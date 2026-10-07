@@ -242,7 +242,13 @@ its failure are consequences, never the cause. A lost pin member is `FAILED`
 with `PIN_HOST_LOST`, so a lost pin fingerprints as exactly that. A failed run
 with no `FAILED` task — a start that failed after its id was minted
 (`RUN_START_FAILED`) — is a run-level failure with no task, pool, Orker, image
-or phase. The **final attempt record** is the one whose number is the task
+or phase. A failure handler (`docs/DSL.md`, "Joins and failure
+handlers") that fails while a run is failing finishes after the run's original
+failure, so it is never taken for the cause. In an Orkflow with a
+failure handler, a `condition:` that cannot be evaluated records its task
+`FAILED` with `CONDITION_FAILED`, so that failure is attributed to the task;
+in every other Orkflow it stays a run-level failure with its task `CANCELED`,
+and its grouping is unchanged. The **final attempt record** is the one whose number is the task
 run's `attempt`, else the highest-numbered one (`attempt` is 0 for a task
 Temporal timed out). A record is used whatever its outcome.
 

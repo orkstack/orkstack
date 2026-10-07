@@ -55,7 +55,10 @@ What the bundle does not carry, deliberately: the Orker's per-attempt
 removed after the attempt and are not stored; what the container was handed
 is reconstructible from members the bundle does carry (the definition's
 `with:`, `env`, secret names and locators, the pinned image, the run input
-inside `run.jsonl`, and each upstream task's committed `values.json`). The live
+inside `run.jsonl`, and each upstream task's committed `values.json`; a
+failure handler's `task.json` `join` was built from its needs' rows in
+`run.jsonl`, and a failed need's staged files are that need's own artifact
+members). The live
 log chunk stream is not carried either: the durable, digested record of an
 attempt's output is the `stdout.log`/`stderr.log` it uploaded.
 

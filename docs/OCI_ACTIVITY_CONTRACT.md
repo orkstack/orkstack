@@ -437,6 +437,25 @@ hit reused), `CacheMemo` (the stored pointer, §5.4 "Memoized completion") and
 cached task on a pool whose Orker predates caching (it could not decode the
 input).
 
+**Join policies** (`docs/DSL.md`, "Joins and failure handlers") add
+`JoinPolicy` (defined in this file beside `CacheScope`, for the same reason:
+`orkflow.proto` imports it, and `Task.join` and `JoinContext` both carry it),
+`NeedOutcome` (one need's `task_id`, its terminal `status` — `SUCCEEDED`,
+`FAILED`, `SKIPPED` or `CANCELED` — and its `error`, bounded field by field:
+`code` 128 bytes, `message` 1024, `details` 256, each on its JSON-escaped
+length), `JoinContext` (`ExecuteTaskInput.join = 28`: the policy and every
+need's outcome in written order, at most 32 needs and 64 KiB — set ONLY for a
+container task whose join is `any_failed` or `all_done`, so every other
+payload is byte-identical), and `DescribeOrkerResult.join_supported = 18`,
+which submit reads to refuse a container failure handler on a pool whose
+Orker predates joins (it could not decode the input). For a failure handler,
+a direct need that `FAILED` with output artifacts contributes an
+`UpstreamRef` with `task_id` and `artifacts` only — no `values` — so its
+files are staged like any upstream's (§3.2). Unlike caching's additions,
+`join` reaches the container: the Orker writes it to `task.json` as `join`
+(§3.2). An image that ignores it is unaffected — the key is new and
+optional, and no other key of `task.json` changes.
+
 ### 2.3 Other proto files
 
 The blocks below are excerpts of the files as they stand: field numbers, names
@@ -869,6 +888,42 @@ ignoring them. `task.pin.name` is the pin as its author named it.
 what the Orker keys the shared directory by, and it is informational to the
 workload.
 
+**A failure handler gets one more key, and only a failure handler.** A task
+whose `join:` is `any_failed` or `all_done` (`docs/DSL.md`, "Joins and failure
+handlers") carries a top-level `join` object: the policy, and how each of its
+needs ended, in the order its `needs:` lists them:
+
+```jsonc
+  "join": {
+    "policy": "any_failed",
+    "needs": [
+      { "taskId": "deploy", "status": "FAILED",
+        "error": { "code": "TASK_FAILED", "category": "ActivityFailed",
+                   "message": "container exited with status 1", "details": "task \"deploy\"" } },
+      { "taskId": "smoke", "status": "CANCELED",
+        "error": { "code": "TASK_CANCELED", "category": "Cancelled", "message": "canceled" } }
+    ]
+  }
+```
+
+`join` is **omitted** for every other task, so it is additive under the
+version rule below. Submit refuses a container failure handler on a pool whose
+Orker cannot write it (`DescribeOrkerResult.join_supported`, §2.2), so a
+failure handler can rely on the key being present. `status` is the run's own
+word for the need's terminal state; a need fail-fast stopped while it ran is
+`CANCELED` with an `error` (`TASK_CANCELED`), never `FAILED`, and a need that
+never started is `CANCELED` or `SKIPPED` with no `error`. The need's full error
+stays on its own row of the run; the copy here is bounded.
+
+**A failed need's files are staged for a handler.** A direct need that
+`FAILED` after writing output artifacts — the Orker uploads a failed attempt's
+artifacts — has them staged exactly like a succeeded upstream's: under
+`input/artifacts/<need>/`, listed in `inputs.artifacts` with `producer` set to
+the need, and with no `inputs.upstream` entry (a failed need has no values). A
+need that failed before writing a file — an image that could not be pulled, a
+container killed at its timeout — has none, so a handler finds a failed need's
+files in `inputs.artifacts`, where a missing file is a missing entry.
+
 **Artifact names are UTF-8; paths are derived and lossy.** `path` is produced
 by the existing `safeComponent` rule (`internal/orker/resolver.go:127-151`),
 which rewrites separators, dot segments and long names, so it cannot carry the
@@ -948,11 +1003,25 @@ absence rather than treating it as an error.
 | `inputs.eachUpstream` | array | optional | absent | present only when a direct upstream is a fan-out, so a workload can tell "zero items" from "no such upstream" |
 | `inputs.eachUpstream[].taskId` | string | required | — | the fan-out's task id |
 | `inputs.eachUpstream[].count` | integer | required | `0` | how many items were staged |
+| `join` | object | optional | absent | present only for a failure handler (`join:` `any_failed` or `all_done`) — and, by the submit guard, always present for one |
+| `join.policy` | string | required in `join` | — | `"any_failed"` or `"all_done"` |
+| `join.needs` | array | required in `join` | — | one entry per need, in `needs:` order; at most 32 |
+| `join.needs[].taskId` | string | required | — | the need's task id |
+| `join.needs[].status` | string | required | — | `"SUCCEEDED"`, `"FAILED"`, `"SKIPPED"` or `"CANCELED"` |
+| `join.needs[].error` | object | optional | absent | present only when the need recorded an error |
+| `join.needs[].error.code` | string | required in `error` | — | machine-readable reason, at most 128 bytes |
+| `join.needs[].error.category` | string | optional | absent | `ActivityFailed`, `InfrastructureError`, `ContractViolation`, `TimedOut` or `Cancelled` (`AGENTS.md` §4); absent when unspecified |
+| `join.needs[].error.message` | string | required in `error` | — | human-readable explanation, at most 1024 bytes |
+| `join.needs[].error.details` | string | optional | absent | at most 256 bytes |
 | `secrets` | array | required | `[]` | never null; names and paths only, never values |
 | `secrets[].name` | string | required | — | `^[A-Za-z0-9._-]{1,128}$` |
 | `secrets[].path` | string | required | — | absolute container path |
 | `trace.traceparent` | string | optional | absent | present only when this deployment exports traces (§ below) |
 | `trace.tracestate` | string | optional | absent | present only alongside `traceparent`, and only when the propagator set one |
+
+Each bound on a `join.needs[].error` text is measured on its JSON-escaped
+encoding, so it holds on the wire whatever characters the text holds; a cut
+text ends at a UTF-8 boundary with `…`.
 
 An absent array is never written as `null`; the Orker emits `[]`. An absent
 optional scalar is omitted, never written as `""` — a workload distinguishes

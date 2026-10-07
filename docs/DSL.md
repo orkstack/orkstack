@@ -246,6 +246,7 @@ tasks:
     uses: http            # catalog activity name, full OCI image reference,
                           # or orkflow:<name>@<version> (see "Composition")
     needs: []             # DAG edges list existing task ids; no cycles
+    join: all_succeeded   # optional: none_failed, any_failed or all_done (see "Joins and failure handlers")
     condition: ""         # optional templated gate
     timeout_seconds: 300  # optional container wall-clock timeout; default 300
     retry:                # optional Temporal retry policy
@@ -307,6 +308,204 @@ same pool. Within a run, one pool name means one set of Orkers and one set of
 Orkers has one name — so the pool a run reports a task on is a pool you can
 write to reach those same Orkers. A task that names a pool with no live
 Orkers is refused at submit rather than left waiting for one.
+
+## Joins and failure handlers (`join:`)
+
+A task's optional `join:` says when it may start, decided from how its
+`needs:` ended. It takes exactly one of four words, on every task kind —
+container, awaited and composed:
+
+| `join:` | The task starts when its needs are all terminal and… | Otherwise it is `SKIPPED`, with |
+|---|---|---|
+| `all_succeeded` *(default)* | …every need `SUCCEEDED` | `upstream task "<need>" was skipped` |
+| `none_failed` | …none `FAILED` or `CANCELED`, and at least one `SUCCEEDED` | `join none_failed: every need was skipped (<needs>)` |
+| `any_failed` | …at least one `FAILED` (after its retries) | `join any_failed: none of its needs failed (<needs>); it runs only when one of them fails` |
+| `all_done` | …whatever they did | — |
+
+`join: all_succeeded` compiles to no join at all: the same definition and
+digest as a task that writes none. A task's `condition:` still applies, after
+the join test, unchanged.
+
+**Re-joining branches.** `none_failed` closes an if/else: "if A then B else C,
+then D" is `D: {needs: [B, C], join: none_failed}` — one of B and C is always
+skipped, and D runs after whichever ran. Skips propagate along every
+`all_succeeded` edge exactly as before; a `none_failed` task stops the
+propagation unless every one of its needs was skipped.
+
+```yaml
+- id: decide                      # the decision is a task's value
+  uses: shell
+  with: {op: eval, command: ["printf", "%s", "{{ .inputs.route }}"]}
+- id: canary
+  uses: shell
+  needs: [decide]
+  condition: '{{ eq .tasks.decide.output.value "canary" }}'
+  with: {op: exec, command: ["echo", "canary rollout"]}
+- id: full
+  uses: shell
+  needs: [decide]
+  condition: '{{ eq .tasks.decide.output.value "full" }}'
+  with: {op: exec, command: ["echo", "full rollout"]}
+- id: verify
+  uses: shell
+  needs: [canary, full]
+  join: none_failed               # one branch was skipped; re-join after the other
+  with: {op: exec, command: ["echo", "verified"]}
+```
+
+**Failure handlers.** A task whose join is `any_failed` or `all_done` is a
+**failure handler**: the only kind of task that starts in a run that is
+already failing. A handler cleans up, notifies or compensates; it never rescues
+the run. It covers only the needs it lists — `rollback: {needs: [deploy], join:
+any_failed}` does not run when `build` fails, because then `deploy` never ran.
+An `any_failed` handler on another handler is an escalation ("page someone if
+the rollback failed"); an `all_done` handler on one is a step after it,
+whatever it did.
+
+**How a run ends.**
+
+- It *succeeds* when every task is decided and none failed. An `any_failed`
+  handler of needs that all succeeded is skipped; an `all_done` handler runs.
+- It is *canceled* when an operator cancels it before anything failed:
+  nothing new starts — not even a failure handler — and every task still
+  running, handlers included, is stopped with SIGTERM. A pending handler is
+  recorded `CANCELED` with `the run was canceled; a canceled run starts no
+  failure handler`. Cleanup at cancellation is the container's own SIGTERM
+  handling.
+- It *fails* otherwise. Fail-fast stops every task that is not a failure
+  handler exactly as before — a never-started one is `CANCELED` with `the run
+  is failing (task "<cause>" failed) and this task is not a failure handler`
+  — then the failure handlers run to their own outcomes, and the run ends
+  **`FAILED` with the original failure's reason**. A handler's success never
+  changes that; a handler's failure is recorded on the handler, stops nothing
+  else and never replaces the run's reason. A handler already running when the
+  failure happened (an `all_done` handler admitted before it) keeps running.
+  While the handlers run the run is **failing**: its status is still
+  `RUNNING`, its error is already set, and its event stream carries one
+  `TASK_LOG` with no task id: `run failing after task "<cause>" failed;
+  waiting for its failure handlers: <handlers>`.
+- An operator who cancels a failing run stops its handlers (pending ones are
+  recorded `the run was canceled while its failure handlers ran`); the run
+  still ends `FAILED` with the original reason. A run terminated outside
+  OrkStack runs no workflow code: it reads `CANCELED`, with the failing error
+  it carried kept.
+
+**A cancelled need is not a failed one.** A task fail-fast stopped while it
+ran beside the one that failed is `CANCELED`, never `FAILED` — so `any_failed`
+does not fire for it, although it may have changed something outside OrkStack
+before it stopped (activities are at-least-once). A task fail-fast stopped
+before it started is `CANCELED` too.
+
+**What a failure handler receives.** A handler is an ordinary task in every
+other respect — its own image, `with:`, pool, secrets, commit, attempts and
+logs — and, like any task, **a handler with no `retry:` has exactly one
+attempt**: an Orker lost under it records it `FAILED`
+(`ORKER_HEARTBEAT_TIMEOUT`). A compensation that must survive a lost Orker
+declares `retry:` and is written to be safe to run twice, keyed on its stable
+`idempotencyKey`. What it is handed differs in three ways, set only for a
+failure handler so every other task's input is unchanged:
+
+1. **How its needs ended, as a file.** `/orkstack/input/task.json` carries a
+   `join` object: the policy and, for each need in written order, its
+   `taskId`, `status` (`SUCCEEDED`, `FAILED`, `SKIPPED`, `CANCELED`) and, when
+   the need recorded one, its `error` (`code` ≤ 128 bytes, `category`,
+   `message` ≤ 1024 bytes, `details` ≤ 256 bytes; a cut text ends in `…`).
+   `CANCELED` carries an error (`TASK_CANCELED`) when the need was stopped in
+   flight, and none when it never started.
+2. **The failed needs' files.** A direct need that `FAILED` after writing
+   output artifacts has them staged like any upstream's, so `task.json`'s
+   `inputs.artifacts` lists them with `producer` set to the need. A need that
+   failed before writing a file — an image that could not be pulled, a
+   container killed at its timeout — has none. **Read a failed need's files
+   from `task.json`'s `inputs.artifacts`**, where a missing file is a missing
+   entry; the `artifact` helper fails the render for a name that is not staged.
+3. **Succeeded ancestors' values, as always.** A skipped, cancelled or failed
+   ancestor contributes no values.
+
+**The saga idiom.** A condition — on any task — still sees only succeeded
+ancestors, so `{{ if index .tasks "reserve-flight" }}true{{ end }}` is the
+deterministic "did that succeed?" test. Choose the form by whether the step a
+compensation undoes can be running when another forward step fails:
+
+- *Forward steps run in sequence:* when one fails, every earlier one has
+  `SUCCEEDED` and every later one never started. The compensation is
+  `join: any_failed` over the forward steps plus a condition that the step it
+  undoes succeeded:
+
+  ```yaml
+  - id: cancel-hotel
+    uses: ghcr.io/acme/booking:3
+    needs: [reserve-hotel, reserve-flight, charge-card]
+    join: any_failed
+    condition: '{{ if index .tasks "reserve-hotel" }}true{{ end }}'
+    retry: {maximum_attempts: 3}
+    with: {op: cancel-hotel}
+  ```
+- *Forward steps run in parallel:* fail-fast stops a step still running and
+  records it `CANCELED`, so the condition above is false for it and
+  `any_failed` does not fire on its account. Its compensation is `join:
+  all_done` over the forward steps and decides in the container from
+  `task.json`'s `join.needs[].status`: it undoes its step when that step may
+  have run (`SUCCEEDED`, `FAILED`, or `CANCELED` with an `error`) **and** the
+  run is failing (some need `FAILED` or `CANCELED`), and otherwise exits 0
+  having done nothing — which is what it does in a run where every forward
+  step succeeded, since an `all_done` handler runs there too:
+
+  ```yaml
+  - id: release-capacity
+    uses: shell
+    needs: [reserve-capacity, provision-dns]
+    join: all_done
+    retry: {maximum_attempts: 3}
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        j=/orkstack/input/task.json
+        failing=$(jq '[.join.needs[] | select(.status == "FAILED" or .status == "CANCELED")] | length' "$j")
+        mine=$(jq -r '.join.needs[] | select(.taskId == "reserve-capacity") | if .status == "SKIPPED" or (.status == "CANCELED" and .error == null) then "no" else "yes" end' "$j")
+        if [ "$failing" -gt 0 ] && [ "$mine" = yes ]; then echo "releasing capacity"; fi
+  ```
+
+In both forms the compensation's `needs:` lists every forward step whose
+failure should undo its step: a handler decides only on its own needs.
+
+**Reading an ancestor a join can leave absent.** Without a join, every task of
+a needs closure has succeeded whenever a task runs. A join breaks that, and not
+only for the joined task's direct needs: an ordinary `deploy` after a
+`none_failed` `verify` runs whether `canary` or `full` ran, and the one that
+was skipped is absent from `.tasks`. Reading it — `.tasks.canary.output.x`,
+`index .tasks "canary" "output" "x"`, or `artifact "canary/…"` — fails the
+task. Guard the read: `{{ with index .tasks "canary" }}{{ .output.x }}{{ end }}`
+(or `{{ if index .tasks "canary" }}…{{ end }}`; the body runs only when the
+task is present, never the `else`). Apply warns, never refuses, about every
+unguarded read of an ancestor a join can leave absent (`tasks[i].condition`,
+`tasks[i].with…`). Only those two exact pipelines are recognised as a guard:
+`{{ if and (index .tasks "a") … }}` still warns — a known false positive. For
+a failure handler an `artifact` read always warns, guarded or not: read the
+file from `task.json`'s `inputs.artifacts` instead.
+
+**A broken condition.** In an Orkflow that declares a failure handler, a task
+whose `condition:` cannot be evaluated is recorded `FAILED` with
+`CONDITION_FAILED` (category `ContractViolation`) — so its own `any_failed`
+handlers fire — and the run fails with the evaluation error as before. In every
+other Orkflow the task is recorded `CANCELED`, exactly as before.
+
+**Planning both paths.** `orkctl run plan` and the submit dialog's Plan decide
+joins with the interpreter's own predicate and sentences, and `--assume-failed
+TASK` (repeatable; the dialog's *Assume these tasks fail*) plans the run as if
+TASK, when it would run, failed after its retries: its failure handlers are
+planned, every task that depends on it and is not a failure handler is
+`unreached`, and independent work is planned as if nothing had failed.
+`orkctl run plan deploy --assume-failed deploy --assert-runs rollback
+--assert-runs notify` is a CI check that a handler is wired.
+
+**Not supported:** a failure handler may not be pinned, fan out or be cached
+(rule 39); no ordinary task may need an `any_failed` task (rule 40). There is
+no loop, no `continue_on_error` and no Orkflow-level `on_failure:` hook: a
+failure that should not fail the run is the workload's to report as data, which
+a `condition:` reads. See `examples/branch-and-recover.ork.yaml`.
 
 ## Pins
 
@@ -453,7 +652,7 @@ tasks:
   default would make the stored object differ from what was sent. Keys the
   schema does not declare are accepted.
 
-An awaited task takes only `id`, `needs`, `condition` and `await`; every key
+An awaited task takes only `id`, `needs`, `condition`, `join` and `await`; every key
 that shapes a container (`uses`, `with`, `command`, `env`, `secrets`,
 `resources`, `network`, `pool`, `pin`, `retry`, `timeout_seconds`,
 `cancellation_grace_period_seconds`, `run_as_orker_user`) is refused by name.
@@ -462,7 +661,9 @@ artifacts — and `{{ .tasks.<await>.output.<field> }}` is how its values are
 read. A `condition:` on an await is evaluated before it opens, and an upstream
 skip propagates through it like any task. There are no retries: a rejection
 fails the task with `AWAIT_REJECTED` (category `ActivityFailed`) and the run
-fails fast, as for any task failure. A business "no" that should branch is a
+fails fast, as for any task failure — after its failure handlers (see "Joins
+and failure handlers"), which an await may itself be (`join: any_failed`:
+"approve the rollback?"). A business "no" that should branch is a
 *completion* with a value (`{"approved": false}`) read by a downstream
 `condition:`.
 
@@ -596,7 +797,11 @@ checked per item when the run reaches it (`INPUT_TOO_LARGE`, naming the item).
 fails the task with that item's error, prefixed `item 97 of 120 failed:`, and
 the run with it; items in flight are cancelled, and items never dispatched
 end `CANCELED` without running. An item retries alone: its siblings' commits
-stand.
+stand. The run fails after its failure handlers; an `any_failed` handler of the
+fan-out is handed the node's error (`item 97 of 120 failed: …`) and no item
+files. A `none_failed` fan-out whose `each.over` task did not succeed fails
+`EACH_OVER_MISSING`: such a fan-out reads its array from an input or from a
+task that always runs.
 
 **Not supported in this version:** a fan-out may not be pinned (`pin:`), may
 not fan out over another fan-out or name one in `needs:` (no nesting), and an
@@ -640,7 +845,7 @@ tasks:
   version pins the child's exact bytes and, through them, every descendant's.
   A version pointer never moves a running parent; `uses:` cannot be a
   template.
-- **What it may carry:** `id`, `needs`, `condition`, `uses` and `with`.
+- **What it may carry:** `id`, `needs`, `condition`, `join`, `uses` and `with`.
   `command`, `env`, `secrets`, `resources`, `network`, `pool`, `pin`,
   `retry`, `timeout_seconds`, `cancellation_grace_period_seconds`,
   `run_as_orker_user`, `each`, `await` and `cache` are refused by name: the
@@ -663,7 +868,10 @@ tasks:
   cancels its running children and waits for them to end; a parent
   terminated from outside asks its children to cancel, so no child is left
   running. A composed task is never retried: its child's tasks carry their
-  own retries and timeouts.
+  own retries and timeouts. A failed child fires the parent's `any_failed`
+  handlers after the child's own handlers ran, and the parent fails after
+  them; a composed failure handler starts its child in a failing parent
+  (compensation as a reusable Orkflow).
 - **Bounds.** Composition is acyclic and at most `ORK_COMPOSE_MAX_DEPTH`
   levels deep (default and ceiling 4; a run is level 0). The whole tree is
   planned at the parent's submit — its pools, secret policy, image policy and
@@ -817,7 +1025,16 @@ this context:
   shell boundary.
 
 Only tasks listed (transitively) in `needs` are guaranteed to be resolvable;
-referencing an unrelated task's output is a compile-time error.
+referencing an unrelated task's output is a compile-time error. Past a join,
+an ancestor may be absent (see "Joins and failure handlers").
+
+**Condition truthiness.** A `condition:` is false exactly when its rendered
+text, trimmed and lower-cased, is one of eleven spellings: the empty string,
+`false`, `0`, `no`, `off`, `null`, `<no value>`, `[]`, `map[]`, `<nil>`,
+`unspecified`. Anything else is true. So a decide task emits an **enum string
+compared with `eq`** — `{{ eq .tasks.decide.output.route "canary" }}` — or a
+JSON boolean rendered bare; never a free-form string rendered bare, which is
+true for `"No thanks"` and false for `"no"`.
 
 Two kinds of template are rendered by the **engine** rather than an Orker: a
 composed task's `with:` and an Orkflow's `outputs:`. They get **no helpers**
@@ -859,8 +1076,8 @@ and name every task they read literally (rule 28).
     Enforced by `internal/api` at validate and apply, after resolution — the
     compiler has no registry to ask (`docs/ACTIVITY_IMAGES.md`, "Declaring the
     interface"). An image without the label is not checked.
-15. An awaited task carries nothing but `id`, `needs`, `condition` and
-    `await`: every field that shapes a container — and `each` and `cache` —
+15. An awaited task carries nothing but `id`, `needs`, `condition`, `join`
+    and `await`: every field that shapes a container — and `each` and `cache` —
     is refused by name, on the compiled message as well as in YAML, so a
     hand-built request meets the same rule.
 16. `await.timeout_seconds` is present and between 1 and 2592000 (30 days).
@@ -896,8 +1113,8 @@ and name every task they read literally (rule 28).
     `^[A-Za-z0-9][A-Za-z0-9._-]*$` of at most 200 bytes, no template), and
     the compiled `Task.orkflow` agrees with it; such a task carries no image.
     It skips rule 6's catalog check.
-27. A composed task carries nothing but `id`, `needs`, `condition`, `uses`,
-    `with` (and its compiled `orkflow`): every execution field — `command`,
+27. A composed task carries nothing but `id`, `needs`, `condition`, `join`,
+    `uses`, `with` (and its compiled `orkflow`): every execution field — `command`,
     `env`, `secrets`, `resources`, `network`, `pool`, `pin`, `retry`,
     `timeout_seconds`, `cancellation_grace_period_seconds`,
     `run_as_orker_user`, `each`, `await`, `cache` — is refused by name.
@@ -933,6 +1150,28 @@ and name every task they read literally (rule 28).
 36. A cached task is not pinned: its pin's `/orkstack/shared` is an input no
     memo key can cover. An awaited task (rule 15) and a composed task (rule
     27) may not carry `cache:` either.
+37. `join:`, when present, is one of `all_succeeded`, `none_failed`,
+    `any_failed`, `all_done` (field `tasks[i].join`). `all_succeeded` is the
+    default and compiles to no join at all. A compiled `Task.join` is one of
+    the defined values.
+38. A task whose `join:` is not `all_succeeded` names at least one need: a
+    join decides on its needs' outcomes.
+39. A failure handler (`any_failed`, `all_done`) is not pinned
+    (`tasks[i].pin`), is not a fan-out (`tasks[i].each`) and is not cached
+    (`tasks[i].cache`): fail-fast ends every pin with the run's work, a
+    fan-out's contract is that its first failed item fails it and stops its
+    siblings, and a handler's input includes how its needs ended, which no
+    memo key covers.
+40. A task whose `join:` is `all_succeeded` or `none_failed` may not name, in
+    `needs:`, a task whose `join:` is `any_failed` (`tasks[i].needs[j]`): it
+    could never run. Use `join: all_done` (run after it, whatever it did) or
+    `join: any_failed` (run if it fails).
+41. `outputs:` may not read a task whose `join:` is `any_failed`
+    (`outputs.<name>`): outputs are rendered only when a run succeeds, and
+    then such a task is always skipped.
+42. A failure handler that runs a container names at most 32 needs
+    (`tasks[i].needs`): its input records how every need ended, and that
+    record is bounded. An awaited or composed failure handler is not limited.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that
