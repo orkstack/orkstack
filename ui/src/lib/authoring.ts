@@ -106,6 +106,7 @@ export function planCli(args: {
 	version: string;
 	input: JsonObject;
 	assumedOutputs?: JsonObject;
+	assumeFailed?: readonly string[];
 }): string {
 	const namespace = args.namespace || 'default';
 	const flags = [`--namespace ${shellQuote(namespace)}`];
@@ -116,6 +117,8 @@ export function planCli(args: {
 		lines.push(`printf '%s\\n' ${shellQuote(JSON.stringify(args.assumedOutputs))} > outputs.json`);
 		flags.push('--outputs-file outputs.json');
 	}
+	// One --assume-failed per task, as the CLI takes it.
+	for (const id of args.assumeFailed ?? []) flags.push(`--assume-failed ${shellQuote(id)}`);
 	lines.push(`orkctl run plan ${shellQuote(args.name)} ${flags.join(' ')}`);
 	return lines.join('\n');
 }

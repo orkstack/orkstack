@@ -27,7 +27,15 @@
 	import RetryBadge from '$lib/components/RetryBadge.svelte';
 	import CacheBadge from '$lib/components/CacheBadge.svelte';
 	import type { CacheResult } from '$lib/gen/orkstack/v1/activity_pb';
-	import { CacheOutcome } from '$lib/gen/orkstack/v1/activity_pb';
+	import { CacheOutcome, JoinPolicy } from '$lib/gen/orkstack/v1/activity_pb';
+	import {
+		failingBannerText,
+		isFailingNote,
+		joinTitle,
+		joinWord,
+		outstandingHandlers,
+		runFailing
+	} from '$lib/join';
 	import {
 		cacheOutcomeLabel,
 		cacheSourceHref,
@@ -75,7 +83,7 @@
 		originLinkPath,
 		originReferenceURL
 	} from '$lib/origin';
-	import { fmtTimestamp, isTerminal, statusLabel, taskDispatched } from '$lib/status';
+	import { fmtTimestamp, isTerminal, keepsEventMessage, statusLabel, taskDispatched } from '$lib/status';
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
 	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
 	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
@@ -170,6 +178,10 @@
 		// been merged: until then an absent cache means "not read yet", never
 		// "the Orker reported none".
 		factsRead?: boolean;
+		// join is the task's join policy (docs/DSL.md "Joins and failure
+		// handlers"): seeded from the definition, copied from TaskRun.join
+		// only when set — the rule pin follows. Absent for all_succeeded.
+		join?: JoinPolicy;
 	}
 
 	const run = $derived(data.run);
@@ -219,6 +231,11 @@
 	// the socket said, and `runError` below is the STRUCTURED error from the
 	// snapshot, which is the only one of the two that carries a category.
 	let runErrorMessage = $state<string>(untrack(() => data.run?.error?.message) ?? '');
+	// failingNote is the text of the failing note — the one TASK_LOG with no
+	// task id a run with failure handlers emits when it starts failing. It is
+	// what makes the Failing banner appear live, before the re-read it starts
+	// brings the structured Run.error; '' until it arrives.
+	let failingNote = $state('');
 	let socketState = $state<RunSocketState>('connecting');
 	let streamDelivered = $state(false);
 	// The socket is only 'live' once it has actually delivered something.
@@ -541,6 +558,7 @@
 				pin: task.pin,
 				orkerId: '',
 				items: [],
+				...(task.join ? { join: task.join } : {}),
 				...(task.await ? { await: create(TaskAwaitSchema, { callback: task.await.callback }) } : {}),
 				...(task.orkflow
 					? {
@@ -583,6 +601,7 @@
 				...(tr.each ? { each: tr.each } : {}),
 				...(tr.child ? { child: tr.child } : existing?.child ? { child: existing.child } : {}),
 				...(tr.cache ? { cache: tr.cache } : {}),
+				...(tr.join ? { join: tr.join } : existing?.join ? { join: existing.join } : {}),
 				factsRead: isTerminal(tr.status),
 				items: itemsFromTaskRun(tr)
 			});
@@ -601,10 +620,16 @@
 
 	function mergeTerminalFacts() {
 		for (const tr of data.run?.taskRuns ?? []) {
+			const existing = tasks.find((t) => t.id === tr.taskId);
 			upsertTask(tr.taskId, {
 				status: tr.status,
 				attempt: tr.attempt,
-				message: tr.error?.message ?? '',
+				// A SKIPPED or CANCELED row with no error is explained only by
+				// its TASK_LOG sentence (a join's skip, a fail-fast cancel),
+				// which the snapshot has no field for: keep it.
+				message:
+					tr.error?.message ??
+					(keepsEventMessage(tr.status) ? (existing?.message ?? '') : ''),
 				error: hasError(tr.error) ? tr.error : undefined,
 				retryState: tr.retryState,
 				exitCode: measuredExitCode(tr),
@@ -632,6 +657,8 @@
 				// every key present in the patch, so an empty pin here would
 				// erase the pin the definition already seeded.
 				...(tr.pin ? { pin: tr.pin } : {}),
+				// The join, on pin's rule: patched only when set.
+				...(tr.join ? { join: tr.join } : {}),
 				// A fan-out's expansion and its items, never moving an item an
 				// event already settled back to unsettled.
 				...(tr.each
@@ -852,6 +879,16 @@
 				})();
 				break;
 			case EventType.TASK_LOG:
+				// The failing note is about the RUN: it carries no task id, so
+				// it patches no card (an empty id would become a card of its
+				// own). It shows the Failing banner and starts ONE re-read for
+				// the structured Run.error — never a poll; task cards keep
+				// moving from their own events.
+				if (isFailingNote(event)) {
+					failingNote = event.message;
+					void rereadOnEvent();
+					break;
+				}
 				// A run event, not the task's output. EVENT_TYPE_TASK_LOG carries
 				// the engine's own notes about a task — a skip and why — and the
 				// run's history is deliberately not where output lives. Bytes
@@ -953,6 +990,19 @@
 	// needs has not finished yet, or that the run ended before it ever
 	// started. `taskDispatched` is the test, and it leans on the engine
 	// stamping started_at ONLY at real dispatch.
+	// A task's join: the pinned definition's, else the snapshot's.
+	function joinOf(id: string): JoinPolicy | undefined {
+		return taskDefs.get(id)?.join || tasks.find((t) => t.id === id)?.join;
+	}
+	// The failure handlers still to finish, from the LIVE task views: one
+	// drops out of the banner the moment its own terminal event arrives.
+	const failingHandlers = $derived(
+		outstandingHandlers(
+			tasks.map((t) => ({ id: t.id, status: t.status })),
+			joinOf
+		)
+	);
+
 	function notStartedCaption(task: TaskView): string {
 		if (task.status === Status.CANCELED || isTerminal(runStatus)) return 'Never started';
 		const blocking = (taskDefs.get(task.id)?.needs ?? []).filter(
@@ -1377,6 +1427,20 @@
 		whose failure arrived only over the socket
 		has a message and no category, and says exactly that much.
 	-->
+	{#if runFailing(runStatus, runError, failingNote)}
+		<!--
+			A failing run: its outcome is decided FAILED and its failure
+			handlers still run. Keyed on the LIVE status, so the terminal event
+			— RUN_FAILED, or a terminated run's RUN_CANCELED — clears it.
+		-->
+		<p
+			data-testid="run-failing"
+			data-handlers={failingHandlers.map((h) => h.id).join(',')}
+			class="mb-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
+		>
+			{failingBannerText(failingHandlers)}
+		</p>
+	{/if}
 	{#if runError}
 		<div class="mb-6"><FailurePanel error={runError} testid="run-error" /></div>
 	{:else if runErrorMessage}
@@ -1532,6 +1596,13 @@
 								is one question whichever of the two answers it.
 							-->
 							<div class="flex flex-wrap items-center justify-end gap-2">
+								{#if task.join}
+									<span
+										data-testid="task-{task.id}-join"
+										title={joinTitle(task.join, taskDefs.get(task.id)?.needs ?? [])}
+										class="inline-flex items-center rounded-full border border-border bg-surface-sunken px-2 py-0.5 font-mono text-[11px] leading-4 whitespace-nowrap text-fg-secondary"
+									>join {joinWord(task.join)}</span>
+								{/if}
 								{#if dispatched || task.status === Status.SKIPPED}
 									<StatusPill status={task.status} testid="task-{task.id}-status" />
 								{:else}

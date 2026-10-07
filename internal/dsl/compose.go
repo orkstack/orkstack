@@ -109,7 +109,7 @@ func ComposedLabel(ref *orkstackv1.OrkflowRef) string {
 
 // composeFieldRefusal is rule 27's sentence for one key.
 func composeFieldRefusal(taskID, key, name, version string) error {
-	return fmt.Errorf("task %q: a composed task takes only id, needs, condition, uses and with; "+
+	return fmt.Errorf("task %q: a composed task takes only id, needs, condition, join, uses and with; "+
 		"%q does not apply (it runs orkflow %s@%s as a child run, whose own tasks declare where "+
 		"and how they run)", taskID, key, name, version)
 }
@@ -164,11 +164,16 @@ func compileComposedTask(taskIndex int, td taskDocument, namespace string) (*ork
 				composeFieldRefusal(td.ID, field.key, name, version))
 		}
 	}
+	join, err := compileJoin(taskIndex, td)
+	if err != nil {
+		return nil, err
+	}
 	task := &orkstackv1.Task{
 		Id:        td.ID,
 		Uses:      td.Uses,
 		Needs:     td.Needs,
 		Condition: td.Condition,
+		Join:      join,
 		// 0, not DefaultTimeoutSeconds: a composed task has no timeout of its
 		// own — its child's tasks carry theirs (rule 27).
 		TimeoutSeconds: 0,

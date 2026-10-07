@@ -344,6 +344,16 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 		}
 		count = n
 	} else {
+		// A fan-out joined with none_failed may be reached with its task
+		// source skipped — the author's wiring, not the store's fault, so a
+		// ContractViolation naming it rather than EACH_EXPANSION_FAILED.
+		// Without a join every ancestor of a fan-out that runs succeeded, so
+		// this is unreachable for every earlier definition and history.
+		if srcID := source.GetTaskId(); s.taskRuns[srcID] != nil &&
+			s.taskRuns[srcID].GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+			return s.failExpansion(ctx, id, EachOverMissingCode, eachOverMissingMessage(
+				spec.GetOver(), srcID, statusWord(s.taskRuns[srcID].GetStatus())))
+		}
 		ref := s.results[source.GetTaskId()].GetValuesRef()
 		if s.plan.CommitRoot == "" || ref == nil {
 			return s.failExpansion(ctx, id, EachExpansionFailedCode, fmt.Sprintf(
@@ -445,6 +455,13 @@ func (s *runState) taskIndex(id string) int {
 		}
 	}
 	return -1
+}
+
+// eachOverMissingMessage is the sentence for a fan-out whose task source did
+// not succeed. Shared by expandEach and Simulate.
+func eachOverMissingMessage(over, source, status string) string {
+	return fmt.Sprintf("each.over %s: task %q is %s, so its values do not exist — a fan-out joined "+
+		"with none_failed reads its array from an input or from a task that always runs", over, source, status)
 }
 
 // failExpansion records a fan-out that could not be expanded: the node FAILED

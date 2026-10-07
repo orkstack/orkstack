@@ -194,6 +194,14 @@ message TaskRun {
   // what each memo step decided. On a fan-out it is set on the items, never
   // on the fan-out's own row.
   CacheResult cache = 24;
+
+  // join is the task's join policy, set from the run's first snapshot for
+  // every task whose definition declares one other than all_succeeded, and
+  // UNSET otherwise — so a snapshot of a run with no join is byte-identical
+  // to what it was before this field existed. Its presence is how a client
+  // tells a failure handler from an ordinary task without reading the
+  // definition (the precedent of TaskRun.await, .each and .child).
+  JoinPolicy join = 25;
 }
 
 // AwaitResolvedVia names the door an await's resolution came through.
@@ -412,6 +420,10 @@ message Run {
   // declares `outputs:`; otherwise every leaf task's inline values, keyed by
   // task id.
   Payload output = 6;
+  // error is set when the run's outcome is decided FAILED or CANCELED. While
+  // a failing run's failure handlers still run, it is already set and status
+  // is RUNNING (docs/DSL.md "Joins and failure handlers"); the terminal
+  // snapshot carries the same error with status FAILED.
   Error error = 7;
   repeated TaskRun task_runs = 8;
   google.protobuf.Timestamp created_at = 9;
@@ -538,7 +550,10 @@ message Event {
   string run_id = 1;
   int64 sequence = 2;                    // monotonic per run
   EventType type = 3;
-  string task_id = 4;                    // set for task events
+  // task_id is set for task events. Empty on exactly one event that is not
+  // about a task: the TASK_LOG, status RUNNING, a run with failure handlers
+  // emits when it starts failing (docs/DSL.md "Joins and failure handlers").
+  string task_id = 4;
   Status status = 5;
   string message = 6;                    // human readable / log line
   Payload data = 7;                      // optional structured detail

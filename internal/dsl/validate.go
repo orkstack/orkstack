@@ -227,6 +227,13 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		return err
 	}
 
+	// Rules 37–42: join policies. After rule 5 (SureAncestors and rule 40
+	// walk the needs graph) and before rule 8, so a refused join is named
+	// before any template rule reads it.
+	if err := validateJoins(wf, byID); err != nil {
+		return err
+	}
+
 	// Rule 8: templates parse and reference only declared inputs and
 	// (transitively) upstream tasks.
 	inputs := map[string]struct{}{}

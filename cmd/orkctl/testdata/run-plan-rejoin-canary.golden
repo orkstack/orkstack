@@ -1,0 +1,17 @@
+PLAN  branch-and-recover@0.1.0  namespace default
+definition  sha256:015631e3cc6f50515fb8452728f9d993af98849201878bd6d371e6bb5c57516a
+input       {"fail_deploy":false,"fail_rollback":false,"rollback_seconds":0,"route":"canary","smoke_seconds":10}
+
+WAVE  TASK      OUTCOME  DETAIL
+1     decide    runs
+2     canary    runs
+2     full      skipped  condition "{{ eq .tasks.decide.output.value \"full\" }}" evaluated false
+3     verify    runs     join none_failed
+4     deploy    runs
+4     smoke     runs
+5     announce  runs
+5     rollback  skipped  join any_failed: none of its needs failed (deploy); it runs only when one of them fails
+5     notify    runs     join all_done
+6     escalate  skipped  join any_failed: none of its needs failed (rollback); it runs only when one of them fails
+
+7 run, 3 skipped, 5 waves. Nothing was started.

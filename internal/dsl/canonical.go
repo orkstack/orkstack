@@ -224,6 +224,12 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	if t.GetPin() != "" {
 		out["pin"] = t.GetPin()
 	}
+	// join is emitted ONLY when it is not UNSPECIFIED (all_succeeded) — the
+	// same exception, for the same reason, as `pin`: a definition with no
+	// join keeps its digest.
+	if t.GetJoin() != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
+		out["join"] = int64(t.GetJoin())
+	}
 	// await is emitted ONLY when set — the same exception, for the same
 	// reason, as `pin`: a document with no await keeps the digest it had.
 	if a := t.GetAwait(); a != nil {

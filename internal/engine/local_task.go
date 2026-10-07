@@ -7,6 +7,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -30,7 +31,11 @@ import (
 // each: (each-fan-out §9.9) is another: a fan-out composes ONE ITEM's input,
 // exactly as scheduleItem does, and requires Item; a task that names a
 // fan-out in its own needs: is refused, because its items are read from
-// their commits and a local run has no commit store.
+// their commits and a local run has no commit store. join: (task-join-policy
+// §10) is a third: a failure handler's input carries how its needs ended, so
+// LocalTask.Join is required for one and refused for any other task, and a
+// direct need that FAILED contributes {task_id, artifacts} exactly as
+// schedule's upstreamFor does.
 
 // LocalTask names one task of one definition to be composed OUTSIDE a run:
 // the caller runs it itself (`orkctl task run`), so nothing here is replayed,
@@ -61,6 +66,10 @@ type LocalTask struct {
 	// for an input source means "count it from Input", as the interpreter
 	// does; nil for a task source is a caller error.
 	ItemCount *int32
+	// Join is how a failure handler's needs ended (JoinContextFromRun, or the
+	// caller's --need). Required for a failure handler, refused for any other
+	// task.
+	Join *orkstackv1.JoinContext
 }
 
 // LocalTaskRefusal is a refusal the interpreter would have recorded as the
@@ -119,6 +128,15 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 	if ref := spec.GetOrkflow(); ref != nil {
 		return nil, ComposedTaskRefusal(t.TaskID, ref)
 	}
+	handler := isFailureHandler(spec)
+	if handler && t.Join == nil {
+		return nil, fmt.Errorf("task %q is a failure handler (join %s): its input names how its needs ended; "+
+			"run it with --from-run RUN or name each need with --need TASK=STATUS", t.TaskID, dsl.JoinWord(spec.GetJoin()))
+	}
+	if !handler && t.Join != nil {
+		return nil, fmt.Errorf("task %q is not a failure handler (join %s): how its needs ended is not part of "+
+			"its input, so --need does not apply", t.TaskID, dsl.JoinWord(spec.GetJoin()))
+	}
 	if spec.GetEach() == nil && t.Item != nil {
 		return nil, fmt.Errorf("task %q is not a fan-out; it has no items, so --item does not apply", t.TaskID)
 	}
@@ -143,10 +161,38 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 	if err != nil {
 		return nil, err
 	}
+	// For a failure handler, a direct need's contribution follows its
+	// recorded (or supplied) outcome: SUCCEEDED as today, FAILED as
+	// {task_id, artifacts} when it has any, anything else nothing.
+	joined := map[string]orkstackv1.Status{}
+	for _, need := range t.Join.GetNeeds() {
+		joined[need.GetTaskId()] = need.GetStatus()
+	}
 	upstream := make([]*orkstackv1.UpstreamRef, 0, len(closure))
 	for _, id := range closure {
 		ref, ok := t.Upstream[id]
 		if !ok || ref == nil {
+			continue
+		}
+		failedShape := ref.GetValues() == nil && ref.GetCommitUri() == "" && ref.GetEach() == nil
+		if status, direct := joined[id]; handler && direct {
+			switch status {
+			case orkstackv1.Status_STATUS_SUCCEEDED:
+				if failedShape {
+					continue
+				}
+			case orkstackv1.Status_STATUS_FAILED:
+				if len(ref.GetArtifacts()) > 0 {
+					clone := proto.Clone(ref).(*orkstackv1.UpstreamRef)
+					upstream = append(upstream, &orkstackv1.UpstreamRef{TaskId: id, Artifacts: clone.GetArtifacts()})
+				}
+				continue
+			default:
+				continue
+			}
+		} else if failedShape && len(ref.GetArtifacts()) > 0 {
+			// A failed task's artifacts reach only a failure handler that
+			// names it directly.
 			continue
 		}
 		// A fan-out further up the closure contributes nothing: its items
@@ -196,6 +242,9 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		Upstream: upstream,
 
 		RunAsOrkerUser: spec.GetRunAsOrkerUser(),
+	}
+	if handler {
+		input.Join = proto.Clone(t.Join).(*orkstackv1.JoinContext)
 	}
 	if each := spec.GetEach(); each != nil {
 		return localItemInput(wf, spec, t, input)
@@ -305,6 +354,36 @@ func UpstreamFromRun(run *orkstackv1.Run) map[string]*orkstackv1.UpstreamRef {
 			CommitUri: tr.GetCommit().GetUri(),
 			Values:    tr.GetValuesRef(),
 			Artifacts: tr.GetArtifacts(),
+		}
+	}
+	return out
+}
+
+// JoinContextFromRun is the JoinContext RunWorkflow built for taskID's
+// dispatch, rebuilt from a recorded run with the interpreter's own pure
+// helper: each need's status and error from its row, bounded field by
+// field. Nil when taskID is not a failure handler of wf.
+func JoinContextFromRun(run *orkstackv1.Run, wf *orkstackv1.Orkflow, taskID string) *orkstackv1.JoinContext {
+	spec := taskByID(wf, taskID)
+	if spec == nil || !isFailureHandler(spec) {
+		return nil
+	}
+	rows := map[string]*orkstackv1.TaskRun{}
+	for _, tr := range run.GetTaskRuns() {
+		rows[tr.GetTaskId()] = tr
+	}
+	return joinContextFor(spec, func(id string) *orkstackv1.TaskRun { return rows[id] })
+}
+
+// FailedNeedUpstreamFromRun returns, for every TaskRun of run that FAILED with
+// output artifacts, the {task_id, artifacts} ref a failure handler naming it
+// directly is handed. UpstreamFromRun keeps its succeeded-only contract;
+// LocalTaskInput uses these only for a failure handler's direct FAILED needs.
+func FailedNeedUpstreamFromRun(run *orkstackv1.Run) map[string]*orkstackv1.UpstreamRef {
+	out := map[string]*orkstackv1.UpstreamRef{}
+	for _, tr := range run.GetTaskRuns() {
+		if ref := failedNeedRef(tr); ref != nil {
+			out[tr.GetTaskId()] = ref
 		}
 	}
 	return out

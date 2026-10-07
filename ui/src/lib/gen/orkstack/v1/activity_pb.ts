@@ -6,7 +6,7 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_struct, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { ArtifactRef, FailureCategory, Payload } from "./common_pb";
+import type { ArtifactRef, Error, FailureCategory, Payload, Status } from "./common_pb";
 import { file_orkstack_v1_common } from "./common_pb";
 import type { ImagePolicySelection } from "./image_policy_pb";
 import { file_orkstack_v1_image_policy } from "./image_policy_pb";
@@ -18,7 +18,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/activity.proto.
  */
 export const file_orkstack_v1_activity: GenFile = /*@__PURE__*/
-  fileDesc("ChpvcmtzdGFjay92MS9hY3Rpdml0eS5wcm90bxILb3Jrc3RhY2sudjEi4AEKCEltYWdlUmVmEhEKCXJlZmVyZW5jZRgBIAEoCRIQCghyZWdpc3RyeRgCIAEoCRISCgpyZXBvc2l0b3J5GAMgASgJEhQKDGluZGV4X2RpZ2VzdBgEIAEoCRIOCgZwaW5uZWQYBSABKAkSEgoKbWVkaWFfdHlwZRgGIAEoCRIRCglwbGF0Zm9ybXMYByADKAkSFwoPcGxhdGZvcm1fZGlnZXN0GAkgASgJEhAKCHBsYXRmb3JtGAogASgJEhAKCGRlbGl2ZXJ5GAsgASgJSgQICBAJUgtyZXNvbHZlZF9hdCIuCg9SZXNvdXJjZVJlcXVlc3QSCwoDY3B1GAEgASgJEg4KBm1lbW9yeRgCIAEoCSI6CgpFYWNoU291cmNlEg0KBWlucHV0GAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDAoEcGF0aBgDIAMoCSIpCglTZWNyZXRSZWYSDAoEbmFtZRgBIAEoCRIOCgZzb3VyY2UYAiABKAkilAEKD1dvcmtzcGFjZUxpbWl0cxIYChB2YWx1ZXNfbWF4X2J5dGVzGAEgASgDEhoKEmFydGlmYWN0X21heF9jb3VudBgCIAEoBRIaChJhcnRpZmFjdF9tYXhfYnl0ZXMYAyABKAMSFQoNbG9nX21heF9ieXRlcxgEIAEoAxIYChBjb21taXRfbWF4X2J5dGVzGAUgASgDIrIBCgtVcHN0cmVhbVJlZhIPCgd0YXNrX2lkGAEgASgJEhIKCmNvbW1pdF91cmkYAiABKAkSKAoGdmFsdWVzGAMgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSJwoEZWFjaBgFIAEoCzIZLm9ya3N0YWNrLnYxLkVhY2hVcHN0cmVhbSJICgpQaW5Db250ZXh0EgwKBG5hbWUYASABKAkSEwoLaW5zdGFuY2VfaWQYAiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAMgASgFIlwKDENhY2hlQ29udGV4dBImCgVzY29wZRgBIAEoDjIXLm9ya3N0YWNrLnYxLkNhY2hlU2NvcGUSEwoLdHRsX3NlY29uZHMYAiABKAMSDwoHcmVmcmVzaBgDIAEoCCKWAgoLQ2FjaGVTb3VyY2USDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSFAoMb3JrZmxvd19uYW1lGAMgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgEIAEoCRISCgpjb21taXRfdXJpGAUgASgJEhUKDWNvbW1pdF9zaGEyNTYYBiABKAkSLgoKc3RhcnRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKBGl0ZW0YCSABKAVIAIgBARIPCgdhdHRlbXB0GAogASgFQgcKBV9pdGVtIsUCCgtDYWNoZVJlc3VsdBIqCgdvdXRjb21lGAEgASgOMhkub3Jrc3RhY2sudjEuQ2FjaGVPdXRjb21lEgsKA2tleRgCIAEoCRITCgttaXNzX3JlYXNvbhgDIAEoCRITCgttaXNzX2RldGFpbBgEIAEoCRIoCgZzb3VyY2UYBSABKAsyGC5vcmtzdGFjay52MS5DYWNoZVNvdXJjZRIUCgxtZW1vX3dyaXR0ZW4YBiABKAgSGAoQbWVtb193cml0ZV9lcnJvchgHIAEoCRJDCg5rZXlfY29tcG9uZW50cxgIIAMoCzIrLm9ya3N0YWNrLnYxLkNhY2hlUmVzdWx0LktleUNvbXBvbmVudHNFbnRyeRo0ChJLZXlDb21wb25lbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKJAwoJQ2FjaGVNZW1vEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEgsKA2tleRgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkSJgoFc2NvcGUYBCABKA4yFy5vcmtzdGFjay52MS5DYWNoZVNjb3BlEhQKDG9ya2Zsb3dfbmFtZRgFIAEoCRIPCgd0YXNrX2lkGAYgASgJEigKBnNvdXJjZRgHIAEoCzIYLm9ya3N0YWNrLnYxLkNhY2hlU291cmNlEkEKDmtleV9jb21wb25lbnRzGAggAygLMikub3Jrc3RhY2sudjEuQ2FjaGVNZW1vLktleUNvbXBvbmVudHNFbnRyeRIuCgpjcmVhdGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgKIAEoCRIQCghidWlsZF9pZBgLIAEoCRo0ChJLZXlDb21wb25lbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJgCgtFYWNoQ29udGV4dBINCgVpbmRleBgBIAEoBRINCgVjb3VudBgCIAEoBRIKCgJhcxgDIAEoCRInCgZzb3VyY2UYBCABKAsyFy5vcmtzdGFjay52MS5FYWNoU291cmNlIjIKDEVhY2hVcHN0cmVhbRINCgVjb3VudBgBIAEoBRITCgtjb21taXRfcm9vdBgCIAEoCSLeBwoQRXhlY3V0ZVRhc2tJbnB1dBIOCgZydW5faWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRIMCgRwb29sGAYgASgJEg8KB3Rhc2tfaWQYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEhIKCmNvbW1pdF91cmkYCSABKAkSJAoFaW1hZ2UYCiABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAsgAygJEiUKBHdpdGgYDCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjMKA2VudhgNIAMoCzImLm9ya3N0YWNrLnYxLkV4ZWN1dGVUYXNrSW5wdXQuRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIXCg90aW1lb3V0X3NlY29uZHMYDyABKAUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBAgASgFEi8KCXJlc291cmNlcxgRIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBIgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSLAoGbGltaXRzGBMgASgLMhwub3Jrc3RhY2sudjEuV29ya3NwYWNlTGltaXRzEicKCXJ1bl9pbnB1dBgUIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKgoIdXBzdHJlYW0YFSADKAsyGC5vcmtzdGFjay52MS5VcHN0cmVhbVJlZhIZChFydW5fYXNfb3JrZXJfdXNlchgWIAEoCBIyCgl0ZWxlbWV0cnkYFyABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24SJAoDcGluGBggASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dBI3CgxpbWFnZV9wb2xpY3kYGSABKAsyIS5vcmtzdGFjay52MS5JbWFnZVBvbGljeVNlbGVjdGlvbhImCgRlYWNoGBogASgLMhgub3Jrc3RhY2sudjEuRWFjaENvbnRleHQSKAoFY2FjaGUYGyABKAsyGS5vcmtzdGFjay52MS5DYWNoZUNvbnRleHQaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJaCg9SZWxlYXNlUGluSW5wdXQSDgoGcnVuX2lkGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCRIkCgNwaW4YAyABKAsyFy5vcmtzdGFjay52MS5QaW5Db250ZXh0ImYKCUNvbW1pdFJlZhILCgN1cmkYASABKAkSDgoGc2hhMjU2GAIgASgJEgwKBGV0YWcYAyABKAkSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAihgQKEUV4ZWN1dGVUYXNrUmVzdWx0Eg8KB3Rhc2tfaWQYASABKAkSEQoJZXhpdF9jb2RlGAIgASgFEiYKBmNvbW1pdBgDIAEoCzIWLm9ya3N0YWNrLnYxLkNvbW1pdFJlZhIrCglhcnRpZmFjdHMYBCADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIyChBzeXN0ZW1fYXJ0aWZhY3RzGAUgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSLAoKdmFsdWVzX3JlZhgGIAEoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEhMKC3ZhbHVlc19qc29uGAcgASgMEhYKDnZhbHVlc19pbmxpbmVkGAggASgIEiQKBWltYWdlGAkgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSFgoOY29tbWl0X2Fkb3B0ZWQYCiABKAgSLgoKc3RhcnRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCG9ya2VyX2lkGA0gASgJEg8KB2F0dGVtcHQYDiABKAUSJwoFY2FjaGUYDyABKAsyGC5vcmtzdGFjay52MS5DYWNoZVJlc3VsdCLKBAoOQWN0aXZpdHlDb21taXQSFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSEQoJbmFtZXNwYWNlGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRIPCgd0YXNrX2lkGAQgASgJEhQKDG9ya2Zsb3dfbmFtZRgFIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YBiABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgHIAEoCRIXCg9pZGVtcG90ZW5jeV9rZXkYCCABKAkSJAoFaW1hZ2UYCSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIRCglleGl0X2NvZGUYCiABKAUSKAoGdmFsdWVzGAsgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAwgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgNIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEi4KCnN0YXJ0ZWRfYXQYDiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GA8gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIPCgdhdHRlbXB0GBAgASgFEhAKCG9ya2VyX2lkGBEgASgJEhAKCGJ1aWxkX2lkGBIgASgJEicKBWNhY2hlGBMgASgLMhgub3Jrc3RhY2sudjEuQ2FjaGVSZXN1bHQi3QIKFUFjdGl2aXR5RmFpbHVyZURldGFpbBITCgtyZWFzb25fY29kZRgBIAEoCRIuCghjYXRlZ29yeRgCIAEoDjIcLm9ya3N0YWNrLnYxLkZhaWx1cmVDYXRlZ29yeRIRCglleGl0X2NvZGUYAyABKAUSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgFIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEhIKCnNjYW5fbm90ZXMYBiADKAkSJAoFaW1hZ2UYByABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdhdHRlbXB0GAggASgFEhAKCG9ya2VyX2lkGAkgASgJEi4KCnN0YXJ0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIrADChNEZXNjcmliZU9ya2VyUmVzdWx0EhAKCG9ya2VyX2lkGAEgASgJEhAKCGJ1aWxkX2lkGAIgASgJEgwKBHBvb2wYAyABKAkSFAoMcnVudGltZV9uYW1lGAQgASgJEhcKD3J1bnRpbWVfdmVyc2lvbhgFIAEoCRIYChBzZWN1cml0eV9wcm9maWxlGAYgASgJEhYKDm1heF9jb25jdXJyZW50GAcgASgFEhAKCHJvb3RsZXNzGAggASgIEhsKE21heF9jb25jdXJyZW50X3BpbnMYCSABKAUSEAoIY29yZG9uZWQYCiABKAgSFQoNY29yZG9uX3JlYXNvbhgLIAEoCRIvCgtjb3Jkb25lZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASFQoNcnVubmluZ190YXNrcxgNIAEoBRIRCglvcGVuX3BpbnMYDiABKAUSIgoEcGlucxgPIAMoCzIULm9ya3N0YWNrLnYxLk9wZW5QaW4SFgoOZWFjaF9zdXBwb3J0ZWQYECABKAgSFwoPY2FjaGVfc3VwcG9ydGVkGBEgASgIIoEBCgdPcGVuUGluEg4KBnJ1bl9pZBgBIAEoCRILCgNwaW4YAiABKAkSKQoFc2luY2UYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIjQKEENvcmRvbk9ya2VySW5wdXQSEAoIY29yZG9uZWQYASABKAgSDgoGcmVhc29uGAIgASgJKlwKC05ldHdvcmtNb2RlEhwKGE5FVFdPUktfTU9ERV9VTlNQRUNJRklFRBAAEhgKFE5FVFdPUktfTU9ERV9ERUZBVUxUEAESFQoRTkVUV09SS19NT0RFX05PTkUQAipdCgpDYWNoZVNjb3BlEhsKF0NBQ0hFX1NDT1BFX1VOU1BFQ0lGSUVEEAASFwoTQ0FDSEVfU0NPUEVfT1JLRkxPVxABEhkKFUNBQ0hFX1NDT1BFX05BTUVTUEFDRRACKngKDENhY2hlT3V0Y29tZRIdChlDQUNIRV9PVVRDT01FX1VOU1BFQ0lGSUVEEAASFQoRQ0FDSEVfT1VUQ09NRV9ISVQQARIWChJDQUNIRV9PVVRDT01FX01JU1MQAhIaChZDQUNIRV9PVVRDT01FX0JZUEFTU0VEEANCqQEKD2NvbS5vcmtzdGFjay52MUINQWN0aXZpdHlQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_image_policy, file_orkstack_v1_telemetry]);
+  fileDesc("ChpvcmtzdGFjay92MS9hY3Rpdml0eS5wcm90bxILb3Jrc3RhY2sudjEi4AEKCEltYWdlUmVmEhEKCXJlZmVyZW5jZRgBIAEoCRIQCghyZWdpc3RyeRgCIAEoCRISCgpyZXBvc2l0b3J5GAMgASgJEhQKDGluZGV4X2RpZ2VzdBgEIAEoCRIOCgZwaW5uZWQYBSABKAkSEgoKbWVkaWFfdHlwZRgGIAEoCRIRCglwbGF0Zm9ybXMYByADKAkSFwoPcGxhdGZvcm1fZGlnZXN0GAkgASgJEhAKCHBsYXRmb3JtGAogASgJEhAKCGRlbGl2ZXJ5GAsgASgJSgQICBAJUgtyZXNvbHZlZF9hdCIuCg9SZXNvdXJjZVJlcXVlc3QSCwoDY3B1GAEgASgJEg4KBm1lbW9yeRgCIAEoCSI6CgpFYWNoU291cmNlEg0KBWlucHV0GAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDAoEcGF0aBgDIAMoCSIpCglTZWNyZXRSZWYSDAoEbmFtZRgBIAEoCRIOCgZzb3VyY2UYAiABKAkilAEKD1dvcmtzcGFjZUxpbWl0cxIYChB2YWx1ZXNfbWF4X2J5dGVzGAEgASgDEhoKEmFydGlmYWN0X21heF9jb3VudBgCIAEoBRIaChJhcnRpZmFjdF9tYXhfYnl0ZXMYAyABKAMSFQoNbG9nX21heF9ieXRlcxgEIAEoAxIYChBjb21taXRfbWF4X2J5dGVzGAUgASgDIrIBCgtVcHN0cmVhbVJlZhIPCgd0YXNrX2lkGAEgASgJEhIKCmNvbW1pdF91cmkYAiABKAkSKAoGdmFsdWVzGAMgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSJwoEZWFjaBgFIAEoCzIZLm9ya3N0YWNrLnYxLkVhY2hVcHN0cmVhbSJICgpQaW5Db250ZXh0EgwKBG5hbWUYASABKAkSEwoLaW5zdGFuY2VfaWQYAiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAMgASgFImYKC05lZWRPdXRjb21lEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAIgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEiEKBWVycm9yGAMgASgLMhIub3Jrc3RhY2sudjEuRXJyb3IiXwoLSm9pbkNvbnRleHQSJwoGcG9saWN5GAEgASgOMhcub3Jrc3RhY2sudjEuSm9pblBvbGljeRInCgVuZWVkcxgCIAMoCzIYLm9ya3N0YWNrLnYxLk5lZWRPdXRjb21lIlwKDENhY2hlQ29udGV4dBImCgVzY29wZRgBIAEoDjIXLm9ya3N0YWNrLnYxLkNhY2hlU2NvcGUSEwoLdHRsX3NlY29uZHMYAiABKAMSDwoHcmVmcmVzaBgDIAEoCCKWAgoLQ2FjaGVTb3VyY2USDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSFAoMb3JrZmxvd19uYW1lGAMgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgEIAEoCRISCgpjb21taXRfdXJpGAUgASgJEhUKDWNvbW1pdF9zaGEyNTYYBiABKAkSLgoKc3RhcnRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKBGl0ZW0YCSABKAVIAIgBARIPCgdhdHRlbXB0GAogASgFQgcKBV9pdGVtIsUCCgtDYWNoZVJlc3VsdBIqCgdvdXRjb21lGAEgASgOMhkub3Jrc3RhY2sudjEuQ2FjaGVPdXRjb21lEgsKA2tleRgCIAEoCRITCgttaXNzX3JlYXNvbhgDIAEoCRITCgttaXNzX2RldGFpbBgEIAEoCRIoCgZzb3VyY2UYBSABKAsyGC5vcmtzdGFjay52MS5DYWNoZVNvdXJjZRIUCgxtZW1vX3dyaXR0ZW4YBiABKAgSGAoQbWVtb193cml0ZV9lcnJvchgHIAEoCRJDCg5rZXlfY29tcG9uZW50cxgIIAMoCzIrLm9ya3N0YWNrLnYxLkNhY2hlUmVzdWx0LktleUNvbXBvbmVudHNFbnRyeRo0ChJLZXlDb21wb25lbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKJAwoJQ2FjaGVNZW1vEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEgsKA2tleRgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkSJgoFc2NvcGUYBCABKA4yFy5vcmtzdGFjay52MS5DYWNoZVNjb3BlEhQKDG9ya2Zsb3dfbmFtZRgFIAEoCRIPCgd0YXNrX2lkGAYgASgJEigKBnNvdXJjZRgHIAEoCzIYLm9ya3N0YWNrLnYxLkNhY2hlU291cmNlEkEKDmtleV9jb21wb25lbnRzGAggAygLMikub3Jrc3RhY2sudjEuQ2FjaGVNZW1vLktleUNvbXBvbmVudHNFbnRyeRIuCgpjcmVhdGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgKIAEoCRIQCghidWlsZF9pZBgLIAEoCRo0ChJLZXlDb21wb25lbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJgCgtFYWNoQ29udGV4dBINCgVpbmRleBgBIAEoBRINCgVjb3VudBgCIAEoBRIKCgJhcxgDIAEoCRInCgZzb3VyY2UYBCABKAsyFy5vcmtzdGFjay52MS5FYWNoU291cmNlIjIKDEVhY2hVcHN0cmVhbRINCgVjb3VudBgBIAEoBRITCgtjb21taXRfcm9vdBgCIAEoCSKGCAoQRXhlY3V0ZVRhc2tJbnB1dBIOCgZydW5faWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRIMCgRwb29sGAYgASgJEg8KB3Rhc2tfaWQYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEhIKCmNvbW1pdF91cmkYCSABKAkSJAoFaW1hZ2UYCiABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAsgAygJEiUKBHdpdGgYDCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjMKA2VudhgNIAMoCzImLm9ya3N0YWNrLnYxLkV4ZWN1dGVUYXNrSW5wdXQuRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIXCg90aW1lb3V0X3NlY29uZHMYDyABKAUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBAgASgFEi8KCXJlc291cmNlcxgRIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBIgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSLAoGbGltaXRzGBMgASgLMhwub3Jrc3RhY2sudjEuV29ya3NwYWNlTGltaXRzEicKCXJ1bl9pbnB1dBgUIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKgoIdXBzdHJlYW0YFSADKAsyGC5vcmtzdGFjay52MS5VcHN0cmVhbVJlZhIZChFydW5fYXNfb3JrZXJfdXNlchgWIAEoCBIyCgl0ZWxlbWV0cnkYFyABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24SJAoDcGluGBggASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dBI3CgxpbWFnZV9wb2xpY3kYGSABKAsyIS5vcmtzdGFjay52MS5JbWFnZVBvbGljeVNlbGVjdGlvbhImCgRlYWNoGBogASgLMhgub3Jrc3RhY2sudjEuRWFjaENvbnRleHQSKAoFY2FjaGUYGyABKAsyGS5vcmtzdGFjay52MS5DYWNoZUNvbnRleHQSJgoEam9pbhgcIAEoCzIYLm9ya3N0YWNrLnYxLkpvaW5Db250ZXh0GioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiWgoPUmVsZWFzZVBpbklucHV0Eg4KBnJ1bl9pZBgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSJAoDcGluGAMgASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dCJmCglDb21taXRSZWYSCwoDdXJpGAEgASgJEg4KBnNoYTI1NhgCIAEoCRIMCgRldGFnGAMgASgJEi4KCmNyZWF0ZWRfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIoYEChFFeGVjdXRlVGFza1Jlc3VsdBIPCgd0YXNrX2lkGAEgASgJEhEKCWV4aXRfY29kZRgCIAEoBRImCgZjb21taXQYAyABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgFIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEiwKCnZhbHVlc19yZWYYBiABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhITCgt2YWx1ZXNfanNvbhgHIAEoDBIWCg52YWx1ZXNfaW5saW5lZBgIIAEoCBIkCgVpbWFnZRgJIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEhYKDmNvbW1pdF9hZG9wdGVkGAogASgIEi4KCnN0YXJ0ZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAwgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgNIAEoCRIPCgdhdHRlbXB0GA4gASgFEicKBWNhY2hlGA8gASgLMhgub3Jrc3RhY2sudjEuQ2FjaGVSZXN1bHQiygQKDkFjdGl2aXR5Q29tbWl0EhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEhEKCW5hbWVzcGFjZRgCIAEoCRIOCgZydW5faWQYAyABKAkSDwoHdGFza19pZBgEIAEoCRIUCgxvcmtmbG93X25hbWUYBSABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAYgASgJEiEKGW9ya2Zsb3dfZGVmaW5pdGlvbl9kaWdlc3QYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEiQKBWltYWdlGAkgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSEQoJZXhpdF9jb2RlGAogASgFEigKBnZhbHVlcxgLIAEoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEisKCWFydGlmYWN0cxgMIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYDSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIuCgpzdGFydGVkX2F0GA4gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgPIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgQIAEoBRIQCghvcmtlcl9pZBgRIAEoCRIQCghidWlsZF9pZBgSIAEoCRInCgVjYWNoZRgTIAEoCzIYLm9ya3N0YWNrLnYxLkNhY2hlUmVzdWx0It0CChVBY3Rpdml0eUZhaWx1cmVEZXRhaWwSEwoLcmVhc29uX2NvZGUYASABKAkSLgoIY2F0ZWdvcnkYAiABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSEQoJZXhpdF9jb2RlGAMgASgFEisKCWFydGlmYWN0cxgEIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYBSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhISCgpzY2FuX25vdGVzGAYgAygJEiQKBWltYWdlGAcgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSDwoHYXR0ZW1wdBgIIAEoBRIQCghvcmtlcl9pZBgJIAEoCRIuCgpzdGFydGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCLIAwoTRGVzY3JpYmVPcmtlclJlc3VsdBIQCghvcmtlcl9pZBgBIAEoCRIQCghidWlsZF9pZBgCIAEoCRIMCgRwb29sGAMgASgJEhQKDHJ1bnRpbWVfbmFtZRgEIAEoCRIXCg9ydW50aW1lX3ZlcnNpb24YBSABKAkSGAoQc2VjdXJpdHlfcHJvZmlsZRgGIAEoCRIWCg5tYXhfY29uY3VycmVudBgHIAEoBRIQCghyb290bGVzcxgIIAEoCBIbChNtYXhfY29uY3VycmVudF9waW5zGAkgASgFEhAKCGNvcmRvbmVkGAogASgIEhUKDWNvcmRvbl9yZWFzb24YCyABKAkSLwoLY29yZG9uZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhUKDXJ1bm5pbmdfdGFza3MYDSABKAUSEQoJb3Blbl9waW5zGA4gASgFEiIKBHBpbnMYDyADKAsyFC5vcmtzdGFjay52MS5PcGVuUGluEhYKDmVhY2hfc3VwcG9ydGVkGBAgASgIEhcKD2NhY2hlX3N1cHBvcnRlZBgRIAEoCBIWCg5qb2luX3N1cHBvcnRlZBgSIAEoCCKBAQoHT3BlblBpbhIOCgZydW5faWQYASABKAkSCwoDcGluGAIgASgJEikKBXNpbmNlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpleHBpcmVzX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCI0ChBDb3Jkb25PcmtlcklucHV0EhAKCGNvcmRvbmVkGAEgASgIEg4KBnJlYXNvbhgCIAEoCSpcCgtOZXR3b3JrTW9kZRIcChhORVRXT1JLX01PREVfVU5TUEVDSUZJRUQQABIYChRORVRXT1JLX01PREVfREVGQVVMVBABEhUKEU5FVFdPUktfTU9ERV9OT05FEAIqfAoKSm9pblBvbGljeRIbChdKT0lOX1BPTElDWV9VTlNQRUNJRklFRBAAEhsKF0pPSU5fUE9MSUNZX05PTkVfRkFJTEVEEAESGgoWSk9JTl9QT0xJQ1lfQU5ZX0ZBSUxFRBACEhgKFEpPSU5fUE9MSUNZX0FMTF9ET05FEAMqXQoKQ2FjaGVTY29wZRIbChdDQUNIRV9TQ09QRV9VTlNQRUNJRklFRBAAEhcKE0NBQ0hFX1NDT1BFX09SS0ZMT1cQARIZChVDQUNIRV9TQ09QRV9OQU1FU1BBQ0UQAip4CgxDYWNoZU91dGNvbWUSHQoZQ0FDSEVfT1VUQ09NRV9VTlNQRUNJRklFRBAAEhUKEUNBQ0hFX09VVENPTUVfSElUEAESFgoSQ0FDSEVfT1VUQ09NRV9NSVNTEAISGgoWQ0FDSEVfT1VUQ09NRV9CWVBBU1NFRBADQqkBCg9jb20ub3Jrc3RhY2sudjFCDUFjdGl2aXR5UHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_image_policy, file_orkstack_v1_telemetry]);
 
 /**
  * ImageRef is an OCI image resolved to an immutable reference. The engine
@@ -317,6 +317,10 @@ export type UpstreamRef = Message<"orkstack.v1.UpstreamRef"> & {
    * do. Set only on the input of a DIRECT dependent (a task naming the
    * fan-out in needs:). A task further downstream receives no ref for it.
    *
+   * For a failure handler's input, a DIRECT need that FAILED and recorded
+   * output artifacts contributes a ref with task_id and artifacts only —
+   * commit_uri and values unset.
+   *
    * @generated from field: orkstack.v1.EachUpstream each = 5;
    */
   each?: EachUpstream | undefined;
@@ -371,6 +375,77 @@ export const PinContextSchema: GenMessage<PinContext> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_activity, 6);
 
 /**
+ * NeedOutcome is how one need of a failure handler ended, as the run
+ * recorded it when the handler was dispatched.
+ *
+ * @generated from message orkstack.v1.NeedOutcome
+ */
+export type NeedOutcome = Message<"orkstack.v1.NeedOutcome"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * status is SUCCEEDED, FAILED, SKIPPED or CANCELED and never another value:
+   * a task is dispatched only once every need is terminal.
+   *
+   * @generated from field: orkstack.v1.Status status = 2;
+   */
+  status: Status;
+
+  /**
+   * error is the need's TaskRun.error, bounded field by field: code to 128
+   * bytes, message to 1024 bytes and details to 256 bytes — three separate
+   * bounds, each on the length of that field's JSON-escaped encoding, and a
+   * cut field ends at a UTF-8 boundary with "…". category and retryable are
+   * copied as they are. Set when the need recorded an error — always for
+   * FAILED, for CANCELED when it was stopped in flight — and unset otherwise.
+   *
+   * @generated from field: orkstack.v1.Error error = 3;
+   */
+  error?: Error | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.NeedOutcome.
+ * Use `create(NeedOutcomeSchema)` to create a new message.
+ */
+export const NeedOutcomeSchema: GenMessage<NeedOutcome> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 7);
+
+/**
+ * JoinContext tells a failure handler how each of its needs ended. It is set
+ * ONLY on the input of a container task whose join is ANY_FAILED or
+ * ALL_DONE, so every other task's recorded payload is byte-identical to what
+ * it was before this message existed. The Orker writes it to task.json as
+ * `join`. With at most 32 needs (docs/DSL.md rule 42) and NeedOutcome's
+ * bounds, its encoding is at most 64 KiB.
+ *
+ * @generated from message orkstack.v1.JoinContext
+ */
+export type JoinContext = Message<"orkstack.v1.JoinContext"> & {
+  /**
+   * @generated from field: orkstack.v1.JoinPolicy policy = 1;
+   */
+  policy: JoinPolicy;
+
+  /**
+   * the task's needs, in written order
+   *
+   * @generated from field: repeated orkstack.v1.NeedOutcome needs = 2;
+   */
+  needs: NeedOutcome[];
+};
+
+/**
+ * Describes the message orkstack.v1.JoinContext.
+ * Use `create(JoinContextSchema)` to create a new message.
+ */
+export const JoinContextSchema: GenMessage<JoinContext> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 8);
+
+/**
  * CacheContext tells an Orker that this attempt is of a cached task. It is
  * set ONLY on such a task's input, so every other task's recorded payload is
  * byte-identical to what it was before this field existed.
@@ -409,7 +484,7 @@ export type CacheContext = Message<"orkstack.v1.CacheContext"> & {
  * Use `create(CacheContextSchema)` to create a new message.
  */
 export const CacheContextSchema: GenMessage<CacheContext> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 7);
+  messageDesc(file_orkstack_v1_activity, 9);
 
 /**
  * CacheSource names the commit a memo points at — the one a hit reused.
@@ -484,7 +559,7 @@ export type CacheSource = Message<"orkstack.v1.CacheSource"> & {
  * Use `create(CacheSourceSchema)` to create a new message.
  */
 export const CacheSourceSchema: GenMessage<CacheSource> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 8);
+  messageDesc(file_orkstack_v1_activity, 10);
 
 /**
  * CacheResult is one attempt's memo decision.
@@ -562,7 +637,7 @@ export type CacheResult = Message<"orkstack.v1.CacheResult"> & {
  * Use `create(CacheResultSchema)` to create a new message.
  */
 export const CacheResultSchema: GenMessage<CacheResult> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 9);
+  messageDesc(file_orkstack_v1_activity, 11);
 
 /**
  * CacheMemo is the stored memo: metadata/memo/{ns}/orkflow/{orkflow}/{task}/{key}.json
@@ -646,7 +721,7 @@ export type CacheMemo = Message<"orkstack.v1.CacheMemo"> & {
  * Use `create(CacheMemoSchema)` to create a new message.
  */
 export const CacheMemoSchema: GenMessage<CacheMemo> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 10);
+  messageDesc(file_orkstack_v1_activity, 12);
 
 /**
  * EachContext tells an Orker that this attempt is ONE ITEM of a fan-out task.
@@ -692,7 +767,7 @@ export type EachContext = Message<"orkstack.v1.EachContext"> & {
  * Use `create(EachContextSchema)` to create a new message.
  */
 export const EachContextSchema: GenMessage<EachContext> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 11);
+  messageDesc(file_orkstack_v1_activity, 13);
 
 /**
  * EachUpstream is a fan-out ancestor's contribution to a DIRECT dependent: not
@@ -727,7 +802,7 @@ export type EachUpstream = Message<"orkstack.v1.EachUpstream"> & {
  * Use `create(EachUpstreamSchema)` to create a new message.
  */
 export const EachUpstreamSchema: GenMessage<EachUpstream> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 12);
+  messageDesc(file_orkstack_v1_activity, 14);
 
 /**
  * ExecuteTaskInput is the argument of the ExecuteTask Temporal activity. It
@@ -963,6 +1038,17 @@ export type ExecuteTaskInput = Message<"orkstack.v1.ExecuteTaskInput"> & {
    * @generated from field: orkstack.v1.CacheContext cache = 27;
    */
   cache?: CacheContext | undefined;
+
+  /**
+   * join tells a failure handler how its needs ended. UNSET for every task
+   * whose join is not ANY_FAILED or ALL_DONE, which keeps such a task's
+   * recorded payload byte-identical to what it was before this field existed
+   * (the golden history fixtures have no failure handler and must keep
+   * matching without re-recording).
+   *
+   * @generated from field: orkstack.v1.JoinContext join = 28;
+   */
+  join?: JoinContext | undefined;
 };
 
 /**
@@ -970,7 +1056,7 @@ export type ExecuteTaskInput = Message<"orkstack.v1.ExecuteTaskInput"> & {
  * Use `create(ExecuteTaskInputSchema)` to create a new message.
  */
 export const ExecuteTaskInputSchema: GenMessage<ExecuteTaskInput> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 13);
+  messageDesc(file_orkstack_v1_activity, 15);
 
 /**
  * ReleasePinInput asks the pin host to remove the pin's shared directory.
@@ -1002,7 +1088,7 @@ export type ReleasePinInput = Message<"orkstack.v1.ReleasePinInput"> & {
  * Use `create(ReleasePinInputSchema)` to create a new message.
  */
 export const ReleasePinInputSchema: GenMessage<ReleasePinInput> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 14);
+  messageDesc(file_orkstack_v1_activity, 16);
 
 /**
  * CommitRef points at a written ActivityCommit object.
@@ -1044,7 +1130,7 @@ export type CommitRef = Message<"orkstack.v1.CommitRef"> & {
  * Use `create(CommitRefSchema)` to create a new message.
  */
 export const CommitRefSchema: GenMessage<CommitRef> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 15);
+  messageDesc(file_orkstack_v1_activity, 17);
 
 /**
  * ExecuteTaskResult is what an Orker returns for a SUCCEEDED activity. A
@@ -1182,7 +1268,7 @@ export type ExecuteTaskResult = Message<"orkstack.v1.ExecuteTaskResult"> & {
  * Use `create(ExecuteTaskResultSchema)` to create a new message.
  */
 export const ExecuteTaskResultSchema: GenMessage<ExecuteTaskResult> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 16);
+  messageDesc(file_orkstack_v1_activity, 18);
 
 /**
  * ActivityCommit is the immutable completion manifest (AGENTS.md §4.1). It is
@@ -1313,7 +1399,7 @@ export type ActivityCommit = Message<"orkstack.v1.ActivityCommit"> & {
  * Use `create(ActivityCommitSchema)` to create a new message.
  */
 export const ActivityCommitSchema: GenMessage<ActivityCommit> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 17);
+  messageDesc(file_orkstack_v1_activity, 19);
 
 /**
  * ActivityFailureDetail is what a FAILED activity returns. A failure produces
@@ -1405,7 +1491,7 @@ export type ActivityFailureDetail = Message<"orkstack.v1.ActivityFailureDetail">
  * Use `create(ActivityFailureDetailSchema)` to create a new message.
  */
 export const ActivityFailureDetailSchema: GenMessage<ActivityFailureDetail> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 18);
+  messageDesc(file_orkstack_v1_activity, 20);
 
 /**
  * DescribeOrkerResult is the pool-liveness probe's payload: a pool proves it
@@ -1537,6 +1623,19 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
    * @generated from field: bool cache_supported = 17;
    */
   cacheSupported: boolean;
+
+  /**
+   * join_supported is true on an Orker that reads ExecuteTaskInput.join
+   * (task.json `join`). An Orker built before it answers false (unset), and
+   * submit refuses an Orkflow with a container failure handler on its pool:
+   * the SDK's default payload converter refuses unknown fields, so such an
+   * Orker would FAIL every attempt of a failure handler on decoding
+   * ExecuteTaskInput.join — the compensation step of a run that is already
+   * failing.
+   *
+   * @generated from field: bool join_supported = 18;
+   */
+  joinSupported: boolean;
 };
 
 /**
@@ -1544,7 +1643,7 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
  * Use `create(DescribeOrkerResultSchema)` to create a new message.
  */
 export const DescribeOrkerResultSchema: GenMessage<DescribeOrkerResult> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 19);
+  messageDesc(file_orkstack_v1_activity, 21);
 
 /**
  * OpenPin is one pin this Orker currently hosts: a session it has accepted
@@ -1592,7 +1691,7 @@ export type OpenPin = Message<"orkstack.v1.OpenPin"> & {
  * Use `create(OpenPinSchema)` to create a new message.
  */
 export const OpenPinSchema: GenMessage<OpenPin> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 20);
+  messageDesc(file_orkstack_v1_activity, 22);
 
 /**
  * CordonOrkerInput is the argument of the CordonOrker activity, dispatched
@@ -1622,7 +1721,7 @@ export type CordonOrkerInput = Message<"orkstack.v1.CordonOrkerInput"> & {
  * Use `create(CordonOrkerInputSchema)` to create a new message.
  */
 export const CordonOrkerInputSchema: GenMessage<CordonOrkerInput> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 21);
+  messageDesc(file_orkstack_v1_activity, 23);
 
 /**
  * NetworkMode is the complete set of network configurations an Orkflow may
@@ -1654,6 +1753,57 @@ export enum NetworkMode {
  */
 export const NetworkModeSchema: GenEnum<NetworkMode> = /*@__PURE__*/
   enumDesc(file_orkstack_v1_activity, 0);
+
+/**
+ * JoinPolicy is when a task with needs may start, decided from how its needs
+ * ended (docs/DSL.md "Joins and failure handlers"). Defined here rather than
+ * in orkflow.proto for the reason CacheScope is: activity.proto cannot import
+ * orkflow.proto, and JoinContext below carries it.
+ *
+ * @generated from enum orkstack.v1.JoinPolicy
+ */
+export enum JoinPolicy {
+  /**
+   * UNSPECIFIED is all_succeeded: the task starts when every need SUCCEEDED,
+   * and a SKIPPED need skips it. It is the ONLY encoding of the default — the
+   * compiler writes it for `join: all_succeeded` and for no `join:` — so a
+   * definition that names no join keeps its digest and every payload stays
+   * byte-identical.
+   *
+   * @generated from enum value: JOIN_POLICY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * NONE_FAILED: every need terminal, none FAILED or CANCELED, at least one
+   * SUCCEEDED. SKIPPED needs are tolerated, which is what lets branches
+   * re-join.
+   *
+   * @generated from enum value: JOIN_POLICY_NONE_FAILED = 1;
+   */
+  NONE_FAILED = 1,
+
+  /**
+   * ANY_FAILED: at least one need FAILED, after its retries. A failure
+   * handler: one of the two kinds of task that start in a failing run.
+   *
+   * @generated from enum value: JOIN_POLICY_ANY_FAILED = 2;
+   */
+  ANY_FAILED = 2,
+
+  /**
+   * ALL_DONE: every need terminal, whatever its outcome. A failure handler.
+   *
+   * @generated from enum value: JOIN_POLICY_ALL_DONE = 3;
+   */
+  ALL_DONE = 3,
+}
+
+/**
+ * Describes the enum orkstack.v1.JoinPolicy.
+ */
+export const JoinPolicySchema: GenEnum<JoinPolicy> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_activity, 1);
 
 /**
  * CacheScope is who may reuse a cached task's memo (docs/DSL.md "Caching").
@@ -1688,7 +1838,7 @@ export enum CacheScope {
  * Describes the enum orkstack.v1.CacheScope.
  */
 export const CacheScopeSchema: GenEnum<CacheScope> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_activity, 1);
+  enumDesc(file_orkstack_v1_activity, 2);
 
 /**
  * CacheOutcome is what one attempt's memo step decided.
@@ -1729,5 +1879,5 @@ export enum CacheOutcome {
  * Describes the enum orkstack.v1.CacheOutcome.
  */
 export const CacheOutcomeSchema: GenEnum<CacheOutcome> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_activity, 2);
+  enumDesc(file_orkstack_v1_activity, 3);
 

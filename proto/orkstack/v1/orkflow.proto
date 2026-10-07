@@ -55,7 +55,9 @@ message Task {
   google.protobuf.Struct with = 3;
   // needs lists task ids that must complete before this task runs (DAG edges).
   repeated string needs = 4;
-  // condition is an optional CEL-like expression gating execution (v0: simple truthy).
+  // condition is a Go template rendered by the engine; the task is skipped
+  // when it renders one of the documented falsy spellings (docs/DSL.md
+  // "Templating").
   string condition = 5;
   int32 timeout_seconds = 6;             // default 300
   RetryPolicy retry = 7;
@@ -125,6 +127,14 @@ message Task {
   // name a pin (docs/DSL.md rule 36), and an awaited or composed task may not
   // carry it (rules 15, 27).
   CacheSpec cache = 23;
+
+  // join is when this task may start, decided from how its needs ended
+  // (docs/DSL.md "Joins and failure handlers"). UNSPECIFIED is
+  // all_succeeded. Part of canonicalOrkflow(Task) ONLY when set (see pin), so
+  // a definition with no join keeps its digest. A task whose join is
+  // ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry
+  // each or carry cache (docs/DSL.md rule 39).
+  JoinPolicy join = 24;
 }
 
 // CacheSpec opts ONE task into memoization across runs (docs/DSL.md

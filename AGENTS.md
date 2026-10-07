@@ -397,6 +397,13 @@ The repository vocabulary is deliberate:
   Orker polls and nothing dispatches to, whose poller list is the fleet. Both
   are built in `internal/task/pool.go` and never appear on a user-facing
   surface.
+- **Join policy** means a task's `join:`: when it may start, decided from how
+  its needs ended. One of `all_succeeded` (the default), `none_failed`,
+  `any_failed`, `all_done`.
+- **Failure handler** means a task whose join policy is `any_failed` or
+  `all_done`. It is the only kind of task that starts in a failing run, and it
+  never rescues the run: a run whose failure handlers ran still ends `FAILED`
+  with its original reason.
 
 An Orkflow name is unique within a namespace. Names are validated, never
 sanitized, by the same rule at each boundary:
@@ -569,7 +576,11 @@ includes:
 - a Worker Deployment Version rollout while a task pin is open: the pin's
   remaining members must stay on the process that opened it, never move to the
   new version's Orker, and the run's unpinned tasks must keep their own
-  version's routing (§7.2).
+  version's routing (§7.2);
+- a failing run runs its failure handlers to their own outcomes and ends
+  `FAILED` with the original reason; an operator cancel starts none and stops
+  running ones; an Orker killed under a running handler retries it per its
+  own policy.
 
 Every execution must eventually reach either a correct durable state or an
 explicit actionable failure. There is no documented third state such as stuck,

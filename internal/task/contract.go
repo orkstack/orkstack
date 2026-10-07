@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/converter"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -249,7 +250,7 @@ func CheckInputSize(in *orkstackv1.ExecuteTaskInput, planLimit ...int64) error {
 	if len(planLimit) > 0 && planLimit[0] > 0 && planLimit[0] < limit {
 		limit = planLimit[0]
 	}
-	size, err := temporalPayloadSize(in)
+	size, err := PayloadSize(in)
 	if err != nil {
 		return fmt.Errorf("%s: task %q: encode the activity input: %w",
 			ReasonInputTooLarge, in.GetTaskId(), err)
@@ -265,10 +266,13 @@ func CheckInputSize(in *orkstackv1.ExecuteTaskInput, planLimit ...int64) error {
 	return nil
 }
 
-// temporalPayloadSize is the deterministic upper bound on the bytes Temporal
-// will carry for in. See CheckInputSize for why it is a bound and not a length.
-func temporalPayloadSize(in *orkstackv1.ExecuteTaskInput) (int64, error) {
-	payload, err := converter.GetDefaultDataConverter().ToPayload(in)
+// PayloadSize is the deterministic upper bound on the bytes Temporal will carry
+// for m — any message, encoded by the default data converter as a top-level
+// argument is. See CheckInputSize for why it is a bound and not a length.
+// CheckInputSize measures with it unchanged, so every decision it recorded
+// stands. Pure.
+func PayloadSize(m proto.Message) (int64, error) {
+	payload, err := converter.GetDefaultDataConverter().ToPayload(m)
 	if err != nil {
 		return 0, err
 	}
@@ -346,5 +350,5 @@ func ItemIdempotencyKeyFor(namespace, runID, taskID string, index int32) string 
 // InputSize is the deterministic bound on the bytes Temporal records for in:
 // exactly the measure CheckInputSize compares against its limit.
 func InputSize(in *orkstackv1.ExecuteTaskInput) (int64, error) {
-	return temporalPayloadSize(in)
+	return PayloadSize(in)
 }

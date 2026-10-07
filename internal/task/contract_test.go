@@ -99,7 +99,7 @@ func TestCheckInputSize_HonoursThePlanLimit(t *testing.T) {
 	in := inputWithBlob(t, "a", 4096)
 	// The bound the check itself uses: deterministic, and never below what
 	// Temporal will carry.
-	bound, err := temporalPayloadSize(in)
+	bound, err := PayloadSize(in)
 	if err != nil {
 		t.Fatal(err)
 	}

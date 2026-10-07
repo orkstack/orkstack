@@ -57,6 +57,63 @@ type templateChecker struct {
 	// outputRef, when set, is called for every literal read of
 	// .tasks.<id>.output.<key> (OutputReferences), in either spelling.
 	outputRef func(taskID, key string)
+	// reads, when set (collect mode, with refs: record and never refuse),
+	// receives every read of a task (TaskReads, W1). guards is the stack of
+	// task ids guarded at the current point of the walk: the body of an
+	// {{ if index .tasks "<id>" }} or {{ with index .tasks "<id>" }}. With
+	// reads nil and guards empty the checker behaves exactly as without them.
+	reads  *[]TaskRead
+	guards []string
+}
+
+// recordRead appends one task read when collecting reads.
+func (c *templateChecker) recordRead(path, taskID string, kind TaskReadKind, name string) {
+	if c.reads == nil {
+		return
+	}
+	guarded := false
+	for _, g := range c.guards {
+		if g == taskID {
+			guarded = true
+			break
+		}
+	}
+	*c.reads = append(*c.reads, TaskRead{TaskID: taskID, Kind: kind, Path: path, Guarded: guarded, Name: name})
+}
+
+// guardOf is the task id an {{ if }} or {{ with }} pipeline guards: non-empty
+// exactly when the pipeline is one command `index .tasks "<id>"` (.tasks not
+// rebound) or `index $.tasks "<id>"`, with no declaration. index of a missing
+// key is nil, so the body runs only when the task is present. No other
+// pipeline is recognised as a guard.
+func guardOf(pipe *parse.PipeNode, rebound bool) string {
+	if pipe == nil || len(pipe.Decl) > 0 || len(pipe.Cmds) != 1 {
+		return ""
+	}
+	args := pipe.Cmds[0].Args
+	if len(args) != 3 {
+		return ""
+	}
+	if ident, ok := args[0].(*parse.IdentifierNode); !ok || ident.Ident != "index" {
+		return ""
+	}
+	switch base := args[1].(type) {
+	case *parse.FieldNode:
+		if rebound || len(base.Ident) != 1 || base.Ident[0] != "tasks" {
+			return ""
+		}
+	case *parse.VariableNode:
+		if len(base.Ident) != 2 || base.Ident[0] != "$" || base.Ident[1] != "tasks" {
+			return ""
+		}
+	default:
+		return ""
+	}
+	id, ok := args[2].(*parse.StringNode)
+	if !ok {
+		return ""
+	}
+	return id.Text
 }
 
 // engineHelperRefusal is rule 28's sentence for one Orker helper.
@@ -267,29 +324,49 @@ func (c *templateChecker) walk(path string, node parse.Node, rebound bool) error
 	case *parse.ChainNode:
 		return c.walk(path, typed.Node, rebound)
 	case *parse.IfNode:
-		return c.walkBranch(path, &typed.BranchNode, rebound, rebound, rebound)
+		return c.walkBranch(path, &typed.BranchNode, rebound, rebound, rebound, c.guardFor(typed.Pipe, rebound))
 	case *parse.WithNode:
 		return c.walkBranch(path, &typed.BranchNode, rebound,
-			withBodyRebound(typed.Pipe, rebound), rebound)
+			withBodyRebound(typed.Pipe, rebound), rebound, c.guardFor(typed.Pipe, rebound))
 	case *parse.RangeNode:
-		return c.walkBranch(path, &typed.BranchNode, rebound, true, rebound)
+		return c.walkBranch(path, &typed.BranchNode, rebound, true, rebound, "")
 	case *parse.TemplateNode:
 		return c.walk(path, typed.Pipe, rebound)
 	}
 	return nil
 }
 
+// guardFor is guardOf while reads are collected, and "" otherwise, so a
+// checker that collects no reads walks exactly as it always did.
+func (c *templateChecker) guardFor(pipe *parse.PipeNode, rebound bool) string {
+	if c.reads == nil {
+		return ""
+	}
+	return guardOf(pipe, rebound)
+}
+
+// walkBranch walks an if/with/range. guard, when non-empty, is pushed onto
+// the guard stack around the body (branch.List) only — never the pipeline or
+// the else.
 func (c *templateChecker) walkBranch(
 	path string,
 	branch *parse.BranchNode,
 	pipeRebound bool,
 	listRebound bool,
 	elseRebound bool,
+	guard string,
 ) error {
 	if err := c.walk(path, branch.Pipe, pipeRebound); err != nil {
 		return err
 	}
-	if err := c.walk(path, branch.List, listRebound); err != nil {
+	if guard != "" {
+		c.guards = append(c.guards, guard)
+	}
+	err := c.walk(path, branch.List, listRebound)
+	if guard != "" {
+		c.guards = c.guards[:len(c.guards)-1]
+	}
+	if err != nil {
 		return err
 	}
 	return c.walk(path, branch.ElseList, elseRebound)
@@ -330,6 +407,7 @@ func (c *templateChecker) checkField(path string, ident []string) error {
 		if len(ident) >= 4 && ident[2] == "output" && c.outputRef != nil {
 			c.outputRef(ident[1], ident[3])
 		}
+		c.recordRead(path, ident[1], TaskReadField, "")
 		if c.refs != nil {
 			c.refs[ident[1]] = struct{}{}
 			return nil
@@ -419,6 +497,7 @@ func (c *templateChecker) checkCommand(path string, cmd *parse.CommandNode, rebo
 		if err := c.checkUpstream(path, producer); err != nil {
 			return false, err
 		}
+		c.recordRead(path, producer, TaskReadArtifact, name)
 		// Rule 18: an awaited task produces no artifacts — only values.
 		if c.refs == nil && c.tasks[producer].GetAwait() != nil {
 			return false, c.refuse(fmt.Errorf("task %q: %s: %q is an awaited task and produces no artifacts; "+
@@ -529,6 +608,9 @@ func (c *templateChecker) checkTaskIndex(path, taskID string, rest []parse.Node)
 		if subLiteral && keyLiteral && sub.Text == "output" {
 			c.outputRef(taskID, key.Text)
 		}
+	}
+	if len(rest) > 0 {
+		c.recordRead(path, taskID, TaskReadIndex, "")
 	}
 	if c.refs != nil {
 		c.refs[taskID] = struct{}{}

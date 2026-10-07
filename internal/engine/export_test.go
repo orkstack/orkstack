@@ -14,3 +14,11 @@ func DropCacheContextForTest() (restore func()) {
 	dropCacheContextForTest = true
 	return func() { dropCacheContextForTest = false }
 }
+
+// JoinHandlersOnRunContextForTest sets the test-only switch that makes
+// dispatchContext return runCtx for a failure handler, and returns the
+// function that clears it.
+func JoinHandlersOnRunContextForTest() (restore func()) {
+	joinHandlersOnRunContextForTest = true
+	return func() { joinHandlersOnRunContextForTest = false }
+}

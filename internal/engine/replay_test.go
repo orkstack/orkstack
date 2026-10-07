@@ -192,3 +192,30 @@ func TestGoldenHistory_StillDescribesAPinnedMultiTaskRun(t *testing.T) {
 			"it was not recorded by a versioned build, so it is not the cross-version case")
 	}
 }
+
+// TestCommittedFixtures_DeclareNoJoin checks the premise of task-join-policy
+// §4.10 against the exact histories the replay guard holds: no committed
+// fixture's RunWorkflow input carries a task with a join, so every branch a
+// join opens is unreachable from them and needs no GetVersion marker.
+func TestCommittedFixtures_DeclareNoJoin(t *testing.T) {
+	fixtures := []string{
+		"testdata/history/run-succeeded-v1.json",
+		"testdata/history/run-awaited-resolved-v1.json",
+		"testdata/history/run-awaited-timeout-v1.json",
+		"testdata/history/run-each-v1.json",
+		"testdata/history/run-composed-parent-v1.json",
+		"testdata/history/run-composed-child-v1.json",
+		"testdata/history/run-cached-v1.json",
+	}
+	for _, path := range fixtures {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("committed fixture %s is missing: %v", path, err)
+		}
+		_, wf, _, _ := goldenWorkflowArgs(t, loadHistoryFile(t, path))
+		for _, tk := range wf.GetTasks() {
+			if tk.GetJoin() != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
+				t.Errorf("%s: task %q carries join %v", path, tk.GetId(), tk.GetJoin())
+			}
+		}
+	}
+}

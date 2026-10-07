@@ -78,7 +78,7 @@ func awaitFieldRefusal(taskID, key string) error {
 	case "cache":
 		reason = "its value comes from whoever resolves it, not from a computation"
 	}
-	msg := fmt.Sprintf("task %q: an awaited task takes only id, needs, condition and await; "+
+	msg := fmt.Sprintf("task %q: an awaited task takes only id, needs, condition, join and await; "+
 		"%q does not apply (%s)", taskID, key, reason)
 	if key == "timeout_seconds" {
 		msg += " — the deadline is await.timeout_seconds"
@@ -118,10 +118,15 @@ func compileAwaitTask(taskIndex int, td taskDocument) (*orkstackv1.Task, error) 
 		}
 		spec.Schema = schema
 	}
+	join, err := compileJoin(taskIndex, td)
+	if err != nil {
+		return nil, err
+	}
 	return &orkstackv1.Task{
 		Id:        td.ID,
 		Needs:     td.Needs,
 		Condition: td.Condition,
+		Join:      join,
 		// 0, not DefaultTimeoutSeconds: an await's deadline is its own.
 		TimeoutSeconds: 0,
 		Await:          spec,
@@ -134,7 +139,7 @@ func compileAwaitTask(taskIndex int, td taskDocument) (*orkstackv1.Task, error) 
 func validateAwaitTask(taskIndex int, task *orkstackv1.Task) error {
 	id := task.GetId()
 	at := func(field string) string { return fmt.Sprintf("tasks[%d].%s", taskIndex, field) }
-	// Rule 15: nothing but id, needs, condition and await.
+	// Rule 15: nothing but id, needs, condition, join and await.
 	checks := []struct {
 		field string
 		set   bool

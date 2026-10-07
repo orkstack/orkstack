@@ -8,6 +8,7 @@ import type { JsonObject } from '@bufbuild/protobuf';
 import { PlanOutcome, type PlanRunResponse, type PlanTask } from './gen/orkstack/v1/service_pb';
 import { eachPlanDetail } from './each';
 import { cachePlanDetail } from './cache';
+import { isFailureHandler, joinWord } from './join';
 
 /** The lower-case OUTCOME word the CLI's table prints. */
 export function planOutcomeWord(outcome: PlanOutcome): string {
@@ -22,12 +23,23 @@ export function planOutcomeWord(outcome: PlanOutcome): string {
 			return 'unreached';
 		case PlanOutcome.AWAITS:
 			return 'awaits';
+		case PlanOutcome.ASSUMED_FAILED:
+			return 'assumed_failed';
 		default:
 			return 'unspecified';
 	}
 }
 
-function failingTask(plan: PlanRunResponse): PlanTask | undefined {
+/**
+ * The task at which the planned run starts failing: fails_at when the server
+ * sets it, else (an older server) the first FAILS. A plan of a definition
+ * with failure handlers may hold more than one FAILS.
+ */
+export function failingTask(plan: PlanRunResponse): PlanTask | undefined {
+	if (plan.failsAt) {
+		const at = plan.tasks.find((task) => task.taskId === plan.failsAt);
+		if (at) return at;
+	}
 	return plan.tasks.find((task) => task.outcome === PlanOutcome.FAILS);
 }
 
@@ -50,9 +62,22 @@ export function planWaveLabel(task: PlanTask): string {
 	return task.wave > 0 ? String(task.wave) : '–';
 }
 
-/** The Detail cell, verbatim as the CLI prints it. */
+/**
+ * The Detail cell, verbatim as the CLI prints it. A task with a join that
+ * runs or awaits says so first: `join <word>`, then the rest after "; ".
+ */
 export function planDetail(task: PlanTask, plan: PlanRunResponse): string {
+	const detail = planOutcomeDetail(task, plan);
+	if ((task.outcome === PlanOutcome.RUNS || task.outcome === PlanOutcome.AWAITS) && task.join) {
+		return detail ? `join ${joinWord(task.join)}; ${detail}` : `join ${joinWord(task.join)}`;
+	}
+	return detail;
+}
+
+function planOutcomeDetail(task: PlanTask, plan: PlanRunResponse): string {
 	switch (task.outcome) {
+		case PlanOutcome.ASSUMED_FAILED:
+			return 'assumed to fail (--assume-failed)';
 		case PlanOutcome.SKIPPED:
 			return task.skipReason;
 		case PlanOutcome.RUNS:
@@ -74,6 +99,7 @@ export function planDetail(task: PlanTask, plan: PlanRunResponse): string {
 		case PlanOutcome.FAILS:
 			return task.error?.message ?? '';
 		case PlanOutcome.UNREACHED: {
+			if (task.unreachedBy) return `after ${task.unreachedBy} fails`;
 			const failing = failingTask(plan);
 			return failing ? `after ${failing.taskId} fails` : '';
 		}
@@ -92,7 +118,8 @@ function plural(n: number, noun: string): string {
  */
 export function planSummary(plan: PlanRunResponse): string {
 	const awaits = plan.awaits > 0 ? `${plural(plan.awaits, 'await')}, ` : '';
-	return `${plan.runs} run, ${awaits}${plan.skipped} skipped, ${plural(plan.waveCount, 'wave')}. Nothing was started.`;
+	const assumed = plan.assumedFailed > 0 ? `${plan.assumedFailed} assumed failed, ` : '';
+	return `${plan.runs} run, ${awaits}${assumed}${plan.skipped} skipped, ${plural(plan.waveCount, 'wave')}. Nothing was started.`;
 }
 
 /**
@@ -110,20 +137,61 @@ export function goDuration(totalSeconds: number): string {
 	return `${s}s`;
 }
 
-/** The FAILS sentence, '' when no task fails. */
+/** The failure handlers the plan runs or opens, in declaration order. */
+export function planHandlersThatRun(plan: PlanRunResponse): string[] {
+	return plan.tasks
+		.filter(
+			(task) =>
+				isFailureHandler(task.join) &&
+				(task.outcome === PlanOutcome.RUNS || task.outcome === PlanOutcome.AWAITS)
+		)
+		.map((task) => task.taskId);
+}
+
+/** The failure sentence, '' when nothing fails. */
 export function planFailure(plan: PlanRunResponse): string | '' {
 	const failing = failingTask(plan);
 	if (!failing) return '';
 	const unreached = plan.tasks.filter((task) => task.outcome === PlanOutcome.UNREACHED).length;
-	return (
-		`The run would FAIL deciding ${failing.taskId}: ${failing.error?.message ?? ''}. ` +
-		`${plural(unreached, 'task')} unreached; tasks planned to run in the same or a later wave ` +
-		'may be cancelled in flight.'
-	);
+	let sentence =
+		failing.outcome === PlanOutcome.ASSUMED_FAILED
+			? `The run would FAIL at ${failing.taskId}: assumed to fail. ${plural(unreached, 'task')} unreached; ` +
+				'tasks that do not depend on a failed task are planned as if nothing had failed, and in a run any ' +
+				'of them still pending or running when it fails is canceled.'
+			: `The run would FAIL deciding ${failing.taskId}: ${failing.error?.message ?? ''}. ` +
+				`${plural(unreached, 'task')} unreached; tasks planned to run in the same or a later wave ` +
+				'may be cancelled in flight.';
+	const handlers = planHandlersThatRun(plan);
+	if (handlers.length > 0) sentence += ` Failure handlers that would run: ${handlers.join(', ')}.`;
+	return sentence;
 }
 
-/** The caveat lines: unsupplied upstream outputs, then ignored stubs. */
-export function planCaveats(plan: PlanRunResponse): string[] {
+/** Said when assumptions were sent and the server applied none of them. */
+export const PLAN_IGNORED_ASSUMPTIONS =
+	'The server did not apply --assume-failed: it predates assumed failures.';
+
+export function planIgnoredAssumptions(plan: PlanRunResponse, sent: readonly string[]): boolean {
+	return sent.length > 0 && plan.assumedFailed === 0 && plan.unusedAssumeFailed.length === 0;
+}
+
+/**
+ * Parses the "Assume these tasks fail" field: comma-separated task ids,
+ * trimmed, empty entries dropped. Whether an id names a task is the
+ * server's to refuse.
+ */
+export function parseAssumeFailed(text: string): string[] {
+	return text
+		.split(',')
+		.map((id) => id.trim())
+		.filter((id) => id !== '');
+}
+
+/**
+ * The caveat lines: unsupplied upstream outputs, then ignored stubs, then
+ * ignored assumed failures, then — when assumptions were sent and none was
+ * applied — the older-server sentence.
+ */
+export function planCaveats(plan: PlanRunResponse, assumeFailed: readonly string[] = []): string[] {
 	const lines: string[] = [];
 	const absent = plan.tasks.filter((task) => task.assumedAbsent.length > 0).map((task) => task.taskId);
 	if (absent.length > 0) {
@@ -137,6 +205,10 @@ export function planCaveats(plan: PlanRunResponse): string[] {
 			`Assumed outputs for tasks that do not run were ignored: ${plan.unusedAssumedOutputs.join(', ')}.`
 		);
 	}
+	if (plan.unusedAssumeFailed.length > 0) {
+		lines.push(`Assumed failures for tasks that do not run were ignored: ${plan.unusedAssumeFailed.join(', ')}.`);
+	}
+	if (planIgnoredAssumptions(plan, assumeFailed)) lines.push(PLAN_IGNORED_ASSUMPTIONS);
 	return lines;
 }
 

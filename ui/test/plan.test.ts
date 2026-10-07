@@ -9,13 +9,17 @@ import {
 } from '../src/lib/gen/orkstack/v1/service_pb';
 import { planCli } from '../src/lib/authoring';
 import {
+	PLAN_IGNORED_ASSUMPTIONS,
+	parseAssumeFailed,
 	parseAssumedOutputs,
 	planCaveats,
 	planDetail,
 	planFailure,
+	planOutcomeWord,
 	planRows,
 	planSummary
 } from '../src/lib/plan';
+import { JoinPolicy } from '../src/lib/gen/orkstack/v1/activity_pb';
 
 const task = (taskId: string, outcome: PlanOutcome, wave: number, extra: Record<string, unknown> = {}) =>
 	create(PlanTaskSchema, { taskId, outcome, wave, ...extra });
@@ -176,4 +180,79 @@ test('a composed task plans as one RUNS row with the CLI detail', async () => {
 	expect(planDetail(plan.tasks[0], plan)).toBe(
 		'orkflow release-block@2.1.0 as a child run (not planned: orkctl run plan release-block --version 2.1.0)'
 	);
+});
+
+// task-join-policy: the plan's assumed failures and joins, mirroring
+// cmd/orkctl/run_plan.go word for word.
+test('planOutcomeWord, planDetail and planSummary say assumed_failed', () => {
+	const assumed = task('deploy', PlanOutcome.ASSUMED_FAILED, 4, {
+		error: create(ErrorSchema, { code: 'ASSUMED_FAILED', message: 'assumed to fail (assume_failed)' })
+	});
+	const plan = create(PlanRunResponseSchema, {
+		failsAt: 'deploy',
+		assumedFailed: 1,
+		runs: 6,
+		skipped: 2,
+		waveCount: 5,
+		tasks: [
+			task('verify', PlanOutcome.RUNS, 3, { join: JoinPolicy.NONE_FAILED }),
+			assumed,
+			task('rollback', PlanOutcome.RUNS, 5, { join: JoinPolicy.ANY_FAILED }),
+			task('notify', PlanOutcome.RUNS, 5, { join: JoinPolicy.ALL_DONE, pin: 'p' }),
+			task('escalate', PlanOutcome.SKIPPED, 6, {
+				join: JoinPolicy.ANY_FAILED,
+				skipReason: 'join any_failed: none of its needs failed (rollback); it runs only when one of them fails'
+			}),
+			task('announce', PlanOutcome.UNREACHED, 0, { unreachedBy: 'deploy' })
+		]
+	});
+	expect(planOutcomeWord(PlanOutcome.ASSUMED_FAILED)).toBe('assumed_failed');
+	expect(planDetail(assumed, plan)).toBe('assumed to fail (--assume-failed)');
+	expect(planDetail(plan.tasks[0], plan)).toBe('join none_failed');
+	expect(planDetail(plan.tasks[3], plan)).toBe('join all_done; pin p');
+	expect(planDetail(plan.tasks[4], plan)).toBe(
+		'join any_failed: none of its needs failed (rollback); it runs only when one of them fails'
+	);
+	expect(planDetail(plan.tasks[5], plan)).toBe('after deploy fails');
+	expect(planSummary(plan)).toBe('6 run, 1 assumed failed, 2 skipped, 5 waves. Nothing was started.');
+	expect(planFailure(plan)).toBe(
+		'The run would FAIL at deploy: assumed to fail. 1 task unreached; tasks that do not depend on a failed task ' +
+			'are planned as if nothing had failed, and in a run any of them still pending or running when it fails is ' +
+			'canceled. Failure handlers that would run: rollback, notify.'
+	);
+});
+
+test('planFailure appends the handlers to a FAILS sentence and reads fails_at first', () => {
+	const plan = create(PlanRunResponseSchema, {
+		failsAt: 'first',
+		tasks: [
+			task('first', PlanOutcome.FAILS, 0, { error: create(ErrorSchema, { code: 'RUN_FAILED', message: 'boom' }) }),
+			task('h1', PlanOutcome.FAILS, 0, {
+				join: JoinPolicy.ANY_FAILED,
+				error: create(ErrorSchema, { code: 'CONDITION_FAILED', message: 'bang' })
+			}),
+			task('h2', PlanOutcome.RUNS, 1, { join: JoinPolicy.ALL_DONE })
+		]
+	});
+	expect(planFailure(plan)).toBe(
+		'The run would FAIL deciding first: boom. 0 tasks unreached; tasks planned to run in the same or a later ' +
+			'wave may be cancelled in flight. Failure handlers that would run: h2.'
+	);
+	// An older server: no fails_at, the first FAILS.
+	const older = create(PlanRunResponseSchema, {
+		tasks: [task('x', PlanOutcome.FAILS, 0, { error: create(ErrorSchema, { message: 'boom' }) }), task('y', PlanOutcome.UNREACHED, 0)]
+	});
+	expect(planDetail(older.tasks[1], older)).toBe('after x fails');
+});
+
+test('planCaveats names unused assumptions and an assumption an older server ignored', () => {
+	const unused = create(PlanRunResponseSchema, { unusedAssumeFailed: ['full'] });
+	expect(planCaveats(unused, ['full'])).toEqual(['Assumed failures for tasks that do not run were ignored: full.']);
+	const ignored = create(PlanRunResponseSchema, {});
+	expect(planCaveats(ignored, ['deploy'])).toEqual([PLAN_IGNORED_ASSUMPTIONS]);
+	expect(planCaveats(ignored)).toEqual([]);
+	expect(parseAssumeFailed(' deploy, ,rollback ,')).toEqual(['deploy', 'rollback']);
+	expect(
+		planCli({ name: 'deploy', namespace: 'payments', version: '', input: {}, assumeFailed: ['deploy', 'roll back'] })
+	).toContain("--assume-failed 'deploy' --assume-failed 'roll back'");
 });

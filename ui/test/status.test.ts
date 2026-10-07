@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { TimestampSchema } from '@bufbuild/protobuf/wkt';
 import { Status } from '../src/lib/gen/orkstack/v1/common_pb';
-import { isTerminal, taskDispatched } from '../src/lib/status';
+import { isTerminal, keepsEventMessage, taskDispatched } from '../src/lib/status';
 
 // A real Timestamp message, not a shaped literal: taskDispatched's whole point
 // is reading the field the wire actually carries.
@@ -63,4 +63,12 @@ test('AWAITING has its own label and tone, is not terminal, and counts as dispat
 	expect(EVENT_TYPE_LABEL[EventType.TASK_RESOLVED]).toBe('TASK_RESOLVED');
 	expect(isTerminal(Status.AWAITING)).toBe(false);
 	expect(taskDispatched(Status.AWAITING, undefined)).toBe(true);
+});
+
+test('keepsEventMessage keeps a skip or cancel reason past the terminal re-read', () => {
+	expect(keepsEventMessage(Status.SKIPPED)).toBe(true);
+	expect(keepsEventMessage(Status.CANCELED)).toBe(true);
+	for (const status of [Status.SUCCEEDED, Status.FAILED, Status.RUNNING, Status.PENDING, undefined]) {
+		expect(keepsEventMessage(status)).toBe(false);
+	}
 });

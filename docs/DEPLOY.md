@@ -402,7 +402,7 @@ takes that answer as representative — a mixed pool is refused or accepted
 depending on who answered, and a pin accepted onto Orkers that in fact set `0`
 waits for a slot that never appears and then fails the run.
 
-### Fan-out and caching need every Orker of a pool on a release that supports them
+### Fan-out, caching and failure handlers need every Orker of a pool on a release that supports them
 
 An Orkflow with a fan-out (`each:`, `docs/DSL.md` "Fan-out") needs Orkers that
 understand items: an Orker built before fan-out would run an item without its
@@ -427,6 +427,16 @@ caching back is benign: an older engine runs a definition that declares
 under `metadata/memo/` in the artifact bucket, need no setting of their own,
 and a lifecycle rule there should be no shorter than `ORK_CACHE_MAX_TTL`
 (`docs/STORAGE.md`).
+
+Failure handlers (`join: any_failed` or `all_done`, `docs/DSL.md` "Joins and
+failure handlers") are the same: an Orker built before join policies cannot
+decode a failure handler's input — the SDK's payload converter refuses the
+unknown field — and would fail the compensation step of a run that is
+already failing. So submit asks one Orker of the pool of every failure
+handler that runs a container whether it reads join policies, and refuses
+with `FailedPrecondition` naming the pool, the tasks, the Orker and its
+build when it does not; `allow_empty_pool` does not override that. A
+`none_failed` join needs nothing from an Orker.
 
 ### Pins on a versioned deployment
 
@@ -1139,6 +1149,15 @@ release runs nothing at all (§1).
    decode of that start fails the run's workflow task — retried until a worker
    of the new release takes it, which under Pinned versioning may be never.
 
+   Likewise, apply an Orkflow that declares **`join:`** only once the release
+   that introduced join policies is Current (versioned) or every replica runs
+   it (unversioned). An older engine refuses to apply `join:`, but one asked
+   to start a run of an already-stored version that declares it drops the
+   unknown field and runs every task as `all_succeeded` — and an `any_failed`
+   failure handler would then run after its needs **succeeded** (a rollback
+   after a successful deploy). A failing run — its failure handlers still
+   running — holds its release like any running run.
+
 A rollout done this way is held by
 `TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn`
 (`internal/engine/versioning_rollout_integration_test.go`): the run in flight
@@ -1276,6 +1295,28 @@ reach an Orker with no image and fail `IMAGE_NOT_PINNED` — explicit — but an
 `outputs:` Orkflow would **silently** return its leaf aggregation instead of
 its declared outputs. Runs with children in flight stay pinned to the newer
 release and must drain there (`orkctl release wait`).
+
+**Rolling back past join policies.** The mirror of §3's ramp rule, and the
+one of these whose silent outcome is destructive. An older engine decodes a
+stored version with unknown fields dropped and runs every task as
+`all_succeeded`: a `none_failed` re-join would be skipped (visible), but an
+**`any_failed` failure handler would run after its needs SUCCEEDED** — a
+rollback after a successful deploy — and an `all_done` handler would run
+only on success. So before rolling back to a release that predates join
+policies, close every namespace whose current Orkflow versions declare a
+failure handler, or promote versions without one first:
+
+```bash
+orkctl namespace update NS --hold "rolling back past join policies"
+orkctl release rollback "$OLD"
+orkctl release wait "$NEW"        # runs already on the newer release drain there
+```
+
+and submit no version that declares `any_failed` or `all_done` on the older
+release. Runs already executing on the newer release, failing ones included,
+stay pinned there and must drain (`orkctl release wait`). Release the hold
+only once the namespace's current versions declare no failure handler, or
+once the deployment is rolled forward again.
 
 **Rolling back past schedules.** A release without schedules has no
 `ScheduleFireWorkflow` registered, so a schedule that fires on it fails to
@@ -1991,6 +2032,10 @@ They catch different halves, and neither is enough alone:
 | `TestRunWorkflow_ReplaysCommittedV1History` | Temporal's own replayer: command types and their order | a reordered, added or deleted activity; a changed scheduling order |
 | `TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream` | the same replayer, run against a body with one extra emit — it must FAIL | the guard above going blind: it is the proof the fixture can reject an inserted command, on the day it is recorded rather than one change later |
 | `TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends` | the payloads, by re-executing the fixture's own input against the recorded ones | a changed `task.ExecuteTaskInput`, a renamed event type, a reworded message, a changed `Run` projection |
+| `TestRunWorkflow_ReplaysCommittedJoinHistory` | the replayer against the join fixture (`run-join-v1.json`, `examples/branch-and-recover.ork.yaml` with a failing `deploy`), plus the order the replay schedules tasks in | a changed join decision, a failure handler dispatched in a different place, a moved failing note or `RUN_FAILED` |
+| `TestJoinHistory_ActivityPayloadsMatchWhatCurrentCodeSends` | the join fixture's payloads, re-executed from its own input | a changed `ExecuteTaskInput.join` or failed-need reference, a reworded skip, cancel or failing sentence |
+| `TestJoinHistory_CatchesAHandlerOnTheRunContext` | the replayer, against a body that dispatches failure handlers on the run's own context — it must FAIL | the join guard going blind to where a handler's activities are scheduled |
+| `TestCommittedFixtures_DeclareNoJoin` | every other fixture's `RunWorkflow` input | a fixture that declares `join:`, which would void the premise that no earlier history reaches a join branch |
 
 The replayer never looks inside a payload: adding a field to
 `task.ExecuteTaskInput` replays perfectly clean, and an Orker of the recorded

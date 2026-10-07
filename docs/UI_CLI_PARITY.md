@@ -592,12 +592,20 @@ it is `UNREACHED`.
 
 CLI: `orkctl run plan <orkflow> [--version V]` or `orkctl run plan --file
 FILE.ork.yaml`, with `--input`/`--input-json`, `--output TASK=JSON`,
-`--outputs-file PATH`, and `--assert-runs`/`--assert-skipped` for CI (exit 4
-when the plan contradicts them, 1 when no plan could be computed); `--json`
-is the raw `PlanRunResponse`. UI: a **Plan** action beside **Submit run** in
-the submit dialog (also behind **Run again**), with an optional assumed-outputs
-field in its advanced section, a wave/task/outcome/detail table, and a CLI
-equivalent of the plan.
+`--outputs-file PATH`, `--assume-failed TASK` (repeatable: plan the run as
+if TASK, when it would run, failed after its retries — its failure handlers
+are planned, every task that depends on it and is not a failure handler is
+`unreached`, independent work is planned as if nothing had failed), and
+`--assert-runs`/`--assert-skipped` for CI, one task per flag (exit 4 when the
+plan contradicts them — an `assumed_failed` task fails `--assert-runs` — 1 when
+no plan could be computed); `--json` is the raw `PlanRunResponse`. UI: a
+**Plan** action beside **Submit run** in the submit dialog (also behind **Run
+again**), with an optional assumed-outputs field and an *Assume these tasks
+fail* field (`run-submit-assume-failed`, comma-separated task ids) in its
+advanced section, a wave/task/outcome/detail table, and a CLI equivalent of the
+plan carrying one `--assume-failed` per assumed task. Both say `The server did
+not apply --assume-failed: it predates assumed failures.` when an older engine
+ignored the assumption, instead of presenting the plan as the failure path.
 
 A plan never submits. There is no flag, button, or field that turns a plan
 into a run: `PlanRun` has no starter, mints no run id, takes no idempotency
@@ -798,6 +806,47 @@ results*; the Orkflow page shows TTL and scope and links to **Admin → Cache**,
 which shows the hit rate, reused time and memos, and purges through a
 confirmed dialog with its `orkctl cache purge` equivalent.
 
+### Joins and failure handlers
+
+A task's `join:` (`docs/DSL.md`, "Joins and failure handlers") says when it
+may start from how its needs ended: `all_succeeded` (the default),
+`none_failed` (re-join after a branch), `any_failed` and `all_done` (failure
+handlers, the only tasks that start in a failing run). `Task.join` carries it
+on the definition and `TaskRun.join` on each run row. A **failing run** — its
+outcome already decided `FAILED` while its failure handlers run — is
+`Run.status = RUNNING` with `Run.error` set, and its event stream carries one
+`TASK_LOG` with no task id (the failing note: `run failing after task
+"<cause>" failed; waiting for its failure handlers: <handlers>`); it ends
+`FAILED` with the original failure's reason whatever its handlers did.
+`PlanRunRequest.assume_failed` plans the failure path (`PlanTask.join`,
+`PLAN_OUTCOME_ASSUMED_FAILED`, `PlanTask.unreached_by`,
+`PlanRunResponse.assumed_failed`, `unused_assume_failed`, `fails_at`).
+`ValidateOrkflow` and `ApplyOrkflow` carry the join warning W1 (an unguarded
+read of an ancestor a join can leave absent) and never refuse on it; rules
+37–42 refuse at compile. Submit refuses a container failure handler on a pool
+whose Orker predates joins with `FailedPrecondition`
+(`DescribeOrkerResult.join_supported`); `allow_empty_pool` does not override
+it. No new RPC, no new write, no audit row.
+
+CLI: `run plan --assume-failed TASK` (§"Run plan"); `run get` reads `Status:
+RUNNING (failing)` for a failing run and prints a `JOIN  POLICY` table when a
+row carries a join; `run watch` prints the failing note as a `TASK_LOG` row
+with `-` for its task; `orkflow get` and `apply` print a `JOIN  POLICY  NEEDS`
+table; `run cancel`'s help says a failing run's handlers are stopped and the
+run still ends `FAILED`; `task run --need TASK=STATUS` overrides a failure
+handler's need outcome in its local `task.json` `join`; `--json` carries
+`join`, `fails_at` and `assumed_failed`. UI: the Orkflow DAG marks a joined
+task (`data-join`, a `join <word>` chip `dag-node-{id}-join`, a title
+sentence) and draws a failure handler and the edges into it dashed; the run
+page shows a `join` chip per joined task (`task-{id}-join`), keeps a skipped
+or cancelled task's reason after the run ends, and — live, from the failing
+note, which triggers one re-read — shows the run's error beside a Running pill
+and a *Failing* banner (`run-failing`, `data-handlers`) naming the outstanding
+handlers with their status words until the run ends; a pending handler's card
+reads `Waiting for <needs>` while the run is failing. The submit dialog's Plan
+takes *Assume these tasks fail* and renders `assumed_failed`, the unreached
+tasks and the failure handlers that would run with the CLI's words.
+
 ## Capability and acceptance matrix
 
 | Capability | UI behavior | CLI/shared behavior | Required observable acceptance |
@@ -842,6 +891,7 @@ confirmed dialog with its `orkctl cache purge` equivalent.
 | Composed Orkflows (`uses: orkflow:`, `outputs:`) | A composed task's card links to its child run, rolls up the child's tasks live and names the pinned child; the child's page links back; *Child runs* lists a parent's children; the Orkflow page shows the child reference, its digest and the declared outputs; apply shows rules 26–32 on their fields | `run get` names each child and `--tree` expands them; `run list --origin parent-run:RUN`; `orkflow get` COMPOSED and OUTPUT tables; `run logs` and `task run` refuse a composed task naming the child; `run plan` renders it | A child is its own run with its own id, history, archive record and `PARENT_RUN` origin; declared outputs are `Run.output` and the task's values, read by a downstream container; a child failure fails the parent task with the child's category; cancelling or terminating the parent leaves no child running; a second replica reads the tree; a submit that cannot plan the tree mints nothing; a run with neither construct is byte-identical (golden replay) |
 | Interface compatibility | Versions tab marks every version compatible, breaking or unknown against the current one; *Compare interfaces* beside *Diff*; the promote dialog lists breaking and unknown findings, what follows the current version and what pins it, and requires an acknowledgement for a breaking promotion; a *Callers* section lists composing Orkflows, triggers and schedules; the Apply page shows breaking warnings | `orkflow compat NAME [FROM] TO`, `orkflow callers NAME [--all-versions]`, `orkflow promote NAME V [--acknowledge-breaking]`, `orkflow versions` COMPAT column, warnings on `apply`/`validate`; `--json` for each | A breaking promotion is refused naming each change and moves nothing on any replica until acknowledged; compatible and unknown promotions are never refused; an apply is never refused and a breaking one warns; a promotion that raced another is refused rather than swapping across an unchecked break; `callers` names exactly the namespace's composing versions, triggers and schedules and nothing of another namespace; `compat` and `callers` write nothing |
 | Task caching (`cache:`) | A cached task's card shows *Cached* linking to the producing run, or *Cache miss* with its reason, or *Cache bypassed*; Inspect shows key, source commit and memo write; attempts show each memo decision and key components; the header counts cached tasks; fan-out cells mark cached items; *Ignore cached results* on submit; the Orkflow page shows TTL and scope; Admin → Cache shows hit rate, reused time and memos, and purges with a confirmed dialog | `run submit`/`run again --no-cache`; `run get` `SUCCEEDED (cached)` and one cache line per cached task; `run attempts` CACHE column; `orkflow get` CACHED table; `run plan` DETAIL; `cache stats [--orkflow] [--since] [--until]`; `cache purge (--orkflow NAME \| --namespace-scoped \| --all) [--task] [--older-than]`; `--json` envelopes | A second identical run reuses the commit and starts no container; any input change misses; deleting every memo changes no result; a corrupt memo, a retired source, a missing object or a memo-store outage is a recorded miss and the task succeeds; an Orker killed after a hit's commit is adopted as a hit; `no_cache` bypasses and refreshes; a pool whose Orker predates caching is refused at submit; a second replica reads stats and purges; a run with no cached task is byte-identical (golden replay) |
+| Joins and failure handlers (`join:`) | The Orkflow DAG marks joined tasks and draws failure handlers and their edges dashed; the run page shows a `join` chip per joined task, skip and cancel reasons that survive the run's end, and — live, from the failing note — a *Failing* banner naming the outstanding handlers and the run's error while a failed run's handlers run; the submit dialog's Plan takes *Assume these tasks fail* and shows `assumed_failed`, unreached tasks and the handlers that would run | `join:` in the DSL (rules 37–42, warning W1); `run plan --assume-failed TASK` (assertions one task per flag); `run get` `RUNNING (failing)` and a `JOIN` table; `run watch` prints the failing note; `orkflow get` `JOIN` table; `task run --need TASK=STATUS`; `task.json` `join`; `--json` carries `join`, `fails_at`, `assumed_failed`; submit refuses a failure handler on a pool whose Orker predates joins | A skipped branch re-joins; an `any_failed` handler runs only when a need fails and a run with a handler still ends `FAILED` with the original error; fail-fast still stops every other task; an operator cancel starts no handler and stops running ones, and a cancel during handlers keeps the run `FAILED`; a terminated failing run reads `CANCELED` with its error kept; a handler sees its needs' outcomes and the failed need's artifacts without control-plane access; plan and run agree with and without an assumed failure; a run with no `join:` is byte-identical (all seven golden replays) |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new

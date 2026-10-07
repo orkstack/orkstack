@@ -906,6 +906,10 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	// Caching's apply warnings: never an ERROR, so an apply is never refused
 	// on them (docs/DSL.md "Caching").
 	issues = append(issues, cacheIssues(wf, s.cacheMaxTTL)...)
+	// Join policies' apply warning (W1): an unguarded read of an ancestor a
+	// join can leave absent. Never an ERROR; rules 37–42 already refused in
+	// Compile.
+	issues = append(issues, dsl.JoinWarnings(wf)...)
 	if hasError(issues) {
 		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}
@@ -1515,6 +1519,12 @@ func poolPlanError(err error) error {
 	// task's input, so the run is refused before any id is minted.
 	var noCache *engine.PoolNoCacheSupportError
 	if errors.As(err, &noCache) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	// A pool whose Orker predates join policies: it could not decode a
+	// failure handler's input, so the run is refused before any id is minted.
+	var noJoin *engine.PoolNoJoinSupportError
+	if errors.As(err, &noJoin) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	var unreachable *engine.PoolUnreachableError

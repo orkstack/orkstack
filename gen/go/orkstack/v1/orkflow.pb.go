@@ -225,7 +225,9 @@ type Task struct {
 	With *structpb.Struct `protobuf:"bytes,3,opt,name=with,proto3" json:"with,omitempty"`
 	// needs lists task ids that must complete before this task runs (DAG edges).
 	Needs []string `protobuf:"bytes,4,rep,name=needs,proto3" json:"needs,omitempty"`
-	// condition is an optional CEL-like expression gating execution (v0: simple truthy).
+	// condition is a Go template rendered by the engine; the task is skipped
+	// when it renders one of the documented falsy spellings (docs/DSL.md
+	// "Templating").
 	Condition      string       `protobuf:"bytes,5,opt,name=condition,proto3" json:"condition,omitempty"`
 	TimeoutSeconds int32        `protobuf:"varint,6,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"` // default 300
 	Retry          *RetryPolicy `protobuf:"bytes,7,opt,name=retry,proto3" json:"retry,omitempty"`
@@ -280,7 +282,14 @@ type Task struct {
 	// cache opts this container task into memoization across runs. It may not
 	// name a pin (docs/DSL.md rule 36), and an awaited or composed task may not
 	// carry it (rules 15, 27).
-	Cache         *CacheSpec `protobuf:"bytes,23,opt,name=cache,proto3" json:"cache,omitempty"`
+	Cache *CacheSpec `protobuf:"bytes,23,opt,name=cache,proto3" json:"cache,omitempty"`
+	// join is when this task may start, decided from how its needs ended
+	// (docs/DSL.md "Joins and failure handlers"). UNSPECIFIED is
+	// all_succeeded. Part of canonicalOrkflow(Task) ONLY when set (see pin), so
+	// a definition with no join keeps its digest. A task whose join is
+	// ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry
+	// each or carry cache (docs/DSL.md rule 39).
+	Join          JoinPolicy `protobuf:"varint,24,opt,name=join,proto3,enum=orkstack.v1.JoinPolicy" json:"join,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -460,6 +469,13 @@ func (x *Task) GetCache() *CacheSpec {
 		return x.Cache
 	}
 	return nil
+}
+
+func (x *Task) GetJoin() JoinPolicy {
+	if x != nil {
+		return x.Join
+	}
+	return JoinPolicy_JOIN_POLICY_UNSPECIFIED
 }
 
 // CacheSpec opts ONE task into memoization across runs (docs/DSL.md
@@ -876,7 +892,7 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"OrkflowRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12+\n" +
-	"\x11definition_digest\x18\x03 \x01(\tR\x10definitionDigest\"\xa4\a\n" +
+	"\x11definition_digest\x18\x03 \x01(\tR\x10definitionDigest\"\xd1\a\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12+\n" +
 	"\x04with\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x04with\x12\x14\n" +
@@ -899,7 +915,8 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\x05await\x18\x14 \x01(\v2\x16.orkstack.v1.AwaitSpecR\x05await\x12)\n" +
 	"\x04each\x18\x15 \x01(\v2\x15.orkstack.v1.EachSpecR\x04each\x121\n" +
 	"\aorkflow\x18\x16 \x01(\v2\x17.orkstack.v1.OrkflowRefR\aorkflow\x12,\n" +
-	"\x05cache\x18\x17 \x01(\v2\x16.orkstack.v1.CacheSpecR\x05cache\x1a6\n" +
+	"\x05cache\x18\x17 \x01(\v2\x16.orkstack.v1.CacheSpecR\x05cache\x12+\n" +
+	"\x04join\x18\x18 \x01(\x0e2\x17.orkstack.v1.JoinPolicyR\x04join\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x02\x10\x03J\x04\b\b\x10\tR\x06pluginR\x05queue\"[\n" +
@@ -971,9 +988,10 @@ var file_orkstack_v1_orkflow_proto_goTypes = []any{
 	(*SecretRef)(nil),             // 13: orkstack.v1.SecretRef
 	(*ResourceRequest)(nil),       // 14: orkstack.v1.ResourceRequest
 	(NetworkMode)(0),              // 15: orkstack.v1.NetworkMode
-	(CacheScope)(0),               // 16: orkstack.v1.CacheScope
-	(*EachSource)(nil),            // 17: orkstack.v1.EachSource
-	(*timestamppb.Timestamp)(nil), // 18: google.protobuf.Timestamp
+	(JoinPolicy)(0),               // 16: orkstack.v1.JoinPolicy
+	(CacheScope)(0),               // 17: orkstack.v1.CacheScope
+	(*EachSource)(nil),            // 18: orkstack.v1.EachSource
+	(*timestamppb.Timestamp)(nil), // 19: google.protobuf.Timestamp
 }
 var file_orkstack_v1_orkflow_proto_depIdxs = []int32{
 	11, // 0: orkstack.v1.Task.with:type_name -> google.protobuf.Struct
@@ -987,20 +1005,21 @@ var file_orkstack_v1_orkflow_proto_depIdxs = []int32{
 	5,  // 8: orkstack.v1.Task.each:type_name -> orkstack.v1.EachSpec
 	2,  // 9: orkstack.v1.Task.orkflow:type_name -> orkstack.v1.OrkflowRef
 	4,  // 10: orkstack.v1.Task.cache:type_name -> orkstack.v1.CacheSpec
-	16, // 11: orkstack.v1.CacheSpec.scope:type_name -> orkstack.v1.CacheScope
-	17, // 12: orkstack.v1.EachSpec.source:type_name -> orkstack.v1.EachSource
-	11, // 13: orkstack.v1.AwaitSpec.schema:type_name -> google.protobuf.Struct
-	9,  // 14: orkstack.v1.Orkflow.labels:type_name -> orkstack.v1.Orkflow.LabelsEntry
-	11, // 15: orkstack.v1.Orkflow.inputs:type_name -> google.protobuf.Struct
-	3,  // 16: orkstack.v1.Orkflow.tasks:type_name -> orkstack.v1.Task
-	18, // 17: orkstack.v1.Orkflow.created_at:type_name -> google.protobuf.Timestamp
-	1,  // 18: orkstack.v1.Orkflow.pins:type_name -> orkstack.v1.Pin
-	10, // 19: orkstack.v1.Orkflow.outputs:type_name -> orkstack.v1.Orkflow.OutputsEntry
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	16, // 11: orkstack.v1.Task.join:type_name -> orkstack.v1.JoinPolicy
+	17, // 12: orkstack.v1.CacheSpec.scope:type_name -> orkstack.v1.CacheScope
+	18, // 13: orkstack.v1.EachSpec.source:type_name -> orkstack.v1.EachSource
+	11, // 14: orkstack.v1.AwaitSpec.schema:type_name -> google.protobuf.Struct
+	9,  // 15: orkstack.v1.Orkflow.labels:type_name -> orkstack.v1.Orkflow.LabelsEntry
+	11, // 16: orkstack.v1.Orkflow.inputs:type_name -> google.protobuf.Struct
+	3,  // 17: orkstack.v1.Orkflow.tasks:type_name -> orkstack.v1.Task
+	19, // 18: orkstack.v1.Orkflow.created_at:type_name -> google.protobuf.Timestamp
+	1,  // 19: orkstack.v1.Orkflow.pins:type_name -> orkstack.v1.Pin
+	10, // 20: orkstack.v1.Orkflow.outputs:type_name -> orkstack.v1.Orkflow.OutputsEntry
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_orkflow_proto_init() }

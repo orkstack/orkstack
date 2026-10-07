@@ -188,3 +188,49 @@ re-recorded only when the caching path's command stream or payloads genuinely
 change, with a commit that says so. `run-succeeded-v1.json` itself has no
 cached task and keeps matching unchanged: a run with no cached task sends no
 `CacheContext`.
+
+## The join fixture
+
+`run-join-v1.json` holds the join path still (`docs/DSL.md` "Joins and
+failure handlers"): the first `none_failed` decision, the first failure
+handler dispatched after fail-fast with an `ExecuteTaskInput.join`
+(`JoinContext`) and a failed need's artifact reference, the first failing note
+(a `TASK_LOG` with no task id) and the first `RUN_FAILED` emitted after a run's
+failure handlers ended. It is a real history of
+`examples/branch-and-recover.ork.yaml` with `route=full`, `fail_deploy=true`
+and `smoke_seconds=120` — `full` and `verify` run, `canary` skipped, `deploy`
+failed after its two attempts, `smoke` stopped, `announce` never started,
+`rollback` and `notify` run, `escalate` skipped — recorded once by a
+**versioned** worker against a real cluster. Three tests hold the tree to it
+on every `make test`:
+
+- `TestRunWorkflow_ReplaysCommittedJoinHistory` — the command half, plus the
+  `ExecuteTask` schedule the replay produces (task order), read through an
+  interceptor as the fan-out fixture's test does.
+- `TestJoinHistory_ActivityPayloadsMatchWhatCurrentCodeSends` — the payload
+  half: the fixture re-executed from its own input, with its recorded results
+  fed back, and every `ExecuteTaskInput` (the handler's `join` and the
+  failed-need reference included), every event message and the finished run
+  compared with the recorded ones.
+- `TestJoinHistory_CatchesAHandlerOnTheRunContext` — the replay against a body
+  that dispatches failure handlers on the run's own context (which fail-fast
+  cancels), which must fail with a nondeterminism error.
+
+Until the file is committed those tests skip and name the command that
+records it (set `ORK_REQUIRE_JOIN_FIXTURE=1` to make its absence a failure).
+Nothing writes it except `TestIntegration_RecordJoinRunHistory`
+(`internal/engine/join_integration_test.go`, I17), and only when asked:
+
+```bash
+ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
+  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
+  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
+  -run TestIntegration_RecordJoinRunHistory
+```
+
+The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
+re-recorded only when the join path's command stream or payloads genuinely
+change, with a commit that says so. The seven earlier fixtures declare no
+`join:` — `TestCommittedFixtures_DeclareNoJoin` (`replay_test.go`) decodes each
+one's input and checks it — so they keep matching unchanged: every new branch
+of the interpreter is entered only by a definition that declares a join.

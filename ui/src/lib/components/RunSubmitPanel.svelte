@@ -19,7 +19,7 @@
 	import type { JsonObject } from '@bufbuild/protobuf';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { defaultsForInputs, inputSpecs, parseInputObject, planCli, submitCli } from '$lib/authoring';
-	import { parseAssumedOutputs } from '$lib/plan';
+	import { parseAssumeFailed, parseAssumedOutputs } from '$lib/plan';
 	import AwaitCallbacks from './AwaitCallbacks.svelte';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import DeclaredInputs from './DeclaredInputs.svelte';
@@ -100,6 +100,9 @@
 	let planning = $state(false);
 	let planError = $state('');
 	let assumedOutputsJson = $state('{}');
+	// "Assume these tasks fail": comma-separated task ids, sent as
+	// PlanRunRequest.assume_failed (orkctl run plan --assume-failed).
+	let assumeFailedText = $state('');
 	let planRequest = 0;
 	// The submission's callback tokens, shown ONCE in place of the form. Held
 	// only here, in memory — like the Triggers tab's one-time secret — and
@@ -176,6 +179,7 @@
 			allowEmptyPool = false;
 			noCache = false;
 			assumedOutputsJson = '{}';
+			assumeFailedText = '';
 			plan = null;
 			planError = '';
 			originReference = '';
@@ -203,6 +207,7 @@
 		void inputsJson;
 		void inputsValue;
 		void assumedOutputsJson;
+		void assumeFailedText;
 		untrack(() => {
 			planRequest++;
 			plan = null;
@@ -276,6 +281,7 @@
 
 	const assumedParsed = $derived(parseAssumedOutputs(assumedOutputsJson));
 	const assumedError = $derived('error' in assumedParsed ? assumedParsed.error : '');
+	const assumeFailed = $derived(parseAssumeFailed(assumeFailedText));
 	const planCommand = $derived(
 		'value' in cliParsedInput && 'value' in assumedParsed
 			? planCli({
@@ -283,7 +289,8 @@
 					namespace,
 					version: chosenVersion,
 					input: cliParsedInput.value,
-					assumedOutputs: assumedParsed.value
+					assumedOutputs: assumedParsed.value,
+					assumeFailed
 				})
 			: ''
 	);
@@ -312,7 +319,8 @@
 				orkflowVersion: chosenVersion,
 				namespace,
 				input: create(PayloadSchema, { data: parsed.value }),
-				assumedOutputs
+				assumedOutputs,
+				assumeFailed
 			});
 			if (request === planRequest) plan = res;
 		} catch (err) {
@@ -572,6 +580,23 @@
 					Tasks not listed are planned with an empty output.
 				</p>
 			</div>
+			<div class="flex flex-col gap-1.5">
+				<label for="run-submit-assume-failed" class="text-sm text-fg">
+					Assume these tasks fail <span class="text-fg-muted">(comma-separated task ids)</span>
+				</label>
+				<input
+					id="run-submit-assume-failed"
+					data-testid="run-submit-assume-failed"
+					bind:value={assumeFailedText}
+					spellcheck="false"
+					placeholder="deploy"
+					class="h-9 rounded-md border border-border bg-surface px-3 font-mono text-[13px] text-fg shadow-xs placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				/>
+				<p class="text-xs text-fg-muted">
+					Plans the failure path: each task, when it would run, failed after its retries — its failure
+					handlers are planned and the tasks that depend on it are unreached.
+				</p>
+			</div>
 		</div>
 	</details>
 
@@ -580,7 +605,7 @@
 	{/if}
 
 	{#if plan}
-		<PlanTable {plan} />
+		<PlanTable {plan} {assumeFailed} />
 	{/if}
 
 	{#if formError}
