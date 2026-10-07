@@ -1144,7 +1144,7 @@ test('the activity catalog is global and resolved, and an Orker outage is report
 			.getByTestId('activity-list')
 			.locator('tbody tr')
 			.evaluateAll((rows) => rows.length)
-	).toBe(3);
+	).toBe(names.length);
 	await shot(page, 'screenshot-admin-activities-orker-unavailable.png');
 });
 
