@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -189,5 +190,34 @@ func TestSafeComponent_SanitizesArtifactNamesIntoOneSafeComponent(t *testing.T) 
 				t.Fatalf("component %q escaped root %q (relative path %q)", component, root, rel)
 			}
 		})
+	}
+}
+
+// TestRendererFuncs_AreExactlyArtifactEnvSh is the Orker's half of the
+// helper-set pin (its DSL half is TestTemplateFuncs_AreExactlyArtifactEnvSh):
+// the platform only moves and quotes data, and anything that computes is a
+// task — so the renderer of with: offers exactly artifact, env and sh.
+func TestRendererFuncs_AreExactlyArtifactEnvSh(t *testing.T) {
+	funcs := newRenderer("t", nil, nil, nil, nil, nil, nil).funcs(context.Background())
+	var names []string
+	for name := range funcs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if !reflect.DeepEqual(names, []string{"artifact", "env", "sh"}) {
+		t.Fatalf("the Orker's with: renderer offers %v, want exactly [artifact env sh]: computing is a task, not a template helper", names)
+	}
+}
+
+// TestRenderer_EscapedBracesRenderLiterally is how a jq filter (or any with:
+// string) carries the two characters {{ literally: {{ "{{" }} renders to {{.
+func TestRenderer_EscapedBracesRenderLiterally(t *testing.T) {
+	r := testRenderer(nil, nil, nil, nil, nil)
+	got, err := r.render(context.Background(), map[string]any{"filter": `"{{ "{{" }}name}}"`})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if got["filter"] != `"{{name}}"` {
+		t.Fatalf("filter = %q, want %q", got["filter"], `"{{name}}"`)
 	}
 }

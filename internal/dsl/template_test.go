@@ -2,6 +2,7 @@ package dsl_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -47,4 +48,36 @@ func TestReferencedUpstream_SeesEverySpellingTheCheckerAccepts(t *testing.T) {
 			t.Fatal("ReferencedUpstream of an unterminated action returned no error")
 		}
 	})
+}
+
+// TestValidate_LiteralBracesInAWithStringNeedTheEscape: a with: string
+// containing {{ is a DSL template, so a jq filter that needs the characters
+// {{ literally writes {{ "{{" }} — and the unescaped spelling is refused at
+// validate, naming the key, never discovered at run time.
+func TestValidate_LiteralBracesInAWithStringNeedTheEscape(t *testing.T) {
+	doc := func(filter string) []byte {
+		return []byte(`name: braces
+version: "0.1.0"
+tasks:
+  - id: q
+    uses: json
+    network: none
+    with:
+      op: query
+      nullInput: true
+      filter: '` + filter + `'
+`)
+	}
+	_, err := dsl.Compile(doc(`"{{name}}"`))
+	if err == nil {
+		t.Fatal(`filter '"{{name}}"' compiled; an unescaped {{ is a template and must be refused`)
+	}
+	for _, want := range []string{`task "q": with.filter: template parse error`, `function "name" not defined`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+	if _, err := dsl.Compile(doc(`"{{ "{{" }}name}}"`)); err != nil {
+		t.Fatalf(`the escaped filter '"{{ "{{" }}name}}"' was refused: %v`, err)
+	}
 }
