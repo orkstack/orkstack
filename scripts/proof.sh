@@ -42,7 +42,7 @@ if has_gate integration || has_gate ui; then
 		curl -sf -o /dev/null http://127.0.0.1:9000/minio/health/live
 	need "the local registry on $REGISTRY (make infra-up)" \
 		curl -sf -o /dev/null "http://$REGISTRY/v2/"
-	for activity in shell http file; do
+	for activity in $(make -s -C "$REPO/images" print-activities); do
 		need "activity-$activity pushed to $REGISTRY (make -C images push)" \
 			curl -sf -o /dev/null -H 'Accept: application/vnd.oci.image.index.v1+json' \
 			"http://$REGISTRY/v2/orkstack/activity-$activity/manifests/dev"
@@ -63,7 +63,7 @@ if has_gate observability; then
 		curl -sf -o /dev/null http://127.0.0.1:9000/minio/health/live
 	need "the local registry on $REGISTRY (make infra-up-observability)" \
 		curl -sf -o /dev/null "http://$REGISTRY/v2/"
-	for activity in shell http file; do
+	for activity in $(make -s -C "$REPO/images" print-activities); do
 		need "activity-$activity pushed to $REGISTRY (make -C images push)" \
 			curl -sf -o /dev/null -H 'Accept: application/vnd.oci.image.index.v1+json' \
 			"http://$REGISTRY/v2/orkstack/activity-$activity/manifests/dev"

@@ -58,9 +58,9 @@ The filesystem is the activity API:
 - stdout and stderr are logs; exit zero succeeds and non-zero fails;
 - SIGTERM, followed by SIGKILL after the grace period, is cancellation.
 
-The first-party `activity-http`, `activity-shell`, and `activity-file` images are
-reference implementations of this same public contract, not privileged Go
-plugins. A custom activity is just another OCI image.
+The first-party `activity-http`, `activity-shell`, `activity-file`,
+`activity-json`, `activity-git` and `activity-template` images are reference
+implementations of this same public contract, not privileged Go plugins. A custom activity is just another OCI image.
 
 ### 5. Artifacts and completion records (`pkg/artifacts`)
 

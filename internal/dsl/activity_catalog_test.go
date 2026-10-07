@@ -18,6 +18,9 @@ func TestCatalogResolveUses_AppliesTheFourRulesInOrder(t *testing.T) {
 			"ghcr.io/orkstack/activity-shell:0.1", ""},
 		{"http", "http", "ghcr.io/orkstack/activity-http:0.1", ""},
 		{"file", "file", "ghcr.io/orkstack/activity-file:0.1", ""},
+		{"json", "json", "ghcr.io/orkstack/activity-json:0.1", ""},
+		{"git", "git", "ghcr.io/orkstack/activity-git:0.1", ""},
+		{"template", "template", "ghcr.io/orkstack/activity-template:0.1", ""},
 		{"a full reference is itself", "ghcr.io/acme/migrate:v3",
 			"ghcr.io/acme/migrate:v3", ""},
 		{"a pinned reference is itself", "ghcr.io/acme/m@sha256:" + strings.Repeat("a", 64),
@@ -52,6 +55,30 @@ func TestCatalogResolveUses_AppliesTheFourRulesInOrder(t *testing.T) {
 
 // Rule 2 runs before rule 3, so a catalog name can never be read as a Docker
 // Hub repository. This is the reason the rules are ordered at all.
+// TestBuiltinActivityCatalog_IsTheSixFirstPartyImages pins the built-in key
+// set: every place that names the first-party images as a set (the config
+// default, images/Makefile, the local test catalog) is held to it by
+// TestNames_AreEveryFirstPartyImage and the config completeness tests.
+func TestBuiltinActivityCatalog_IsTheSixFirstPartyImages(t *testing.T) {
+	want := map[string]string{
+		"shell":    "ghcr.io/orkstack/activity-shell:0.1",
+		"http":     "ghcr.io/orkstack/activity-http:0.1",
+		"file":     "ghcr.io/orkstack/activity-file:0.1",
+		"json":     "ghcr.io/orkstack/activity-json:0.1",
+		"git":      "ghcr.io/orkstack/activity-git:0.1",
+		"template": "ghcr.io/orkstack/activity-template:0.1",
+	}
+	got := BuiltinActivityCatalog()
+	if len(got) != len(want) {
+		t.Fatalf("built-in catalog has %d entries %v, want the six first-party images %v", len(got), got.Names(), keysOf(want))
+	}
+	for name, ref := range want {
+		if got[name] != ref {
+			t.Errorf("built-in catalog %q = %q, want %q", name, got[name], ref)
+		}
+	}
+}
+
 func TestCatalogResolveUses_CatalogNameBeatsDockerHubRepository(t *testing.T) {
 	catalog := BuiltinActivityCatalog()
 	got, err := catalog.ResolveUses("t1", "shell")

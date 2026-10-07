@@ -167,7 +167,7 @@ check_workdir_mountable() {
 # fails loudly at apply time (§4.3) instead of silently running something else.
 local_activity_catalog() {
 	local registry="${ORK_LOCAL_REGISTRY:-localhost:5001}" name doc=""
-	for name in shell http file; do
+	for name in $(make -s -C "$REPO/images" print-activities); do
 		curl -sfo /dev/null \
 			-H 'Accept: application/vnd.oci.image.index.v1+json' \
 			"http://$registry/v2/orkstack/activity-$name/manifests/dev" || return 0

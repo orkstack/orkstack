@@ -204,7 +204,7 @@ test.beforeAll(async () => {
 	// Prerequisites are failures here, never skips: the caller is expected to
 	// probe every one of them BEFORE running this spec (AGENTS.md §11.1), so
 	// an absence never reaches here.
-	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// The first-party images, built and PUSHED: `uses: shell` is a
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
 	ensureActivityImages();

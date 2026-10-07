@@ -161,7 +161,7 @@ var Schema = []Var{
 
 	// activities has no single scalar default: it is the built-in catalog
 	// baked into internal/dsl, not a value this package can format.
-	{Path: "activities", Env: "ORK_ACTIVITY_CATALOG", Binaries: usesOrk, Kind: KindDocument, Default: "built-in shell/http/file → ghcr.io/orkstack/activity-*:0.1"},
+	{Path: "activities", Env: "ORK_ACTIVITY_CATALOG", Binaries: usesOrk, Kind: KindDocument, Default: "built-in shell/http/file/json/git/template → ghcr.io/orkstack/activity-*:0.1"},
 
 	// orker.id and orker.workdir are genuinely dynamic (a hostname hash, and
 	// os.TempDir()) — real prose, not one of the two standardized

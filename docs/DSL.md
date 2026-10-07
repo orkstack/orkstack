@@ -549,9 +549,11 @@ tasks:
     with: { op: checksum, src: '{{ artifact "test/report.txt" }}' }
 ```
 
-The `uses:` names above are illustrative — a deployment's catalog decides what
-they resolve to. For a pin written against the first-party activity images and
-compiled by the test suite, see `examples/pinned-build.ork.yaml`.
+`git` is the first-party `activity-git` image (`images/activity-git/README.md`,
+"`dest` — a working tree for a pin"); `golang` is illustrative — a
+deployment's catalog decides what such a name resolves to. For a pin written
+against the first-party activity images and compiled by the test suite, see
+`examples/pinned-build.ork.yaml`.
 
 `pins:` is a top-level map from pin name to a (possibly empty) options object;
 `pins: { build: {} }` is legal. `pin:` on a task is a bare name and must name a

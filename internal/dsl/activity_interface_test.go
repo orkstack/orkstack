@@ -70,15 +70,59 @@ func field(typ string, required bool) *orkstackv1.FieldSchema {
 	return &orkstackv1.FieldSchema{Type: typ, Required: required}
 }
 
-func TestParseInterfaceLabel_AcceptsTheThreeFirstPartyLabels(t *testing.T) {
+// fieldDefault is an optional field with a documentary default.
+func fieldDefault(typ string, value any) *orkstackv1.FieldSchema {
+	v, err := structpb.NewValue(value)
+	if err != nil {
+		panic(err)
+	}
+	return &orkstackv1.FieldSchema{Type: typ, Default: v}
+}
+
+func TestParseInterfaceLabel_AcceptsEveryFirstPartyLabel(t *testing.T) {
 	type want struct {
 		fields    map[string]*orkstackv1.FieldSchema
 		ops       map[string]map[string]*orkstackv1.FieldSchema
 		defaultOp string
 		values    map[string]string
 	}
-	str, arr, num, obj := "string", "array", "number", "object"
+	str, arr, num, obj, boolean := "string", "array", "number", "object", "boolean"
 	cases := map[string]want{
+		// result is deliberately undeclared: its JSON type is whatever the
+		// filter returns, and the vocabulary has no "any". The declared values
+		// are the three an `as:` run reports.
+		"activity-json": {
+			ops: map[string]map[string]*orkstackv1.FieldSchema{
+				"query": {
+					"filter": field(str, true), "src": field(str, false), "slurp": fieldDefault(boolean, false),
+					"srcs": field(arr, false), "gather": field(str, false), "nullInput": fieldDefault(boolean, false),
+					"vars": field(obj, false), "as": field(str, false),
+				},
+				"merge": {"srcs": field(arr, true), "as": field(str, false)},
+			},
+			values: map[string]string{"path": str, "sizeBytes": num, "sha256": str},
+		},
+		"activity-git": {
+			fields: map[string]*orkstackv1.FieldSchema{
+				"url": field(str, true), "ref": field(str, false), "tokenSecret": field(str, false),
+				"tokenUser": fieldDefault(str, "x-access-token"), "caFile": field(str, false),
+			},
+			ops: map[string]map[string]*orkstackv1.FieldSchema{
+				"clone":   {"depth": fieldDefault(num, 1.0), "as": fieldDefault(str, "src.tar.gz"), "dest": field(str, false)},
+				"resolve": {},
+			},
+			values: map[string]string{"commit": str, "ref": str, "path": str, "sizeBytes": num, "sha256": str},
+		},
+		"activity-template": {
+			ops: map[string]map[string]*orkstackv1.FieldSchema{
+				"render": {
+					"src": field(str, true), "data": field(str, false), "values": field(obj, false),
+					"datasources": field(obj, false), "leftDelim": field(str, false), "rightDelim": field(str, false),
+					"as": field(str, false),
+				},
+			},
+			values: map[string]string{"path": str, "sizeBytes": num, "sha256": str},
+		},
 		"activity-file": {
 			ops: map[string]map[string]*orkstackv1.FieldSchema{
 				"copy":     {"src": field(str, true), "as": field(str, false)},
@@ -335,6 +379,44 @@ func TestCheckWith_LiteralTypeMismatchIsAWarningAndTemplatesAreNotTyped(t *testi
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertIssues(t, CheckWith(0, taskWith(t, tc.with), httpInterface(t)), tc.want)
+		})
+	}
+}
+
+// TestCheckWith_TransformImageDocuments checks documents against the labels
+// the json, git and template images ship, so validate/apply catch their
+// mistakes with no engine change.
+func TestCheckWith_TransformImageDocuments(t *testing.T) {
+	label := func(image string) func(*testing.T) *orkstackv1.ActivityInterface {
+		return func(t *testing.T) *orkstackv1.ActivityInterface { return mustParse(t, firstPartyLabel(t, image)) }
+	}
+	jsonIface, gitIface, templateIface := label("activity-json"), label("activity-git"), label("activity-template")
+	const jsonQuery = `declared: as, filter, gather, nullInput, op, slurp, src, srcs, vars`
+	for _, tc := range []struct {
+		name  string
+		iface func(*testing.T) *orkstackv1.ActivityInterface
+		with  map[string]any
+		want  []wantIssue
+	}{
+		{"json without filter", jsonIface, map[string]any{"op": "query", "nullInput": true}, []wantIssue{{sevError, "tasks[0].with.filter",
+			`with.filter is required by the interface of ` + testPinned + ` for op "query" and is not supplied`}}},
+		{"json op transform", jsonIface, map[string]any{"op": "transform", "filter": "."}, []wantIssue{{sevError, "tasks[0].with.op",
+			`with.op "transform" is not an operation of ` + testPinned + ` (declared ops: merge, query)`}}},
+		{"json key filtre", jsonIface, map[string]any{"op": "query", "filter": ".", "nullInput": true, "filtre": "."}, []wantIssue{{sevWarning, "tasks[0].with.filtre",
+			`with.filtre is not declared by the interface of ` + testPinned + ` for op "query" (` + jsonQuery + `); ` +
+				`the image may still accept it — check for a typo or a key renamed in a newer image`}}},
+		{"json vars templated as a string", jsonIface, map[string]any{"op": "query", "filter": ".", "nullInput": true, "vars": "{{ .inputs.v }}"}, nil},
+		{"git op push", gitIface, map[string]any{"op": "push", "url": "https://h/r.git"}, []wantIssue{{sevError, "tasks[0].with.op",
+			`with.op "push" is not an operation of ` + testPinned + ` (declared ops: clone, resolve)`}}},
+		{"git without url", gitIface, map[string]any{"op": "resolve", "ref": "main"}, []wantIssue{{sevError, "tasks[0].with.url",
+			`with.url is required by the interface of ` + testPinned + ` for op "resolve" and is not supplied`}}},
+		{"git depth as a literal string", gitIface, map[string]any{"op": "clone", "url": "https://h/r.git", "depth": "1"}, []wantIssue{{sevWarning, "tasks[0].with.depth",
+			`with.depth is declared number by the interface of ` + testPinned + `; this document supplies a string — the image may coerce it, or refuse it at run time`}}},
+		{"template without src", templateIface, map[string]any{"op": "render"}, []wantIssue{{sevError, "tasks[0].with.src",
+			`with.src is required by the interface of ` + testPinned + ` for op "render" and is not supplied`}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertIssues(t, CheckWith(0, taskWith(t, tc.with), tc.iface(t)), tc.want)
 		})
 	}
 }

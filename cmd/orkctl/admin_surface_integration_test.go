@@ -321,7 +321,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// ActivityService.ListActivities. B answers it having started nothing,
 	// exactly as it answers pool health.
 	catalog := requireCLI(t, onB, "B lists the activity catalog", "activity", "list")
-	for _, want := range []string{"shell", "http", "file"} {
+	for _, want := range []string{"shell", "http", "file", "json", "git", "template"} {
 		if !strings.Contains(catalog, want) {
 			t.Errorf("the catalog does not report the %q activity:\n%s", want, catalog)
 		}

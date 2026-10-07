@@ -167,7 +167,7 @@ func TestInterfaceManifests_FirstPartyImagesDeclareTheirInterfaces(t *testing.T)
 	})
 
 	human := requireCLI(t, stack.cli, "list activities", "activity", "list")
-	for _, want := range []string{"INTERFACE", "7 ops", "5 keys, 6 ops", "3 ops"} {
+	for _, want := range []string{"INTERFACE", "7 ops", "5 keys, 6 ops", "3 ops", "2 ops", "5 keys, 2 ops", "1 op"} {
 		if !strings.Contains(human, want) {
 			t.Fatalf("activity list lacks %q:\n%s", want, human)
 		}
@@ -187,6 +187,20 @@ func TestInterfaceManifests_FirstPartyImagesDeclareTheirInterfaces(t *testing.T)
 	if len(shell.GetOps()) != 3 || shell.GetDefaultOp() != "exec" {
 		t.Fatalf("shell interface = %v, want 3 ops, defaultOp exec", shell)
 	}
+	// The transform images (first-party-transform-images X8).
+	jsonIface, gitIface, templateIface := byName["json"].GetInterface(), byName["git"].GetInterface(), byName["template"].GetInterface()
+	if len(jsonIface.GetFields()) != 0 || len(jsonIface.GetOps()) != 2 || jsonIface.GetDefaultOp() != "" ||
+		jsonIface.GetOps()["query"] == nil || jsonIface.GetOps()["merge"] == nil {
+		t.Fatalf("json interface = %v, want ops query and merge, no default, no shared keys", jsonIface)
+	}
+	if len(gitIface.GetFields()) != 5 || len(gitIface.GetOps()) != 2 || gitIface.GetDefaultOp() != "" ||
+		gitIface.GetOps()["clone"] == nil || gitIface.GetOps()["resolve"] == nil {
+		t.Fatalf("git interface = %v, want 5 shared keys, ops clone and resolve, no default", gitIface)
+	}
+	if len(templateIface.GetFields()) != 0 || len(templateIface.GetOps()) != 1 || templateIface.GetDefaultOp() != "" ||
+		templateIface.GetOps()["render"] == nil {
+		t.Fatalf("template interface = %v, want the one op render, no default", templateIface)
+	}
 
 	requireCLI(t, stack.cli, "inspect file", "activity", "inspect", "file")
 	inspected := decodeActivityInfo(t, requireCLI(t, stack.cli, "inspect file as JSON", "activity", "inspect", "file", "--json"), false)[0]
@@ -199,6 +213,47 @@ func TestInterfaceManifests_FirstPartyImagesDeclareTheirInterfaces(t *testing.T)
 	pinned := pinnedReference(inspected)
 	if !strings.HasSuffix(pinned, "/orkstack/activity-file@"+byName["file"].GetIndexDigest()) {
 		t.Fatalf("pinned = %q, want the list's digest", pinned)
+	}
+}
+
+// TestInterfaceManifests_TransformImagesAreCheckedAtValidate: the json,
+// git and template labels, read from the real registry, check a document
+// before anything runs — with no engine change.
+func TestInterfaceManifests_TransformImagesAreCheckedAtValidate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	stack := startInterfaceStack(ctx, t, 1, false)
+	t.Cleanup(func() {
+		stack.writeProof(t, "transform-images-validate.txt", "transform images are checked at validate")
+	})
+
+	name := fmt.Sprintf("iface-tx-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
+	head := func(uses string) string {
+		return fmt.Sprintf("name: %s\nversion: \"1.0.0\"\ntasks:\n  - id: q\n    uses: %s\n    pool: %s\n    network: none\n    with:\n", name, uses, stack.pool)
+	}
+	for _, tc := range []struct {
+		what, doc, field, contains string
+	}{
+		{"json without filter", head("json") + "      op: query\n      nullInput: true\n", "tasks[0].with.filter", "with.filter is required by the interface of "},
+		{"json op transform", head("json") + "      op: transform\n      filter: .\n", "tasks[0].with.op", `with.op "transform" is not an operation of `},
+		{"git without url", head("git") + "      op: resolve\n", "tasks[0].with.url", "with.url is required by the interface of "},
+		{"template without src", head("template") + "      op: render\n", "tasks[0].with.src", "with.src is required by the interface of "},
+	} {
+		path := writeInterfaceDocument(t, name+"-"+strings.ReplaceAll(tc.what, " ", "-"), tc.doc)
+		stdout, _, code := stack.cli("orkflow", "validate", path)
+		if code == 0 {
+			t.Fatalf("%s: validate exited 0:\n%s", tc.what, stdout)
+		}
+		if line := "error    " + tc.field + ": " + tc.contains; !strings.Contains(stdout, line) {
+			t.Fatalf("%s: validate did not print %q:\n%s", tc.what, line, stdout)
+		}
+	}
+
+	path := writeInterfaceDocument(t, name+"-filtre", head("json")+"      op: query\n      nullInput: true\n      filter: .\n      filtre: .\n")
+	validated := requireCLI(t, stack.cli, "validate the json document with a misspelled key", "orkflow", "validate", path)
+	if !strings.Contains(validated, "warning  tasks[0].with.filtre: with.filtre is not declared by the interface of ") ||
+		!strings.Contains(validated, "Valid orkflow "+name+" (version 1.0.0), 1 warning") {
+		t.Fatalf("validate of the filtre document:\n%s", validated)
 	}
 }
 

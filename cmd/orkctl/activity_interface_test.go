@@ -112,10 +112,19 @@ func TestActivityList_RendersTheInterfaceColumn(t *testing.T) {
 		&orkstackv1.ActivityInfo{Name: "migrate", Reference: "ghcr.io/acme/migrate:v3"},
 		&orkstackv1.ActivityInfo{Name: "shell", Reference: fakeRegistry + "/orkstack/activity-shell:dev", IndexDigest: "sha256:" + strings.Repeat("d", 64),
 			MediaType: dsl.MediaTypeOCIIndex, Platforms: []string{"linux/amd64"}, ResolvedAt: resolved},
+		&orkstackv1.ActivityInfo{Name: "json", Reference: fakeRegistry + "/orkstack/activity-json:dev", IndexDigest: "sha256:" + strings.Repeat("1", 64),
+			MediaType: dsl.MediaTypeOCIIndex, Platforms: []string{"linux/amd64"}, ResolvedAt: resolved,
+			Interface: firstPartyInterface(t, "activity-json")},
+		&orkstackv1.ActivityInfo{Name: "git", Reference: fakeRegistry + "/orkstack/activity-git:dev", IndexDigest: "sha256:" + strings.Repeat("2", 64),
+			MediaType: dsl.MediaTypeOCIIndex, Platforms: []string{"linux/amd64"}, ResolvedAt: resolved,
+			Interface: firstPartyInterface(t, "activity-git")},
+		&orkstackv1.ActivityInfo{Name: "template", Reference: fakeRegistry + "/orkstack/activity-template:dev", IndexDigest: "sha256:" + strings.Repeat("3", 64),
+			MediaType: dsl.MediaTypeOCIIndex, Platforms: []string{"linux/amd64"}, ResolvedAt: resolved,
+			Interface: firstPartyInterface(t, "activity-template")},
 	)
 	human := f.run("activity", "list").requireExit(t, exitOK).stdout
 	requireGolden(t, "activity-list.golden", human)
-	for _, want := range []string{"7 ops", "none", "malformed"} {
+	for _, want := range []string{"7 ops", "none", "malformed", "2 ops", "5 keys, 2 ops", "1 op"} {
 		if !strings.Contains(human, want) {
 			t.Fatalf("INTERFACE column lacks %q:\n%s", want, human)
 		}
@@ -153,6 +162,40 @@ func TestActivityInspect_RendersDeclaredNoneAndMalformed(t *testing.T) {
 		{[]string{"--json", "activity", "inspect", "file"}, "activity-inspect.json.golden"},
 	} {
 		requireGolden(t, tc.golden, f.run(tc.args...).requireExit(t, exitOK).stdout)
+	}
+}
+
+// TestActivityInspect_RendersTheTransformImages: the headline of each
+// transform image's declared interface, through the real inspect command.
+func TestActivityInspect_RendersTheTransformImages(t *testing.T) {
+	resolution := func(image, digit string) *dsl.Resolution {
+		digest := "sha256:" + strings.Repeat(digit, 64)
+		return &dsl.Resolution{
+			Image: &orkstackv1.ImageRef{Registry: fakeRegistry, Repository: "orkstack/" + image, IndexDigest: digest,
+				Pinned: fakeRegistry + "/orkstack/" + image + "@" + digest, MediaType: dsl.MediaTypeOCIIndex},
+			Interface: firstPartyInterface(t, image),
+		}
+	}
+	f := interfaceFixture(t, stubResolver{
+		"ghcr.io/acme/json:1":     resolution("activity-json", "1"),
+		"ghcr.io/acme/git:1":      resolution("activity-git", "2"),
+		"ghcr.io/acme/template:1": resolution("activity-template", "3"),
+	})
+	for reference, headline := range map[string]string{
+		"ghcr.io/acme/json:1":     "schema 1 · selected by op: (2 ops, op required)",
+		"ghcr.io/acme/git:1":      "schema 1 · selected by op: (2 ops, op required) · 5 keys shared by every op",
+		"ghcr.io/acme/template:1": "schema 1 · selected by op: (1 op, op required)",
+	} {
+		out := f.run("activity", "inspect", reference).requireExit(t, exitOK).stdout
+		var line string
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, "schema 1") {
+				line = l
+			}
+		}
+		if !strings.HasSuffix(strings.TrimSpace(line), headline) {
+			t.Errorf("activity inspect %s: interface line %q, want it to read %q\n%s", reference, line, headline, out)
+		}
 	}
 }
 

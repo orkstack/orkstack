@@ -1,0 +1,14 @@
+#!/bin/sh
+# git runs this when a remote asks for a credential, passing the prompt as $1,
+# and reads one line. It answers only a prompt that names with.url's own
+# origin: a redirect to another host or port gets no answer, so git fails
+# instead of sending the token there.
+case "${1:-}" in
+  "Username for 'https://$ACTIVITY_GIT_AUTHORITY': ")
+    printf '%s\n' "$ACTIVITY_GIT_USER" ;;
+  "Password for 'https://$ACTIVITY_GIT_USER@$ACTIVITY_GIT_AUTHORITY': ")
+    tr -d '\r\n' < "$ACTIVITY_GIT_TOKEN_FILE"; printf '\n' ;;
+  *)
+    echo "activity-git: a credential was asked for another origin than with.url's; none is given" >&2
+    exit 1 ;;
+esac
