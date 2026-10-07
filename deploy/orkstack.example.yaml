@@ -75,12 +75,17 @@ engine:
 
 # The activity catalog: catalog name -> registry reference, resolved to a
 # digest at apply time. Re-serializes to ORK_ACTIVITY_CATALOG under the hood
-# (docs/DEPLOY.md §1). Uncomment to override the built-in shell/http/file
-# entries (ghcr.io/orkstack/activity-*:0.1):
+# (docs/DEPLOY.md §1). Uncomment to override the built-in
+# shell/http/file/json/git/template entries (ghcr.io/orkstack/activity-*:0.1).
+# An override REPLACES the built-in table, so list every name the deployment
+# offers:
 # activities:
 #   shell: ghcr.io/orkstack/activity-shell:0.1
 #   http: ghcr.io/orkstack/activity-http:0.1
 #   file: ghcr.io/orkstack/activity-file:0.1
+#   json: ghcr.io/orkstack/activity-json:0.1
+#   git: ghcr.io/orkstack/activity-git:0.1
+#   template: ghcr.io/orkstack/activity-template:0.1
 
 orker:
   # id: ""                    # default: hostname-<hash of the work dir>; two Orkers must never share one

@@ -245,11 +245,14 @@ export const catalogEnv = {
   shell: ${activityRef('shell')}
   http: ${activityRef('http')}
   file: ${activityRef('file')}
+  json: ${activityRef('json')}
+  git: ${activityRef('git')}
+  template: ${activityRef('template')}
 `
 };
 
 /**
- * ensureActivityImages builds and pushes the three first-party images.
+ * ensureActivityImages builds and pushes every first-party image.
  *
  * Pushed, not merely built: a never-pushed tag has no registry manifest
  * digest, so apply-time resolution cannot pin it and `uses: shell` fails

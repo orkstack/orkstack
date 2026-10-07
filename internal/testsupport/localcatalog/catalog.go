@@ -34,7 +34,7 @@ const EnvVar = "ORK_TEST_REGISTRY"
 const DefaultRegistry = "localhost:5001"
 
 // Names is the built-in catalog's key set (§4.2).
-var Names = []string{"shell", "http", "file"}
+var Names = []string{"shell", "http", "file", "json", "git", "template"}
 
 // Registry is the registry these tests resolve against.
 func Registry() string {

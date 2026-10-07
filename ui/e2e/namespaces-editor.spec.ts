@@ -227,7 +227,7 @@ test.beforeAll(async () => {
 	if (await tcpOpen(18081)) throw new Error('port 18081 already in use (stray engine?)');
 	if (await tcpOpen(14174)) throw new Error('port 14174 already in use (stray UI?)');
 
-	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// The first-party images, built and PUSHED: `uses: shell` is a
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
 	ensureActivityImages();
