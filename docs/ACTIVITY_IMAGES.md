@@ -103,7 +103,7 @@ What a document is told:
   image is still pinned and runnable.
 
 `orkctl activity inspect <name-or-reference>` and Admin → Activities show what
-an image declares. The three first-party images carry the label; each README's
+an image declares. Every first-party image carries the label; each README's
 "Interface" section reproduces it.
 
 ## First-party reference images
@@ -115,11 +115,82 @@ Dockerfile:
 - [`activity-shell`](../images/activity-shell/README.md) — argv, scripts, and
   evaluations;
 - [`activity-file`](../images/activity-file/README.md) — small Unix-like file
-  operations.
+  operations;
+- [`activity-json`](../images/activity-json/README.md) — one jq filter over JSON
+  files, the run input, a fan-out's items or nothing at all, or a deep merge:
+  the default compute step;
+- [`activity-git`](../images/activity-git/README.md) — a read-only HTTPS
+  checkout (a source tarball, or a working tree in a pin) and ref → commit
+  resolution, with the token kept out of every argument, URL and log;
+- [`activity-template`](../images/activity-template/README.md) — one text
+  artifact rendered with gomplate from a template file and JSON/YAML
+  datasources.
 
-All three read rendered configuration from
-`/orkstack/input/config.json`, write compact values to
-`/orkstack/output/values.json`, and write regular-file artifacts beneath
+Every one of them reads rendered configuration from
+`/orkstack/input/config.json`, writes compact values to
+`/orkstack/output/values.json`, and writes regular-file artifacts beneath
 `/orkstack/output/artifacts/`. They use the same ABI as any third-party image.
+Every first-party image honours a task's `env:` like any Unix tool — nothing is
+cleared or silently overridden — and the `json`, `git` and `template` READMEs'
+*Environment* sections list each image's defaults and what overrides them.
 See the [OCI Activity Contract](OCI_ACTIVITY_CONTRACT.md) for the authoritative
 platform contract and [the DSL reference](DSL.md) for task syntax.
+
+## Network and caching of the first-party images
+
+Nothing in OrkStack expects a task to produce the same output from the same
+input. Tasks run at least once and may read the clock, the network and their
+environment; determinism is required of the engine's own workflow code only,
+never of a task. Exactly one opt-in feature depends on it — `cache:` — and
+writing `cache:` is the author's assertion that reusing an earlier result for
+the same memo key is as good as running the task again. The rules and the
+table below tell you when that assertion is false for each first-party image;
+each image's README has the detail.
+
+1. **`cache:` is your assertion**, which OrkStack cannot verify ([DSL
+   reference](DSL.md), "Caching"). Write it only when a reused result is as
+   good as a fresh one — when the result depends on nothing outside what the
+   memo key covers ("What the key covers": the image, `command`, `env`, the
+   secrets' names and sources, `network`, the rendered `with:`, the run input,
+   and the content of every staged input). What the key does not cover makes a
+   task unsafe to cache: the clock, randomness, the network, a variable the
+   container runtime sets per container (`HOSTNAME`), the run's coordinates in
+   `task.json` (run id, idempotency key, attempt), and a git ref that moves.
+2. **A task that mounts a secret is never cached** — `git` included. A cache
+   hit reads no secret, so it never exercises the credential: after a token is
+   revoked or a repository's access is removed, a cached private clone would
+   keep handing out the tree until its memo expired (up to `ORK_CACHE_MAX_TTL`)
+   or someone purged it, and the key covers a secret's name and source, never
+   its value, so rotating the token changes nothing. Apply already warns on
+   every cached task that mounts a secret; this rule makes "don't" the
+   practice rather than "purge on revoke".
+3. **Cache the tasks after an uncached step instead.** A cached task's key
+   covers the content digest of every staged input — and a task is staged
+   every succeeded ancestor's values and artifacts, not only its direct
+   needs' — so it hits exactly when every ancestor reproduced its outputs byte
+   for byte. A private `git` clone by commit id does: the `untar`, `render`
+   and `query` tasks after it hit on every run of an unchanged commit while the
+   clone itself re-fetches and re-checks the token. An ancestor whose output
+   varies is not an error; its successors simply miss.
+4. **`network: none` on every task that should not need the network**, so an
+   accidental network dependency fails instead of being memoized; values
+   travel through `with:` and files, where the key sees them.
+5. **Side effects belong to uncached tasks**, and use the task's
+   `idempotencyKey`, because execution is at-least-once.
+
+| Image / op | Needs network | `cache:` is safe when | Unsafe to cache when |
+|---|---|---|---|
+| `json` (both ops) | no — write `network: none` | the filter does not call `now`, reads no runtime-set variable (`HOSTNAME`) through `$ENV`/`env`, and reads no run coordinate from `task.json` (rule 2 never applies: the image refuses secrets) | it calls `now`, reads `$ENV.HOSTNAME`, or reads `run.id`, `idempotencyKey` or `task.attempt` |
+| `template` `render` | no — write `network: none` | the template calls none of the functions its README's *Caching* section lists (rule 2 never applies: the image refuses secrets) | it reads the clock, randomness, a runtime-set variable such as `HOSTNAME`, the network or undeclared files |
+| `git` `clone` (`as`) | yes | `ref` is a **full commit id** (resolve first, then clone `{{ .tasks.<resolve>.output.commit }}`) **and the task mounts no secret** — a public repository; a `caFile` read from an upstream artifact is an input, not a secret | `ref` names a branch, tag or `HEAD` (a hit would keep returning the old tree until the TTL); **or** it mounts a secret — `tokenSecret`, or `caFile: secrets/…` (rule 2): cache the tasks after it instead (rule 3) |
+| `git` `resolve` | yes | never | always — its job is to observe a moving ref |
+| `git` `clone` with `dest` | yes | never (a pinned task is never cached) | — |
+| `file` (all ops) | no — write `network: none` | it mounts no secret | it mounts a secret (rule 2). Caching a `tar` task is safe, but `tar`'s output is not byte-reproducible — its members carry the time each file was staged — so tasks downstream of a `tar` never hit (rule 3); pass a directory's files on, or archive at the end of a pipeline |
+| `http` | yes | never — a request observes or changes something outside | always |
+| `shell` | depends | only for a script whose result depends on nothing the key does not cover, and that mounts no secret | it reads the clock, the network, randomness or `HOSTNAME`, has side effects, or mounts a secret |
+
+A `git` tarball is reproducible per commit and **platform image** under the
+image's default environment: a pool that mixes architectures produces one
+digest per architecture, so the cached tasks after the clone miss when a clone
+lands on the other kind of Orker (`activity-git`'s README, "`as` — a source
+tarball").

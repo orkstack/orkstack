@@ -1190,9 +1190,12 @@ configuration, not an Orker probe and not a marketplace.
 ```yaml
 # ORK_ACTIVITY_CATALOG, default: the built-in table below
 activities:
-  shell: ghcr.io/orkstack/activity-shell:0.1
-  http:  ghcr.io/orkstack/activity-http:0.1
-  file:  ghcr.io/orkstack/activity-file:0.1
+  shell:    ghcr.io/orkstack/activity-shell:0.1
+  http:     ghcr.io/orkstack/activity-http:0.1
+  file:     ghcr.io/orkstack/activity-file:0.1
+  json:     ghcr.io/orkstack/activity-json:0.1
+  git:      ghcr.io/orkstack/activity-git:0.1
+  template: ghcr.io/orkstack/activity-template:0.1
 ```
 
 `container` is deliberately absent: under this contract every task already is a
@@ -1415,7 +1418,7 @@ container.
 
 | Source | How the image arrives | Digest |
 |---|---|---|
-| **Builtin** (`shell`, `http`, `file`) | Pulled from the catalog reference like any other image. Built and pushed by `make -C images push`. | Real registry index digest |
+| **Builtin** (`shell`, `http`, `file`, `json`, `git`, `template`) | Pulled from the catalog reference like any other image. Built and pushed by `make -C images push`. | Real registry index digest |
 | **Custom / community** | Pull from the registry named in `uses:`. This is the default and needs no configuration. | Real registry index digest |
 | **User-provided source** (Dockerfile or git context) | `orkctl activity build <path\|git-url> --tag <ref> --push` builds and pushes, printing the pinned reference to paste into `uses:`. An explicit, out-of-band step. | Real registry index digest |
 | **Embedded fallback** (builtins only) | An **OCI image layout** shipped with the Orker at `ORK_ORKER_IMAGE_LAYOUT` (default `/var/lib/orkstack/images`). Used only when a pull of an already-pinned digest fails. | Real registry index digest, carried inside the layout |
@@ -2804,13 +2807,21 @@ escaping, §3.3) makes `{{ sh .inputs.name }}` safe and satisfies AGENTS.md §6'
 sentence literally; the array form remains the documented default because it
 needs no author vigilance.
 
-The three first-party images:
+The first-party images:
 
 | Image | `op` values | `values.json` | Artifacts |
 |---|---|---|---|
 | `activity-shell` | `exec`, `eval`, `script` | `exitCode`; `eval` adds `value`; `script` adds `scriptPath` | files the script writes to `output/artifacts/` |
 | `activity-http` | `get`, `post`, `put`, `patch`, `delete`, `head` | `status`, `headers`, `durationMs`, and `json` when the body parses and is small | the response body when `captureBodyAs` is set |
 | `activity-file` | `copy`, `checksum`, `gzip`, `gunzip`, `tar`, `untar`, `concat` | `path`, `sizeBytes`, `sha256` | exactly one per op |
+| `activity-json` | `query`, `merge` | `result` (the filter's one output, whatever its type); with `as`, `path`, `sizeBytes`, `sha256` | the result, only when `as` is set |
+| `activity-git` | `clone`, `resolve` | `commit`, `ref`; `clone` adds `path`, and for a tarball `sizeBytes`, `sha256` | `clone` with `as`: one source tarball (`git archive`); with `dest`, none — a working tree in the pin's `/orkstack/shared` |
+| `activity-template` | `render` | `path`, `sizeBytes`, `sha256` | exactly one: the rendered file |
+
+`activity-template`'s work is the gomplate CLI — the project's published release
+binary, verified against its SHA-256 when the image is built — behind the same
+`entry.sh` ABI as every other first-party image, exactly as `activity-json`'s is
+jq and `activity-git`'s is git: no OrkStack library on either side of the line.
 
 **There is no `activity-container` image, and there cannot be one.** Inside
 an activity container, §9.1 forbids every mechanism that could reach a Docker
