@@ -245,7 +245,7 @@ test.beforeAll(async () => {
 				'pool-unavailable failure (see the last test in this file)'
 		);
 	}
-	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// The first-party images, built and PUSHED: `uses: shell` is a
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
 	ensureActivityImages();
@@ -1027,6 +1027,27 @@ test("the Activities page shows each first-party image's declared interface, and
 	await expect(page.getByTestId('activity-inspect-result')).toHaveCount(0);
 	await shot(page, 'screenshot-admin-activities-inspect-refused.png');
 	note('activities page: file 7 ops, http 5 keys, 6 ops; inspect file pinned ' + catalogDigest + '; {{ .x }} refused IMAGE_NOT_PINNED');
+
+	// The transform images (first-party-transform-images P1): json, git and
+	// template reach the page with the interfaces their labels declare — the
+	// UI code is unchanged; this is the evidence that catalog and labels flow.
+	await expect(page.getByTestId('activity-interface-json')).toContainText('2 ops');
+	await expect(page.getByTestId('activity-interface-git')).toContainText('5 keys, 2 ops');
+	await expect(page.getByTestId('activity-interface-template')).toContainText('1 op');
+	await page.getByTestId('activity-interface-git').click();
+	const gitPanel = page.getByTestId('activity-interface-panel-git');
+	await expect(gitPanel.getByTestId('activity-interface-summary')).toContainText(
+		'schema 1 · selected by op: (2 ops, op required) · 5 keys shared by every op'
+	);
+	await expect(gitPanel.getByTestId('activity-interface-row-*-url')).toContainText('required');
+	await expect(gitPanel.getByTestId('activity-interface-value-commit')).toBeVisible();
+	await page.getByTestId('activity-inspect-reference').fill('json');
+	await page.getByTestId('activity-inspect-submit').click();
+	const jsonResult = page.getByTestId('activity-inspect-result');
+	await expect(jsonResult.getByTestId('activity-inspect-activity')).toHaveText('json (catalog)');
+	await expect(jsonResult.getByTestId('activity-interface-row-query-filter')).toContainText('required');
+	await shot(page, 'screenshot-admin-activities-transform-images.png');
+	note('activities page: json 2 ops, git 5 keys, 2 ops (url required, value commit), template 1 op; inspect json: query.filter required');
 });
 
 // The activity catalog, and the Orker probe beside it.
@@ -1064,7 +1085,7 @@ test('the activity catalog is global and resolved, and an Orker outage is report
 	const names = await page.getByTestId('activity-list').locator('tbody tr').evaluateAll((rows) =>
 		rows.map((row) => row.getAttribute('data-testid')?.replace('activity-row-', '') ?? '')
 	);
-	expect(names).toEqual(['file', 'http', 'shell']);
+	expect(names).toEqual(['file', 'git', 'http', 'json', 'shell', 'template']);
 	for (const name of names) {
 		await expect(page.getByTestId(`activity-reference-${name}`)).toContainText(`activity-${name}`);
 		// Resolved at APPLY time, so the page shows a digest and not a tag.

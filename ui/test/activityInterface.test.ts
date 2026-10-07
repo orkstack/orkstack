@@ -94,3 +94,28 @@ test('inspectCommand writes a plain reference bare and quotes anything else', ()
 	);
 	expect(inspectCommand('{{ .x }}')).toBe("orkctl activity inspect '{{ .x }}'");
 });
+
+test('the transform images: summary, headline and rows match the CLI', () => {
+	expect(interfaceSummary(info({ interface: label('activity-json') }))).toBe('2 ops');
+	expect(interfaceSummary(info({ interface: label('activity-git') }))).toBe('5 keys, 2 ops');
+	expect(interfaceSummary(info({ interface: label('activity-template') }))).toBe('1 op');
+	expect(interfaceHeadline(info({ interface: label('activity-json') }))).toBe(
+		'schema 1 · selected by op: (2 ops, op required)'
+	);
+	expect(interfaceHeadline(info({ interface: label('activity-git') }))).toBe(
+		'schema 1 · selected by op: (2 ops, op required) · 5 keys shared by every op'
+	);
+	expect(interfaceHeadline(info({ interface: label('activity-template') }))).toBe(
+		'schema 1 · selected by op: (1 op, op required)'
+	);
+	const git = interfaceRows(label('activity-git'));
+	expect(git.slice(0, 5).map((r) => [r.op, r.key])).toEqual([
+		['*', 'caFile'],
+		['*', 'ref'],
+		['*', 'tokenSecret'],
+		['*', 'tokenUser'],
+		['*', 'url']
+	]);
+	expect(git[4]).toEqual({ op: '*', key: 'url', type: 'string', required: 'yes', default: '-' });
+	expect(git[3]).toEqual({ op: '*', key: 'tokenUser', type: 'string', required: 'no', default: '"x-access-token"' });
+});
