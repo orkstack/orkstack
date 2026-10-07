@@ -154,7 +154,12 @@ func TestIntegration_CLIRunGetShowsAFailingRun(t *testing.T) {
 	if !strings.Contains(machine, `"join": "ANY_FAILED"`) {
 		t.Errorf("--json run get carries no join:\n%s", machine)
 	}
-	watched := s.mustCLI(0, "run", "watch", runID)
+	// run watch follows the run to its end, and a FAILED run exits
+	// exitRunFailed (2) — the run is failing, so that is the right code.
+	watched, watchErr, watchCode := codeOf(s, "run", "watch", runID)
+	if watchCode != exitRunFailed {
+		t.Errorf("run watch exit = %d, want %d (the run ends FAILED); stderr:\n%s", watchCode, exitRunFailed, watchErr)
+	}
 	noted := false
 	for _, line := range strings.Split(watched, "\n") {
 		if strings.Contains(line, "run failing after task") && strings.Contains(line, " - ") {
