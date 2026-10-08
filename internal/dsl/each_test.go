@@ -103,8 +103,8 @@ func TestCompile_EachCompiles(t *testing.T) {
 		}
 	}
 	want := &orkstackv1.EachSpec{
-		Over: "{{ .tasks.list.output.parts }}", As: "part", MaxItems: 50, MaxParallel: 2,
-		Source: &orkstackv1.EachSource{TaskId: "list", Path: []string{"parts"}},
+		Over: "{{ .tasks.list.output.result }}", As: "part", MaxItems: 50, MaxParallel: 2,
+		Source: &orkstackv1.EachSource{TaskId: "list", Path: []string{"result"}},
 	}
 	if !proto.Equal(convert.GetEach(), want) {
 		t.Fatalf("EachSpec = %v, want %v", convert.GetEach(), want)

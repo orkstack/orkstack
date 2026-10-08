@@ -260,8 +260,8 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	var h *harness
 	// Every task's values are stored where CountEachItems reads them, so a
 	// fan-out over an upstream output (examples/each-fan-out.ork.yaml) really
-	// expands and its items are compared too. The source task of that
-	// example writes four parts.
+	// expands and its items are compared too. parityExampleValues gives the
+	// tasks a fan-out or a condition reads the values they really produce.
 	behavior := func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		result, err := parityResult(in)
 		if c.fail[in.GetTaskId()] {
@@ -277,9 +277,10 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 			return result, err
 		}
 		values := map[string]any{"task": in.GetTaskId(), "value": in.GetTaskId()}
-		if in.GetTaskId() == "list" {
-			values["parts"] = []any{map[string]any{"name": "a"}, map[string]any{"name": "b"},
-				map[string]any{"name": "c"}, map[string]any{"name": "d"}}
+		// Keyed by the corpus document: a composed child's tasks run in
+		// the parent's harness, so the parent's entry stubs them too.
+		for k, v := range parityExampleValues[c.name][in.GetTaskId()] {
+			values[k] = v
 		}
 		result.ValuesJson = valuesJSON(values)
 		result.ValuesRef = h.values.put("mem://parity/"+in.GetTaskId(), result.ValuesJson)
@@ -400,7 +401,7 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 			}
 			// A task downstream of a composed task is compared too: its
 			// upstream ref for the composed task is {task_id, values}.
-			if composesAny(c.wf) {
+			if needsAComposedTask(c.wf) {
 				downstream := false
 				for _, want := range recorded {
 					for _, up := range want.GetUpstream() {
@@ -751,13 +752,52 @@ func TestLocalTaskInput_FanOutItemRules(t *testing.T) {
 	}
 }
 
-func composesAny(wf *orkstackv1.Orkflow) bool {
+// needsAComposedTask reports whether some task of wf names a composed task in
+// its needs:. Only then is anything downstream of a composed task to compare:
+// order-saga and approval-gate compose notify-block from leaf tasks.
+func needsAComposedTask(wf *orkstackv1.Orkflow) bool {
 	for _, t := range wf.GetTasks() {
-		if t.GetOrkflow() != nil {
-			return true
+		for _, need := range t.GetNeeds() {
+			if taskByIDOf(wf, need).GetOrkflow() != nil {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// parityExampleValues is, per shipped example file and task id, the keys
+// merged into that task's stubbed values: what a fan-out expands over and
+// what a condition or a composed task's engine-rendered with: reads, so every
+// fan-out expands, every condition evaluates and every composed task renders
+// in the corpus, and their tasks' inputs are compared too.
+var parityExampleValues = map[string]map[string]map[string]any{
+	"each-fan-out.ork.yaml": {
+		"list": {"result": []any{map[string]any{"name": "a"}, map[string]any{"name": "b"},
+			map[string]any{"name": "c"}, map[string]any{"name": "d"}}},
+	},
+	"decide-and-route.ork.yaml": {
+		"decide": {"result": map[string]any{"route": "canary", "notify": true}},
+	},
+	"approval-gate.ork.yaml": {
+		"assess": {"result": map[string]any{"risky": false, "summary": "web: replicas = 3"}},
+		"post":   {"status": 200}, // notify-block's, composed by announce
+	},
+	"notify-block.ork.yaml": {
+		"post": {"status": 200}, // its declared output reads it
+	},
+	"order-saga.ork.yaml": {
+		"report": {"result": "x"},
+		"post":   {"status": 200}, // notify-block's, composed by notify
+	},
+	"config-from-git.ork.yaml": {
+		"resolve": {"commit": "0123456789abcdef0123456789abcdef01234567", "ref": "refs/heads/main"},
+		"prepare": {"result": []any{map[string]any{"name": "api", "file": "api.conf", "port": "8080",
+			"replicas": "2", "environment": "staging", "commit": "0123456789ab"}}},
+	},
+	"custom-image.ork.yaml": {
+		"labels": {"result": []any{"alpha", "beta"}},
+	},
 }
 
 func taskByIDOf(wf *orkstackv1.Orkflow, id string) *orkstackv1.Task {
