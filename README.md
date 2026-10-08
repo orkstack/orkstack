@@ -122,6 +122,9 @@ The individual steps are still there when you want them: `make tools`,
 `make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
 `make infra-up-observability` adds a local Grafana stack
 ([deploy/observability](./deploy/observability/README.md)).
+To run the UI by hand, `cd ui && bun run dev`: its server proxies Connect calls
+to `ENGINE_API_URL` (default `http://127.0.0.1:8080`), and the browser opens
+WebSockets to `PUBLIC_ENGINE_WS_URL` (default the page's host on `:8080`).
 
 Configuration needs nothing for a laptop — `make up` runs on defaults alone.
 Past that, `ork` and `orker` read one shared YAML file (`--config PATH`), with

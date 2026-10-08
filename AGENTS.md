@@ -345,11 +345,14 @@ A definition limit such as 256 KiB is a proposal, not a current hard invariant.
 Do not turn that proposal into a hard limit without a separate accepted
 contract.
 
-Tasks form a DAG through `needs`: a task becomes ready once every need has
-ended and its join policy admits it, and a task with no `needs` is ready at
-run start, so independent tasks run in parallel. Detect missing references and
-dependency cycles during validation; do not discover malformed DAGs during
-runtime.
+Steps execute sequentially in declaration order by default. Explicit `needs`
+dependencies create DAG edges and enable parallel execution. `needs: []` may
+start immediately. As implemented, the interpreter adds no implicit
+declaration-order edge: a task becomes ready once every need has ended and its
+join policy admits it, and a task with no `needs` is ready at run start, so
+independent tasks run in parallel; write `needs` to order tasks. Detect
+missing references and dependency cycles during validation; do not discover
+malformed DAGs during runtime.
 
 The repository vocabulary is deliberate. The user-facing words below are the
 ones the DSL, the proto, `orkctl`, the UI and every message use; a word marked
@@ -432,9 +435,10 @@ internal never appears on any of those surfaces.
   (`StatsService.GetUsage`), never measured utilization and never a stored
   counter.
 - **Telemetry sink** means an operator-declared OTLP destination, named, in
-  `ORK_TELEMETRY_SINKS`. `default` is reserved for the deployment's default
-  destination: the standard `OTEL_*` environment, or the table's `default:`
-  entry when it declares one.
+  `ORK_TELEMETRY_SINKS`. `default` is reserved: it means the standard `OTEL_*`
+  environment, not an entry in that YAML. As implemented, a table that
+  declares a `default:` entry overrides the `OTEL_*` environment for the
+  default destination; a table without one leaves the environment in charge.
 - **Telemetry policy** means one namespace's selection among a deployment's
   telemetry sinks: which sink, whether task logs export, which attributes.
   It is a field of `orkstack.v1.Namespace` (`telemetry`), unset meaning

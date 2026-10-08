@@ -57,9 +57,10 @@ fail() {
 # inside a command substitution would exit only the subshell and let the script
 # carry on with an empty path — the same subshell hazard as §10.1 rule 2b.
 #
-# Relative paths resolve under /orkstack/input (§10.2); absolute paths must
-# already be inside the workspace. A `..` component is refused rather than
-# normalized, so a path can never be argued out of the workspace.
+# Relative paths resolve under /orkstack/input; absolute paths must already
+# be inside the workspace. A `..` component is refused rather than
+# normalized, so a path can never be argued out of the workspace
+# (images/activity-file/README.md, "Paths").
 RESOLVED=
 resolve_read() {
     _p=$1

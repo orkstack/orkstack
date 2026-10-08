@@ -210,14 +210,13 @@ func (s *activitySuite) run(ctx context.Context) (*activityTestReport, error) {
 //
 // It is a pure function, separated from run() so the reporting layer can be
 // tested without a container runtime. That matters more than it looks: the
-// FAIL half of this command is the half an acceptance criterion names, and it
-// is the half that is hardest to reach through Docker.
+// FAIL half of this command is the half a broken image depends on, and it is
+// the half that is hardest to reach through Docker.
 //
 // A SKIP is not a pass and is never counted as one, but it does not make the
 // report fail either — the host could not express the property, which is not
 // the image's fault. A caller that needs "all six were actually measured"
-// must check Passed, which is why proof gate 4 asserts on it rather than on
-// the exit code alone.
+// must check Passed rather than the exit code alone.
 func buildActivityTestReport(image string, assertions []assertion) *activityTestReport {
 	report := &activityTestReport{Image: image, OK: true}
 	for _, a := range assertions {
@@ -353,7 +352,7 @@ func (s *activitySuite) execute(
 // stdout is asserted rather than only values.json because the `eval`
 // command-substitution defect was invisible to any values-only check:
 // values.json was right while the durable stdout.log was empty for every eval
-// task (§14.18), silently voiding §3.6's regression gate.
+// task (§14.18), silently losing §3.6's durable stdout stream.
 func (s *activitySuite) assertStartsAndWritesValues(ctx context.Context) assertion {
 	const marker = "orkstack-contract-stdout-marker"
 	a := assertion{name: "starts, writes values.json, and its stdout reaches the stream"}
@@ -587,8 +586,8 @@ func (s *activitySuite) assertExitCodesAreNotInterpreted(ctx context.Context) as
 //
 // The workload prints a marker from its own TERM trap. That line reaching the
 // log stream is direct evidence the signal crossed the entry script into the
-// workload — which is exactly what §10.2 rule 2a exists to guarantee and what
-// the previous draft of that script got wrong.
+// workload — which is exactly what §10.1 rule 2a exists to guarantee and what
+// the naive entry script gets wrong (§14.14).
 func (s *activitySuite) assertCancellationIsHonoured(ctx context.Context) assertion {
 	const (
 		ready      = "orkstack-contract-ready"
@@ -651,7 +650,7 @@ func (s *activitySuite) assertCancellationIsHonoured(ctx context.Context) assert
 	case <-caught:
 	case <-time.After(s.grace):
 		a.err = fmt.Errorf("the workload did not observe SIGTERM within the %s grace period; "+
-			"the entry script is not forwarding it (§10.2 rule 2a, §14.14)", s.grace)
+			"the entry script is not forwarding it (§10.1 rule 2a, §14.14)", s.grace)
 		return a
 	}
 	elapsed := time.Since(cancelledAt)

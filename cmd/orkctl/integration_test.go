@@ -532,7 +532,7 @@ func writePoolPinnedOrkflow(t *testing.T, repoRoot, name, pool string) string {
 			"uses": "shell",
 			"with": map[string]any{
 				"op": "exec",
-				// argv, never a shell string (§10.2 rule 8).
+				// argv, never a shell string (§10.1 rule 8).
 				"command": []any{"sh", "-c", "echo boom >&2; exit 7"},
 			},
 		}}

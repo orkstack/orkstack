@@ -1524,9 +1524,9 @@ heartbeat timeout means the Orker died — a fact about the host, not the
 workload — so it stays retryable under the task's policy, which is what moves
 the task to a live Orker.
 
-### 8.2 The exhaustive table
+### 8.2 Reason codes
 
-Reasons the Orker produces (`internal/orker/failure.go`):
+Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 
 | Reason code | Category | Retryable | Trigger |
 |---|---|---|---|
@@ -1571,9 +1571,30 @@ Reasons the Orker produces (`internal/orker/failure.go`):
 | `VALUES_CORRUPT` | ContractViolation | no | on adoption, the refetched `values.json` does not match `commit.values.sha256` |
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched |
 
-The engine produces the orchestration-level codes — `TASK_FAILED`,
-`TASK_CANCELED`, the pin codes (`PIN_HOST_LOST`, `PIN_UNAVAILABLE`, …), the
-await, fan-out and composition codes — documented with their features in
+Two Orker codes are not task-attempt reasons: `ORKER_CORDON_INVALID`
+(ContractViolation) refuses a malformed cordon control request, and `PANIC`
+is only what the Orker's attempt observer and per-reason metrics record when
+an attempt unwinds by panic — Temporal's activity worker turns the panic into
+its own error, never into a reported reason.
+
+The engine's own codes, independent of any one DSL feature:
+
+| Code | Where it lands | Meaning |
+|---|---|---|
+| `TASK_FAILED` | task `Error.code` | the default when a failure carries no Orker reason code; the message holds the cause |
+| `TASK_CANCELED` | task, Cancelled | the task was canceled (status `CANCELED`) |
+| `TASK_OUTPUT_INVALID` | task, ContractViolation | a committed or await-delivered `values.json` could not be converted to the task's output payload |
+| `ACTIVITY_TIMEOUT` | task, TimedOut, not retryable | Temporal's start-to-close timeout ended the activity (§8.1) |
+| `ORKER_HEARTBEAT_TIMEOUT` | task, InfrastructureError, retryable | the Orker stopped heartbeating — it died (§8.1) |
+| `INVALID_POOL`, `RESERVED_QUEUE` | non-retryable refusal to dispatch; a fan-out node's own code | the task's pool has no route in the run's plan, or resolves to a channel the engine reserves for itself |
+| `INVALID_COMMIT_KEY` | non-retryable refusal to dispatch | the namespace, run ID and task ID cannot compose a commit key (§5.2) |
+| `INVALID_RUN`, `INVALID_ORKFLOW` | the run's workflow failure | input guards: no run ID, or an Orkflow with no tasks |
+| `RUN_FAILED`, `RUN_CANCELED`, `RUN_TERMINATED`, `RUN_TIMED_OUT` | run `Error.code`, read from the history event that closed the execution | failed; canceled; terminated from outside the workflow (status `CANCELED`, message is the termination reason); exceeded a run timeout |
+| `RUN_START_FAILED` | run `Error.code` | the run's start failed after its ID was minted (`docs/STATS.md`) |
+
+Codes that belong to one construct — pins (`PIN_HOST_LOST`,
+`PIN_UNAVAILABLE`, `PIN_TIMEOUT`, …), joins (`CONDITION_FAILED`), awaits,
+fan-out and composition — are documented with that construct in
 `docs/DSL.md`.
 
 **There is no exit-code table, deliberately.** A workload choosing `exit 126`

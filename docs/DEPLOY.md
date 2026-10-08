@@ -109,6 +109,12 @@ needs `ORK_S3_*` either way.
   claim. The authoritative probe is a cheap unary call that touches the
   bucket, `orkctl --server … orkflow list` (`OrkflowService.ListOrkflows`);
   `scripts/stack.sh` gates on exactly that.
+- **The UI reaches the engine at two addresses.** Its server proxies every
+  Connect call (same origin for the browser, so no CORS) to `ENGINE_API_URL`
+  (default `http://127.0.0.1:8080`); the browser opens the run and task-log
+  WebSockets directly to the engine at `PUBLIC_ENGINE_WS_URL` (default
+  `ws(s)://<page host>:8080`). Set both whenever the engine is not on the UI
+  host's `:8080`.
 - **Browser clients need `ORK_WS_ALLOWED_ORIGINS`** set on every replica, since
   any of them may take the socket. Unset, the engine allows same-origin only,
   which is right for production and wrong the moment the UI is served from its

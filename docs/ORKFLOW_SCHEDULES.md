@@ -206,5 +206,5 @@ interval is aligned to the Unix epoch: every 15m fires at :00, :15, :30 and
 
 A release without schedules has no `ScheduleFireWorkflow` registered, so a
 schedule that fires on it cannot start. Pause or delete every schedule before
-rolling back to such a release ([DEPLOY.md](DEPLOY.md), "Rolling back past
-schedules").
+rolling back to such a release ([DEPLOY.md](DEPLOY.md) §3, "Releases that add
+Orkflow constructs", the `schedules` row).
