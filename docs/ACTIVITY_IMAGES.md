@@ -7,6 +7,9 @@ implements the public filesystem ABI of the
 interface inside the Orker, no OrkStack SDK, and no plugin registry. To add
 an activity, build an image that reads `/orkstack/input`, writes
 `/orkstack/output`, logs to stdout/stderr, and exits normally.
+`examples/custom-image` and `examples/custom-image-shell` are two such images,
+in Go and in POSIX shell; `docs/ORKFLOW_PATTERNS.md`, "When to write your own
+image", says when to write one.
 
 This page documents one convention the first-party reference images share.
 It is not part of the platform contract.

@@ -1,0 +1,110 @@
+# OrkStack orkflow DSL
+#
+# Decide in a task, branch on its value, re-join after the branch that ran.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Decide in a task, branch on its value"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Branch and re-join"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Plan before you run"
+#
+#   decide        a json task computes the decision ONCE: an enum (`route`)
+#                 and a JSON boolean (`notify`). The platform never computes;
+#                 a condition only reads a value, compares it, and combines.
+#   canary,       one task per route; each condition compares the enum with
+#   direct, hold  `eq`, so exactly one of them runs.
+#   notify-owner  combines two reads with `and`: a route test and the bare
+#                 JSON boolean, which renders `true` or `false`.
+#   report        join: none_failed re-joins after whichever route ran and
+#                 reads THAT branch's values by choosing the path with the
+#                 `index .tasks` guard — never by naming a skipped branch.
+#
+# See every path before anything runs. Each line is a CI check, and the test
+# suite runs every one of them; a condition that reads a key under `result`
+# needs the decision supplied with --output:
+#   orkctl run plan --file examples/decide-and-route.ork.yaml --output decide='{"result":{"route":"canary","notify":true}}' --assert-runs canary --assert-skipped direct --assert-skipped hold --assert-runs notify-owner --assert-runs report
+#   orkctl run plan --file examples/decide-and-route.ork.yaml --output decide='{"result":{"route":"direct","notify":false}}' --assert-runs direct --assert-skipped canary --assert-skipped notify-owner --assert-runs report
+#   orkctl run plan --file examples/decide-and-route.ork.yaml --output decide='{"result":{"route":"hold","notify":true}}' --assert-runs hold --assert-skipped notify-owner --assert-runs report
+name: decide-and-route
+version: "0.1.0"
+description: "Decide a rollout route in a json task, branch three ways on its value, and re-join after the branch that ran."
+
+inputs:
+  change:
+    type: object
+    default:
+      service: api
+      risk: low
+      files_changed: 3
+  freeze:
+    type: boolean
+    default: false
+
+tasks:
+  # 1. The decision is computation, so it is a task. It reads the run input
+  #    from run.json — typed JSON, never a value spliced into the filter —
+  #    and reports {"result": {"route": ..., "notify": ...}}.
+  - id: decide
+    uses: json
+    network: none
+    with:
+      op: query
+      src: run.json
+      filter: |
+        .change as $c
+        | {
+            route: (if .freeze then "hold"
+                    elif $c.risk == "high" or $c.files_changed > 20 then "canary"
+                    else "direct" end),
+            notify: ($c.risk != "low")
+          }
+
+  # 2. Three branches. Each reads the enum and compares it: a condition is
+  #    false only for a short list of spellings (docs/DSL.md, "Templating"),
+  #    so an enum compared with `eq` is the safe form.
+  - id: canary
+    uses: shell
+    needs: [decide]
+    condition: '{{ eq .tasks.decide.output.result.route "canary" }}'
+    with:
+      op: eval
+      command: ["printf", "%s", "canary: 5%, then 50%, then 100% of traffic"]
+
+  - id: direct
+    uses: shell
+    needs: [decide]
+    condition: '{{ eq .tasks.decide.output.result.route "direct" }}'
+    with:
+      op: eval
+      command: ["printf", "%s", "direct: all traffic at once"]
+
+  - id: hold
+    uses: shell
+    needs: [decide]
+    condition: '{{ eq .tasks.decide.output.result.route "hold" }}'
+    with:
+      op: eval
+      command: ["printf", "%s", "hold: a change freeze is on, nothing rolls out"]
+
+  # 3. Combining is still only reading: `and` of an enum test and a JSON
+  #    boolean rendered bare.
+  - id: notify-owner
+    uses: shell
+    needs: [decide]
+    condition: '{{ and (ne .tasks.decide.output.result.route "hold") .tasks.decide.output.result.notify }}'
+    with:
+      op: exec
+      command: ["echo", "the change is not low-risk: telling its owner"]
+
+  # 4. The re-join. Two of the three branches are always SKIPPED, so the
+  #    default join (all_succeeded) would skip this task too; none_failed
+  #    runs it after the one that ran. A skipped branch is absent from
+  #    .tasks and its values are never staged, so the source path is CHOSEN
+  #    with the guard form `if index .tasks "<id>"`, which never fails.
+  - id: report
+    uses: json
+    needs: [canary, direct, hold]
+    join: none_failed
+    network: none
+    with:
+      op: query
+      src: '{{ if index .tasks "canary" }}upstream/canary/values.json{{ else if index .tasks "direct" }}upstream/direct/values.json{{ else }}upstream/hold/values.json{{ end }}'
+      filter: '{plan: .value}'

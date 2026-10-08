@@ -1,0 +1,188 @@
+# OrkStack orkflow DSL
+#
+# A saga: reserve, charge and ship an order through an HTTP API, undo what was
+# done when a step fails, and report either way.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Undo what was done: failure handlers and sagas"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Side effects are at-least-once"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "A non-2xx answer is data"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Reuse a block with declared outputs"
+#
+#   prepare      validates the order and builds every request body ONCE.
+#   reserve,     the requests. Each PUTs to a URL keyed by the order id, so a
+#   charge, ship retried request is the same request (at-least-once).
+#   reserved,    the http activity exits 0 for any answer it received, so a
+#   charged,     json task turns "the service said no" into a failure:
+#   shipped      `error(...)` exits non-zero.
+#   release      join: any_failed over reserve AND every step after it: if
+#                any of them failed, the reservation may exist, so it is
+#                deleted. A DELETE of nothing is harmless — compensations are
+#                idempotent.
+#   refund       the same for the payment: needs charge and every step after.
+#                When reserve fails, charge never starts (it is CANCELED, not
+#                FAILED), so refund is skipped.
+#   report       join: all_done, after prepare, every step and both
+#                compensations: it reads how each ended from task.json's
+#                `join` object, and runs in a run that succeeds too.
+#   notify       join: all_done, the reusable notify-block (apply
+#                examples/notify-block.ork.yaml first).
+#
+# A failure handler never rescues the run: when a step fails, the run still
+# ends FAILED with that step's error, after release, refund, report and notify
+# ran to their own outcomes.
+#
+# Plan both paths before anything runs:
+#   orkctl run plan --file examples/order-saga.ork.yaml --assert-skipped release --assert-skipped refund --assert-runs report --assert-runs notify
+#   orkctl run plan --file examples/order-saga.ork.yaml --assume-failed shipped --assert-runs release --assert-runs refund --assert-runs report --assert-runs notify
+#   orkctl run plan --file examples/order-saga.ork.yaml --assume-failed reserve --assert-runs release --assert-skipped refund --assert-runs report
+#   orkctl run plan --file examples/order-saga.ork.yaml --assume-failed prepare --assert-skipped release --assert-skipped refund --assert-runs report --assert-runs notify
+name: order-saga
+version: "0.1.0"
+description: "Reserve, charge and ship an order over HTTP; release and refund when a later step fails; report either way. Apply notify-block first."
+
+inputs:
+  api:
+    type: string
+    required: true
+  notify_url:
+    type: string
+    required: true
+  order:
+    type: object
+    required: true
+
+tasks:
+  # 1. Validate once and build every body once. A malformed order fails here,
+  #    before any request is made. An id used in a URL is checked, not trusted.
+  - id: prepare
+    uses: json
+    network: none
+    with:
+      op: query
+      src: run.json
+      filter: |
+        .order as $o
+        | if (($o.id | type) != "string") or ($o.id | test("^[a-z0-9][a-z0-9-]{0,62}$") | not)
+          then error("order.id must be a lowercase slug, got \($o.id | tojson)")
+          else {
+            id: $o.id,
+            reservation: ({sku: $o.sku, quantity: $o.quantity} | tojson),
+            payment: ({amount: $o.amount, currency: ($o.currency // "EUR")} | tojson),
+            shipment: ({sku: $o.sku, quantity: $o.quantity, address: $o.address} | tojson)
+          }
+          end
+
+  - id: reserve
+    uses: http
+    needs: [prepare]
+    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    with:
+      op: put
+      url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/reservation'
+      headers:
+        content-type: application/json
+      body: '{{ .tasks.prepare.output.result.reservation }}'
+      timeoutSeconds: 20
+
+  - id: reserved
+    uses: json
+    needs: [reserve]
+    network: none
+    with:
+      op: query
+      src: upstream/reserve/values.json
+      filter: 'if .status == 200 or .status == 201 then "reserved" else error("the reservation was answered HTTP \(.status)") end'
+
+  - id: charge
+    uses: http
+    needs: [reserved]
+    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    with:
+      op: put
+      url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/payment'
+      headers:
+        content-type: application/json
+      body: '{{ .tasks.prepare.output.result.payment }}'
+      timeoutSeconds: 20
+
+  - id: charged
+    uses: json
+    needs: [charge]
+    network: none
+    with:
+      op: query
+      src: upstream/charge/values.json
+      filter: 'if .status == 200 or .status == 201 then "charged" else error("the payment was answered HTTP \(.status)") end'
+
+  - id: ship
+    uses: http
+    needs: [charged]
+    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    with:
+      op: put
+      url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/shipment'
+      headers:
+        content-type: application/json
+      body: '{{ .tasks.prepare.output.result.shipment }}'
+      timeoutSeconds: 20
+
+  - id: shipped
+    uses: json
+    needs: [ship]
+    network: none
+    with:
+      op: query
+      src: upstream/ship/values.json
+      filter: 'if .status == 200 or .status == 201 then "shipped" else error("the shipment was answered HTTP \(.status)") end'
+
+  # 2. Compensations. A handler with no retry: has one attempt; these declare
+  #    one, and are safe to run twice.
+  - id: release
+    uses: http
+    needs: [reserve, reserved, charge, charged, ship, shipped]
+    join: any_failed
+    retry: { maximum_attempts: 5, initial_interval_seconds: 2 }
+    with:
+      op: delete
+      url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/reservation'
+      timeoutSeconds: 20
+
+  - id: refund
+    uses: http
+    needs: [charge, charged, ship, shipped]
+    join: any_failed
+    retry: { maximum_attempts: 5, initial_interval_seconds: 2 }
+    with:
+      op: delete
+      url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/payment'
+      timeoutSeconds: 20
+
+  # 3. Report either way. all_done runs whatever its needs did, in a run that
+  #    succeeds too. It reads statuses from task.json and the order from
+  #    run.json: `srcs` hands the filter one array of both.
+  - id: report
+    uses: json
+    needs: [prepare, reserve, reserved, charge, charged, ship, shipped, release, refund]
+    join: all_done
+    network: none
+    with:
+      op: query
+      srcs: [task.json, run.json]
+      filter: |
+        .[0].join.needs as $needs
+        | (.[1].order.id // "?") as $id
+        | ([$needs[] | select(.status == "FAILED")] | first) as $failed
+        | if $failed == null then "order \($id): reserved, charged and shipped"
+          else "order \($id) failed at \($failed.taskId) (\($failed.error.code // "no code")); "
+               + ([$needs[] | select(.taskId == "release" or .taskId == "refund")
+                   | "\(.taskId) \(.status | ascii_downcase)"] | join(", "))
+          end
+
+  - id: notify
+    uses: orkflow:notify-block@0.1.0
+    needs: [report]
+    join: all_done
+    with:
+      url: '{{ .inputs.notify_url }}'
+      subject: order saga
+      text: '{{ with index .tasks "report" }}{{ .output.result }}{{ end }}'

@@ -420,12 +420,14 @@ func TestSureAncestors_IsTheClosureWithoutJoins(t *testing.T) {
 		t.Fatalf("glob: %v", err)
 	}
 	for _, path := range paths {
-		if filepath.Base(path) == "branch-and-recover.ork.yaml" {
-			continue
-		}
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatalf("compile %s: %v", path, err)
+		}
+		// The sure set is the needs closure only when no task joins: a
+		// join narrows it by design (TestSureAncestors_FollowsJoins).
+		if hasAnyJoin(wf) {
+			continue
 		}
 		byID := map[string]*orkstackv1.Task{}
 		for _, task := range wf.GetTasks() {
@@ -446,10 +448,35 @@ func TestSureAncestors_IsTheClosureWithoutJoins(t *testing.T) {
 				t.Errorf("%s: sure(%s) = %v, want the closure %v", filepath.Base(path), task.GetId(), sure[task.GetId()], want)
 			}
 		}
+	}
+}
+
+// TestJoinWarnings_EveryShippedExampleHasNone holds every shipped example —
+// the ones that join and the ones that do not — to apply's W1 warning: no
+// example reads a task that may be absent outside an `index .tasks` guard.
+func TestJoinWarnings_EveryShippedExampleHasNone(t *testing.T) {
+	paths, err := filepath.Glob("../../examples/*.ork.yaml")
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("glob: %v (%d found)", err, len(paths))
+	}
+	for _, path := range paths {
+		wf, err := dsl.CompileFile(path)
+		if err != nil {
+			t.Fatalf("compile %s: %v", path, err)
+		}
 		if issues := dsl.JoinWarnings(wf); len(issues) != 0 {
 			t.Errorf("%s: JoinWarnings = %v, want none", filepath.Base(path), issues)
 		}
 	}
+}
+
+func hasAnyJoin(wf *orkstackv1.Orkflow) bool {
+	for _, task := range wf.GetTasks() {
+		if task.GetJoin() != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTaskReads_KindsPathsAndGuards(t *testing.T) {

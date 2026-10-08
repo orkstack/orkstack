@@ -22,11 +22,11 @@ import (
 
 // eachCLIDoc is examples/each-fan-out.ork.yaml's list → convert → merge
 // shape, stamped with its own name, on the local first-party images only.
-// The parts come from the run's input rather than from list's values:
-// activity-shell writes values.json itself on every op, so no task of it can
-// hand an array to a fan-out, and the example's plain base image would make
-// this suite resolve a Docker Hub tag at apply. The upstream-sourced
-// expansion is the engine suite's (I1–I5, real Orker and containers).
+// The parts come from the run's input, so this suite exercises an
+// input-sourced expansion; the shipped example computes its list in a json
+// task and is run end to end by cmd/orkctl/examples_integration_test.go (E3).
+// The upstream-sourced expansion is also the engine suite's (I1–I5, real
+// Orker and containers).
 // `convert` prints its task.json and config.json between markers, so C3 can
 // compare a local item run with the Orker's own, and item 2 exits 1 on its
 // first attempt so one item retries.

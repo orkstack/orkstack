@@ -67,11 +67,11 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
 // reads every item's part.txt, staged under one directory per item, in item
 // order, and `op: eval` makes what it read its values.
 //
-// The parts are the run's INPUT, not list's values: activity-shell writes
-// values.json itself on every op, so no shell task can hand a fan-out an
-// array, and examples/each-fan-out.ork.yaml's plain base image would make this
-// spec resolve a Docker Hub tag at apply. The upstream-sourced expansion is
-// proven by the engine suite (internal/engine/each_integration_test.go).
+// The parts are the run's INPUT, so this spec exercises an input-sourced
+// expansion; the shipped example computes its list in a json task and is run
+// end to end by cmd/orkctl/examples_integration_test.go (E3). The
+// upstream-sourced expansion is also proven by the engine suite
+// (internal/engine/each_integration_test.go).
 const PARTS = ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => ({ name }));
 
 function fanOutOrkflow(): string {

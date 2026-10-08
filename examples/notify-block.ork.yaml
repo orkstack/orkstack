@@ -1,0 +1,61 @@
+# OrkStack orkflow DSL
+#
+# A reusable block: post one JSON notification and report the HTTP status.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Reuse a block with declared outputs"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Pass values as data, never as code"
+#
+# `outputs:` is its interface: the one thing a composing Orkflow may read
+# (`.tasks.<id>.output.status`). Other Orkflows compose it with
+#   uses: orkflow:notify-block@0.1.0
+# so apply this file before examples/order-saga.ork.yaml and
+# examples/approval-gate.ork.yaml.
+#
+# The body is BUILT by a json task from typed values, never spliced into a
+# JSON string in `with:` — a quote or a newline in `text` would break the
+# document, or change its meaning. A non-2xx answer is data here (the http
+# activity exits 0 for any response it received): the block reports `status`
+# and its caller decides what a 500 means.
+name: notify-block
+version: "0.1.0"
+description: "Post one JSON notification built by a json task; its declared output is the HTTP status."
+
+inputs:
+  url:
+    type: string
+    required: true
+  subject:
+    type: string
+    default: ""
+  text:
+    type: string
+    required: true
+
+outputs:
+  status: '{{ .tasks.post.output.status }}'
+
+tasks:
+  - id: body
+    uses: json
+    network: none
+    with:
+      op: query
+      nullInput: true
+      vars:
+        subject: '{{ .inputs.subject }}'
+        text: '{{ .inputs.text }}'
+      filter: '{subject: $vars.subject, text: $vars.text} | tojson'
+
+  # A request that could not be performed (DNS, refused, TLS, timeout) fails
+  # and is retried; an answer of any status is data.
+  - id: post
+    uses: http
+    needs: [body]
+    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    with:
+      op: post
+      url: '{{ .inputs.url }}'
+      headers:
+        content-type: application/json
+      body: '{{ .tasks.body.output.result }}'
+      timeoutSeconds: 20

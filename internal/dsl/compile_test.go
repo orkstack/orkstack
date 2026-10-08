@@ -82,9 +82,15 @@ func TestCompileFile_AcceptsHelloExample(t *testing.T) {
 }
 
 // TestCompile_AcceptsEveryShippedExample keeps examples/ honest: every file we
-// ship as documentation must still compile, and every task in it must name the
-// generic `op` selector so the examples stay a faithful reference for
-// docs/ACTIVITY_IMAGES.md.
+// ship as documentation must still compile, and every task that names a
+// catalog activity must name the generic `op` selector, so the examples stay a
+// faithful reference for docs/ACTIVITY_IMAGES.md.
+//
+// `op` is a convention of the first-party images, not of the OCI contract: a
+// task whose `uses` is a registry reference (an image of the author's own,
+// examples/custom-image.ork.yaml) has its own configuration shape and is
+// exempt. An awaited task runs no activity and a composed task's with: is
+// its child run's input, so neither names an `op` either.
 func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
 	paths, err := filepath.Glob("../../examples/*.ork.yaml")
 	if err != nil {
@@ -93,6 +99,7 @@ func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
 	if len(paths) < 4 {
 		t.Fatalf("found %d examples (%v), want hello, http-post, file-read and shell-eval", len(paths), paths)
 	}
+	catalog := dsl.BuiltinActivityCatalog()
 
 	for _, path := range paths {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -107,18 +114,8 @@ func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
 				if task.GetOrkflow() != nil {
 					continue // a composed task's with: is its child run's input
 				}
-				if filepath.Base(path) == "each-fan-out.ork.yaml" && task.GetId() == "list" {
-					// The one exemption: this task runs a plain base image
-					// (alpine), not a first-party activity, so there is no `op`
-					// selector to name. Its `command:` is the container's CMD
-					// and writes the values.json array the fan-out reads,
-					// which no activity-shell op can: activity-shell's
-					// ENTRYPOINT writes values.json itself on every op.
-					if len(task.GetCommand()) == 0 || strings.Contains(task.GetUses(), "shell") {
-						t.Fatalf("each-fan-out's list = uses %q, command %v: the exemption no longer fits it",
-							task.GetUses(), task.GetCommand())
-					}
-					continue
+				if _, ok := catalog[task.GetUses()]; !ok {
+					continue // a registry reference: `op` is not its convention
 				}
 				with := task.GetWith().AsMap()
 				op, _ := with["op"].(string)
