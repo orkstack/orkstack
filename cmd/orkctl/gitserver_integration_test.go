@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -454,4 +455,40 @@ func requireContainerCanReachTLS(ctx context.Context, t *testing.T, url string) 
 	if out, err := probe.CombinedOutput(); err != nil {
 		infraAbsent(t, "a container cannot reach the test git server %s (%v): %s", url, err, out)
 	}
+}
+
+// AddRepository creates a bare repository at repo under the server root
+// (private/… is authenticated, public/… is not) whose HEAD is
+// refs/heads/main and which serves a reachable commit by id, commits files to
+// main, pushes, and returns the commit id.
+func (s *tlsGitServer) AddRepository(t *testing.T, repo string, files map[string]string) string {
+	t.Helper()
+	s.newRepo(repo, files)
+	s.inWork(repo, "push", "--quiet", "origin", "main")
+	return s.Commit(repo, "refs/heads/main")
+}
+
+// PushCommit commits the given files to main, changing nothing else, pushes,
+// and returns the new commit id.
+func (s *tlsGitServer) PushCommit(t *testing.T, repo string, files map[string]string) string {
+	t.Helper()
+	work := filepath.Join(s.work, repo)
+	for name, content := range files {
+		path := filepath.Join(work, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		s.inWork(repo, "add", name)
+	}
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	s.inWork(repo, "commit", "--quiet", "-m", "change "+strings.Join(names, ", "))
+	s.inWork(repo, "push", "--quiet", "origin", "main")
+	return s.Commit(repo, "refs/heads/main")
 }
