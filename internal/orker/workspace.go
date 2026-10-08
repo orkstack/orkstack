@@ -262,7 +262,7 @@ func (w *Workspace) Mounts() []Mount {
 // source is a sibling of this tree, not a child of it (§6.4).
 //
 // Called on EVERY exit path: success, failure, panic and cancellation alike
-// (§6.2).
+// (docs/OCI_ACTIVITY_CONTRACT.md §7.1, step 15).
 func (w *Workspace) Remove() error {
 	return removeSealedTree(w.Root)
 }

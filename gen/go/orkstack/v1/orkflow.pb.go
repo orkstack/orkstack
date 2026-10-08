@@ -741,8 +741,8 @@ type Orkflow struct {
 	// 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an
 	// older reader simply does not see it. The alternative was to populate
 	// orkflow_definition_digest from workflow code, which changes recorded
-	// activity-payload bytes and would force a SECOND replay-fixture reset —
-	// which §11.4 calls a process failure.
+	// activity-payload bytes and would force re-recording the base replay
+	// fixture, which is never re-recorded.
 	DefinitionDigest string `protobuf:"bytes,10,opt,name=definition_digest,json=definitionDigest,proto3" json:"definition_digest,omitempty"`
 	// pins declares every Pin a task may name, sorted by name at compile so
 	// one document always compiles to one message. Part of canonicalOrkflow,

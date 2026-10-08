@@ -14,10 +14,9 @@ import (
 // The five failure categories of the OCI Activity Contract (§8.1).
 //
 // They are re-exported from internal/task rather than redeclared. The Orker
-// constructs them and the engine reads them, and they are the exact Temporal
-// ApplicationError type strings that RetryPolicy.NonRetryableErrorTypes
-// matches LITERALLY — so a second spelling on this side would silently stop a
-// contract violation from being non-retryable. One owner, one string.
+// constructs them and the engine reads them back as the exact Temporal
+// ApplicationError type strings, so a second spelling on this side would
+// silently misclassify a failure. One owner, one string.
 const (
 	CategoryActivityFailed      = task.CategoryActivityFailed
 	CategoryInfrastructureError = task.CategoryInfrastructureError
@@ -178,8 +177,9 @@ func CategoryFor(reason string) string {
 // RetryableReason answers whether Temporal should try a reason code again.
 //
 // The category supplies the default and the override table supplies the three
-// exceptions. ContractViolation and TimedOut are never retryable, which is the
-// same statement NonRetryableCategories makes to the engine.
+// exceptions. ContractViolation and TimedOut are never retryable (the same
+// statement task.NonRetryableCategories makes); the answer becomes the
+// non-retryable flag on the ApplicationError, which wins over any policy.
 func RetryableReason(reason string) bool {
 	if explicit, ok := retryableReason[reason]; ok {
 		return explicit

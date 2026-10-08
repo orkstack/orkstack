@@ -401,8 +401,7 @@ func goldenActivityPayloads(t *testing.T, recorded *historypb.History) (
 				// The key is lowerCamel because ExecuteTaskInput is a
 				// top-level PROTO message now, and Temporal's converter
 				// encodes those with protojson rather than encoding/json
-				// (§2.5). That encoder flip is precisely what made the one
-				// permitted fixture reset necessary (§11.4).
+				// (testdata/history/README.md, run-succeeded-v1.json).
 				taskID, _ := decoded["taskId"].(string)
 				if taskID == "" {
 					t.Fatalf("a recorded ExecuteTask input has no taskId: %v", decoded)

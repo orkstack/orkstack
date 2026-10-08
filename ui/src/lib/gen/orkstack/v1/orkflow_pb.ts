@@ -537,8 +537,8 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
    * 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an
    * older reader simply does not see it. The alternative was to populate
    * orkflow_definition_digest from workflow code, which changes recorded
-   * activity-payload bytes and would force a SECOND replay-fixture reset —
-   * which §11.4 calls a process failure.
+   * activity-payload bytes and would force re-recording the base replay
+   * fixture, which is never re-recorded.
    *
    * @generated from field: string definition_digest = 10;
    */

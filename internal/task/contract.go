@@ -9,9 +9,7 @@
 // orkstack.v1.ExecuteTaskInput is the whole activity argument
 // (docs/OCI_ACTIVITY_CONTRACT.md §2.2). Temporal's data converter encodes a top-level protobuf message with
 // protojson and everything else with encoding/json, so the recorded payload
-// encoding is protojson and the golden fixture below is pinned to it — which
-// is why the design permits exactly ONE replay-fixture recording, made once,
-// after the entire wire shape had landed (§11.4).
+// encoding is protojson and the golden fixture below is pinned to it.
 //
 // Design note — template rendering lives in the Orker, not the engine:
 // task `with` values may reference upstream artifacts via the
@@ -25,9 +23,8 @@
 // wire change. The golden history fixture
 // (internal/engine/testdata/history/run-succeeded-v1.json) was recorded by
 // TestIntegration_RecordGoldenRunHistory against a real cluster
-// (ORK_RECORD_GOLDEN_HISTORY=1) after the ExecuteTaskInput wire shape landed,
-// and §11.4 permits no further reset: a change that would need one is a
-// change to the contract itself, not a refactor.
+// (ORK_RECORD_GOLDEN_HISTORY=1) and is never re-recorded: a change that would
+// need it is a change to the contract itself, not a refactor.
 package task
 
 import (
@@ -95,10 +92,8 @@ const (
 // than in internal/orker or internal/engine. The Orker constructs them and the
 // engine reads them, so a copy in either package would be a second spelling of
 // a shared contract — and these strings tolerate no drift at all: they are the
-// exact Temporal ApplicationError type strings, and
-// RetryPolicy.NonRetryableErrorTypes matches a type string LITERALLY, not with
-// errors.Is. A category that spelled itself differently on the two sides would
-// silently stop being non-retryable.
+// exact Temporal ApplicationError type strings the engine maps back to a
+// FailureCategory on the reading side.
 const (
 	// CategoryActivityFailed is the container exiting non-zero for its own
 	// reasons. Retried per the task's policy.
@@ -112,25 +107,23 @@ const (
 	// CategoryTimedOut is the Orker killing the container at timeout_seconds,
 	// or Temporal producing a *TimeoutError.
 	//
-	// It is NON-RETRYABLE BY DEFAULT, which deviates from AGENTS.md §4's
-	// suggested-default table. Acceptance criterion 7 of this design groups
-	// timeout with the permanent failures in as many words; the two cannot
-	// both be honored, and the acceptance criteria are this work's literal
-	// contract, so the criterion controls. Flipping it back is one line:
-	// remove it from NonRetryableCategories (§8.1, §13, §17 C1).
+	// The Orker's own CONTAINER_TIMEOUT is NON-RETRYABLE BY DEFAULT, which
+	// differs from AGENTS.md §4's suggested-default table: a workload that
+	// times out once would time out again on the same wall clock. A Temporal
+	// heartbeat timeout (a lost Orker) stays retryable. The decision is made
+	// by orker.RetryableReason (docs/OCI_ACTIVITY_CONTRACT.md §8.1).
 	CategoryTimedOut = "TimedOut"
 	// CategoryCancelled is delivered by Temporal through a heartbeat. It is
 	// never an ApplicationError; the Orker returns ctx.Err() instead.
 	CategoryCancelled = "Cancelled"
 )
 
-// NonRetryableCategories is what the engine puts in
-// RetryPolicy.NonRetryableErrorTypes.
-//
-// It is belt and braces rather than the only mechanism: a ContractViolation is
-// also constructed with temporal.NewNonRetryableApplicationError, and the
-// constructor's flag always wins. The list is what makes the intent visible in
-// the workflow, to a reader of the retry policy who never opens the Orker.
+// NonRetryableCategories names the categories whose reasons the Orker
+// constructs non-retryable by default. It is a statement of intent shared by
+// tests, not a retry list: the engine sets no NonRetryableErrorTypes, and
+// non-retryability travels on the error itself
+// (temporal.NewNonRetryableApplicationError, decided by
+// orker.RetryableReason).
 func NonRetryableCategories() []string {
 	return []string{CategoryContractViolation, CategoryTimedOut}
 }
@@ -327,7 +320,7 @@ func whitespaceSites(compact []byte) int {
 // wire names coexist, and keeping this one plain is what makes
 // ExecuteTaskInput's JSON key byte-identical to the `idempotencyKey` that
 // task.json already writes. The Go identifiers stay distinct because those
-// would genuinely collide (§11.5).
+// would genuinely collide.
 func IdempotencyKeyFor(namespace, runID, taskID string) string {
 	if namespace == "" {
 		namespace = "default"

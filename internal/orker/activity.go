@@ -212,11 +212,11 @@ func (a *Activities) Dispatcher() *OCIDispatcher { return a.dispatcher }
 // inputs, pull the image, run the container, validate its outputs, upload
 // them, and write the completion manifest.
 //
-// The argument is the proto message, not a Go struct. That is deliberate and
-// it is the reason §11.4's one-time replay-fixture reset exists: Temporal's
-// converter encodes a top-level protobuf message with protojson and everything
-// else with encoding/json, so making ExecuteTaskInput a proto message flips the
-// recorded payload encoding (§2.5).
+// The argument is the proto message, not a Go struct. That is deliberate:
+// Temporal's converter encodes a top-level protobuf message with protojson and
+// everything else with encoding/json, so the recorded payload encoding is
+// protojson and the base replay fixture pins it
+// (internal/engine/testdata/history/README.md).
 func (a *Activities) ExecuteTask(
 	ctx context.Context,
 	in *orkstackv1.ExecuteTaskInput,

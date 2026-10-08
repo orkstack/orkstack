@@ -553,8 +553,8 @@ func TestIntegration_CancellationSignalsThenKills(t *testing.T) {
 
 // TestIntegration_ContainerTimeoutIsTerminal covers the OTHER kill path, which
 // shares TerminateContainer with cancellation but means something different:
-// the task exceeded its own wall clock, and §8.1 makes that terminal by
-// default (§17 C1).
+// the task exceeded its own wall clock, and docs/OCI_ACTIVITY_CONTRACT.md
+// §8.1 makes that terminal by default.
 func TestIntegration_ContainerTimeoutIsTerminal(t *testing.T) {
 	requireDocker(t)
 	dispatcher, _ := newDispatcher(t)

@@ -2021,8 +2021,7 @@ func retryStateEnumFor(state enumspb.RetryState) orkstackv1.RetryState {
 }
 
 // categoryEnumFor maps an ApplicationError type string to the proto enum.
-// The category names ARE the type strings, which is what makes
-// NonRetryableErrorTypes work at all (§8.1).
+// The category names ARE the type strings (docs/OCI_ACTIVITY_CONTRACT.md §8.1).
 func categoryEnumFor(category string) orkstackv1.FailureCategory {
 	switch category {
 	case task.CategoryActivityFailed:
