@@ -427,7 +427,8 @@ func namespaceSpecFlags(
 		"how long a finished run stays readable, e.g. \"168h\" "+
 			"(default: the deployment maximum; \"inherit\" clears a value)")
 	cmd.Flags().StringVar(telemetrySink, "telemetry-sink", "",
-		"telemetry sink this namespace's runs use, by name, from `orkctl system telemetry-sinks` "+
+		"telemetry sink this namespace's runs use, by the name the deployment declares in "+
+			"ORK_TELEMETRY_SINKS; an unknown name is refused with the known list "+
 			"(default: the deployment's default sink)")
 	cmd.Flags().StringVar(taskLogs, "task-logs", "inherit",
 		"override the Orker's task-log export for this namespace's runs: enabled, disabled, or inherit")
@@ -441,7 +442,7 @@ func namespaceSpecFlags(
 		"most runs of this namespace in flight at once (0 = unlimited)")
 	cmd.Flags().StringVar(requireSignedBy, "require-signed-by", "",
 		"require every image executed in this namespace to carry a valid signature, as cosign:KEY "+
-			"naming a key of `orkctl admin image-policy get` (tightens the deployment policy; never loosens it)")
+			"naming a key of 'orkctl admin image-policy get' (tightens the deployment policy; never loosens it)")
 	cmd.Flags().Int64Var(&budget.cpuSeconds, "budget-cpu-seconds", 0,
 		"bound on the namespace's RESERVED cpu-seconds (cpu x attempt time) over --budget-period; 0 unbounds the dimension")
 	cmd.Flags().Int64Var(&budget.gibSeconds, "budget-gib-seconds", 0,
@@ -451,7 +452,7 @@ func namespaceSpecFlags(
 			artifacts.BudgetMinPeriod, artifacts.BudgetMaxPeriod))
 	cmd.Flags().BoolVar(&budget.enforce, "budget-enforce", false,
 		"refuse new runs once the budget is reached (=false only reports it); check that "+
-			"`orkctl stats usage --since <period>` answers before enforcing: an enforced budget "+
+			"'orkctl stats usage --since <period>' answers before enforcing: an enforced budget "+
 			"that cannot be measured refuses every submit")
 }
 

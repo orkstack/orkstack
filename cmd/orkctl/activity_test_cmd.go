@@ -89,6 +89,11 @@ func newActivityTestCommand(g *globalFlags) *cobra.Command {
 			"the test.\n\n" +
 			"The image reference is used verbatim: this command does not resolve it\n" +
 			"through the catalog, because the point is to test an image you just built.\n\n" +
+			"Each probe is a command run inside the image through activity-shell's config\n" +
+			"(with: op exec or eval, plus a command), so the image needs sh and jq and must\n" +
+			"accept that config. An image with its own config contract (activity-http,\n" +
+			"activity-file) is refused before any assertion, as \"cannot be driven\"; test\n" +
+			"it with a fixture that speaks its config (test/fixtures/).\n\n" +
 			"Requires a working container runtime. Exits non-zero if any assertion fails.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

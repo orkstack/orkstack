@@ -172,7 +172,7 @@ func newAdminImagePolicySetCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&requireDigest, "require-digest", false,
-		"refuse a `uses:` written as a mutable tag (--require-digest=false clears it); catalog names are exempt")
+		"refuse a uses: written as a mutable tag (--require-digest=false clears it); catalog names are exempt")
 	cmd.Flags().StringArrayVar(&allowedRegistry, "allowed-registry", nil,
 		"a {registry}/{repository} prefix images may come from, e.g. ghcr.io/acme/ (repeatable; replaces the whole list)")
 	cmd.Flags().BoolVar(&clearRegistries, "clear-allowed-registries", false,
