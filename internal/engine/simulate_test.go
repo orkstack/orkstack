@@ -355,6 +355,12 @@ func TestSimulate_AgreesWithTheInterpreter(t *testing.T) {
 			map[string]map[string]any{"list": {"parts": "nope"}}},
 		{"cached pipeline", compileExample(t, "cached-pipeline.ork.yaml"), nil,
 			map[string]map[string]any{"stamp": {"value": "1759600000000000000"}}},
+		{"decide-and-route canary", compileExample(t, "decide-and-route.ork.yaml"), nil,
+			map[string]map[string]any{"decide": {"result": map[string]any{"route": "canary", "notify": true}}}},
+		{"decide-and-route direct", compileExample(t, "decide-and-route.ork.yaml"), nil,
+			map[string]map[string]any{"decide": {"result": map[string]any{"route": "direct", "notify": false}}}},
+		{"decide-and-route hold", compileExample(t, "decide-and-route.ork.yaml"), nil,
+			map[string]map[string]any{"decide": {"result": map[string]any{"route": "hold", "notify": true}}}},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

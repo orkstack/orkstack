@@ -469,7 +469,11 @@ compensation undoes can be running when another forward step fails:
   ```
 
 In both forms the compensation's `needs:` lists every forward step whose
-failure should undo its step: a handler decides only on its own needs.
+failure should undo its step: a handler decides only on its own needs. A third
+form — for a request that may have taken effect although it failed — needs the
+step it undoes and every step after it, with no condition and an idempotent
+undo: see `docs/ORKFLOW_PATTERNS.md`, "Undo what was done: failure handlers and
+sagas", and `examples/order-saga.ork.yaml`.
 
 **Reading an ancestor a join can leave absent.** Without a join, every task of
 a needs closure has succeeded whenever a task runs. A join breaks that, and not
@@ -553,7 +557,8 @@ tasks:
 "`dest` — a working tree for a pin"); `golang` is illustrative — a
 deployment's catalog decides what such a name resolves to. For a pin written
 against the first-party activity images and compiled by the test suite, see
-`examples/pinned-build.ork.yaml`.
+`examples/pinned-build.ork.yaml`. `examples/pinned-checkout.ork.yaml` clones
+with the `git` activity into a pin.
 
 `pins:` is a top-level map from pin name to a (possibly empty) options object;
 `pins: { build: {} }` is legal. `pin:` on a task is a bare name and must name a
@@ -1043,6 +1048,10 @@ composed task's `with:` and an Orkflow's `outputs:`. They get **no helpers**
 (`artifact`, `env` and `sh` are Orker-side), read `.tasks.<id>.output` only,
 and name every task they read literally (rule 28).
 
+Computing — formatting, arithmetic, a decision — is a task's job, never a
+template's: see `docs/ORKFLOW_PATTERNS.md`, "The rule: the platform moves data,
+tasks compute".
+
 ## Validation rules (enforced by `internal/dsl`)
 
 1. `namespace`, when present, is slug-formatted (`^[a-z][a-z0-9-]*$`); absent
@@ -1217,4 +1226,6 @@ direction — a test dependency costs an importer nothing.
 See `examples/hello.ork.yaml` for a fetch → transform → checksum pipeline that
 uses the first-party `http`, `shell`, and `file` OCI activity images with
 artifact hand-off. Every shipped example is compiled by
-`TestCompile_AcceptsEveryShippedExample`.
+`TestCompile_AcceptsEveryShippedExample`. `examples/README.md` lists every
+shipped example and what it needs to run, and `docs/ORKFLOW_PATTERNS.md` is the
+best-practice guide they illustrate.

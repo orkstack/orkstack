@@ -40,6 +40,8 @@ make up             # Temporal + MinIO + engine + orker + UI, health-checked
 make down           # stop everything (data is kept)
 ```
 
+`examples/README.md` lists every example and what it needs to run.
+
 - UI: http://localhost:5173
 - Engine API: http://localhost:8080
 - Temporal UI: http://localhost:8233
@@ -107,6 +109,8 @@ pull request quotes it. No proof, no done.
 - [DSL reference](./docs/DSL.md)
 - [OCI Activity Contract](./docs/OCI_ACTIVITY_CONTRACT.md)
 - [Activity images and the `op` convention](./docs/ACTIVITY_IMAGES.md)
+- [Orkflow patterns](./docs/ORKFLOW_PATTERNS.md)
+- [Examples](./examples/README.md)
 - [Deploying OrkStack](./docs/DEPLOY.md)
 - [Storage layout](./docs/STORAGE.md)
 - [JSON enum dialect](./docs/JSON.md)

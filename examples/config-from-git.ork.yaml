@@ -1,0 +1,158 @@
+# OrkStack orkflow DSL
+#
+# Render one config file per service from a repository, at ONE commit, and
+# reuse every rendering while that commit does not change.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Pin moving inputs: resolve, then use the commit"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Batch transforms into one prepare task"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Cache only what you assert is reusable"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "jq, a template, or your own image"
+#
+#   resolve   asks the remote what `ref` means now; every later task names the
+#             COMMIT it reported, never the branch, so a push mid-run cannot
+#             mix two trees.
+#   clone     fetches that commit as a tarball. It mounts the token, so it is
+#             NOT cached: a task that mounts a secret is never cached, and a
+#             revoked token must fail the very next run.
+#   tmpl,     one file each out of the tarball (file untar), cached. Their
+#   services  key covers the tarball's digest, so they hit on the next run of
+#             the same commit while activity-git's tarball of it is
+#             byte-identical (one platform image, its default environment —
+#             images/activity-git/README.md, "Caching"); if it ever differs,
+#             they simply miss.
+#   prepare   computes every service's values ONCE, formatted as strings,
+#             before the fan-out — not once per item.
+#   render    one template rendering per service (each:), cached per item.
+#   manifest  gathers the items' values into one list.
+#
+# The repository must hold the two files named by `template_path` and
+# `services_path`; services.json is {"services": [{"name", "port",
+# "replicas"}, ...]}. Export GIT_TOKEN where the Orker runs (secrets:
+# below). For a PUBLIC repository delete both `tokenSecret:` lines and both
+# `secrets:` blocks — and then `clone` may be cached too, because it clones a
+# commit id. Behind a proxy, give the git tasks `env: {HTTPS_PROXY: ...}`:
+# it configures git, as it would on any machine.
+#
+#   orkctl run submit config-from-git --input repo=https://git.example.com/acme/app.git --input environment=prod
+#   orkctl run submit config-from-git --input repo=... --input environment=prod   # again: tmpl..manifest are SUCCEEDED (cached)
+name: config-from-git
+version: "0.1.0"
+description: "Resolve a branch to a commit, clone it once, and render one config file per service; cached while the commit holds."
+
+inputs:
+  repo:
+    type: string
+    required: true
+  ref:
+    type: string
+    default: main
+  environment:
+    type: string
+    default: staging
+  template_path:
+    type: string
+    default: deploy/app.conf.tmpl
+  services_path:
+    type: string
+    default: deploy/services.json
+
+tasks:
+  - id: resolve
+    uses: git
+    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    secrets:
+      - name: git-token
+        source: env:GIT_TOKEN
+    with:
+      op: resolve
+      url: '{{ .inputs.repo }}'
+      ref: '{{ .inputs.ref }}'
+      tokenSecret: git-token
+
+  - id: clone
+    uses: git
+    needs: [resolve]
+    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    secrets:
+      - name: git-token
+        source: env:GIT_TOKEN
+    with:
+      op: clone
+      url: '{{ .inputs.repo }}'
+      ref: '{{ .tasks.resolve.output.commit }}'
+      tokenSecret: git-token
+
+  - id: tmpl
+    uses: file
+    needs: [clone]
+    network: none
+    cache: { enabled: true, ttl_seconds: 86400 }
+    with:
+      op: untar
+      src: '{{ artifact "clone/src.tar.gz" }}'
+      member: '{{ .inputs.template_path }}'
+      as: app.conf.tmpl
+
+  - id: services
+    uses: file
+    needs: [clone]
+    network: none
+    cache: { enabled: true, ttl_seconds: 86400 }
+    with:
+      op: untar
+      src: '{{ artifact "clone/src.tar.gz" }}'
+      member: '{{ .inputs.services_path }}'
+      as: services.json
+
+  - id: prepare
+    uses: json
+    needs: [resolve, services]
+    network: none
+    cache: { enabled: true, ttl_seconds: 86400 }
+    with:
+      op: query
+      src: '{{ artifact "services/services.json" }}'
+      vars:
+        environment: '{{ .inputs.environment }}'
+        commit: '{{ .tasks.resolve.output.commit }}'
+      filter: |
+        [ .services[]
+          | {
+              name,
+              file: "\(.name).conf",
+              port: (.port | tostring),
+              replicas: ((if $vars.environment == "prod" then .replicas * 2 else .replicas end) | tostring),
+              environment: $vars.environment,
+              commit: $vars.commit[0:12]
+            } ]
+
+  - id: render
+    uses: template
+    needs: [tmpl, prepare]
+    network: none
+    cache: { enabled: true, ttl_seconds: 86400 }
+    each:
+      over: '{{ .tasks.prepare.output.result }}'
+      as: svc
+      max_items: 100
+      max_parallel: 4
+    with:
+      op: render
+      src: '{{ artifact "tmpl/app.conf.tmpl" }}'
+      values:
+        name: '{{ .each.svc.name }}'
+        port: '{{ .each.svc.port }}'
+        replicas: '{{ .each.svc.replicas }}'
+        environment: '{{ .each.svc.environment }}'
+        commit: '{{ .each.svc.commit }}'
+      as: '{{ .each.svc.file }}'
+
+  - id: manifest
+    uses: json
+    needs: [render]
+    network: none
+    cache: { enabled: true, ttl_seconds: 86400 }
+    with:
+      op: query
+      gather: render
+      filter: 'map({file: (.path | split("/") | last), sha256, sizeBytes})'
