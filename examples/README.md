@@ -3,19 +3,22 @@
 ## What these are
 
 Every Orkflow here is a runnable reference document: the test suite compiles
-each one, runs every `orkctl run plan` line in its header as a CI check, and
-runs each end to end against a real engine, Orker, Temporal and object store.
+each one, runs every `orkctl run plan --file` line in its header as a CI check,
+and runs each end to end against a real engine, Orker, Temporal and object
+store (all but `advanced-demo`, which needs the internet).
 [`docs/ORKFLOW_PATTERNS.md`](../docs/ORKFLOW_PATTERNS.md) is the guide they
 illustrate; each example names the sections it shows in a `# Pattern:` line
 of its header, and the header lists everything the example needs before it
 runs.
 
-The eleven older examples (marked *older* below) predate the guide and are
-kept byte-identical, because a stored version cannot change. Five of them
-splice a rendered value into shell text or a JSON string — `http-post`,
-`shell-eval`, `file-read`, `pinned-build` and `advanced-demo` — which the
-guide's "Pass values as data, never as code" says not to do: follow the
-guide, not them.
+The eleven examples marked *older* below do not follow every rule of the
+guide, and are not edited: each pins a `version:` a deployment may already
+store, and applying changed bytes under a stored version is refused. Five of
+them splice a rendered value into shell text or a JSON string —
+`http-post`, `shell-eval`, `file-read`, `pinned-build` and `advanced-demo` —
+which the guide's "Pass values as data, never as code" says not to do, and
+`cached-pipeline` caches a task with no `ttl_seconds` (its one validation
+warning). Follow the guide, not them.
 
 ## Running them
 
@@ -73,9 +76,10 @@ orkctl apply examples/notify-block.ork.yaml
 orkctl apply examples/order-saga.ork.yaml examples/approval-gate.ork.yaml
 ```
 
-`orkctl apply examples/` applies the directory in lexical order and does not
-reorder by composition, so a composing example that sorts before its block
-is refused until the block is stored.
+Apply the block in its own command. Applying several documents at once
+(`orkctl apply examples/`) validates every one before writing any, against
+the Orkflows already stored — so a block in the same command does not count,
+a composing example is refused, and nothing is written.
 
 ## The automation document
 

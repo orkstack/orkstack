@@ -11,7 +11,7 @@ applied to the `ork` engine with `orkctl apply`.
 | `name`        | yes      | Slug identifier, unique within its namespace.           |
 | `version`     | no       | Author-pinned version; defaults to the source's hash.  |
 | `description` | no       | Human description.                                     |
-| `labels`      | no       | `map[string]string` for organization/filtering, free-form — no key shape, entry count, or value size is enforced here. When telemetry is on, at most 32 of them (sorted by key) are exported as `ork.label.<key>` telemetry attributes, each key and value sanitized for that boundary (`docs/DEPLOY.md`, "Per-namespace policy"). |
+| `labels`      | no       | Free-form `map[string]string` for organization and filtering (see "Labels"). |
 | `inputs`      | no       | Declared input parameters (see below).                 |
 | `outputs`     | no       | Declared return contract: name to template (see below). |
 | `pins`        | no       | Declared task pins (see below).                        |
@@ -99,9 +99,8 @@ orkctl orkflow edit deploy              # $EDITOR round trip, applied as a new v
 orkctl orkflow edit deploy --version 1.3.0   # start from an older version
 ```
 
-Until somebody promotes, an orkflow runs its **most recently applied** version,
-which is what it did before pointers existed — promoting nothing changes
-nothing. Promoting to a version that was never applied is refused, so a pointer
+Until somebody promotes, an orkflow runs its **most recently applied** version.
+Promoting to a version that was never applied is refused, so a pointer
 never names a version that is not there.
 
 A promotion decides what STARTS, never what is already running: a run in flight
@@ -191,10 +190,19 @@ inputs:
   url:
     type: string          # string | number | boolean | object | array
     default: "https://…"  # optional
-    required: false        # default false when a default is present
+    required: false       # optional, default false
 ```
 
-Provided at submit time and referenced as `{{ .inputs.<name> }}`.
+Provided at submit time and referenced as `{{ .inputs.<name> }}`. An input is
+**required** exactly when it says `required: true` and has no `default`; a
+declaration with a default is never required. A composing task's `with:` check
+(rule 32) and the promote gate ("Promoting compares declared interfaces") both
+read it that way.
+
+Submit fills every omitted input that has a `default` and checks nothing
+else: it does not refuse a missing required input or a value of another type.
+A task whose template reads an input nobody supplied fails `RENDER_FAILED`
+(`ContractViolation`) rather than running with an empty string.
 
 The schema above is YAML, like the rest of this document — but the VALUES a
 run is submitted with are JSON, never YAML, and stay JSON in the recorded
@@ -234,9 +242,10 @@ string.
   keeps the status it earned, and the run is `FAILED`, never `SUCCEEDED`
   without the interface it declares.
 
-An Orkflow that declares no `outputs:` (absent and `{}` are one value) keeps
-the output it always had: every leaf task's inline values, keyed by task id —
-and an Orkflow composing it receives `{}`.
+An Orkflow that declares no `outputs:` (absent and `{}` are one value) has no
+return contract: its run's output is every leaf task's inline values, keyed
+by task id — an accident of graph shape that adding a task changes — and an
+Orkflow composing it receives `{}`.
 
 ## Tasks
 
@@ -249,7 +258,7 @@ tasks:
     join: all_succeeded   # optional: none_failed, any_failed or all_done (see "Joins and failure handlers")
     condition: ""         # optional templated gate
     timeout_seconds: 300  # optional container wall-clock timeout; default 300
-    retry:                # optional Temporal retry policy
+    retry:                # optional; absent means exactly one attempt
       maximum_attempts: 3
       initial_interval_seconds: 1
       backoff_coefficient: 2.0
@@ -272,16 +281,34 @@ tasks:
     with:                 # image-specific config, rendered into config.json
       op: get
       url: https://example.test/health
+    # each:, await: — see "Fan-out" and "Awaited tasks"
 ```
+
+`retry:` absent (or `maximum_attempts` of 0 or 1) means one attempt — never
+Temporal's unbounded default. Within `retry:`, an unset interval is 1 s, an
+unset coefficient 2.0 and an unset maximum interval 100 s.
 
 `uses:` is the only image selector. A catalog name is resolved at apply time;
 a registry tag or digest may be written directly. In every case the applied
-definition records an immutable digest. `uses:` cannot be templated. A
-deployment may require every registry reference to be written with a digest
-and bound the registries images may come from (`orkctl admin image-policy
-get`), and a namespace may require a cosign signature (`orkctl namespace
-get`); an image outside either is refused at validate and apply with the
-field path `tasks[i].uses`, and again at submit.
+definition records an immutable digest, so a moved tag never changes a stored
+version. `uses:` cannot be templated: an image chosen at run time could not be
+pinned at apply.
+
+An image is also subject to the deployment's image policy (`orkctl admin
+image-policy get`): `require_digest` refuses a registry reference written as a
+tag (a catalog name is exempt — the catalog is the operator's own
+configuration), `allowed_registries` bounds where images may come from, and a
+namespace may require a cosign signature (`require_signed_by`, shown by
+`orkctl namespace get`). An image outside the policy is refused at validate
+and apply on `tasks[i].uses`, again at submit, and by the Orker before it
+pulls (`IMAGE_NOT_PERMITTED`, `IMAGE_NOT_SIGNED`, `IMAGE_SIGNATURE_INVALID`).
+See `docs/DEPLOY.md`, "Image supply-chain policy".
+
+When the resolved image declares its `with:` interface (the
+`org.orkstack.activity.interface` label), validate and apply check `with:`
+against it (rule 14): a missing required key or an undeclared `op` is an
+error, an undeclared key or a literal of the wrong type a warning, and a
+templated value is never typed. An image without the label is not checked.
 
 `command` is a top-level argv override and never a shell string. `env` contains
 only variables supplied to the workload; OrkStack's required context travels
@@ -307,7 +334,9 @@ pointed the default, both spellings go there and a run reports both on the
 same pool. Within a run, one pool name means one set of Orkers and one set of
 Orkers has one name — so the pool a run reports a task on is a pool you can
 write to reach those same Orkers. A task that names a pool with no live
-Orkers is refused at submit rather than left waiting for one.
+Orkers is refused at submit rather than left waiting for one
+(`orkctl run submit --allow-empty-pool` overrides that), and a namespace's
+`allowed_pools` bounds which pools its tasks may name.
 
 ## Joins and failure handlers (`join:`)
 
@@ -326,11 +355,19 @@ container, awaited and composed:
 digest as a task that writes none. A task's `condition:` still applies, after
 the join test, unchanged.
 
+The set is closed on purpose. How a need ended is a fact only the interpreter
+holds, so the decision belongs to it — but as a lookup, not a language: an
+expression in `join:`, or a need's status exposed to `condition:`, would be a
+second language over the run's record and would change what `.tasks.<id>`
+means to every existing condition (it holds only succeeded ancestors). The
+words are predicates over **this task's own needs**, not hooks: a handler is
+not "on run failure", and `all_done` does not mean "even when cancelled".
+
 **Re-joining branches.** `none_failed` closes an if/else: "if A then B else C,
 then D" is `D: {needs: [B, C], join: none_failed}` — one of B and C is always
 skipped, and D runs after whichever ran. Skips propagate along every
-`all_succeeded` edge exactly as before; a `none_failed` task stops the
-propagation unless every one of its needs was skipped.
+`all_succeeded` edge; a `none_failed` task stops the propagation unless every
+one of its needs was skipped.
 
 ```yaml
 - id: decide                      # the decision is a task's value
@@ -371,15 +408,17 @@ whatever it did.
   running, handlers included, is stopped with SIGTERM. A pending handler is
   recorded `CANCELED` with `the run was canceled; a canceled run starts no
   failure handler`. Cleanup at cancellation is the container's own SIGTERM
-  handling.
+  handling: a "cancel, then run the cleanup tasks" mode would leave nothing
+  but an external terminate to stop a slow or stuck handler.
 - It *fails* otherwise. Fail-fast stops every task that is not a failure
-  handler exactly as before — a never-started one is `CANCELED` with `the run
-  is failing (task "<cause>" failed) and this task is not a failure handler`
-  — then the failure handlers run to their own outcomes, and the run ends
-  **`FAILED` with the original failure's reason**. A handler's success never
-  changes that; a handler's failure is recorded on the handler, stops nothing
-  else and never replaces the run's reason. A handler already running when the
-  failure happened (an `all_done` handler admitted before it) keeps running.
+  handler — in an Orkflow that declares a handler, a never-started one is
+  `CANCELED` with `the run is failing (task "<cause>" failed) and this task is
+  not a failure handler` — then the failure handlers run to their own
+  outcomes, and the run ends **`FAILED` with the original failure's reason**.
+  A handler's success never changes that; a handler's failure is recorded on
+  the handler, stops nothing else and never replaces the run's reason. A
+  handler already running when the failure happened (an `all_done` handler
+  admitted before it) keeps running.
   While the handlers run the run is **failing**: its status is still
   `RUNNING`, its error is already set, and its event stream carries one
   `TASK_LOG` with no task id: `run failing after task "<cause>" failed;
@@ -493,23 +532,19 @@ file from `task.json`'s `inputs.artifacts` instead.
 **A broken condition.** In an Orkflow that declares a failure handler, a task
 whose `condition:` cannot be evaluated is recorded `FAILED` with
 `CONDITION_FAILED` (category `ContractViolation`) — so its own `any_failed`
-handlers fire — and the run fails with the evaluation error as before. In every
-other Orkflow the task is recorded `CANCELED`, exactly as before.
+handlers fire — and the run fails with the evaluation error. In every other
+Orkflow the task is recorded `CANCELED`.
 
-**Planning both paths.** `orkctl run plan` and the submit dialog's Plan decide
-joins with the interpreter's own predicate and sentences, and `--assume-failed
-TASK` (repeatable; the dialog's *Assume these tasks fail*) plans the run as if
-TASK, when it would run, failed after its retries: its failure handlers are
-planned, every task that depends on it and is not a failure handler is
-`unreached`, and independent work is planned as if nothing had failed.
-`orkctl run plan deploy --assume-failed deploy --assert-runs rollback
---assert-runs notify` is a CI check that a handler is wired.
+**Planning both paths.** `orkctl run plan --assume-failed TASK` plans the
+failure path (see "Planning a run").
 
 **Not supported:** a failure handler may not be pinned, fan out or be cached
 (rule 39); no ordinary task may need an `any_failed` task (rule 40). There is
-no loop, no `continue_on_error` and no Orkflow-level `on_failure:` hook: a
-failure that should not fail the run is the workload's to report as data, which
-a `condition:` reads. See `examples/branch-and-recover.ork.yaml`.
+no loop, no `continue_on_error` and no Orkflow-level `on_failure:` hook: the
+graph stays a DAG that `run plan` sees whole, a handler lists the needs it
+handles (the DAG is the one place edges are declared), and a failure that
+should not fail the run is the workload's to report as data, which a
+`condition:` reads. See `examples/branch-and-recover.ork.yaml`.
 
 ## Pins
 
@@ -564,7 +599,7 @@ with the `git` activity into a pin.
 `pins: { build: {} }` is legal. `pin:` on a task is a bare name and must name a
 declared pin — a name nothing declared is refused at compile, exactly as a
 `needs` entry that names no task is, so a typo cannot silently create a second,
-one-task group. A pin's only option today is `timeout_seconds`, the whole
+one-task group. A pin's only option is `timeout_seconds`, the whole
 group's lifetime from the moment its first task is dispatched until its last
 task ends; `0` or absent means derived, as the sum of every member task's own
 wall-clock budget, which is the sequential worst case. The lifetime is declared
@@ -612,12 +647,10 @@ already applies to a task's external side effects, now applied to the host's
 own disk. Do not copy a secret into `/orkstack/shared`: that puts it on disk
 for the pin's lifetime, the same warning that applies to `output/`.
 
-`orkflow validate` warns (severity `WARNING`, field `pins.<name>`) about a pin
-whose every task leaves `run_as_orker_user` false: each container then keeps
-its image's own `USER`, and two members with different baked-in users can
-each write files under the sticky-bit `/orkstack/shared` that the other cannot
-replace. Agreement (rule 11) cannot catch that case, because the UIDs come from
-the images, not the document.
+Validate and apply warn (field `pins.<name>`) about a pin whose every task
+leaves `run_as_orker_user` false: each member then keeps its image's own
+`USER`, and rule 11 cannot compare UIDs that come from the images rather than
+the document.
 
 **Lifecycle.** A pin opens lazily, when the first of its tasks is ready and
 classified to run — never at run start — so a pin whose every task is skipped
@@ -645,8 +678,8 @@ A pool with **no** pin host at all is refused at submit instead (above), so
 constant, not a setting: workflow code may not read process configuration,
 and an author has no better information about the number than the platform
 does. `PIN_HOST_LOST` and `PIN_TIMEOUT` reach the engine as the same event —
-the Temporal session that holds the pin ended — and are told apart by the
-elapsed time against the pin's lifetime, which is deterministic on replay.
+the pin's hold on its host ended — and are told apart by the elapsed time
+against the pin's lifetime, which is deterministic on replay.
 A member that fails on its own (a non-zero exit) leaves the pin open and
 takes the ordinary failure path. `INVALID_PIN` is reserved for a hand-built
 definition naming a pin it does not declare, which the compiler refuses.
@@ -701,8 +734,10 @@ tasks:
 An awaited task takes only `id`, `needs`, `condition`, `join` and `await`; every key
 that shapes a container (`uses`, `with`, `command`, `env`, `secrets`,
 `resources`, `network`, `pool`, `pin`, `retry`, `timeout_seconds`,
-`cancellation_grace_period_seconds`, `run_as_orker_user`) is refused by name.
-An `artifact "<task>/<name>"` helper may not name an await — it produces no
+`cancellation_grace_period_seconds`, `run_as_orker_user`, and also `each` and
+`cache`) is refused by name. While a task awaits, its run is `RUNNING`;
+`AWAITING` is a task status only. An `artifact "<task>/<name>"` helper may not
+name an await — it produces no
 artifacts — and `{{ .tasks.<await>.output.<field> }}` is how its values are
 read. A `condition:` on an await is evaluated before it opens, and an upstream
 skip propagates through it like any task. There are no retries: a rejection
@@ -733,16 +768,25 @@ awaiting.
   `callback: true`, with that await's own token, and answers `202` once the
   resolution is recorded in the run's history. The token is the capability:
   it resolves exactly the await it was minted for, in the run's own
-  namespace, and nothing else.
+  namespace, and nothing else, and it grants no read.
+
+A completion's values are bounded by the deployment's values limit and stored
+as an immutable object; they reach a downstream container only as its
+upstream `values.json`. Neither door queues, retries or rate-limits: one
+request is one delivery, and what to expose, to whom and how fast is the
+operator's gateway. A resolution records the `Ork-Principal` the gateway
+asserted (`resolved_by`), as asserted, not authenticated — `ResolveAwait`
+has `CancelRun`'s trust model.
 
 **Who receives a callback token.** The token is disclosed once, to whoever
 submitted the run — `orkctl run submit`/`run again` print it, the UI's submit
 dialog shows it before it continues to the run, and a trigger's `201` carries
-it — and only a salted digest of it is kept. A **scheduled** run's tokens are
-disclosed to nobody; resolve its awaits with `orkctl run resolve`. A container
-never receives a callback token. Do not set `callback: true` on an approval
-whose approver must differ from whoever submits the run: the submitter
-receives the token.
+it — and only a salted digest of it, in the run's own start record, is kept.
+A **scheduled** run's tokens are disclosed to nobody; resolve its awaits with
+`orkctl run resolve`. A container never receives a callback token: getting one
+there would mean storing the plaintext or sharing a key with every Orker. Do
+not set `callback: true` on an approval whose approver must differ from
+whoever submits the run: the submitter receives the token.
 
 See `examples/awaited-approval.ork.yaml`.
 
@@ -804,7 +848,9 @@ tasks:
   the task `EACH_TOO_MANY_ITEMS` before any item runs. The sum of `max_items`
   over every fan-out of one Orkflow is at most 1000 too (a deployment may
   lower that ceiling with `ORK_EACH_MAX_ITEMS`, `docs/DEPLOY.md` §1): the
-  items of one run share one history budget.
+  items of one run share one history budget. A run's history is bounded by the
+  cluster, and a run that crossed that bound would be terminated or stuck, so
+  the bound is declared up front and enforced before anything runs.
 - `max_parallel` — at most this many items run at once; absent or `0` means
   no bound of the task's own (the pool's Orkers are the bound).
 
@@ -828,7 +874,8 @@ template may read a fan-out (`.tasks.<fan-out>` or `artifact "<fan-out>/…"`):
 N items have no single value to substitute.
 
 **Per-item bounds.** With `S` the Orkflow's declared total (the sum of its
-`max_items`), every item is held to:
+`max_items`), every item is held to bounds derived from `S` alone, so they are
+known at apply and identical on replay:
 
 | Bound | Value | At S = 1000 | At S ≤ 64 |
 | --- | --- | --- | --- |
@@ -858,14 +905,20 @@ is not a JSON array, or the committed `values.json` is not JSON) and
 than the values bound, or did not match its recorded digest). `INVALID_EACH`
 is reserved for a hand-built definition the compiler would have refused.
 
-**Not supported in this version:** a fan-out may not be pinned (`pin:`), may
-not fan out over another fan-out or name one in `needs:` (no nesting), and an
-awaited task may not declare `each:`.
+**Not supported:** a fan-out may not be pinned (`pin:`) — N concurrent items
+writing one `/orkstack/shared` multiplies the hazard of "A pin imposes no
+ordering" — may not fan out over another fan-out or name one in `needs:` (no
+nesting, no matrix: a second dimension is a task that writes the flattened
+array), and an awaited or composed task may not declare `each:`. There is no
+per-item condition and no continue-on-error: `condition:` gates the whole node
+once, and an array that must be filtered is filtered by the task that writes
+it.
 
 `orkctl run get` shows a fan-out as one row with a progress count;
 `--expand <task>` lists its items, and `run logs`, `run artifacts`,
-`run attempts`, `run timing`, `run inspect`, `run evidence export`,
-`run artifact provenance` and `task run` take `--item N`. The run page draws
+`run artifact download`, `run artifact provenance`, `run attempts`,
+`run timing`, `run inspect`, `run evidence export` and `task run` take
+`--item N`. The run page draws
 one card with a cell per item. See `examples/each-fan-out.ork.yaml`.
 
 ## Composition (`uses: orkflow:`)
@@ -885,12 +938,11 @@ tasks:
     with:                                  # the child run's input
       image: '{{ .tasks.build.output.image_digest }}'
   - id: announce
-    uses: http
+    uses: shell
     needs: [release]
-    with:
-      op: post
-      url: https://hooks.example/notify
-      body: '{"shipped":"{{ .tasks.release.output.digest }}"}'
+    with:                                  # the child's outputs, read as values
+      op: exec
+      command: ["echo", "shipped {{ .tasks.release.output.digest }}"]
 ```
 
 - **One pinned version.** `orkflow:<name>@<version>` — the version is
@@ -899,12 +951,16 @@ tasks:
   definition digest is stamped into this Orkflow's definition, so this
   version pins the child's exact bytes and, through them, every descendant's.
   A version pointer never moves a running parent; `uses:` cannot be a
-  template.
+  template — a child is never chosen by input. Composition never crosses
+  namespaces: one team's apply must not be able to break another team's run.
 - **What it may carry:** `id`, `needs`, `condition`, `join`, `uses` and `with`.
   `command`, `env`, `secrets`, `resources`, `network`, `pool`, `pin`,
   `retry`, `timeout_seconds`, `cancellation_grace_period_seconds`,
   `run_as_orker_user`, `each`, `await` and `cache` are refused by name: the
-  child's own tasks declare where and how they run (and may be cached).
+  child's own tasks declare where and how they run (and may be cached). There
+  is no retry or timeout of the child as a whole: a run id is single-use, so a
+  retried child would need a new identity, and a timeout would stop the child
+  without running its workflow code.
 - **`with:` is the child's input**, rendered by the **engine**: values, and
   strings from templates. It reads `.inputs.<declared>` and its `needs:`
   closure like any `with:`, but the Orker's helpers (`artifact`, `env`, `sh`)
@@ -928,19 +984,25 @@ tasks:
   them; a composed failure handler starts its child in a failing parent
   (compensation as a reusable Orkflow). The composed task's other codes:
   `CHILD_INPUT_RENDER_FAILED` and `CHILD_INPUT_TOO_LARGE` (`ContractViolation`:
-  the child's input could not be rendered, or exceeds the values bound),
+  the child's input could not be rendered, or exceeds the values bound);
   `CHILD_INPUT_UNAVAILABLE` (an upstream value could not be read),
   `CHILD_START_FAILED`, `CHILD_RUN_TERMINATED` and `CHILD_VALUES_UNSTORED`
-  (all `InfrastructureError`), and `CHILD_RUN_CANCELED` (status `CANCELED`).
-  `INVALID_COMPOSITION` is reserved for a hand-built definition the compiler
-  would have refused.
+  (all `InfrastructureError`); and `CHILD_RUN_CANCELED` (`Cancelled`, status
+  `CANCELED`). `INVALID_COMPOSITION` is reserved for a hand-built definition
+  the compiler would have refused.
 - **Bounds.** Composition is acyclic and at most `ORK_COMPOSE_MAX_DEPTH`
   levels deep (default and ceiling 4; a run is level 0). The whole tree is
   planned at the parent's submit — its pools, secret policy, image policy and
   fan-out cap — and a submission the deployment can no longer plan (a child
   deleted, a cap lowered, a pool forbidden) is refused before anything starts.
-  Every definition of the tree travels in the run's plan, which is bounded by
-  256 KiB.
+  Deleting an Orkflow is never refused for its callers' sake: a parent whose
+  child is gone is refused at its next submit, naming the child, and
+  `orkctl orkflow callers` is the read that answers "who uses this". Every
+  definition of the tree travels in the run's plan, which is bounded by
+  256 KiB. Admission (`hold`, `max_running`) and budgets are decided once, at
+  the parent's submit: a child is never refused by them, because refusing it
+  would fail a run already accepted. Children do count toward `max_running`,
+  and their attempts are usage of the namespace.
 - A child's callback awaits get tokens that are disclosed to no one: resolve
   them with `orkctl run resolve <child-run> --task <task>` or on the child
   run's page.
@@ -1068,27 +1130,47 @@ whenever that run changes.
   task cannot be cached (rules 36, 15, 27); a child Orkflow's own tasks may be.
   `orkctl task run` and `orkctl activity test` never read or write a memo.
   Nothing a container sees changes.
+- **No selective keys.** A task cannot exclude a run input, an item's position
+  or a variable from its key: each such knob would let a wrong result be
+  served silently.
+- **No automatic reclamation.** Nothing deletes memos but `orkctl cache purge`
+  and a bucket lifecycle rule on `metadata/memo/` (`docs/STORAGE.md`); a memo
+  whose source run was retired simply misses.
+- **No per-trigger or per-schedule bypass.** An Orkflow whose runs must never
+  reuse a result declares no `cache:`.
 
 See `examples/cached-pipeline.ork.yaml`.
 
 ## Templating
 
-Task `with` values and `condition` are rendered with Go `text/template` against
-this context:
+A task's `with:` values and `condition:` are Go `text/template` templates, as
+are `outputs:` values and `each.over` (one reference, see "Fan-out"). Every
+other key — `command`, `env`, `uses` included — is literal. A literal `{{` in
+`with:` is written `{{ "{{" }}`. The context:
 
-- `.inputs.<name>` — submitted inputs.
-- `.tasks.<id>.output.<field>` — a completed upstream task's output payload.
-  `orkctl run plan` evaluates a `condition` for a given input without running
-  anything.
+- `.inputs.<name>` — the submitted input, after defaults.
+- `.tasks.<id>.output.<field>` — a succeeded ancestor's `values.json`.
+- `.tasks.<id>.artifacts` — (`with:` only) the ancestor's artifact references;
+  prefer the `artifact` helper.
+- `.each.<as>`, `.each.index`, `.each.count` — one fan-out item (see
+  "Fan-out").
 - Helper `artifact "<taskId>/<artifactName>"` — resolves to a **local path** the
   Orker has materialized before the task runs.
-- Helper `env "<NAME>"` — reads an allowlisted environment variable on the Orker.
+- Helper `env "<NAME>"` — reads an environment variable of the **Orker**, only
+  when it is listed in `orker.env_allowlist` (`ORK_ORKER_ENV_ALLOWLIST`).
 - Helper `sh <value>` — quotes a rendered value for an explicitly requested
   shell boundary.
 
-Only tasks listed (transitively) in `needs` are guaranteed to be resolvable;
-referencing an unrelated task's output is a compile-time error. Past a join,
-an ancestor may be absent (see "Joins and failure handlers").
+There are exactly these three helpers, plus Go's built-in functions (`eq`,
+`ne`, `lt`, `and`, `or`, `not`, `index`, `len`, `printf`, …). A template may
+read only the task's `needs:` closure (`outputs:` excepted); referencing any
+other task is a compile-time error. Past a join, an ancestor may be absent
+(see "Joins and failure handlers"). A template that reads a key nobody
+supplied fails the task `RENDER_FAILED`; every rendered value is a string.
+
+A `condition:` is evaluated by the **engine**, once, before the task starts:
+it sees `.inputs` and `.tasks.<id>.output` only, and a condition that calls a
+helper fails when evaluated.
 
 **Condition truthiness.** A `condition:` is false exactly when its rendered
 text, trimmed and lower-cased, is one of eleven spellings: the empty string,
@@ -1098,14 +1180,50 @@ compared with `eq`** — `{{ eq .tasks.decide.output.route "canary" }}` — or a
 JSON boolean rendered bare; never a free-form string rendered bare, which is
 true for `"No thanks"` and false for `"no"`.
 
-Two kinds of template are rendered by the **engine** rather than an Orker: a
-composed task's `with:` and an Orkflow's `outputs:`. They get **no helpers**
-(`artifact`, `env` and `sh` are Orker-side), read `.tasks.<id>.output` only,
-and name every task they read literally (rule 28).
+Two more kinds of template are rendered by the **engine** rather than an
+Orker: a composed task's `with:` and an Orkflow's `outputs:`. They get **no
+helpers** (`artifact`, `env` and `sh` are Orker-side), read
+`.tasks.<id>.output` only, and name every task they read literally (rule 28).
 
 Computing — formatting, arithmetic, a decision — is a task's job, never a
 template's: see `docs/ORKFLOW_PATTERNS.md`, "The rule: the platform moves data,
 tasks compute".
+
+## Planning a run (`orkctl run plan`)
+
+`orkctl run plan NAME` (or `--file DOC` for an unapplied document), and the
+submit dialog's **Plan**, answer for one input which tasks would run, which
+would be skipped and exactly why, and in which dispatch wave each would start.
+The engine decides every condition and join with the interpreter's own
+evaluator, predicate and skip sentences, and starts, stores and records
+nothing. A plan proves wiring, never behaviour, and is not an admission check:
+pools, holds and limits are asked at submit. This is possible only because a
+condition computes nothing.
+
+- A condition that reads an upstream output sees `{}` unless the output is
+  supplied with `--output TASK=JSON` or `--outputs-file PATH`; the plan names
+  every condition that read an unsupplied output.
+- `--assume-failed TASK` (repeatable) plans the run as if TASK, when it would
+  run, failed after its retries: its failure handlers are planned, every task
+  that depends on it and is not a failure handler is `unreached`, and
+  independent work is planned as if nothing had failed.
+- `--assert-runs TASK` and `--assert-skipped TASK`, one task per flag, make
+  a plan a CI check: exit `4` when the plan contradicts one, `1` when no plan
+  could be computed. `orkctl run plan deploy --assume-failed deploy
+  --assert-runs rollback` checks that a handler is wired.
+
+How each node reads:
+
+| Node | Outcome | Detail |
+|---|---|---|
+| a task that runs or is skipped | `runs`, `skipped` | the skip sentence a run would record; `pin <name>` for a pinned task |
+| a task with a `join:` | as above | prefixed `join <word>` |
+| awaited | `awaits`: takes a wave, counted apart from `runs` | `await ≤ <deadline>`, plus `callback`; an `--output` for it is its resolution |
+| fan-out | one row, `runs` | `each over <ref>: N items (≤ max_items, P at a time)` when the array is countable — an input, or a stubbed source — otherwise `counted when the run reaches it`; a fan-out whose source does not run, or whose array is too long, `fails` with its `EACH_*` code |
+| composed | one row, `runs` | `orkflow <name>@<version> as a child run`: the plan never recurses — plan the child with `orkctl run plan <name> --version <version>` |
+| cached | `runs` | the TTL and scope; a plan never predicts a hit, which the Orker decides |
+| a condition that cannot be evaluated | `fails` | the run's own error; every task decided after it is `unreached` |
+| `--assume-failed` | `assumed_failed` | its non-handler dependents are `unreached` |
 
 ## Validation rules (enforced by `internal/dsl`)
 
@@ -1121,7 +1239,10 @@ tasks compute".
    catalog activity name or OCI registry reference; an awaited task runs no
    image. A `uses:` beginning with `orkflow:` is a composed task (rule 26) and
    skips the catalog check — it would otherwise be taken for a registry
-   reference because it contains `:` and `@`.
+   reference because it contains `:` and `@`. `network:`, when present, is
+   `default` or `none` (6b). Every secret has a `name` matching
+   `^[A-Za-z0-9._-]{1,128}$` — validated, never sanitized, so it cannot
+   escape the secrets directory — and a non-empty `source:` (6c).
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks, and
    `.each` under rule 25.
@@ -1132,13 +1253,14 @@ tasks compute".
 12. Every declared pin is used by at least one task. A declaration nothing
     references is a typo.
 13. `pins.<name>.timeout_seconds` is not negative. `0` and absent are one
-    value — both mean derived — so a literal `timeout_seconds: 0` is accepted
-    and means the same thing as omitting the key; the compiled field is a plain
-    integer in which the two cannot be told apart, and every rule the compiler
-    applies must also hold for a request that never met this YAML.
+    value — both mean derived — because the compiled field cannot tell them
+    apart, and every rule must also hold for a hand-built request that never
+    met this YAML.
 14. When a task's resolved image declares an interface, `with:` supplies
-    every key the image requires and names an op it declares; an undeclared
-    key or a type that disagrees is reported as a warning, never refused.
+    every key the image requires and names an op it declares (or the image
+    declares a default op); an undeclared key or a literal whose type
+    disagrees is reported as a warning, never refused, and a templated value
+    is never typed.
     Enforced by `internal/api` at validate and apply, after resolution — the
     compiler has no registry to ask (`docs/ACTIVITY_IMAGES.md`, "Declaring the
     interface"). An image without the label is not checked.
@@ -1243,38 +1365,34 @@ Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that
 behaves differently from its document.
 
-`labels:` is free-form: no key shape, entry count, or value size is enforced
-by the compiler. A namespace's own telemetry attributes remain bounded and
-shaped (`ValidateAttributeMap`, `internal/dsl`: at most 16 entries, each key
-`^[a-z][a-z0-9_.-]{0,63}$`, each value at most 256 bytes and free of control
-characters) because they are operator/admin input rendered verbatim in
-terminals and the UI; a label is the tenant's own document and an ordinary,
-widely-used key like `Team` or `app.kubernetes.io/name` should not be refused
-for not looking like an attribute.
-
-When telemetry is on, a namespace's operator-set attributes and an orkflow's
-own labels merge onto the same run's signals (`ork.ns.<key>` and
-`ork.label.<key>`, respectively; `docs/DEPLOY.md`, "Per-namespace policy").
-The merge is where labels are made safe as telemetry rather than where they
-are refused as a document: at most 32 labels are exported, taken in
-sorted-key order; each key is folded into the attribute alphabet
-(`dsl.SanitizeAttributeKey` — lowercased, every byte outside
-`[a-z0-9_.-]` replaced with `_`, a non-letter first character prefixed
-`l_`, capped at 64 bytes) and each value is truncated to 256 bytes with
-control characters stripped (`dsl.SanitizeAttributeValue`). Two label keys
-that fold to the same sanitized key keep only the one that sorts first.
-
 A slug is at most **200 bytes**, in every position above. The bound is half the
 rule and not a detail of it: a namespace, an orkflow name and a version are
 path components of a stored object key, a pool becomes an execution channel,
 and a pin name becomes a directory component on the Orker, so a longer name is
-one the compiler could accept and nothing could store. It is the same 200 the orkflow store and the namespace registry enforce
-(`pkg/artifacts`), and the two are held together by measurement rather than by
-a shared constant: the artifact store is a public package and the compiler is
-not, so the store does not depend on the compiler and does not drag it into
-the build of every program that stores an artifact. A test inside
-`pkg/artifacts` imports the compiler and fails on any disagreement, in either
-direction — a test dependency costs an importer nothing.
+one the compiler could accept and nothing could store. The orkflow store and
+the namespace registry (`pkg/artifacts`) enforce the same 200; they share no
+constant, so the store does not import the compiler, and a test in
+`pkg/artifacts` fails on any disagreement.
+
+## Labels
+
+`labels:` is free-form: no key shape, entry count, or value size is enforced,
+because a label is the tenant's own document and an ordinary key like `Team`
+or `app.kubernetes.io/name` should not be refused for not looking like an
+attribute. (A namespace's operator-set telemetry attributes, by contrast, are
+bounded and shaped at write — `ValidateAttributeMap`: at most 16 entries, each
+key `^[a-z][a-z0-9_.-]{0,63}$`, each value at most 256 bytes with no control
+characters — because they are rendered verbatim in terminals and the UI.)
+
+When telemetry is on, labels are made safe where they are exported, not
+refused as a document: at most 32, in sorted-key order, become
+`ork.label.<key>` attributes beside the namespace's `ork.ns.<key>`
+(`docs/DEPLOY.md`, "Per-namespace policy"). Each key is lowercased, every byte
+outside `[a-z0-9_.-]` replaced with `_`, a non-letter first character
+prefixed `l_`, and capped at 64 bytes (`dsl.SanitizeAttributeKey`); each value
+is truncated to 256 bytes with control characters stripped
+(`dsl.SanitizeAttributeValue`). Two keys that fold to the same attribute keep
+only the one that sorts first.
 
 ## Example
 

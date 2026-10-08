@@ -151,7 +151,7 @@ long handles SIGTERM to clean up within the task's cancellation grace period
 (30 seconds by default, then SIGKILL). A shell does that by running the work in
 the background under a `TERM` trap that forwards the signal and waits —
 `images/activity-shell/entry.sh` shows the shape
-(`docs/OCI_ACTIVITY_CONTRACT.md` §10.2 rule 2a).
+(`docs/OCI_ACTIVITY_CONTRACT.md` §10.1 rule 2a, and §10.2 for the pattern).
 
 ## Environment
 
