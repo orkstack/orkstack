@@ -1,0 +1,98 @@
+# OrkStack orkflow DSL
+#
+# Any OCI image is an activity: two images built from this repository — one
+# Go, one POSIX shell — run as durable tasks with no SDK, no `op` and no
+# catalog name.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "When to write your own image"
+#
+# BUILD AND PUSH THE IMAGES FIRST. They are published nowhere, and a locally
+# built image that was never pushed has no registry digest to pin:
+#   orkctl activity build examples/custom-image --tag localhost:5001/orkstack-examples/custom-image:dev
+#   orkctl activity build examples/custom-image-shell --tag localhost:5001/orkstack-examples/custom-image-shell:dev
+# Each prints the pinned reference (…@sha256:…) to paste over the tag below.
+# A deployment whose image policy sets require_digest refuses the tags; one
+# with allowed_registries must list localhost:5001.
+#
+#   probe         the whole ABI with no `with:`: read task.json, write
+#                 values.json, exit 0.
+#   report,       the same `with:`, two languages, the same artifact and
+#   report-shell  values shape. `command:` is NOT rendered — only `with:`
+#                 and `condition:` are — so the braces in it arrive literally.
+#   labels,       a fan-out over a json-computed list. The image reads its
+#   per-label     item from task.json's `each` object (exact JSON), so its
+#                 `with:` names no `.each` at all.
+#   summary       gathers the items' values; collate concatenates artifacts
+#   collate       from both images with the first-party file activity.
+name: custom-image
+version: "0.1.0"
+description: "Two custom OCI images, Go and shell, as durable activities: no SDK, no op, no catalog name. Build and push them first."
+
+inputs:
+  label:
+    type: string
+    default: "no sdk required"
+
+tasks:
+  - id: probe
+    uses: localhost:5001/orkstack-examples/custom-image:dev
+    network: none
+
+  - id: report
+    uses: localhost:5001/orkstack-examples/custom-image:dev
+    needs: [probe]
+    network: none
+    command: ["{{ .inputs.label }}", "is-not-rendered"]
+    with:
+      label: '{{ .inputs.label }}'
+      src: upstream/probe/values.json
+      as: report.txt
+
+  - id: report-shell
+    uses: localhost:5001/orkstack-examples/custom-image-shell:dev
+    needs: [probe]
+    network: none
+    command: ["{{ .inputs.label }}", "is-not-rendered"]
+    with:
+      label: '{{ .inputs.label }}'
+      src: upstream/probe/values.json
+      as: report-shell.txt
+
+  - id: labels
+    uses: json
+    network: none
+    with:
+      op: query
+      nullInput: true
+      filter: '["alpha", "beta", "gamma"]'
+
+  - id: per-label
+    uses: localhost:5001/orkstack-examples/custom-image:dev
+    needs: [labels, probe]
+    network: none
+    each:
+      over: '{{ .tasks.labels.output.result }}'
+      as: label
+      max_items: 10
+    with:
+      src: upstream/probe/values.json
+
+  - id: summary
+    uses: json
+    needs: [per-label]
+    network: none
+    with:
+      op: query
+      gather: per-label
+      filter: 'map({index: .each.index, label, idempotencyKey})'
+
+  - id: collate
+    uses: file
+    needs: [report, report-shell]
+    network: none
+    with:
+      op: concat
+      srcs:
+        - '{{ artifact "report/report.txt" }}'
+        - '{{ artifact "report-shell/report-shell.txt" }}'
+      as: both-reports.txt
