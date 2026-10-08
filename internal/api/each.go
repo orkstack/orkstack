@@ -11,7 +11,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// The item selector (spec each-fan-out §7.2): every per-task read that takes
+// The item selector (docs/UI_CLI_PARITY.md "Fan-out"): every per-task read that takes
 // an `item` applies one set of rules, in this order, after the run's
 // namespace check and the task-exists check the read already makes.
 //
@@ -92,7 +92,7 @@ func eachMaxItemsOf(configured int32) int32 {
 	return configured
 }
 
-// checkEachLimits is apply and validate's fan-out check (spec §7.1): the
+// checkEachLimits is apply and validate's fan-out check: the
 // declared total against ORK_EACH_MAX_ITEMS, and each fan-out's OWN part of
 // every item's input — the image, command, with, env, secrets and resources
 // every item carries — against the per-item bound the declared total allows.

@@ -648,7 +648,8 @@ does. `PIN_HOST_LOST` and `PIN_TIMEOUT` reach the engine as the same event —
 the Temporal session that holds the pin ended — and are told apart by the
 elapsed time against the pin's lifetime, which is deterministic on replay.
 A member that fails on its own (a non-zero exit) leaves the pin open and
-takes the ordinary failure path.
+takes the ordinary failure path. `INVALID_PIN` is reserved for a hand-built
+definition naming a pin it does not declare, which the compiler refuses.
 
 ## Awaited tasks
 
@@ -848,6 +849,15 @@ files. A `none_failed` fan-out whose `each.over` task did not succeed fails
 `EACH_OVER_MISSING`: such a fan-out reads its array from an input or from a
 task that always runs.
 
+A fan-out's own row fails, before any item runs, with one of:
+`EACH_OVER_MISSING` (the array's source is absent), `EACH_OVER_NOT_ARRAY` (it
+is not a JSON array, or the committed `values.json` is not JSON) and
+`EACH_TOO_MANY_ITEMS` (more elements than `max_items`) — all
+`ContractViolation`, never retried — or `EACH_EXPANSION_FAILED`
+(`InfrastructureError`: the committed array could not be read, was larger
+than the values bound, or did not match its recorded digest). `INVALID_EACH`
+is reserved for a hand-built definition the compiler would have refused.
+
 **Not supported in this version:** a fan-out may not be pinned (`pin:`), may
 not fan out over another fan-out or name one in `needs:` (no nesting), and an
 awaited task may not declare `each:`.
@@ -916,7 +926,14 @@ tasks:
   own retries and timeouts. A failed child fires the parent's `any_failed`
   handlers after the child's own handlers ran, and the parent fails after
   them; a composed failure handler starts its child in a failing parent
-  (compensation as a reusable Orkflow).
+  (compensation as a reusable Orkflow). The composed task's other codes:
+  `CHILD_INPUT_RENDER_FAILED` and `CHILD_INPUT_TOO_LARGE` (`ContractViolation`:
+  the child's input could not be rendered, or exceeds the values bound),
+  `CHILD_INPUT_UNAVAILABLE` (an upstream value could not be read),
+  `CHILD_START_FAILED`, `CHILD_RUN_TERMINATED` and `CHILD_VALUES_UNSTORED`
+  (all `InfrastructureError`), and `CHILD_RUN_CANCELED` (status `CANCELED`).
+  `INVALID_COMPOSITION` is reserved for a hand-built definition the compiler
+  would have refused.
 - **Bounds.** Composition is acyclic and at most `ORK_COMPOSE_MAX_DEPTH`
   levels deep (default and ceiling 4; a run is level 0). The whole tree is
   planned at the parent's submit — its pools, secret policy, image policy and

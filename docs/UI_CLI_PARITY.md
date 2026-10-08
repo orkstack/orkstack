@@ -607,6 +607,26 @@ Admin → Audit render the same records in the same order for the same filters.
   renders it) when any scope component is set. The signing secret is never
   part of it.
 
+### Run origin
+
+Every run carries one immutable `Run.origin` (`RunOrigin`): what started it.
+It is decided once, at submit, by the process that accepted the submission,
+and travels on the replay-pinned `RunPlan`, so every replay and every replica
+reads the same answer; nothing in OrkStack reads it to decide anything. The
+`kind` is never taken from a client: `SubmitRun` produces `SUBMIT`, or
+`RUN_AGAIN` when it names a `source_run_id` the server finds in the namespace
+(`NotFound` otherwise); the trigger door stamps `TRIGGER`, a schedule fire
+`SCHEDULE`, and a composed task `PARENT_RUN`, each with the originating id. A
+caller may add only a `reference` — `--origin-ref`, the dialog's **Origin
+reference**, or the trigger door's `Ork-Origin-Reference` header — at most
+256 bytes and no control characters, validated and never sanitized (an
+invalid one is `InvalidArgument` and starts nothing). `principal` is the
+`Ork-Principal` assertion, recorded and never authenticated. A run recorded
+before origins existed has kind `UNSPECIFIED`, rendered `unrecorded`, never
+`SUBMIT`. `run list --origin KIND[:ID]` searches live runs through two
+Temporal search attributes and finished runs through the archive's origin
+index (`docs/STORAGE.md`), merged.
+
 ### Run again
 
 No new durable operation is needed. UI `Run again` loads the selected run into
@@ -967,8 +987,7 @@ caller's machine against the run's recorded bytes. Its UI surface is a
 (`run-task-{task}-replay-cli`) carrying exactly
 `orkctl --namespace '<ns>' 'task' 'run' '--from-run' '<run>' '--task' '<task>'`
 — the namespace, the run and the task, and no input, secret or path. The
-browser runs nothing. This extension came with the phase-4
-`orkctl-task-run` proposal (review approved 2026-09-24).
+browser runs nothing.
 
 Do not mount a Docker socket into the UI/engine, accept arbitrary server host
 paths, or invent a privileged activity runner to manufacture parity. A future

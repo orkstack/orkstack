@@ -23,7 +23,7 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// orkctl-release's CLI acceptance on the real binaries: `ork` and `orker`
+// `orkctl release`'s CLI acceptance (docs/DEPLOY.md §3) on the real binaries: `ork` and `orker`
 // started with ORK_BUILD_ID and a per-test ORK_DEPLOYMENT_NAME, each test in
 // its own Temporal namespace (one namespace holds one deployment), and
 // `orkctl` as a built binary whose exit codes are the real ones. Tasks are

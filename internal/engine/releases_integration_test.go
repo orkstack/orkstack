@@ -22,7 +22,7 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// orkctl-release §5 against a real cluster. Each test provisions its own
+// The release view (docs/DEPLOY.md §3) against a real cluster. Each test provisions its own
 // namespace and deployment name: a deployment's routing is namespace-wide
 // state, and the pool channels (ork-pool-build) are fixed names.
 

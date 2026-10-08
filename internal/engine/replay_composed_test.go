@@ -25,11 +25,11 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// The composed fixtures: real histories of the §2.6 examples — a parent
+// The composed fixtures: real histories of the shipped composition examples — a parent
 // (composed-release) whose composed task's child (release-block) declares
 // outputs and whose own outputs project them — recorded once by a versioned
-// worker against a real cluster by TestIntegration_RecordComposedRunHistory
-// (I10), never hand-edited (testdata/history/README.md). They hold the first
+// worker against a real cluster by TestIntegration_RecordComposedRunHistory,
+// never hand-edited (testdata/history/README.md). They hold the first
 // ExecuteChildWorkflow, the first RenderComposedValues and
 // StoreComposedValues markers and the first declared-outputs render
 // RunWorkflow ever issued.
@@ -39,7 +39,7 @@ const (
 )
 
 // requireComposedFixtures skips while the fixtures have not been recorded.
-// They can only be produced against a real cluster (I10); once committed this
+// They can only be produced against a real cluster; once committed this
 // never skips again. ORK_REQUIRE_COMPOSED_FIXTURES makes their absence a
 // failure.
 func requireComposedFixtures(t *testing.T) {

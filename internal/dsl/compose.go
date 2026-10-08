@@ -31,8 +31,8 @@ const orkflowUsesShape = "orkflow:<name>@<version>"
 
 // ComposeVersionRequiredError is `uses: orkflow:<name>` with no version.
 // Namespace is the document's own `namespace:` (empty = default), carried so
-// internal/api can name the versions that exist (spec composed-orkflows
-// §4.5); the compiler is pure and cannot.
+// internal/api can name the versions that exist; the compiler is pure and
+// cannot.
 type ComposeVersionRequiredError struct {
 	TaskIndex int
 	TaskID    string

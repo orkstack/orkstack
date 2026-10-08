@@ -100,8 +100,8 @@ export async function waitFor(
 // namespace the deployment has — on the shared development store, well over a
 // thousand rows on one very tall page — and a click on one row's Edit that
 // lands anywhere but that row's handler (a lost click, or the row beside it
-// after the table moved) leaves this namespace's form closed. Proof
-// phase-3-merged failed exactly so: the click on `namespace-edit-<ns>`
+// after the table moved) leaves this namespace's form closed. One proof run
+// failed exactly so: the click on `namespace-edit-<ns>`
 // succeeded and `ns-edit-allowed-secrets-<ns>` never appeared. Why that click
 // missed is NOT established: that run kept no trace (playwright.config.ts now
 // keeps a proof's failures), it did not reproduce in repeated runs, and it was

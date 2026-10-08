@@ -88,8 +88,8 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		// how "not present" arrives here: Pin.timeout_seconds is a plain
 		// proto int32, so by the time validate sees it, an author who wrote
 		// `timeout_seconds: 0` and an author who wrote nothing are one value —
-		// and the design gives that value one meaning, DERIVED (§4.4's
-		// "optional; default derived", §6.3's "or when 0: Σ over members").
+		// and the contract gives that value one meaning, DERIVED: the sum of
+		// every member's budget (docs/DSL.md "Pins", rule 13).
 		// Enforcing ">= 1 if the author typed something" would need the
 		// *int32 that only pinDocument has, i.e. a rule the YAML front end
 		// could apply and a hand-built request could skip — two answers to

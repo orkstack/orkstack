@@ -16,7 +16,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
-// The example conventions (spec advanced-orkflow-examples §2): every example
+// The example conventions (examples/README.md): every example
 // this repository ships is documentation, so its header, its index entries
 // and the guide it cites are held to rules a reader can rely on.
 
@@ -139,8 +139,8 @@ func header(t *testing.T, path string) []string {
 	return lines
 }
 
-// planLineArgs is cmd/orkctl's tokenizer for a documented plan line (U6
-// runs the lines through it): words split on spaces outside single quotes,
+// planLineArgs is cmd/orkctl's tokenizer for a documented plan line
+// (TestExamples_DocumentedPlansHold runs the lines through it): words split on spaces outside single quotes,
 // the quotes stripped, and an unbalanced quote or a double quote outside
 // single quotes refused. It is repeated here because a test cannot import
 // package main; TestPlanLineArgs there holds the behaviour.
@@ -520,8 +520,8 @@ func TestOrkflowPatterns_CitesNoCodeAnchors(t *testing.T) {
 	}
 }
 
-// customImageLabel is the interface both example images declare (spec
-// advanced-orkflow-examples §3.10): the same activity, so the same label.
+// customImageLabel is the interface both example images declare: the same
+// activity, so the same label.
 const customImageLabel = `{"schemaVersion":1,"fields":{"label":{"type":"string"},"src":{"type":"string"},"as":{"type":"string","default":"report.txt"}},"values":{"idempotencyKey":{"type":"string"},"attempt":{"type":"number"},"taskId":{"type":"string"},"label":{"type":"string"},"argv":{"type":"array"},"source":{"type":"string"},"artifact":{"type":"string"},"stats":{"type":"object"},"each":{"type":"object"}}}`
 
 func TestCustomImages_FollowTheDockerfileContract(t *testing.T) {
@@ -602,7 +602,7 @@ func TestCustomImages_FollowTheDockerfileContract(t *testing.T) {
 // TestExamples_WithMatchesTheImageInterfaces checks every example task's
 // with: against the interface its image declares, read from the Dockerfile
 // the image is built from — the check validate and apply run against the
-// pushed image (E1), without a registry. A catalog name reads
+// pushed image, without a registry. A catalog name reads
 // images/activity-<name>; an example image reads examples/<dir>.
 func TestExamples_WithMatchesTheImageInterfaces(t *testing.T) {
 	labelLine := regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`)

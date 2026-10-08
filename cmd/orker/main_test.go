@@ -276,7 +276,7 @@ func TestLoadConfig_AcceptsAnIntervalInsideTheBounds(t *testing.T) {
 	}
 }
 
-// TestWorkerOptions_BecomeAPinHostOnlyWhenAsked is §7.2 plus §10 check 3: an
+// TestWorkerOptions_BecomeAPinHostOnlyWhenAsked: an
 // Orker that never set ORK_ORKER_MAX_PINS must build the same worker.Options it
 // built before pins existed, plus two zero-valued fields.
 //
@@ -343,7 +343,8 @@ func TestWorkerOptions_BecomeAPinHostOnlyWhenAsked(t *testing.T) {
 }
 
 // TestWorkerOptions_APinHostOnAVersionedDeploymentIsAcceptedByTheSDK is the
-// cheap half of design §12.1: does the SDK accept the one configuration whose
+// cheap half of the pins-on-a-versioned-deployment contract (docs/DEPLOY.md
+// "Pins on a versioned deployment"): does the SDK accept the one configuration whose
 // two halves its own documentation says cannot be combined?
 //
 // The SDK's doc comment on `DeploymentOptions.UseVersioning` says it "NOTE:
@@ -456,7 +457,7 @@ func TestLoadConfig_AcceptsAPinCapItCanHonor(t *testing.T) {
 // misleading.
 //
 // DescribeOrker's max_concurrent_pins is what submit reads to decide whether a
-// pinned run's pool could ever open its pin (§7.4). An Orker that advertised a
+// pinned run's pool could ever open its pin. An Orker that advertised a
 // capacity its worker does not poll for would accept the submit and then leave
 // the run waiting out CreationTimeout for a slot that does not exist — the one
 // outcome the submit-time probe exists to prevent. One config value must reach

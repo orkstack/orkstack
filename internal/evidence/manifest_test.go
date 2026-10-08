@@ -12,7 +12,6 @@ import (
 
 var updateGolden = flag.Bool("update", false, "rewrite testdata goldens")
 
-// E2
 func TestManifest_JSONKeysAndDialectAreTheContract(t *testing.T) {
 	f := newFixture()
 	got, err := f.manifest.MarshalJSON()

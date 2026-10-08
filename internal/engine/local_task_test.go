@@ -105,7 +105,7 @@ tasks:
     with: {command: "echo publish"}
 `
 
-// parityResult is the behavior every E1 task succeeds with: values naming the
+// parityResult is the behavior every agreement-test task succeeds with: values naming the
 // task, one artifact <id>.out with a URI and sha256 no other task shares, and
 // a commit under the parity commit root.
 func parityResult(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
@@ -151,7 +151,7 @@ func parityPlan(wf *orkstackv1.Orkflow) engine.RunPlan {
 }
 
 // requiredInputs gives every declared input WITHOUT a default a value of its
-// declared type, the way E1's example corpus is submitted.
+// declared type, the way the agreement test's example corpus is submitted.
 func requiredInputs(t *testing.T, wf *orkstackv1.Orkflow) *orkstackv1.Payload {
 	t.Helper()
 	values := map[string]any{}
@@ -381,7 +381,7 @@ func parityChildren(t *testing.T, wf *orkstackv1.Orkflow) map[string]*engine.Chi
 	return children
 }
 
-// TestLocalTaskInput_AgreesWithTheInterpreter is E1: for every task the
+// TestLocalTaskInput_AgreesWithTheInterpreter: for every task the
 // interpreter schedules, LocalTaskInput reproduces the recorded input
 // byte-for-byte except the four named, deliberate differences.
 func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
@@ -446,7 +446,7 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 					local.Item, local.ItemCount = &index, &count
 				}
 				// A direct dependent of a fan-out is refused locally: its
-				// items are read from their commits (§9.9).
+				// items are read from their commits.
 				if dependsOnFanOut(c.wf, want.GetTaskId()) {
 					if _, err := engine.LocalTaskInput(local); err == nil ||
 						!strings.Contains(err.Error(), "a local run has no commit store") {
@@ -504,7 +504,7 @@ func taskPin(wf *orkstackv1.Orkflow, id string) string {
 	return ""
 }
 
-// TestLocalTaskInput_LeavesCommitPinTelemetryAndImagePolicyUnset is E2.
+// TestLocalTaskInput_LeavesCommitPinTelemetryAndImagePolicyUnset.
 func TestLocalTaskInput_LeavesCommitPinTelemetryAndImagePolicyUnset(t *testing.T) {
 	wf := compile(t, localParityPinned)
 	for _, id := range []string{"prep", "compile", "publish"} {
@@ -525,7 +525,7 @@ func TestLocalTaskInput_LeavesCommitPinTelemetryAndImagePolicyUnset(t *testing.T
 	}
 }
 
-// TestLocalTaskInput_UsesOnlyTheClosureInClosureOrder is E3.
+// TestLocalTaskInput_UsesOnlyTheClosureInClosureOrder.
 func TestLocalTaskInput_UsesOnlyTheClosureInClosureOrder(t *testing.T) {
 	wf := compile(t, localParityDiamond)
 	ref := func(id string) *orkstackv1.UpstreamRef {
@@ -549,7 +549,7 @@ func TestLocalTaskInput_UsesOnlyTheClosureInClosureOrder(t *testing.T) {
 	}
 }
 
-// TestLocalTaskInput_RefusesAnUnknownTaskAnEmptyRunIDAndANilOrkflow is E4.
+// TestLocalTaskInput_RefusesAnUnknownTaskAnEmptyRunIDAndANilOrkflow.
 func TestLocalTaskInput_RefusesAnUnknownTaskAnEmptyRunIDAndANilOrkflow(t *testing.T) {
 	wf := compile(t, localParityDiamond)
 	for name, lt := range map[string]engine.LocalTask{
@@ -569,7 +569,7 @@ func TestLocalTaskInput_RefusesAnUnknownTaskAnEmptyRunIDAndANilOrkflow(t *testin
 }
 
 // TestLocalTaskInput_RefusesAnAwaitedTask is the awaited-tasks half of
-// orkctl-task-run's §2.4 obligation: the interpreter never schedules an
+// `orkctl task run`'s obligation: the interpreter never schedules an
 // awaited task (it waits for a resolution and starts no container), so no
 // local input may be composed for one. The refusal is a caller error naming
 // the node, never the task's own failure. A task DOWNSTREAM of an await is
@@ -604,7 +604,7 @@ tasks:
 	}
 }
 
-// TestLocalTaskInput_AppliesDeclaredDefaultsOnce is E5.
+// TestLocalTaskInput_AppliesDeclaredDefaultsOnce.
 func TestLocalTaskInput_AppliesDeclaredDefaultsOnce(t *testing.T) {
 	wf := compile(t, localParityDiamond)
 	compose := func(input *orkstackv1.Payload) map[string]any {
@@ -632,7 +632,7 @@ func TestLocalTaskInput_AppliesDeclaredDefaultsOnce(t *testing.T) {
 	}
 }
 
-// TestLocalTaskInput_RefusesAnOversizeInputAsTheInterpreterDoes is E6.
+// TestLocalTaskInput_RefusesAnOversizeInputAsTheInterpreterDoes.
 func TestLocalTaskInput_RefusesAnOversizeInputAsTheInterpreterDoes(t *testing.T) {
 	big := strings.Repeat("x", 300*1024)
 	wf := compile(t, `
@@ -671,7 +671,7 @@ tasks:
 	}
 }
 
-// TestUpstreamFromRun_TakesSucceededTasksOnly is E7.
+// TestUpstreamFromRun_TakesSucceededTasksOnly.
 func TestUpstreamFromRun_TakesSucceededTasksOnly(t *testing.T) {
 	values := &orkstackv1.ArtifactRef{Name: "values.json", Uri: "s3://b/values", Sha256: "aa"}
 	out := &orkstackv1.ArtifactRef{Name: "out.txt", Uri: "s3://b/out", Sha256: "bb"}
@@ -695,7 +695,7 @@ func TestUpstreamFromRun_TakesSucceededTasksOnly(t *testing.T) {
 	}
 }
 
-// TestTaskClosure_MatchesTheInterpreterClosure is E8.
+// TestTaskClosure_MatchesTheInterpreterClosure.
 func TestTaskClosure_MatchesTheInterpreterClosure(t *testing.T) {
 	c := parityCase{name: "diamond", wf: compile(t, localParityDiamond), input: payload(t, map[string]any{"target": "s"})}
 	recorded, _ := runParity(t, c, "ork-parity-closure")

@@ -25,7 +25,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// These tests hold namespace budgets to the spec against two real `ork`
+// These tests hold namespace budgets to their contract (docs/DEPLOY.md
+// "Namespace budgets") against two real `ork`
 // replicas sharing one bucket and one private Temporal namespace, and one
 // real Orker on a private queue — the admission stack's shape, with both
 // replicas measuring on every request (ORK_USAGE_CACHE_TTL=0) so nothing a
@@ -98,7 +99,7 @@ func newBudgetStack(ctx context.Context, t *testing.T, label string) *budgetStac
 	return s
 }
 
-// usageProbeYAML is the spec's three-task probe: one task sized below the
+// usageProbeYAML is the three-task usage probe: one task sized below the
 // Orker's default, one that takes the default, and one that fails twice.
 func usageProbeYAML(name string) string {
 	return fmt.Sprintf(`name: %s

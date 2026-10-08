@@ -139,8 +139,8 @@ func mountFor(mounts []Mount, destination string) (Mount, bool) {
 // TestExecute_AnUnpinnedAttemptIsUNCHANGED is the backward-compatibility proof
 // at the dispatcher level, and it is deliberately an assertion about absence.
 //
-// §10 requires that a document with no pin dispatches exactly as it did before
-// this feature existed. So an unpinned attempt must render the SAME four
+// A document with no pin must dispatch exactly as it did before pins
+// existed. So an unpinned attempt must render the SAME four
 // mounts, carry NO ork.pin label, write NO task.pin and NO paths.shared, and
 // leave no pin directory behind. If any of those four changed, every unpinned
 // deployment on earth changed with it.
@@ -307,7 +307,7 @@ func TestExecute_ARefusedPinInstanceIDFailsTheAttempt(t *testing.T) {
 	}
 }
 
-// TestDescribeOrker_ReportsTheConfiguredPinCapacity is §7.3. The number is what
+// TestDescribeOrker_ReportsTheConfiguredPinCapacity: the number is what
 // submit reads to decide whether a pinned task's pool could ever open its pin,
 // so a zero has to travel as a zero: it is the difference between "refused at
 // submit with a message naming the setting" and "waits five minutes and then
@@ -341,7 +341,7 @@ func TestDescribeOrker_ReportsTheConfiguredPinCapacity(t *testing.T) {
 }
 
 // TestBoot_ReapsPinDirectoriesWhetherOrNotThisOrkerHostsPins is the boot reap
-// of §8.4, and the "whether or not" is the point.
+// (docs/OCI_ACTIVITY_CONTRACT.md §6.4), and the "whether or not" is the point.
 //
 // A pin directory left by a PREVIOUS life that did host pins must still be
 // removed by a boot that does not, or turning ORK_ORKER_MAX_PINS back to 0
@@ -391,7 +391,8 @@ func TestBoot_ReapsPinDirectoriesWhetherOrNotThisOrkerHostsPins(t *testing.T) {
 	}
 }
 
-// TestReleasePinActivity_RemovesTheRightDirectoryAndIsIdempotent covers §8.5.
+// TestReleasePinActivity_RemovesTheRightDirectoryAndIsIdempotent covers the
+// ReleasePin activity (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
 //
 // The engine schedules this on the pin's own session, so it can only ever land
 // on the host that owns the directory; what this asserts is the other three

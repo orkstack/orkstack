@@ -33,7 +33,7 @@ func presentMember(path string, kind Kind, taskID string, attempt int32, name, o
 		SizeBytes: int64(len(content)), SHA256: digestOf(content), State: StatePresent}
 }
 
-// newFixture builds the E2 manifest: one succeeded task retried once, with a
+// newFixture builds the golden manifest: one succeeded task retried once, with a
 // reclaimed log and an unrecorded attempt on a second task.
 func newFixture() fixtureBundle {
 	contents := map[string][]byte{

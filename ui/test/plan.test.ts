@@ -24,7 +24,6 @@ import { JoinPolicy } from '../src/lib/gen/orkstack/v1/activity_pb';
 const task = (taskId: string, outcome: PlanOutcome, wave: number, extra: Record<string, unknown> = {}) =>
 	create(PlanTaskSchema, { taskId, outcome, wave, ...extra });
 
-// U1
 test('planRows orders by wave then declaration and puts wave-0 rows last', () => {
 	const plan = create(PlanRunResponseSchema, {
 		tasks: [
@@ -38,7 +37,6 @@ test('planRows orders by wave then declaration and puts wave-0 rows last', () =>
 	expect(planRows(plan).map((row) => row.taskId)).toEqual(['early', 'late', 'also-late', 'broken', 'gone']);
 });
 
-// U2
 test('planSummary handles plurals', () => {
 	const one = create(PlanRunResponseSchema, { runs: 1, skipped: 0, waveCount: 1 });
 	expect(planSummary(one)).toBe('1 run, 0 skipped, 1 wave. Nothing was started.');
@@ -47,7 +45,6 @@ test('planSummary handles plurals', () => {
 	expect(planSummary(create(PlanRunResponseSchema, {}))).toBe('0 run, 0 skipped, 0 waves. Nothing was started.');
 });
 
-// U3
 test('planFailure is empty without a FAILS task and names it with one', () => {
 	expect(planFailure(create(PlanRunResponseSchema, { tasks: [task('a', PlanOutcome.RUNS, 1)] }))).toBe('');
 	const failing = create(PlanRunResponseSchema, {
@@ -67,7 +64,6 @@ test('planFailure is empty without a FAILS task and names it with one', () => {
 	expect(planDetail(failing.tasks[1], failing)).toBe('evaluate condition "x": boom');
 });
 
-// U4
 test('planCaveats match the CLI sentences', () => {
 	const plan: PlanRunResponse = create(PlanRunResponseSchema, {
 		tasks: [
@@ -94,7 +90,6 @@ test('planCaveats match the CLI sentences', () => {
 	expect(planDetail(plan.tasks[1], plan)).toBe('condition "x" evaluated false');
 });
 
-// U5
 test('planCli omits --version when empty, emits --outputs-file only with assumptions, and quotes', () => {
 	const current = planCli({ name: 'deploy', namespace: 'payments', version: '', input: { region: 'eu' } });
 	expect(current).toBe(
@@ -120,7 +115,6 @@ test('planCli omits --version when empty, emits --outputs-file only with assumpt
 	);
 });
 
-// U6
 test('parseAssumedOutputs follows its five rules in order', () => {
 	expect(parseAssumedOutputs('')).toEqual({ value: {} });
 	expect(parseAssumedOutputs('   ')).toEqual({ value: {} });

@@ -12,7 +12,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
-// The interface compatibility gate (interface-compatibility-gate §5): two
+// The interface compatibility gate (docs/UI_CLI_PARITY.md "Interface compatibility"): two
 // reads — CompareInterfaces and ListOrkflowCallers — and the helpers the
 // promote gate, the version listing and the apply/validate warnings share.
 // Nothing here writes: every answer is computed from immutable documents the

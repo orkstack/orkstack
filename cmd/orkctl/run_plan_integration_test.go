@@ -156,7 +156,7 @@ func planOrkflowName(prefix string) string {
 	return fmt.Sprintf("%s-%d-%d", prefix, os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 }
 
-// I1: a plan and a real run of the same input agree on every task.
+// A plan and a real run of the same input agree on every task.
 func TestRunPlan_AgreesWithARealRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -228,7 +228,7 @@ func TestRunPlan_AgreesWithARealRun(t *testing.T) {
 	proof.Write(t, "orkctl", "run-plan-agreement.txt", []byte(table.String()+"\n# plan\n"+human.stdout))
 }
 
-// I2: a second replica plans an Orkflow it never applied, identically.
+// A second replica plans an Orkflow it never applied, identically.
 func TestRunPlan_SecondReplicaAnswersForAnOrkflowItNeverApplied(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -268,7 +268,7 @@ func TestRunPlan_SecondReplicaAnswersForAnOrkflowItNeverApplied(t *testing.T) {
 	proof.Write(t, "orkctl", "run-plan-second-replica.json", encoded)
 }
 
-// I3: plans leave no run behind, on either replica or in Temporal.
+// Plans leave no run behind, on either replica or in Temporal.
 func TestRunPlan_LeavesNoRunBehind(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

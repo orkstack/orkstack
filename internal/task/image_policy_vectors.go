@@ -51,7 +51,8 @@ VM++cNZJJfWL6BwbqKs4tIX+kOtqfQqOF0yrl/Wh6uZ/Za70t1qHI/xFfQ==
 // FixedSigningKeyFingerprint is SigningKeyFingerprint of FixedSigningKeyPEM.
 const FixedSigningKeyFingerprint = "sha256:f5a5f53127e68edd8110a0d95cb84f3a2832c15af3833f64da493fcf23306c41"
 
-// ImagePolicyVectors returns the shared vectors (spec §1's tables).
+// ImagePolicyVectors returns the shared registry and digest vectors every
+// boundary is tested against.
 func ImagePolicyVectors() ImagePolicyVectorSet {
 	return ImagePolicyVectorSet{
 		Registries: []RegistryVector{

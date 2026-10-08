@@ -23,7 +23,7 @@ import (
 )
 
 // The two awaited-run fixtures: real histories recorded by a versioned worker
-// against a real cluster by TestIntegration_RecordAwaitedRunHistories (I8),
+// against a real cluster by TestIntegration_RecordAwaitedRunHistories,
 // never hand-edited (testdata/history/README.md). They hold the await path —
 // the first Timer and the first Signal RunWorkflow ever issued — still, the
 // way run-succeeded-v1.json holds the container path.
@@ -33,7 +33,7 @@ const (
 )
 
 // requireAwaitedFixture skips while a fixture has not been recorded yet. The
-// fixtures can only be produced against a real cluster (I8); once one is
+// fixtures can only be produced against a real cluster; once one is
 // committed this never skips again, and the replay below is a hard gate.
 func requireAwaitedFixture(t *testing.T, path string) {
 	t.Helper()

@@ -33,8 +33,7 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// The shipped-examples suite's stack (spec advanced-orkflow-examples, Test
-// plan, "Integration"): one real `ork` built from this tree on S3 with a
+// The shipped-examples suite's stack (examples/README.md): one real `ork` built from this tree on S3 with a
 // private Temporal namespace and channel, one real Orker that is a pin host,
 // an OrkStack namespace of the suite's own — so every example is applied
 // under its SHIPPED name and composition by name keeps working — and every

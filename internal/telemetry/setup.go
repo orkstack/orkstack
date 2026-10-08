@@ -351,7 +351,7 @@ func recordBuildInfo(provider metric.MeterProvider, attrs []attribute.KeyValue) 
 func (p *Providers) Config() Config { return p.cfg }
 
 // Cardinality reports the label policy this Providers' own instruments were
-// built with (Config.HighCardinality). Phase 3's per-sink routers
+// built with (Config.HighCardinality). The per-sink routers
 // (EngineObserver, OrkerObserver, TaskLogExporter) read this off whichever
 // Providers a run or task was pinned to, rather than assuming every sink
 // shares the process-wide default — a nil Providers behaves like disabled
@@ -524,7 +524,7 @@ func withoutExporter(names []string, candidate string) []string {
 }
 
 // sinksOf wraps one Providers as a Sinks whose only member is the default —
-// the shape every phase-1 constructor (NewTaskLogExporter, NewEngineObserver,
+// the shape every single-sink constructor (NewTaskLogExporter, NewEngineObserver,
 // NewOrkerObserver) is defined in terms of, so a caller that still builds one
 // Providers and hands it to them keeps compiling and behaving exactly as
 // before: every sink name, known or not, resolves to p.

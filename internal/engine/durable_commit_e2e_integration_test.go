@@ -43,19 +43,17 @@ import (
 // TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry is the
 // end-to-end proof that the durable commit protocol engages on a REAL run.
 //
-// Before this test the three RunPlan durability fields were populated only by
-// test harnesses: internal/engine/pools.go built `RunPlan{Namespace, Routes}`
-// and nothing on the production submit path ever set CommitRoot, Limits or
-// TransferBudgetSeconds. Every real activity therefore received an empty
-// commit_uri, so §5.4's protocol — which Phase 2 implemented and proved in
-// isolation — never ran outside tests.
+// It guards the production submit path's RunPlan durability fields
+// (CommitRoot, Limits, TransferBudgetSeconds): without them every real
+// activity would receive an empty commit_uri and the §5.4 protocol would never
+// run outside tests.
 //
 // Everything below the orkflow store is production code: internal/api resolves
 // the plan, the real RunWorkflow composes the URI, and a real OCIDispatcher
 // runs a real container against a real Docker daemon and a real MinIO bucket.
 // Only the stored definition is written directly rather than through
-// ApplyOrkflow, because apply-time registry resolution of `uses:` into
-// Task.image is Phase 3 (§4.3) and does not exist yet.
+// ApplyOrkflow, so the test needs no registry to resolve `uses:` into
+// Task.image (§4.3).
 func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testing.T) {
 	e := startCommitE2E(t)
 	ctx, cfg, in, key, wantURI, run := e.ctx, e.cfg, e.in, e.key, e.wantURI, e.run
@@ -109,7 +107,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	t.Logf("EVIDENCE commit_adopted=%t committing_attempt=%d exit_code=%d",
 		adopted.GetCommitAdopted(), adopted.GetAttempt(), adopted.GetExitCode())
 
-	// (d) I3 (task-timing-breakdown): the adopted attempt's record lists
+	// (d) Task timing (docs/UI_CLI_PARITY.md "Task timing"): the adopted attempt's record lists
 	//     exactly the phases it passed through — it returned at the commit
 	//     check, so [start, commit-check] — and the snapshot's started_at is
 	//     the COMMITTING attempt's start, read back out of commit.json.
@@ -142,8 +140,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 		commitStart.AsTime().Format(time.RFC3339Nano))
 }
 
-// TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly is
-// run-evidence-bundle I4: the evidence bundle of a run whose task was adopted
+// TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly: the evidence bundle of a run whose task was adopted
 // says so, instead of hiding the adoption behind one attempt.
 //
 // The run is the production one of startCommitE2E: attempt 1 commits through
@@ -421,9 +418,8 @@ func startCommitE2E(t *testing.T) *commitE2E {
 		t.Cleanup(w.Stop)
 	}
 
-	// The definition, with its image already pinned to a digest. Apply-time
-	// resolution of `uses:` is Phase 3; the wire field it fills is Phase 1's,
-	// and this is what it will contain.
+	// The definition, with its image already pinned to a digest: exactly what
+	// apply-time resolution of `uses:` writes into Task.image.
 	pinned := pinnedAlpineForCommitE2E(t)
 	orkflowName := "commit-e2e-probe"
 	definition := &orkstackv1.Orkflow{

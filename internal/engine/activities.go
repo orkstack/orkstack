@@ -126,8 +126,8 @@ func (a *EventActivities) WithSnapshotStore(store SnapshotStore) *EventActivitie
 // Temporal data converter encodes top-level protobuf messages with protojson.
 //
 // The second argument is a snapshot URI, or empty for an event that carries
-// none of its own — a fan-out's item event between its stride snapshots (spec
-// each-fan-out §5.6). Such an event reads no snapshot, applies nothing to the
+// none of its own — a fan-out's item event between its stride snapshots.
+// Such an event reads no snapshot, applies nothing to the
 // RunStore, is published to the bus, is announced to the EventObserver with
 // the store's copy of the run (skipped when there is none), notifies nothing
 // and archives nothing. The projection worker on

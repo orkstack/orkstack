@@ -23,7 +23,7 @@ export { expect, type Page } from "@playwright/test";
 // module graph cannot link, SvelteKit cannot hydrate, and the page is its
 // 500 screen. That is the browser reporting the host, not the UI reporting
 // anything, and it failed a different spec in a different place in half the
-// proofs of this tree (browsing-operations, admission, run-origin,
+// proofs of this tree (browsing-operations, admission, run origin,
 // logs-dashboard), always at a navigation, always with this error code in the
 // trace. network-change.spec.ts reproduces it on demand.
 //

@@ -9,7 +9,7 @@ import (
 )
 
 // TestQueueForOrker_UsesTheOrkerPrefix pins the control channel's spelling and
-// the id rule every Orker must meet to have one (orker-cordon-drain §4).
+// the id rule every Orker must meet to have one (docs/DEPLOY.md "Removing an Orker safely: cordon and drain").
 func TestQueueForOrker_UsesTheOrkerPrefix(t *testing.T) {
 	queue, err := task.QueueForOrker("orker-7f3a")
 	if err != nil || queue != "ork-orker-orker-7f3a" {

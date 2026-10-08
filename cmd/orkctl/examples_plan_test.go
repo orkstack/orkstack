@@ -116,7 +116,7 @@ func examplePlanLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// TestExamples_DocumentedPlansHold is U6: every `orkctl run plan --file` line
+// TestExamples_DocumentedPlansHold: every `orkctl run plan --file` line
 // in an example's header is a CI check. Each runs through the real CLI
 // against the real Connect service, exactly as a reader would type it, and
 // must exit 0 — its --assert-runs and --assert-skipped hold.

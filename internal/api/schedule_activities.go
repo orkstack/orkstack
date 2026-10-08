@@ -45,7 +45,8 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 	rec *orkstackv1.ScheduleRecord,
 	scheduledAt time.Time,
 ) (*orkstackv1.ScheduledRunPreparation, error) {
-	// The SCHEDULE row of run-origin §3, with its open cell decided: the
+	// The SCHEDULE origin (docs/UI_CLI_PARITY.md "Run origin"), with its open
+	// cell decided: the
 	// reference is the nominal fire time in RFC 3339 UTC, so a backfilled run
 	// says which night it stood in for.
 	origin := &orkstackv1.RunOrigin{

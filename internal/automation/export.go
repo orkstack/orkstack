@@ -203,7 +203,7 @@ func unmanagedWebhook(h liveHook) *orkstackv1.AutomationStep {
 	}
 }
 
-// exportSchedule writes one schedule entry: keys in the §3.3 table's order,
+// exportSchedule writes one schedule entry: keys in the `schedules` table's order,
 // optional keys at their absent value omitted, except overlap, always written.
 func exportSchedule(s *orkstackv1.Schedule) *yaml.Node {
 	spec := s.GetSpec()

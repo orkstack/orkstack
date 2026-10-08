@@ -134,7 +134,7 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 }
 
 // TestGoldenHistory_ReplayedSnapshotProjectsSchedulingAndLeavesStartUnset is
-// E6 (task-timing-breakdown): re-executing the committed fixture's own inputs
+// Task timing (docs/UI_CLI_PARITY.md "Task timing"): re-executing the committed fixture's own inputs
 // and recorded results on this code publishes snapshots that carry
 // scheduled_at on every dispatched task and started_at on none.
 //
@@ -144,8 +144,9 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 // started_at (its recording harness returned only task_id, values_json and
 // artifacts), so the snapshot's unset started_at is the projection of a nil
 // input, asserted as such below. What it does NOT prove: that a real Orker's
-// start survives replay. That is E2/E5 (mocked results that carry one) and I1
-// (end to end), not this test's claim. The fixture itself is not touched.
+// start survives replay. That is timing_test.go's (mocked results that carry
+// one) and the task-timing integration suite's (end to end), not this test's
+// claim. The fixture itself is not touched.
 func TestGoldenHistory_ReplayedSnapshotProjectsSchedulingAndLeavesStartUnset(t *testing.T) {
 	recorded := loadGoldenHistory(t)
 	runID, wf, runInput, plan := goldenWorkflowArgs(t, recorded)

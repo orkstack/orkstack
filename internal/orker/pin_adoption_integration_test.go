@@ -44,7 +44,8 @@ const (
 //  1. the retry ADOPTS — same values, same artifacts, same committing attempt,
 //     and the container does NOT run a second time; and
 //  2. the pin's /orkstack/shared survives the whole thing, because it is keyed
-//     by the pin's instance id and not by the attempt (§8.4, §6.5's retry row).
+//     by the pin's instance id and not by the attempt (a retry stays on the
+//     pin's host and sees the same directory, docs/DSL.md "Pins").
 //
 // The container itself is the witness for (1): it appends a line to
 // shared/runs.log every time it starts, so "the container did not run again" is
@@ -163,7 +164,8 @@ func TestIntegration_APinnedAttemptThatDiedAfterCommitIsAdoptedNotRerun(t *testi
 	}
 
 	// The per-ATTEMPT trees are gone while the pin's is not. That contrast is
-	// the sentence §8.2 makes: one directory per attempt, destroyed on every
+	// the layout makes (docs/OCI_ACTIVITY_CONTRACT.md §6.4): one directory per
+	// attempt, destroyed on every
 	// exit, around one directory per pin that survives them all.
 	if leaked := attemptDirectories(t, dispatcher.WorkRoot, runID); len(leaked) != 0 {
 		t.Errorf("per-attempt workspaces survived: %v", leaked)
@@ -175,7 +177,7 @@ func TestIntegration_APinnedAttemptThatDiedAfterCommitIsAdoptedNotRerun(t *testi
 //
 // An attempt that died BEFORE writing commit.json leaves nothing durable, so
 // the retry genuinely re-runs the container — in a FRESH per-attempt workspace,
-// against the SAME /orkstack/shared (§6.5's retry row, §8.6's last bullet).
+// against the SAME /orkstack/shared (docs/DSL.md "Pins").
 // That is the property a pin exists for, and it is worth proving separately
 // from adoption because adoption never touches the mount at all.
 //

@@ -1197,8 +1197,8 @@ func TestSimulate_ComposedTaskIsOnePlanTaskAndStubsItsOutputs(t *testing.T) {
 	}
 }
 
-// TestSimulate_AgreesWithTheInterpreterOverAComposedTask is E1 over a
-// composed task: the interpreter, whose mocked child returns the stub as its
+// TestSimulate_AgreesWithTheInterpreterOverAComposedTask is the
+// plan/interpreter agreement gate over a composed task: the interpreter, whose mocked child returns the stub as its
 // declared outputs, decides every task as the plan does.
 func TestSimulate_AgreesWithTheInterpreterOverAComposedTask(t *testing.T) {
 	for _, digest := range []string{"go", "stop"} {

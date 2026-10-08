@@ -16,7 +16,7 @@ import (
 )
 
 // newAdminImagePolicyCommand groups the deployment's image supply-chain floor
-// read and write (image-supply-chain-policy §8.1).
+// read and write (docs/DEPLOY.md "Image supply-chain policy").
 //
 // It lives under `admin`, beside `retention`, because it is deployment-wide:
 // the floor under every namespace. A namespace may tighten it (`orkctl

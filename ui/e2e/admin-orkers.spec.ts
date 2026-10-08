@@ -18,7 +18,7 @@ import {
 } from './harness';
 
 // Admin → Pools → Show Orkers, against a real engine, two real Orkers on
-// `main`, real Temporal and real MinIO (orker-cordon-drain §9).
+// `main`, real Temporal and real MinIO (docs/DEPLOY.md "Removing an Orker safely: cordon and drain").
 //
 // What is measured here, each in a browser:
 //

@@ -156,8 +156,8 @@ func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 // which the golden vector in canonical_test.go proves, and still hashes the
 // fields for every definition that actually uses them.
 //
-// See docs/design/task-pinning-worker-session.md §5.4 (and §12.7, which records
-// the deviation as a decision).
+// docs/OCI_ACTIVITY_CONTRACT.md §4.4 records this exception to "emitted
+// whether or not zero".
 func canonicalPins(pins []*orkstackv1.Pin) []any {
 	if len(pins) == 0 {
 		return nil
@@ -271,7 +271,7 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	// cache is emitted ONLY when set — the same exception, for the same
 	// reason, as `pin`. It is part of the definition: a version that consults
 	// memos is not the version that does not. It is NOT part of any memo key
-	// (cache-memoization spec §4.2): changing a TTL invalidates nothing.
+	// (docs/DSL.md "What the key covers"): changing a TTL invalidates nothing.
 	if c := t.GetCache(); c != nil {
 		out["cache"] = map[string]any{
 			"ttlSeconds": int64(c.GetTtlSeconds()),

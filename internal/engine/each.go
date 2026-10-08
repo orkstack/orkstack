@@ -25,7 +25,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Fan-out (spec each-fan-out §5): a task that declares `each:` is ONE node of
+// Fan-out (docs/DSL.md "Fan-out"): a task that declares `each:` is ONE node of
 // the DAG that runs as one item per element of an array. The interpreter
 // counts the array once — from the run input, or through a local activity
 // whose result is recorded as a marker — and dispatches every item as its own
@@ -48,14 +48,14 @@ const (
 
 	eachItemInputBudget    = 16 << 20
 	eachItemArtifactBudget = 16384
-	// eachDispatchBytes bounds the item inputs one workflow task may schedule
-	// (spec §5.4): batch = max(1, eachDispatchBytes / item input bound).
+	// eachDispatchBytes bounds the item inputs one workflow task may
+	// schedule: batch = max(1, eachDispatchBytes / item input bound).
 	eachDispatchBytes = 2 << 20
 	// eachDispatchYield is the timer that ends a dispatch batch's workflow
 	// task when more items are due. A Temporal timer, not a scheduler.
 	eachDispatchYield = time.Millisecond
 	// eachSnapshotsPerFanOut bounds how many item events of one fan-out write
-	// a fresh snapshot (spec §5.6).
+	// a fresh snapshot.
 	eachSnapshotsPerFanOut = 20
 	// The count activity's budget mirrors the snapshot write's: 10s per
 	// attempt, 3 attempts, 60s end to end.
@@ -89,7 +89,7 @@ func itemFlightKey(id string, index int32) string {
 	return id + "#" + strconv.Itoa(int(index))
 }
 
-// eachBounds are the two per-item bounds of spec §5.1, derived from the
+// eachBounds are the two per-item bounds, derived from the
 // Orkflow's declared item total alone, so they are known at apply and pinned
 // by the definition on replay. A run with no fan-out computes neither.
 func eachBounds(wf *orkstackv1.Orkflow, limits WorkspaceLimits) (share int32, inputLimit int64, artifactMax int32) {
@@ -113,7 +113,7 @@ func eachBounds(wf *orkstackv1.Orkflow, limits WorkspaceLimits) (share int32, in
 }
 
 // EachItemBounds exposes eachBounds to internal/api, which checks a fan-out's
-// own share of every item's input at apply (spec §7.1).
+// own share of every item's input at apply.
 func EachItemBounds(wf *orkstackv1.Orkflow, limits WorkspaceLimits) (inputLimit int64, artifactMax int32) {
 	_, inputLimit, artifactMax = eachBounds(wf, limits)
 	return inputLimit, artifactMax
@@ -491,7 +491,7 @@ func (s *runState) failExpansion(ctx workflow.Context, id, code, message string)
 // dispatchItems schedules items in ascending index order while a slot is free
 // and an item is due, at most batch per workflow task; a yield timer ends the
 // workflow task between batches, so no completion carries more than
-// eachDispatchBytes of item inputs (spec §5.1).
+// eachDispatchBytes of item inputs.
 func (s *runState) dispatchItems(ctx, runCtx workflow.Context, id string, inFlight map[string]workflow.Future) error {
 	e := s.eaches[id]
 	batch := int64(eachDispatchBytes) / s.itemInputLimit
@@ -550,8 +550,7 @@ func (s *runState) itemRefused(ctx workflow.Context, id string, index int32, cau
 	return s.failNodeOnItem(ctx, id, index)
 }
 
-// scheduleItem is schedule for one item, with exactly the differences of spec
-// §5.4: the item's idempotency key and commit URI, the per-item artifact
+// scheduleItem is schedule for one item, with exactly these differences: the item's idempotency key and commit URI, the per-item artifact
 // limit, and EachContext. No event is emitted at dispatch.
 func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32) (workflow.Future, error) {
 	t := s.tasks[id]
@@ -674,8 +673,8 @@ func (s *runState) collectItem(
 	// already shows the freed slot's replacement as RUNNING. A refill the
 	// engine refuses (INPUT_TOO_LARGE) has already failed the node by the
 	// time it returns; this item's own event is still emitted below before
-	// that refusal goes to fail(), so every settled item has its one event
-	// (spec §5.5 step 3), after the refused item's.
+	// that refusal goes to fail(), so every settled item has its one event,
+	// after the refused item's.
 	var refused error
 	if !draining && cause == nil {
 		refused = s.dispatchItems(ctx, runCtx, id, inFlight)
@@ -895,7 +894,7 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 
 // WithoutItems returns a clone of run with every TaskRun.items cleared and
 // everything else kept: the shape of the workflow's own result, a ListRuns
-// page and a webhook body (spec §5.13). For a run with no fan-out the clone
+// page and a webhook body. For a run with no fan-out the clone
 // equals the input.
 func WithoutItems(run *orkstackv1.Run) *orkstackv1.Run {
 	if run == nil {

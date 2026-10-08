@@ -29,12 +29,12 @@ import (
 )
 
 // tlsGitServer is the test git remote of the transform-image suites
-// (first-party-transform-images §12.4): git's own `http-backend` behind a TLS
+// (docs/ACTIVITY_IMAGES.md): git's own `http-backend` behind a TLS
 // listener whose leaf names host.docker.internal — the name every Go
 // integration suite uses for a container's route to the host — signed by a CA
 // generated for the test. A second listener, "elsewhere", serves the same
 // handler on another port, which is another ORIGIN: the target of the
-// /moved/ redirect (X9).
+// /moved/ redirect.
 //
 // The middleware, in order:
 //

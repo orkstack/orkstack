@@ -873,7 +873,7 @@ func mustRunObjectRefKey(t *testing.T, objectID, runID string) string {
 }
 
 // TestIntegration_RunEvidenceReflectsCleanupAsReclaimed is run-evidence-bundle
-// I2: a real run on a live cluster, archived to a private MinIO bucket, with a
+// A real run on a live cluster, archived to a private MinIO bucket, with a
 // real commit record, a real attempt record and a real uploaded stdout.log.
 // The cleanup pass retires it; the evidence manifest then lists commit.json
 // commit_missing and the attempt record unrecorded, while the outcome

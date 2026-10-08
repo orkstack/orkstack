@@ -22,7 +22,8 @@ import {
 } from './harness';
 
 // Admin → Webhooks with a scope, in a browser, against the real engine, Orker,
-// Temporal and MinIO (docs/design/proposals/phase-1/scoped-subscriptions).
+// Temporal and MinIO (docs/UI_CLI_PARITY.md "Scoped subscriptions and task
+// outcome events").
 //
 // What is measured here:
 //   1. the page states that subscriptions are deployment-wide unless scoped,

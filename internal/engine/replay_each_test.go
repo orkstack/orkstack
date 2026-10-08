@@ -24,7 +24,7 @@ import (
 )
 
 // eachHistory is the fan-out fixture: a real history recorded by a versioned
-// worker against a real cluster by TestIntegration_RecordEachRunHistory (I8),
+// worker against a real cluster by TestIntegration_RecordEachRunHistory,
 // never hand-edited (testdata/history/README.md). A 6-item fan-out over an
 // upstream output with max_parallel: 2, one item retried, and a direct
 // dependent: the first local-activity count marker, the first item
@@ -33,7 +33,7 @@ import (
 const eachHistory = "testdata/history/run-each-v1.json"
 
 // requireEachFixture skips while the fixture has not been recorded yet. It
-// can only be produced against a real cluster (I8); once committed this never
+// can only be produced against a real cluster; once committed this never
 // skips again, and the replay below is a hard gate. ORK_REQUIRE_EACH_FIXTURE
 // makes its absence a failure.
 func requireEachFixture(t *testing.T) {

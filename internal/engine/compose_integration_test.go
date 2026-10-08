@@ -29,9 +29,9 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The composed-orkflows integration suite (spec composed-orkflows,
-// "Integration"): real Temporal, real MinIO and — for I1–I7 — the real Orker
-// running real containers through Docker, on the shape of the §2.6 examples:
+// The composed-orkflows integration suite (docs/DSL.md "Composition"): real
+// Temporal, real MinIO and the real Orker running real containers through
+// Docker, on the shape of the shipped composition examples:
 // build → release (a child run of release-block: sign → publish, declaring
 // digest and url) → announce, the parent declaring its own digest. The
 // definitions run the pinned alpine image the commit suite uses, so the
@@ -189,7 +189,6 @@ func (e *eachE2E) taskLog(runID, taskID string) string {
 	return b.String()
 }
 
-// I1.
 func TestIntegration_ComposedRunEndToEnd(t *testing.T) {
 	e := startEachE2E(t, true)
 	e.startOrker("compose-i1")
@@ -232,7 +231,6 @@ func TestIntegration_ComposedRunEndToEnd(t *testing.T) {
 		runID, childID, childRun.GetOrigin().GetId(), values, announce, digest)))
 }
 
-// I2.
 func TestIntegration_ComposedChildFailureFailsTheParent(t *testing.T) {
 	e := startEachE2E(t, true)
 	e.startOrker("compose-i2")
@@ -257,7 +255,6 @@ func TestIntegration_ComposedChildFailureFailsTheParent(t *testing.T) {
 // sleepUntilTerm is a child task that records SIGTERM on stdout and exits.
 const sleepUntilTerm = `trap 'echo got SIGTERM; exit 143' TERM; echo sleeping; sleep 600 & wait`
 
-// I3.
 func TestIntegration_CancelParentCancelsTheChildsContainer(t *testing.T) {
 	e := startEachE2E(t, true)
 	e.startOrker("compose-i3")
@@ -286,7 +283,6 @@ func TestIntegration_CancelParentCancelsTheChildsContainer(t *testing.T) {
 		runID, run.GetFinishedAt().AsTime(), childID, childRun.GetFinishedAt().AsTime(), logged)))
 }
 
-// I4.
 func TestIntegration_CancelChildCancelsItsParent(t *testing.T) {
 	e := startEachE2E(t, true)
 	e.startOrker("compose-i4")
@@ -308,7 +304,6 @@ func TestIntegration_CancelChildCancelsItsParent(t *testing.T) {
 		childID, runID, run.GetError().GetCode(), run.GetError().GetMessage())))
 }
 
-// I5.
 func TestIntegration_TerminatedParentCancelsItsChild(t *testing.T) {
 	e := startEachE2E(t, true)
 	e.startOrker("compose-i5")
@@ -341,7 +336,6 @@ func TestIntegration_TerminatedParentCancelsItsChild(t *testing.T) {
 		runID, childID, childRun.GetStatus(), described.GetWorkflowExecutionInfo().GetStatus(), logged)))
 }
 
-// I6.
 func TestIntegration_EngineRestartMidChildStartsOneChild(t *testing.T) {
 	e := startEachE2E(t, true)
 	e.startOrker("compose-i6")
@@ -366,7 +360,6 @@ func TestIntegration_EngineRestartMidChildStartsOneChild(t *testing.T) {
 	proof.Write(t, "engine", "compose-I6.txt", []byte(fmt.Sprintf("parent=%s child starts in history=1\n", runID)))
 }
 
-// I7.
 func TestIntegration_ChildArchivedWithItsOwnIndexAndOrigin(t *testing.T) {
 	e := startEachE2E(t, true)
 	e.startOrker("compose-i7")
@@ -422,9 +415,10 @@ func TestIntegration_ChildArchivedWithItsOwnIndexAndOrigin(t *testing.T) {
 		runID, childID, runID, objectID, holders)))
 }
 
-// I8 lives in versioning_compose_integration_test.go.
+// The child-on-its-parent's-version test lives in
+// versioning_compose_integration_test.go.
 
-// I9: a submission the deployment can no longer plan is refused, and nothing
+// A submission the deployment can no longer plan is refused, and nothing
 // is started.
 func TestIntegration_ComposedSubmitRefusalsMintNothing(t *testing.T) {
 	address := temporalAddress()
@@ -511,7 +505,7 @@ func (emptyGPU) ObservePool(_ context.Context, queue string) (engine.PoolLivenes
 	return engine.PoolLiveness{Orkers: 1, LastSeen: time.Now()}, nil
 }
 
-// I10: opt-in recorder of the composed fixtures.
+// Opt-in recorder of the composed fixtures.
 func TestIntegration_RecordComposedRunHistory(t *testing.T) {
 	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") == "" {
 		t.Skip("set ORK_RECORD_GOLDEN_HISTORY=1 to record " + composedParentHistory + " and " + composedChildHistory +
@@ -575,7 +569,7 @@ func TestIntegration_RecordComposedRunHistory(t *testing.T) {
 	}
 	setCurrentVersion(t, ctx, temporalClient, deployment, runQueue, orkerQueue)
 
-	// The §2.6 examples, as apply would store them: the child's digest
+	// The shipped composition examples, as apply would store them: the child's digest
 	// stamped into the parent's composed task.
 	child := exampleOrkflow(t, "release-block", "0.1.0")
 	parent := exampleOrkflow(t, "composed-release", "0.1.0")

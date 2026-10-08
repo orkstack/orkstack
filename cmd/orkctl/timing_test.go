@@ -13,8 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// These are the task-timing-breakdown spec's CLI scenarios (C1-C9). The
-// derivation table's rows T1-T8 are built once, as data, and every rendering
+// These are the task-timing CLI scenarios (docs/UI_CLI_PARITY.md "Task
+// timing"). The derivation table's rows T1-T8 are built once, as data, and every rendering
 // test reads the same builders — the goldens and the fixture-driven command
 // tests cannot drift apart.
 
@@ -81,9 +81,9 @@ func at(value string) time.Time {
 
 func ts(t time.Time) *timestamppb.Timestamp { return timestamppb.New(t) }
 
-// scenarioNightly is the spec's worked example — T1 (extract, load), T2
-// (transform), T3 (verify) and T4 (report) in one run — exactly as §6.2
-// renders it.
+// scenarioNightly is the worked example — T1 (extract, load), T2
+// (transform), T3 (verify) and T4 (report) in one run — exactly as `run
+// timing` renders it.
 func scenarioNightly() (*orkstackv1.Run, []*orkstackv1.TaskAttempt) {
 	const runID = "ork-20260922091401-1"
 	succeeded := orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED
@@ -132,7 +132,7 @@ func scenarioNightly() (*orkstackv1.Run, []*orkstackv1.TaskAttempt) {
 	return run, attempts
 }
 
-// scenarioRender is §6.2's --task example: decided on attempt 2, and attempt
+// scenarioRender is the --task worked example: decided on attempt 2, and attempt
 // 1 HAS a record, so the queue wait is a number.
 func scenarioRender(runID string) (*orkstackv1.TaskRun, []*orkstackv1.TaskAttempt) {
 	S := at("2026-09-22T10:02:00Z")
@@ -241,7 +241,7 @@ func renderJSON(t *testing.T, timing *runTiming) string {
 
 var timingNow = at("2026-09-22T23:00:00Z")
 
-// TestRunTiming_GoldenTable is C1: T1-T4 in one run, as §6.2 renders it.
+// TestRunTiming_GoldenTable renders T1-T4 in one run, as `run timing` prints it.
 func TestRunTiming_GoldenTable(t *testing.T) {
 	run, attempts := scenarioNightly()
 	timing := computeRunTiming(run, attempts, timingOptions{AttemptStore: true, Now: timingNow})
@@ -250,7 +250,7 @@ func TestRunTiming_GoldenTable(t *testing.T) {
 	t.Logf("C1 run timing:\n%s", got)
 }
 
-// TestRunTiming_GoldenJSON is C2: the same run as the CLI-owned document.
+// TestRunTiming_GoldenJSON: the same run as the CLI-owned document.
 func TestRunTiming_GoldenJSON(t *testing.T) {
 	run, attempts := scenarioNightly()
 	timing := computeRunTiming(run, attempts, timingOptions{AttemptStore: true, Now: timingNow})
@@ -282,7 +282,7 @@ func TestRunTiming_GoldenJSON(t *testing.T) {
 	}
 }
 
-// TestRunTiming_TaskNarrowsToOneTaskAndPrintsItsPhases is C3, through the
+// TestRunTiming_TaskNarrowsToOneTaskAndPrintsItsPhases: through the
 // real command against the fixture engine.
 func TestRunTiming_TaskNarrowsToOneTaskAndPrintsItsPhases(t *testing.T) {
 	f, attempts := newAttemptFixture(t)
@@ -311,7 +311,7 @@ func TestRunTiming_TaskNarrowsToOneTaskAndPrintsItsPhases(t *testing.T) {
 // "10s" or "1m0s".
 var standaloneZero = regexp.MustCompile(`(^|[^0-9.m])0s\b`)
 
-// TestRunTiming_PreContractRunRendersUnavailableNeverZero is C4 (T5).
+// TestRunTiming_PreContractRunRendersUnavailableNeverZero is row T5.
 func TestRunTiming_PreContractRunRendersUnavailableNeverZero(t *testing.T) {
 	f, attempts := newAttemptFixture(t)
 	task, records := scenarioPreContract("run-timing-legacy")
@@ -337,7 +337,7 @@ func TestRunTiming_PreContractRunRendersUnavailableNeverZero(t *testing.T) {
 	t.Logf("C4 pre-contract:\n%s", got.stdout)
 }
 
-// TestRunTiming_ClockSkewIsUnavailableNotNegative is C5 (T6).
+// TestRunTiming_ClockSkewIsUnavailableNotNegative is row T6.
 func TestRunTiming_ClockSkewIsUnavailableNotNegative(t *testing.T) {
 	f, attempts := newAttemptFixture(t)
 	task, records := scenarioSkew("run-timing-skew")
@@ -361,7 +361,7 @@ func TestRunTiming_ClockSkewIsUnavailableNotNegative(t *testing.T) {
 	}
 }
 
-// TestRunTiming_WithoutAnAttemptStoreStillPrintsTheSnapshotHalf is C6 (T8).
+// TestRunTiming_WithoutAnAttemptStoreStillPrintsTheSnapshotHalf is row T8.
 func TestRunTiming_WithoutAnAttemptStoreStillPrintsTheSnapshotHalf(t *testing.T) {
 	f := newFixture(t)
 	f.runs.Apply(oneTaskRun("run-timing-nostore", scenarioNoStore()))
@@ -458,7 +458,7 @@ func TestRunTiming_RunningTaskShowsOnlySinceScheduled(t *testing.T) {
 	}
 }
 
-// TestRunGet_TimingFlagAppendsTheTable is C7's first half.
+// TestRunGet_TimingFlagAppendsTheTable: `run get --timing` appends the table.
 func TestRunGet_TimingFlagAppendsTheTable(t *testing.T) {
 	f, attempts := newAttemptFixture(t)
 	task, records := scenarioRender("run-get-timing")
@@ -478,7 +478,7 @@ func TestRunGet_TimingFlagAppendsTheTable(t *testing.T) {
 	}
 }
 
-// TestRunGet_TimingIsRefusedWithJSON is C7's second half, on the precedent of
+// TestRunGet_TimingIsRefusedWithJSON: `--timing --json` is refused, on the precedent of
 // --attempts.
 func TestRunGet_TimingIsRefusedWithJSON(t *testing.T) {
 	f, attempts := newAttemptFixture(t)
@@ -504,7 +504,7 @@ func TestRunGet_TimingIsRefusedWithJSON(t *testing.T) {
 	}
 }
 
-// TestRenderRun_TaskTableHasScheduledBeforeStarted is C8: `run get` shows the
+// TestRenderRun_TaskTableHasScheduledBeforeStarted: `run get` shows the
 // dispatch instant beside the Orker's start.
 func TestRenderRun_TaskTableHasScheduledBeforeStarted(t *testing.T) {
 	task, _ := scenarioRender("r")
@@ -521,7 +521,7 @@ func TestRenderRun_TaskTableHasScheduledBeforeStarted(t *testing.T) {
 	}
 }
 
-// TestTaskStatusLabel_NeverStartedReadsScheduledAt is C9: a task canceled
+// TestTaskStatusLabel_NeverStartedReadsScheduledAt: a task canceled
 // while it ran has scheduled_at and no started_at (no Orker reported), and it
 // is NOT "never started".
 func TestTaskStatusLabel_NeverStartedReadsScheduledAt(t *testing.T) {

@@ -11,7 +11,7 @@ import { shellQuote } from './runDetail';
 import { fmtTimestamp } from './status';
 
 // Admin → Releases' rendering rules, shared by the page and its tests
-// (orkctl-release §8). They mirror `orkctl release status` (cmd/orkctl/release.go):
+// (docs/DEPLOY.md §3). They mirror `orkctl release status` (cmd/orkctl/release.go):
 // a count the run index could not give is `unknown`, never 0, and "drained"
 // is said only when the release may be stopped.
 
@@ -162,7 +162,7 @@ function runsFinish(previous: Release | undefined, build: string): string {
 	return `the ${previous.runsInFlight} runs executing on ${build} finish there`;
 }
 
-/** §7.2/§7.3's result sentence for a promote or a rollback. */
+/** The result sentence for a promote or a rollback, as `orkctl release` prints it. */
 export function promoteResult(
 	read: ListReleasesResponse | null,
 	build: string,
@@ -181,7 +181,7 @@ export function promoteResult(
 	return text;
 }
 
-/** §7.4's result sentence for a ramp or a stopped ramp. */
+/** The result sentence for a ramp or a stopped ramp, as `orkctl release` prints it. */
 export function rampResult(
 	read: ListReleasesResponse | null,
 	build: string,

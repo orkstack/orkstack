@@ -62,7 +62,7 @@ func interpret(t *testing.T, runID string, wf *orkstackv1.Orkflow, input *orksta
 
 // interpretFailing is interpret with every task named in failing returning a
 // non-retryable ActivityFailed: the run in which exactly the plan's assumed
-// failures happen (§6, "a plan and a run agree").
+// failures happen ("a plan and a run agree").
 func interpretFailing(t *testing.T, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, assumed map[string]map[string]any, failing []string, pools ...string) (*orkstackv1.Run, *harness) {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
@@ -112,9 +112,9 @@ func skipMessages(h *harness, runID string) map[string][]string {
 	return out
 }
 
-// assertAgreement is E1's per-task check: the plan and the interpreter agree
+// assertAgreement is the agreement test's per-task check: the plan and the interpreter agree
 // on every task of wf for this input and these stubs — and, with assumed
-// failures, task-join-policy §6's table: a failure handler is held to its
+// failures, the join rule: a failure handler is held to its
 // plan exactly; any other task may also have been CANCELED once the run
 // started failing, because it may have been pending or running then.
 func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunResponse, run *orkstackv1.Run, h *harness, runID string) {
@@ -181,7 +181,7 @@ func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunRespons
 			}
 		case orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS, orkstackv1.PlanOutcome_PLAN_OUTCOME_UNREACHED:
 			// A fan-out that FAILS ends FAILED with that message: its
-			// expansion was refused (spec each-fan-out §5.12).
+			// expansion was refused (docs/DSL.md "Fan-out").
 			if task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS && task.GetEach() != nil {
 				if got != orkstackv1.Status_STATUS_FAILED {
 					t.Errorf("%s: fan-out %s planned FAILS, interpreter %v", label, id, got)
@@ -317,7 +317,7 @@ func compileExample(t *testing.T, name string) *orkstackv1.Orkflow {
 	return wf
 }
 
-// E1: the plan and the real interpreter agree on every task.
+// The plan and the real interpreter agree on every task.
 func TestSimulate_AgreesWithTheInterpreter(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -400,7 +400,7 @@ tasks:
     with: {command: "echo"}
 `
 
-// E2: a wave is one more than the deepest need.
+// A wave is one more than the deepest need.
 func TestSimulate_WaveIsOneMoreThanTheDeepestNeed(t *testing.T) {
 	plan := simulate(t, compile(t, wavesDocument), nil, nil)
 	want := map[string]int32{"build": 1, "lint": 2, "test": 2, "sign": 3, "docs": 1, "publish": 4}
@@ -463,7 +463,7 @@ tasks:
     with: {command: "echo"}
 `
 
-// E3: a skipped task keeps the wave it would have had and is not counted.
+// A skipped task keeps the wave it would have had and is not counted.
 func TestSimulate_SkippedTaskKeepsItsWouldBeWaveAndIsNotCounted(t *testing.T) {
 	plan := simulate(t, compile(t, smokeDocument), payload(t, map[string]any{"region": "eu"}), nil)
 	smoke := planTaskOf(t, plan, "smoke-test")
@@ -509,7 +509,7 @@ tasks:
     with: {command: "echo"}
 `
 
-// E4: an upstream skip names the first skipped need in needs: order.
+// An upstream skip names the first skipped need in needs: order.
 func TestSimulate_UpstreamSkipNamesTheFirstSkippedNeed(t *testing.T) {
 	wf := compile(t, twoSkippedNeedsDocument)
 	input := payload(t, map[string]any{"on": false})
@@ -551,7 +551,7 @@ tasks:
     with: {command: "echo"}
 `
 
-// E5: a condition that errors FAILS the run and leaves the rest UNREACHED.
+// A condition that errors FAILS the run and leaves the rest UNREACHED.
 func TestSimulate_ConditionErrorFailsAndMarksUnreached(t *testing.T) {
 	wf := compile(t, conditionErrorDocument)
 	input := payload(t, map[string]any{"a": "x", "b": 1})
@@ -592,7 +592,7 @@ func TestSimulate_ConditionErrorFailsAndMarksUnreached(t *testing.T) {
 	assertAgreement(t, "condition error", plan, run, h, "run-simulate-condition-error")
 }
 
-// E6: an assumed output drives a downstream condition both ways.
+// An assumed output drives a downstream condition both ways.
 func TestSimulate_AssumedOutputDrivesAnUpstreamCondition(t *testing.T) {
 	wf := compile(t, outputConditionDocument)
 	on := simulate(t, wf, nil, assumedPayloads(t, map[string]map[string]any{"x": {"field": true}}))
@@ -630,7 +630,7 @@ tasks:
     with: {command: "echo"}
 `
 
-// E7: an unsupplied upstream output is {} and is reported.
+// An unsupplied upstream output is {} and is reported.
 func TestSimulate_UnsuppliedUpstreamOutputIsEmptyAndReported(t *testing.T) {
 	wf := compile(t, publishDocument)
 	input := payload(t, map[string]any{"go": false})
@@ -666,7 +666,7 @@ tasks:
     with: {command: "echo"}
 `
 
-// E8: declared defaults apply; an explicit null is not replaced.
+// Declared defaults apply; an explicit null is not replaced.
 func TestSimulate_AppliesDeclaredInputDefaults(t *testing.T) {
 	wf := compile(t, defaultsDocument)
 	plan := simulate(t, wf, nil, nil)
@@ -689,7 +689,7 @@ func TestSimulate_AppliesDeclaredInputDefaults(t *testing.T) {
 	assertAgreement(t, "explicit null", nulled, run, h, "run-simulate-null")
 }
 
-// E9: an unused stub is reported; a stub for a non-task is refused.
+// An unused stub is reported; a stub for a non-task is refused.
 func TestSimulate_ReportsUnusedAndRefusesUnknownAssumedOutputs(t *testing.T) {
 	wf := compile(t, conditionDocument)
 	plan := simulate(t, wf, payload(t, map[string]any{"enabled": false}),
@@ -708,7 +708,7 @@ func TestSimulate_ReportsUnusedAndRefusesUnknownAssumedOutputs(t *testing.T) {
 	}
 }
 
-// E10: Simulate is pure and mutates nothing.
+// Simulate is pure and mutates nothing.
 func TestSimulate_IsPureAndMutatesNothing(t *testing.T) {
 	wf := compile(t, publishDocument)
 	input := payload(t, map[string]any{"go": true})
@@ -751,7 +751,7 @@ func TestSimulate_IsPureAndMutatesNothing(t *testing.T) {
 	}
 }
 
-// E11: the interpreter's skip events are spelled by the shared helpers.
+// The interpreter's skip events are spelled by the shared helpers.
 func TestClassify_UsesTheSharedSkipReasons(t *testing.T) {
 	wf := compile(t, conditionDocument)
 	run, h := interpret(t, "run-classify-reasons", wf, payload(t, map[string]any{"enabled": false}), nil)

@@ -11,7 +11,6 @@ import (
 	"testing"
 )
 
-// E3
 func TestWrite_MembersAppearInManifestOrderWithManifestFirst(t *testing.T) {
 	f := newFixture()
 	bundle := writeFixture(t, f)
@@ -52,7 +51,6 @@ func TestWrite_MembersAppearInManifestOrderWithManifestFirst(t *testing.T) {
 	}
 }
 
-// E4
 func TestWrite_AbortsOnDigestOrSizeMismatchAndOnVanish(t *testing.T) {
 	f := newFixture()
 	artifact := "tasks/reconcile/artifacts/rates.parquet"

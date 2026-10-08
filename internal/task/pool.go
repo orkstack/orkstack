@@ -24,7 +24,7 @@ const (
 	// orkerQueuePrefix names every Orker's control channel:
 	// orkerQueuePrefix + orker_id. Exactly one process polls each, and it
 	// carries DescribeOrker and CordonOrker to that process and no other
-	// (orker-cordon-drain §4). It is internal: no user-facing surface names it.
+	// (docs/DEPLOY.md "Removing an Orker safely: cordon and drain"). It is internal: no user-facing surface names it.
 	orkerQueuePrefix = "ork-orker-"
 
 	// OrkersQueue is the presence channel every Orker polls and nothing
@@ -251,7 +251,7 @@ func PoolForQueue(queue string) (string, bool) {
 // PoolForQueue. ok=false for anything else: a raw channel that is not the
 // default, a pin-creation channel, another product's channel. It builds no
 // channel name and adds no prefix; it composes the two readers this file
-// already has (orkctl-release §4).
+// already has (docs/DEPLOY.md §3).
 func PoolForChannel(queue string, def Route) (string, bool) {
 	if queue != "" && queue == def.Queue {
 		return def.Pool, true

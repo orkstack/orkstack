@@ -561,7 +561,7 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 			if len(results) != 2 {
 				t.Errorf("Observe seam recorded %d results for the run, want 2 (TASK_STARTED and %s)", len(results), tc.terminal)
 			}
-			// scheduledAt is the dispatch stamp (task-timing-breakdown):
+			// scheduledAt is the dispatch stamp (docs/UI_CLI_PARITY.md "Task timing"):
 			// sibling was dispatched and then canceled, so it carries one.
 			// startedAt is the Orker's own start, which a plain context
 			// cancellation does not report, so it is not asserted here.

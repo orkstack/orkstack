@@ -11,7 +11,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 )
 
-// The plan half of join policies (task-join-policy §6): Simulate decides a
+// The plan half of join policies (docs/DSL.md "Joins and failure handlers"): Simulate decides a
 // join with the interpreter's own predicate and sentences, plans assumed
 // failures, and agrees with a run in which exactly those tasks fail.
 

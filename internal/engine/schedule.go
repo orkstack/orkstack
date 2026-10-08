@@ -46,7 +46,7 @@ const (
 	SchedulePauseNote  = "paused"
 	ScheduleResumeNote = "resumed"
 
-	// maxScheduleFireTimes bounds next_fire_times and recent_fires (§2).
+	// maxScheduleFireTimes bounds next_fire_times and recent_fires.
 	maxScheduleFireTimes = 10
 	// scheduleListPageSize is the list page the cluster is asked for.
 	scheduleListPageSize = 1000

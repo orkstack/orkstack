@@ -340,7 +340,6 @@ func requireDiffCode(t *testing.T, err error, code connect.Code, contains ...str
 	}
 }
 
-// D1
 func TestDiffRuns_RefusesMissingOrIdenticalIDsAndUnknownFields(t *testing.T) {
 	f := newDiffFixture(t, []*orkstackv1.Run{diffRun("ork-a", nil), diffRun("ork-b", nil)})
 	cases := []struct {
@@ -366,7 +365,6 @@ func TestDiffRuns_RefusesMissingOrIdenticalIDsAndUnknownFields(t *testing.T) {
 	}
 }
 
-// D2
 func TestDiffRuns_AnotherNamespacesRunIsNotFound(t *testing.T) {
 	a := diffRun("ork-alpha-run", func(r *orkstackv1.Run) { r.Namespace = "alpha" }, diffTask("work"))
 	b := diffRun("ork-bravo-run", func(r *orkstackv1.Run) { r.Namespace = "bravo" }, diffTask("work"))
@@ -410,7 +408,6 @@ func fullyRecordedFixture(t *testing.T, from, to *orkstackv1.Run, options ...dif
 	return f
 }
 
-// D3
 func TestDiffRuns_IdenticalRunsYieldNoRowsAndCountEveryTaskIdentical(t *testing.T) {
 	later := func(r *orkstackv1.Run) {
 		r.CreatedAt = timestamppb.New(diffT0.Add(24 * time.Hour))
@@ -444,7 +441,7 @@ func TestDiffRuns_IdenticalRunsYieldNoRowsAndCountEveryTaskIdentical(t *testing.
 	}
 }
 
-// d4Runs is D4's fixture: three tasks, and between them every snapshot field
+// d4Runs is a fixture of three tasks, and between them every snapshot field
 // differs once.
 func d4Runs() (*orkstackv1.Run, *orkstackv1.Run) {
 	from := diffRun("ork-mon", nil,
@@ -475,7 +472,6 @@ func d4Runs() (*orkstackv1.Run, *orkstackv1.Run) {
 	return from, to
 }
 
-// D4
 func TestDiffRuns_OneRowPerDifferingTaskField(t *testing.T) {
 	from, to := d4Runs()
 	f := newDiffFixture(t, []*orkstackv1.Run{from, to})
@@ -506,7 +502,6 @@ func TestDiffRuns_OneRowPerDifferingTaskField(t *testing.T) {
 	requireRows(t, res)
 }
 
-// D5
 func TestDiffRuns_InputDiffIsCanonicalAndLabelled(t *testing.T) {
 	from := diffRun("ork-mon", func(r *orkstackv1.Run) {
 		r.Input = diffInput(t, map[string]any{"date": "2026-09-21", "n": 5.0})
@@ -535,7 +530,6 @@ func TestDiffRuns_InputDiffIsCanonicalAndLabelled(t *testing.T) {
 	}
 }
 
-// D6
 func TestDiffRuns_DefinitionRowAndDigestFlag(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -567,7 +561,6 @@ func TestDiffRuns_DefinitionRowAndDigestFlag(t *testing.T) {
 	}
 }
 
-// D7
 func TestDiffRuns_ImageComesFromTheDefinitionThenTheAttemptThenIsUnavailable(t *testing.T) {
 	newRuns := func() (*orkstackv1.Run, *orkstackv1.Run) {
 		from := diffRun("ork-mon", nil, diffTask("work"))
@@ -626,7 +619,6 @@ func TestDiffRuns_ImageComesFromTheDefinitionThenTheAttemptThenIsUnavailable(t *
 	})
 }
 
-// D8
 func TestDiffRuns_PlatformDigestFromTheOutcomeAttemptRecord(t *testing.T) {
 	withDigest := func(digest string) func(*orkstackv1.TaskAttempt) {
 		return func(r *orkstackv1.TaskAttempt) { r.Image.PlatformDigest = digest }
@@ -746,7 +738,7 @@ func TestDiffRuns_PlatformDigestFromTheOutcomeAttemptRecord(t *testing.T) {
 	})
 }
 
-// d9Runs is D9's fixture, corrected (implementation-notes.md): etl has a,b,c
+// d9Runs is the two-orkflow fixture: etl has a,b,c
 // and report has b,c,d, so a and d are one-sided and b and c are shared.
 func d9Runs(bDiffers bool) (*orkstackv1.Run, *orkstackv1.Run) {
 	from := diffRun("ork-etl", func(r *orkstackv1.Run) { r.OrkflowName = "etl"; r.OrkflowVersion = "1.0.0" },
@@ -763,7 +755,6 @@ func d9Runs(bDiffers bool) (*orkstackv1.Run, *orkstackv1.Run) {
 	return from, to
 }
 
-// D9
 func TestDiffRuns_DifferentOrkflowsAreComparedAndFlagged(t *testing.T) {
 	from, to := d9Runs(true)
 	f := fullyRecordedFixture(t, from, to)
@@ -782,7 +773,6 @@ func TestDiffRuns_DifferentOrkflowsAreComparedAndFlagged(t *testing.T) {
 	)
 }
 
-// D9a
 func TestDiffRuns_OnlyNeverHidesAOneSidedTask(t *testing.T) {
 	presenceRows := []string{"a presence present | absent", "d presence absent | present"}
 	cases := []struct {
@@ -824,7 +814,6 @@ func TestDiffRuns_OnlyNeverHidesAOneSidedTask(t *testing.T) {
 	}
 }
 
-// D10
 func TestDiffRuns_OnlyNarrowsTheAnswerAndTheReads(t *testing.T) {
 	from, to := d4Runs()
 	from.Input = diffInput(t, map[string]any{"date": "2026-09-21"})
@@ -857,7 +846,6 @@ func TestDiffRuns_OnlyNarrowsTheAnswerAndTheReads(t *testing.T) {
 	}
 }
 
-// D11
 func TestDiffRuns_ShallowRunsCarryNoTasksInputOrOutput(t *testing.T) {
 	from, to := d4Runs()
 	from.Input = diffInput(t, map[string]any{"date": "2026-09-21"})
@@ -881,7 +869,6 @@ func TestDiffRuns_ShallowRunsCarryNoTasksInputOrOutput(t *testing.T) {
 	}
 }
 
-// D12
 func TestDiffRuns_StoreErrorsFailRatherThanDegrade(t *testing.T) {
 	from := diffRun("ork-mon", nil, diffTask("work"))
 	to := diffRun("ork-tue", nil, diffTask("work"))
@@ -912,7 +899,6 @@ func skipped(task *orkstackv1.TaskRun) {
 	task.FinishedAt = nil
 }
 
-// D13
 func TestDiffRuns_DoesNotApplyIsEmptyAndAvailable(t *testing.T) {
 	from := diffRun("ork-mon", nil, diffTask("load", skipped))
 	to := diffRun("ork-tue", nil, diffTask("load", skipped))
@@ -938,7 +924,6 @@ func TestDiffRuns_DoesNotApplyIsEmptyAndAvailable(t *testing.T) {
 	)
 }
 
-// D14
 func TestDiffRuns_DurationUnavailableWhenTerminalWithMissingOrInvertedTimes(t *testing.T) {
 	from := diffRun("ork-mon", nil,
 		diffTask("missing", func(task *orkstackv1.TaskRun) {
@@ -962,7 +947,6 @@ func TestDiffRuns_DurationUnavailableWhenTerminalWithMissingOrInvertedTimes(t *t
 	)
 }
 
-// D15
 func TestDiffRuns_LiveRunComparesOnItsSnapshot(t *testing.T) {
 	from := diffRun("ork-live", func(r *orkstackv1.Run) {
 		r.Status = orkstackv1.Status_STATUS_RUNNING
@@ -996,7 +980,6 @@ func TestDiffRuns_LiveRunComparesOnItsSnapshot(t *testing.T) {
 	}
 }
 
-// D16
 func TestDiffRuns_CountsAndOrderAreTheContract(t *testing.T) {
 	from, to := d4Runs()
 	from.TaskRuns = append(from.TaskRuns, diffTask("idle"), diffTask("ship"))

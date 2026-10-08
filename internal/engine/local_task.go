@@ -26,13 +26,12 @@ import (
 // task (an awaited task, a fan-out, a composed orkflow, a cache hit) must
 // state its local behavior and extend that test in the same change; until it
 // does, LocalTaskInput must refuse such a task rather than compose an input
-// the interpreter would never have scheduled. await: (awaited-tasks) is
+// the interpreter would never have scheduled. await: (docs/DSL.md "Awaited tasks") is
 // such a node: LocalTaskInput refuses an awaited task with a caller error.
-// each: (each-fan-out §9.9) is another: a fan-out composes ONE ITEM's input,
+// each: (docs/DSL.md "Fan-out") is another: a fan-out composes ONE ITEM's input,
 // exactly as scheduleItem does, and requires Item; a task that names a
 // fan-out in its own needs: is refused, because its items are read from
-// their commits and a local run has no commit store. join: (task-join-policy
-// §10) is a third: a failure handler's input carries how its needs ended, so
+// their commits and a local run has no commit store. join: is a third: a failure handler's input carries how its needs ended, so
 // LocalTask.Join is required for one and refused for any other task, and a
 // direct need that FAILED contributes {task_id, artifacts} exactly as
 // schedule's upstreamFor does.
@@ -121,7 +120,7 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		// The interpreter never schedules an awaited task: it waits for a
 		// resolution from outside the run and starts no container. There is
 		// no input to compose, so this is a caller error, not the task's own
-		// failure (orkctl-task-run §2.4).
+		// failure (docs/UI_CLI_PARITY.md "Local activity build/test parity decision").
 		return nil, fmt.Errorf("task %q is an awaited task (await:): it starts no container, so there is nothing to run locally; "+
 			"resolve it in a run with orkctl run resolve, or run a task downstream of it with its values supplied", t.TaskID)
 	}
@@ -144,7 +143,7 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		return nil, fmt.Errorf("task %q is a fan-out (each:): name the item to run with --item N", t.TaskID)
 	}
 	// A direct dependent of a fan-out stages every item from its commit;
-	// a local run has no commit store (§9.9).
+	// a local run has no commit store.
 	for _, need := range spec.GetNeeds() {
 		producer := taskByID(wf, need)
 		if producer.GetEach() == nil {
@@ -196,7 +195,7 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 			continue
 		}
 		// A fan-out further up the closure contributes nothing: its items
-		// reach DIRECT dependents only (spec each-fan-out §5.8).
+		// reach DIRECT dependents only (docs/DSL.md "Fan-out").
 		if taskByID(wf, id).GetEach() != nil {
 			continue
 		}
@@ -306,8 +305,7 @@ func localItemInput(wf *orkstackv1.Orkflow, spec *orkstackv1.Task, t LocalTask, 
 
 // ComposedTaskRefusal is why a composed task cannot run locally: it starts a
 // child run, not a container, so there is no input to compose. One of the
-// child's tasks runs locally against the child run's bytes (spec
-// composed-orkflows §6.10).
+// child's tasks runs locally against the child run's bytes.
 func ComposedTaskRefusal(taskID string, ref *orkstackv1.OrkflowRef) error {
 	return fmt.Errorf("task %q runs orkflow %s@%s as a child run, not a container: run one of its "+
 		"tasks with orkctl task run --from-run <child-run-id> --task <task>", taskID, ref.GetName(), ref.GetVersion())

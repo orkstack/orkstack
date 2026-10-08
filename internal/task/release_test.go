@@ -6,7 +6,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// orkctl-release §4: the one reverse translation a release view needs, beside
+// The release view (docs/DEPLOY.md §3): the one reverse translation it needs, beside
 // PoolForQueue, and the one spelling of a release in the run index.
 
 func TestPoolForChannel_NamesTheDefaultRouteByItsPool(t *testing.T) {

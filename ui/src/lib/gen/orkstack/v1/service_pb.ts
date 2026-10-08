@@ -1763,7 +1763,8 @@ export type Delivery = Message<"orkstack.v1.Delivery"> & {
 
   /**
    * task_id and attempt are set for a task outcome delivery
-   * (scoped-subscriptions) and empty/zero for a run transition.
+   * (docs/UI_CLI_PARITY.md "Scoped subscriptions and task outcome events")
+   * and empty/zero for a run transition.
    *
    * @generated from field: string task_id = 8;
    */

@@ -300,7 +300,7 @@ func TestStartRun_DoesNotMistakeAnUnrelatedFailureForATakenID(t *testing.T) {
 // TestRunStartMemoAndAttributes_MatchStartRun: the two helpers a scheduled
 // run's child start uses produce exactly what StartRun sends for the same
 // definition, plan and boot answers — so a run started by a schedule is
-// stamped as a submitted one is (orkflow-schedules §4.4).
+// stamped as a submitted one is (docs/ORKFLOW_SCHEDULES.md).
 func TestRunStartMemoAndAttributes_MatchStartRun(t *testing.T) {
 	origins := []*engine.RunOrigin{
 		nil,

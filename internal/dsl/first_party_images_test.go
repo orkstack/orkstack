@@ -12,7 +12,7 @@ import (
 
 // The first-party images are ordinary OCI images, but the rules they follow
 // are this repository's contract (docs/OCI_ACTIVITY_CONTRACT.md §10.1–§10.2,
-// docs/design first-party-transform-images §2). These tests read the files
+// docs/ACTIVITY_IMAGES.md). These tests read the files
 // under images/ — as the label tests in activity_interface_test.go do — so a
 // rule cannot be broken by an edit nobody runs a container for.
 

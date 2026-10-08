@@ -15,7 +15,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// The task-caching CLI scenarios (spec cache-memoization C1–C3): real
+// The task-caching CLI scenarios (docs/DSL.md "Caching"): real
 // engines, a real Orker, real Temporal and MinIO, and the BUILT orkctl, over
 // examples/cached-pipeline.ork.yaml applied under a stamped name.
 
@@ -98,7 +98,6 @@ func usageOf(doc cacheStatsDoc, task string) (hits, misses string) {
 	return "", ""
 }
 
-// C1.
 func TestIntegration_CLICacheStatsAndPurge(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -139,7 +138,7 @@ func TestIntegration_CLICacheStatsAndPurge(t *testing.T) {
 	s.writeTranscript("cache-C1.txt")
 }
 
-// C2: replica B answers for runs replica A started.
+// Replica B answers for runs replica A started.
 func TestIntegration_CacheReadsOnASecondReplica(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -167,7 +166,6 @@ func TestIntegration_CacheReadsOnASecondReplica(t *testing.T) {
 	s.writeTranscript("cache-C2.txt")
 }
 
-// C3.
 func TestIntegration_CLIRunSubmitAndAgainNoCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()

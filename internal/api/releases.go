@@ -18,7 +18,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 )
 
-// Releases (orkctl-release §6): which build of OrkStack takes new runs, and
+// Releases (docs/DEPLOY.md §3): which build of OrkStack takes new runs, and
 // the one judgement that decides whether another may.
 //
 // Nothing here holds a release. Every answer is the cluster's routing, drain
@@ -39,7 +39,7 @@ const (
 // errNoReleases is the answer when this replica has no cluster seam.
 var errNoReleases = errors.New("this engine is not wired to a cluster, so it cannot read or change releases")
 
-// The fixed sentences of §5.8. A cluster error can carry a channel name or an
+// The fixed sentences a release read or write answers with. A cluster error can carry a channel name or an
 // internal attribute name, so its text is logged by the engine and never
 // forwarded.
 const (
@@ -53,7 +53,7 @@ const (
 )
 
 // releaseClusterError maps a cluster error onto a Connect code and one fixed
-// sentence (§5.8), by its type and by whether it came from the write.
+// sentence, by its type and by whether it came from the write.
 func releaseClusterError(err error, write bool, buildID string) *connect.Error {
 	code, message := releaseErrorSentence(err, write, buildID)
 	return connect.NewError(code, errors.New(message))
@@ -253,7 +253,7 @@ func (s *Service) releaseSnapshot(ctx context.Context, only string) (*orkstackv1
 }
 
 // inventorySentence is the fixed cause of an inventory that could not be
-// read, in the words of §5.8's read rows.
+// read, in the read sentences' words.
 func inventorySentence(err error) string {
 	if errors.Is(err, errNoFleet) {
 		return "this engine cannot list Orkers"
@@ -262,7 +262,7 @@ func inventorySentence(err error) string {
 	return message
 }
 
-// releaseRole is §6.2.
+// releaseRole is a release's role in the deployment (docs/DEPLOY.md §3).
 func releaseRole(observed engine.ObservedRelease, routing engine.Routing) orkstackv1.ReleaseRole {
 	switch {
 	case routing.Current != "" && observed.BuildID == routing.Current:
@@ -291,7 +291,7 @@ func poolsServed(rows []*orkstackv1.Orker) []string {
 	return pools
 }
 
-// releaseDrained is §6.4: the one condition under which a release's processes
+// releaseDrained is the one condition under which a release's processes
 // may be stopped.
 func releaseDrained(release *orkstackv1.Release, inventoryIncomplete bool) bool {
 	role := release.GetRole()
@@ -350,7 +350,7 @@ func sortReleases(releases []*orkstackv1.Release) {
 
 // judgeRelease lists every reason target may not take new runs. It is pure:
 // same inputs, same blockers, same order. It is the ONLY place the check
-// lives; PromoteRelease and RampRelease refuse on exactly its output (§6.3).
+// lives; PromoteRelease and RampRelease refuse on exactly its output.
 func judgeRelease(target string, obs engine.ReleaseObservation, inventory []*orkstackv1.Orker,
 	invErr error, runs map[string]releaseRunCount, running int64, runningErr error) []*orkstackv1.ReleaseBlocker {
 	if obs.Routing.Current != "" && target == obs.Routing.Current {
@@ -597,7 +597,7 @@ func idList(ids []string) string {
 }
 
 // releaseWritable is the steps both writes share: the snapshot, and the
-// refusals that precede any judgement (§6.6 steps 2–5).
+// refusals that precede any judgement.
 func (s *Service) releaseWritable(ctx context.Context, buildID, expected string) (*orkstackv1.ListReleasesResponse, *orkstackv1.Release, engine.ReleaseObservation, error) {
 	resp, obs, err := s.releaseSnapshot(ctx, buildID)
 	if err != nil {
@@ -634,7 +634,7 @@ func (s *Service) releaseWritable(ctx context.Context, buildID, expected string)
 	return resp, target, obs, nil
 }
 
-// refuseOnBlockers is §6.6 step 7.
+// refuseOnBlockers refuses a write onto a release that has blockers.
 func refuseOnBlockers(target *orkstackv1.Release) error {
 	if len(target.GetBlockers()) == 0 {
 		return nil
@@ -648,7 +648,7 @@ func refuseOnBlockers(target *orkstackv1.Release) error {
 	return connect.NewError(connect.CodeFailedPrecondition, errors.New(b.String()))
 }
 
-// confirmRouting is §6.6 step 9: an AwaitRouting error is logged and read as
+// confirmRouting is the write's last step: an AwaitRouting error is logged and read as
 // unconfirmed, never as a failed write — the write already happened.
 func (s *Service) confirmRouting(ctx context.Context, want engine.Routing) bool {
 	confirmed, err := s.releases.AwaitRouting(ctx, want, releaseRoutingWait)

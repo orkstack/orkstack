@@ -46,15 +46,16 @@ type ScheduleEntry struct {
 	Orkflow, Version, Description string
 	Input                         *orkstackv1.Payload      // nil when absent or '{}'
 	Spec                          *orkstackv1.ScheduleSpec // overlap already normalised: absent → SKIP
-	// Keys are the document keys the entry wrote, in the §3.3 table's
-	// order. A CREATE lists exactly these.
+	// Keys are the document keys the entry wrote, in the order of the
+	// docs/AUTOMATION.md `schedules` table. A CREATE lists exactly these.
 	Keys []string
 }
 
 // TriggerEntry is one `triggers` entry.
 type TriggerEntry struct {
 	Orkflow, Version, Description string
-	// Keys are the document keys the entry wrote, in the §3.4 table's order.
+	// Keys are the document keys the entry wrote, in the order of the
+	// docs/AUTOMATION.md `triggers` table.
 	Keys []string
 }
 
@@ -65,7 +66,8 @@ type WebhookEntry struct {
 	Orkflow   string
 	Task      string
 	SecretEnv string
-	// Keys are the document keys the entry wrote, in the §3.5 table's order.
+	// Keys are the document keys the entry wrote, in the order of the
+	// docs/AUTOMATION.md `webhooks` table.
 	Keys []string
 }
 

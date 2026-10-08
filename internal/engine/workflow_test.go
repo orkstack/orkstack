@@ -126,8 +126,8 @@ func newHarnessCtx(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior fu
 // sessionCreationActivityName and sessionCompletionActivityName are Temporal's
 // own internal session activities, spelled here because a test observes them
 // and the SDK does not export the names. They are the only place in the tree
-// that names a session: the ENGINE never does, which is the §1 discipline
-// (session is to pin what queue is to pool).
+// that names a session: the ENGINE never does, which is the AGENTS.md §7
+// vocabulary discipline (session is to pin what queue is to pool).
 const (
 	sessionCreationActivityName   = "internalSessionCreationActivity"
 	sessionCompletionActivityName = "internalSessionCompletionActivity"
@@ -1258,10 +1258,10 @@ func TestRunWorkflow_NeverAnnouncesACanceledSiblingAsATaskOutcome(t *testing.T) 
 }
 
 // ---------------------------------------------------------------------------
-// Task pins (docs/design/task-pinning-worker-session.md §6)
+// Task pins (docs/DSL.md "Pins")
 // ---------------------------------------------------------------------------
 
-// pinnedDocument is the §4.1 shape: two members of one pin, plus an unpinned
+// pinnedDocument is the docs/DSL.md "Pins" shape: two members of one pin, plus an unpinned
 // downstream task that sees them only through what they committed.
 const pinnedDocument = `
 name: pinned
@@ -1291,7 +1291,7 @@ tasks:
 // Every member carries the SAME PinContext.instance_id, which is the engine's
 // promise that they ran on one Orker process against one /orkstack/shared; the
 // unpinned task carries NO pin field at all, which is what keeps every
-// pre-pin payload byte-identical (§10.2); and the pin is released and closed
+// pre-pin payload byte-identical; and the pin is released and closed
 // rather than left holding the host's slot.
 func TestRunWorkflow_SchedulesEveryPinnedTaskOnOnePinSessionAndReleasesIt(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
@@ -1330,7 +1330,7 @@ func TestRunWorkflow_SchedulesEveryPinnedTaskOnOnePinSessionAndReleasesIt(t *tes
 		t.Errorf("pin instance ids = %q and %q, want ONE opening of the pin for both members",
 			prep.GetPin().GetInstanceId(), compileIn.GetPin().GetInstanceId())
 	}
-	// The derived lifetime (§6.3): both members' own budgets, their grace
+	// The derived lifetime: both members' own budgets, their grace
 	// periods and this plan's transfer budget, plus the release budget.
 	if got := prep.GetPin().GetTimeoutSeconds(); got != 2*(300+30)+60 {
 		t.Errorf("pin timeout_seconds = %d, want the derived sequential worst case", got)
@@ -1356,7 +1356,7 @@ func TestRunWorkflow_SchedulesEveryPinnedTaskOnOnePinSessionAndReleasesIt(t *tes
 	if got := taskRunOf(t, run, "publish").GetPin(); got != "" {
 		t.Errorf("publish TaskRun.pin = %q, want empty", got)
 	}
-	// orker_id for EVERY task, pinned or not (§9). For a pin it is the
+	// orker_id for EVERY task, pinned or not. For a pin it is the
 	// client-visible proof the pin held: same pin, same Orker.
 	for _, id := range []string{"prep", "compile", "publish"} {
 		if got := taskRunOf(t, run, id).GetOrkerId(); got != "orker-pin-host" {
@@ -1379,7 +1379,7 @@ func TestRunWorkflow_SchedulesEveryPinnedTaskOnOnePinSessionAndReleasesIt(t *tes
 	}
 
 	// Released on the pin host, then the session completed: the host's slot
-	// and its shared directory are both given back (§6.4, §8.5).
+	// and its shared directory are both given back.
 	releases := h.releases()
 	if len(releases) != 1 {
 		t.Fatalf("ReleasePin calls = %d, want exactly one", len(releases))
@@ -1397,7 +1397,7 @@ func TestRunWorkflow_SchedulesEveryPinnedTaskOnOnePinSessionAndReleasesIt(t *tes
 }
 
 // TestRunWorkflow_NeverOpensAPinWhoseTasksAreAllSkipped is the laziness
-// contract (§6.2): a pin is opened by the first member the run actually
+// contract: a pin is opened by the first member the run actually
 // decides to RUN, so a pin whose every member is skipped by condition costs an
 // Orker nothing — no session, no slot, no shared directory, no lifetime clock.
 func TestRunWorkflow_NeverOpensAPinWhoseTasksAreAllSkipped(t *testing.T) {
@@ -1456,7 +1456,7 @@ tasks:
 }
 
 // TestRunWorkflow_HoldsAPinnedTaskUntilItsSessionIsReadyWithoutHoldingSiblings
-// is the property the pin's coroutine exists for (§6.2).
+// is the property the pin's coroutine exists for.
 //
 // A member waits for its session — it cannot be dispatched before one exists —
 // but an UNRELATED unpinned task must advance in the meantime. A blocking
@@ -1537,7 +1537,8 @@ tasks:
 	}
 }
 
-// TestRunWorkflow_RunsConcurrentPinMembersOnOneSession is §4.6 restated at the
+// TestRunWorkflow_RunsConcurrentPinMembersOnOneSession is docs/DSL.md's "a pin
+// imposes no ordering" restated at the
 // engine: a pin imposes NO ordering, so two members with no `needs:` edge
 // between them run at the same time — and, being one pin, on one session.
 func TestRunWorkflow_RunsConcurrentPinMembersOnOneSession(t *testing.T) {
@@ -1609,7 +1610,7 @@ tasks:
 }
 
 // TestRunWorkflow_ClassifiesALostPinHostAsPinHostLost is the sharpest rule of
-// the feature (§6.5): A PIN NEVER MOVES.
+// the feature: A PIN NEVER MOVES.
 //
 // When the host dies the SDK marks the session failed and cancels every
 // activity on it, so the task's own future returns a CANCELLATION. Recording
@@ -1662,7 +1663,7 @@ func TestRunWorkflow_ClassifiesALostPinHostAsPinHostLost(t *testing.T) {
 		t.Errorf("run error message = %q, want it to explain the lost pin", got)
 	}
 	// A member the run never reached is CANCELED, with started_at unset: it
-	// never got to an Orker at all (§6.5's table).
+	// never got to an Orker at all.
 	if got := statusOf(stored, "compile"); got != orkstackv1.Status_STATUS_CANCELED {
 		t.Errorf("compile status = %v, want CANCELED", got)
 	}
@@ -1670,7 +1671,7 @@ func TestRunWorkflow_ClassifiesALostPinHostAsPinHostLost(t *testing.T) {
 		t.Errorf("compile scheduled_at = %v, started_at = %v, want both unset",
 			tr.GetScheduledAt(), tr.GetStartedAt())
 	}
-	// E4's pin-loss half: prep WAS dispatched, but its host died without
+	// The pin-loss half of "no started_at without an Orker report": prep WAS dispatched, but its host died without
 	// reporting, so it has a scheduled_at and no started_at.
 	if prep.GetScheduledAt() == nil {
 		t.Error("prep scheduled_at is unset; it was dispatched before the host was lost")
@@ -1712,7 +1713,7 @@ func TestRunWorkflow_ClassifiesALostPinHostAsPinHostLost(t *testing.T) {
 }
 
 // TestRunWorkflow_BackfillsALostPinMembersOrkerIDFromItsSibling is the
-// operability half of §6.5: "which Orker died?" is the first question a lost
+// operability half of PIN_HOST_LOST: "which Orker died?" is the first question a lost
 // pin raises, and the run record has to answer it.
 //
 // A member lost WITH its pin reports nothing — its host died, so there is no
@@ -1795,8 +1796,8 @@ func TestRunWorkflow_BackfillsALostPinMembersOrkerIDFromItsSibling(t *testing.T)
 }
 
 // TestRunWorkflow_ClassifiesAPinThatOutlivedItsTimeoutAsPinTimeout is
-// PIN_HOST_LOST's sibling, and the only thing separating them is the clock
-// (§6.5): both arrive as the same session failure, and a pin that has been
+// PIN_HOST_LOST's sibling, and the only thing separating them is the clock:
+// both arrive as the same session failure, and a pin that has been
 // open for at least its own ExecutionTimeout hit its lifetime bound rather
 // than losing its host.
 //
@@ -1900,7 +1901,7 @@ tasks:
 }
 
 // TestRunWorkflow_FailsTheTriggeringTaskWhenNoPinHostHasAFreeSlot is the
-// PIN_UNAVAILABLE row of §6.5.
+// PIN_UNAVAILABLE failure: every pin host of the pool stayed full.
 //
 // Submit already refused a pool whose Orkers host no pins at all
 // (PoolNoPinHostError), so reaching here means the pool's hosts are
@@ -1962,7 +1963,7 @@ func TestRunWorkflow_FailsTheTriggeringTaskWhenNoPinHostHasAFreeSlot(t *testing.
 	}
 }
 
-// TestRunWorkflow_ClosesAPinAsSoonAsItsOwnMembersAreDone is §6.4's promptness
+// TestRunWorkflow_ClosesAPinAsSoonAsItsOwnMembersAreDone is the promptness
 // claim: a pin closes when ITS work is done, not when the run is.
 //
 // A run with a fast pin and slow unpinned work after it must give the host's
@@ -2019,7 +2020,7 @@ func TestRunWorkflow_ClosesAPinAsSoonAsItsOwnMembersAreDone(t *testing.T) {
 }
 
 // TestRunWorkflow_DoesNotReturnBeforeItsPinHasFinishedClosing is the other
-// half of §6.4, and the reason succeed()/fail() wait at all.
+// half of closing a pin, and the reason succeed()/fail() wait at all.
 //
 // A workflow that returned first would ABANDON the pin's coroutine: the host
 // would give its session slot back on its next heartbeat, but the release
@@ -2064,7 +2065,8 @@ func TestRunWorkflow_DoesNotReturnBeforeItsPinHasFinishedClosing(t *testing.T) {
 }
 
 // TestRunWorkflow_LeavesAPinnedTaskThatFailedOnItsOwnToTheOrdinaryPath is the
-// last row of §6.5, and the boundary the rest of the pin machinery must not
+// ordinary-failure case — a member that fails on its own leaves its pin open —
+// and the boundary the rest of the pin machinery must not
 // cross.
 //
 // A member whose container exits non-zero has failed on its OWN. Temporal
@@ -2106,7 +2108,7 @@ func TestRunWorkflow_LeavesAPinnedTaskThatFailedOnItsOwnToTheOrdinaryPath(t *tes
 		t.Errorf("prep exit code = %d, want 3", got)
 	}
 	// orker_id off the failure detail, for a failed attempt as for a
-	// successful one (§9): a failure is exactly when an operator wants to know
+	// successful one: a failure is exactly when an operator wants to know
 	// which host it happened on.
 	if got := prep.GetOrkerId(); got != "orker-pin-host" {
 		t.Errorf("prep orker_id = %q, want it read off the failure detail", got)
@@ -2115,14 +2117,14 @@ func TestRunWorkflow_LeavesAPinnedTaskThatFailedOnItsOwnToTheOrdinaryPath(t *tes
 		t.Errorf("run status = %v, want FAILED", stored.GetStatus())
 	}
 	// The pin is still closed on the way out: a failed member is a terminal
-	// member (§4.7).
+	// member.
 	if len(h.releases()) != 1 {
 		t.Errorf("ReleasePin calls = %d, want the pin released even though a member failed",
 			len(h.releases()))
 	}
 }
 
-// TestRunWorkflow_RecordsTheOrkerOfAnUnpinnedTaskThatFailed is §9's
+// TestRunWorkflow_RecordsTheOrkerOfAnUnpinnedTaskThatFailed is orker_id's
 // unconditional half, on the path that has nothing to do with pins.
 //
 // orker_id is populated for EVERY task, pinned or not: the field already

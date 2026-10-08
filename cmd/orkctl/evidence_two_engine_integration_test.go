@@ -26,7 +26,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The run-evidence integration scenarios (I1, I3, I5, I6): two real `ork`
+// The run-evidence integration scenarios: two real `ork`
 // replicas on one private Temporal namespace, one Orker and the MinIO bucket.
 // Every export is asked of replica B, which never started the run, so no byte
 // of a bundle can have come from the process that watched it.
@@ -230,7 +230,6 @@ func memberOf(t *testing.T, m *evidence.Manifest, path string) evidence.Member {
 	return evidence.Member{}
 }
 
-// I1
 func TestIntegration_RunEvidenceIsAnsweredByAReplicaThatNeverStartedTheRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -315,7 +314,6 @@ func TestIntegration_RunEvidenceIsAnsweredByAReplicaThatNeverStartedTheRun(t *te
 	t.Logf("EVIDENCE run_evidence_two_replica run=%s %s", e.runID, strings.SplitN(verified, "\n", 2)[0])
 }
 
-// I3
 func TestIntegration_RunEvidenceAndProvenanceAgreeOnAMissingObject(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -377,7 +375,6 @@ func awaitProvenanceHeldFor(ctx context.Context, t *testing.T, replica *engineRe
 	t.Fatalf("run %s's report.txt reference never became HELD", runID)
 }
 
-// I5
 func TestIntegration_RunEvidenceOfALiveRunIsRefused(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -414,7 +411,6 @@ func TestIntegration_RunEvidenceOfALiveRunIsRefused(t *testing.T) {
 	t.Logf("EVIDENCE run_evidence_live_refused run=%s stderr=%q then exported %d members", runID, strings.TrimSpace(stderr), len(m.Members))
 }
 
-// I6
 func TestIntegration_RunEvidenceTamperedBundleFailsVerifyByName(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()

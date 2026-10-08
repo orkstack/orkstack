@@ -12,8 +12,8 @@
 // bookmark and a pasted link all keep it, and the server render and the
 // browser agree without a store to synchronize.
 
-// NAMESPACE_PARAM is `ns` — the spelling the design fixed (v003-design.md
-// §1.9) and the one a person types by hand. It is the PAGE's parameter and has
+// NAMESPACE_PARAM is `ns` — the fixed spelling, and the one a person types by
+// hand. It is the PAGE's parameter and has
 // nothing to do with the request field, which stays `namespace`: the field is
 // the contract with the engine, this is the address of a page.
 export const NAMESPACE_PARAM = "ns";
@@ -64,8 +64,8 @@ export function namespaceLabel(namespace: string): string {
 // in +layout.svelte then answers it with whatever the READER last chose. One
 // address opened `payments` for one colleague and `default` for another —
 // precisely what a pasted link must never do. So every internal link states
-// the namespace it belongs to, and the design's "selection is canonical in the
-// URL on every route" (v003-design.md §1.9) holds for `default` too.
+// the namespace it belongs to, and "selection is canonical in the URL on every
+// route" holds for `default` too.
 export function withNamespace(path: string, namespace: string): string {
   const [base, query] = path.split("?");
   const params = new URLSearchParams(query ?? "");

@@ -15,7 +15,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// The join-policy CLI scenarios (task-join-policy C1–C3): real `ork` and
+// The join-policy CLI scenarios (docs/DSL.md "Joins and failure handlers"): real `ork` and
 // `orker` binaries, real Temporal and MinIO, and the BUILT orkctl, on
 // examples/branch-and-recover.ork.yaml as shipped (applied under a stamped
 // name so parallel suites never share a definition).
@@ -67,7 +67,7 @@ func codeOf(s *taskRunStack, args ...string) (string, string, int) {
 	return s.cli(0, args...)
 }
 
-// C1 — plan the failure path, assert it, and hold a real run to the plan.
+// Plan the failure path, assert it, and hold a real run to the plan.
 func TestIntegration_CLIPlanAssumeFailedAndTheRunAgree(t *testing.T) {
 	s, name := joinStack(t)
 	// The decision is decide's value; the plan is handed it as an assumed
@@ -95,7 +95,7 @@ func TestIntegration_CLIPlanAssumeFailedAndTheRunAgree(t *testing.T) {
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 		t.Fatalf("run = %v %v", run.GetStatus(), run.GetError())
 	}
-	// §6's table: a failure handler is held to its plan exactly; any other
+	// The join rule: a failure handler is held to its plan exactly; any other
 	// task may also have been canceled once the run started failing.
 	want := map[string][]orkstackv1.Status{
 		"decide":   {orkstackv1.Status_STATUS_SUCCEEDED},
@@ -123,7 +123,7 @@ func TestIntegration_CLIPlanAssumeFailedAndTheRunAgree(t *testing.T) {
 	s.writeTranscript("join-C1.txt")
 }
 
-// C2 — the failing run through `run get` and `run watch`.
+// The failing run through `run get` and `run watch`.
 func TestIntegration_CLIRunGetShowsAFailingRun(t *testing.T) {
 	s, name := joinStack(t)
 	runID := s.submit(name, "--input", "route=full", "--input", "fail_deploy=true",
@@ -173,7 +173,7 @@ func TestIntegration_CLIRunGetShowsAFailingRun(t *testing.T) {
 	s.writeTranscript("join-C2.txt")
 }
 
-// C3 — replay a failure handler locally.
+// Replay a failure handler locally.
 func TestIntegration_CLITaskRunReplaysAFailureHandler(t *testing.T) {
 	s, name := joinStack(t)
 	runID := s.submit(name, "--input", "route=canary", "--input", "fail_deploy=true", "--input", "smoke_seconds=1")

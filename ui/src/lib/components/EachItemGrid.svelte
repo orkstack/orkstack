@@ -1,5 +1,5 @@
 <script lang="ts">
-	// A fan-out's card body (spec each-fan-out §10.1): one summary line, one
+	// A fan-out's card body (docs/DSL.md "Fan-out"): one summary line, one
 	// cell per item, and — for the item a reader selects — that item's own
 	// panel: its facts, its failure, its attempts, its log, its artifacts and
 	// the CLI that reads each of them. It renders in place of the task's log

@@ -128,8 +128,8 @@ func attemptProbeWorkflow(ctx workflow.Context, in *orkstackv1.ExecuteTaskInput)
 	return workflow.ExecuteActivity(ctx, "ExecuteTask", in).Get(ctx, nil)
 }
 
-// TestAttemptRecords_OneRecordPerAttemptOfARetriedTask is Phase 1's whole
-// point, held as data.
+// TestAttemptRecords_OneRecordPerAttemptOfARetriedTask is the point of
+// per-attempt records, held as data.
 //
 // A task that fails once and then succeeds leaves NOTHING behind today outside
 // the Orker process: Temporal hands the workflow the final result and discards

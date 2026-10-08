@@ -11,7 +11,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
-// summaryDoc is the docs/AUTOMATION.md (spec §Summary) document.
+// summaryDoc is the worked document of docs/AUTOMATION.md "The document".
 const summaryDoc = `# environments/prod/automation.ork.yaml
 apiVersion: orkstack/v1
 kind: Automation

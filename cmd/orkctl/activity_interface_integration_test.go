@@ -28,7 +28,7 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// Activity interface manifests (activity-interface-manifests §8.4), against
+// Activity interface manifests (docs/ACTIVITY_IMAGES.md "Declaring the interface"), against
 // the real local registry holding the first-party images this tree labels,
 // a real `ork`, and — for the run — a real Orker and Temporal.
 
@@ -187,7 +187,7 @@ func TestInterfaceManifests_FirstPartyImagesDeclareTheirInterfaces(t *testing.T)
 	if len(shell.GetOps()) != 3 || shell.GetDefaultOp() != "exec" {
 		t.Fatalf("shell interface = %v, want 3 ops, defaultOp exec", shell)
 	}
-	// The transform images (first-party-transform-images X8).
+	// The transform images (docs/ACTIVITY_IMAGES.md).
 	jsonIface, gitIface, templateIface := byName["json"].GetInterface(), byName["git"].GetInterface(), byName["template"].GetInterface()
 	if len(jsonIface.GetFields()) != 0 || len(jsonIface.GetOps()) != 2 || jsonIface.GetDefaultOp() != "" ||
 		jsonIface.GetOps()["query"] == nil || jsonIface.GetOps()["merge"] == nil {

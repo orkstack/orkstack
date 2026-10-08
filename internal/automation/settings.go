@@ -163,7 +163,7 @@ var namespaceSettings = []settingRow{
 		export: func(ns *orkstackv1.Namespace) *yaml.Node { return strNode(ns.GetRequireSignedBy()) },
 	},
 	{
-		// budget (namespace-budgets) is configuration, managed as a unit like
+		// budget (docs/DEPLOY.md "Namespace budgets") is configuration, managed as a unit like
 		// telemetry; its sub-keys are the --budget-* flags of `orkctl
 		// namespace create/update` with the prefix dropped.
 		key: "budget", field: "budget",

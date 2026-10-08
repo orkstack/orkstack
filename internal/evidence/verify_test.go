@@ -9,7 +9,6 @@ import (
 	"testing"
 )
 
-// E5
 func TestVerify_AcceptsWhatWriteProduced(t *testing.T) {
 	f := newFixture()
 	report, err := Verify(bytes.NewReader(writeFixture(t, f)))
@@ -33,7 +32,6 @@ func TestVerify_AcceptsWhatWriteProduced(t *testing.T) {
 	}
 }
 
-// E6
 func TestVerify_FailsByName(t *testing.T) {
 	f := newFixture()
 	artifact := "tasks/reconcile/artifacts/rates.parquet"
@@ -188,7 +186,6 @@ func TestVerify_FailsByName(t *testing.T) {
 	})
 }
 
-// E7
 func TestVerify_NeverWritesToDisk(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

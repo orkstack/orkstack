@@ -3811,7 +3811,8 @@ type Delivery struct {
 	Namespace   string `protobuf:"bytes,6,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	OrkflowName string `protobuf:"bytes,7,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
 	// task_id and attempt are set for a task outcome delivery
-	// (scoped-subscriptions) and empty/zero for a run transition.
+	// (docs/UI_CLI_PARITY.md "Scoped subscriptions and task outcome events")
+	// and empty/zero for a run transition.
 	TaskId  string `protobuf:"bytes,8,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	Attempt int32  `protobuf:"varint,9,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	// status is the transition's status as the body's "status" carried it.

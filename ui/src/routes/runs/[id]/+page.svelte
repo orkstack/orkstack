@@ -156,7 +156,7 @@
 		// presence is what draws the await panel instead of a log pane: an
 		// awaited task runs no container and writes no logs.
 		await?: TaskAwait;
-		// each is set for a fan-out (spec each-fan-out §10.1): whether its
+		// each is set for a fan-out (docs/DSL.md "Fan-out"): whether its
 		// array was counted, and into how many items. items are those items,
 		// seeded from the snapshot and moved one cell at a time by item
 		// events; a fan-out's own row has no attempt, log or artifact of its

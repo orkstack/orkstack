@@ -68,7 +68,7 @@ func (c *countingReadClient) reset() (describes, histories int) {
 
 var _ engine.RunReadClient = (*countingReadClient)(nil)
 
-// TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork is I6:
+// TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork:
 // against a real cluster and a real in-process Orker, InspectRun's cluster
 // read costs exactly one describe for a finished run and for a live run with
 // nothing pending, and one describe plus ONE history read only when a task is

@@ -20,8 +20,8 @@ import {
 	waitForEngine
 } from './harness';
 
-// The example gallery against a real engine, Orker, Temporal and MinIO (spec
-// advanced-orkflow-examples, Playwright):
+// The example gallery against a real engine, Orker, Temporal and MinIO
+// (examples/README.md):
 //
 //   P1. the Apply page lists one card per examples/*.ork.yaml — read from the
 //       directory here, not from the page — each showing the file's `name:`

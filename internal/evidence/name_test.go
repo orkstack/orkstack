@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// E1
 func TestMemberName_CleanNamesAreVerbatimAndOthersAreEncoded(t *testing.T) {
 	clean201 := strings.Repeat("a", 201)
 	cases := []struct {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The Orkers serving one pool, and the cordon (orker-cordon-drain §9).
+	// The Orkers serving one pool, and the cordon (docs/DEPLOY.md "Removing an Orker safely: cordon and drain").
 	//
 	// Orkers are deployment infrastructure: the same list whichever namespace
 	// is selected. It is read from ActivityService.ListOrkers — the cluster's

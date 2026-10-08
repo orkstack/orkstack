@@ -572,7 +572,8 @@ func (f fakePoolOrkers) OrkerOnPool(_ context.Context, queue string) (*orkstackv
 }
 
 // ---------------------------------------------------------------------------
-// Task pins at submit (docs/design/task-pinning-worker-session.md §4.3, §7.4)
+// Task pins at submit (docs/DSL.md "Pins", docs/DEPLOY.md "Pin hosting is a
+// pool-wide setting")
 // ---------------------------------------------------------------------------
 
 // pinHostPools answers the DescribeOrker probe with each channel's
@@ -593,7 +594,7 @@ func (p pinHostPools) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.
 }
 
 // refusingDescriber fails the test if it is asked anything. It is how a test
-// proves the describe call was NOT made — §10.4's promise that an unpinned
+// proves the describe call was NOT made — the promise that an unpinned
 // submit runs no probe it did not run before this feature.
 type refusingDescriber struct{ t *testing.T }
 
@@ -627,7 +628,8 @@ tasks:
     with: {command: "echo publish"}
 `
 
-// TestPoolResolver_RefusesAPinnedSubmitOntoAPoolThatHostsNoPins is §7.4.
+// TestPoolResolver_RefusesAPinnedSubmitOntoAPoolThatHostsNoPins is the
+// no-pin-host refusal.
 //
 // The pool is LIVE — an Orker is polling it — so PoolEmptyError has nothing to
 // say. The narrower question a pin asks is whether anything serving the pool
@@ -700,7 +702,7 @@ func TestPoolResolver_AcceptsAPinnedSubmitWhenThePoolHostsPins(t *testing.T) {
 }
 
 // TestPoolResolver_DowngradesTheNoPinHostRefusalUnderAllowEmptyPool holds the
-// override to the same shape it has for an empty pool (§7.4): the operator who
+// override to the same shape it has for an empty pool: the operator who
 // overrides is TOLD what they are waiting for, and the fact goes on the record
 // rather than being suppressed.
 func TestPoolResolver_DowngradesTheNoPinHostRefusalUnderAllowEmptyPool(t *testing.T) {
@@ -725,7 +727,8 @@ func TestPoolResolver_DowngradesTheNoPinHostRefusalUnderAllowEmptyPool(t *testin
 	}
 }
 
-// TestPoolResolver_AsksNothingAboutPinsForAnUnpinnedSubmit is §10.4 stated as
+// TestPoolResolver_AsksNothingAboutPinsForAnUnpinnedSubmit is "an unpinned
+// submit is unchanged" stated as
 // a test: pinning must cost a deployment that does not use it nothing at all,
 // including one extra round trip on every submit.
 func TestPoolResolver_AsksNothingAboutPinsForAnUnpinnedSubmit(t *testing.T) {
@@ -796,7 +799,7 @@ func TestPoolResolver_DoesNotRefusePinsWithNoAuthorityToAsk(t *testing.T) {
 }
 
 // TestPoolResolver_RefusesAPinWhoseTasksRESOLVEOntoTwoPools is rule 10's
-// second half (§4.3), and it is not a duplicate of the compiler's.
+// second half, and it is not a duplicate of the compiler's.
 //
 // The compiler compares the LITERAL `pool:` values and treats an absent pool
 // and `main` as one, because QueueForPool does. This document therefore

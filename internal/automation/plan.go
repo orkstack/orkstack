@@ -353,7 +353,7 @@ func (p *planner) schedules() {
 	p.scheduleRenames(creates, gone)
 }
 
-// scheduleRenames is §6.2's probable rename for schedules. A schedule's name
+// scheduleRenames is the probable-rename hint for schedules. A schedule's name
 // is its identity and has no in-place rename, so there is no command to
 // offer; the warning says what the new key costs instead — the old schedule
 // keeps firing (or, with --prune, is deleted with its run history under the

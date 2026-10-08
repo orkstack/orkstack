@@ -416,7 +416,7 @@ func (s *Service) RedeliverWebhook(
 	if err != nil {
 		return nil, err
 	}
-	// A delivery body never carries a fan-out's items (each-fan-out §5.13),
+	// A delivery body never carries a fan-out's items (docs/DSL.md "Fan-out"),
 	// the redelivery no more than the original: the same shape, the run as
 	// it reads now.
 	encoded, err := MarshalJSON(engine.WithoutItems(run))

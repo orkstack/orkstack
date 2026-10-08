@@ -243,7 +243,7 @@ var auditedProcedures = map[string]auditExtractor{
 			}
 			entry.Detail = "current " + previous + " -> " + out.GetCurrentVersion()
 			// The interface verdict makes a breaking promotion attributable
-			// to whoever acknowledged it (interface-compatibility-gate §5.6).
+			// to whoever acknowledged it (docs/UI_CLI_PARITY.md "Interface compatibility").
 			if verdict := out.GetInterfaceVerdict(); verdict != orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_UNSPECIFIED {
 				entry.Detail += " interface=" + auditVerdictWord(verdict) + " vs " + out.GetComparedVersion()
 				if verdict == orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_BREAKING {
@@ -539,7 +539,7 @@ var auditedProcedures = map[string]auditExtractor{
 			Detail: imagePolicySummary(in.GetPolicy()),
 		}
 	},
-	// The release writes (orkctl-release §6.8). Deployment-wide, as
+	// The release writes (docs/DEPLOY.md §3). Deployment-wide, as
 	// retention.update is: a release belongs to no namespace.
 	orkstackv1connect.SystemServicePromoteReleaseProcedure: func(req, resp proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.PromoteReleaseRequest)
@@ -688,7 +688,7 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 		"default_pool=" + engine.DefaultPoolFor(ns),
 		"allowed_pools=[" + strings.Join(ns.GetAllowedPools(), " ") + "]",
 	}
-	// Secret policy (tenant-scoped-secret-policy): allowed_secrets= only when
+	// Secret policy (docs/DEPLOY.md "Secrets on a shared pool"): allowed_secrets= only when
 	// the list is non-empty, so an unrestricted namespace's summary is
 	// byte-identical to what it was before the field existed; clearing the
 	// list is the record with no key. Entries are in stored order, the
@@ -699,13 +699,13 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 		parts = append(parts, "allowed_secrets=["+strings.Join(allowed, " ")+"]")
 	}
 	parts = append(parts, "run_retention="+retentionLabel(ns.GetRunRetention()))
-	// Image policy (image-supply-chain-policy): require_signed_by= only when
+	// Image policy (docs/DEPLOY.md "Image supply-chain policy"): require_signed_by= only when
 	// set, on the rule allowed_secrets= and hold= follow, so an unrestricted
 	// namespace's summary is byte-identical to before the field existed.
 	if signer := ns.GetRequireSignedBy(); signer != "" {
 		parts = append(parts, "require_signed_by="+signer)
 	}
-	// Admission (namespace-admission-control): hold= only when a hold is
+	// Admission (docs/DEPLOY.md "Namespace admission"): hold= only when a hold is
 	// requested — released is the absence, as an accepting namespace is
 	// hold == nil — quoted so a reason can never end its own value early;
 	// since is the registry's and the record's own at says when. max_running
@@ -715,7 +715,7 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 		parts = append(parts, "hold="+strconv.Quote(hold.GetReason()))
 	}
 	parts = append(parts, "max_running="+strconv.FormatInt(int64(ns.GetMaxRunning()), 10))
-	// Budget (namespace-budgets): budget={…} only when set, on the hold= rule,
+	// Budget (docs/DEPLOY.md "Namespace budgets"): budget={…} only when set, on the hold= rule,
 	// so a namespace with no budget summarizes byte-identically to before the
 	// field existed and a cleared budget is the record with no key.
 	if budget := ns.GetBudget(); budget != nil {

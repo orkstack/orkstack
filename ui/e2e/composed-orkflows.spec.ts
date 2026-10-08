@@ -21,7 +21,7 @@ import {
 } from './harness';
 
 // Composed Orkflows against a real engine, Orker, Temporal and MinIO
-// (spec composed-orkflows §10): a composed task's card names its pinned child
+// (docs/DSL.md "Composition"): a composed task's card names its pinned child
 // and links its child run the moment TASK_STARTED arrives, rolling the
 // child's tasks up live from the child's own stream; the child's page names
 // its parent and the parent lists its children; declared outputs are the run

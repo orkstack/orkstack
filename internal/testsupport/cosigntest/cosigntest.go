@@ -3,8 +3,8 @@
 // internal/dsl.SignatureVerifier and for test/tools/cosign-sign.
 //
 // It is TEST TOOLING. No binary under cmd/ links it: OrkStack never signs
-// anything and never holds a private key (image-supply-chain-policy §
-// Non-goals). It exists as a package rather than a test helper because four
+// anything and never holds a private key (docs/DEPLOY.md "Image supply-chain
+// policy"). It exists as a package rather than a test helper because four
 // suites (internal/dsl, internal/api, internal/orker, cmd/orkctl) and one
 // tool need the same layout, and one copy of a layout is the point — the
 // integration suite proves this copy is what the real `cosign` CLI writes and

@@ -21,7 +21,7 @@ import (
 
 // ---------------------------------------------------------------------------
 // orkflow compat / callers / promote --acknowledge-breaking
-// (interface-compatibility-gate §6)
+// (docs/UI_CLI_PARITY.md "Interface compatibility")
 // ---------------------------------------------------------------------------
 
 const compatBlock210 = `name: release-block

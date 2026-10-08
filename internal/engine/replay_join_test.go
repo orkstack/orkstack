@@ -28,7 +28,7 @@ import (
 
 // joinHistory is the join fixture: examples/branch-and-recover.ork.yaml with
 // route=full, fail_deploy=true and smoke_seconds=120, recorded by a versioned
-// worker against a real cluster by TestIntegration_RecordJoinRunHistory (I17)
+// worker against a real cluster by TestIntegration_RecordJoinRunHistory
 // and never hand-edited (testdata/history/README.md). It holds still the
 // first none_failed decision, the first handler dispatched after fail-fast
 // with a JoinContext and a failed-need artifact ref, the first failing note
@@ -36,7 +36,7 @@ import (
 const joinHistory = "testdata/history/run-join-v1.json"
 
 // requireJoinFixture skips while the fixture has not been recorded yet. It can
-// only be produced against a real cluster (I17); once committed this never
+// only be produced against a real cluster; once committed this never
 // skips again. ORK_REQUIRE_JOIN_FIXTURE makes its absence a failure.
 func requireJoinFixture(t *testing.T) {
 	t.Helper()

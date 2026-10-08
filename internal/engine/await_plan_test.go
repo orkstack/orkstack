@@ -187,8 +187,8 @@ func interpretAwaited(t *testing.T, runID string, wf *orkstackv1.Orkflow, assume
 	return run, h
 }
 
-// TestSimulate_AgreesWithTheInterpreterOnAwaits is run-plan's E1 gate
-// extended to awaited tasks.
+// TestSimulate_AgreesWithTheInterpreterOnAwaits is the plan/interpreter
+// agreement gate extended to awaited tasks.
 func TestSimulate_AgreesWithTheInterpreterOnAwaits(t *testing.T) {
 	cases := []struct {
 		name    string

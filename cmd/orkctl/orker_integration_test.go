@@ -19,7 +19,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// orker-cordon-drain's CLI acceptance, on the real binaries: `ork` and
+// Cordon and drain's CLI acceptance (docs/DEPLOY.md "Removing an Orker
+// safely: cordon and drain"), on the real binaries: `ork` and
 // `orker` as built processes against real Temporal (a private namespace) and
 // MinIO, and `orkctl` as a built binary whose exit codes are the real ones.
 

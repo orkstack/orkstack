@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Admin → Releases (orkctl-release §8): which build of OrkStack takes new
+	// Admin → Releases (docs/DEPLOY.md §3): which build of OrkStack takes new
 	// runs, the one write that changes it, and what still holds a release
 	// that takes none — the parity of `orkctl release …`.
 	//

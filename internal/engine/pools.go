@@ -124,7 +124,7 @@ type NamespaceReader interface {
 //
 // Put carries artifacts.PutConditions because the arbitration between two
 // replicas is the store's own: a conditional write is refused by the backend,
-// so nothing above it invents a lock (design §5, AGENTS.md §7).
+// so nothing above it invents a lock (AGENTS.md §7).
 type NamespaceRegistry interface {
 	NamespaceReader
 	List(ctx context.Context) ([]*orkstackv1.Namespace, error)
@@ -187,7 +187,7 @@ func (e *PoolEmptyError) Error() string {
 // pools.
 //
 // A pin is ONE Orker process sharing ONE directory, and a session is created
-// on one task queue (design §4.3), so a pin that spans two pools is not
+// on one task queue, so a pin that spans two pools is not
 // something the engine could implement — it is a document that contradicts
 // itself.
 //
@@ -195,7 +195,7 @@ func (e *PoolEmptyError) Error() string {
 // This is the same invariant enforced again on the pool each task actually
 // RESOLVED to, after the namespace default and this deployment's route
 // collapse have been applied — mirroring how rule 7 is split between compiler
-// and server today (design §4.3). The compile-time check cannot stand alone:
+// and server today. The compile-time check cannot stand alone:
 // it is skipped entirely by a hand-built SubmitRun that never went through the
 // DSL, and this is the path such a request cannot avoid.
 type PinPoolMismatchError struct {
@@ -223,11 +223,11 @@ func (e *PinPoolMismatchError) Error() string {
 // activity would sit on `<queue>__internal_session_creation` that nobody
 // polls, and the pin's tasks would wait out pinCreationTimeout before failing
 // with PIN_UNAVAILABLE — a stranded run, which is exactly what a submit-time
-// probe exists to prevent (design §7.4).
+// probe exists to prevent (docs/DEPLOY.md "Pin hosting is a pool-wide setting").
 //
 // Pin hosting is a POOL-WIDE property: one Orker answers the probe, and the
 // documented deployment rule is that every Orker of a pool sets the same
-// ORK_ORKER_MAX_PINS (design §12.6).
+// ORK_ORKER_MAX_PINS.
 type PoolNoPinHostError struct {
 	Namespace string
 	Pool      string
@@ -248,8 +248,8 @@ func (e *PoolNoPinHostError) Error() string {
 }
 
 // PoolNoEachSupportError refuses a submit whose fan-out — or a direct
-// dependent of one — would run on a pool whose Orker predates fan-out (spec
-// each-fan-out §5.11). Such an Orker drops ExecuteTaskInput.each and
+// dependent of one — would run on a pool whose Orker predates fan-out
+// (docs/DEPLOY.md §1). Such an Orker drops ExecuteTaskInput.each and
 // UpstreamRef.each, which would run an item without its item or give a
 // dependent no items to read: silently wrong, which AGENTS.md §14 ranks below
 // explicit failure. allow_empty_pool does NOT downgrade it — that override
@@ -583,7 +583,7 @@ func (r *PoolResolver) Plan(
 	pinsByPool := map[string][]string{}
 	pinnedTasksByPool := map[string][]string{}
 	// The fan-out view: every fan-out and every DIRECT dependent of one, per
-	// resolved pool — the pools whose Orker must implement fan-out (§5.11).
+	// resolved pool — the pools whose Orker must implement fan-out.
 	eachRelated, dependents := eachRelatedTasks(planned)
 	eachTasksByPool := map[string][]string{}
 	eachDependentByPool := map[string]string{}
@@ -686,9 +686,9 @@ func (r *PoolResolver) Plan(
 		}
 		if live.Fresh(r.now(), r.freshness()) {
 			// A live pool that carries a pinned task is asked one more
-			// question: can anything here OPEN a pin (§7.4). Asked only of a
+			// question: can anything here OPEN a pin. Asked only of a
 			// live pool with a pinned task, so an unpinned submit runs no
-			// describe call it did not run before (§10.4), and a deserted pool
+			// describe call it did not run before pins existed, and a deserted pool
 			// has already failed below with PoolEmptyError — what its Orkers
 			// host is moot when it has none.
 			if err := r.checkPinHost(ctx, checkPinHostRequest{
@@ -703,7 +703,7 @@ func (r *PoolResolver) Plan(
 				return nil, RunPlan{}, err
 			}
 			// And, for a pool that carries a fan-out or a direct dependent of
-			// one: does its Orker implement fan-out at all (§5.11).
+			// one: does its Orker implement fan-out at all.
 			if err := r.checkEachSupport(ctx, namespaceName(ns), wf.GetName(), pool, routes[pool],
 				eachTasksByPool[pool], eachDependentByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
@@ -766,7 +766,7 @@ type checkPinHostRequest struct {
 // Three ways it declines to refuse, and each is a different fact:
 //
 //   - No pinned task on this pool: there is no question to ask, and asking
-//     would add a describe call to an unpinned submit (§10.4).
+//     would add a describe call to an unpinned submit.
 //   - No describer wired (r.Orkers == nil): no authority to ask, the same
 //     reason a nil Probe disables the liveness check rather than inventing an
 //     answer. A process with no seam must not refuse every pinned submit.
@@ -780,7 +780,7 @@ type checkPinHostRequest struct {
 //
 // allowEmpty downgrades a real refusal to a warning exactly as it does for an
 // empty pool: the operator who overrides has been told what they are waiting
-// for (§7.4).
+// for.
 func (r *PoolResolver) checkPinHost(ctx context.Context, req checkPinHostRequest) error {
 	if len(req.pins) == 0 || r.Orkers == nil {
 		return nil

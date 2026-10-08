@@ -19,7 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// The live-attempt-introspection integration scenarios (I1–I4): real `ork`
+// The live-attempt-introspection integration scenarios (docs/UI_CLI_PARITY.md
+// "Live attempt introspection"): real `ork`
 // and `orker` binaries, a real Temporal cluster and the MinIO bucket, and
 // `orkctl run inspect` read back through the built CLI. Each test owns a
 // private Temporal namespace and a private Orker channel (the timingStack
@@ -224,7 +225,7 @@ func removeContainer(t *testing.T, id string) {
 	t.Logf("docker rm -f %s: %v %s", id, err, strings.TrimSpace(string(out)))
 }
 
-// TestIntegration_InspectRunReadsTheLiveHeartbeat is I1.
+// TestIntegration_InspectRunReadsTheLiveHeartbeat.
 func TestIntegration_InspectRunReadsTheLiveHeartbeat(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -309,7 +310,7 @@ func TestIntegration_InspectRunReadsTheLiveHeartbeat(t *testing.T) {
 	t.Logf("I1 run attempts attempt 1 orkerId=%s == heartbeat orkerId=%s", row.OrkerID, a.OrkerID)
 }
 
-// TestIntegration_InspectRunShowsAnAttemptWaitingForAnOrker is I2.
+// TestIntegration_InspectRunShowsAnAttemptWaitingForAnOrker.
 func TestIntegration_InspectRunShowsAnAttemptWaitingForAnOrker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -356,7 +357,7 @@ tasks:
 	t.Logf("I2 run finished %s", final.GetStatus())
 }
 
-// TestIntegration_InspectRunNeverShowsAPreviousAttemptsDetail is I3.
+// TestIntegration_InspectRunNeverShowsAPreviousAttemptsDetail.
 func TestIntegration_InspectRunNeverShowsAPreviousAttemptsDetail(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -433,7 +434,7 @@ tasks:
 	awaitTerminalOnB(ctx, t, s.replicas[0], runID)
 }
 
-// TestIntegration_InspectRunMarksALostOrkerStale is I4.
+// TestIntegration_InspectRunMarksALostOrkerStale.
 func TestIntegration_InspectRunMarksALostOrkerStale(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 14*time.Minute)
 	defer cancel()

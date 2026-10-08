@@ -57,7 +57,7 @@ type awaitStack struct {
 }
 
 type awaitStackOptions struct {
-	// noOrker starts no Orker activity worker at all (I7).
+	// noOrker starts no Orker activity worker at all.
 	noOrker bool
 }
 
@@ -326,7 +326,7 @@ tasks:
     with: {op: exec, command: ["echo", "{{ .tasks.training.output.model_uri }}"]}
 `
 
-// I1: the callback door, with the token SubmitRun returned; the downstream
+// The callback door, with the token SubmitRun returned; the downstream
 // activity's input carries the ref; the object in MinIO is byte-identical.
 func TestIntegration_AwaitResolvedFeedsItsValuesDownstream(t *testing.T) {
 	s := newAwaitStack(t, awaitStackOptions{})
@@ -377,7 +377,7 @@ func TestIntegration_AwaitResolvedFeedsItsValuesDownstream(t *testing.T) {
 		runID, len(body), training.GetValuesRef().GetUri(), training.GetValuesRef().GetSha256(), ref.GetValues().GetUri()))
 }
 
-// I2: a deadline, two seconds.
+// A deadline, two seconds.
 func TestIntegration_AwaitTimesOutAndFailsTheRunExplicitly(t *testing.T) {
 	s := newAwaitStack(t, awaitStackOptions{noOrker: true})
 	wf := &orkstackv1.Orkflow{Name: "await-timeout", Version: "1.0.0", Tasks: []*orkstackv1.Task{
@@ -396,7 +396,7 @@ func TestIntegration_AwaitTimesOutAndFailsTheRunExplicitly(t *testing.T) {
 	writeAwaitProof(t, "await-I2.txt", fmt.Sprintf("run %s: %s %s\n", runID, gate.GetError().GetCode(), gate.GetError().GetMessage()))
 }
 
-// I3: a rejection over the Connect RPC.
+// A rejection over the Connect RPC.
 func TestIntegration_AwaitRejectionFailsTheRunWithItsReason(t *testing.T) {
 	s := newAwaitStack(t, awaitStackOptions{})
 	s.apply(awaitIntegrationYAML)
@@ -418,7 +418,7 @@ func TestIntegration_AwaitRejectionFailsTheRunWithItsReason(t *testing.T) {
 	}
 }
 
-// I4: the run is cancelled while it awaits.
+// The run is cancelled while it awaits.
 func TestIntegration_RunCanceledWhileAwaitingEndsCanceled(t *testing.T) {
 	s := newAwaitStack(t, awaitStackOptions{noOrker: true})
 	wf := &orkstackv1.Orkflow{Name: "await-cancel", Version: "1.0.0", Tasks: []*orkstackv1.Task{
@@ -440,7 +440,7 @@ func TestIntegration_RunCanceledWhileAwaitingEndsCanceled(t *testing.T) {
 	}
 }
 
-// I5: §15 "an accepted execution cannot disappear" — the run worker is gone
+// AGENTS.md §15 "an accepted execution cannot disappear" — the run worker is gone
 // while the resolution is delivered, and a fresh worker applies it.
 func TestIntegration_ResolutionDeliveredWithNoEngineWorkerIsAppliedAfterRestart(t *testing.T) {
 	s := newAwaitStack(t, awaitStackOptions{})
@@ -464,7 +464,7 @@ func TestIntegration_ResolutionDeliveredWithNoEngineWorkerIsAppliedAfterRestart(
 		runID, run.GetStatus()))
 }
 
-// I6: two different completions at once — exactly one applies.
+// Two different completions at once — exactly one applies.
 func TestIntegration_ConcurrentResolutionsApplyExactlyOne(t *testing.T) {
 	s := newAwaitStack(t, awaitStackOptions{})
 	s.apply(awaitIntegrationYAML)
@@ -512,7 +512,7 @@ func TestIntegration_ConcurrentResolutionsApplyExactlyOne(t *testing.T) {
 	}
 }
 
-// I7: no Orker polls anything; an await-only orkflow still submits and runs.
+// No Orker polls anything; an await-only orkflow still submits and runs.
 func TestIntegration_AwaitOnlyOrkflowRunsWithNoOrker(t *testing.T) {
 	s := newAwaitStack(t, awaitStackOptions{noOrker: true})
 	s.apply(`
@@ -539,7 +539,7 @@ const (
 	awaitedTimeoutFixture  = "testdata/history/run-awaited-timeout-v1.json"
 )
 
-// I8: records the two awaited replay fixtures from REAL runs on a versioned
+// Records the two awaited replay fixtures from REAL runs on a versioned
 // worker. Opt-in, exactly as TestIntegration_RecordGoldenRunHistory: the
 // fixtures are recorded once and then age.
 func TestIntegration_RecordAwaitedRunHistories(t *testing.T) {

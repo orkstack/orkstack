@@ -24,9 +24,9 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// Task pinning under Worker Deployment Versioning — design §3 "Versioning" and
-// §12.1, the one part of the pinning design that was a PREDICTION rather than a
-// fact. This file is the measurement.
+// Task pinning under Worker Deployment Versioning (docs/DEPLOY.md "Pins on a
+// versioned deployment", AGENTS.md §7.2). The combination is unsupported
+// upstream, so this file — not the SDK's doc comment — is the contract.
 //
 // What the SDK v1.47.0 source actually says, read rather than paraphrased:
 //
@@ -66,7 +66,7 @@ const (
 	// pin is genuinely open while a newer version becomes Current.
 	pinVersionGate = "pin-gate"
 	// pinVersionAfter is the pinned member SCHEDULED AFTER the rollout. It is
-	// the whole point: §6.5 says a pin never moves, and this is the task that
+	// the whole point: a pin never moves, and this is the task that
 	// would move if the session's unversioned queue fell through to the current
 	// version of anything.
 	pinVersionAfter = "pin-after"
@@ -129,7 +129,7 @@ type pinVersionReplica struct {
 	// executed is "<runID>/<taskID>" -> what this process saw.
 	executed map[string]pinVersionExecution
 	// released records every ReleasePin this process was asked for, as
-	// "<runID>/<pin instance id>". It is the §8.5/§12.2 half: the release rides a
+	// "<runID>/<pin instance id>". It is the release half: the release rides a
 	// DISCONNECTED session context, and if that context lost the session it would
 	// land on some other Orker of the pool — or, under versioning, on the current
 	// version's Orker. It is keyed by run because a pin host legitimately
@@ -294,8 +294,8 @@ func (r *pinVersionReplica) releases() []string {
 	return append([]string(nil), r.released...)
 }
 
-// TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout settles design
-// §12.1 against a real cluster.
+// TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout proves the
+// pins-on-a-versioned-deployment contract against a real cluster.
 //
 // The shape is versioning_rollout's, with a pin: v1 is the whole world, a run
 // with a pin starts and opens it, one pinned member holds the pin open, v2 —
@@ -303,7 +303,7 @@ func (r *pinVersionReplica) releases() []string {
 // is the gate released, so the pin's SECOND member is scheduled while a newer
 // version is current.
 //
-// Four things must be true, and the design could only assume them:
+// Four things must be true, and only a real cluster can show them:
 //
 //  1. the pin opens at all on a versioned deployment: the SDK does not reject
 //     EnableSessionWorker together with real Worker Deployment Versioning, and
@@ -429,7 +429,7 @@ func TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout(t *testing.T) 
 	// The engine's own record, which is what a client reads.
 	assertTaskRunsAgreeOnOnePin(t, transcript, pinnedResult, first.orkerID)
 
-	// §8.5/§12.2 in passing: the release rides a DISCONNECTED session context,
+	// The release in passing: it rides a DISCONNECTED session context,
 	// and it has to land on the host that owns the directory — not on the
 	// current version's Orker.
 	assertReleaseLandedOnTheHost(t, transcript, pinnedRun, first, second, firstHistory)
@@ -571,7 +571,7 @@ func pinVersionUnpinned(history map[int64]*pinVersionActivity) []*pinVersionActi
 	return out
 }
 
-// assertPinCreationIsVersioned is the first half of the §12.1 prediction: the
+// assertPinCreationIsVersioned is the first half of the contract: the
 // pin's session CREATION activity goes to `<pool queue>__internal_session_creation`
 // and is dispatched to a worker of the run's OWN deployment version, using
 // versioning — i.e. the creation half participates in version routing exactly
@@ -687,7 +687,7 @@ func assertPinMembersRanOnOneOrker(
 			continue
 		}
 		t.Errorf("the %s Orker executed %s (pin %q) of a run pinned to %s: a version rollout moved "+
-			"an OPEN pin's work onto another process, which §6.5 forbids and no shared directory "+
+			"an OPEN pin's work onto another process, which a pin forbids and no shared directory "+
 			"would follow", newerVersion, key, exec.pin, heldVersion)
 	}
 	if members < 2 {
@@ -803,7 +803,7 @@ func assertTaskRunsAgreeOnOnePin(
 		members, pinVersionKeys(orkers), pinVersionPin))
 }
 
-// assertReleaseLandedOnTheHost checks §8.5's release, which is scheduled on a
+// assertReleaseLandedOnTheHost checks the ReleasePin activity, which is scheduled on a
 // DISCONNECTED session context. If that context lost the session, the release
 // would be routed by the pool queue instead — under versioning, to the CURRENT
 // version's Orker, which owns no such directory.
@@ -825,8 +825,8 @@ func assertReleaseLandedOnTheHost(
 	released := pinVersionReleasesOf(held, runID)
 	if len(released) == 0 {
 		t.Errorf("the pin host was never asked to release run %s's pin; the shared directory now "+
-			"waits for the lease sweep, and §12.2's assumption about a disconnected context "+
-			"carrying the session does not hold", runID)
+			"waits for the lease sweep: a disconnected context no longer carries "+
+			"the session", runID)
 		return
 	}
 	wanted := map[string]struct{}{}

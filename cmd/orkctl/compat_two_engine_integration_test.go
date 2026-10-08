@@ -22,7 +22,7 @@ import (
 )
 
 // The interface compatibility gate against real processes
-// (interface-compatibility-gate, Test plan C1–C3): two `ork` replicas on one
+// (docs/UI_CLI_PARITY.md "Interface compatibility"): two `ork` replicas on one
 // Temporal cluster and one MinIO bucket, the harness
 // promotion_two_engine_integration_test.go already uses (startReplica,
 // isolatedNamespace). Names are stamped so the shared bucket's default
@@ -96,7 +96,7 @@ func resolvedOn(ctx context.Context, t *testing.T, replica *engineReplica, name 
 	return got.Msg.GetOrkflow().GetVersion()
 }
 
-// compatReleaseBlock is the spec's shared fixture under a stamped name:
+// compatReleaseBlock is the shared compatibility fixture under a stamped name:
 // version 2.1.0, or 3.0.0 (adds a required region and a defaulted timeout,
 // drops output url, adds sbom, rewrites every task).
 func compatReleaseBlock(name, version string) string {
@@ -140,7 +140,7 @@ tasks:
 `, name)
 }
 
-// TestIntegration_InterfaceGateAcrossTwoReplicas is C1: a breaking version is
+// TestIntegration_InterfaceGateAcrossTwoReplicas: a breaking version is
 // stored with warnings on A, compared and refused on B, moves nothing on
 // either replica, and lands once acknowledged.
 func TestIntegration_InterfaceGateAcrossTwoReplicas(t *testing.T) {
@@ -200,7 +200,7 @@ func TestIntegration_InterfaceGateAcrossTwoReplicas(t *testing.T) {
 	proof.Write(t, "orkctl", "interface-gate-two-replicas.txt", []byte(s.transcript.String()))
 }
 
-// TestIntegration_CallersSeeCompositionTriggersAndSchedules is C2: a real
+// TestIntegration_CallersSeeCompositionTriggersAndSchedules: a real
 // composing orkflow, a trigger following current and a paused, pinned
 // Temporal Schedule are exactly the three callers another replica lists.
 func TestIntegration_CallersSeeCompositionTriggersAndSchedules(t *testing.T) {
@@ -294,7 +294,7 @@ tasks:
 	proof.Write(t, "orkctl", "callers-two-replicas.txt", []byte(s.transcript.String()))
 }
 
-// TestIntegration_ConcurrentPromotionNeverLandsAnUnacknowledgedBreak is C3:
+// TestIntegration_ConcurrentPromotionNeverLandsAnUnacknowledgedBreak:
 // a→t is COMPATIBLE and b→t is BREAKING (input zone removed). A promotes t
 // without acknowledgement while B alternates acknowledged promotions of a and
 // b; no landed promotion of t may have replaced b.

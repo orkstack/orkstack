@@ -16,18 +16,19 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// The fan-out CLI scenarios (spec each-fan-out C1–C3): a real engine (two
-// for C2), a real Orker and real Temporal and MinIO; the BUILT orkctl reads
-// every item through the §9 commands.
+// The fan-out CLI scenarios (docs/UI_CLI_PARITY.md "Fan-out"): a real engine
+// (two for the cross-replica read), a real Orker and real Temporal and MinIO;
+// the BUILT orkctl reads every item through the --item commands.
 
 // eachCLIDoc is examples/each-fan-out.ork.yaml's list → convert → merge
 // shape, stamped with its own name, on the local first-party images only.
 // The parts come from the run's input, so this suite exercises an
 // input-sourced expansion; the shipped example computes its list in a json
-// task and is run end to end by cmd/orkctl/examples_integration_test.go (E3).
-// The upstream-sourced expansion is also the engine suite's (I1–I5, real
-// Orker and containers).
-// `convert` prints its task.json and config.json between markers, so C3 can
+// task and is run end to end by cmd/orkctl/examples_integration_test.go.
+// The upstream-sourced expansion is also covered by the engine's fan-out
+// suite (real Orker and containers).
+// `convert` prints its task.json and config.json between markers, so the
+// local-item test can
 // compare a local item run with the Orker's own, and item 2 exits 1 on its
 // first attempt so one item retries.
 func eachCLIDoc(name string) string {
@@ -91,7 +92,6 @@ func eachRun(ctx context.Context, t *testing.T, s *timingStack) *orkstackv1.Run 
 	return run
 }
 
-// C1.
 func TestIntegration_CLIRunGetExpandLogsArtifactsAttemptsForItems(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -140,7 +140,7 @@ func TestIntegration_CLIRunGetExpandLogsArtifactsAttemptsForItems(t *testing.T) 
 	s.writeTranscript("each-C1.txt")
 }
 
-// C2: a run replica A started, read in full on replica B.
+// A run replica A started, read in full on replica B.
 func TestIntegration_EachReadsOnASecondReplica(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -160,7 +160,7 @@ func TestIntegration_EachReadsOnASecondReplica(t *testing.T) {
 	s.writeTranscript("each-C2.txt")
 }
 
-// C3: orkctl task run --from-run … --task convert --item 2 renders the
+// `orkctl task run --from-run … --task convert --item 2` renders the
 // config.json and task.json `each` the Orker rendered.
 func TestIntegration_TaskRunOneItemLocally(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -170,7 +170,7 @@ func TestIntegration_TaskRunOneItemLocally(t *testing.T) {
 	stdout, stderr, code := stack.taskRun("--from-run", run.GetId(), "--task", "convert", "--item", "2", "--keep")
 	// A local run is one attempt, attempt 1, and item 2 exits 1 on its first
 	// attempt by design, so task run reports that failure (exitRunFailed).
-	// What C3 compares is the rendering the container saw, not its outcome.
+	// What this compares is the rendering the container saw, not its outcome.
 	if code != exitRunFailed || !strings.Contains(stdout, "CONTAINER_EXIT_NONZERO") {
 		t.Fatalf("task run --item 2 exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}

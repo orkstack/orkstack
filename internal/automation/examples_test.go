@@ -11,7 +11,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
-// TestParse_TheShippedAutomationExample is U5: the automation document under
+// TestParse_TheShippedAutomationExample: the automation document under
 // examples/automation parses with no issue, declares what its header says,
 // and names only Orkflows that are shipped examples.
 func TestParse_TheShippedAutomationExample(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// TestIntegration_ASecondReplicaInspectsARunItNeverStarted is I5: two `ork`
+// TestIntegration_ASecondReplicaInspectsARunItNeverStarted: two `ork`
 // replicas on one Temporal namespace, one Orker channel and one bucket (the
 // tworeplica_read shape). A run submitted through A is inspected through B —
 // which started nothing and holds nothing of it in memory — and B reports the

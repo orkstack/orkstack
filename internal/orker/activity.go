@@ -84,13 +84,13 @@ type Options struct {
 	MaxConcurrent int32
 	// MaxPins is reported by DescribeOrker. Zero — the default — means this
 	// Orker hosts no pins, and a submit that pins a task to its pool is refused
-	// at submit rather than left waiting for a slot that does not exist (§7.1,
-	// §7.4).
+	// at submit rather than left waiting for a slot that does not exist
+	// (docs/DEPLOY.md "Pin hosting is a pool-wide setting").
 	MaxPins int32
 	// LayoutRoot is where embedded OCI image layouts live (§4.6).
 	LayoutRoot string
 	// Signatures verifies a task's cosign signature when its image policy
-	// names a signer (image-supply-chain-policy §6.2). cmd/orker always
+	// names a signer (docs/DEPLOY.md "Image supply-chain policy"). cmd/orker always
 	// builds one; nil only in tests, where such a task fails
 	// IMAGE_SIGNATURE_UNAVAILABLE rather than passing.
 	Signatures *dsl.SignatureVerifier
@@ -240,12 +240,12 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		RunningTasks:      a.running.Load(),
 		// This build implements fan-out items and their fan-in staging; an
 		// Orker built before it answers false, and submit refuses a fan-out
-		// on its pool (spec each-fan-out §5.11).
+		// on its pool (docs/DEPLOY.md §1).
 		EachSupported: true,
-		// The memo step (cache-memoization §6): this Orker reads
+		// The memo step (§5.4.1): this Orker reads
 		// ExecuteTaskInput.cache, so submit may send a cached task to its pool.
 		CacheSupported: true,
-		// Join policies (task-join-policy §4.11): this Orker reads
+		// Join policies (docs/DSL.md "Joins and failure handlers"): this Orker reads
 		// ExecuteTaskInput.join, so submit may send a failure handler to its
 		// pool.
 		JoinSupported: true,
@@ -276,7 +276,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 	return result, nil
 }
 
-// ReleasePin removes one pin's shared directory (§8.5).
+// ReleasePin removes one pin's shared directory (§6.4).
 //
 // The engine schedules it on the pin's OWN session, so it lands on the host
 // that owns the directory or nowhere at all — there is no branch here that
@@ -311,11 +311,11 @@ func (a *Activities) ReleasePin(ctx context.Context, in *orkstackv1.ReleasePinIn
 	return nil
 }
 
-// PinLeaseSweepInterval is how often SweepPinLeases ticks (§8.4).
+// PinLeaseSweepInterval is how often SweepPinLeases ticks (§6.4).
 const PinLeaseSweepInterval = time.Minute
 
 // SweepPinLeases removes expired pin directories until ctx is done, and is the
-// third and last of §8.4's three ways a pin's directory ends.
+// third and last of §6.4's three ways a pin's directory ends.
 //
 // It runs UNCONDITIONALLY — whether or not this Orker hosts pins. Three reasons,
 // and the third is the one that makes it more than tidiness:
@@ -365,7 +365,7 @@ func (a *Activities) sweepPinLeasesOnce(now time.Time) {
 	}
 }
 
-// reapPinDirectories removes every pin directory found at boot (§8.4).
+// reapPinDirectories removes every pin directory found at boot (§6.4).
 //
 // It is UNCONDITIONAL, and deliberately so: a directory left behind by a
 // PREVIOUS life that did host pins must still be cleaned up by a boot that does
@@ -444,7 +444,7 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// And its own previous life's pin directories, beside the containers, for
 	// the same reason and with a stronger guarantee: a pin cannot outlive the
 	// worker process that opened its session, so every ork-pin-* under the work
-	// root is dead by construction rather than by heuristic (§8.4).
+	// root is dead by construction rather than by heuristic (§6.4).
 	a.reapPinDirectories(root)
 	return nil
 }

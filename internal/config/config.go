@@ -178,7 +178,7 @@ var Schema = []Var{
 
 	// orker.pins.max_concurrent is 0 (no default constant) rather than a
 	// derived-from-code literal: hosting zero pins is the deliberate
-	// zero-config default (docs/design/task-pinning-worker-session.md §7.1)
+	// zero-config default (docs/DEPLOY.md "Pin hosting is a pool-wide setting")
 	// — an Orker that never sets this starts no session pollers and behaves
 	// exactly as it did before pins existed.
 	{Path: "orker.pins.max_concurrent", Env: "ORK_ORKER_MAX_PINS", Binaries: usesOrker, Kind: KindInt, Default: "0"},

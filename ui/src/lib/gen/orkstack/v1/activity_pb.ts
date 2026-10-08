@@ -360,7 +360,7 @@ export type PinContext = Message<"orkstack.v1.PinContext"> & {
   /**
    * timeout_seconds is the pin's lifetime bound as the engine set it
    * (Pin.timeout_seconds or the derived sum). The Orker derives the shared
-   * directory's lease from it (§8.4).
+   * directory's lease from it (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
    *
    * @generated from field: int32 timeout_seconds = 3;
    */
@@ -539,8 +539,8 @@ export type CacheSource = Message<"orkstack.v1.CacheSource"> & {
   finishedAt?: Timestamp | undefined;
 
   /**
-   * item is set when the producer was one item of a fan-out (each-fan-out's
-   * 0-based index); unset otherwise.
+   * item is set when the producer was one item of a fan-out (its 0-based
+   * index); unset otherwise.
    *
    * @generated from field: optional int32 item = 9;
    */
@@ -1650,7 +1650,7 @@ export const DescribeOrkerResultSchema: GenMessage<DescribeOrkerResult> = /*@__P
  * and not yet completed. It names the run and the pin — never the session,
  * which is internal (AGENTS.md §7) — and says when the shared directory's
  * lease ends, which is the longest the pin can live even if nothing else
- * closes it (docs/design/task-pinning-worker-session.md §8.4).
+ * closes it (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
  *
  * @generated from message orkstack.v1.OpenPin
  */

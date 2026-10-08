@@ -314,7 +314,7 @@ func (n *WebhookNotifier) NotifyRunEvent(
 		return
 	}
 	// A delivery body never carries a fan-out's items: it stays small, and
-	// a subscriber reads items with GetRun (spec each-fan-out §5.13).
+	// a subscriber reads items with GetRun.
 	encoded, err := MarshalJSON(engine.WithoutItems(run))
 	if err != nil {
 		n.logger.Error("webhook encode run", "run_id", event.GetRunId(), "error", err)

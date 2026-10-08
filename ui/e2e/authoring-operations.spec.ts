@@ -181,15 +181,14 @@ test('apply validates without writing, imports and exports exact YAML, and guard
 	await shot(page, 'screenshot-dirty-draft-guard.png');
 });
 
-// Activity interface manifests (activity-interface-manifests §8.5): the
+// Activity interface manifests (docs/ACTIVITY_IMAGES.md "Declaring the interface"): the
 // first-party `file` image declares its with: contract in the
 // org.orkstack.activity.interface label, and validate/apply check a document
 // against it after resolution. A missing required key is an ERROR the engine
 // refuses before storing anything; an undeclared key is a WARNING that
 // changes nothing — the document applies, and the warning stays visible.
 //
-// Deviation from the spec's wording, recorded in implementation-notes.md:
-// this page has never disabled Apply on a validation ERROR (secret-policy's
+// This page has never disabled Apply on a validation ERROR (secret-policy's
 // e2e clicks Apply after one to see the server refuse it), so the ERROR half
 // is proven the same way — Apply is refused in the engine's words and
 // nothing is stored — rather than by a disabled button.

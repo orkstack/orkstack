@@ -21,8 +21,8 @@
 	function href(changes: Record<string, string>) { return listHref('/orkflows', { ...coordinates, ...changes }); }
 
 	// The cursors BEHIND this page, per filter set and per tab; see the same
-	// block in runs/+page.svelte and §3.2 of
-	// docs/design/pagination-and-timerange-ui.md for why they are not in the URL.
+	// block in runs/+page.svelte and docs/UI_CLI_PARITY.md "Paging in the
+	// browser" for why they are not in the URL.
 	const stackKey = $derived(pageStackKey('/orkflows', coordinates));
 	let stack = $state<string[]>([]);
 	$effect(() => {

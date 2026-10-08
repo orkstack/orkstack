@@ -358,7 +358,7 @@ func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t 
 
 // TestRegisterWorkflows_ScheduleFireIsPinned: a schedule's fire lives exactly
 // as long as the run it starts, so it is Pinned with that run
-// (orkflow-schedules §4.3).
+// (docs/ORKFLOW_SCHEDULES.md).
 func TestRegisterWorkflows_ScheduleFireIsPinned(t *testing.T) {
 	var registered recordingRegistrar
 	engine.RegisterWorkflows(&registered)

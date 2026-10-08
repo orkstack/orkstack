@@ -64,7 +64,7 @@ func TestSecretPolicy_MatchVectors(t *testing.T) {
 	for _, v := range want {
 		t.Run(v.Pattern+" "+v.Source, func(t *testing.T) { assertVector(t, v) })
 	}
-	// Every row the spec names is in the exported table the boundaries use.
+	// Every row above is in the exported table the boundaries use.
 	exported := map[SecretPolicyVector]bool{}
 	for _, v := range SecretPolicyVectors() {
 		exported[v] = true
@@ -232,7 +232,7 @@ func TestSecretPolicy_EmptyListPermitsEverything(t *testing.T) {
 func TestSecretPolicyVectors_AreExportedForTheBoundaries(t *testing.T) {
 	vectors := SecretPolicyVectors()
 	if len(vectors) < 17 {
-		t.Fatalf("SecretPolicyVectors() has %d rows, want at least the spec's 17", len(vectors))
+		t.Fatalf("SecretPolicyVectors() has %d rows, want at least the 17 contract rows", len(vectors))
 	}
 	for _, v := range vectors {
 		assertVector(t, v)

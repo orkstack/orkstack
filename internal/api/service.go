@@ -203,12 +203,12 @@ type Config struct {
 
 	// Fleet answers ActivityService.ListOrkers and CordonOrker: the presence
 	// channel's poller records and one Orker's own control channel
-	// (orker-cordon-drain §6). Nil answers both Unavailable.
+	// (docs/DEPLOY.md "Removing an Orker safely: cordon and drain"). Nil answers both Unavailable.
 	Fleet engine.OrkerFleet
 
 	// Releases answers SystemService's ListReleases, RampRelease and
 	// PromoteRelease: the cluster's routing of new runs between releases, and
-	// the one write that changes it (orkctl-release §5). `ork` wires
+	// the one write that changes it (docs/DEPLOY.md §3). `ork` wires
 	// engine.TemporalReleaseCluster over the client it already holds. Nil
 	// answers all three Unavailable.
 	Releases engine.ReleaseCluster
@@ -423,10 +423,9 @@ type Service struct {
 	telemetrySinks []string
 	artifacts      artifacts.Config
 	limits         engine.WorkspaceLimits
-	// eachMaxItems is Config.EachMaxItems, defaulted (spec each-fan-out §7.1).
+	// eachMaxItems is Config.EachMaxItems, defaulted.
 	eachMaxItems int32
-	// composeMaxDepth is Config.ComposeMaxDepth, defaulted (spec
-	// composed-orkflows §8).
+	// composeMaxDepth is Config.ComposeMaxDepth, defaulted.
 	composeMaxDepth int
 	// cacheMaxTTL is Config.CacheMaxTTL, defaulted; memos is Config.Memos.
 	cacheMaxTTL time.Duration
@@ -642,7 +641,7 @@ func (s *Service) ApplyOrkflow(
 	// The interface comparison must see the store as it was BEFORE this
 	// version lands, or an unpromoted orkflow's new head would be compared
 	// with itself. WARNINGs only: applying is never refused for a consumer's
-	// sake (interface-compatibility-gate §5.4).
+	// sake (docs/UI_CLI_PARITY.md "Interface compatibility").
 	issues = append(issues, s.interfaceChangeIssues(ctx, ns.GetName(), wf)...)
 	expected, err := s.checkEditTokens(ctx, ns.GetName(), wf.GetName(),
 		req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion())
@@ -740,9 +739,8 @@ func (s *Service) ValidateOrkflow(ctx context.Context, req *connect.Request[orks
 // three images can still run as three different uids and hit the same
 // sticky-bit failure on its second task. The platform cannot know an image's
 // USER at compile time — that is the registry's answer, and only after a pull
-// — so this is advice and not a refusal (docs/design/task-pinning-worker-
-// session.md §4.4, §12.9: a documented author responsibility, not a platform
-// guarantee).
+// — so this is advice and not a refusal (docs/DSL.md "Pins": a documented
+// author responsibility, not a platform guarantee).
 //
 // A document with no pin produces nothing, so an unpinned author's validate
 // response is exactly what it was before pins existed.
@@ -835,7 +833,7 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	wf, err := dsl.CompileWithOptions(source, dsl.Options{Catalog: s.activityCatalog()})
 	if err != nil {
 		// A composed task with no version names the versions that exist
-		// (spec composed-orkflows §4.5); the compiler is pure and cannot.
+		// in the namespace; the compiler is pure and cannot.
 		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument,
 			s.enrichVersionRequired(ctx, requestedNamespace, err))
 	}
@@ -871,7 +869,7 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 		return nil, nil, nil, applyResolveError(err)
 	}
 	// The deployment's fan-out bounds: ORK_EACH_MAX_ITEMS, and each fan-out's
-	// own share of every item's input (spec each-fan-out §7.1) — measured
+	// own share of every item's input — measured
 	// after resolution, so the image every item carries is counted.
 	if err := s.checkEachLimits(wf); err != nil {
 		return nil, nil, nil, err
@@ -1335,7 +1333,7 @@ func (s *Service) prepare(
 	}
 	// The declared fan-out total against the deployment's cap NOW: a
 	// definition applied before ORK_EACH_MAX_ITEMS was lowered is refused
-	// before any id is minted (spec each-fan-out §7.1).
+	// before any id is minted.
 	if err := s.checkEachCapAtSubmit(stored); err != nil {
 		return submission{}, err
 	}
@@ -1382,7 +1380,7 @@ func (s *Service) prepare(
 	plan.Cache = s.cachePlanFor(planned, msg.GetNoCache())
 	// Every child run this submission can start, planned recursively under
 	// the parent's namespace, resolver, allow_empty_pool, image-policy
-	// selection and boot answers (spec composed-orkflows §5.2). It refuses
+	// selection and boot answers. It refuses
 	// and mints nothing.
 	nsIdx, orIdx := indexAnswers(binding.Starter)
 	if err := s.planChildren(ctx, composeRequest{
@@ -1502,7 +1500,7 @@ func poolPlanError(err error) error {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	// A live pool that hosts no pins is PoolEmptyError's sibling and gets its
-	// code (design §7.4): the request is well formed and the deployment is not
+	// code: the request is well formed and the deployment is not
 	// ready for it, so it is retryable once an operator sets
 	// ORK_ORKER_MAX_PINS on that pool's Orkers.
 	var noPinHost *engine.PoolNoPinHostError
@@ -1510,7 +1508,7 @@ func poolPlanError(err error) error {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	// A pool whose Orker predates fan-out: the request is well formed and
-	// the deployment is not ready for it (spec each-fan-out §5.11).
+	// the deployment is not ready for it (docs/DEPLOY.md §1).
 	var noEach *engine.PoolNoEachSupportError
 	if errors.As(err, &noEach) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
@@ -2081,7 +2079,7 @@ func (s *Service) ListRuns(
 	}
 	// A list page never carries a fan-out's items: GetRun is the read that
 	// does, and a page of archived fan-out runs must not carry thousands of
-	// items per run (spec each-fan-out §5.13).
+	// items per run.
 	for i, run := range response.Runs {
 		response.Runs[i] = engine.WithoutItems(run)
 	}

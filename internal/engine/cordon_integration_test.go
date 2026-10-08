@@ -574,7 +574,7 @@ func TestIntegration_ACordonedPinHostOpensNoNewPinAndKeepsItsOpenOne(t *testing.
 	// maxPins 2 on A, not 1: a host at its cap does not poll the creation
 	// channel at all (the SDK's session token), so a second pin could never
 	// even reach A's interceptor and the refusal this test pins could not be
-	// observed. See implementation-notes.md.
+	// observed.
 	a := d.orker("orker-pa-"+d.token, pool, pinOrkerConfig{
 		maxPins: 2, logger: slog.New(slog.NewTextHandler(logsA, nil))})
 	probe := engine.NewTemporalPoolProbe(d.temporal)
@@ -687,7 +687,7 @@ func TestIntegration_EveryPinHostCordonedFailsThePinWithPinUnavailable(t *testin
 		t.Fatalf("the PIN_UNAVAILABLE message does not carry the cordon reason %q: %s", reason, message)
 	}
 	if elapsed < 4*time.Minute || elapsed > 7*time.Minute {
-		t.Fatalf("the pin failed after %s; want between 4 and 7 minutes (the §5.4 bound)", elapsed)
+		t.Fatalf("the pin failed after %s; want between 4 and 7 minutes (the cordon refusal bound)", elapsed)
 	}
 	dirs, _ := filepath.Glob(filepath.Join(a.workRoot, "ork-pin-*"))
 	if len(dirs) != 0 {
@@ -746,7 +746,7 @@ func TestIntegration_DescribeOrkerOnThePoolChannelStillAnswersFromTheUncordonedS
 		t.Fatalf("pool %s reports %d live Orkers inside the freshness window; want 2", pool, count)
 	}
 	// At most two describes can land on A's already-outstanding long polls
-	// (§5.3's window); three answers therefore include at least one from B.
+	// (the cordon window); three answers therefore include at least one from B.
 	answered := map[string]int{}
 	for i := 0; i < 3; i++ {
 		got, err := d.starter.OrkerOnPool(ctx, a.queue)

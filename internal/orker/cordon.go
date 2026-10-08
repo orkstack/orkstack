@@ -18,7 +18,7 @@ import (
 )
 
 // A cordon stops one Orker taking new work while leaving everything in flight
-// alone (docs/design/proposals/phase-2/orker-cordon-drain/spec.md §5). It has
+// alone (docs/DEPLOY.md "Removing an Orker safely: cordon and drain"). It has
 // three effects on three different SDK seams, because the three kinds of
 // intake are three different pollers:
 //

@@ -93,8 +93,7 @@ func (x *RetryPolicy) GetMaximumIntervalSeconds() int32 {
 }
 
 // Pin is a named group of tasks that execute on ONE Orker process and share
-// /orkstack/shared for the group's lifetime (docs/design/task-pinning-
-// worker-session.md). It is the user-facing word; the Temporal session that
+// /orkstack/shared for the group's lifetime (docs/DSL.md "Pins"). It is the user-facing word; the Temporal session that
 // implements it is internal, as a queue is to a pool.
 type Pin struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -738,7 +737,7 @@ type Orkflow struct {
 	// under re-canonicalization, and pkg/artifacts.sameStoredOrkflow still
 	// sees a re-apply of an unchanged document as equal.
 	//
-	// Added after the Phase 1 wire freeze, deliberately and ADDITIVELY: fields
+	// Added after the original wire freeze, deliberately and ADDITIVELY: fields
 	// 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an
 	// older reader simply does not see it. The alternative was to populate
 	// orkflow_definition_digest from workflow code, which changes recorded

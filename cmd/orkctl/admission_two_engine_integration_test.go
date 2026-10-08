@@ -28,7 +28,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// admissionHoldReason is the incident's reason, as the spec's narrative has it.
+// admissionHoldReason is the hold reason of the worked incident.
 const admissionHoldReason = "partner CI loop, INC-4412"
 
 // admissionStack is two real `ork` replicas sharing one bucket and one

@@ -13,12 +13,12 @@ import (
 
 // DefaultEachMaxItems is ORK_EACH_MAX_ITEMS' default: the built-in ceiling
 // on the items one Orkflow's fan-outs may declare in total, which a
-// deployment may lower and never raise (spec each-fan-out §8).
+// deployment may lower and never raise (docs/DSL.md "Fan-out").
 const DefaultEachMaxItems = dsl.MaxEachItems
 
 // DefaultComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH's default: the built-in
 // ceiling on how many levels of child runs one run may start, which a
-// deployment may lower and never raise (spec composed-orkflows §8).
+// deployment may lower and never raise (docs/DSL.md "Composition").
 const DefaultComposeMaxDepth int32 = MaxComposeDepth
 
 // DefaultCacheMaxTTL is ORK_CACHE_MAX_TTL's default: the oldest memoized

@@ -77,12 +77,12 @@ const (
 	ReasonResourceRefused      = "RESOURCE_REQUEST_REFUSED"
 	ReasonNetworkModeRefused   = "NETWORK_MODE_REFUSED"
 	// ReasonEachItemUnavailable is a fan-out item whose array no longer
-	// resolves to the one the engine counted (spec each-fan-out §6.1):
+	// resolves to the one the engine counted:
 	// unreachable while the store honours its digests, stated rather than
 	// guessed at.
 	ReasonEachItemUnavailable = "EACH_ITEM_UNAVAILABLE"
 
-	// Image supply-chain policy (image-supply-chain-policy §6.1), re-exported
+	// Image supply-chain policy (docs/DEPLOY.md "Image supply-chain policy"), re-exported
 	// from internal/task so the engine and the Orker spell one refusal one
 	// way. The first three refuse identically forever; the fourth is a
 	// registry that could not be asked, classified as IMAGE_PULL_FAILED is.

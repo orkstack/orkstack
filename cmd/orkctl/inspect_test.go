@@ -77,7 +77,7 @@ func (l *liveReader) LiveAttempts(context.Context, string, time.Time) (engine.Li
 	return frame.live, nil
 }
 
-// inspectAt is the engine clock every golden is rendered against: the §5
+// inspectAt is the engine clock every golden is rendered against: the worked
 // example's moment.
 var inspectAt = time.Date(2026, 9, 23, 9, 51, 7, 0, time.UTC)
 
@@ -92,7 +92,7 @@ func newInspectFixture(t *testing.T, now time.Time, frames ...inspectFrame) *fix
 
 func liveAt(d time.Duration) *timestamppb.Timestamp { return timestamppb.New(inspectAt.Add(d)) }
 
-// trainRun is the §5 example's run: fit running, eval pending, clean skipped.
+// trainRun is the worked example's run: fit running, eval pending, clean skipped.
 func trainRun(status orkstackv1.Status) *orkstackv1.Run {
 	return &orkstackv1.Run{
 		Id:          "ork-train-1",
@@ -112,7 +112,7 @@ const (
 	stCancel    = orkstackv1.LiveAttemptState_LIVE_ATTEMPT_STATE_CANCEL_REQUESTED
 )
 
-// fitStarted is L1 as the §5 example renders it: attempt 2, 40m2s in, last
+// fitStarted is L1 as the worked example renders it: attempt 2, 40m2s in, last
 // beat 3 s ago, 412.0 MiB logged.
 func fitStarted() *orkstackv1.LiveAttempt {
 	return &orkstackv1.LiveAttempt{
@@ -145,7 +145,6 @@ func inspectOne(t *testing.T, golden string, run *orkstackv1.Run, attempts ...*o
 	return res
 }
 
-// C1
 func TestRunInspect_GoldenTable(t *testing.T) {
 	res := inspectOne(t, "run-inspect.golden", trainRun(orkstackv1.Status_STATUS_RUNNING), fitStarted())
 	for _, want := range []string{"412.0 MiB", "40m2s", "3s ago", "3f2a9c1d0b4e ", "at least 4m58s left"} {
@@ -155,7 +154,6 @@ func TestRunInspect_GoldenTable(t *testing.T) {
 	}
 }
 
-// C2
 func TestRunInspect_GoldenJSON(t *testing.T) {
 	run := trainRun(orkstackv1.Status_STATUS_RUNNING)
 	f := newInspectFixture(t, inspectAt, inspectFrame{run: run, live: engine.LiveRun{Attempts: []*orkstackv1.LiveAttempt{fitStarted()}}})
@@ -174,7 +172,7 @@ func TestRunInspect_GoldenJSON(t *testing.T) {
 	}
 }
 
-// C3: one golden per state, reason and the stale sentence.
+// One golden per state, reason and the stale sentence.
 func TestRunInspect_EveryUnavailableReasonAndStateHasAGolden(t *testing.T) {
 	running := trainRun(orkstackv1.Status_STATUS_RUNNING)
 
@@ -294,7 +292,6 @@ func TestRunInspect_EveryReasonValueIsPrintedByAGolden(t *testing.T) {
 	}
 }
 
-// C4
 func TestRunInspect_OldOrkerHeartbeatPrintsDashForOrker(t *testing.T) {
 	old := &orkstackv1.LiveAttempt{
 		TaskId: "fit", Attempt: 1, State: stStarted,
@@ -315,7 +312,6 @@ func TestRunInspect_OldOrkerHeartbeatPrintsDashForOrker(t *testing.T) {
 	}
 }
 
-// C5
 func TestRunInspect_FormatBytes(t *testing.T) {
 	for _, tc := range []struct {
 		n    int64
@@ -329,7 +325,6 @@ func TestRunInspect_FormatBytes(t *testing.T) {
 	}
 }
 
-// C6
 func TestRunInspect_WatchEndsAtTerminalWithTheRunExitCode(t *testing.T) {
 	running := trainRun(orkstackv1.Status_STATUS_RUNNING)
 	failed := trainRun(orkstackv1.Status_STATUS_FAILED)
@@ -364,7 +359,6 @@ func TestRunInspect_WatchEndsAtTerminalWithTheRunExitCode(t *testing.T) {
 	}
 }
 
-// C7
 func TestRunInspect_IntervalIsRefusedBelowOneSecondAndWithoutWatch(t *testing.T) {
 	f := newInspectFixture(t, inspectAt, inspectFrame{run: trainRun(orkstackv1.Status_STATUS_RUNNING)})
 	res := f.run("run", "inspect", "ork-train-1", "--watch", "--interval", "500ms")
@@ -380,7 +374,6 @@ func TestRunInspect_IntervalIsRefusedBelowOneSecondAndWithoutWatch(t *testing.T)
 	}
 }
 
-// C8
 func TestRunInspect_FailedPreconditionIsWordedForAnOperator(t *testing.T) {
 	f := newFixture(t)
 	f.runs.Save(trainRun(orkstackv1.Status_STATUS_RUNNING))
@@ -391,7 +384,6 @@ func TestRunInspect_FailedPreconditionIsWordedForAnOperator(t *testing.T) {
 	}
 }
 
-// C9
 func TestRunInspect_UnknownTaskAndOtherNamespaceAreNotFound(t *testing.T) {
 	f := newInspectFixture(t, inspectAt, inspectFrame{run: trainRun(orkstackv1.Status_STATUS_RUNNING)})
 	res := f.run("run", "inspect", "ork-train-1", "--task", "nope")

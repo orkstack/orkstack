@@ -16,7 +16,7 @@ import (
 // They are duplicated here on purpose. A test that read the names out of the
 // implementation would still pass if every name were replaced by the empty
 // string, and "the report NAMES the assertion that failed" is precisely the
-// property Phase 3 acceptance criterion (6) turns on.
+// property `orkctl activity test` exists to provide.
 //
 // TestAssertionNamesMatchTheImplementation keeps the duplication honest.
 const (
@@ -94,7 +94,7 @@ func TestAssertionStatus(t *testing.T) {
 }
 
 // TestBuildActivityTestReport_NamesTheAssertionThatFailed is the fail half of
-// Phase 3 acceptance criterion (6): `orkctl activity test` must report
+// the activity-test contract: `orkctl activity test` must report
 // pass/fail, and a FAIL must say WHICH of the six properties broke.
 //
 // One case per assertion, because a report that named only the first failure,

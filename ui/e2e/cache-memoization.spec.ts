@@ -20,8 +20,8 @@ import {
 	waitForEngine
 } from './harness';
 
-// Task caching against a real engine, Orker, Temporal and MinIO (spec
-// cache-memoization, Playwright P1–P5): a second identical run shows its
+// Task caching against a real engine, Orker, Temporal and MinIO (docs/DSL.md
+// "Caching"): a second identical run shows its
 // cached task linking to the run that produced it; a miss says why, and the
 // attempt timeline shows the decision and its key components; Ignore cached
 // results bypasses every cached task; Admin → Cache shows the hit rate and

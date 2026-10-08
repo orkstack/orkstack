@@ -24,7 +24,7 @@ import {
 } from './harness';
 
 // Image supply-chain policy in a browser, against a real engine, Orker,
-// Temporal, MinIO and registry (image-supply-chain-policy § Playwright):
+// Temporal, MinIO and registry (docs/DEPLOY.md "Image supply-chain policy"):
 //
 //   1. Admin → Image policy: the scope caption says Deployment-wide and the
 //      empty policy reads No / Unrestricted / None / Never; a save of two
@@ -289,7 +289,7 @@ test('4: Validate anchors both refusals to tasks[0].uses; a signed catalog image
 	// The image outside the floor is the shared registry's own shell image
 	// spelled through 127.0.0.1 rather than localhost, and pinned by digest:
 	// the rule checks require_digest BEFORE allowed_registries
-	// (image-supply-chain-policy §1), so a tag-spelled outside image would
+	// (docs/DEPLOY.md "Image supply-chain policy"), so a tag-spelled outside image would
 	// meet the tag sentence first, and a real, resolvable reference outside
 	// `localhost:5001/orkstack/` needs no public-registry round trip.
 	const { outside, outsideRepo } = await outsideImage();

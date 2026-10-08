@@ -42,6 +42,16 @@ record before its logs. The order is part of the contract: it is what lets a
 reader stream-verify without buffering, and a bundle in another order fails
 `verify`.
 
+A fan-out (`docs/DSL.md` "Fan-out") contributes its node's `tasks[]` entry
+(status, no attempts) followed by one entry per item carrying `"item": i`.
+Each item's members use the per-task layout above under
+`tasks/{task-id}/items/{i:05}/` (`commit.json`, `values.json`,
+`artifacts/{member-name}`, `attempts/{n}.json`, `attempts/{n}/stdout.log`,
+`attempts/{n}/stderr.log`), items ascending, and every such member entry
+carries `"item": i`; `scope` carries `item` when the export was narrowed to
+one. These keys are additive, so `schema_version` stays `1` and `verify`
+reads bundles with and without items.
+
 A `SKIPPED` task has no members and one `tasks[]` entry. A `FAILED` or
 `CANCELED` task has no `commit.json` and no `values.json`, and has artifact
 and log members for whatever its failure path uploaded.

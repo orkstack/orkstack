@@ -269,7 +269,7 @@ cmd_up() {
 	start ork "$REPO/bin/ork" --config "$RUN_DIR/orkstack.yaml"
 	wait_for "engine api" 60 "$REPO/bin/orkctl" --server "$ENGINE_URL" orkflow list
 	# DescribeOrker is an activity the engine schedules onto the Orker's queue
-	# (design §6.5), so a live count answers only when the Orker is actually
+	# (docs/OCI_ACTIVITY_CONTRACT.md §6.5), so a live count answers only when the Orker is actually
 	# polling. A liveness check on the process alone would pass with an Orker
 	# that dialled Temporal, failed, and is sitting there useless.
 	#

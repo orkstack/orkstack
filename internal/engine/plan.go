@@ -46,8 +46,8 @@ type RunPlan struct {
 	// which is a pure function of its arguments and replays identically.
 	CommitRoot string `json:"commit_root"`
 
-	// Limits are the deployment-wide CONTRACT limits (design §2.2
-	// WorkspaceLimits): values, artifact count and size, log and commit
+	// Limits are the deployment-wide CONTRACT limits
+	// (docs/OCI_ACTIVITY_CONTRACT.md §2.2, WorkspaceLimits): values, artifact count and size, log and commit
 	// bounds. They are engine configuration, uniform across the deployment,
 	// and the engine needs them itself for its own INPUT_TOO_LARGE check.
 	//
@@ -261,7 +261,7 @@ type WorkspaceLimits struct {
 	CommitMaxBytes   int64 `json:"commit_max_bytes"`
 }
 
-// Default contract limits (design §2.2). They are the values a deployment
+// Default contract limits (docs/OCI_ACTIVITY_CONTRACT.md §2.2). They are the values a deployment
 // gets with no configuration, and they are what task.json reports so a
 // workload can respect them instead of discovering them by failing.
 const (

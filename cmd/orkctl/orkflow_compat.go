@@ -12,7 +12,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
-// The interface compatibility surface (interface-compatibility-gate §6):
+// The interface compatibility surface (docs/UI_CLI_PARITY.md "Interface compatibility"):
 // `compat` answers "what will this change break?" between two stored
 // versions, and `callers` answers "who starts or composes this, pinned to
 // what?". Both are reads and exit 0 whatever they find; the gate belongs on
@@ -105,7 +105,7 @@ func resolvedNamespaceName(namespace string) string {
 	return namespace
 }
 
-// verdictWord is research §7's rendering: BREAKING shouts, the others do not.
+// verdictWord renders a verdict: BREAKING shouts, the others do not.
 func verdictWord(verdict orkstackv1.InterfaceVerdict) string {
 	switch verdict {
 	case orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_COMPATIBLE:

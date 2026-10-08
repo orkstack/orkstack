@@ -52,7 +52,6 @@ func applyAdvancedDemo(t *testing.T, f *fixture) {
 	f.run("apply", advancedDemoPath).requireExit(t, exitOK)
 }
 
-// C1
 func TestRunPlanGolden(t *testing.T) {
 	f := newFixture(t)
 	applyAdvancedDemo(t, f)
@@ -69,7 +68,6 @@ func TestRunPlanGolden(t *testing.T) {
 	}
 }
 
-// C2
 func TestRunPlanFileGolden(t *testing.T) {
 	f := newFixture(t)
 	out := f.run("run", "plan", "--file", advancedDemoPath).requireExit(t, exitOK)
@@ -80,7 +78,6 @@ func TestRunPlanFileGolden(t *testing.T) {
 	f.run("orkflow", "get", "advanced-demo").requireExit(t, exitError)
 }
 
-// C3
 func TestRunPlanFailsGolden(t *testing.T) {
 	f := newFixture(t)
 	path := writePlanFile(t, "plan-fails.ork.yaml", planFailsDocument)
@@ -89,7 +86,6 @@ func TestRunPlanFailsGolden(t *testing.T) {
 	requireGolden(t, "run-plan-fails.golden", out.stdout)
 }
 
-// C4
 func TestRunPlan_AssertionsSetTheExitCode(t *testing.T) {
 	f := newFixture(t)
 	applyAdvancedDemo(t, f)
@@ -114,7 +110,6 @@ func TestRunPlan_AssertionsSetTheExitCode(t *testing.T) {
 	}
 }
 
-// C5
 func TestRunPlan_OutputFlagsBuildAssumedOutputs(t *testing.T) {
 	file := writePlanFile(t, "outputs.json", `{"flaky": {"exitCode": 1}, "warmup": {"ok": true}}`)
 	got, err := buildAssumedOutputs([]string{`flaky={"exitCode": 0}`}, file)
@@ -151,7 +146,6 @@ func TestRunPlan_OutputFlagsBuildAssumedOutputs(t *testing.T) {
 	}
 }
 
-// C6
 func TestRunPlan_FileAndNameAreExclusive(t *testing.T) {
 	f := newFixture(t)
 	both := f.run("run", "plan", "advanced-demo", "--file", advancedDemoPath).requireExit(t, exitError)
@@ -169,7 +163,6 @@ func TestRunPlan_FileAndNameAreExclusive(t *testing.T) {
 	}
 }
 
-// C7
 func TestRunPlan_NeverSubmits(t *testing.T) {
 	f := newFixture(t)
 	applyAdvancedDemo(t, f)

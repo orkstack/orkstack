@@ -2,7 +2,7 @@ import type { Orker } from './gen/orkstack/v1/service_pb';
 import { shellQuote } from './runDetail';
 
 // The Orker inventory's rendering rules, shared by Admin → Pools and its
-// tests (orker-cordon-drain §9). They mirror `orkctl orker list`
+// tests (docs/DEPLOY.md "Removing an Orker safely: cordon and drain"). They mirror `orkctl orker list`
 // (cmd/orkctl/orker.go): an Orker that could not be asked is unreachable,
 // never idle, and none of its numbers are drawn.
 

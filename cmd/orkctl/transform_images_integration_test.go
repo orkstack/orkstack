@@ -22,7 +22,7 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// The transform-image scenarios (first-party-transform-images §12.4, X1–X9):
+// The transform-image scenarios (docs/ACTIVITY_IMAGES.md):
 // a real `ork` on S3, a private Temporal namespace and channel, a real Orker
 // that runs the activity-json, activity-git and activity-template images in
 // real containers, and — for git — a TLS git server built from git's own
@@ -38,7 +38,7 @@ type transformStack struct {
 	git *tlsGitServer
 }
 
-// transformJSONSecret is a value the json image must refuse to mount (X7 d).
+// transformJSONSecret is a value the json image must refuse to mount.
 const transformJSONSecret = "transform-json-secret-value"
 
 func startTransformStack(ctx context.Context, t *testing.T, withGit bool) *transformStack {
@@ -182,7 +182,7 @@ func (x *transformStack) attempts(t *testing.T, runID, task string) []*orkstackv
 	return resp.GetAttempts()
 }
 
-// ============================================================== X1 — json
+// ============================================================== json
 
 func x1Document(name string) string {
 	return fmt.Sprintf(`name: %s
@@ -323,7 +323,7 @@ func TestIntegration_TransformImages_JSONFanOutGatherDecide(t *testing.T) {
 	x.note("run 2: prepare cache=HIT; run 3 (env dev): prepare cache=MISS direct=SUCCEEDED canary=SKIPPED")
 }
 
-// ============================================================== X2 — git
+// ============================================================== git
 
 func gitSecrets() string {
 	return `    secrets:
@@ -493,7 +493,7 @@ func containsString(list []string, want string) bool {
 	return false
 }
 
-// ============================================================== X2b — refs
+// ============================================================== refs
 
 func gitResolveDocument(name, url, ref, extra string) string {
 	refLine := ""
@@ -553,7 +553,7 @@ func TestIntegration_TransformImages_GitRefResolution(t *testing.T) {
 		x.git.Commit("private/app.git", "refs/tags/release"), peeled, tagObject)
 }
 
-// ============================================================== X2c — public clone cached
+// ============================================================== public clone cached
 
 func TestIntegration_TransformImages_PublicCloneByCommitIsCached(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -614,7 +614,7 @@ tasks:
 	}
 }
 
-// ============================================================== X3 — pin
+// ============================================================== pin
 
 func TestIntegration_TransformImages_GitCheckoutIntoAPin(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -675,7 +675,7 @@ tasks:
 	x.note("checkout: attempt 1 FAILED (500), attempt 2 SUCCEEDED into /orkstack/shared/work/src; read: VERSION=flaky-1")
 }
 
-// ============================================================== X4 — the token
+// ============================================================== the token
 
 // requireNoToken checks every place a run is read from for both forms of
 // the token: each task's log, run get --json, run attempts --json, and the
@@ -790,7 +790,7 @@ tasks:
 	x.note("(d) no tokenSecret: FAILED at once, terminal prompts disabled")
 }
 
-// ============================================================== X5 — TLS
+// ============================================================== TLS
 
 func TestIntegration_TransformImages_GitVerifiesTLSUnlessTheTaskSaysOtherwise(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -828,7 +828,7 @@ func TestIntegration_TransformImages_GitVerifiesTLSUnlessTheTaskSaysOtherwise(t 
 	}
 }
 
-// ============================================================== X6 — cancel
+// ============================================================== cancel
 
 func TestIntegration_TransformImages_GitCancellationReachesTheFetch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -877,7 +877,7 @@ tasks:
 	}
 }
 
-// ============================================================== X7 — failures
+// ============================================================== failures
 
 func TestIntegration_TransformImages_FailuresAreExplicit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
@@ -978,7 +978,7 @@ func TestIntegration_TransformImages_FailuresAreExplicit(t *testing.T) {
 	x.note("(a) 2 outputs: CONTAINER_EXIT_NONZERO/ActivityFailed; (b) no artifact; (c) VALUES_TOO_LARGE/ContractViolation, 1 attempt; (d) secret refused; (e) {{name}}")
 }
 
-// ============================================================== X9 — redirect
+// ============================================================== redirect
 
 func TestIntegration_TransformImages_GitTokenNeverFollowsARedirect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

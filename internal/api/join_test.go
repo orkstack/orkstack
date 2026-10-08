@@ -15,7 +15,7 @@ import (
 )
 
 // joinYAML is a deploy with a re-join before it and two failure handlers
-// after it (task-join-policy).
+// after it (docs/DSL.md "Joins and failure handlers").
 const joinYAML = `name: joined
 version: "1.0.0"
 inputs:

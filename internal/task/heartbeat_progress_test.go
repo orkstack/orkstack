@@ -9,7 +9,7 @@ import (
 	"go.temporal.io/sdk/converter"
 )
 
-// TestHeartbeatProgress_JSONShapeIsTheOrkersShape (E11) pins the wire names
+// TestHeartbeatProgress_JSONShapeIsTheOrkersShape pins the wire names
 // an Orker and an engine of different builds agree on, round-trips the detail
 // through Temporal's default converter the way RecordHeartbeat and the
 // engine's describe decode do, and proves an old Orker's beat still decodes.
@@ -51,7 +51,7 @@ func TestHeartbeatProgress_JSONShapeIsTheOrkersShape(t *testing.T) {
 	t.Logf("wire keys %v; {\"phase\":\"run\"} decodes as %+v", got, old)
 }
 
-// TestHeartbeatStaleAfter_LeavesRoomBeforeTheDeadWorkerWindow (E12) holds the
+// TestHeartbeatStaleAfter_LeavesRoomBeforeTheDeadWorkerWindow holds the
 // ordering that makes the stale flag useful: a healthy tick never trips it,
 // and it trips before Temporal acts.
 func TestHeartbeatStaleAfter_LeavesRoomBeforeTheDeadWorkerWindow(t *testing.T) {

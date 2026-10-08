@@ -190,9 +190,9 @@ func taskIsTerminal(status orkstackv1.Status) bool {
 	return false
 }
 
-// computeRunTiming implements the task-timing derivation (spec § "Derivation")
-// over one GetRun snapshot and one ListTaskAttempts response. It is the only
-// place in the CLI that subtracts a task's timestamps.
+// computeRunTiming implements the task-timing derivation (docs/UI_CLI_PARITY.md
+// "Task timing") over one GetRun snapshot and one ListTaskAttempts response.
+// It is the only place in the CLI that subtracts a task's timestamps.
 func computeRunTiming(
 	run *orkstackv1.Run,
 	attempts []*orkstackv1.TaskAttempt,
@@ -277,7 +277,7 @@ func computeTaskTiming(
 	S, B, F := task.ScheduledAt, task.StartedAt, task.FinishedAt
 	terminal := taskIsTerminal(taskRun.GetStatus())
 	if taskRun.GetEach() != nil {
-		// A fan-out's own row (spec each-fan-out §9.4): S its expansion, B
+		// A fan-out's own row: S its expansion, B
 		// its earliest item's start, F its end. No attempts of its own.
 		task.FanOut = true
 		task.Scheduled = S != nil

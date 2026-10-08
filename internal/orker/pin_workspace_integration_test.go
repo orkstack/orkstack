@@ -55,7 +55,7 @@ func TestIntegration_TwoPinnedContainersShareOneDirectory(t *testing.T) {
 	}
 	// Every task of a pin runs as the Orker's own user, which is what
 	// docs/DSL.md recommends across a pin (rule 11's warning) and what keeps
-	// the sticky-bit uid clash of §12.9 out of the measurement: two tasks
+	// the sticky-bit uid clash out of the measurement: two tasks
 	// running as different uids in one 1777 directory is the author's problem
 	// to avoid, not the platform's to prove.
 	writer.RunAsOrkerUser = true
@@ -119,7 +119,8 @@ func TestIntegration_TwoPinnedContainersShareOneDirectory(t *testing.T) {
 		t.Errorf("lease.json is %04o, want 0600", got)
 	}
 
-	// ReleasePin removes it, which is the normal end of a pin (§8.4 way 1) and
+	// ReleasePin removes it, which is the normal end of a pin
+	// (docs/OCI_ACTIVITY_CONTRACT.md §6.4) and
 	// is asserted here rather than left to the cleanup above so a failure names
 	// the release rather than a leaked directory.
 	removed, err := orker.ReleasePinDirectory(dispatcher.WorkRoot, runID, "build", pinInstanceID)
@@ -135,7 +136,7 @@ func TestIntegration_TwoPinnedContainersShareOneDirectory(t *testing.T) {
 }
 
 // TestIntegration_AReplacementOrkerReapsAPinItsPredecessorLeft is the crash
-// half of §8.4's boot reap, driven the way
+// half of the boot reap (docs/OCI_ACTIVITY_CONTRACT.md §6.4), driven the way
 // orphan_reap_integration_test.go drives the container half: one Activities
 // "dies" (Close releases its identity claim, exactly as process death would)
 // leaving real state behind, and a replacement pointed at the same work root

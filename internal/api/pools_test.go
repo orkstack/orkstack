@@ -845,7 +845,7 @@ func poolNames(pools []*orkstackv1.Pool) []string {
 }
 
 // ---------------------------------------------------------------------------
-// Task pins at submit (docs/design/task-pinning-worker-session.md §7.4)
+// Task pins at submit (docs/DEPLOY.md "Pin hosting is a pool-wide setting")
 // ---------------------------------------------------------------------------
 
 const pinnedGpuOrkflow = `
@@ -889,7 +889,7 @@ func (p pinHostPools) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.
 // reaching a client, in the code that tells them what to do about it.
 //
 // FailedPrecondition, the same code PoolEmptyError maps to, and for the same
-// reason (design §7.4): the request is well formed and the DEPLOYMENT is not
+// reason: the request is well formed and the DEPLOYMENT is not
 // ready for it, so it becomes submittable the moment an operator sets
 // ORK_ORKER_MAX_PINS on that pool's Orkers. InvalidArgument would have told
 // the caller to fix a document that has nothing wrong with it.

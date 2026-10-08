@@ -15,7 +15,6 @@ import {
 
 const run = (id: string, status: Status): Run => create(RunSchema, { id, status });
 
-// U1
 test('the default comparison target is the newest other SUCCEEDED run, else the newest other, else none', () => {
 	// ListRuns order: newest first.
 	const runs = [
@@ -36,14 +35,12 @@ test('the default comparison target is the newest other SUCCEEDED run, else the 
 	expect(defaultCompareTarget(unsorted, 'ork-x')).toBe('ork-a');
 });
 
-// U2
 test('does-not-apply renders -, missing evidence renders unavailable, a value renders itself', () => {
 	expect(renderDiffValue('', true)).toBe('-');
 	expect(renderDiffValue('', false)).toBe('unavailable');
 	expect(renderDiffValue('gpu', true)).toBe('gpu');
 });
 
-// U3
 test('the only parameter splits, trims and drops empties, and keeps unknown names for the server to refuse', () => {
 	expect(parseOnly('image, pool,,')).toEqual(['image', 'pool']);
 	expect(parseOnly(null)).toEqual([]);
@@ -55,7 +52,6 @@ test('the only parameter splits, trims and drops empties, and keeps unknown name
 	]);
 });
 
-// U4
 test('reason sentences, the summary and the footnotes are the CLI golden strings', () => {
 	const sentences: Record<string, string> = {
 		definition_unavailable: 'the pinned definition is no longer stored',

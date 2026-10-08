@@ -274,7 +274,7 @@ The steps are, in order:
    `false`, and the run's origin stamped from the record: kind `TRIGGER`, id
    the trigger's id, description the trigger's description, the reference
    from the header, and the `Ork-Principal` header recorded (never
-   authenticated) as the principal (`docs/design/proposals/phase-2/run-origin`).
+   authenticated) as the principal (`docs/UI_CLI_PARITY.md`, "Run origin").
 7. Answer with the result.
 
 **The load-bearing invariant:** the namespace, Orkflow name, and version a
@@ -469,7 +469,7 @@ merges triggers across namespaces.
   the one its caller holds.
 - **Provenance is the run's origin, not a trigger field.** A trigger-started
   run records `origin {kind: TRIGGER, id: trg-…}` with the header's reference
-  (run-origin, `docs/design/proposals/phase-2/run-origin`); the trigger
+  (`docs/UI_CLI_PARITY.md`, "Run origin"); the trigger
   record itself stores nothing about any one invocation.
 - **No change to webhooks.** `WebhookService`, its storage, its delivery, and
   its UI are untouched; a trigger-started run notifies webhook subscribers

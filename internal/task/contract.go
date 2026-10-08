@@ -6,8 +6,8 @@
 // and update both sides.
 //
 // Design note — the argument is a PROTO MESSAGE, not a Go struct:
-// orkstack.v1.ExecuteTaskInput is the whole activity argument (design §2.3,
-// §2.4). Temporal's data converter encodes a top-level protobuf message with
+// orkstack.v1.ExecuteTaskInput is the whole activity argument
+// (docs/OCI_ACTIVITY_CONTRACT.md §2.2). Temporal's data converter encodes a top-level protobuf message with
 // protojson and everything else with encoding/json, so the recorded payload
 // encoding is protojson and the golden fixture below is pinned to it — which
 // is why the design permits exactly ONE replay-fixture recording, made once,
@@ -78,7 +78,7 @@ const (
 	// either package would be a second spelling of a shared contract. The
 	// engine schedules it on the pin's own Temporal session, which routes it
 	// to the host that owns the directory; a host with no such directory
-	// returns success (docs/design/task-pinning-worker-session.md §8.5).
+	// returns success (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
 	ActivityReleasePin = "ReleasePin"
 
 	// ActivityCordonOrker is the registered activity name for setting or
@@ -88,7 +88,8 @@ const (
 	ActivityCordonOrker = "CordonOrker"
 )
 
-// The five failure categories of the OCI Activity Contract (design §8.1).
+// The five failure categories of the OCI Activity Contract
+// (docs/OCI_ACTIVITY_CONTRACT.md §8.1).
 //
 // They live HERE, in the seam package both sides already depend on, rather
 // than in internal/orker or internal/engine. The Orker constructs them and the

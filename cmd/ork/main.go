@@ -75,10 +75,10 @@ type config struct {
 	idempotencyTTL time.Duration
 	contractLimits engine.WorkspaceLimits
 	// eachMaxItems is ORK_EACH_MAX_ITEMS: 1 … dsl.MaxEachItems, refused at
-	// boot outside that range (spec each-fan-out §8).
+	// boot outside that range (docs/DEPLOY.md §1).
 	eachMaxItems int32
 	// composeMaxDepth is ORK_COMPOSE_MAX_DEPTH: 1 … engine.MaxComposeDepth,
-	// refused at boot outside that range (spec composed-orkflows §8).
+	// refused at boot outside that range (docs/DEPLOY.md §1).
 	composeMaxDepth int32
 	// cacheMaxTTL is ORK_CACHE_MAX_TTL: at least 1s, refused at boot
 	// otherwise — it bounds how old a memoized result a cached task may
@@ -1019,7 +1019,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// start deleting run history under one it never confirmed.
 		return fmt.Errorf("establish retention policy: %w", err)
 	}
-	// The image supply-chain floor (image-supply-chain-policy): one settings
+	// The image supply-chain floor (docs/DEPLOY.md "Image supply-chain policy"): one settings
 	// document beside the retention policy, read at apply, validate and
 	// submit. Nothing is materialized at boot — a deployment that never
 	// wrote one has the empty policy, which permits what it always did.
@@ -1053,14 +1053,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
 	// The local activity that counts a fan-out's task-sourced array, over the
-	// same store internal/api reads artifacts with (spec each-fan-out §5.3).
+	// same store internal/api reads artifacts with.
 	runWorker.RegisterActivityWithOptions(
 		engine.NewEachActivities(artifactStore).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems},
 	)
 	// The two local activities a composed task and declared outputs use:
 	// render engine-side templates over upstream values.json, and store a
-	// composed task's values (spec composed-orkflows §6.7).
+	// composed task's values.
 	compose := engine.NewComposeActivities(artifactStore)
 	runWorker.RegisterActivityWithOptions(compose.RenderComposedValues,
 		activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
@@ -1148,7 +1148,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	activities := &api.CatalogLister{Catalog: cfg.activityCatalog, Resolver: resolver}
 
 	// Releases: which build of this deployment takes new runs, read from and
-	// written to the cluster's own routing on every call (orkctl-release §5).
+	// written to the cluster's own routing on every call (docs/DEPLOY.md §3).
 	// Built over the client this engine already holds — never a second
 	// connection — and called only inside the three release RPCs, so a
 	// deployment that never asks behaves exactly as before.

@@ -2,7 +2,7 @@
 #
 # first_party_contract.sh — the per-image contract fixtures of the first-party
 # transform images: activity-json, activity-git and activity-template
-# (docs/design first-party-transform-images §12.3).
+# (docs/ACTIVITY_IMAGES.md).
 #
 # Like the mandatory Bash fixture (bash_activity_contract.sh, which stays
 # standalone), it runs an image against the ABI with no Orkflow, no Temporal,

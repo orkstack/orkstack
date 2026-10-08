@@ -530,7 +530,7 @@ func PercentileDuration(ascending []time.Duration, p int) time.Duration {
 }
 
 // releaseRunsQuery is the run index predicate for runs executing on one
-// release (orkctl-release §5.5). RunWorkflow only: the idempotency claim is
+// release (docs/DEPLOY.md §3). RunWorkflow only: the idempotency claim is
 // AutoUpgrade and holds no release; a schedule's fire workflow lives exactly
 // as long as the run it starts and is not a run.
 func releaseRunsQuery(indexedVersion string) string {
