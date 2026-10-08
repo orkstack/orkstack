@@ -53,9 +53,11 @@ Temporal is the sole source of durable execution truth. It owns:
 
 Temporal *workflow* code in `internal/engine` must be deterministic: no clocks,
 network, randomness, or direct IO. Side effects belong in activities or the
-Orker. Do not create an OrkStack-owned execution-state database, Orkflow-state
-database, scheduler, task-queue implementation, distributed lock service,
-retry subsystem, timer subsystem, or state-transition engine. Cron scheduling
+Orker. Determinism is required of OrkStack's workflow code only, never of a
+task: a container may read the clock, the network and its environment. Do not
+create an OrkStack-owned execution-state database, Orkflow-state database,
+scheduler, task-queue implementation, distributed lock service, retry
+subsystem, timer subsystem, or state-transition engine. Cron scheduling
 must use Temporal Schedules. Interaction with a running Temporal workflow must
 use Temporal Signals, including approval, external completion, resume, and abort.
 
@@ -111,16 +113,12 @@ for example as `workspace.tar.gz`; the artifact layer has no directory
 semantics. Artifacts remain opaque.
 
 Structured runtime data — `values.json`, a run's submitted input, and its
-recorded output — is always JSON, never YAML. JSON is the one format the
-Temporal `Payload`, the Connect API, `orkctl --json`, and the browser's typed
-input editor already share (`docs/JSON.md`), so a copied CLI command
-reproduces exactly what was submitted. JSON's `null`/`true`/`false`/number/
-string types have no implicit coercion to trip a reader — YAML's unquoted
-`no`, `yes`, `on`, and octal-looking numbers are exactly the silent-coercion
-class of bug the typed-input UI exists to prevent. This does not change the
-Orkflow DSL: a document a person authors — the Orkflow itself, with its
-declared input schema — stays YAML (`docs/DSL.md`); only the runtime data a
-system exchanges is JSON. Do not add a YAML input mode to the UI or CLI.
+recorded output — is always JSON, never YAML: it is the one format the
+Temporal payload, the Connect API, `orkctl --json` and the UI's typed input
+editor share (`docs/JSON.md`), so a copied CLI command reproduces exactly what
+was submitted, and it has none of YAML's silent coercions (`no`, `on`,
+octal-looking numbers). Documents a person authors — an Orkflow, an automation
+document — stay YAML. Do not add a YAML input mode to the UI or CLI.
 
 ### 3.2 Exit status and logs
 
@@ -165,7 +163,8 @@ backoffCoefficient: 2.0
 maxInterval:        1m
 ```
 
-Activities may override the policy. Keep these failure categories distinct:
+Activities may override the policy; in the DSL a task without `retry:` makes
+exactly one attempt. Keep these failure categories distinct:
 
 ```text
 ActivityFailed
@@ -186,7 +185,11 @@ Cancelled            never retry automatically
 ```
 
 These are policy defaults, not exactly-once guarantees. An activity
-implementation must not silently collapse the categories.
+implementation must not silently collapse the categories. As implemented, a
+container that exceeds its own `timeout:` (`TimedOut`, `CONTAINER_TIMEOUT`) is
+terminal rather than retried, because it would time out again on the same
+wall clock; a heartbeat timeout (a lost Orker) stays retryable under the
+task's policy (`docs/OCI_ACTIVITY_CONTRACT.md` §8.1).
 
 ### 4.1 Durable output commit
 
@@ -207,10 +210,22 @@ Successful completion conceptually does this, in order:
 5. write an immutable `commit.json` completion manifest;
 6. report Activity success to Temporal.
 
+Anything the engine itself records as a task's result (an await's resolution
+values, a composed task's values) is written to object storage before the
+history record that references it, the same order as a commit.
+
 Use a deterministic commit key. At retry start, if a valid `commit.json` exists,
 return its committed result and do not execute the container again. This only
 prevents duplicate container execution after OrkStack has durably committed the
 result; it does not make arbitrary external side effects exactly once.
+
+A cached task's memo is advisory. A hit writes this run's own `commit.json`
+referencing the source commit's content-addressed objects and starts no
+container; every doubt about a memo (unreadable, mismatched, missing object,
+timeout) is a miss that runs the task; the memo step fails an attempt only
+when its own commit write fails. Deleting any memo changes no result.
+Caching is the author's assertion that a task is safe to reuse; OrkStack
+cannot verify it.
 
 An accepted execution must not disappear. A durably committed activity result
 must not become pending again. Object-storage failures must not silently produce
@@ -227,9 +242,13 @@ ghcr.io/acme/migrate@sha256:...
 ```
 
 A running execution must never silently switch images because a tag moved.
-Leave room for later policies such as `requireDigest`, signed-image checks, and
-allowed registries; do not build that policy system unless current work needs
-it.
+
+The deployment's image policy (`orkctl admin image-policy`: `require_digest`,
+`allowed_registries`, cosign public `signing_keys`) is a floor; a namespace may
+only tighten it (`require_signed_by`), never loosen it. It is enforced at
+apply, at submit, and by the Orker at dispatch against the policy selection
+the run pinned at submit, so every attempt of a task is judged by one rule.
+Only `cosign:` exists; it is a closed set, not an extension point (§13).
 
 The Orker should be stateless and disposable. Persistent local state is limited
 to an OCI image cache, ephemeral execution directories, and optional transient
@@ -248,6 +267,8 @@ The Orker is responsible for:
 poll Temporal
 resolve the activity specification
 check the completion commit
+check the run's image policy
+check a cached task's memo
 resolve the OCI image and digest
 create an isolated workspace
 materialize input artifacts
@@ -302,26 +323,37 @@ platform primitives.
 
 Secrets come from secret references or explicitly supplied workload secrets,
 never committed source. `.env` is gitignored. Shell commands must not
-interpolate untrusted input without the templating layer's escaping.
+interpolate untrusted input without the templating layer's escaping. An `env:`
+value is stored in the definition, so it is configuration and never a secret;
+no `env:` value grants a credential, privilege or host access. Which
+secret sources a task may name is bounded by its namespace's
+`allowed_secrets` (checked at apply and again at submit) intersected with each
+Orker's `ORK_ORKER_SECRET_ALLOW` floor (checked at dispatch); both bound names
+and never store or compare a value. A bearer credential OrkStack mints for a
+caller (a trigger token, an await callback token) is disclosed once and stored
+only as a salted hash.
 
 ## 7. Orkflow execution model
 
 Compile each Orkflow into an immutable internal representation and execute it
 through one generic deterministic Temporal Workflow interpreter. Do not generate
 bespoke Temporal source code for each Orkflow. The interpreter resolves
- dependencies, schedules activities, waits on Temporal timers and Signals,
+dependencies, schedules activities, waits on Temporal timers and Signals,
 applies retry policies, handles cancellation, and records compact outputs.
 
 A definition limit such as 256 KiB is a proposal, not a current hard invariant.
 Do not turn that proposal into a hard limit without a separate accepted
 contract.
 
-Steps execute sequentially in declaration order by default. Explicit `needs`
-dependencies create DAG edges and enable parallel execution. `needs: []` may
-start immediately. Detect missing references and dependency cycles during
-validation; do not discover malformed DAGs during runtime.
+Tasks form a DAG through `needs`: a task becomes ready once every need has
+ended and its join policy admits it, and a task with no `needs` is ready at
+run start, so independent tasks run in parallel. Detect missing references and
+dependency cycles during validation; do not discover malformed DAGs during
+runtime.
 
-The repository vocabulary is deliberate:
+The repository vocabulary is deliberate. The user-facing words below are the
+ones the DSL, the proto, `orkctl`, the UI and every message use; a word marked
+internal never appears on any of those surfaces.
 
 - **Orkflow** means the user-authored YAML entity, its name, version, and
   compiled definition.
@@ -331,8 +363,7 @@ The repository vocabulary is deliberate:
 - **Queue** means only an internal Temporal task queue and never a user-facing
   OrkStack concept.
 - **Pin** means a named group of tasks of one Orkflow that execute on one Orker
-  process and share `/orkstack/shared`. It is the user-facing word: it appears
-  in the DSL, the proto, `orkctl`, the UI, and every error message.
+  process and share `/orkstack/shared`.
 - **Session** means Temporal's Worker Session, the mechanism a pin is
   implemented with. It is internal, exactly as **queue** is internal to
   **pool** (§7.1): no user-facing surface names a session, a session id, or a
@@ -340,63 +371,22 @@ The repository vocabulary is deliberate:
 - **Pin host** means an Orker configured to accept pins
   (`ORK_ORKER_MAX_PINS` above zero). Every Orker still runs ordinary tasks;
   only a pin host runs pinned ones.
-- **Run retention** means how long a finished run of one OrkStack namespace
-  stays readable before it is retired, counted from when the run FINISHED,
-  never from submission. It is a field of `orkstack.v1.Namespace`
-  (`run_retention`), unset meaning inherit.
-- **Maximum run retention** means the deployment-wide ceiling every
-  namespace's run retention is bound by, and what a namespace that sets none
-  inherits (`orkstack.v1.RetentionPolicy.max_run_retention`).
-- **Release** means one build of OrkStack — `ork` and `orker` built and
-  deployed together — identified by `ORK_BUILD_ID` within the deployment named
-  by `ORK_DEPLOYMENT_NAME` (§7.2). It is the user-facing word: it appears in
-  the proto, `orkctl release`, the UI, and every message. The Temporal Worker
-  Deployment Version it is implemented with is internal, exactly as a session
-  is internal to a pin. (Unrelated to `orkctl namespace update --release-hold`,
-  where "release" is a verb on a hold.) A release is **current** when it takes
-  every new run not sent to a ramping release, **ramping** when it takes a
-  stated percentage of new runs, **previous** when it took new runs once and
-  takes none now, and a **candidate** when its processes have registered and it
-  has never taken new runs.
-- A release is **drained** when the cluster reports that no run executing on
-  it remains and no Orker of it hosts an open pin — the release-scoped
-  counterpart of an Orker's drain. A drained release's processes may be
-  stopped.
-- **Telemetry sink** means an operator-declared OTLP destination, named, in
-  `ORK_TELEMETRY_SINKS`. `default` is reserved: it means the standard `OTEL_*`
-  environment, not an entry in that YAML.
-- **Budget** means a namespace's bound on reserved cpu-seconds and
-  GiB-seconds over a rolling period, soft (reported only) or enforced (the
-  third reason in the admission gate). It is a field of
-  `orkstack.v1.Namespace` (`budget`), unset meaning unbounded.
-- **Usage** means reservation × held time — the cpu and memory an Orker
-  granted each attempt, multiplied by how long it held it — derived on read
-  (`StatsService.GetUsage`), never measured utilization and never a stored
-  counter.
-- **Telemetry policy** means one namespace's selection among a deployment's
-  telemetry sinks: which sink, whether task logs export, which attributes.
-  It is a field of `orkstack.v1.Namespace` (`telemetry`), unset meaning
-  inherit — the same shape `run_retention` already uses.
-- **Hold** means a namespace closed to new runs, with the operator's reason
-  and the instant the registry recorded it (`orkstack.v1.Namespace.hold`). It
-  is an admission decision, never a retroactive one: a run already accepted
-  finishes untouched, and releasing a hold starts nothing that was refused.
-  Its sibling `max_running` bounds a namespace's runs in flight, counted from
-  the cluster's execution index at submit.
-- **Cordon** means a process-local flag on one Orker that stops it accepting
-  new tasks and opening new pins while leaving everything in flight alone. It
-  is delivered over the Orker's own control channel, is lost when the process
-  exits, and is the user-facing word: it appears in the proto, `orkctl`, the
-  UI, and every message.
-- **Drain** means cordoning an Orker and waiting until it reports no running
-  task and no open pin. It is a client-side wait over the inventory read
-  (`orkctl orker drain`); nothing server-side holds drain state.
-- **Control channel** and **presence channel** are internal, exactly as
-  **queue** is: the Temporal task queue `ork-orker-<orker_id>` that one Orker
-  polls for `DescribeOrker` and `CordonOrker`, and `ork-orkers`, which every
-  Orker polls and nothing dispatches to, whose poller list is the fleet. Both
-  are built in `internal/task/pool.go` and never appear on a user-facing
-  surface.
+- **Fan-out** means a task declaring `each:`: one DAG node that runs one
+  **item** per element of an array. An item is identified by its 0-based
+  index, never a string; `convert[3]` is a rendering only and nothing parses
+  it.
+- **Composed task** means a task whose `uses:` is `orkflow:<name>@<version>`.
+  It starts a **child run** of that Orkflow and waits for it; the run that
+  started it is the **parent run**. **Outputs** are an Orkflow's declared
+  return contract (`outputs:`).
+- **Awaited task** means a task declaring `await:`: it runs no container and
+  waits until it is **resolved** from outside the run (completed with values
+  or rejected with a reason) or its deadline passes. A **callback token** is
+  the one-time bearer credential an `await:` with `callback: true` is issued
+  at submit.
+- **Cached task** means a task declaring `cache:` with `enabled: true`. A
+  **memo** is one stored pointer from a memo key to a `SUCCEEDED` commit
+  (§4.1); a memo step's outcome is a **hit**, **miss** or **bypassed**.
 - **Join policy** means a task's `join:`: when it may start, decided from how
   its needs ended. One of `all_succeeded` (the default), `none_failed`,
   `any_failed`, `all_done`.
@@ -404,6 +394,82 @@ The repository vocabulary is deliberate:
   `all_done`. It is the only kind of task that starts in a failing run, and it
   never rescues the run: a run whose failure handlers ran still ends `FAILED`
   with its original reason.
+- **Schedule** means an object bound to one Orkflow that starts runs on a
+  schedule spec; a **fire** is one occasion it acted (on time, by backfill, or
+  by hand). **Trigger** is the inbound plain-HTTP run starter, a different
+  object; the manual form of a schedule is "fire", never "trigger".
+- **Origin** means the immutable record of what started a run: a kind
+  (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`), the
+  originating object's id, a caller-supplied reference and the principal.
+- **Principal** means the `Ork-Principal` request header a deployment's
+  gateway asserted, recorded verbatim on audit records and origins. It is not
+  authenticated, and no surface may present it as a verified identity: every
+  rendering says it was asserted.
+- **Automation document** means one authored YAML file
+  (`kind: Automation`) declaring a namespace's settings, schedules, triggers
+  and webhooks by name (`docs/AUTOMATION.md`). Its plan
+  (`apply --dry-run`) is unrelated to `orkctl run plan`, which simulates one
+  run's DAG.
+- **Run retention** means how long a finished run of one OrkStack namespace
+  stays readable before it is retired, counted from when the run FINISHED,
+  never from submission. It is a field of `orkstack.v1.Namespace`
+  (`run_retention`), unset meaning inherit.
+- **Maximum run retention** means the deployment-wide ceiling every
+  namespace's run retention is bound by, and what a namespace that sets none
+  inherits (`orkstack.v1.RetentionPolicy.max_run_retention`).
+- **Hold** means a namespace closed to new runs, with the operator's reason
+  and the instant the registry recorded it (`orkstack.v1.Namespace.hold`). It
+  is an admission decision, never a retroactive one: a run already accepted
+  finishes untouched, and releasing a hold starts nothing that was refused.
+  Its sibling `max_running` bounds a namespace's runs in flight, counted from
+  the cluster's execution index at submit.
+- **Budget** means a namespace's bound on reserved cpu-seconds and
+  GiB-seconds over a rolling period, soft (reported only) or enforced (the
+  third check of the admission gate, after hold and `max_running`). It is a
+  field of `orkstack.v1.Namespace` (`budget`), unset meaning unbounded.
+- **Usage** means reservation × held time — the cpu and memory an Orker
+  granted each attempt, multiplied by how long it held it — derived on read
+  (`StatsService.GetUsage`), never measured utilization and never a stored
+  counter.
+- **Telemetry sink** means an operator-declared OTLP destination, named, in
+  `ORK_TELEMETRY_SINKS`. `default` is reserved for the deployment's default
+  destination: the standard `OTEL_*` environment, or the table's `default:`
+  entry when it declares one.
+- **Telemetry policy** means one namespace's selection among a deployment's
+  telemetry sinks: which sink, whether task logs export, which attributes.
+  It is a field of `orkstack.v1.Namespace` (`telemetry`), unset meaning
+  inherit — the same shape `run_retention` already uses.
+- **Release** means one build of OrkStack — `ork` and `orker` built and
+  deployed together — identified by `ORK_BUILD_ID` within the deployment named
+  by `ORK_DEPLOYMENT_NAME` (§7.2). The Temporal Worker Deployment Version it
+  is implemented with is internal, exactly as a session is internal to a pin.
+  (Unrelated to `orkctl namespace update --release-hold`, where "release" is
+  a verb on a hold.) A release is **current** when it takes every new run not
+  sent to a ramping release, **ramping** when it takes a stated percentage of
+  new runs, **previous** when it took new runs once and takes none now, and a
+  **candidate** when its processes have registered and it has never taken new
+  runs. It is **drained** when the cluster reports that no run executing on
+  it remains and no Orker of it hosts an open pin; a drained release's
+  processes may be stopped.
+- **Cordon** means a process-local flag on one Orker that stops it accepting
+  new tasks and opening new pins while leaving everything in flight alone. It
+  is delivered over the Orker's own control channel and is lost when the
+  process exits.
+- **Drain** means cordoning an Orker and waiting until it reports no running
+  task and no open pin. It is a client-side wait over the inventory read
+  (`orkctl orker drain`); nothing server-side holds drain state.
+- **Control channel** and **presence channel** are internal, exactly as
+  **queue** is: the Temporal task queue `ork-orker-<orker_id>` that one Orker
+  polls for `DescribeOrker` and `CordonOrker`, and `ork-orkers`, which every
+  Orker polls and nothing dispatches to, whose poller list is the fleet.
+
+The Temporal mechanisms behind these words are internal, exactly as a queue is
+internal to a pool: no CLI string, UI string, HTTP body, client-rendered proto
+comment or error message names a task queue, session, Worker Deployment
+Version, Signal, Timer, child workflow, parent-close policy, local activity,
+marker, Temporal memo, search attribute, visibility query, Temporal Schedule id or
+workflow id. (A proto comment on an engine-internal message may say what
+implements it.)
 
 An Orkflow name is unique within a namespace. Names are validated, never
 sanitized, by the same rule at each boundary:
@@ -415,7 +481,6 @@ Creating `default` writes nothing: an identical namespace specification is a
 no-op, a different specification is a conflict, and deleting `default` is
 always refused. A request with no namespace uses `default` on the wire.
 
-
 Runs use IDs shaped `ork-{timestamp}-{sequence}`. The sequence is
 `nonce<<32 | counter`, with one 32-bit cryptographic nonce per process and a
 per-process counter. It is monotonic only within one replica. A run ID is the
@@ -424,12 +489,31 @@ to another run. Nothing may parse a run ID or derive meaning from its parts.
 Order runs by `created_at`; compare IDs only as the documented tie-break on the
 ListRuns read path.
 
+Submission is the last place a run's routing and policy may be decided:
+workflow code is deterministic and may not read a namespace document,
+process configuration, or the cluster. `SubmitRun`'s preparation resolves the
+namespace and Orkflow, applies the admission gate (hold, then `max_running`,
+then an enforced budget), resolves each task's pool against the namespace's
+allow-list and checks a live, capable Orker serves it, and then decides the
+image-policy selection, telemetry selection, cache plan, every composed
+child's plan, the origin and any await callback tokens. All of it rides the
+replay-pinned `RunPlan` and is never re-read. Every refusal happens before a
+run ID is minted or an idempotency key claimed, so a refused submission leaves
+nothing behind. Admission is never retroactive. A guard that reads the
+cluster's index or usage (`max_running`, an enforced budget) is a lock-free
+read-then-act and therefore best-effort by a bounded overshoot; a lock would
+be the distributed lock service §2.1 forbids.
+
 Temporal is the read model for live runs. Finished runs past retention come from
 the shared run archive. `RunStore` and `EventBus` are write-side helpers only:
 they support candidate submission, archive/webhook writes, and the stream for a
 run whose start failed. Never answer a read from process memory behind a wired
 reader. Any replica must answer for a run it did not start and for a run whose
-original replica is gone.
+original replica is gone. Aggregates (stats, failures, flakes, usage, cache
+hit rates) are derived on read from Temporal and the records already in object
+storage; there is no stored counter or index database. Audit, delivery and
+attempt records are immutable objects written once; they are records, never a
+read path for a decision.
 
 RunWorkflow assigns event sequence numbers. The bus honors supplied numbers and
 assigns one only when none is supplied. Temporal history, the in-process log,
@@ -440,20 +524,22 @@ by sequence from another replica.
 
 `pool:` is the only user-facing selector of *which Orkers*; `pin:` constrains a
 group of tasks to *one* member of that set. Neither exposes a queue, a session,
-or a host name. No user-facing surface may expose `queue:` or a queue name. The
-translation is centralized in `internal/task/pool.go`: `QueueForPool`,
-`RouteForPool`, `PoolForQueue`, and the single `ork-pool-` prefix construction
-are the complete mapping.
+or a host name. No user-facing surface may expose `queue:` or a queue name.
+`internal/task/pool.go` builds every channel name and is the complete mapping:
+`QueueForPool`, `RouteForPool`, `DefaultRoute`, `PoolForQueue`, the single
+`ork-pool-` prefix construction, and the Orker control (`ork-orker-<id>`) and
+presence (`ork-orkers`) channels.
 
 An empty pool and `main` both mean the deployment's configured default pool.
 Other valid pools resolve to `ork-pool-<slug>`. The reserved
-`ork-engine-events` channel cannot be a bound default. A task's pool must be
-resolved inside the engine; Temporal queue names must not leak into the user
-contract.
+`ork-engine-events` channel and the Orker control and presence channels cannot
+be a bound default. A task's pool must be resolved inside the engine; Temporal
+queue names must not leak into the user contract.
 
 The deployment's engine workflows use fixed internal channels: `RunWorkflow`
-uses `ork-tasks` and engine events use `ork-engine-events`, regardless of the
-`ORK_ORKER_QUEUE` override used for the default activity pool.
+(including every child run) uses `ork-tasks` and engine events use
+`ork-engine-events`, regardless of the `ORK_ORKER_QUEUE` override used for the
+default activity pool.
 
 The same rule extends to retention: the underlying cluster's own workflow
 execution retention TTL is likewise internal, never a user-facing setting. It
@@ -463,34 +549,48 @@ by a client. What a client sets is run retention and maximum run retention —
 OrkStack's own vocabulary — never anything named "Temporal" on the wire, in
 CLI help, or in the UI.
 
-
 ### 7.2 Versioning
 
 An Orkflow version is immutable. Applying an edit creates a new version; runs
 pin the version and its definition digest. A run continues on the definition it
 started with even if the current pointer moves. The current pointer controls
-new runs only.
+new runs only. Moving the pointer across a breaking change to the declared
+interface (`inputs:` and `outputs:`) is refused unless that promotion is
+explicitly acknowledged (`--acknowledge-breaking`).
 
 One Worker Deployment spans `ork` and `orker` for a release. They share
 `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` and are released together. With
-versioning enabled, `RunWorkflow` is Pinned, `IdempotencyClaimWorkflow` is
-AutoUpgrade, and the projection worker on `ork-engine-events` is unversioned.
-Versioning is off unless `ORK_BUILD_ID` is set; leave
-`DefaultVersioningBehavior` unset when it is off. `orkctl release` (status, ramp, promote,
-rollback, wait) is the supported rollout path, and it refuses a ramp or
-promotion the target release's engines and Orkers could not carry. A version must drain before
-its workers are decommissioned. A pinned workflow uses its own activity-worker
-version only while that version has workers polling its activity channel;
-otherwise Temporal falls through to that channel's current version. A task pin
-(§7.1) is the one exception to that rule, and it is stricter rather than looser:
-its session is opened through a version-routed activity, but its member
-activities ride the session's own per-host channel, which is unversioned and
-polled by exactly one process — so a pin stays on the process that opened it
-across a rollout and never falls through to the current version
-(`internal/engine/versioning_pin_integration_test.go`, `docs/DEPLOY.md`). Old
-histories must replay against new code; `internal/engine/replay_test.go`
-protects this contract.
+versioning enabled, `RunWorkflow` and `ScheduleFireWorkflow` are Pinned,
+`IdempotencyClaimWorkflow` is AutoUpgrade, and the projection worker on
+`ork-engine-events` is unversioned. A child run started by a Pinned parent
+inherits the parent's version, so its plan is interpreted by the release that
+built it. Versioning is off unless `ORK_BUILD_ID` is set; leave
+`DefaultVersioningBehavior` unset when it is off. `orkctl release` (status,
+ramp, promote, rollback, wait) is the supported rollout path, and it refuses a
+ramp or promotion the target release's engines and Orkers could not carry. A
+version must drain before its workers are decommissioned. A pinned workflow
+uses its own activity-worker version only while that version has workers
+polling its activity channel; otherwise Temporal falls through to that
+channel's current version. A task pin (§7.1) is the one exception to that
+rule, and it is stricter rather than looser: its session is opened through a
+version-routed activity, but its member activities ride the session's own
+per-host channel, which is unversioned and polled by exactly one process — so
+a pin stays on the process that opened it across a rollout and never falls
+through to the current version
+(`internal/engine/versioning_pin_integration_test.go`, `docs/DEPLOY.md`).
 
+Old histories must replay against new code; `internal/engine/replay_test.go`
+and the recorded histories in `internal/engine/testdata/history/` protect this
+contract. A new interpreter path must be entered only by a definition that
+declares the new feature, which no older history holds, so every recorded
+history replays unchanged without a version marker; each new command path gets
+its own recorded history fixture. Because the activity channel can fall
+through to another release, an activity-input field an older Orker would
+reject or ignore (cache, join, fan-out items) is advertised as a capability on
+`DescribeOrker`. Submit asks one Orker of each pool such a task would run on
+and refuses with `FailedPrecondition`, naming the Orker and its build, when it
+lacks the capability; a pool that does not answer the probe is logged, not
+refused, so every Orker of one pool must run one release.
 
 ## 8. Workflow-native primitives
 
@@ -508,13 +608,19 @@ cancellation
 
 Do not start a container merely to sleep, wait for approval, or wait until a
 future time. Do not add a custom scheduler, event bus, task queue, state
-machine, or expression runtime for these operations.
+machine, or expression runtime for these operations. An awaited task
+(`await:`) is the DSL form of a Signal wait, manual approval and external
+completion: a Temporal Timer for its deadline and a Signal for its resolution,
+and no container. A schedule is a Temporal Schedule; a composed task is a
+Temporal child workflow of the same `RunWorkflow` interpreter; a fan-out's
+items are ordinary activities in the interpreter's own in-flight set.
 
 ## 9. First-party activities
 
-First-party activities must use exactly the same OCI contract as third-party
-activities. Do not create a privileged internal plugin system. They should be
-reference implementations of the public OCI contract.
+First-party activities (`images/`: `http`, `shell`, `file`, `json`, `git`,
+`template`) must use exactly the same OCI contract as third-party activities.
+Do not create a privileged internal plugin system. They should be reference
+implementations of the public OCI contract.
 
 The file activity remains intentionally small and Unix-like. Its basic
 operations may include `copy`, `checksum`, `gzip`, `gunzip`, `tar`, `untar`, and
@@ -542,6 +648,12 @@ output, artifact-name rules, output-size limits, SIGTERM, exit-code handling,
 and activity timeout. Keep the Bash, Go, and Python fixtures under
 `test/fixtures/`; the Bash fixture is mandatory. If Bash needs an SDK, the
 architecture has failed.
+
+`orkctl task run` runs one task of an Orkflow locally through the same
+dispatcher, renderer and workspace, against a run's recorded bytes or local
+files. It writes nothing to the deployment; a local run is a new logical
+activity with its own idempotency key, and its external side effects are
+real.
 
 ## 11. Reliability, observability, and evidence
 
@@ -589,8 +701,9 @@ production-ready until required failure and recovery scenarios are proven.
 
 OpenTelemetry (`internal/telemetry`) is the only telemetry API in the
 codebase — no per-vendor code anywhere else. Exporters are selected by the
-standard `OTEL_*` environment, and everything is off by default: a deployment
-that sets none of it runs exactly as it did before this package existed.
+standard `OTEL_*` environment (or the config file's `telemetry:` block), and
+everything is off by default: a deployment that sets none of it exports
+nothing and opens no admin listener.
 Telemetry is best-effort and non-blocking — an exporter that cannot reach its
 collector is logged and counted, never retried in line, and a record that
 cannot be queued is dropped; telemetry can never fail a task or a run.
@@ -630,12 +743,11 @@ sleeps for synchronization; use deadlines or test helpers. A skip is never a
 pass: a harness must probe its prerequisites itself and fail, not skip, once
 they are present.
 
-On a Linux host with plain Docker Engine, `host.docker.internal` does not
-exist by default; add it to `/etc/hosts` as `172.17.0.1` and, if ufw denies
-input by default, allow TCP from `docker0` (see the README's "Linux hosts").
-This is host setup, not Orker behavior: the Orker must not add `--add-host`
-or any host-network configuration to activity containers (§6). On macOS,
-Docker Desktop provides the name and nothing changes.
+Some suites have an activity container call a stub on the host at
+`host.docker.internal`; a Linux host with plain Docker Engine needs one-time
+host setup for that name (README, "Linux hosts"). It is host setup, never
+Orker behavior: the Orker must not add `--add-host` or any host-network
+configuration to activity containers (§6).
 
 ### 11.2 Evidence
 
@@ -661,7 +773,6 @@ mistaken for today's. A change to behavior that only a browser can show
 (rendering, live streams, an operator flow) is proven with a Playwright spec
 and its screenshots, never with a description.
 
-
 Parallel integration runs need a unique `ORK_TEMPORAL_NAMESPACE`; set the same
 namespace and queues only for a deliberate two-replica test. Set
 `ORK_ORKER_QUEUE` consistently on both binaries when a private task channel is
@@ -676,7 +787,6 @@ pkill -f '/bin/orker$'; pkill -f '/bin/ork$'; sleep 2
 ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep
 ```
 
-
 Before finalizing a merge, run `make merge-check` (`make build`, `make lint`,
 `make test`, and `go vet -tags=integration ./...`) on the merged tree. When both
 sides changed a file, resolve the union of behaviors against the merge base;
@@ -686,7 +796,7 @@ do not take one side wholesale. Rerun affected integration suites after a merge.
 
 ```text
 proto/orkstack/v1/     Proto contract; edit here first
- gen/go/               Generated Go; never hand-edit
+gen/go/                Generated Go; never hand-edit
 cmd/ork/               Engine entrypoint (`bin/ork`)
 cmd/orker/             Orker entrypoint
 cmd/orkctl/            CLI entrypoint
@@ -696,15 +806,21 @@ internal/dsl/          YAML parse, validation, and Orkflow compilation
 internal/orker/        Orker runtime and OCI activity dispatch
 internal/task/         Temporal namespace, pool routing, and deployment identity
 internal/config/       Configuration file schema and loader
-internal/telemetry/    OpenTelemetry setup, sinks, admin listener and per-signal instrumentation
-internal/archive/      Archived-run cleanup worker
-images/                First-party OCI activity images; public filesystem ABI, no required SDK
+internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentation
+internal/archive/      Run retirement and the cluster retention controller
+internal/automation/   Automation documents: parse, plan, export
+internal/evidence/     Run evidence bundle format, writer, and offline verifier
+internal/testsupport/  Test-only helpers shared by suites
+images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing
+pkg/triggers/          Inbound trigger registry and token hashing
+pkg/webhooks/          Run-event webhook registry, signing, and delivery
+pkg/schedules/         Schedule id shape (the schedule itself lives in Temporal)
 ui/                    SvelteKit, Vite, Tailwind, and generated TS clients
 deploy/                Temporal, object-storage, and registry development stack
-examples/              Example Orkflows
-docs/                  Design and reference material
+examples/              Example Orkflows, automation documents, and custom images
+docs/                  Reference material (indexed in README.md)
 test/                  Activity contract fixtures and test-only helper tools
 scripts/               Development helpers (`make up`, `make reset`)
 ```
@@ -714,15 +830,15 @@ wrapped errors. Prefer `context.Context` first and no panics in library code.
 Connect serves h2c on `:8080` by default and the WebSocket bridge serves
 `/ws/runs/{id}`. The UI uses Bun and Svelte 5 runes; generated clients live in
 `ui/src/lib/gen`. The CLI uses Cobra and human output by default, with `--json`
-for machine output. Configuration is a YAML file (`--config PATH`, one
-shared schema owned by `internal/config` and documented in
-`docs/DEPLOY.md` §1, with `deploy/orkstack.defaults.yaml` — generated by
-`make config-defaults`, or `ork --defaults` / `orker --defaults` — as the
-full, always-current reference for every key's built-in default), with
-`ORK_`/`OTEL_` environment variables overriding
-whatever the file sets, and sane localhost defaults — including
-`ORK_TEMPORAL_NAMESPACE` (default `ork-main`), `ORK_ORKER_QUEUE` (default
-`ork-tasks`), `ORK_ARTIFACT_BACKEND`, and `ORK_S3_ENDPOINT`.
+for machine output. Configuration is one YAML file shared by both binaries
+(`--config PATH`; the schema is `internal/config`, documented in
+`docs/DEPLOY.md` §1), with `ORK_`/`OTEL_` environment variables overriding it
+and localhost defaults —
+including `ORK_TEMPORAL_NAMESPACE` (`ork-main`), `ORK_ORKER_QUEUE`
+(`ork-tasks` for the default pool), `ORK_ARTIFACT_BACKEND`, and
+`ORK_S3_ENDPOINT`. `deploy/orkstack.defaults.yaml` (`make config-defaults`,
+or `ork --defaults` / `orker --defaults`) is the complete reference for every
+key's default.
 
 Proto is the single source of truth for cross-process types. Never hand-edit
 generated files. Regenerate Go and UI clients when the proto changes.
@@ -754,7 +870,8 @@ Do not build:
 - an embedded Python or JavaScript runtime;
 - a custom event bus, state machine, scheduler, task queue, or Orkflow-state database;
 - a complex expression language;
-- a Kubernetes operator;
+- a Kubernetes operator (an automation document is applied once by a client;
+  there is no controller, watch, or stored desired state);
 - a multi-cloud abstraction framework;
 - PostgreSQL, MySQL, Redis, Kafka, NATS, RabbitMQ, Elasticsearch, ZooKeeper,
   etcd, SQLite, or another required durable system.
