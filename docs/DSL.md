@@ -612,6 +612,44 @@ already applies to a task's external side effects, now applied to the host's
 own disk. Do not copy a secret into `/orkstack/shared`: that puts it on disk
 for the pin's lifetime, the same warning that applies to `output/`.
 
+`orkflow validate` warns (severity `WARNING`, field `pins.<name>`) about a pin
+whose every task leaves `run_as_orker_user` false: each container then keeps
+its image's own `USER`, and two members with different baked-in users can
+each write files under the sticky-bit `/orkstack/shared` that the other cannot
+replace. Agreement (rule 11) cannot catch that case, because the UIDs come from
+the images, not the document.
+
+**Lifecycle.** A pin opens lazily, when the first of its tasks is ready and
+classified to run — never at run start — so a pin whose every task is skipped
+by `condition:` or an upstream skip never occupies a host. While it opens, its
+ready tasks stay `PENDING`; unpinned branches of the run keep advancing. The
+pin closes when every member is terminal: the engine asks the pin host to
+remove the pin's directory, then frees the host's slot, and the run does not
+report its own outcome until every pin it opened has closed. A run is
+fail-fast, pinned or not: a member that fails fails the run, which cancels its
+running siblings and marks every not-yet-started task `CANCELED`. A member's
+own `retry:` retries on the same host, so a retry is not a pin failure and the
+pin stays open.
+
+**What only a pin can fail with.** Each is non-retryable, names the pin, and
+fails the run:
+
+| code | category | when |
+|---|---|---|
+| `PIN_UNAVAILABLE` | `InfrastructureError` | every pin host of the pool stayed full (or cordoned) for the whole creation timeout, a fixed **5 minutes**. Only the task whose readiness asked for the pin fails; it never reached an Orker, so its `scheduled_at` and `started_at` stay unset. |
+| `PIN_HOST_LOST` | `InfrastructureError` | the host stopped heartbeating the pin (noticed within the 30-second heartbeat timeout) before the pin's lifetime ran out. Every member running at that moment is `FAILED` with this code — never `CANCELED`, because the platform lost it — and members not yet started are `CANCELED`. A member that already committed stays `SUCCEEDED`. |
+| `PIN_TIMEOUT` | `TimedOut` | the pin was open for at least its lifetime (`timeout_seconds`, or the derived sum). Members still running are stopped with it, as above. |
+
+A pool with **no** pin host at all is refused at submit instead (above), so
+`PIN_UNAVAILABLE` only ever means saturation. The creation timeout is a
+constant, not a setting: workflow code may not read process configuration,
+and an author has no better information about the number than the platform
+does. `PIN_HOST_LOST` and `PIN_TIMEOUT` reach the engine as the same event —
+the Temporal session that holds the pin ended — and are told apart by the
+elapsed time against the pin's lifetime, which is deterministic on replay.
+A member that fails on its own (a non-zero exit) leaves the pin open and
+takes the ordinary failure path.
+
 ## Awaited tasks
 
 An **awaited task** declares `await:` instead of `uses:`. It starts no

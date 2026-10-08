@@ -424,6 +424,20 @@ message DescribeOrkerResult {
 }
 ```
 
+**Task pins** (`docs/DSL.md`, "Pins") add `PinContext`
+(`ExecuteTaskInput.pin = 24`: the pin's `name`; the `instance_id` of this
+opening of it, which the engine takes from the Temporal session it opened and
+the Orker keys the shared directory by, trusting nothing else to name that
+directory; and the pin's lifetime in `timeout_seconds`, from which the Orker
+derives the directory's lease, §6.4). It is set ONLY for a pinned task, so
+every other payload is byte-identical. `ReleasePinInput` (`run_id`,
+`namespace`, `pin`) is the input of the `ReleasePin` activity (§6.4).
+`DescribeOrkerResult.max_concurrent_pins = 9` is `ORK_ORKER_MAX_PINS`, which
+submit reads to refuse a pinned task on a pool whose Orkers host no pins;
+`open_pins = 14` and `pins = 15` (one `OpenPin` per open pin, ordered by run
+id, its name and lease unset until the first member arrives) are what
+`orkctl orker drain` and `orkctl release status` report.
+
 **Task caching** (`docs/DSL.md`, "Caching") adds, all Orker-side and none of
 it visible to a container: `CacheScope`, `CacheOutcome`, `CacheContext`
 (`ExecuteTaskInput.cache = 27`: scope, the effective TTL in seconds, and
@@ -2224,6 +2238,42 @@ per worker start, so every pin directory found at boot is dead by construction
 rather than by heuristic. The pinned task is also the one place where "Temporal
 retries elsewhere" does not apply: the pin and its run fail explicitly
 (`PIN_HOST_LOST`) instead (AGENTS.md §5).
+
+The directory is `ork-pin-<run>-<pin>-<instance>/` under the work root, created
+by the first member attempt that arrives (the Orker has no hook at session
+creation, which is SDK-internal) and re-asserted to `0700`/`1777` by every
+later one, so a workload that chmod'ed its view of `shared/` cannot lock the
+next member out. The instance id must match `^[0-9a-f-]{36}$` before it
+becomes a path segment — refused, never rewritten, because a rewritten id
+would name a different pin's directory. Removal walks the tree chmod-first,
+because a workload may have left `0500` directories under `shared/`. It ends
+by whichever of three paths comes first:
+
+1. **`ReleasePin`** — the normal, prompt path. Once every member is terminal
+   the engine schedules this activity *on the pin's own session*, so it can
+   only run on the host that owns the directory. It is idempotent (an absent
+   directory is success) and best effort: its failure is logged by the engine
+   and never fails the run, because cleanup is not orchestration.
+2. **Boot reap** — at every Orker start, unconditionally (also when
+   `ORK_ORKER_MAX_PINS` is now `0`, so a previous life's trees are not
+   stranded), every `ork-pin-*` is removed. A failed removal is logged and does
+   not stop the Orker from starting.
+3. **Lease sweep** — `lease.json`, `0600`, sits *beside* `shared/`, never
+   inside it, so nothing a workload can reach can forge or extend it. It is
+   written once, on first arrival, as `expiresAt` = first arrival + the pin's
+   lifetime + 6 minutes of slack, and is never re-armed. A sweep every minute,
+   unconditional like the reap, removes any pin directory whose lease expired
+   — or, when the lease is missing or does not decode, whose directory is older
+   than the slack. It is the only collector when the run is terminated from
+   outside the workflow while the Orker stays up: no workflow code runs, so no
+   `ReleasePin` is ever scheduled. It can never remove a live pin's directory,
+   because the pin's session lifetime is measured from session creation, which
+   precedes first arrival, so Temporal has declared the session dead before
+   the lease can expire.
+
+A pin directory has no per-pin size quota; it is bounded by the lease and the
+host's disk, and `ORK_ORKER_TMPFS_BYTES` does not apply to it (it is a bind
+mount, not a tmpfs).
 
 ### 6.5 Pool liveness
 

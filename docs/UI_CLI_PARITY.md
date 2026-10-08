@@ -61,6 +61,56 @@ a scan cut short by a budget as complete; return an actionable failure if a
 continuation cannot be determined. Do not read process memory behind a wired
 reader. Exercise both local and S3 archive paths and real Temporal visibility.
 
+#### Paging in the browser
+
+The Runs and Orkflows lists share one URL rule and one footer
+(`ui/src/lib/browsing.ts`, `ui/src/lib/components/Pagination.svelte`):
+
+- **The URL holds what the page shows, and nothing else.** `ns` first, then
+  the filters, `size`, the engine's `cursor`, and `page` — a 1-based number the
+  client counts, omitted at 1 (and treated as 1 when there is no cursor). A
+  pasted link opens the exact page it was copied from. `listHref` is the only
+  place either list writes a query string; it only ever `set`s, never
+  `append`s, and omits empty values — so a key can never appear twice
+  (`size=25&size=50`) and a cleared filter leaves the bar.
+- **The path back lives in `sessionStorage`, not the URL.** Previous needs the
+  cursors *behind* the current one; that is the reader's path, not a
+  coordinate of the page, and in the URL it grew the address bar by one
+  escaped cursor per page. The stack is stored under `orkstack.pages:` + the
+  list's canonical filter query (its href with `cursor` and `page` removed), so
+  it can never be applied to another filter set, and it is written on Next
+  before navigating. `sessionStorage` because the cursor is a position, not a
+  snapshot, so a stack means something only while its reader is still paging
+  (`localStorage` would trust yesterday's); not SvelteKit's `page.state`,
+  because a reload resets it and F5 must not lose Previous; not an engine
+  `previous_page_token`, because reverse cursors over the live/archive union
+  are their own design.
+- **When the path back is unknown** — a pasted link, a new tab, a stack built
+  under other filters, private-mode storage that throws — Previous is
+  disabled and **First page** is offered, the one earlier page the browser can
+  honestly name. Previous is enabled only when the stack describes *this* page
+  (`stack[page-1] === cursor`), never merely because the stack is non-empty.
+- **No totals.** List responses carry `next_page_token` and no count, so the
+  footer never shows "of N": it reads `Page 3 · 10 runs`, `Page 5 · 7 runs ·
+  last page`, or just `7 runs` when everything fits on page 1. A total would
+  be an engine change (`total_size`), not a UI one.
+- **Page size.** On Runs it is a field of the filter form, which is a draft of
+  the URL, so it applies with **Apply filters** like every other field; on
+  Orkflows, which has no filter form, it applies on change and clears that
+  filter set's stack. The difference is deliberate: one form must not apply
+  some fields on change and the rest on submit.
+
+The dashboard's window control is one group of four segments: `15m`, `6h`,
+`24h` and **Custom**, a popover with a `datetime-local` input capped at now.
+The active segment — Custom included — carries `aria-current="page"`; while a
+custom window is in force its label is `Since <instant>`, formatted exactly as
+the header's range, and the input is pre-filled with it. The URL keeps
+`since=` as an ISO instant because that is what `orkctl stats --since` takes.
+There is no "until": the custom window is `since` to now, and an end the
+request cannot carry would be a control that does nothing. `?window=custom`
+without a valid `since` marks Custom and shows the error panel rather than
+snapping back to `24h`, which would disagree with the address bar.
+
 ### Artifact retrieval
 
 Add `RunService.ListRunArtifacts(ListRunArtifactsRequest)` returning

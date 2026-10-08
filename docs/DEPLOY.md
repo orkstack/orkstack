@@ -402,6 +402,27 @@ takes that answer as representative — a mixed pool is refused or accepted
 depending on who answered, and a pin accepted onto Orkers that in fact set `0`
 waits for a slot that never appears and then fails the run.
 
+The refusal is `failed_precondition`, the same code as an empty pool, and it
+names the pool, the pins, the tasks and the fix:
+
+```
+pool "gpu" (namespace "ci", pin "build", tasks: clone, compile, test) has live
+Orkers but none of them hosts pins, so the pin could never open. Start one with
+ORK_ORKER_POOL=gpu ORK_ORKER_MAX_PINS=1, or submit with allow_empty_pool to wait
+for one
+```
+
+`allow_empty_pool` downgrades it to a logged warning, as it does for an empty
+pool. A pool Orker that does not answer the describe probe is not a refusal —
+the submit proceeds and, if no host can open the pin, the triggering task
+fails `PIN_UNAVAILABLE` after the creation timeout (`docs/DSL.md`, "Pins").
+Pinning is therefore opt-in twice — by the author (the document) and by the
+operator (this setting) — and a document that pins is refused until an
+operator has opted its pool in, never left waiting. A pin host runs two extra
+Temporal pollers (session creation and its own per-process session channel),
+which is why the default is `0`: an Orker that never set the key starts
+neither.
+
 ### Fan-out, caching and failure handlers need every Orker of a pool on a release that supports them
 
 An Orkflow with a fan-out (`each:`, `docs/DSL.md` "Fan-out") needs Orkers that
@@ -441,7 +462,7 @@ build when it does not; `allow_empty_pool` does not override that. A
 ### Pins on a versioned deployment
 
 Pins work with Worker Deployment Versioning (`ORK_BUILD_ID`, §2), and what
-holds a pin in place is **not** the routing versioning uses. Measured on a real
+holds a pin in place is **not** the routing versioning uses. Proven on a real
 cluster by `internal/engine/versioning_pin_integration_test.go`
 (`TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout`), with a pin
 host on v1, a second on v2, and the Current Version rolled forward while a pin
