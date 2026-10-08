@@ -2,41 +2,28 @@
 
 OrkStack has two durable stores and no third:
 
-- **Temporal** holds every live run: workflow state, task state, the event
-  stream, idempotency claims, and Worker Deployment versions. It is the read
-  model for a run until its run retention expires (72 h by default, set at
-  boot by `internal/task.EnsureNamespace`, and read or changed as the
-  deployment maximum with `orkctl admin retention`; a namespace may keep runs
-  for less with `orkctl namespace update --run-retention`), and every Orkflow
-  schedule — its coordinates, its spec and its fire history
-  (`docs/ORKFLOW_SCHEDULES.md`).
+- **Temporal** holds every live run — workflow state, task state, the event
+  stream — plus idempotency claims, Worker Deployment versions and routing,
+  and every Orkflow schedule (its coordinates, spec and fire history,
+  `docs/ORKFLOW_SCHEDULES.md`). It is the read model for a run until the run
+  is retired at its run retention (`docs/DEPLOY.md` §5, "Run retention").
 - **Object storage** holds everything that must outlive a process or a
-  retention window: Orkflow definitions, the namespace registry, artifacts,
-  task logs, run snapshots, activity completion records, and the archive of
-  finished runs.
+  retention window: Orkflow definitions, the namespace registry, deployment
+  settings, artifacts, task logs, run snapshots, activity completion and
+  attempt records, the audit trail, webhook delivery records, cache memos,
+  and the archive of finished runs.
 
 Nothing durable lives in an `ork` or `orker` process. There is no SQL
-database, no embedded store, and no OrkStack-owned counter; AGENTS.md §13
-lists them as non-goals. An earlier decision record chose SQLite for run
-persistence; that design was never built, and the layout below is what shipped
-instead.
+database, no embedded store, and no OrkStack-owned counter (AGENTS.md §13).
 
 ## Backends
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `ORK_ARTIFACT_BACKEND` | `local` | `local` (a directory) or `s3` (any S3-compatible store with conditional `PutObject`) |
-| `ORK_ARTIFACT_DIR` | `./.data/artifacts` | root directory of the `local` backend |
-| `ORK_S3_ENDPOINT` | `http://localhost:9000` | S3 endpoint |
-| `ORK_S3_REGION` | `us-east-1` | S3 region |
-| `ORK_S3_BUCKET` | `orkstack-artifacts` | the one bucket a deployment uses |
-| `ORK_S3_ACCESS_KEY`, `ORK_S3_SECRET_KEY`, `ORK_S3_SESSION_TOKEN` | dev-stack credentials | static credentials; unset both keys to use the SDK's default chain |
-| `ORK_S3_PATH_STYLE` | `true` | path-style addressing (MinIO) |
-
-The defaults live in `pkg/artifacts/config.go`. A replicated deployment needs
-`s3`: on `local` each replica archives runs to its own disk and each Orker
-writes artifacts nobody else can read. `docs/DEPLOY.md` §1 covers that and the
-lifecycle rules operators may add.
+`storage.backend` / `ORK_ARTIFACT_BACKEND` selects `local` (a directory,
+`ORK_ARTIFACT_DIR`) or `s3` (any S3-compatible store with conditional
+`PutObject`); the keys are in `docs/DEPLOY.md` §1. A replicated deployment
+needs `s3`: on `local` each replica archives runs to its own disk and each
+Orker writes artifacts nobody else can read. The engine reads Orkflow
+definitions from S3 whatever the backend says.
 
 The local backend mirrors the S3 key layout as directories under
 `ORK_ARTIFACT_DIR`, with two private additions: `.metadata/` sidecars carrying
@@ -44,108 +31,119 @@ an object's attributes, and `.tmp/` for in-flight writes.
 
 ## Key layout
 
-One bucket, one key family per kind of record. The builders are the single
-place each shape is spelled.
+One bucket, one key family per kind of record. The builders in
+`pkg/artifacts` are the single place each shape is spelled.
 
 | Key | Holds | Written | Removed by |
 |---|---|---|---|
-| `metadata/orkflows/{ns}/{name}/{version}.json` | one immutable Orkflow version, source YAML included (`OrkflowKey`, `pkg/artifacts/orkflow_store.go`) | conditional create; a divergent rewrite is `ErrVersionExists` | `orkctl orkflow delete`, which removes every version and both pointers after checking for recent runs |
-| `metadata/orkflows/{ns}/{name}/@current.json` | the version new runs execute (`OrkflowCurrentKey`, `orkflow_current.go`) | compare-and-swap; a promotion swaps it only while it still names the version the promotion compared the target's declared interface against (`CurrentExpectation`), so a promotion that raced another is refused, never landed over it | the same delete |
-| `metadata/orkflows/{ns}/{name}/@head.json` | the newest applied version; moving it is the apply commit point (`OrkflowHeadKey`, `orkflow_head.go`) | compare-and-swap | the same delete |
-| `metadata/namespaces/{name}.json` | the namespace registry entry (`NamespaceKey`, `namespace_store.go`) | conditional PUT with an etag | `orkctl namespace delete`, refused while the namespace holds anything |
-| `metadata/triggers/{id}.json` | one inbound run starter: namespace, orkflow, pinned version, description, optional `name`, and the salted digest of its token — never the token (`triggerKey`, `pkg/artifacts/trigger_store.go`); flat, because the invoke URL carries only the id | conditional create; rewritten in place only by `UpdateTrigger`, through a conditional put on the ETag it read (name, pin, description change; the id and the digest never do) | `orkctl trigger delete` |
-| `metadata/webhooks/{id}.json` | one subscription: the protojson of `RegisterWebhookResponse` — URL, events, scope, optional `webhook.name`, and the signing secret, which no read but delivery's returns (`webhookKey`, `webhook_store.go`) | conditional create; rewritten in place only by `UpdateWebhook`, through a conditional put on the ETag it read (name, URL, events and scope change; the id and the secret never do) | `orkctl webhook delete` |
-| `metadata/settings/image-policy.json` | the deployment image supply-chain floor (`ImagePolicyKey`, `image_policy_store.go`) | plain put by `UpdateImagePolicy`; absent until an operator writes one | nothing |
-| `metadata/runs/{run-id}.jsonl` | an archived run: the run record then every event, one JSON line each (`RunArchiveKey`, `archive.go`) | once, at the run's terminal event; read verbatim as `run.jsonl` by `RunService.ExportRunEvidence` (docs/RUN_EVIDENCE.md) | nothing; archive bodies are never deleted |
-| `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row (`RunIndexKey`) | with the archive body | nothing |
-| `metadata/index/origins/{ns}/{kind}/{origin-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the origin index row (`RunOriginIndexKey`): `kind` is the origin kind's slug (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`), `origin-id` the originating object's id or `none`; read keys-only by an origin-filtered `ListRuns` | with the archive body, only for a run with a recorded origin, before its run-index row | nothing |
-| `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`); read keys-only by `RunService.GetArtifactProvenance` (`ListObjectReferences`) as well as by cleanup | with the archive body | the cleanup worker, when it releases the run's claims |
-| `metadata/index/run-objects/{run-id}.json` | the list of object ids the run references (`RunObjectListKey`) | with the archive body | the cleanup worker |
-| `metadata/cleanup/runs/{run-id}.json` | a sidecar recording that the run's artifacts were cleaned (`RunCleanupKey`) | once, by the cleanup worker | nothing |
-| `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind each projected event, kept out of Temporal history (`RunSnapshotKey`, `snapshots.go`) | by the workflow's snapshot local activity | the cleanup worker |
-| `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` (and `.trunc`) | live task stdout/stderr chunks; order is the zero-padded key (`LogChunkKey`, `logs.go`) | by the Orker while the task runs | the cleanup worker, or a bucket lifecycle rule |
-| `metadata/logs/{run-id}/{task-id}/{item:05}/{attempt}/{seq}` (and `.trunc`) | one fan-out item's live stdout/stderr chunks: the task row's layout with the item's zero-padded index one segment below the task (`LogScopePrefix`, `logs.go`) | by the Orker while the item runs | the cleanup worker, or a bucket lifecycle rule |
-| `metadata/attempts/{run-id}/{task-id}/{attempt}.json` | one `TaskAttempt`: the outcome, error, exit code and §7.1 phase of ONE attempt, the phases it passed through, and the cpu and memory the Orker reserved for it; order is the zero-padded key (`AttemptKey`, `attempts.go`) | by the Orker at the end of every attempt, best-effort, plain put; read verbatim as `attempts/{n}.json` by `ExportRunEvidence` | the cleanup worker, or a bucket lifecycle rule |
-| `metadata/attempts/{run-id}/{task-id}/{item:05}/{attempt}.json` | one `TaskAttempt` of one fan-out item (`TaskAttempt.item` set); each item numbers its attempts from 1 (`AttemptScopePrefix`, `attempts.go`) | by the Orker at the end of every item attempt, best-effort, plain put | the cleanup worker, or a bucket lifecycle rule |
-| `metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` | one control-plane audit record: who asserted which write, on what, when, and whether it was refused (`AuditKey`, `pkg/artifacts/audit.go`); the day is the record's own `at` in UTC | create-only, by the engine after every audited write RPC | nothing; a bucket lifecycle rule is the operator's |
-| `metadata/deliveries/{yyyy}/{mm}/{dd}/{id}/{ns}/{run-id}/{webhook-id}/{event}/{outcome}.json` | one settled webhook delivery: every attempt, the signature sent, the body's SHA-256 — never the body (`DeliveryKey`, `pkg/artifacts/deliveries.go`); the day is the one the delivery id's stamp carries (`created_at`), and the segments after the id are the record's own coordinates so every listing filter is decided from the key | create-only, by the engine after the dispatcher returns | nothing; a bucket lifecycle rule is the operator's |
-| `metadata/commits/{ns}/{run-id}/{task-id}/commit.json` | the immutable activity completion record (`CommitKey`, `commit_store.go`) | conditional create-if-absent; read verbatim as `commit.json` by `ExportRunEvidence`, only at the `CommitRef.uri` the run snapshot recorded | the cleanup worker |
-| `metadata/commits/{ns}/{run-id}/{task-id}/{item:05}/commit.json` | one fan-out item's immutable completion record (`ItemCommitKey`, `commit_store.go`); read by every direct dependent to stage that item's files | conditional create-if-absent, exactly as a task's | the cleanup worker |
-| `metadata/memo/{ns}/orkflow/{orkflow}/{task-id}/{key}.json` | one orkflow-scoped `CacheMemo`: a pointer from a cached task's memo key to a `SUCCEEDED` commit (`MemoKey`, `pkg/artifacts/memo.go`; `docs/DSL.md` "Caching") | by the Orker after a fresh commit of a cached task, best-effort, plain put, last writer wins | `orkctl cache purge` (`PurgeCache`), or a bucket lifecycle rule |
+| `metadata/orkflows/{ns}/{name}/{version}.json` | one immutable Orkflow version, source YAML included (`OrkflowKey`) | conditional create; a divergent rewrite is `ErrVersionExists` | `orkctl orkflow delete`, which removes every version and both pointers after checking for recent runs |
+| `metadata/orkflows/{ns}/{name}/@current.json` | `{version, updated_at}`: the version new runs execute; absent means the head (`OrkflowCurrentKey`) | compare-and-swap; a promotion swaps it only while it still names the version the promotion compared the target's declared interface against (`CurrentExpectation`), so a promotion that raced another is refused, never landed over it | the same delete |
+| `metadata/orkflows/{ns}/{name}/@head.json` | `{version, applied_at}`: the newest applied version; moving it is the apply's commit point (`OrkflowHeadKey`) | compare-and-swap | the same delete |
+| `metadata/namespaces/{name}.json` | the namespace registry entry, every field of `Namespace` (`NamespaceKey`); `default` is synthesized when absent | conditional PUT with an etag | `orkctl namespace delete`, refused while the namespace holds anything |
+| `metadata/settings/retention-policy.json` | the deployment's maximum run retention (`RetentionPolicyKey`) | create-if-absent at first boot, then plain put by `UpdateRetentionPolicy` | nothing |
+| `metadata/settings/image-policy.json` | the deployment image supply-chain floor, signing keys as public PEM (`ImagePolicyKey`) | plain put by `UpdateImagePolicy`; absent until an operator writes one | nothing |
+| `metadata/triggers/{id}.json` | one inbound run starter: namespace, orkflow, pinned version, description, optional `name`, and the salted digest of its token — never the token (`triggerKey`); flat, because the invoke URL carries only the id | conditional create; rewritten only by `UpdateTrigger`, through a conditional put on the ETag it read (name, pin, description change; the id and the digest never do) | `orkctl trigger delete` |
+| `metadata/webhooks/{id}.json` | one subscription: URL, events, scope, optional `name`, and the signing secret, which no read but delivery returns (`webhookKey`) | conditional create; rewritten only by `UpdateWebhook`, through a conditional put on the ETag it read (name, URL, events and scope change; the id and the secret never do) | `orkctl webhook delete` |
+| `metadata/runs/{run-id}.jsonl` | an archived run: the run record then every event, one JSON line each (`RunArchiveKey`) | once, at the run's terminal event; read verbatim as `run.jsonl` by `ExportRunEvidence` (`docs/RUN_EVIDENCE.md`) | nothing |
+| `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row, stamped by `created_at` (`RunIndexKey`) | with the archive body | nothing |
+| `metadata/index/origins/{ns}/{kind}/{origin-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the origin index row (`RunOriginIndexKey`): `kind` is `submit`, `trigger`, `schedule`, `parent-run` or `run-again`, `origin-id` the originating object's id or `none`; read keys-only by an origin-filtered `ListRuns` | with the archive body, only for a run with a recorded origin, before its run-index row | nothing |
+| `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`) | with the archive body | cleanup, when it releases the run's claims |
+| `metadata/index/run-objects/{run-id}.json` | the object ids the run references (`RunObjectListKey`) | with the archive body | cleanup |
+| `metadata/cleanup/runs/{run-id}.json` | the sidecar recording that the run was retired and cleaned (`RunCleanupKey`) | once, by cleanup | nothing |
+| `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind each projected event, kept out of Temporal history (`RunSnapshotKey`) | by the workflow's snapshot local activity | cleanup |
+| `metadata/logs/{run-id}/{task-id}/[{item:05}/]{attempt}/{seq}` (and `.trunc`) | live task stdout/stderr chunks; order is the zero-padded key (`LogChunkKey`, `LogScopePrefix`) | by the Orker while the attempt runs | cleanup, or a bucket lifecycle rule |
+| `metadata/attempts/{run-id}/{task-id}/[{item:05}/]{attempt}.json` | one `TaskAttempt`: outcome, error, exit code, the phase it ended in and every phase it passed through (`docs/OCI_ACTIVITY_CONTRACT.md` §7.1), the image it ran, and the cpu and memory the Orker reserved (`AttemptKey`, `AttemptScopePrefix`); each item numbers its attempts from 1 | by the Orker at the end of every attempt, best-effort, plain put; read verbatim as `attempts/{n}.json` by `ExportRunEvidence` | cleanup, or a bucket lifecycle rule |
+| `metadata/commits/{ns}/{run-id}/{task-id}/[{item:05}/]commit.json` | the immutable activity completion record of a task, or of one fan-out item (`CommitKey`, `ItemCommitKey`); a dependent of a fan-out reads every item's to stage its files | conditional create-if-absent; read verbatim as `commit.json` by `ExportRunEvidence`, only at the `CommitRef.uri` the run snapshot recorded | cleanup |
+| `metadata/memo/{ns}/orkflow/{orkflow}/{task-id}/{key}.json` | one orkflow-scoped `CacheMemo`: a pointer from a cached task's 64-hex memo key to a `SUCCEEDED` commit (`MemoKey`; `docs/DSL.md` "Caching") | by the Orker after a fresh commit of a cached task, best-effort, plain put, last writer wins | `orkctl cache purge`, or a bucket lifecycle rule |
 | `metadata/memo/{ns}/namespace/{task-id}/{key}.json` | one namespace-scoped `CacheMemo` | same | same |
-| `metadata/probes/commit-store/…/commit.json` | the boot-time probe proving conditional create works on this store | at boot | nothing |
-| `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`, `s3_manifest.go`) | by the Orker, content-addressed | a bucket lifecycle rule, or `DeleteUnreferencedObjects` |
+| `metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` | one control-plane audit record: who asserted which write, on what, when, and whether it was refused (`AuditKey`); the day is the record's own `at` in UTC | create-only, by the engine after every audited write RPC | a bucket lifecycle rule only |
+| `metadata/deliveries/{yyyy}/{mm}/{dd}/{id}/{ns}/{run-id}/{webhook-id}/{event}/{delivered\|failed}.json` | one settled webhook delivery: every attempt, the signature sent, the body's SHA-256 — never the body (`DeliveryKey`); the day is the delivery id's stamp, and the segments after the id are the record's own coordinates, so every listing filter is decided from the key | create-only, by the engine after the dispatcher returns | a bucket lifecycle rule only |
+| `metadata/probes/commit-store/…/commit.json` | the probe proving conditional create works on this store | at every Orker boot | nothing |
+| `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`) | by the Orker, content-addressed | a bucket lifecycle rule, or `DeleteUnreferencedObjects` |
 | `manifests/{object-key}` | the artifact's exact logical name, beside its object | with the object | with the object |
-| `objects/n-{name}[/c-{…}]/{sha256}` | workload artifact bytes on the `local` backend (`objectKey`, `artifacts.go`) | by the Orker, content-addressed | nothing automatic |
+| `objects/n-{name}[/c-{…}]/{sha256}` | workload artifact bytes on the `local` backend (`objectKey`) | by the Orker, content-addressed | nothing automatic |
 
-Run ids, namespaces, and task ids pass through `encodeArchiveSegment`
-(`pkg/artifacts/archive.go`): a clean slug is used verbatim, anything else is
-encoded and prefixed with `~`, and every segment is bounded at 200 bytes. A
-run id is encoded, never parsed (AGENTS.md §7).
+Run ids, namespaces and task ids pass through `encodeArchiveSegment`: a clean
+slug is used verbatim, anything else is encoded and prefixed with `~`, and
+every segment is bounded at 200 bytes. A run id is encoded, never parsed
+(AGENTS.md §7). A basename beginning `@` is reserved for per-orkflow
+pointers, so a pointer can never be read as a version.
 
 ## Invariants the layout carries
 
 - **Bytes never travel through Temporal.** Events and activity inputs carry
   references into this layout; the 256 KiB payload ceiling (AGENTS.md §2.2)
-  is what forces snapshots, logs, and artifacts out here.
+  is what forces snapshots, logs and artifacts out here.
 - **A durably committed result cannot become pending again.** `commit.json`
   is written with create-if-absent; an Orker retry that finds one returns it
   and never runs the container again. The boot probe refuses a store that
   cannot arbitrate that write.
 - **Any replica answers for any run.** Every read of a finished run, a log, a
-  definition, or a namespace goes to this layout or to Temporal, never to the
-  memory of the process that started it.
+  definition, a namespace, a setting, an audit or delivery record goes to
+  this layout or to Temporal, never to the memory of the process that wrote
+  it.
+- **Pointers, not copies.** `@current` and `@head` name a version and hold no
+  copy of the document: a second copy is a second place to be wrong. Moving
+  them is a compare-and-swap arbitrated by the store's conditional PUT, so
+  two replicas promoting or applying at once need no lock, lease or Temporal
+  state — the loser is told and swaps again against the winner's etag. The
+  head is a pointer rather than "the greatest `created_at`" because each
+  replica stamps from its own clock, and because an edit's
+  `expected_head_version` must be checked by the write itself. `applied_at`
+  never goes backwards, so `orkctl orkflow versions` lists versions in apply
+  order even when clocks disagree.
 - **A fan-out item has its own commit, attempt and log keys**, one
   zero-padded segment below its task's; artifact objects stay
   content-addressed and are shared between items that wrote the same bytes.
-  Every item key stays under its run's prefix, so the cleanup worker reclaims
-  items with no rule of their own.
+  Every item key stays under its run's prefix, so cleanup reclaims items with
+  no rule of their own.
 - **Every attempt is recorded, not just the winner.** Temporal discards a
   failed attempt's error when it schedules the next one, so the Orker writes
-  one `TaskAttempt` per attempt beside the logs that attempt produced. The
-  write is best-effort: a record that cannot be stored is logged and never
-  changes what the attempt reported.
-- **A schedule is the Temporal Schedule.** Nothing about one is written to
-  this layout, so nothing here can disagree with the cluster about when it
-  fires. The one trace a schedule leaves here is its runs' own origin-index
-  rows (`metadata/index/origins/{ns}/schedule/{sch-…}/…`), which every run
-  has whatever started it.
-- **An awaited task's `values.json` is written by the engine** when a
-  resolution arrives, before the resolution is delivered; it is the only
-  object an await produces. It lands in the same content-addressed family, with
-  the same provenance metadata, as a container's `values.json`.
-- **A composed task's `values.json` is written by the engine** too, when its
-  child run succeeds: the child's declared outputs, stored for the PARENT run
-  under the composed task's id, in the same content-addressed family and with
-  the same provenance metadata as a container's `values.json`. A child run
-  needs no new key family: it is an ordinary run with its own snapshots,
-  events, archive record and origin-index row
-  (`metadata/index/origins/{ns}/parent-run/{parent}/…`).
-- **No automation document is stored anywhere.** A document lives in Git;
+  one `TaskAttempt` per attempt beside that attempt's logs. The write is
+  best-effort: a record that cannot be stored is logged and never changes
+  what the attempt reported, and every reader of attempt records reports a
+  missing one rather than assuming it clean.
+- **Settings are documents, not live reads.** The retention maximum and the
+  image policy are single documents under `metadata/settings/`, so any
+  replica answers identically. A run pins the image policy (and the signing
+  key) it was submitted under in its plan; a later change never reaches it.
+- **A schedule is the Temporal Schedule.** Nothing about one is written here,
+  so nothing here can disagree with the cluster about when it fires. The one
+  trace a schedule leaves is its runs' origin-index rows
+  (`metadata/index/origins/{ns}/schedule/{sch-…}/…`).
+- **An awaited or composed task's `values.json` is written by the engine** —
+  an await's when its resolution arrives, before the resolution is
+  delivered; a composed task's when its child run succeeds (the child's
+  declared outputs, stored for the PARENT run under the composed task's id).
+  Both land in the same content-addressed family, with the same provenance
+  metadata, as a container's. A child run needs no key family of its own: it
+  is an ordinary run with its own snapshots, events, archive record and
+  origin-index row (`…/parent-run/{parent}/…`).
+- **No automation document is stored.** A document lives in Git;
   `PlanAutomation` reads it from the request and the namespace's live objects
   and writes nothing, and an apply writes only through the ordinary trigger,
   webhook, schedule and namespace RPCs. A trigger or webhook record carries
-  an optional `name`, nothing else: no "managed-by" marker, no last-applied
-  copy. A record written before names existed reads as unnamed; nothing is
-  migrated.
-- **An update never recreates a delete.** The trigger and webhook records are
+  an optional `name` and nothing else: no "managed-by" marker, no
+  last-applied copy. A record written without a name reads as unnamed.
+- **An update never recreates a delete.** Trigger and webhook records are
   rewritable by their own update only, with a conditional put naming the
-  ETag the update read; a record deleted between the read and the write stays
-  deleted, and the update reports NotFound.
-- **A memo is a pointer to a commit that already exists; deleting any memo,
-  or the whole `metadata/memo/` prefix, changes no result** — only whether the
-  next run of a cached task runs its container. A memo is written only after a
-  fresh `commit.json` was created, read only to decide whether a container is
-  needed, and every doubt about it resolves to *run the task*. It belongs to no
-  run, so the cleanup worker never touches it; a memo whose source run was
-  retired simply misses (`SOURCE_COMMIT_GONE`). A hit writes its run's own
-  `commit.json`, whose references are the source's content-addressed objects —
-  no byte is copied.
+  ETag the update read; a record deleted in between stays deleted, and the
+  update reports NotFound.
+- **A memo changes no result.** It is a pointer to a commit that already
+  exists, written only after a fresh `commit.json` was created and read only
+  to decide whether a container is needed; every doubt resolves to *run the
+  task*. A hit writes its run's own `commit.json` whose references are the
+  source's content-addressed objects — no byte is copied. A memo belongs to
+  no run, so cleanup never touches it; one whose source run was retired
+  simply misses (`SOURCE_COMMIT_GONE`). Deleting any memo, or the whole
+  prefix, only makes the next run of a cached task run its container.
+- **Logs and records, never queues.** Nothing in OrkStack reads an audit or
+  delivery record to decide what to do or send; expiring one only shortens
+  how far back `orkctl admin audit` or `orkctl webhook deliveries` can look.
 - **The archive is append-only.** Bodies and index rows — the run index and
-  the origin index alike — are never deleted;
-  what the cleanup worker reclaims is the run's logs, attempt records,
-  snapshots, commit record, and object markers, and it records that in the
-  cleanup sidecar.
+  the origin index alike — are never deleted; what cleanup reclaims is the
+  run's logs, attempt records, snapshots, commit records and object markers,
+  and it records that in the cleanup sidecar.
 
 ## Artifact provenance
 
@@ -181,33 +179,49 @@ be looked up, because the marker's object segment is one-way.
 ## Reclaiming space
 
 `internal/archive/cleanup.go` runs inside `ork` when `ORK_CLEANUP_ENABLED=true`
-(`ORK_CLEANUP_INTERVAL` `1h`, `ORK_CLEANUP_RETENTION_BUFFER` `24h`,
-`ORK_CLEANUP_BATCH_SIZE` `100`). It walks the run index in key order, and for
-each archived run past its OWN OrkStack namespace's run retention (falling
-back to the deployment maximum) it explicitly retires the execution — never
-waiting for anything to expire passively — then deletes the run's logs,
-attempt records, snapshots, and commit record, releases its object markers, and
-writes the cleanup sidecar.
+(`docs/DEPLOY.md` §1, "Retention cleanup and bucket lifecycle rules", has its
+settings, its fail-closed rules and the lifecycle recipes). It walks the run
+index in key order, and for each archived run past its OWN namespace's run
+retention (falling back to the deployment maximum) it explicitly retires the
+execution, deletes the run's `metadata/logs/{run-id}/`,
+`metadata/attempts/{run-id}/`, `metadata/commits/{ns}/{run-id}/` and
+`metadata/snapshots/{ns}/{run-id}/`, releases its object markers, and writes
+the cleanup sidecar.
 
-The cleanup worker never touches `metadata/audit/`: the control-plane audit
-trail is kept until a bucket lifecycle rule on that prefix says otherwise, and
-no setting in OrkStack shortens it.
+Paging is in key order, not newest first, because the stamp is the fourth
+segment of a run-index key: a newest-first page cannot be produced without
+reading and sorting every key under the prefix, which would re-read the whole
+index once per page.
 
-Nor does it touch `metadata/deliveries/`: a webhook delivery record is kept
-until a bucket lifecycle rule on that prefix expires it. It is a log, never a
-queue — nothing in OrkStack reads a record to decide what to send — so
-expiring one changes no behaviour; it only shortens how far back
-`orkctl webhook deliveries` can look.
+Cleanup never touches `metadata/audit/`, `metadata/deliveries/` or
+`metadata/memo/`; a bucket lifecycle rule is the only retention for each.
 
-Nor does it touch `metadata/memo/`: a memo belongs to no run. Nothing deletes
-memos but `orkctl cache purge` and a bucket lifecycle rule on that prefix; a
-rule should be no shorter than `ORK_CACHE_MAX_TTL` (default 168h), since a
-memo older than the cap can never be reused anyway. Expiring one changes no
-result.
+**Object reference accounting.** Archiving a run records which physical
+objects its completion references: one zero-byte marker per object under
+`metadata/index/objects/{sha256(object-id)}/`, and the run's own list under
+`metadata/index/run-objects/`. The marker key is the reference — an object
+with no keys under its prefix is referenced by no archived run — so counting
+references is a keys-only prefix scan, and releasing a run's claims costs one
+read plus one delete per object. Two details are load-bearing:
 
-Artifact objects themselves are not reclaimed automatically.
-`DeleteUnreferencedObjects` exists and is proven against live object storage,
-but the cleanup worker deliberately does not call it yet. Until automatic
-reclamation is wired into the cleanup pass, a bucket lifecycle rule on
-`orkflows/` (and on `metadata/logs/`) is the operational answer. `docs/DEPLOY.md`
-"Object reference accounting" has the details and the rule recipes.
+- **The object identity is the whole content-addressed key, not the bare
+  digest.** Equal bytes under two logical names are two stored objects;
+  refcounting on the digest alone would let one run's cleanup delete the
+  other's.
+- **The marker segment is a SHA-256 *of* the object id**, because an object
+  key embeds a base64 logical name that easily exceeds the 200-byte segment
+  bound; hashing it means no artifact name can make a run unarchivable.
+
+Marker writes are issued 8 at a time because archiving happens inside a
+projection activity with a 10-second budget whose failure is only logged, and
+a run that exhausted it would have no archive body. The cost is still linear
+in a run's artifact count, so a very wide run can still approach that budget.
+
+`DeleteRunArtifacts` releases only the calling run's markers and list; it
+never deletes artifact bytes. `DeleteUnreferencedObjects` deletes an object
+only when its marker prefix is empty, and treats an object already gone as a
+no-op. Cleanup does not call it — that is a scan of the whole reference
+index, not a delete under one run's prefixes — and on `local` deleting by
+producing run would destroy another run's committed result, because objects
+there carry no run id. Artifact bytes are therefore reclaimed by a bucket
+lifecycle rule on `orkflows/` (or `objects/`).

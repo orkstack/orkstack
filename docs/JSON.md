@@ -72,7 +72,7 @@ curl -H 'Content-Type: application/json' -d '{"status":"running"}'        …/Ru
 A name that is neither spelling is not invented into a value: Connect's codec
 contract discards unknown input, so the field stays unset.
 
-`orkctl --status` has always accepted both forms (`cmd/orkctl/input.go`).
+`orkctl --status` accepts both forms, in any case (`cmd/orkctl/input.go`).
 
 ## Implementation
 
@@ -83,7 +83,7 @@ contract discards unknown input, so the field stays unset.
   (`cmd/orkctl/output.go`, one shared encoder, no second implementation).
 - `api.UnmarshalJSON` / `api.UnmarshalJSONOptions` — decode either spelling.
 - `internal/api/codec.go` registers a Connect codec built on the tolerant
-  decoder for all three services.
+  decoder for every service (`HandlerOptions`).
 
 The rewrite is **descriptor-driven**: it walks the message schema alongside the
 JSON tree and only renames values sitting in an enum-typed field. Consequences

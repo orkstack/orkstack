@@ -15,14 +15,12 @@ Version**. A run is **pinned** to the version that started it and finishes
 there, whatever you deploy next. That guarantee costs you two rules — make each
 version **Current** when you want it to serve (the first one especially: until
 then it serves nothing), and do not stop the old workers until their version
-reports `Drained`.
+reports `Drained`. `orkctl release` (§3) does both, and refuses what would
+break them.
 
-The claims below are held by integration tests against the built binaries:
-the two-replica topology by `cmd/orkctl/tworeplica_read_integration_test.go`
-and `cmd/orkctl/admin_surface_integration_test.go`, the rollout and drain rules
-by `internal/engine/versioning_rollout_integration_test.go` and
-`internal/engine/versioning_drain_integration_test.go`
-(`make test-integration` with the stack up).
+The topology and rollout claims below are held by integration tests against
+the built binaries (`cmd/orkctl/tworeplica_read_integration_test.go`,
+`internal/engine/versioning_*_integration_test.go`).
 
 ---
 
@@ -106,10 +104,11 @@ needs `ORK_S3_*` either way.
   connected. They resume the same way, on `from_seq` instead of
   `from_sequence`, over a sequence the single Orker executing that attempt
   assigned (§1, "Live task logs").
-- **Readiness: there is no `/healthz` yet.** Probe with a cheap unary call —
-  `OrkflowService.ListOrkflows`, i.e. `orkctl --server … orkflow list`.
-  `scripts/stack.sh` gates on exactly that; it reaches the bucket the replica
-  loads definitions from, so it fails while the replica cannot serve.
+- **Readiness.** With `ORK_ADMIN_ADDR` set, `/healthz` answers 200 once the
+  process is up and `/readyz` 200 once it serves (§7) — the process's own
+  claim. The authoritative probe is a cheap unary call that touches the
+  bucket, `orkctl --server … orkflow list` (`OrkflowService.ListOrkflows`);
+  `scripts/stack.sh` gates on exactly that.
 - **Browser clients need `ORK_WS_ALLOWED_ORIGINS`** set on every replica, since
   any of them may take the socket. Unset, the engine allows same-origin only,
   which is right for production and wrong the moment the UI is served from its
@@ -324,15 +323,15 @@ then the variable it becomes.
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
 | `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
-| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme, as today. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
-| `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by`; grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
+| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme. A namespace's `allowed_secrets` can only narrow this, never widen it (§5, "Secrets on a shared pool"). Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
+| `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable |
 | `orker.log.flush_bytes` | `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
 | `orker.log.flush_interval` | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
 | `orker.heartbeat_interval` | `ORK_ORKER_HEARTBEAT_INTERVAL` | `5s` | `orker` | how often a running task's heartbeat actually reaches Temporal. Two consequences, both real: it is the longest a **cancellation** waits before the Orker acts on it — Temporal delivers cancellation only in a heartbeat's response, so a failing run's still-running siblings keep burning resources for up to this long — and it is the longest **Temporal frontend outage** a running container survives, since the SDK gives up on an activity whose heartbeat RPC keeps failing for a whole interval. Must be between `1s` and `10s` (a third of the 30 s heartbeat timeout); anything else is refused at boot rather than clamped. Lower it towards `2s` where Temporal is local or highly available; raise it where the frontend is flaky |
-| `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no session pollers, so an Orker that never set the key runs exactly as it does today; above zero makes this Orker a pin host. Pool-wide — see below |
+| `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no extra pollers; above zero makes this Orker a pin host. Pool-wide — see below |
 | `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
 | `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
@@ -361,7 +360,7 @@ then the variable it becomes.
 | `storage.s3.secret_key` | `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
 | `storage.s3.session_token` | `ORK_S3_SESSION_TOKEN` | *(empty)* | both | for temporary credentials |
 | `storage.s3.path_style` | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
-| `engine.stats_cache_ttl` | `ORK_STATS_CACHE_TTL` | `5s` | `ork` | how long one `GetStats`, `GetFailureBreakdown` or `GetFlakeIndex` answer is reused; `0` switches the cache off (`docs/STATS.md`) |
+| `engine.stats_cache_ttl` | `ORK_STATS_CACHE_TTL` | `5s` | `ork` | how long one `GetStats`, `GetFailureBreakdown`, `GetFlakeIndex` or `GetCacheStats` answer is reused; `0` switches the cache off (`docs/STATS.md`) |
 | `engine.usage_cache_ttl` | `ORK_USAGE_CACHE_TTL` | `5m` | `ork` | how long one usage measurement (`orkctl stats usage`, the dashboard Usage card, and an enforced budget's admission check) is reused; `0` switches the cache off, which makes every submit into an enforced namespace measure (`docs/STATS.md`, "Usage") |
 | `telemetry.log_format` | `ORK_LOG_FORMAT` | `text` | both | process log encoding: `text` or `json` |
 | `telemetry.log_level` | `ORK_LOG_LEVEL` | `info` | both | minimum process log level: `debug`, `info`, `warn`, `error` |
@@ -388,8 +387,7 @@ generated `deploy/orkstack.defaults.yaml` (regenerate it with `make
 config-defaults` after any Schema change, or read it straight from a
 binary with `ork --defaults` / `orker --defaults` — both print the
 identical file to stdout and exit, with no config file or environment
-needed) — every key present, in this table's order, each one commented out
-at its own default. `deploy/orkstack.example.yaml` stays the worked,
+needed) — every key present, each at its own default. `deploy/orkstack.example.yaml` stays the worked,
 hand-annotated example for a real deployment to start from; the generated
 file is the reference, not something to copy and edit by hand.
 
@@ -442,12 +440,8 @@ nothing to do with the task. So submit asks one Orker of the pool of every
 cached task (a cached fan-out's items run on the fan-out's pool) whether it
 implements caching, and refuses with `FailedPrecondition` naming the pool, the
 tasks, the Orker and its build when it does not; neither `allow_empty_pool` nor
-`no_cache` overrides that (a bypass still sends the cache context). Rolling
-caching back is benign: an older engine runs a definition that declares
-`cache:` with every task uncached, and memos left behind are inert. Memos live
-under `metadata/memo/` in the artifact bucket, need no setting of their own,
-and a lifecycle rule there should be no shorter than `ORK_CACHE_MAX_TTL`
-(`docs/STORAGE.md`).
+`no_cache` overrides that (a bypass still sends the cache context). Memos live
+under `metadata/memo/` and need no setting of their own.
 
 Failure handlers (`join: any_failed` or `all_done`, `docs/DSL.md` "Joins and
 failure handlers") are the same: an Orker built before join policies cannot
@@ -459,46 +453,44 @@ with `FailedPrecondition` naming the pool, the tasks, the Orker and its
 build when it does not; `allow_empty_pool` does not override that. A
 `none_failed` join needs nothing from an Orker.
 
+All three probes are best-effort: a pool whose Orker does not answer within
+the describe timeout is not refused — nothing was measured — and the engine
+logs a warning (`submit: a live pool with … did not answer the describe-orker
+probe`). The probe is a guard for a mixed rollout, not a substitute for
+running every Orker of a pool on one release.
+
 ### Pins on a versioned deployment
 
 Pins work with Worker Deployment Versioning (`ORK_BUILD_ID`, §2), and what
-holds a pin in place is **not** the routing versioning uses. Proven on a real
-cluster by `internal/engine/versioning_pin_integration_test.go`
-(`TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout`), with a pin
-host on v1, a second on v2, and the Current Version rolled forward while a pin
-was open:
+holds a pin in place is **not** the routing versioning uses:
 
-- the pin's session **creation** activity is routed by version exactly like any
-  other activity of a pinned run: scheduled on
-  `<pool queue>__internal_session_creation` and dispatched to a pin host of the
-  run's own version, with versioning in effect;
-- the pin's **member** activities ride the session's own `<uuid>@<hostname>`
-  queue, which the SDK polls *unversioned*, and reach the one process that
-  polls it. The member scheduled after v2 became Current still executed on v1's
-  Orker, as did the pin's release and the SDK's session completion activity;
-- the run's unpinned tasks kept the ordinary version-pinned routing, and a
-  pinned run submitted after the switch opened its pin on v2 — so the older
-  pin stayed put by routing, not because the newer version was idle.
+- the pin's session **creation** activity is version-routed like any other
+  activity of a pinned run: scheduled on `<pool queue>__internal_session_creation`
+  and dispatched to a pin host of the run's own version;
+- the pin's **member** activities, its release and the SDK's session
+  completion ride the session's own `<uuid>@<hostname>` queue, which the SDK
+  polls *unversioned*, so they reach the one process that opened the pin even
+  after a newer version becomes Current;
+- the run's unpinned tasks keep ordinary version-pinned routing, and a pin
+  opened after the switch opens on the new version.
 
-Two consequences for a rollout. First, a pin is bound to a **process**, not to
-a version, so §3 step 5's wait for `Drained` is what keeps an open pin's host
-alive; and restarting that same process — even at the same build id — loses the
-pin rather than moving it, because the per-host session queue name is minted
-fresh on every worker start. Second, the SDK's own doc comment still says
+Two consequences for a rollout. A pin is bound to a **process**, not to a
+version: §3 step 5's wait for `Drained` is what keeps an open pin's host
+alive, and restarting that process — even at the same build id — loses the
+pin rather than moving it, because the per-host session queue is minted fresh
+on every worker start. And the SDK's doc comment still says
 `DeploymentOptions.UseVersioning` "cannot be enabled at the same time as
-`EnableSessionWorker`" (`temporalio/sdk-go#1227`), while the only enforced panic
-covers the deprecated `UseBuildIDForVersioning` flag. The combination OrkStack
-produces is therefore accepted and behaves as above, but it is not a supported
-upstream configuration — which is why that integration test, not the doc
-comment, is the contract, and why it runs on every proof.
+`EnableSessionWorker`" (`temporalio/sdk-go#1227`); only the deprecated
+`UseBuildIDForVersioning` flag is enforced. The combination is therefore not
+an upstream-supported configuration, and
+`internal/engine/versioning_pin_integration_test.go`
+(`TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout`) — not the
+doc comment — is the contract; it runs on every proof.
 
-`orkctl release status` and `orkctl release wait` name each open pin and the
-Orker holding it, so the process not to stop is on the screen, not inferred.
-
-§3 step 5's `Drained` is the **version**-scoped wait. Its **host**-scoped
-complement is `orkctl orker drain` (see "Removing an Orker safely" in §5):
-cordon one Orker so it opens no new pin, and wait until its open pins have
-finished before the process is stopped.
+`orkctl release status` and `release wait` name each open pin and the Orker
+holding it. The **host**-scoped complement of the version-scoped `Drained` is
+`orkctl orker drain` (§5, "Removing an Orker safely"): cordon one Orker so it
+opens no new pin, and wait until its open pins have finished.
 
 ### The bucket stops being optional at the second replica
 
@@ -518,50 +510,20 @@ export ORK_S3_SECRET_KEY=…
 export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
 ```
 
-One bucket, seven key families (`pkg/artifacts`):
-
-| keys | what |
-|---|---|
-| `metadata/orkflows/{namespace}/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot; immutable once written |
-| `metadata/orkflows/{namespace}/{name}/@current.json` | which version that orkflow runs: `{"version":…,"updated_at":…}` and nothing else. Moved by `orkctl orkflow promote`; absent means "the head" |
-| `metadata/orkflows/{namespace}/{name}/@head.json` | which version was applied last: `{"version":…,"applied_at":…}`. Moved by `apply`, and moving it IS the apply's commit point |
-| `metadata/namespaces/{name}.json` | namespace registry documents; `default` is synthesized when absent |
-| `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/{namespace}/…` | archived runs: the body, and the key-only index `ListRuns` scans |
-| `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` | task output, one chunk per object, written while the task runs (below) |
-| `orkflows/{orkflow}/{run-id}/{task-id}/{name}` | artifacts, addressed by provenance |
-
-A basename beginning `@` is reserved for per-orkflow metadata stored beside the
-versions, so a pointer can never be read as a version. Two replicas promoting
-at once are arbitrated by the object store's own conditional PUT — the loser is
-told it lost and swaps again against the winner's etag — so promotion needs no
-lock, no lease and nothing in Temporal. Neither pointer holds a copy of the
-document: a second place for it is a second place for it to be wrong.
-
-The head is a pointer for the same reason, and for one more. Each replica
-stamps `created_at` from its own clock, so a head read as "the greatest stamp"
-is decided by whichever replica's clock runs fastest; and an edit's
-`expected_head_version` has to be checked by the write itself, or a competing
-apply lands between the check and the write and the stale edit succeeds
-anyway. Both are settled by the swap. `applied_at` is monotonic — an apply
-never stamps its version earlier than the head it extends — so `orkctl orkflow
-versions` lists them in the order they were applied on a deployment whose
-clocks disagree.
+The store must support conditional `PutObject` (`If-None-Match`/`If-Match`):
+commits, Orkflow pointers and registry documents are arbitrated by it, and
+every Orker probes it at boot and refuses to start on a store that cannot. What lives under which key, who writes it and what
+removes it is `docs/STORAGE.md`.
 
 ### Live task logs: where they are, what bounds them, how long they stay
 
 A task's output is bytes, so it travels as stored objects and never through a
 Temporal payload or the event stream (AGENTS.md §2.2). The Orker executing an
 attempt buffers its lines and flushes them as numbered chunks **while the task
-runs**; `orkctl run logs -f`, `RunService.StreamTaskLogs` and the
-`/ws/runs/{id}/tasks/{task}/logs` socket read them back.
-
-```
-metadata/logs/{run-id}/{task-id}/{attempt}/{seq}         one chunk
-metadata/logs/{run-id}/{task-id}/{attempt}/{seq}.trunc   the truncation notice
-```
-
-Both counters are zero-padded to a fixed width, so a lexicographic listing is
-numeric order: **the key carries the order**, and no reader sorts by
+runs** (`metadata/logs/{run-id}/{task-id}/[{item}/]{attempt}/{seq}`, plus a
+`.trunc` notice); `orkctl run logs -f`, `RunService.StreamTaskLogs` and the
+`/ws/runs/{id}/tasks/{task}/logs` socket read them back. Both counters are
+zero-padded, so **the key carries the order** and no reader sorts by
 modification time, which two clocks and a retry would make a lie.
 
 Because the chunks are in the bucket rather than in the process that produced
@@ -576,228 +538,130 @@ socket) waits for chunks that do not exist yet and returns when the task
 reaches a terminal state. Without `-f` the command prints the chunks the store
 holds when it runs and returns, even against a task that is still writing, so
 a script that wants a transcript is not left tailing a chatty task forever.
-Both resume on `from_seq`, which is the last sequence already received: the
-stream continues **after** it, so a reconnect replays nothing and skips
-nothing.
+Both resume on `from_seq`, the last sequence already received: the stream
+continues **after** it, so a reconnect replays nothing and skips nothing.
 
-**A follow moves with the task's retries.** The key above is per ATTEMPT, and
-a Temporal activity retry changes nothing a task's status shows — the task
-stays RUNNING while try 2 starts writing under a new prefix. So a follow that
-named no attempt (`attempt=0`, which is the default and what the UI's pane
-sends) re-reads which attempt is latest while the one it is on is silent, and
-moves onto a later one, delivering it from its first chunk. A stream that
-resolved the attempt once sat on a dead prefix, delivering nothing, until the
-task ended — while reporting itself live.
+**A follow moves with the task's retries.** Keys are per ATTEMPT, and a
+Temporal retry changes nothing a task's status shows — the task stays RUNNING
+while try 2 writes under a new prefix. So a follow that named no attempt
+(`attempt=0`, the default and what the UI sends) re-reads which attempt is
+latest while the one it is on is silent, and moves onto a later one from its
+first chunk; a stream that resolved the attempt once would sit on a dead
+prefix while reporting itself live.
 
 That makes `from_seq` half a cursor: sequences are dense **per attempt**, so a
-client that reconnects sends `from_attempt` beside it, naming the attempt its
-cursor counted. A cursor from another attempt is dropped and the new attempt
-is delivered from its start, which is the only safe reading — a retry is
-usually shorter than the try that failed, so applying the old cursor would
-deliver nothing at all. An explicit `--attempt N` is pinned and never moves:
-it is a request for one try's transcript.
-
-Every client sends both halves: the browser's pane
-(`ui/src/lib/taskLogs.ts`), the WebSocket bridge that parses them
-(`internal/api/ws.go`), and `orkctl run logs`, which takes `--from-attempt N`
-beside `--from-seq N`. A cursor that names no attempt is **refused** by the
-CLI rather than applied to whichever try happens to be latest: the CLI cannot
-recover the missing half, and guessing it is how a resume silently skips a
-retry's first chunks.
+reconnecting client sends `from_attempt` beside it. A cursor from another
+attempt is dropped and the new attempt is delivered from its start — a retry
+is usually shorter than the try that failed, so applying the old cursor would
+deliver nothing. An explicit `--attempt N` is pinned and never moves. Every
+client sends both halves (`ui/src/lib/taskLogs.ts`, `internal/api/ws.go`,
+`orkctl run logs --from-seq N --from-attempt N`); the CLI **refuses** a cursor
+that names no attempt rather than guess, which is how a resume silently skips
+a retry's first chunks.
 
 Two bounds decide when a chunk is written, and a deployment tunes both:
 
 - `ORK_ORKER_LOG_FLUSH_BYTES` (64 KiB) batches a chatty task, so a hundred
   thousand lines cost a few hundred objects rather than a hundred thousand.
 - `ORK_ORKER_LOG_FLUSH_INTERVAL` (500 ms) bounds the wait for a slow one, so a
-  task printing a line a minute is visible in half a second rather than when it
-  eventually reaches 64 KiB.
+  task printing a line a minute is visible in half a second.
 
 A third bounds the damage. `ORK_ORKER_LOG_MAX_BYTES` (16 MiB) caps ONE task
 attempt: at the cap the Orker writes a final chunk saying so, in words, and
 stores nothing more. **Truncation is visible in the stream**, never silent —
 `orkctl run logs` prints the notice and the RPC sets `truncated` on it. The
 Orker's own memory is one flush buffer per running task, and a single
-over-long line is split rather than accumulated, so neither a chatty task nor
-one that never prints a newline can exhaust it.
+over-long line is split rather than accumulated.
 
 **What one reader costs the engine is bounded in bytes, not in chunks.** A
-replica reads the store one page at a time and holds one page per open
-subscriber: at most **4 MiB of chunk data, plus the one chunk that crossed
-that budget** (`logChunkPage` and `logChunkPageBytes`, `internal/api/logs.go`).
-Both bounds are needed, because a count is not a size — one chunk is whatever
-the Orker flushed, so raising `ORK_ORKER_LOG_FLUSH_BYTES` raises what a page of
-32 chunks weighs and nothing else would notice. Paging costs nothing in
-completeness: a page cut by the budget is followed by another read from the
-sequence it ended on, so a replay of a 16 MiB attempt is whole. Size a replica
-for this per concurrently open pane or `orkctl run logs`, remembering that a
-run detail page opens one per expanded task.
+replica holds one page per open subscriber: at most **4 MiB of chunk data,
+plus the one chunk that crossed that budget** (`logChunkPage`,
+`logChunkPageBytes`, `internal/api/logs.go`). A count alone is not a size —
+raising `ORK_ORKER_LOG_FLUSH_BYTES` raises what a page weighs. A page cut by
+the budget is followed by another read, so a replay is whole. Size a replica
+for this per concurrently open pane or `orkctl run logs`; a run page opens one
+per expanded task.
 
-**Retention-aware cleanup is active and fail-closed.** With
-`ORK_CLEANUP_ENABLED=true`, `ork` periodically lists archived runs whose
-CREATION time is old enough that they *could* be past retention — a cheap
-superset prefilter, using the shortest retention any configured namespace
-has, never the actual gate. For each candidate it asks the underlying cluster
-whether the execution still exists and, if so, when it CLOSED; a run whose
-close time is not yet past its OWN OrkStack namespace's run retention
-(falling back to the deployment maximum) is left alone. One past that cutoff
-is explicitly retired: the cleaner calls the cluster's delete RPC itself
-rather than waiting for anything to expire on its own, then removes that
-run's `metadata/logs/{run-id}/` and
-`metadata/commits/{orkstack-namespace}/{run-id}/` objects. An execution the
-cluster no longer holds (already removed by an earlier pass, or by the
-backstop TTL — see the run-retention section above) is treated as already
-retired: storage is reclaimed with no delete call. The archive body, its
-index, and its cleanup marker remain permanent.
+A reader that meets a removed chunk mid-stream stops at the gap rather than
+skipping it, so a resumed read continues from the last sequence it actually
+received.
 
-Cleanup fails closed. If the retention policy or any namespace's own value is
-unreadable, that iteration deletes nothing. An archived run whose execution
-the cluster reports as STILL RUNNING is refused rather than retired — closing
-would terminate it, and archiving only ever happens after a run's terminal
-event, so this is a defect to surface, not a case to handle silently.
-Per-run storage failures are logged and retried by a later iteration.
-Repeating a successful pass is a no-op because the immutable
-`artifacts_cleaned` sidecar records when a run was retired.
+### Retention cleanup and bucket lifecycle rules
 
-The cleaner deliberately does **not** remove workload artifacts under
-`objects/`. Those keys are content-addressed by logical name and digest, not by
-run id, so two runs can reference the same object and deleting by the producing
-run would corrupt the other run's committed result.
+Two independent mechanisms bound what the bucket keeps, and they are
+complementary, not alternatives.
 
-#### Object reference accounting
+**The cleanup worker** (`ORK_CLEANUP_ENABLED=true`, off by default because it
+deletes durable data) is what enforces run retention (§5, "Run retention"). Each
+pass walks the run index in key order — memory proportional to one page of
+`ORK_CLEANUP_BATCH_SIZE × 2` keys, one pass over the index per iteration —
+prefiltering on creation time with the shortest retention any namespace has.
+For each candidate it asks the cluster whether the execution still exists and
+when it CLOSED; one not yet past its OWN namespace's run retention (else the
+deployment maximum) is left alone. One past it is retired explicitly — the
+cleaner deletes the execution itself rather than waiting for a TTL — and its
+run-scoped storage is removed: logs, attempt records, snapshots, the commit
+records, and its object-reference markers (`docs/STORAGE.md`, "Reclaiming
+space"). An execution the cluster no longer holds is treated as already
+retired. The archive body, its index rows and the cleanup sidecar are
+permanent, so a retired run stays listable and readable.
 
-The archive does now record which physical objects each run's completion
-references, so safe reclamation is possible; what remains deferred is having
-the cleaner perform it automatically. Archiving a run writes two pieces of
-bookkeeping beside the run body:
+Cleanup **fails closed**: if the retention policy or any namespace's own value
+is unreadable, that iteration deletes nothing; an archived run the cluster
+reports as STILL RUNNING is refused rather than retired (deleting would
+terminate it, and archiving happens only after a terminal event, so it is a
+defect to surface); per-run storage failures are logged and retried by a later
+pass; a repeated pass is a no-op because the `artifacts_cleaned` sidecar
+records what was done.
 
-```text
-metadata/index/objects/{sha256(object-id)}/{encoded-run-id}   zero bytes
-metadata/index/run-objects/{encoded-run-id}.json              this run's object ids
-```
+**Workload artifact bytes are not reclaimed automatically.** The archive
+records which objects each run references, and `DeleteUnreferencedObjects`
+can delete an object no archived run claims, but the cleanup worker does not
+call it: it would be a scan of the whole reference index, not a delete under
+one run's prefixes. A bucket lifecycle rule is the operational answer for
+`orkflows/` (and `objects/` on `local`); choose its expiry by how long archived
+artifact references must stay readable — `orkctl run artifact provenance`
+reports `bytes_present: false` for bytes a rule removed.
 
-The marker key is the reference itself — an object with no keys under its
-prefix is referenced by no archived run — so counting references is a prefix
-scan that reads no bodies, exactly like the run index. The per-run list is what
-makes releasing a run's claims cost one read plus one delete per referenced
-object, instead of a scan of every marker in the bucket.
+**Bucket lifecycle rules** expire objects by age regardless of retention, and
+are the only retention for the prefixes nothing in OrkStack deletes. Each
+rule below changes no recorded result, only how far back a read can look —
+provided its expiry is longer than any run lasts (artifact bytes expired
+under a running run fail its dependents' input staging):
 
-Two details in those key shapes are load-bearing:
+| prefix | what a rule shortens |
+|---|---|
+| `metadata/logs/` | task output of finished runs (`orkctl run logs`) |
+| `metadata/attempts/` | per-attempt records (`orkctl run attempts`, the flake index, usage and budgets, which report them as missing evidence) |
+| `orkflows/`, `objects/` | artifact bytes; references stay, `bytes_present` turns false |
+| `metadata/audit/` | the control-plane audit trail (`orkctl admin audit`); no setting shortens it |
+| `metadata/deliveries/` | webhook delivery records (`orkctl webhook deliveries`); a log, never a queue |
+| `metadata/memo/` | cached-task memos; keep the rule no shorter than `ORK_CACHE_MAX_TTL` (a memo past it can never be reused anyway) |
 
-- **The object identity is the whole content-addressed key, not the bare
-  digest.** Equal bytes stored under two different logical names are two
-  distinct stored objects, and refcounting on the digest alone would let one
-  run's cleanup delete the other's object.
-- **The marker's object segment is a SHA-256 *of* the object id, not the id.**
-  An object key embeds a base64 logical name, so it easily exceeds the
-  200-byte limit on one archive key segment; hashing it to fixed-width hex
-  means no artifact name can make a run unarchivable.
-
-Archiving a run writes one marker per referenced object, so its cost is linear
-in the run's artifact count. Those writes are issued with bounded concurrency
-(8 in flight, matching the engine's archive fetches) because archiving happens
-inside a projection activity with a 10-second budget whose failure is only
-logged — a run that exhausts it would end up with no archive body, which is the
-only record of it once Temporal retention passes. Measured against MinIO on
-loopback: 500 objects took 1.464s serially and 297ms with the writes
-overlapped. This reduces the risk rather than removing it: the cost is still
-linear, so a sufficiently wide fan-out run can still approach the budget. Treat
-the ceiling as raised, not gone.
-
-`DeleteRunArtifacts` releases only the calling run's markers and its list. It
-never touches `objects/`. `DeleteUnreferencedObjects` deletes a physical object
-only when that object's marker prefix is empty, and treats an object that is
-already gone as a no-op rather than an error, so a concurrent cleaner, an
-operator, or a lifecycle rule racing the same object cannot turn cleanup red or
-inflate its reclaimed-bytes count.
-
-**Automatic `objects/` reclamation is not wired yet.**
-`DeleteUnreferencedObjects` exists and is covered by tests against live object
-storage, but the cleanup worker deliberately does not call it. Bucket lifecycle
-policy is the operational answer for `objects/` growth until automatic
-reclamation is wired into the cleanup pass.
-
-A note on what "bounded scan" buys. Cleanup pages the run index in index-key
-order, asking for `ORK_CLEANUP_BATCH_SIZE * 2` entries at a time and resuming
-each page after the previous page's last key. Two things follow, and they are
-different claims:
-
-- **Worker memory is proportional to a page**, not to the archive, because the
-  worker holds one page at a time.
-- **A whole iteration costs one pass over the index**, because the backend
-  stops walking as soon as the page is full. On S3 that is `StartAfter` plus an
-  early return; on the local backend it is a key-order descent that prunes any
-  subtree sorting at or before the cursor.
-
-Ordering by key rather than by time is what makes the second claim possible.
-The run index key is
-`metadata/index/runs/{namespace}/{orkflow}/{status}/{stamp}/{run-id}`, so the
-stamp is the fourth segment: a newest-first page cannot be produced without
-reading every key under the prefix and sorting it. Paging a newest-first query
-would therefore re-read the whole index once per page — measured at 22,000 keys
-enumerated over 11 pages for 2,000 archived runs at batch size 100, against
-2,000 keys for the key-order walk. The amplified case is the steady state of a
-healthy deployment, where every eligible run already carries its
-`artifacts_cleaned` sidecar, so the walk pages through them to reach older work.
-
-What is still not bounded is the number of queries. Cleanup state is not a
-dimension of the immutable run index, so an iteration whose eligible runs are
-all already cleaned still issues `archive-size / page` list calls to walk past
-them, even though the total keys they enumerate stays linear.
-
-**Bucket lifecycle rules are the independent retention policy.** Cleanup is
-off by default, so a deployment that has not set `ORK_CLEANUP_ENABLED=true`
-otherwise reclaims nothing. Even when enabled, cleanup retires an execution at
-its own namespace's run retention, actively; a bucket lifecycle rule expires
-objects by age regardless of that. The two mechanisms are complementary
-rather than alternatives.
-
-Lifecycle policy is also the only storage-level mechanism that can bound
-growth under `objects/`, because the cleaner intentionally leaves those shared
-content-addressed artifacts alone. Choose that expiry separately according to
-how long archived artifact references must remain readable. A conservative
-log-only rule can bound task-log growth without touching definitions,
-artifacts, or archived runs:
+Do not expire the other prefixes: `metadata/orkflows/`, `metadata/namespaces/`,
+`metadata/settings/`, `metadata/triggers/` and `metadata/webhooks/` are
+definitions and registries; `metadata/commits/` holds the commits a retry
+adopts and `metadata/snapshots/` what live reads need, both reclaimed by
+cleanup at retention; `metadata/runs/` and `metadata/index/` are the archive.
 
 ```bash
-# MinIO: expire task logs after 30 days, leaving definitions, artifacts and
-# archived runs alone.
-mc ilm rule add local/orkstack-artifacts \
-  --prefix "metadata/logs/" --expire-days 30
-```
+# MinIO: expire task logs after 30 days.
+mc ilm rule add local/orkstack-artifacts --prefix "metadata/logs/" --expire-days 30
 
-```bash
 # AWS S3: the same rule.
 aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
   --lifecycle-configuration '{"Rules":[{"ID":"ork-task-logs","Status":"Enabled",
     "Filter":{"Prefix":"metadata/logs/"},"Expiration":{"Days":30}}]}'
 ```
 
-Webhook delivery records (`metadata/deliveries/`, one small object per settled
-delivery) are a second prefix an operator may expire the same way. Nothing
-reads them to decide anything, so a rule only bounds how far back
-`orkctl webhook deliveries` and Admin → Webhooks → Deliveries can look:
-
-```bash
-# MinIO: expire webhook delivery records after 90 days.
-mc ilm rule add local/orkstack-artifacts \
-  --prefix "metadata/deliveries/" --expire-days 90
-```
-
-This is separate from `DeleteOrkflow`. Orkflow deletion removes the stored
-versions of an Orkflow only after its run-safety gate proves no affected run
-is live. Retention cleanup removes one finished run's logs and commits only
-after Temporal has already removed that execution. They act on different
-objects, have different triggers, and neither deletes archived run records.
-
-A reader that meets a removed chunk mid-stream stops at the gap rather than
-skipping it, so a resumed read continues from the last sequence it actually
-received.
+Retention is separate from `orkctl orkflow delete`, which removes an
+Orkflow's stored versions only after its run-safety gate proves no affected
+run is live; neither deletes archived run records.
 
 ### Versioning is off until you set a build id
 
-With no `ORK_BUILD_ID`, both binaries register unversioned workers and behave
-exactly as they did before versioning existed. That is what keeps a
+With no `ORK_BUILD_ID`, both binaries register unversioned workers and every
+run goes to whatever is polling. That is what keeps a
 single-process `make run-ork` + `make run-orker` working with no configuration
 at all, and it is deliberate: a build id is the release's identity and there is
 no sane value to invent for it.
@@ -848,17 +712,15 @@ of `ork` and `orker` deployed together — and reads the deployment, the
 namespace and the cluster address from the engine it talks to, so there is
 nothing to pass by hand. It refuses, with nothing changed, while the release
 could not carry what it would take: no engine of it running, a pool in use
-with no Orker of it, or **runs started before versioning still executing**
-(§3.5) — the refusal names each and what to start or wait for. The raw cluster
+with no uncordoned Orker of it, a pool that hosts pins with no pin host of it,
+or **runs started before versioning still executing** (§3.5) — the refusal
+names each and what to start or wait for. The raw cluster
 command it makes underneath is listed in §4, "Underneath: the cluster commands".
 
 Backlogged runs start within seconds of it. §3 step 0 is the full first-release
 procedure; every release after that inherits a Current Version from its
-predecessor, and takes over with the same call at §3 step 4.
-
-Measured by `TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent`
-(`internal/engine`), which watches a versioned release receive no workflow task
-at all for 15s and then complete the same run 1s after the routing change.
+predecessor, and takes over with the same call at §3 step 4
+(`TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent`).
 
 ---
 
@@ -1065,8 +927,8 @@ release runs nothing at all (§1).
    pool **anybody is serving now** with no uncordoned Orker of v2 (from the
    Orker inventory, so a pool that is quiet today is still judged); a pool
    that hosts pins with no pin host of v2; or an Orker that did not answer
-   (`UNVERIFIED` — a read that could not be made is never a pass). This
-   replaces reading `describe-version`'s two rows by hand.
+   (`UNVERIFIED` — a read that could not be made is never a pass). A count
+   the cluster could not give reads `unknown`, never 0.
 
 3. **Ramp** (optional but recommended):
 
@@ -1095,8 +957,6 @@ release runs nothing at all (§1).
    flight stays on v1 and finishes there. The command returns only after the
    engine's own channel — what dispatch reads — reports the new routing, or
    says out loud after 10 s that the change is recorded but not yet applied.
-   `test/tools/queue-routing` stays in the test suite as the measurement of
-   that gap; the operator procedure no longer needs it.
 
    A promotion is refused, and nothing is written, when the routing changed
    since the command's own read (`the releases changed since you read them`):
@@ -1119,82 +979,78 @@ release runs nothing at all (§1).
    ```
 
    It exits 0 only when the cluster reports v1 drained **and** no Orker of v1
-   hosts an open pin **and** every Orker answered; it exits 4 at `--timeout`
-   naming every run and pin left, and 1 when v1 takes new runs again. The
-   cluster refreshes its drain verdict on a delay of a few minutes, which is
-   why the default timeout is an hour.
+   hosts an open pin **and** every Orker answered; 4 at `--timeout` (default
+   1h), naming every run and pin left; 1 when v1 takes new runs, is unknown,
+   or the engine stops answering. The cluster refreshes its drain verdict on a
+   delay of minutes. `wait` is a loop in `orkctl`; nothing server-side holds
+   rollout state.
 
-   Stopping v1 while it is still draining leaves its runs stuck with no worker
-   to advance them; they resume if you bring v1 back, but until then they make
-   no progress. Measured, not asserted:
-   `TestIntegration_APinnedRunStrandsWhenItsVersionsOrkerStopsBeforeDrained`
-   (`internal/engine`) stops v1's Orker with v2 current and watches a run
-   pinned to v1 for 45 seconds — its task stays scheduled and unstarted, the
-   run stays `RUNNING`, and it finishes on v1 within a second of v1's Orker
-   coming back.
-
-   The same test holds the other half, which is the dangerous one: **v2 does
-   not pick those tasks up.** The exception in §2 routes an activity to the
-   current release when the workflow's own release has no workers on that
-   channel, and if it ever fired here, skipping this step would silently run an
-   in-flight run's remaining tasks on a newer Orker build — the thing this whole
-   document exists to prevent. The test fails the day that changes.
+   Stopping v1 while it is still draining strands its runs: their tasks stay
+   scheduled and unstarted and the runs stay `RUNNING` until v1's workers come
+   back, and then finish on v1. **v2 does not pick those tasks up** — if the
+   §2 exception ever fired here, an in-flight run's remaining tasks would run
+   silently on a newer Orker build, the thing this document exists to prevent
+   (`TestIntegration_APinnedRunStrandsWhenItsVersionsOrkerStopsBeforeDrained`
+   fails the day that changes).
 
 6. **Stop v1** once `release wait` exits 0 — every replica and every Orker
    carrying that build id. Stopping *some* of them earlier is safe (§5); the
    release is what must not disappear while runs are pinned to it. An Orker
    that hosts an open pin must not be stopped before the pin closes:
-   `orkctl orker drain <orker>` waits for exactly that.
+   `orkctl orker drain <orker>` waits for exactly that. A run holds its release
+   while it waits on an **awaited task** (at most 30 days, the cap on
+   `await.timeout_seconds`), while any fan-out item is unsettled, while a
+   composed child runs (children are counted as runs), and while a failing
+   run's failure handlers run.
 
-   A run with an **awaited task** (`docs/DSL.md` "Awaited tasks") holds the
-   release that started it for as long as it waits — until it is resolved,
-   times out or is cancelled, which is at most 30 days, the cap on
-   `await.timeout_seconds`. Drainage reports it like any running run. During
-   a ramp, apply an Orkflow that uses `await:` only once the release that
-   introduced awaits is Current: a run routed to an older build would treat
-   the await as a container task and fail explicitly, never silently.
+The rollout is held end to end by
+`TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn` (the run
+in flight at the switch finishes wholly on v1, including the task scheduled
+after it) and, through `orkctl`, `TestIntegration_ReleaseRolloutThroughOrkctl`.
 
-   Likewise, apply an Orkflow that uses a **fan-out** (`each:`) only once the
-   release that introduced fan-out is Current. An older engine refuses to
-   compile `each:`, but one asked to start a run of an already-stored version
-   that declares it would drop the unknown field and run the node once as a
-   plain task — explicitly failing `RENDER_FAILED` only when its `with:` reads
-   `.each`, and giving its direct dependents no items. A run with a fan-out
-   holds its release until every item settles, like any running run.
+**Why OrkStack's check is stronger than the cluster's own.** The cluster
+refuses a promotion only for a version no poller was ever seen on, and for one
+missing a channel the current version polled *only if that channel had work
+recently* — a pool whose work arrives weekly passes on a quiet day. It knows
+nothing of cordons, pin hosts, or runs started before versioning.
+`orkctl release` judges every pool anybody is serving, from the Orker
+inventory, and leaves the cluster's guards on underneath.
 
-   Likewise, apply an Orkflow that **composes another** (`uses: orkflow:`) or
-   declares **`outputs:`** only once the release that introduced composition
-   is Current (versioned) or every replica runs it (unversioned). An older
-   engine refuses to apply either construct, but a new engine's submission
-   carries `Task.orkflow` and `RunPlan.children`, and an older run worker's
-   decode of that start fails the run's workflow task — retried until a worker
-   of the new release takes it, which under Pinned versioning may be never.
+### Releases that add Orkflow constructs
 
-   Likewise, apply an Orkflow that declares **`join:`** only once the release
-   that introduced join policies is Current (versioned) or every replica runs
-   it (unversioned). An older engine refuses to apply `join:`, but one asked
-   to start a run of an already-stored version that declares it drops the
-   unknown field and runs every task as `all_succeeded` — and an `any_failed`
-   failure handler would then run after its needs **succeeded** (a rollback
-   after a successful deploy). A failing run — its failure handlers still
-   running — holds its release like any running run.
+A stored Orkflow version outlives the release that applied it. An older
+engine refuses to *apply* a construct it does not know, but asked to *run* an
+already-stored version it decodes the definition with unknown fields dropped.
+So, during a ramp, apply a document that uses a construct only once the
+release that introduced it is Current (versioned) or on every replica
+(unversioned); and before rolling back past it, stop submitting versions that
+use it. What an older release does with each:
 
-A rollout done this way is held by
-`TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn`
-(`internal/engine/versioning_rollout_integration_test.go`): the run in flight
-when v2 became current finishes on v1 and **both** of its tasks — including the
-one scheduled after the switch — are executed by v1's Orker, while the run
-submitted after the switch runs wholly on v2. The same procedure through
-`orkctl` is `TestIntegration_ReleaseRolloutThroughOrkctl`
-(`cmd/orkctl/release_integration_test.go`), including the refusal of a v2 with
-no Orker.
+| construct | an older release running a stored version that uses it |
+|---|---|
+| `await:` | treats the await as a container task and fails it — explicit |
+| `each:` (fan-out) | runs the node once as a plain task, staging no items for its dependents; fails `RENDER_FAILED` only if `with:` reads `.each` — **silent** otherwise |
+| `uses: orkflow:` | an older run worker cannot decode the start (`Task.orkflow`, `RunPlan.children`) and retries the workflow task until a new worker takes it — under Pinned, possibly never; a composed task reaching an older Orker fails `IMAGE_NOT_PINNED` |
+| `outputs:` | returns the leaf aggregation instead of the declared outputs — **silent** |
+| `join:` | runs every task as `all_succeeded`: a `none_failed` re-join is skipped (visible), but an **`any_failed` failure handler runs after its needs SUCCEEDED** (a rollback after a successful deploy) and an `all_done` handler only on success — **silent and destructive** |
+| `cache:` | runs every task uncached; memos left behind are inert — benign |
+| schedules | no `ScheduleFireWorkflow` is registered, so a fire cannot start — pause or delete every schedule (`orkctl schedule pause`/`delete`) first |
 
-Why OrkStack's check is stronger than the cluster's own: the cluster refuses a
-promotion that drops a channel the current release polled only when that
-channel has had work recently, so a pool whose work arrives weekly passes it on
-a quiet day — `TestIntegration_TheClustersOwnGuardAdmitsAReleaseMissingAQuietPool`
-measures exactly that. `orkctl release` judges every pool anybody is serving,
-from the Orker inventory, and leaves the cluster's guard on underneath.
+Before rolling back past join policies, hold every namespace whose current
+versions declare a failure handler (or promote versions without one), then
+release the hold only once none declares one or the deployment is rolled
+forward again:
+
+```bash
+orkctl namespace update NS --hold "rolling back past join policies"
+orkctl release rollback "$OLD"
+orkctl release wait "$NEW"        # runs already on the newer release drain there
+```
+
+Runs already executing on the newer release — items, children and failing
+runs included — stay pinned there and must drain (`orkctl release wait`). The
+Orker-side half of fan-out, caching and failure handlers is checked at submit
+per pool (§1, "Fan-out, caching and failure handlers need every Orker…").
 
 ---
 
@@ -1302,47 +1158,10 @@ argument in §2 applies in full: if the two builds disagree about the command
 stream, the run fails its next workflow task. Use it to rescue a run you would
 otherwise abandon, not as a routine tool.
 
-**Rolling back past fan-out.** The mirror of §3's ramp rule: after rolling
-back to a release that predates fan-out, submit no Orkflow version that
-declares `each:` — that older engine would run each fan-out once as a plain
-task (above). Runs with items in flight stay pinned to the newer release and
-must drain there (`orkctl release wait`).
-
-**Rolling back past composition.** The mirror of §3's ramp rule: after
-rolling back to a release that predates composed Orkflows, submit no Orkflow
-version that composes another or declares `outputs:`. That older engine
-decodes a stored version with unknown fields dropped: a composed task would
-reach an Orker with no image and fail `IMAGE_NOT_PINNED` — explicit — but an
-`outputs:` Orkflow would **silently** return its leaf aggregation instead of
-its declared outputs. Runs with children in flight stay pinned to the newer
-release and must drain there (`orkctl release wait`).
-
-**Rolling back past join policies.** The mirror of §3's ramp rule, and the
-one of these whose silent outcome is destructive. An older engine decodes a
-stored version with unknown fields dropped and runs every task as
-`all_succeeded`: a `none_failed` re-join would be skipped (visible), but an
-**`any_failed` failure handler would run after its needs SUCCEEDED** — a
-rollback after a successful deploy — and an `all_done` handler would run
-only on success. So before rolling back to a release that predates join
-policies, close every namespace whose current Orkflow versions declare a
-failure handler, or promote versions without one first:
-
-```bash
-orkctl namespace update NS --hold "rolling back past join policies"
-orkctl release rollback "$OLD"
-orkctl release wait "$NEW"        # runs already on the newer release drain there
-```
-
-and submit no version that declares `any_failed` or `all_done` on the older
-release. Runs already executing on the newer release, failing ones included,
-stay pinned there and must drain (`orkctl release wait`). Release the hold
-only once the namespace's current versions declare no failure handler, or
-once the deployment is rolled forward again.
-
-**Rolling back past schedules.** A release without schedules has no
-`ScheduleFireWorkflow` registered, so a schedule that fires on it fails to
-start a workflow task. Pause or delete every schedule (`orkctl schedule pause`
-/ `delete`) before rolling back to a release without them.
+**Rolling back past a release that added Orkflow constructs** (fan-out,
+composition, `outputs:`, join policies, caching, schedules) needs the
+preparation in §3, "Releases that add Orkflow constructs" — for join policies
+it is a hold, because the silent outcome is destructive.
 
 ### Back to unversioned workers
 
@@ -1421,12 +1240,11 @@ identity `DescribeWorkerDeployment`, `DescribeWorkerDeploymentVersion`,
 `CountWorkflowExecutions` on its namespace. Without them the three release
 RPCs answer `permission_denied` and nothing else in the engine changes.
 
-**The first rollout after the Orker inventory ships.** Orkers of a build
-older than `orkctl orker list` are not in the inventory: they still make their
-pool in use while their release is current, but they cannot make a pool
-served, so rolling **back** to such a build is refused and the raw command is
-the path; rolling forward from it cannot see its pin hosts, so check pin hosts
-by hand for that one rollout.
+**Releases that predate the Orker inventory.** Their Orkers are not in
+`orkctl orker list`: they still make their pool in use while their release is
+current, but they cannot make a pool served, so rolling **back** to such a
+release is refused and the raw command is the path; rolling forward from one
+cannot see its pin hosts, so check pin hosts by hand for that rollout.
 
 ---
 
@@ -1451,61 +1269,31 @@ by hand for that one rollout.
   `TestListRuns_OrdersRunsByTimeNotByRunID`) and `RunQuery.finish`, which
   orders one page of the archive index (`pkg/artifacts/archive.go`). Those two
   are the whole list.
-- **Any replica answers any run** (§0). Live runs are read from Temporal,
-  finished ones from the archive in the bucket — the half that needs
-  `ORK_ARTIFACT_BACKEND=s3` (§1), because on the default `local` backend each
-  replica archives to its own disk and only that replica can answer for a run
-  past Temporal retention. Nothing durable lives in a process, so a read does
-  not need to reach the replica that started the run — or that replica to
-  still exist.
-- **Listing one namespace's runs is a question the cluster answers.** Each
-  engine registers the `OrkflowNamespace` search attribute on its Temporal
-  namespace at boot (`task.EnsureRunSearchAttributes`, beside the namespace
-  itself) and stamps every run it starts with the namespace that run belongs
-  to, so `run list -n payments` is a visibility predicate rather than a filter
-  over a page of everyone's runs. That distinction is a tenancy one: filtered
-  afterwards, how far the list could see was set by how busy the OTHER
-  namespaces were, and a namespace with one live run behind a neighbour's
-  hundred was told it had none.
+- **Listing runs is a question the cluster answers.** At boot each engine
+  registers three search attributes on its Temporal namespace —
+  `OrkflowNamespace` (`task.EnsureRunSearchAttributes`) and
+  `OrkflowOriginKind`/`OrkflowOriginId`
+  (`task.EnsureRunOriginSearchAttributes`) — and stamps every run it starts
+  with them, so `run list -n payments`, `run list --origin trigger:trg-…` and
+  the runs page's **Started by** filter are visibility predicates over live
+  runs rather than filters over a page of everyone's. That is a tenancy
+  property: filtered afterwards, how far a list could see would be set by how
+  busy the OTHER namespaces were. Finished runs come from the archive, whose
+  run and origin index keys begin with the namespace (`docs/STORAGE.md`).
 
-  A cluster that refuses the registration — the operator API behind an
-  authorizer, a visibility store without custom attributes — still boots, and
-  says so once:
-
-  ```
-  WARN visibility does not index a run's orkflow namespace
-       search_attribute=OrkflowNamespace
-       consequence="listing a namespace's live runs scans the whole index"
-  ```
-
-  The reader then reads the index to the end instead of trusting a predicate
-  the cluster cannot apply, which is slower and still the tenant's own answer;
-  a list that cannot finish even that walk fails rather than returning a short
-  one. Runs started *before* the attribute existed carry the namespace in
-  their memo but not in the index, so they are listed by id and, once
-  finished, from the archive — whose key already begins with the namespace.
-- **Listing runs by what started them is the same kind of question.** The
-  engine also registers `OrkflowOriginKind` and `OrkflowOriginId`
-  (`task.EnsureRunOriginSearchAttributes`) and stamps each run with its
-  origin's kind and id, so `run list --origin trigger:trg-…` and the runs
-  page's **Started by** filter are a visibility predicate for live runs; for
-  finished runs the archive keeps a zero-byte origin index beside its run
-  index (`docs/STORAGE.md`). The two origin attributes carry their OWN answer
-  on the boot line, separate from the namespace one, so a cluster that
-  accepted `OrkflowNamespace` in an earlier release and refuses the new pair
-  keeps its namespace predicate:
-
-  ```
-  INFO connected to temporal address=… namespace=… run_namespace_index=true run_origin_index=true
-  ```
-
-  On refusal the engine still boots and warns once
-  (`search_attribute=OrkflowOriginKind,OrkflowOriginId`,
-  `consequence="filtering runs by origin walks the whole index"`); an
-  origin-filtered list then reads the index to the end and fails, naming both
-  attributes, rather than return a short list. A run started before origins
-  existed has no origin, renders `unrecorded`, and is matched by no origin
-  filter. No setting controls any of this.
+  The boot line reports each answer separately
+  (`INFO connected to temporal … run_namespace_index=true run_origin_index=true`),
+  so a cluster that refuses one pair keeps the other. A cluster that refuses
+  the registration — the operator API behind an authorizer, a visibility
+  store without custom attributes — still boots and warns once
+  (`WARN visibility does not index …`, naming the attribute and the
+  consequence); the reader then walks the whole index instead of trusting a
+  predicate the cluster cannot apply, and a list that cannot finish that walk
+  fails rather than returning a short one. A run started before
+  `OrkflowNamespace` was stamped carries its namespace only in its memo: it
+  is read by id while live and listed from the archive once finished. A run
+  started before origins were recorded renders `unrecorded` and matches no
+  origin filter. No setting controls any of this.
 - **A double submit is settled by the cluster, not by a replica.** One
   `--idempotency-key` sent to two replicas at once returns one run id, because
   the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not
@@ -1514,16 +1302,6 @@ by hand for that one rollout.
   can both submit `nightly` and get their own run
   (`api.submission.claimKey`); unscoped, the second would be answered with the
   first tenant's run id and its work would never start.
-- **`ORK_ORKER_QUEUE` must be set on both binaries.** Set it on only one and
-  runs strand in `RUNNING`: the Orker polls one queue while the engine
-  dispatches to another. It moves **task execution only** — the engine's own
-  workers stay on `ork-tasks` and `ork-engine-events` (§2). A task's own
-  `pool:` in the DSL is how a step reaches a dedicated Orker pool
-  (`docs/DSL.md`), and it cannot be used to escape this setting: `pool: main`
-  is the name of whatever queue you bound here, so it follows the override
-  rather than outranking it, and no document can route itself back onto
-  `ork-tasks` by naming the default pool
-  (`TestPoolResolver_NamingTheDefaultPoolCannotEscapeTheOperatorsRoute`).
 - **One namespace, one deployment.** The engine's queue name is fixed, so two
   OrkStack deployments in one namespace would fight over the current version of
   `ork-tasks`. Give each environment its own namespace, as above.
@@ -1548,23 +1326,25 @@ by hand for that one rollout.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 
-Nine reads answer every operational question about a deployment, and each is
-available from the CLI and over Connect. Seven of them are answered from the
-cluster or the bucket, so **any replica answers them and they all answer the
-same** (`AGENTS.md` §7). Two — system information and the activity catalog —
-are deliberately not.
+Every operational read is available from the CLI, over Connect and in the
+UI's Admin pages. All but two are answered from the cluster or the bucket, so
+**any replica answers them and they all answer the same** (`AGENTS.md` §7).
+System information and the activity catalog deliberately describe the replica
+that answered.
 
 | read | CLI | where the answer comes from |
 |---|---|---|
 | system information | `orkctl admin info` | **this replica's own build and configuration** |
-| maximum run retention | `orkctl admin retention get \| set <duration>` | the retention policy document in the bucket — **any replica answers**, and writable |
-| pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
-| namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket — each namespace's own `run_retention` lives here too |
 | activity catalog | `orkctl activity list` | **this replica's own configuration** (`ORK_ACTIVITY_CATALOG`), resolved to pinned digests at apply time |
-| audit trail | `orkctl admin audit` | the audit records in the bucket (`metadata/audit/`) — **any replica answers**, for writes any replica recorded |
-| webhook deliveries | `orkctl webhook deliveries \| delivery \| redeliver` | the delivery records in the bucket (`metadata/deliveries/`) — **any replica answers**, for deliveries any replica made |
-| Orker inventory | `orkctl orker list \| get \| cordon \| uncordon \| drain` | the cluster's poller information, plus each Orker itself — **any replica answers**; nothing stores an Orker |
-| releases | `orkctl release status \| ramp \| promote \| rollback \| wait` | the cluster's routing, drain verdict and run index, plus the Orker inventory — **any replica answers**, and writable (ramp, promote). The engine's cluster identity needs the worker-deployment read and write permissions on its namespace (§4, "Underneath") |
+| maximum run retention | `orkctl admin retention get \| set` | `metadata/settings/retention-policy.json`; writable |
+| image policy | `orkctl admin image-policy get \| set` | `metadata/settings/image-policy.json`; writable |
+| namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket, including each namespace's retention, admission, budget and policies |
+| pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
+| Orker inventory | `orkctl orker list \| get \| cordon \| uncordon \| drain` | the cluster's poller information, plus each Orker itself; nothing stores an Orker |
+| releases | `orkctl release status \| ramp \| promote \| rollback \| wait` | the cluster's routing, drain verdict and run index, plus the Orker inventory; writable (ramp, promote, rollback). Needs the worker-deployment permissions (§4, "Underneath") |
+| audit trail | `orkctl admin audit` | `metadata/audit/` |
+| webhook deliveries | `orkctl webhook deliveries \| delivery \| redeliver` | `metadata/deliveries/` |
+| usage | `orkctl stats usage` | the run archive and attempt records (`docs/STATS.md` §8) |
 
 `orkctl admin info` describes **the replica that answered**, and it says so in
 its own output. Behind a load balancer that is whichever replica took the
@@ -1718,19 +1498,30 @@ What a cordon does, precisely:
   every Orker is cordoned reports its poller-derived count for the freshness
   window and zero after it.
 
-`SIGTERM` is unchanged: it stops polling and cancels in-flight work as before.
-An operator who wants in-flight work to finish first cordons and drains; the
-Orker does not cordon itself on `SIGTERM`.
+`SIGTERM` stops polling and cancels in-flight work; the Orker does not cordon
+itself on it. An operator who wants in-flight work to finish first cordons
+and drains.
 
-`ORK_ORKER_ID` must be unique across the **whole deployment**: it is the
-Orker's Temporal worker identity and names its control channel. Two Orkers
+**Why the cordon lives only in the process.** An Orker is stateless and
+disposable (`AGENTS.md` §5): a stored cordon would be durable state about a
+process that may no longer exist, and a replacement reusing its id would
+inherit a stale refusal. So nothing stores an Orker or its cordon — no
+registry, no drain state, no server-side drain (`drain` is a loop in
+`orkctl`). The inventory is read from the cluster: every Orker also polls a
+**presence** channel nothing is dispatched to, so a cordoned Orker that has
+stopped polling its pool stays listed for the whole drain, and a **control**
+channel of its own, so a cordon or a describe reaches exactly one host rather
+than whichever Orker of a pool picks it up. Both are internal names, two idle
+long polls per Orker.
+
+`ORK_ORKER_ID` must therefore be unique across the **whole deployment**: it
+is the Orker's worker identity and names its control channel. Two Orkers
 sharing one show as a single row whose `unavailable_reason` names the
-collision, and a cordon could land on either. The derived default
-(`<host>-<hash of the work root>`) is unique by construction. Each Orker holds
-two more idle long polls against the cluster (its control and presence
-channels) than before this capability existed. An Orker of an older release
-polls neither: `orkctl pool list` still counts it, `orkctl orker list` does
-not list it, and `orkctl orker cordon` answers `NotFound` for it.
+collision, and a cordon could land on either; the derived default
+(`<host>-<hash of the work root>`) is unique by construction. An Orker of a
+release that predates the inventory polls neither channel: `orkctl pool list`
+still counts it, `orkctl orker list` does not list it, and `orkctl orker
+cordon` answers `NotFound`.
 
 Every cordon and uncordon is an audit record (`orker.cordon`,
 `orker.uncordon`, target the Orker id, the reason in its detail, no
@@ -1741,8 +1532,8 @@ namespace).
 Two fields of a namespace's own document decide whether it admits a new run.
 Both are checked at one place — `SubmitRun`'s preparation, the gate every door
 goes through (`orkctl run submit`, `run again`, the UI's submit dialog, a
-trigger invoke) — after the namespace and orkflow resolve and before any pool
-is looked at, so `--allow-empty-pool` does not bypass them. A refusal is
+trigger invoke, a schedule fire) — after the namespace and orkflow resolve
+and before any pool is looked at, so `--allow-empty-pool` does not bypass them. A refusal is
 `failed_precondition`, synchronous, and leaves nothing behind: no run id, no
 idempotency claim, no recorded run. Nothing is queued; releasing a hold starts
 nothing that was refused while it was set.
@@ -1772,10 +1563,15 @@ nothing that was refused while it was set.
   submission was accepted returns the refusal instead of that run while the
   namespace is held or full. The run the key names is unaffected and readable
   by id and in `run list`.
-- **Rolling upgrade.** A release older than this one discards both fields and
-  admits, so during a rollout a hold is enforced only by replicas already on
-  this release; an older `orkctl` writing a held namespace back through
-  `namespace update` drops the hold — run the `orkctl` of the release.
+- **Rolling upgrade.** A release that predates admission discards both
+  fields and admits, so during a rollout a hold is enforced only by replicas
+  that know it; an older `orkctl` writing a held namespace back through
+  `namespace update` drops the hold — run the `orkctl` of the release. The
+  same holds for every later namespace field (budget, `allowed_secrets`,
+  `require_signed_by`).
+- **A hold is a namespace write**, so it is audited as `namespace.update`
+  with `hold=`/`max_running=` in the detail; a refused submit writes no audit
+  record (its count is the metric below).
 - **Refusals are counted** on `ork.runs.refused` (§7, "Lifecycle metrics") and
   logged once per refusal at Info as `run refused`, with `namespace`,
   `orkflow`, `reason` (`NAMESPACE_HELD` or `MAX_RUNNING_REACHED`) and
@@ -1784,16 +1580,18 @@ nothing that was refused while it was set.
 
 ### Attributing control-plane writes
 
-Every call of a control-plane **write** RPC — namespace create/update/delete,
-orkflow apply/promote/delete, run cancel, trigger create/delete, webhook
-register/delete (over Connect and over the legacy `/v1/webhooks` routes), the
-retention maximum, and the image policy (`image_policy.update`, its keys
-recorded by fingerprint, never as PEM) — writes one immutable record, succeeded or refused, to
-`metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` in the bucket, before the response
-leaves the engine. Reads are never recorded, and neither is `SubmitRun` nor a
-trigger invocation: a run's own record is already the durable fact.
-`orkctl admin audit` and Admin → Audit read the trail back, newest first,
-from any replica:
+Every call of a control-plane **write** RPC writes one immutable record,
+succeeded or refused, to `metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` before
+the response leaves the engine. One Connect interceptor over every handler
+does it, so no handler can forget; the classification table is
+`auditedProcedures` (`internal/api/audit.go`), and the recorded actions are
+listed in [UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Control-plane audit trail"
+(webhook writes are recorded over the legacy `/v1/webhooks` routes too).
+Reads are never recorded, and neither is `SubmitRun` nor a trigger or await
+callback invocation: a run's own record and origin are already the durable
+fact, and an object per submit would make the trail a log pipeline.
+Deployment-wide writes carry no namespace. `orkctl admin audit` and Admin →
+Audit read the trail back, newest first, from any replica:
 
 ```
 WHEN                  PRINCIPAL        ACTION            NAMESPACE      TARGET         RESULT
@@ -1822,19 +1620,27 @@ OrkStack records it and does not authenticate it.
   Behind a gateway that is the gateway's address; no `X-Forwarded-For` or
   other proxy header is consulted. The client's address is in the gateway's
   own access log.
+- **No secret is ever recorded.** The extractors never read a webhook
+  signing secret or a trigger token.
 - **The write is best-effort.** An audit store that refuses the write never
-  changes what the write RPC returns: the engine logs `audit record dropped`
-  at warn (action, target, principal, error) and counts
+  changes what the write RPC returns — an audit outage must not stop an
+  operator holding a namespace mid-incident: the engine logs `audit record
+  dropped` at warn (action, target, principal, error) and counts
   `ork.audit.records{outcome="dropped"}` (§7 "Metrics").
+- **It is a record, not a mechanism.** Nothing in OrkStack reads an audit
+  record to decide anything, and nothing is notified when one lands. There is
+  no hash chain: immutability comes from create-only writes plus the bucket's
+  own object-lock or versioning policy, which is the operator's.
 - **Nothing reclaims the trail.** The cleanup worker never touches
   `metadata/audit/`; a bucket lifecycle rule on that prefix is the operator's
   retention for it. There is no setting: a deployment that upgrades gets
   records, unattributed until something asserts a principal.
 - **A listing is bounded.** The default window is the seven days before now;
-  `--since`/`--until` choose another. A page that would examine more than
-  5000 records before filling is refused (`resource_exhausted`) rather than
-  answered from the subset it read — narrow the window, and page a long
-  compliance range month by month.
+  `--since`/`--until` choose another, and `--action` (a prefix), `--principal`
+  and `-n` filter. Pages hold 50 records by default, 200 at most. A page that
+  would examine more than 5000 records before filling is refused
+  (`resource_exhausted`) rather than answered from the subset it read —
+  narrow the window, and page a long compliance range month by month.
 
 ### Namespace budgets: reserved consumption, soft or enforced
 
@@ -1881,13 +1687,16 @@ orkctl namespace update analytics --clear-budget              # unbounded
   retention, with `ORK_CLEANUP_ENABLED=true`, measures only what cleanup has not
   reclaimed — `coverage begins …` shows where — so an enforced budget can admit
   where a complete count would refuse, never the reverse.
-- **Rolling upgrade.** An Orker of an older release writes records without a
-  reservation (counted in task-seconds, reported as `attempts carry no
-  reservation`). An `ork` of an older release discards `budget` and admits,
-  and answers `GetUsage` with `Unimplemented`, so during a rollout an enforced
-  budget is enforced only by replicas already on this release; an older
-  `orkctl` round-tripping a namespace drops `budget` — run the `orkctl` of the
-  release.
+- **No alert, no dollar figure.** A soft budget is visible on every read
+  and notifies nothing: "already warned" would be stored state. Alerting
+  ahead of a threshold belongs to the telemetry pipeline
+  (`ork.orker.task.duration`, labelled by namespace and pool). OrkStack knows
+  what it reserved, never what it cost.
+- **Rolling upgrade.** An Orker that predates reservations writes records
+  without one (counted in task-seconds, reported as `attempts carry no
+  reservation`). An `ork` that predates budgets discards `budget`, admits,
+  and answers `GetUsage` with `Unimplemented`, so during a rollout an
+  enforced budget is enforced only by replicas that know it.
 - **Refusals are counted** on `ork.runs.refused` with
   `ork.refusal.reason="budget_exceeded"` or `"budget_unmeasurable"`, and logged
   once as `run refused` with `period`, `cpu_seconds_used`,
@@ -1899,14 +1708,15 @@ orkctl namespace update analytics --clear-budget              # unbounded
 OrkStack keeps Temporal as an implementation detail an operator never has to
 think about (AGENTS.md §7) — including here. What an operator sets is **run
 retention**: how long a finished run stays readable before OrkStack retires
-it and reclaims its run-scoped storage (logs, completion commits, snapshots).
+it and reclaims its run-scoped storage (logs, attempt records, snapshots,
+completion commits; the archived run record itself is kept).
 There are two knobs, and they compose:
 
 - **A deployment maximum** (`orkctl admin retention get|set <duration>`,
   `SystemService.GetRetentionPolicy`/`UpdateRetentionPolicy`): the ceiling no
   namespace may exceed, and what a namespace that sets nothing inherits.
-  Deployment-wide, stored with the deployment (not a live cluster read), so
-  any replica answers the same.
+  Stored at `metadata/settings/retention-policy.json` (not a live cluster
+  read), so any replica answers the same.
 - **A run retention per namespace**
   (`orkctl namespace create|update --run-retention <duration>`,
   `orkstack.v1.Namespace.run_retention`): how long THAT namespace's finished
@@ -1919,8 +1729,8 @@ Retention counts from when a run **finished**, never from when it was
 submitted: a run that executed for two days under a 72h retention is readable
 for 72h after it ended, not 72h after it started.
 
-**Enforcement needs `ORK_CLEANUP_ENABLED=true`** (§ "The bucket stops being
-optional…" above): the cleanup worker is what actually retires a run at its
+**Enforcement needs `ORK_CLEANUP_ENABLED=true`** (§1, "Retention cleanup and
+bucket lifecycle rules"): the cleanup worker is what actually retires a run at its
 namespace's own retention. A deployment that never enables it keeps every run
 for the deployment maximum plus the enforcement margin
 (`ORK_CLEANUP_RETENTION_BUFFER`) regardless of what any namespace asks for —
@@ -1971,17 +1781,14 @@ Namespaces page for each namespace's own value — the ceiling sits apart from
 `/admin/namespaces` because it bounds all of them, not because it belongs to
 one.
 
-**Migration.** An existing deployment's current retention becomes the new
-deployment maximum automatically, the first time an upgraded `ork` boots: it
-observes the cluster's current retention TTL and stores it as the maximum
-unchanged (nothing is tightened), then raises the underlying TTL by the
-enforcement margin. Every existing namespace inherits that maximum until an
-operator gives it its own, tighter value — nobody is opted into shorter
-retention by upgrading. Enabling `ORK_CLEANUP_ENABLED` for the first time
-moves retirement from whenever the (now-hidden) backstop TTL would have fired
-to the moment each run actually crosses its own namespace's retention —
-sooner, by up to the enforcement margin, and namespace-aware for the first
-time.
+**First boot.** With no stored policy, the engine stores the cluster's
+current retention TTL (72h on a fresh cluster) as the maximum, unchanged —
+nobody is opted into shorter retention by upgrading — then raises the
+underlying TTL by the margin. It must store the value rather than re-derive
+it each boot, or every restart would raise the TTL by another margin.
+Enabling `ORK_CLEANUP_ENABLED` for the first time moves retirement from the
+backstop TTL to the moment each run crosses its own namespace's retention:
+sooner, by up to the margin.
 
 ### Secrets on a shared pool
 
@@ -1996,16 +1803,19 @@ places; a source must pass **both**:
   process that reads the value, at dispatch, before the image is pulled; a
   source outside it fails the task `SECRET_NOT_PERMITTED` (a
   `ContractViolation`, never retried). Empty resolves every source of an
-  allowed scheme, as before this setting existed. A malformed entry, or one
+  allowed scheme. A malformed entry, or one
   naming a scheme outside `orker.secret_schemes`, stops the Orker at boot.
 - **The tenant's list, per namespace:** `orkctl namespace update NAME
   --allow-secret 'env:SANDBOX_*'` (or Admin → Namespaces). It is enforced by
   the engine at validate and apply, as an issue on
   `tasks[i].secrets[j].source`, and again at every submit — `run submit`,
-  `run again`, the UI, a trigger invoke — so a definition applied before the
-  list existed is refused at its next submit. It is never retroactive: a run
-  already accepted finishes on the definition it pinned; stop one with
-  `orkctl run cancel`. Empty means unrestricted.
+  `run again`, the UI, a trigger invoke, a schedule fire — before a run id is
+  minted, so a definition applied before the list existed is refused at its
+  next submit. It is never retroactive: a run already accepted finishes on
+  the definition it pinned; stop one with `orkctl run cancel`. Empty (or
+  `--clear-allowed-secrets`) means unrestricted. The list never travels to
+  the Orker: a list handed to the Orker by its caller would be no check on
+  the caller, and the engine's submit gate is the one no client bypasses.
 
 A namespace can therefore only ever narrow what its Orkers permit. The grammar
 is deliberately small: a literal scheme, and `*` as the one wildcard, which
@@ -2019,9 +1829,75 @@ as it always has. Nothing here stores, logs or compares a secret value;
 refusals carry the source string only.
 
 During a rolling upgrade the namespace list is enforced only by engine
-replicas already at the release that added it; the Orker floor is unaffected
-by the rollout. An older `orkctl` round-tripping a namespace through `update`
-drops the list — run the `orkctl` of the release.
+replicas that know it; the Orker floor is unaffected by the rollout.
+
+### Image supply-chain policy
+
+By default any `uses:` a document names is pulled and run: the engine pins it
+to a digest at apply, which answers "did the image change under us?" and
+never "should this image run here at all?". Two halves bound that, and an
+image must pass both:
+
+- **The deployment floor:** `orkctl admin image-policy set` (or Admin →
+  Image policy), one document at `metadata/settings/image-policy.json`.
+  `--require-digest` refuses a `uses:` written as a mutable tag — a catalog
+  name (`uses: shell`) is exempt, because the catalog is the operator's own
+  configuration; write the catalog's references with digests if that matters.
+  `--allowed-registry PREFIX` (repeatable) bounds the resolved
+  `{registry}/{repository}` to literal prefixes matched on `/` boundaries
+  (`ghcr.io/acme/` matches `ghcr.io/acme/migrate`, never
+  `ghcr.io/acmeevil/…`); a list that would exclude a catalog activity is
+  refused. `--signing-key NAME=cosign.pub` registers a cosign PUBLIC key by
+  name (ECDSA P-256; OrkStack never holds a private key). Empty — the state of
+  every deployment until an operator writes one — permits everything.
+- **The tenant's tightening, per namespace:** `orkctl namespace update NAME
+  --require-signed-by cosign:KEY` requires every image executed in the
+  namespace to carry a valid cosign signature by that key. A namespace can
+  tighten the floor and has no field with which to loosen it. A key a
+  namespace names cannot be removed from the floor until the namespace is
+  cleared (`--clear-require-signed-by`).
+
+The policy is checked at three doors: at validate and apply (an issue on
+`tasks[i].uses`), at every submit — `run submit`, `run again`, the UI, a
+trigger invoke, a schedule fire — before a run id is minted (`failed_precondition`, so a
+definition stored before the policy tightened is refused at its next
+submit), and by the Orker before it builds a workspace or pulls, against the
+policy the run pinned at submit. A run keeps the policy **and the key** it
+was submitted under: tightening the floor, moving a namespace's signer or
+rotating a key never reaches a run already accepted; stop one with `orkctl
+run cancel`. A committed attempt is adopted without being judged again.
+
+Verification is one fixed scheme — key-based cosign signatures over the
+simple-signing payload; no keyless signing, transparency log, attestation or
+policy language. The Orker verifies the signature itself, never taking a
+caller's word that it was checked, with its own registry client:
+`orker.registry_auth_file` / `ORK_ORKER_REGISTRY_AUTH_FILE` is a docker
+`config.json` used only for the signature manifest and blob GETs (empty is
+anonymous, which public registries allow); the engine uses
+`ORK_REGISTRY_AUTH_FILE` for the same GETs at apply. A registry that cannot
+be asked is never a pass: `unavailable` at apply and submit, and a retried
+`IMAGE_SIGNATURE_UNAVAILABLE` at the Orker. A missing signature is
+`IMAGE_NOT_SIGNED`, a signature by another key or over another digest
+`IMAGE_SIGNATURE_INVALID`, an image outside the floor `IMAGE_NOT_PERMITTED`
+— all three `ContractViolation`, never retried.
+
+Signing an image, with the `cosign` CLI and default settings:
+
+```bash
+cosign generate-key-pair                                  # cosign.key, cosign.pub
+cosign sign --key cosign.key ghcr.io/acme/migrate@sha256:<digest>
+orkctl admin image-policy set --signing-key release=cosign.pub
+orkctl namespace update prod-payments --require-signed-by cosign:release
+```
+
+To rotate a key without a gap, add the new key under a new name, re-sign,
+move each namespace's `--require-signed-by`, then `--remove-signing-key` the
+old name. During a rolling upgrade the policy is enforced only by engine
+replicas that know it, and a run submitted through an older replica carries
+no policy for the Orker to check; the window is the rollout.
+Every image digest that ever ran is already recorded per attempt
+(`orkctl run attempts`, the `TaskAttempt.image` of each attempt record) —
+that is the audit read, and nothing new is written for it.
 
 ---
 
@@ -2098,9 +1974,10 @@ variables of its own for "which vendor," only for the handful of switches
 OpenTelemetry has no opinion on (§1's table, above).
 
 **The admin listener is separate from the API, on purpose.**
-`ORK_ADMIN_ADDR` — empty by default, so nothing opens — serves `/healthz`,
-`/readyz`, `/metrics` (only once the `prometheus` metrics exporter is asked
-for) and `/debug/pprof/` (only with `ORK_PPROF_ENABLED=true`). It is never
+`ORK_ADMIN_ADDR` — empty by default, so nothing opens — serves `/healthz`
+(200 once the listener is up), `/readyz` (503 until the binary serves, then
+200), `/metrics` (only once the `prometheus` metrics exporter is asked for)
+and `/debug/pprof/` (only with `ORK_PPROF_ENABLED=true`). It is never
 `ORK_HTTP_ADDR`: the API port answers client traffic, the admin port answers
 an operator's scraper, and conflating them would mean a scrape config error
 or a slow `/debug/pprof/` request competing with a run's own requests. Bind it
@@ -2109,72 +1986,6 @@ something to expose publicly, and `ORK_PPROF_ENABLED`'s own default reflects
 that an Orker's heap holds resolved secret bytes. Suggested addresses for a
 single-host deployment: `:9464` for `ork`, `:9465` for `orker`, so one host can
 run both without a collision.
-
-### Image supply-chain policy
-
-By default any `uses:` a document names is pulled and run: the engine pins it
-to a digest at apply, which answers "did the image change under us?" and
-never "should this image run here at all?". Two halves bound that, and an
-image must pass both:
-
-- **The deployment floor:** `orkctl admin image-policy set` (or Admin →
-  Image policy), one document at `metadata/settings/image-policy.json`.
-  `--require-digest` refuses a `uses:` written as a mutable tag — a catalog
-  name (`uses: shell`) is exempt, because the catalog is the operator's own
-  configuration; write the catalog's references with digests if that matters.
-  `--allowed-registry PREFIX` (repeatable) bounds the resolved
-  `{registry}/{repository}` to literal prefixes matched on `/` boundaries
-  (`ghcr.io/acme/` matches `ghcr.io/acme/migrate`, never
-  `ghcr.io/acmeevil/…`); a list that would exclude a catalog activity is
-  refused. `--signing-key NAME=cosign.pub` registers a cosign PUBLIC key by
-  name (ECDSA P-256; OrkStack never holds a private key). Empty — the state of
-  every deployment until an operator writes one — permits everything, as
-  before.
-- **The tenant's tightening, per namespace:** `orkctl namespace update NAME
-  --require-signed-by cosign:KEY` requires every image executed in the
-  namespace to carry a valid cosign signature by that key. A namespace can
-  tighten the floor and has no field with which to loosen it. A key a
-  namespace names cannot be removed from the floor until the namespace is
-  cleared (`--clear-require-signed-by`).
-
-The policy is checked at three doors: at validate and apply (an issue on
-`tasks[i].uses`), at every submit — `run submit`, `run again`, the UI, a
-trigger invoke — before a run id is minted (`failed_precondition`, so a
-definition stored before the policy tightened is refused at its next
-submit), and by the Orker before it builds a workspace or pulls, against the
-policy the run pinned at submit. A run keeps the policy **and the key** it
-was submitted under: tightening the floor, moving a namespace's signer or
-rotating a key never reaches a run already accepted; stop one with `orkctl
-run cancel`. A committed attempt is adopted without being judged again.
-
-The Orker verifies the signature itself with its own registry client:
-`orker.registry_auth_file` / `ORK_ORKER_REGISTRY_AUTH_FILE` is a docker
-`config.json` used only for the signature manifest and blob GETs (empty is
-anonymous, which public registries allow); the engine uses
-`ORK_REGISTRY_AUTH_FILE` for the same GETs at apply. A registry that cannot
-be asked is never a pass: `unavailable` at apply and submit, and a retried
-`IMAGE_SIGNATURE_UNAVAILABLE` at the Orker. A missing signature is
-`IMAGE_NOT_SIGNED`, a signature by another key or over another digest
-`IMAGE_SIGNATURE_INVALID`, an image outside the floor `IMAGE_NOT_PERMITTED`
-— all three `ContractViolation`, never retried.
-
-Signing an image, with the `cosign` CLI and default settings:
-
-```bash
-cosign generate-key-pair                                  # cosign.key, cosign.pub
-cosign sign --key cosign.key ghcr.io/acme/migrate@sha256:<digest>
-orkctl admin image-policy set --signing-key release=cosign.pub
-orkctl namespace update prod-payments --require-signed-by cosign:release
-```
-
-To rotate a key without a gap, add the new key under a new name, re-sign,
-move each namespace's `--require-signed-by`, then `--remove-signing-key` the
-old name. During a rolling upgrade the policy is enforced only by engine
-replicas at the release that added it, and a run submitted through an older
-replica carries no policy for the Orker to check; the window is the rollout.
-Every image digest that ever ran is already recorded per attempt
-(`orkctl run attempts`, the `TaskAttempt.image` of each attempt record) —
-that is the audit read, and nothing new is written for it.
 
 ### Recipes
 
@@ -2270,7 +2081,7 @@ the default (`tracecontext,baggage`) is what every recipe above assumes.
 
 Every process log line this package emits carries `trace_id` (and `span_id`)
 when one is live on the context it was logged from — the engine's structured
-"run event" line (§ "Lifecycle metrics", below) included — so a trace found in
+"run event" line ("Lifecycle metrics", below) included — so a trace found in
 Tempo or Jaeger and a log line found in Loki are one click apart in either
 direction: search the trace ID as a LogQL label, or read `trace_id` off a log
 line and paste it into Tempo's search.
@@ -2279,7 +2090,7 @@ A task's `task.json` carries an optional `trace` key —
 `{"traceparent": "...", "tracestate": "..."}` in the same shape the W3C
 `traceparent`/`tracestate` HTTP headers use — so a workload that wants its own
 work folded into the same trace can propagate it. This is informational, not
-part of the OCI Activity Contract's ABI (§3.2): it is present only when tracing
+part of the OCI Activity Contract's ABI (`docs/OCI_ACTIVITY_CONTRACT.md` §3.2): it is present only when tracing
 is on and a real span exists, absent otherwise, and no image needs to read it
 to run correctly. A workload that does not recognize the key ignores it.
 
@@ -2308,11 +2119,8 @@ without deciding to. With it on, point a continuous profiler at
 - **Pyroscope's own agent-less scrape**, pointed directly at the same
   `/debug/pprof/` path with `application_name: ork` (or `orker`) and the
   matching `spy_name: gospy`.
-- **Datadog Agent**, continuous profiler, `PYROSCOPE`-style pull is not what
-  Datadog uses — instead enable `DD_PROFILING_ENABLED` in a small sidecar that
-  scrapes `/debug/pprof/profile` and `/debug/pprof/heap` and pushes them, or
-  point Datadog's own Go continuous profiler integration at the same paths per
-  its documented pprof-scrape mode.
+- **Datadog**, which pushes rather than pulls: a small sidecar that scrapes
+  `/debug/pprof/profile` and `/debug/pprof/heap` and forwards them.
 
 None of this needs any code change: `net/http/pprof`'s handlers are the
 standard library's, and every scraper above speaks pprof's wire format
@@ -2348,9 +2156,9 @@ policy names one — they can land on a different sink than the process default
 |---|---|---|
 | `ork.runs` | `status` | engine, once per terminal run (succeeded/failed/canceled) |
 | `ork.run.duration` | `status` | engine, same event, `finished_at - started_at` |
-| `ork.tasks` | `status`, `failure_category` | engine, once per terminal task (succeeded/failed) |
-| `ork.task.duration` | `status` | engine, same event, `finished_at - scheduled_at` (dispatch to finish; `started_at` on a run recorded before `scheduled_at` existed) |
-| `ork.task.attempts` | `status` | engine, same event: the attempt number the task finished on |
+| `ork.tasks` | `ork.pool`, `status`, `failure_category`, `ork.cache.outcome` | engine, once per terminal task (succeeded/failed) |
+| `ork.task.duration` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event, `finished_at - scheduled_at` (dispatch to finish; `started_at` on a run recorded before `scheduled_at` existed) |
+| `ork.task.attempts` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event: the attempt number the task finished on — one observation per fan-out item, none for a composed task |
 | `ork.orker.tasks` | `outcome`, `ork.failure.reason` | Orker, once per attempt (`outcome`: `succeeded`, `failed`, `canceled`, or `adopted` for a retry that found an existing durable commit and ran no container) |
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
@@ -2358,7 +2166,12 @@ policy names one — they can land on a different sink than the process default
 | `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | engine, once per submission the namespace's hold, `max_running` or enforced budget refused (`namespace_held`, `max_running_reached`, `budget_exceeded`, `budget_unmeasurable`); not a run, not counted on `ork.runs` |
 
 (The rows above omit `ork.namespace` even though every run and task metric
-carries it; `ork.runs.refused` names it explicitly.) Under `prometheus` the
+carries it; `ork.runs.refused` names it explicitly. `ork.cache.outcome` —
+`hit`, `miss` or `bypassed` — is set only for a cached task, so a deployment
+with none keeps exactly its series, and a hit's short duration never reads as
+a fast container. A fan-out item is never a metric label; `ork.item` appears
+only on task-log records and attempt spans, beside `ork.cache.outcome` and
+`ork.cache.miss_reason` on the span.) Under `prometheus` the
 refusal counter renders as
 `ork_runs_refused_total{ork_namespace="payments",ork_refusal_reason="namespace_held"}`,
 by the same name derivation as every other counter here. Under high
@@ -2405,9 +2218,8 @@ sinks:
     metrics_endpoint: http://otel-collector.internal:4318/v1/metrics
 ```
 
-A sink name is a slug (`^[a-z][a-z0-9_-]{0,63}$`) — it becomes a label, a
-selector a namespace names, and eventually a file path segment, none of which
-forgive arbitrary punctuation. `endpoint` is the base URL used for any signal
+A sink name is a slug (`^[a-z][a-z0-9_-]{0,63}$`) — it becomes a label and a
+selector a namespace names. `endpoint` is the base URL used for any signal
 that has no more specific `logs_endpoint`/`traces_endpoint`/`metrics_endpoint`;
 at least one of the two must resolve for every signal this deployment has
 switched on for that sink, or boot refuses with the sink's name and the
@@ -2549,13 +2361,12 @@ priced what your backend charges for the cardinality.
 Task output is always durable, whether or not any of this is configured:
 every stdout/stderr line an activity container writes keeps flowing to object
 storage as numbered chunks and out through the streaming API and UI (§1,
-"Live task logs"), exactly as before this document's telemetry variables
-existed. `ORK_ORKER_TASK_LOG_EXPORT=true` adds a second, independent copy —
+"Live task logs"). `ORK_ORKER_TASK_LOG_EXPORT=true` adds a second, independent copy —
 each line is also emitted as an OTel log record (requires
 `OTEL_LOGS_EXPORTER=otlp`), carrying `ork.stream` (`stdout`, `stderr`, or
 `ork` for the Orker's own framing), `ork.run_id`, `ork.task_id`,
-`ork.attempt`, `ork.namespace`, `ork.orkflow.name`/`.version`/`.digest`, and
-`ork.pool`. It is off by default because its volume is exactly the workloads'
+`ork.attempt`, `ork.item` (a fan-out item), `ork.namespace`,
+`ork.orkflow.name`/`.version`/`.digest`, and `ork.pool`. It is off by default because its volume is exactly the workloads'
 own output — a chatty task doubles its log traffic the moment this is turned
 on.
 

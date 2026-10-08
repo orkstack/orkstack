@@ -12,7 +12,13 @@ orkctl -n payments stats --since 2026-05-01T09:00:00Z
 orkctl -n payments stats --json    # the same answer, for a machine
 orkctl -n payments stats failures  # the window's failed runs, grouped (§6)
 orkctl -n payments stats flakes    # the window's tasks that needed a retry (§7)
+orkctl -n payments stats usage     # reserved cpu and memory, held against a budget (§8)
+orkctl -n payments cache stats     # cached tasks' hit rate and stored memos (§9)
 ```
+
+Every read here aggregates one namespace over one window. One run's own
+timing — queue wait against run time, and each attempt's phases — is a run
+read, `orkctl run timing` (`docs/UI_CLI_PARITY.md`, "Task timing").
 
 ## 1. Two sources, and no third
 
@@ -138,7 +144,7 @@ Percentiles are **nearest rank**: p95 is the smallest sample at or above 95% of
 them. Every value returned is a duration some run actually took, which an
 interpolated percentile over a handful of runs would not be.
 
-## 4. The cache
+## 4. The response cache
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -456,7 +462,7 @@ number that looks real:
 - `coverage_since` — the creation time of the oldest run in the window that
   still has a record: where reclamation has reached.
 - `attempts_without_resources` — recorded attempts with no reservation (written
-  before this release, or refused before one was resolved): their time is in
+  by an Orker that predates reservations, or refused before one was resolved): their time is in
   task-seconds, not in cpu- or GiB-seconds, which are then lower bounds.
 - `unreported_attempts` — attempts below a task's highest that left no record.
 - `attempts_unmeasured` — records with no usable interval; counted in nothing.
