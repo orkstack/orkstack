@@ -87,10 +87,6 @@ const pinAffinityRuns = 20
 // notices, or the kill would be proving something about a finished task.
 const pinAffinityHoldSeconds = 60
 
-// pinAffinityAlpineTag is the image both proofs run. Cheap, fast, public, and
-// already the image internal/orker's own pin proof uses.
-const pinAffinityAlpineTag = "alpine:3.20"
-
 // pinOrker is ONE real Orker of this suite's pool: a real Activities, the
 // Temporal worker it is registered on, and — the load-bearing part — a record
 // of every task it was ASKED to run, written the instant it was asked.

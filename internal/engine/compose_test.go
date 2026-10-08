@@ -70,12 +70,6 @@ func (m *memComposeStore) Put(_ context.Context, name string, r io.Reader, opts 
 		SizeBytes: int64(len(data)), SHA256: digest, Metadata: opts.Metadata}, nil
 }
 
-func (m *memComposeStore) readURIs() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]string(nil), m.reads...)
-}
-
 // childStart is one mocked child run's start, as the child saw it.
 type childStart struct {
 	workflowID string

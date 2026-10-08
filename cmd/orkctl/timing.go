@@ -54,8 +54,6 @@ type quantity struct {
 	reason  string
 }
 
-func notApplicable() quantity { return quantity{} }
-
 func unknownBecause(reason string) quantity {
 	return quantity{applies: true, reason: reason}
 }

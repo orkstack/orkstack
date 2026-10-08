@@ -137,11 +137,6 @@ type Activities struct {
 	pins *openPins
 }
 
-// NewActivities builds the activity set with environment-derived defaults.
-func NewActivities(store artifacts.Store) *Activities {
-	return NewActivitiesWithOptions(store, Options{})
-}
-
 // NewActivitiesWithOptions builds the activity set with explicit options.
 func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	workRoot := opts.WorkRoot

@@ -12,7 +12,6 @@ const statuses: Record<string, Status> = {
 };
 
 export function statusFromParam(value: string): Status { return statuses[value] ?? Status.UNSPECIFIED; }
-export function statusParam(value: Status): string { return Object.entries(statuses).find(([, status]) => status === value)?.[0] ?? ''; }
 export function pageSize(value: string): number { const parsed = Number(value); return [10, 25, 50, 100].includes(parsed) ? parsed : 25; }
 export function instant(value: string) {
 	if (!value) return undefined;

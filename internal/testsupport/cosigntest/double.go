@@ -84,13 +84,6 @@ func (d *Double) Sign(repo, digest string, layers ...Layer) {
 	d.PutManifest(repo, SignatureTag(digest), OCIManifestType, Manifest(layers))
 }
 
-// Unsign removes repo@digest's signature object: its tag answers 404.
-func (d *Double) Unsign(repo, digest string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	delete(d.manifests, repo+"/manifests/"+SignatureTag(digest))
-}
-
 // SetStatus makes every request whose path contains fragment answer status.
 // A zero status removes the override.
 func (d *Double) SetStatus(fragment string, status int) {

@@ -419,23 +419,6 @@ func (c *Client) getBlob(ctx context.Context, host, repo, digest string) ([]byte
 	return body, nil
 }
 
-// SplitReference splits "host/repo:tag" or "host/repo@digest" into its parts.
-// The host is the first segment; this is test tooling for loopback
-// registries, not a general parser.
-func SplitReference(ref string) (host, repo, tagOrDigest string, err error) {
-	host, rest, ok := strings.Cut(ref, "/")
-	if !ok || rest == "" {
-		return "", "", "", fmt.Errorf("reference %q has no host/repository", ref)
-	}
-	if at := strings.LastIndex(rest, "@"); at >= 0 {
-		return host, rest[:at], rest[at+1:], nil
-	}
-	if colon := strings.LastIndex(rest, ":"); colon >= 0 {
-		return host, rest[:colon], rest[colon+1:], nil
-	}
-	return host, rest, "latest", nil
-}
-
 // hostOf strips a scheme from an httptest URL.
 func hostOf(raw string) string {
 	if u, err := url.Parse(raw); err == nil && u.Host != "" {

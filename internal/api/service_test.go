@@ -194,10 +194,6 @@ func (f *fixture) runClient() orkstackv1connect.RunServiceClient {
 	return orkstackv1connect.NewRunServiceClient(f.client, f.baseURL)
 }
 
-func (f *fixture) activityClient() orkstackv1connect.ActivityServiceClient {
-	return orkstackv1connect.NewActivityServiceClient(f.client, f.baseURL)
-}
-
 func helloYAML(t *testing.T) string {
 	t.Helper()
 	source, err := os.ReadFile("../../examples/hello.ork.yaml")

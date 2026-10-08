@@ -716,16 +716,6 @@ func TestExecute_CacheHitReturnsTheSourceResultWithoutAContainer(t *testing.T) {
 	}
 }
 
-func countLines(lines []string, needle string) int {
-	n := 0
-	for _, l := range lines {
-		if strings.Contains(l, needle) {
-			n++
-		}
-	}
-	return n
-}
-
 func TestExecute_HitOfAHitCommitNamesTheOriginalProducer(t *testing.T) {
 	h := newCacheHarness(t)
 	h.produce(t, cachedTaskInput(t, "ork-run-1"))
