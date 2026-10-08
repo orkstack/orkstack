@@ -236,18 +236,13 @@ A **decide task** emits a JSON enum or boolean, compared with `eq` in a
 
 ## Caching
 
-Nothing in OrkStack expects a task to produce the same output from the same
-input: tasks run at least once and may read the clock, the network and their
-environment. Exactly one opt-in feature depends on it — `cache:` — and writing
-`cache:` is **your assertion** that reusing an earlier result for the same
-memo key is as good as running the filter again. OrkStack cannot verify it.
-This section tells you when that assertion is false for this image. The
-inventory below was derived from jq 1.7's own list of builtins (218 entries,
-read in the image), not from memory, and is re-derived whenever the `jq~1.7`
-constraint moves.
-
-A task that mounts a secret is never cached. This image refuses a task that
-mounts one at all, so that rule never applies here.
+Writing `cache:` is **your assertion** that reusing an earlier result for the
+same memo key is as good as running the filter again; OrkStack cannot verify
+it (`docs/ACTIVITY_IMAGES.md`, "Network and caching"). This section tells you
+when that assertion is false for this image. The inventory covers every jq
+1.7 builtin and must be re-derived from jq's own builtin list whenever the
+`jq~1.7` constraint moves. (A task that mounts a secret is never cached; this
+image refuses one at all.)
 
 **Unsafe to cache when** the filter
 
@@ -341,9 +336,9 @@ The declared values are the three keys an `as:` run reports.
 
 ## Cancellation
 
-jq runs in the background under a TERM trap (§10.2 rule 2a), so cancelling a
-run interrupts a long filter within the grace period rather than being
-escalated to SIGKILL; the task then fails with the filter's exit status named.
+jq runs in the background under a TERM trap (the OCI Activity Contract's
+§10.1 rule 2a), so cancelling a run interrupts a long filter within the grace
+period rather than being escalated to SIGKILL.
 
 ## What this image does not do
 

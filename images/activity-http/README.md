@@ -4,20 +4,10 @@ Performs one HTTP request and reports the response as data. A reference
 implementation of the OCI Activity Contract: `curl` makes the request, `jq`
 writes the result, and there is no OrkStack SDK.
 
-### Why `curl`, when §10.1 says "jq is the only SDK"
-
-That annotation sits on **activity-shell's** Dockerfile, and the rule it states
-is that no image needs an **OrkStack** SDK — not that an image may install no
-packages. An HTTP client that cannot make an HTTP request would be a strange
-reading of it. What the rule forbids is a library that knows about OrkStack:
-some `orkstack-sdk` a workload must link against to be scheduled, report
-progress, or hand back results. This image links against nothing of the sort.
-It reads `/orkstack/input/config.json`, writes `/orkstack/output/values.json`,
-and exits — which is the entire ABI, and is exactly what a third-party image
-built on `curl` would do.
-
-The falsification test for the whole design is the Bash fixture, and it needs
-`cat`, `jq` and a redirect. That is the claim §10.1 is protecting.
+"No SDK" means no library that knows about OrkStack, not no packages: this
+image installs `curl` to do its work and `jq` to speak the ABI, and links
+against nothing that schedules it, reports progress or hands back results —
+exactly what a third-party image built on `curl` would do.
 
 ```yaml
 - id: notify
@@ -32,7 +22,7 @@ The falsification test for the whole design is the Bash fixture, and it needs
 
 ## Configuration
 
-Read from `/orkstack/input/config.json` (§3.3).
+Read from `/orkstack/input/config.json`.
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -58,10 +48,11 @@ the request. Branch on `status` in your Orkflow:
 condition: '{{ eq .tasks.notify.output.status 200.0 }}'
 ```
 
-The activity fails (non-zero exit) only when the request could not be
-performed at all — DNS failure, connection refused, TLS failure, or the
-request exceeding `timeoutSeconds`. Those are the cases a retry can fix, so
-they are the cases that become retryable `ActivityFailed`.
+The activity fails (exit `1`, an ordinary `ActivityFailed`) only when the
+request could not be performed at all — a missing `url`, DNS failure,
+connection refused, TLS failure, or the request exceeding `timeoutSeconds`.
+Those are the cases a retry can fix; give the task a `retry:` if you want one.
+An unknown `op` exits `2`.
 
 This is a documented contract of *this image*, not a platform rule.
 
@@ -97,8 +88,10 @@ The image declares its `with:` contract in the
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
 "Declaring the interface"), so `orkctl orkflow validate` and apply check a
 task's `with:` before anything runs: a missing required key or an unknown
-`op` is an error, an undeclared key a warning. Five shared keys, six ops that read nothing beyond them, `get` when `op` is absent, and every `values.json` key of Output — `json` included, although it is present only for a JSON body of at most 1 MiB. The label, as the
-Dockerfile carries it:
+`op` is an error, an undeclared key a warning. Five shared keys, six ops that
+read nothing beyond them, `get` when `op` is absent, and every `values.json`
+key of Output — `json` included, although it is present only for a JSON body
+of at most 1 MiB. The label, as the Dockerfile carries it:
 
 ```dockerfile
 LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type":"string","required":true},"headers":{"type":"object"},"body":{"type":"string"},"timeoutSeconds":{"type":"number"},"captureBodyAs":{"type":"string"}},"ops":{"get":{},"post":{},"put":{},"patch":{},"delete":{},"head":{}},"defaultOp":"get","values":{"status":{"type":"number"},"headers":{"type":"object"},"durationMs":{"type":"number"},"sizeBytes":{"type":"number"},"json":{"type":"object"}}}'
@@ -108,9 +101,14 @@ LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type
 
 ## Cancellation
 
-curl runs in the background under a TERM trap (§10.2 rule 2a), so cancellation
-interrupts an in-flight request within the grace period rather than being
-escalated to SIGKILL.
+curl runs in the background under a TERM trap (the contract's §10.1 rule 2a),
+so cancellation interrupts an in-flight request within the grace period rather
+than being escalated to SIGKILL.
+
+## Environment
+
+The image sets no variable and honours the task's `env:`: curl reads its own
+(`HTTPS_PROXY`, `NO_PROXY`, …) like anywhere else.
 
 ## Building
 

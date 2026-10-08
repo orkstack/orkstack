@@ -55,7 +55,7 @@ fail() {
 # resolve_read turns a configured source into an absolute container path and
 # leaves the result in RESOLVED. It is deliberately NOT a $( ) helper: `fail`
 # inside a command substitution would exit only the subshell and let the script
-# carry on with an empty path — the same subshell hazard as §10.2 rule 2b.
+# carry on with an empty path — the same subshell hazard as §10.1 rule 2b.
 #
 # Relative paths resolve under /orkstack/input (§10.2); absolute paths must
 # already be inside the workspace. A `..` component is refused rather than

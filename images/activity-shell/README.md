@@ -3,7 +3,8 @@
 Runs a command, a script, or an expression inside the activity container and
 reports what happened. It is a reference implementation of the OCI Activity
 Contract (`docs/OCI_ACTIVITY_CONTRACT.md`): it uses exactly the public ABI, has
-no OrkStack SDK, and reads its whole world out of `/orkstack`.
+no OrkStack SDK, and reads its whole world out of `/orkstack`. Its
+`entry.sh` is the reference for the contract's entry-script rules (§10.1–§10.2).
 
 ```yaml
 - id: migrate
@@ -16,7 +17,7 @@ no OrkStack SDK, and reads its whole world out of `/orkstack`.
 ## Configuration
 
 The `with:` block is rendered by the Orker and delivered as
-`/orkstack/input/config.json` (§3.3). This image reads four keys.
+`/orkstack/input/config.json`. This image reads four keys.
 
 | Key | Type | Ops | Meaning |
 |---|---|---|---|
@@ -29,8 +30,7 @@ The `with:` block is rendered by the Orker and delivered as
 
 `command` is a **JSON array**, and each element becomes exactly one argv
 element. It is never handed to `sh -c`. A rendered value therefore cannot
-become code, whatever it contains — this is the shell-injection fix of §10.2
-rule 8, and it is measured in §14.18:
+become code, whatever it contains (the contract's §10.1 rule 8):
 
 ```yaml
 command: ["echo", "hello; touch /orkstack/output/artifacts/PWNED"]
@@ -84,8 +84,9 @@ rule; it is how the platform avoids inventing a magic exit code. `exec` and
 ```
 
 The workload's stdout still reaches the container log stream and the durable
-`stdout.log`; `eval` captures it by redirection rather than by command
-substitution, precisely so that stays true (§14.18).
+`stdout.log`: `eval` captures it by redirection, never by command
+substitution, which would also lose cancellation (the contract's §10.1
+rule 2b).
 
 An unknown `op` exits `2` with a message on stderr.
 
@@ -98,7 +99,7 @@ An unknown `op` exits `2` with a message on stderr.
 
 The scan of `output/artifacts/` is not recursive, and a directory, symlink,
 device, socket or FIFO there fails the activity with
-`ContractViolation/ARTIFACT_NOT_A_FILE` (§3.5). Archive a hierarchy yourself,
+`ContractViolation/ARTIFACT_NOT_A_FILE`. Archive a hierarchy yourself,
 e.g. as `workspace.tar.gz`. Names must be valid UTF-8.
 
 ## Interface
@@ -107,8 +108,9 @@ The image declares its `with:` contract in the
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
 "Declaring the interface"), so `orkctl orkflow validate` and apply check a
 task's `with:` before anything runs: a missing required key or an unknown
-`op` is an error, an undeclared key a warning. Three ops, `exec` when `op` is absent, and every `values.json` key of Output — `value` is the captured stdout of `op: eval`. The label, as the
-Dockerfile carries it:
+`op` is an error, an undeclared key a warning. Three ops, `exec` when `op`
+is absent, and every `values.json` key of Output — `value` is the captured
+stdout of `op: eval`. The label, as the Dockerfile carries it:
 
 ```dockerfile
 LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"exec":{"fields":{"command":{"type":"array","required":true}}},"script":{"fields":{"script":{"type":"string","required":true},"interpreter":{"type":"string"},"command":{"type":"array"}}},"eval":{"fields":{"command":{"type":"array","required":true}}}},"defaultOp":"exec","values":{"exitCode":{"type":"number"},"scriptPath":{"type":"string"},"value":{"type":"string"}}}'
@@ -118,23 +120,24 @@ LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"exec":{"fields
 
 ## stdout, stderr, and cancellation
 
-stdout and stderr are captured independently and byte-exact (§3.6). Plain text
-is enough; there is no logging SDK.
+stdout and stderr are captured independently and byte-exact. Plain text is
+enough; there is no logging SDK.
 
 Cancellation arrives as an ordinary SIGTERM, is forwarded to the workload, and
 the workload gets `limits.cancellationGracePeriodSeconds` to clean up before
 SIGKILL. Ordinary Unix signal handling is all that is required of a workload.
 The entry script runs the workload in the background under a TERM trap rather
 than `exec`ing it, so that both halves of the contract hold: the workload
-observes the signal **and** `values.json` still gets written (§10.2 rule 2a,
-measured in §14.14).
+observes the signal **and** `values.json` still gets written (the contract's
+§10.1 rule 2a).
 
 ## Environment
 
-There is none to read. Everything about the activity — run identity, image
-digest, limits, paths, input artifacts, secret paths — is in
-`/orkstack/input/task.json` (§3.2). Environment variables are not part of the
-ABI.
+The platform sets no variable: everything about the activity — run identity,
+image digest, limits, paths, input artifacts, secret paths — is in
+`/orkstack/input/task.json`. The image sets none either, and the workload
+inherits the task's `env:` unchanged, plus what the container runtime adds
+(under Docker, `HOSTNAME`).
 
 ## Building
 

@@ -156,21 +156,19 @@ unqualified: `default`, `quote`, `squote`, `indent`, `toUpper`, `toLower`,
 
 ## Caching
 
-Nothing in OrkStack expects a task to produce the same output from the same
-input: tasks run at least once and may read the clock, the network and their
-environment. Exactly one opt-in feature depends on it — `cache:` — and writing
-`cache:` is **your assertion** that reusing an earlier result for the same
-memo key is as good as rendering again. OrkStack cannot verify it. This
-section tells you which functions make that assertion false.
+Writing `cache:` is **your assertion** that reusing an earlier result for the
+same memo key is as good as rendering again; OrkStack cannot verify it
+(`docs/ACTIVITY_IMAGES.md`, "Network and caching"). This section tells you
+which functions make that assertion false.
 
-A task that mounts a secret is never cached. This image refuses a task that
-mounts one at all, so that rule never applies here.
+A task that mounts a secret is never cached; this image refuses such a task
+at all.
 
-This inventory is for gomplate 4.3.3, the version the Dockerfile pins, and is
-re-derived when `GOMPLATE_VERSION` moves. It was derived from gomplate's own
-function reference at the release's source tag, cross-checked against the
-functions the binary registers, and every function that could read ambient
-state was run on the release binary — not written from memory.
+This inventory is for gomplate 4.3.3, the version the Dockerfile pins. When
+`GOMPLATE_VERSION` moves it must be re-derived from gomplate's function
+reference at the release's tag, cross-checked against the functions the
+binary registers, with every function that could read ambient state run on
+the release binary.
 
 **Unsafe to cache when** the template calls one of these:
 
@@ -340,9 +338,10 @@ LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"render":{"fiel
 
 ## Cancellation
 
-gomplate runs in the background under a TERM trap (§10.2 rule 2a), so a
-cancellation reaches it within the grace period rather than being escalated to
-SIGKILL, and a cancelled render publishes no artifact.
+gomplate runs in the background under a TERM trap (the OCI Activity
+Contract's §10.1 rule 2a), so a cancellation reaches it within the grace
+period rather than being escalated to SIGKILL, and a cancelled render
+publishes no artifact.
 
 ## What this image does not do
 
