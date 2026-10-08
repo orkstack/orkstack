@@ -295,8 +295,11 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 		if !reflect.DeepEqual(seen, wantSeen) {
 			t.Fatalf("the order service saw %v, want %v", seen, wantSeen)
 		}
+		// The http image writes `body:` to its request file with `jq -r`,
+		// which ends it with one newline (images/activity-http/entry.sh); the
+		// bytes before it are exactly the text prepare built.
 		for i, key := range []string{"reservation", "payment", "shipment"} {
-			if string(requests[i].Body) != prepared[key] {
+			if string(requests[i].Body) != fmt.Sprint(prepared[key])+"\n" {
 				t.Fatalf("%s body = %q, want what prepare built: %q", key, requests[i].Body, prepared[key])
 			}
 		}

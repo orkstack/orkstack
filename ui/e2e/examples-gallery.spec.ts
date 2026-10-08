@@ -133,12 +133,16 @@ test('P2: a new example applies, plans and runs from the browser', async ({ page
 	await expect(page.getByTestId('apply-validate')).toHaveText('Validate');
 	await expect(page.getByTestId('apply-validation-issue')).toHaveCount(0);
 	await page.getByTestId('apply-submit').click();
-	await expect(page.getByTestId('apply-success')).toContainText('Applied decide-and-route@0.1.0', { timeout: 60_000 });
+	// An apply with no warning goes straight to the Orkflow's page; the
+	// `apply-success` banner is shown only when warnings remain to be read
+	// (ui/src/routes/apply/+page.svelte).
+	await page.waitForURL(/\/orkflows\/decide-and-route/, { timeout: 60_000 });
+	await expect(page.getByTestId('orkflow-name')).toContainText('decide-and-route');
+	await expect(page.getByTestId('orkflow-version')).toHaveText('v0.1.0');
 	note('P2 applied decide-and-route@0.1.0 from its card with no validation issue');
 
 	// Plan, with the decision supplied: a condition that reads a key under
 	// `result` cannot be evaluated without it.
-	await page.goto(`${UI}/orkflows/decide-and-route?ns=${NS}`);
 	await page.getByTestId('orkflow-submit-run').click();
 	await expect(page.getByTestId('orkflow-submit-dialog')).toBeVisible();
 	await page.getByText('Advanced submission options').click();
