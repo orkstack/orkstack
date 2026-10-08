@@ -1,10 +1,10 @@
 import { expect, test, type Page } from './test';
-import { execFileSync, execSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { catalogEnv, ensureActivityImages, orkerEnv } from './harness';
+import { catalogEnv, ensureActivityImages, orkerEnv, killStarted, trackChild } from './harness';
 import { selectNamespace } from './uiHelpers';
 
 // The whole logs-dashboard story, in one browser session against the real
@@ -94,7 +94,6 @@ const SCROLLBACK = 2000;
 // minting a new STAMP, and the survivors go looking for a run nobody started.
 test.describe.configure({ mode: 'serial' });
 
-const children: ChildProcess[] = [];
 // The run the dashboard test fails on purpose, which the fingerprint test
 // after it groups, deep-links to and then reclaims.
 let failedRun = '';
@@ -130,8 +129,7 @@ function spawnLogged(
 	});
 	child.stdout?.pipe(out);
 	child.stderr?.pipe(out);
-	children.push(child);
-	return child;
+	return trackChild(child);
 }
 
 async function waitFor(
@@ -164,27 +162,6 @@ function tcpOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
 			resolve(false);
 		});
 	});
-}
-
-async function killAll(): Promise<void> {
-	const survivors = children.splice(0);
-	for (const child of survivors) {
-		if (child.exitCode === null && !child.signalCode) child.kill('SIGTERM');
-	}
-	const deadline = Date.now() + 10_000;
-	for (const child of survivors) {
-		while (child.exitCode === null && !child.signalCode && Date.now() < deadline) {
-			await new Promise((r) => setTimeout(r, 100));
-		}
-		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
-	}
-	// AGENTS.md §11.1: never leave a stray engine or Orker behind, and anchor both
-	// patterns — unanchored, `bin/ork` also matches `bin/orkctl`.
-	try {
-		execSync("pkill -f '/bin/orker$' || true; pkill -f '/bin/ork$' || true", { timeout: 5_000 });
-	} catch {
-		// pkill exit status is informational only
-	}
 }
 
 /** rpc calls one named engine directly, so a test can say WHICH replica. */
@@ -505,7 +482,7 @@ test.afterAll(async () => {
 		// The engines may already be gone, or the registry may refuse. Either
 		// way the run is over and nothing below depends on it.
 	}
-	await killAll();
+	await killStarted();
 });
 
 // The live half: the pane follows while the task runs, keeps the

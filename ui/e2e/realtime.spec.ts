@@ -1,11 +1,11 @@
 import { expect, test } from './test';
-import { execFileSync, execSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { catalogEnv, containerHost, ensureActivityImages, orkerEnv, s3Env } from './harness';
+import { catalogEnv, containerHost, ensureActivityImages, orkerEnv, s3Env, killStarted, trackChild } from './harness';
 
 // Realtime proof: real engine + real Orker + built UI, driven by a browser.
 // The spec submits hello-ork through the UI form and asserts the run page
@@ -34,7 +34,6 @@ const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'realtime')
 	: path.join(uiDir, 'test-results', 'realtime');
 
-const children: ChildProcess[] = [];
 let stubServer: Server | undefined;
 let stubPort = 0;
 let runUrl = '';
@@ -59,8 +58,7 @@ function spawnLogged(
 	});
 	child.stdout?.pipe(out);
 	child.stderr?.pipe(out);
-	children.push(child);
-	return child;
+	return trackChild(child);
 }
 
 async function waitFor(
@@ -93,28 +91,6 @@ function tcpOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
 			resolve(false);
 		});
 	});
-}
-
-async function killAll(): Promise<void> {
-	const survivors = children.splice(0);
-	for (const child of survivors) {
-		if (child.exitCode === null && !child.signalCode) child.kill('SIGTERM');
-	}
-	const deadline = Date.now() + 8_000;
-	for (const child of survivors) {
-		while (child.exitCode === null && !child.signalCode && Date.now() < deadline) {
-			await new Promise((r) => setTimeout(r, 100));
-		}
-		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
-	}
-	// Backstop per AGENTS.md §11.1: never leave stray ork processes behind.
-	try {
-		execSync("pkill -f 'bin/orker' || true; pkill -f 'bin/ork' || true", {
-			timeout: 5_000
-		});
-	} catch {
-		// pkill exit status is informational only
-	}
 }
 
 test.beforeAll(async () => {
@@ -238,7 +214,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-	await killAll();
+	await killStarted();
 	stubServer?.close();
 });
 

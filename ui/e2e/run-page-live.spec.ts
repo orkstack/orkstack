@@ -6,7 +6,7 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	noteTo,
 	orkerEnv,
 	proofOut,
@@ -171,7 +171,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-	await killAll();
+	await killStarted();
 });
 
 test('a running task shows what it is doing now: waiting, phase and bytes, cancelling', async ({ page }) => {

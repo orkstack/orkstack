@@ -7,7 +7,7 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	orkerEnv,
 	proofOut,
 	rpc as callEngine,
@@ -103,7 +103,7 @@ test.beforeAll(async () => {
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: completedWorkflow() });
 });
 
-test.afterAll(async () => { await killAll(); });
+test.afterAll(async () => { await killStarted(); });
 
 test('cancel confirmation, authoritative status, pinned version, deep links and rerun review survive one operator flow', async ({ page }) => {
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: NAME });

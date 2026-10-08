@@ -6,7 +6,7 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	noteTo,
 	orkerEnv,
 	proofOut,
@@ -109,7 +109,7 @@ test.beforeAll(async () => {
 	note(`namespace ${NS}, orkflow ${NAME}@0.1.0, engine ${ENGINE}, ui ${UI}`);
 });
 
-test.afterAll(async () => { await killAll(); });
+test.afterAll(async () => { await killStarted(); });
 
 /** Submits from the orkflow's dialog and returns the run id and the token the one-time panel disclosed. */
 async function submitWithCallback(page: Page): Promise<{ runId: string; token: string; command: string }> {

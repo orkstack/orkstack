@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-	catalogEnv, clusterEnv, ensureActivityImages, killAll, orkerEnv, proofOut,
+	catalogEnv, clusterEnv, ensureActivityImages, killStarted, orkerEnv, proofOut,
 	rpc as callEngine, s3Env, spawnLogged, tcpOpen, uiDir, repoRoot, waitFor, waitForEngine
 } from './harness';
 import { selectOption } from './uiHelpers';
@@ -62,7 +62,7 @@ test.beforeAll(async () => {
 	await waitFor('all fixture runs to reach the list index', async () => (await rpc<{ runs: unknown[] }>('RunService/ListRuns', { namespace: NS, orkflowName: FLOW, pageSize: 25 })).runs.length === RUNS);
 });
 
-test.afterAll(async () => { await killAll(); });
+test.afterAll(async () => { await killStarted(); });
 
 /** The run rows on screen, by testid, in the order they render. */
 function rowIDs(page: Page) {

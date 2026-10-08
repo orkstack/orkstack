@@ -5,7 +5,7 @@ import path from "node:path";
 import {
   catalogEnv,
   clusterEnv,
-  killAll,
+  killStarted,
   proofOut,
   rpc as callEngine,
   s3Env,
@@ -110,7 +110,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await killAll();
+  await killStarted();
 });
 
 test("the delete control confirms irreversible deletion and cancel changes nothing", async ({

@@ -8,7 +8,7 @@ import {
 	clusterEnv,
 	containerHost,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	noteTo,
 	orkerEnv,
 	proofOut,
@@ -216,7 +216,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-	await killAll();
+	await killStarted();
 	await new Promise<void>((resolve) => (probeServer ? probeServer.close(() => resolve()) : resolve()));
 });
 

@@ -35,8 +35,8 @@
 //
 // It runs until SIGTERM/SIGINT, so the caller controls its lifetime the same
 // way it controls bin/ork and bin/orker (ui/e2e/harness.ts spawnLogged +
-// killAll already SIGTERMs then SIGKILLs every child it started, generically
-// — this binary needs no special-cased pkill pattern).
+// killStarted SIGTERMs then SIGKILLs every child the spec started, by handle,
+// generically — this binary needs no special handling).
 package main
 
 import (

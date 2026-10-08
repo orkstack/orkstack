@@ -18,8 +18,32 @@ import { fileURLToPath } from 'node:url';
 export const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const repoRoot = path.resolve(uiDir, '..');
 
-/** The processes started through spawnLogged, so killAll can end all of them. */
+/**
+ * The processes this spec file started (spawnLogged, or a spec's own spawn
+ * passed to trackChild), so killStarted can end exactly those. Nothing in the
+ * e2e suite ever signals a process by name or pattern: several stacks, proofs
+ * and agents share one host, and a pattern like `/bin/ork$` reaches every
+ * engine on it, not just this spec's.
+ */
 const children: ChildProcess[] = [];
+
+/**
+ * trackChild registers a process this spec started, so killStarted and the
+ * exit backstop below end it.
+ */
+export function trackChild(child: ChildProcess): ChildProcess {
+	children.push(child);
+	return child;
+}
+
+// Backstop: if the worker exits without its afterAll running (a crashed hook,
+// an uncaught error), still end this spec's own children — by handle, never by
+// name. 'exit' handlers must be synchronous; kill() is.
+process.on('exit', () => {
+	for (const child of children) {
+		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
+	}
+});
 
 /** proofOut returns a writer for one proof directory. */
 export function proofOut(dir: string) {
@@ -49,8 +73,7 @@ export function spawnLogged(
 	});
 	child.stdout?.pipe(out);
 	child.stderr?.pipe(out);
-	children.push(child);
-	return child;
+	return trackChild(child);
 }
 
 export async function waitFor(
@@ -111,10 +134,10 @@ export function tcpOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
 }
 
 /**
- * killStarted ends exactly the processes this spec started through
- * spawnLogged — by handle, never by name — and waits for them to exit. It is
- * killAll without the name-pattern sweep, for a spec that shares its host
- * with other stacks and so may only ever signal its own children.
+ * killStarted ends exactly the processes this spec started (spawnLogged or
+ * trackChild) — by handle, never by name — and waits for them to exit:
+ * SIGTERM, then SIGKILL after 10 s. It is the only way the e2e suite stops a
+ * process.
  */
 export async function killStarted(): Promise<void> {
 	const survivors = children.splice(0);
@@ -127,17 +150,6 @@ export async function killStarted(): Promise<void> {
 			await new Promise((r) => setTimeout(r, 100));
 		}
 		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
-	}
-}
-
-export async function killAll(): Promise<void> {
-	await killStarted();
-	// AGENTS.md §11.1: never leave a stray engine or Orker behind, and anchor both
-	// patterns — unanchored, `bin/ork` also matches `bin/orkctl`.
-	try {
-		execSync("pkill -f '/bin/orker$' || true; pkill -f '/bin/ork$' || true", { timeout: 5_000 });
-	} catch {
-		// pkill exit status is informational only
 	}
 }
 

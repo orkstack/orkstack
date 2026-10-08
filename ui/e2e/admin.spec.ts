@@ -7,7 +7,7 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	noteTo,
 	orkerEnv,
 	proofOut,
@@ -279,7 +279,7 @@ test.beforeAll(async () => {
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
 	// The default pool's Orker — captured so the last-but-one test can kill
-	// THIS process alone, not the `gpu` one, and not through killAll's
+	// THIS process alone, not the `gpu` one, and not through killStarted's
 	// shared list (which still cleans it up harmlessly in afterAll: killing
 	// an already-dead child is a no-op there).
 	mainOrkerProc = spawnLogged(outPath('orker-main.log'), './bin/orker', [], {
@@ -352,7 +352,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-	await killAll();
+	await killStarted();
 	// The symmetric half of the `bucket-ensure` call in beforeAll: this
 	// run's own bucket is removed once nothing needs it any more, rather
 	// than left to accumulate the way the shared `orkstack-artifacts`

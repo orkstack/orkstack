@@ -6,7 +6,7 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	orkerEnv,
 	proofOut,
 	rpc as callEngine,
@@ -88,7 +88,7 @@ test.beforeAll(async () => {
 	await rpc('OrkflowService/ApplyOrkflow', { namespace: NS, yaml: yaml('2.0.0', 'two') });
 });
 
-test.afterAll(async () => { await killAll(); });
+test.afterAll(async () => { await killStarted(); });
 
 test('version-pinned submit, typed inputs, CLI, and run-again retain author intent', async ({ page }) => {
 	// The orkflow's own page IS the submit surface: `?version=` selects the

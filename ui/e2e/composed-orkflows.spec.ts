@@ -117,9 +117,8 @@ test.beforeAll(async () => {
 	note(`namespace ${NS}, orkflows release-block@0.1.0 and composed-release@0.1.0, engine ${ENGINE}, ui ${UI}`);
 });
 
-// Cleanup stops exactly the processes this spec started, by PID: never
-// harness.killAll, whose name-pattern sweep could reach a process this spec
-// does not own (another stack sharing the host).
+// Cleanup stops exactly the processes this spec started, by handle
+// (killStarted), never by name or pattern.
 test.afterAll(async () => { await killStarted(); });
 
 async function submit(name: string): Promise<string> {

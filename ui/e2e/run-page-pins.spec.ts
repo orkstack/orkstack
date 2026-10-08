@@ -7,7 +7,7 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	noteTo,
 	orkerEnv,
 	proofOut,
@@ -239,7 +239,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-	await killAll();
+	await killStarted();
 });
 
 test('a pinned task states its pin and its orker, and one pin means one orker', async ({ page }) => {

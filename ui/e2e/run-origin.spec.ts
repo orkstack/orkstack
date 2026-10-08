@@ -6,7 +6,7 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	noteTo,
 	orkerEnv,
 	proofOut,
@@ -91,7 +91,7 @@ test.beforeAll(async () => {
 	note(`namespace ${NS}, orkflow ${NAME}@0.1.0, engine ${ENGINE}, ui ${UI}`);
 });
 
-test.afterAll(async () => { await killAll(); });
+test.afterAll(async () => { await killStarted(); });
 
 /** Opens the orkflow's submit dialog, fills the origin reference, and submits. */
 async function submitFromDialog(page: Page, reference: string, check?: (page: Page) => Promise<void>): Promise<string> {

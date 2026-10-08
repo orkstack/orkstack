@@ -38,9 +38,8 @@ import {
 // The receiver is this spec's own node:http server on 127.0.0.1: the engine,
 // not a container, POSTs to it.
 //
-// Cleanup stops exactly the processes this spec started, by PID. It does not
-// call harness.killAll, whose pattern-based sweep could reach a process this
-// spec does not own.
+// Cleanup stops exactly the processes this spec started, by handle
+// (killStarted), never by name or pattern.
 
 const ENGINE = 'http://127.0.0.1:18093';
 const ENGINE_WS = 'ws://127.0.0.1:18093';

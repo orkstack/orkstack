@@ -6,7 +6,7 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	orkerEnv,
 	proofOut,
 	rpc as callEngine,
@@ -83,7 +83,7 @@ test.beforeAll(async () => {
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: completedWorkflow() });
 });
 
-test.afterAll(async () => { await killAll(); });
+test.afterAll(async () => { await killStarted(); });
 
 /** Submits the orkflow and returns once the run's archive holds its marker. */
 async function submitArchived(): Promise<string> {

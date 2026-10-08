@@ -1,10 +1,10 @@
 import { expect, test, type Page } from './test';
-import { execFileSync, execSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { catalogEnv, ensureActivityImages } from './harness';
+import { catalogEnv, ensureActivityImages, killStarted, trackChild } from './harness';
 import { expectNamespace, selectNamespace } from './uiHelpers';
 
 // The UI is namespace-aware, and an orkflow can be edited,
@@ -56,8 +56,6 @@ const PROOF_DIR = process.env.ORK_PROOF_DIR
 // skips what depended on it, and the report has one line.
 test.describe.configure({ mode: 'serial' });
 
-const children: ChildProcess[] = [];
-
 function outPath(name: string): string {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	return path.join(PROOF_DIR, name);
@@ -82,8 +80,7 @@ function spawnLogged(
 	});
 	child.stdout?.pipe(out);
 	child.stderr?.pipe(out);
-	children.push(child);
-	return child;
+	return trackChild(child);
 }
 
 async function waitFor(
@@ -116,27 +113,6 @@ function tcpOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
 			resolve(false);
 		});
 	});
-}
-
-async function killAll(): Promise<void> {
-	const survivors = children.splice(0);
-	for (const child of survivors) {
-		if (child.exitCode === null && !child.signalCode) child.kill('SIGTERM');
-	}
-	const deadline = Date.now() + 8_000;
-	for (const child of survivors) {
-		while (child.exitCode === null && !child.signalCode && Date.now() < deadline) {
-			await new Promise((r) => setTimeout(r, 100));
-		}
-		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
-	}
-	// AGENTS.md §11.1: never leave a stray engine behind, and anchor the pattern —
-	// unanchored, `bin/ork` also matches `bin/orkctl`.
-	try {
-		execSync("pkill -f '/bin/ork$' || true", { timeout: 5_000 });
-	} catch {
-		// pkill exit status is informational only
-	}
 }
 
 // rpc calls the engine through the UI's own same-origin proxy: the exact path
@@ -302,7 +278,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await purgeOwnOrkflows().catch((err) => console.warn(`namespaces-editor cleanup: ${err}`));
-	await killAll();
+	await killStarted();
 });
 
 // A namespace switcher scopes every page, the selection survives

@@ -42,8 +42,7 @@ import { selectOption } from './uiHelpers';
 // holds exactly this run's writes, so every count below is exact.
 //
 // Process hygiene: this spec kills ONLY the processes it started, by handle.
-// It never calls the harness's killAll, whose pattern kill would reach other
-// engines on this host.
+// No e2e spec ever kills by name or pattern (harness.ts, killStarted).
 
 const ENGINE_PORT = '18096';
 const ENGINE = `http://127.0.0.1:${ENGINE_PORT}`;

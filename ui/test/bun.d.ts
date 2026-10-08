@@ -35,11 +35,13 @@ declare module 'bun:test' {
 	};
 }
 
-// The one filesystem read a unit test makes: activityInterface.test.ts reads
+// The filesystem reads the unit tests make: activityInterface.test.ts reads
 // the first-party images' Dockerfiles, so the UI is tested against the label a
-// real image ships rather than a copy that can drift from it.
+// real image ships rather than a copy that can drift from it, and
+// e2eProcessHygiene.test.ts lists and reads the e2e sources.
 declare module 'node:fs' {
 	export function readFileSync(path: string, encoding: 'utf8'): string;
+	export function readdirSync(path: string): string[];
 }
 
 interface ImportMeta {

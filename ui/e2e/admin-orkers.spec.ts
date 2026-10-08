@@ -35,7 +35,7 @@ import {
 //      without it.
 //
 // Process hygiene: this spec signals ONLY the processes it started, by
-// handle. It never calls the harness's killAll.
+// handle (killStarted).
 
 const ENGINE_PORT = '18171';
 const ENGINE = `http://127.0.0.1:${ENGINE_PORT}`;
