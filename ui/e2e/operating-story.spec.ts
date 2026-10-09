@@ -500,9 +500,9 @@ test('a namespace and its pool policy are set in the Admin section, and pool hea
 	await page.getByTestId('ns-create-allowed-pools').fill('main, batch');
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toBeVisible();
-	// A create filters the paged list to the created name (q=), so its row
+	// A create filters the paged list to the created name (filter=name=…), so its row
 	// is on screen whichever page it would sort onto.
-	await expect(page).toHaveURL(new RegExp(`q=${OPS_NS}`));
+	await expect(page).toHaveURL(new RegExp(`filter=name%3D${OPS_NS}(&|$)`));
 	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toBeVisible();
 	await shot(page, 'screenshot-admin-namespace-created.png');
 	note(`created namespace ${OPS_NS} (default_pool=main, allowed_pools=main,batch) via engine B`);

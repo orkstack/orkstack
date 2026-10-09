@@ -2,11 +2,15 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import HoldBanner from '$lib/components/HoldBanner.svelte';
+	import ListFilter from '$lib/components/ListFilter.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
 	import { fmtTimestamp } from '$lib/status';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
+	import { shellQuote } from '$lib/runDetail';
+	import type { FieldFilter } from '$lib/listFilter';
+	import { ListOrkflowsRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -18,12 +22,15 @@
 	// already carried `size=25`, so the URL read `size=25&size=50` and
 	// `searchParams.get` answered with the size the reader had just left.
 	const coordinates = $derived({ ns: namespaceLabel(data.namespace), size: String(data.size), cursor: data.cursor, page: String(data.page) });
-	function href(changes: Record<string, string>) { return listHref('/orkflows', { ...coordinates, ...changes }); }
+	const applied = $derived({ filter: data.applied });
+	function href(changes: Record<string, string>, filters: Record<string, FieldFilter[]> = applied) {
+		return listHref('/orkflows', { ...coordinates, ...changes }, filters);
+	}
 
 	// The cursors BEHIND this page, per filter set and per tab; see the same
 	// block in runs/+page.svelte and docs/UI_CLI_PARITY.md "Paging in the
 	// browser" for why they are not in the URL.
-	const stackKey = $derived(pageStackKey('/orkflows', coordinates));
+	const stackKey = $derived(pageStackKey('/orkflows', coordinates, applied));
 	let stack = $state<string[]>([]);
 	$effect(() => {
 		stack = readPageStack(stackKey);
@@ -39,18 +46,24 @@
 	const nextHref = $derived(data.nextPageToken ? href({ cursor: data.nextPageToken, page: String(data.page + 1) }) : undefined);
 	const firstHref = $derived(href({ cursor: '', page: '' }));
 
-	// Page size applies ON CHANGE here, and waits for Apply filters on the Runs
-	// page. That is not an inconsistency to tidy away: there, page size is one
-	// field of a filter form that is a draft of the URL, and a form that
-	// applied one field on change and the rest on submit would be two
-	// mechanisms. This page has no form, so the control is the gesture.
-	//
-	// A new size is a new page 1 of a new filter set, so the path back through
-	// the old one is dropped rather than left to be trusted later.
-	function setSize(size: string) {
-		writePageStack(stackKey, []);
-		void goto(href({ size, cursor: '', page: '' }));
+	// Page size is a field of the filter form and applies with Apply filters,
+	// like every other field of it: one form never applies some fields on
+	// change and others on submit. A new filter set (or size) is a new page 1
+	// of a new listing, so the path back through the old one is dropped
+	// rather than left to be trusted later.
+	function sizeFromUrl() {
+		return String(data.size);
 	}
+	let sizeDraft = $state(sizeFromUrl());
+	$effect(() => {
+		sizeDraft = sizeFromUrl();
+	});
+	function applyFilters(filters: FieldFilter[]) {
+		writePageStack(stackKey, []);
+		void goto(href({ size: sizeDraft, cursor: '', page: '' }, { filter: filters }), { keepFocus: true, noScroll: true });
+	}
+	const clearHref = $derived(href({ cursor: '', page: '' }, {}));
+	const command = $derived(['orkctl', '-n', shellQuote(namespaceLabel(data.namespace)), 'orkflow', 'list']);
 
 	// A failed list is a failed request, not a permanent state of the world:
 	// the retry re-issues it in place instead of leaving the reload button as
@@ -86,6 +99,13 @@
 	</a>
 </div>
 
+<ListFilter request={ListOrkflowsRequestSchema} applied={data.applied} testid="orkflow" {command} onapply={applyFilters} {clearHref}>
+	<div class="flex flex-col gap-1.5 text-sm">
+		<label class="font-medium text-fg" for="orkflow-page-size">Page size</label>
+		<div class="w-24"><Select id="orkflow-page-size" testid="orkflow-page-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
+	</div>
+</ListFilter>
+
 {#if data.error}
 	<ErrorPanel
 		testid="engine-error"
@@ -97,6 +117,13 @@
 	/>
 {:else if retrying}
 	<p class="text-sm text-fg-muted" data-testid="orkflows-loading">Loading orkflows…</p>
+{:else if data.orkflows.length === 0 && data.applied.length > 0}
+	<p
+		class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
+		data-testid="orkflows-empty"
+	>
+		No orkflows match these filters.
+	</p>
 {:else if data.orkflows.length === 0}
 	<p
 		class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
@@ -144,7 +171,5 @@
 			</tbody>
 		</table>
 	</div>
-	<Pagination testid="orkflows" noun="orkflow" page={data.page} count={data.orkflows.length} {previousHref} {nextHref} {firstHref} onnext={next}>
-		<div class="flex items-center gap-2 text-sm"><label class="font-medium text-fg" for="orkflow-page-size">Page size</label><div class="w-20"><Select id="orkflow-page-size" testid="orkflow-page-size" value={String(data.size)} options={sizeOptions} onchange={setSize} /></div></div>
-	</Pagination>
+	<Pagination testid="orkflows" noun="orkflow" page={data.page} count={data.orkflows.length} {previousHref} {nextHref} {firstHref} onnext={next} />
 {/if}

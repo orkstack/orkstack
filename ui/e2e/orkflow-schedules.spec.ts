@@ -102,7 +102,7 @@ async function createSchedule(name: string, paused = true): Promise<string> {
 	await waitFor(`schedule ${name} to be listed`, async () => {
 		const listed = await rpc<{ schedules?: { name: string }[] }>('ScheduleService/ListSchedules', {
 			namespace: NS,
-			orkflowName: NAME
+			filters: [{ field: 'orkflow_name', op: 'FILTER_OPERATOR_EQUALS', values: [NAME] }]
 		});
 		return (listed.schedules ?? []).some((row) => row.name === name);
 	});

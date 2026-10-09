@@ -148,7 +148,7 @@ test.afterAll(async () => {
 // itself, not the table.
 async function openAdmin(page: Page): Promise<void> {
 	await page.goto(adminNamespaceUrl(UI_ORIGIN, NS, NS));
-	await expect(page.getByTestId('namespaces-filter')).toHaveValue(NS);
+	await expect(page.getByTestId('namespaces-filter-value-0')).toHaveValue(NS);
 }
 
 test('1: Admin → Namespaces shows the Allowed secrets column, set or unrestricted', async ({ page }) => {

@@ -9,6 +9,7 @@
 	// as "idle" would send an operator to stop a host that may be mid-task.
 	import { onMount } from 'svelte';
 	import { errorMessage, orkstack } from '$lib/client';
+	import { FilterOperator, filterOf } from '$lib/listFilter';
 	import type { Orker } from '$lib/gen/orkstack/v1/service_pb';
 	import { withNamespace } from '$lib/namespace';
 	import {
@@ -47,7 +48,8 @@
 	async function load(): Promise<void> {
 		loading = true;
 		try {
-			const res = await orkstack(fetch).activities.listOrkers({ pool });
+			// The pool is this disclosure's scope: a fixed filter, no form.
+			const res = await orkstack(fetch).activities.listOrkers({ filters: [filterOf('pool', FilterOperator.EQUALS, [pool])] });
 			orkers = res.orkers;
 			loadError = '';
 		} catch (err) {

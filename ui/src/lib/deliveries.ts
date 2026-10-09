@@ -40,6 +40,12 @@ export interface DeliveryCoordinates {
 	limit: number;
 	cursor: string;
 	page: number;
+	/**
+	 * The subscriptions table's own filters (its `filter` parameters, in
+	 * canonical order), carried through so paging the panel never drops them.
+	 * They do not filter the panel.
+	 */
+	subscriptionFilter?: string[];
 }
 
 export function deliveredFilter(value: string | null): DeliveredFilter {
@@ -108,6 +114,7 @@ export function deliveriesHref(c: DeliveryCoordinates, changes: Partial<Delivery
 	const next = { ...c, ...changes };
 	const params = new URLSearchParams();
 	params.set('ns', next.ns || 'default');
+	for (const text of next.subscriptionFilter ?? []) params.append('filter', text);
 	if (next.webhook) params.set('webhook', next.webhook);
 	if (next.run) params.set('run', next.run);
 	if (next.event) params.set('event', next.event);

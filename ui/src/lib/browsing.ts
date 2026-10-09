@@ -1,6 +1,7 @@
 import { timestampFromDate } from '@bufbuild/protobuf/wkt';
 import { Status } from './gen/orkstack/v1/common_pb';
 import { originFilterError } from './origin';
+import { canonicalTexts, type FieldFilter } from './listFilter';
 
 const statuses: Record<string, Status> = {
 	pending: Status.PENDING,
@@ -29,27 +30,45 @@ export function runFilterError(status: string, after: string, before: string, or
 }
 export function pageNumber(value: string): number { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : 1; }
 
-// LIST_PATHS are the cursor-paged lists. Naming them keeps a stack key and
-// an href from being built for a path that has neither.
-export type ListPath = '/runs' | '/orkflows' | '/admin/namespaces';
+// ListPath names every list whose address listHref writes. Naming them keeps
+// a stack key and an href from being built for a path that has neither.
+export type ListPath =
+	| '/runs'
+	| '/orkflows'
+	| '/admin/namespaces'
+	| '/admin/webhooks'
+	| '/admin/audit'
+	| '/admin/pools'
+	| '/admin/activities'
+	| '/admin/releases';
 
 // listHref turns a list's coordinates into its address, and it is the ONLY
-// place either list writes a query string.
+// place a list writes a query string.
 //
-// It only ever `set`s, never `append`s, which is the whole point: the Orkflows
-// page-size links used to concatenate `&size=N` onto a query that already
-// carried `size=25`, so the URL read `size=25&size=50` and `searchParams.get`
-// answered with the old value. A builder that starts from an empty
-// URLSearchParams and sets each key once cannot express that URL.
+// Scalar coordinates are only ever `set`, never `append`ed, which is the whole
+// point: the Orkflows page-size links used to concatenate `&size=N` onto a
+// query that already carried `size=25`, so the URL read `size=25&size=50` and
+// `searchParams.get` answered with the old value. A builder that starts from
+// an empty URLSearchParams and sets each key once cannot express that URL.
 //
-// Empty values are omitted, so a cleared filter leaves the bar instead of
+// The one key that repeats is a list's filter parameter (`filter`, or
+// `deliveryFilter` for the second list on Admin → Webhooks): one value per
+// filter, in the CLI grammar, in canonical order (lib/listFilter.ts), so one
+// filter set has one address and one page stack.
+//
+// Empty values are omitted, so a cleared coordinate leaves the bar instead of
 // lingering as `since=`; `page` is omitted at 1 because page 1 is what an
 // address with no page means; `ns` is written first (spelled out for
 // `default`, as withNamespace does) so the coordinate a reader looks for is
-// the first thing they read.
-export function listHref(path: ListPath, coordinates: Record<string, string>): string {
+// the first thing they read, and the filters follow it.
+export function listHref(
+	path: ListPath,
+	coordinates: Record<string, string>,
+	filters: Record<string, Pick<FieldFilter, 'field' | 'op' | 'values'>[]> = {}
+): string {
 	const params = new URLSearchParams();
 	if (coordinates.ns) params.set('ns', coordinates.ns);
+	for (const [param, set] of Object.entries(filters)) for (const text of canonicalTexts(set)) params.append(param, text);
 	for (const [key, value] of Object.entries(coordinates)) if (value && key !== 'ns' && !(key === 'page' && value === '1')) params.set(key, value);
 	return `${path}?${params.toString()}`;
 }
@@ -63,10 +82,14 @@ export const PAGE_STACK_PREFIX = 'orkstack.pages:';
 // escaped engine cursor per Next click.
 //
 // It is keyed by the list's canonical filter query (the builder's output with
-// `cursor` and `page` removed), so a stack belongs to exactly one filter set
-// and can never be applied to another.
-export function pageStackKey(path: ListPath, coordinates: Record<string, string>): string {
-	return `${PAGE_STACK_PREFIX}${listHref(path, { ...coordinates, cursor: '', page: '' })}`;
+// `cursor` and `page` removed, the filters included), so a stack belongs to
+// exactly one filter set and can never be applied to another.
+export function pageStackKey(
+	path: ListPath,
+	coordinates: Record<string, string>,
+	filters: Record<string, Pick<FieldFilter, 'field' | 'op' | 'values'>[]> = {}
+): string {
+	return `${PAGE_STACK_PREFIX}${listHref(path, { ...coordinates, cursor: '', page: '' }, filters)}`;
 }
 
 /** The slice of Storage the page stack needs, so a test can hand in a fake. */

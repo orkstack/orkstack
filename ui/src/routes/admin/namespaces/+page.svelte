@@ -11,6 +11,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
+	import ListFilter from '$lib/components/ListFilter.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
@@ -19,7 +20,9 @@
 	import SignerField from '$lib/components/SignerField.svelte';
 	import { isStaleEtagConflict } from '$lib/adminErrors';
 	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
-	import { createdNamespaceHref, NAMESPACE_FILTER_MAX, namespaceFilterParam, namespacesEmptyState } from '$lib/namespaceList';
+	import { createdNamespaceHref, namespacesEmptyState } from '$lib/namespaceList';
+	import type { FieldFilter } from '$lib/listFilter';
+	import { ListNamespacesRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { create } from '@bufbuild/protobuf';
 	import { NamespaceHoldSchema, type Budget, type Namespace, type NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
@@ -228,15 +231,18 @@
 	);
 	const busy = $derived(retrying || navigatingHere);
 
-	// ── paging and the name filter ────────────────────────────────────────
+	// ── paging and filters ─────────────────────────────────────────────────
 	// The same coordinates, builder and cursor stack the Orkflows list keeps
 	// (orkflows/+page.svelte; docs/UI_CLI_PARITY.md "Paging in the browser"),
-	// plus `q`, the name filter. `ns` rides along so links out of this page
-	// keep the switcher's choice; it does not filter this view.
+	// plus the applied filters (ListFilter). `ns` rides along so links out of
+	// this page keep the switcher's choice; it does not filter this view.
 	const sizeOptions = [10, 25, 50, 100].map((size) => ({ value: String(size), label: String(size) }));
-	const coordinates = $derived({ ns: namespaceLabel(data.namespace), q: data.q, size: String(data.size), cursor: data.cursor, page: String(data.page) });
-	function href(changes: Record<string, string>) { return listHref('/admin/namespaces', { ...coordinates, ...changes }); }
-	const stackKey = $derived(pageStackKey('/admin/namespaces', coordinates));
+	const coordinates = $derived({ ns: namespaceLabel(data.namespace), size: String(data.size), cursor: data.cursor, page: String(data.page) });
+	const applied = $derived({ filter: data.applied });
+	function href(changes: Record<string, string>, filters: Record<string, FieldFilter[]> = applied) {
+		return listHref('/admin/namespaces', { ...coordinates, ...changes }, filters);
+	}
+	const stackKey = $derived(pageStackKey('/admin/namespaces', coordinates, applied));
 	let stack = $state<string[]>([]);
 	$effect(() => {
 		stack = readPageStack(stackKey);
@@ -251,29 +257,26 @@
 	const previousHref = $derived(walked ? href({ cursor: stack[data.page - 2] ?? '', page: String(data.page - 1) }) : undefined);
 	const nextHref = $derived(data.nextPageToken ? href({ cursor: data.nextPageToken, page: String(data.page + 1) }) : undefined);
 	const firstHref = $derived(href({ cursor: '', page: '' }));
-	// Page size applies on change, as on Orkflows: this page's filter is one
-	// field with its own submit, and size is not part of it.
-	function setSize(size: string) {
-		writePageStack(stackKey, []);
-		void goto(href({ size, cursor: '', page: '' }));
-	}
 
-	// The filter input is a DRAFT of `q` (the Runs page's rule): applied on
-	// submit, refilled from what the page loaded after any navigation, and a
-	// new filter is a new page 1.
-	function filterDraftFromUrl() {
-		return data.q;
+	// Page size is a field of the filter form and applies with Apply filters,
+	// never on change: one form never applies some fields on change and
+	// others on submit. The draft is refilled from what the page loaded.
+	function sizeFromUrl() {
+		return String(data.size);
 	}
-	let filterDraft = $state(filterDraftFromUrl());
+	let sizeDraft = $state(sizeFromUrl());
 	$effect(() => {
-		filterDraft = filterDraftFromUrl();
+		sizeDraft = sizeFromUrl();
 	});
-	function applyFilter(event: SubmitEvent) {
-		event.preventDefault();
-		void goto(href({ q: namespaceFilterParam(filterDraft), cursor: '', page: '' }), { keepFocus: true, noScroll: true });
+	// A new filter set (or size) is a new page 1, and the path back through
+	// the set it leaves is dropped rather than trusted later.
+	function applyFilters(filters: FieldFilter[]) {
+		writePageStack(stackKey, []);
+		void goto(href({ size: sizeDraft, cursor: '', page: '' }, { filter: filters }), { keepFocus: true, noScroll: true });
 	}
+	const clearHref = $derived(href({ cursor: '', page: '' }, {}));
 	const emptyState = $derived(
-		namespacesEmptyState({ filter: data.q, page: data.page, count: data.namespacesList.length, hasNext: data.nextPageToken !== '' })
+		namespacesEmptyState({ filtered: data.applied.length > 0, page: data.page, count: data.namespacesList.length, hasNext: data.nextPageToken !== '' })
 	);
 
 
@@ -693,10 +696,27 @@
 <svelte:head><title>Admin — Namespaces — OrkStack</title></svelte:head>
 
 <p class="mb-4 text-sm text-fg-muted" data-testid="namespaces-scope-caption">
-	All namespaces this deployment has — the namespace selector above does not filter this view; the name filter below does.
+	All namespaces this deployment has — the namespace selector above does not filter this view; the filters below do.
 </p>
 
+{#snippet filterForm()}
+	<ListFilter
+		request={ListNamespacesRequestSchema}
+		applied={data.applied}
+		testid="namespaces"
+		command={['orkctl', 'namespace', 'list']}
+		onapply={applyFilters}
+		{clearHref}
+	>
+		<div class="flex flex-col gap-1.5 text-sm">
+			<label class="font-medium text-fg" for="namespaces-page-size">Page size</label>
+			<div class="w-24"><Select id="namespaces-page-size" testid="namespaces-page-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
+		</div>
+	</ListFilter>
+{/snippet}
+
 {#if data.namespacesError}
+	{@render filterForm()}
 	<ErrorPanel
 		testid="namespaces-error"
 		retryTestid="namespaces-retry"
@@ -900,34 +920,7 @@
 		{/if}
 	</section>
 
-	<form class="mb-3 flex flex-wrap items-end gap-2" role="search" onsubmit={applyFilter} data-testid="namespaces-filter-form">
-		<div class="flex flex-col gap-1">
-			<label class="text-sm font-medium text-fg" for="namespaces-filter">Name contains</label>
-			<input
-				id="namespaces-filter"
-				type="search"
-				class="h-9 w-64 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
-				placeholder="any name"
-				autocomplete="off"
-				spellcheck="false"
-				maxlength={NAMESPACE_FILTER_MAX}
-				bind:value={filterDraft}
-				data-testid="namespaces-filter"
-			/>
-		</div>
-		<button
-			type="submit"
-			class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
-			data-testid="namespaces-filter-apply">Filter</button
-		>
-		{#if data.q}
-			<a
-				href={href({ q: '', cursor: '', page: '' })}
-				class="inline-flex h-9 items-center px-2 text-sm font-medium text-brand-700 hover:text-brand-800"
-				data-testid="namespaces-filter-clear">Clear filter</a
-			>
-		{/if}
-	</form>
+	{@render filterForm()}
 
 	{#if busy}
 		<p class="text-sm text-fg-muted" data-testid="namespaces-loading">Loading namespaces…</p>
@@ -939,7 +932,7 @@
 			</p>
 		{:else if emptyState === 'no-match'}
 			<p class="mb-3 text-sm text-fg-muted" data-testid="namespaces-empty">
-				No namespace name contains <code>{data.q}</code>.
+				No namespaces match these filters.
 			</p>
 		{:else if emptyState === 'past-end'}
 			<p class="mb-3 text-sm text-fg-muted" data-testid="namespaces-empty">
@@ -1287,9 +1280,7 @@
 			</div>
 		{/if}
 		{#if data.namespacesList.length > 0 || data.page > 1}
-			<Pagination testid="namespaces" noun="namespace" page={data.page} count={data.namespacesList.length} {previousHref} {nextHref} {firstHref} onnext={next}>
-				<div class="flex items-center gap-2 text-sm"><label class="font-medium text-fg" for="namespaces-page-size">Page size</label><div class="w-20"><Select id="namespaces-page-size" testid="namespaces-page-size" value={String(data.size)} options={sizeOptions} onchange={setSize} /></div></div>
-			</Pagination>
+			<Pagination testid="namespaces" noun="namespace" page={data.page} count={data.namespacesList.length} {previousHref} {nextHref} {firstHref} onnext={next} />
 		{/if}
 	{/if}
 {/if}

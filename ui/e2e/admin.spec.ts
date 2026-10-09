@@ -21,7 +21,7 @@ import {
 	waitForEngine,
 	openNamespaceEdit
 } from './harness';
-import { adminNamespaceUrl, expectNamespace, selectNamespace } from './uiHelpers';
+import { OP, addListFilter, adminNamespaceUrl, expectNamespace, selectNamespace } from './uiHelpers';
 
 // The Admin section: namespaces, pool health, the activity catalog and
 // system information, in a browser, against the real stack.
@@ -494,9 +494,9 @@ test('creating a namespace validates locally, updates round-trip the etag, and a
 	await page.getByTestId('ns-create-description').fill('admin spec namespace');
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toBeVisible();
-	// A create filters the paged list to the created name (q=), so its row
+	// A create filters the paged list to the created name (filter=name=…), so its row
 	// is on screen whichever page it would sort onto.
-	await expect(page).toHaveURL(new RegExp(`q=${OPS_NS}`));
+	await expect(page).toHaveURL(new RegExp(`filter=name%3D${OPS_NS}(&|$)`));
 	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toBeVisible();
 	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toContainText('main');
 	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toContainText('cpu');
@@ -1335,8 +1335,8 @@ test('a failed Admin read reports the failure and retries', async ({ page }) => 
 	await expect(page.getByTestId('namespace-list')).toBeVisible();
 	await expect(page.getByTestId('namespaces-error')).toHaveCount(0);
 	// The retried list is the real one: the filter reaches a row it holds.
-	await page.getByTestId('namespaces-filter').fill(OPS_NS);
-	await page.getByTestId('namespaces-filter').press('Enter');
-	await expect(page).toHaveURL(new RegExp(`q=${OPS_NS}`));
+	await addListFilter(page, 'namespaces', { field: 'name', op: OP.equals, value: OPS_NS });
+	await page.getByTestId('namespaces-filters-apply').click();
+	await expect(page).toHaveURL(new RegExp(`filter=name%3D${OPS_NS}(&|$)`));
 	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toBeVisible();
 });

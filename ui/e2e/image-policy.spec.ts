@@ -175,7 +175,7 @@ async function openPolicy(page: Page): Promise<void> {
 // the filter itself, not the table.
 async function openNamespaces(page: Page): Promise<void> {
 	await page.goto(adminNamespaceUrl(UI_ORIGIN, PROD, PROD));
-	await expect(page.getByTestId('namespaces-filter')).toHaveValue(PROD);
+	await expect(page.getByTestId('namespaces-filter-value-0')).toHaveValue(PROD);
 }
 
 async function chooseSigner(page: Page, testid: string, value: string): Promise<void> {

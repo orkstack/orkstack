@@ -152,7 +152,7 @@ test('1: Admin → Namespaces creates an enforced budget and the Budget column s
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${NS}.`);
 	// The create filtered the list to the created name, so its row is on
 	// screen whichever page it sorts onto.
-	await expect(page).toHaveURL(new RegExp(`q=${NS}`));
+	await expect(page).toHaveURL(new RegExp(`filter=name%3D${NS}(&|$)`));
 	await expect(page.getByTestId(`namespace-budget-${NS}`)).toHaveText('1 cpu-s/1h0m0s enforced');
 	note(`Budget column of ${NS}: ${await page.getByTestId(`namespace-budget-${NS}`).innerText()}`);
 	await page.getByTestId(`namespace-row-${NS}`).scrollIntoViewIfNeeded();

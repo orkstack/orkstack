@@ -10,6 +10,8 @@ import {
 } from '$lib/deliveries';
 import type { ListDeliveriesResponse } from '$lib/gen/orkstack/v1/service_pb';
 import { namespaceFrom, namespaceLabel } from '$lib/namespace';
+import { canonicalTexts, filtersFromUrl } from '$lib/listFilter';
+import type { Webhook } from '$lib/gen/orkstack/v1/service_pb';
 import type { PageLoad } from './$types';
 
 // Two independent reads: the subscriptions and what their deliveries did.
@@ -25,7 +27,11 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const namespace = namespaceFrom(url);
 	const params = url.searchParams;
 	const cursor = params.get('cursor') ?? '';
+	// The subscriptions table's filters are the `filter` parameters; one that
+	// does not parse is shown without a request.
+	const { filters: applied, error: subscriptionFilterError } = filtersFromUrl(url);
 	const coordinates: DeliveryCoordinates = {
+		subscriptionFilter: subscriptionFilterError ? [] : canonicalTexts(applied),
 		ns: namespaceLabel(namespace),
 		webhook: params.get('webhook') ?? '',
 		run: params.get('run') ?? '',
@@ -41,10 +47,21 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	};
 	const client = orkstack(fetch);
 
-	const webhooksRead = client.webhooks.listWebhooks({}).then(
-		(response) => ({ webhooks: response.webhooks, error: null as string | null }),
-		(err) => ({ webhooks: [], error: errorMessage(err) as string | null })
-	);
+	const webhooksRead = subscriptionFilterError
+		? Promise.resolve({ webhooks: [] as Webhook[], error: subscriptionFilterError as string | null })
+		: client.webhooks.listWebhooks({ filters: applied }).then(
+				(response) => ({ webhooks: response.webhooks, error: null as string | null }),
+				(err) => ({ webhooks: [] as Webhook[], error: errorMessage(err) as string | null })
+			);
+	// The Deliveries panel offers EVERY subscription, whatever narrows the
+	// table above it; only a filtered table needs the second read.
+	const panelRead =
+		applied.length === 0 && !subscriptionFilterError
+			? webhooksRead.then((read) => read.webhooks)
+			: client.webhooks.listWebhooks({}).then(
+					(response) => response.webhooks,
+					() => [] as Webhook[]
+				);
 	const filterError = deliveriesFilterError(coordinates);
 	const deliveriesRead = filterError
 		? Promise.resolve({
@@ -68,6 +85,6 @@ export const load: PageLoad = async ({ fetch, url }) => {
 							: 'failed') as string | null
 				})
 			);
-	const [hooks, deliveries] = await Promise.all([webhooksRead, deliveriesRead]);
-	return { webhooks: hooks.webhooks, namespace, error: hooks.error, coordinates, ...deliveries };
+	const [hooks, panelWebhooks, deliveries] = await Promise.all([webhooksRead, panelRead, deliveriesRead]);
+	return { webhooks: hooks.webhooks, panelWebhooks, applied, namespace, error: hooks.error, coordinates, ...deliveries };
 };

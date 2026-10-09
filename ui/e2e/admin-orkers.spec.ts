@@ -140,7 +140,7 @@ test.beforeAll(async () => {
 	await waitFor(
 		'both Orkers listed and answering',
 		async () => {
-			const answer = await listOrkers({ pool: 'main' });
+			const answer = await listOrkers({ filters: [{ field: 'pool', op: 'FILTER_OPERATOR_EQUALS', values: ['main'] }] });
 			const ready = (answer.orkers ?? []).filter((o) => !o.unavailableReason).map((o) => o.orkerId);
 			return ready.includes(ORKER_A) && ready.includes(ORKER_B);
 		},
@@ -193,7 +193,7 @@ test('Pools shows its Orkers and cordons one with a reason', async ({ page }) =>
 	await expect(popover).toContainText(expected);
 	await shot(page, 'admin-orkers-cordoned.png');
 	note(`cordoned ${ORKER_A} with ${JSON.stringify(REASON)}; CLI equivalent: ${expected}`);
-	const answer = await listOrkers({ orkerId: ORKER_A });
+	const answer = await listOrkers({ filters: [{ field: 'orker_id', op: 'FILTER_OPERATOR_EQUALS', values: [ORKER_A] }] });
 	note(`ListOrkers(${ORKER_A}) -> ${JSON.stringify(answer.orkers?.[0])}`);
 });
 
@@ -243,7 +243,7 @@ test('A server error in the cordon dialog is shown, not swallowed', async ({ pag
 	note(`SIGTERM ${ORKER_B}; waiting for its poller record to leave the freshness window`);
 	await waitFor(
 		`${ORKER_B} to leave the poller window`,
-		async () => ((await listOrkers({ orkerId: ORKER_B })).orkers ?? []).length === 0,
+		async () => ((await listOrkers({ filters: [{ field: 'orker_id', op: 'FILTER_OPERATOR_EQUALS', values: [ORKER_B] }] })).orkers ?? []).length === 0,
 		200_000
 	);
 	note(`${ORKER_B} is no longer listed by the engine`);

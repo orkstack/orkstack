@@ -17,25 +17,26 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { selectOption } from './uiHelpers';
+import { OP, addListFilter, selectOption } from './uiHelpers';
 
-// Admin → Namespaces, paged and filtered, against a real engine on real
-// Temporal and MinIO.
+// Admin → Namespaces, paged and filtered through the one structured list
+// filter (ListFilter; docs/UI_CLI_PARITY.md "Filtering lists"), against a
+// real engine on real Temporal and MinIO. Measured in a browser:
 //
-// The page used to read every namespace document and render them all in one
-// table; with a registry of thousands that took seconds and could not redraw
-// in time after a create. What is measured here, each in a browser:
-//
-//   1. a registry larger than one page opens on page 1 in NAME order (`a`,
-//      `a-b`, `ab` — the bucket lists `a-b.json` before `a.json`), and Next,
-//      Previous and the last page walk it without a repeat or a gap;
-//   2. a pasted later page has no path back, so Previous is disabled and
-//      First page is offered, and it lands on page 1;
-//   3. the name filter narrows the list (`q` in the URL), a filter that
-//      matches nothing says so, and Clear filter goes back to everything;
-//   4. a create from page 1 lands on the created namespace's row, though it
-//      sorts onto the last page;
-//   5. an edit on page 2 saves and leaves the reader on page 2.
+//   N1 pages walk the registry in NAME order (`a`, `a-b`, `ab` — the bucket
+//      lists `a-b.json` before `a.json`), Next/Previous, no repeat or gap;
+//   N2 a pasted later page disables Previous and offers First page;
+//   N3 `name ~ tenant-1` narrows, written to the URL as one `filter=`
+//      parameter; `name = default` shows default;
+//   N4 `labels.team = payments` at size 10 pages a PROPERTY filter: page 1,
+//      Next, Previous, and `a-b` on neither; `hold.reason !=` shows only the
+//      held namespace;
+//   N5 a filter matching nothing says so, and Clear filters recovers;
+//   N6 a create from page 1 lands on `filter=name=<created>` with its row;
+//   N7 an edit on page 2 saves and stays on page 2;
+//   N8 the CLI equivalent is the same filter as orkctl spells it;
+//   N9 page size is a field of the filter form: it applies with Apply
+//      filters, never on change.
 //
 // Isolation (AGENTS.md §11.1): its own Temporal namespace, its own bucket
 // created by this run (so the registry holds exactly what this spec wrote and
@@ -58,11 +59,16 @@ const note = noteTo(out('transcript.txt'));
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
 // 23 namespaces plus `default`: pages of 10, 10 and 4 at the smallest size the
-// page offers. `a`, `a-b` and `ab` are the key-order trap.
+// page offers. `a`, `a-b` and `ab` are the key-order trap. Twelve carry
+// team=payments — `a`, `ab` and the ten even tenants — so `a-b`, which sorts
+// between `a` and `ab`, is the one a property filter must skip; tenant-05 is
+// held.
 const TENANTS = Array.from({ length: 20 }, (_, i) => `tenant-${String(i).padStart(2, '0')}`);
 const SEEDED = ['ab', 'a-b', 'a', ...TENANTS];
 const ALL = [...SEEDED, 'default'].sort();
 const PAGES = [ALL.slice(0, 10), ALL.slice(10, 20), ALL.slice(20)];
+const PAYMENTS = ['a', 'ab', ...TENANTS.filter((_, i) => i % 2 === 0)];
+const HELD = 'tenant-05';
 const CREATED = 'zulu';
 
 function bucketEnv(action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
@@ -109,12 +115,20 @@ test.beforeAll(async () => {
 	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
 
 	for (const name of SEEDED) {
-		await rpc('NamespaceService/CreateNamespace', { namespace: { name, description: `seeded ${name}` } });
+		await rpc('NamespaceService/CreateNamespace', {
+			namespace: {
+				name,
+				description: `seeded ${name}`,
+				...(PAYMENTS.includes(name) ? { labels: { team: 'payments' } } : {}),
+				...(name === HELD ? { hold: { reason: 'billing review' } } : {})
+			}
+		});
 	}
 	const listed = await rpc<{ namespaces?: { name: string }[] }>('NamespaceService/ListNamespaces', {});
 	expect((listed.namespaces ?? []).map((ns) => ns.name)).toEqual(ALL);
 	note(`engine ${ENGINE}, temporal namespace ${TEMPORAL_NAMESPACE}, bucket ${BUCKET}`);
 	note(`seeded ${SEEDED.length} namespaces; with default the registry is ${ALL.length}: ${ALL.join(' ')}`);
+	note(`team=payments: ${PAYMENTS.join(' ')}; held: ${HELD}`);
 });
 
 test.afterAll(async () => {
@@ -143,7 +157,16 @@ function shot(page: Page, name: string) {
 	return page.screenshot({ path: out(name), fullPage: true });
 }
 
-test('1–2: pages walk the registry in name order, and a pasted later page offers First page', async ({ page, context }) => {
+/** The `filter` parameters of the page's address, decoded. */
+function urlFilters(page: Page): string[] {
+	return new URL(page.url()).searchParams.getAll('filter');
+}
+
+async function apply(page: Page): Promise<void> {
+	await page.getByTestId('namespaces-filters-apply').click();
+}
+
+test('N1–N2: pages walk the registry in name order, and a pasted later page offers First page', async ({ page, context }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10`);
 	await expectRows(page, PAGES[0]);
 	await expect(page.getByTestId('namespaces-page-status')).toHaveText('Page 1 · 10 namespaces');
@@ -186,68 +209,95 @@ test('1–2: pages walk the registry in name order, and a pasted later page offe
 	await expectRows(pasted, PAGES[0]);
 	note('a pasted page-3 link offered First page and it landed on page 1');
 	await pasted.close();
-
-	// Page size applies on change and starts over at page 1.
-	await selectOption(page, 'namespaces-page-size', '25');
-	await expect(page).toHaveURL(/size=25/);
-	await expectRows(page, ALL);
-	await expect(page.getByTestId('namespaces-page-status')).toHaveText(`${ALL.length} namespaces`);
 });
 
-test('3: the name filter narrows the list, says when nothing matches, and clears', async ({ page }) => {
+test('N3: a name filter narrows the list and rides the URL as one filter parameter', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10`);
-	const filter = page.getByTestId('namespaces-filter');
-
-	await filter.fill('tenant-1');
-	await filter.press('Enter');
-	await expect(page).toHaveURL(/q=tenant-1/);
+	await expectRows(page, PAGES[0]);
+	await addListFilter(page, 'namespaces', { field: 'name', op: OP.contains, value: 'tenant-1' });
+	await apply(page);
+	await expect.poll(() => urlFilters(page)).toEqual(['name~tenant-1']);
+	expect(page.url()).toContain('filter=name%7Etenant-1');
 	await expectRows(page, TENANTS.filter((name) => name.includes('tenant-1')));
 	await expect(page.getByTestId('namespaces-page-status')).toHaveText('10 namespaces');
-	note(`q=tenant-1: ${(await rowNames(page)).join(' ')}`);
+	note(`name~tenant-1: ${(await rowNames(page)).join(' ')} — URL ${page.url()}`);
 
-	// `-` is an ordinary character of the substring; `b` matches both trap names.
-	await filter.fill('b');
-	await page.getByTestId('namespaces-filter-apply').click();
-	await expect(page).toHaveURL(/q=b(&|$)/);
-	await expectRows(page, ['a-b', 'ab']);
-	await shot(page, 'screenshot-filter-b.png');
-
-	// `default` is filtered like any other name.
-	await filter.fill('fault');
-	await filter.press('Enter');
+	// The draft was refilled from the URL; edit it in place.
+	await selectOption(page, 'namespaces-filter-op-0', OP.equals);
+	await page.getByTestId('namespaces-filter-value-0').fill('default');
+	await apply(page);
+	await expect.poll(() => urlFilters(page)).toEqual(['name=default']);
 	await expectRows(page, ['default']);
 	await expect(page.getByTestId('namespaces-empty')).toHaveCount(0);
-
-	await filter.fill('nothing-is-called-this');
-	await filter.press('Enter');
-	await expect(page.getByTestId('namespaces-empty')).toContainText('No namespace name contains nothing-is-called-this');
-	await expect(page.getByTestId('namespace-list')).toHaveCount(0);
-	await shot(page, 'screenshot-filter-no-match.png');
-	note(`no match: ${await page.getByTestId('namespaces-empty').innerText()}`);
-
-	await page.getByTestId('namespaces-filter-clear').click();
-	await expect(page).not.toHaveURL(/q=/);
-	await expect(filter).toHaveValue('');
-	await expectRows(page, PAGES[0]);
 });
 
-test('4: a create from page 1 lands on the created row, though it sorts onto the last page', async ({ page }) => {
+test('N4: a property filter pages with its own cursor, and a hold filter finds the held namespace', async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10`);
+	await expectRows(page, PAGES[0]);
+	await addListFilter(page, 'namespaces', { field: 'labels', key: 'team', op: OP.equals, value: 'payments' });
+	await apply(page);
+	await expect.poll(() => urlFilters(page)).toEqual(['labels.team=payments']);
+	await expectRows(page, PAYMENTS.slice(0, 10));
+	await expect(page.getByTestId('namespaces-page-status')).toHaveText('Page 1 · 10 namespaces');
+	expect(await rowNames(page)).not.toContain('a-b');
+	note(`labels.team=payments page 1: ${(await rowNames(page)).join(' ')}`);
+	await shot(page, 'screenshot-filter-labels.png');
+
+	await page.getByTestId('namespaces-next').click();
+	await expect(page).toHaveURL(/cursor=.*page=2/);
+	await expectRows(page, PAYMENTS.slice(10));
+	await expect(page.getByTestId('namespaces-page-status')).toHaveText('Page 2 · 2 namespaces · last page');
+	await expect.poll(() => urlFilters(page)).toEqual(['labels.team=payments']);
+	note(`labels.team=payments page 2: ${(await rowNames(page)).join(' ')}`);
+	await shot(page, 'screenshot-filter-labels-page-2.png');
+
+	await page.getByTestId('namespaces-previous').click();
+	await expectRows(page, PAYMENTS.slice(0, 10));
+	await expect(page.getByTestId('namespaces-page-status')).toHaveText('Page 1 · 10 namespaces');
+	note('Previous returned to page 1 of the property filter with the same ten rows');
+
+	// Replace the filter: hold.reason != (empty) is every held namespace.
+	await page.getByTestId('namespaces-filter-remove-0').click();
+	await addListFilter(page, 'namespaces', { field: 'hold.reason', op: OP.notEquals, value: '' });
+	await apply(page);
+	await expect.poll(() => urlFilters(page)).toEqual(['hold.reason!=']);
+	await expectRows(page, [HELD]);
+	note(`hold.reason!= : ${(await rowNames(page)).join(' ')}`);
+});
+
+test('N5: a filter that matches nothing says so, and Clear filters goes back to page 1', async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10`);
+	await addListFilter(page, 'namespaces', { field: 'description', op: OP.contains, value: 'nothing-is-described-this-way' });
+	await apply(page);
+	await expect(page.getByTestId('namespaces-empty')).toHaveText('No namespaces match these filters.');
+	await expect(page.getByTestId('namespace-list')).toHaveCount(0);
+	await shot(page, 'screenshot-no-match.png');
+	note(`no match: ${await page.getByTestId('namespaces-empty').innerText()}`);
+
+	await page.getByTestId('namespaces-filters-clear').click();
+	await expect.poll(() => urlFilters(page)).toEqual([]);
+	await expect(page.getByTestId('namespaces-filter-row-0')).toHaveCount(0);
+	await expectRows(page, PAGES[0]);
+	await expect(page).toHaveURL(/size=10/);
+});
+
+test('N6: a create from page 1 lands on the created row, though it sorts onto the last page', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10`);
 	await expectRows(page, PAGES[0]);
 	await page.getByTestId('ns-create-name').fill(CREATED);
 	await page.getByTestId('ns-create-description').fill('created from page 1');
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${CREATED}.`);
-	await expect(page).toHaveURL(new RegExp(`q=${CREATED}`));
+	await expect.poll(() => urlFilters(page)).toEqual([`name=${CREATED}`]);
 	await expect(page).not.toHaveURL(/cursor=/);
-	await expect(page.getByTestId('namespaces-filter')).toHaveValue(CREATED);
+	await expect(page.getByTestId('namespaces-filter-value-0')).toHaveValue(CREATED);
 	await expectRows(page, [CREATED]);
 	await expect(page.getByTestId(`namespace-row-${CREATED}`)).toContainText('created from page 1');
 	await shot(page, 'screenshot-created-row.png');
 	note(`create from page 1: URL ${page.url()} shows ${(await rowNames(page)).join(' ')}`);
 });
 
-test('5: an edit on page 2 saves and leaves the reader on page 2', async ({ page }) => {
+test('N7: an edit on page 2 saves and leaves the reader on page 2', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10`);
 	await expectRows(page, PAGES[0]);
 	await page.getByTestId('namespaces-next').click();
@@ -265,4 +315,36 @@ test('5: an edit on page 2 saves and leaves the reader on page 2', async ({ page
 	await expect(page.getByTestId('namespaces-page-status')).toHaveText('Page 2 · 10 namespaces');
 	await shot(page, 'screenshot-edit-on-page-2.png');
 	note(`edited ${target} on page 2; still at ${page.url()}`);
+});
+
+test('N8: the CLI equivalent is the applied filter as orkctl spells it', async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10&filter=${encodeURIComponent('labels.team=payments')}`);
+	await expectRows(page, PAYMENTS.slice(0, 10));
+	await page.getByTestId('namespaces-filters-cli-trigger').click();
+	await expect(page.getByTestId('namespaces-filters-cli-command')).toHaveText("orkctl namespace list --filter 'labels.team=payments'");
+	note(`CLI equivalent: ${await page.getByTestId('namespaces-filters-cli-command').innerText()}`);
+});
+
+test('N9: page size is a field of the filter form and applies with Apply filters', async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10`);
+	await addListFilter(page, 'namespaces', { field: 'name', op: OP.prefix, value: 'tenant-' });
+	await apply(page);
+	await expect.poll(() => urlFilters(page)).toEqual(['name^tenant-']);
+	await expectRows(page, TENANTS.slice(0, 10));
+	await expect(page.getByTestId('namespaces-page-status')).toHaveText('Page 1 · 10 namespaces');
+	const before = page.url();
+
+	await selectOption(page, 'namespaces-page-size', '25');
+	await expect(page.getByTestId('namespaces-page-size')).toHaveText('25');
+	expect(page.url()).toBe(before);
+	await expectRows(page, TENANTS.slice(0, 10));
+
+	await apply(page);
+	await expectRows(page, TENANTS);
+	await expect(page.getByTestId('namespaces-page-status')).toHaveText('20 namespaces');
+	const params = new URL(page.url()).searchParams;
+	expect(params.getAll('size')).toEqual(['25']);
+	expect(params.get('cursor')).toBeNull();
+	expect(params.getAll('filter')).toEqual(['name^tenant-']);
+	note(`size 25 applied with the filters: ${page.url()}`);
 });
