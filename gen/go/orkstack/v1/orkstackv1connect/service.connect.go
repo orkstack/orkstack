@@ -1724,9 +1724,11 @@ type NamespaceServiceClient interface {
 	// the built-in default always among them.
 	//
 	// page_size 0 returns every match in one response; a positive page_size
-	// returns one page and a next_page_token. A page reads only the documents
-	// it holds: the names come from the registry's key listing, so a page of
-	// 25 out of thousands costs one listing and 25 reads, not thousands.
+	// returns one page and a next_page_token. The names come from the
+	// registry's key listing, so a page filtered by name alone (or not at all)
+	// reads only the documents it holds: a page of 25 out of thousands costs
+	// one listing and 25 reads. A filter on any other field reads documents
+	// in name order, a batch at a time, until the page is full.
 	ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error)
 	// UpdateNamespace replaces a namespace's mutable fields.
 	//
@@ -1864,9 +1866,11 @@ type NamespaceServiceHandler interface {
 	// the built-in default always among them.
 	//
 	// page_size 0 returns every match in one response; a positive page_size
-	// returns one page and a next_page_token. A page reads only the documents
-	// it holds: the names come from the registry's key listing, so a page of
-	// 25 out of thousands costs one listing and 25 reads, not thousands.
+	// returns one page and a next_page_token. The names come from the
+	// registry's key listing, so a page filtered by name alone (or not at all)
+	// reads only the documents it holds: a page of 25 out of thousands costs
+	// one listing and 25 reads. A filter on any other field reads documents
+	// in name order, a batch at a time, until the page is full.
 	ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error)
 	// UpdateNamespace replaces a namespace's mutable fields.
 	//
@@ -2005,6 +2009,14 @@ type ActivityServiceClient interface {
 	// NOT_FOUND — a read for an id nothing polls is an empty answer, and the
 	// drain loop relies on it (CordonOrker, a write, is the one that answers
 	// NOT_FOUND for that id).
+	//
+	// An orker_id EQUALS filter asks exactly that one Orker, on its own
+	// channel, and returns at most one row: it is what `orkctl orker get` and
+	// the drain loop send, so a drain costs one activity per poll and not one
+	// per Orker of the fleet. Every other filter is applied to the inventory;
+	// an unreachable row is kept under a pool, build_id or cordoned filter,
+	// since none of those was measured on it. A malformed orker_id in an
+	// equals, not-equals or in filter is INVALID_ARGUMENT before any read.
 	ListOrkers(context.Context, *connect.Request[v1.ListOrkersRequest]) (*connect.Response[v1.ListOrkersResponse], error)
 	// CordonOrker sets or clears ONE Orker's cordon: a process-local flag
 	// delivered over that Orker's own channel, lost when the process exits.
@@ -2116,6 +2128,14 @@ type ActivityServiceHandler interface {
 	// NOT_FOUND — a read for an id nothing polls is an empty answer, and the
 	// drain loop relies on it (CordonOrker, a write, is the one that answers
 	// NOT_FOUND for that id).
+	//
+	// An orker_id EQUALS filter asks exactly that one Orker, on its own
+	// channel, and returns at most one row: it is what `orkctl orker get` and
+	// the drain loop send, so a drain costs one activity per poll and not one
+	// per Orker of the fleet. Every other filter is applied to the inventory;
+	// an unreachable row is kept under a pool, build_id or cordoned filter,
+	// since none of those was measured on it. A malformed orker_id in an
+	// equals, not-equals or in filter is INVALID_ARGUMENT before any read.
 	ListOrkers(context.Context, *connect.Request[v1.ListOrkersRequest]) (*connect.Response[v1.ListOrkersResponse], error)
 	// CordonOrker sets or clears ONE Orker's cordon: a process-local flag
 	// delivered over that Orker's own channel, lost when the process exits.
@@ -2274,6 +2294,13 @@ type SystemServiceClient interface {
 	// identically, including a replica of another release. A deployment no
 	// release of which has registered with the cluster answers versioned =
 	// false and no releases: an answer, not an error.
+	//
+	// Filters select release rows only; every other response field is the
+	// deployment's, unfiltered, and blockers are still judged against the
+	// whole deployment. A build_id EQUALS filter counts only that release; an
+	// id the cluster does not know is an EMPTY list, never NOT_FOUND: `orkctl
+	// release wait` relies on it to tell "forgotten after draining" from an
+	// error.
 	ListReleases(context.Context, *connect.Request[v1.ListReleasesRequest]) (*connect.Response[v1.ListReleasesResponse], error)
 	// RampRelease sends `percent` of new runs to one release that is not
 	// current, and the rest to the current release. percent 0 stops the ramp
@@ -2481,6 +2508,13 @@ type SystemServiceHandler interface {
 	// identically, including a replica of another release. A deployment no
 	// release of which has registered with the cluster answers versioned =
 	// false and no releases: an answer, not an error.
+	//
+	// Filters select release rows only; every other response field is the
+	// deployment's, unfiltered, and blockers are still judged against the
+	// whole deployment. A build_id EQUALS filter counts only that release; an
+	// id the cluster does not know is an EMPTY list, never NOT_FOUND: `orkctl
+	// release wait` relies on it to tell "forgotten after draining" from an
+	// error.
 	ListReleases(context.Context, *connect.Request[v1.ListReleasesRequest]) (*connect.Response[v1.ListReleasesResponse], error)
 	// RampRelease sends `percent` of new runs to one release that is not
 	// current, and the rest to the current release. percent 0 stops the ramp

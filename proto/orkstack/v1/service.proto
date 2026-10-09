@@ -7,6 +7,7 @@ import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
+import "orkstack/v1/filter.proto";
 import "orkstack/v1/image_policy.proto";
 import "orkstack/v1/run.proto";
 import "orkstack/v1/orkflow.proto";
@@ -185,9 +186,51 @@ message GetOrkflowRequest {
 }
 message GetOrkflowResponse { Orkflow orkflow = 1; }
 message ListOrkflowsRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Orkflow"
+    fields: [
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "version"
+        label: "Current version"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "description"
+        label: "Description"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "labels"
+        label: "Label"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "definition_digest"
+        label: "Definition digest"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "created_at"
+        label: "Applied"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  // page_size bounds one page; 0 means the engine's default page (200).
+  // Filters apply before the page is cut, so a filtered listing past one
+  // page carries a next_page_token like an unfiltered one.
   int32 page_size = 1;
+  // page_token continues a listing; it binds the namespace and the
+  // canonical filter set.
   string page_token = 2;
-  string namespace = 3;                  // empty = the default namespace
+  string namespace = 3;                  // the tenant; empty = the default namespace
+  repeated FieldFilter filters = 4;
 }
 message ListOrkflowsResponse {
   repeated Orkflow orkflows = 1;
@@ -845,7 +888,53 @@ message UpdateWebhookRequest {
   string task_id = 7;
 }
 message UpdateWebhookResponse { Webhook webhook = 1; }
-message ListWebhooksRequest {}
+message ListWebhooksRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Webhook"
+    fields: [
+      {
+        path: "id"
+        label: "Id"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "url"
+        label: "URL"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "namespace"
+        label: "Namespace scope"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "orkflow_name"
+        label: "Orkflow scope"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "task_id"
+        label: "Task scope"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "created_at"
+        label: "Created"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  repeated FieldFilter filters = 1;
+}
 message ListWebhooksResponse { repeated Webhook webhooks = 1; }
 message DeleteWebhookRequest { string id = 1; }
 message DeleteWebhookResponse {}
@@ -1022,8 +1111,47 @@ message CreateTriggerResponse {
   string secret = 2;                       // shown exactly once, like RegisterWebhookResponse.secret
 }
 message ListTriggersRequest {
-  string namespace = 1;
-  string orkflow_name = 2;                 // empty = every trigger in the namespace
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Trigger"
+    fields: [
+      {
+        path: "id"
+        label: "Id"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "orkflow_name"
+        label: "Orkflow"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "orkflow_version"
+        label: "Pinned version"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "description"
+        label: "Description"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "created_at"
+        label: "Created"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  reserved 2;
+  reserved "orkflow_name";
+  string namespace = 1;                    // the tenant; empty = the default namespace
+  repeated FieldFilter filters = 3;
 }
 message ListTriggersResponse { repeated Trigger triggers = 1; }
 message DeleteTriggerRequest { string id = 1; string namespace = 2; }
@@ -1679,9 +1807,11 @@ service NamespaceService {
   // the built-in default always among them.
   //
   // page_size 0 returns every match in one response; a positive page_size
-  // returns one page and a next_page_token. A page reads only the documents
-  // it holds: the names come from the registry's key listing, so a page of
-  // 25 out of thousands costs one listing and 25 reads, not thousands.
+  // returns one page and a next_page_token. The names come from the
+  // registry's key listing, so a page filtered by name alone (or not at all)
+  // reads only the documents it holds: a page of 25 out of thousands costs
+  // one listing and 25 reads. A filter on any other field reads documents
+  // in name order, a batch at a time, until the page is full.
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
   // UpdateNamespace replaces a namespace's mutable fields.
   //
@@ -1723,23 +1853,71 @@ message CreateNamespaceResponse {
 message GetNamespaceRequest { string name = 1; }
 message GetNamespaceResponse { Namespace namespace = 1; }
 message ListNamespacesRequest {
-  // page_size bounds one page. 0 returns EVERY matching namespace in one
-  // response — the behaviour every existing caller relies on (the namespace
-  // switcher, Admin → Usage, orkctl). Negative is INVALID_ARGUMENT.
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Namespace"
+    fields: [
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "description"
+        label: "Description"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "labels"
+        label: "Label"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "default_pool"
+        label: "Default pool"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "hold.reason"
+        label: "Hold reason"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "require_signed_by"
+        label: "Required signer"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "telemetry.sink"
+        label: "Telemetry sink"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "created_at"
+        label: "Created"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      },
+      {
+        path: "updated_at"
+        label: "Updated"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  // page_size 0 returns EVERY matching namespace in one response (the
+  // switcher, Admin → Usage and `orkctl namespace list` ask for it); a
+  // positive page_size returns one page in name order; negative is
+  // INVALID_ARGUMENT.
   int32 page_size = 1;
-  // page_token continues a listing from the response's next_page_token. It
-  // is bound to the name_contains it was issued for; any other filter is
-  // INVALID_ARGUMENT, and so is a token sent with page_size 0.
+  // page_token continues a paged listing; it binds the canonical filter set,
+  // and is INVALID_ARGUMENT with page_size 0.
   string page_token = 2;
-  // name_contains keeps only namespaces whose name contains this substring
-  // (names are lowercase, so matching is exact). Empty keeps all. At most
-  // 200 bytes.
-  string name_contains = 3;
+  repeated FieldFilter filters = 3;
 }
 message ListNamespacesResponse {
   repeated Namespace namespaces = 1;
-  // next_page_token is set when more namespaces match than this page holds.
-  string next_page_token = 2;
+  string next_page_token = 2;              // set when more namespaces match
 }
 message UpdateNamespaceRequest {
   // namespace carries the new spec and the etag it was read at. Every update
@@ -1755,7 +1933,24 @@ message UpdateNamespaceResponse { Namespace namespace = 1; }
 message DeleteNamespaceRequest { string name = 1; }
 message DeleteNamespaceResponse {}
 message ListPoolsRequest {
-  string namespace = 1;                  // empty = the default namespace
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Pool"
+    fields: [
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "is_default"
+        label: "Default"
+        operators: [FILTER_OPERATOR_EQUALS]
+      }
+    ]
+  };
+  string namespace = 1;                  // the tenant; empty = the default namespace
+  repeated FieldFilter filters = 2;
 }
 message ListPoolsResponse {
   repeated Pool pools = 1;               // ordered by name
@@ -1782,6 +1977,14 @@ service ActivityService {
   // NOT_FOUND — a read for an id nothing polls is an empty answer, and the
   // drain loop relies on it (CordonOrker, a write, is the one that answers
   // NOT_FOUND for that id).
+  //
+  // An orker_id EQUALS filter asks exactly that one Orker, on its own
+  // channel, and returns at most one row: it is what `orkctl orker get` and
+  // the drain loop send, so a drain costs one activity per poll and not one
+  // per Orker of the fleet. Every other filter is applied to the inventory;
+  // an unreachable row is kept under a pool, build_id or cordoned filter,
+  // since none of those was measured on it. A malformed orker_id in an
+  // equals, not-equals or in filter is INVALID_ARGUMENT before any read.
   rpc ListOrkers(ListOrkersRequest) returns (ListOrkersResponse);
   // CordonOrker sets or clears ONE Orker's cordon: a process-local flag
   // delivered over that Orker's own channel, lost when the process exits.
@@ -1805,7 +2008,29 @@ message InspectActivityRequest {
 }
 message InspectActivityResponse { ActivityInfo activity = 1; }
 
-message ListActivitiesRequest {}
+message ListActivitiesRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.ActivityInfo"
+    fields: [
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "reference"
+        label: "Reference"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "index_digest"
+        label: "Digest"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      }
+    ]
+  };
+  repeated FieldFilter filters = 1;
+}
 
 // ActivityInfo is one catalog entry, resolved.
 //
@@ -1923,15 +2148,40 @@ message Orker {
 }
 
 message ListOrkersRequest {
-  // pool keeps only Orkers that report serving this pool. Empty keeps every
-  // Orker. It is matched against what each Orker answers, not against a
-  // channel name.
-  string pool = 1;
-  // orker_id asks exactly one Orker, on its own channel, and returns at
-  // most one row; pool is then ignored. It is what `orkctl orker get` and
-  // the drain loop use, so a drain costs one activity per poll and not one
-  // per Orker of the fleet.
-  string orker_id = 2;
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Orker"
+    unavailable_field: "unavailable_reason"
+    fields: [
+      {
+        path: "orker_id"
+        label: "Orker"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_ORKER_ID
+      },
+      {
+        path: "pool"
+        label: "Pool"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+        kept_when_unavailable: true
+      },
+      {
+        path: "build_id"
+        label: "Release"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        kept_when_unavailable: true
+      },
+      {
+        path: "cordoned"
+        label: "Cordoned"
+        operators: [FILTER_OPERATOR_EQUALS]
+        kept_when_unavailable: true
+      }
+    ]
+  };
+  reserved 1, 2;
+  reserved "pool", "orker_id";
+  repeated FieldFilter filters = 3;
 }
 
 message ListOrkersResponse {
@@ -2020,6 +2270,13 @@ service SystemService {
   // identically, including a replica of another release. A deployment no
   // release of which has registered with the cluster answers versioned =
   // false and no releases: an answer, not an error.
+  //
+  // Filters select release rows only; every other response field is the
+  // deployment's, unfiltered, and blockers are still judged against the
+  // whole deployment. A build_id EQUALS filter counts only that release; an
+  // id the cluster does not know is an EMPTY list, never NOT_FOUND: `orkctl
+  // release wait` relies on it to tell "forgotten after draining" from an
+  // error.
   rpc ListReleases(ListReleasesRequest) returns (ListReleasesResponse);
 
   // RampRelease sends `percent` of new runs to one release that is not
@@ -2243,11 +2500,29 @@ message Release {
 }
 
 message ListReleasesRequest {
-  // build_id keeps only that release. Its blockers are still judged against
-  // the whole deployment. An id the cluster does not know is an EMPTY list,
-  // never NOT_FOUND: `orkctl release wait` relies on it to tell "forgotten
-  // after draining" from an error.
-  string build_id = 1;
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Release"
+    fields: [
+      {
+        path: "build_id"
+        label: "Release"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "role"
+        label: "Role"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "drained"
+        label: "Drained"
+        operators: [FILTER_OPERATOR_EQUALS]
+      }
+    ]
+  };
+  reserved 1;
+  reserved "build_id";
+  repeated FieldFilter filters = 2;
 }
 
 message ListReleasesResponse {

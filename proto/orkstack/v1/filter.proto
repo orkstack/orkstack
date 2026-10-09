@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// FilterOperator is the CLOSED set of comparisons a list filter may make.
+// Every filter of a request must hold (AND). There is no OR, no negation of
+// a group, no nesting and no expression, and there never will be one here
+// (AGENTS.md §13). docs/UI_CLI_PARITY.md "Filtering lists" is the contract;
+// the CLI spelling of each operator is in the trailing comment.
+enum FilterOperator {
+  FILTER_OPERATOR_UNSPECIFIED = 0;   // refused
+  FILTER_OPERATOR_EQUALS = 1;        // exactly one value              f=v
+  FILTER_OPERATOR_NOT_EQUALS = 2;    // exactly one value              f!=v
+  FILTER_OPERATOR_IN = 3;            // 1 to 64 values, any matches    f=v1,v2
+  FILTER_OPERATOR_CONTAINS = 4;      // one non-empty value; text      f~v
+  FILTER_OPERATOR_PREFIX = 5;        // one non-empty value; text      f^v
+  FILTER_OPERATOR_AT_OR_AFTER = 6;   // one instant, inclusive         f>=t
+  FILTER_OPERATOR_BEFORE = 7;        // one instant, exclusive         f<t
+}
+
+// FieldFilter is one predicate over one field of the listed object.
+message FieldFilter {
+  // field is a path the request's (filterable) option declares: proto field
+  // names of the listed message, dotted through a nested message
+  // ("origin.kind"), or "labels.<key>" for one key of a labels map, the key
+  // verbatim after the first "labels." (it may contain dots).
+  string field = 1;
+  FilterOperator op = 2;
+  // values in the spelling `orkctl --json` prints: text verbatim, an enum
+  // value's short name ("FAILED"), true/false, an RFC 3339 instant with a
+  // zone. docs/UI_CLI_PARITY.md "Filtering lists" states the matching rules.
+  repeated string values = 3;
+}
+
+// FilterValueRule is the spelling a WHOLE-value comparison (equals, not
+// equals, in) on a field must have, held at the boundary as AGENTS.md §7
+// asks of every name: validated, never sanitized. contains and prefix take
+// fragments of a value and are held only to the size and UTF-8 limits.
+enum FilterValueRule {
+  FILTER_VALUE_RULE_UNSPECIFIED = 0; // any text
+  // An OrkStack name — a namespace, Orkflow, task id or pool, or a trigger,
+  // schedule or webhook name, all of which the API already holds to it —
+  // by dsl.ValidSlug (^[a-z][a-z0-9-]*$, at most 200 bytes). The empty value
+  // is also accepted: it is what an unset name reads as, e.g. the namespace
+  // of a deployment-wide webhook.
+  FILTER_VALUE_RULE_NAME = 1;
+  // An Orker id, by task.ValidOrkerID (1 to 200 bytes, no whitespace or
+  // control character). Empty is refused: every Orker has an id.
+  FILTER_VALUE_RULE_ORKER_ID = 2;
+}
+
+// FilterableField declares one field a list may be filtered on.
+message FilterableField {
+  // path is a proto field path of the resource: "name", "origin.kind", or
+  // the name of a map<string, string> field ("labels"), which filters
+  // address as "labels.<key>".
+  string path = 1;
+  // label is the field's display name, e.g. "Started by". Both clients may
+  // show it; the path is what a filter carries.
+  string label = 2;
+  repeated FilterOperator operators = 3;
+  // allowed_values, for an enum field only: the short names a filter may
+  // name. Empty means every declared value except UNSPECIFIED, which no
+  // filter ever names.
+  repeated string allowed_values = 4;
+  // kept_when_unavailable: this field is not measured on a row that carries
+  // ListFilterSpec.unavailable_field, and such a row is KEPT by every filter
+  // on this field — a filter never hides a row the deployment failed to ask.
+  bool kept_when_unavailable = 5;
+  // requires names a path that must carry an EQUALS filter whenever a filter
+  // on this path is present ("origin.id" requires "origin.kind").
+  string requires = 6;
+  // value_rule, for a text field only: what an equals, not-equals or in
+  // value must spell. UNSPECIFIED means any text.
+  FilterValueRule value_rule = 7;
+}
+
+// ListFilterSpec is one list request's allowlist.
+message ListFilterSpec {
+  // resource is the full name of the listed message, e.g. "orkstack.v1.Run".
+  string resource = 1;
+  // fields, in the order help text and error messages list them.
+  repeated FilterableField fields = 2;
+  // unavailable_field names a string field of resource that is non-empty on
+  // a row the server could not measure ("unavailable_reason"). Empty when
+  // the list has no such rows.
+  string unavailable_field = 3;
+}
+
+extend google.protobuf.MessageOptions {
+  // filterable is set on every list request that takes `repeated
+  // FieldFilter filters`. It is the ONE declaration of what may be filtered:
+  // the engine validates and matches with it, `orkctl --filter help` prints
+  // it, and the browser's filter component renders it.
+  ListFilterSpec filterable = 50100;
+}
