@@ -284,6 +284,12 @@ tasks:
     # each:, await: — see "Fan-out" and "Awaited tasks"
 ```
 
+`needs:` is the only thing that orders tasks. Declaration order sequences
+nothing: a task with no `needs` (absent or `[]`) starts when the run starts,
+and every task starts as soon as all its needs have ended and its `join:`
+admits it, so independent tasks run in parallel. To run B after A, write
+`needs: [A]` on B.
+
 `retry:` absent (or `maximum_attempts` of 0 or 1) means one attempt — never
 Temporal's unbounded default. Within `retry:`, an unset interval is 1 s, an
 unset coefficient 2.0 and an unset maximum interval 100 s.

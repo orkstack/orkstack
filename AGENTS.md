@@ -345,14 +345,12 @@ A definition limit such as 256 KiB is a proposal, not a current hard invariant.
 Do not turn that proposal into a hard limit without a separate accepted
 contract.
 
-Steps execute sequentially in declaration order by default. Explicit `needs`
-dependencies create DAG edges and enable parallel execution. `needs: []` may
-start immediately. As implemented, the interpreter adds no implicit
-declaration-order edge: a task becomes ready once every need has ended and its
-join policy admits it, and a task with no `needs` is ready at run start, so
-independent tasks run in parallel; write `needs` to order tasks. Detect
-missing references and dependency cycles during validation; do not discover
-malformed DAGs during runtime.
+Tasks form a DAG whose only edges are explicit `needs`. Declaration order
+never sequences anything: a task becomes ready once every need has ended and
+its join policy admits it, and a task with no `needs` (absent or `[]`) is
+ready at run start, so independent tasks run in parallel. To order two tasks,
+write `needs`. Detect missing references and dependency cycles during
+validation; do not discover malformed DAGs during runtime.
 
 The repository vocabulary is deliberate. The user-facing words below are the
 ones the DSL, the proto, `orkctl`, the UI and every message use; a word marked
