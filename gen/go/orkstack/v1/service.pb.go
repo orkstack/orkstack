@@ -7903,7 +7903,19 @@ func (x *GetNamespaceResponse) GetNamespace() *Namespace {
 }
 
 type ListNamespacesRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// page_size bounds one page. 0 returns EVERY matching namespace in one
+	// response — the behaviour every existing caller relies on (the namespace
+	// switcher, Admin → Usage, orkctl). Negative is INVALID_ARGUMENT.
+	PageSize int32 `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// page_token continues a listing from the response's next_page_token. It
+	// is bound to the name_contains it was issued for; any other filter is
+	// INVALID_ARGUMENT, and so is a token sent with page_size 0.
+	PageToken string `protobuf:"bytes,2,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	// name_contains keeps only namespaces whose name contains this substring
+	// (names are lowercase, so matching is exact). Empty keeps all. At most
+	// 200 bytes.
+	NameContains  string `protobuf:"bytes,3,opt,name=name_contains,json=nameContains,proto3" json:"name_contains,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7938,9 +7950,32 @@ func (*ListNamespacesRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{90}
 }
 
+func (x *ListNamespacesRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListNamespacesRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+func (x *ListNamespacesRequest) GetNameContains() string {
+	if x != nil {
+		return x.NameContains
+	}
+	return ""
+}
+
 type ListNamespacesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Namespaces    []*Namespace           `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Namespaces []*Namespace           `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty"`
+	// next_page_token is set when more namespaces match than this page holds.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7980,6 +8015,13 @@ func (x *ListNamespacesResponse) GetNamespaces() []*Namespace {
 		return x.Namespaces
 	}
 	return nil
+}
+
+func (x *ListNamespacesResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
 }
 
 type UpdateNamespaceRequest struct {
@@ -11069,12 +11111,17 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\x13GetNamespaceRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"L\n" +
 	"\x14GetNamespaceResponse\x124\n" +
-	"\tnamespace\x18\x01 \x01(\v2\x16.orkstack.v1.NamespaceR\tnamespace\"\x17\n" +
-	"\x15ListNamespacesRequest\"P\n" +
+	"\tnamespace\x18\x01 \x01(\v2\x16.orkstack.v1.NamespaceR\tnamespace\"x\n" +
+	"\x15ListNamespacesRequest\x12\x1b\n" +
+	"\tpage_size\x18\x01 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x02 \x01(\tR\tpageToken\x12#\n" +
+	"\rname_contains\x18\x03 \x01(\tR\fnameContains\"x\n" +
 	"\x16ListNamespacesResponse\x126\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\v2\x16.orkstack.v1.NamespaceR\n" +
-	"namespaces\"N\n" +
+	"namespaces\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"N\n" +
 	"\x16UpdateNamespaceRequest\x124\n" +
 	"\tnamespace\x18\x01 \x01(\v2\x16.orkstack.v1.NamespaceR\tnamespace\"O\n" +
 	"\x17UpdateNamespaceResponse\x124\n" +

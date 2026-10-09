@@ -1675,7 +1675,13 @@ service NamespaceService {
   // GetNamespace reads one namespace. The default namespace always resolves,
   // whether or not anyone created it.
   rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
-  // ListNamespaces returns every registered namespace, ordered by name.
+  // ListNamespaces returns the registered namespaces, ordered by name, with
+  // the built-in default always among them.
+  //
+  // page_size 0 returns every match in one response; a positive page_size
+  // returns one page and a next_page_token. A page reads only the documents
+  // it holds: the names come from the registry's key listing, so a page of
+  // 25 out of thousands costs one listing and 25 reads, not thousands.
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
   // UpdateNamespace replaces a namespace's mutable fields.
   //
@@ -1716,8 +1722,25 @@ message CreateNamespaceResponse {
 }
 message GetNamespaceRequest { string name = 1; }
 message GetNamespaceResponse { Namespace namespace = 1; }
-message ListNamespacesRequest {}
-message ListNamespacesResponse { repeated Namespace namespaces = 1; }
+message ListNamespacesRequest {
+  // page_size bounds one page. 0 returns EVERY matching namespace in one
+  // response — the behaviour every existing caller relies on (the namespace
+  // switcher, Admin → Usage, orkctl). Negative is INVALID_ARGUMENT.
+  int32 page_size = 1;
+  // page_token continues a listing from the response's next_page_token. It
+  // is bound to the name_contains it was issued for; any other filter is
+  // INVALID_ARGUMENT, and so is a token sent with page_size 0.
+  string page_token = 2;
+  // name_contains keeps only namespaces whose name contains this substring
+  // (names are lowercase, so matching is exact). Empty keeps all. At most
+  // 200 bytes.
+  string name_contains = 3;
+}
+message ListNamespacesResponse {
+  repeated Namespace namespaces = 1;
+  // next_page_token is set when more namespaces match than this page holds.
+  string next_page_token = 2;
+}
 message UpdateNamespaceRequest {
   // namespace carries the new spec and the etag it was read at. Every update
   // is conditional: the etag names the stored version this edit replaces, and

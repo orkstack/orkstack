@@ -1720,7 +1720,13 @@ type NamespaceServiceClient interface {
 	// GetNamespace reads one namespace. The default namespace always resolves,
 	// whether or not anyone created it.
 	GetNamespace(context.Context, *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error)
-	// ListNamespaces returns every registered namespace, ordered by name.
+	// ListNamespaces returns the registered namespaces, ordered by name, with
+	// the built-in default always among them.
+	//
+	// page_size 0 returns every match in one response; a positive page_size
+	// returns one page and a next_page_token. A page reads only the documents
+	// it holds: the names come from the registry's key listing, so a page of
+	// 25 out of thousands costs one listing and 25 reads, not thousands.
 	ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error)
 	// UpdateNamespace replaces a namespace's mutable fields.
 	//
@@ -1854,7 +1860,13 @@ type NamespaceServiceHandler interface {
 	// GetNamespace reads one namespace. The default namespace always resolves,
 	// whether or not anyone created it.
 	GetNamespace(context.Context, *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error)
-	// ListNamespaces returns every registered namespace, ordered by name.
+	// ListNamespaces returns the registered namespaces, ordered by name, with
+	// the built-in default always among them.
+	//
+	// page_size 0 returns every match in one response; a positive page_size
+	// returns one page and a next_page_token. A page reads only the documents
+	// it holds: the names come from the registry's key listing, so a page of
+	// 25 out of thousands costs one listing and 25 reads, not thousands.
 	ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error)
 	// UpdateNamespace replaces a namespace's mutable fields.
 	//
