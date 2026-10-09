@@ -183,7 +183,6 @@ is gitignored; the commit or pull request quotes it. No proof, no done.
 | [docs/STATS.md](./docs/STATS.md) | Where stats, failure fingerprints, flakes, usage and cache numbers come from |
 | [docs/RUN_EVIDENCE.md](./docs/RUN_EVIDENCE.md) | The run evidence bundle format and offline verification |
 | [docs/UI_CLI_PARITY.md](./docs/UI_CLI_PARITY.md) | The operator experience contract the UI and CLI share |
-| [docs/MODEL_SELECTION.md](./docs/MODEL_SELECTION.md) | Which AI model to use for which agent task in this repository |
 | [examples/README.md](./examples/README.md) | Every example Orkflow and what it needs to run |
 | [deploy/observability/README.md](./deploy/observability/README.md) | The optional local Grafana/Loki/Tempo/Prometheus profile |
 | [internal/engine/testdata/history/README.md](./internal/engine/testdata/history/README.md) | The recorded histories that guard replay compatibility |

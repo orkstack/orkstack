@@ -283,7 +283,7 @@ func inputForSink(sink string, attrs map[string]string) *orkstackv1.ExecuteTaskI
 	return in
 }
 
-// TestNewOrkerObserverForSinks_TaskPinnedToNamedSinkLandsThere is the phase 3
+// TestNewOrkerObserverForSinks_TaskPinnedToNamedSinkLandsThere is the sink
 // routing contract: an attempt pinned to sink "b" produces its span on b's
 // in-memory exporter, not the default sink's, and carries the selection's
 // attributes.

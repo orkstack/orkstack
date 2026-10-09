@@ -339,7 +339,7 @@ func runWithSelection(id, sink string, attrs map[string]string) *orkstackv1.Run 
 	}
 }
 
-// TestNewEngineObserverForSinks_RunPinnedToNamedSinkLandsThere is the phase 3
+// TestNewEngineObserverForSinks_RunPinnedToNamedSinkLandsThere is the sink
 // routing contract: a run pinned to sink "b" moves b's ManualReader, not the
 // default sink's.
 func TestNewEngineObserverForSinks_RunPinnedToNamedSinkLandsThere(t *testing.T) {

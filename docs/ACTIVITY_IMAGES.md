@@ -49,7 +49,8 @@ Rules for reference activity authors:
 
 1. Use `op` only when one image genuinely offers several related operations.
 2. Use lowercase verbs and reject unknown values before side effects (the
-   first-party images exit `2` on an unknown or missing `op`).
+   first-party images exit `2` on an unknown `op`, and on a missing one unless
+   the image documents a default — `http` defaults to `get`, `shell` to `exec`).
 3. Document whether an op is the default; do not silently guess when no choice
    is clearly safest.
 4. Keep arguments minimal and document output values and artifact files.
