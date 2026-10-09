@@ -1344,7 +1344,7 @@ that answered.
 | activity catalog | `orkctl activity list` | **this replica's own configuration** (`ORK_ACTIVITY_CATALOG`), resolved to pinned digests at apply time |
 | maximum run retention | `orkctl admin retention get \| set` | `metadata/settings/retention-policy.json`; writable |
 | image policy | `orkctl admin image-policy get \| set` | `metadata/settings/image-policy.json`; writable |
-| namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket, including each namespace's retention, admission, budget and policies |
+| namespaces | `orkctl namespace list [--name-contains S] \| get \| create \| update \| delete` | the registry in the bucket, including each namespace's retention, admission, budget and policies; Admin → Namespaces pages it, reading only the documents on screen |
 | pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
 | Orker inventory | `orkctl orker list \| get \| cordon \| uncordon \| drain` | the cluster's poller information, plus each Orker itself; nothing stores an Orker |
 | releases | `orkctl release status \| ramp \| promote \| rollback \| wait` | the cluster's routing, drain verdict and run index, plus the Orker inventory; writable (ramp, promote, rollback). Needs the worker-deployment permissions (§4, "Underneath") |

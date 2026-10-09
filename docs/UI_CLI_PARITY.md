@@ -259,8 +259,8 @@ next-page command, `--json` carries `next_page_token`.
 
 #### Paging in the browser
 
-The Runs and Orkflows lists share one URL rule and one footer
-(`ui/src/lib/browsing.ts`, `Pagination.svelte`):
+The Runs, Orkflows and Admin → Namespaces lists share one URL rule and one
+footer (`ui/src/lib/browsing.ts`, `Pagination.svelte`):
 
 - **The URL holds what the page shows, and nothing else**: `ns`, the filters,
   `size`, the engine's `cursor`, and `page` (1-based, omitted at 1). A pasted
@@ -279,9 +279,9 @@ The Runs and Orkflows lists share one URL rule and one footer
 - **No totals.** Responses carry no count, so the footer never shows "of N":
   `Page 3 · 10 runs`, `Page 5 · 7 runs · last page`, or `7 runs`.
 - **Page size** on Runs is a field of the filter form and applies with **Apply
-  filters**; on Orkflows (no filter form) it applies on change and clears that
-  filter set's stack. One form never applies some fields on change and others
-  on submit.
+  filters**; on Orkflows and Admin → Namespaces (no filter form it belongs to)
+  it applies on change and clears that filter set's stack. One form never
+  applies some fields on change and others on submit.
 
 The dashboard's window control has four segments — `15m`, `6h`, `24h` and
 **Custom** (a `datetime-local` capped at now, labelled `Since <instant>`). The
@@ -919,6 +919,19 @@ clients show it verbatim. Operator semantics are in [DEPLOY.md](DEPLOY.md).
 
 `orkflow validate`, the Apply page and the editor show a policy refusal as a
 field-anchored issue on the offending task.
+
+**Listing.** `ListNamespaces` with `page_size` 0 answers every namespace in
+one response — what `namespace list`, the namespace switcher and Admin → Usage
+ask for. A positive `page_size` pages by name (`next_page_token`, bound to its
+filter) and reads only the documents on the page, which is how Admin →
+Namespaces lists a registry of thousands; its pages are presentation, as on
+Runs and Orkflows, and `namespace list` still prints every match. The name
+filter is the one listing control both clients share: `namespace list
+--name-contains S` and the page's **Name contains** field (`?q=`, applied on
+submit, resetting the cursor) both send `name_contains`, a substring of the
+name with `default` matched like any other. A create in the browser lands on
+the created name as the filter, so its row is on screen whichever page it
+sorts onto.
 
 ### Image policy
 
