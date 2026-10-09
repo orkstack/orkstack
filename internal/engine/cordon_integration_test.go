@@ -256,7 +256,7 @@ func (d *cordonDeployment) list(req *orkstackv1.ListOrkersRequest) []*orkstackv1
 // one reads one Orker's row, or nil when nothing polls its channel.
 func (d *cordonDeployment) one(id string) *orkstackv1.Orker {
 	d.t.Helper()
-	rows := d.list(&orkstackv1.ListOrkersRequest{OrkerId: id})
+	rows := d.list(orkersWhere("orker_id", id))
 	if len(rows) == 0 {
 		return nil
 	}
@@ -480,13 +480,13 @@ func TestIntegration_ListOrkersListsEveryLiveOrkerWithItsLoad(t *testing.T) {
 			t.Fatalf("rows are not ordered by pool then id: %s", describeRows(rows))
 		}
 	}
-	filtered := d.list(&orkstackv1.ListOrkersRequest{Pool: gpu})
+	filtered := d.list(orkersWhere("pool", gpu))
 	if len(filtered) != 1 || filtered[0].GetOrkerId() != g.id {
-		t.Fatalf("--pool %s = %s; want only %s", gpu, describeRows(filtered), g.id)
+		t.Fatalf("pool=%s filter = %s; want only %s", gpu, describeRows(filtered), g.id)
 	}
 	d.transcript.line("ListOrkers pool=%s  %s", gpu, describeRows(filtered))
-	if got := d.list(&orkstackv1.ListOrkersRequest{Pool: build}); len(got) != 3 {
-		t.Fatalf("--pool %s = %s; want three", build, describeRows(got))
+	if got := d.list(orkersWhere("pool", build)); len(got) != 3 {
+		t.Fatalf("pool=%s filter = %s; want three", build, describeRows(got))
 	}
 
 	stopped := build3[0]
@@ -586,7 +586,7 @@ func TestIntegration_ACordonedPinHostOpensNoNewPinAndKeepsItsOpenOne(t *testing.
 	d.transcript.section("a pin opens on A; A is cordoned")
 	run1 := d.submit("hold-" + d.token)
 	d.transcript.line("run 1 %s submitted (pin build: hold 60s, then after)", run1)
-	rows := d.awaitFleet(&orkstackv1.ListOrkersRequest{OrkerId: a.id}, 3*time.Minute,
+	rows := d.awaitFleet(orkersWhere("orker_id", a.id), 3*time.Minute,
 		"A reporting run 1's open pin with its name and lease", func(rows []*orkstackv1.Orker) bool {
 			if len(rows) != 1 || rows[0].GetOpenPins() != 1 || len(rows[0].GetPins()) != 1 {
 				return false
@@ -648,7 +648,7 @@ func TestIntegration_ACordonedPinHostOpensNoNewPinAndKeepsItsOpenOne(t *testing.
 	t.Logf("EVIDENCE open pin kept: run 1's post-cordon member ran on A (%s); run 2's pin opened on B (%s)",
 		after.GetOrkerId(), b.id)
 
-	rows = d.awaitFleet(&orkstackv1.ListOrkersRequest{OrkerId: a.id}, time.Minute, "A reporting no open pin",
+	rows = d.awaitFleet(orkersWhere("orker_id", a.id), time.Minute, "A reporting no open pin",
 		func(rows []*orkstackv1.Orker) bool { return len(rows) == 1 && rows[0].GetOpenPins() == 0 })
 	d.transcript.line("ListOrkers A after    %s", describeRows(rows))
 }
@@ -702,7 +702,7 @@ func TestIntegration_ARestartedCordonedOrkerComesBackReady(t *testing.T) {
 	d := newCordonDeployment(t, ctx, "restart", pool)
 	id := "orker-r-" + d.token
 	a := d.orker(id, pool, pinOrkerConfig{})
-	d.awaitFleet(&orkstackv1.ListOrkersRequest{OrkerId: id}, time.Minute, "A listed",
+	d.awaitFleet(orkersWhere("orker_id", id), time.Minute, "A listed",
 		func(rows []*orkstackv1.Orker) bool { return len(rows) == 1 })
 	row := d.cordon(id, "about to restart")
 	d.transcript.line("before restart        %s", describeRows([]*orkstackv1.Orker{row}))
@@ -710,7 +710,7 @@ func TestIntegration_ARestartedCordonedOrkerComesBackReady(t *testing.T) {
 	a.stop()
 	a.activities.Close()
 	restarted := d.orker(id, pool, pinOrkerConfig{workRoot: a.workRoot})
-	rows := d.awaitFleet(&orkstackv1.ListOrkersRequest{OrkerId: id}, time.Minute, "the restarted A answering",
+	rows := d.awaitFleet(orkersWhere("orker_id", id), time.Minute, "the restarted A answering",
 		func(rows []*orkstackv1.Orker) bool {
 			return len(rows) == 1 && rows[0].GetUnavailableReason() == ""
 		})
@@ -771,7 +771,7 @@ func TestIntegration_CordonReachesAVersionedOrkersControlChannel(t *testing.T) {
 	if !deployment.Versioned() {
 		t.Fatal("this test asserts nothing: the task worker is not versioned")
 	}
-	d.awaitFleet(&orkstackv1.ListOrkersRequest{OrkerId: a.id}, time.Minute, "the versioned Orker listed",
+	d.awaitFleet(orkersWhere("orker_id", a.id), time.Minute, "the versioned Orker listed",
 		func(rows []*orkstackv1.Orker) bool { return len(rows) == 1 })
 	row := d.cordon(a.id, "versioned cordon")
 	d.transcript.line("CordonOrker on a versioned Orker (%s) -> %s", deployment, describeRows([]*orkstackv1.Orker{row}))
@@ -783,4 +783,12 @@ func TestIntegration_CordonReachesAVersionedOrkersControlChannel(t *testing.T) {
 		t.Fatalf("ListOrkers = %v", listed)
 	}
 	t.Logf("EVIDENCE versioned control channel: %s", describeRows([]*orkstackv1.Orker{listed}))
+}
+
+// orkersWhere is a ListOrkers request holding one equals filter, as `orkctl
+// orker list --filter FIELD=VALUE` sends it.
+func orkersWhere(field, value string) *orkstackv1.ListOrkersRequest {
+	return &orkstackv1.ListOrkersRequest{Filters: []*orkstackv1.FieldFilter{{
+		Field: field, Op: orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []string{value},
+	}}}
 }

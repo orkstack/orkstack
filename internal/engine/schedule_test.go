@@ -600,7 +600,7 @@ func TestTemporalScheduler_ListFiltersByMemoNamespaceAndDescribesEach(t *testing
 	cluster.sc.entries = append(cluster.sc.entries, &client.ScheduleListEntry{ID: "ork-schedule/payments/deleted",
 		Memo: memoOf(t, map[string]string{engine.MemoScheduleID: "sch-dead", engine.MemoScheduleName: "deleted",
 			engine.MemoNamespace: "payments", engine.MemoOrkflowName: "reconcile"})})
-	views, err := s.List(ctx, "payments")
+	views, err := s.List(ctx, "payments", nil)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -616,7 +616,7 @@ func TestTemporalScheduler_ListFiltersByMemoNamespaceAndDescribesEach(t *testing
 	// A describe that fails still lists the row, identity intact.
 	cluster.sc.handles["ork-schedule/payments/zeta"].err = serviceerror.NewUnavailable("cluster busy")
 	cluster.sc.entries = append([]*client.ScheduleListEntry(nil), cluster.sc.entries...)
-	views, err = s.List(ctx, "payments")
+	views, err = s.List(ctx, "payments", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

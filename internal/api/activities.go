@@ -37,17 +37,26 @@ type OrkerDescriber interface {
 // The order is by name, and that is part of the contract rather than an
 // implementation detail: the Admin page renders this list, and a list that
 // reordered itself between reads would look like the catalog had changed.
+// Filters apply to every catalog entry read.
 func (s *Service) ListActivities(
 	ctx context.Context,
-	_ *connect.Request[orkstackv1.ListActivitiesRequest],
+	req *connect.Request[orkstackv1.ListActivitiesRequest],
 ) (*connect.Response[orkstackv1.ListActivitiesResponse], error) {
+	set, err := compileFilters(req.Msg)
+	if err != nil {
+		return nil, err
+	}
 	var activities []*orkstackv1.ActivityInfo
 	if s.activities != nil {
 		listed, err := s.activities.ListActivities(ctx)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
-		activities = listed
+		for _, activity := range listed {
+			if set.Match(activity) {
+				activities = append(activities, activity)
+			}
+		}
 	}
 	sort.SliceStable(activities, func(i, j int) bool {
 		return activities[i].GetName() < activities[j].GetName()

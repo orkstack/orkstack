@@ -23,7 +23,9 @@ import (
 type ScheduleController interface {
 	Create(ctx context.Context, rec *orkstackv1.ScheduleRecord, paused bool) (engine.ScheduleView, error)
 	Describe(ctx context.Context, namespace, name string) (engine.ScheduleView, error)
-	List(ctx context.Context, namespace string) ([]engine.ScheduleView, error)
+	// List describes one namespace's schedules; keep (nil: every one) is
+	// decided on the list entry's id, name and Orkflow before any describe.
+	List(ctx context.Context, namespace string, keep func(id, name, orkflow string) bool) ([]engine.ScheduleView, error)
 	Update(ctx context.Context, namespace, name string, apply func(*orkstackv1.ScheduleRecord) error) (engine.ScheduleView, error)
 	Pause(ctx context.Context, namespace, name, reason string) error
 	Resume(ctx context.Context, namespace, name string) error

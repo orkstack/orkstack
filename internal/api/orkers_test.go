@@ -136,33 +136,94 @@ func TestListOrkers_OneRowPerPresenceIdentity_UnansweredIsUnavailableNotZero(t *
 	}
 }
 
-func TestListOrkers_PoolFilterKeepsThatPoolAndUnavailableRows(t *testing.T) {
+func orkersWhere(t *testing.T, texts ...string) *orkstackv1.ListOrkersRequest {
+	return &orkstackv1.ListOrkersRequest{Filters: filters(t, texts...)}
+}
+
+func TestListOrkers_PoolFilterKeepsUnreachableRows(t *testing.T) {
 	svc := api.NewService(api.Config{Fleet: threeOrkerFleet()})
-	if got := orkerIDs(listOrkers(t, svc, &orkstackv1.ListOrkersRequest{Pool: "gpu"})); got != "orker-c001,orker-g1" {
+	if got := orkerIDs(listOrkers(t, svc, orkersWhere(t, "pool=gpu"))); got != "orker-c001,orker-g1" {
 		t.Fatalf("pool gpu rows = %s; want the gpu Orker and the one that could not be asked", got)
 	}
-	if got := orkerIDs(listOrkers(t, svc, &orkstackv1.ListOrkersRequest{Pool: "build"})); got != "orker-c001,orker-7f3a,orker-91c0" {
+	if got := orkerIDs(listOrkers(t, svc, orkersWhere(t, "pool=build"))); got != "orker-c001,orker-7f3a,orker-91c0" {
 		t.Fatalf("pool build rows = %s", got)
+	}
+	if got := orkerIDs(listOrkers(t, svc, orkersWhere(t, "pool!=build"))); got != "orker-c001,orker-g1" {
+		t.Fatalf("pool != build rows = %s", got)
+	}
+	// orker_id is always measured: the unreachable row filters normally.
+	if got := orkerIDs(listOrkers(t, svc, orkersWhere(t, "orker_id^orker-9", "pool=build"))); got != "orker-91c0" {
+		t.Fatalf("orker_id^orker-9 rows = %s", got)
 	}
 }
 
-func TestListOrkers_OrkerIDAsksOneChannelAndIgnoresPool(t *testing.T) {
+func TestListOrkers_OrkerIDEqualityAsksOnlyThatOrker(t *testing.T) {
 	fleet := threeOrkerFleet()
 	svc := api.NewService(api.Config{Fleet: fleet})
-	rows := listOrkers(t, svc, &orkstackv1.ListOrkersRequest{OrkerId: "orker-7f3a", Pool: "gpu"})
+	rows := listOrkers(t, svc, orkersWhere(t, "orker_id=orker-7f3a"))
 	if got := orkerIDs(rows); got != "orker-7f3a" {
-		t.Fatalf("rows = %s; want the one Orker, the pool ignored", got)
+		t.Fatalf("rows = %s; want the one Orker", got)
 	}
 	if fleet.observeOrkers != 0 || len(fleet.observeOrker) != 1 || len(fleet.describes) != 1 {
 		t.Fatalf("ObserveOrkers=%d ObserveOrker=%v describes=%v; want 0, 1, 1",
 			fleet.observeOrkers, fleet.observeOrker, fleet.describes)
 	}
-	if rows := listOrkers(t, svc, &orkstackv1.ListOrkersRequest{OrkerId: "orker-gone"}); len(rows) != 0 {
+	if rows := listOrkers(t, svc, orkersWhere(t, "orker_id=orker-gone")); len(rows) != 0 {
 		t.Fatalf("an id nothing polls answered %v; want an empty list", rows)
 	}
-	_, err := svc.ListOrkers(context.Background(), connect.NewRequest(&orkstackv1.ListOrkersRequest{OrkerId: "a b"}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument {
-		t.Fatalf("an invalid id = %v; want InvalidArgument", err)
+	// Both filters apply: the Orker serves build, not gpu.
+	if rows := listOrkers(t, svc, orkersWhere(t, "orker_id=orker-7f3a", "pool=gpu")); len(rows) != 0 {
+		t.Fatalf("orker_id=orker-7f3a pool=gpu = %s; want no row, every filter holds", orkerIDs(rows))
+	}
+	// An in of several ids is no pushdown: the inventory is read.
+	before := fleet.observeOrkers
+	if got := orkerIDs(listOrkers(t, svc, orkersWhere(t, "orker_id=orker-7f3a,orker-g1"))); got != "orker-7f3a,orker-g1" {
+		t.Fatalf("orker_id in = %s", got)
+	}
+	if fleet.observeOrkers != before+1 {
+		t.Fatalf("an in of two ids did not read the inventory")
+	}
+}
+
+func TestListOrkers_OrkerIDEqualityAnswersAsTheInventoryWould(t *testing.T) {
+	for _, id := range []string{"orker-c001", "orker-7f3a", "orker-91c0", "orker-g1", "orker-gone"} {
+		for _, extra := range [][]string{nil, {"pool=build"}, {"cordoned=false"}} {
+			pushed := api.NewService(api.Config{Fleet: threeOrkerFleet()})
+			texts := append([]string{"orker_id=" + id}, extra...)
+			got := listOrkers(t, pushed, orkersWhere(t, texts...))
+			// The same filter answered from the inventory: an orker_id
+			// fragment is never pushed down, and = is the whole value.
+			whole := api.NewService(api.Config{Fleet: threeOrkerFleet()})
+			var want []*orkstackv1.Orker
+			for _, row := range listOrkers(t, whole, orkersWhere(t, extra...)) {
+				if row.GetOrkerId() == id {
+					want = append(want, row)
+				}
+			}
+			if len(got) != len(want) {
+				t.Fatalf("%q: pushdown %s, inventory %s", texts, orkerIDs(got), orkerIDs(want))
+			}
+			for i := range got {
+				if !proto.Equal(got[i], want[i]) {
+					t.Errorf("%q: pushdown row %v, inventory row %v", texts, got[i], want[i])
+				}
+			}
+		}
+	}
+}
+
+func TestListOrkers_MalformedOrkerIDIsRefusedBeforeAnyRead(t *testing.T) {
+	for _, text := range []string{"orker_id=a b", "orker_id=", "orker_id!=a b", "orker_id=ok,a b"} {
+		fleet := threeOrkerFleet()
+		svc := api.NewService(api.Config{Fleet: fleet})
+		_, err := svc.ListOrkers(context.Background(), connect.NewRequest(orkersWhere(t, text)))
+		if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "orker_id: invalid orker id") {
+			t.Fatalf("%s = %v; want InvalidArgument naming the orker id rule", text, err)
+		}
+		if fleet.observeOrkers != 0 || len(fleet.observeOrker) != 0 || len(fleet.describes) != 0 {
+			t.Fatalf("%s read the fleet (%d, %v, %v); a refusal reads nothing", text,
+				fleet.observeOrkers, fleet.observeOrker, fleet.describes)
+		}
 	}
 }
 
@@ -199,7 +260,7 @@ func TestListOrkers_IdentityMismatchIsReportedAsACollision(t *testing.T) {
 	fleet := threeOrkerFleet()
 	fleet.described["orker-91c0"] = &orkstackv1.DescribeOrkerResult{OrkerId: "orker-other", Pool: "build"}
 	svc := api.NewService(api.Config{Fleet: fleet})
-	rows := listOrkers(t, svc, &orkstackv1.ListOrkersRequest{OrkerId: "orker-91c0"})
+	rows := listOrkers(t, svc, orkersWhere(t, "orker_id=orker-91c0"))
 	if len(rows) != 1 || !strings.Contains(rows[0].GetUnavailableReason(), "two Orkers share an id") ||
 		rows[0].GetPool() != "" {
 		t.Fatalf("a mismatched answer = %v; want an unavailable row naming the collision", rows)

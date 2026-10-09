@@ -16,6 +16,7 @@ import (
 	"github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
@@ -1093,22 +1094,18 @@ func (s *Service) GetOrkflow(
 }
 
 // ListOrkflows returns the latest version of every orkflow in one namespace,
-// read from the durable store on every call.
+// read from the durable store on every call, narrowed by filters and paged by
+// name.
 //
 // It is one prefix scan of that namespace, not a scan of everything followed
-// by a filter: another namespace's documents are never read.
+// by a filter: another namespace's documents are never read. The filters
+// apply to the current-version documents that scan reads, BEFORE the page is
+// cut, so a filtered listing past one page carries a next_page_token like an
+// unfiltered one.
 func (s *Service) ListOrkflows(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListOrkflowsRequest],
 ) (*connect.Response[orkstackv1.ListOrkflowsResponse], error) {
-	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
-	if err != nil {
-		return nil, err
-	}
-	orkflows, err := s.orkflows.List(ctx, ns.GetName())
-	if err != nil {
-		return nil, orkflowStoreError(err, "list orkflows in namespace %q", ns.GetName())
-	}
 	size := int(req.Msg.GetPageSize())
 	if size < 0 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_size cannot be negative"))
@@ -1116,54 +1113,76 @@ func (s *Service) ListOrkflows(
 	if size == 0 {
 		size = engine.DefaultRunPageSize
 	}
+	set, err := compileFilters(req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
+	if err != nil {
+		return nil, err
+	}
+	cursor := ""
 	if token := req.Msg.GetPageToken(); token != "" {
-		cursor, err := decodeOrkflowCursor(token, ns.GetName())
-		if err != nil {
+		if cursor, err = decodeOrkflowCursor(token, ns.GetName(), set); err != nil {
 			return nil, err
 		}
-		filtered := orkflows[:0]
-		for _, wf := range orkflows {
-			if wf.GetName() > cursor {
-				filtered = append(filtered, wf)
-			}
-		}
-		orkflows = filtered
 	}
-	response := &orkstackv1.ListOrkflowsResponse{}
-	if len(orkflows) > size {
-		response.Orkflows = orkflows[:size]
-		token, err := encodeOrkflowCursor(ns.GetName(), response.Orkflows[len(response.Orkflows)-1].GetName())
+	orkflows, err := s.orkflows.List(ctx, ns.GetName())
+	if err != nil {
+		return nil, orkflowStoreError(err, "list orkflows in namespace %q", ns.GetName())
+	}
+	matched := orkflows[:0]
+	for _, wf := range orkflows {
+		if wf.GetName() > cursor && set.Match(wf) {
+			matched = append(matched, wf)
+		}
+	}
+	response := &orkstackv1.ListOrkflowsResponse{Orkflows: matched}
+	if len(matched) > size {
+		response.Orkflows = matched[:size]
+		token, err := encodeOrkflowCursor(ns.GetName(), set, response.Orkflows[size-1].GetName())
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
 		response.NextPageToken = token
-	} else {
-		response.Orkflows = orkflows
 	}
 	return connect.NewResponse(response), nil
 }
 
+// orkflowCursor is a ListOrkflows page token: the last name a page held,
+// bound to the namespace and the canonical filter set it was issued under.
 type orkflowCursor struct {
 	Version   int    `json:"v"`
 	Namespace string `json:"n"`
+	Filters   string `json:"f"`
 	Name      string `json:"name"`
 }
 
-func encodeOrkflowCursor(namespace, name string) (string, error) {
-	raw, err := json.Marshal(orkflowCursor{Version: 1, Namespace: namespace, Name: name})
+// orkflowCursorVersion is 2: version 1 carried no filter set and is refused.
+const orkflowCursorVersion = 2
+
+func encodeOrkflowCursor(namespace string, set listfilter.Set, name string) (string, error) {
+	raw, err := json.Marshal(orkflowCursor{Version: orkflowCursorVersion, Namespace: namespace, Filters: set.Key(), Name: name})
 	if err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
-func decodeOrkflowCursor(token, namespace string) (string, error) {
+
+func decodeOrkflowCursor(token, namespace string, set listfilter.Set) (string, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
 		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
 	}
 	var c orkflowCursor
-	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Namespace != namespace || c.Name == "" {
+	if json.Unmarshal(raw, &c) != nil || c.Version != orkflowCursorVersion || c.Name == "" {
+		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
+	}
+	if c.Namespace != namespace {
 		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_token does not match this namespace"))
+	}
+	if err := checkFilterKey(c.Filters, set); err != nil {
+		return "", err
 	}
 	return c.Name, nil
 }

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -220,7 +221,17 @@ type S3NamespaceStore struct {
 	// now stamps created_at and updated_at. It is a field only so a test can
 	// hold the clock still; every constructor sets it to the wall clock.
 	now func() time.Time
+	// documentsRead counts the namespace documents this store has asked the
+	// backend for (DocumentsRead).
+	documentsRead atomic.Int64
 }
+
+// DocumentsRead is how many namespace documents this store has requested:
+// one per GetObject that read issues, whatever the answer, NotFound
+// included, because a request is the cost. Get, List and Put all read
+// through it. Like S3RunArchive.IndexKeysScanned it exists for tests, which
+// read it as the delta around one call to prove what a listing costs.
+func (s *S3NamespaceStore) DocumentsRead() int64 { return s.documentsRead.Load() }
 
 // compile-time contract check.
 var _ NamespaceStore = (*S3NamespaceStore)(nil)
@@ -775,6 +786,7 @@ func (s *S3NamespaceStore) countOrkflows(ctx context.Context, namespace string) 
 }
 
 func (s *S3NamespaceStore) read(ctx context.Context, key string) (*orkstackv1.Namespace, error) {
+	s.documentsRead.Add(1)
 	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),

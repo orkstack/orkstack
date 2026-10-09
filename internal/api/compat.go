@@ -271,7 +271,7 @@ func (s *Service) ListOrkflowCallers(
 	// Schedules, by name. A partial answer would read as "no schedule
 	// follows current", so a failed list is Unavailable, never empty.
 	if s.schedules != nil {
-		views, err := s.schedules.List(ctx, namespace)
+		views, err := s.schedules.List(ctx, namespace, nil)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
 				"cannot list the schedules of namespace %q: %v", namespace, err))

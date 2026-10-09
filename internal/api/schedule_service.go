@@ -110,11 +110,19 @@ func cloneScheduleInput(in *orkstackv1.Payload) *orkstackv1.Payload {
 }
 
 // ListSchedules returns one namespace's schedules, ordered by name, narrowed
-// to one orkflow when orkflow_name is set.
+// by filters. The filters on id, name and orkflow_name are decided on the
+// cluster's list entry before a schedule is described, so a narrowed listing
+// describes only what it may return; the whole set then applies to each
+// described row, and a row the cluster could not describe is kept under
+// every filter on a field it did not measure.
 func (s *Service) ListSchedules(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListSchedulesRequest],
 ) (*connect.Response[orkstackv1.ListSchedulesResponse], error) {
+	set, err := compileFilters(req.Msg)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.schedulesConfigured(); err != nil {
 		return nil, err
 	}
@@ -122,16 +130,19 @@ func (s *Service) ListSchedules(
 	if err != nil {
 		return nil, err
 	}
-	views, err := s.schedules.List(ctx, ns.GetName())
+	identity := set.Restrict("id", "name", "orkflow_name")
+	keep := func(id, name, orkflow string) bool {
+		return identity.Match(&orkstackv1.Schedule{Id: id, Name: name, Namespace: ns.GetName(), OrkflowName: orkflow})
+	}
+	views, err := s.schedules.List(ctx, ns.GetName(), keep)
 	if err != nil {
 		return nil, scheduleConnectError(err, ns.GetName(), "")
 	}
 	out := make([]*orkstackv1.Schedule, 0, len(views))
 	for _, view := range views {
-		if name := req.Msg.GetOrkflowName(); name != "" && view.OrkflowName != name {
-			continue
+		if row := scheduleProto(view); set.Match(row) {
+			out = append(out, row)
 		}
-		out = append(out, scheduleProto(view))
 	}
 	return connect.NewResponse(&orkstackv1.ListSchedulesResponse{Schedules: out}), nil
 }

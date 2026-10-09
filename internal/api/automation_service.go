@@ -143,7 +143,7 @@ func (s *Service) readAutomationLive(ctx context.Context, ns string, schedules, 
 		return live, err
 	}
 	if live.Namespace != nil && schedules {
-		views, err := s.schedules.List(ctx, ns)
+		views, err := s.schedules.List(ctx, ns, nil)
 		if err != nil {
 			return live, scheduleConnectError(err, ns, "")
 		}

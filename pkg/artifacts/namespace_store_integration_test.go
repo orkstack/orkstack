@@ -601,9 +601,10 @@ func TestNamespaceStore_RoundTripsABudget(t *testing.T) {
 // It proves the two facts a paged ListNamespaces rests on. The names come
 // back in NAME order, not key order: the bucket lists `a-b.json` before
 // `a.json` because `-` sorts before `.`, and a cursor over keys would skip
-// or repeat a name. And no document is read: one namespace document holds
-// bytes that are not a namespace at all, so List — which reads every
-// document — fails on it, while ListNames still answers.
+// or repeat a name. And no document is read: DocumentsRead does not move
+// across the call, and one namespace document holds bytes that are not a
+// namespace at all, so List — which reads every document — fails on it,
+// while ListNames still answers.
 func TestNamespaceStore_ListNamesIsSortedByNameAndReadsNoDocument(t *testing.T) {
 	cfg := s3TestConfig()
 	requireMinIO(t, cfg)
@@ -654,11 +655,15 @@ func TestNamespaceStore_ListNamesIsSortedByNameAndReadsNoDocument(t *testing.T) 
 		t.Fatalf("bucket key order = %v; the premise of this test (a-b.json before a.json) does not hold", keys)
 	}
 
+	before := store.DocumentsRead()
 	names, err := store.ListNames(ctx)
 	if err != nil {
 		t.Fatalf("ListNames: %v", err)
 	}
 	t.Logf("ListNames: %v", names)
+	if read := store.DocumentsRead() - before; read != 0 {
+		t.Fatalf("ListNames read %d namespace documents; it reads the key listing alone", read)
+	}
 	if want := "a a-b ab default zz"; strings.Join(names, " ") != want {
 		t.Fatalf("ListNames = %v, want [%s]: every stored name plus default, by name", names, want)
 	}
