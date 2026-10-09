@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -430,25 +433,163 @@ func (s *Service) GetNamespace(
 	return connect.NewResponse(&orkstackv1.GetNamespaceResponse{Namespace: ns}), nil
 }
 
-// ListNamespaces returns every registered namespace, ordered by name, with the
-// built-in default always among them.
+// ListNamespaces returns the registered namespaces, ordered by name, with the
+// built-in default always among them, filtered by name_contains.
+//
+// page_size 0 answers with every match, which is what the namespace switcher,
+// Admin → Usage and orkctl ask for. A positive page_size walks the registry's
+// NAME listing — keys only — and reads just the documents on the page: a page
+// of 25 out of thousands of namespaces is one listing and 25 reads, where the
+// full answer is one read per namespace.
 func (s *Service) ListNamespaces(
 	ctx context.Context,
-	_ *connect.Request[orkstackv1.ListNamespacesRequest],
+	req *connect.Request[orkstackv1.ListNamespacesRequest],
 ) (*connect.Response[orkstackv1.ListNamespacesResponse], error) {
+	size := int(req.Msg.GetPageSize())
+	filter := req.Msg.GetNameContains()
+	token := req.Msg.GetPageToken()
+	switch {
+	case size < 0:
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_size cannot be negative"))
+	case len(filter) > maxNamespaceNameContains:
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"name_contains is %d bytes; a namespace name is at most %d, so nothing longer can match",
+			len(filter), maxNamespaceNameContains))
+	case token != "" && size == 0:
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"page_token continues a paged listing; send the page_size it was issued for (page_size 0 lists everything)"))
+	}
+	after := ""
+	if token != "" {
+		var err error
+		if after, err = decodeNamespaceCursor(token, filter); err != nil {
+			return nil, err
+		}
+	}
+
 	if s.namespaces == nil {
 		// A process with no registry still has the namespace every orkflow
 		// that names none is in. An empty list would say the deployment has no
 		// namespaces, which is never true.
-		return connect.NewResponse(&orkstackv1.ListNamespacesResponse{
-			Namespaces: []*orkstackv1.Namespace{artifacts.DefaultNamespaceDocument()},
-		}), nil
+		return namespacePage(ctx, []string{artifacts.DefaultNamespace}, filter, after, size,
+			func(context.Context, string) (*orkstackv1.Namespace, error) {
+				return artifacts.DefaultNamespaceDocument(), nil
+			})
 	}
-	registered, err := s.namespaces.List(ctx)
+	if size == 0 {
+		registered, err := s.namespaces.List(ctx)
+		if err != nil {
+			return nil, namespaceStoreError(err, "list namespaces")
+		}
+		matched := registered[:0:0]
+		for _, ns := range registered {
+			if strings.Contains(ns.GetName(), filter) {
+				matched = append(matched, ns)
+			}
+		}
+		return connect.NewResponse(&orkstackv1.ListNamespacesResponse{Namespaces: matched}), nil
+	}
+	names, err := s.namespaces.ListNames(ctx)
 	if err != nil {
 		return nil, namespaceStoreError(err, "list namespaces")
 	}
-	return connect.NewResponse(&orkstackv1.ListNamespacesResponse{Namespaces: registered}), nil
+	return namespacePage(ctx, names, filter, after, size, s.namespaces.Get)
+}
+
+// maxNamespaceNameContains is the longest name_contains accepted: the longest
+// a namespace name can be (AGENTS.md §7), since a longer substring matches
+// nothing and is almost certainly a mistake.
+const maxNamespaceNameContains = 200
+
+// namespacePageReads bounds how many documents one page reads at once.
+const namespacePageReads = 8
+
+// namespacePage answers one page of a name-ordered listing: the names after
+// the cursor that contain filter, size of them, each document read by get.
+// A name whose document is gone by the time it is read was deleted between
+// the listing and the read and is left out, exactly as the full listing
+// leaves it out; the cursor still moves past it.
+func namespacePage(
+	ctx context.Context,
+	names []string,
+	filter, after string,
+	size int,
+	get func(context.Context, string) (*orkstackv1.Namespace, error),
+) (*connect.Response[orkstackv1.ListNamespacesResponse], error) {
+	var matched []string
+	for _, name := range names {
+		if name > after && strings.Contains(name, filter) {
+			matched = append(matched, name)
+		}
+	}
+	response := &orkstackv1.ListNamespacesResponse{}
+	if size > 0 && len(matched) > size {
+		matched = matched[:size]
+		token, err := encodeNamespaceCursor(filter, matched[len(matched)-1])
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		response.NextPageToken = token
+	}
+
+	docs := make([]*orkstackv1.Namespace, len(matched))
+	errs := make([]error, len(matched))
+	slots := make(chan struct{}, namespacePageReads)
+	var wg sync.WaitGroup
+	for i, name := range matched {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			docs[i], errs[i] = get(ctx, name)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err == nil {
+			response.Namespaces = append(response.Namespaces, docs[i])
+			continue
+		}
+		if errors.Is(err, artifacts.ErrNotFound) {
+			continue // deleted between the listing and the read
+		}
+		return nil, namespaceStoreError(err, "read namespace %q", matched[i])
+	}
+	return connect.NewResponse(response), nil
+}
+
+// namespaceCursor is a ListNamespaces page token: the last name a page held,
+// bound to the filter it was issued under, in the shape orkflowCursor uses.
+type namespaceCursor struct {
+	Version int    `json:"v"`
+	Filter  string `json:"f"`
+	Name    string `json:"name"`
+}
+
+func encodeNamespaceCursor(filter, name string) (string, error) {
+	raw, err := json.Marshal(namespaceCursor{Version: 1, Filter: filter, Name: name})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeNamespaceCursor(token, filter string) (string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
+	}
+	var c namespaceCursor
+	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Name == "" {
+		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
+	}
+	if c.Filter != filter {
+		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"page_token was issued for name_contains %q, not %q; start again from the first page",
+			c.Filter, filter))
+	}
+	return c.Name, nil
 }
 
 // UpdateNamespace replaces a namespace's mutable fields, compare-and-swapping

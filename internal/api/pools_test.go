@@ -55,6 +55,18 @@ func (r registry) List(_ context.Context) ([]*orkstackv1.Namespace, error) {
 	return out, nil
 }
 
+// ListNames is the registry's names plus the default, which always resolves.
+func (r registry) ListNames(_ context.Context) ([]string, error) {
+	names := []string{artifacts.DefaultNamespace}
+	for name := range r {
+		if name != artifacts.DefaultNamespace {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 func (r registry) Put(
 	_ context.Context,
 	_ *orkstackv1.Namespace,

@@ -30,6 +30,10 @@ func (o oneNamespace) List(context.Context) ([]*orkstackv1.Namespace, error) {
 	return []*orkstackv1.Namespace{o.ns}, nil
 }
 
+func (o oneNamespace) ListNames(context.Context) ([]string, error) {
+	return []string{o.ns.GetName()}, nil
+}
+
 func (o oneNamespace) Put(context.Context, *orkstackv1.Namespace, artifacts.PutConditions) (*orkstackv1.Namespace, error) {
 	return nil, errors.New("oneNamespace: reads only")
 }

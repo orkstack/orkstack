@@ -593,3 +593,79 @@ func TestNamespaceStore_RoundTripsABudget(t *testing.T) {
 		t.Fatalf("budget = %v after a write with none, want unset", last.GetBudget())
 	}
 }
+
+// TestNamespaceStore_ListNamesIsSortedByNameAndReadsNoDocument runs against
+// real MinIO in a bucket private to this test, so the exact set of names is
+// known.
+//
+// It proves the two facts a paged ListNamespaces rests on. The names come
+// back in NAME order, not key order: the bucket lists `a-b.json` before
+// `a.json` because `-` sorts before `.`, and a cursor over keys would skip
+// or repeat a name. And no document is read: one namespace document holds
+// bytes that are not a namespace at all, so List — which reads every
+// document — fails on it, while ListNames still answers.
+func TestNamespaceStore_ListNamesIsSortedByNameAndReadsNoDocument(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+	raw := newRawS3Client(t, cfg)
+	cfg.S3Bucket = "orkstack-ns-names-" + strings.ToLower(uniqueToken(t))
+	if _, err := raw.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(cfg.S3Bucket)}); err != nil {
+		t.Fatalf("create private bucket %s: %v", cfg.S3Bucket, err)
+	}
+	t.Cleanup(func() {
+		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, "")
+		_, _ = raw.DeleteBucket(context.Background(), &s3.DeleteBucketInput{Bucket: aws.String(cfg.S3Bucket)})
+	})
+	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+
+	for _, name := range []string{"ab", "a-b", "a"} {
+		if _, err := store.Put(ctx, &orkstackv1.Namespace{Name: name}, artifacts.PutConditions{}); err != nil {
+			t.Fatalf("Put(%s): %v", name, err)
+		}
+	}
+	// zz's document is not a namespace, and Bad_Name.json is no key this
+	// package writes: the first must be listed by name, the second skipped.
+	for key, body := range map[string]string{
+		artifacts.NamespacePrefix + "/zz.json":       "this is not a namespace document",
+		artifacts.NamespacePrefix + "/Bad_Name.json": "{}",
+	} {
+		if _, err := raw.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(cfg.S3Bucket),
+			Key:    aws.String(key),
+			Body:   strings.NewReader(body),
+		}); err != nil {
+			t.Fatalf("put %s: %v", key, err)
+		}
+	}
+
+	keys := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.NamespacePrefix+"/")
+	t.Logf("bucket key order: %v", keys)
+	if strings.Join(keys, " ") != strings.Join([]string{
+		artifacts.NamespacePrefix + "/Bad_Name.json",
+		artifacts.NamespacePrefix + "/a-b.json",
+		artifacts.NamespacePrefix + "/a.json",
+		artifacts.NamespacePrefix + "/ab.json",
+		artifacts.NamespacePrefix + "/zz.json",
+	}, " ") {
+		t.Fatalf("bucket key order = %v; the premise of this test (a-b.json before a.json) does not hold", keys)
+	}
+
+	names, err := store.ListNames(ctx)
+	if err != nil {
+		t.Fatalf("ListNames: %v", err)
+	}
+	t.Logf("ListNames: %v", names)
+	if want := "a a-b ab default zz"; strings.Join(names, " ") != want {
+		t.Fatalf("ListNames = %v, want [%s]: every stored name plus default, by name", names, want)
+	}
+	if _, err := store.List(ctx); err == nil {
+		t.Fatal("List succeeded over a document that is not a namespace; it should read and refuse it, " +
+			"which is what shows ListNames did not read it")
+	} else {
+		t.Logf("List over the same bucket fails, as it reads every document: %v", err)
+	}
+}
