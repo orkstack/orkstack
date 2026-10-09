@@ -250,6 +250,33 @@ func TestIntegration_ListOrkersIsAnsweredByAReplicaThatCordonedNothing(t *testin
 		t.Fatalf("replica A reads %v after the uncordon through B; want ready", back)
 	}
 	t.Logf("EVIDENCE two replicas: uncordoned through B, read through A: cordoned=%v", back.GetCordoned())
+
+	// Filters narrow the same inventory on either replica: the Orker is
+	// listed under its own pool, and no longer under cordoned=true.
+	byPool, stderr, code := s.cli(1, "orker", "list", "--json", "--filter", "pool="+row.GetPool())
+	if code != 0 {
+		t.Fatalf("list --filter pool=%s through B exit %d: %s", row.GetPool(), code, stderr)
+	}
+	pooled := &orkstackv1.ListOrkersResponse{}
+	if err := api.UnmarshalJSON([]byte(byPool), pooled); err != nil {
+		t.Fatalf("list --filter --json: %v", err)
+	}
+	found := false
+	for _, r := range pooled.GetOrkers() {
+		found = found || r.GetOrkerId() == s.orkerID
+		if r.GetUnavailableReason() == "" && r.GetPool() != row.GetPool() {
+			t.Errorf("pool=%s listed %s of pool %s", row.GetPool(), r.GetOrkerId(), r.GetPool())
+		}
+	}
+	if !found {
+		t.Fatalf("pool=%s through B does not list %s: %v", row.GetPool(), s.orkerID, pooled.GetOrkers())
+	}
+	none, _, code := s.cli(0, "orker", "list", "--filter", "orker_id="+s.orkerID, "--filter", "cordoned=true")
+	if code != 0 || !strings.Contains(none, "No Orkers match") {
+		t.Fatalf("orker_id=%s cordoned=true after the uncordon = exit %d:\n%s", s.orkerID, code, none)
+	}
+	t.Logf("EVIDENCE filters: pool=%s lists %s through B; cordoned=true lists nothing after the uncordon",
+		row.GetPool(), s.orkerID)
 }
 
 func TestIntegration_CordonIsAudited(t *testing.T) {

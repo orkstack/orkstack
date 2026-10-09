@@ -636,7 +636,7 @@ func TestReleaseCommands_IgnoreNamespace(t *testing.T) {
 		t.Fatalf("-n changed the answer:\n%s\n---\n%s", plain.stdout, scoped.stdout)
 	}
 	var sent orkstackv1.ListReleasesRequest
-	if !f.lastRequest("/orkstack.v1.SystemService/ListReleases", &sent) || sent.GetBuildId() != "" {
+	if !f.lastRequest("/orkstack.v1.SystemService/ListReleases", &sent) || len(sent.GetFilters()) != 0 {
 		t.Fatalf("the request carried %v", &sent)
 	}
 }

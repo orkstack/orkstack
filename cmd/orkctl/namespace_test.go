@@ -524,14 +524,18 @@ func TestNamespaceUpdate_BudgetEnforceFalseKeepsTheBounds(t *testing.T) {
 		requireContains(t, "5000000 cpu-s + 20000000 GiB-s/720h0m0s soft")
 }
 
-// TestNamespaceList_NameContainsFilters: --name-contains passes the substring
-// to ListNamespaces and lists every match, `default` included by the same
-// rule as any other name; without the flag the listing is every namespace,
-// exactly as before (the goldens above pin that rendering).
-func TestNamespaceList_NameContainsFilters(t *testing.T) {
+// TestNamespaceList_Filters: --filter passes the filters to ListNamespaces
+// and lists every match, `default` included by the same rule as any other
+// name; without the flag the listing is every namespace, exactly as before
+// (the goldens above pin that rendering).
+func TestNamespaceList_Filters(t *testing.T) {
 	f := newFixture(t)
-	for _, name := range []string{"payments", "pay-later", "billing"} {
-		f.run("namespace", "create", name).requireExit(t, exitOK)
+	for _, args := range [][]string{
+		{"payments", "--label", "team=money"},
+		{"pay-later", "--label", "team=money"},
+		{"billing", "--label", "team=finance"},
+	} {
+		f.run(append([]string{"namespace", "create"}, args...)...).requireExit(t, exitOK)
 	}
 
 	cases := []struct {
@@ -540,8 +544,13 @@ func TestNamespaceList_NameContainsFilters(t *testing.T) {
 		omitted []string
 	}{
 		{[]string{"namespace", "list"}, []string{"default", "payments", "pay-later", "billing"}, nil},
-		{[]string{"namespace", "list", "--name-contains", "pay"}, []string{"payments", "pay-later"}, []string{"default", "billing"}},
-		{[]string{"namespace", "list", "--name-contains", "fault"}, []string{"default"}, []string{"payments", "pay-later", "billing"}},
+		{[]string{"namespace", "list", "--filter", "name~pay"}, []string{"payments", "pay-later"}, []string{"default", "billing"}},
+		{[]string{"namespace", "list", "--filter", "name~fault"}, []string{"default"}, []string{"payments", "pay-later", "billing"}},
+		{[]string{"namespace", "list", "--filter", "labels.team=money"}, []string{"payments", "pay-later"}, []string{"default", "billing"}},
+		{[]string{"namespace", "list", "--filter", "labels.team=money", "--filter", "name^payments"}, []string{"payments"},
+			[]string{"default", "pay-later", "billing"}},
+		{[]string{"namespace", "list", "--filter", "labels.team=money,finance"}, []string{"payments", "pay-later", "billing"},
+			[]string{"default"}},
 	}
 	for _, tc := range cases {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
@@ -563,7 +572,7 @@ func TestNamespaceList_NameContainsFilters(t *testing.T) {
 		})
 	}
 
-	machine := f.run("--json", "namespace", "list", "--name-contains", "pay").requireExit(t, exitOK)
+	machine := f.run("--json", "namespace", "list", "--filter", "name~pay").requireExit(t, exitOK)
 	var decoded struct {
 		Namespaces []struct {
 			Name string `json:"name"`
@@ -575,9 +584,19 @@ func TestNamespaceList_NameContainsFilters(t *testing.T) {
 	}
 	if len(decoded.Namespaces) != 2 || decoded.Namespaces[0].Name != "pay-later" ||
 		decoded.Namespaces[1].Name != "payments" || decoded.NextPageToken != "" {
-		t.Fatalf("--json --name-contains pay = %+v, want [pay-later payments] and no page token", decoded)
+		t.Fatalf("--json --filter name~pay = %+v, want [pay-later payments] and no page token", decoded)
 	}
 
-	f.run("namespace", "list", "--name-contains", "nothing-matches").requireExit(t, exitOK).
-		requireContains(t, `No namespace name contains "nothing-matches".`)
+	none := f.run("namespace", "list", "--filter", "name~zz").requireExit(t, exitOK)
+	requireGolden(t, "namespace-list-no-match.golden", none.stdout)
+
+	// A semantic refusal is the server's, printed verbatim, exit non-zero.
+	refused := f.run("namespace", "list", "--filter", "nope=x").requireExit(t, exitError)
+	if !strings.Contains(refused.stderr, `filters[0]: "nope" is not a filterable field of Namespace; filterable: name, description, labels.KEY`) {
+		t.Fatalf("nope=x stderr = %q", refused.stderr)
+	}
+	named := f.run("namespace", "list", "--filter", "name=Payments").requireExit(t, exitError)
+	if !strings.Contains(named.stderr, `filters[0]: name "Payments" is not a slug`) {
+		t.Fatalf("name=Payments stderr = %q", named.stderr)
+	}
 }

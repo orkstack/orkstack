@@ -1,0 +1,7 @@
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD      OPERATORS       VALUES
+  build_id   = != =a,b ~ ^   text
+  role       = != =a,b       CURRENT RAMPING PREVIOUS CANDIDATE
+  drained    =               true false
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.

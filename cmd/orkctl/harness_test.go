@@ -353,10 +353,13 @@ func newFixtureWith(
 		f.requestsMu.Lock()
 		f.requestLog = append(f.requestLog, r.URL.Path)
 		f.timeoutLog = append(f.timeoutLog, r.Header.Get("Connect-Timeout-Ms"))
-		// Only unary schedule requests are buffered: a streaming body must
-		// reach the handler as it arrives.
+		// Only services whose RPCs are all unary are buffered: a streaming
+		// body must reach the handler as it arrives.
 		var body []byte
-		if strings.Contains(r.URL.Path, "ScheduleService") || strings.Contains(r.URL.Path, "SystemService") || strings.Contains(r.URL.Path, "AutomationService") {
+		if strings.Contains(r.URL.Path, "ScheduleService") || strings.Contains(r.URL.Path, "SystemService") ||
+			strings.Contains(r.URL.Path, "AutomationService") || strings.Contains(r.URL.Path, "ActivityService") ||
+			strings.Contains(r.URL.Path, "NamespaceService") || strings.Contains(r.URL.Path, "OrkflowService") ||
+			strings.Contains(r.URL.Path, "TriggerService") || strings.Contains(r.URL.Path, "WebhookService") {
 			body, _ = io.ReadAll(r.Body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}

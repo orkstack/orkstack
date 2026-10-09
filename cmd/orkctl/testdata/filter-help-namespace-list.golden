@@ -1,0 +1,13 @@
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD               OPERATORS       VALUES
+  name                = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  description         = != =a,b ~ ^   text
+  labels.KEY          = != =a,b ~ ^   text
+  default_pool        = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  hold.reason         = != =a,b ~ ^   text
+  require_signed_by   = != =a,b ~ ^   text
+  telemetry.sink      = != =a,b ~ ^   text
+  created_at          >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  updated_at          >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.

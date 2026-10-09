@@ -327,6 +327,34 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 		}
 	}
 
+	// ---- filtered reads, answered alike by both replicas -------------------
+	//
+	// A filter is a property of the read, not of the replica: B, which
+	// started nothing, answers every filtered list exactly as A does.
+	for _, args := range [][]string{
+		{"--json", "namespace", "list", "--filter", "name=" + namespace},
+		{"--json", "namespace", "list", "--filter", "name^" + namespace[:4], "--filter", "description~surface probe"},
+		{"--json", "pool", "list", "-n", namespace, "--filter", "is_default=true"},
+		{"--json", "activity", "list", "--filter", "name=shell,file"},
+	} {
+		onAOut := requireCLI(t, onA, "A answers a filtered list", args...)
+		onBOut := requireCLI(t, onB, "B answers the same filtered list", args...)
+		if onAOut != onBOut {
+			t.Errorf("orkctl %s differs between the replicas:\nA %s\nB %s", strings.Join(args, " "), onAOut, onBOut)
+		}
+	}
+	if only := decodePoolList(t, requireCLI(t, onB, "B filters pools to the default",
+		"--json", "pool", "list", "-n", namespace, "--filter", "is_default=true")); len(only.Pools) != 1 ||
+		only.Pools[0].Name != pool || !only.Pools[0].IsDefault {
+		t.Errorf("is_default=true = %+v, want the one default pool %q", only.Pools, pool)
+	}
+	if listed := requireCLI(t, onB, "B filters namespaces by name", "namespace", "list", "--filter", "name="+namespace); !strings.Contains(listed, namespace) || strings.Contains(listed, "\ndefault ") {
+		t.Errorf("name=%s listed:\n%s", namespace, listed)
+	}
+	if shellOnly := requireCLI(t, onB, "B filters the catalog", "activity", "list", "--filter", "name=shell"); !strings.Contains(shellOnly, "shell") || strings.Contains(shellOnly, "template") {
+		t.Errorf("name=shell listed:\n%s", shellOnly)
+	}
+
 	// ---- write safety, on B ------------------------------------------------
 	//
 	// 1. A name the rule forbids is refused, and NOT repaired into one that is

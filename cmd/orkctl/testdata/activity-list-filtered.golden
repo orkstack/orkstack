@@ -1,0 +1,3 @@
+NAME   REFERENCE                                  DIGEST                PLATFORMS  INTERFACE
+file   registry.test/orkstack/activity-file:dev   sha256:eeeeeeeeeeee…  -          none
+shell  registry.test/orkstack/activity-shell:dev  sha256:dddddddddddd…  -          none

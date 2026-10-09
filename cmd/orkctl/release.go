@@ -72,26 +72,35 @@ func newReleaseCommand(g *globalFlags) *cobra.Command {
 // --- status -------------------------------------------------------------------
 
 func newReleaseStatusCommand(g *globalFlags) *cobra.Command {
-	var watch bool
+	var (
+		watch       bool
+		filterTexts *[]string
+	)
 	cmd := &cobra.Command{
-		Use:   "status [--watch]",
+		Use:   "status [--watch] [--filter F]...",
 		Short: "List every release, its role, its engines and Orkers, its runs, and what blocks it",
 		Long: "List every release the cluster knows: its role (current, ramping N%, previous,\n" +
 			"candidate), its engines and Orkers, the pools it serves, its runs in flight,\n" +
 			"whether it is drained, and every reason a release that does not take new runs\n" +
 			"may not start to. A count that could not be read is `unknown`, never 0.\n\n" +
-			"--watch reprints the view every few seconds when it changes, until interrupted.",
+			"--watch reprints the view every few seconds when it changes, until interrupted.\n" +
+			"--filter selects release rows; every other line is the deployment's, and\n" +
+			"blockers are still judged against the whole deployment.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
 			if watch && g.json {
 				return errors.New(`--watch is a view for a person; scripts use "release status --json" or "release wait --json"`)
 			}
 			if watch {
-				return watchReleases(g, cmd)
+				return watchReleases(g, cmd, filters)
 			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
-			resp, err := g.systemClient().ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{}))
+			resp, err := g.systemClient().ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{Filters: filters}))
 			if err != nil {
 				return rpcError("release status", err)
 			}
@@ -103,11 +112,14 @@ func newReleaseStatusCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&watch, "watch", false, "reprint the view whenever it changes, until interrupted")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListReleasesRequest{})
 	return cmd
 }
 
-// watchReleases polls and reprints the whole view only when it changed.
-func watchReleases(g *globalFlags, cmd *cobra.Command) error {
+// watchReleases polls and reprints the whole view only when it changed. Every
+// poll sends the same filters, so the view it reprints, and what counts as a
+// change, are of the filtered response.
+func watchReleases(g *globalFlags, cmd *cobra.Command, filters []*orkstackv1.FieldFilter) error {
 	out := cmd.OutOrStdout()
 	var last *orkstackv1.ListReleasesResponse
 	lastErr := ""
@@ -118,7 +130,7 @@ func watchReleases(g *globalFlags, cmd *cobra.Command) error {
 			}
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), releasePollTimeout)
-		resp, err := g.systemClient().ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{}))
+		resp, err := g.systemClient().ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{Filters: filters}))
 		cancel()
 		now := releaseClock.Now()
 		if err != nil {
@@ -653,7 +665,9 @@ type releaseWaiter struct {
 func (w *releaseWaiter) poll() (*orkstackv1.Release, error) {
 	ctx, cancel := context.WithTimeout(w.cmd.Context(), releasePollTimeout)
 	defer cancel()
-	resp, err := w.g.systemClient().ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{BuildId: w.build}))
+	resp, err := w.g.systemClient().ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{
+		Filters: []*orkstackv1.FieldFilter{equalsFilter("build_id", w.build)},
+	}))
 	if err != nil {
 		return nil, err
 	}

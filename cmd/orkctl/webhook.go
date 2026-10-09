@@ -179,7 +179,9 @@ func newWebhookUpdateCommand(g *globalFlags) *cobra.Command {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
-			listed, err := g.webhookClient().ListWebhooks(ctx, connect.NewRequest(&orkstackv1.ListWebhooksRequest{}))
+			listed, err := g.webhookClient().ListWebhooks(ctx, connect.NewRequest(&orkstackv1.ListWebhooksRequest{
+				Filters: []*orkstackv1.FieldFilter{equalsFilter("id", id)},
+			}))
 			if err != nil {
 				return rpcError("update webhook", err)
 			}
@@ -290,17 +292,24 @@ func renderWebhookUpdated(out io.Writer, hook webhooks.Webhook) error {
 }
 
 func newWebhookListCommand(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var filterTexts *[]string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List registered webhooks",
-		Args:  cobra.NoArgs,
+		Long: "list shows the deployment's webhook subscriptions, narrowed by --filter\n" +
+			"(--filter namespace= keeps the deployment-wide ones).",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
-			response, err := g.webhookClient().ListWebhooks(ctx, connect.NewRequest(&orkstackv1.ListWebhooksRequest{}))
+			response, err := g.webhookClient().ListWebhooks(ctx, connect.NewRequest(&orkstackv1.ListWebhooksRequest{Filters: filters}))
 			if err != nil {
-				return err
+				return rpcError("list webhooks", err)
 			}
 			hooks := make([]webhooks.Webhook, 0, len(response.Msg.GetWebhooks()))
 			for _, hook := range response.Msg.GetWebhooks() {
@@ -309,9 +318,15 @@ func newWebhookListCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeIndentedJSON(cmd.OutOrStdout(), webhookListEnvelope{Webhooks: hooks})
 			}
+			if len(filters) > 0 && len(hooks) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("webhooks", filters))
+				return nil
+			}
 			return renderWebhookList(cmd.OutOrStdout(), hooks)
 		},
 	}
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListWebhooksRequest{})
+	return cmd
 }
 
 func newWebhookDeleteCommand(g *globalFlags) *cobra.Command {

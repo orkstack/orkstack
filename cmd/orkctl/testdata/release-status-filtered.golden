@@ -1,0 +1,9 @@
+deployment:  orkstack
+current:     2026.08.16-a1b2c3d since 2026-09-24T09:02:11Z
+ramping:     -
+
+RELEASE             ROLE     ENGINE  ORKERS  POOLS SERVED    RUNS  STATE
+2026.08.16-a1b2c3d  current  2       3       build,gpu,main  14    serving
+
+1 Orker belongs to no release:
+  orker-d002: pool gpu, started without ORK_BUILD_ID

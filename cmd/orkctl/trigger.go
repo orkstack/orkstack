@@ -208,23 +208,26 @@ func renderTriggerUpdated(out io.Writer, trigger *orkstackv1.Trigger) error {
 }
 
 func newTriggerListCommand(g *globalFlags) *cobra.Command {
-	var orkflow string
+	var filterTexts *[]string
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the triggers of this namespace",
-		Long: "list shows the triggers of the namespace this command acts in.\n" +
-			"--orkflow narrows the result to one orkflow; omitting it lists every\n" +
-			"trigger in the namespace.\n\n" +
+		Long: "list shows the triggers of the namespace this command acts in, narrowed by\n" +
+			"--filter: --filter orkflow_name=NAME lists one orkflow's triggers.\n\n" +
 			"A listing never contains a bearer token: the plaintext exists only in\n" +
 			"the output of `trigger create`.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			response, err := g.triggerClient().ListTriggers(ctx, connect.NewRequest(&orkstackv1.ListTriggersRequest{
-				Namespace:   g.namespace,
-				OrkflowName: orkflow,
+				Namespace: g.namespace,
+				Filters:   filters,
 			}))
 			if err != nil {
 				return rpcError("list triggers", err)
@@ -232,10 +235,14 @@ func newTriggerListCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), response.Msg)
 			}
+			if len(filters) > 0 && len(response.Msg.GetTriggers()) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("triggers", filters))
+				return nil
+			}
 			return renderTriggerList(cmd.OutOrStdout(), response.Msg.GetTriggers())
 		},
 	}
-	cmd.Flags().StringVar(&orkflow, "orkflow", "", "only triggers of this orkflow")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListTriggersRequest{})
 	return cmd
 }
 
