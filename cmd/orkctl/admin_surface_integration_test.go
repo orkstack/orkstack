@@ -330,17 +330,23 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// ---- filtered reads, answered alike by both replicas -------------------
 	//
 	// A filter is a property of the read, not of the replica: B, which
-	// started nothing, answers every filtered list exactly as A does.
-	for _, args := range [][]string{
-		{"--json", "namespace", "list", "--filter", "name=" + namespace},
-		{"--json", "namespace", "list", "--filter", "name^" + namespace[:4], "--filter", "description~surface probe"},
-		{"--json", "pool", "list", "-n", namespace, "--filter", "is_default=true"},
-		{"--json", "activity", "list", "--filter", "name=shell,file"},
+	// started nothing, selects exactly the rows A selects. What is compared
+	// is the selection — each row's identity — because a pool's last_seen
+	// and an activity's resolved_at are stamped by the read itself and so
+	// differ between any two reads, whichever replica answers them.
+	for _, c := range []struct {
+		args     []string
+		selected func(t *testing.T, stdout string) string
+	}{
+		{[]string{"--json", "namespace", "list", "--filter", "name=" + namespace}, selectedNamespaces},
+		{[]string{"--json", "namespace", "list", "--filter", "name^" + namespace[:4], "--filter", "description~surface probe"}, selectedNamespaces},
+		{[]string{"--json", "pool", "list", "-n", namespace, "--filter", "is_default=true"}, selectedPools},
+		{[]string{"--json", "activity", "list", "--filter", "name=shell,file"}, selectedActivities},
 	} {
-		onAOut := requireCLI(t, onA, "A answers a filtered list", args...)
-		onBOut := requireCLI(t, onB, "B answers the same filtered list", args...)
-		if onAOut != onBOut {
-			t.Errorf("orkctl %s differs between the replicas:\nA %s\nB %s", strings.Join(args, " "), onAOut, onBOut)
+		onASel := c.selected(t, requireCLI(t, onA, "A answers a filtered list", c.args...))
+		onBSel := c.selected(t, requireCLI(t, onB, "B answers the same filtered list", c.args...))
+		if onASel == "" || onASel != onBSel {
+			t.Errorf("orkctl %s selects differently on the replicas:\nA %s\nB %s", strings.Join(c.args, " "), onASel, onBSel)
 		}
 	}
 	if only := decodePoolList(t, requireCLI(t, onB, "B filters pools to the default",
@@ -498,6 +504,59 @@ func decodePoolList(t *testing.T, stdout string) adminPoolList {
 		t.Fatalf("pool list --json is not valid JSON: %v\n%s", err, stdout)
 	}
 	return listing
+}
+
+// selectedNamespaces is the selection of `orkctl --json namespace list`: each
+// row's name and etag, in order.
+func selectedNamespaces(t *testing.T, stdout string) string {
+	t.Helper()
+	var listing struct {
+		Namespaces []struct {
+			Name string `json:"name"`
+			Etag string `json:"etag"`
+		} `json:"namespaces"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &listing); err != nil {
+		t.Fatalf("namespace list --json is not valid JSON: %v\n%s", err, stdout)
+	}
+	rows := make([]string, 0, len(listing.Namespaces))
+	for _, ns := range listing.Namespaces {
+		rows = append(rows, ns.Name+"@"+ns.Etag)
+	}
+	return strings.Join(rows, " ")
+}
+
+// selectedPools is the selection of `orkctl --json pool list`: each row's
+// name and whether it is the default, in order, and the default pool.
+func selectedPools(t *testing.T, stdout string) string {
+	t.Helper()
+	listing := decodePoolList(t, stdout)
+	rows := make([]string, 0, len(listing.Pools))
+	for _, p := range listing.Pools {
+		rows = append(rows, fmt.Sprintf("%s(default=%t)", p.Name, p.IsDefault))
+	}
+	return strings.Join(rows, " ") + " default_pool=" + listing.DefaultPool
+}
+
+// selectedActivities is the selection of `orkctl --json activity list`: each
+// row's name, reference and resolved digest, in order.
+func selectedActivities(t *testing.T, stdout string) string {
+	t.Helper()
+	var listing struct {
+		Activities []struct {
+			Name        string `json:"name"`
+			Reference   string `json:"reference"`
+			IndexDigest string `json:"indexDigest"`
+		} `json:"activities"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &listing); err != nil {
+		t.Fatalf("activity list --json is not valid JSON: %v\n%s", err, stdout)
+	}
+	rows := make([]string, 0, len(listing.Activities))
+	for _, a := range listing.Activities {
+		rows = append(rows, a.Name+"="+a.Reference+"@"+a.IndexDigest)
+	}
+	return strings.Join(rows, " ")
 }
 
 // adminNamespaceDocument is `orkctl namespace get --json`, decoded.
