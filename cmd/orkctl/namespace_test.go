@@ -523,3 +523,61 @@ func TestNamespaceUpdate_BudgetEnforceFalseKeepsTheBounds(t *testing.T) {
 	f.run("namespace", "list").requireExit(t, exitOK).
 		requireContains(t, "5000000 cpu-s + 20000000 GiB-s/720h0m0s soft")
 }
+
+// TestNamespaceList_NameContainsFilters: --name-contains passes the substring
+// to ListNamespaces and lists every match, `default` included by the same
+// rule as any other name; without the flag the listing is every namespace,
+// exactly as before (the goldens above pin that rendering).
+func TestNamespaceList_NameContainsFilters(t *testing.T) {
+	f := newFixture(t)
+	for _, name := range []string{"payments", "pay-later", "billing"} {
+		f.run("namespace", "create", name).requireExit(t, exitOK)
+	}
+
+	cases := []struct {
+		args    []string
+		listed  []string
+		omitted []string
+	}{
+		{[]string{"namespace", "list"}, []string{"default", "payments", "pay-later", "billing"}, nil},
+		{[]string{"namespace", "list", "--name-contains", "pay"}, []string{"payments", "pay-later"}, []string{"default", "billing"}},
+		{[]string{"namespace", "list", "--name-contains", "fault"}, []string{"default"}, []string{"payments", "pay-later", "billing"}},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			out := f.run(tc.args...).requireExit(t, exitOK).stdout
+			rows := map[string]bool{}
+			for _, line := range strings.Split(strings.TrimSpace(out), "\n")[1:] {
+				rows[strings.Fields(line)[0]] = true
+			}
+			for _, name := range tc.listed {
+				if !rows[name] {
+					t.Errorf("%v: %s not listed:\n%s", tc.args, name, out)
+				}
+			}
+			for _, name := range tc.omitted {
+				if rows[name] {
+					t.Errorf("%v: %s listed, want it filtered out:\n%s", tc.args, name, out)
+				}
+			}
+		})
+	}
+
+	machine := f.run("--json", "namespace", "list", "--name-contains", "pay").requireExit(t, exitOK)
+	var decoded struct {
+		Namespaces []struct {
+			Name string `json:"name"`
+		} `json:"namespaces"`
+		NextPageToken string `json:"nextPageToken"`
+	}
+	if err := json.Unmarshal([]byte(machine.stdout), &decoded); err != nil {
+		t.Fatalf("decode: %v\n%s", err, machine.stdout)
+	}
+	if len(decoded.Namespaces) != 2 || decoded.Namespaces[0].Name != "pay-later" ||
+		decoded.Namespaces[1].Name != "payments" || decoded.NextPageToken != "" {
+		t.Fatalf("--json --name-contains pay = %+v, want [pay-later payments] and no page token", decoded)
+	}
+
+	f.run("namespace", "list", "--name-contains", "nothing-matches").requireExit(t, exitOK).
+		requireContains(t, `No namespace name contains "nothing-matches".`)
+}
