@@ -191,7 +191,7 @@ func OrkflowNamespacePrefix(namespace string) (string, error) {
 // registry's name rule, which is the compiler's. The other two components have
 // their own rules — a version is a semver or a content hash, not a slug — but
 // a namespace is the same concept here as in metadata/namespaces/, and one
-// concept gets one rule (design §2.5). Without this, an orkflow could be
+// concept gets one rule (AGENTS.md §7). Without this, an orkflow could be
 // stored under a namespace the registry can never hold and no document can
 // name: reachable by key, absent from every listing of namespaces.
 //

@@ -1,251 +1,440 @@
-# UI and CLI operator experience contract
+# UI and CLI parity
 
-This document specifies the operator improvements accepted on 2026-09-08.
-It is an implementation and acceptance checklist, not a claim that its gates
-have passed. `AGENTS.md` remains authoritative. Proto is the source of truth
-for shared types; implement additions there and run `make proto` first.
+`orkctl` and the browser UI are two clients of one Connect API. **Parity**
+means both can accomplish the same deployment operation with the same
+selectors, defaults, results and errors; their presentation may differ. This
+document is the contract for what each operator surface reads and writes, and
+the rules both clients follow. Proto (`proto/orkstack/v1/`) is the source of
+truth for every type named here; `AGENTS.md` remains authoritative.
 
-Parity means that both clients can accomplish the same deployment operation
-with the same selectors, defaults, results, and errors. Their presentation may
-differ. Every run operation carries its namespace; an empty namespace means
-`default`, and a mismatched namespace returns NotFound. Copies and downloads
-must retain the namespace, pinned version, task, and attempt where applicable.
+Semantics owned elsewhere are linked, not repeated: the DSL
+([DSL.md](DSL.md)), operating a deployment ([DEPLOY.md](DEPLOY.md)), stored
+keys ([STORAGE.md](STORAGE.md)), dashboard numbers ([STATS.md](STATS.md)),
+triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
+([ORKFLOW_SCHEDULES.md](ORKFLOW_SCHEDULES.md)), automation documents
+([AUTOMATION.md](AUTOMATION.md)) and evidence bundles
+([RUN_EVIDENCE.md](RUN_EVIDENCE.md)).
 
-## Shared API changes
+## Rules both clients follow
+
+- **Namespace.** Every run and Orkflow operation carries its namespace; empty
+  means `default`, and a resource of another namespace is NotFound — holding
+  an id is not authority over another tenant. Two reads take the namespace as
+  a **filter** where empty means *every* namespace — the audit trail and the
+  webhook delivery records — and a webhook's namespace scope is likewise
+  optional; for those the CLI sends a namespace only when `-n` is typed on
+  that command line, never from `ORK_NAMESPACE` or `namespace use`. Webhook
+  subscriptions, Orkers, releases, the image policy and the retention maximum
+  are listed deployment-wide and ignore the namespace.
+- **Any replica answers.** Every read comes from Temporal or the shared store,
+  never from process memory, so a replica that started nothing answers
+  identically for runs, attempts, deliveries and audit records others made.
+- **Rendered once, server-side.** Where the engine renders a value (a diff
+  cell, a plan step, a reason sentence), both clients print it verbatim. An
+  unknown reason token from a newer build prints as itself; its row is never
+  dropped.
+- **Unavailable is a word, never a zero.** A quantity that does not apply
+  prints `-`; one that happened but cannot be known prints `unavailable` with
+  its reason. The two never look alike, and neither is ever `0`, `0s` or
+  blank.
+- **No partial answers.** A read whose scan would exceed its budget is refused
+  (`ResourceExhausted`, a non-zero CLI exit, an error panel in the UI) and is
+  never answered from the subset it read. A store or cluster that cannot
+  answer is `Unavailable`, never an empty list.
+- **`--json` is the raw response envelope** in the short-enum dialect of
+  [JSON.md](JSON.md), unless a command says otherwise. Two responses cannot
+  share one document, so a flag that would append a second read to `--json`
+  output is refused and names the command that prints it.
+- **Every action has its CLI equivalent.** The UI shows a shell-escaped,
+  runnable `orkctl` (or `curl`) command beside each action, carrying the
+  namespace, version, task, attempt and item where they apply; a quote in a
+  value cannot become shell syntax.
+- **Deep links and copies keep their coordinates.** A URL or download retains
+  the namespace, pinned version, task, attempt, item and inspector tab, and a
+  reload restores the selection. Run inputs may contain secrets and never
+  enter a shareable URL: a run is shared by its id alone.
+- **One-time secrets are shown once.** A trigger token, a generated webhook
+  secret and an await callback token appear in the creating response only;
+  no listing, URL or later read carries them.
+- **The browser invents no validation the CLI bypasses**, and typed input
+  controls are a presentation of declared inputs, not a schema language (see
+  "Baseline operator flows").
+
+## Orkflows
 
 ### Validation without applying
 
-Add `OrkflowService.ValidateOrkflow(ValidateOrkflowRequest)` returning
-`ValidateOrkflowResponse`:
+`OrkflowService.ValidateOrkflow` runs the same preparation as apply — compile,
+resolve the namespace, check allowed pools and secret sources, resolve images
+and the image policy, read declared activity interfaces, derive the effective
+version and definition digest, compare the declared interface against the
+current version — and writes nothing: no definition, pointer, execution or
+subscription, and it never claims an apply's concurrency check succeeded.
+Each problem is a `ValidationIssue` (`field`, `message`, `severity` ERROR or
+WARNING) with an actionable field path when one is known and an empty field
+otherwise, never a guessed location. A dependency outage stays an RPC error.
+Apply still checks edit tokens and immutable-version conflicts at its own
+write boundary. Warnings stay visible after validation and after a successful
+apply.
 
-- Request: `string yaml = 1`, `string namespace = 2`.
-- Response: `Orkflow orkflow = 1`, `repeated ValidationIssue issues = 2`.
-- `ValidationIssue`: `string field = 1`, `string message = 2`,
-  `ValidationSeverity severity = 3`; enum values UNSPECIFIED, ERROR, WARNING.
+CLI: `orkctl orkflow validate FILE [--json]` exits non-zero only for an ERROR.
+UI: **Validate** on the Apply page and in the editor; validation alone never
+clears the editor's dirty state.
 
-The same preparation function serves validation and apply: compile, resolve
-namespace, check allowed pools, resolve images, derive the effective version,
-and calculate the definition digest. Validation never writes a definition,
-pointer, execution, or subscription and never claims an apply concurrency
-check has succeeded. Validation errors are issues with an actionable field
-path when available; errors without a known field use an empty field, never
-a guessed location. Dependency outages remain RPC errors. Apply continues to
-check edit tokens and immutable-version conflicts at its own write boundary.
-Warnings remain visible after validation and successful apply. The CLI is
-`orkctl orkflow validate FILE`, including `--json`; invalid documents exit
-nonzero after rendering the issues.
+### Interface compatibility
+
+An Orkflow's declared interface is its `inputs:` and `outputs:`
+([DSL.md](DSL.md), "Promoting compares declared interfaces"). Two reads serve
+it, computed per request and stored nowhere:
+
+- `OrkflowService.CompareInterfaces` classifies how one stored version's
+  interface changes in another: every finding has its own `COMPATIBLE`,
+  `BREAKING` or `UNKNOWN` verdict and the one sentence both clients print.
+- `OrkflowService.ListOrkflowCallers` lists every composing task of another
+  Orkflow's scanned version, every trigger and every schedule of the
+  namespace that references it, with the version each pins (empty: it follows
+  current, so a promotion moves it). A schedule the cluster could not
+  describe carries `unavailable_reason`. Nothing of another namespace is
+  listed.
+
+`OrkflowVersion.interface_verdict` marks each version against the current one.
+`SetCurrentOrkflowVersion` refuses a BREAKING promotion with
+`FailedPrecondition` naming each breaking change until
+`acknowledge_breaking` is set, never refuses COMPATIBLE or UNKNOWN, and swaps
+the pointer only while it still names the version it compared against — a
+promotion that raced another is refused rather than swapped across an
+unchecked break. A rollback is gated alike. Apply and validate report a
+breaking change against the running version as field-anchored WARNINGs and
+never refuse.
+
+CLI: `orkflow compat NAME [FROM] TO`, `orkflow callers NAME
+[--all-versions]`, `orkflow promote NAME V [--acknowledge-breaking]` (prints
+`Interface against <v>: …`), the `COMPAT` column of `orkflow versions`, and
+the warnings of `apply`/`orkflow validate`. `compat` exits 0 whatever the
+verdict. UI: a verdict chip on every row of the Versions tab, **Compare
+interfaces** beside **Diff**, a promote dialog listing breaking and unknown
+findings, what follows current and what pins it, with an acknowledgement
+checkbox for a breaking promotion, and a **Callers** section under the version
+table.
+
+### Run plan
+
+`OrkflowService.PlanRun` answers, for one definition and one input, which
+tasks would run, which would be skipped and why, and in which dispatch wave
+each would start. What a plan decides, its flags, exit codes and how each
+kind of task reads are in [DSL.md](DSL.md), "Planning a run"; this section is
+the parity contract.
+
+The server resolves a stored version as `GetOrkflow` does (empty = current)
+or prepares an unapplied document as `ValidateOrkflow` does, applies declared
+input defaults, and walks the DAG with the interpreter's own condition
+evaluator and skip sentences, so both clients show the same outcome and
+detail strings. An engine that predates assumed failures ignores
+`assume_failed`; both clients then say
+`The server did not apply --assume-failed: it predates assumed failures.`
+rather than presenting the plan as the failure path.
+
+**A plan never submits.** No flag, button or field turns a plan into a run:
+`PlanRun` mints no run id, takes no idempotency claim, writes no definition or
+event, and is not an admission check — pools, holds, budgets and limits stay
+`SubmitRun`'s questions, so Plan works while a namespace is held.
+
+CLI: `run plan <orkflow> [--version V]` or `run plan --file FILE`, with
+`--input`/`--input-json`, `--output TASK=JSON`, `--outputs-file PATH`,
+`--assume-failed TASK` and `--assert-runs`/`--assert-skipped`. UI: **Plan**
+beside **Submit run** in the submit dialog (also behind **Run again**), with
+assumed-outputs and *Assume these tasks fail* fields, a
+wave/task/outcome/detail table, the summary sentence, and the plan's CLI
+equivalent; a stale plan clears when the draft changes.
+
+## Submitting runs
+
+### Run origin
+
+Every run carries one immutable `Run.origin`: what started it. It is decided
+once, at submit, by the process that accepted the submission, travels on the
+replay-pinned `RunPlan`, and is present on every snapshot, in the archive and
+in every webhook body (inside `run`). Nothing in OrkStack reads it to decide
+anything — not admission, routing or retries.
+
+| Kind (slug) | Produced by | `id` | `reference` | `description` | `principal` |
+| --- | --- | --- | --- | --- | --- |
+| `SUBMIT` (`submit`) | `SubmitRun` without `source_run_id` | — | caller's | — | `Ork-Principal` |
+| `RUN_AGAIN` (`run-again`) | `SubmitRun` with a `source_run_id` the server finds in the namespace (NotFound otherwise) | source run id | caller's | — | `Ork-Principal` |
+| `TRIGGER` (`trigger`) | the trigger door | trigger id | `Ork-Origin-Reference` header | the trigger's description | `Ork-Principal` |
+| `SCHEDULE` (`schedule`) | a schedule fire | schedule id | the nominal fire time | the schedule's name | — |
+| `PARENT_RUN` (`parent-run`) | a composed task | parent run id | — | — | — |
+
+The kind is never taken from a client. A caller may add only a `reference`
+(`--origin-ref`, the submit dialog's **Origin reference**, or the trigger
+door's header): at most 256 bytes, no control characters, validated and never
+sanitized — an invalid one is `InvalidArgument` and starts nothing. `principal`
+is the `Ork-Principal` assertion, recorded and never authenticated. A run
+recorded before origins existed has kind `UNSPECIFIED`, renders `unrecorded`
+(never `submit`) and matches no origin filter.
+
+`ListRuns` filters by kind, or kind and id: live runs through two Temporal
+search attributes, finished runs through the archive's origin index
+([STORAGE.md](STORAGE.md)), merged under the same fail-rather-than-subset rule
+as every list.
+
+CLI: `run submit --origin-ref`, `run again --origin-ref`, `run list --origin
+KIND[:ID]`, an `ORIGIN` column (`-` when unrecorded), and `Origin:`,
+`Reference:` and `Principal:` lines on `run get`. UI: the run header's origin
+line — kind chip, the id linked to the source run or the Triggers/Schedules
+tab, the description, the reference linked only when it is an http(s) URL, and
+`asserted by …` with a not-authenticated title; the runs list's **Started
+by** and **Origin id** filters and **Origin** column, both kept in the URL
+(`origin`, `originId`).
+
+### Run again
+
+UI **Run again** loads the selected run into a reviewed submission draft,
+showing the source and its pinned version. CLI `run again RUN` reads that run
+and submits through `SubmitRun` with `source_run_id`, so the new run's origin
+is `run-again <source>`. Both default to the source's pinned version and
+inputs, support reviewed overrides (`--input`, `--input-json`, `--version`,
+`--no-cache`, `--origin-ref`), and `--dry-run` prints the exact new submission.
+The original idempotency key is never reused; a fresh one may be supplied. A
+new run gets a new id. Both explain before submitting that this starts a new
+execution and may repeat external side effects. An unavailable pinned
+definition fails with its coordinates and never silently switches to current.
+The seeded draft exists only in the page that already holds the run; the
+dialog's copied command is `orkctl run again <source>` with the same flags.
+
+### Awaited tasks
+
+A task may declare `await:` instead of `uses:` ([DSL.md](DSL.md), "Awaited
+tasks"): it starts no container and waits, `AWAITING`, until something outside
+the run resolves it or its deadline passes. `RunService.ResolveAwait`
+completes (`values_json`, the exact bytes that become the task's
+`values.json`) or rejects (`reject`, `reason`) one await of a running run,
+namespace-scoped like `CancelRun`. It answers once the values are stored and
+the resolution delivered — never once applied; a repeat of the resolution that
+already won answers `repeat` and delivers nothing. An await declaring
+`callback: true` also accepts `POST /v1/runs/{id}/awaits/{task}[/reject]` with
+the one-time token in `SubmitRunResponse.await_callbacks`; only the token's
+digest is kept. `TaskRun.await` carries the deadline and who resolved it,
+through which door, as asserted. `TASK_AWAITING` and `TASK_RESOLVED` are
+subscribable webhook events. A Connect resolution is audited
+(`run.await.resolve`, values recorded only by digest); the callback door, like
+the trigger door, is not.
+
+CLI: `run resolve RUN --task TASK [--values JSON | --values-file PATH |
+--reject --reason TEXT]` — `--values-file` is sent verbatim (`-` reads stdin),
+neither flag means `{}`, and every refusable flag combination is refused
+before a request. `run submit`/`run again` print each callback once as a
+shell-safe `curl`; `run get` adds an await table (deadline, remaining,
+resolved via, by, callback); `run plan` lists awaits; `run timing` reads an
+await as `awaited`. UI: the run page's await panel in place of the log pane —
+state, deadline, live remaining time, **Resolve** (typed fields over the
+await's schema, or JSON sent verbatim) and **Reject** dialogs with their CLI
+equivalents, *Delivered* until the run applies it, and a placeholder `curl`
+for a callback await; the submit dialog shows the one-time callback panel
+before it continues to the run.
+
+## Reading runs
 
 ### Run browsing
 
-Extend `ListRunsRequest` with `google.protobuf.Timestamp created_after = 6`
-(inclusive) and `google.protobuf.Timestamp created_before = 7` (exclusive).
-Validate timestamps and reject an inverted or empty interval. Add CLI
-`run list --since RFC3339 --until RFC3339 --page-token TOKEN` and retain
-`--status`, `--orkflow`, and `--limit` as page size. JSON returns the existing
-response envelope including `next_page_token`; human output shows a usable
-next-page command when one exists.
+`ListRuns` takes `created_after` (inclusive) and `created_before` (exclusive);
+an inverted or empty interval is `InvalidArgument`. Rows sort newest
+`created_at` first, then id descending at equal times; nothing parses an id.
+Live and archived records merge by id, the archive preferred for terminal
+records, and each source applies the bounds and cursor before its own limit,
+fetching enough to know whether another matching row exists.
 
-Use the existing `page_token` and `next_page_token` fields. A versioned opaque
-token binds namespace, Orkflow, status, both time bounds, and the last returned
-`created_at`/ID pair. Invalid tokens and changed filters return InvalidArgument;
-clients clear the token when filters change. Page-size changes may retain the
-cursor. Sort newest creation time first, then ID descending at equal times;
-never parse an ID. Preserve the existing legacy missing-time fallback in
-`engine.RunIndexTime`. Merge live and archive records by ID with the archive
-preferred for terminal records. Apply bounds/cursor before each source's
-limit and fetch enough to decide whether another matching row exists.
+The page token is opaque and versioned and binds the namespace, Orkflow,
+status, origin, both time bounds and the last returned `created_at`/id. A
+token presented with other filters is `InvalidArgument`; clients clear the
+token when a filter changes, and a page-size change may keep it. A cursor is a
+position, not a frozen snapshot: newly visible records before it appear on
+refresh and statuses may change between pages. A scan cut short by its budget
+is never labelled complete; an undeterminable continuation is an actionable
+failure.
 
-The cursor is a position, not a frozen snapshot: newly visible records before
-it appear on refresh, and run statuses may change between reads. Do not label
-a scan cut short by a budget as complete; return an actionable failure if a
-continuation cannot be determined. Do not read process memory behind a wired
-reader. Exercise both local and S3 archive paths and real Temporal visibility.
+CLI: `run list [--status] [--orkflow] [--origin] [--since RFC3339] [--until
+RFC3339] [--limit N] [--page-token TOKEN]`; human output prints a usable
+next-page command, `--json` carries `next_page_token`.
 
-### Artifact retrieval
+#### Paging in the browser
 
-Add `RunService.ListRunArtifacts(ListRunArtifactsRequest)` returning
-`ListRunArtifactsResponse` and
-`RunService.ReadArtifact(ReadArtifactRequest)` returning a stream of
-`ArtifactChunk`:
+The Runs and Orkflows lists share one URL rule and one footer
+(`ui/src/lib/browsing.ts`, `Pagination.svelte`):
 
-- List request: `string run_id = 1`, `string namespace = 2`,
-  `string task_id = 3` (empty selects every task).
-- `RunArtifact`: `string task_id = 1`, `ArtifactKind kind = 2`,
-  `ArtifactRef artifact = 3`, `int32 attempt = 4`.
-- List response: `repeated RunArtifact artifacts = 1`.
-- Kind enum: UNSPECIFIED, OUTPUT, VALUES, STDOUT, STDERR.
-- Read request: `string run_id = 1`, `string namespace = 2`,
-  `string task_id = 3`, `ArtifactKind kind = 4`, `string name = 5`.
-  `name` is the exact returned artifact name; require a matching reference.
-- Chunk: `bytes data = 1` (at most 64 KiB), `ArtifactRef artifact = 2`
-  (first chunk), `bool last = 3` (successful complete read).
+- **The URL holds what the page shows, and nothing else**: `ns`, the filters,
+  `size`, the engine's `cursor`, and `page` (1-based, omitted at 1). A pasted
+  link opens the exact page it was copied from. One function writes the query
+  string, only ever `set`s and omits empty values, so a key never appears
+  twice and a cleared filter leaves the bar.
+- **The path back lives in `sessionStorage`**, keyed by the list's canonical
+  filter query, written on Next before navigating. Not the URL (it grew by one
+  escaped cursor per page), not `localStorage` (a cursor is a position, so a
+  stack means something only while its reader is paging), not in-memory page
+  state (F5 must keep Previous), and not a reverse engine cursor (reverse
+  paging over the live/archive union is its own design).
+- **When the path back is unknown** — a pasted link, a new tab, another filter
+  set, storage that throws — Previous is disabled and **First page** is
+  offered. Previous is enabled only when the stack describes this exact page.
+- **No totals.** Responses carry no count, so the footer never shows "of N":
+  `Page 3 · 10 runs`, `Page 5 · 7 runs · last page`, or `7 runs`.
+- **Page size** on Runs is a field of the filter form and applies with **Apply
+  filters**; on Orkflows (no filter form) it applies on change and clears that
+  filter set's stack. One form never applies some fields on change and others
+  on submit.
 
-Resolve every download against an authoritative, namespace-checked Run and
-its task references. Include output artifacts, `values_ref`, and stdout/stderr
-system artifacts. Never accept an arbitrary URI, object key, or local path.
-Only expose attempts for which a reference is actually recorded; older logs
-remain accessible through the existing attempt-aware log stream. Stream
-bytes directly from `pkg/artifacts.Store.Get`, outside Temporal and events.
-Missing/retired bytes are explicit errors. Surface read failures and verify
-size/checksum before calling a download complete. A browser download must use
-safe attachment naming; the CLI must not turn artifact names into paths.
-
-CLI: `run artifacts RUN [--task TASK] [--json]` lists references and
-`run artifact download RUN --task TASK --kind KIND --name NAME --output PATH`
-downloads one. Write a temporary sibling and rename on success; refuse an
-existing output unless an explicit overwrite flag is supplied. UI presents
-the same task/kind/name/size/checksum metadata and download actions.
-
-### Artifact provenance
-
-Add `RunService.GetArtifactProvenance(GetArtifactProvenanceRequest)` returning
-`GetArtifactProvenanceResponse` — a unary read of the object index the run
-archive keeps for cleanup (`docs/STORAGE.md`, "Artifact provenance"):
-
-- Request: `string run_id = 1`, `string namespace = 2` (empty = `default`),
-  `string task_id = 3`, `ArtifactKind kind = 4`, `string name = 5`,
-  `string expect_sha256 = 6` (optional; a mismatch with the recorded digest is
-  FailedPrecondition naming both).
-- Response: `ArtifactRef artifact = 1` (as recorded on the run),
-  `bool bytes_present = 2`, `ReferenceState own_reference = 3`
-  (HELD, RELEASED, ABSENT), `google.protobuf.Timestamp released_at = 4`,
-  `repeated ArtifactReference references = 5`,
-  `int64 references_unreadable = 6`, `google.protobuf.Timestamp computed_at = 7`.
-- `ArtifactReference`: `run_id`, `orkflow_name`, `orkflow_version`,
-  `task_id`, `kind`, `run_status`, `run_created_at`.
-
-The artifact is addressed exactly as a download is and resolved against the
-authoritative, namespace-checked run; a URI or key is never accepted. Order is
-the response's contract: `run_created_at` descending, ties by run id
-descending, then `Run.task_runs` order and kind within one run. Three absences
-are never conflated: bytes gone (`bytes_present=false`), reference released
-by cleanup (RELEASED with `released_at`), and no evidence either way
-(ABSENT). A store or listing failure is Unavailable, never `false` or an empty
-list; more than 1000 markers is ResourceExhausted; an engine with no archive
-or no artifact store answers FailedPrecondition. There is no stream and no
-cache: a client asks when a person opens the disclosure.
-
-CLI: `run artifact provenance RUN --task TASK --kind KIND --name NAME
-[--expect-sha256 HEX] [--json]` prints the artifact, a BYTES line, a
-REFERENCE line in one of three fixed wordings, and a REFERENCED BY table;
-`--json` is the raw response. Missing bytes exit 0 — they are a finding, not
-an error. UI: a **Provenance** toggle beside each artifact row's Download,
-opening a panel with the same BYTES and REFERENCE wordings, one row per
-reference linking to that run in the same namespace with the addressed run
-marked `this run`, the unreadable footer, and the CLI equivalent.
+The dashboard's window control has four segments — `15m`, `6h`, `24h` and
+**Custom** (a `datetime-local` capped at now, labelled `Since <instant>`). The
+URL keeps `since=` as an ISO instant because that is what `orkctl stats
+--since` takes. There is no "until": the window is `since` to now.
+`?window=custom` without a valid `since` shows the error panel rather than
+snapping back to `24h`, which would disagree with the address bar.
 
 ### Task attempts
 
-Temporal owns retries, so a run snapshot carries only a task's final outcome:
-`TaskRun.attempt` and `TaskRun.error` describe the last attempt, and every
-earlier attempt's error is discarded when the next one is scheduled. The Orker
-writes one immutable `TaskAttempt` record per attempt to the shared store
-(`metadata/attempts/{run-id}/{task-id}/{attempt}.json`, `docs/STORAGE.md`), and
-one RPC reads them back.
+Temporal keeps only a task's final outcome, so `TaskRun.attempt` and
+`TaskRun.error` describe the last attempt. The Orker files one immutable
+`TaskAttempt` record per attempt to the shared store ([STORAGE.md](STORAGE.md)),
+and `RunService.ListTaskAttempts` reads them back — no stream: clients refetch
+on a task's terminal event, the run's terminal event, or a higher attempt seen
+on the log stream.
 
-Add `RunService.ListTaskAttempts(ListTaskAttemptsRequest)` returning
-`ListTaskAttemptsResponse`:
+- **Order is the response's contract**: tasks in `Run.task_runs` order, then
+  ascending attempt.
+- **Gaps are reported, never hidden.** The highest attempt is the maximum of
+  `TaskRun.attempt`, the highest stored record and the log store's latest
+  attempt; every number below it with no record is returned as `UNREPORTED`
+  carrying only its coordinates. Clients present it as missing evidence ("no
+  record from the orker — it crashed or lost its heartbeat"), never as a
+  failure, and invent no timing, error or retry schedule for it.
+- `TaskRun.attempt` alone is not the attempt count: it is 0 for a task
+  Temporal timed out and is the committing attempt for an adopted commit.
+- An unattempted task returns an empty list, which is not an error. Records
+  share the logs' lifecycle, so a run past cleanup returns empty. An unknown
+  task is NotFound, a missing run id `InvalidArgument`, and an engine with no
+  attempt store answers `FailedPrecondition` rather than a timeline of
+  UNREPORTED rows.
 
-- Request: `string run_id = 1`, `string namespace = 2` (empty = `default`),
-  `string task_id = 3` (empty selects every task of the run).
-- Response: `repeated TaskAttempt attempts = 1`.
-- `TaskAttempt` (`proto/orkstack/v1/run.proto`): `int32 schema_version = 1`,
-  `string run_id = 2`, `string task_id = 3`, `int32 attempt = 4` (1-based),
-  `AttemptOutcome outcome = 5`, `Error error = 6` (set only for FAILED),
-  `int32 exit_code = 7`, `google.protobuf.Timestamp started_at = 8`,
-  `finished_at = 9`, `string orker_id = 10`, `string pool = 11`,
-  `string phase = 12`, `ImageRef image = 13`,
-  `repeated ArtifactRef system_artifacts = 14`, `bool commit_adopted = 15`,
-  `string build_id = 16`.
-- `AttemptOutcome`: UNSPECIFIED, SUCCEEDED, FAILED, CANCELED, UNREPORTED.
+CLI: `run attempts RUN [--task TASK] [--item N]` and `run get RUN --attempts`
+(`run get --attempts --json` is refused, pointing at `run attempts --json`).
+UI: a per-task retry badge and an attempt timeline with each failed attempt's
+own error and a link that pins the log pane to that attempt.
 
-There is no new stream. Clients refetch on triggers they already follow — a
-task terminal event, the run's terminal event, and a higher attempt observed
-on the log stream. The WebSocket bridge is unchanged.
+### Task timing
 
-Ordering is the response's contract, not a client's sort: tasks in the order
-`Run.task_runs` lists them, then ascending by attempt within a task. Both
-clients render that order as given.
+*Was this task slow, or was it waiting?* is read off one snapshot and the
+attempt records; there is no timing RPC. `TaskRun.scheduled_at` is when the
+engine scheduled the task (the `TASK_SCHEDULED` instant); `TaskRun.started_at`
+is when the Orker began the attempt that decided it (unset while running and
+for a task no Orker reported on). Each `TaskAttempt` lists `phases`: every
+phase it passed through ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md)
+§7.1), contiguous, the last ending at `finished_at`.
 
-Gaps are reported, never hidden. The highest attempt number is the maximum of
-`TaskRun.attempt`, the highest stored record, and the log store's latest
-attempt for that task; every number from 1 to that maximum with no record is
-returned as `ATTEMPT_OUTCOME_UNREPORTED` carrying only `run_id`, `task_id` and
-`attempt`, so no attempt is silently renumbered when an Orker dies before
-filing its record. Clients must present an UNREPORTED row as missing evidence
-("no record from the orker — it crashed or lost its heartbeat"), never as a
-failure, and must not invent timing, an error, or a retry schedule for it.
-`TaskRun.attempt` alone is not the attempt count: it is 0 for a task Temporal
-timed out and is the committing attempt for an adopted commit. (`DiffRuns`
-relies on the same shape and reads the committing attempt's record, then the
-newest successful adopter's — see "Run diff" below.)
+Both clients derive, with one rule (`cmd/orkctl/timing.go`,
+`ui/src/lib/timing.ts`): WAIT = `started_at − scheduled_at`, RUN =
+`finished_at − started_at`, TOTAL = `finished_at − scheduled_at`, and for a
+task decided on a retry the queue wait `attempts[1].started_at −
+scheduled_at` on its pool. A quantity that does not apply is `-`; one that
+cannot be known is `unavailable` with exactly one of: `no orker reported a
+start`, `clock skew`, `recorded before scheduled time existed`, `attempt
+records reclaimed`, `no attempt record`, `record predates phase spans`, `no
+task attempt store`. A snapshot with `started_at` and no `scheduled_at` was
+written before the field existed; its TOTAL is dispatch to finish and is
+labelled so.
 
-A task that has not been attempted returns an empty list, which is not an
-error and is distinct from a task whose attempts were reclaimed. Records live
-on the same lifecycle as logs, so a run past cleanup returns empty. Scoping
-matches every other run read: another namespace's run is NotFound, an unknown
-`task_id` is NotFound, a missing `run_id` is InvalidArgument, and an engine
-with no attempt store configured answers FailedPrecondition rather than a
-timeline of UNREPORTED rows. `GetRun` and `ListRuns` are unchanged.
+CLI: `run timing RUN [--task TASK] [--item N]` prints the table, the run's
+summed wait and each task's attempts with phases; `run get --timing` appends
+it and `run get` has a `SCHEDULED` column. `--json` is a CLI-derived document,
+not a proto envelope, so `run get --timing --json` is refused. UI: a running
+card reads `Since scheduled …`; a finished one draws a wait/run bar (an
+unavailable segment hatched and naming its reason); the attempt timeline lists
+each attempt's phases and a retried task's queue wait.
 
-CLI: `run attempts RUN [--task TASK] [--json]` renders the timeline, and
-`run get RUN --attempts` appends the same table; `--json` is the raw
-`ListTaskAttemptsResponse` envelope. Two responses cannot share one JSON
-document, so `run get --attempts --json` is refused and points at
-`run attempts --json`. UI presents a per-task retry badge and an
-attempt timeline with each failed attempt's error and a link that pins the log
-pane to that attempt, retaining namespace, task and attempt.
+### Live attempt introspection
+
+*What is this running task doing right now* is one unary read,
+`RunService.InspectRun`. It reads the heartbeat detail the Orker already sends
+and the cluster already holds for each pending attempt, and answers one
+`LiveAttempt` per in-flight task: its state (`SCHEDULED`, `STARTED`,
+`CANCEL_REQUESTED`), attempt, scheduled/started instants, the task's timeout
+and grace, Temporal's backstop, and — only when a heartbeat from **this**
+attempt exists — its phase, container, bytes logged, Orker and last beat, with
+the instant Temporal times the attempt out without another
+(`heartbeat_deadline_at`). Nothing is stored, projected or streamed; a
+terminal run answers its status and no attempts without touching the cluster;
+a cluster error is `Unavailable`.
+
+`heartbeat_available=false` carries one of three reasons: `NOT_STARTED` (no
+Orker has the attempt), `NO_HEARTBEAT_YET` (an Orker has it and no beat from
+this attempt has arrived — a previous attempt's detail Temporal still holds is
+never shown as the new attempt's), `UNDECODABLE`. A last beat older than
+`task.HeartbeatStaleAfter` (20 s, two ceiling ticks) is `heartbeat_stale`,
+computed server-side against the response's `computed_at`, which every age
+both clients print is measured against.
+
+CLI: `run inspect RUN [--task TASK] [--item N] [--watch] [--interval D]`
+prints `STATE`, `PHASE`, `ORKER`, `CONTAINER`, `LOGGED`, `RUNNING`,
+`HEARTBEAT` and footers (the reason, the stale deadline, the timeout as a
+lower bound, the pool an attempt waits on, the next retry, a requested
+cancellation). `--watch` polls (default 5 s, at least 1 s) until the run is
+terminal and exits with the run's code (0 succeeded, 2 failed, 3 canceled);
+under `--watch`, `--json` prints one compact response per line. UI: a running
+card polls the same read every 5 s while the page is visible and shows
+`Running for …`, a live line (`Waiting for an orker · …`, `Phase run · 412.0
+MiB logged · heartbeat 3s ago`, `… — STALE`, `Attempt 3 scheduled for …`,
+`Cancelling · phase …`, `Phase unavailable · <reason>`) and the Orker.
+
+### Task pins
+
+A **pin** is a named group of tasks of one Orkflow that execute on one Orker
+and share `/orkstack/shared` ([DSL.md](DSL.md), "Pins"). Two `TaskRun` fields
+carry it, with no new RPC, stream or event:
+
+- `pin` — the pin the task belongs to, as authored; empty when unpinned.
+- `orker_id` — the Orker that produced the outcome, for **every** task that
+  reached an Orker. Empty means "never reached an Orker" (skipped, canceled
+  before dispatch, or its host died before reporting), never "not pinned". A
+  member lost with its pin (`PIN_HOST_LOST`, `PIN_TIMEOUT`) is backfilled from
+  a sibling of the same pin — a pin never moves, so a sibling's value is that
+  task's by construction. When no member ever reported one, the failure's
+  `error.details` carries the session's raw OS host name as an explicitly
+  labelled best-effort lead, which is not an `orker_id`.
+
+Read together they prove a pin held: one pin's members show one `orker_id`.
+Neither names a queue, session or session id. `run get` renders `POOL`, `PIN`
+and `ORKER` columns (`-` when absent); the UI states `Pin <name>` and `Orker
+<id>` beside `Pool <pool>` and tints each pin's member cards with one colour
+derived from the pin name. `run watch` needs nothing new: `TASK_SCHEDULED`
+reads `task scheduled on pool <pool>, pin <name>` for a pinned task.
 
 ### Run diff
 
-*"This run failed and last night's succeeded — what is different?"* Add
-`RunService.DiffRuns(DiffRunsRequest)` returning `DiffRunsResponse` — one
-unary read over what `GetRun`, `GetOrkflow` and `ListTaskAttempts` already
-serve, computed on every call and stored nowhere:
+*"This run failed and last night's succeeded — what is different?"*
+`RunService.DiffRuns` is one read over what `GetRun`, `GetOrkflow` and
+`ListTaskAttempts` serve, computed on every call and stored nowhere. Both runs
+resolve in the request's namespace (another namespace's run is NotFound, never
+compared); equal or empty ids and an unknown field name are `InvalidArgument`
+(the last lists the valid fields). Runs of different Orkflows are compared and
+flagged (`same_orkflow=false`), never refused. A store error fails the call;
+it never degrades to "unavailable" evidence.
 
-- Request: `string from_run_id = 1`, `string to_run_id = 2`,
-  `string namespace = 3` (empty = `default`; BOTH runs resolve in it),
-  `repeated string only = 4` (empty = every field).
-- `RunFieldDiff`: `task_id = 1` (empty for a run-level row), `field = 2`,
-  `from_value = 3`, `to_value = 4`, `from_available = 5`, `to_available = 6`,
-  `from_reason = 7`, `to_reason = 8`.
-- Response: `Run from = 1`, `Run to = 2` (shallow: `task_runs`, `input` and
-  `output` cleared), `same_orkflow = 3`, `same_definition_digest = 4`,
-  `input_unified_diff = 5`, `repeated RunFieldDiff differences = 6`,
-  `tasks_compared = 7`, `tasks_identical = 8`, `evidence_unavailable = 9`,
-  `repeated string fields_compared = 10`.
-
-Both ids resolve through the lookup every run read uses: another namespace's
-run is NotFound, never compared. Equal ids, an empty id, or an unknown field
-name are InvalidArgument (the last lists the valid fields). Two runs of
-different orkflows are compared and flagged (`same_orkflow=false`), never
-refused. A store error fails the call (Unavailable); it never degrades to
-"unavailable" evidence.
-
-**Vocabulary and order.** The field names, in canonical order, are
-`definition`, `input` (run-level) and `presence`, `status`, `attempt`,
-`pool`, `pin`, `orker`, `exit_code`, `error`, `duration`, `image`,
-`platform_digest` (task-level). `differences` is ordered: the run-level
-`definition` row, then the from-run's tasks in its `task_runs` order, then
-tasks only the to-run has in its order; within a task, fields in canonical
-order. Both clients render that order as given. There is no `input` row: the
-canonical-JSON unified diff (keys sorted, integers without fraction, labelled
-`<run id>/input.json`) is the row, printed verbatim.
+**Fields, in canonical order:** `definition`, `input` (run-level); `presence`,
+`status`, `attempt`, `pool`, `pin`, `orker`, `exit_code`, `error`, `duration`,
+`image`, `platform_digest`, `cached` (task-level). `differences` is ordered:
+the `definition` row, then the from-run's tasks in its `task_runs` order, then
+tasks only the to-run has; within a task, fields in canonical order. The input
+difference is not a row but `input_unified_diff`: a canonical-JSON unified
+diff (keys sorted, integers without fraction, labelled `<run id>/input.json`)
+printed verbatim.
 
 **`only` and `presence`.** `only` narrows the fields and the reads — naming
-neither `image` nor `platform_digest` never opens the orkflow or the attempt
-store. `presence` is compared under every `only`: a task one run lacks
-always yields exactly one `presence` row (`present`/`absent`) and no other,
-so narrowing can never make an added or removed task count identical.
-`fields_compared` is the resolved list (every field, or `only` plus
-`presence`) and every row's `field` is one of its entries.
+neither `image` nor `platform_digest` never opens the Orkflow or the attempt
+store. `presence` is compared under every `only`: a task one run lacks yields
+exactly one `presence` row (`present`/`absent`), so narrowing never makes an
+added or removed task count identical. `fields_compared` echoes the resolved
+list.
 
-**Rendering — decided once, server-side.** Every value is a rendered string
-a client prints verbatim. An available empty value is "does not apply" and
-prints `-`; an unavailable side prints `unavailable` and its reason. The two
-never look alike.
-
-| `field` | Rendered value | `-` (available, empty) when | `unavailable` when |
+| `field` | Rendered value | `-` when | `unavailable` when |
 | --- | --- | --- | --- |
 | `presence` | `present` / `absent` | never | never |
 | `status` | `SUCCEEDED`, `SKIPPED`, … | never | never |
@@ -254,23 +443,19 @@ never look alike.
 | `pin` | verbatim | not pinned | never |
 | `orker` | `TaskRun.orker_id` | no Orker reported | never |
 | `exit_code` | decimal | no Orker reported | never |
-| `error` | `{code} ({category})`, or `{code}`; message and details are never compared | no error | never |
-| `duration` | `finished − started` in Go's spelling (`1m3s`, `850ms`) | not terminal; SKIPPED; never reached an Orker | `timestamps_missing`, `timestamps_inverted` |
-| `image` | the pinned definition's `Task.image.pinned`, else the outcome attempt record's | never | the definition is unavailable (`definition_unavailable`, `definition_digest_mismatch`) and no record answers; `task_not_in_definition` |
+| `error` | `{code} ({category})` or `{code}`; message and details never compared | no error | never |
+| `duration` | `finished − started`, Go spelling (`1m3s`) | not terminal; SKIPPED; never reached an Orker | `timestamps_missing`, `timestamps_inverted` |
+| `image` | the pinned definition's `Task.image.pinned`, else the outcome attempt record's | never | definition unavailable and no record answers; `task_not_in_definition` |
 | `platform_digest` | the outcome attempt record's `image.platform_digest` | never reached an Orker; the container never ran | `no_attempt_store`, `no_outcome_attempt`, `attempt_record_missing` |
+| `cached` | `hit <source run>`, `miss`, `bypassed` | no cache | never |
 
-**The outcome attempt record.** For `image` (fallback) and
-`platform_digest`, the record whose attempt is `TaskRun.attempt` answers —
-which for an adopted commit is the committing attempt. When that record is
-gone (a crash after `commit.json`, or cleanup), the newest record with
-`commit_adopted` and outcome SUCCEEDED answers instead: an adopting retry
-files its record under its own attempt number, carrying the committing
-attempt's executed image from `commit.json`. A failed or canceled record is
-never used. A definition whose `definition_digest` differs from the run's
-pinned digest cannot answer (`definition_digest_mismatch`).
-
-**Reason tokens.** A client renders the sentence; an unknown token (a later
-build's) renders as itself, and the row is never dropped.
+**The outcome attempt record** — for `image` (fallback) and
+`platform_digest` — is the record whose attempt is `TaskRun.attempt` (the
+committing attempt, for an adopted commit). When that record is gone, the
+newest record with `commit_adopted` and outcome SUCCEEDED answers instead: an
+adopting retry files its record under its own number, carrying the committing
+attempt's image from `commit.json`. A failed or canceled record is never used.
+A definition whose digest differs from the run's pinned digest cannot answer.
 
 | token | sentence |
 | --- | --- |
@@ -283,656 +468,534 @@ build's) renders as itself, and the row is never dropped.
 | `timestamps_missing` | the snapshot lacks a start or finish time |
 | `timestamps_inverted` | the finish time precedes the start time |
 
-CLI: `run diff FROM TO [--only FIELD,...] [--json]` prints a header (`Diff`,
+CLI: `run diff FROM TO [--only FIELD,...]` prints a header (`Diff`,
 `Namespace`, `Compared` when narrowed, `Orkflow`, `Status`, `Finished`,
-`Definition`, `Input`), the input diff verbatim, a TASK/FIELD/FROM/TO table
-(or `No task differences.`), the summary sentence `{differ} of {compared}
-tasks differ; {identical} identical[; {n} field(s) unavailable].` and one
-footnote per unavailable side, `{task} {field} in {run}: {reason}
-({sentence})`. Digests are never abbreviated. `--json` is the raw
-`DiffRunsResponse`; exit status is 0 whenever the RPC succeeded. UI: a
-**Compare** action on the run page pre-selects the Orkflow's newest other
+`Definition`, `Input`), the input diff, a TASK/FIELD/FROM/TO table (or `No task
+differences.`), the summary `{differ} of {compared} tasks differ; {identical}
+identical[; {n} field(s) unavailable].` and one footnote per unavailable side.
+Digests are never abbreviated; exit status is 0 whenever the RPC succeeded.
+UI: **Compare** on the run page pre-selects the Orkflow's newest other
 SUCCEEDED run and opens `/runs/{from}/compare?to={to}`, a deep-linkable page
-with a swap link, the same table, summary and footnotes, and a
-`CliEquivalent` for the command above.
+with a swap link, the same table (only differing cells tinted), summary and
+footnotes.
 
-### Task timing
+### Artifact retrieval
 
-Two facts an operator needs first — *was this task slow, or was it
-waiting?* — are read off one snapshot and the attempt records, and no new
-RPC, stream or `EventType` is added. `TaskRun.scheduled_at` (18) is the
-instant the engine scheduled the task, the same `workflow.Now` the
-`TASK_SCHEDULED` event carries; `TaskRun.started_at` (8) is when the Orker
-began the attempt that decided the task (`ExecuteTaskResult.started_at`, or
-`ActivityFailureDetail.started_at` for a failure), unset while the task runs
-and for a task no Orker reported on. Each `TaskAttempt` lists
-`phases` (17): every §7.1 phase the attempt passed through, contiguous, the
-last ending at `finished_at`, the last one's name equal to `phase`.
+`RunService.ListRunArtifacts` lists a run's (or one task's) recorded
+references — output artifacts, `values_ref`, and the stdout/stderr system
+artifacts — each with its task, kind (`OUTPUT`, `VALUES`, `STDOUT`,
+`STDERR`), attempt and `ArtifactRef`. `RunService.ReadArtifact` streams one,
+addressed by task, kind and the exact listed name, in chunks of at most
+64 KiB, the first carrying the reference and the last `last=true`.
 
-Both clients derive, with one rule (`cmd/orkctl/timing.go`,
-`ui/src/lib/timing.ts`): WAIT = `started_at − scheduled_at`, RUN =
-`finished_at − started_at`, TOTAL = `finished_at − scheduled_at`, and for a
-task decided on a retry the queue wait `attempts[1].started_at −
-scheduled_at` on its pool. A quantity that does not apply (never scheduled,
-not finished) is `-`/absent; a quantity that happened but cannot be known is
-`unavailable`, never `0s`, with exactly one of seven reasons: `no orker
-reported a start`, `clock skew`, `recorded before scheduled time existed`,
-`attempt records reclaimed`, `no attempt record`, `record predates phase
-spans`, `no task attempt store`. A snapshot with `started_at` and no
-`scheduled_at` was written before the field existed: its TOTAL is dispatch to
-finish and is labelled so.
+Every read resolves against the authoritative, namespace-checked run and its
+recorded references; an arbitrary URI, object key or local path is never
+accepted. Only attempts with a recorded reference are listed (older logs stay
+readable through the attempt-aware log stream). Bytes stream from the artifact
+store, outside Temporal and events. Missing or retired bytes are explicit
+errors, and size and checksum are verified before `last` is sent — a mismatch
+ends the stream `DataLoss` — so a download is never called complete on bytes
+that do not match.
 
-CLI: `run timing RUN [--task TASK] [--json]` prints the table, the run's
-summed wait and every scheduled task's attempts with their phases;
-`run get RUN --timing` appends the same output, and `run get` gains a
-`SCHEDULED` column. `--json` is a CLI-owned derived document, not a proto
-envelope, so `run get --timing --json` is refused and points at
-`run timing --json`. UI: a RUNNING task's card reads `Since scheduled …`; a
-finished one draws a two-segment wait/run bar (an unavailable segment is
-hatched and names its reason) with the `run timing --task` command beside
-it; the attempt timeline lists each attempt's phases and, for a task decided
-on a retry, its queue wait.
+CLI: `run artifacts RUN [--task] [--item]` and `run artifact download RUN
+--task --kind --name --output PATH [--overwrite]`, which writes a temporary
+sibling and renames on success, refuses an existing file without
+`--overwrite`, and never turns an artifact name into a path. UI: the same
+task/kind/name/size/checksum metadata and a download with safe attachment
+naming.
 
-### Live attempt introspection
+### Artifact provenance
 
-"What is this running task doing right now" is one unary read,
-`RunService.InspectRun` (`proto/orkstack/v1/service.proto`). It reads the
-heartbeat detail the Orker already sends and the cluster already holds for
-every pending `ExecuteTask` attempt (`DescribeWorkflowExecution`), maps each
-pending activity to its task through its scheduling event, and answers one
-`LiveAttempt` per in-flight task: its state (`SCHEDULED`, `STARTED`,
-`CANCEL_REQUESTED`), attempt number, scheduled/started instants, the task's
-own timeout and grace, Temporal's backstop, and — only when a heartbeat from
-THIS attempt exists — its phase, container id, bytes logged, Orker id, last
-beat and the instant Temporal times the attempt out without another
-(`heartbeat_deadline_at`). Nothing is stored, projected or streamed; a
-terminal run answers `run_status` and no attempts without touching the
-cluster, and a cluster error is `Unavailable`, never an empty list.
+`RunService.GetArtifactProvenance` reads the object index the run archive
+keeps for cleanup ([STORAGE.md](STORAGE.md), "Artifact provenance"),
+addressed exactly as a download is (optionally with `expect_sha256`; a
+mismatch with the recorded digest is `FailedPrecondition` naming both). It
+answers the recorded reference, `bytes_present`, this run's own reference
+state (`HELD`, `RELEASED` with `released_at`, or `ABSENT`), every archived
+run of the namespace that recorded the same object, `references_unreadable`
+and `computed_at`.
 
-Unavailable is a word, never a zero: `heartbeat_available=false` carries one
-of three reasons — `NOT_STARTED` (no Orker has the attempt),
-`NO_HEARTBEAT_YET` (an Orker has it and no beat from this attempt has
-arrived, including when Temporal still holds the previous attempt's detail,
-which is never shown as the new attempt's), `UNDECODABLE` (a beat that is
-not the Orker's shape). A last beat older than `task.HeartbeatStaleAfter`
-(20 s, two ceiling ticks) is `heartbeat_stale`, computed server-side against
-the answer's `computed_at`, which every age both clients print is measured
-against.
+Three absences are never conflated: bytes gone, reference released by
+cleanup, and no evidence either way. References are ordered by
+`run_created_at` descending, then run id descending, then `task_runs` order
+and kind. A store or listing failure is `Unavailable`; more than 1000
+references is `ResourceExhausted`; no archive or no artifact store is
+`FailedPrecondition`. There is no stream and no cache.
 
-CLI: `run inspect RUN [--task TASK] [--watch] [--interval D] [--json]`
-prints one row per task (`STATE`, `PHASE`, `ORKER`, `CONTAINER`, `LOGGED`,
-`RUNNING`, `HEARTBEAT`) and footers naming the reason, the stale sentence
-with its deadline, the task timeout as a lower bound, the pool an attempt
-waits on, the next retry, or a requested cancellation. `--watch` polls
-(default 5 s, at least 1 s) until the run is terminal and exits with the
-run's code; `--json` is the raw `InspectRunResponse` (one compact object per
-line under `--watch`). UI: a RUNNING task's card polls the same read every
-5 s while the page is visible and shows `Running for …`, a live line
-(`Waiting for an orker · …`, `Phase run · 412.0 MiB logged · heartbeat 3s
-ago`, `… — STALE`, `Attempt 3 scheduled for …`, `Cancelling · phase …`,
-`Phase unavailable · <reason>`), the Orker the heartbeat names, and the
-`run inspect --task` command beside it.
+CLI: `run artifact provenance RUN --task --kind --name [--item]
+[--expect-sha256 HEX]` prints the artifact, a BYTES line, a REFERENCE line in
+one of three fixed wordings and a REFERENCED BY table; missing bytes exit 0 —
+a finding, not an error. UI: a **Provenance** toggle beside each artifact's
+Download, fetched on every open, with the same wordings, each reference
+linking to its run (this one marked `this run`) and the unreadable footer.
 
-### Task pins
+### Run evidence
 
-A **pin** is a named group of tasks of one orkflow that execute on one Orker
-and share `/orkstack/shared`. Two fields on `TaskRun` (`proto/orkstack/v1/run.proto`)
-carry that to both clients, and no new RPC, stream or `EventType` is added:
+`RunService.ExportRunEvidence` streams one finished run's evidence bundle — a
+`tar.gz` led by `MANIFEST.json` — assembled per request and kept nowhere; the
+layout, manifest, states, reason tokens and verifier are
+[RUN_EVIDENCE.md](RUN_EVIDENCE.md). `manifest_only` streams the manifest
+alone. A live run, or a terminal run whose archive write has not landed, is
+`FailedPrecondition`; a member whose bytes do not match its recorded digest
+ends the stream `DataLoss` without `last`.
 
-- `string pin = 16` — the pin this task belongs to, spelled as the author
-  wrote it in `pin:`, and empty for a task that is not pinned.
-- `string orker_id = 17` — the Orker that produced this task's outcome. It is
-  populated for **every** task that reached an Orker, pinned or not, and is
-  empty only when the task never got to one (skipped, canceled before
-  dispatch) or its host died before reporting. An empty `orker_id` therefore
-  means "never reached an Orker", never "not pinned". A member lost with its
-  pin (`PIN_HOST_LOST`, `PIN_TIMEOUT`) reports nothing, so the engine backfills
-  its `orker_id` from another member of the same pin — a pin never moves, so a
-  sibling's value is that task's by construction. It stays empty only when no
-  member of that pin ever reported one, and the failure's `error.details` then
-  carries the Temporal session's raw OS host name as an explicitly labelled
-  best-effort lead, which is not an `orker_id`.
+CLI: `run evidence export RUN --output PATH [--task [--item]] [--no-logs]
+[--no-artifacts] [--overwrite]` (or `--json`: the manifest itself, no file) and
+`run evidence verify FILE [--against-store]`. UI: **Evidence** on a finished
+run's header opens a dialog that shows the manifest summary before any bundle
+byte is fetched (`N present · … · size`), the definition line, absent members
+with their sentences, **View manifest**, **Include logs**/**Include
+artifacts** toggles that re-fetch the manifest, and a browser download —
+refused above 512 MiB, where the CLI is the tool — that completes only on
+`last`.
 
-Read together the two are the client-visible proof that a pin held: the
-members of one pin show one `pin` and one `orker_id`. Neither field names a
-queue, a session or a session id — `pin` is the user-facing word and Temporal's
-Worker Session underneath it stays internal, exactly as **queue** stays
-internal to **pool**.
+### Fan-out
 
-Parity expectation: both clients show the same two fields for the same task.
-`orkctl run get RUN` renders `POOL`, `PIN` and `ORKER` in the task table
-between the status and the attempt, each rendering an absent value as `-`, and
-`--json` carries them as protojson names them (`pin`, `orkerId`, omitted when
-empty) off the unchanged `GetRunResponse` envelope. The UI run page states
-`Pin <name>` and `Orker <id>` beside `Pool <pool>` on the task card, and tints
-each pin's member cards with one accent colour derived from the pin name, so
-"these ran together" is legible without reading the labels.
+A task that declares `each:` ([DSL.md](DSL.md), "Fan-out") is one node whose
+items are each a durable activity. `TaskRun.each` (`expanded`, `count`) and
+`TaskRun.items` (one `TaskRun` per item, `item` set) carry them on `GetRun`;
+an item's `TASK_LOG` event carries `Event.item`. Every per-task read takes one
+optional `item` — `StreamTaskLogs` and the log socket (`item=`),
+`ListRunArtifacts`, `ReadArtifact`, `GetArtifactProvenance`,
+`ListTaskAttempts`, `InspectRun`, `ExportRunEvidence` — under one set of
+rules: `item` without `task_id`, a negative item, or an item of a task that is
+not a fan-out is `InvalidArgument`; an item of a fan-out not yet expanded, or
+past its count, is NotFound; a read of ONE stream or object of a fan-out
+without `item` is `InvalidArgument` naming `--item N`, while a list without
+`item` returns every item's rows. `ListRuns`, the webhook body and the
+workflow result carry a fan-out's node row without `items`, so a list stays
+bounded whatever a run expanded into. A human rendering spells an item
+`convert[97]` (0-based); that spelling is never sent or parsed — the wire
+field is the integer.
 
-`orkctl run watch` needs no new column: it streams events, and the
-`TASK_SCHEDULED` message the engine emits already reads
-`task scheduled on pool <pool>, pin <name>` for a pinned task and
-`task scheduled on pool <pool>` for an unpinned one.
+CLI: `run get` shows a fan-out as one row (`RUNNING 97/120`) with a summary
+line and `--expand <task>`; `--item N` on `run logs`, `run artifacts`, `run
+artifact download|provenance`, `run attempts`, `run timing`, `run inspect`,
+`run evidence export` and `task run`; `run watch` spells item events
+`convert[97]`. UI: one card per fan-out with a summary and an item grid moved
+by item events, an item panel (status, attempt, Orker, exit, times, failure,
+attempts, logs, artifacts), an `N items retried` badge and
+`?task=&item=&attempt=` deep links; the DAG labels the node `each ≤ N`.
 
-`TaskAttempt` already carried `orker_id` and `pool` (see "Task attempts"); a
-`pin` field there is additive and not part of this contract.
+### Composed Orkflows
+
+A task whose `uses:` is `orkflow:<name>@<version>` ([DSL.md](DSL.md),
+"Composition") starts a **child run** and reaches no Orker. `TaskRun.child`
+carries the pinned name, version and definition digest, and `run_id` once the
+child's start is confirmed — never before. The child's own origin is
+`{PARENT_RUN, <parent id>}`, so a parent's children are `ListRuns` with
+`--origin parent-run:<id>` — no new RPC; a child is read, watched, cancelled,
+diffed and exported by its own id. `StreamTaskLogs` refuses a composed task
+with `FailedPrecondition` naming the child and `orkctl run logs <child>`;
+`ListTaskAttempts` answers an empty timeline; `DiffRuns` compares a composed
+row on presence, status, error and duration only. Apply reports composition
+errors as field-anchored issues, and submit refuses a tree the deployment can
+no longer plan with `FailedPrecondition` naming the child.
+
+CLI: `run get` names each child run (or why none started) and `--tree
+[--depth N]` appends every child's task table depth first, reading in the
+parent's namespace and printing `unavailable (<code>: <message>)` for a child
+it cannot read (`--tree --json` is refused, naming `taskRuns[].child.runId`);
+`orkflow get` adds `COMPOSED` and `OUTPUT` tables; `task run` refuses a
+composed task by name. UI: a composed task's card links the pinned child
+Orkflow and, once `TASK_STARTED` arrives, the child run, with its status and a
+live roll-up of the child's tasks from the child's own stream; the header's
+**Child runs** link opens the runs list filtered to the children; the Orkflow
+page links each child at its version with the pinned digest and lists the
+declared outputs.
+
+### Caching
+
+A task that declares `cache:` ([DSL.md](DSL.md), "Caching") may reuse an
+identical earlier run's commit. `TaskRun.cache` (`HIT` with its source run,
+commit, digest and producing times; `MISS` with a reason token and sentence;
+or `BYPASSED`; and whether the memo was written) marks it on `GetRun` and
+`ListRuns`; each `TaskAttempt` carries its own decision and the key's
+components; a hit's `TASK_SUCCEEDED` reads `task succeeded (cached from run
+<id>)`. `SubmitRunRequest.no_cache` runs every cached task's container and
+refreshes its memo, for the whole tree. `CacheService` serves `GetCacheStats`
+and `PurgeCache` (exactly one of an Orkflow, the namespace-scoped memos, or
+all; optionally one task and an age; at most 10,000 deletions per call, with
+`more`) — see [STATS.md](STATS.md) §9. Submit refuses a cached task on a pool
+whose Orker predates caching with `FailedPrecondition`.
+
+CLI: `run submit|again --no-cache`; `run get` labels a hit `SUCCEEDED
+(cached)` with one cache line per cached task; `run attempts` adds a `CACHE`
+column; `orkflow get` a `CACHED` table; `cache stats [--orkflow] [--since]
+[--until]`; `cache purge (--orkflow NAME | --namespace-scoped | --all)
+[--task] [--older-than]`, refused before any request unless exactly one
+selector is given. UI: **Cached** (linking the producing run), **Cache miss**
+with its reason, or **Cache bypassed** on the task card; Inspect shows the
+key, source commit and memo write; the submit panel offers *Ignore cached
+results*; **Admin → Cache** shows hit rate, reused time and memos and purges
+through a confirmed dialog.
+
+### Joins and failure handlers
+
+A task's `join:` ([DSL.md](DSL.md), "Joins and failure handlers") says when it
+may start from how its needs ended; `Task.join` and `TaskRun.join` carry it. A
+**failing run** — its outcome already `FAILED` while its failure handlers run
+— is `Run.status = RUNNING` with `Run.error` set, and its stream carries one
+`TASK_LOG` with no task id (`run failing after task "<cause>" failed; waiting
+for its failure handlers: <handlers>`); it ends `FAILED` with the original
+reason whatever its handlers did. Submit refuses a container failure handler
+on a pool whose Orker predates joins (`FailedPrecondition`;
+`allow_empty_pool` does not override it). No new RPC, write or audit row.
+
+CLI: `run get` reads `Status: RUNNING (failing)` and prints a `JOIN POLICY`
+table; `run watch` prints the failing note with `-` for its task; `orkflow
+get` and `apply` print a `JOIN POLICY NEEDS` table; `run cancel` on a failing
+run stops its handlers and the run still ends `FAILED`; `task run --need
+TASK=STATUS` overrides a handler's need outcome locally. UI: the DAG marks a
+joined task and draws failure handlers and their edges dashed; the run page
+shows a `join` chip per joined task, keeps a skipped or cancelled task's
+reason after the run ends, and — live, from the failing note — a *Failing*
+banner naming the outstanding handlers beside a Running pill; a pending
+handler reads `Waiting for <needs>`.
+
+## Webhooks
 
 ### Webhook administration
 
-Add a proto `WebhookService` with `RegisterWebhook`, `ListWebhooks`, and
-`DeleteWebhook`. Subscriptions are deployment-wide unless they name a scope
-(see "Scoped subscriptions and task outcome events" below); the listing stays
-deployment-wide, each row states its scope, and the UI says so explicitly
-rather than implying the namespace picker filters it.
+`WebhookService` manages subscriptions: `RegisterWebhook`, `ListWebhooks`,
+`UpdateWebhook`, `DeleteWebhook`. Subscriptions are stored in the shared store
+at `metadata/webhooks/{id}.json` (`wh-{16 hex}`), with atomic create and
+delete, so management and delivery matching both see another replica's
+changes on the next request; there is no startup snapshot and no process-only
+registry. A storage failure never produces a successful registration or
+deletion, and a notification lookup failure never fails a run. The legacy
+plain-JSON `/v1/webhooks` routes are compatibility adapters over the same
+service; clients use the generated types.
 
-- `Webhook`: `string id = 1`, `string url = 2`,
-  `repeated EventType events = 3`, `google.protobuf.Timestamp created_at = 4`,
-  `string namespace = 5`, `string orkflow_name = 6`, `string task_id = 7`,
-  `string name = 8`.
-- Register request: `string url = 1`, `repeated EventType events = 2`,
-  `string secret = 3` (optional user-supplied signing secret),
-  `string namespace = 4`, `string orkflow_name = 5`, `string task_id = 6`,
-  `string name = 7`.
-- Register response: `Webhook webhook = 1`, `string secret = 2`.
-- List request empty; response `repeated Webhook webhooks = 1`.
-- Update request (`UpdateWebhook`): `string id = 1`, `string name = 2`,
-  `string url = 3`, `repeated EventType events = 4`, `string namespace = 5`,
-  `string orkflow_name = 6`, `string task_id = 7`; response `Webhook webhook = 1`.
-  It replaces every mutable field in place on the register path's checks; the
-  id and the signing secret never change, so a receiver keeps verifying and
-  the subscription's delivery history stays continuous. It carries no secret.
-- Delete request `string id = 1`; response empty.
+- **Events.** The four run transitions (`RUN_STARTED`, `RUN_SUCCEEDED`,
+  `RUN_FAILED`, `RUN_CANCELED`) and six task events (`TASK_SCHEDULED`,
+  `TASK_STARTED`, `TASK_AWAITING`, `TASK_RESOLVED`, `TASK_SUCCEEDED`,
+  `TASK_FAILED`); `TASK_LOG` is refused. Empty selects every run transition
+  and no task event: task events are opt-in by name.
+- **Secrets.** URLs must be HTTP(S). The signing secret (supplied, or
+  generated) is disclosed once, in the register response; `List` and `Get`
+  never carry it. Delivery reads the registry through the one read that does
+  (`ListForDelivery`). A matched subscription without a secret is delivered
+  unsigned and logged at Warn (`webhook delivery unsigned`).
+- **`name`** is an optional handle by which an automation document addresses
+  the subscription ([AUTOMATION.md](AUTOMATION.md)): a slug, unique among the
+  named subscriptions of its namespace scope, and it **requires** a namespace
+  scope, because a deployment-wide subscription belongs to no namespace. It
+  plays no part in delivery.
+- **`UpdateWebhook`** replaces name, URL, events and scope in place on the
+  register path's checks (a conditional put on S3, so an update never brings
+  back a deleted subscription). The id and secret never change, so a receiver
+  keeps verifying and the delivery history stays continuous. Rotating a secret
+  is delete then register.
 
-`name` is a subscription's optional handle — how an automation document
-addresses it (`docs/AUTOMATION.md`): a slug, unique among the named
-subscriptions of its namespace scope, and it REQUIRES a namespace scope,
-because a deployment-wide subscription belongs to no namespace. It plays no
-part in delivery. An unnamed subscription — every one registered before names
-existed — is outside every automation document.
+**What a receiver gets.** One `POST` per matched event, `Content-Type:
+application/json`, body:
 
-Accept the four run transitions (RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,
-RUN_CANCELED) and the six task events (TASK_SCHEDULED, TASK_STARTED,
-TASK_AWAITING, TASK_RESOLVED, TASK_SUCCEEDED, TASK_FAILED); TASK_LOG is refused. Empty selects every run
-transition and no task event: task events are opt-in by name. Preserve HTTP/HTTPS URL validation and one-time
-secret disclosure. List never contains secrets. Store subscriptions in shared
-object storage, with atomic create/delete and durable failure reporting;
-both management and delivery matching must observe another replica's changes.
-Delivery matching reads the registry through `Store.ListForDelivery`, the one
-read that carries each subscription's signing secret; `List` and `Get` — what
-`ListWebhooks`, the JSON adapter, `orkctl` and the UI answer from — never do.
-Until scoped subscriptions landed, the durable registry production wires
-matched through the public `List`, so every production delivery went out with
-no `X-Ork-Signature` header. Every delivery from the durable registry now
-carries one, over the same body bytes, with the secret its registration
-disclosed; no record is rewritten and no subscriber re-registers. A matched
-subscription with no secret is still delivered, and logged at `Warn` as
-`webhook delivery unsigned`.
-Do not use a startup-only snapshot or a process-only subscription registry in
-production. The existing JSON routes may remain compatibility adapters over
-the same service/storage; clients use generated types. Keep existing delivery
-semantics and describe them accurately: durable registration does not make
-in-flight delivery durable or exactly once; what each delivery did is recorded
-once it has settled (`delivery-records`), and the record is a log, never a
-queue. This work adds no scheduler or
-delivery-state database. Storage failure must not produce successful registration
-or deletion, and notification lookup failure must not fail a run.
+```json
+{"runId":"ork-…","orkflowName":"…","status":"FAILED","timestamp":"<RFC 3339>","taskId":"…","attempt":2,"run":{…}}
+```
+
+`taskId` and `attempt` appear only on a task event (`attempt` is omitted when
+Temporal has not numbered one — `TASK_SCHEDULED`, `TASK_STARTED`, a timed-out
+task); `run` is the full run in [JSON.md](JSON.md)'s dialect, `origin`
+included. Headers: `X-Ork-Signature: sha256=<hex HMAC-SHA256 of the exact body
+bytes>`, `X-Ork-Event`, `X-Ork-Delivery` (stable across one delivery's retries:
+the receiver's deduplication handle), `X-Ork-Webhook-Id`, `X-Ork-Run-Id`,
+`X-Ork-Task-Id` (task events), `X-Ork-Timestamp`, `X-Ork-Attempt`, and
+`X-Ork-Redelivery-Of` on an operator's redelivery. Only the body is signed, so
+a receiver verifies by hashing the bytes it read; headers vary per attempt and
+are outside the signature.
+
+**Delivery is best-effort.** A transport error or a 5xx is retried, up to four
+requests within about 700 ms of backoff (100/200/400 ms), each bounded at
+10 s; a 4xx ends the attempt series. Delivery runs off the run's path and can
+never fail a run. Durable registration does not make in-flight delivery
+durable or exactly-once, and there is no ordering across deliveries; across
+replicas an event may be delivered twice. A subscriber that must not miss an
+event reconciles with `GetRun`. What each delivery did is recorded once it
+settles ("Webhook deliveries"); the record is a log, never a queue.
+
+CLI: `webhook register URL [--event E…] [--secret S] [-n NS] [--orkflow]
+[--task] [--name]`, `webhook list` (a `NAME` and a `SCOPE` column), `webhook
+update ID [--name] [--url] [--event…|--clear-events] [-n|--deployment-wide]
+[--orkflow] [--task]` (read-modify-write), `webhook delete ID`. UI: **Admin →
+Webhooks** — list, register (name disabled until a namespace scope is given,
+run and task event checkboxes), the one-time secret, an Edit dialog stating
+the id and secret are kept, and delete. The listing is deployment-wide and
+says so rather than implying the namespace switcher filters it.
 
 #### Scoped subscriptions and task outcome events
 
 A subscription may name `namespace`, `orkflow_name` and `task_id`: three
-exact-match strings, each empty meaning every, each validated as a slug
-(`^[a-z][a-z0-9-]*$`, at most 200 bytes) and never sanitized. A run that names
-no namespace is in `default`, so a subscription scoped to `default` matches
-it. `task_id` is consulted only for task events — a `RUN_*` event passes it —
-and registration refuses a `task_id` when no `TASK_*` event is named. A scope
-names coordinates, not objects: nothing checks that the namespace, orkflow or
-task exists, so a subscription may precede the orkflow it names. The record
-stays flat at `metadata/webhooks/{id}.json`; a record written before scope
-existed reads as deployment-wide, and a record whose scope is invalid is
-refused on read rather than widened.
+exact-match strings, each empty meaning every, each validated as a slug and
+never sanitized. A run with no namespace is in `default`, so a subscription
+scoped to `default` matches it. `task_id` is consulted only for task events (a
+`RUN_*` event passes it), and registration refuses a `task_id` when no
+`TASK_*` event is named. A scope names coordinates, not objects: nothing checks
+that the namespace, Orkflow or task exists, so a subscription may precede the
+Orkflow it names. A record written before scopes existed reads as
+deployment-wide; a record whose scope is invalid is refused on read rather
+than widened.
 
-A task delivery carries the flat header plus `taskId` and `attempt`, and the
-`X-Ork-Task-Id` header; `attempt` is omitted when Temporal has not numbered
-one (`TASK_SCHEDULED`, `TASK_STARTED`, a task that timed out). A run
-delivery's body and headers are byte-identical to what they were before. A
-task that was skipped, or that was running or pending when its run ended, is
-never delivered as a task outcome — the interpreter records a canceled running
-task as `TASK_FAILED` carrying `CANCELED`, and the projection refuses it by
-status — so a `TASK_FAILED` delivery always reads `"status":"FAILED"`, and the
-run's terminal delivery is where a cancellation is read. Task events are
-higher-cardinality hints on the same best-effort channel (four requests at
-most, no ordering across deliveries, possibly twice across replicas); a
-subscriber that must not miss one reconciles with `GetRun`. Every durable
-lookup lists the whole registry, as before, now up to four more times per
-task; there is no cache.
+A task that was skipped, or that was running or pending when its run ended, is
+never delivered as a task outcome, so a `TASK_FAILED` delivery always reads
+`"status":"FAILED"`; a cancellation is read from the run's terminal delivery.
+Every delivery lookup lists the whole registry (no cache), up to four more
+times per task with task events subscribed.
 
 | Surface | Register | Read the scope | Refusal |
 | --- | --- | --- | --- |
-| CLI | `orkctl webhook register URL -n NS --orkflow NAME --task TASK --event E`; only an explicit `-n` narrows (`ORK_NAMESPACE` and the saved default do not apply) | `SCOPE` row/column: `ns/orkflow/task`, `*` per unset component, `ALL` when unscoped; `--json` carries `namespace`/`orkflowName`/`taskId` when set | Local, before any request, with the server's `ValidateScope` message |
-| UI | Admin → Webhooks: three optional free-text inputs (a slug `pattern` catches typos), eight event checkboxes, a caveat under the task events | `Scope` column (`webhook-scope-{id}`), `Deployment-wide` when unscoped | Server `InvalidArgument` in the register `ErrorPanel` |
+| CLI | `webhook register URL -n NS --orkflow NAME --task TASK --event E`; only an explicit `-n` narrows | `SCOPE`: `ns/orkflow/task`, `*` per unset component, `ALL` when unscoped; `--json` carries `namespace`/`orkflowName`/`taskId` when set | Local, before any request, with the server's message |
+| UI | Admin → Webhooks: three optional inputs and the event checkboxes, with the best-effort caveat under the task events | `Scope` column, `Deployment-wide` when unscoped | Server `InvalidArgument` in the register form |
+
+#### Webhook deliveries
+
+Every delivery that **settles** — landed, or gave up — is recorded as one
+immutable, create-only object
+(`metadata/deliveries/{yyyy}/{mm}/{dd}/{delivery-id}/{ns}/{run-id}/{webhook-id}/{event}/{outcome}.json`,
+[STORAGE.md](STORAGE.md)): every attempt with its status, error, backoff and
+timing, the signature that was sent, and the SHA-256 and byte count of the
+exact body — **never the body**, which would be a second copy of the run. The
+record proves what OrkStack sent and what the receiver answered, never what
+the receiver did with it. Recording is best-effort: a record that cannot be
+stored is logged at warn and the delivery's outcome is unchanged. Nothing
+reads a record to decide what to send — no pending state, lease or scan — and
+nothing reclaims them; a bucket lifecycle rule is the operator's
+([DEPLOY.md](DEPLOY.md)).
+
+- **`ListDeliveries`** filters by webhook, run, event, outcome and namespace
+  (empty: every namespace) over a window: `until` defaults to now; `since` to
+  the run's start when a run is named, else seven days before `until`. Page
+  size defaults to 50, at most 200; the page token binds every filter and the
+  resolved window. A scan of more than 100,000 keys before a page fills is
+  `ResourceExhausted`. The response echoes the resolved window.
+- **`GetDelivery`** returns one record.
+- **`RedeliverWebhook`** is one operator-initiated, synchronous POST — no
+  retry ladder — to the subscription as it is now (a deleted subscription is
+  `FailedPrecondition` and nothing is sent), signed with its **current**
+  secret, carrying the original's event fields and timestamp but the run as
+  it reads today, with `X-Ork-Redelivery-Of` naming the original. Its outcome
+  is recorded as a new delivery; a POST that was sent but could not be
+  recorded is `Unavailable` saying both. It is audited (`webhook.redeliver`).
+  Nothing is queued: the operator is the retry policy.
+
+With no store configured, all three answer `FailedPrecondition`. CLI:
+`webhook deliveries [--webhook] [--run] [--event] [--delivered] [--since]
+[--until] [--limit] [--page-token] [-n]`, `webhook delivery ID`, `webhook
+redeliver ID` (exit 1 when the receiver did not accept it). UI: the
+**Deliveries** panel on Admin → Webhooks — a caption with the resolved window
+and scope, the same filters, a delivered/failed pill, attempts and last
+status, an expanded row with the signature, body digest and byte count ("body
+not stored") and the attempt timeline, a per-webhook **Deliveries** link, and
+**Redeliver** behind a confirmation stating one signed POST, now, of today's
+run, with the result inline.
+
+## Control plane
 
 ### Automation documents
 
-`AutomationService` (`proto/orkstack/v1/automation.proto`) plans and exports
-one namespace's automation document — its settings, schedules, triggers and
-webhooks, declared by name — and writes nothing (`docs/AUTOMATION.md`). An
-apply is the CLIENT sending each actionable step's carried request to the
-existing write RPC it names, so CLI and UI apply through exactly the calls a
-person makes by hand, each audited under its own action. Applying a
-directory, `--check` and `--secrets-out` are CLI affordances over operations
-both clients have: the Apply page applies orkflows, and Admin → Automation
-plans and applies one document.
+`AutomationService` plans and exports one namespace's automation document —
+settings, schedules, triggers and webhooks, declared by name — and writes
+nothing ([AUTOMATION.md](AUTOMATION.md)). An apply is the **client** sending
+each actionable step's carried request to the existing write RPC it names, so
+both clients apply through exactly the calls a person makes by hand, each
+audited under its own action. Applying a directory, `--check` and
+`--secrets-out` are CLI affordances over operations both clients have: the
+Apply page applies Orkflows, and **Admin → Automation** (which respects the
+namespace switcher) exports, plans and applies one document, re-planning on
+accept and refusing a plan that moved since it was shown. Triggers and webhooks
+are named and edited in place on the Triggers tab and the Webhooks page.
 
 ### Control-plane audit trail
 
-`AuditService.ListAuditRecords` (`proto/orkstack/v1/audit.proto`) reads back
-one immutable record per control-plane write RPC — succeeded or refused —
-from `metadata/audit/` in the shared store, so any replica answers for a write
-any replica recorded. Reads, `SubmitRun`, and trigger invocations are never
-recorded. `orkctl admin audit [--since] [--until] [--action PREFIX]
-[--principal NAME] [--limit N] [--page-token TOKEN] [-n NS] [--json]` and
-Admin → Audit render the same records in the same order for the same filters.
+Every call of a control-plane write RPC — succeeded or refused — writes one
+immutable record to `metadata/audit/` before the response leaves the engine
+([DEPLOY.md](DEPLOY.md), "Attributing control-plane writes", for the
+operator's view). `AuditService.ListAuditRecords` reads them back from any
+replica. The recorded actions are:
 
-- The request's `namespace` is a FILTER, and empty means **every** namespace —
-  the one request in the API where it does not mean `default`. The CLI sends
-  one only when `-n` is typed on that command line (never from
-  `ORK_NAMESPACE` or `namespace use`); the page shows every namespace unless
-  its scope control says otherwise. Both print the scope they used.
+| Area | Actions |
+| --- | --- |
+| Orkflows | `orkflow.apply`, `orkflow.promote`, `orkflow.delete` |
+| Runs | `run.cancel`, `run.await.resolve` (values by digest only) |
+| Namespaces | `namespace.create`, `namespace.update` (hold, cap, budget, secret list and signer in its detail), `namespace.delete` |
+| Triggers | `trigger.create`, `trigger.update`, `trigger.delete` |
+| Schedules | `schedule.create`, `.update`, `.pause`, `.resume`, `.fire`, `.backfill`, `.delete` (never the input) |
+| Webhooks | `webhook.register`, `webhook.update`, `webhook.delete`, `webhook.redeliver` (never a secret) |
+| Deployment | `retention.update`, `image_policy.update` (keys by fingerprint), `orker.cordon`, `orker.uncordon`, `release.promote`, `release.ramp`, `cache.purge` |
+
+Reads, `SubmitRun` (the run's own record and origin are the durable fact) and
+the trigger and await-callback doors are never recorded. A `webhook.*` record
+is deployment-wide (empty namespace) even for a scoped subscription; its
+detail is `url=… events=[…]`, plus `scope=ns/orkflow/task` when scoped.
+
+- The request's `namespace` is a filter, and empty means **every** namespace —
+  deployment-wide writes appear only there. Both clients print the scope they
+  used.
 - The window defaults to the seven days before the engine's `now`; the
-  response echoes the resolved `since`/`until`, which both clients print.
-- The page token is versioned and binds namespace, action prefix, principal,
-  and the window as sent; a token presented with different filters is
-  `InvalidArgument` ("filters changed; drop the page token"), as for
-  `ListRuns`. The CLI's next-page hint repeats the filters; the page keeps
-  filters, cursor and page number in its URL and the path back per tab.
+  response echoes the resolved `since`/`until`. Page size defaults to 50, at
+  most 200; a page that would examine more than 5000 records is
+  `ResourceExhausted`.
+- The page token binds namespace, action prefix, principal and window; a token
+  presented with other filters is `InvalidArgument` ("filters changed; drop
+  the page token").
 - `principal` is what a gateway asserted in `Ork-Principal`, never
   authenticated; an empty one renders `unattributed`, and both clients print
   the "asserted, not authenticated" caption under every rendering, empty
   page included. `ORK_PRINCIPAL` makes `orkctl` assert one.
-- A scan past the engine's budget is `ResourceExhausted` and is shown as the
-  failure it is — beside the window inputs in the UI, a non-zero exit in the
-  CLI — never as an empty page.
-- A `webhook.register` record is deployment-wide (empty namespace) even when
-  the subscription is scoped; its detail is `url=… events=[…]`, followed by
-  `scope=ns/orkflow/task` (`*` per unset component, as the `SCOPE` column
-  renders it) when any scope component is set. The signing secret is never
-  part of it.
 
-### Run again
+CLI: `admin audit [--since] [--until] [--action PREFIX] [--principal NAME]
+[--limit N] [--page-token TOKEN] [-n NS]`. UI: **Admin → Audit** — every
+namespace by default and one on request, action/principal/window filters,
+`refused {code}` for a refusal, pagination, the caption.
 
-No new durable operation is needed. UI `Run again` loads the selected run into
-a submission draft. CLI `run again RUN` reads that run and submits through
-`SubmitRun` with `source_run_id` set to it, so the new run's origin is
-`run-again <source>` — a claim the server checks (the source must exist in the
-namespace, NotFound otherwise); `--origin-ref` and the dialog's **Origin
-reference** attach a correlation reference, and the dialog's copied command is
-`orkctl run again <source>` with the same flags; support reviewed overrides for inputs and version plus a
-`--dry-run` that prints the exact new submission. Default to the source's
-pinned version and inputs. Never reuse its original idempotency key; allow a
-fresh explicitly supplied key. A new run gets a new ID. Explain before submit
-that this starts a new execution and may repeat external side effects. If the
-pinned definition is unavailable, fail with its coordinates; never silently
-switch to current. Original inputs may contain secrets and never belong in a
-shareable or bookmarkable URL; a run is shared by its ID alone, and the
-seeded draft exists only in the page that already holds that run.
+### Orker inventory, cordon and drain
 
-### Run plan
+`ActivityService.ListOrkers` lists every live Orker from the cluster's poller
+information plus each Orker's own answer, so any replica answers the same; an
+Orker that could not be asked is `unreachable` with its reason and no numbers,
+never idle. `CordonOrker` sets or clears a cordon, which lives only in the
+Orker process. Semantics, exit codes and the `ORK_ORKER_ID` uniqueness rule
+are [DEPLOY.md](DEPLOY.md), "Removing an Orker safely: cordon and drain".
 
-`OrkflowService.PlanRun` answers, for one definition and one input, which
-tasks would run, which would be skipped and exactly why, and in which dispatch
-wave each would start — without starting anything. It resolves a stored
-version exactly as `GetOrkflow` does (empty version = current), or prepares
-an unapplied document exactly as `ValidateOrkflow` does, applies the declared
-input defaults, and walks the DAG with the interpreter's own condition
-evaluator and skip-reason sentences. Optional `assumed_outputs` stub a task's
-`values.json` so a condition on an upstream output can be planned both ways;
-a running task without a stub is planned with `{}`, and every condition that
-read such an output is named. A condition that errors is `FAILS` with the
-exact `RUN_FAILED` message a run would record, and every task decided after
-it is `UNREACHED`.
+CLI: `orker list [--pool]`, `orker get ID`, `orker cordon ID --reason TEXT`
+(a blank reason is refused before any request), `orker uncordon ID`, `orker
+drain ID [--reason] [--timeout] [--watch]` — a client-side loop: exit 0
+drained, 4 timed out naming what remains, 1 unreachable, uncordoned or
+restarted. Orker commands ignore `--namespace`. UI: **Admin → Pools**, a
+per-pool **Show Orkers** disclosure with a state pill (`ready`, `cordoned`,
+`unreachable`), tasks, pins, last seen and open pins linking to their runs;
+**Cordon** through a dialog that requires a reason and shows a server error in
+place; one-click **Uncordon**.
 
-CLI: `orkctl run plan <orkflow> [--version V]` or `orkctl run plan --file
-FILE.ork.yaml`, with `--input`/`--input-json`, `--output TASK=JSON`,
-`--outputs-file PATH`, `--assume-failed TASK` (repeatable: plan the run as
-if TASK, when it would run, failed after its retries — its failure handlers
-are planned, every task that depends on it and is not a failure handler is
-`unreached`, independent work is planned as if nothing had failed), and
-`--assert-runs`/`--assert-skipped` for CI, one task per flag (exit 4 when the
-plan contradicts them — an `assumed_failed` task fails `--assert-runs` — 1 when
-no plan could be computed); `--json` is the raw `PlanRunResponse`. UI: a
-**Plan** action beside **Submit run** in the submit dialog (also behind **Run
-again**), with an optional assumed-outputs field and an *Assume these tasks
-fail* field (`run-submit-assume-failed`, comma-separated task ids) in its
-advanced section, a wave/task/outcome/detail table, and a CLI equivalent of the
-plan carrying one `--assume-failed` per assumed task. Both say `The server did
-not apply --assume-failed: it predates assumed failures.` when an older engine
-ignored the assumption, instead of presenting the plan as the failure path.
+### Releases
 
-A plan never submits. There is no flag, button, or field that turns a plan
-into a run: `PlanRun` has no starter, mints no run id, takes no idempotency
-claim, writes no definition or event, and is not an admission check — pools,
-holds, and limits remain `SubmitRun`'s questions, so Plan stays available
-while a namespace is held. A plan proves wiring, never behaviour.
+`SystemService.ListReleases`, `RampRelease` and `PromoteRelease` read and
+change which release (one `ORK_BUILD_ID` of `ork` and `orker`) takes new runs
+([DEPLOY.md](DEPLOY.md) §3–4). Any replica, of either release, answers the
+same releases, roles, counts and blockers. A ramp or promotion is refused with
+nothing written when the release could not carry the runs it would take — no
+engine of it running, a pool in use with no uncordoned Orker of it, a pinning
+pool with no pin host of it, or runs started before any release was current
+still executing — naming every blocker; a routing that changed since the read
+is refused. There is no override: an operator who must do what this refuses
+uses the cluster's own commands ([DEPLOY.md](DEPLOY.md), "Underneath: the
+cluster commands"). OrkStack starts and stops no process and stores no
+rollout: the cluster's routing is the only record of which release is
+current, runs always finish on the release that started them, and `status
+--watch` and `wait` are loops in `orkctl`. Every write is a `release.promote`
+or `release.ramp` audit record.
 
-### Awaited tasks
+CLI: `release status [--watch]` (`--watch --json` is refused), `release ramp
+BUILD --percent N` (1–100; 0 stops the ramp), `release promote BUILD`,
+`release rollback BUILD` (refused client-side unless the target is a previous
+release), `release wait BUILD [--timeout]` — a client-side loop: exit 0
+drained, 4 timed out naming every run and pin left, 1 otherwise. A count that
+could not be read is `unknown`, never 0. Release commands ignore
+`--namespace`. UI: **Admin → Releases** — one row per release with its role
+(current, ramping N%, previous, candidate), engines, Orkers, pools served,
+runs, and state (`serving`, `ready`, `not ready (N blockers)`, `draining`,
+`drained`), every blocker verbatim, a holds disclosure listing the runs still
+executing and each open pin with its Orker; **Promote**, **Roll back**,
+**Ramp…** and **Stop ramp** through a dialog that re-reads the release on
+open, keeps accept disabled while blockers remain, and sends that read's
+revision. Refresh is manual; nothing polls.
 
-A task may declare `await:` instead of `uses:` (`docs/DSL.md` "Awaited
-tasks"): it starts no container and waits, as `AWAITING`, until something
-outside the run resolves it or its deadline passes. `RunService.ResolveAwait`
-completes (`values_json`, the exact bytes that become the task's
-`values.json`) or rejects (`reject`, `reason`) one await of a running run,
-namespace-scoped exactly as `CancelRun` is, and answers once the values are
-stored and the resolution is delivered — never once it is applied; a repeat of
-the resolution that already won answers `repeat` and delivers nothing. An await
-that declares `callback: true` also accepts `POST
-/v1/runs/{id}/awaits/{task}[/reject]` with the one-time token
-`SubmitRunResponse.await_callbacks` disclosed to the submitter; the token is
-shown by that response and nowhere else, and only its digest is kept.
-`TaskRun.await` carries the deadline and who resolved it, through which door,
-as asserted; `TASK_AWAITING` and `TASK_RESOLVED` are subscribable events.
+### Namespace policy
 
-CLI: `orkctl run resolve RUN --task TASK [--values JSON | --values-file PATH |
---reject --reason TEXT]`, with `--values-file` sent verbatim and every
-refusable flag combination refused before a request; `run submit`/`run again`
-print each callback once as a shell-safe `curl`; `run get` adds an await table
-(deadline, remaining, resolved via, by, callback); `run plan` renders `awaits`;
-`run timing` reads an await's run as `awaited`. UI: the run page's await panel
-in place of the log pane — state, deadline, a live remaining time, **Resolve**
-(typed fields over the await's schema, or JSON sent verbatim) and **Reject**
-dialogs with their CLI equivalents, *Delivered* until the run applies it, and a
-placeholder `curl` for a callback await; the submit dialog's one-time callback
-panel before it continues to the run.
+Each is a field of the namespace document, set with `namespace create|update`
+or the **Admin → Namespaces** form, enforced at the one admission gate every
+door shares (`SubmitRun` preparation: `run submit`, `run again`, the submit
+dialog, a trigger invoke, a schedule fire), and audited through
+`namespace.update`. A refusal mints no run id and takes no claim, and both
+clients show it verbatim. Operator semantics are in [DEPLOY.md](DEPLOY.md).
 
-### Run evidence
-
-`RunService.ExportRunEvidence` streams one finished run's evidence bundle: a
-`tar.gz` whose first member, `MANIFEST.json`, names every member's path,
-origin, size, `sha256` and state, followed by the archived run and events, the
-pinned definition's `source.yaml`, and per task the verbatim `commit.json`,
-`values.json`, every output artifact, every attempt record and every attempt's
-`stdout.log`/`stderr.log`. It is a read assembled per request and kept
-nowhere; `manifest_only` streams the manifest alone, uncompressed. Every
-member digest is of the bytes as read; a recorded reference is verified as it
-streams and a mismatch ends the stream `DataLoss` without `last`. An object
-cleanup or a lifecycle rule removed is a `reclaimed` member with its recorded
-digest, an attempt with no record is `unrecorded`, and a stored definition
-that does not hash to the pinned digest is `rejected` — never omitted. A store
-that cannot answer is `Unavailable`; a live run, or a terminal run whose
-archive write has not landed, is `FailedPrecondition`. The layout, the
-manifest schema, the reason tokens and the verifier's rules are
-[RUN_EVIDENCE.md](RUN_EVIDENCE.md).
-
-CLI: `orkctl run evidence export <run-id> --output PATH [--task] [--no-logs]
-[--no-artifacts] [--overwrite]` commits the file only after `last`;
-`--json` prints `MANIFEST.json` itself (not a proto envelope) and writes no
-file. `orkctl run evidence verify <bundle.tar.gz> [--json]` is the offline
-hashing loop; `--against-store` also compares the bundle with the engine's
-live manifest. UI: an **Evidence** action on a finished run's header opens a
-dialog that shows the manifest summary before any bundle byte is fetched,
-include toggles, the absent members with their sentences, the manifest JSON,
-a `CliEquivalent`, and a download that completes only on `last`.
-
-### Fan-out
-
-A task that declares `each:` (`docs/DSL.md` "Fan-out") is one node whose
-items are each a durable activity. `TaskRun.each` (`expanded`, `count`) and
-`TaskRun.items` (one `TaskRun` per item, `item` set) carry them on `GetRun`;
-an item `TASK_LOG` event carries `Event.item`. Every per-task read takes one
-optional `item` selector — `ReadTaskLogs`/the log socket (`item=`),
-`ListRunArtifacts`, `ReadArtifact`, `GetArtifactProvenance`,
-`ListTaskAttempts`, `InspectRun`, `ExportRunEvidence` — under
-one set of rules: `item` without `task_id` is `InvalidArgument`; a negative
-item is `InvalidArgument`; an item of a task that is not a fan-out is
-`InvalidArgument`; an item of a fan-out not yet expanded, or past its count,
-is `NotFound`; and a read of ONE stream or ONE object of a fan-out without
-`item` is `InvalidArgument` naming `--item N`, while a list without `item`
-returns every item's rows, each carrying its `item`. `ListRuns`, the webhook
-body and the workflow result carry a fan-out's node row without `items`
-(`WithoutItems`), so a list stays bounded whatever a run expanded into. A
-human rendering spells one item `convert[97]` (0-based); it is never sent and
-never parsed — the wire field is the integer.
-
-CLI: `run get` shows a fan-out as one row, `RUNNING 97/120`, with a summary
-line and `--expand <task>` listing its items; `--item N` on `run logs`,
-`run artifacts`, `run artifact download`, `run artifact provenance`,
-`run attempts`, `run timing`, `run inspect`, `run evidence export` and
-`task run`; `run logs` without `--item` on a fan-out prints the hint;
-`run watch` spells item events `convert[97]`; `run plan` counts an input
-source and names a task source as counted when the run reaches it;
-`orkflow get` and `apply` show the `each:` table. UI: the run page draws one
-card per fan-out with a summary, a grid of item cells moved by item events,
-an item panel (status, attempt, Orker, exit, times, failure, attempt
-timeline, log pane, artifacts with Download, CLI equivalents), a
-`N items retried` badge, and `?task=&item=&attempt=` deep links; the plan
-table states the fan-out in the CLI's words, the DAG labels the node
-`each ≤ N`, and run diff labels item rows `convert[97]`.
-
-### Composed Orkflows
-
-A task whose `uses:` is `orkflow:<name>@<version>` (`docs/DSL.md`
-"Composition") starts a **child run** of that pinned Orkflow and reaches no
-Orker. `TaskRun.child` (`TaskChild`: the pinned name, version and definition
-digest from the run's first snapshot, and `run_id` once the child's start is
-confirmed — never before) marks it on `GetRun`; the child run's own
-`Run.origin` is `{PARENT_RUN, <parent id>}`, so a parent's children are the
-runs `ListRuns` returns for `--origin parent-run:<id>` — no new RPC. A child
-is read, watched, cancelled, diffed and exported on its own id. The refusals
-are shared: `StreamTaskLogs` (and the log socket) refuses a composed task
-with `FailedPrecondition` naming its child run and `orkctl run logs <child>`;
-`ListTaskAttempts` answers an empty timeline; `DiffRuns` compares a composed
-row on presence, status, error and duration only. Apply reports rules 26–32
-(`docs/DSL.md`) as field-anchored issues on `tasks[i].uses`, `tasks[i].with.<k>`
-or the reading field, and submit refuses a tree the deployment can no longer
-plan with `FailedPrecondition` naming the child.
-
-CLI: `run get` prints one line per composed task naming its child run and the
-`orkctl run get` that opens it (or why none was started); `run get --tree
-[--depth N]` appends every child's task table under its parent, depth first,
-read in the parent's namespace, and says `unavailable (<code>: <message>)` for
-a child it cannot read (`--tree` with `--json` is refused, naming
-`taskRuns[].child.runId`); `orkflow get` adds the `COMPOSED` and `OUTPUT`
-tables; `run plan` renders a composed task's DETAIL; `run logs` prints where a
-composed task's logs are; `run timing` labels its ATTEMPT `child`; `task run`
-refuses a composed task by name. UI: a composed task's card shows a
-**ChildRunPanel** — the pinned child linked to its Orkflow page, the child run
-linked once `TASK_STARTED` arrives (one event-triggered re-read), its status
-pill, a live roll-up of the child's tasks from the child's own stream, and the
-`orkctl run get` CLI equivalents; Inspect shows the child reference and full
-digest; the header's **Child runs** link opens the runs list filtered to the
-children; the output panel says *Declared outputs* or *Leaf task values*; the
-Orkflow page links each composed task's child at its version with the pinned
-digest, lists the declared outputs, and the DAG names the child.
-
-### Interface compatibility
-
-An Orkflow's *declared interface* is its `inputs:` and `outputs:` (`docs/DSL.md`
-"Promoting compares declared interfaces"). Two reads serve it, both computed
-per request and stored nowhere: `OrkflowService.CompareInterfaces` classifies
-how one stored version's declared interface changes in another (every finding
-with its own `COMPATIBLE`, `BREAKING` or `UNKNOWN` verdict and the one sentence
-every client prints verbatim), and `OrkflowService.ListOrkflowCallers` lists
-every composing task of another orkflow's scanned version, every trigger and
-every schedule of the namespace that references it, with the version each pins
-(empty: it follows current; a schedule the cluster could not describe carries
-`unavailable_reason` instead). Three fields carry the gate:
-`OrkflowVersion.interface_verdict` (each version against the current one),
-`SetCurrentOrkflowVersionRequest.acknowledge_breaking`, and
-`SetCurrentOrkflowVersionResponse.interface_verdict`/`compared_version`.
-`SetCurrentOrkflowVersion` refuses a BREAKING promotion with
-`FailedPrecondition` naming each breaking change until it is acknowledged,
-never refuses COMPATIBLE or UNKNOWN, and swaps the pointer only while it still
-names the version it compared against. Apply and validate report a breaking
-change against the version that runs now as field-anchored WARNINGs and never
-refuse.
-
-CLI: `orkflow compat NAME [FROM] TO`, `orkflow callers NAME [--all-versions]`,
-`orkflow promote NAME V [--acknowledge-breaking]` (which prints `Interface
-against <v>: …`), the `COMPAT` column of `orkflow versions`, and the warnings
-of `apply`/`orkflow validate`; `--json` for each. UI: a verdict chip on every
-row of the Versions tab, *Compare interfaces* beside *Diff*, the promote
-dialog's findings, followers, pinned composers and acknowledgement checkbox,
-and a *Callers* section under the version table.
-
-### Caching
-
-A task that declares `cache:` (`docs/DSL.md` "Caching") may reuse an identical
-earlier run's commit. `TaskRun.cache` (`CacheResult`: `HIT` with its
-`CacheSource` — the run, commit, digest and producing times — `MISS` with a
-reason token and sentence, or `BYPASSED`, plus whether the memo was written)
-marks it on `GetRun` and `ListRuns`; each `TaskAttempt` carries its own
-decision and the key's components; a hit's `TASK_SUCCEEDED` reads
-`task succeeded (cached from run <id>)`. `SubmitRunRequest.no_cache` runs every
-cached task's container and refreshes its memo, for the whole tree.
-`CacheService` adds `GetCacheStats` (per cached task: hits, misses, bypassed,
-the hit rate — *unavailable* over nothing — and the producing attempts' time
-reused; and the memo inventory, grouped) and `PurgeCache` (exactly one of an
-Orkflow, the namespace-scoped memos, or all; optionally one task and an age;
-bounded at 10,000 deletions with `more`). `DiffRuns` compares the `cached`
-field. Submit refuses a cached task on a pool whose Orker predates caching
-with `FailedPrecondition`.
-
-CLI: `run submit --no-cache`, `run again --no-cache`; `run get` labels a hit
-`SUCCEEDED (cached)` and prints one cache line per cached task; `run attempts`
-adds a `CACHE` column when any record carries one; `orkflow get` adds a
-`CACHED` table; `run plan` renders a cached task's DETAIL; `cache stats
-[--orkflow] [--since] [--until]` and `cache purge (--orkflow NAME |
---namespace-scoped | --all) [--task] [--older-than]`, which refuses anything
-but exactly one selector before sending a request. UI: a cached task's card
-shows **Cached** linking to the producing run, **Cache miss** with its reason,
-or **Cache bypassed** (`task-{id}-cache`, `data-outcome`); Inspect shows the
-key, source commit and memo write; the attempt timeline shows each memo
-decision and its key components; the header counts cached tasks; fan-out cells
-mark cached items (`data-cached`); the submit panel offers *Ignore cached
-results*; the Orkflow page shows TTL and scope and links to **Admin → Cache**,
-which shows the hit rate, reused time and memos, and purges through a
-confirmed dialog with its `orkctl cache purge` equivalent.
-
-### Joins and failure handlers
-
-A task's `join:` (`docs/DSL.md`, "Joins and failure handlers") says when it
-may start from how its needs ended: `all_succeeded` (the default),
-`none_failed` (re-join after a branch), `any_failed` and `all_done` (failure
-handlers, the only tasks that start in a failing run). `Task.join` carries it
-on the definition and `TaskRun.join` on each run row. A **failing run** — its
-outcome already decided `FAILED` while its failure handlers run — is
-`Run.status = RUNNING` with `Run.error` set, and its event stream carries one
-`TASK_LOG` with no task id (the failing note: `run failing after task
-"<cause>" failed; waiting for its failure handlers: <handlers>`); it ends
-`FAILED` with the original failure's reason whatever its handlers did.
-`PlanRunRequest.assume_failed` plans the failure path (`PlanTask.join`,
-`PLAN_OUTCOME_ASSUMED_FAILED`, `PlanTask.unreached_by`,
-`PlanRunResponse.assumed_failed`, `unused_assume_failed`, `fails_at`).
-`ValidateOrkflow` and `ApplyOrkflow` carry the join warning W1 (an unguarded
-read of an ancestor a join can leave absent) and never refuse on it; rules
-37–42 refuse at compile. Submit refuses a container failure handler on a pool
-whose Orker predates joins with `FailedPrecondition`
-(`DescribeOrkerResult.join_supported`); `allow_empty_pool` does not override
-it. No new RPC, no new write, no audit row.
-
-CLI: `run plan --assume-failed TASK` (§"Run plan"); `run get` reads `Status:
-RUNNING (failing)` for a failing run and prints a `JOIN  POLICY` table when a
-row carries a join; `run watch` prints the failing note as a `TASK_LOG` row
-with `-` for its task; `orkflow get` and `apply` print a `JOIN  POLICY  NEEDS`
-table; `run cancel`'s help says a failing run's handlers are stopped and the
-run still ends `FAILED`; `task run --need TASK=STATUS` overrides a failure
-handler's need outcome in its local `task.json` `join`; `--json` carries
-`join`, `fails_at` and `assumed_failed`. UI: the Orkflow DAG marks a joined
-task (`data-join`, a `join <word>` chip `dag-node-{id}-join`, a title
-sentence) and draws a failure handler and the edges into it dashed; the run
-page shows a `join` chip per joined task (`task-{id}-join`), keeps a skipped
-or cancelled task's reason after the run ends, and — live, from the failing
-note, which triggers one re-read — shows the run's error beside a Running pill
-and a *Failing* banner (`run-failing`, `data-handlers`) naming the outstanding
-handlers with their status words until the run ends; a pending handler's card
-reads `Waiting for <needs>` while the run is failing. The submit dialog's Plan
-takes *Assume these tasks fail* and renders `assumed_failed`, the unreached
-tasks and the failure handlers that would run with the CLI's words.
-
-## Capability and acceptance matrix
-
-| Capability | UI behavior | CLI/shared behavior | Required observable acceptance |
+| Policy | CLI | UI | Refusal |
 | --- | --- | --- | --- |
-| Cancellation | Active-run action with optional reason; disable duplicate requests and show cancellation requested until authoritative status changes | Existing `run cancel --reason` | Running fixture receives cancellation; reason survives; terminal state comes from server; errors remain actionable |
-| Version-safe submission | Version picker marks current; links from a definition and a run retain pinned version; advanced idempotency key and empty-pool override are explicit | Existing submit version/key flags plus new `--allow-empty-pool` exposing the existing API field | Viewing an old version submits that version even after current moves; repeated same-key submit deduplicates according to existing server contract |
-| Inputs/results | Collapsible run inputs/outputs, task values, metadata; copy and JSON export | Existing `run get --json`, artifact commands above | Successful fixture values and artifact metadata match CLI; empty values are distinct from unavailable values |
-| Run filters/history | Status, Orkflow, page size, creation interval, refresh, next/previous; URL preserves filters, cursor and page number; the path back is per-tab; distinguish empty deployment from no matches | List query/cursor above | Older page is reachable; no duplicate rows at equal timestamps; mixed live/archive results and cross-namespace rejection covered |
-| Retained logs | Full retained-log download bypasses scrollback cap; older retained chunks can be browsed; search explicitly says loaded-log scope | Existing `run logs` task/attempt/from cursor and shell redirection | Download includes beyond pane cap; truncation notices remain visible; attempt selection and namespace retained; failed download never looks complete |
-| Dashboard window | 15m, 6h, 24h and custom since; the active window, custom included, is marked in the control and shown as a formatted instant; display selected time and preserve coverage caveats | Existing `stats --since` | Request time changes and rendered counts/coverage follow response; reload preserves selection |
-| Webhooks | List/register/delete, run and task event selection, optional namespace/orkflow/task scope with a per-row scope cell, one-time secret copy | Proto-backed webhook commands with `-n`/`--orkflow`/`--task` and a `SCOPE` column | Second replica and restarted engine see registration/deletion and scope; list excludes secret; storage failure errors; a scoped task delivery and an invalid-scope refusal captured in the browser |
-| Webhook deliveries | Admin → Webhooks **Deliveries** panel: caption with the resolved window and "every namespace" or the namespace, webhook/run/event/outcome/since/until/namespace filters, table with a delivered/failed pill, attempts and last status, an expanded row with the signature, the body's `sha256` and byte count ("body not stored") and the attempt timeline, pagination, `CliEquivalent`, a per-webhook `Deliveries` link, ErrorPanel with Retry; Redeliver behind `ConfirmDialog` stating one POST, now, signed, today's run, with the result inline | `webhook deliveries [--webhook] [--run] [--event] [--delivered] [--since] [--until] [--limit] [--page-token] [-n]`, `webhook delivery ID`, `webhook redeliver ID` (exit 1 when not delivered); `--json` is the raw response | Every settled delivery is one create-only record whose `body_sha256` and `signature` equal what the receiver read; a refused delivery lists four attempts that agree with the receiver's log; a record written on one replica is listed and redelivered by another; a redelivery is exactly one signed POST carrying `X-Ork-Redelivery-Of` and is recorded as a new delivery; a scan past its budget refuses; nothing reads a record to decide what to send |
-| Automation plan/apply/export | Admin → Automation (respects the namespace switcher): Export with Download, "Edit as a plan" and an unmanaged-objects callout naming each `orkctl … update … --name NAME`; a document textarea or imported file, a Prune checkbox, Plan showing issues, rows with symbol/action, changes and notes, a line per unmanaged section, the counts and the digest, "No changes."; a password input per `secret_env` entry; Apply behind a `ConfirmDialog` naming every deletion, re-planning first and refusing a moved plan (`automation-stale`), per-step outcomes, one-time secrets once; `CliEquivalent` for export, plan and apply | `apply FILE\|DIR... [--dry-run\|--check] [--prune] [--expect-plan sha256:…] [--secrets-out PATH]`; `export [-n]`; `--json` prints an `ApplyReport` (`ExportAutomationResponse`); one orkflow file with no new flag prints exactly as before | Same plan, same strings, same digest in both clients; a dry run leaves `metadata/` and the cluster's schedules byte-identical; a re-apply writes nothing; only `--prune` deletes, and never an unnamed, deployment-wide or omitted-section object; a trigger token and a webhook secret survive every in-place update; a plan that moved between review and apply writes nothing |
-| Trigger edit | Triggers tab: optional name on create, a name per row (`unnamed`), Edit dialog (name, version `Select`, description) stating the URL and token are kept, `CliEquivalent` | `trigger create --name`, `trigger update ID [--name] [--version\|--follow-current] [--description]` (read-modify-write), `NAME` column | Names unique per namespace; the original token invokes after a rename or re-pin; another namespace's trigger is NotFound |
-| Webhook edit | Admin → Webhooks: optional name (disabled until a namespace scope is given), `Name` column, Edit dialog (name, URL, events, scope) stating the id and secret are kept, `CliEquivalent` | `webhook register --name` (needs `-n`), `webhook update ID [--name] [--url] [--event…\|--clear-events] [-n\|--deployment-wide] [--orkflow] [--task]` (read-modify-write), `NAME` column | A name requires a namespace scope; a delivery after an edit verifies with the originally disclosed secret; an update across a concurrent delete never brings the subscription back |
-| Validate/apply | Validate current YAML without saving; field issues and warnings; retain warnings after apply | Shared validator and CLI validate | Invalid DAG and namespace mismatch agree; valid validation writes nothing; unavailable image errors actionable |
-| Run again | Reviewed submission seeded from run, showing source and pinned version | CLI again plus dry-run | Inputs preserved, override respected, new ID, no implicit old-key reuse, unavailable version refuses |
-| Run plan | Plan action in the submit dialog beside Submit run, with an assumed-outputs field, a wave/task/outcome/detail table, the summary sentence and caveats, and a CLI equivalent of the plan; stale plans clear when the draft changes | `run plan <orkflow> [--version]` / `run plan --file FILE`, `--input`, `--output`, `--outputs-file`, `--assert-runs`/`--assert-skipped` (exit 4), `--json` is the raw `PlanRunResponse` | Plan and a real run of the same input agree on every task; ListRuns shows no new run after a plan; a second replica plans an Orkflow it never applied identically |
-| Run origin | Run header line `run-origin`: kind chip, id linked to the source run or the Triggers tab, description, reference linked only when it is an http(s) URL, `asserted by …` principal with its not-authenticated title, `unrecorded` for a run recorded before origins existed; submit dialog **Origin reference** (`--origin-ref` in its copied command, `orkctl run again <source>` when opened from Run again); runs list **Started by** + **Origin id** filters and an **Origin** column, both in the URL (`origin`, `originId`) | `run submit --origin-ref`, `run again --origin-ref` (sends `source_run_id`), `run list --origin KIND[:ID]`, `ORIGIN` column (`-` when unrecorded), `run get` `Origin:`/`Reference:`/`Principal:` lines; trigger invoke `Ork-Origin-Reference` header | The kind is never taken from a client: `SUBMIT`/`RUN_AGAIN` from `SubmitRun`, `TRIGGER` from the trigger door; an over-long or control-character reference is `InvalidArgument` and mints nothing; a run-again of an unknown or other-namespace run is `NotFound`; live and archived runs of one origin listed together; a pre-origin run is `unrecorded` and matched by no origin filter |
-| Schedules | Orkflow page **Schedules** tab (between Triggers and Edit): scope statement; create form (name, version `Current`/pinned, cron one per line, interval, time zone, overlap `skip`/`buffer-one`/`buffer-all`/`cancel-other`/`allow-all` defaulting to `skip`, Advanced jitter/catch-up/pause-on-failure/start/end/description/JSON input, create paused) with the server's refusal verbatim in `schedule-error`; one row per schedule with state pill (`active`, `paused` with the note in its title, `unavailable` with its reason), next fire, last run linked to the run (or `refused` with the reason in its title); Pause (reason dialog), Resume, Fire now behind a `ConfirmDialog` that sends no overlap override, Delete behind a `ConfirmDialog`, and `CliEquivalent` popovers for the recreating `schedule create` and the pause/resume/fire one-liners; a row expands into the next ten fire times, the recent fires (run link, `refused` with its reason, `preparing`, `unavailable`) and the counters line; run page origin `schedule` links back to the tab | `schedule create\|list\|get\|update\|pause\|resume\|fire\|backfill\|delete`, `--json` on each; `--overlap` slugs; on `fire`/`backfill` an absent `--overlap` is no override; `update` is read-modify-write and last writer wins | Every field is read from the cluster on each call and nothing is stored under `metadata/`; a fire starts an ordinary run through the submit preparation with origin `{SCHEDULE, sch-…, nominal time, name}`; a refused fire records the submit refusal verbatim; `run list --origin schedule:<id>` is the schedule's audit trail. **Backfill is CLI-only in v1**: a parity exception accepted with the `orkflow-schedules` contract, because a backfill enqueues many fires at once and is an operator recovery tool rather than a day-to-day action; the UI shows backfilled runs like any other fire |
-| Typed inputs | String/number/boolean controls, required/default hints; object/array JSON editors; JSON alternative | Same submitted JSON values as `run submit --input` | Switching modes preserves values; false/zero/empty string not dropped; invalid numeric/JSON data cannot silently coerce |
-| Editor protection | Warn on navigation with unsaved YAML; import local YAML; export current draft/source; conflict handling preserved | Existing file-based apply/edit/get | Import and export round-trip; dirty navigation guarded; successful save clears dirty state; validation alone does not clear it |
-| Deep links/CLI copies | Preserve namespace, task, attempt, inspector tab; copy commands beside corresponding actions | Shell-escaped actual CLI syntax | Reload restores selection; copied commands include required namespace/version; quotes in values cannot become shell syntax |
-| Orker inventory and cordon | Admin → Pools, per-pool **Show Orkers** disclosure: state pill (`ready`, `cordoned`, `unreachable` with its reason and no numbers), tasks, pins, last seen, open pins linking to their runs; **Cordon** through a confirm dialog that requires a reason and shows a server error in the dialog; one-click **Uncordon**; a shell-escaped CLI equivalent per row | `orkctl orker list [--pool]`, `get`, `cordon --reason`, `uncordon`, and `drain [--reason] [--timeout] [--watch]` (a client-side wait: exit 0 drained, 4 timed out naming what remains, 1 unreachable or uncordoned); `--namespace` is ignored — Orkers are deployment infrastructure | Same rows and states from `ActivityService.ListOrkers` on any replica; an unanswered Orker is unreachable, never idle; a blank reason is refused before any request; NotFound for an id nothing polls; every cordon is an `orker.cordon`/`orker.uncordon` audit record |
-| Releases | Admin → **Releases**: one row per release with its role pill (current, ramping N%, previous, candidate), engines, Orkers, pools served, runs (`unknown` with the reason as its title, never 0), and state (`serving`, `ready`, `not ready (N blockers)`, `draining (checked T)`, `drained`); every blocker under its row verbatim; a holds disclosure listing the runs still executing (each linking to its run in that run's own namespace) and each open pin with the Orker holding it and an `orkctl orker drain` equivalent; **Promote** (candidate, ramping), **Roll back** (previous), **Ramp…** (1–100) and **Stop ramp** through a confirm dialog that re-reads the release on open, shows that read's blockers and keeps accept disabled while any remain, sends that read's revision, and shows a refusal in the dialog; a shell-escaped CLI equivalent beside every action; Refresh (no polling) | `orkctl release status [--watch]`, `ramp <build> --percent N`, `promote <build>`, `rollback <build>` (refused client-side unless the target is previous), `wait <build> [--timeout]` (exit 0 drained, 4 timed out naming every run and pin left, 1 otherwise); `--json` is the raw response; `--watch --json` is refused; `--namespace` is ignored — releases are deployment-wide | Same releases, roles, counts and blockers from `SystemService.ListReleases` on any replica, of either release; a release missing an engine, an in-use pool or a pin host is refused naming each with nothing written; a routing changed since the read is refused; every write is a `release.promote`/`release.ramp` audit record |
-| Task attempts | Per-task retry badge and attempt timeline; failed attempts show their own error; a row links to that attempt's logs | `run attempts RUN [--task]` and `run get --attempts`, same order and `--json` envelope | Retried fixture shows every attempt with its own outcome and error; an attempt with no record renders as UNREPORTED, not as a failure or a gap; another namespace's run is NotFound; a replica that ran nothing answers identically |
-| Task timing | Running card reads "Since scheduled"; finished card draws a wait/run bar with unavailable segments hatched and named; attempt timeline lists each attempt's phases and a retried task's queue wait | `run timing RUN [--task] [--json]`, `run get --timing`, `SCHEDULED` column on `run get` | A task submitted with no Orker polling waits at least the stimulus and its wait segment is wider than its run; every attempt lists its phases; a retried task shows both attempts and its queue wait; a reclaimed, pre-contract, skewed or unreported value renders `unavailable` with its reason, never `0s`; a replica that ran nothing prints the identical document |
-| Live attempt introspection | A RUNNING card shows `Running for`, a live line with the phase, bytes logged and heartbeat age (or waiting / retry / cancelling / unavailable with its reason), STALE in amber with the deadline, and the Orker the heartbeat names; the poll pauses while the page is hidden | `run inspect RUN [--task] [--watch] [--interval] [--json]` | The three states and the three reasons render as words, never zeros; a stale heartbeat carries the instant Temporal times the attempt out; a previous attempt's carried-over detail is never shown as the current attempt's; a replica that started nothing answers identically; a terminal run answers with no attempts |
-| Failure fingerprints | Dashboard **Recent failures** → *Fingerprints* disclosure (absent when nothing failed): one chip per dimension (`orkflow`…`orker`, four defaults ticked), rows in enum column order with runs/first/last, `unavailable` (muted italic, `data-unavailable`) for reclaimed image/phase and `-` for a value the run never had, the CLI's footer sentences, each row a link to `/runs` filtered by namespace, orkflow (when grouped), `status=failed` and the answered window; fetched on open and on each dashboard refresh; ErrorPanel with Retry on a failed read; CLI equivalent | `stats failures [--since] [--until] [--orkflow] [--group-by] [--category] [--limit]`, `--json` is the raw `GetFailureBreakdownResponse` | `sum(run_count)` equals `stats`' failed count for the window; three real failure modes group apart with their codes and categories; a reclaimed attempt record renders `unavailable` and is counted, never blank; a scan past its budget is refused, never truncated; a replica that started nothing answers identically |
-| Flake index | Dashboard **Stability** disclosure (full width, closed by default, open state remembered per viewer): one chip per dimension (`task`, `pool`, `orker`, `phase`, `image`; `orkflow` is always a column), rows with runs/retried/rate/attempts per run/dominant cause, `unavailable` (muted italic, `data-unavailable`) for a task no run in the window has a record of, the CLI's footer sentences, each row a link to `/runs` filtered by namespace, orkflow and the answered window with no status; run page **Retry history (7 days)** decorates each task's retry badge (`flaky N%` on a run that did not retry it) with a note of the evidence counts; ErrorPanel on a failed read; CLI equivalents | `stats flakes [--since] [--until] [--orkflow] [--group-by] [--limit]`, `--json` is the raw `GetFlakeIndexResponse`; `code`/`category` refused client-side | `runs_in_window` equals `stats`' finished count for the window; a SUCCEEDED run whose task retried is counted retried; reclaimed attempt records are excluded from the denominator and counted, never read as clean; a task with no record anywhere renders `unavailable`, never `0%`; a scan past its budget is refused, never truncated; a replica that started nothing answers identically |
-| Run diff | Run page **Compare** action with the newest other SUCCEEDED run of the Orkflow pre-selected (any run id may be pasted); deep-linkable `/runs/{id}/compare?to={id}` page with swap, definition/orkflow chips, the verbatim input diff, a TASK/FIELD/FROM/TO table tinting only differing cells, the CLI's summary and footnotes, and `CliEquivalent` | `run diff FROM TO [--only FIELD,...]`, `--json` is the raw `DiffRunsResponse` envelope | Same rows, same strings, same order in both; another namespace's run is NotFound; a reclaimed attempt record renders `unavailable` with its reason and never `-`; a task only one run has keeps its `presence` row under any `--only`; a replica that started neither run answers identically |
-| Run evidence | Finished run's **Evidence** dialog: manifest-first summary (`N present · … · size to download`), definition line, absent members with their reason sentences, **View manifest**, **Include logs**/**Include artifacts** toggles that re-fetch the manifest, `CliEquivalent`, and a browser download (refused above 512 MiB) that completes only on `last` | `run evidence export RUN --output PATH [--task] [--no-logs] [--no-artifacts] [--overwrite]` or `--json` (the manifest, verbatim); `run evidence verify FILE [--json] [--against-store]` | The same manifest for the same request from both clients; a reclaimed object is a `reclaimed` member with its digest, never omitted; a tampered member fails `verify` by name; another namespace's run is NotFound; a live run is refused; a replica that started nothing answers identically |
-| Artifact provenance | Per-row **Provenance** disclosure under Inspect: bytes line, reference line, referencing runs linked in the page's namespace with `this run` marked, unreadable footer, CLI equivalent; fetched on open, re-fetched on every open | `run artifact provenance RUN --task --kind --name [--expect-sha256] [--json]`, same wordings and order | Bytes present and missing both render; HELD, RELEASED and ABSENT each render their own wording; another namespace's runs are neither listed nor counted; a replica that started nothing answers identically; a second S3 run with identical bytes lists only itself |
-| Namespace admission | Admin → Namespaces Hold and Max running columns; Hold… / Release hold row actions behind `ConfirmDialog` with `CliEquivalent`; hold banner on Orkflows, dashboard and the submit dialog with submit disabled; a cap refusal shown verbatim; Admin → Audit shows the `namespace.update` record's detail with the reason and cap | `namespace update --hold REASON`, `--release-hold`, `--max-running N`; `namespace get`/`list` render both; `run submit`, `run again` and a trigger invoke refused `failed_precondition` with the reason and the fix; `admin audit --json` carries `hold="…"`/`max_running=N` in the record's `detail` | Refusal leaves no run, no id and no claim; an accepted run finishes after a hold is set; a hold set on one replica refuses on the other; the count includes runs the other replica started; `since` survives a reason edit and is never client-supplied; the audit record of a hold names the reason, and of a release has no `hold=` |
-| Namespace budgets and usage | Dashboard Usage card (bars per bounded dimension, `unbounded` as a word, caveat, coverage, evidence, chips, `CliEquivalent`); Admin → Namespaces Budget column and form fields; Admin → Usage table per namespace with window presets; a budget refusal shown verbatim in the submit panel | `namespace create/update --budget-cpu-seconds/--budget-gib-seconds/--budget-period/--budget-enforce`, `update --clear-budget`; `namespace get/list` render it; `stats usage [--since] [--until] [--group-by orkflow,task,pool\|namespace] [--json]`; `run submit`, `run again`, a trigger invoke and a schedule fire refused `failed_precondition` with the usage, budget, period and fix | Usage equals the sum recomputed from `run attempts --json` of every attempt; a replica that ran nothing answers identically; a reclaimed record is reported, never zero; an enforced budget set on one replica refuses on the other and leaves no run; a soft budget never refuses; the audit record carries `budget={…}` |
-| Tenant-scoped secret policy | Admin → Namespaces Allowed secrets column and one-per-line field on create and edit, with the `unrestricted` caption and the Orker-floor note; the Apply page's and the editor's Validate and Apply show the `tasks[i].secrets[j].source` issue; the run page shows `SECRET_NOT_PERMITTED` on a task the Orker refused | `namespace create/update --allow-secret PATTERN…`, `update --clear-allowed-secrets`; `namespace get`/`list` render the list or `unrestricted`; `orkflow validate` prints the field-anchored issue; `apply` and `run submit` refused `invalid_argument` naming the namespace, source, task, secret and list; the Orker refuses a source outside `ORK_ORKER_SECRET_ALLOW` with `SECRET_NOT_PERMITTED` before pulling an image | Validate and apply agree; a refused apply writes nothing; a refused submit mints no id and takes no claim; a list tightened on one replica refuses a submit on the other; a permitted secret's value reaches `/orkstack/input/secrets/<name>` and appears in no log, attempt record, event or archived object; a refused source is never retried; `..` is refused at every gate; an empty list on both halves reproduces today's behaviour byte for byte |
-| Image supply-chain policy | Admin → Image policy page (deployment-wide caption; require-digest, registries, keys with fingerprints, updated; one form; refusals verbatim); Admin → Namespaces Signed by column and a signer `Select` on create and edit; Apply page shows the `tasks[i].uses` issue; run page shows `IMAGE_NOT_PERMITTED` / `IMAGE_NOT_SIGNED` / `IMAGE_SIGNATURE_INVALID` on a task the Orker refused | `admin image-policy get`, `set --require-digest --allowed-registry … --signing-key NAME=PATH --remove-signing-key NAME --clear-allowed-registries`; `namespace create/update --require-signed-by cosign:KEY`, `update --clear-require-signed-by`; `orkflow validate` prints the field-anchored issue; `apply` refused `invalid_argument`, `run submit` / `run again` / a trigger invoke refused `failed_precondition`, each naming the task, the image, the rule and the command to read the policy; the Orker refuses before pulling with a non-retryable reason and verifies the signature itself | Validate and apply agree; a refused apply writes nothing; a refused submit mints no id and takes no claim; a policy set on one replica refuses on the other; an accepted run finishes on the policy it pinned after the policy tightens; a signature removed after submit fails the task `IMAGE_NOT_SIGNED` with one attempt; an unreachable registry is `unavailable` at apply and a retried `IMAGE_SIGNATURE_UNAVAILABLE` at the Orker, never a pass; a removal of a key a namespace names is refused naming it; the empty policy reproduces today's behaviour byte for byte and the golden history is not re-recorded |
-| Interface manifests | Admin → Activities **Interface** column (`-`, `none`, `malformed`, `N keys`, `N ops`) whose disclosure opens the declared table; an **Inspect a reference** form with `CliEquivalent`, the pinned reference and the same table, or the server's refusal in an ErrorPanel; the Apply page and the editor show the `tasks[i].with.<key>` ERRORs and WARNINGs, and the warnings stay visible after apply | `activity list` INTERFACE column, `activity inspect <name-or-reference> [--json]`; `orkflow validate` prints `error`/`warning` rows and exits nonzero only for an ERROR; `apply` prints interface warnings under `Warnings:` | Same issues for the same document; same interface for the same reference; a refused apply writes nothing; a warned document applies and runs; an unlabelled image is unchanged |
-| Audit trail | Admin → Audit: scope statement (every namespace by default, one namespace on request), action/principal/window filters, table with `unattributed` for an absent principal and `refused {code}` for a refusal, pagination, caption, CLI equivalent; ErrorPanel with Retry on a failed read | `admin audit [--since] [--until] [--action] [--principal] [--limit] [--page-token] [-n]`, `--json` is the raw envelope; `ORK_PRINCIPAL` asserts a principal | A write on one replica is listed by another; a refusal is recorded with its code; reads and submits are not recorded; the header a gateway sets on browser requests is recorded verbatim; a scan past its budget refuses instead of answering empty |
-| Awaited tasks | AWAITING pill, deadline, live remaining time; Resolve (typed or JSON) and Reject dialogs with CLI equivalents; *Delivered* until applied; one-time callback panel after submit; placeholder `curl` on the card | `run resolve [--values/--values-file` or `--reject --reason]`; `run submit`/`again` print each callback once; `run get` await table; `run plan` `awaits`; `POST /v1/runs/{id}/awaits/{task}[/reject]` | Values stored byte-exact before delivery and read by the downstream task; timeout and rejection fail the run with their codes; cancellation ends the await `CANCELED`; a second replica and a restarted worker apply a resolution; refusals store and send nothing; the token appears in exactly one response |
-| Fan-out (`each:`) | One card per fan-out with a summary and an item grid updated live from item events; an item panel with its attempts, logs, artifacts and CLI equivalents; deep links carry `item`; plan and DAG show the bound | `run get` collapsed row and `--expand`; `--item` on `logs`, `artifacts`, `artifact download`, `attempts`, `timing`, `inspect`, `evidence export`, `artifact provenance`, `task run`; `watch` spells `convert[97]`; `run plan` counts an input source | Every item commits under its own key and retries alone; a dependent stages every item from its commit; a failed item fails the run naming itself; a second replica serves every item read; history at the ceiling stays inside the stated budget; a run with no fan-out is byte-identical (golden replay) |
-| Composed Orkflows (`uses: orkflow:`, `outputs:`) | A composed task's card links to its child run, rolls up the child's tasks live and names the pinned child; the child's page links back; *Child runs* lists a parent's children; the Orkflow page shows the child reference, its digest and the declared outputs; apply shows rules 26–32 on their fields | `run get` names each child and `--tree` expands them; `run list --origin parent-run:RUN`; `orkflow get` COMPOSED and OUTPUT tables; `run logs` and `task run` refuse a composed task naming the child; `run plan` renders it | A child is its own run with its own id, history, archive record and `PARENT_RUN` origin; declared outputs are `Run.output` and the task's values, read by a downstream container; a child failure fails the parent task with the child's category; cancelling or terminating the parent leaves no child running; a second replica reads the tree; a submit that cannot plan the tree mints nothing; a run with neither construct is byte-identical (golden replay) |
-| Interface compatibility | Versions tab marks every version compatible, breaking or unknown against the current one; *Compare interfaces* beside *Diff*; the promote dialog lists breaking and unknown findings, what follows the current version and what pins it, and requires an acknowledgement for a breaking promotion; a *Callers* section lists composing Orkflows, triggers and schedules; the Apply page shows breaking warnings | `orkflow compat NAME [FROM] TO`, `orkflow callers NAME [--all-versions]`, `orkflow promote NAME V [--acknowledge-breaking]`, `orkflow versions` COMPAT column, warnings on `apply`/`validate`; `--json` for each | A breaking promotion is refused naming each change and moves nothing on any replica until acknowledged; compatible and unknown promotions are never refused; an apply is never refused and a breaking one warns; a promotion that raced another is refused rather than swapping across an unchecked break; `callers` names exactly the namespace's composing versions, triggers and schedules and nothing of another namespace; `compat` and `callers` write nothing |
-| Task caching (`cache:`) | A cached task's card shows *Cached* linking to the producing run, or *Cache miss* with its reason, or *Cache bypassed*; Inspect shows key, source commit and memo write; attempts show each memo decision and key components; the header counts cached tasks; fan-out cells mark cached items; *Ignore cached results* on submit; the Orkflow page shows TTL and scope; Admin → Cache shows hit rate, reused time and memos, and purges with a confirmed dialog | `run submit`/`run again --no-cache`; `run get` `SUCCEEDED (cached)` and one cache line per cached task; `run attempts` CACHE column; `orkflow get` CACHED table; `run plan` DETAIL; `cache stats [--orkflow] [--since] [--until]`; `cache purge (--orkflow NAME \| --namespace-scoped \| --all) [--task] [--older-than]`; `--json` envelopes | A second identical run reuses the commit and starts no container; any input change misses; deleting every memo changes no result; a corrupt memo, a retired source, a missing object or a memo-store outage is a recorded miss and the task succeeds; an Orker killed after a hit's commit is adopted as a hit; `no_cache` bypasses and refreshes; a pool whose Orker predates caching is refused at submit; a second replica reads stats and purges; a run with no cached task is byte-identical (golden replay) |
-| Joins and failure handlers (`join:`) | The Orkflow DAG marks joined tasks and draws failure handlers and their edges dashed; the run page shows a `join` chip per joined task, skip and cancel reasons that survive the run's end, and — live, from the failing note — a *Failing* banner naming the outstanding handlers and the run's error while a failed run's handlers run; the submit dialog's Plan takes *Assume these tasks fail* and shows `assumed_failed`, unreached tasks and the handlers that would run | `join:` in the DSL (rules 37–42, warning W1); `run plan --assume-failed TASK` (assertions one task per flag); `run get` `RUNNING (failing)` and a `JOIN` table; `run watch` prints the failing note; `orkflow get` `JOIN` table; `task run --need TASK=STATUS`; `task.json` `join`; `--json` carries `join`, `fails_at`, `assumed_failed`; submit refuses a failure handler on a pool whose Orker predates joins | A skipped branch re-joins; an `any_failed` handler runs only when a need fails and a run with a handler still ends `FAILED` with the original error; fail-fast still stops every other task; an operator cancel starts no handler and stops running ones, and a cancel during handlers keeps the run `FAILED`; a terminated failing run reads `CANCELED` with its error kept; a handler sees its needs' outcomes and the failed need's artifacts without control-plane access; plan and run agree with and without an assumed failure; a run with no `join:` is byte-identical (all seven golden replays) |
-| Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
+| Hold and cap | `--hold REASON`, `--release-hold`, `--max-running N` | Hold and Max running columns; Hold… / Release hold; a hold banner on Orkflows, the dashboard and the submit dialog, with submit disabled | `failed_precondition` `NAMESPACE_HELD` / `MAX_RUNNING_REACHED`, with the reason and the fix |
+| Budget | `--budget-cpu-seconds`, `--budget-gib-seconds`, `--budget-period`, `--budget-enforce[=false]`, `--clear-budget`; `stats usage` | Budget column and fields; dashboard Usage card; Admin → Usage ([STATS.md](STATS.md) §8) | `BUDGET_EXCEEDED` / `BUDGET_UNMEASURABLE`, with usage, budget, period and fix |
+| Secret sources | `--allow-secret PATTERN…`, `--clear-allowed-secrets` | Allowed secrets column, one per line, `unrestricted` caption | `invalid_argument` at apply/validate/submit naming the task, secret and list; the Orker's own floor refuses with `SECRET_NOT_PERMITTED` before pulling |
+| Required signer | `--require-signed-by cosign:KEY`, `--clear-require-signed-by` | Signed by column and a signer select | see image policy below |
 
-Typed controls are presentation of existing input declarations, not a new
-schema language. Unknown or complex declarations retain the JSON editor and
-unknown user-supplied keys are not silently discarded. Browser UI must not
-invent server validation requirements that the CLI bypasses.
+`orkflow validate`, the Apply page and the editor show a policy refusal as a
+field-anchored issue on the offending task.
 
-## Local activity build/test parity decision
+### Image policy
 
-`orkctl activity build` and `orkctl activity test` are local developer
-operations on the caller's filesystem and OCI runtime. They have no current
-deployment API and therefore no browser execution equivalent. Surface them
-in the activity UI as local tooling with accurate copyable commands and
-prerequisites. On 2026-09-08 the user explicitly accepted these two commands
-as a local-tool exception to UI/CLI parity. Copying a command is assistance,
-not browser execution. Browser-triggered builds and contract tests are
-outside this implementation's accepted scope.
+`SystemService.GetImagePolicy`/`UpdateImagePolicy` hold the deployment floor —
+require-digest, allowed registry prefixes, and named cosign public keys a
+namespace may require — in the shared store, so any replica enforces the same
+policy ([DEPLOY.md](DEPLOY.md), "Image supply-chain policy"). Apply and
+validate refuse a non-conforming `uses:` as a field-anchored
+`invalid_argument`; `run submit`, `run again` and a trigger invoke refuse a
+stored definition the policy now forbids with `failed_precondition`, naming
+the task, image, rule and the command that reads the policy. The Orker
+verifies a required signature itself and fails the task before pulling with
+`IMAGE_NOT_PERMITTED`, `IMAGE_NOT_SIGNED` or `IMAGE_SIGNATURE_INVALID`
+(non-retryable) or `IMAGE_SIGNATURE_UNAVAILABLE` (retried; never a pass). An
+accepted run finishes on the policy it pinned. Removing a key a namespace
+names is refused naming it.
 
-The exception covers a third command, `orkctl task run`
-(docs/OCI_ACTIVITY_CONTRACT.md §10.4), which runs one task of a run on the
-caller's machine against the run's recorded bytes. Its UI surface is a
-`CliEquivalent` popover on a FAILED task card of the run page
-(`run-task-{task}-replay-cli`) carrying exactly
-`orkctl --namespace '<ns>' 'task' 'run' '--from-run' '<run>' '--task' '<task>'`
-— the namespace, the run and the task, and no input, secret or path. The
-browser runs nothing. This extension came with the phase-4
-`orkctl-task-run` proposal (review approved 2026-09-24).
+CLI: `admin image-policy get`, `admin image-policy set [--require-digest]
+[--allowed-registry PREFIX…|--clear-allowed-registries] [--signing-key
+NAME=PATH] [--remove-signing-key NAME]`. UI: **Admin → Image policy**, one
+form, deployment-wide caption, keys with fingerprints, refusals verbatim.
 
-Do not mount a Docker socket into the UI/engine, accept arbitrary server host
-paths, or invent a privileged activity runner to manufacture parity. A future
-execution equivalent requires a separately accepted contract for build-context
-transfer, isolation, registry credentials, artifact custody, and cancellation.
+### Activity interfaces
 
-## Evidence and completion
+An activity image may declare its `with:` interface in an OCI label
+([ACTIVITY_IMAGES.md](ACTIVITY_IMAGES.md)). CLI: `activity list` (an
+`INTERFACE` column: `-`, `none`, `malformed`, `N keys`, `N ops`) and
+`activity inspect <name-or-reference>`; `orkflow validate` prints its ERRORs
+and WARNINGs, and `apply` prints the warnings. UI: **Admin → Activities**, the
+same column with a disclosure of the declared table and an **Inspect a
+reference** form; the Apply page and the editor show the `tasks[i].with.<key>`
+issues, warnings kept after apply.
 
-Behavior tests precede implementation. Unit tests cover selectors, cursor
-validation, stream failure, value preservation, and no-write validation.
-Real Temporal/MinIO integration covers merged history, artifact downloads,
-replica/restart webhook persistence, cancellation and version pinning.
-Playwright specs exercise operator flows against the real stack and retain
-screenshots/transcripts in the proof directory. Run `make lint test`, required
-integration tests, `make proof`, and `make proof-ui`; report each gate and the
-fresh proof directory. A skip or absent prerequisite is not a pass. Commit
-scoped Conventional Commits with the evidence; never commit `proof/`.
+### Dashboard reads
+
+Failure fingerprints (`stats failures`, the dashboard's **Fingerprints**
+disclosure), the flake index (`stats flakes`, the **Stability** disclosure
+and the run page's retry history), usage (`stats usage`, the **Usage** card
+and Admin → Usage) and cache statistics are specified, numbers and parity
+both, in [STATS.md](STATS.md).
+
+## Baseline operator flows
+
+| Capability | Contract both clients honour |
+| --- | --- |
+| Cancellation | `run cancel --reason`; the UI's cancel action takes an optional reason, disables duplicate requests and shows "cancellation requested" until the authoritative status changes; the reason survives and the terminal state comes from the server. |
+| Version-safe submission | The version picker marks current; links from a definition or a run keep the pinned version, so an old version is submitted even after current moves. Idempotency key and empty-pool override (`--allow-empty-pool`) are explicit, advanced inputs; a repeated key deduplicates per the server contract. |
+| Inputs and results | Run inputs/outputs, task values and metadata with copy and JSON export (`run get --json`); empty values are distinct from unavailable values. |
+| Typed inputs | String/number/boolean controls with required/default hints; object and array use JSON editors, with a JSON alternative for the whole input. Switching modes preserves values; false/zero/empty string not dropped; invalid numeric/JSON data cannot silently coerce; unknown user-supplied keys are kept; unknown or complex declarations keep the JSON editor. The submitted JSON equals `run submit --input`'s. |
+| Retained logs | `run logs` (task, attempt, item, `--from-seq` cursor with its attempt) and a full retained-log download that bypasses the pane's scrollback cap; older chunks can be browsed; search says it covers loaded lines; truncation notices stay visible; a failed download never looks complete. |
+| Editor protection | Warn on navigation with unsaved YAML; import a local file; export the draft or source; conflict handling on apply; a successful save clears dirty state. |
+| Run timing basics | Elapsed time from authoritative start/end, updating while running; missing timestamps render unknown; no invented retry schedule. |
+
+## Parity exceptions
+
+These are accepted exceptions, not gaps.
+
+### Local activity build/test parity decision
+
+- **`orkctl activity build`, `orkctl activity test` and `orkctl task run`**
+  are local developer operations on the caller's filesystem and OCI runtime,
+  with no deployment API ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md)
+  §10.3–10.4). The UI presents them as local tooling with accurate copyable
+  commands and prerequisites — for `task run`, a CLI-equivalent popover on a
+  FAILED task card carrying exactly `orkctl --namespace '<ns>' 'task' 'run'
+  '--from-run' '<run>' '--task' '<task>'`, with no input, secret or path.
+  Copying a command is assistance, not browser execution. Do not mount a
+  Docker socket into the UI or engine, accept arbitrary server host paths, or
+  invent a privileged activity runner to manufacture parity; a browser
+  execution equivalent needs its own accepted contract for build-context
+  transfer, isolation, registry credentials, artifact custody and
+  cancellation.
+
+### CLI-only operations
+
+- **`orkctl schedule backfill`** is CLI-only: it enqueues many fires at once
+  and is an operator recovery tool. The UI shows backfilled runs like any
+  other fire ([ORKFLOW_SCHEDULES.md](ORKFLOW_SCHEDULES.md)).
+- **Applying a directory, `apply --check` and `--secrets-out`** are CLI
+  affordances over operations the UI also performs one document at a time.

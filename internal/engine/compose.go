@@ -26,7 +26,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Composed Orkflows (spec composed-orkflows §6): a task whose `uses:` names
+// Composed Orkflows (docs/DSL.md "Composition"): a task whose `uses:` names
 // another Orkflow starts a CHILD RUN — Temporal's own ExecuteChildWorkflow of
 // this same RunWorkflow interpreter, over the child's compiled definition —
 // and waits for it. Everything the child needs was decided at the parent's
@@ -580,7 +580,8 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 		orkstackv1.Status_STATUS_SUCCEEDED, fmt.Sprintf("child run %s succeeded", c.plan.RunID))
 }
 
-// childFailure is one row of the failure table (spec §6.3).
+// childFailure maps a child run's failure to the composed task's status, code
+// and category (docs/DSL.md "Composition").
 func childFailure(err error) (status orkstackv1.Status, code string, category orkstackv1.FailureCategory) {
 	var terminated *temporal.TerminatedError
 	var applicationErr *temporal.ApplicationError
@@ -718,7 +719,7 @@ func (s *runState) renderOutputs(ctx workflow.Context) (*orkstackv1.Payload, *or
 }
 
 // failOutputs ends a run whose tasks all finished but whose declared outputs
-// could not be produced: FAILED, never SUCCEEDED (spec §6.5).
+// could not be produced: FAILED, never SUCCEEDED.
 func (s *runState) failOutputs(ctx workflow.Context, failure *orkstackv1.Error) (*orkstackv1.Run, error) {
 	s.status = orkstackv1.Status_STATUS_FAILED
 	s.finished = timestamppb.New(workflow.Now(ctx))

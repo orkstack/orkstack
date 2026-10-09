@@ -17,8 +17,8 @@ import (
 const defaultsHeader = `# OrkStack configuration file — generated defaults.
 #
 # Every key config.Schema knows about, written at its own built-in
-# default, in the order docs/DEPLOY.md's "## 1. Configuration"
-# table lists them. This file changes nothing when used as-is: loading it
+# default, nested by section in Schema's declaration order. docs/DEPLOY.md
+# §1 documents each key. This file changes nothing when used as-is: loading it
 # with --config and applying it sets every value to what the binary
 # already falls back to with no file at all.
 #
@@ -80,8 +80,7 @@ var perBinaryDefault = map[string][2]string{
 // yamlTree is an insertion-ordered tree built from Schema's dotted Path
 // values, so RenderDefaults can nest keys the way YAML needs to
 // (storage: {s3: {endpoint: ...}}) while preserving Schema's own
-// declaration order — the same order docs/DEPLOY.md's table uses — rather
-// than a map's unspecified iteration order.
+// declaration order rather than a map's unspecified iteration order.
 type yamlTree struct {
 	key      string
 	v        *Var

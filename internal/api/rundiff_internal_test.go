@@ -6,7 +6,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// D8a — the lookup rule on its own: the outcome attempt's record first, then
+// The lookup rule on its own: the outcome attempt's record first, then
 // the newest SUCCESSFUL adopter, and never any other record.
 func TestOutcomeRecord_PrefersTheOutcomeThenTheNewestSuccessfulAdopter(t *testing.T) {
 	record := func(attempt int32, outcome orkstackv1.AttemptOutcome, adopted bool, digest string) *orkstackv1.TaskAttempt {

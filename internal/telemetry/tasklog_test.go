@@ -187,7 +187,7 @@ func testInputForSinkWithLogs(sink string, taskLogs orkstackv1.TaskLogExport, at
 }
 
 // TestTaskLogExporterForSinks_GlobalAndSelectionInteract is the table over
-// (globalExport, selection.TaskLogs) the phase 3 plan calls for: a
+// (globalExport, selection.TaskLogs): a
 // selection's ENABLED/DISABLED always overrides the deployment default
 // either way, and UNSPECIFIED leaves the default in charge.
 func TestTaskLogExporterForSinks_GlobalAndSelectionInteract(t *testing.T) {

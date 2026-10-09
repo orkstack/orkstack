@@ -630,7 +630,7 @@ func TestRedeliverWebhook_NeverRetries(t *testing.T) {
 }
 
 // A fan-out's items stay out of the redelivery body exactly as they stay out
-// of the original's (each-fan-out §5.13): the receiver sees one shape, with
+// of the original's (docs/DSL.md "Fan-out"): the receiver sees one shape, with
 // the node's each and status, however many items the run expanded.
 func TestRedeliverWebhook_BodyCarriesNoItems(t *testing.T) {
 	f := newDeliveryFixture(t, http.StatusBadGateway)

@@ -208,7 +208,7 @@ func TestEffectiveRunRetention_NilNamespaceFallsBackToTheMaximum(t *testing.T) {
 // flakyNewNamespaceCluster simulates the propagation delay between
 // task.EnsureNamespace registering a namespace and it becoming visible to
 // the very next admin RPC against it (observed on Temporal's dev-server,
-// AGENTS.md's "boot fails closed" territory but for a transient,
+// fail-closed-boot territory, but for a transient,
 // self-inflicted cause rather than a genuine misconfiguration): its first
 // notFoundCalls calls to either admin method report NamespaceNotFound, then
 // it behaves like a normal fakeCluster.

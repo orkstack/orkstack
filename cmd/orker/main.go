@@ -357,7 +357,7 @@ func workerOptions(cfg config) worker.Options {
 }
 
 // taskWorkerOptions is workerOptions plus the three things only a booted
-// Orker knows (orker-cordon-drain §5.7):
+// Orker knows:
 //
 //   - Identity is the orker id, so the poller identity Temporal records for
 //     every worker of this process — and therefore the presence channel's
@@ -540,7 +540,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	// The pin lease sweep: the backstop for a pin directory whose run was
 	// terminated from outside, where Temporal frees the session and no OrkStack
-	// code ever runs (§8.4). It ticks on ctx — the process's own signal context
+	// code ever runs (§6.4). It ticks on ctx — the process's own signal context
 	// — so it stops at shutdown rather than outliving run(), and it never
 	// blocks this function's return.
 	//
@@ -565,7 +565,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	)
 	// Registered unconditionally, on the ordinary worker. The engine schedules
 	// it on the pin's own SESSION context, which is what routes it to the host
-	// that owns the directory (§8.5); an Orker with no pins registers a name
+	// that owns the directory (§6.4); an Orker with no pins registers a name
 	// nobody will ever schedule, which costs nothing and keeps the registration
 	// block one shape.
 	taskWorker.RegisterActivityWithOptions(
@@ -673,7 +673,7 @@ func orkerOptions(
 		Pool:     cfg.pool,
 		BuildID:  cfg.deployment.BuildID,
 		// What DescribeOrker reports, and therefore what submit reads to decide
-		// whether a pinned task's pool could ever open its pin (§7.3, §7.4). It
+		// whether a pinned task's pool could ever open its pin. It
 		// is the SAME number workerOptions turns EnableSessionWorker on with, so
 		// an Orker cannot advertise a capacity its worker does not poll for.
 		MaxPins: cfg.maxPins,
@@ -684,8 +684,8 @@ func orkerOptions(
 		// (§14.15), so a filename is a claim rather than a digest. An absent
 		// directory simply disables the fallback.
 		LayoutRoot: cfg.imageLayoutRoot,
-		// The image policy's signature check (image-supply-chain-policy
-		// §6.2): always built — an empty auth file is anonymous access,
+		// The image policy's signature check (docs/DEPLOY.md "Image
+		// supply-chain policy"): always built — an empty auth file is anonymous access,
 		// which is what a public registry needs — over the engine's one
 		// resolver, so the Orker reads a signature exactly as apply did.
 		Signatures: &dsl.SignatureVerifier{

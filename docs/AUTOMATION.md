@@ -54,6 +54,10 @@ that watches: an apply is a one-shot diff-and-write started by a person or a
 CI job, every write is the same validated, audited call a person could make by
 hand, and re-running it against an unchanged namespace plans nothing.
 
+"Plan" here is unrelated to `orkctl run plan`, which simulates one run's DAG
+(`PlanRun`); the automation plan is `PlanAutomation`, shown by `apply
+--dry-run`.
+
 What this is not (`AGENTS.md` §13): not a reconciliation loop, a controller or
 a drift watcher — drift is found by `orkctl apply --check`, run by a person or
 a CI job; not a desired-state store — no document, plan, digest or
@@ -166,9 +170,9 @@ subscription — an update never changes a secret — and the plan says so.
 ## Names and in-place updates
 
 A document addresses objects by name. Schedules always have one; triggers and
-webhooks gained an optional `name` (`Trigger.name`, `Webhook.name`). Every
-trigger and webhook created before names existed is **unnamed**, and an
-unnamed object is outside every document: no apply, not even `--prune`, ever
+webhooks carry an optional `name` (`Trigger.name`, `Webhook.name`). A trigger
+or webhook without one — including every one created before names existed —
+is **unnamed**, and an unnamed object is outside every document: no apply, not even `--prune`, ever
 touches it. A webhook name requires a namespace scope; a deployment-wide
 subscription belongs to no namespace document at all.
 
@@ -266,8 +270,8 @@ orkctl apply <file|dir>... [--dry-run | --check] [--prune]
              [--expect-plan sha256:HEX] [--secrets-out PATH] [-n NS] [--json]
 ```
 
-One Orkflow file with none of the new flags runs exactly as it always has.
-Otherwise each argument is a file, or a directory read non-recursively for
+One Orkflow file with none of the automation flags behaves as a plain Orkflow
+apply (`--json` prints `ApplyOrkflowResponse`). Otherwise each argument is a file, or a directory read non-recursively for
 `*.ork.yaml` and `*.ork.yml` in lexical order. A file with no `kind` and no
 `apiVersion` is an Orkflow; `kind: Automation` is an automation document;
 anything else is refused. Two automation documents naming one namespace are
@@ -363,20 +367,35 @@ write's own action (`namespace.update`, `schedule.create`, `trigger.update`,
 are never recorded. `trigger.update` and `webhook.update` record the new
 name, pin, URL, events and scope, never a secret.
 
-## Capability and acceptance matrix
+## Guarantees
 
-| Capability | UI behavior | CLI/shared behavior | Required observable acceptance |
-| --- | --- | --- | --- |
-| Plan (dry run) | Admin → Automation: paste/import, Prune, Plan; issues, rows, digest | `apply FILE\|DIR... --dry-run [--prune]`; `--json` `ApplyReport` | Every create, update, delete, undeclared and unmanaged object listed with its changes; errors anchored to fields with lines; MinIO `metadata/` and the cluster's schedules byte-identical before and after |
-| Apply | Apply behind a confirmation naming deletions; per-step outcomes | `apply FILE\|DIR...`; Orkflows first; steps in plan order | Each write is the existing RPC (audit shows one record per step under its own action); a namespace created, settings overlaid, schedules/triggers/webhooks created and updated in place |
-| Idempotence | Plan after apply reads "No changes" | Second `apply` writes nothing; `--check` exits 0 | Zero write calls on the second apply |
-| Deletion | Only with Prune; each DELETE named in the dialog | Only with `--prune`; each `-` line named | Named undeclared objects deleted; unnamed and deployment-wide objects untouched; an omitted section untouched |
-| Credentials | One-time secrets panel with runnable `curl` | Token and `curl` printed once, or written to `--secrets-out` (0600) | The token invokes (`201`); a re-apply prints none; an in-place update keeps token and URL; a webhook update keeps the secret and a later delivery verifies with it |
-| Plan pinning | Apply re-plans and refuses a changed digest | `--expect-plan sha256:…` | A drift between review and apply writes nothing and prints the new plan |
-| Export and adoption | Export, download, unmanaged callout with naming commands | `export -n NS`; `trigger update --name`; `webhook update --name` | Export → `apply --check` exits 0; adopted objects keep their tokens and secrets |
-| Names and edits | Triggers tab and Webhooks page name and edit in place | `--name` on create/register; `trigger update`, `webhook update`; `NAME` column | Names unique per namespace; a webhook name requires a namespace scope; duplicate names (a race) refused by plan and export with the fix |
-| Settings overlay | Changes shown per key | Same | Keys absent from `settings` untouched; a hold never released; stale etag refused |
-| Partial failure | Failed and not-run rows | `failed`/`not run` lines, exit 1 | Re-apply converges |
-| Drift detection | — (the page shows the plan) | `apply --check` exits 4 with changes | A hand edit is found and named |
-| Replicas | — | — | Plan on one replica, apply on another, identical exports from both |
-| Replay contract | — | — | Both replay guards pass with `internal/engine/testdata/history` unchanged |
+- `--dry-run`, `--check`, `PlanAutomation` and `ExportAutomation` write
+  nothing: `metadata/` and the cluster's schedules are byte-identical before
+  and after.
+- Re-applying an unchanged document against an unchanged namespace makes zero
+  write calls.
+- Only `--prune` deletes, only named objects of sections the document
+  declares, and never an unnamed object, a deployment-wide subscription, an
+  Orkflow or an Orkflow version.
+- A trigger token and a webhook secret are disclosed once, on the apply that
+  creates them, and survive every later in-place update; a later delivery
+  still verifies with the original secret.
+- A plan that moved between review and apply (`--expect-plan`, or the page's
+  re-plan) writes nothing and prints the new plan.
+- A hold, a paused schedule and an Orker cordon are operational state: an
+  apply never sets, releases or changes them.
+- A plan computed on one replica can be applied through another; two replicas
+  export the same document.
+
+## Why it is shaped this way
+
+| Alternative | Why not |
+| --- | --- |
+| A server-side `ApplyAutomation` RPC that performs the writes | A second write path for every object, bypassing each RPC's own validation and audit row, one request doing unbounded work — the shape of a controller endpoint. |
+| A reconciliation loop or drift watcher | `AGENTS.md` §13 (no Kubernetes-operator shape). Drift is `--check`, acted on by a person. |
+| Ids in the document (`id: trg-…`) | Not stable across environments, and a created object's id would have to be written back into Git before the next apply could find it. |
+| A name-to-id map stored beside the objects, or a "managed-by" marker | Two writes and a crash window per create, an orphan state, and a last-applied record — a second state machine (`AGENTS.md` §2.2). The name is a field on the object. |
+| Deriving an object's id from its name | An existing object could never be adopted without re-issuing its URL, and a deleted trigger's URL would come back to life under a new token. |
+| Delete-and-recreate to make a field true | Re-issues the trigger token or webhook secret the integration depends on. |
+| Planning in each client | The plan is served by one planner so `apply --dry-run` and Admin → Automation can never disagree about what an apply would do; only the writes are client-side. |
+| A YAML mapping for schedule `input` | Run input is JSON, never YAML (`AGENTS.md` §3.1). |

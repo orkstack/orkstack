@@ -10,7 +10,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// The two Orker channels beside the pool channel (orker-cordon-drain §5.7).
+// The two Orker channels beside the pool channel (docs/DEPLOY.md "Removing an Orker safely: cordon and drain").
 // They live here rather than in cmd/orker so the in-process test Orkers of the
 // engine's integration suites are built exactly as the shipped binary is.
 

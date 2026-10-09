@@ -477,10 +477,10 @@ func (r result) requireStderrContains(t *testing.T, fragments ...string) result 
 
 // staticActivities is the catalog seam a test wires by hand.
 //
-// It is the whole implementation Phase 1 needs: which activities exist is
-// ENGINE CONFIGURATION (§4.2), so a fixture that states the configuration is
-// stating the real thing rather than faking a worker. Phase 3 replaces it with
-// the catalog that resolves each reference's index digest at apply time.
+// Which activities exist is ENGINE CONFIGURATION, so a fixture that states the
+// configuration is stating the real thing rather than faking a worker. In
+// production the catalog resolves each reference's index digest at apply time
+// (docs/OCI_ACTIVITY_CONTRACT.md §4).
 type staticActivities []*orkstackv1.ActivityInfo
 
 func (a staticActivities) ListActivities(context.Context) ([]*orkstackv1.ActivityInfo, error) {

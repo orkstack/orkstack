@@ -60,8 +60,7 @@ export const RetryPolicySchema: GenMessage<RetryPolicy> = /*@__PURE__*/
 
 /**
  * Pin is a named group of tasks that execute on ONE Orker process and share
- * /orkstack/shared for the group's lifetime (docs/design/task-pinning-
- * worker-session.md). It is the user-facing word; the Temporal session that
+ * /orkstack/shared for the group's lifetime (docs/DSL.md "Pins"). It is the user-facing word; the Temporal session that
  * implements it is internal, as a queue is to a pool.
  *
  * @generated from message orkstack.v1.Pin
@@ -534,12 +533,12 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
    * under re-canonicalization, and pkg/artifacts.sameStoredOrkflow still
    * sees a re-apply of an unchanged document as equal.
    *
-   * Added after the Phase 1 wire freeze, deliberately and ADDITIVELY: fields
+   * Added after the original wire freeze, deliberately and ADDITIVELY: fields
    * 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an
    * older reader simply does not see it. The alternative was to populate
    * orkflow_definition_digest from workflow code, which changes recorded
-   * activity-payload bytes and would force a SECOND replay-fixture reset —
-   * which §11.4 calls a process failure.
+   * activity-payload bytes and would force re-recording the base replay
+   * fixture, which is never re-recorded.
    *
    * @generated from field: string definition_digest = 10;
    */

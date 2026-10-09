@@ -19,7 +19,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Fan-out on the Orker (spec each-fan-out §6): an ITEM attempt resolves its
+// Fan-out on the Orker (docs/DSL.md "Fan-out"): an ITEM attempt resolves its
 // own element of the array the engine counted, and a DIRECT DEPENDENT of a
 // fan-out stages every item from that item's own commit. Neither needs any
 // state of its own: the commit store is the record, and the engine sent the

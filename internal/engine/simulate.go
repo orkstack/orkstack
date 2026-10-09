@@ -85,8 +85,7 @@ func Simulate(
 			// Set for every await whatever its outcome, so a reader sees the
 			// deadline and whether it takes a callback.
 			Await: tasks[id].GetAwait(),
-			// Set for every fan-out whatever its outcome (spec each-fan-out
-			// §5.12).
+			// Set for every fan-out whatever its outcome.
 			Each: tasks[id].GetEach(),
 			// Set for every composed task whatever its outcome. A plan never
 			// recurses into the child: a composed task that would run is RUNS,

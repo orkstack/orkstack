@@ -254,8 +254,6 @@ var (
 		category: orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR, pool: "gpu", orker: "orker-g1"}
 	exitNonzero = taskFailure{task: "reconcile", code: "CONTAINER_EXIT_NONZERO",
 		category: orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED, pool: "main", orker: "orker-m1"}
-	valuesMissing = taskFailure{task: "report", code: "VALUES_MISSING",
-		category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, pool: "main", orker: "orker-m1"}
 	startFailed = taskFailure{code: "RUN_START_FAILED",
 		category: orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR}
 )

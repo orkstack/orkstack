@@ -18,7 +18,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// `orkctl release` (orkctl-release §7): which build of OrkStack takes new
+// `orkctl release` (docs/DEPLOY.md §3): which build of OrkStack takes new
 // runs, the one write that changes it, and the client-side wait for the
 // release before it to drain. Nothing server-side holds a rollout: `status
 // --watch` and `wait` are loops here.
@@ -264,7 +264,7 @@ func runLabel(run *orkstackv1.Run) string {
 	return fmt.Sprintf("%s/%s@%s", ns, orDash(run.GetOrkflowName()), orDash(run.GetOrkflowVersion()))
 }
 
-// renderReleases prints the status view (§7.1).
+// renderReleases prints the status view (docs/DEPLOY.md §3).
 func renderReleases(out io.Writer, resp *orkstackv1.ListReleasesResponse, now time.Time) {
 	fmt.Fprintf(out, "%-12s %s\n", "deployment:", resp.GetDeploymentName())
 	if !resp.GetVersioned() {
@@ -474,7 +474,7 @@ func newReleasePromoteCommand(g *globalFlags, rollback bool) *cobra.Command {
 						build, roleWord(target), build)
 				}
 			}
-			// The write is its own request with its own bound (spec §7): the
+			// The write is its own request with its own bound: the
 			// server may spend up to 10s confirming routing after the change,
 			// and the read above must not have spent that budget already.
 			ctx, cancel := g.unaryContext(cmd)

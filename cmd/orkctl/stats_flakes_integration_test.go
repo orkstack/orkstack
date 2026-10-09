@@ -42,7 +42,7 @@ type flakeCorpus struct {
 	artifactCfg artifacts.Config
 }
 
-// flakeOrkflowYAML is the spec's fixture: flaky fails on attempt 1 and
+// flakeOrkflowYAML is the flake-index fixture: flaky fails on attempt 1 and
 // succeeds on attempt 2; steady succeeds first time.
 func flakeOrkflowYAML(name string) string {
 	return fmt.Sprintf(`name: %s

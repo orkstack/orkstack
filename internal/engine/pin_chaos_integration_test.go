@@ -35,9 +35,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// This file is the rest of the design's Phase 6 chaos matrix
-// (docs/design/task-pinning-worker-session.md §13), against real
-// infrastructure: real Temporal, one real Orker hosting real pins with real
+// This file covers the pin rows of the chaos matrix (AGENTS.md §11) against
+// real infrastructure: real Temporal, one real Orker hosting real pins with real
 // containers, and real object storage.
 //
 // It deliberately does NOT re-derive the classification logic that
@@ -46,10 +45,11 @@ import (
 // real, in the two situations no mocked session can produce:
 //
 //   - the pin host dies in the GAP BETWEEN two members, with the first
-//     member's work already durably committed (§6.4, §6.5's "pin host dies
-//     mid-pin" row); and
+//     member's work already durably committed (PIN_HOST_LOST, docs/DSL.md
+//     "Pins"); and
 //   - the run is TERMINATED from outside while a pin is open, so no OrkStack
-//     code runs at all and the lease sweep is the only backstop (§8.4 way 3).
+//     code runs at all and the lease sweep is the only backstop
+//     (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
 //
 // "pin host killed while a member container is actively running" belongs to
 // pin_affinity_integration_test.go and is not duplicated here.
@@ -108,7 +108,7 @@ type pinChaosCluster struct {
 //
 // maxPins is the real ORK_ORKER_MAX_PINS: it becomes both
 // orker.Options.MaxPins (what DescribeOrker reports, and therefore what
-// submit's §7.4 pin-host check reads) and the SDK's
+// submit's pin-host check reads) and the SDK's
 // MaxConcurrentSessionExecutionSize (what actually bounds concurrent pins on
 // this process), exactly as cmd/orker's workerOptions pairs them.
 func newPinChaosCluster(t *testing.T, ctx context.Context, maxPins int32) *pinChaosCluster {
@@ -315,7 +315,7 @@ func newPinChaosCluster(t *testing.T, ctx context.Context, maxPins int32) *pinCh
 		Bus:        bus,
 		Starter:    starter,
 		// The real probes: the liveness check and — for a pinned task — the
-		// §7.4 describe that reads max_concurrent_pins off the Orker itself.
+		// pin-host describe that reads max_concurrent_pins off the Orker itself.
 		// A pinned submit that reached the workflow without passing these would
 		// be proving something weaker than the deployment does.
 		Pools:      engine.NewTemporalPoolProbe(c.temporal),
@@ -583,7 +583,7 @@ func (c *pinChaosCluster) awaitPinDirectory(within time.Duration) string {
 // ---------------------------------------------------------------------------
 
 // TestIntegration_APinHostLostBetweenMembersKeepsTheFirstMembersCommittedWork
-// is §6.4 and §6.5's "pin host dies mid-pin" row measured at the one moment no
+// is a pin host lost mid-pin, measured at the one moment no
 // unit test can construct: the gap AFTER a member finished successfully and
 // BEFORE the next one was dispatched.
 //
@@ -617,7 +617,7 @@ func TestIntegration_APinHostLostBetweenMembersKeepsTheFirstMembersCommittedWork
 	name := "pin-gap-" + c.token
 	version := c.seed(name,
 		// A generous lifetime: this test is about losing the HOST, and a pin
-		// that timed out on its own clock would be the other row of §6.5.
+		// that timed out on its own clock would be PIN_TIMEOUT instead.
 		[]*orkstackv1.Pin{{Name: "build", TimeoutSeconds: 900}},
 		[]*orkstackv1.Task{{
 			Id:   "clone",
@@ -720,8 +720,8 @@ func TestIntegration_APinHostLostBetweenMembersKeepsTheFirstMembersCommittedWork
 	// touch the dead session. The SDK settles its activity future with
 	// ErrSessionFailed straight away, collect asks pinLoss before recordFailure,
 	// and the answer is the pin's. CANCELED here would mean fail-fast reached it
-	// first, which would say an operator ended the run — the reading §6.5
-	// exists to prevent, because it invites retrying the task on an Orker whose
+	// first, which would say an operator ended the run — the reading
+	// PIN_HOST_LOST exists to prevent, because it invites retrying the task on an Orker whose
 	// /orkstack/shared is empty.
 	if compile.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 		t.Errorf("compile status = %v, want FAILED: the platform lost the pin's host, "+
@@ -783,8 +783,8 @@ func TestIntegration_APinHostLostBetweenMembersKeepsTheFirstMembersCommittedWork
 		after.GetStatus(), after.GetCommit().GetUri(), len(after.GetArtifacts()))
 
 	// The pin's own directory was NOT released — nothing could schedule
-	// ReleasePin onto a session Temporal had already failed — which is §6.5's
-	// last row and exactly what the boot reap and the lease exist for.
+	// ReleasePin onto a session Temporal had already failed — which is exactly
+	// what the boot reap and the lease exist for.
 	if got := c.releases(); len(got) != 0 {
 		t.Errorf("ReleasePin ran %d time(s) for a pin whose host was gone: %v", len(got), got)
 	}
@@ -803,7 +803,7 @@ func TestIntegration_APinHostLostBetweenMembersKeepsTheFirstMembersCommittedWork
 			after.GetStatus(), after.GetCommit().GetUri(), len(after.GetArtifacts()), after.GetOrkerId()),
 		fmt.Sprintf("compile                %v, code %q", compile.GetStatus(), compile.GetError().GetCode()),
 		fmt.Sprintf("run                    %v: %s", final.GetStatus(), final.GetError().GetMessage()),
-		fmt.Sprintf("ReleasePin calls       %d (the host was gone; §8.4's reap and lease are the backstops)",
+		fmt.Sprintf("ReleasePin calls       %d (the host was gone; the boot reap and lease are the backstops)",
 			len(c.releases())),
 	})
 }
@@ -812,8 +812,9 @@ func TestIntegration_APinHostLostBetweenMembersKeepsTheFirstMembersCommittedWork
 // Scenario 3 — the run is TERMINATED from outside while a pin is open
 // ---------------------------------------------------------------------------
 
-// TestIntegration_ATerminatedRunLeavesItsPinForTheLeaseSweep is §8.4 way 3 and
-// §12's named gap, driven the only way it can be: by hard-terminating a REAL
+// TestIntegration_ATerminatedRunLeavesItsPinForTheLeaseSweep is the lease
+// sweep's reason to exist (docs/OCI_ACTIVITY_CONTRACT.md §6.4), driven the
+// only way it can be: by hard-terminating a REAL
 // workflow execution out from under a live Orker.
 //
 // Termination is deliberately not the engine's own cancel-run path. A cancel is
@@ -898,7 +899,7 @@ func TestIntegration_ATerminatedRunLeavesItsPinForTheLeaseSweep(t *testing.T) {
 		t.Fatalf("the pin directory vanished the moment the run was terminated: %v", err)
 	}
 	if !pinDirectorySurvives(t, pinRoot, 20*time.Second) {
-		t.Fatalf("the pin directory %s was removed after termination; §8.4 says nothing "+
+		t.Fatalf("the pin directory %s was removed after termination; nothing "+
 			"OrkStack-side runs on this path, so nothing should have", pinRoot)
 	}
 	if got := c.releases(); len(got) != 0 {
@@ -967,7 +968,7 @@ func TestIntegration_ATerminatedRunLeavesItsPinForTheLeaseSweep(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable is
-// §6.5's "every pin host in the pool is full for CreationTimeout" row.
+// "every pin host in the pool is full for the whole creation timeout" case.
 //
 // It is a DIFFERENT scenario from the two that are already covered, and the
 // difference is the whole reason this test is slow enough to need its own
@@ -998,7 +999,7 @@ func TestIntegration_ATerminatedRunLeavesItsPinForTheLeaseSweep(t *testing.T) {
 // open pin for run A whose member is a live container.
 func TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable(t *testing.T) {
 	// pinCreationTimeout is a hardcoded 5 minutes in internal/engine/workflow.go
-	// and §12.4 deliberately does not expose it, so the budget has to cover it
+	// and is deliberately not a setting, so the budget has to cover it
 	// plus the run that holds the pin open for its whole length.
 	ctx, cancel := context.WithTimeout(context.Background(), 18*time.Minute)
 	defer cancel()
@@ -1050,7 +1051,7 @@ func TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable(t
 
 	// ── run B: a second pin onto the same, now full, pool ──
 	//
-	// Submit still ACCEPTS it, and that is correct: §7.4's probe asks whether
+	// Submit still ACCEPTS it, and that is correct: the pin-host probe asks whether
 	// the pool has a pin host at all (max_concurrent_pins > 0), which it does.
 	// Saturation is not a submit-time fact — it is a race the workflow has to
 	// lose, which is what the rest of this test measures.
@@ -1109,7 +1110,7 @@ func TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable(t
 		t.Error("queued's error is retryable; the engine never re-creates a session for a pin")
 	}
 	// It never reached an Orker, and the absence of a dispatch stamp is the
-	// only thing that says so (§6.5, pinOpened). The dispatch stamp is
+	// only thing that says so (pinOpened). The dispatch stamp is
 	// scheduled_at; started_at (the Orker's start) is unset as well.
 	if queued.GetScheduledAt() != nil {
 		t.Errorf("queued scheduled_at = %v, want unset: the pin never opened, so nothing was dispatched",
@@ -1365,7 +1366,7 @@ func pinDirectorySurvives(t *testing.T, dir string, window time.Duration) bool {
 func pinChaosProof(t *testing.T, name string, lines []string) {
 	t.Helper()
 	header := []string{
-		"# docs/design/task-pinning-worker-session.md Phase 6 — chaos evidence",
+		"# task pin chaos evidence (AGENTS.md §11)",
 		"# Every fact below came from the cluster, from the Orker, or from the",
 		"# host's own disk, never from the engine's expectation.",
 		"# recorded " + time.Now().UTC().Format(time.RFC3339),

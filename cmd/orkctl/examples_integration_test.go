@@ -24,8 +24,7 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 )
 
-// The shipped-examples scenarios (spec advanced-orkflow-examples, Test plan,
-// E1–E12): every example this repository ships runs end to end, as a reader
+// The shipped-examples scenarios (examples/README.md): every example this repository ships runs end to end, as a reader
 // would run it — the shipped file, applied under its own name, submitted with
 // the inputs its header names — against a real engine, Orker, Temporal and
 // MinIO. Each scenario writes its transcript to
@@ -79,8 +78,6 @@ func requireRunFailedAt(t *testing.T, run *orkstackv1.Run, id string) *orkstackv
 	}
 	return taskRunOf(t, run, id).GetError()
 }
-
-// ===================================================================== E1
 
 func TestIntegration_EveryExampleValidatesClean(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -153,8 +150,6 @@ func TestIntegration_EveryExampleValidatesClean(t *testing.T) {
 	}
 	x.note("every example validated with no warning but cached-pipeline's documented one; the automation plan is %v", planned)
 }
-
-// ================================================================ E2–E7, E12
 
 func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
@@ -479,8 +474,6 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 	})
 }
 
-// =================================================================== E8, E9
-
 func TestIntegration_GitExamplesRunAsShipped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -651,8 +644,6 @@ func untarGz(t *testing.T, body []byte) map[string]string {
 	}
 }
 
-// ====================================================================== E10
-
 func TestIntegration_CustomImageExampleRunsAsShipped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -720,8 +711,6 @@ func TestIntegration_CustomImageExampleRunsAsShipped(t *testing.T) {
 		t.Fatalf("task run report label = %v", got)
 	}
 }
-
-// ====================================================================== E11
 
 func TestIntegration_AutomationExampleAppliesAndFires(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)

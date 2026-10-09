@@ -6,19 +6,22 @@ implements the public filesystem ABI of the
 [OCI Activity Contract](OCI_ACTIVITY_CONTRACT.md); there is no extension
 interface inside the Orker, no OrkStack SDK, and no plugin registry. To add
 an activity, build an image that reads `/orkstack/input`, writes
-`/orkstack/output`, logs to stdout/stderr, and exits normally.
+`/orkstack/output`, logs to stdout/stderr, and exits normally — following the
+Dockerfile and entry-script rules of the contract's §10.1.
 `examples/custom-image` and `examples/custom-image-shell` are two such images,
 in Go and in POSIX shell; `docs/ORKFLOW_PATTERNS.md`, "When to write your own
 image", says when to write one.
 
-This page documents one convention the first-party reference images share.
-It is not part of the platform contract.
+This page documents the conventions the first-party reference images share:
+the `op` selector, the interface label, `env:` handling, and when caching
+them is safe. None of it is part of the platform contract; a third-party
+image may choose any configuration shape.
+
+## The `op` convention
 
 An activity image may expose one operation selector, spelled `op`, inside its
 `with:` configuration. `op` names what that image does; the other keys are the
-arguments for that operation. This is an image-level convention, not part of
-the OCI Activity Contract: third-party images may choose any configuration
-shape and need no OrkStack SDK.
+arguments for that operation.
 
 ```yaml
 name: notify
@@ -42,10 +45,12 @@ A task may instead put a registry reference directly in `uses:`. There is no
 `container` activity: every activity already is a container, so a custom
 workload names its own image directly.
 
-## Rules for reference activity authors
+Rules for reference activity authors:
 
 1. Use `op` only when one image genuinely offers several related operations.
-2. Use lowercase verbs and reject unknown values before side effects.
+2. Use lowercase verbs and reject unknown values before side effects (the
+   first-party images exit `2` on an unknown `op`, and on a missing one unless
+   the image documents a default — `http` defaults to `get`, `shell` to `exec`).
 3. Document whether an op is the default; do not silently guess when no choice
    is clearly safest.
 4. Keep arguments minimal and document output values and artifact files.
@@ -58,15 +63,17 @@ workload names its own image directly.
 
 An image MAY write down its `with:` contract in one OCI image label,
 `org.orkstack.activity.interface`. The engine reads it from the image's config
-during the apply-time resolution that already pins the digest
-([OCI Activity Contract](OCI_ACTIVITY_CONTRACT.md) §4.3 step 7) and checks every
-task's `with:` against it at `orkctl orkflow validate` and at apply (DSL
-validation rule 14). The container never reads the label, and nothing about it
-is stored: it is recomputed from the digest-addressed image on every read.
+during the apply-time resolution that already pins the digest (OCI Activity
+Contract §4.3) and checks every task's `with:` against it at `orkctl orkflow
+validate` and at apply (`docs/DSL.md`, validation rule 14). The container never
+reads the label, and nothing about it is stored: it is recomputed from the
+digest-addressed image on every read, so it can never disagree with what runs.
+For a multi-platform image the label is read from the first platform manifest
+in index order, so every platform variant should carry the same label.
 
-The label is **optional**. An image without it — every image built before it
-existed — is an ordinary activity, resolved, applied and run exactly as
-before; its `with:` is checked by the image itself at run time (rule 2 above).
+The label is **optional**. An image without it is an ordinary activity,
+resolved, applied and run exactly as before; its `with:` is checked by the
+image itself at run time (rule 2 above).
 
 Its value is the protojson encoding (lowerCamel names) of the
 `orkstack.v1.ActivityInterface` message, verbatim, on one line:
@@ -89,8 +96,12 @@ LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields
 Each key is declared with exactly the vocabulary an Orkflow's `inputs:` has —
 `type` (`string`, `number`, `boolean`, `object`, `array`), `required`, and a
 documentary `default` the engine never writes into `with:` — and not one word
-more: no pattern, range, enum or nesting, and a word outside the vocabulary
-makes the label unreadable rather than being ignored.
+more: no pattern, range, enum or nesting. A word outside the vocabulary makes
+the label unreadable rather than being ignored, and so do `required` together
+with a `default`, a `null` default, or a default of the wrong type. A label is
+content an untrusted image supplies, so it is bounded: at most 64 KiB of text,
+64 ops, and 256 keys in any one `fields`/`values` map; a key matches
+`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$` and an op `^[a-z][a-z0-9_-]{0,63}$`.
 
 What a document is told:
 
@@ -111,7 +122,7 @@ an image declares. Every first-party image carries the label; each README's
 
 ## First-party reference images
 
-The current configuration and output contract for each image lives beside its
+The configuration and output contract for each image lives beside its
 Dockerfile:
 
 - [`activity-http`](../images/activity-http/README.md) — HTTP requests;
@@ -132,12 +143,22 @@ Dockerfile:
 Every one of them reads rendered configuration from
 `/orkstack/input/config.json`, writes compact values to
 `/orkstack/output/values.json`, and writes regular-file artifacts beneath
-`/orkstack/output/artifacts/`. They use the same ABI as any third-party image.
-Every first-party image honours a task's `env:` like any Unix tool — nothing is
-cleared or silently overridden — and the `json`, `git` and `template` READMEs'
-*Environment* sections list each image's defaults and what overrides them.
-See the [OCI Activity Contract](OCI_ACTIVITY_CONTRACT.md) for the authoritative
-platform contract and [the DSL reference](DSL.md) for task syntax.
+`/orkstack/output/artifacts/`, through the same ABI as any third-party image.
+`json` and `template` refuse a task that mounts a secret at all: a filter or
+template can read any file it can name, and its result becomes a value or an
+artifact in object storage.
+
+### The environment
+
+Every first-party image honours a task's `env:` like any Unix tool (OCI
+Activity Contract §3.7): the entry script never clears, filters or re-executes
+the environment, so the tool sees the image's `ENV` defaults, overridden by
+the task's `env:`, plus what the container runtime adds (under Docker,
+`HOSTNAME`). Images whose tool wants a home set `HOME=/orkstack/tmp` (the root
+filesystem is read-only), and images that read the clock set `TZ=UTC`. The
+`json`, `git` and `template` READMEs' *Environment* sections list each image's
+defaults, what overrides them, and the one variable an image refuses
+(`activity-git`: `GIT_TRACE_REDACT` set false while a token is in use).
 
 ## Network and caching of the first-party images
 
@@ -145,36 +166,33 @@ Nothing in OrkStack expects a task to produce the same output from the same
 input. Tasks run at least once and may read the clock, the network and their
 environment; determinism is required of the engine's own workflow code only,
 never of a task. Exactly one opt-in feature depends on it — `cache:` — and
-writing `cache:` is the author's assertion that reusing an earlier result for
-the same memo key is as good as running the task again. The rules and the
-table below tell you when that assertion is false for each first-party image;
-each image's README has the detail.
+writing `cache:` is the author's assertion, which OrkStack cannot verify,
+that reusing an earlier result for the same memo key is as good as running the
+task again. The rules and the table below tell you when that assertion is
+false for each first-party image; each image's README has the detail.
 
-1. **`cache:` is your assertion**, which OrkStack cannot verify ([DSL
-   reference](DSL.md), "Caching"). Write it only when a reused result is as
-   good as a fresh one — when the result depends on nothing outside what the
-   memo key covers ("What the key covers": the image, `command`, `env`, the
-   secrets' names and sources, `network`, the rendered `with:`, the run input,
-   and the content of every staged input). What the key does not cover makes a
-   task unsafe to cache: the clock, randomness, the network, a variable the
-   container runtime sets per container (`HOSTNAME`), the run's coordinates in
-   `task.json` (run id, idempotency key, attempt), and a git ref that moves.
+1. **Write `cache:` only when the result depends on nothing outside the memo
+   key** ([DSL reference](DSL.md), "What the key covers": the image,
+   `command`, `env`, the secrets' names and sources, `network`, the rendered
+   `with:`, the run input, and the content of every staged input). The key
+   does not cover the clock, randomness, the network, a variable the container
+   runtime sets per container (`HOSTNAME`), the run's coordinates in
+   `task.json` (run id, idempotency key, attempt), or a git ref that moves.
 2. **A task that mounts a secret is never cached** — `git` included. A cache
    hit reads no secret, so it never exercises the credential: after a token is
-   revoked or a repository's access is removed, a cached private clone would
-   keep handing out the tree until its memo expired (up to `ORK_CACHE_MAX_TTL`)
-   or someone purged it, and the key covers a secret's name and source, never
-   its value, so rotating the token changes nothing. Apply already warns on
-   every cached task that mounts a secret; this rule makes "don't" the
-   practice rather than "purge on revoke".
+   revoked or a repository's access removed, a cached private clone would keep
+   handing out the tree until its memo expired (up to `ORK_CACHE_MAX_TTL`) or
+   someone purged it, and the key covers a secret's name and source, never its
+   value, so rotating the token changes nothing. Apply warns on every cached
+   task that mounts a secret.
 3. **Cache the tasks after an uncached step instead.** A cached task's key
-   covers the content digest of every staged input — and a task is staged
-   every succeeded ancestor's values and artifacts, not only its direct
-   needs' — so it hits exactly when every ancestor reproduced its outputs byte
-   for byte. A private `git` clone by commit id does: the `untar`, `render`
-   and `query` tasks after it hit on every run of an unchanged commit while the
-   clone itself re-fetches and re-checks the token. An ancestor whose output
-   varies is not an error; its successors simply miss.
+   covers the content digest of every staged input — every succeeded
+   ancestor's values and artifacts, not only its direct needs' — so it hits
+   exactly when every ancestor reproduced its outputs byte for byte. A private
+   `git` clone by commit id does: the `untar`, `render` and `query` tasks after
+   it hit on every run of an unchanged commit while the clone itself
+   re-fetches and re-checks the token. An ancestor whose output varies is not
+   an error; its successors simply miss.
 4. **`network: none` on every task that should not need the network**, so an
    accidental network dependency fails instead of being memoized; values
    travel through `with:` and files, where the key sees them.
@@ -183,8 +201,8 @@ each image's README has the detail.
 
 | Image / op | Needs network | `cache:` is safe when | Unsafe to cache when |
 |---|---|---|---|
-| `json` (both ops) | no — write `network: none` | the filter does not call `now`, reads no runtime-set variable (`HOSTNAME`) through `$ENV`/`env`, and reads no run coordinate from `task.json` (rule 2 never applies: the image refuses secrets) | it calls `now`, reads `$ENV.HOSTNAME`, or reads `run.id`, `idempotencyKey` or `task.attempt` |
-| `template` `render` | no — write `network: none` | the template calls none of the functions its README's *Caching* section lists (rule 2 never applies: the image refuses secrets) | it reads the clock, randomness, a runtime-set variable such as `HOSTNAME`, the network or undeclared files |
+| `json` (both ops) | no — write `network: none` | the filter does not call `now`, reads no runtime-set variable (`HOSTNAME`) through `$ENV`/`env`, and reads no run coordinate from `task.json` | it calls `now`, reads `$ENV.HOSTNAME`, or reads `run.id`, `idempotencyKey` or `task.attempt` |
+| `template` `render` | no — write `network: none` | the template calls none of the functions its README's *Caching* section lists | it reads the clock, randomness, a runtime-set variable such as `HOSTNAME`, the network or undeclared files |
 | `git` `clone` (`as`) | yes | `ref` is a **full commit id** (resolve first, then clone `{{ .tasks.<resolve>.output.commit }}`) **and the task mounts no secret** — a public repository; a `caFile` read from an upstream artifact is an input, not a secret | `ref` names a branch, tag or `HEAD` (a hit would keep returning the old tree until the TTL); **or** it mounts a secret — `tokenSecret`, or `caFile: secrets/…` (rule 2): cache the tasks after it instead (rule 3) |
 | `git` `resolve` | yes | never | always — its job is to observe a moving ref |
 | `git` `clone` with `dest` | yes | never (a pinned task is never cached) | — |

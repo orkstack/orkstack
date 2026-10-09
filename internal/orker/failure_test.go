@@ -59,7 +59,7 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 		{ReasonContainerExitNonzero, CategoryActivityFailed, true,
 			"every non-zero status Wait returns is the workload's own, whatever the number"},
 		{ReasonContainerTimeout, CategoryTimedOut, false,
-			"acceptance criterion 7 groups timeout with the permanent failures (§17 C1)"},
+			"a workload that timed out once would time out again on the same wall clock (§8.1)"},
 		{ReasonRuntimeRefused, CategoryInfrastructureError, true,
 			"the container never ran; the host may be fine next attempt"},
 		{ReasonWorkspaceNotBindable, CategoryInfrastructureError, false,

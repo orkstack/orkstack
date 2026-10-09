@@ -1,10 +1,10 @@
 #!/bin/sh
 # images/activity-shell/entry.sh — the whole SDK is jq and a redirect.
 #
-# This script is docs/OCI_ACTIVITY_CONTRACT.md §10.2, transcribed. It is not
-# illustrative: §14.18 built this exact text into an image and exercised it on
-# every op, cancelled and successful. The draft before it failed two of those
-# cases. Do not "improve" it without re-running §14.18's harness.
+# This script is the reference implementation of docs/OCI_ACTIVITY_CONTRACT.md
+# §10.1-§10.2 (the supervisor pattern is quoted there). Re-run the contract
+# fixtures (`make -C images test`, `orkctl activity test`) after any change:
+# the shell rules below (§14.18) fail silently, not loudly.
 set -u
 umask 022        # rule 7: outputs must be readable by the Orker (§3.1)
 

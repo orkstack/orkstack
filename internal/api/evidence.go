@@ -246,7 +246,7 @@ func (e *evidenceExport) task(
 	}
 	// A fan-out contributes its node entry (status, no attempts) followed by
 	// one entry per item, items ascending, each item's members under
-	// tasks/{task}/items/{i:05}/ (spec each-fan-out §7.3).
+	// tasks/{task}/items/{i:05}/ (docs/RUN_EVIDENCE.md "Layout").
 	if task.GetEach() != nil {
 		m.Tasks = append(m.Tasks, evidence.TaskEntry{
 			TaskID: id, Status: shortStatus(task.GetStatus()), Attempts: []evidence.AttemptEntry{},

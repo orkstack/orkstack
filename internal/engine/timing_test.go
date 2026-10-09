@@ -16,8 +16,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// These tests are § "Derivation"'s engine half (task-timing-breakdown spec,
-// E1-E5): scheduled_at is the dispatch instant, projected from the same
+// These tests are the task-timing derivation's engine half (docs/UI_CLI_PARITY.md
+// "Task timing"): scheduled_at is the dispatch instant, projected from the same
 // workflow.Now the TASK_SCHEDULED event is stamped with, and started_at is
 // the Orker's own report of when it began the attempt that decided the task —
 // set only when an Orker reported one.
@@ -38,7 +38,7 @@ func scheduledEventTimes(t *testing.T, h *harness, runID string) map[string]time
 	return out
 }
 
-// TestRunWorkflow_ScheduledAtIsTheTaskScheduledEventsTimestamp is E1: for
+// TestRunWorkflow_ScheduledAtIsTheTaskScheduledEventsTimestamp: for
 // every dispatched task scheduled_at equals the TASK_SCHEDULED event's own
 // timestamp — one clock read, two views — and a skipped task has none.
 func TestRunWorkflow_ScheduledAtIsTheTaskScheduledEventsTimestamp(t *testing.T) {
@@ -86,7 +86,7 @@ func TestRunWorkflow_ScheduledAtIsTheTaskScheduledEventsTimestamp(t *testing.T) 
 	}
 }
 
-// TestRunWorkflow_StartedAtIsTheOrkersStartNotTheDispatch is E2: the terminal
+// TestRunWorkflow_StartedAtIsTheOrkersStartNotTheDispatch: the terminal
 // snapshot's started_at is the ExecuteTaskResult's, not the workflow's clock,
 // so started_at − scheduled_at is the wait the Orker saw.
 func TestRunWorkflow_StartedAtIsTheOrkersStartNotTheDispatch(t *testing.T) {
@@ -129,7 +129,7 @@ tasks:
 	t.Logf("E2 started_at − scheduled_at = %v", wait)
 }
 
-// TestRunWorkflow_StartedAtComesFromTheFailureDetail is E3: a failed task's
+// TestRunWorkflow_StartedAtComesFromTheFailureDetail: a failed task's
 // started_at comes off ActivityFailureDetail.started_at, and every other
 // field the failure path already recorded is unchanged.
 func TestRunWorkflow_StartedAtComesFromTheFailureDetail(t *testing.T) {
@@ -184,7 +184,7 @@ tasks:
 	}
 }
 
-// TestRunWorkflow_LeavesStartedAtUnsetWhenNoOrkerReported is E4: a failure no
+// TestRunWorkflow_LeavesStartedAtUnsetWhenNoOrkerReported: a failure no
 // Orker described — a Temporal timeout, a plain error with no detail — leaves
 // started_at unset while scheduled_at is set. "Not known" is never invented.
 // The pin-loss branch is held in TestRunWorkflow_ClassifiesALostPinHostAsPinHostLost.
@@ -228,7 +228,7 @@ tasks:
 	}
 }
 
-// TestRunWorkflow_AdoptedCommitReportsTheCommittingAttemptsStart is E5: the
+// TestRunWorkflow_AdoptedCommitReportsTheCommittingAttemptsStart: the
 // retry that adopts a commit reports the COMMITTING attempt's start, on the
 // same rule `attempt` already follows.
 func TestRunWorkflow_AdoptedCommitReportsTheCommittingAttemptsStart(t *testing.T) {

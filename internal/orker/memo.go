@@ -242,7 +242,7 @@ func memoScopeName(scope orkstackv1.CacheScope) string {
 	return "orkflow"
 }
 
-// computeMemoKey is cache-memoization spec §4.1, and nothing else reads an
+// computeMemoKey is the memo key (docs/DSL.md "What the key covers"), and nothing else reads an
 // input to build a key. config and runJSON are encodeInputFile's bytes; item
 // is what resolveEachItem resolved, nil for a task that is not a fan-out item.
 // ok is false when an input reference had no digest (INPUT_UNHASHED). Pure.
@@ -345,8 +345,8 @@ type memoHit struct {
 	commit *orkstackv1.ActivityCommit
 }
 
-// lookupMemo decides HIT or MISS for key, in the order of the spec's §6.3
-// table. On a HIT it returns the source commit, its refetched values bytes
+// lookupMemo decides HIT or MISS for key, in the order of the miss-reason
+// table (docs/DSL.md "Miss reasons"). On a HIT it returns the source commit, its refetched values bytes
 // and the hit commit to write; every other outcome is a MISS with its reason
 // and sentence set on trace. It never returns a Failure.
 func (d *OCIDispatcher) lookupMemo(ctx context.Context, in *orkstackv1.ExecuteTaskInput,

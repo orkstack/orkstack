@@ -41,7 +41,7 @@ func equalLines(a, b []string) bool {
 	return true
 }
 
-// The framing table of the design (v004-design.md §1.4). Each row is a
+// The live-log framing table. Each row is a
 // sequence of Writes — the split points matter, because a docker read boundary
 // falls wherever it likes — followed by Close.
 func TestLineWriter_FramesLinesAcrossWriteBoundaries(t *testing.T) {

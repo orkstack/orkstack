@@ -925,7 +925,7 @@ export const ScheduledRunPreparationSchema: GenMessage<ScheduledRunPreparation> 
  * Temporal's TERMINATE_OTHER — is RESERVED, so ALLOW_ALL is 6 here as it is
  * there. The alignment is for readability only. The engine converts through
  * an explicit switch that never casts (specOverlapToTemporal /
- * overrideOverlapToTemporal, spec §3.1), and an undeclared value such as 5
+ * overrideOverlapToTemporal), and an undeclared value such as 5
  * arriving on the wire (proto3 enums are open) is refused by the API and by
  * that switch; it never reaches the cluster.
  *

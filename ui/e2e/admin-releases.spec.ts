@@ -19,7 +19,7 @@ import {
 	waitForEngine
 } from './harness';
 
-// Admin → Releases (orkctl-release §8), against real engines and Orkers
+// Admin → Releases (docs/DEPLOY.md §3), against real engines and Orkers
 // started with ORK_BUILD_ID, real Temporal (a private namespace) and real
 // MinIO. The UI is served by an engine started WITHOUT ORK_BUILD_ID that
 // shares the deployment name: it is the "suite's unversioned engine" the

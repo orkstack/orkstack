@@ -1024,7 +1024,7 @@ func TestAuditInterceptor_ResolveAwaitRecordsTheDigestNeverTheValues(t *testing.
 
 // TestAudit_PromoteDetailRecordsTheInterfaceVerdict: a breaking promotion is
 // attributable to whoever acknowledged it, and a refused one records what
-// was requested (interface-compatibility-gate §5.6).
+// was requested (docs/UI_CLI_PARITY.md "Interface compatibility").
 func TestAudit_PromoteDetailRecordsTheInterfaceVerdict(t *testing.T) {
 	f := newAuditFixture(t, auditOptions{})
 	ctx := context.Background()

@@ -16,7 +16,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Composed Orkflows (spec composed-orkflows §4, §5): the apply-time
+// Composed Orkflows (docs/DSL.md "Composition"): the apply-time
 // resolution of `uses: orkflow:<name>@<version>` (rules 31 and 32), and the
 // submit-time planning of every child run a submission can start.
 
@@ -39,7 +39,7 @@ type composeNode struct {
 }
 
 // composeProblem is one node that did not resolve: which root task it hangs
-// off, its path, and the sentence §4.3 gives its kind.
+// off, its path, and the fixed sentence for its kind.
 type composeProblem struct {
 	TaskIndex int      // the ROOT composing task's index, where apply anchors
 	Path      []string // "name@version" from the root
@@ -222,7 +222,7 @@ func versionList(versions artifacts.OrkflowVersions) string {
 }
 
 // composeVersionRefusal is the compiler's ComposeVersionRequiredError with
-// the stored versions appended (spec §4.5).
+// the stored versions appended.
 type composeVersionRefusal struct {
 	missing *dsl.ComposeVersionRequiredError
 	suffix  string

@@ -12,15 +12,17 @@
 // snapshots. The attempt prefix holds the per-attempt records the Orker wrote
 // (pkg/artifacts/attempts.go); they are diagnosis for the logs they sit beside,
 // so they are reclaimed with them and never outlive them.
-// Workload artifacts under objects/ are
-// content-addressed by logical name and digest, with no run id in the key. The
-// same object can therefore be referenced by another live or retained run;
-// deleting it by a run prefix could destroy that run's committed result.
-// The archive keeps reference markers for those objects, so a shared object
-// can be reclaimed once no archived run claims it — that is what
-// artifacts.DeleteUnreferencedObjects does. This worker does not call it:
-// reclaiming shared objects is a scan of the whole reference index rather than
-// a delete under one run's prefixes, so it is not part of the per-run pass.
+// Workload artifact bytes are not deleted here. On the local backend
+// (objects/) a key is name-and-digest with no run id, so one object can be
+// referenced by another live or retained run, and deleting it by a run
+// prefix could destroy that run's committed result. On s3 (orkflows/) the key
+// embeds the producing run, but a memo hit's commit in a later run still
+// references it. The archive keeps reference markers for every object, so a
+// shared object can be reclaimed once no archived run claims it — that is
+// artifacts.DeleteUnreferencedObjects, a scan of the whole reference index
+// rather than a delete under one run's prefixes, so it is not part of the
+// per-run pass; a bucket lifecycle rule is the documented reclaimer
+// (docs/STORAGE.md, "Reclaiming space").
 // Archive bodies and indexes are never deleted.
 //
 // The cluster's own retention TTL on the single Temporal namespace behind the

@@ -22,7 +22,7 @@ import {
 } from './harness';
 
 // Namespace budgets in a browser, against a real engine, Orker, Temporal and
-// MinIO (namespace-budgets spec, "Playwright"):
+// MinIO (docs/DEPLOY.md "Namespace budgets"):
 //
 //   1. Admin → Namespaces creates a namespace with an enforced budget of one
 //      cpu-second per hour, and the Budget column says so;

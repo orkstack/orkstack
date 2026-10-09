@@ -247,7 +247,6 @@ func verifyFile(t *testing.T, path string) *evidence.Report {
 	return report
 }
 
-// C1
 func TestRunEvidenceExport_WritesTheBundleAndPrintsTheSummary(t *testing.T) {
 	e := newEvidenceCLI(t)
 	e.seed(t, "ork-evidence-1", e.digest)
@@ -276,7 +275,6 @@ func TestRunEvidenceExport_WritesTheBundleAndPrintsTheSummary(t *testing.T) {
 	}
 }
 
-// C2
 func TestRunEvidenceExport_JSONPrintsTheManifestVerbatim(t *testing.T) {
 	e := newEvidenceCLI(t)
 	e.seed(t, "ork-evidence-1", e.digest)
@@ -345,7 +343,6 @@ func startEvidenceStub(t *testing.T, stub evidenceStub) string {
 	return "http://" + listener.Addr().String()
 }
 
-// C3
 func TestRunEvidenceExport_IncompleteStreamLeavesNoFile(t *testing.T) {
 	t.Setenv(serverEnvVar, "")
 	t.Setenv(namespaceEnvVar, "")
@@ -378,7 +375,6 @@ func TestRunEvidenceExport_IncompleteStreamLeavesNoFile(t *testing.T) {
 	}
 }
 
-// C4
 func TestRunEvidenceExport_RefusesToClobberWithoutOverwrite(t *testing.T) {
 	e := newEvidenceCLI(t)
 	e.seed(t, "ork-evidence-1", e.digest)
@@ -462,7 +458,6 @@ func rewriteBundle(t *testing.T, from, to string, mutate func(name string, body 
 	}
 }
 
-// C5
 func TestGoldenRunEvidenceVerify_Passing(t *testing.T) {
 	e := newEvidenceCLI(t)
 	e.seed(t, "ork-evidence-1", e.digest)
@@ -481,7 +476,6 @@ func TestGoldenRunEvidenceVerify_Passing(t *testing.T) {
 	requireGolden(t, "run-evidence-verify.json.golden", jsonRes.stdout)
 }
 
-// C5
 func TestGoldenRunEvidenceVerify_Failing(t *testing.T) {
 	e := newEvidenceCLI(t)
 	e.seed(t, "ork-evidence-1", e.digest)
@@ -504,7 +498,6 @@ func TestGoldenRunEvidenceVerify_Failing(t *testing.T) {
 	}
 }
 
-// C6
 func TestRunEvidenceVerify_AgainstStore(t *testing.T) {
 	e := newEvidenceCLI(t)
 	e.seed(t, "ork-evidence-1", e.digest)
@@ -547,7 +540,6 @@ func TestRunEvidenceVerify_AgainstStore(t *testing.T) {
 	}
 }
 
-// C7
 func TestRunEvidence_ErrorsAreActionable(t *testing.T) {
 	e := newEvidenceCLI(t)
 	e.seed(t, "ork-evidence-1", e.digest)

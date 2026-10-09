@@ -215,7 +215,7 @@ func (s *Service) StreamRunTaskLogs(
 	if err := composedTaskLogRefusal(q.RunID, taskRun); err != nil {
 		return err
 	}
-	// The item selector (spec each-fan-out §7.2): a fan-out's own row writes
+	// The item selector (each.go): a fan-out's own row writes
 	// no logs, its items do, so a fan-out requires `item`.
 	if _, err := itemRunOf(run, q.TaskID, q.Item); err != nil {
 		return err

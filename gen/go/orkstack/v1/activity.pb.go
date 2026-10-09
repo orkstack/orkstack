@@ -769,7 +769,7 @@ type PinContext struct {
 	InstanceId string `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	// timeout_seconds is the pin's lifetime bound as the engine set it
 	// (Pin.timeout_seconds or the derived sum). The Orker derives the shared
-	// directory's lease from it (§8.4).
+	// directory's lease from it (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
 	TimeoutSeconds int32 `protobuf:"varint,3,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -1039,8 +1039,8 @@ type CacheSource struct {
 	// source ActivityCommit. A memo's age is measured from finished_at.
 	StartedAt  *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	FinishedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
-	// item is set when the producer was one item of a fan-out (each-fan-out's
-	// 0-based index); unset otherwise.
+	// item is set when the producer was one item of a fan-out (its 0-based
+	// index); unset otherwise.
 	Item *int32 `protobuf:"varint,9,opt,name=item,proto3,oneof" json:"item,omitempty"`
 	// attempt is the producing attempt (ActivityCommit.attempt).
 	Attempt       int32 `protobuf:"varint,10,opt,name=attempt,proto3" json:"attempt,omitempty"`
@@ -2766,7 +2766,7 @@ func (x *DescribeOrkerResult) GetJoinSupported() bool {
 // and not yet completed. It names the run and the pin — never the session,
 // which is internal (AGENTS.md §7) — and says when the shared directory's
 // lease ends, which is the longest the pin can live even if nothing else
-// closes it (docs/design/task-pinning-worker-session.md §8.4).
+// closes it (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
 type OpenPin struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`

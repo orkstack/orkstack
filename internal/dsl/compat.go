@@ -15,7 +15,7 @@ import (
 
 // The declared interface of an Orkflow version is its inputs: and its
 // outputs:, and nothing else. This file classifies how one version's declared
-// interface changes in another (interface-compatibility-gate §2): every
+// interface changes in another (docs/UI_CLI_PARITY.md "Interface compatibility"): every
 // declared input and output gets a finding with its own verdict. Tasks,
 // images, with:, pools, timeouts and output TEMPLATES are implementation and
 // are never findings — DiffOrkflowVersions reports them.
@@ -36,8 +36,8 @@ type InputDeclaration struct {
 	// function's job).
 	Type string
 	// Required is `required: true` AND no `default` key. A declaration
-	// carrying both is not required (docs/DSL.md "Inputs"; composed-orkflows
-	// rule 32: "required: true and no default").
+	// carrying both is not required (docs/DSL.md "Inputs" and validation rule
+	// 32: "required: true and no default").
 	Required bool
 	// Default is the `default` value when the key is present — a JSON null
 	// included, because ApplyInputDefaults copies whatever the key holds —
@@ -127,7 +127,7 @@ func unknownVerdict() orkstackv1.InterfaceVerdict {
 }
 
 // CompareInterfaces classifies how from's declared interface changes in to
-// (interface-compatibility-gate §2.2). Pure, total, deterministic: a nil
+// (docs/UI_CLI_PARITY.md "Interface compatibility"). Pure, total, deterministic: a nil
 // message reads as an Orkflow with no inputs and no outputs. Findings are
 // every input, names sorted bytewise, each in the table's order (type, then
 // required, then default); then the output side — O1 or O2 alone, or every

@@ -33,7 +33,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The run-diff integration scenarios (I1-I4): two real `ork` replicas sharing
+// The run-diff integration scenarios (docs/UI_CLI_PARITY.md "Run diff"): two
+// real `ork` replicas sharing
 // one private Temporal namespace, one Orker and the MinIO bucket; every
 // DiffRuns is asked of replica B, which started neither run, so no answer can
 // have come from the process that watched the runs.
@@ -213,7 +214,7 @@ func deleteAttemptRecord(t *testing.T, s *timingStack, runID, taskID string, att
 	fmt.Fprintf(&s.transcript, "deleted s3://%s/%s\n\n", cfg.S3Bucket, key)
 }
 
-// TestIntegration_RunDiffIsAnsweredByTheReplicaThatStartedNeitherRun is I1.
+// TestIntegration_RunDiffIsAnsweredByTheReplicaThatStartedNeitherRun.
 func TestIntegration_RunDiffIsAnsweredByTheReplicaThatStartedNeitherRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -276,9 +277,9 @@ func TestIntegration_RunDiffIsAnsweredByTheReplicaThatStartedNeitherRun(t *testi
 	t.Logf("EVIDENCE I1 other namespace: %s", strings.TrimSpace(stderr))
 }
 
-// TestIntegration_RunDiffSurvivesReclaimedAttemptRecords is I2.
+// TestIntegration_RunDiffSurvivesReclaimedAttemptRecords.
 //
-// The definition-unavailable path stays a unit scenario (D7c): DeleteOrkflow
+// The definition-unavailable path stays a unit scenario: DeleteOrkflow
 // refuses to delete a version a run used within its 24 h window, so a real
 // stack cannot reach it here without waiting a day.
 func TestIntegration_RunDiffSurvivesReclaimedAttemptRecords(t *testing.T) {
@@ -313,7 +314,7 @@ func TestIntegration_RunDiffSurvivesReclaimedAttemptRecords(t *testing.T) {
 	s.mustCLI(1, "run", "diff", run1, run2)
 }
 
-// TestIntegration_RunDiffOfALiveRun is I3.
+// TestIntegration_RunDiffOfALiveRun.
 func TestIntegration_RunDiffOfALiveRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -407,7 +408,7 @@ func runningContainers(t *testing.T) int {
 	return len(strings.Fields(string(out)))
 }
 
-// TestIntegration_RunDiffReadsTheAdopterWhenTheCommittingRecordIsGone is I4:
+// TestIntegration_RunDiffReadsTheAdopterWhenTheCommittingRecordIsGone:
 // the store state the AGENTS.md §11 crash window leaves — commit.json
 // durable, the committing attempt's record gone, the adopting retry's record
 // filed under its own number — produced with production code only.

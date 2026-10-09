@@ -9,7 +9,7 @@ import (
 // safeComponent turns an opaque logical artifact name into a single safe path
 // component.
 //
-// The staging path it produces is pinned by tests (§6.2): a change here
+// The staging path it produces is pinned by tests: a change here
 // changes where every task finds its inputs.
 //
 // It is deliberately LOSSY, and that is why task.json carries `nameB64`

@@ -92,7 +92,7 @@
 
 	// The cursors BEHIND this page: per filter set, per tab, in sessionStorage
 	// rather than in the URL, which used to grow by one escaped engine cursor
-	// per Next click (docs/design/pagination-and-timerange-ui.md §3.2).
+	// per Next click (docs/UI_CLI_PARITY.md "Paging in the browser").
 	//
 	// Read in an `$effect` and not a `$derived`: the first render is the
 	// server's, where there is no sessionStorage, and a derived computed there

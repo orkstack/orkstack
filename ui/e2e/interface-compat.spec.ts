@@ -20,7 +20,7 @@ import {
 } from './harness';
 
 // The interface compatibility gate in the browser
-// (interface-compatibility-gate §7, Test plan "Playwright").
+// (docs/UI_CLI_PARITY.md "Interface compatibility").
 //
 // Real engine (Connect API over real Temporal + real MinIO) and the real
 // production UI build. Every verdict, finding, refusal and caller below is the
@@ -64,7 +64,7 @@ function shot(page: Page, name: string) {
 
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
-// The spec's shared fixture: 3.0.0 adds a required region and a defaulted
+// The shared compatibility fixture: 3.0.0 adds a required region and a defaulted
 // timeout, drops output url, adds sbom, and rewrites every task.
 function block(version: '2.1.0' | '3.0.0'): string {
 	if (version === '2.1.0') {

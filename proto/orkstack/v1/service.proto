@@ -887,7 +887,8 @@ message Delivery {
   string namespace = 6;
   string orkflow_name = 7;
   // task_id and attempt are set for a task outcome delivery
-  // (scoped-subscriptions) and empty/zero for a run transition.
+  // (docs/UI_CLI_PARITY.md "Scoped subscriptions and task outcome events")
+  // and empty/zero for a run transition.
   string task_id = 8;
   int32 attempt = 9;
   // status is the transition's status as the body's "status" carried it.

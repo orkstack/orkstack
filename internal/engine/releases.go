@@ -19,7 +19,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// Releases (orkctl-release §5): the engine's view of the deployment's
+// Releases (docs/DEPLOY.md §3): the engine's view of the deployment's
 // releases — which one the cluster routes new runs to, which ones it still
 // knows, what each still executes — and the one write that changes the
 // routing.
@@ -28,7 +28,7 @@ import (
 // named by ORK_BUILD_ID. The cluster object it is implemented with is
 // internal, exactly as a session is internal to a pin: nothing here returns a
 // channel name, and every cluster error is logged and wrapped so the API can
-// replace it with a fixed sentence (§5.8). Nothing is stored: every answer is
+// replace it with a fixed sentence. Nothing is stored: every answer is
 // read from the cluster on the call, so any replica answers identically.
 
 // ErrNotVersioned reports that the cluster has no record of this deployment:
@@ -54,21 +54,21 @@ func (r Routing) Revision() string {
 // cluster routes, which releases it knows, and what each still executes.
 // Production wires *TemporalReleaseCluster; a test states the facts directly.
 type ReleaseCluster interface {
-	// ObserveReleases reads the deployment in one pass (§5.2–5.4).
+	// ObserveReleases reads the deployment in one pass.
 	// ErrNotVersioned when the cluster has no record of it; the observation
 	// returned beside that error still carries DeploymentName.
 	ObserveReleases(ctx context.Context) (ReleaseObservation, error)
 	// ReleaseRuns counts the runs executing on one release and lists up to
-	// limit of them, newest first, as shallow projections (§5.5).
+	// limit of them, newest first, as shallow projections.
 	ReleaseRuns(ctx context.Context, buildID string, limit int) (int64, []*orkstackv1.Run, error)
 	// RunningRuns counts every run executing on the deployment, on any
-	// release or none (§5.5).
+	// release or none.
 	RunningRuns(ctx context.Context) (int64, error)
 	// SetRouting makes exactly one cluster call moving from obs.Routing to
-	// want (§5.6).
+	// want.
 	SetRouting(ctx context.Context, obs ReleaseObservation, want Routing) error
 	// AwaitRouting polls the engine's own channel until it routes as want,
-	// or within elapses (§5.7).
+	// or within elapses.
 	AwaitRouting(ctx context.Context, want Routing, within time.Duration) (bool, error)
 }
 
@@ -83,7 +83,7 @@ type ReleaseObservation struct {
 	// counts processes started without ORK_BUILD_ID.
 	EngineReplicas map[string]int
 	// PoolUse is keyed by pool, over the pools the Current and Ramping
-	// releases registered (§5.4). Pools only; no channel name crosses this
+	// releases registered. Pools only; no channel name crosses this
 	// seam.
 	PoolUse map[string]PoolUse
 	// conflictToken is the cluster's serialization token from the same
@@ -103,7 +103,7 @@ type ObservedRelease struct {
 	// tells PREVIOUS from CANDIDATE.
 	HasServed bool
 	// RegisteredPools are the pools whose channels this release's Orkers have
-	// ever polled, as the cluster recorded them (§5.4).
+	// ever polled, as the cluster recorded them.
 	RegisteredPools []string
 	// DescribeErr is set when the release's own description could not be
 	// read; RegisteredPools and DrainCheckedAt are then unknown.
@@ -135,7 +135,7 @@ const (
 
 // ReleaseClusterError wraps a cluster error with the operation that produced
 // it. Its text carries the cluster's own text and is for the engine log only;
-// the API maps it by Cause's serviceerror type (§5.8).
+// the API maps it by Cause's serviceerror type.
 type ReleaseClusterError struct {
 	Op    ReleaseClusterOp
 	What  string
@@ -267,7 +267,7 @@ func (c *TemporalReleaseCluster) fail(op ReleaseClusterOp, what, buildID string,
 }
 
 // ObserveReleases reads routing, releases, engine replicas and pool use in
-// one pass (§5.2–5.4).
+// one pass.
 func (c *TemporalReleaseCluster) ObserveReleases(ctx context.Context) (ReleaseObservation, error) {
 	obs := ReleaseObservation{DeploymentName: c.deployment}
 	handle := c.client.WorkerDeploymentClient().GetHandle(c.deployment)
@@ -376,13 +376,13 @@ func (c *TemporalReleaseCluster) registeredPools(infos []client.WorkerDeployment
 }
 
 // engineReplicas counts the live engine processes per release on the engine's
-// own channel (§5.3). WORKFLOW pollers only: an Orker is activity-only, and
+// own channel. WORKFLOW pollers only: an Orker is activity-only, and
 // the engine's run worker polls workflow tasks only, so this channel's
 // workflow pollers are exactly the engine's processes. A failure fails the
 // whole read: engine liveness is never reported as zero.
 //
 // It is the default-mode read, which lists every poller of the channel with
-// the release it registered with. The enhanced read §5.3 named
+// the release it registered with. The enhanced read named
 // (AllActive + Unversioned) was measured against the pinned cluster to omit
 // pollers that registered with a release (TestIntegration_ObserveReleases…),
 // so it would have reported a running engine as none.
@@ -448,8 +448,8 @@ func (c *TemporalReleaseCluster) describeChannel(ctx context.Context, queue stri
 	})
 }
 
-// poolUse describes every pool the current and ramping releases registered
-// (§5.4). Other releases' registrations are not evidence of current use.
+// poolUse describes every pool the current and ramping releases registered.
+// Other releases' registrations are not evidence of current use.
 func (c *TemporalReleaseCluster) poolUse(ctx context.Context, obs ReleaseObservation) map[string]PoolUse {
 	union := map[string]bool{}
 	for _, release := range obs.Releases {
@@ -539,7 +539,7 @@ func (c *TemporalReleaseCluster) RunningRuns(ctx context.Context) (int64, error)
 	return n, nil
 }
 
-// SetRouting makes exactly one cluster call moving obs.Routing to want (§5.6).
+// SetRouting makes exactly one cluster call moving obs.Routing to want.
 // The cluster's own guards stay ON (IgnoreMissingTaskQueues and AllowNoPollers
 // false), and the conflict token is the one from the Describe the check
 // judged, so a routing change in between is refused rather than overwritten.

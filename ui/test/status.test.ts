@@ -43,7 +43,7 @@ test('SKIPPED is terminal: nothing moves a task the DAG decided not to run', () 
 	expect(isTerminal(undefined)).toBe(false);
 });
 
-// U9 (task-timing-breakdown): the dispatch stamp is scheduled_at. A task
+// Task timing (docs/UI_CLI_PARITY.md "Task timing"): the dispatch stamp is scheduled_at. A task
 // canceled while it ran has scheduled_at and NO started_at — no Orker reported
 // a start — and it did run.
 test('taskDispatched keys on scheduledAt, not on the Orker-reported start', () => {

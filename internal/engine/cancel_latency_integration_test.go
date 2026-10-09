@@ -39,7 +39,7 @@ import (
 // unset the answer is ~24 s however fast the Orker's loop ticks. The workflow
 // test environment has neither behavior: it delivers cancellation immediately,
 // which is why every existing cancellation test passed while a real run took
-// 23.9 s. Measured on the run that prompted this: cancellation requested 52 ms
+// 23.9 s. In that real run, cancellation was requested 52 ms
 // after the sibling's failure, observed 23.86 s later, container dead 296 ms
 // after that.
 //

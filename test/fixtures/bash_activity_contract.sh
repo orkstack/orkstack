@@ -25,8 +25,8 @@
 #   6  exit codes pass through, and a timeout kills a hung image  §14.13, §14.5
 #
 # Assertion 1 runs against every op the image declares rather than one
-# representative shape: the previous draft of §10.2's entry script passed on
-# `exec` and failed on `eval` at exit 143 with no values.json and empty logs.
+# representative shape: an entry script that runs `eval` inside `$( )` passes
+# on `exec` and fails on `eval` at exit 143 with no values.json and empty logs.
 # A per-shape test would not have caught that; a per-op test does (§14.18).
 
 set -uo pipefail

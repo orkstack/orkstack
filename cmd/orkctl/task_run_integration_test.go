@@ -32,8 +32,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The `orkctl task run` integration scenarios (I1-I7): a real engine and a
-// real Orker against the real Temporal and MinIO (I7: the local backend)
+// The `orkctl task run` integration scenarios: a real engine and a
+// real Orker against the real Temporal and MinIO (or the local backend)
 // produce a run, and the BUILT orkctl replays one of its tasks on this
 // machine's container runtime, through the Orker's own dispatcher.
 
@@ -42,7 +42,7 @@ import (
 // prints its config.json and task.json between marker lines, then exits 1
 // unless the upstream value equals `expect` and the staged artifact holds the
 // marker. Submitted with target=staging, expect=prod, the run fails at
-// consume. strict=false removes the comparison (I3's edited document).
+// consume. strict=false removes the comparison (the edited-document case).
 func taskRunFixtureDoc(name, marker string, strict bool) string {
 	comparison := `if [ "{{ .tasks.produce.output.value }}" != "{{ .inputs.expect }}" ]; then
           echo "mismatch: {{ .tasks.produce.output.value }} != {{ .inputs.expect }}" >&2
@@ -217,7 +217,7 @@ func fileSHA(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// replayFailedConsume is I1's assertion set against a failed fixture run. It
+// replayFailedConsume is the replay assertion set against a failed fixture run. It
 // returns the two invocations' stdout.
 func (s *taskRunStack) replayFailedConsume(run *orkstackv1.Run) {
 	t := s.t
@@ -270,7 +270,7 @@ func (s *taskRunStack) replayFailedConsume(run *orkstackv1.Run) {
 	t.Logf("EVIDENCE --input expect=staging: SUCCEEDED, exit 0")
 }
 
-// TestIntegration_TaskRunReplaysAFailedTaskAgainstItsRunsBytes is I1.
+// TestIntegration_TaskRunReplaysAFailedTaskAgainstItsRunsBytes.
 func TestIntegration_TaskRunReplaysAFailedTaskAgainstItsRunsBytes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -299,7 +299,7 @@ func bucketListing(t *testing.T, ctx context.Context, cfg artifacts.Config) []st
 	return out
 }
 
-// TestIntegration_TaskRunWritesNothingToTheDeployment is I2.
+// TestIntegration_TaskRunWritesNothingToTheDeployment.
 func TestIntegration_TaskRunWritesNothingToTheDeployment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -393,7 +393,7 @@ func TestIntegration_TaskRunWritesNothingToTheDeployment(t *testing.T) {
 	s.writeTranscript("task-run-writes-nothing.txt")
 }
 
-// TestIntegration_TaskRunRunsAnEditedDocumentAgainstTheRunsBytes is I3.
+// TestIntegration_TaskRunRunsAnEditedDocumentAgainstTheRunsBytes.
 func TestIntegration_TaskRunRunsAnEditedDocumentAgainstTheRunsBytes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -430,7 +430,7 @@ func TestIntegration_TaskRunRunsAnEditedDocumentAgainstTheRunsBytes(t *testing.T
 	s.writeTranscript("task-run-edited.txt")
 }
 
-// TestIntegration_TaskRunSecretIsExplicitAndNeverKept is I4.
+// TestIntegration_TaskRunSecretIsExplicitAndNeverKept.
 func TestIntegration_TaskRunSecretIsExplicitAndNeverKept(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -491,7 +491,7 @@ tasks:
 	s.writeTranscript("task-run-secret.txt")
 }
 
-// TestIntegration_TaskRunInterruptStopsTheContainer is I5.
+// TestIntegration_TaskRunInterruptStopsTheContainer.
 func TestIntegration_TaskRunInterruptStopsTheContainer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -582,7 +582,7 @@ tasks:
 	s.writeTranscript("task-run-interrupt.txt")
 }
 
-// TestIntegration_TaskRunRendersOnlyWithoutACreatedContainer is I6.
+// TestIntegration_TaskRunRendersOnlyWithoutACreatedContainer.
 func TestIntegration_TaskRunRendersOnlyWithoutACreatedContainer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -626,7 +626,7 @@ func treeListing(t *testing.T, dir string) []string {
 	return out
 }
 
-// TestIntegration_TaskRunReplaysALocalBackendRun is I7: the same replay
+// TestIntegration_TaskRunReplaysALocalBackendRun: the same replay
 // against an engine and Orker on the LOCAL artifact backend, so the recorded
 // URIs are file:// and replayStore serves them.
 func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {

@@ -79,7 +79,7 @@ const (
 	ModeWritableDir os.FileMode = 0o777 | os.ModeSticky
 	// ModePinLease is a pin's lease.json. It is written by the Orker and read
 	// by the Orker; no container ever sees it, because it lives in the 0700 pin
-	// root BESIDE the bind-mounted shared/ child rather than inside it (§8.2).
+	// root BESIDE the bind-mounted shared/ child rather than inside it (§6.4).
 	ModePinLease os.FileMode = 0o600
 )
 
@@ -116,7 +116,7 @@ type Workspace struct {
 	// It is deliberately NOT created, sealed or removed by this type. It is
 	// created by AcquirePin, it outlives this attempt, and Remove must never
 	// touch it — the next task of the same pin is entitled to find it intact
-	// (§7.5, §8.1).
+	// (§3.1, §6.4).
 	Shared string
 }
 
@@ -236,7 +236,7 @@ func (w *Workspace) SealSecrets() error {
 // for this attempt OR for this attempt's pin; there is no branch that could
 // produce a host path from a definition.
 //
-// The pin half of that promise is what §7.5 widened the sentence for, and it is
+// The pin half of that promise is what pins widened the sentence for, and it is
 // no weaker: AcquirePin builds its path from a run id, a compiler-enforced slug
 // and an instance id validated before it becomes a path segment, so a
 // definition still cannot name a host path (§9.1).
@@ -259,10 +259,10 @@ func (w *Workspace) Mounts() []Mount {
 //
 // It deletes w.Root only. w.Shared belongs to the PIN and outlives every
 // attempt of it, so a pinned attempt's cleanup must not reach it — the mount's
-// source is a sibling of this tree, not a child of it (§8.1).
+// source is a sibling of this tree, not a child of it (§6.4).
 //
 // Called on EVERY exit path: success, failure, panic and cancellation alike
-// (§6.2).
+// (docs/OCI_ACTIVITY_CONTRACT.md §7.1, step 15).
 func (w *Workspace) Remove() error {
 	return removeSealedTree(w.Root)
 }
@@ -279,7 +279,7 @@ func (w *Workspace) Remove() error {
 // So every directory is made writable on the way down before anything is
 // unlinked. A pin directory needs the identical walk for a different reason: a
 // workload writing into the 1777 shared/ tree as its own uid may have left a
-// 0500 directory behind, which no removal can traverse either (§8.4). One walk
+// 0500 directory behind, which no removal can traverse either (§6.4). One walk
 // serves both, because two removal implementations would mean one of them
 // eventually stops matching the other.
 func removeSealedTree(root string) error {
@@ -315,7 +315,7 @@ func (w *Workspace) RemoveSecrets() error {
 // ------------------------------------------------------------- pin workspace
 
 // pinDirPrefix is what every pin directory's name starts with, and therefore
-// what the boot reap and the lease sweep list by (§8.2).
+// what the boot reap and the lease sweep list by (§6.4).
 const pinDirPrefix = "ork-pin-"
 
 // pinLeaseFileName is the lease written beside — never inside — the shared
@@ -334,7 +334,7 @@ const pinSharedDirName = "shared"
 const pinReleaseBudget = 60 * time.Second
 
 // pinLeaseSlack is how much longer a pin's lease outlives the pin's own
-// timeout: the release budget plus five minutes (§8.4).
+// timeout: the release budget plus five minutes (§6.4).
 //
 // The lease is a pure BACKSTOP and never the primary removal path. The session's
 // ExecutionTimeout already bounds the pin's life and is measured from session
@@ -347,7 +347,7 @@ const pinLeaseSlack = pinReleaseBudget + 5*time.Minute
 
 // PinWorkspace is one opening of one pin, on the host that hosts it.
 //
-// It is the second, longer-lived kind of ephemeral execution directory (§8.1):
+// It is the second, longer-lived kind of ephemeral execution directory (§6.4):
 // still bounded, local, disposable and reconstructible by re-running, but with
 // the PIN's lifetime rather than one attempt's. It is neither an input tree (it
 // is never sealed) nor an output tree (nothing in it is scanned, hashed,
@@ -360,7 +360,7 @@ type PinWorkspace struct {
 	// Shared is Root/shared, mode 1777 with the sticky bit. This is the path
 	// bind-mounted read-write at /orkstack/shared.
 	Shared string
-	// LeasePath is Root/lease.json, mode 0600 (§8.4).
+	// LeasePath is Root/lease.json, mode 0600 (§6.4).
 	LeasePath string
 }
 
@@ -377,7 +377,7 @@ type pinLease struct {
 }
 
 // AcquirePin resolves or creates the shared directory of one opening of one pin
-// (§8.2, §8.4). Every member attempt of the pin calls it, and they all get the
+// (§6.4). Every member attempt of the pin calls it, and they all get the
 // same paths back — that sharing IS the feature.
 //
 // It is therefore IDEMPOTENT by construction rather than by a lock: a second
@@ -484,7 +484,7 @@ func writePinLease(pin *PinWorkspace, runID, pinName string, pinTimeoutSeconds i
 }
 
 // ReleasePinDirectory removes one pin's directory, and it is the ONE removal
-// path all three of §8.4's ways to end a pin go through.
+// path all three of §6.4's ways to end a pin go through.
 //
 // It returns the path it removed, or "" when the directory was already gone —
 // which is what lets a caller log a real removal and stay silent on the boring
@@ -509,7 +509,7 @@ func ReleasePinDirectory(workRoot, runID, pinName, instanceID string) (string, e
 }
 
 // ReapPinDirectories removes EVERY pin directory under the work root, and is
-// the boot reap of §8.4.
+// the boot reap of §6.4.
 //
 // It is not a heuristic. A pin lives inside a Temporal Worker Session whose
 // resource id is a fresh uuid minted per worker start, so no session — and
@@ -518,7 +518,7 @@ func ReleasePinDirectory(workRoot, runID, pinName, instanceID string) (string, e
 //
 // It returns what it removed and joins whatever it could not, so the caller can
 // log both. A failure here must never fail a boot: cleanup is not orchestration
-// (§8.5), the lease sweep will try again, and refusing to start over a
+// (§6.4), the lease sweep will try again, and refusing to start over a
 // directory nothing will ever read again is worse than starting.
 func ReapPinDirectories(workRoot string) ([]string, error) {
 	dirs, err := pinDirectories(workRoot)
@@ -538,7 +538,7 @@ func ReapPinDirectories(workRoot string) ([]string, error) {
 }
 
 // SweepExpiredPinLeases removes every pin directory whose lease has expired as
-// of now, and is the third way a pin ends (§8.4).
+// of now, and is the third way a pin ends (§6.4).
 //
 // It covers the one leak the other two cannot: an Orker that stays alive while
 // its run is terminated from outside, where Temporal frees the session but no
@@ -687,7 +687,7 @@ func pinDirectory(workRoot, runID, pinName, instanceID string) (string, error) {
 	return filepath.Join(root, name), nil
 }
 
-// validPinInstanceID holds an instance id to ^[0-9a-f-]{36}$ (§8.2), the shape
+// validPinInstanceID holds an instance id to ^[0-9a-f-]{36}$ (§6.4), the shape
 // of the lowercase uuid the engine mints through workflow.SideEffect.
 //
 // Hand-rolled for the same reason ValidSecretName is: the grammar is the

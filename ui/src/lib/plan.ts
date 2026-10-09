@@ -81,7 +81,7 @@ function planOutcomeDetail(task: PlanTask, plan: PlanRunResponse): string {
 		case PlanOutcome.SKIPPED:
 			return task.skipReason;
 		case PlanOutcome.RUNS:
-			// A fan-out is one PlanTask (spec each-fan-out §5.12).
+			// A fan-out is one PlanTask (docs/DSL.md "Fan-out").
 			if (task.each) return task.cache ? `${eachPlanDetail(task)}; ${cachePlanDetail(task.cache)}` : eachPlanDetail(task);
 			// A cached task: a plan never predicts a hit (cmd/orkctl run_plan.go).
 			if (task.cache) return cachePlanDetail(task.cache);

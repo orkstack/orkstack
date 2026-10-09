@@ -43,7 +43,7 @@ const (
 )
 
 // taskRunFixtureYAML is the CLI suite's task-run-fixture: produce -> consume,
-// plus the members C10 needs (a skipped task and a second producer), a task
+// plus the members the closure tests need (a skipped task and a second producer), a task
 // declaring a secret, one whose with: reads an output key that does not
 // exist, and a pinned task.
 const taskRunFixtureYAML = `name: task-run-fixture
@@ -465,8 +465,6 @@ func countRequests(paths []string, method string) int {
 	return n
 }
 
-// ---------------------------------------------------------------- C1
-
 func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	dir := t.TempDir()
@@ -538,8 +536,6 @@ func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------- C2, C3, C4, C5
 
 func TestTaskRun_ReplaysAgainstTheRunsRecordedBytes(t *testing.T) {
 	fx := newTaskRunFixture(t)
@@ -626,8 +622,6 @@ func TestTaskRun_RenderFailureIsATaskFailure(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- C6, C7
-
 func TestTaskRun_WritesNothingToTheDeployment(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	ctx := context.Background()
@@ -709,8 +703,6 @@ func TestTaskRun_NeverReusesTheSourceRunsIdentity(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- C8, C9
-
 func TestTaskRun_RefusesAnUnaccountedSecretBeforeFetching(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	before := len(fx.requests())
@@ -788,8 +780,6 @@ func TestTaskRun_StagesASuppliedSecretAndKeepsNoByteOfIt(t *testing.T) {
 	omitted := fx.runTaskRun(rt, "--from-run", taskRunSourceRun, "--task", "secretive", "--omit-secret", "tok").requireExit(t, exitOK)
 	omitted.requireContains(t, "tok  omitted (--omit-secret)")
 }
-
-// ---------------------------------------------------------------- C10, C11, C12
 
 func TestTaskRun_UpstreamSourcesAreExplicit(t *testing.T) {
 	fx := newTaskRunFixture(t)
@@ -876,8 +866,6 @@ func TestTaskRun_ValidationErrorsRefuseBeforeFetching(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- C13
-
 func TestTaskRunExitCode_FollowsTheCategory(t *testing.T) {
 	cases := []struct {
 		outcome, category string
@@ -910,8 +898,6 @@ func TestTaskRunExitCode_FollowsTheCategory(t *testing.T) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------- C14
 
 // readyWatcher cancels once the transcript shows the container's ready line.
 type readyWatcher struct {
@@ -959,8 +945,6 @@ func TestTaskRun_InterruptRunsTheCancellationSequence(t *testing.T) {
 	}
 	requireNoSession(t, fx.workdir)
 }
-
-// ---------------------------------------------------------------- C15, C16
 
 func TestTaskRun_PinnedTaskGetsAFreshOrSeededSharedDirectory(t *testing.T) {
 	fx := newTaskRunFixture(t)
@@ -1052,8 +1036,6 @@ func TestTaskRun_SessionDirectoryIsRemovedUnlessKept(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- C17, C18
-
 func TestTaskRun_UnreadableUpstreamBytesRefuse(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	fx.seedRun(t, "ork-1790000000000000005-5", func(run *orkstackv1.Run) {
@@ -1081,7 +1063,7 @@ func TestTaskRun_NoRuntimeRefusesBeforeAnyFetch(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- C19 pure helpers
+// ---------------------------------------------------------------- pure helpers
 
 func TestLocalSecrets(t *testing.T) {
 	declared := []*orkstackv1.SecretRef{{Name: "a", Source: "env:A"}, {Name: "b", Source: "env:B"}, {Name: "c", Source: "env:C"}}

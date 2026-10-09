@@ -364,16 +364,14 @@ func TestRunWorkflow_SetsTheHeartbeatAndCancellationOptions(t *testing.T) {
 	}
 }
 
-// TestNonRetryableCategories_AreWhatTheEngineTellsTemporal pins the list the
-// retry policy carries. The constructor's flag is the primary mechanism; this
-// list is what makes the intent visible to a reader of the policy (§8.1).
-func TestNonRetryableCategories_AreWhatTheEngineTellsTemporal(t *testing.T) {
+// TestNonRetryableCategories_AreContractViolationAndTimedOut pins the
+// categories the Orker constructs non-retryable by default (§8.1).
+func TestNonRetryableCategories_AreContractViolationAndTimedOut(t *testing.T) {
 	got := strings.Join(task.NonRetryableCategories(), ",")
 	const want = "ContractViolation,TimedOut"
 	if got != want {
-		t.Errorf("NonRetryableCategories = %q, want %q. TimedOut is terminal by default because "+
-			"acceptance criterion 7 groups timeout with the permanent failures; flipping it back "+
-			"is a one-line change here (§17 C1)", got, want)
+		t.Errorf("NonRetryableCategories = %q, want %q. TimedOut is terminal by default: a workload "+
+			"that timed out once would time out again on the same wall clock (§8.1)", got, want)
 	}
 }
 

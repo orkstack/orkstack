@@ -278,7 +278,7 @@ func planOutcomeDetail(task *orkstackv1.PlanTask, failing string) string {
 		return task.GetSkipReason()
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS:
 		if task.GetEach() != nil {
-			// A fan-out is one PlanTask (spec each-fan-out §5.12).
+			// A fan-out is one PlanTask.
 			if spec := task.GetCache(); spec != nil {
 				return eachDetail(task) + "; " + cachePlanDetail(spec)
 			}
@@ -419,7 +419,7 @@ func planUnusedSentence(plan *orkstackv1.PlanRunResponse) string {
 		strings.Join(plan.GetUnusedAssumedOutputs(), ", "))
 }
 
-// renderPlan prints the human plan (docs: run-plan spec §5.2).
+// renderPlan prints the human plan (docs/UI_CLI_PARITY.md "Run plan").
 func renderPlan(out io.Writer, plan *orkstackv1.PlanRunResponse, file string, assumeFailed []string) error {
 	var buf bytes.Buffer
 	header := fmt.Sprintf("PLAN  %s@%s  namespace %s", plan.GetOrkflowName(), plan.GetOrkflowVersion(), plan.GetNamespace())

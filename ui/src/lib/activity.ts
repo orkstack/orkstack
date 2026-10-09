@@ -19,7 +19,7 @@ import { shellQuote } from './runDetail';
 /**
  * activityLabel is what a task names, in the author's own words.
  *
- * `uses:` is the only image-selecting field in the DSL (§2.3), so it is what
+ * `uses:` is the only image-selecting field in the DSL (docs/DSL.md), so it is what
  * the author wrote and what they will search for. `image.reference` is the
  * same string after resolution and is the fallback for a task read back from
  * a definition that carries only the resolved ref. A task with neither is not

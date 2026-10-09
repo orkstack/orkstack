@@ -78,7 +78,7 @@ func (s *Service) ListOrkflowVersions(
 // is not stored. A lost race is FailedPrecondition — the caller re-reads and
 // decides again — never a silent overwrite of the winner.
 //
-// It is also the interface gate (interface-compatibility-gate §5.2): the
+// It is also the interface gate (docs/UI_CLI_PARITY.md "Interface compatibility"): the
 // target's declared interface is compared with the version a run that names
 // no version executes now, and a BREAKING change is refused until the request
 // acknowledges it. The swap is conditional on the pointer the comparison read

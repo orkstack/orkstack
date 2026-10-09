@@ -491,8 +491,8 @@ func (m *UsageMeter) measureRun(ctx context.Context, entry artifacts.RunIndexEnt
 func bodyFacts(run *orkstackv1.Run) runUsageEntry {
 	facts := runUsageEntry{orkflow: run.GetOrkflowName()}
 	for _, task := range run.GetTaskRuns() {
-		// A fan-out's items are each one more sample of the node (spec
-		// each-fan-out §14, namespace-budgets): its own row is none.
+		// A fan-out's items are each one more sample of the node: its own row
+		// is none.
 		rows := []*orkstackv1.TaskRun{task}
 		if task.GetEach() != nil {
 			rows = task.GetItems()

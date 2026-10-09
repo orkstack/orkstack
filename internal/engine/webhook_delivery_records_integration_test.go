@@ -36,7 +36,7 @@ import (
 
 // These tests prove delivery records on the production shape: the durable
 // webhook registry on MinIO (so deliveries are signed through
-// Store.ListForDelivery, scoped-subscriptions §4.1), an S3DeliveryStore wired
+// Store.ListForDelivery), an S3DeliveryStore wired
 // both as the notifier's Observe callback and as api.Config.Deliveries, a real
 // run on a private Temporal namespace, and a receiver that reads the bytes.
 

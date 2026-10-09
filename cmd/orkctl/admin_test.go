@@ -128,7 +128,7 @@ func TestAdminInfo_GoldenHumanAndJSON(t *testing.T) {
 }
 
 // TestAdminInfo_SaysVersioningIsOffRatherThanPrintingAnEmptyBuildID is the
-// design's explicit rendering rule (v004-design §3.3).
+// explicit rendering rule for an unversioned deployment.
 //
 // An empty build id is not "unknown": it is the documented off switch for
 // Worker Deployment Versioning (AGENTS.md §7.2). Printing a blank cell would

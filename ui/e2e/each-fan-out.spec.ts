@@ -22,7 +22,7 @@ import {
 } from './harness';
 
 // Fan-out (`each:`) on the run detail page, in a browser, against the real
-// stack (spec each-fan-out §10, Playwright).
+// stack (docs/DSL.md "Fan-out").
 //
 // What is measured is the client surface of one claim: a fan-out is ONE card
 // whose items are each a durable task of their own — a cell that moves from
@@ -69,7 +69,7 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
 //
 // The parts are the run's INPUT, so this spec exercises an input-sourced
 // expansion; the shipped example computes its list in a json task and is run
-// end to end by cmd/orkctl/examples_integration_test.go (E3). The
+// end to end by cmd/orkctl/examples_integration_test.go. The
 // upstream-sourced expansion is also proven by the engine suite
 // (internal/engine/each_integration_test.go).
 const PARTS = ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => ({ name }));

@@ -14,7 +14,7 @@ import (
 
 // OrkerFleet is the engine's view of the deployment's Orkers: who is polling
 // the presence channel, and one Orker's own answer or cordon, delivered on its
-// control channel (orker-cordon-drain §6). Production wires *TemporalStarter;
+// control channel (docs/DEPLOY.md "Removing an Orker safely: cordon and drain"). Production wires *TemporalStarter;
 // a test states the facts directly.
 //
 // Nothing here holds an Orker list. Every answer is derived on read from the

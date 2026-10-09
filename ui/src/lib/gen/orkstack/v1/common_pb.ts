@@ -120,8 +120,8 @@ export type Error = Message<"orkstack.v1.Error"> & {
 
   /**
    * category is the AGENTS.md §4 failure category this error belongs to. It
-   * is what drives NonRetryableErrorTypes in ActivityOptions, so it is part
-   * of the replay-visible contract and not merely display data.
+   * is recorded in history, so it is part of the replay-visible contract and
+   * not merely display data.
    *
    * @generated from field: orkstack.v1.FailureCategory category = 5;
    */

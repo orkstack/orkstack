@@ -60,7 +60,7 @@ func (s *Service) ListTaskAttempts(
 			continue
 		}
 		// A fan-out answers one timeline per item, items ascending: its own
-		// row has no attempts (spec each-fan-out §7.2).
+		// row has no attempts.
 		if task.GetEach() != nil {
 			items := task.GetItems()
 			if selected != nil {

@@ -22,7 +22,7 @@ import { shellQuote } from './runDetail';
 /**
  * A kind's client spelling: the value's name after AUTOMATION_OBJECT_KIND_,
  * lowercased — namespace, schedule, trigger, webhook. Derived from the
- * descriptor (run-origin's rule), so a kind added to the proto needs no edit
+ * descriptor (as run origin kinds are), so a kind added to the proto needs no edit
  * here.
  */
 export function automationKindSlug(kind: AutomationObjectKind): string {

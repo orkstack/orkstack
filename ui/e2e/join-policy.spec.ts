@@ -21,7 +21,7 @@ import {
 } from './harness';
 
 // Join policies and failure handlers against a real engine, Orker, Temporal
-// and MinIO (task-join-policy P1–P5): the Orkflow page's DAG marks joins and
+// and MinIO (docs/DSL.md "Joins and failure handlers"): the Orkflow page's DAG marks joins and
 // draws failure handlers dashed; the submit dialog's Plan shows a re-join and
 // — with "Assume these tasks fail" — the failure path; and a failing run is
 // watched LIVE on its run page (never reloaded): the failing note makes the

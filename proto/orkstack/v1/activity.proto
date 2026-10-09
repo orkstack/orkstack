@@ -164,7 +164,7 @@ message PinContext {
   string instance_id = 2;
   // timeout_seconds is the pin's lifetime bound as the engine set it
   // (Pin.timeout_seconds or the derived sum). The Orker derives the shared
-  // directory's lease from it (§8.4).
+  // directory's lease from it (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
   int32 timeout_seconds = 3;
 }
 
@@ -275,8 +275,8 @@ message CacheSource {
   // source ActivityCommit. A memo's age is measured from finished_at.
   google.protobuf.Timestamp started_at = 7;
   google.protobuf.Timestamp finished_at = 8;
-  // item is set when the producer was one item of a fan-out (each-fan-out's
-  // 0-based index); unset otherwise.
+  // item is set when the producer was one item of a fan-out (its 0-based
+  // index); unset otherwise.
   optional int32 item = 9;
   // attempt is the producing attempt (ActivityCommit.attempt).
   int32 attempt = 10;
@@ -711,7 +711,7 @@ message DescribeOrkerResult {
 // and not yet completed. It names the run and the pin — never the session,
 // which is internal (AGENTS.md §7) — and says when the shared directory's
 // lease ends, which is the longest the pin can live even if nothing else
-// closes it (docs/design/task-pinning-worker-session.md §8.4).
+// closes it (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
 message OpenPin {
   string run_id = 1;
   // pin is the name the author wrote in `pin:`. EMPTY until the pin's first

@@ -1,236 +1,138 @@
-# The golden history fixture
+# Recorded run histories
 
-`run-succeeded-v1.json` is a real Temporal history from a successful six-task
-run, recorded against a real cluster by a **versioned** worker, so every
-workflow task in it carries `VERSIONING_BEHAVIOR_PINNED`. It is the repo's
-only old-history-meets-new-code guard: it is recorded once and then AGES, so
-every commit after the recording is measured against a build genuinely older
-than itself. Two tests hold the tree to it on every `make test`:
+Each `*.json` here is a real Temporal history of `RunWorkflow`, recorded once
+against a real cluster by a **versioned** worker (every workflow task carries
+`VERSIONING_BEHAVIOR_PINNED`) and then left to AGE: every later commit is
+measured against a build older than itself. They are the repository's
+old-history-meets-new-code guard (AGENTS.md §7.2), and `make test` holds the
+tree to them in two halves per fixture:
 
-- `TestRunWorkflow_ReplaysCommittedV1History` — the COMMAND half. The SDK's
-  `WorkflowReplayer` rejects a reordered, added or deleted activity.
-- `TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends` — the PAYLOAD
-  half. The replayer never looks inside a payload, so this one re-executes
-  `RunWorkflow` from the fixture's own input and compares what today's code
-  puts INTO each activity call against what the recorded build put there.
+- the **command half** — the SDK's `WorkflowReplayer` replays the history and
+  rejects a reordered, added or deleted command;
+- the **payload half** — the replayer never looks inside a payload, so a
+  second test re-executes `RunWorkflow` from the fixture's own input, feeds
+  back the recorded results, and compares what today's code puts into every
+  activity call (and, where listed, every event and the finished run) with
+  what the recorded build put there.
 
-`TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream` (`replay_test.go`)
-proves the command guard can see an inserted activity, so the fixture is worth
-having from the day it is recorded and not only from the next change onward.
+Each fixture also has a **negative test**: a deliberately altered body or
+stream that the guard must catch, so the fixture is known to see the kind of
+change it exists for.
 
-Nothing writes this file except `TestIntegration_RecordGoldenRunHistory`
-(`internal/engine/golden_history_integration_test.go`), and only when asked:
+## Rules
 
-```bash
-ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
-  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
-  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
-  -run TestIntegration_RecordGoldenRunHistory
-```
+- **Never hand-edit a fixture.** A fixture edited to agree with the code
+  proves only that the code agrees with itself.
+- Re-record a fixture only when what the engine commands or sends on that
+  path genuinely changed — never to turn a red test green. The commit that
+  re-records it says why.
+- A new interpreter path is entered only by a definition that declares the
+  feature, so the older fixtures keep replaying unchanged
+  (`TestCommittedFixtures_DeclareNoJoin` checks this for `join:`). A new
+  command path gets its own fixture, recorder, and command, payload and
+  negative tests on this model.
+- A missing fixture makes its tests skip, naming the command that records
+  it; set the fixture's `ORK_REQUIRE_*` variable to make absence a failure.
 
-**Never hand-edit it.** A fixture edited to agree with the code proves that the
-code agrees with itself, which is the one thing this guard exists not to be.
-
-**The rule:** the fixture is re-recorded only when what the engine puts into an
-activity — the command stream or an activity's input — genuinely changed, and
-never to turn a red test green (AGENTS.md §7.2). The commit that re-records it
-says why.
-
-## The awaited-run fixtures
-
-`run-awaited-resolved-v1.json` and `run-awaited-timeout-v1.json` hold the
-await path still: the first Timer and the first Signal `RunWorkflow` ever
-issued (`docs/DSL.md` "Awaited tasks"). Each is a real history of the run
-`a → await b → c`, recorded once by a **versioned** worker against a real
-cluster — the first completed through a resolution delivered with
-`TemporalStarter.SignalAwait`, the second left to time out after two seconds.
-Three tests hold the tree to them on every `make test`:
-
-- `TestRunWorkflow_ReplaysCommittedAwaitedHistories` — the command half, for
-  both files.
-- `TestAwaitedHistory_ActivityPayloadsMatchWhatCurrentCodeSends` — the payload
-  half: the resolved fixture re-executed from its own input, with its own
-  activity results and its own recorded resolution fed back.
-- `TestAwaitedHistory_CatchesAMovedTimer` — the replay of the resolved fixture
-  against a body that starts the deadline timer after the `TASK_AWAITING`
-  emit instead of before it, which must fail.
-
-Until both files are committed those tests skip and name the command that
-records them (set `ORK_REQUIRE_AWAITED_FIXTURES=1` to make their absence a
-failure). Nothing writes them except `TestIntegration_RecordAwaitedRunHistories`
-(`internal/engine/await_integration_test.go`), and only when asked:
+Recording, against `make infra-up` and only when asked:
 
 ```bash
 ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
   ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
   go test -tags=integration -p 1 -count=1 ./internal/engine/ \
-  -run TestIntegration_RecordAwaitedRunHistories
+  -run <recorder>
 ```
 
-The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
-re-recorded only when the await path's command stream or payloads genuinely
-change, with a commit that says so.
+## Fixtures
 
-## The fan-out fixture
+### `run-succeeded-v1.json` — the base path
 
-`run-each-v1.json` holds the fan-out path still (`docs/DSL.md` "Fan-out"): the
-first `CountEachItems` local-activity marker, the first item activities, the
-first item events published without a snapshot of their own, and the first
-`EachUpstream` reference `RunWorkflow` ever issued. It is a real history of
-`list → convert (each: over list's six parts, max_parallel: 2, item 3 retried
-once) → merge`, recorded once by a **versioned** worker against a real
-cluster. Four tests hold the tree to it on every `make test`:
+A successful six-task run. It also pins the `ExecuteTaskInput` wire
+encoding: the activity argument is a top-level proto message, so Temporal's
+converter records it as protojson (lowerCamel keys). This fixture is never
+re-recorded; a change that would need it is a change to the activity
+contract (`docs/OCI_ACTIVITY_CONTRACT.md` §2.1), not a refactor.
 
-- `TestRunWorkflow_ReplaysCommittedEachHistory` — the command half, plus the
-  ExecuteTask schedule the replay produces (task and item, in order), read
-  through an interceptor: the replayer itself matches an activity command by
-  type and id and never by input, so a dispatch that picked different items
-  would otherwise pass.
-- `TestEachHistory_ActivityPayloadsMatchWhatCurrentCodeSends` — the payload
-  half: the fixture re-executed from its own input, with each recorded
-  ExecuteTask result fed back by task and item, and the recorded count.
-- `TestEachHistory_ReplayNeverRecountsTheArray` — the replay reads the count
-  from its marker and never calls `CountEachItems`, whatever a store would now
-  answer: the replayed run has the recorded six items.
-- `TestEachHistory_CatchesAReorderedDispatch` — the replay against a body that
-  dispatches items in descending order, which must be caught.
+- command: `TestRunWorkflow_ReplaysCommittedV1History`
+- payload: `TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends`
+- negative: `TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream`
+- recorder: `TestIntegration_RecordGoldenRunHistory`
+  (`golden_history_integration_test.go`)
 
-Until the file is committed those tests skip and name the command that
-records it (set `ORK_REQUIRE_EACH_FIXTURE=1` to make its absence a failure).
-Nothing writes it except `TestIntegration_RecordEachRunHistory`
-(`internal/engine/each_integration_test.go`), and only when asked:
+### `run-awaited-resolved-v1.json`, `run-awaited-timeout-v1.json` — awaits
 
-```bash
-ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
-  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
-  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
-  -run TestIntegration_RecordEachRunHistory
-```
+The run `a → await b → c`, the first resolved through a Signal
+(`TemporalStarter.SignalAwait`), the second left to time out. Pins the
+deadline Timer, which starts before the `TASK_AWAITING` emit.
 
-The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
-re-recorded only when the fan-out path's command stream or payloads genuinely
-change, with a commit that says so.
+- command: `TestRunWorkflow_ReplaysCommittedAwaitedHistories`
+- payload: `TestAwaitedHistory_ActivityPayloadsMatchWhatCurrentCodeSends`
+  (with the recorded resolution fed back)
+- negative: `TestAwaitedHistory_CatchesAMovedTimer`
+- recorder: `TestIntegration_RecordAwaitedRunHistories`
+  (`await_integration_test.go`); `ORK_REQUIRE_AWAITED_FIXTURES`
 
-## The composed fixtures
+### `run-each-v1.json` — fan-out
 
-`run-composed-parent-v1.json` and `run-composed-child-v1.json` hold the
-composition path still (`docs/DSL.md` "Composition" and "Outputs"): the first
-`ExecuteChildWorkflow` `RunWorkflow` ever issued, the first
-`RenderComposedValues` and `StoreComposedValues` local-activity markers, and
-the first declared-outputs render. They are real histories of the shipped
-examples — `composed-release` composing `release-block@0.1.0`, whose
-`outputs:` the parent's own `outputs:` projects — recorded once, together, by
-a **versioned** worker against a real cluster. Three tests hold the tree to
-them on every `make test`:
+`list → convert (each: over six parts, max_parallel: 2, item 3 retried once)
+→ merge`. Pins the `CountEachItems` marker, item dispatch order, item events
+without their own snapshot, and the `EachUpstream` reference.
 
-- `TestRunWorkflow_ReplaysCommittedComposedHistories` — the command half, for
-  both files.
-- `TestComposedHistory_PayloadsMatchWhatCurrentCodeSends` — the payload half:
-  the parent re-executed from its own input, with its recorded task results,
-  render and store markers and its child's recorded result fed back, and
-  every ExecuteTask input and the child start — id, task queue, parent-close
-  policy, memo, search attributes and its four input payloads — compared with
-  the recorded `StartChildWorkflowExecutionInitiated`.
-- `TestComposedHistory_CatchesAChildStartWithoutItsRender` — the replay of the
-  parent against a body that starts the child without first recording its
-  input render, which must fail.
+- command: `TestRunWorkflow_ReplaysCommittedEachHistory`, which also checks
+  the `ExecuteTask` schedule (task and item, in order) through an
+  interceptor, because the replayer matches an activity by type and id, never
+  by input
+- payload: `TestEachHistory_ActivityPayloadsMatchWhatCurrentCodeSends`;
+  `TestEachHistory_ReplayNeverRecountsTheArray` (the count comes from the
+  marker, whatever a store would now answer)
+- negative: `TestEachHistory_CatchesAReorderedDispatch`
+- recorder: `TestIntegration_RecordEachRunHistory`
+  (`each_integration_test.go`); `ORK_REQUIRE_EACH_FIXTURE`
 
-Until both files are committed those tests skip and name the command that
-records them (set `ORK_REQUIRE_COMPOSED_FIXTURES=1` to make their absence a
-failure). Nothing writes them except `TestIntegration_RecordComposedRunHistory`
-(`internal/engine/compose_integration_test.go`), and only when asked:
+### `run-composed-parent-v1.json`, `run-composed-child-v1.json` — composition
 
-```bash
-ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
-  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
-  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
-  -run TestIntegration_RecordComposedRunHistory
-```
+The shipped `composed-release` example composing `release-block@0.1.0`,
+recorded together. Pins `ExecuteChildWorkflow`, the `RenderComposedValues`
+and `StoreComposedValues` markers, and the declared-outputs render.
 
-The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
-re-recorded only when the composition path's command stream or payloads
-genuinely change, with a commit that says so.
+- command: `TestRunWorkflow_ReplaysCommittedComposedHistories`
+- payload: `TestComposedHistory_PayloadsMatchWhatCurrentCodeSends` — every
+  `ExecuteTask` input and the child start (id, task queue, parent-close
+  policy, memo, search attributes, input payloads)
+- negative: `TestComposedHistory_CatchesAChildStartWithoutItsRender`
+- recorder: `TestIntegration_RecordComposedRunHistory`
+  (`compose_integration_test.go`); `ORK_REQUIRE_COMPOSED_FIXTURES`
 
-## The cached fixture
+### `run-cached-v1.json` — caching
 
-`run-cached-v1.json` holds the caching path still (`docs/DSL.md` "Caching"):
-the first `ExecuteTaskInput.cache` (`CacheContext`) `RunWorkflow` ever sent,
-the first `ExecuteTaskResult.cache` it recorded, and the first
-`task succeeded (cached from run …)` event. It is a real history of the
-**second** run of `examples/cached-pipeline.ork.yaml` — `featurize` a hit on
-the first run's memo, `stamp` uncached, `train` a miss — recorded once by a
-**versioned** worker against a real cluster. Three tests hold the tree to it
-on every `make test`:
+The second run of `examples/cached-pipeline.ork.yaml`: `featurize` a hit on
+the first run's memo, `stamp` uncached, `train` a miss. Pins
+`ExecuteTaskInput.cache`, `ExecuteTaskResult.cache` and the
+`task succeeded (cached from run …)` event. A run with no cached task sends no
+cache context, so `run-succeeded-v1.json` is unaffected.
 
-- `TestRunWorkflow_ReplaysCommittedCachedHistory` — the command half.
-- `TestCachedHistory_ActivityPayloadsMatchWhatCurrentCodeSends` — the payload
-  half: the fixture re-executed from its own input, with its recorded
-  ExecuteTask results fed back, and every activity input (`cache` included),
-  every event and the finished run compared with the recorded ones.
-- `TestCachedHistory_PayloadCheckCatchesADroppedCacheContext` — the same
-  comparison against a body whose `cacheContextFor` returns nil, which must
-  find the difference.
+- command: `TestRunWorkflow_ReplaysCommittedCachedHistory`
+- payload: `TestCachedHistory_ActivityPayloadsMatchWhatCurrentCodeSends`
+  (every input, event and the finished run)
+- negative: `TestCachedHistory_PayloadCheckCatchesADroppedCacheContext`
+- recorder: `TestIntegration_RecordCachedRunHistory`
+  (`cache_integration_test.go`); `ORK_REQUIRE_CACHED_FIXTURE`
 
-Until the file is committed those tests skip and name the command that
-records it (set `ORK_REQUIRE_CACHED_FIXTURE=1` to make its absence a
-failure). Nothing writes it except `TestIntegration_RecordCachedRunHistory`
-(`internal/engine/cache_integration_test.go`, I15), and only when asked:
+### `run-join-v1.json` — joins and failure handlers
 
-```bash
-ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
-  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
-  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
-  -run TestIntegration_RecordCachedRunHistory
-```
+`examples/branch-and-recover.ork.yaml` with `route=full`, `fail_deploy=true`,
+`smoke_seconds=120`: `full` and `verify` run, `canary` skipped, `deploy` fails
+after two attempts, `smoke` stopped, `announce` never started, `rollback` and
+`notify` run, `escalate` skipped. Pins a `none_failed` decision, a failure
+handler dispatched after fail-fast with `ExecuteTaskInput.join` and a failed
+need's artifact reference, the failing note (a `TASK_LOG` with no task id),
+and `RUN_FAILED` after the handlers end.
 
-The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
-re-recorded only when the caching path's command stream or payloads genuinely
-change, with a commit that says so. `run-succeeded-v1.json` itself has no
-cached task and keeps matching unchanged: a run with no cached task sends no
-`CacheContext`.
-
-## The join fixture
-
-`run-join-v1.json` holds the join path still (`docs/DSL.md` "Joins and
-failure handlers"): the first `none_failed` decision, the first failure
-handler dispatched after fail-fast with an `ExecuteTaskInput.join`
-(`JoinContext`) and a failed need's artifact reference, the first failing note
-(a `TASK_LOG` with no task id) and the first `RUN_FAILED` emitted after a run's
-failure handlers ended. It is a real history of
-`examples/branch-and-recover.ork.yaml` with `route=full`, `fail_deploy=true`
-and `smoke_seconds=120` — `full` and `verify` run, `canary` skipped, `deploy`
-failed after its two attempts, `smoke` stopped, `announce` never started,
-`rollback` and `notify` run, `escalate` skipped — recorded once by a
-**versioned** worker against a real cluster. Three tests hold the tree to it
-on every `make test`:
-
-- `TestRunWorkflow_ReplaysCommittedJoinHistory` — the command half, plus the
-  `ExecuteTask` schedule the replay produces (task order), read through an
-  interceptor as the fan-out fixture's test does.
-- `TestJoinHistory_ActivityPayloadsMatchWhatCurrentCodeSends` — the payload
-  half: the fixture re-executed from its own input, with its recorded results
-  fed back, and every `ExecuteTaskInput` (the handler's `join` and the
-  failed-need reference included), every event message and the finished run
-  compared with the recorded ones.
-- `TestJoinHistory_CatchesAHandlerOnTheRunContext` — the replay against a body
-  that dispatches failure handlers on the run's own context (which fail-fast
-  cancels), which must fail with a nondeterminism error.
-
-Until the file is committed those tests skip and name the command that
-records it (set `ORK_REQUIRE_JOIN_FIXTURE=1` to make its absence a failure).
-Nothing writes it except `TestIntegration_RecordJoinRunHistory`
-(`internal/engine/join_integration_test.go`, I17), and only when asked:
-
-```bash
-ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
-  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
-  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
-  -run TestIntegration_RecordJoinRunHistory
-```
-
-The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
-re-recorded only when the join path's command stream or payloads genuinely
-change, with a commit that says so. The seven earlier fixtures declare no
-`join:` — `TestCommittedFixtures_DeclareNoJoin` (`replay_test.go`) decodes each
-one's input and checks it — so they keep matching unchanged: every new branch
-of the interpreter is entered only by a definition that declares a join.
+- command: `TestRunWorkflow_ReplaysCommittedJoinHistory`, with the
+  `ExecuteTask` schedule checked as for fan-out
+- payload: `TestJoinHistory_ActivityPayloadsMatchWhatCurrentCodeSends`
+  (every input, event message and the finished run)
+- negative: `TestJoinHistory_CatchesAHandlerOnTheRunContext` — handlers
+  dispatched on the run context fail-fast cancels
+- recorder: `TestIntegration_RecordJoinRunHistory`
+  (`join_integration_test.go`); `ORK_REQUIRE_JOIN_FIXTURE`

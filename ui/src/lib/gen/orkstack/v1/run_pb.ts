@@ -709,7 +709,7 @@ export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
    * record whose request the Orker's policy admitted — including an attempt
    * that adopted a commit or failed before its container started, because
    * the Orker's slot was committed to it either way. Unset when the request
-   * was refused (RESOURCE_REFUSED), on a record written before this field
+   * was refused (RESOURCE_REQUEST_REFUSED), on a record written before this field
    * existed, and on a synthesized UNREPORTED row. A reader never treats
    * unset as zero: usage counts such an attempt's held time and reports it
    * as carrying no reservation. schema_version stays 1: the field is

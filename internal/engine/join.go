@@ -50,7 +50,7 @@ func (o needOutcome) word() string {
 // only kind of task that starts in a failing run.
 func isFailureHandler(t *orkstackv1.Task) bool { return dsl.IsFailureHandler(t) }
 
-// joinAdmits is §1.2's table: whether a task whose needs are all terminal is
+// joinAdmits is the join table (docs/DSL.md "Joins and failure handlers"): whether a task whose needs are all terminal is
 // admitted by its join, and when not, the reason recorded after "task
 // skipped: ". Pure; shared by classify and Simulate so a plan and a run say
 // one sentence. UNSPECIFIED (all_succeeded) is classify's own loop; it is
@@ -370,7 +370,7 @@ func (s *runState) settleHandlerDispatch(ctx workflow.Context, id string, err er
 }
 
 // failWithHandlers is fail() for a definition that declares a failure
-// handler (task-join-policy §4.5, F1–F13). The order is replay-visible.
+// handler (docs/DSL.md "Joins and failure handlers"). The order is replay-visible.
 func (s *runState) failWithHandlers(
 	ctx workflow.Context,
 	cancelRun workflow.CancelFunc,
@@ -521,7 +521,7 @@ func (s *runState) cancelWithHandlers(
 	return s.snapshot(), cause
 }
 
-// runFailureHandlers is the failing phase (§4.6): every pending failure
+// runFailureHandlers is the failing phase: every pending failure
 // handler is classified as its needs settle and dispatched on handlerCtx;
 // every outcome is recorded and none stops anything else. It returns when
 // nothing is in flight, no await is open and nothing is ready.
@@ -538,7 +538,7 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				}
 				continue
 			}
-			run, err := s.classify(ectx, id) // a condition error records CONDITION_FAILED itself (§4.4)
+			run, err := s.classify(ectx, id) // a condition error records CONDITION_FAILED itself
 			if err != nil || !run {
 				continue
 			}

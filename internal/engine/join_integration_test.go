@@ -32,11 +32,11 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The join-policy integration suite (task-join-policy, "Integration"): real
+// The join-policy integration suite (docs/DSL.md "Joins and failure handlers"): real
 // Temporal, real MinIO and real Orkers running the first-party shell image
 // in Docker, on examples/branch-and-recover.ork.yaml AS SHIPPED — driven only
 // by its inputs — except the two named variants, each defined by the one
-// change it makes to rollback (I9b's no-retry variant, I12's await variant).
+// change it makes to rollback (a no-retry variant and an await variant).
 // A phase the test must act inside is held open by the example's own
 // smoke_seconds / rollback_seconds, and the test acts when it OBSERVES the
 // moment — an event, a live attempt's heartbeat — never after a sleep of its
@@ -285,7 +285,7 @@ var allTasks = []string{"decide", "canary", "full", "verify", "deploy", "smoke",
 
 const anyFailedSkip = "task skipped: join any_failed: none of its needs failed (deploy); it runs only when one of them fails"
 
-// I1 — re-join, both routes.
+// Re-join, both routes.
 func TestIntegration_JoinRejoinsAfterTheBranchThatRan(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i1")
@@ -333,7 +333,7 @@ func TestIntegration_JoinRejoinsAfterTheBranchThatRan(t *testing.T) {
 	proof.Write(t, "engine", "join-I1.txt", []byte(strings.Join(lines, "\n")+"\n"))
 }
 
-// I2 — every branch skipped.
+// Every branch skipped.
 func TestIntegration_JoinEveryBranchSkipped(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i2")
@@ -371,7 +371,7 @@ func failingNotes(events []*orkstackv1.Event) []*orkstackv1.Event {
 	return out
 }
 
-// I3 — a failure handler.
+// A failure handler.
 func TestIntegration_JoinFailureHandlerRunsAndTheRunStillFails(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i3")
@@ -451,7 +451,7 @@ func TestIntegration_JoinFailureHandlerRunsAndTheRunStillFails(t *testing.T) {
 		runID, runLine(run, allTasks...), runJSON, noteJSON, rollbackOut, notifyOut)))
 }
 
-// I4 — the failing shape on the wire, from a second replica's reader.
+// The failing shape on the wire, from a second replica's reader.
 func TestIntegration_JoinFailingShapeOnTheWire(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i4")
@@ -480,7 +480,7 @@ func TestIntegration_JoinFailingShapeOnTheWire(t *testing.T) {
 		failing.GetStatus(), failing.GetError().GetMessage(), ended.GetStatus(), ended.GetError().GetMessage())))
 }
 
-// I5 — a handler fails.
+// A handler fails.
 func TestIntegration_JoinAHandlerFailsAndEscalates(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i5")
@@ -517,7 +517,7 @@ func TestIntegration_JoinAHandlerFailsAndEscalates(t *testing.T) {
 	proof.Write(t, "engine", "join-I5.txt", []byte(runLine(run, allTasks...)+"\n"))
 }
 
-// I6 — operator cancel before any failure.
+// Operator cancel before any failure.
 func TestIntegration_JoinOperatorCancelStartsNoHandler(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i6")
@@ -556,7 +556,7 @@ func TestIntegration_JoinOperatorCancelStartsNoHandler(t *testing.T) {
 	proof.Write(t, "engine", "join-I6.txt", []byte(runLine(run, allTasks...)+"\n"))
 }
 
-// I7 — operator cancel during the failing phase.
+// Operator cancel during the failing phase.
 func TestIntegration_JoinCancelDuringHandlersKeepsTheRunFailed(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i7")
@@ -586,7 +586,7 @@ func TestIntegration_JoinCancelDuringHandlersKeepsTheRunFailed(t *testing.T) {
 		runID, run.GetStatus(), run.GetError().GetMessage(), runLine(run, allTasks...))))
 }
 
-// I8 — external terminate during the failing phase.
+// External terminate during the failing phase.
 func TestIntegration_JoinTerminatedFailingRunReadsCanceledWithItsError(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i8")
@@ -654,7 +654,7 @@ func (j *joinE2E) awaitLiveAttempt(runID, taskID string, attempt int32, within t
 	return ""
 }
 
-// killUnderRollback is I9's and I9b's procedure: two Orkers; once notify
+// killUnderRollback is the kill-under-a-handler procedure: two Orkers; once notify
 // succeeded and rollback's first attempt heartbeats, stop the Orker under it.
 func (j *joinE2E) killUnderRollback(runID string, workers map[string]worker.Worker) string {
 	j.t.Helper()
@@ -688,7 +688,7 @@ func heartbeatRetry(t *testing.T, h *history.History, taskID string) (int32, str
 	return 0, ""
 }
 
-// I9 — an Orker killed under a running handler retries it per its policy.
+// An Orker killed under a running handler retries it per its policy.
 func TestIntegration_JoinOrkerKilledUnderAHandlerRetriesIt(t *testing.T) {
 	j := startJoinE2E(t)
 	workers := map[string]worker.Worker{"join-i9-a": j.orker("join-i9-a"), "join-i9-b": j.orker("join-i9-b")}
@@ -730,7 +730,7 @@ func TestIntegration_JoinOrkerKilledUnderAHandlerRetriesIt(t *testing.T) {
 		victim, rollback.GetOrkerId(), attempt, timeoutType, records, runLine(run, allTasks...))))
 }
 
-// I9b — the same kill, with no retry policy.
+// The same kill, with no retry policy.
 func TestIntegration_JoinOrkerKilledUnderAHandlerWithoutRetryFailsIt(t *testing.T) {
 	j := startJoinE2E(t)
 	workers := map[string]worker.Worker{"join-i9b-a": j.orker("join-i9b-a"), "join-i9b-b": j.orker("join-i9b-b")}
@@ -761,7 +761,7 @@ func TestIntegration_JoinOrkerKilledUnderAHandlerWithoutRetryFailsIt(t *testing.
 		rollback.GetError().GetCode(), rollback.GetError().GetCategory(), rollback.GetRetryState(), run.GetError().GetMessage())))
 }
 
-// I10 — engine restarted during the failing phase.
+// Engine restarted during the failing phase.
 func TestIntegration_JoinEngineRestartDuringHandlersDispatchesNothingTwice(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i10")
@@ -795,7 +795,7 @@ func TestIntegration_JoinEngineRestartDuringHandlersDispatchesNothingTwice(t *te
 	proof.Write(t, "engine", "join-I10.txt", []byte(strings.Join(lines, " ")+"\n"))
 }
 
-// I11 — composed.
+// Composed.
 func TestIntegration_JoinComposedHandlersRunInTheirOrder(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i11")
@@ -879,7 +879,7 @@ func signalAwait(t *testing.T, j *joinE2E, runID string, sig *orkstackv1.AwaitSi
 	}
 }
 
-// I12 — awaited.
+// Awaited.
 func TestIntegration_JoinAwaitedHandlers(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i12")
@@ -941,7 +941,7 @@ tasks:
 	proof.Write(t, "engine", "join-I12.txt", []byte("rejected gate fired tidy; await variant resolved and rejected while failing\n"))
 }
 
-// I13 — fan-out.
+// Fan-out.
 func TestIntegration_JoinAnItemFailureStartsTheFanOutsHandler(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i13")
@@ -982,7 +982,7 @@ tasks:
 	proof.Write(t, "engine", "join-I13.txt", []byte(out))
 }
 
-// I14 — a lost pin: three pin hosts; the host running the pinned member is
+// A lost pin: three pin hosts; the host running the pinned member is
 // killed; the unpinned any_failed handler runs on a survivor.
 func TestIntegration_JoinALostPinStartsAnUnpinnedHandler(t *testing.T) {
 	j := startJoinE2E(t)
@@ -1055,7 +1055,7 @@ tasks:
 		victim, compile.GetError().GetCode(), recover.GetOrkerId())))
 }
 
-// I15 — cache on a re-join.
+// Cache on a re-join.
 func TestIntegration_JoinCachedReJoinHitsForTheSameRoute(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i15")
@@ -1096,7 +1096,7 @@ tasks:
 	proof.Write(t, "engine", "join-I15.txt", []byte(fmt.Sprintf("canary=%s canary=%s full=%s\n", first, second, other)))
 }
 
-// I16 — a broken condition.
+// A broken condition.
 func TestIntegration_JoinBrokenConditionFailsItsTaskWhenAHandlerExists(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i16")
@@ -1140,7 +1140,7 @@ tasks:
 		broken.GetStatus(), broken.GetError().GetCode(), taskRunNamed(plain, "broken").GetStatus())))
 }
 
-// I18 — an Orker that predates joins.
+// An Orker that predates joins.
 func TestIntegration_JoinSubmitRefusesAPoolWhoseOrkerPredatesJoins(t *testing.T) {
 	j := startJoinE2E(t)
 	pool := fmt.Sprintf("old-%d", time.Now().UnixNano()%1_000_000)
@@ -1197,7 +1197,7 @@ func TestIntegration_JoinSubmitRefusesAPoolWhoseOrkerPredatesJoins(t *testing.T)
 	}
 }
 
-// I17 — opt-in recorder of testdata/history/run-join-v1.json: the shipped
+// Opt-in recorder of testdata/history/run-join-v1.json: the shipped
 // example with route=full, fail_deploy=true and smoke_seconds=120, on a
 // VERSIONED worker and a real Orker.
 func TestIntegration_RecordJoinRunHistory(t *testing.T) {

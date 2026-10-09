@@ -32,8 +32,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The fan-out integration suite (spec each-fan-out, "Integration"): real
-// Temporal, real MinIO and — for I1–I5 — the real Orker running real
+// The fan-out integration suite (docs/DSL.md "Fan-out"): real
+// Temporal, real MinIO and — for the Orker scenarios — the real Orker running real
 // containers through Docker, on the shape of examples/each-fan-out.ork.yaml:
 // list → convert (each: over list's parts) → merge. Every scenario runs in a
 // private Temporal namespace on private channels (AGENTS.md §11.1).
@@ -307,7 +307,6 @@ func (e *eachE2E) objectExists(key string) bool {
 	return err == nil
 }
 
-// I1.
 func TestIntegration_EachCommitsEveryItemUnderItsOwnKey(t *testing.T) {
 	e := startEachE2E(t, true)
 	e.startOrker("each-i1")
@@ -340,7 +339,6 @@ func TestIntegration_EachCommitsEveryItemUnderItsOwnKey(t *testing.T) {
 	proof.Write(t, "engine", "each-I1.txt", []byte(strings.Join(append(lines, "merge="+values), "\n")+"\n"))
 }
 
-// I2.
 func TestIntegration_EachItemRetriesAloneAndSiblingsRunOnce(t *testing.T) {
 	e := startEachE2E(t, true)
 	e.startOrker("each-i2")
@@ -365,7 +363,7 @@ func TestIntegration_EachItemRetriesAloneAndSiblingsRunOnce(t *testing.T) {
 	proof.Write(t, "engine", "each-I2.txt", []byte(fmt.Sprintf("run=%s item 2 retried alone; siblings ran once\n", runID)))
 }
 
-// I3: kill the Orker while item 1 runs; item 1 retries on another Orker and
+// Kill the Orker while item 1 runs; item 1 retries on another Orker and
 // the other items' commits and records are untouched.
 func TestIntegration_EachOrkerKilledMidItemRetriesOnlyThatItem(t *testing.T) {
 	e := startEachE2E(t, true)
@@ -377,7 +375,7 @@ func TestIntegration_EachOrkerKilledMidItemRetriesOnlyThatItem(t *testing.T) {
 	// Items 0 and 2 settle while item 1 holds its container: both must be
 	// committed before the kill, or the kill would legitimately cancel and
 	// retry them too. Item 1 reads RUNNING in the first fresh snapshot after
-	// a sibling settles (the expansion's snapshots show items PENDING, §5.6).
+	// a sibling settles (the expansion's snapshots show items PENDING).
 	e.awaitItemStatus(runID, 0, orkstackv1.Status_STATUS_SUCCEEDED, 3*time.Minute)
 	e.awaitItemStatus(runID, 2, orkstackv1.Status_STATUS_SUCCEEDED, 3*time.Minute)
 	e.awaitItemStatus(runID, 1, orkstackv1.Status_STATUS_RUNNING, time.Minute)
@@ -400,7 +398,7 @@ func TestIntegration_EachOrkerKilledMidItemRetriesOnlyThatItem(t *testing.T) {
 	proof.Write(t, "engine", "each-I3.txt", []byte(fmt.Sprintf("run=%s item1 orker=%s\n", runID, items[1].GetOrkerId())))
 }
 
-// I4: kill after item 0's commit.json, before completion: the retry adopts.
+// Kill after item 0's commit.json, before completion: the retry adopts.
 func TestIntegration_EachItemCommittedThenOrkerDiesIsAdopted(t *testing.T) {
 	e := startEachE2E(t, true)
 	runID := fmt.Sprintf("ork-each-i4-%d", time.Now().UnixNano())
@@ -453,7 +451,7 @@ func TestIntegration_EachItemCommittedThenOrkerDiesIsAdopted(t *testing.T) {
 	proof.Write(t, "engine", "each-I4.txt", []byte(fmt.Sprintf("run=%s item0 commit_adopted=true records=%d\n", runID, len(records))))
 }
 
-// I5: stop the run worker with items in flight, start a fresh one: the run
+// Stop the run worker with items in flight, start a fresh one: the run
 // completes and every item has exactly one ExecuteTask scheduling in history.
 func TestIntegration_EachEngineRestartMidFanOutDispatchesNothingTwice(t *testing.T) {
 	e := startEachE2E(t, true)
@@ -462,7 +460,7 @@ func TestIntegration_EachEngineRestartMidFanOutDispatchesNothingTwice(t *testing
 	hold := `sleep 2; `
 	e.start(runID, e.eachDefinition("each-i5", 6, 2, hold))
 	// The read model shows an item RUNNING only in a fresh snapshot taken
-	// after a sibling settles (§5.6), so "mid-fan-out" is observed as item 0
+	// after a sibling settles, so "mid-fan-out" is observed as item 0
 	// settled: with at most 2 at a time, items are still in flight and items
 	// 2–5 are not all dispatched yet.
 	e.awaitItemStatus(runID, 0, orkstackv1.Status_STATUS_SUCCEEDED, 3*time.Minute)
@@ -487,7 +485,7 @@ func TestIntegration_EachEngineRestartMidFanOutDispatchesNothingTwice(t *testing
 	proof.Write(t, "engine", "each-I5.txt", []byte(fmt.Sprintf("run=%s schedulings=%v\n", runID, counts)))
 }
 
-// I6: a 1000-item fan-out over an input of 1000 small integers, against a
+// A 1000-item fan-out over an input of 1000 small integers, against a
 // stand-in ExecuteTask that returns realistic results, stays inside the
 // stated history budget, and no workflow task schedules more than 2 MiB.
 func TestIntegration_EachHistoryStaysInsideTheBudgetAtTheCeiling(t *testing.T) {
@@ -562,7 +560,7 @@ func TestIntegration_EachHistoryStaysInsideTheBudgetAtTheCeiling(t *testing.T) {
 	}
 }
 
-// I7: a stand-in DescribeOrker answering each_supported: false on the pool's
+// A stand-in DescribeOrker answering each_supported: false on the pool's
 // channel refuses the submit.
 func TestIntegration_EachSubmitRefusesAPoolWhoseOrkerPredatesFanOut(t *testing.T) {
 	e := startEachE2E(t, false)
@@ -610,7 +608,7 @@ func TestIntegration_EachSubmitRefusesAPoolWhoseOrkerPredatesFanOut(t *testing.T
 	}
 }
 
-// I8: opt-in recorder of testdata/history/run-each-v1.json.
+// Opt-in recorder of testdata/history/run-each-v1.json.
 func TestIntegration_RecordEachRunHistory(t *testing.T) {
 	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") == "" {
 		t.Skip("set ORK_RECORD_GOLDEN_HISTORY=1 to record " + eachHistory +

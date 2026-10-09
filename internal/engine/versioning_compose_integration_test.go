@@ -20,8 +20,9 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// TestIntegration_ComposedChildRunsOnItsParentsVersion is I8: the observation
-// spec composed-orkflows §6.9 rests on, not the assumption. A parent starts
+// TestIntegration_ComposedChildRunsOnItsParentsVersion is the observation the
+// composed-child versioning rule (docs/DEPLOY.md §2) rests on, not the
+// assumption. A parent starts
 // while v1 is current and holds at its gate while v2 is promoted; only then
 // does it reach its composed task and start the child. The child must start
 // on v1 — the version of the Pinned parent that started it, whose release

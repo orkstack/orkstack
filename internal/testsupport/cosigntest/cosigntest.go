@@ -3,8 +3,8 @@
 // internal/dsl.SignatureVerifier and for test/tools/cosign-sign.
 //
 // It is TEST TOOLING. No binary under cmd/ links it: OrkStack never signs
-// anything and never holds a private key (image-supply-chain-policy §
-// Non-goals). It exists as a package rather than a test helper because four
+// anything and never holds a private key (docs/DEPLOY.md "Image supply-chain
+// policy"). It exists as a package rather than a test helper because four
 // suites (internal/dsl, internal/api, internal/orker, cmd/orkctl) and one
 // tool need the same layout, and one copy of a layout is the point — the
 // integration suite proves this copy is what the real `cosign` CLI writes and
@@ -417,23 +417,6 @@ func (c *Client) getBlob(ctx context.Context, host, repo, digest string) ([]byte
 		return nil, fmt.Errorf("GET blob %s/%s@%s: %d", host, repo, digest, resp.StatusCode)
 	}
 	return body, nil
-}
-
-// SplitReference splits "host/repo:tag" or "host/repo@digest" into its parts.
-// The host is the first segment; this is test tooling for loopback
-// registries, not a general parser.
-func SplitReference(ref string) (host, repo, tagOrDigest string, err error) {
-	host, rest, ok := strings.Cut(ref, "/")
-	if !ok || rest == "" {
-		return "", "", "", fmt.Errorf("reference %q has no host/repository", ref)
-	}
-	if at := strings.LastIndex(rest, "@"); at >= 0 {
-		return host, rest[:at], rest[at+1:], nil
-	}
-	if colon := strings.LastIndex(rest, ":"); colon >= 0 {
-		return host, rest[:colon], rest[colon+1:], nil
-	}
-	return host, rest, "latest", nil
 }
 
 // hostOf strips a scheme from an httptest URL.

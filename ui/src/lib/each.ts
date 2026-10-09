@@ -1,4 +1,4 @@
-// Fan-out on the run page (spec each-fan-out §10): the page's only logic
+// Fan-out on the run page (docs/DSL.md "Fan-out"): the page's only logic
 // about items, kept here so it is unit-tested. An item is addressed by its
 // 0-based index and rendered convert[97] — a rendering, never parsed.
 

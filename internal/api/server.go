@@ -95,7 +95,7 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 
 	// ScheduleService manages schedules: the third run starter, bound to one
 	// orkflow in one namespace, whose every field lives in a Temporal
-	// Schedule (orkflow-schedules).
+	// Schedule (docs/ORKFLOW_SCHEDULES.md).
 	schedulePath, scheduleHandler := orkstackv1connect.NewScheduleServiceHandler(svc, handlerOptions...)
 	mux.Handle(schedulePath, scheduleHandler)
 

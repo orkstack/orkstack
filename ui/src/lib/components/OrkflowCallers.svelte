@@ -3,7 +3,7 @@
 	// version each one pins — `orkctl orkflow callers`, in the same columns and
 	// words. It is read here, on mount and when "every version" changes, not
 	// in the page loader: the engine answers it with a scan of the namespace,
-	// which not every tab should pay for (interface-compatibility-gate §7.5).
+	// which not every tab should pay for (docs/UI_CLI_PARITY.md "Interface compatibility").
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { errorMessage, orkstack } from '$lib/client';

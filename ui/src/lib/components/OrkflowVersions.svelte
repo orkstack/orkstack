@@ -90,8 +90,8 @@
 	// The dialog's interface comparison and callers are INFORMATION: the gate
 	// is the engine's, and it compares again when the promotion is sent. A
 	// comparison that could not be read therefore never blocks the button; a
-	// BREAKING one does until it is acknowledged (interface-compatibility-gate
-	// §7.3).
+	// BREAKING one does until it is acknowledged (docs/UI_CLI_PARITY.md
+	// "Interface compatibility").
 	let promoteComparing = $state(false);
 	let promoteCompare = $state<CompareInterfacesResponse | null>(null);
 	let promoteCompareError = $state('');

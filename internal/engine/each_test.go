@@ -578,8 +578,8 @@ func TestRunWorkflow_EachExpansionRefusalsFailBeforeDispatch(t *testing.T) {
 	}
 }
 
-// Spec test names, kept as thin aliases of the table above so `go test -run`
-// finds each by the name the spec gives it.
+// Named aliases of the table above, so `go test -run` finds each scenario by
+// name.
 func TestRunWorkflow_EachTooManyItemsFailsBeforeDispatch(t *testing.T) {
 	TestRunWorkflow_EachExpansionRefusalsFailBeforeDispatch(t)
 }
@@ -778,7 +778,7 @@ func TestRunWorkflow_EachItemInputBoundIsShared(t *testing.T) {
 }
 
 // An item that settles and frees a slot whose refill the engine refuses
-// (INPUT_TOO_LARGE) still gets its one TASK_LOG event (spec §5.5 step 3):
+// (INPUT_TOO_LARGE) still gets its one TASK_LOG event:
 // every item the node records SUCCEEDED has a SUCCEEDED item event. The
 // with: value is sized so items 0-9 sit exactly at the shared per-item bound
 // and item 10, whose idempotency key is one digit longer, is one byte over,

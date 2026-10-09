@@ -290,8 +290,8 @@ type Error struct {
 	Details   string                 `protobuf:"bytes,3,opt,name=details,proto3" json:"details,omitempty"` // optional stack/context
 	Retryable bool                   `protobuf:"varint,4,opt,name=retryable,proto3" json:"retryable,omitempty"`
 	// category is the AGENTS.md §4 failure category this error belongs to. It
-	// is what drives NonRetryableErrorTypes in ActivityOptions, so it is part
-	// of the replay-visible contract and not merely display data.
+	// is recorded in history, so it is part of the replay-visible contract and
+	// not merely display data.
 	Category      FailureCategory `protobuf:"varint,5,opt,name=category,proto3,enum=orkstack.v1.FailureCategory" json:"category,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

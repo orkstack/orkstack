@@ -132,7 +132,7 @@ func (d Deployment) Apply(opts worker.Options) worker.Options {
 
 // IndexedVersion is the value SearchAttrDeploymentVersion holds for build
 // buildID of deployment name: "<name>:<buildID>" — the spelling the cluster's
-// run index uses (orkctl-release §4, pinned by
+// run index uses (pinned by
 // TestIntegration_ReleaseRunsCountsARunExecutingOnIt). A name or build id
 // holding a double quote, a backslash, or a control character cannot be
 // written into a query without escaping the cluster's grammar does not

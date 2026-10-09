@@ -43,7 +43,8 @@ func (r *recordingAuditStore) lastQuery(t *testing.T) artifacts.AuditQuery {
 }
 
 // auditFixture is the real API over a seeded audit store. The records are the
-// WHY example of the spec, stamped in the fixture's window.
+// worked example of docs/UI_CLI_PARITY.md "Control-plane audit trail",
+// stamped in the fixture's window.
 func auditFixture(t *testing.T) (*fixture, *recordingAuditStore) {
 	t.Helper()
 	store := &recordingAuditStore{MemoryAuditStore: artifacts.NewMemoryAuditStore()}

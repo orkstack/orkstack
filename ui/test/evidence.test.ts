@@ -13,7 +13,7 @@ import {
 } from '../src/lib/evidence';
 import { runCommand } from '../src/lib/runDetail';
 
-// The E2 golden from internal/evidence: the exact document the engine writes.
+// The golden manifest from internal/evidence: the exact document the engine writes.
 const golden = readFileSync(`${import.meta.dir}/../../internal/evidence/testdata/manifest.golden.json`, 'utf8');
 const goldenBytes = new TextEncoder().encode(golden);
 

@@ -339,7 +339,7 @@ func runWithSelection(id, sink string, attrs map[string]string) *orkstackv1.Run 
 	}
 }
 
-// TestNewEngineObserverForSinks_RunPinnedToNamedSinkLandsThere is the phase 3
+// TestNewEngineObserverForSinks_RunPinnedToNamedSinkLandsThere is the sink
 // routing contract: a run pinned to sink "b" moves b's ManualReader, not the
 // default sink's.
 func TestNewEngineObserverForSinks_RunPinnedToNamedSinkLandsThere(t *testing.T) {
@@ -479,7 +479,7 @@ func taskDurationSum(t *testing.T, reader sdkmetric.Reader, status string) (floa
 	return 0, false
 }
 
-// TestEngineObserver_TaskDurationMeasuresDispatchToFinish is E8: correcting
+// TestEngineObserver_TaskDurationMeasuresDispatchToFinish: correcting
 // TaskRun.started_at to the Orker's start must not silently change what
 // ork.task.duration measures. It stays dispatch to finish — finished_at −
 // scheduled_at — and falls back to started_at on a snapshot that has no

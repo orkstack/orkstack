@@ -249,7 +249,7 @@ tasks:
 			// A templated `uses:` cannot compile. Resolution happens at APPLY
 			// so a run pins an immutable digest, and a reference selected from
 			// run input is not knowable then. This is a deliberate capability
-			// loss recorded in §17, not an oversight.
+			// loss, not an oversight.
 			name: "uses is a template",
 			yaml: `
 name: templated-uses

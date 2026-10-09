@@ -18,7 +18,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// Cosign signature verification (image-supply-chain-policy §4).
+// Cosign signature verification (docs/DEPLOY.md "Image supply-chain policy").
 //
 // THERE IS EXACTLY ONE RESOLVER, and that extends to signatures: the verifier
 // is built over Resolver, reuses its bearer/basic authentication and its

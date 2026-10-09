@@ -187,7 +187,7 @@ func (c *awaitCLI) post(i int, path, token, body string) (int, string) {
 	return resp.StatusCode, string(out)
 }
 
-// C1: apply the example, submit, POST the callback over real HTTP, watch the
+// Apply the example, submit, POST the callback over real HTTP, watch the
 // run finish, read the values back byte for byte, and repeat.
 func TestIntegration_CLISubmitCallbackAndWatchAnAwaitedRun(t *testing.T) {
 	c := newAwaitCLI(t, 1, true)
@@ -243,7 +243,7 @@ tasks:
     await: {timeout_seconds: 600}
 `
 
-// C2: submit on engine A; the callback and `run resolve` both go to engine B,
+// Submit on engine A; the callback and `run resolve` both go to engine B,
 // which started nothing.
 func TestIntegration_AwaitResolvedOnASecondEngineReplica(t *testing.T) {
 	c := newAwaitCLI(t, 2, false)
@@ -279,7 +279,7 @@ func TestIntegration_AwaitResolvedOnASecondEngineReplica(t *testing.T) {
 	}
 }
 
-// C3: every refusal leaves the run AWAITING, and its event stream — read to
+// Every refusal leaves the run AWAITING, and its event stream — read to
 // the end once the run is cancelled — holds no TASK_RESOLVED.
 func TestIntegration_CallbackRefusalsLeaveTheRunAwaiting(t *testing.T) {
 	c := newAwaitCLI(t, 1, false)

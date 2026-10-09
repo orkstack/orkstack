@@ -23,7 +23,7 @@ import {
 
 // Admin → Automation, the Triggers tab's edit and the Webhooks page's edit, in
 // a browser, against the real engine, Orker, Temporal and MinIO
-// (docs/design/proposals/phase-4/declarative-automation §9).
+// (docs/AUTOMATION.md "Admin → Automation").
 //
 // What is measured here:
 //   1. Export shows the namespace's document and names its unnamed objects

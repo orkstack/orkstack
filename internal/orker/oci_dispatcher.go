@@ -523,13 +523,13 @@ func (d *OCIDispatcher) execute(
 	// path (§9.4).
 	defer func() { _ = ws.RemoveSecrets() }()
 
-	// STEP 4b. The pin's shared directory, for a pinned attempt only (§7.5).
+	// STEP 4b. The pin's shared directory, for a pinned attempt only (§3.1).
 	//
 	// There is NO defer beside the two above, and that is the whole difference
 	// between this directory and the attempt's own: it must outlive this
 	// attempt, because the next task of the pin — and the next attempt of this
 	// one — is entitled to find what this container wrote. It ends by
-	// ReleasePin, a boot reap or its lease, never by an attempt (§8.4).
+	// ReleasePin, a boot reap or its lease, never by an attempt (§6.4).
 	//
 	// A failure here fails the attempt exactly as a workspace failure does,
 	// because it is the same class of failure: the Orker could not build the
@@ -1012,7 +1012,7 @@ func (d *OCIDispatcher) stageInputs(
 	for _, up := range in.GetUpstream() {
 		producer := up.GetTaskId()
 		// A fan-out upstream carries no commit of its own: its items do, and
-		// they are staged one directory per item (spec each-fan-out §6.2).
+		// they are staged one directory per item (§3.1).
 		if up.GetEach() != nil {
 			if failure := d.stageEachUpstream(ctx, in, ws, up, staged, deferBytes); failure != nil {
 				return nil, failure
@@ -1362,7 +1362,7 @@ func (d *OCIDispatcher) containerSpec(
 	// ork.pin names the opening of the pin this container belongs to, for a
 	// pinned attempt only. It is not a reaper key — ork.orker already is — but
 	// it is what lets an operator ask the runtime which containers are sharing
-	// one directory, which is exactly the question a pin raises (§7.5, §9).
+	// one directory, which is exactly the question a pin raises.
 	if pin := in.GetPin(); pin != nil {
 		spec.Labels["ork.pin"] = pin.GetInstanceId()
 	}

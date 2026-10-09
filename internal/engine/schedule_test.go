@@ -26,7 +26,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// ---- the conversions (§3.1.1) ----
+// ---- the conversions ----
 
 func TestTemporalScheduler_IDsAreDerivedAndSeparated(t *testing.T) {
 	a := engine.TemporalScheduleID("a", "b-c")
@@ -115,7 +115,7 @@ func TestTemporalScheduler_SpecToTemporal(t *testing.T) {
 	}
 }
 
-// expectedOverlap is the hand-written table of §3.1.1, against the real
+// expectedOverlap is the hand-written overlap table, against the real
 // enumspb constants.
 var expectedSpecOverlap = map[orkstackv1.OverlapPolicy]enumspb.ScheduleOverlapPolicy{
 	orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED:  enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,

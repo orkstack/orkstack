@@ -88,8 +88,8 @@ func TestDefinitionDigest_GoldenVector(t *testing.T) {
 }
 
 // pinnedOrkflow is goldenOrkflow with a pin declared and both tasks joined to
-// it. It is built by hand rather than compiled, because `pins:`/`pin:` have no
-// DSL support yet (Phase 2); this file only pins the wire and the digest.
+// it. It is built by hand rather than compiled, so this file pins the wire and
+// the digest independently of the DSL compiler.
 func pinnedOrkflow(t *testing.T) *orkstackv1.Orkflow {
 	t.Helper()
 	wf := goldenOrkflow(t)
@@ -124,14 +124,14 @@ func TestDefinitionDigest_GoldenPinnedVector(t *testing.T) {
 	}
 	if got != GoldenPinnedDefinitionDigest {
 		t.Fatalf("pinned definition digest changed.\n got: %s\nwant: %s\n\n"+
-			"Pins are part of the canonical form (design §5.4). Update the "+
+			"Pins are part of the canonical form (docs/OCI_ACTIVITY_CONTRACT.md §4.4). Update the "+
 			"constant only if changing the canonical form was the intent.",
 			got, GoldenPinnedDefinitionDigest)
 	}
 }
 
 // The canonical form of a pinned orkflow carries `pins` on the document, sorted
-// by name, and `pin` on each member task (design §5.4).
+// by name, and `pin` on each member task (docs/OCI_ACTIVITY_CONTRACT.md §4.4).
 func TestCanonicalOrkflow_EmitsPinsAndPinWhenSet(t *testing.T) {
 	canonical, err := CanonicalOrkflow(pinnedOrkflow(t))
 	if err != nil {
@@ -237,7 +237,7 @@ func TestDefinitionDigest_ChangesWhenAPinIsAddedOrRemoved(t *testing.T) {
 	})
 }
 
-// THE BACKWARD-COMPATIBILITY CRUX (design §5.4, §10.1). An orkflow that
+// THE BACKWARD-COMPATIBILITY CRUX (docs/OCI_ACTIVITY_CONTRACT.md §4.4). An orkflow that
 // declares no pin must canonicalize with NO `pins` key and NO `pin` key —
 // not present, not empty, not null — because the digest is stamped into the
 // document and a moved digest turns a re-apply of an unchanged document into
@@ -304,7 +304,7 @@ func TestCanonicalOrkflow_IsValidCompactSortedJSON(t *testing.T) {
 
 // §4.4: only enumerated fields are serialized, so adding a proto field cannot
 // silently change an existing digest. source_yaml and created_at are the two
-// the spec names explicitly.
+// the contract names explicitly.
 func TestCanonicalOrkflow_IgnoresSourceAndCreatedAt(t *testing.T) {
 	base := goldenOrkflow(t)
 	before, err := DefinitionDigest(base)

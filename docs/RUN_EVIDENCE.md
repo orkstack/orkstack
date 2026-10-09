@@ -12,14 +12,18 @@ needs nothing but itself to verify: `orkctl run evidence verify` is a hashing
 loop over its manifest, with no server and no credentials.
 
 ```text
-orkctl run evidence export <run-id> --output PATH [--task TASK] [--no-logs] [--no-artifacts] [--overwrite] [-n NS]
-orkctl run evidence export <run-id> --json [--task TASK] [--no-logs] [--no-artifacts] [-n NS]
+orkctl run evidence export <run-id> --output PATH [--task TASK [--item N]] [--no-logs] [--no-artifacts] [--overwrite] [-n NS]
+orkctl run evidence export <run-id> --json [--task TASK [--item N]] [--no-logs] [--no-artifacts] [-n NS]
 orkctl run evidence verify <bundle.tar.gz> [--json]
 orkctl run evidence verify <bundle.tar.gz> --against-store [-n NS] [--server URL]
 ```
 
-The run page offers the same bundle through its **Evidence** action, which
-shows the manifest before any byte of the bundle is fetched.
+`export` commits the file only after the stream's `last` chunk (a temporary
+sibling, renamed), so an interrupted export leaves nothing behind; `--json`
+prints `MANIFEST.json` itself and writes no file. The run page offers the same
+bundle through its **Evidence** action, which shows the manifest before any
+byte of the bundle is fetched ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Run
+evidence").
 
 ## Layout
 
@@ -41,6 +45,16 @@ snapshot's order, which is name-byte order), then attempts ascending, each
 record before its logs. The order is part of the contract: it is what lets a
 reader stream-verify without buffering, and a bundle in another order fails
 `verify`.
+
+A fan-out (`docs/DSL.md` "Fan-out") contributes its node's `tasks[]` entry
+(status, no attempts) followed by one entry per item carrying `"item": i`.
+Each item's members use the per-task layout above under
+`tasks/{task-id}/items/{i:05}/` (`commit.json`, `values.json`,
+`artifacts/{member-name}`, `attempts/{n}.json`, `attempts/{n}/stdout.log`,
+`attempts/{n}/stderr.log`), items ascending, and every such member entry
+carries `"item": i`; `scope` carries `item` when the export was narrowed to
+one. These keys are additive, so `schema_version` stays `1` and `verify`
+reads bundles with and without items.
 
 A `SKIPPED` task has no members and one `tasks[]` entry. A `FAILED` or
 `CANCELED` task has no `commit.json` and no `values.json`, and has artifact
@@ -123,8 +137,9 @@ task (the run's own members are always included), `logs: false` drops every
 `stdout.log`/`stderr.log`, `artifacts: false` drops the output artifacts.
 `values.json`, `commit.json` and attempt records are never excluded.
 
-A later change to this document bumps `schema_version`; `verify` refuses a
-version it does not know rather than guessing.
+A change a version-1 reader could misread bumps `schema_version` (additive
+keys, like the fan-out `item`, do not); `verify` refuses a version it does not
+know rather than guessing.
 
 ## States
 

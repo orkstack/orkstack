@@ -37,7 +37,7 @@ const SearchAttrOrkflowNamespace = "OrkflowNamespace"
 // SearchAttrDeploymentVersion is the run index's record of the release a run
 // executes on. The cluster provides and maintains it; it is never registered
 // (EnsureRunSearchAttributes is unchanged) and never user-facing
-// (orkctl-release §4).
+// (docs/DEPLOY.md §3).
 const SearchAttrDeploymentVersion = "TemporalWorkerDeploymentVersion"
 
 // SearchKeyOrkflowNamespace is the typed key StartRun stamps onto a run.

@@ -15,7 +15,7 @@ import (
 // MaxEachItems bounds a whole Orkflow: the sum of max_items over every each:
 // task it declares (docs/DSL.md rule 21). It is the ceiling
 // ORK_EACH_MAX_ITEMS may lower and never raise; engine/each.go derives the
-// per-item history bounds from the declared sum (spec §5.1).
+// per-item history bounds from the declared sum.
 const MaxEachItems = 1000
 
 // DefaultEachAs is the name .each binds an item to when `as:` is absent.

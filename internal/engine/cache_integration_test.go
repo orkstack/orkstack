@@ -35,7 +35,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The task-caching integration suite (spec cache-memoization, "Integration"):
+// The task-caching integration suite (docs/DSL.md "Caching"):
 // real Temporal, real MinIO and the real Orker running real containers
 // through Docker, on the shape of examples/cached-pipeline.ork.yaml —
 // featurize (cached, ttl 86400) and stamp → train (cached) — over the pinned
@@ -104,7 +104,8 @@ type pipelineOpts struct {
 	scope         orkstackv1.CacheScope
 	featurizeID   string
 	// retry is every task's retry policy; nil is the DSL default of one
-	// attempt. Retry is not a key component (spec §4.2), so it never changes
+	// attempt. Retry is not a key component (docs/DSL.md "What the key
+	// covers"), so it never changes
 	// what a hit reuses.
 	retry *orkstackv1.RetryPolicy
 }
@@ -240,7 +241,6 @@ func (c *cacheE2E) attemptLog(runID, taskID string, attempt int32) string {
 	return b.String()
 }
 
-// I1.
 func TestIntegration_CacheSecondRunReusesTheCommitAndRunsNoContainer(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i1", nil, nil)
@@ -288,7 +288,6 @@ func TestIntegration_CacheSecondRunReusesTheCommitAndRunsNoContainer(t *testing.
 	proof.Write(t, "engine", "cache-I1.txt", []byte(runJSON(run1)+"\n"+runJSON(run2)+"\n"))
 }
 
-// I2.
 func TestIntegration_CacheKeyFollowsEveryDeclaredInput(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i2", nil, nil)
@@ -320,7 +319,6 @@ func TestIntegration_CacheKeyFollowsEveryDeclaredInput(t *testing.T) {
 	proof.Write(t, "engine", "cache-I2.txt", []byte(strings.Join(lines, "\n")+"\n"))
 }
 
-// I3.
 func TestIntegration_CacheDeletedMemoPrefixOnlyCostsTime(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i3", nil, nil)
@@ -343,7 +341,6 @@ func TestIntegration_CacheDeletedMemoPrefixOnlyCostsTime(t *testing.T) {
 	proof.Write(t, "engine", "cache-I3.txt", []byte(fmt.Sprintf("deleted %d memo objects\n%s\n", deleted, runJSON(third))))
 }
 
-// I4.
 func TestIntegration_CacheCorruptMemoIsAMiss(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i4", nil, nil)
@@ -365,7 +362,6 @@ func TestIntegration_CacheCorruptMemoIsAMiss(t *testing.T) {
 	proof.Write(t, "engine", "cache-I4.txt", []byte(runJSON(second)+"\n"))
 }
 
-// I5.
 func TestIntegration_CacheRetiredSourceIsAMiss(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i5", nil, nil)
@@ -379,7 +375,6 @@ func TestIntegration_CacheRetiredSourceIsAMiss(t *testing.T) {
 	proof.Write(t, "engine", "cache-I5.txt", []byte(runJSON(second)+"\n"))
 }
 
-// I6.
 func TestIntegration_CacheMissingSourceObjectIsAMiss(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i6", nil, nil)
@@ -396,7 +391,7 @@ func TestIntegration_CacheMissingSourceObjectIsAMiss(t *testing.T) {
 	proof.Write(t, "engine", "cache-I6.txt", []byte(runJSON(second)+"\n"))
 }
 
-// I7: the Orker dies after the hit's commit.json and before completion.
+// The Orker dies after the hit's commit.json and before completion.
 func TestIntegration_CacheHitCommittedThenOrkerDiesIsAdopted(t *testing.T) {
 	c := startCacheE2E(t)
 	first := c.startCacheOrker("cache-i7-a", nil, nil)
@@ -458,7 +453,6 @@ func TestIntegration_CacheHitCommittedThenOrkerDiesIsAdopted(t *testing.T) {
 	proof.Write(t, "engine", "cache-I7.txt", []byte(fmt.Sprintf("commitAdopted=true records=%d\n%s\n", len(records), runJSON(run))))
 }
 
-// I8.
 func TestIntegration_CacheNoCacheBypassesAndRefreshes(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i8", nil, nil)
@@ -481,7 +475,7 @@ func TestIntegration_CacheNoCacheBypassesAndRefreshes(t *testing.T) {
 	proof.Write(t, "engine", "cache-I8.txt", []byte(runJSON(bypass)+"\n"+runJSON(next)+"\n"))
 }
 
-// I9: a cached 4-item fan-out. Run 2 hits every item and merge stages all
+// A cached 4-item fan-out. Run 2 hits every item and merge stages all
 // four from run 2's own item commits. A run whose array changes misses every
 // item: each item stages list's values.json, which carries the whole array,
 // and every staged file is in the key (docs/DSL.md "Caching").
@@ -533,7 +527,6 @@ func TestIntegration_CacheFanOutItemsHitIndividually(t *testing.T) {
 	proof.Write(t, "engine", "cache-I9.txt", []byte(runJSON(second)+"\n"))
 }
 
-// I10.
 func TestIntegration_CacheNamespaceScopeSharesAcrossOrkflows(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i10", nil, nil)
@@ -570,7 +563,6 @@ func (failingMemos) ListMemos(context.Context, artifacts.MemoScopeRef, string, i
 }
 func (failingMemos) DeleteMemo(context.Context, artifacts.MemoRef) error { return errMemoOutage }
 
-// I11.
 func TestIntegration_CacheMemoStoreOutageIsAMiss(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i11", failingMemos{}, nil)
@@ -583,7 +575,6 @@ func TestIntegration_CacheMemoStoreOutageIsAMiss(t *testing.T) {
 	proof.Write(t, "engine", "cache-I11.txt", []byte(runJSON(run)+"\n"))
 }
 
-// I12.
 func TestIntegration_CacheExpiredMemoIsAMiss(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i12", nil, nil)
@@ -603,7 +594,7 @@ func TestIntegration_CacheExpiredMemoIsAMiss(t *testing.T) {
 	proof.Write(t, "engine", "cache-I12.txt", []byte(runJSON(second)+"\n"))
 }
 
-// I13: an Orker that predates caching on the pool refuses the submit, and
+// An Orker that predates caching on the pool refuses the submit, and
 // no run is left behind.
 func TestIntegration_CacheSubmitRefusesAPoolWhoseOrkerPredatesCaching(t *testing.T) {
 	address := temporalAddress()
@@ -682,7 +673,7 @@ func TestIntegration_CacheSubmitRefusesAPoolWhoseOrkerPredatesCaching(t *testing
 	proof.Write(t, "engine", "cache-I13.txt", []byte(submitErr.Error()+"\n"))
 }
 
-// I14: release-block's sign cached: the second parent run's child sign hits.
+// The release-block example's sign cached: the second parent run's child sign hits.
 func TestIntegration_CacheComposedChildTaskHits(t *testing.T) {
 	c := startCacheE2E(t)
 	c.startCacheOrker("cache-i14", nil, nil)
@@ -721,7 +712,7 @@ func TestIntegration_CacheComposedChildTaskHits(t *testing.T) {
 	proof.Write(t, "engine", "cache-I14.txt", []byte(runJSON(secondChild)+"\n"))
 }
 
-// I15: opt-in recorder of testdata/history/run-cached-v1.json — the SECOND
+// Opt-in recorder of testdata/history/run-cached-v1.json — the SECOND
 // run of the cached pipeline (featurize a hit, stamp uncached, train a miss),
 // by a versioned worker, with stand-in Orker results that carry exactly what
 // the real Orker reports.

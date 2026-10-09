@@ -1,7 +1,7 @@
 //go:build integration
 
-// Integration coverage for fan-out item keys on the S3 backends (spec
-// each-fan-out §4.2), against real MinIO: a listing genuinely produced by the
+// Integration coverage for fan-out item keys on the S3 backends
+// (docs/STORAGE.md "Key layout"), against real MinIO: a listing genuinely produced by the
 // server, where an item's records sit one segment below its task's.
 package artifacts_test
 

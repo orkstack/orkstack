@@ -164,13 +164,12 @@ func (s *Service) DiffRuns(
 		// A fan-out's own row is compared on the fields it owns only:
 		// attempt, orker, exit_code, image and platform_digest belong to its
 		// items, and comparing the node's unset values would report missing
-		// evidence where there is none (spec each-fan-out §7.3).
+		// evidence where there is none.
 		fanOut := fromTask.GetEach() != nil || toTask.GetEach() != nil
 		// A composed task's row likewise: attempt, orker, exit_code, image
 		// and platform_digest are its child's facts, and child.run_id is not
 		// compared — two runs' children always have two ids, and the
-		// definition they ran is compared through the parent's digest (spec
-		// composed-orkflows §7).
+		// definition they ran is compared through the parent's digest.
 		composed := fromTask.GetChild() != nil || toTask.GetChild() != nil
 		fieldsFor := func(item bool) []string {
 			if composed {

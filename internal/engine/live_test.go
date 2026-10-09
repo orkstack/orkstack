@@ -247,7 +247,7 @@ func liveRows(t *testing.T) []liveRow {
 	return rows
 }
 
-// TestLiveAttempts_DerivesEveryScenarioOfTheTable is E1: L1–L11 through the
+// TestLiveAttempts_DerivesEveryScenarioOfTheTable: L1–L11 through the
 // real reader over a fake cluster, every field of the derivation asserted.
 func TestLiveAttempts_DerivesEveryScenarioOfTheTable(t *testing.T) {
 	for _, row := range liveRows(t) {
@@ -306,7 +306,7 @@ func assertLiveAttempt(t *testing.T, got, want *orkstackv1.LiveAttempt) {
 }
 
 // TestLiveAttempts_MapsPendingActivitiesToTasksThroughTheSchedulingEvent is
-// E2: SDK-assigned activity ids map to task ids through their scheduling
+// SDK-assigned activity ids map to task ids through their scheduling
 // events, and the engine's own pending activities are not attempts.
 func TestLiveAttempts_MapsPendingActivitiesToTasksThroughTheSchedulingEvent(t *testing.T) {
 	executeTask := &commonpb.ActivityType{Name: task.ActivityExecuteTask}
@@ -349,7 +349,7 @@ func (c *countingConverter) FromPayload(payload *commonpb.Payload, valuePtr any)
 	return c.DataConverter.FromPayload(payload, valuePtr)
 }
 
-// TestLiveAttempts_DecodesOnlyThePendingActivitiesInputs is E3: three tasks
+// TestLiveAttempts_DecodesOnlyThePendingActivitiesInputs: three tasks
 // were scheduled, one is pending, one input is decoded.
 func TestLiveAttempts_DecodesOnlyThePendingActivitiesInputs(t *testing.T) {
 	pending := []*workflowpb.PendingActivityInfo{{
@@ -375,7 +375,7 @@ func TestLiveAttempts_DecodesOnlyThePendingActivitiesInputs(t *testing.T) {
 	t.Logf("3 ExecuteTask scheduling events, 1 pending: FromPayload called %d time(s)", counting.fromPayload)
 }
 
-// TestLiveAttempts_AClosedExecutionReadsNoHistory is E4.
+// TestLiveAttempts_AClosedExecutionReadsNoHistory.
 func TestLiveAttempts_AClosedExecutionReadsNoHistory(t *testing.T) {
 	fake := liveFixture(nil)
 	fake.describes[liveRunID].WorkflowExecutionInfo.CloseTime = ts(readerEpoch)
@@ -392,7 +392,7 @@ func TestLiveAttempts_AClosedExecutionReadsNoHistory(t *testing.T) {
 	t.Logf("closed execution: describes=%d history reads=%d", fake.count("describe"), fake.count("history"))
 }
 
-// TestLiveAttempts_NothingPendingReadsNoHistory is E5.
+// TestLiveAttempts_NothingPendingReadsNoHistory.
 func TestLiveAttempts_NothingPendingReadsNoHistory(t *testing.T) {
 	fake := liveFixture([]*workflowpb.PendingActivityInfo{{
 		ActivityId: "3", ActivityType: &commonpb.ActivityType{Name: ActivityPublishEvent},
@@ -409,7 +409,7 @@ func TestLiveAttempts_NothingPendingReadsNoHistory(t *testing.T) {
 	}
 }
 
-// TestLiveAttempts_NotFoundIsErrRunNotFound is E6.
+// TestLiveAttempts_NotFoundIsErrRunNotFound.
 func TestLiveAttempts_NotFoundIsErrRunNotFound(t *testing.T) {
 	fake := liveFixture(nil)
 	_, err := newRunReader(fake, nil).LiveAttempts(context.Background(), "ork-missing", time.Now())
@@ -429,7 +429,7 @@ func TestLiveAttempts_NotFoundIsErrRunNotFound(t *testing.T) {
 	}
 }
 
-// TestLiveAttempts_APendingActivityWithoutASchedulingEventFails is E7.
+// TestLiveAttempts_APendingActivityWithoutASchedulingEventFails.
 func TestLiveAttempts_APendingActivityWithoutASchedulingEventFails(t *testing.T) {
 	fake := liveFixture([]*workflowpb.PendingActivityInfo{{
 		ActivityId: "13", ActivityType: &commonpb.ActivityType{Name: task.ActivityExecuteTask},
@@ -442,7 +442,7 @@ func TestLiveAttempts_APendingActivityWithoutASchedulingEventFails(t *testing.T)
 	t.Logf("invariant broken → %v", err)
 }
 
-// TestLiveAttempts_DescribesBeforeItReadsHistory is E8.
+// TestLiveAttempts_DescribesBeforeItReadsHistory.
 func TestLiveAttempts_DescribesBeforeItReadsHistory(t *testing.T) {
 	fake := liveFixture([]*workflowpb.PendingActivityInfo{{
 		ActivityId: "5", ActivityType: &commonpb.ActivityType{Name: task.ActivityExecuteTask},
@@ -456,7 +456,7 @@ func TestLiveAttempts_DescribesBeforeItReadsHistory(t *testing.T) {
 	}
 }
 
-// TestLiveAttemptState_MapsEveryTemporalValueExplicitly is E9: a Temporal
+// TestLiveAttemptState_MapsEveryTemporalValueExplicitly: a Temporal
 // upgrade that adds a pending-activity state fails here until the switch
 // names it.
 func TestLiveAttemptState_MapsEveryTemporalValueExplicitly(t *testing.T) {
@@ -480,7 +480,7 @@ func TestLiveAttemptState_MapsEveryTemporalValueExplicitly(t *testing.T) {
 	}
 }
 
-// TestLiveAttempts_ANilClientIsErrNoLiveReader is E10.
+// TestLiveAttempts_ANilClientIsErrNoLiveReader.
 func TestLiveAttempts_ANilClientIsErrNoLiveReader(t *testing.T) {
 	_, err := newRunReader(nil, nil).LiveAttempts(context.Background(), liveRunID, time.Now())
 	if !errors.Is(err, ErrNoLiveReader) {

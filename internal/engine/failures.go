@@ -101,8 +101,7 @@ func PrimaryFailedTask(run *orkstackv1.Run) *orkstackv1.TaskRun {
 		// A FAILED fan-out is decided by the item that failed it: the
 		// earliest-finished FAILED item stands for it. Its task_id is the
 		// node's, so a fan-out's failures group under its task id, while its
-		// code, category, pool and orker are the item's (spec each-fan-out
-		// §14, failure-fingerprints).
+		// code, category, pool and orker are the item's.
 		candidate := task
 		if item := earliestFailedItem(task); item != nil {
 			candidate = item

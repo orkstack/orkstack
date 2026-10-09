@@ -10,7 +10,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// Fan-out in the CLI (spec each-fan-out §9). An item is addressed by its
+// Fan-out in the CLI (docs/UI_CLI_PARITY.md "Fan-out"). An item is addressed by its
 // 0-based index with --item N, read only when the flag was given, and a human
 // rendering spells one item convert[97] — a rendering only, never sent and
 // never parsed. --json output is always the unchanged response envelope, which
@@ -163,7 +163,7 @@ func fanOutRow(run *orkstackv1.Run, taskID string) *orkstackv1.TaskRun {
 	return nil
 }
 
-// eachDetail is a plan's DETAIL for a fan-out (spec §5.12): "each over <over>:
+// eachDetail is a plan's DETAIL for a fan-out: "each over <over>:
 // 3 items (≤ 50, 2 at a time)" when counted, "each over <over> (≤ 500 items;
 // counted when the run reaches it)" otherwise.
 func eachDetail(task *orkstackv1.PlanTask) string {

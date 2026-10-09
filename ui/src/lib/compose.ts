@@ -25,7 +25,7 @@ export function childOrkflowHref(namespace: string, name: string, version: strin
 
 /**
  * A parent's children: the runs list filtered to runs whose origin is this
- * run (run-origin's coordinates, `orkctl run list --origin parent-run:<id>`).
+ * run (`orkctl run list --origin parent-run:<id>`).
  */
 export function childrenListHref(namespace: string, parentRunId: string): string {
 	return withNamespace(`/runs?origin=parent-run&originId=${encodeURIComponent(parentRunId)}`, namespace);

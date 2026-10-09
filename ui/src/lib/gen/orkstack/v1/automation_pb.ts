@@ -595,8 +595,8 @@ export const DisclosedSecretsSchema: GenMessage<DisclosedSecrets> = /*@__PURE__*
 /**
  * AutomationObjectKind names the four kinds of object a document declares.
  * Clients spell them namespace, schedule, trigger, webhook: the value's name
- * after AUTOMATION_OBJECT_KIND_, lowercased — run-origin §5's derivation,
- * with the same descriptor-walk test in each client.
+ * after AUTOMATION_OBJECT_KIND_, lowercased — the same derivation run origin
+ * kinds use, with the same descriptor-walk test in each client.
  *
  * @generated from enum orkstack.v1.AutomationObjectKind
  */

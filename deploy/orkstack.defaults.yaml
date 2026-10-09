@@ -1,8 +1,8 @@
 # OrkStack configuration file — generated defaults.
 #
 # Every key config.Schema knows about, written at its own built-in
-# default, in the order docs/DEPLOY.md's "## 1. Configuration"
-# table lists them. This file changes nothing when used as-is: loading it
+# default, nested by section in Schema's declaration order. docs/DEPLOY.md
+# §1 documents each key. This file changes nothing when used as-is: loading it
 # with --config and applying it sets every value to what the binary
 # already falls back to with no file at all.
 #

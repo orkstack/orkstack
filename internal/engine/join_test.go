@@ -19,8 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// The workflow tests of join policies and failure handlers (task-join-policy
-// Test plan, internal/engine). Every case drives the real RunWorkflow on the
+// The workflow tests of join policies and failure handlers (docs/DSL.md
+// "Joins and failure handlers"). Every case drives the real RunWorkflow on the
 // test environment; a moment a test must act inside is OBSERVED — an event on
 // the bus, a snapshot being written — never waited for with a sleep.
 

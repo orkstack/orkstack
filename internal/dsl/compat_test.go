@@ -24,7 +24,7 @@ const (
 	unknown    = orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_UNKNOWN
 )
 
-// releaseBlock210 and releaseBlock300 are the spec's shared fixture: 3.0.0
+// releaseBlock210 and releaseBlock300 are the shared compatibility fixture: 3.0.0
 // adds a required region and a defaulted timeout, drops output url, adds
 // output sbom, and rewrites every task.
 const releaseBlock210 = `

@@ -16,9 +16,9 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// The composed-orkflows CLI suite (spec composed-orkflows C1–C2): real `ork`,
-// `orker` and `orkctl` against a real cluster and bucket, applying the §2.6
-// examples into a stamped OrkStack namespace.
+// The composed-orkflows CLI suite (docs/DSL.md "Composition"): real `ork`,
+// `orker` and `orkctl` against a real cluster and bucket, applying the
+// shipped composition examples into a stamped OrkStack namespace.
 
 // composedNamespace creates a fresh OrkStack namespace through the CLI and
 // applies the two examples into it, child first.
@@ -60,7 +60,6 @@ func childRunOf(t *testing.T, server, ns, runID string) string {
 	return ""
 }
 
-// C1.
 func TestIntegration_CLIComposedTreeAndChildren(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -97,7 +96,6 @@ func TestIntegration_CLIComposedTreeAndChildren(t *testing.T) {
 		tree.stdout, runID, children.stdout, refused.stderr, childID, logs.stdout)))
 }
 
-// C2.
 func TestIntegration_ComposedRunReadsOnASecondReplica(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()

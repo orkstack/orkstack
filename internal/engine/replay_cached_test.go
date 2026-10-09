@@ -23,14 +23,14 @@ import (
 // cachedHistory is the caching fixture: the SECOND run of
 // examples/cached-pipeline.ork.yaml — featurize a hit, stamp uncached, train a
 // miss — recorded by a versioned worker against a real cluster by
-// TestIntegration_RecordCachedRunHistory (I15), never hand-edited
+// TestIntegration_RecordCachedRunHistory, never hand-edited
 // (testdata/history/README.md). It holds still the first CacheContext an
 // ExecuteTask input ever carried, the first ExecuteTaskResult.cache, and the
 // first "(cached from run …)" event.
 const cachedHistory = "testdata/history/run-cached-v1.json"
 
 // requireCachedFixture skips while the fixture has not been recorded yet. It
-// can only be produced against a real cluster (I15); once committed this
+// can only be produced against a real cluster; once committed this
 // never skips again. ORK_REQUIRE_CACHED_FIXTURE makes its absence a failure.
 func requireCachedFixture(t *testing.T) {
 	t.Helper()

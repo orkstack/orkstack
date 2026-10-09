@@ -87,10 +87,6 @@ const pinAffinityRuns = 20
 // notices, or the kill would be proving something about a finished task.
 const pinAffinityHoldSeconds = 60
 
-// pinAffinityAlpineTag is the image both proofs run. Cheap, fast, public, and
-// already the image internal/orker's own pin proof uses.
-const pinAffinityAlpineTag = "alpine:3.20"
-
 // pinOrker is ONE real Orker of this suite's pool: a real Activities, the
 // Temporal worker it is registered on, and — the load-bearing part — a record
 // of every task it was ASKED to run, written the instant it was asked.
@@ -108,8 +104,7 @@ type pinOrker struct {
 	workRoot   string
 	activities *orker.Activities
 	worker     worker.Worker
-	// control and presence are the Orker's own two channels (orker-cordon-
-	// drain §5.7): built by orker.NewChannelWorkers exactly as cmd/orker
+	// control and presence are the Orker's own two channels: built by orker.NewChannelWorkers exactly as cmd/orker
 	// builds them, so this test Orker and the shipped one are one shape.
 	control  worker.Worker
 	presence worker.Worker
@@ -749,7 +744,7 @@ const pinAffinityPinTimeoutSeconds = 300
 // not a value the test could have arranged.
 //
 // Both members are run_as_orker_user, which is what docs/DSL.md recommends
-// across a pin and what keeps §12.9's sticky-bit uid clash out of the
+// across a pin and what keeps the sticky-bit uid clash out of the
 // measurement — the same terms internal/orker's own pin proof is on.
 //
 // Placeholders are substituted rather than fmt.Sprintf'd: the payloads contain
@@ -1259,7 +1254,7 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		// The cordon's two seams, exactly as cmd/orker's taskWorkerOptions
 		// sets them: the Tuner whose activity slot supplier refuses to
 		// reserve while cordoned, and the interceptor that counts and refuses
-		// new pins (orker-cordon-drain §5.3-§5.6).
+		// new pins (docs/DEPLOY.md "Removing an Orker safely: cordon and drain").
 		Tuner:        tuner,
 		Interceptors: []interceptor.WorkerInterceptor{activities.WorkerInterceptor()},
 	}))

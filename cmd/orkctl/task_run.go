@@ -54,7 +54,7 @@ type taskRunOptions struct {
 	secrets     []string
 	omitSecrets []string
 	// needs is --need TASK=STATUS: a failure handler's need outcome, as
-	// typed (task-join-policy §10).
+	// typed (docs/DSL.md "Joins and failure handlers").
 	needs      []string
 	shared     string
 	renderOnly bool
@@ -73,7 +73,7 @@ type suppliedArtifact struct {
 	path     string
 }
 
-// parsedTaskRun is what §3.2's checks produce from the flags.
+// parsedTaskRun is what the flag checks produce.
 type parsedTaskRun struct {
 	assumed     map[string]*orkstackv1.Payload
 	artifacts   []suppliedArtifact
@@ -162,9 +162,9 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// ---------------------------------------------------------------- §3.2
+// ---------------------------------------------------------------- flags
 
-// parseTaskRunFlags applies §3.2's checks, in order, before any RPC.
+// parseTaskRunFlags applies the flag checks, in order, before any RPC.
 func parseTaskRunFlags(opts *taskRunOptions) (*parsedTaskRun, error) {
 	if opts.task == "" {
 		return nil, errors.New("--task is required")
@@ -370,7 +370,7 @@ func localSecrets(
 	return out
 }
 
-// taskRunExitCode is §3.11's mapping, by outcome and category and nothing
+// taskRunExitCode is the exit-status mapping (§10.4), by outcome and category and nothing
 // else: an InfrastructureError is this machine's problem, not the task's
 // verdict, so it is exit 1 like any command that could not do its job.
 func taskRunExitCode(outcome, category string) int {
@@ -388,7 +388,7 @@ func taskRunExitCode(outcome, category string) int {
 
 // ---------------------------------------------------------------- runner
 
-// taskRunner carries one invocation through §3.3's sequence.
+// taskRunner carries one invocation through the local-run sequence (§10.4).
 type taskRunner struct {
 	g      *globalFlags
 	opts   *taskRunOptions
@@ -456,7 +456,7 @@ func runTaskRun(cmd *cobra.Command, g *globalFlags, opts *taskRunOptions) error 
 	}
 
 	// The first SIGINT or SIGTERM cancels the context: the dispatcher runs
-	// the §3.3 sequence — SIGTERM, the grace period, SIGKILL, remove — and the
+	// the cancellation sequence — SIGTERM, the grace period, SIGKILL, remove — and the
 	// command exits 3. The notifier is stopped on that first signal, so a
 	// second one terminates orkctl at once.
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -643,7 +643,7 @@ func (r *taskRunner) joinContext() *orkstackv1.JoinContext {
 	return join
 }
 
-// definition is §3.3 step 4.
+// definition resolves the task's definition.
 func (r *taskRunner) definition() error {
 	if r.opts.file != "" {
 		source, err := os.ReadFile(r.opts.file)
@@ -707,7 +707,8 @@ func (r *taskRunner) taskRunOf(id string) *orkstackv1.TaskRun {
 	return nil
 }
 
-// account is §3.3 step 6: each check names every offender, not the first.
+// account checks every input is accounted for: each check names every
+// offender, not the first.
 func (r *taskRunner) account() error {
 	var problems []string
 	inClosure := map[string]bool{}
@@ -819,7 +820,7 @@ func newPinInstanceID() string {
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
-// compose is §3.3 step 7, and everything after it.
+// compose builds the task's input, and everything after it.
 func (r *taskRunner) compose() error {
 	var input *orkstackv1.Payload
 	var err error
@@ -860,7 +861,7 @@ func (r *taskRunner) compose() error {
 	join := r.joinContext()
 	if join != nil {
 		// A failure handler is handed its direct FAILED needs' artifacts,
-		// as the interpreter hands them (task-join-policy §4.7).
+		// as the interpreter hands them (docs/DSL.md "Joins and failure handlers").
 		for id, ref := range engine.FailedNeedUpstreamFromRun(r.run) {
 			for _, need := range r.spec.GetNeeds() {
 				if need == id {
@@ -964,7 +965,7 @@ func (r *taskRunner) pinTimeout(name string, in *orkstackv1.ExecuteTaskInput) in
 	return in.GetTimeoutSeconds() + in.GetCancellationGracePeriodSeconds()
 }
 
-// dispatch is §3.3 steps 8-11.
+// dispatch runs the task through the dispatcher and reports it.
 func (r *taskRunner) dispatch() (err error) {
 	// STEP 8. The session directory, the store, the dispatcher.
 	root := localToolRoot("task-run")
@@ -1155,7 +1156,7 @@ func protoRef(ref artifacts.ArtifactRef) *orkstackv1.ArtifactRef {
 	}
 }
 
-// fetch is §3.3 step 9 for every member whose source is the run: each
+// fetch reads every member whose source is the run: each
 // recorded reference is read through ReadArtifact, checked against the
 // reference GetRun returned, hashed, and served to the dispatcher under the
 // recorded URI.

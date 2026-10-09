@@ -129,7 +129,7 @@ func relRun(id, ns, orkflow, version string, age time.Duration) *orkstackv1.Run 
 		Status: orkstackv1.Status_STATUS_RUNNING, CreatedAt: timestamppb.New(releaseClockStart.Add(-age))}
 }
 
-// rolloutStep is §7.1's example: A current, C a candidate missing pool
+// rolloutStep is the status view's worked example: A current, C a candidate missing pool
 // build, P draining with three runs and a pin, Q drained.
 func rolloutStep() releaseStep {
 	return releaseStep{
@@ -353,7 +353,7 @@ func TestReleasePromote_SendsTheRevisionItRead(t *testing.T) {
 	}
 }
 
-// TestReleaseWrites_BoundTheWriteOnItsOwn is spec §7's "bound each request":
+// TestReleaseWrites_BoundTheWriteOnItsOwn proves each request is bounded:
 // promote, rollback and ramp each read ListReleases and then write, and the
 // write gets a whole --timeout of its own. The server-side write may spend up
 // to 10s confirming routing after the change; were the read's time deducted

@@ -974,7 +974,7 @@ test('switching namespace while on Pools shows this page\'s own loading state, n
 	await page.unroute('**/orkstack.v1.NamespaceService/ListPools');
 });
 
-// Activity interface manifests (activity-interface-manifests §8.5): each
+// Activity interface manifests (docs/ACTIVITY_IMAGES.md "Declaring the interface"): each
 // first-party image carries the org.orkstack.activity.interface label, the
 // engine reads it from the image's config during the same resolution that pins
 // the digest, and the page shows it — per catalog row, and for any reference
@@ -1028,7 +1028,7 @@ test("the Activities page shows each first-party image's declared interface, and
 	await shot(page, 'screenshot-admin-activities-inspect-refused.png');
 	note('activities page: file 7 ops, http 5 keys, 6 ops; inspect file pinned ' + catalogDigest + '; {{ .x }} refused IMAGE_NOT_PINNED');
 
-	// The transform images (first-party-transform-images P1): json, git and
+	// The transform images (docs/ACTIVITY_IMAGES.md): json, git and
 	// template reach the page with the interfaces their labels declare — the
 	// UI code is unchanged; this is the evidence that catalog and labels flow.
 	await expect(page.getByTestId('activity-interface-json')).toContainText('2 ops');

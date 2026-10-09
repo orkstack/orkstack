@@ -69,17 +69,6 @@ func IsFailureHandler(t *orkstackv1.Task) bool {
 	return false
 }
 
-// DeclaresFailureHandler reports whether any task of wf is a failure handler.
-// Pure.
-func DeclaresFailureHandler(wf *orkstackv1.Orkflow) bool {
-	for _, t := range wf.GetTasks() {
-		if IsFailureHandler(t) {
-			return true
-		}
-	}
-	return false
-}
-
 // validateJoins enforces rules 37 (the compiled half), 38, 39, 40, 41 and 42
 // on the compiled message, so a hand-built definition meets the same rules a
 // document does. Called after rule 5, so the needs graph is acyclic.

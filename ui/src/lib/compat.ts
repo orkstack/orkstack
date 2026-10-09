@@ -1,4 +1,4 @@
-// Interface compatibility (interface-compatibility-gate §7.1): the only logic
+// Interface compatibility (docs/UI_CLI_PARITY.md "Interface compatibility"): the only logic
 // behind the verdict chips, the Compare interfaces panel, the promote
 // dialog's acknowledgement and the Callers section. Every verdict, finding
 // and sentence is the ENGINE's; this file only chooses words and classes for

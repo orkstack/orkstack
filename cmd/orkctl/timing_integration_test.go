@@ -27,7 +27,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The task-timing-breakdown integration scenarios (I1, I2, I4, I5, I6): real
+// The task-timing integration scenarios (docs/UI_CLI_PARITY.md "Task timing"): real
 // `ork` and `orker` binaries, a real Temporal cluster and the MinIO bucket, and
 // `orkctl run timing` read back through the built CLI. Each test owns a
 // private Temporal namespace and a private Orker channel (AGENTS.md §11.1).
@@ -219,7 +219,7 @@ tasks:
 `, name)
 }
 
-// TestIntegration_QueueWaitIsVisibleWhenNoOrkerIsPolling is I1: a run
+// TestIntegration_QueueWaitIsVisibleWhenNoOrkerIsPolling: a run
 // submitted while no Orker polls its pool waits, and `run timing` says so —
 // WAIT is the wait, RUN is the container, and every number is one a process
 // actually measured.
@@ -324,7 +324,7 @@ func TestIntegration_QueueWaitIsVisibleWhenNoOrkerIsPolling(t *testing.T) {
 	}
 }
 
-// TestIntegration_RetriedTaskTimingSplitsAttempts is I2: a task that fails
+// TestIntegration_RetriedTaskTimingSplitsAttempts: a task that fails
 // once and succeeds on attempt 2 — the deciding attempt's start is on the
 // snapshot, and the queue wait comes from attempt 1's record.
 func TestIntegration_RetriedTaskTimingSplitsAttempts(t *testing.T) {
@@ -419,7 +419,7 @@ tasks:
 	t.Logf("I2 waitSeconds=%.3f queueWaitSeconds=%.3f", *flaky.WaitSeconds, *flaky.QueueWaitSeconds)
 }
 
-// TestIntegration_AFailedTaskCarriesItsStart is I4: a task whose container
+// TestIntegration_AFailedTaskCarriesItsStart: a task whose container
 // exits non-zero is FAILED with the Orker's start on its snapshot, carried on
 // ActivityFailureDetail.started_at — so its wait is a number.
 func TestIntegration_AFailedTaskCarriesItsStart(t *testing.T) {
@@ -461,7 +461,7 @@ tasks:
 	t.Logf("I4 FAILED doomed: startedAt=%s waitSeconds=%.3f runSeconds=%.3f", task.StartedAt, *task.WaitSeconds, *task.RunSeconds)
 }
 
-// TestIntegration_ReclaimedAttemptRecordsRenderUnavailable is I5: after the
+// TestIntegration_ReclaimedAttemptRecordsRenderUnavailable: after the
 // cleanup pass reclaims a finished run's storage — its attempt records and
 // logs deleted, its execution retired so reads come from the archive — the
 // snapshot still gives wait and run, and the attempts block says the records
@@ -549,7 +549,7 @@ tasks:
 	}
 }
 
-// TestIntegration_AReplicaThatStartedNothingAnswersRunTiming is I6: the
+// TestIntegration_AReplicaThatStartedNothingAnswersRunTiming: the
 // timing document is derived from shared state alone, so a replica that never
 // accepted the run prints it byte for byte as the one that did.
 func TestIntegration_AReplicaThatStartedNothingAnswersRunTiming(t *testing.T) {

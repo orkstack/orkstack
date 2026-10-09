@@ -8,7 +8,8 @@ import (
 )
 
 // TestPinFailureError_SeparatesALostHostFromAnExpiredLifetime is the
-// classification of §6.5, held on its own.
+// PIN_HOST_LOST / PIN_TIMEOUT classification (docs/DSL.md "Pins"), held on
+// its own.
 //
 // Both failures reach the workflow as the SAME event — the pin's session was
 // marked failed, because its creation activity stopped — and the elapsed time
@@ -89,8 +90,8 @@ func TestPinFailureError_SeparatesALostHostFromAnExpiredLifetime(t *testing.T) {
 	}
 }
 
-// TestRunState_PinLifetimeIsTheAuthorsOrTheSequentialWorstCase pins §6.3's
-// first row.
+// TestRunState_PinLifetimeIsTheAuthorsOrTheSequentialWorstCase pins the pin
+// lifetime rule: the author's timeout_seconds, or the derived sum.
 //
 // The declared number wins outright, because a lifetime is a property of the
 // group and its author said so. With none declared the engine cannot know the

@@ -6,7 +6,7 @@
 // shared development bucket those prefixes hold every namespace and Orkflow
 // every earlier test run left behind — data a test must never delete — so a
 // boot there costs time proportional to the bucket's whole history rather
-// than to the test: by the phase-4 proof a single boot spent ~26 s listing
+// than to the test: one measured boot spent ~26 s listing
 // 2,400 namespaces and 3,200 Orkflows it had no use for, and a package that
 // boots a few hundred engines crept toward its `go test -timeout`.
 //

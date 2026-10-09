@@ -15,7 +15,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// The Orker inventory and its one write (orker-cordon-drain §7).
+// The Orker inventory and its one write (docs/DEPLOY.md "Removing an Orker safely: cordon and drain").
 //
 // Nothing here holds an Orker. The list is the presence channel's poller
 // records plus each Orker's own answer on its control channel, read on every
@@ -76,7 +76,7 @@ func (s *Service) ListOrkers(
 // one describe per Orker, rows sorted by pool then orker_id. ListOrkers keeps
 // its own orker_id branch and its pool filter on top of it; ListReleases
 // attributes the same rows to releases, so the release view and the Orker list
-// are one inventory, not two (orkctl-release §6.1).
+// are one inventory, not two (docs/DEPLOY.md §3).
 func (s *Service) orkerInventory(ctx context.Context) ([]*orkstackv1.Orker, error) {
 	if s.fleet == nil {
 		return nil, errNoFleet

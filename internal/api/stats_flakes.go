@@ -294,8 +294,7 @@ func (h *StatsHandler) sampleRun(
 	var samples []engine.TaskSample
 	for _, task := range run.GetTaskRuns() {
 		// A fan-out's own row produces no sample: each item is one sample
-		// of its node, grouped under the node's task id (spec each-fan-out
-		// §14, flake-index).
+		// of its node, grouped under the node's task id.
 		rows := []*orkstackv1.TaskRun{task}
 		if task.GetEach() != nil {
 			rows = task.GetItems()

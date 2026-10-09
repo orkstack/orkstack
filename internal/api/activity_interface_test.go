@@ -180,7 +180,7 @@ func TestApplyOrkflow_CarriesInterfaceWarningsAndStores(t *testing.T) {
 // function of the stored document — which has no field the label could reach.
 //
 // A labelled and an unlabelled image cannot share an index digest (the label
-// lives in the config the index addresses), so the "same values" the spec
+// lives in the config the index addresses), so the "same values" the contract
 // asks for are checked as the property that makes them equal: in both cases
 // the stored ImageRef differs only in its content addresses, and the digest
 // and version are recomputed from the stored document alone.

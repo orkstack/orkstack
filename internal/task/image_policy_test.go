@@ -296,7 +296,7 @@ func TestCheckOrkflow_SkipsAnUnresolvedImage(t *testing.T) {
 func TestImagePolicyVectors_AreExportedForTheBoundaries(t *testing.T) {
 	v := ImagePolicyVectors()
 	if len(v.Registries) != 13 || len(v.Digests) != 5 {
-		t.Fatalf("vectors: %d registry rows, %d digest rows; spec §1 has 13 and 5", len(v.Registries), len(v.Digests))
+		t.Fatalf("vectors: %d registry rows, %d digest rows; want 13 and 5", len(v.Registries), len(v.Digests))
 	}
 	if v.FixedSigningKeyFingerprint != SigningKeyPEMFingerprint(v.FixedSigningKeyPEM) {
 		t.Fatalf("fixed key fingerprint does not match its PEM")

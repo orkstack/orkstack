@@ -8,8 +8,10 @@ an ordinary way to configure a task, and caching is the author's assertion,
 not a property OrkStack expects of tasks.
 
 Every example cites the sections below by title in its header
-(`# Pattern: docs/ORKFLOW_PATTERNS.md, "<title>"`), and every example is
-compiled, planned and run end to end by the test suite.
+(`# Pattern: docs/ORKFLOW_PATTERNS.md, "<title>"`). The test suite compiles
+every example, runs every `orkctl run plan --file` line in its header, and
+runs it end to end
+against a real stack (all but `advanced-demo`, which needs the internet).
 
 ## The rule: the platform moves data, tasks compute
 
@@ -19,9 +21,10 @@ an argv element, a shell word, a file. Every computation — formatting,
 arithmetic, parsing, validation, a decision — runs in a task.
 
 The template layer is Go `text/template` with exactly three helpers,
-`artifact`, `env` and `sh`, plus Go's built-ins (`eq`, `ne`, `lt`, `le`,
-`gt`, `ge`, `and`, `or`, `not`, `len`, `index`, `printf`). A `condition:`
-reads values, compares them and combines the comparisons, nothing more.
+`artifact`, `env` and `sh`, plus Go's built-in functions (`eq`, `ne`, `lt`,
+`le`, `gt`, `ge`, `and`, `or`, `not`, `len`, `index`, `printf`, …). A
+`condition:` reads values, compares them and combines the comparisons,
+nothing more.
 
 Why:
 
@@ -72,7 +75,8 @@ it:
 - render a JSON boolean bare: `{{ .tasks.assess.output.result.risky }}`;
 - combine with `and`, `or`, `not`;
 - compare numbers inside the task, not in the condition — a template sees
-  every JSON number as a float, which is why older examples write `200.0`.
+  every JSON number as a float, which is why some examples compare with
+  `200.0`.
 
 A condition is false exactly when its rendered text, trimmed and lower-cased,
 is one of eleven spellings (the empty string, `false`, `0`, `no`, `off`,
@@ -382,7 +386,8 @@ Examples: [pinned-checkout](../examples/pinned-checkout.ork.yaml),
 - Its `outputs:` are its interface, and they are strings.
 - `orkctl orkflow compat` and the promote gate compare interfaces.
 - A composed failure handler runs its child in a failing parent.
-- Apply a child before the Orkflows that compose it.
+- Apply a child, in its own `orkctl apply`, before the Orkflows that compose
+  it: a composing document is validated against what is already stored.
 
 Examples: [notify-block](../examples/notify-block.ork.yaml),
 [order-saga](../examples/order-saga.ork.yaml),
@@ -427,15 +432,18 @@ Examples: [the automation document](../examples/automation/examples.ork.yaml).
 ## Plan before you run
 
 `orkctl run plan` and the submit panel's Plan decide conditions, joins and
-skips without starting anything.
+skips without starting anything (the DSL reference's "Planning a run" shows
+how each kind of task reads).
 
 - Supply a decide task's output with `--output TASK=JSON`. A condition that
   reads a key under an output that was not supplied cannot be evaluated, and
   the plan says so.
-- `--assume-failed TASK` plans a failure path.
+- `--assume-failed TASK` plans a failure path: its failure handlers run, and
+  every other task that depends on it is unreached.
 - `--assert-runs TASK` and `--assert-skipped TASK` make a plan a CI check: it
   exits `4` when the plan contradicts one.
-- Every plan line in an example's header is run by the test suite.
+- Every `orkctl run plan --file` line in an example's header is run by the
+  test suite.
 - `orkctl task run` runs one task's filter or template locally.
 
 Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
@@ -444,11 +452,9 @@ Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
 
 ## Examples index
 
-The eleven older examples (marked *older*) predate this guide and are kept
-byte-identical, because a stored version cannot change. Five of them splice a
-rendered value into shell text or a JSON string — `http-post`, `shell-eval`,
-`file-read`, `pinned-build` and `advanced-demo` — which "Pass values as data,
-never as code" says not to do; follow the guide, not them.
+Examples marked *older* do not follow every rule of this guide; see
+[`examples/README.md`](../examples/README.md) for which, and why they are not
+edited. Follow the guide, not them.
 
 | Example | Shows | Sections |
 |---|---|---|

@@ -70,12 +70,6 @@ func (m *memComposeStore) Put(_ context.Context, name string, r io.Reader, opts 
 		SizeBytes: int64(len(data)), SHA256: digest, Metadata: opts.Metadata}, nil
 }
 
-func (m *memComposeStore) readURIs() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]string(nil), m.reads...)
-}
-
 // childStart is one mocked child run's start, as the child saw it.
 type childStart struct {
 	workflowID string
@@ -1197,8 +1191,8 @@ func TestSimulate_ComposedTaskIsOnePlanTaskAndStubsItsOutputs(t *testing.T) {
 	}
 }
 
-// TestSimulate_AgreesWithTheInterpreterOverAComposedTask is E1 over a
-// composed task: the interpreter, whose mocked child returns the stub as its
+// TestSimulate_AgreesWithTheInterpreterOverAComposedTask is the
+// plan/interpreter agreement gate over a composed task: the interpreter, whose mocked child returns the stub as its
 // declared outputs, decides every task as the plan does.
 func TestSimulate_AgreesWithTheInterpreterOverAComposedTask(t *testing.T) {
 	for _, digest := range []string{"go", "stop"} {

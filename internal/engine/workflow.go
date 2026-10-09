@@ -39,8 +39,8 @@ const orkerHeartbeatTimeout = task.HeartbeatTimeout
 
 // pinCreationTimeout is how long a pin waits for SOME pin host in its pool to
 // have a free session slot. It becomes SessionOptions.CreationTimeout, which
-// the SDK uses as the creation activity's ScheduleToStartTimeout (design
-// §6.3).
+// the SDK uses as the creation activity's ScheduleToStartTimeout
+// (docs/DSL.md "Pins").
 //
 // Submit already refused a pool whose Orkers host no pins at all
 // (PoolNoPinHostError), so this covers SATURATION only: every host is at its
@@ -51,12 +51,12 @@ const orkerHeartbeatTimeout = task.HeartbeatTimeout
 // A constant, not a setting: workflow code may not read process configuration,
 // and putting it on Pin would be one more knob for a number an author has no
 // better information about than the platform does. Pin.creation_timeout_seconds
-// is a one-field addition later if the trade proves wrong (design §12.4).
+// is a one-field addition later if the trade proves wrong.
 const pinCreationTimeout = 5 * time.Minute
 
 // pinReleaseBudget is the slice of a DERIVED pin lifetime reserved for the
 // release activity that removes /orkstack/shared, added on top of the members'
-// own budgets (design §6.3).
+// own budgets.
 //
 // A pin's ExecutionTimeout is the creation activity's StartToCloseTimeout —
 // the pin's WHOLE life, cleanup included. Without this the sum would be
@@ -68,7 +68,8 @@ const pinCreationTimeout = 5 * time.Minute
 const pinReleaseBudget = 60 * time.Second
 
 // pinReleaseTimeout bounds one attempt of the release activity, and
-// pinReleaseAttempts caps how many it gets (design §8.5).
+// pinReleaseAttempts caps how many it gets (docs/OCI_ACTIVITY_CONTRACT.md
+// §6.4).
 //
 // Small on purpose. Removing a directory on the host that owns it is fast or
 // broken, and its failure is LOGGED and never returned: cleanup is not
@@ -231,7 +232,7 @@ func RunWorkflow(
 			// A pin is opened by the FIRST of its members the run actually
 			// decides to run, and never before: a pin whose every member is
 			// skipped costs an Orker nothing, and the pin's lifetime clock
-			// starts when work is about to start (design §6.2). Opening does
+			// starts when work is about to start. Opening does
 			// not schedule this task — nothing is emitted for it, it stays
 			// PENDING, and readyTasks holds it until the session is open.
 			hold, err := state.openPin(runCtx, id)
@@ -295,7 +296,7 @@ func RunWorkflow(
 		// Then every opening pin's readiness, in sorted pin-name order and
 		// AFTER the task futures — a fixed position, so which of several
 		// simultaneously ready futures the loop takes first is a property of
-		// this code and not of iteration order (design §6.2).
+		// this code and not of iteration order.
 		for _, name := range state.pinOrder {
 			p := state.pins[name]
 			if !p.opened || p.readyConsumed {
@@ -410,7 +411,7 @@ type runState struct {
 	// eaches is one entry per fan-out task, keyed by task id, built once in
 	// newRunState; iteration is over order, never the map. eachShare is the
 	// Orkflow's declared item total, and itemInputLimit / itemArtifactMax
-	// the two per-item bounds derived from it (spec each-fan-out §5.1). A
+	// the two per-item bounds derived from it (each.go). A
 	// run with no fan-out allocates nothing and leaves all three zero.
 	eaches          map[string]*eachState
 	eachShare       int32
@@ -472,7 +473,7 @@ type pinState struct {
 	// had actually decided to run at that point.
 	triggeredBy string
 	// openedAt is workflow.Now when opening began — the deterministic start
-	// PIN_TIMEOUT is measured from (design §6.5).
+	// PIN_TIMEOUT is measured from.
 	openedAt time.Time
 	// timeout is this pin's ExecutionTimeout: Pin.timeout_seconds, or the
 	// derived sum. Held here so the value on PinContext, the value the session
@@ -681,7 +682,7 @@ func transitiveNeedsOf(tasks map[string]*orkstackv1.Task, id string) []string {
 // declaration order.
 //
 // A task whose PIN is opening is not ready, however met its `needs:` are: the
-// session it must be scheduled on does not exist yet (design §6.2). Such a
+// session it must be scheduled on does not exist yet. Such a
 // task stays PENDING with nothing emitted for it and is re-scanned the moment
 // the pin's readiness settles, which is why holding it here rather than
 // half-scheduling it costs a client nothing.
@@ -763,14 +764,14 @@ func (s *runState) openingPins() int {
 }
 
 // pinLifetime is a pin's ExecutionTimeout: the author's number, or the
-// sequential worst case derived from its members (design §6.3).
+// sequential worst case derived from its members (docs/DSL.md "Pins").
 //
 // The derived sum is every member's own wall clock plus its cancellation grace
 // plus this run's transfer budget — the same three the member's own
 // StartToCloseTimeout is built from in schedule() — plus pinReleaseBudget for
 // the cleanup that has to fit inside the session too. It over-estimates a pin
 // whose members run concurrently, and that costs nothing: the pin closes when
-// its last member is terminal (§6.4), never at this bound. An under-estimate
+// its last member is terminal, never at this bound. An under-estimate
 // would kill a healthy pin, which is why the sequential case is the one taken.
 //
 // A pure function of the definition and the plan, so it replays identically.
@@ -831,11 +832,11 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 	p.closed, p.closedSettable = workflow.NewFuture(runCtx)
 	p.done = workflow.NewBufferedChannel(runCtx, 1)
 
-	// A coroutine, and it has to be one, for two reasons that each force it
-	// (design §6.2): CompleteSession must run in the coroutine that ran
-	// CreateSession, so something other than the main loop has to own the
-	// session's life; and CreateSession blocks until a host answers, bounded
-	// only by pinCreationTimeout, which in the main loop would stall every
+	// A coroutine, and it has to be one, for two reasons that each force it:
+	// CompleteSession must run in the coroutine that ran CreateSession, so
+	// something other than the main loop has to own the session's life; and
+	// CreateSession blocks until a host answers, bounded only by
+	// pinCreationTimeout, which in the main loop would stall every
 	// unpinned branch of the run — the exact property the loop's re-scan
 	// exists to provide.
 	workflow.Go(runCtx, func(gctx workflow.Context) {
@@ -848,7 +849,7 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 // loop, and close it once the loop says every member is terminal.
 //
 // It emits NOTHING. Every emit stays in the main loop so the event sequence
-// counter is assigned in one place (design §12.3); this coroutine's only
+// counter is assigned in one place; this coroutine's only
 // channel back to the loop is the two futures and the one signal.
 func (s *runState) hostPin(gctx workflow.Context, p *pinState, queue string) {
 	base := workflow.WithActivityOptions(gctx, workflow.ActivityOptions{TaskQueue: queue})
@@ -889,7 +890,7 @@ func (s *runState) hostPin(gctx workflow.Context, p *pinState, queue string) {
 		// it is sent. The disconnected child still carries the session — the
 		// SDK keeps SessionInfo as a context VALUE and a disconnected context
 		// delegates Value() to its parent — so the release still lands on the
-		// host that owns the directory (design §12.2).
+		// host that owns the directory.
 		release, cancelRelease := workflow.NewDisconnectedContext(sessionCtx)
 		releaseCtx := workflow.WithActivityOptions(release, workflow.ActivityOptions{
 			StartToCloseTimeout: pinReleaseTimeout,
@@ -925,7 +926,7 @@ func (s *runState) hostPin(gctx workflow.Context, p *pinState, queue string) {
 //
 // A session that opened needs nothing done: the loop re-scans and the pin's
 // members are no longer held. A creation that failed is terminal for the pin —
-// the engine never re-creates a session for a pin (design §6.5) — so the
+// the engine never re-creates a session for a pin — so the
 // member whose readiness asked for it fails with PIN_UNAVAILABLE and the
 // returned error engages fail()'s fail-fast machinery exactly as any other
 // task failure does.
@@ -1015,7 +1016,7 @@ func (s *runState) pinSettled(p *pinState) bool {
 // the release activity would never run and /orkstack/shared would sit until
 // its lease expired. Prompt cleanup is worth a bounded wait, and the bound is
 // the coroutine's own work: pinReleaseTimeout x pinReleaseAttempts plus the
-// SDK's 3s completion activity (design §6.4).
+// SDK's 3s completion activity.
 //
 // It SIGNALS before it waits, rather than trusting closePinFor to have done
 // it. By the time a run ends every member of every pin is terminal — succeed()
@@ -1045,7 +1046,7 @@ func (s *runState) awaitPinsClosed(ctx workflow.Context) {
 // pinLoss reports the PIN-level reason a member's activity ended, or nil when
 // the task's failure is its own.
 //
-// A pin never moves (design §6.5). When the host dies its creation activity
+// A pin never moves (AGENTS.md §5). When the host dies its creation activity
 // heartbeat-times-out, the SDK marks the session FAILED and cancels the
 // session context, so every in-flight member's future returns a cancellation —
 // a cancellation that says nothing about the workload and must not be recorded
@@ -1100,7 +1101,7 @@ func (s *runState) pinLossOf(id string) *orkstackv1.Error {
 // time is what separates them: a pin that has been open for at least its own
 // ExecutionTimeout hit its lifetime bound, and one that has not lost its host.
 // Deterministic on both counts: workflow.Now is the replayed clock and
-// openedAt was recorded from it (design §6.5).
+// openedAt was recorded from it.
 //
 // Neither is retryable and neither is the workload's fault, which is why both
 // are non-retryable and neither is ACTIVITY_FAILED.
@@ -1143,7 +1144,7 @@ const pinSessionHostLabel = "Temporal session host (best effort, may differ from
 // pinOrkerID is the id of the Orker hosting p, as one of its members has
 // already recorded it, or empty when none has yet.
 //
-// A PIN NEVER MOVES (design §6.5): every member of one pin executes on the
+// A PIN NEVER MOVES (AGENTS.md §5): every member of one pin executes on the
 // exact same Orker PROCESS for the pin's whole life — that is the invariant
 // /orkstack/shared depends on, and the one the feature exists to provide. So an
 // orker_id recorded by ANY member is, by construction rather than by inference,
@@ -1291,7 +1292,7 @@ func (s *runState) markSkipped(ctx workflow.Context, id, reason string) error {
 	taskRun := s.taskRuns[id]
 	taskRun.Status = orkstackv1.Status_STATUS_SKIPPED
 	taskRun.FinishedAt = now
-	// Terminal, so this task's pin may now have none left (§6.4). A pin whose
+	// Terminal, so this task's pin may now have none left. A pin whose
 	// every member is skipped was never opened, so this is a no-op for it.
 	defer s.closePinFor(ctx, id)
 	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG, id,
@@ -1312,7 +1313,7 @@ func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
 	for _, need := range s.closure[id] {
 		// A fan-out contributes ONE ref, whatever its count, and only to a
 		// DIRECT dependent: its items are files nothing else may read (rule
-		// 24), and the Orker stages each from its own commit (spec §5.8).
+		// 24), and the Orker stages each from its own commit.
 		if e := s.eaches[need]; e != nil {
 			if s.taskRuns[need].GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED && s.directlyNeeds(id, need) {
 				refs = append(refs, &orkstackv1.UpstreamRef{
@@ -1583,7 +1584,7 @@ func (s *runState) executeTaskInput(
 		// Set ONLY for a pinned task. An unpinned task's payload is therefore
 		// byte-identical to what it was before this field existed — protojson
 		// omits an unset message field — which is what lets the golden
-		// history fixture keep matching without being re-recorded (§10.2).
+		// history fixture keep matching without being re-recorded.
 		Pin: pinContext,
 
 		// Set ONLY for a cached task of a run whose plan carries a cache plan
@@ -1665,7 +1666,7 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 		return s.collectChild(ctx, id, future)
 	}
 	// This task is terminal on every path out of here, so this is where its
-	// pin learns whether it was the last one (§6.4).
+	// pin learns whether it was the last one.
 	defer s.closePinFor(ctx, id)
 	taskRun := s.taskRuns[id]
 
@@ -1675,7 +1676,7 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 		// BEFORE recordFailure, because the two answers differ: a member of a
 		// pin whose session has failed did not fail on its own and did not get
 		// cancelled in the sense a client means — the platform lost the host
-		// it was pinned to (§6.5).
+		// it was pinned to (PIN_HOST_LOST, docs/DSL.md "Pins").
 		if loss := s.pinLoss(ctx, id); loss != nil {
 			taskRun.Status = orkstackv1.Status_STATUS_FAILED
 			taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
@@ -1716,7 +1717,8 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 	taskRun.ValuesRef = result.GetValuesRef()
 	taskRun.Commit = result.GetCommit()
 	taskRun.ExitCode = result.GetExitCode()
-	// WHICH Orker produced this, for every task, pinned or not (§9). The field
+	// WHICH Orker produced this, for every task, pinned or not
+	// (docs/UI_CLI_PARITY.md "Task pins"). The field
 	// already travelled on the result; nothing copied it onto the snapshot.
 	// For a pin it is the client-visible proof the pin held: same pin, same
 	// orker_id across every member.
@@ -1846,7 +1848,7 @@ func (s *runState) markCanceled(ctx workflow.Context, id, reason string) error {
 	taskRun := s.taskRuns[id]
 	taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 	taskRun.FinishedAt = now
-	// As in markSkipped: terminal, so the pin may be done with (§6.4). This is
+	// As in markSkipped: terminal, so the pin may be done with. This is
 	// the hook cancelInFlight relies on — it marks every never-started task
 	// CANCELED, which is what makes every pin's members terminal on the
 	// failure path and lets fail() wait on `closed` without hanging.
@@ -1913,8 +1915,8 @@ func (s *runState) recordFailureOn(ctx workflow.Context, taskRun *orkstackv1.Tas
 		// after the proto converter decodes it from the wire.
 		var detail *orkstackv1.ActivityFailureDetail
 		if err := applicationErr.Details(&detail); err == nil {
-			// WHICH Orker produced this outcome, for every task, pinned or not
-			// (§9) — read as soon as a detail decodes, before the reason-code
+			// WHICH Orker produced this outcome, for every task, pinned or not —
+			// read as soon as a detail decodes, before the reason-code
 			// gate below, because a failed attempt is exactly when an operator
 			// wants to know which host it happened on. Nil-safe: a detail
 			// without one leaves the field empty, which is what it already
@@ -2019,8 +2021,7 @@ func retryStateEnumFor(state enumspb.RetryState) orkstackv1.RetryState {
 }
 
 // categoryEnumFor maps an ApplicationError type string to the proto enum.
-// The category names ARE the type strings, which is what makes
-// NonRetryableErrorTypes work at all (§8.1).
+// The category names ARE the type strings (docs/OCI_ACTIVITY_CONTRACT.md §8.1).
 func categoryEnumFor(category string) orkstackv1.FailureCategory {
 	switch category {
 	case task.CategoryActivityFailed:
@@ -2144,7 +2145,7 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 	// A fan-out's own failure carries the node's sentence as the
 	// ApplicationError's message, whichever way the array was counted or the
 	// item failed; Run.error.message is that sentence, without the error
-	// type's decoration (spec each-fan-out §5.3). Nothing else changes: the
+	// type's decoration. Nothing else changes: the
 	// branch is reached only for a fan-out, which no earlier history holds.
 	var nodeErr *temporal.ApplicationError
 	// A composed task's failure carries the sentence naming its child the
@@ -2157,7 +2158,7 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 	// A pin that lost its host is the one failure that ARRIVES as a
 	// cancellation without anything having cancelled the run: the SDK cancels
 	// the session context when the session fails, so every member's future
-	// returns a cancellation (§6.5). The run failed — nobody ended it — and
+	// returns a cancellation. The run failed — nobody ended it — and
 	// the run's reason is the pin's, not the word "canceled".
 	if lost := s.pinLossOf(taskID); lost != nil {
 		failure.Code = "RUN_FAILED"
@@ -2170,7 +2171,7 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	// Every pin closed before the run reports success, so the terminal
 	// snapshot describes a run that is genuinely finished — nothing of it is
-	// still holding an Orker's session slot or a directory on its disk (§6.4).
+	// still holding an Orker's session slot or a directory on its disk.
 	// Ordinarily a no-op: each pin was already closed by its own last member.
 	s.awaitPinsClosed(ctx)
 	// Reached only with no await open (the loop's exit condition); a
@@ -2178,7 +2179,7 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	s.drainResolutions(ctx)
 
 	// Declared outputs, rendered once, replace the leaf aggregation; a run
-	// whose outputs cannot be produced FAILS (spec composed-orkflows §6.5).
+	// whose outputs cannot be produced FAILS (docs/DSL.md "Composition").
 	// An Orkflow with no `outputs:` takes the path it always took.
 	var output *orkstackv1.Payload
 	if len(s.wf.GetOutputs()) > 0 {

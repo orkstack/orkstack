@@ -119,8 +119,7 @@ time of the checkout.
 platform image under the image's default environment, gives one tarball digest
 on every run: git compresses in-process with zlib (no `gzip` program is run),
 the gzip header's time field is zero, and the fresh repository has no
-configuration of its own to read. The claim is scoped exactly as far as it was
-measured:
+configuration of its own to read. The claim is scoped exactly:
 
 - the compressed bytes depend on the archiving git and zlib, so the claim is
   per **platform image** — one `linux/amd64` or one `linux/arm64` image — not
@@ -196,12 +195,10 @@ commit id itself when `ref` was one.
 
 ## Caching
 
-Nothing in OrkStack expects a task to produce the same output from the same
-input: tasks run at least once and may read the clock, the network and their
-environment. Exactly one opt-in feature depends on it — `cache:` — and writing
-`cache:` is **your assertion** that reusing an earlier result for the same
-memo key is as good as running the task again. OrkStack cannot verify it. This
-section tells you when that assertion is false for this image.
+Writing `cache:` is **your assertion** that reusing an earlier result for the
+same memo key is as good as running the task again; OrkStack cannot verify it
+(`docs/ACTIVITY_IMAGES.md`, "Network and caching"). This section tells you
+when that assertion is false for this image.
 
 A task that mounts a secret is never cached. A cache hit reads no secret, so a
 cached private clone would keep handing out the tree after its token was
@@ -360,8 +357,9 @@ LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type
 ## Cancellation
 
 `ls-remote`, the fetch, the checkout and the archive each run in the
-background under a TERM trap (§10.2 rule 2a), so cancelling a run interrupts a
-slow fetch within the grace period rather than being escalated to SIGKILL.
+background under a TERM trap (the OCI Activity Contract's §10.1 rule 2a), so
+cancelling a run interrupts a slow fetch within the grace period rather than
+being escalated to SIGKILL.
 
 ## What this image does not do
 

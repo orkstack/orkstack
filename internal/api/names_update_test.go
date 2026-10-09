@@ -20,7 +20,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
-// These tests prove declarative-automation §4: triggers and webhooks gain an
+// These tests prove docs/AUTOMATION.md "Names and in-place updates": triggers
+// and webhooks gain an
 // optional name and an in-place update that never re-issues the credential
 // an external system holds.
 

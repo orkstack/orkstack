@@ -26,7 +26,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.OrkflowServiceDiffOrkflowVersionsProcedure: true,
 	orkstackv1connect.OrkflowServicePlanRunProcedure:             true,
 	// CompareInterfaces and ListOrkflowCallers compute on read and write
-	// nothing (interface-compatibility-gate §5.6).
+	// nothing (docs/UI_CLI_PARITY.md "Interface compatibility").
 	orkstackv1connect.OrkflowServiceCompareInterfacesProcedure:  true,
 	orkstackv1connect.OrkflowServiceListOrkflowCallersProcedure: true,
 	orkstackv1connect.RunServiceGetRunProcedure:                 true,
@@ -50,7 +50,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.ActivityServiceListOrkersProcedure:        true,
 	orkstackv1connect.CacheServiceGetCacheStatsProcedure:        true,
 	// InspectActivity resolves one reference against the registry and writes
-	// nothing (activity-interface-manifests §5.4).
+	// nothing (docs/ACTIVITY_IMAGES.md "Declaring the interface").
 	orkstackv1connect.ActivityServiceInspectActivityProcedure:  true,
 	orkstackv1connect.SystemServiceGetSystemInfoProcedure:      true,
 	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure: true,
@@ -63,7 +63,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.StatsServiceGetUsageProcedure:            true,
 	orkstackv1connect.AuditServiceListAuditRecordsProcedure:    true,
 	// PlanAutomation and ExportAutomation write nothing, ever
-	// (declarative-automation §7): an apply is the client sending the plan's
+	// (docs/AUTOMATION.md): an apply is the client sending the plan's
 	// requests to the audited write RPCs, each recorded under its own action.
 	orkstackv1connect.AutomationServicePlanAutomationProcedure:   true,
 	orkstackv1connect.AutomationServiceExportAutomationProcedure: true,
@@ -77,18 +77,18 @@ var auditStreamingReads = map[string]bool{
 	orkstackv1connect.RunServiceStreamTaskLogsProcedure: true,
 	orkstackv1connect.RunServiceReadArtifactProcedure:   true,
 	// ExportRunEvidence assembles a bundle from objects that already exist
-	// and writes nothing (run-evidence-bundle §8).
+	// and writes nothing (docs/RUN_EVIDENCE.md).
 	orkstackv1connect.RunServiceExportRunEvidenceProcedure: true,
 }
 
 // Plan is a read verb: PlanRun simulates a definition and writes nothing
-// (docs/design/proposals/phase-3/run-plan, "Reads only"). Inspect is the verb
+// (docs/UI_CLI_PARITY.md "Run plan"). Inspect is the verb
 // of InspectRun (a live describe) and InspectActivity (an on-demand registry
-// read, activity-interface-manifests §5.4); both write nothing. Export is the
+// read, docs/ACTIVITY_IMAGES.md "Declaring the interface"); both write nothing. Export is the
 // verb of ExportAutomation, which renders a namespace as a document and writes
-// nothing (declarative-automation §7.3). Compare is the verb of
+// nothing (docs/AUTOMATION.md). Compare is the verb of
 // CompareInterfaces, which classifies two stored documents and writes nothing
-// (interface-compatibility-gate §5.6).
+// (docs/UI_CLI_PARITY.md "Interface compatibility").
 var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export", "Compare"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file

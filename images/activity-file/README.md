@@ -25,8 +25,7 @@ Sources resolve inside the workspace. A relative path resolves under
 be argued out of the workspace.
 
 Every op that produces something writes exactly one file to
-`/orkstack/output/artifacts/`, which is what makes it one output artifact
-(§3.5). The output name is `as`, or a sensible default derived from the source.
+`/orkstack/output/artifacts/`, which is what makes it one output artifact. The output name is `as`, or a sensible default derived from the source.
 It must be a plain file name: no `/`, no `..`, at most 128 bytes.
 
 ## Operations
@@ -45,16 +44,11 @@ It must be a plain file name: no `/`, no `..`, at most 128 bytes.
 workspace path inside it.
 
 `untar` extracts **one named member**, because an artifact is a regular file
-and §3.5 has no directory semantics — a whole hierarchy is not an artifact.
-`member` is required, and is a path inside the archive.
+and the artifact layer has no directory semantics — a whole hierarchy is not
+an artifact. `member` is required, and is a path inside the archive.
 
-`checksum` produces no artifact, and that is deliberate rather than an
-inconsistency with "every op that produces something writes exactly one file".
-It **produces nothing**: it reads a file and reports its digest. Writing the
-hex digest out as an artifact would be inventing an output so the table could
-have no exceptions — a file nobody asked for, which `values.json` already
-carries the contents of. `sha256sum` prints; it does not create a file, and
-AGENTS.md §9 asks this activity to stay Unix-like.
+`checksum` produces no artifact: like `sha256sum`, it reads a file and reports
+its digest, which `values.json` already carries.
 
 ## Output
 
@@ -73,8 +67,8 @@ AGENTS.md §9 asks this activity to stay Unix-like.
 ## Errors
 
 A missing or unreadable source, a `..` in a path, an over-long or unsafe
-artifact name, or a failed compression is a non-zero exit with a message on
-stderr. An unknown or missing `op` exits `2`.
+artifact name, or a failed compression exits `1` with a message on stderr. An
+unknown or missing `op` exits `2`.
 
 ## Interface
 
@@ -82,8 +76,9 @@ The image declares its `with:` contract in the
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
 "Declaring the interface"), so `orkctl orkflow validate` and apply check a
 task's `with:` before anything runs: a missing required key or an unknown
-`op` is an error, an undeclared key a warning. Seven ops, no default op (an unknown or missing `op` exits `2`), and the three `values.json` keys of Output. The label, as the
-Dockerfile carries it:
+`op` is an error, an undeclared key a warning. Seven ops, no default op (an
+unknown or missing `op` exits `2`), and the three `values.json` keys of
+Output. The label, as the Dockerfile carries it:
 
 ```dockerfile
 LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}},"checksum":{"fields":{"src":{"type":"string","required":true}}},"gzip":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}},"gunzip":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}},"tar":{"fields":{"srcs":{"type":"array","required":true},"as":{"type":"string"}}},"untar":{"fields":{"src":{"type":"string","required":true},"member":{"type":"string","required":true},"as":{"type":"string"}}},"concat":{"fields":{"srcs":{"type":"array","required":true},"as":{"type":"string","required":true}}}},"values":{"path":{"type":"string"},"sizeBytes":{"type":"number"},"sha256":{"type":"string"}}}'
@@ -93,8 +88,15 @@ LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields
 
 ## Cancellation
 
-The real work runs in the background under a TERM trap (§10.2 rule 2a), so a
-long `tar` is interrupted within the cancellation grace period.
+The real work runs in the background under a TERM trap (the OCI Activity
+Contract's §10.1 rule 2a), so a long `tar` is interrupted within the
+cancellation grace period.
+
+## Environment
+
+The image sets no variable and honours the task's `env:`. `tar` output is not
+byte-reproducible (members carry the time each file was staged), which matters
+only to caching (`docs/ACTIVITY_IMAGES.md`).
 
 ## Building
 

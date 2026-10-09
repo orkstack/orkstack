@@ -10,8 +10,8 @@ import {
 import { formatBytes, heartbeatAge, liveLine } from '../src/lib/live';
 
 // The live-attempt derivation's scenario table, L1–L11, as the server answers
-// it, through the browser's live line (U1–U11). The sentences are the ones
-// the spec lists and `orkctl run inspect` prints beside them. Times of day are
+// it, through the browser's live line. The sentences are the ones
+// `orkctl run inspect` prints beside them. Times of day are
 // rendered in the viewer's zone, so the table pins it.
 (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process.env.TZ = 'UTC';
 

@@ -22,7 +22,7 @@ import {
 } from './harness';
 
 // Admin → Webhooks → Deliveries, in a browser, against the real engine, Orker,
-// Temporal and MinIO (docs/design/proposals/phase-2/delivery-records).
+// Temporal and MinIO (docs/UI_CLI_PARITY.md "Webhook administration").
 //
 // What is measured here:
 //   1. a delivery the receiver refused is recorded once it settles, and the

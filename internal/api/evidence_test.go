@@ -254,13 +254,13 @@ func (f *evidenceFixture) finish(run *orkstackv1.Run) *orkstackv1.Run {
 // succeeded is H1's run: one task, attempt 1 failed with its own logs,
 // attempt 2 succeeded with an artifact, values, logs and a commit.
 type succeededRun struct {
-	run                  *orkstackv1.Run
-	report, values       *orkstackv1.ArtifactRef
-	stdout1, stderr1     *orkstackv1.ArtifactRef
-	stdout2, stderr2     *orkstackv1.ArtifactRef
-	commit               *orkstackv1.CommitRef
-	commitRaw, runJSONL  []byte
-	reportBytes, outBody []byte
+	run                 *orkstackv1.Run
+	report, values      *orkstackv1.ArtifactRef
+	stdout1, stderr1    *orkstackv1.ArtifactRef
+	stdout2, stderr2    *orkstackv1.ArtifactRef
+	commit              *orkstackv1.CommitRef
+	commitRaw, runJSONL []byte
+	reportBytes         []byte
 }
 
 func (f *evidenceFixture) succeeded(runID string) succeededRun {

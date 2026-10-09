@@ -115,7 +115,7 @@ func cliDiffRun(t *testing.T, id, namespace, name, version, digest, date string,
 	}
 }
 
-// seedChangedPair is C1's fixture: nightly-etl@1.2.0 on Monday succeeded;
+// seedChangedPair is the changed-pair fixture: nightly-etl@1.2.0 on Monday succeeded;
 // 1.2.1 on Tuesday, with a moved transform tag, a new date and a gpu pool,
 // failed. Monday's load record was reclaimed.
 func seedChangedPair(t *testing.T, f *diffCLIFixture) {
@@ -150,7 +150,6 @@ func seedChangedPair(t *testing.T, f *diffCLIFixture) {
 	f.seed(t, tue)
 }
 
-// C1
 func TestGoldenRunDiff_HumanOutput(t *testing.T) {
 	f := newDiffCLIFixture(t)
 	seedChangedPair(t, f)
@@ -168,7 +167,6 @@ func TestGoldenRunDiff_HumanOutput(t *testing.T) {
 	}
 }
 
-// C2
 func TestGoldenRunDiff_IdenticalRuns(t *testing.T) {
 	f := newDiffCLIFixture(t)
 	f.define(t, "", "nightly-etl", "1.2.0", cliDigestMon, map[string]string{
@@ -192,7 +190,6 @@ func TestGoldenRunDiff_IdenticalRuns(t *testing.T) {
 	}
 }
 
-// C3
 func TestGoldenRunDiff_JSON(t *testing.T) {
 	f := newDiffCLIFixture(t)
 	seedChangedPair(t, f)
@@ -220,7 +217,6 @@ func TestGoldenRunDiff_JSON(t *testing.T) {
 	}
 }
 
-// C4
 func TestRunDiff_OnlyNarrowsAndUnknownFieldExitsNonZero(t *testing.T) {
 	f := newDiffCLIFixture(t)
 	seedChangedPair(t, f)
@@ -242,7 +238,6 @@ func TestRunDiff_OnlyNarrowsAndUnknownFieldExitsNonZero(t *testing.T) {
 	}
 }
 
-// C5
 func TestRunDiff_SameRunIsRefused(t *testing.T) {
 	f := newDiffCLIFixture(t)
 	seedChangedPair(t, f)
@@ -255,7 +250,6 @@ func TestRunDiff_SameRunIsRefused(t *testing.T) {
 	}
 }
 
-// C6
 func TestRunDiff_AnotherNamespaceExitsNonZero(t *testing.T) {
 	f := newDiffCLIFixture(t)
 	f.run("namespace", "create", "payments").requireExit(t, exitOK)
@@ -272,7 +266,6 @@ func TestRunDiff_AnotherNamespaceExitsNonZero(t *testing.T) {
 	}
 }
 
-// C7
 func TestRunDiff_DifferentOrkflowsRenderThePresenceRows(t *testing.T) {
 	f := newDiffCLIFixture(t)
 	f.define(t, "", "etl", "1.0.0", cliDigestMon, map[string]string{"a": cliImageShell, "b": cliImageShell, "c": cliImageShell})
