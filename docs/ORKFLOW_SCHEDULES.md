@@ -147,7 +147,7 @@ orkctl schedule create NAME --orkflow NAME [--version V]
     [--overlap skip|buffer-one|buffer-all|cancel-other|allow-all]
     [--catchup-window DUR] [--pause-on-failure]
     [--input KEY=VALUE ...] [--input-json JSON] [--description TEXT] [--paused]
-orkctl schedule list [--orkflow NAME]
+orkctl schedule list [--filter F ...]
 orkctl schedule get NAME
 orkctl schedule update NAME [--version V | --follow-current] [spec flags]
     [--input KEY=VALUE ...] [--input-json JSON] [--clear-input] [--description TEXT]

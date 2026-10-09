@@ -49,8 +49,9 @@ disclosed exactly once. No other message carries it.
   the pinned version, when one is given — exists, with `SubmitRun`'s own
   errors in that order. A refused create writes nothing: a trigger never
   silently points at nothing.
-- **`ListTriggers`** returns one namespace's triggers; `orkflow_name` narrows
-  to one Orkflow. It reads the shared store on every call, so any replica
+- **`ListTriggers`** returns one namespace's triggers; filters narrow it
+  ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Filtering lists") — `--filter
+  orkflow_name=NAME` lists one Orkflow's. It reads the shared store on every call, so any replica
   answers for a trigger another created. A listing never carries a token or
   its digest.
 - **`UpdateTrigger`** replaces every mutable field — name, pin, description —
@@ -190,7 +191,7 @@ run, and nothing is left to deliver later.
 
 ```text
 orkctl trigger create --orkflow NAME [--version V] [--description TEXT] [--name NAME] [-n NS]
-orkctl trigger list   [--orkflow NAME] [-n NS]
+orkctl trigger list   [--filter F ...] [-n NS]
 orkctl trigger update ID [--name NAME] [--version V | --follow-current] [--description TEXT] [-n NS]
 orkctl trigger delete ID [-n NS]
 ```

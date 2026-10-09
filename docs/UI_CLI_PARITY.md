@@ -60,6 +60,217 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   controls are a presentation of declared inputs, not a schema language (see
   "Baseline operator flows").
 
+## Filtering lists
+
+Every list whose collection grows with use takes one structured filter,
+`repeated FieldFilter filters` (`proto/orkstack/v1/filter.proto`). A filter
+is a field, one operator from a closed set and its values; **every filter of
+a request must hold**. There is no OR, no grouping, no negation of a group and
+no expression, by design (`AGENTS.md` §13). Which fields of which object may
+be filtered, with which operators, is declared **once**, as the
+`(orkstack.v1.filterable)` option on the list request; the engine validates
+and matches with it, `orkctl --filter help` prints it, and the browser's
+filter form renders it. The matcher is written once, in
+`internal/listfilter`.
+
+Lists that take filters: `ListNamespaces`, `ListOrkflows`, `ListWebhooks`,
+`ListTriggers`, `ListSchedules`, `ListPools`, `ListActivities`, `ListOrkers`
+and `ListReleases`. The run list, webhook deliveries and the audit trail keep
+the selectors their own sections describe. Child listings of one parent
+(`ListOrkflowVersions`, `ListRunArtifacts`, `ListTaskAttempts`), the
+`ListOrkflowCallers` report and `ListTelemetrySinks` take no filters.
+
+### Scoping versus filtering
+
+A request field stays a typed field only when it names the **tenant** a read
+is confined to (`namespace` on a namespaced resource: empty means `default`,
+another namespace's object is NotFound), the one **parent** of a bounded
+child listing, or **paging** (`page_size`, `page_token`). Everything else that
+narrows a listing is a filter — any property of the listed object, including
+an id, a time, or the namespace *recorded on* a deployment-wide object (a
+webhook's scope).
+
+### Operators and the CLI grammar
+
+| Operator | CLI | Values | Holds when |
+| --- | --- | --- | --- |
+| equals | `f=v` | exactly 1 | the field equals `v` |
+| not equals | `f!=v` | exactly 1 | the field differs from `v` |
+| in | `f=v1,v2` | 1–64, none empty | the field equals any value (one value is equals) |
+| contains | `f~v` | exactly 1, non-empty | the text contains `v` |
+| prefix | `f^v` | exactly 1, non-empty | the text starts with `v` |
+| at or after | `f>=t` | exactly 1 instant | the instant is `t` or later |
+| before | `f<t` | exactly 1 instant | the instant is earlier than `t` |
+
+To exclude several values, repeat `!=`: AND is the only combinator. The
+display names above, with the CLI spelling in parentheses (`contains (~)`),
+are the ones both clients use.
+
+`orkctl` takes one repeatable `--filter FIELD OP VALUE` flag on every list
+command (`--filter 'status=FAILED,CANCELED' --filter 'labels.team=payments'`).
+The grammar is exact and nothing is trimmed:
+
+```text
+FILTER   = FIELD OPERATOR [VALUES]
+FIELD    = 1*( ESCAPED / any character except \ = ! ~ ^ < > )
+           -- "labels.<key>": everything after the first "labels." is the key
+OPERATOR = ">=" / "!=" / "=" / "~" / "^" / "<"
+VALUES   = ITEM *( "," ITEM )      -- more than one ITEM only after "="
+ITEM     = 1*( ESCAPED / any character except \ and , )
+ESCAPED  = "\" any-character      -- "\," is a comma, "\\" a backslash, "\=" an equals sign
+```
+
+A field ends at its first unescaped operator character; `!` must be followed
+by `=` and `>` by `=`; a value beginning with an unescaped `=` is refused
+(`no operator "<=", "==" or ">=="; escape a value's leading = as \=`), so
+`<=` and `==` never parse as something else; after `=`, unescaped commas make
+an `in` and an empty item is refused, while a lone empty value is allowed
+(`namespace=` is equals ""); after any other operator an unescaped comma is
+refused; a trailing lone `\` and an empty `--filter ''` are refused.
+`orkctl` checks this syntax only, before any request; every other refusal is
+the server's, printed verbatim with a non-zero exit — one validator, so the
+browser and the CLI cannot disagree.
+
+**Field paths are proto field names; values are `--json` spellings.** A path
+is `orkflow_name`, `created_at`, `hold.reason` — the names in the `.proto` and
+in `--filter help`, never the camelCase keys `--json` prints for the same
+fields, and no alias is accepted. A value is exactly what `--json` prints
+(`FAILED`, `2026-10-09T00:00:00Z`, `true`), so a value copied from `--json`
+output filters for it.
+
+`--filter help` prints the command's allowlist and exits 0 without a request;
+the same table ends the command's `--help`:
+
+```text
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD      OPERATORS       VALUES
+  orker_id   = != =a,b ~ ^   an Orker id
+  pool       = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty; an unreachable row is kept
+  build_id   = != =a,b ~ ^   text; an unreachable row is kept
+  cordoned   =               true false; an unreachable row is kept
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+```
+
+A filtered listing that matches nothing prints `No <things> match --filter
+'…'.` instead of an empty table; `--json` keeps each command's own envelope,
+and filters only narrow the rows inside it.
+
+### Matching rules
+
+A filter reads the listed object exactly as the response carries it, in
+[JSON.md](JSON.md)'s dialect:
+
+| Field type | Operators | Value spelling | An unset field reads as |
+| --- | --- | --- | --- |
+| text | equals, not equals, in, contains, prefix; an opaque id or digest only the first three | verbatim UTF-8, case-sensitive, no trimming | `""` |
+| enum | equals, not equals, in | the short name (`FAILED`); input is case-insensitive, the type prefix is optional and `-` reads as `_` | `UNSPECIFIED`, which no filter names: equals and in never match it, not equals always does |
+| bool | equals | `true` or `false`, exactly | `false` |
+| timestamp | at or after, before | RFC 3339 **with a zone** (`Z` or `±hh:mm`); compared as instants at microsecond precision | never matches |
+| `labels.<key>` | as text | as text | an absent key reads `""` |
+
+A path through a nested message reads each unset message as its zero value:
+`hold.reason=` lists the namespaces with no hold and `hold.reason!=` the held
+ones. Repeated and numeric fields are never filterable. **Opaque ids are
+matched whole** — a webhook, trigger or schedule id and the digests take
+equals, not equals and in only — because nothing derives meaning from an
+id's parts (`AGENTS.md` §7); operator-chosen names (an Orker id, a release,
+every slug) take all five text operators.
+
+**Rows the deployment could not ask.** A list whose rows can say "this could
+not be measured" (an unreachable Orker, a schedule the cluster could not
+describe) keeps such a row under every filter on a field it did not measure,
+and lists it with its reason: a filter never hides a row the deployment failed
+to ask. Identity fields (an Orker's id; a schedule's id, name and Orkflow) are
+always measured and filter normally.
+
+### Values, limits and refusals
+
+A request is refused with `InvalidArgument`, before any read, with exactly
+these messages (`i` is the filter's index in the request):
+
+| Condition | Message |
+| --- | --- |
+| more than 16 filters | `at most 16 filters; got 17` |
+| a field not in the allowlist (a camelCase path included) | `filters[i]: "statuss" is not a filterable field of Run; filterable: …` — the declared paths in order, a labels map written `labels.KEY` |
+| `labels` with no key | `filters[i]: name a key: labels.<key>` |
+| no operator | `filters[i]: orkflow_name: no operator` |
+| an operator the field does not take | `filters[i]: status does not take contains (~); it takes equals (=), not equals (!=), in (=a,b)` |
+| value count | `filters[i]: equals (=) takes exactly one value`, `filters[i]: in (=a,b) takes 1 to 64 values`, `filters[i]: in (=a,b) cannot hold an empty value` |
+| a value over 1024 bytes, or not UTF-8 | `filters[i]: a value is at most 1024 bytes of UTF-8` |
+| an empty contains or prefix | `filters[i]: contains (~) needs a non-empty value` |
+| an enum value the list cannot select | `filters[i]: "AWAITING" is not a status this list can select; status is one of …` |
+| a name, in equals, not equals or in | `filters[i]: namespace "Payments" is not a slug (^[a-z][a-z0-9-]*$)` |
+| an Orker id, in equals, not equals or in | `filters[i]: orker_id: invalid orker id: empty` |
+| bool | `filters[i]: drained is true or false, not "yes"` |
+| time | `filters[i]: "2026-10-09" is not an RFC 3339 instant with a zone (2026-10-09T00:00:00Z)` |
+| an unmet requirement | `filters[i]: origin.id needs an equals (=) filter on origin.kind` |
+| an empty interval | `created_at >= 2026-10-09T00:00:00Z and < 2026-10-08T00:00:00Z select no instant` |
+| a page token of another filter set | `page_token was issued for other filters; drop it and list from the first page` |
+
+Values are checked only where the field declares what they must spell. A
+whole-value comparison on a field that holds an OrkStack name — a namespace,
+Orkflow, task id or pool, or a trigger, schedule or webhook name — is held to
+the same name rule as every other boundary (`AGENTS.md` §7: validated, never
+sanitized), and the empty value is accepted, because it is what an unset name
+reads as (`namespace=` selects deployment-wide webhooks). An Orker id is held
+to the Orker id rule. A contains or prefix value is a fragment, not a name,
+and is held only to the size and UTF-8 limits; an opaque id that names
+nothing matches nothing — an empty answer, never an error.
+
+### Canonical form and page tokens
+
+A filter set is canonicalized before it is used: an `in` of one value becomes
+equals and its values are deduplicated and sorted; enum values become upper
+short names; instants become UTC at microsecond precision; several lower
+bounds on one field collapse to the latest and several upper bounds to the
+earliest; then each filter is written in the CLI grammar, the texts sorted
+bytewise and duplicates dropped. A page token binds the SHA-256 of those
+texts, so `status=failed` then `status=FAILED`, or the same filters in
+another order, continue one listing, and a changed set never does — the
+token is refused with the message above, and clients clear it whenever the
+filters change. A token of an older shape is `invalid page_token`.
+
+### What a filter costs
+
+A filter only ever narrows what is read; the whole set is still applied to
+every row read, so a narrower read can never change an answer.
+
+| List | Decided from | Note |
+| --- | --- | --- |
+| Namespaces | `name`: the namespace registry's name listing, before any document is read; every other field: the document | name filters alone read only the page's documents; any other filter reads documents in name order, eight at a time, until the page is full |
+| Orkflows | the current-version documents the list already reads | filters apply before the page is cut |
+| Webhooks, triggers | the subscription and trigger documents the list already reads | a single `orkflow_name=` narrows what the trigger store reads |
+| Schedules | `id`, `name`, `orkflow_name`: the cluster's list of schedules, before any is described; the rest: each schedule as described | a narrowed listing describes only what it may return |
+| Pools | the computed pool rows | |
+| Activities | the catalog | |
+| Orkers | `orker_id=`: that one Orker, asked on its own; everything else: the cluster's list of Orkers and each one's answer | a malformed id is refused before anything is asked |
+| Releases | `build_id=`: that release alone is counted; the release rows | filters select release rows only; every other field is the deployment's |
+
+### Filters in the browser
+
+Every filtered list renders one component, `ListFilter.svelte`, from the same
+declaration (`ui/src/lib/listFilter.ts`): a form holding a **draft** of the
+applied filters — refilled from the URL after every navigation, applied only
+with **Apply filters** — with one row per filter: the field (`Label (path)`,
+a labels map as `Label (labels.KEY)` with a key input), the operator (only
+the field's own, by their display names), and a value control for the field's
+kind (text; for in, one input where `\,` is a literal comma; an enum select,
+or a checkbox per value for in; `true`/`false`; a `datetime-local` shown with
+the UTC instant it sends). **Add filter**, **Clear filters** and the CLI
+equivalent of the applied filters (`orkctl … --filter '…'`, every value
+shell-quoted) sit beside it. The browser blocks nothing the CLI would send —
+an empty label key goes out as `labels.`, an empty time as `""` — and shows
+the server's refusal verbatim in the page's error panel, with Clear filters
+still there to recover.
+
+The filters live in the URL as one **repeated** key per list — `filter`, one
+value per filter in the CLI grammar, in canonical order, after `ns` — so a
+link is the listing. Values are percent-encoded; in a hand-typed link write a
+`+` as `%2B` (or use `Z`), since a literal `+` decodes as a space and is then
+refused as not an instant. A parameter that does not parse is shown as an
+error without a request.
+
 ## Orkflows
 
 ### Validation without applying
@@ -265,8 +476,10 @@ footer (`ui/src/lib/browsing.ts`, `Pagination.svelte`):
 - **The URL holds what the page shows, and nothing else**: `ns`, the filters,
   `size`, the engine's `cursor`, and `page` (1-based, omitted at 1). A pasted
   link opens the exact page it was copied from. One function writes the query
-  string, only ever `set`s and omits empty values, so a key never appears
-  twice and a cleared filter leaves the bar.
+  string, `listHref`: it sets every scalar key once and omits empty values, so
+  a scalar never appears twice and a cleared filter leaves the bar. On
+  Orkflows and Admin → Namespaces the filters are repeated `filter` keys in
+  canonical order ("Filtering lists") — the one key that repeats.
 - **The path back lives in `sessionStorage`**, keyed by the list's canonical
   filter query, written on Next before navigating. Not the URL (it grew by one
   escaped cursor per page), not `localStorage` (a cursor is a position, so a
@@ -278,10 +491,10 @@ footer (`ui/src/lib/browsing.ts`, `Pagination.svelte`):
   offered. Previous is enabled only when the stack describes this exact page.
 - **No totals.** Responses carry no count, so the footer never shows "of N":
   `Page 3 · 10 runs`, `Page 5 · 7 runs · last page`, or `7 runs`.
-- **Page size** on Runs is a field of the filter form and applies with **Apply
-  filters**; on Orkflows and Admin → Namespaces (no filter form it belongs to)
-  it applies on change and clears that filter set's stack. One form never
-  applies some fields on change and others on submit.
+- **Page size** is a field of the filter form on every paged list — Runs,
+  Orkflows and Admin → Namespaces — and applies with **Apply filters**, never
+  on change, starting a new page 1 and clearing the stack of the filter set it
+  leaves. One form never applies some fields on change and others on submit.
 
 The dashboard's window control has four segments — `15m`, `6h`, `24h` and
 **Custom** (a `datetime-local` capped at now, labelled `Since <instant>`). The
@@ -716,10 +929,11 @@ event reconciles with `GetRun`. What each delivery did is recorded once it
 settles ("Webhook deliveries"); the record is a log, never a queue.
 
 CLI: `webhook register URL [--event E…] [--secret S] [-n NS] [--orkflow]
-[--task] [--name]`, `webhook list` (a `NAME` and a `SCOPE` column), `webhook
+[--task] [--name]`, `webhook list [--filter F…]` (a `NAME` and a `SCOPE`
+column; `--filter namespace=` keeps the deployment-wide ones), `webhook
 update ID [--name] [--url] [--event…|--clear-events] [-n|--deployment-wide]
 [--orkflow] [--task]` (read-modify-write), `webhook delete ID`. UI: **Admin →
-Webhooks** — list, register (name disabled until a namespace scope is given,
+Webhooks** — list (with the filter form), register (name disabled until a namespace scope is given,
 run and task event checkboxes), the one-time secret, an Edit dialog stating
 the id and secret are kept, and delete. The listing is deployment-wide and
 says so rather than implying the namespace switcher filters it.
@@ -858,11 +1072,13 @@ never idle. `CordonOrker` sets or clears a cordon, which lives only in the
 Orker process. Semantics, exit codes and the `ORK_ORKER_ID` uniqueness rule
 are [DEPLOY.md](DEPLOY.md), "Removing an Orker safely: cordon and drain".
 
-CLI: `orker list [--pool]`, `orker get ID`, `orker cordon ID --reason TEXT`
+CLI: `orker list [--filter F…]` (`--filter pool=build`), `orker get ID`
+(an `orker_id=ID` filter: that Orker alone is asked), `orker cordon ID --reason TEXT`
 (a blank reason is refused before any request), `orker uncordon ID`, `orker
 drain ID [--reason] [--timeout] [--watch]` — a client-side loop: exit 0
 drained, 4 timed out naming what remains, 1 unreachable, uncordoned or
-restarted. Orker commands ignore `--namespace`. UI: **Admin → Pools**, a
+restarted. Orker commands ignore `--namespace`. UI: **Admin → Pools**, the
+filter form over the pool cards (`pool list [--filter F…]`), a
 per-pool **Show Orkers** disclosure with a state pill (`ready`, `cordoned`,
 `unreachable`), tasks, pins, last seen and open pins linking to their runs;
 **Cordon** through a dialog that requires a reason and shows a server error in
@@ -886,13 +1102,16 @@ current, runs always finish on the release that started them, and `status
 --watch` and `wait` are loops in `orkctl`. Every write is a `release.promote`
 or `release.ramp` audit record.
 
-CLI: `release status [--watch]` (`--watch --json` is refused), `release ramp
+CLI: `release status [--watch] [--filter F…]` (`--watch --json` is
+refused; the filters select release rows and are sent on every poll),
+`release ramp
 BUILD --percent N` (1–100; 0 stops the ramp), `release promote BUILD`,
 `release rollback BUILD` (refused client-side unless the target is a previous
 release), `release wait BUILD [--timeout]` — a client-side loop: exit 0
 drained, 4 timed out naming every run and pin left, 1 otherwise. A count that
 could not be read is `unknown`, never 0. Release commands ignore
-`--namespace`. UI: **Admin → Releases** — one row per release with its role
+`--namespace`. UI: **Admin → Releases** — the filter form over the release
+rows, one row per release with its role
 (current, ramping N%, previous, candidate), engines, Orkers, pools served,
 runs, and state (`serving`, `ready`, `not ready (N blockers)`, `draining`,
 `drained`), every blocker verbatim, a holds disclosure listing the runs still
@@ -920,18 +1139,24 @@ clients show it verbatim. Operator semantics are in [DEPLOY.md](DEPLOY.md).
 `orkflow validate`, the Apply page and the editor show a policy refusal as a
 field-anchored issue on the offending task.
 
-**Listing.** `ListNamespaces` with `page_size` 0 answers every namespace in
-one response — what `namespace list`, the namespace switcher and Admin → Usage
-ask for. A positive `page_size` pages by name (`next_page_token`, bound to its
-filter) and reads only the documents on the page, which is how Admin →
-Namespaces lists a registry of thousands; its pages are presentation, as on
-Runs and Orkflows, and `namespace list` still prints every match. The name
-filter is the one listing control both clients share: `namespace list
---name-contains S` and the page's **Name contains** field (`?q=`, applied on
-submit, resetting the cursor) both send `name_contains`, a substring of the
-name with `default` matched like any other. A create in the browser lands on
-the created name as the filter, so its row is on screen whichever page it
-sorts onto.
+**Listing.** `ListNamespaces` takes filters ("Filtering lists") on the name,
+description, labels, default pool, hold reason, required signer, telemetry
+sink and the created/updated times; `default` is matched like any other name.
+With `page_size` 0 it answers every match in one response — what `namespace
+list`, the namespace switcher and Admin → Usage ask for. A positive
+`page_size` pages by name (`next_page_token`, bound to the filter set), which
+is how Admin → Namespaces lists a registry of thousands; its pages are
+presentation, as on Runs and Orkflows, and `namespace list [--filter F…]`
+still prints every match. What a page costs depends on its filters: the names
+come from the registry's name listing, so with no filter or only name filters
+a page reads just the documents it shows (a page of 25 out of thousands is
+one listing and 25 reads); a filter on any other field reads documents in
+name order, eight at a time, until the page is full — at worst every
+document after the cursor. Every document, `default`'s included, is read the
+same way, so a `default` that was updated is listed as stored. Admin →
+Namespaces renders the filter form with page size inside it, and a create in
+the browser lands on `filter=name=<created>` on a first page, so its row is on
+screen whichever page it sorts onto.
 
 ### Image policy
 
@@ -957,11 +1182,11 @@ form, deployment-wide caption, keys with fingerprints, refusals verbatim.
 ### Activity interfaces
 
 An activity image may declare its `with:` interface in an OCI label
-([ACTIVITY_IMAGES.md](ACTIVITY_IMAGES.md)). CLI: `activity list` (an
+([ACTIVITY_IMAGES.md](ACTIVITY_IMAGES.md)). CLI: `activity list [--filter F…]` (an
 `INTERFACE` column: `-`, `none`, `malformed`, `N keys`, `N ops`) and
 `activity inspect <name-or-reference>`; `orkflow validate` prints its ERRORs
 and WARNINGs, and `apply` prints the warnings. UI: **Admin → Activities**, the
-same column with a disclosure of the declared table and an **Inspect a
+filter form over the catalog, the same column with a disclosure of the declared table and an **Inspect a
 reference** form; the Apply page and the editor show the `tasks[i].with.<key>`
 issues, warnings kept after apply.
 

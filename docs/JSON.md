@@ -74,9 +74,23 @@ contract discards unknown input, so the field stays unset.
 
 `orkctl --status` accepts both forms, in any case (`cmd/orkctl/input.go`).
 
+### Filter values
+
+A list filter's values ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Filtering
+lists") are this dialect's spellings: an enum value by its short name
+(`FAILED`), `true`/`false`, an RFC 3339 instant with a zone, text verbatim —
+exactly what `--json` prints, so a value copied from `--json` output filters
+for it. An enum value is read with this dialect's tolerance — any case, the
+type prefix optional — and one more: `-` reads as `_`, so `parent-run` is
+`PARENT_RUN`. The JSON codec accepts the same `-` spelling, since one rule
+reads both.
+
 ## Implementation
 
-`internal/api/json.go` owns the dialect:
+`internal/enumname` is the one implementation of the short and canonical
+spellings (`Short`, `Proto`, `Prefix`), shared by the JSON codec and the list
+filter compiler (`internal/listfilter`). `internal/api/json.go` owns the
+codec:
 
 - `api.MarshalJSON` / `api.MarshalJSONOptions` — encode with short enum names.
   Used by the WebSocket bridge (`internal/api/ws.go`) and by `orkctl`
