@@ -13,9 +13,13 @@
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import TelemetryFields from '$lib/components/TelemetryFields.svelte';
 	import SignerField from '$lib/components/SignerField.svelte';
 	import { isStaleEtagConflict } from '$lib/adminErrors';
+	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
+	import { createdNamespaceHref, NAMESPACE_FILTER_MAX, namespaceFilterParam, namespacesEmptyState } from '$lib/namespaceList';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { create } from '@bufbuild/protobuf';
 	import { NamespaceHoldSchema, type Budget, type Namespace, type NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
@@ -224,6 +228,54 @@
 	);
 	const busy = $derived(retrying || navigatingHere);
 
+	// ── paging and the name filter ────────────────────────────────────────
+	// The same coordinates, builder and cursor stack the Orkflows list keeps
+	// (orkflows/+page.svelte; docs/UI_CLI_PARITY.md "Paging in the browser"),
+	// plus `q`, the name filter. `ns` rides along so links out of this page
+	// keep the switcher's choice; it does not filter this view.
+	const sizeOptions = [10, 25, 50, 100].map((size) => ({ value: String(size), label: String(size) }));
+	const coordinates = $derived({ ns: namespaceLabel(data.namespace), q: data.q, size: String(data.size), cursor: data.cursor, page: String(data.page) });
+	function href(changes: Record<string, string>) { return listHref('/admin/namespaces', { ...coordinates, ...changes }); }
+	const stackKey = $derived(pageStackKey('/admin/namespaces', coordinates));
+	let stack = $state<string[]>([]);
+	$effect(() => {
+		stack = readPageStack(stackKey);
+	});
+	function next() {
+		const ahead = Array.from({ length: Math.max(stack.length, data.page + 1) }, (_, at) => stack[at] ?? '');
+		[ahead[data.page - 1], ahead[data.page]] = [data.cursor, data.nextPageToken];
+		writePageStack(stackKey, ahead);
+		stack = ahead;
+	}
+	const walked = $derived(data.page > 1 && stack[data.page - 1] === data.cursor);
+	const previousHref = $derived(walked ? href({ cursor: stack[data.page - 2] ?? '', page: String(data.page - 1) }) : undefined);
+	const nextHref = $derived(data.nextPageToken ? href({ cursor: data.nextPageToken, page: String(data.page + 1) }) : undefined);
+	const firstHref = $derived(href({ cursor: '', page: '' }));
+	// Page size applies on change, as on Orkflows: this page's filter is one
+	// field with its own submit, and size is not part of it.
+	function setSize(size: string) {
+		writePageStack(stackKey, []);
+		void goto(href({ size, cursor: '', page: '' }));
+	}
+
+	// The filter input is a DRAFT of `q` (the Runs page's rule): applied on
+	// submit, refilled from what the page loaded after any navigation, and a
+	// new filter is a new page 1.
+	function filterDraftFromUrl() {
+		return data.q;
+	}
+	let filterDraft = $state(filterDraftFromUrl());
+	$effect(() => {
+		filterDraft = filterDraftFromUrl();
+	});
+	function applyFilter(event: SubmitEvent) {
+		event.preventDefault();
+		void goto(href({ q: namespaceFilterParam(filterDraft), cursor: '', page: '' }), { keepFocus: true, noScroll: true });
+	}
+	const emptyState = $derived(
+		namespacesEmptyState({ filter: data.q, page: data.page, count: data.namespacesList.length, hasNext: data.nextPageToken !== '' })
+	);
+
 
 	// ── create ─────────────────────────────────────────────────────────────
 	let createName = $state('');
@@ -325,11 +377,16 @@
 					requireSignedBy: createRequireSignedBy.trim()
 				}
 			});
+			const createdName = res.namespace?.name ?? createName.trim();
 			createSuccess = res.created
 				? `Created ${res.namespace?.name}.`
 				: `${res.namespace?.name} already exists with this exact spec — nothing changed.`;
 			resetCreateForm();
-			await invalidateAll();
+			// The created row is shown by filtering to it on a first page: with
+			// the list paged, the page it sorts onto is not necessarily the one
+			// on screen. invalidateAll, because the address may not change (it
+			// was already filtered to this name) and the row must still appear.
+			await goto(createdNamespaceHref(coordinates, createdName), { invalidateAll: true, keepFocus: true, noScroll: true });
 		} catch (err) {
 			createServerError = errorMessage(err);
 		} finally {
@@ -636,7 +693,7 @@
 <svelte:head><title>Admin — Namespaces — OrkStack</title></svelte:head>
 
 <p class="mb-4 text-sm text-fg-muted" data-testid="namespaces-scope-caption">
-	All namespaces this deployment has — the namespace selector above does not filter this view.
+	All namespaces this deployment has — the namespace selector above does not filter this view; the name filter below does.
 </p>
 
 {#if data.namespacesError}
@@ -843,353 +900,397 @@
 		{/if}
 	</section>
 
+	<form class="mb-3 flex flex-wrap items-end gap-2" role="search" onsubmit={applyFilter} data-testid="namespaces-filter-form">
+		<div class="flex flex-col gap-1">
+			<label class="text-sm font-medium text-fg" for="namespaces-filter">Name contains</label>
+			<input
+				id="namespaces-filter"
+				type="search"
+				class="h-9 w-64 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
+				placeholder="any name"
+				autocomplete="off"
+				spellcheck="false"
+				maxlength={NAMESPACE_FILTER_MAX}
+				bind:value={filterDraft}
+				data-testid="namespaces-filter"
+			/>
+		</div>
+		<button
+			type="submit"
+			class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+			data-testid="namespaces-filter-apply">Filter</button
+		>
+		{#if data.q}
+			<a
+				href={href({ q: '', cursor: '', page: '' })}
+				class="inline-flex h-9 items-center px-2 text-sm font-medium text-brand-700 hover:text-brand-800"
+				data-testid="namespaces-filter-clear">Clear filter</a
+			>
+		{/if}
+	</form>
+
 	{#if busy}
 		<p class="text-sm text-fg-muted" data-testid="namespaces-loading">Loading namespaces…</p>
 	{:else}
-		{#if data.namespacesList.length <= 1}
+		{#if emptyState === 'only-default'}
 			<p class="mb-3 text-sm text-fg-muted" data-testid="namespaces-empty">
 				No namespaces beyond <code>default</code> yet — it is undeletable
 				below because every orkflow that names no namespace is in it. Create one above.
 			</p>
+		{:else if emptyState === 'no-match'}
+			<p class="mb-3 text-sm text-fg-muted" data-testid="namespaces-empty">
+				No namespace name contains <code>{data.q}</code>.
+			</p>
+		{:else if emptyState === 'past-end'}
+			<p class="mb-3 text-sm text-fg-muted" data-testid="namespaces-empty">
+				Nothing on this page — the namespaces it held are gone. Start again from the first page.
+			</p>
 		{/if}
-		<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
-			<table class="w-full min-w-[720px] border-collapse text-left text-sm" data-testid="namespace-list">
-				<thead class="bg-surface-sunken">
-					<tr>
-						<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Name</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Description</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Default pool</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed pools</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed secrets</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Run retention</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Hold</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Max running</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Signed by</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Budget</th>
-<th class="h-10 px-4 text-xs font-medium text-fg-muted">Telemetry sink</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Task logs</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Attrs</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Updated</th>
-						<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted"></th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each data.namespacesList as ns (ns.name)}
-						<tr
-							class="border-t border-border-subtle transition-colors duration-150 {ns.hold
-								? 'bg-warning-50 hover:bg-warning-100'
-								: 'hover:bg-surface-hover'}"
-							data-testid="namespace-row-{ns.name}"
-							data-held={ns.hold ? 'true' : 'false'}
-						>
-							<td class="h-11 px-4 pl-5 align-middle font-medium text-fg">{ns.name}</td>
-							<td class="h-11 max-w-xs truncate px-4 align-middle text-fg-secondary"
-								>{ns.description || '—'}</td
+		{#if data.namespacesList.length > 0}
+			<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+				<table class="w-full min-w-[720px] border-collapse text-left text-sm" data-testid="namespace-list">
+					<thead class="bg-surface-sunken">
+						<tr>
+							<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Name</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Description</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Default pool</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed pools</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed secrets</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Run retention</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Hold</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Max running</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Signed by</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Budget</th>
+	<th class="h-10 px-4 text-xs font-medium text-fg-muted">Telemetry sink</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Task logs</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Attrs</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Updated</th>
+							<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted"></th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each data.namespacesList as ns (ns.name)}
+							<tr
+								class="border-t border-border-subtle transition-colors duration-150 {ns.hold
+									? 'bg-warning-50 hover:bg-warning-100'
+									: 'hover:bg-surface-hover'}"
+								data-testid="namespace-row-{ns.name}"
+								data-held={ns.hold ? 'true' : 'false'}
 							>
-							<td class="h-11 px-4 align-middle text-fg-secondary"
-								>{ns.defaultPool || DEFAULT_POOL_NAME}</td
-							>
-							<td class="h-11 px-4 align-middle text-fg-secondary">
-								{ns.allowedPools.length > 0 ? ns.allowedPools.join(', ') : 'unrestricted'}
-							</td>
-							<td
-								class="h-11 max-w-xs truncate px-4 align-middle font-mono text-xs text-fg-secondary"
-								title={allowedSecretsLabel(ns.allowedSecrets)}
-								data-testid="namespace-allowed-secrets-{ns.name}">{allowedSecretsLabel(ns.allowedSecrets)}</td
-							>
-							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-run-retention-{ns.name}"
-								>{runRetentionLabel(ns.runRetention)}</td
-							>
-							<td
-								class="h-11 max-w-xs truncate px-4 align-middle {ns.hold
-									? 'font-medium text-warning-800'
-									: 'text-fg-secondary'}"
-								title={holdLabel(ns.hold)}
-								data-testid="namespace-hold-{ns.name}">{holdLabel(ns.hold)}</td
-							>
-							<td class="h-11 px-4 align-middle text-fg-secondary tabular-nums" data-testid="namespace-max-running-{ns.name}"
-								>{maxRunningLabel(ns.maxRunning)}</td
-							>
-							<td class="h-11 px-4 align-middle font-mono text-xs text-fg-secondary" data-testid="namespace-require-signed-by-{ns.name}"
-								>{ns.requireSignedBy || '—'}</td
-							>
-							<td class="h-11 px-4 align-middle whitespace-nowrap text-fg-secondary" data-testid="namespace-budget-{ns.name}"
-								>{budgetConfigLabel(ns.budget)}</td
-							>
-							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
-								>{telemetrySinkLabel(ns.telemetry)}</td
-							>
-							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-task-logs-{ns.name}"
-								>{taskLogsLabel(ns.telemetry)}</td
-							>
-							<td class="h-11 px-4 align-middle text-fg-secondary tabular-nums" data-testid="namespace-telemetry-attribute-count-{ns.name}"
-								>{attributeCountLabel(ns.telemetry)}</td
-							>
-							<td class="h-11 px-4 align-middle text-fg-muted tabular-nums"
-								>{fmtTimestamp(ns.updatedAt)}</td
-							>
-							<td class="h-11 px-4 pr-5 align-middle">
-								<div class="flex items-center justify-end gap-2">
-									<button
-										type="button"
-										data-testid="namespace-edit-{ns.name}"
-										onclick={() => openEdit(ns)}
-										class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
-									>
-										Edit
-									</button>
-									{#if ns.hold}
+								<td class="h-11 px-4 pl-5 align-middle font-medium text-fg">{ns.name}</td>
+								<td class="h-11 max-w-xs truncate px-4 align-middle text-fg-secondary"
+									>{ns.description || '—'}</td
+								>
+								<td class="h-11 px-4 align-middle text-fg-secondary"
+									>{ns.defaultPool || DEFAULT_POOL_NAME}</td
+								>
+								<td class="h-11 px-4 align-middle text-fg-secondary">
+									{ns.allowedPools.length > 0 ? ns.allowedPools.join(', ') : 'unrestricted'}
+								</td>
+								<td
+									class="h-11 max-w-xs truncate px-4 align-middle font-mono text-xs text-fg-secondary"
+									title={allowedSecretsLabel(ns.allowedSecrets)}
+									data-testid="namespace-allowed-secrets-{ns.name}">{allowedSecretsLabel(ns.allowedSecrets)}</td
+								>
+								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-run-retention-{ns.name}"
+									>{runRetentionLabel(ns.runRetention)}</td
+								>
+								<td
+									class="h-11 max-w-xs truncate px-4 align-middle {ns.hold
+										? 'font-medium text-warning-800'
+										: 'text-fg-secondary'}"
+									title={holdLabel(ns.hold)}
+									data-testid="namespace-hold-{ns.name}">{holdLabel(ns.hold)}</td
+								>
+								<td class="h-11 px-4 align-middle text-fg-secondary tabular-nums" data-testid="namespace-max-running-{ns.name}"
+									>{maxRunningLabel(ns.maxRunning)}</td
+								>
+								<td class="h-11 px-4 align-middle font-mono text-xs text-fg-secondary" data-testid="namespace-require-signed-by-{ns.name}"
+									>{ns.requireSignedBy || '—'}</td
+								>
+								<td class="h-11 px-4 align-middle whitespace-nowrap text-fg-secondary" data-testid="namespace-budget-{ns.name}"
+									>{budgetConfigLabel(ns.budget)}</td
+								>
+								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
+									>{telemetrySinkLabel(ns.telemetry)}</td
+								>
+								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-task-logs-{ns.name}"
+									>{taskLogsLabel(ns.telemetry)}</td
+								>
+								<td class="h-11 px-4 align-middle text-fg-secondary tabular-nums" data-testid="namespace-telemetry-attribute-count-{ns.name}"
+									>{attributeCountLabel(ns.telemetry)}</td
+								>
+								<td class="h-11 px-4 align-middle text-fg-muted tabular-nums"
+									>{fmtTimestamp(ns.updatedAt)}</td
+								>
+								<td class="h-11 px-4 pr-5 align-middle">
+									<div class="flex items-center justify-end gap-2">
 										<button
 											type="button"
-											data-testid="namespace-release-hold-{ns.name}"
-											onclick={() => askToRelease(ns)}
-											class="inline-flex h-8 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs transition-colors duration-150 hover:bg-warning-50"
-										>
-											Release hold
-										</button>
-									{:else}
-										<button
-											type="button"
-											data-testid="namespace-hold-action-{ns.name}"
-											onclick={() => askToHold(ns.name)}
+											data-testid="namespace-edit-{ns.name}"
+											onclick={() => openEdit(ns)}
 											class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 										>
-											Hold…
+											Edit
 										</button>
-									{/if}
-{#if ns.name === 'default'}
-										<span
-											class="text-xs text-fg-muted"
-											data-testid="namespace-delete-default-reason"
-											title="every orkflow that names no namespace is in it"
-										>
-											undeletable
-										</span>
-										<button
-											type="button"
-											data-testid="namespace-delete-default"
-											disabled
-											title="default cannot be deleted: every orkflow that names no namespace is in it"
-											class="inline-flex h-8 cursor-not-allowed items-center rounded-md border border-border px-3 text-xs text-fg-muted opacity-50"
-										>
-											Delete
-										</button>
-									{:else}
-										<button
-											type="button"
-											data-testid="namespace-delete-{ns.name}"
-											onclick={() => askToDelete(ns.name)}
-											class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50"
-										>
-											Delete
-										</button>
-									{/if}
-								</div>
-							</td>
-						</tr>
-						{#if editingName === ns.name}
-							<tr>
-								<td colspan="15" class="bg-surface-sunken px-4 py-4">
-									<form
-										data-testid="namespace-edit-form-{ns.name}"
-										class="grid gap-3 sm:grid-cols-2"
-										onsubmit={(e) => {
-											e.preventDefault();
-											void submitEdit();
-										}}
-									>
-										<label class="flex flex-col gap-1.5 text-sm">
-											<span class="font-medium text-fg">Description</span>
-											<input
-												data-testid="ns-edit-description-{ns.name}"
-												bind:value={editDescription}
-												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-											/>
-										</label>
-										<label class="flex flex-col gap-1.5 text-sm">
-											<span class="font-medium text-fg">Default pool</span>
-											<input
-												data-testid="ns-edit-default-pool-{ns.name}"
-												bind:value={editDefaultPool}
-												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-											/>
-											{#if editErrors.defaultPool}
-												<span class="text-xs text-danger-700">{editErrors.defaultPool}</span>
-											{/if}
-										</label>
-										<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
-											<span class="font-medium text-fg">Allowed pools (comma-separated)</span>
-											<input
-												data-testid="ns-edit-allowed-pools-{ns.name}"
-												bind:value={editAllowedPools}
-												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-											/>
-											{#if editErrors.allowedPools}
-												<span class="text-xs text-danger-700">{editErrors.allowedPools}</span>
-											{/if}
-										</label>
-										<label class="flex flex-col gap-1.5 text-sm">
-											<span class="font-medium text-fg">Run retention (hours, blank = inherit)</span>
-											<input
-												data-testid="ns-edit-run-retention-{ns.name}"
-												bind:value={editRunRetentionHours}
-												inputmode="decimal"
-												placeholder="inherit"
-												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-											/>
-											{#if editErrors.runRetention}
-												<span class="text-xs text-danger-700">{editErrors.runRetention}</span>
-											{/if}
-										</label>
-										<label class="flex flex-col gap-1.5 text-sm">
-											<span class="font-medium text-fg">Hold reason (blank = accepting)</span>
-											<input
-												data-testid="ns-edit-hold-reason-{ns.name}"
-												bind:value={editHoldReason}
-												placeholder="accepting"
-												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-											/>
-											<span class="text-xs text-fg-muted">A reason closes the namespace to new runs; blank releases it.</span>
-											{#if editErrors.holdReason}
-												<span class="text-xs text-danger-700">{editErrors.holdReason}</span>
-											{/if}
-										</label>
-										<label class="flex flex-col gap-1.5 text-sm">
-											<span class="font-medium text-fg">Max running (0 = unlimited)</span>
-											<input
-												data-testid="ns-edit-max-running-{ns.name}"
-												bind:value={editMaxRunning}
-												inputmode="numeric"
-												placeholder="0"
-												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-											/>
-											{#if editErrors.maxRunning}
-												<span class="text-xs text-danger-700">{editErrors.maxRunning}</span>
-											{/if}
-										</label>
-										<fieldset class="flex flex-col gap-2 rounded-md border border-border px-3 py-2 text-sm sm:col-span-2" data-testid="ns-edit-budget-{ns.name}">
-											<legend class="px-1 font-medium text-fg">Budget (reserved cpu and memory over a rolling period; both amounts blank = unbounded)</legend>
-											<div class="grid gap-3 sm:grid-cols-4">
-												<label class="flex flex-col gap-1.5">
-													<span class="text-xs font-medium text-fg">Budget cpu-seconds</span>
-													<input data-testid="ns-edit-budget-cpu-seconds-{ns.name}" bind:value={editBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
-												</label>
-												<label class="flex flex-col gap-1.5">
-													<span class="text-xs font-medium text-fg">Budget GiB-seconds</span>
-													<input data-testid="ns-edit-budget-gib-seconds-{ns.name}" bind:value={editBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
-												</label>
-												<label class="flex flex-col gap-1.5">
-													<span class="text-xs font-medium text-fg">Budget period (hours)</span>
-													<input data-testid="ns-edit-budget-period-hours-{ns.name}" bind:value={editBudgetPeriodHours} inputmode="numeric" placeholder="720" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
-												</label>
-												<label class="flex items-center gap-2 self-end pb-2">
-													<input type="checkbox" class="size-4 accent-brand-600" data-testid="ns-edit-budget-enforce-{ns.name}" bind:checked={editBudgetEnforce} />
-													<span class="text-xs font-medium text-fg">Enforce</span>
-												</label>
-											</div>
-											<span class="text-xs text-fg-muted">Units are RESERVED cpu and memory × attempt time, not measured utilization. Unchecked, the budget is reported and never refuses; checked, new runs are refused once it is reached — check the Usage card answers first, because an enforced budget that cannot be measured refuses every submit.</span>
-											{#if editErrors.budget}
-												<span class="text-xs text-danger-700" data-testid="ns-edit-error-budget-{ns.name}">{editErrors.budget}</span>
-											{/if}
-										</fieldset>
-										<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
-											<span class="font-medium text-fg"
-												>Allowed secrets (one scheme:pattern per line; blank = unrestricted)</span
-											>
-											<textarea
-												data-testid="ns-edit-allowed-secrets-{ns.name}"
-												bind:value={editAllowedSecrets}
-												rows="2"
-												placeholder="unrestricted"
-												spellcheck="false"
-												class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-											></textarea>
-											<span class="text-xs text-fg-muted"
-												>Bounds which <code>source:</code> values this namespace's tasks may name. Each
-												Orker's own <code>ORK_ORKER_SECRET_ALLOW</code> still applies.</span
-											>
-											{#if editErrors.allowedSecrets}
-												<span class="text-xs text-danger-700" data-testid="ns-edit-error-allowed-secrets-{ns.name}"
-													>{editErrors.allowedSecrets}</span
-												>
-											{/if}
-										</label>
-										<SignerField
-											bind:value={editRequireSignedBy}
-											keys={data.signingKeys}
-											keysError={data.signingKeysError}
-											testid="ns-edit-require-signed-by-{ns.name}"
-											error={editErrors.requireSignedBy}
-											errorTestid="ns-edit-error-require-signed-by-{ns.name}"
-										/>
-										<TelemetryFields
-											bind:sink={editTelemetrySink}
-											bind:taskLogs={editTaskLogs}
-											bind:attributesText={editTelemetryAttributesText}
-											sinks={data.telemetrySinks}
-											sinksError={data.telemetrySinksError}
-											idPrefix="ns-edit"
-											testIdSuffix="-{ns.name}"
-											attributesError={editErrors.telemetryAttributes}
-										/>
-										<div class="flex items-center gap-2 sm:col-span-2">
-											<button
-												type="submit"
-												data-testid="ns-edit-save-{ns.name}"
-												disabled={editBusy}
-												class="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-50"
-											>
-												{editBusy ? 'Saving…' : 'Save'}
-											</button>
-											<CliEquivalent
-												command={budgetCommand(ns.name, editBudgetCpuSeconds, editBudgetGibSeconds, editBudgetPeriodHours, editBudgetEnforce)}
-												testid="ns-edit-cli-{ns.name}"
-											/>
+										{#if ns.hold}
 											<button
 												type="button"
-												data-testid="ns-edit-cancel-{ns.name}"
-												disabled={editBusy}
-												onclick={closeEdit}
-												class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
+												data-testid="namespace-release-hold-{ns.name}"
+												onclick={() => askToRelease(ns)}
+												class="inline-flex h-8 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs transition-colors duration-150 hover:bg-warning-50"
 											>
-												Cancel
+												Release hold
 											</button>
-										</div>
-									</form>
-									{#if editConflict}
-										<div
-											class="mt-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
-											data-testid="namespace-edit-conflict-{ns.name}"
-										>
-											<p>{editServerError}</p>
-											<p class="mt-1 text-xs text-warning-700">
-												Namespace {ns.name} changed since it was read — reload and re-apply.
-											</p>
+										{:else}
 											<button
 												type="button"
-												data-testid="namespace-edit-conflict-retry-{ns.name}"
-												onclick={reloadEtagAndRetry}
-												disabled={editBusy}
-												class="mt-2 inline-flex h-7 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs hover:bg-warning-50 disabled:pointer-events-none disabled:opacity-50"
+												data-testid="namespace-hold-action-{ns.name}"
+												onclick={() => askToHold(ns.name)}
+												class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 											>
-												Reload latest and re-apply my edit
+												Hold…
 											</button>
-										</div>
-									{:else if editServerError}
-										<p
-											class="mt-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700"
-											data-testid="namespace-edit-error-{ns.name}"
-										>
-											{editServerError}
-										</p>
-									{/if}
+										{/if}
+	{#if ns.name === 'default'}
+											<span
+												class="text-xs text-fg-muted"
+												data-testid="namespace-delete-default-reason"
+												title="every orkflow that names no namespace is in it"
+											>
+												undeletable
+											</span>
+											<button
+												type="button"
+												data-testid="namespace-delete-default"
+												disabled
+												title="default cannot be deleted: every orkflow that names no namespace is in it"
+												class="inline-flex h-8 cursor-not-allowed items-center rounded-md border border-border px-3 text-xs text-fg-muted opacity-50"
+											>
+												Delete
+											</button>
+										{:else}
+											<button
+												type="button"
+												data-testid="namespace-delete-{ns.name}"
+												onclick={() => askToDelete(ns.name)}
+												class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50"
+											>
+												Delete
+											</button>
+										{/if}
+									</div>
 								</td>
 							</tr>
-						{/if}
-					{/each}
-				</tbody>
-			</table>
-		</div>
+							{#if editingName === ns.name}
+								<tr>
+									<td colspan="15" class="bg-surface-sunken px-4 py-4">
+										<form
+											data-testid="namespace-edit-form-{ns.name}"
+											class="grid gap-3 sm:grid-cols-2"
+											onsubmit={(e) => {
+												e.preventDefault();
+												void submitEdit();
+											}}
+										>
+											<label class="flex flex-col gap-1.5 text-sm">
+												<span class="font-medium text-fg">Description</span>
+												<input
+													data-testid="ns-edit-description-{ns.name}"
+													bind:value={editDescription}
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+												/>
+											</label>
+											<label class="flex flex-col gap-1.5 text-sm">
+												<span class="font-medium text-fg">Default pool</span>
+												<input
+													data-testid="ns-edit-default-pool-{ns.name}"
+													bind:value={editDefaultPool}
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+												/>
+												{#if editErrors.defaultPool}
+													<span class="text-xs text-danger-700">{editErrors.defaultPool}</span>
+												{/if}
+											</label>
+											<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
+												<span class="font-medium text-fg">Allowed pools (comma-separated)</span>
+												<input
+													data-testid="ns-edit-allowed-pools-{ns.name}"
+													bind:value={editAllowedPools}
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+												/>
+												{#if editErrors.allowedPools}
+													<span class="text-xs text-danger-700">{editErrors.allowedPools}</span>
+												{/if}
+											</label>
+											<label class="flex flex-col gap-1.5 text-sm">
+												<span class="font-medium text-fg">Run retention (hours, blank = inherit)</span>
+												<input
+													data-testid="ns-edit-run-retention-{ns.name}"
+													bind:value={editRunRetentionHours}
+													inputmode="decimal"
+													placeholder="inherit"
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+												/>
+												{#if editErrors.runRetention}
+													<span class="text-xs text-danger-700">{editErrors.runRetention}</span>
+												{/if}
+											</label>
+											<label class="flex flex-col gap-1.5 text-sm">
+												<span class="font-medium text-fg">Hold reason (blank = accepting)</span>
+												<input
+													data-testid="ns-edit-hold-reason-{ns.name}"
+													bind:value={editHoldReason}
+													placeholder="accepting"
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+												/>
+												<span class="text-xs text-fg-muted">A reason closes the namespace to new runs; blank releases it.</span>
+												{#if editErrors.holdReason}
+													<span class="text-xs text-danger-700">{editErrors.holdReason}</span>
+												{/if}
+											</label>
+											<label class="flex flex-col gap-1.5 text-sm">
+												<span class="font-medium text-fg">Max running (0 = unlimited)</span>
+												<input
+													data-testid="ns-edit-max-running-{ns.name}"
+													bind:value={editMaxRunning}
+													inputmode="numeric"
+													placeholder="0"
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+												/>
+												{#if editErrors.maxRunning}
+													<span class="text-xs text-danger-700">{editErrors.maxRunning}</span>
+												{/if}
+											</label>
+											<fieldset class="flex flex-col gap-2 rounded-md border border-border px-3 py-2 text-sm sm:col-span-2" data-testid="ns-edit-budget-{ns.name}">
+												<legend class="px-1 font-medium text-fg">Budget (reserved cpu and memory over a rolling period; both amounts blank = unbounded)</legend>
+												<div class="grid gap-3 sm:grid-cols-4">
+													<label class="flex flex-col gap-1.5">
+														<span class="text-xs font-medium text-fg">Budget cpu-seconds</span>
+														<input data-testid="ns-edit-budget-cpu-seconds-{ns.name}" bind:value={editBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+													</label>
+													<label class="flex flex-col gap-1.5">
+														<span class="text-xs font-medium text-fg">Budget GiB-seconds</span>
+														<input data-testid="ns-edit-budget-gib-seconds-{ns.name}" bind:value={editBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+													</label>
+													<label class="flex flex-col gap-1.5">
+														<span class="text-xs font-medium text-fg">Budget period (hours)</span>
+														<input data-testid="ns-edit-budget-period-hours-{ns.name}" bind:value={editBudgetPeriodHours} inputmode="numeric" placeholder="720" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+													</label>
+													<label class="flex items-center gap-2 self-end pb-2">
+														<input type="checkbox" class="size-4 accent-brand-600" data-testid="ns-edit-budget-enforce-{ns.name}" bind:checked={editBudgetEnforce} />
+														<span class="text-xs font-medium text-fg">Enforce</span>
+													</label>
+												</div>
+												<span class="text-xs text-fg-muted">Units are RESERVED cpu and memory × attempt time, not measured utilization. Unchecked, the budget is reported and never refuses; checked, new runs are refused once it is reached — check the Usage card answers first, because an enforced budget that cannot be measured refuses every submit.</span>
+												{#if editErrors.budget}
+													<span class="text-xs text-danger-700" data-testid="ns-edit-error-budget-{ns.name}">{editErrors.budget}</span>
+												{/if}
+											</fieldset>
+											<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
+												<span class="font-medium text-fg"
+													>Allowed secrets (one scheme:pattern per line; blank = unrestricted)</span
+												>
+												<textarea
+													data-testid="ns-edit-allowed-secrets-{ns.name}"
+													bind:value={editAllowedSecrets}
+													rows="2"
+													placeholder="unrestricted"
+													spellcheck="false"
+													class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+												></textarea>
+												<span class="text-xs text-fg-muted"
+													>Bounds which <code>source:</code> values this namespace's tasks may name. Each
+													Orker's own <code>ORK_ORKER_SECRET_ALLOW</code> still applies.</span
+												>
+												{#if editErrors.allowedSecrets}
+													<span class="text-xs text-danger-700" data-testid="ns-edit-error-allowed-secrets-{ns.name}"
+														>{editErrors.allowedSecrets}</span
+													>
+												{/if}
+											</label>
+											<SignerField
+												bind:value={editRequireSignedBy}
+												keys={data.signingKeys}
+												keysError={data.signingKeysError}
+												testid="ns-edit-require-signed-by-{ns.name}"
+												error={editErrors.requireSignedBy}
+												errorTestid="ns-edit-error-require-signed-by-{ns.name}"
+											/>
+											<TelemetryFields
+												bind:sink={editTelemetrySink}
+												bind:taskLogs={editTaskLogs}
+												bind:attributesText={editTelemetryAttributesText}
+												sinks={data.telemetrySinks}
+												sinksError={data.telemetrySinksError}
+												idPrefix="ns-edit"
+												testIdSuffix="-{ns.name}"
+												attributesError={editErrors.telemetryAttributes}
+											/>
+											<div class="flex items-center gap-2 sm:col-span-2">
+												<button
+													type="submit"
+													data-testid="ns-edit-save-{ns.name}"
+													disabled={editBusy}
+													class="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-50"
+												>
+													{editBusy ? 'Saving…' : 'Save'}
+												</button>
+												<CliEquivalent
+													command={budgetCommand(ns.name, editBudgetCpuSeconds, editBudgetGibSeconds, editBudgetPeriodHours, editBudgetEnforce)}
+													testid="ns-edit-cli-{ns.name}"
+												/>
+												<button
+													type="button"
+													data-testid="ns-edit-cancel-{ns.name}"
+													disabled={editBusy}
+													onclick={closeEdit}
+													class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
+												>
+													Cancel
+												</button>
+											</div>
+										</form>
+										{#if editConflict}
+											<div
+												class="mt-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
+												data-testid="namespace-edit-conflict-{ns.name}"
+											>
+												<p>{editServerError}</p>
+												<p class="mt-1 text-xs text-warning-700">
+													Namespace {ns.name} changed since it was read — reload and re-apply.
+												</p>
+												<button
+													type="button"
+													data-testid="namespace-edit-conflict-retry-{ns.name}"
+													onclick={reloadEtagAndRetry}
+													disabled={editBusy}
+													class="mt-2 inline-flex h-7 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs hover:bg-warning-50 disabled:pointer-events-none disabled:opacity-50"
+												>
+													Reload latest and re-apply my edit
+												</button>
+											</div>
+										{:else if editServerError}
+											<p
+												class="mt-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700"
+												data-testid="namespace-edit-error-{ns.name}"
+											>
+												{editServerError}
+											</p>
+										{/if}
+									</td>
+								</tr>
+							{/if}
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+		{#if data.namespacesList.length > 0 || data.page > 1}
+			<Pagination testid="namespaces" noun="namespace" page={data.page} count={data.namespacesList.length} {previousHref} {nextHref} {firstHref} onnext={next}>
+				<div class="flex items-center gap-2 text-sm"><label class="font-medium text-fg" for="namespaces-page-size">Page size</label><div class="w-20"><Select id="namespaces-page-size" testid="namespaces-page-size" value={String(data.size)} options={sizeOptions} onchange={setSize} /></div></div>
+			</Pagination>
+		{/if}
 	{/if}
 {/if}
 

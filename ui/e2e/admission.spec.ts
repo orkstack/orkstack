@@ -20,6 +20,7 @@ import {
 	waitForEngine,
 	openNamespaceEdit
 } from './harness';
+import { adminNamespaceUrl } from './uiHelpers';
 
 // Namespace admission control in a browser, against a real engine, Orker,
 // Temporal and MinIO:
@@ -121,8 +122,10 @@ test.afterAll(async () => {
 	await killStarted();
 });
 
+// Admin → Namespaces filtered to NS: the list is paged, and the filter is how
+// a row is reached whichever page it sorts onto.
 async function openAdmin(page: Page): Promise<void> {
-	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=${NS}`);
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, NS, NS));
 	await expect(page.getByTestId(`namespace-row-${NS}`)).toBeVisible();
 }
 

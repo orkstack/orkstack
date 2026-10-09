@@ -29,9 +29,9 @@ export function runFilterError(status: string, after: string, before: string, or
 }
 export function pageNumber(value: string): number { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : 1; }
 
-// LIST_PATHS are the two cursor-paged lists. Naming them keeps a stack key and
+// LIST_PATHS are the cursor-paged lists. Naming them keeps a stack key and
 // an href from being built for a path that has neither.
-export type ListPath = '/runs' | '/orkflows';
+export type ListPath = '/runs' | '/orkflows' | '/admin/namespaces';
 
 // listHref turns a list's coordinates into its address, and it is the ONLY
 // place either list writes a query string.

@@ -16,7 +16,7 @@ import {
 	waitForEngine,
 	openNamespaceEdit
 } from './harness';
-import { selectOption } from './uiHelpers';
+import { adminNamespaceUrl, selectOption } from './uiHelpers';
 
 // Admin → Audit, against a real engine on real Temporal and MinIO.
 //
@@ -199,7 +199,7 @@ test('an Ork-Principal header set in front of the browser is recorded', async ({
 	const context = await browser.newContext({ extraHTTPHeaders: { 'Ork-Principal': 'e2e-operator' } });
 	const page = await context.newPage();
 	try {
-		await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+		await page.goto(adminNamespaceUrl(UI_ORIGIN, NS));
 		await openNamespaceEdit(page, NS);
 		await page.getByTestId(`ns-edit-description-${NS}`).fill('edited behind a gateway');
 		await page.getByTestId(`ns-edit-save-${NS}`).click();

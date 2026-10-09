@@ -63,3 +63,18 @@ export async function selectOption(page: Page, testid: string, value: string): P
 export async function expectNamespace(page: Page, name: string): Promise<void> {
 	await expect(page.getByTestId('namespace-picker')).toHaveText(name);
 }
+
+/**
+ * The Admin → Namespaces address that shows `name`'s row: the list filtered
+ * to it (`q`, a substring of the name) on a first page.
+ *
+ * The list is paged (ui/src/routes/admin/namespaces/+page.ts), so the page a
+ * namespace sorts onto depends on every other namespace in the bucket. A spec
+ * that opened the bare list and looked for its row would pass or fail on what
+ * other runs left behind; through the filter it never depends on that. `ns`
+ * is the switcher's selection, carried as every other link carries it.
+ */
+export function adminNamespaceUrl(origin: string, name: string, ns = 'default'): string {
+	const params = new URLSearchParams({ ns, q: name });
+	return `${origin}/admin/namespaces?${params.toString()}`;
+}

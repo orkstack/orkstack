@@ -1,31 +1,46 @@
 import { errorMessage, orkstack } from '$lib/client';
 import type { Namespace } from '$lib/gen/orkstack/v1/namespace_pb';
+import { pageNumber, pageSize } from '$lib/browsing';
 import { namespaceFrom } from '$lib/namespace';
+import { namespaceFilterParam } from '$lib/namespaceList';
 import type { PageLoad } from './$types';
 
 // This is the GLOBAL view: every namespace this deployment has,
 // not the one the switcher selected. The switcher's value still travels in
 // the URL, purely so a link out of this page (e.g. to Pools) can carry it —
 // it never filters ListNamespaces.
+//
+// It is paged and filtered the way the Orkflows list is (orkflows/+page.ts):
+// `size`, the engine's `cursor` and its `page` label, plus `q`, a substring of
+// the name. A page reads only the documents it shows, so a registry of
+// thousands opens as fast as a registry of ten.
 export const load: PageLoad = async ({ fetch, url }) => {
 	const namespace = namespaceFrom(url);
-	const namespaces = loadNamespaces(fetch);
+	const size = pageSize(url.searchParams.get('size') ?? '');
+	const cursor = url.searchParams.get('cursor') ?? '';
+	// The page number is a LABEL for the cursor beside it (runs/+page.ts):
+	// without a cursor there is no later page to number, so it is 1.
+	const page = cursor ? pageNumber(url.searchParams.get('page') ?? '') : 1;
+	const q = namespaceFilterParam(url.searchParams.get('q') ?? '');
+	const namespaces = loadNamespaces(fetch, size, cursor, q);
 	const sinks = loadTelemetrySinks(fetch);
 	const keys = loadImagePolicy(fetch);
 	const [namespacesResult, sinksResult, keysResult] = await Promise.all([namespaces, sinks, keys]);
-	return { namespace, ...namespacesResult, ...sinksResult, ...keysResult };
+	return { namespace, size, cursor, page, q, ...namespacesResult, ...sinksResult, ...keysResult };
 };
 
-async function loadNamespaces(fetchFn: typeof fetch) {
+async function loadNamespaces(fetchFn: typeof fetch, size: number, cursor: string, q: string) {
 	try {
-		const res = await orkstack(fetchFn).namespaces.listNamespaces({});
+		const res = await orkstack(fetchFn).namespaces.listNamespaces({ pageSize: size, pageToken: cursor, nameContains: q });
 		return {
 			namespacesList: res.namespaces,
+			nextPageToken: res.nextPageToken,
 			namespacesError: null as string | null
 		};
 	} catch (err) {
 		return {
 			namespacesList: [] as Namespace[],
+			nextPageToken: '',
 			namespacesError: errorMessage(err)
 		};
 	}
