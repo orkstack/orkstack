@@ -27,7 +27,7 @@ var allReasonCodes = []string{
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused,
 	ReasonNetworkModeRefused, ReasonEachItemUnavailable,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
-	ReasonImageSignatureUnavailable,
+	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake

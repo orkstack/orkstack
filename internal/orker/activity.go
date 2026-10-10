@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -387,6 +388,27 @@ func (a *Activities) reapPinDirectories(root string) {
 	}
 }
 
+// reapContainers runs the runtime's Reap and logs what it removed and each
+// orphan it could not remove. Only a failure to list is returned.
+func (a *Activities) reapContainers(ctx context.Context) error {
+	removed, err := a.dispatcher.Runtime.Reap(ctx, a.dispatcher.OrkerID)
+	if removed > 0 {
+		a.dispatcher.logger().Info("orphaned containers reaped", "removed", removed)
+	}
+	var partial *ReapIncompleteError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &partial):
+		for _, failure := range partial.Failures {
+			a.dispatcher.logger().Warn("orphan container reap", "error", failure)
+		}
+		return nil
+	default:
+		return fmt.Errorf("reap orphaned containers: %w", err)
+	}
+}
+
 // Boot performs the checks an Orker must pass before it accepts work.
 //
 // Refusing to start is the only honest response to any of these failures. An
@@ -420,6 +442,9 @@ func (a *Activities) Boot(ctx context.Context) error {
 		ProbeBindable(context.Context, string) error
 	}); ok {
 		if err := prober.ProbeBindable(ctx, root); err != nil {
+			if errors.Is(err, ErrProbeImageUnavailable) {
+				return fmt.Errorf("%s: %w", ReasonBindProbeImageUnavailable, err)
+			}
 			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
 	}
@@ -439,8 +464,15 @@ func (a *Activities) Boot(ctx context.Context) error {
 	}
 	// Reap this Orker's own previous life's containers. An Orker crash does
 	// not stop its containers (§14.17), so a restarted Orker inherits them.
-	if _, err := a.dispatcher.Runtime.Reap(ctx, a.dispatcher.OrkerID); err != nil {
-		return fmt.Errorf("reap orphaned containers: %w", err)
+	//
+	// Every orphan is tried. One that cannot be removed is logged, by the same
+	// policy as reapPinDirectories below, and does not stop boot: refusing to
+	// start over one container stuck in removal would leave the pool short an
+	// Orker for a container the next boot tries again. Only a reap that could
+	// not even LIST the containers refuses, because then this Orker cannot
+	// account for any of them.
+	if err := a.reapContainers(ctx); err != nil {
+		return err
 	}
 	// And its own previous life's pin directories, beside the containers, for
 	// the same reason and with a stronger guarantee: a pin cannot outlive the

@@ -100,6 +100,11 @@ const (
 	ReasonPanic = "PANIC"
 )
 
+// ReasonBindProbeImageUnavailable is a boot refusal: the bind probe's own image
+// could not be pulled, which says nothing about whether the work root can be
+// bound (WORKDIR_NOT_BINDABLE).
+const ReasonBindProbeImageUnavailable = "BIND_PROBE_IMAGE_UNAVAILABLE"
+
 // reasonCategory is the §8.2 table, as data.
 //
 // It is a map rather than a switch so a code with no row is a detectable
@@ -150,6 +155,7 @@ var reasonCategory = map[string]string{
 	ReasonImageNotSigned:            CategoryContractViolation,
 	ReasonImageSignatureInvalid:     CategoryContractViolation,
 	ReasonImageSignatureUnavailable: CategoryInfrastructureError,
+	ReasonBindProbeImageUnavailable: CategoryInfrastructureError,
 }
 
 // retryableReason overrides the category's own default for the three codes
