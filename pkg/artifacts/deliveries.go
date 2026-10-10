@@ -104,32 +104,20 @@ type DeliveryStore interface {
 
 // DeliveryQuery narrows a listing. Since is inclusive, Until exclusive,
 // both against created_at; both are required here — the RPC resolves the
-// defaults, so the store never guesses a window. Empty string / UNSPECIFIED
-// fields match every value. BeforeKey is the exclusive newest-first cursor:
-// a full object key the store itself handed back.
+// defaults, so the store never guesses a window. Keep decides a record from
+// its key's coordinates alone, before its body is read; nil keeps every
+// record. BeforeKey is the exclusive newest-first cursor: a full object key
+// the store itself handed back.
 type DeliveryQuery struct {
 	Since, Until time.Time
-	WebhookID    string
-	RunID        string
-	Namespace    string
-	Event        orkstackv1.EventType
-	Outcome      orkstackv1.DeliveryOutcome
+	Keep         func(DeliveryKeyFields) bool
 	BeforeKey    string
 	Limit        int
 }
 
-// matches reports whether a key's coordinates pass every non-empty filter.
+// matches reports whether a key's coordinates pass Keep.
 func (q DeliveryQuery) matches(k DeliveryKeyFields) bool {
-	switch {
-	case q.WebhookID != "" && k.WebhookID != q.WebhookID,
-		q.RunID != "" && k.RunID != q.RunID,
-		q.Namespace != "" && k.Namespace != q.Namespace,
-		q.Event != orkstackv1.EventType_EVENT_TYPE_UNSPECIFIED && k.Event != q.Event,
-		q.Outcome == orkstackv1.DeliveryOutcome_DELIVERY_OUTCOME_DELIVERED && !k.Delivered,
-		q.Outcome == orkstackv1.DeliveryOutcome_DELIVERY_OUTCOME_FAILED && k.Delivered:
-		return false
-	}
-	return true
+	return q.Keep == nil || q.Keep(k)
 }
 
 // DeliveryPage is one page. NextKey is the key of the last record delivered,

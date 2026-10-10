@@ -19,6 +19,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -787,23 +788,20 @@ func (s *Service) auditUnary(
 	return resp, err
 }
 
-// auditCursor is the decoded page token. The filters are bound as the client
-// SENT them (a window left empty stays empty), so "the same request, next
-// page" matches; the resolved window is carried separately, so every page of
-// one listing covers the same instants even though an empty `until` means
-// "now" and now moves.
+// auditCursor is the decoded page token: the canonical filter set's key, the
+// window as the first page resolved it — so every page of one listing covers
+// the same instants even though an unbounded end means "now" and now moves —
+// and the key to continue before.
 type auditCursor struct {
-	Namespace    string `json:"namespace"`
-	ActionPrefix string `json:"action_prefix"`
-	Principal    string `json:"principal"`
-	Since        string `json:"since"`
-	Until        string `json:"until"`
-	WindowSince  string `json:"window_since"`
-	WindowUntil  string `json:"window_until"`
-	BeforeKey    string `json:"before_key"`
+	Filters     string `json:"filters"`
+	WindowSince string `json:"window_since"`
+	WindowUntil string `json:"window_until"`
+	BeforeKey   string `json:"before_key"`
 }
 
-const auditCursorVersion = "v1:"
+// auditCursorVersion is "v2:": a "v1:" token carried the removed typed
+// filters and fails the prefix check, as invalid page_token.
+const auditCursorVersion = "v2:"
 
 func encodeAuditCursor(c auditCursor) (string, error) {
 	raw, err := json.Marshal(c)
@@ -813,67 +811,53 @@ func encodeAuditCursor(c auditCursor) (string, error) {
 	return auditCursorVersion + base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-func decodeAuditCursor(token string, want auditCursor) (auditCursor, error) {
+// decodeAuditCursor reads a page token issued under set, returning the window
+// it carries and the key to continue before.
+func decodeAuditCursor(token string, set listfilter.Set) (since, until time.Time, beforeKey string, err error) {
+	invalid := connect.NewError(connect.CodeInvalidArgument, errors.New("invalid page_token"))
 	body, ok := strings.CutPrefix(token, auditCursorVersion)
 	if !ok {
-		return auditCursor{}, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid page_token"))
+		return time.Time{}, time.Time{}, "", invalid
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(body)
-	if err != nil {
-		return auditCursor{}, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid page_token"))
+	raw, decodeErr := base64.RawURLEncoding.DecodeString(body)
+	if decodeErr != nil {
+		return time.Time{}, time.Time{}, "", invalid
 	}
 	var c auditCursor
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return auditCursor{}, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid page_token"))
-	}
-	if c.Namespace != want.Namespace || c.ActionPrefix != want.ActionPrefix || c.Principal != want.Principal ||
-		c.Since != want.Since || c.Until != want.Until {
-		return auditCursor{}, connect.NewError(connect.CodeInvalidArgument,
-			errors.New("filters changed; drop the page token"))
+	if json.Unmarshal(raw, &c) != nil {
+		return time.Time{}, time.Time{}, "", invalid
 	}
 	if _, _, ok := artifacts.ParseAuditKey(c.BeforeKey); !ok {
-		return auditCursor{}, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid page_token"))
+		return time.Time{}, time.Time{}, "", invalid
 	}
-	if _, err := time.Parse(time.RFC3339Nano, c.WindowSince); err != nil {
-		return auditCursor{}, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid page_token"))
+	since, sinceErr := time.Parse(time.RFC3339Nano, c.WindowSince)
+	until, untilErr := time.Parse(time.RFC3339Nano, c.WindowUntil)
+	if sinceErr != nil || untilErr != nil {
+		return time.Time{}, time.Time{}, "", invalid
 	}
-	if _, err := time.Parse(time.RFC3339Nano, c.WindowUntil); err != nil {
-		return auditCursor{}, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid page_token"))
+	if err := checkFilterKey(c.Filters, set); err != nil {
+		return time.Time{}, time.Time{}, "", err
 	}
-	return c, nil
-}
-
-func auditTimeString(ts *timestamppb.Timestamp) (string, error) {
-	if ts == nil {
-		return "", nil
-	}
-	if !ts.IsValid() {
-		return "", fmt.Errorf("invalid timestamp")
-	}
-	return ts.AsTime().UTC().Format(time.RFC3339Nano), nil
+	return since.UTC(), until.UTC(), c.BeforeKey, nil
 }
 
 // ListAuditRecords reads the trail back from the shared store, newest first.
 // It is answered from the store on every call and never from process memory,
 // so a replica that recorded nothing answers identically.
+//
+// It is a deployment-wide listing narrowed by filters, decided on each
+// record's body (the key holds only the day and the id). The window is the
+// `at` interval the filters bound: its end defaults to now on the engine's
+// clock and its start to seven days before the end.
 func (s *Service) ListAuditRecords(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListAuditRecordsRequest],
 ) (*connect.Response[orkstackv1.ListAuditRecordsResponse], error) {
-	if s.auditStore == nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition,
-			errors.New("audit store is not configured"))
-	}
 	msg := req.Msg
-	sinceRaw, err := auditTimeString(msg.GetSince())
+	set, err := compileFilters(msg)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("since is invalid"))
+		return nil, err
 	}
-	untilRaw, err := auditTimeString(msg.GetUntil())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("until is invalid"))
-	}
-
 	pageSize := int(msg.GetPageSize())
 	switch {
 	case pageSize == 0:
@@ -882,52 +866,47 @@ func (s *Service) ListAuditRecords(
 		return nil, connect.NewError(connect.CodeInvalidArgument,
 			fmt.Errorf("page_size %d is outside 1..%d", msg.GetPageSize(), MaxAuditPageSize))
 	}
-
-	filters := auditCursor{
-		Namespace:    msg.GetNamespace(),
-		ActionPrefix: msg.GetActionPrefix(),
-		Principal:    msg.GetPrincipal(),
-		Since:        sinceRaw,
-		Until:        untilRaw,
+	if s.auditStore == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition,
+			errors.New("audit store is not configured"))
 	}
+
 	var since, until time.Time
 	var beforeKey string
 	if token := msg.GetPageToken(); token != "" {
-		cursor, err := decodeAuditCursor(token, filters)
-		if err != nil {
+		if since, until, beforeKey, err = decodeAuditCursor(token, set); err != nil {
 			return nil, err
 		}
-		since, _ = time.Parse(time.RFC3339Nano, cursor.WindowSince)
-		until, _ = time.Parse(time.RFC3339Nano, cursor.WindowUntil)
-		beforeKey = cursor.BeforeKey
 	} else {
+		atOrAfter, before := set.Interval("at")
 		until = s.now().UTC()
-		if msg.GetUntil() != nil {
-			until = msg.GetUntil().AsTime().UTC()
+		if !before.IsZero() {
+			until = before.UTC()
 		}
 		since = until.Add(-DefaultAuditLookback)
-		if msg.GetSince() != nil {
-			since = msg.GetSince().AsTime().UTC()
+		if !atOrAfter.IsZero() {
+			since = atOrAfter.UTC()
+		}
+		if !until.After(since) {
+			return nil, emptyWindow("at", since, until)
 		}
 	}
-	if !until.After(since) {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
-			"until %s must be after since %s", until.Format(time.RFC3339Nano), since.Format(time.RFC3339Nano)))
-	}
 
+	var keep func(*orkstackv1.AuditRecord) bool
+	if !set.Empty() {
+		keep = func(rec *orkstackv1.AuditRecord) bool { return set.Match(rec) }
+	}
 	page, err := s.auditStore.ListAuditRecords(ctx, artifacts.AuditQuery{
-		Since:        since,
-		Until:        until,
-		Namespace:    msg.GetNamespace(),
-		ActionPrefix: msg.GetActionPrefix(),
-		Principal:    msg.GetPrincipal(),
-		BeforeKey:    beforeKey,
-		Limit:        pageSize,
+		Since:     since,
+		Until:     until,
+		Keep:      keep,
+		BeforeKey: beforeKey,
+		Limit:     pageSize,
 	})
 	if err != nil {
 		if errors.Is(err, artifacts.ErrAuditScanBudget) {
 			return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf(
-				"scan examined more than %d records before filling a page; narrow --since/--until or the filters",
+				"scan examined more than %d records before filling a page; narrow the at window or add filters",
 				artifacts.AuditScanMaxObjects))
 		}
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("read audit records: %w", err))
@@ -941,11 +920,12 @@ func (s *Service) ListAuditRecords(
 		out.Records = []*orkstackv1.AuditRecord{}
 	}
 	if page.NextKey != "" {
-		next := filters
-		next.WindowSince = since.Format(time.RFC3339Nano)
-		next.WindowUntil = until.Format(time.RFC3339Nano)
-		next.BeforeKey = page.NextKey
-		token, err := encodeAuditCursor(next)
+		token, err := encodeAuditCursor(auditCursor{
+			Filters:     set.Key(),
+			WindowSince: since.Format(time.RFC3339Nano),
+			WindowUntil: until.Format(time.RFC3339Nano),
+			BeforeKey:   page.NextKey,
+		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode page_token: %w", err))
 		}

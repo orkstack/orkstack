@@ -393,21 +393,22 @@ func TestDeliveryStore_FiltersAreDecidedFromTheKey(t *testing.T) {
 		}
 	}
 	window := DeliveryQuery{Since: base, Until: base.Add(time.Hour), Limit: 50}
-	cases := map[string]func(*DeliveryQuery){
-		"run":       func(q *DeliveryQuery) { q.RunID = "ork-run-007" },
-		"webhook":   func(q *DeliveryQuery) { q.WebhookID = fmt.Sprintf("wh-%016x", 7) },
-		"event":     func(q *DeliveryQuery) { q.Event = orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED },
-		"outcome":   func(q *DeliveryQuery) { q.Outcome = orkstackv1.DeliveryOutcome_DELIVERY_OUTCOME_DELIVERED },
-		"namespace": func(q *DeliveryQuery) { q.Namespace = "analytics" },
-		"all five": func(q *DeliveryQuery) {
-			q.RunID, q.WebhookID, q.Event = "ork-run-007", fmt.Sprintf("wh-%016x", 7), orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED
-			q.Outcome, q.Namespace = orkstackv1.DeliveryOutcome_DELIVERY_OUTCOME_DELIVERED, "analytics"
+	run7 := func(k DeliveryKeyFields) bool { return k.RunID == "ork-run-007" }
+	cases := map[string]func(DeliveryKeyFields) bool{
+		"run":       run7,
+		"webhook":   func(k DeliveryKeyFields) bool { return k.WebhookID == fmt.Sprintf("wh-%016x", 7) },
+		"event":     func(k DeliveryKeyFields) bool { return k.Event == orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED },
+		"delivered": func(k DeliveryKeyFields) bool { return k.Delivered },
+		"namespace": func(k DeliveryKeyFields) bool { return k.Namespace == "analytics" },
+		"all five": func(k DeliveryKeyFields) bool {
+			return run7(k) && k.WebhookID == fmt.Sprintf("wh-%016x", 7) &&
+				k.Event == orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED && k.Delivered && k.Namespace == "analytics"
 		},
 	}
-	for name, narrow := range cases {
+	for name, keep := range cases {
 		t.Run(name, func(t *testing.T) {
 			q := window
-			narrow(&q)
+			q.Keep = keep
 			double.resetCounts()
 			page, err := store.ListDeliveries(ctx, q)
 			if err != nil {
@@ -427,9 +428,42 @@ func TestDeliveryStore_FiltersAreDecidedFromTheKey(t *testing.T) {
 		})
 	}
 	q := window
-	q.RunID, q.Namespace = "ork-run-007", "payments"
+	q.Keep = func(k DeliveryKeyFields) bool { return run7(k) && k.Namespace == "payments" }
 	if page, err := store.ListDeliveries(ctx, q); err != nil || len(page.Deliveries) != 0 {
 		t.Errorf("a disjoint intersection matched %d records (%v), want none", len(page.Deliveries), err)
+	}
+}
+
+func TestDeliveryQuery_KeepSeesTheKeyFields(t *testing.T) {
+	ctx := context.Background()
+	at := time.Date(2026, 9, 21, 3, 0, 0, 0, time.UTC)
+	rec := deliveryAt(t, at)
+	rec.Namespace, rec.RunId, rec.WebhookId = "analytics", "ork-run-keep", "wh-00000000000000aa"
+	rec.Event, rec.TaskId, rec.Delivered = orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, "load", true
+	for name, store := range deliveryBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			if err := store.PutDelivery(ctx, rec); err != nil {
+				t.Fatalf("PutDelivery: %v", err)
+			}
+			var seen []DeliveryKeyFields
+			page, err := store.ListDeliveries(ctx, DeliveryQuery{
+				Since: at.Add(-time.Hour), Until: at.Add(time.Hour), Limit: 50,
+				Keep: func(k DeliveryKeyFields) bool { seen = append(seen, k); return false },
+			})
+			if err != nil {
+				t.Fatalf("ListDeliveries: %v", err)
+			}
+			if len(page.Deliveries) != 0 {
+				t.Errorf("Keep refused every key but %d records were listed", len(page.Deliveries))
+			}
+			want := DeliveryKeyFields{
+				ID: rec.GetId(), CreatedAt: at, Namespace: "analytics", RunID: "ork-run-keep",
+				WebhookID: "wh-00000000000000aa", Event: orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, Delivered: true,
+			}
+			if len(seen) != 1 || seen[0] != want {
+				t.Errorf("Keep saw %+v, want exactly %+v", seen, want)
+			}
+		})
 	}
 }
 
@@ -498,6 +532,9 @@ func (s *syntheticSource) fetchDelivery(context.Context, string) ([]byte, bool, 
 	return nil, false, nil
 }
 
+// matchesNoKey is a Keep that refuses every record.
+func matchesNoKey(DeliveryKeyFields) bool { return false }
+
 func TestDeliveryStore_ScanBudgetRefuses(t *testing.T) {
 	base := time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC)
 	src := &syntheticSource{}
@@ -507,7 +544,7 @@ func TestDeliveryStore_ScanBudgetRefuses(t *testing.T) {
 	}
 	sort.Strings(src.keys)
 	page, err := walkDeliveries(context.Background(), src, DeliveryQuery{
-		Since: base, Until: base.Add(24 * time.Hour), RunID: "ork-matches-nothing", Limit: 50,
+		Since: base, Until: base.Add(24 * time.Hour), Keep: matchesNoKey, Limit: 50,
 	})
 	if !errors.Is(err, ErrDeliveryScanBudget) {
 		t.Fatalf("error = %v, want ErrDeliveryScanBudget", err)
@@ -518,7 +555,7 @@ func TestDeliveryStore_ScanBudgetRefuses(t *testing.T) {
 	// Exactly at the budget is answered — an empty page, honestly.
 	src.keys = src.keys[:DeliveryScanMaxKeys]
 	if _, err := walkDeliveries(context.Background(), src, DeliveryQuery{
-		Since: base, Until: base.Add(24 * time.Hour), RunID: "ork-matches-nothing", Limit: 50,
+		Since: base, Until: base.Add(24 * time.Hour), Keep: matchesNoKey, Limit: 50,
 	}); err != nil {
 		t.Errorf("a scan of exactly %d keys was refused: %v", DeliveryScanMaxKeys, err)
 	}

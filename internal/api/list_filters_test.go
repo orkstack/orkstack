@@ -444,6 +444,14 @@ func TestListRequests_RefuseAnInvalidFilterUniformly(t *testing.T) {
 			_, err := svc.ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{Filters: f}))
 			return err
 		}},
+		{"ListDeliveries", "Delivery", "run_id~x", func(f []*orkstackv1.FieldFilter) error {
+			_, err := svc.ListDeliveries(ctx, connect.NewRequest(&orkstackv1.ListDeliveriesRequest{Filters: f}))
+			return err
+		}},
+		{"ListAuditRecords", "AuditRecord", "succeeded~x", func(f []*orkstackv1.FieldFilter) error {
+			_, err := svc.ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{Filters: f}))
+			return err
+		}},
 	} {
 		err := tc.call(filters(t, "nope=x"))
 		want := fmt.Sprintf(`filters[0]: "nope" is not a filterable field of %s; filterable: `, tc.resource)

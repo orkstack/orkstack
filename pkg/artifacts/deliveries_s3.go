@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -18,6 +19,9 @@ import (
 type S3DeliveryStore struct {
 	client *s3.Client
 	bucket string
+	// bodiesRead counts the record bodies this store has asked the backend
+	// for (BodiesRead).
+	bodiesRead atomic.Int64
 }
 
 var _ DeliveryStore = (*S3DeliveryStore)(nil)
@@ -31,6 +35,13 @@ func NewS3DeliveryStore(ctx context.Context, cfg Config) (*S3DeliveryStore, erro
 	}
 	return &S3DeliveryStore{client: client, bucket: bucket}, nil
 }
+
+// BodiesRead is how many delivery record bodies this store has requested:
+// one per GetObject fetchDelivery issues, whatever the answer, NotFound
+// included, because a request is the cost. Only tests read it, always as the
+// delta around one call: it is how a test proves a filtered listing reads a
+// body only for a record whose key matched.
+func (s *S3DeliveryStore) BodiesRead() int64 { return s.bodiesRead.Load() }
 
 func (s *S3DeliveryStore) uri(key string) string { return "s3://" + s.bucket + "/" + key }
 
@@ -120,6 +131,7 @@ func (s *S3DeliveryStore) listDeliveryID(ctx context.Context, idPrefix string) (
 }
 
 func (s *S3DeliveryStore) fetchDelivery(ctx context.Context, key string) ([]byte, bool, error) {
+	s.bodiesRead.Add(1)
 	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
 	if err != nil {
 		if isNotFound(err) {

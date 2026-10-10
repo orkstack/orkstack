@@ -17,8 +17,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
+
+// inNamespace is a Keep for one namespace's records.
+func inNamespace(namespace string) func(*orkstackv1.AuditRecord) bool {
+	return func(rec *orkstackv1.AuditRecord) bool { return rec.GetNamespace() == namespace }
+}
 
 // auditTestDay returns a random UTC day decades in the past, so this test's
 // day prefixes are its own in a bucket other suites (and a live engine) write
@@ -148,7 +155,7 @@ func TestAudit_S3ListAcrossDaysWithCursor(t *testing.T) {
 		want = append([]string{rec.GetId()}, want...)
 	}
 
-	q := artifacts.AuditQuery{Since: day1, Until: day3.AddDate(0, 0, 1), Limit: 2, Namespace: "s3-walk"}
+	q := artifacts.AuditQuery{Since: day1, Until: day3.AddDate(0, 0, 1), Limit: 2, Keep: inNamespace("s3-walk")}
 	var got []string
 	var sizes []int
 	for range 10 {
@@ -171,7 +178,7 @@ func TestAudit_S3ListAcrossDaysWithCursor(t *testing.T) {
 
 	// The middle day excluded by the window.
 	page, err := replica.ListAuditRecords(ctx, artifacts.AuditQuery{
-		Since: day3, Until: day3.AddDate(0, 0, 1), Limit: 50, Namespace: "s3-walk",
+		Since: day3, Until: day3.AddDate(0, 0, 1), Limit: 50, Keep: inNamespace("s3-walk"),
 	})
 	if err != nil || len(page.Records) != 2 {
 		t.Fatalf("day3-only listing = %v, %v; want the two day3 records", ids(page.Records), err)
@@ -205,10 +212,83 @@ func TestAudit_S3ListAcrossDaysWithCursor(t *testing.T) {
 	default:
 	}
 	_, err = replica.ListAuditRecords(ctx, artifacts.AuditQuery{
-		Since: budgetDay, Until: budgetDay.AddDate(0, 0, 1), Limit: 50, Principal: "nobody-matches",
+		Since: budgetDay, Until: budgetDay.AddDate(0, 0, 1), Limit: 50,
+		Keep: func(rec *orkstackv1.AuditRecord) bool { return rec.GetPrincipal() == "nobody-matches" },
 	})
 	if !errors.Is(err, artifacts.ErrAuditScanBudget) {
 		t.Fatalf("listing %d unmatched records = %v, want ErrAuditScanBudget", artifacts.AuditScanMaxObjects+1, err)
 	}
 	t.Logf("S3 scan of %d unmatched records refused: %v", artifacts.AuditScanMaxObjects+1, err)
+}
+
+// TestAuditStore_FiltersOverRealRecords lists records written to MinIO
+// through the audit trail's own allowlist: each filter set is compiled as
+// ListAuditRecords compiles it and its Match is the store's Keep, so the
+// listing is decided on the decoded bodies exactly as the RPC decides it.
+func TestAuditStore_FiltersOverRealRecords(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+	store, err := artifacts.NewS3AuditStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3AuditStore: %v", err)
+	}
+	raw := newRawS3Client(t, cfg)
+	day := auditTestDay(t)
+	cleanupAuditDays(t, raw, cfg.S3Bucket, day)
+
+	deployment := auditRecord(day.Add(1*time.Hour), "", "retention.update", "svc-ci")
+	deployment.Target, deployment.Succeeded = "deployment", true
+	update := auditRecord(day.Add(2*time.Hour), "payments", "namespace.update", "dsantos")
+	update.Target, update.Succeeded = "payments", true
+	refused := auditRecord(day.Add(3*time.Hour), "payments", "orkflow.promote", "dsantos")
+	refused.Target, refused.ErrorCode = "deploy@3", "failed_precondition"
+	other := auditRecord(day.Add(4*time.Hour), "analytics", "namespace.update", "svc-ci")
+	other.Target, other.Succeeded = "analytics", true
+	for _, rec := range []*orkstackv1.AuditRecord{deployment, update, refused, other} {
+		if err := store.PutAuditRecord(ctx, rec); err != nil {
+			t.Fatalf("PutAuditRecord: %v", err)
+		}
+	}
+	spec := listfilter.MustSpec(&orkstackv1.ListAuditRecordsRequest{})
+	cases := []struct {
+		filters []string
+		want    []*orkstackv1.AuditRecord // newest first
+	}{
+		{nil, []*orkstackv1.AuditRecord{other, refused, update, deployment}},
+		{[]string{"namespace="}, []*orkstackv1.AuditRecord{deployment}},
+		{[]string{"namespace=payments"}, []*orkstackv1.AuditRecord{refused, update}},
+		{[]string{"action^namespace."}, []*orkstackv1.AuditRecord{other, update}},
+		{[]string{"principal=svc-ci", "namespace!="}, []*orkstackv1.AuditRecord{other}},
+		{[]string{"succeeded=false"}, []*orkstackv1.AuditRecord{refused}},
+		{[]string{"error_code=failed_precondition"}, []*orkstackv1.AuditRecord{refused}},
+		{[]string{"target~deploy"}, []*orkstackv1.AuditRecord{refused, deployment}},
+		{[]string{"namespace=default"}, nil},
+	}
+	for _, tc := range cases {
+		name := strings.Join(tc.filters, " ")
+		var filters []*orkstackv1.FieldFilter
+		for _, text := range tc.filters {
+			f, err := listfilter.Parse(text)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", text, err)
+			}
+			filters = append(filters, f)
+		}
+		set, err := spec.Compile(filters)
+		if err != nil {
+			t.Fatalf("Compile(%s): %v", name, err)
+		}
+		page, err := store.ListAuditRecords(ctx, artifacts.AuditQuery{
+			Since: day, Until: day.AddDate(0, 0, 1), Limit: 50,
+			Keep: func(rec *orkstackv1.AuditRecord) bool { return set.Match(rec) },
+		})
+		if err != nil {
+			t.Fatalf("ListAuditRecords(%s): %v", name, err)
+		}
+		if got, want := strings.Join(ids(page.Records), ","), strings.Join(ids(tc.want), ","); got != want {
+			t.Errorf("filters %q listed %s, want %s", tc.filters, got, want)
+		}
+		t.Logf("filters %q over real records: %d listed", tc.filters, len(page.Records))
+	}
 }
