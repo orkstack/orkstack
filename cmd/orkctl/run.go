@@ -107,6 +107,11 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 					return err
 				}
 				fmt.Fprintln(cmd.OutOrStdout())
+			} else if callbacks := resp.Msg.GetAwaitCallbacks(); len(callbacks) > 0 {
+				// The callback tokens are disclosed by this response and
+				// nowhere else, but stdout belongs to the one JSON document
+				// the watch prints: they go to stderr, once.
+				renderAwaitCallbacks(cmd.ErrOrStderr(), g.baseURL(), callbacks)
 			}
 			return watchRun(cmd, g, run.GetId(), 0)
 		},

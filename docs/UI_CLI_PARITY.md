@@ -57,7 +57,10 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   enter a shareable URL: a run is shared by its id alone.
 - **One-time secrets are shown once.** A trigger token, a generated webhook
   secret and an await callback token appear in the creating response only;
-  no listing, URL or later read carries them.
+  no listing, URL or later read carries them. `orkctl run submit --watch
+  --json` prints a submission's await callbacks (the ready `curl`) on
+  **stderr**, before the watch starts, so stdout stays the one JSON document
+  the watch prints.
 - **`orkctl` exit codes.** `0` the command succeeded; `1` it failed —
   including a mistyped subcommand (`orkctl run lsit` fails with
   `unknown command "lsit" for "orkctl run"` and the nearest suggestion; a
