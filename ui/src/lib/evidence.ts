@@ -12,8 +12,12 @@ import { downloadFilename, runCommand } from './runDetail';
  * A browser assembles a download in memory before saving it, so a bundle
  * larger than this is handed to the CLI instead. A client constant, on the
  * same terms as LIVE_POLL_MS: no server setting decides it.
+ *
+ * The assembly holds the streamed chunks and then the Blob built from them
+ * (collectEvidence and evidenceBlob copy nothing themselves), so the peak is
+ * about twice the bundle: 256 MiB keeps that within what a tab can count on.
  */
-export const EVIDENCE_BROWSER_MAX_BYTES = 512 * 1024 * 1024;
+export const EVIDENCE_BROWSER_MAX_BYTES = 256 * 1024 * 1024;
 
 export type EvidenceState = 'present' | 'reclaimed' | 'unrecorded' | 'rejected';
 
@@ -153,4 +157,64 @@ export function definitionLine(m: Manifest): string {
 		default:
 			return `Definition ${digest} · source.yaml ${m.definition.state}`;
 	}
+}
+
+/** One ExportRunEvidence message, as much of it as assembly reads. */
+export interface EvidenceChunk {
+	data: Uint8Array;
+	last: boolean;
+}
+
+/**
+ * collectEvidence keeps one stream's bytes, resolving only once `last`
+ * arrived. Each chunk's bytes are KEPT, never copied: the Connect runtime
+ * decodes every message into a fresh buffer it does not reuse, so a copy
+ * here would only double what the tab holds.
+ */
+export async function collectEvidence(
+	stream: AsyncIterable<EvidenceChunk>,
+	manifestOnly: boolean
+): Promise<Uint8Array[]> {
+	const parts: Uint8Array[] = [];
+	let complete = false;
+	for await (const chunk of stream) {
+		if (chunk.data.length) parts.push(chunk.data);
+		if (chunk.last) complete = true;
+	}
+	if (!complete) {
+		throw new Error(
+			manifestOnly
+				? 'Manifest stream ended before the engine confirmed a complete manifest.'
+				: 'Evidence stream ended before the engine confirmed a complete bundle.'
+		);
+	}
+	return parts;
+}
+
+/**
+ * evidenceBlob builds the download from the parts as they are (a Blob takes
+ * views directly), then empties the array so the parts can be collected
+ * before the object URL is made: the Blob is the one copy left.
+ */
+export function evidenceBlob(parts: Uint8Array[]): Blob {
+	const blob = new Blob(parts as BlobPart[], { type: 'application/gzip' });
+	parts.length = 0;
+	return blob;
+}
+
+/**
+ * What the dialog says when a bundle is over the browser limit: its size,
+ * the limit, and the CLI that exports it instead. null when it fits.
+ */
+export function evidenceTooLarge(
+	m: Manifest,
+	namespace: string,
+	runId: string,
+	o: { logs: boolean; artifacts: boolean }
+): { message: string; command: string } | null {
+	if (m.counts.bytes_present <= EVIDENCE_BROWSER_MAX_BYTES) return null;
+	return {
+		message: `This bundle is ${formatBytes(m.counts.bytes_present)}, more than the ${formatBytes(EVIDENCE_BROWSER_MAX_BYTES)} a browser download assembles in memory. Export it with the CLI:`,
+		command: evidenceCommand(namespace, runId, o)
+	};
 }

@@ -800,8 +800,11 @@ run's header opens a dialog that shows the manifest summary before any bundle
 byte is fetched (`N present · … · size`), the definition line, absent members
 with their sentences, **View manifest**, **Include logs**/**Include
 artifacts** toggles that re-fetch the manifest, and a browser download —
-refused above 512 MiB, where the CLI is the tool — that completes only on
-`last`.
+refused above 256 MiB, where the dialog names the bundle's size and shows the
+`orkctl run evidence export` command to use instead — that completes only on
+`last`. The browser keeps the streamed chunks as delivered and builds the file
+from them without a further copy, so a download holds about twice the bundle
+at its peak.
 
 ### Fan-out
 

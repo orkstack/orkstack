@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import {
 	EVIDENCE_BROWSER_MAX_BYTES,
 	absentMembers,
+	collectEvidence,
+	evidenceBlob,
+	evidenceTooLarge,
 	definitionLine,
 	evidenceCommand,
 	evidenceFilename,
@@ -44,7 +47,7 @@ test('U1 evidenceSummary counts, sizes and omits zeros', () => {
 	expect(evidenceSummary(withCounts(m, { present: 3, reclaimed: 0, unrecorded: 0, rejected: 0, bytes_present: 900 }))).toBe(
 		'3 present · 900 B to download'
 	);
-	expect(EVIDENCE_BROWSER_MAX_BYTES).toBe(512 * 1024 * 1024);
+	expect(EVIDENCE_BROWSER_MAX_BYTES).toBe(256 * 1024 * 1024);
 });
 
 test('U2 absentMembers lists every non-present member with its sentence', () => {
@@ -82,4 +85,66 @@ test('U3 evidenceCommand is the CLI that writes the same bundle', () => {
 test('U4 evidenceFilename sanitises through downloadFilename', () => {
 	expect(evidenceFilename('ork-1')).toBe('ork-1.evidence.tar.gz');
 	expect(evidenceFilename('a/b\\c')).toBe('a_b_c.evidence.tar.gz');
+});
+
+async function* stream(chunks: { data: Uint8Array; last: boolean }[]) {
+	for (const chunk of chunks) yield chunk;
+}
+
+// F-ui-ux-5: the download is assembled with no per-chunk copy, and the Blob
+// is the one copy left once it exists.
+test('U9 the bundle is assembled without copying a chunk, byte for byte', async () => {
+	const chunks = [
+		{ data: new Uint8Array([1, 2, 3]), last: false },
+		{ data: new Uint8Array(0), last: false },
+		{ data: new Uint8Array([4, 5]), last: false },
+		{ data: new Uint8Array([6]), last: true }
+	];
+	const original = Uint8Array.prototype.slice;
+	let slices = 0;
+	Uint8Array.prototype.slice = function (this: Uint8Array, ...args: [number?, number?]) {
+		slices++;
+		return original.apply(this, args);
+	} as typeof original;
+	let parts: Uint8Array[];
+	let blob: Blob;
+	try {
+		parts = await collectEvidence(stream(chunks), false);
+		// Kept as delivered: the same buffers, not copies of them.
+		expect(parts.length).toBe(3);
+		expect(parts[0] === chunks[0].data).toBe(true);
+		expect(parts[2] === chunks[3].data).toBe(true);
+		blob = evidenceBlob(parts);
+	} finally {
+		Uint8Array.prototype.slice = original;
+	}
+	expect(slices).toBe(0);
+	// The parts are released once the Blob holds the bytes.
+	expect(parts.length).toBe(0);
+	expect(blob.type).toBe('application/gzip');
+	expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([1, 2, 3, 4, 5, 6]);
+});
+
+test('U9 a stream that never says last is refused, never assembled', async () => {
+	let refusal = '';
+	try {
+		await collectEvidence(stream([{ data: new Uint8Array([1]), last: false }]), false);
+	} catch (err) {
+		refusal = String(err);
+	}
+	expect(refusal).toContain('before the engine confirmed a complete bundle');
+});
+
+test('U10 an over-limit bundle names its size, the limit and the CLI that exports it', () => {
+	const m = parseManifest(goldenBytes);
+	expect(evidenceTooLarge(withCounts(m, { bytes_present: EVIDENCE_BROWSER_MAX_BYTES }), 'payments', 'ork-1', { logs: true, artifacts: true })).toBeNull();
+	const over = evidenceTooLarge(withCounts(m, { bytes_present: 300 * 1024 * 1024 }), 'payments', 'ork-1', {
+		logs: false,
+		artifacts: true
+	});
+	expect(over?.message).toBe(
+		'This bundle is 300.0 MiB, more than the 256.0 MiB a browser download assembles in memory. Export it with the CLI:'
+	);
+	expect(over?.command).toBe(evidenceCommand('payments', 'ork-1', { logs: false, artifacts: true }));
+	expect(over?.command).toBe("orkctl --namespace 'payments' 'run' 'evidence' 'export' 'ork-1' '--output' 'ork-1.evidence.tar.gz' '--no-logs'");
 });
