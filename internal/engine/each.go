@@ -436,12 +436,19 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 	if e.limit < count {
 		scheduled += fmt.Sprintf(", at most %d at a time", e.limit)
 	}
-	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, id,
-		orkstackv1.Status_STATUS_RUNNING, scheduled); err != nil {
+	// As in schedule: nothing changes between these two events, so on the lean
+	// event path TASK_STARTED reuses TASK_SCHEDULED's snapshot.
+	// The version is asked before TASK_SCHEDULED, so its marker precedes the
+	// pair it decides.
+	s.leanEvents(ctx)
+	scheduledURI, err := s.emitWithSnapshot(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, id,
+		orkstackv1.Status_STATUS_RUNNING, scheduled, "")
+	if err != nil {
 		return err
 	}
-	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
-		orkstackv1.Status_STATUS_RUNNING, fmt.Sprintf("dispatching %d items to orkers", count)); err != nil {
+	reuse := s.startedSnapshotURI(ctx, scheduledURI)
+	if _, err := s.emitWithSnapshot(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
+		orkstackv1.Status_STATUS_RUNNING, fmt.Sprintf("dispatching %d items to orkers", count), reuse); err != nil {
 		return err
 	}
 	return s.dispatchItems(ctx, runCtx, id, inFlight)
@@ -848,7 +855,10 @@ func (s *runState) finishFanOutOnRunEnd(ctx workflow.Context, id string) {
 // counter emit uses (history, the bus and the archive stay identical,
 // AGENTS.md §7) and writes a fresh snapshot only when fresh is true; otherwise
 // it schedules PublishEvent with an EMPTY snapshot URI, and the event carries
-// no snapshot of its own.
+// no snapshot of its own — and, on the lean event path, is not waited for
+// (lean_events.go). A fresh event is always awaited: it applies a snapshot to
+// the RunStore, and letting two of those reorder could regress the copy a
+// webhook body is built from.
 func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 	status orkstackv1.Status, message string, fresh bool,
 ) error {
@@ -864,6 +874,17 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 		Item:      proto.Int32(index),
 	}
 	dedupeKey := fmt.Sprintf("%s#%d", s.runID, s.eventSeq)
+	if !fresh && s.leanEvents(ctx) {
+		// The lean event path: an event without a snapshot of its own applies
+		// nothing to the RunStore and notifies nothing (PublishEvent), so its
+		// publish may finish in any order — the bus orders by sequence — and
+		// the main loop does not wait for it. It is still one PublishEvent
+		// scheduled in history, numbered from the same counter, so a reader
+		// sees exactly the stream it always has. drainItemPublishes awaits
+		// every one before the run's terminal event.
+		s.publishItemDetached(ctx, event, "", dedupeKey)
+		return nil
+	}
 	snapshotURI := ""
 	if fresh {
 		localCtx := workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
@@ -877,11 +898,14 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 			return fmt.Errorf("write snapshot for event %d: %w", s.eventSeq, err)
 		}
 	}
-	activityCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		TaskQueue:           EventQueue,
-		StartToCloseTimeout: eventActivityTimeout,
-		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
-	})
+	base := ctx
+	if s.leanEvents(ctx) {
+		// Awaited, but on the same disconnected context as the item publishes
+		// that are not, so an operator's cancel arriving while it is in flight
+		// does not cancel it either.
+		base = s.itemPublishContext(ctx)
+	}
+	activityCtx := workflow.WithActivityOptions(base, eventActivityOptions())
 	if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey).
 		Get(ctx, nil); err != nil {
 		workflow.GetLogger(ctx).Error("publish item event failed",

@@ -713,11 +713,13 @@ type runProjection struct {
 	events         []*orkstackv1.Event
 	snapshotURI    string
 	snapshotLoaded bool
-	// priorSnapshotURI is the snapshot URI referenced by the SECOND-newest
-	// lifecycle event. Every publish writes its own snapshot before it
-	// publishes (workflow.go's emit), so this object is nearly as complete as
-	// the newest one — it is what a live-run miss falls back to rather than
-	// dropping straight to startedRun, which carries no TaskRuns at all.
+	// priorSnapshotURI is the newest snapshot URI DIFFERENT from snapshotURI —
+	// the one referenced by the second-newest lifecycle event, unless that
+	// event reused the newest one's object (a lean-path TASK_STARTED). Nearly
+	// every publish writes its own snapshot before it publishes (workflow.go's
+	// emit), so this object is nearly as complete as the newest one — it is
+	// what a live-run miss falls back to rather than dropping straight to
+	// startedRun, which carries no TaskRuns at all.
 	priorSnapshotURI string
 	// sawTerminal records that the run published its own terminal lifecycle
 	// event. closeRun consults it so an event read can decide "no synthetic
@@ -783,7 +785,11 @@ func (r *TemporalRunReader) scan(
 			if err != nil {
 				return nil, err
 			}
-			if snapshotURI != "" {
+			// The prior URI advances only on a DIFFERENT object: on the lean
+			// event path a TASK_STARTED publishes with the URI its
+			// TASK_SCHEDULED wrote (lean_events.go), and the fallback must
+			// still name an older object, not the same missing one twice.
+			if snapshotURI != "" && snapshotURI != projection.snapshotURI {
 				projection.priorSnapshotURI = projection.snapshotURI
 				projection.snapshotURI = snapshotURI
 			}
@@ -865,9 +871,9 @@ func (r *TemporalRunReader) scan(
 			if !errors.Is(err, artifacts.ErrNotFound) {
 				return nil, err
 			}
-			// The newest snapshot is gone, but every lifecycle event writes its
-			// own snapshot before it publishes (workflow.go's emit), so the
-			// object written alongside the SECOND-newest event is nearly as
+			// The newest snapshot is gone, but nearly every lifecycle event
+			// writes its own snapshot before it publishes (workflow.go's emit),
+			// so the newest OTHER object — priorSnapshotURI — is nearly as
 			// complete — in particular it still carries TaskRuns, which
 			// startedRun never has at all. One bounded fallback attempt, not a
 			// walk further back: the point is to survive one miss on the object

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"google.golang.org/protobuf/proto"
 
@@ -54,6 +55,53 @@ type EventActivities struct {
 	observer  EventObserver
 	events    RunEventSource
 	snapshots SnapshotStore
+	// recent holds the last few snapshots this process read, by URI. A
+	// snapshot object is immutable, and on the lean event path a TASK_STARTED
+	// publishes with the URI its TASK_SCHEDULED just did, so the second
+	// publish on this replica costs no read.
+	recent snapshotCache
+}
+
+// snapshotCacheSize bounds snapshotCache: two publishes of one URI are
+// adjacent in a run's stream, so a handful of entries per concurrently
+// projecting run is all the reuse needs.
+const snapshotCacheSize = 32
+
+// snapshotCache is a bounded URI → decoded Run cache, oldest entry evicted
+// first. It is a disposable process-local cache (AGENTS.md §13): a miss reads
+// the object store exactly as before, and nothing reads the cache but
+// readSnapshot. Entries are cloned in and out, so no caller shares a message.
+type snapshotCache struct {
+	mu    sync.Mutex
+	runs  map[string]*orkstackv1.Run
+	order []string
+}
+
+func (c *snapshotCache) get(uri string) (*orkstackv1.Run, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	run, ok := c.runs[uri]
+	if !ok {
+		return nil, false
+	}
+	return proto.Clone(run).(*orkstackv1.Run), true
+}
+
+func (c *snapshotCache) put(uri string, run *orkstackv1.Run) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.runs == nil {
+		c.runs = make(map[string]*orkstackv1.Run, snapshotCacheSize)
+	}
+	if _, ok := c.runs[uri]; ok {
+		return
+	}
+	if len(c.order) >= snapshotCacheSize {
+		delete(c.runs, c.order[0])
+		c.order = c.order[1:]
+	}
+	c.runs[uri] = proto.Clone(run).(*orkstackv1.Run)
+	c.order = append(c.order, uri)
 }
 
 // NewEventActivities wires the projection activity to a bus and run store.
@@ -186,6 +234,9 @@ func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orksta
 	if a.snapshots == nil {
 		return nil, fmt.Errorf("engine: publish event: snapshot store is not configured")
 	}
+	if run, ok := a.recent.get(uri); ok {
+		return run, nil
+	}
 	data, err := a.snapshots.ReadSnapshot(ctx, uri)
 	if err != nil {
 		return nil, fmt.Errorf("engine: publish event: read snapshot: %w", err)
@@ -194,6 +245,7 @@ func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orksta
 	if err := proto.Unmarshal(data, run); err != nil {
 		return nil, fmt.Errorf("engine: publish event: decode snapshot %s: %w", uri, err)
 	}
+	a.recent.put(uri, run)
 	return run, nil
 }
 

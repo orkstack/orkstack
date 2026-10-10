@@ -23,9 +23,12 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// goldenHistoryPath is the committed replay fixture. replay_test.go replays it
-// on every `make test`; this file is the only thing that writes it.
-const goldenHistoryPath = "testdata/history/run-succeeded-v1.json"
+// goldenHistoryPath is where the recorder writes. run-succeeded-v1.json was
+// recorded before the "lean-event-path" version existed and is never
+// re-recorded; today's code records that version's marker, so a recording
+// now is the lean-path fixture, run-succeeded-v2.json
+// (lean_events_internal_test.go). This file is the only thing that writes it.
+const goldenHistoryPath = "testdata/history/run-succeeded-v2.json"
 
 // TestIntegration_RecordGoldenRunHistory captures the committed cross-version
 // replay fixture from a REAL run on a real cluster.

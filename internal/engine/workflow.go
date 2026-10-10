@@ -445,6 +445,17 @@ type runState struct {
 	cancelHandlers workflow.CancelFunc
 	detached       workflow.Context
 	cancelDetached workflow.CancelFunc
+
+	// The lean event path (lean_events.go). leanDecided and lean are the
+	// run's one answer to the "lean-event-path" version, asked at the first
+	// event that needs it. pendingItemPublishes is every fan-out item publish
+	// scheduled and not yet awaited, oldest first, and publishCtx the
+	// disconnected context they are scheduled on. All three stay empty on
+	// the old path.
+	leanDecided          bool
+	lean                 bool
+	pendingItemPublishes []workflow.Future
+	publishCtx           workflow.Context
 }
 
 // pinState is one pin's whole life inside this run: who belongs to it, and
@@ -1439,12 +1450,20 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	if p != nil {
 		scheduled += ", pin " + p.name
 	}
-	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, id,
-		orkstackv1.Status_STATUS_RUNNING, scheduled); err != nil {
+	// Nothing in the run's state changes between these two events, so on the
+	// lean event path TASK_STARTED publishes with the snapshot TASK_SCHEDULED
+	// just wrote rather than writing an identical one (lean_events.go).
+	// The version is asked before TASK_SCHEDULED, so its marker precedes the
+	// pair it decides.
+	s.leanEvents(ctx)
+	scheduledURI, err := s.emitWithSnapshot(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, id,
+		orkstackv1.Status_STATUS_RUNNING, scheduled, "")
+	if err != nil {
 		return nil, err
 	}
-	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
-		orkstackv1.Status_STATUS_RUNNING, "task dispatched to an orker"); err != nil {
+	reuse := s.startedSnapshotURI(ctx, scheduledURI)
+	if _, err := s.emitWithSnapshot(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
+		orkstackv1.Status_STATUS_RUNNING, "task dispatched to an orker", reuse); err != nil {
 		return nil, err
 	}
 
@@ -2279,6 +2298,31 @@ func (s *runState) emit(
 	status orkstackv1.Status,
 	message string,
 ) error {
+	_, err := s.emitWithSnapshot(ctx, eventType, taskID, status, message, "")
+	return err
+}
+
+// emitWithSnapshot is emit, returning the snapshot URI the event was published
+// with. With reuseURI empty it writes the event's own snapshot, as emit always
+// has. With reuseURI set it writes none and publishes with that URI: the lean
+// event path's TASK_STARTED, whose snapshot is byte-identical to the
+// TASK_SCHEDULED one written just before it (startedSnapshotURI).
+//
+// A terminal run event first waits for every item publish still outstanding
+// (drainItemPublishes), so nothing the run published is still in flight when
+// it ends. On the old path there are never any, so the command stream is
+// unchanged.
+func (s *runState) emitWithSnapshot(
+	ctx workflow.Context,
+	eventType orkstackv1.EventType,
+	taskID string,
+	status orkstackv1.Status,
+	message string,
+	reuseURI string,
+) (string, error) {
+	if isTerminalRunEventType(eventType) && len(s.pendingItemPublishes) > 0 {
+		s.drainItemPublishes(ctx)
+	}
 	s.eventSeq++
 	event := &orkstackv1.Event{
 		RunId:     s.runID,
@@ -2291,30 +2335,29 @@ func (s *runState) emit(
 	}
 	dedupeKey := fmt.Sprintf("%s#%d", s.runID, s.eventSeq)
 
-	// A local activity is essential here: Temporal does not persist its input,
-	// while a regular activity would put this complete snapshot straight back
-	// into ActivityTaskScheduled.input and retain quadratic history growth. Its
-	// only recorded result is the small URI reference.
-	localCtx := workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
-		StartToCloseTimeout:    snapshotAttemptTimeout,
-		ScheduleToCloseTimeout: snapshotActivityTimeout,
-		RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
-	})
-	var snapshotURI string
-	if err := workflow.ExecuteLocalActivity(
-		localCtx, ActivityWriteSnapshot, s.snapshot(), int64(s.eventSeq),
-	).Get(localCtx, &snapshotURI); err != nil {
-		// Object storage is part of the durable record. Continuing would let a
-		// run succeed without a readable terminal snapshot or complete archive,
-		// so unlike the best-effort projection below this failure ends the run.
-		return fmt.Errorf("write snapshot for event %d: %w", s.eventSeq, err)
+	snapshotURI := reuseURI
+	if snapshotURI == "" {
+		// A local activity is essential here: Temporal does not persist its
+		// input, while a regular activity would put this complete snapshot
+		// straight back into ActivityTaskScheduled.input and retain quadratic
+		// history growth. Its only recorded result is the small URI reference.
+		localCtx := workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
+			StartToCloseTimeout:    snapshotAttemptTimeout,
+			ScheduleToCloseTimeout: snapshotActivityTimeout,
+			RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
+		})
+		if err := workflow.ExecuteLocalActivity(
+			localCtx, ActivityWriteSnapshot, s.snapshot(), int64(s.eventSeq),
+		).Get(localCtx, &snapshotURI); err != nil {
+			// Object storage is part of the durable record. Continuing would
+			// let a run succeed without a readable terminal snapshot or
+			// complete archive, so unlike the best-effort projection below
+			// this failure ends the run.
+			return "", fmt.Errorf("write snapshot for event %d: %w", s.eventSeq, err)
+		}
 	}
 
-	activityCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		TaskQueue:           EventQueue,
-		StartToCloseTimeout: eventActivityTimeout,
-		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
-	})
+	activityCtx := workflow.WithActivityOptions(ctx, eventActivityOptions())
 	future := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey)
 	if err := future.Get(ctx, nil); err != nil {
 		// Projection is observability, not orchestration: a failed publish is
@@ -2322,7 +2365,18 @@ func (s *runState) emit(
 		workflow.GetLogger(ctx).Error("publish event failed",
 			"run_id", s.runID, "event", eventType.String(), "error", err)
 	}
-	return nil
+	return snapshotURI, nil
+}
+
+// eventActivityOptions are the projection activity's options, shared by every
+// publish: the engine's own events channel, one attempt's budget, three
+// attempts.
+func eventActivityOptions() workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		TaskQueue:           EventQueue,
+		StartToCloseTimeout: eventActivityTimeout,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
+	}
 }
 
 // routeForTask resolves one task to its route: the queue its activity is
