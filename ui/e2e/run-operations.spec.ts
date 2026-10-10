@@ -115,6 +115,25 @@ test('cancel confirmation, authoritative status, pinned version, deep links and 
 	await expect(page.getByTestId('pinned-orkflow-link')).toHaveAttribute('href', new RegExp(`version=0.1.0.*ns=default`));
 	await page.getByTestId('cancel-run').click();
 	await expect(page.getByTestId('cancel-run-confirm')).toBeVisible();
+	// F-ui-ux-2: a destructive confirmation takes the focus on Cancel, Tab and
+	// Shift+Tab never leave it, and dismissing it hands the focus back.
+	await expect(page.getByTestId('cancel-run-dismiss')).toBeFocused();
+	const insideConfirm = () =>
+		page.evaluate(() => !!document.activeElement?.closest('[data-testid="cancel-run-confirm"]'));
+	for (let i = 0; i < 6; i++) {
+		await page.keyboard.press('Tab');
+		expect(await insideConfirm(), `Tab ${i + 1} stays in the dialog`).toBe(true);
+	}
+	for (let i = 0; i < 6; i++) {
+		await page.keyboard.press('Shift+Tab');
+		expect(await insideConfirm(), `Shift+Tab ${i + 1} stays in the dialog`).toBe(true);
+	}
+	await page.screenshot({ path: out('screenshot-cancel-confirm-focus.png'), fullPage: true });
+	await page.getByTestId('cancel-run-dismiss').click();
+	await expect(page.getByTestId('cancel-run-confirm')).toHaveCount(0);
+	await expect(page.getByTestId('cancel-run')).toBeFocused();
+	await page.getByTestId('cancel-run').click();
+	await expect(page.getByTestId('cancel-run-confirm')).toBeVisible();
 	await page.getByTestId('cancel-reason').fill('operator cancelled this run');
 	await page.getByTestId('cancel-run-accept').click();
 	await expect(page.getByTestId('cancellation-requested')).toContainText('Waiting for the run to stop');
