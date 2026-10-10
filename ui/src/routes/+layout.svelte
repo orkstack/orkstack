@@ -26,7 +26,8 @@
 
 	// Switching keeps the page you are on and drops the filters belonging to the
 	// namespace you left: an orkflow name is unique WITHIN a namespace, so
-	// carrying `?orkflow=deploy` across names a different orkflow or none.
+	// carrying `?filter=orkflow_name=deploy` across names a different orkflow
+	// or none.
 	function switchTo(name: string) {
 		// Remembered BEFORE the navigation, and remembered under its label, so
 		// that a later bare URL restores this choice rather than overriding it.

@@ -126,7 +126,9 @@
 		const field = declared(row.path);
 		const path = field?.kind === 'labels' ? `${row.path}.${row.key}` : row.path;
 		if (field?.kind === 'time') return filterOf(path, row.op, [isoFromLocal(row.text)]);
-		if (field?.kind === 'enum' && row.op === FilterOperator.IN) return filterOf(path, row.op, [...row.picked]);
+		// An enum `in` sends its values in the field's declared order, whatever
+		// order they were ticked in, so one choice has one address.
+		if (field?.kind === 'enum' && row.op === FilterOperator.IN) return filterOf(path, row.op, field.values.filter((v) => row.picked.includes(v)));
 		if (row.op === FilterOperator.IN) return filterOf(path, row.op, splitList(row.text));
 		return filterOf(path, row.op, [row.text]);
 	}

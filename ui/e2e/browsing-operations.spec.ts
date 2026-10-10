@@ -6,11 +6,17 @@ import {
 	catalogEnv, clusterEnv, ensureActivityImages, killStarted, orkerEnv, proofOut,
 	rpc as callEngine, s3Env, spawnLogged, tcpOpen, uiDir, repoRoot, waitFor, waitForEngine
 } from './harness';
-import { selectOption } from './uiHelpers';
+import { OP, addListFilter, selectOption } from './uiHelpers';
 
 // A real browser path for URL-addressable list filters and dashboard windows.
 // It gives pagination enough data to issue an opaque cursor, then follows it
 // instead of reconstructing a cursor in the page.
+//
+// The Runs list is filtered through the structured list filter
+// (docs/UI_CLI_PARITY.md "Filtering lists"): repeated `filter` parameters in
+// the CLI grammar, edited through ListFilter, applied with the page size by
+// Apply filters. R1–R6 below are its cases on a real engine, Orker, Temporal
+// and MinIO.
 //
 // 21 runs at `size=10` is three pages on purpose: two pages only prove that a
 // cursor can be followed once, and the defect this spec pins down — the URL
@@ -22,7 +28,11 @@ const UI = 'http://127.0.0.1:14184';
 const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-browsing';
 const NS = 'browsing-ops';
 const FLOW = `browsing-${Date.now().toString(36)}`;
+// A second Orkflow whose every run fails, so the status filters have more
+// than one status to choose between.
+const FAILING = `failing-${Date.now().toString(36)}`;
 const RUNS = 21;
+const FAILED_RUNS = 3;
 const DIR = process.env.ORK_PROOF_DIR ? path.join(process.env.ORK_PROOF_DIR, 'browsing-operations') : path.join(uiDir, 'test-results', 'browsing-operations');
 const out = proofOut(DIR);
 const rpc = <T>(method: string, body: unknown) => callEngine<T>(ENGINE, method, body);
@@ -37,6 +47,22 @@ tasks:
       op: exec
       command: ["sh", "-c", "printf '{}' > /orkstack/output/values.json"]
 `; }
+
+function failingWorkflow() { return `name: ${FAILING}
+version: "1.0.0"
+description: browsing fixture that fails
+tasks:
+  - id: boom
+    uses: shell
+    with:
+      op: exec
+      command: ["sh", "-c", "echo boom >&2; exit 1"]
+`; }
+
+/** One EQUALS filter as the engine's JSON codec reads it. */
+function equals(field: string, value: string) {
+	return { field, op: 'FILTER_OPERATOR_EQUALS', values: [value] };
+}
 
 test.beforeAll(async () => {
 	mkdirSync(DIR, { recursive: true });
@@ -58,8 +84,11 @@ test.beforeAll(async () => {
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'browsing operations' } });
 	await waitFor('a live pool', async () => (await rpc<{ pools: { liveOrkerCount: number }[] }>('NamespaceService/ListPools', { namespace: NS })).pools.some((pool) => pool.liveOrkerCount > 0));
 	await rpc('OrkflowService/ApplyOrkflow', { namespace: NS, yaml: workflow() });
+	await rpc('OrkflowService/ApplyOrkflow', { namespace: NS, yaml: failingWorkflow() });
 	for (let i = 0; i < RUNS; i++) await rpc('RunService/SubmitRun', { namespace: NS, orkflowName: FLOW, idempotencyKey: `${FLOW}-${i}` });
-	await waitFor('all fixture runs to reach the list index', async () => (await rpc<{ runs: unknown[] }>('RunService/ListRuns', { namespace: NS, orkflowName: FLOW, pageSize: 25 })).runs.length === RUNS);
+	for (let i = 0; i < FAILED_RUNS; i++) await rpc('RunService/SubmitRun', { namespace: NS, orkflowName: FAILING, idempotencyKey: `${FAILING}-${i}` });
+	await waitFor('all fixture runs to reach the list index', async () => (await rpc<{ runs: unknown[] }>('RunService/ListRuns', { namespace: NS, filters: [equals('orkflow_name', FLOW), equals('status', 'SUCCEEDED')], pageSize: 25 })).runs.length === RUNS);
+	await waitFor('every failing run to be listed FAILED', async () => (await rpc<{ runs: unknown[] }>('RunService/ListRuns', { namespace: NS, filters: [equals('status', 'FAILED')], pageSize: 25 })).runs.length === FAILED_RUNS);
 });
 
 test.afterAll(async () => { await killStarted(); });
@@ -71,14 +100,33 @@ function rowIDs(page: Page) {
 	return page.locator('tr[data-testid^="run-row-"]').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid')));
 }
 
+/** The `filter` parameters of the page's address, decoded, in order. */
+function urlFilters(page: Page): string[] {
+	return new URL(page.url()).searchParams.getAll('filter');
+}
+
+/** The status pills of the rows on screen, in order. */
+async function rowStatuses(page: Page) {
+	return (await page.locator('tr[data-testid^="run-row-"] td:nth-child(4)').allTextContents()).map((text) => text.trim());
+}
+
+/** The CLI equivalent of the applied filters, read from its popover. */
+async function cliCommand(page: Page): Promise<string> {
+	await page.getByTestId('run-filters-cli-trigger').click();
+	const text = await page.getByTestId('run-filters-cli-command').innerText();
+	await page.keyboard.press('Escape');
+	return text.trim();
+}
+
 /**
  * A list address says WHERE the reader is and nothing about how they got
- * there: the filter coordinates, one cursor, one page number. No key twice,
- * no `history=`, and a length that does not grow with depth.
+ * there: the filters, one cursor, one page number. No scalar key twice, no
+ * `history=`, and a length that does not grow with depth.
  */
 function expectListAddress(url: string): URL {
 	const parsed = new URL(url);
-	expect([...parsed.searchParams.keys()].sort()).toEqual(['cursor', 'ns', 'orkflow', 'page', 'size']);
+	expect([...new Set(parsed.searchParams.keys())].sort()).toEqual(['cursor', 'filter', 'ns', 'page', 'size']);
+	expect(parsed.searchParams.getAll('filter')).toEqual([`orkflow_name=${FLOW}`]);
 	expect(parsed.searchParams.getAll('size')).toHaveLength(1);
 	expect(parsed.searchParams.has('history')).toBe(false);
 	// One engine cursor is 160-240 characters before escaping; 400 is generous
@@ -87,11 +135,15 @@ function expectListAddress(url: string): URL {
 	return parsed;
 }
 
-test('runs retain filter/time URL coordinates, reject invalid time ranges, and follow opaque pages without a growing URL', async ({ page, browser }) => {
-	await page.goto(`${UI}/runs?ns=${NS}&orkflow=${FLOW}&size=10`);
+test('R5: runs keep their filters in the URL, page under them, and a pasted later page offers First page', async ({ page, browser }) => {
+	await page.goto(`${UI}/runs?ns=${NS}&filter=orkflow_name%3D${FLOW}&size=10`);
 	await expect(page.getByTestId('run-list')).toBeVisible();
+	// The draft is the URL's: one orkflow_name row, already filled.
+	await expect(page.getByTestId('run-filter-field-0')).toHaveText('Orkflow (orkflow_name)');
+	await expect(page.getByTestId('run-filter-value-0')).toHaveValue(FLOW);
+	await expect(page.getByTestId('runs-heading')).toContainText(`for ${FLOW}`);
 	await page.getByTestId('run-filters-apply').click();
-	await expect(page).toHaveURL(new RegExp(`orkflow=${FLOW}`));
+	await expect.poll(() => urlFilters(page)).toEqual([`orkflow_name=${FLOW}`]);
 	const firstPageIDs = await rowIDs(page);
 	expect(firstPageIDs).toHaveLength(10);
 	await expect(page.getByTestId('runs-page-status')).toHaveText('Page 1 · 10 runs');
@@ -162,11 +214,131 @@ test('runs retain filter/time URL coordinates, reject invalid time ranges, and f
 	await colleague.close();
 
 	await page.screenshot({ path: out('screenshot-runs-filtered.png'), fullPage: true });
-	await page.goto(`${UI}/runs?ns=${NS}&status=bogus`);
-	await expect(page.getByTestId('engine-error')).toContainText('Unknown run status');
-	await page.goto(`${UI}/runs?ns=${NS}&since=2026-01-02T00:00&until=2026-01-01T00:00`);
-	await expect(page.getByTestId('engine-error')).toContainText('after');
+
+	// What a field may take is the engine's to refuse, and its words are
+	// shown verbatim: a status the list cannot select, and an inverted
+	// created_at window.
+	await page.goto(`${UI}/runs?ns=${NS}&filter=status%3Dbogus`);
+	await expect(page.getByTestId('engine-error')).toContainText('"bogus" is not a status this list can select; status is one of PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED, SKIPPED');
+	await page.goto(`${UI}/runs?ns=${NS}&filter=created_at%3E%3D2026-01-02T00%3A00%3A00Z&filter=created_at%3C2026-01-01T00%3A00%3A00Z`);
+	await expect(page.getByTestId('engine-error')).toContainText('created_at >= 2026-01-02T00:00:00Z and < 2026-01-01T00:00:00Z select no instant');
 	await page.screenshot({ path: out('screenshot-runs-invalid-range.png'), fullPage: true });
+});
+
+test('R1: status in and not equals through the enum controls', async ({ page }) => {
+	await page.goto(`${UI}/runs?ns=${NS}&size=50`);
+	await expect(page.getByTestId('run-list')).toBeVisible();
+	await page.waitForLoadState('networkidle');
+	// in: a checkbox per allowed status, never AWAITING (a task status).
+	const row = await addListFilter(page, 'run', { field: 'status', op: OP.in });
+	await expect(page.getByTestId(`run-filter-value-${row}-AWAITING`)).toHaveCount(0);
+	// Ticked out of order on purpose: the values go out in the declared order.
+	await page.getByTestId(`run-filter-value-${row}-CANCELED`).check();
+	await page.getByTestId(`run-filter-value-${row}-FAILED`).check();
+	await page.getByTestId('run-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual(['status=FAILED,CANCELED']);
+	await expect.poll(() => rowStatuses(page)).toEqual(Array(FAILED_RUNS).fill('FAILED'));
+	expect(await cliCommand(page)).toBe(`orkctl -n '${NS}' run list --filter 'status=FAILED,CANCELED'`);
+	await page.screenshot({ path: out('screenshot-runs-status-in.png'), fullPage: true });
+
+	// not equals: one value from the enum Select. The draft was refilled from
+	// the URL, so the row is replaced rather than added to.
+	await page.getByTestId(`run-filter-remove-${row}`).click();
+	const ne = await addListFilter(page, 'run', { field: 'status', op: OP.notEquals, select: 'SUCCEEDED' });
+	await page.getByTestId('run-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual(['status!=SUCCEEDED']);
+	await expect.poll(() => rowStatuses(page)).toEqual(Array(FAILED_RUNS).fill('FAILED'));
+	await expect(page.getByTestId(`run-filter-value-${ne}`)).toHaveText('SUCCEEDED');
+	await page.screenshot({ path: out('screenshot-runs-status-not-equals.png'), fullPage: true });
+});
+
+test('R2: orkflow_name contains narrows, and an equals names the Orkflow in the header', async ({ page }) => {
+	await page.goto(`${UI}/runs?ns=${NS}&size=50`);
+	await expect(page.getByTestId('run-list')).toBeVisible();
+	await page.waitForLoadState('networkidle');
+	await addListFilter(page, 'run', { field: 'orkflow_name', op: OP.contains, value: 'failing-' });
+	await page.getByTestId('run-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual(['orkflow_name~failing-']);
+	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(FAILED_RUNS);
+	// A contains is not one Orkflow: the header names none and Submit offers
+	// the picker.
+	await expect(page.getByTestId('runs-heading')).toHaveText('Runs');
+	await expect(page.getByTestId('runs-submit-run')).toHaveText('Browse orkflows');
+
+	await page.goto(`${UI}/runs?ns=${NS}&filter=orkflow_name%3D${FAILING}`);
+	await expect(page.getByTestId('runs-heading')).toContainText(`for ${FAILING}`);
+	await expect(page.getByTestId('runs-submit-run')).toHaveText('Submit a run');
+	await expect(page.getByTestId('runs-submit-run')).toHaveAttribute('href', `/orkflows/${FAILING}?ns=${NS}`);
+	await page.screenshot({ path: out('screenshot-runs-orkflow-equals.png'), fullPage: true });
+});
+
+test('R3: a created_at window through datetime-local, and its CLI equivalent in UTC', async ({ page }) => {
+	await page.goto(`${UI}/runs?ns=${NS}&size=50`);
+	await expect(page.getByTestId('run-list')).toBeVisible();
+	await page.waitForLoadState('networkidle');
+	// The local minute an hour ago and an hour ahead: every fixture run is
+	// inside, so the window keeps all of them.
+	const local = (offsetMs: number) => new Date(Date.now() + offsetMs - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+	const since = local(-60 * 60_000);
+	const until = local(60 * 60_000);
+	const from = await addListFilter(page, 'run', { field: 'created_at', op: OP.atOrAfter, value: since });
+	const to = await addListFilter(page, 'run', { field: 'created_at', op: OP.before, value: until });
+	const sinceUtc = new Date(since).toISOString().replace('.000Z', 'Z');
+	const untilUtc = new Date(until).toISOString().replace('.000Z', 'Z');
+	await expect(page.getByTestId(`run-filter-utc-${from}`)).toHaveText(`${sinceUtc} (UTC)`);
+	await expect(page.getByTestId(`run-filter-utc-${to}`)).toHaveText(`${untilUtc} (UTC)`);
+	await page.getByTestId('run-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual([`created_at<${untilUtc}`, `created_at>=${sinceUtc}`]);
+	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(RUNS + FAILED_RUNS);
+	expect(await cliCommand(page)).toBe(`orkctl -n '${NS}' run list --filter 'created_at<${untilUtc}' --filter 'created_at>=${sinceUtc}'`);
+	await page.screenshot({ path: out('screenshot-runs-created-window.png'), fullPage: true });
+
+	// A window that closed before the runs existed keeps none.
+	await page.goto(`${UI}/runs?ns=${NS}&filter=created_at%3C2000-01-01T00%3A00%3A00Z`);
+	await expect(page.getByTestId('runs-empty')).toContainText('No runs match these filters');
+});
+
+test('R4: page size is a field of the filter form and applies with Apply filters', async ({ page }) => {
+	await page.goto(`${UI}/runs?ns=${NS}&filter=orkflow_name%3D${FLOW}`);
+	await expect(page.getByTestId('run-list')).toBeVisible();
+	await page.waitForLoadState('networkidle');
+	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(RUNS);
+	const before = page.url();
+	await selectOption(page, 'run-filter-size', '10');
+	await expect(page.getByTestId('run-filter-size')).toHaveText('10');
+	expect(page.url()).toBe(before);
+	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(RUNS);
+	await page.getByTestId('run-filters-apply').click();
+	await expect(page).toHaveURL(/size=10/);
+	const applied = new URL(page.url());
+	expect(applied.searchParams.getAll('size')).toEqual(['10']);
+	expect(applied.searchParams.get('cursor')).toBeNull();
+	expect(applied.searchParams.getAll('filter')).toEqual([`orkflow_name=${FLOW}`]);
+	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(10);
+	await expect(page.getByTestId('runs-page-status')).toHaveText('Page 1 · 10 runs');
+	await page.screenshot({ path: out('screenshot-runs-page-size.png'), fullPage: true });
+});
+
+test('R6: the dashboard and an Orkflow page link into the filtered runs list', async ({ page }) => {
+	// The dashboard's failures table links each Orkflow to its runs. (The
+	// flake and fingerprint rows' links, which add the report's window, are
+	// followed in logs-dashboard.spec.ts, which seeds a retried task.)
+	await page.goto(`${UI}/?ns=${NS}&window=24h`);
+	await expect.poll(async () => page.getByTestId(`failure-${FAILING}`).count(), { timeout: 60_000 }).toBe(1);
+	await page.getByTestId(`failure-${FAILING}`).getByRole('link', { name: FAILING }).click();
+	await page.waitForURL(/\/runs\?/);
+	expect(urlFilters(page)).toEqual([`orkflow_name=${FAILING}`]);
+	expect(new URL(page.url()).searchParams.get('ns')).toBe(NS);
+	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(FAILED_RUNS);
+	await expect(page.getByTestId('runs-heading')).toContainText(`for ${FAILING}`);
+
+	// An Orkflow's View runs is the same filter.
+	await page.goto(`${UI}/orkflows/${FLOW}?ns=${NS}`);
+	await page.getByRole('link', { name: 'View runs' }).click();
+	await page.waitForURL(/\/runs\?/);
+	expect(urlFilters(page)).toEqual([`orkflow_name=${FLOW}`]);
+	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(RUNS);
+	await page.screenshot({ path: out('screenshot-runs-from-orkflow.png'), fullPage: true });
 });
 
 test('the orkflows page size applies with Apply filters and writes one size to the URL', async ({ page }) => {

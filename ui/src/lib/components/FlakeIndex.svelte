@@ -14,7 +14,7 @@
 	// shared spellings, not a second opinion.
 	import { durationFromMs, timestampFromDate, type Timestamp } from '@bufbuild/protobuf/wkt';
 	import { errorMessage, orkstack } from '$lib/client';
-	import { listHref } from '$lib/browsing';
+	import { listHref, runWindowFilters } from '$lib/browsing';
 	import { namespaceLabel } from '$lib/namespace';
 	import { groupBySpelling, timestampMs } from '$lib/stats';
 	import {
@@ -124,12 +124,11 @@
 	// namespace, the orkflow, and the exact window the index answered — and no
 	// status, because the retried runs of a flaky task mostly SUCCEEDED.
 	function rowHref(orkflowName: string): string {
-		return listHref('/runs', {
-			ns: namespaceLabel(namespace),
-			orkflow: orkflowName,
-			since: iso(result?.windowSince),
-			until: iso(result?.windowUntil)
-		});
+		return listHref(
+			'/runs',
+			{ ns: namespaceLabel(namespace) },
+			{ filter: runWindowFilters(orkflowName, '', iso(result?.windowSince), iso(result?.windowUntil)) }
+		);
 	}
 
 	const columns = $derived(result?.groupBy.length ? result.groupBy : [FailureGroupBy.ORKFLOW, ...groupBy]);

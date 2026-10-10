@@ -19,15 +19,17 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { selectOption } from './uiHelpers';
+import { OP, addListFilter } from './uiHelpers';
 
 // What started a run, against a real engine, Orker, Temporal and MinIO: the
 // submit dialog records a reference (a link only when it is an http(s) URL),
 // Run again records run-again linked to its source, a trigger invoke records
 // trigger with the trigger's description and the caller's header, a gateway's
 // Ork-Principal is recorded and captioned as unauthenticated, the runs list
-// filters by origin with the filter in the URL, and a run archived before
-// origins existed reads "unrecorded" — never "submit".
+// filters by origin.kind and origin.id with the filters in the URL (O2: an id
+// alone is refused, with the form's hint beside it), and a run archived
+// before origins existed reads "unrecorded" — never "submit". O1, a parent's
+// Child runs link, is in composed-orkflows.spec.ts, which composes.
 const ENGINE = 'http://127.0.0.1:18097';
 const ENGINE_WS = 'ws://127.0.0.1:18097';
 const UI = 'http://127.0.0.1:14191';
@@ -240,37 +242,62 @@ test('the runs list filters by origin, the URL carries it, and reload keeps it',
 	await page.goto(`${UI}/runs?ns=${NS}`);
 	await expect(page.getByTestId(`run-row-${triggerRun}`)).toBeVisible({ timeout: 60_000 });
 	await expect(page.getByTestId(`run-row-${submitRun}`)).toBeVisible({ timeout: 60_000 });
-	await expect(page.getByTestId('run-filter-origin-id')).toBeDisabled();
+	await page.waitForLoadState('networkidle');
 
-	await selectOption(page, 'run-filter-origin', 'trigger');
-	await page.getByTestId('run-filter-origin-id').fill(triggerId);
+	await addListFilter(page, 'run', { field: 'origin.kind', op: OP.equals, select: 'TRIGGER' });
+	await addListFilter(page, 'run', { field: 'origin.id', op: OP.equals, value: triggerId });
 	await page.getByTestId('run-filters-apply').click();
-	await expect(page).toHaveURL(new RegExp(`origin=trigger&originId=${triggerId}`));
+	await expect.poll(() => urlFilters(page)).toEqual([`origin.id=${triggerId}`, 'origin.kind=TRIGGER']);
 	await expect(page.getByTestId(`run-row-${triggerRun}`)).toBeVisible();
 	await expect(page.getByTestId(`run-row-${submitRun}`)).toHaveCount(0);
 	await expect(page.getByTestId(`run-row-origin-${triggerRun}`)).toHaveText(`trigger ${triggerId}`);
 	await expect(page.locator('[data-testid^="run-row-origin-"]')).toHaveCount(1);
 	await shot(page, 'screenshot-runs-filtered-by-trigger.png');
 
+	// A reload keeps the rows and refills the draft from the URL, in its
+	// canonical order.
 	await page.reload();
 	await expect(page.getByTestId(`run-row-${triggerRun}`)).toBeVisible();
 	await expect(page.getByTestId(`run-row-${submitRun}`)).toHaveCount(0);
-	await expect(page.getByTestId('run-filter-origin')).toContainText('Trigger');
-	await expect(page.getByTestId('run-filter-origin-id')).toHaveValue(triggerId);
+	await expect(page.getByTestId('run-filter-field-0')).toHaveText('Origin id (origin.id)');
+	await expect(page.getByTestId('run-filter-value-0')).toHaveValue(triggerId);
+	await expect(page.getByTestId('run-filter-field-1')).toHaveText('Started by (origin.kind)');
+	await expect(page.getByTestId('run-filter-value-1')).toHaveText('TRIGGER');
 
 	await page.getByTestId('run-filters-clear').click();
 	await expect(page.getByTestId(`run-row-${triggerRun}`)).toBeVisible();
 	await expect(page.getByTestId(`run-row-${submitRun}`)).toBeVisible();
 	await expect(page.getByTestId(`run-row-origin-${submitRun}`)).toHaveText('submit');
-	expect(new URL(page.url()).searchParams.has('origin')).toBe(false);
+	expect(urlFilters(page)).toEqual([]);
 
-	await page.goto(`${UI}/runs?ns=${NS}&originId=${triggerId}`);
-	await expect(page.getByTestId('engine-error')).toContainText('An origin id needs an origin kind.');
-
-	await page.goto(`${UI}/runs?ns=${NS}&origin=trigger&originId=trg-nothing-here`);
-	await expect(page.getByTestId('runs-empty')).toContainText('No runs started by trigger trg-nothing-here match these filters');
-	note(`list filter trigger:${triggerId} -> [${triggerRun}]; cleared -> both; bare id refused`);
+	await page.goto(`${UI}/runs?ns=${NS}&filter=origin.kind%3DTRIGGER&filter=origin.id%3Dtrg-nothing-here`);
+	await expect(page.getByTestId('runs-empty')).toContainText('No runs match these filters');
+	note(`list filters origin.kind=TRIGGER origin.id=${triggerId} -> [${triggerRun}]; cleared -> both`);
 });
+
+test('O2: an origin id without an origin kind shows the hint, and the engine refuses it', async ({ page }) => {
+	await page.goto(`${UI}/runs?ns=${NS}`);
+	await expect(page.getByTestId('run-filters')).toBeVisible();
+	await page.waitForLoadState('networkidle');
+	const row = await addListFilter(page, 'run', { field: 'origin.id', op: OP.equals, value: 'trg-0123456789abcdef' });
+	await expect(page.getByTestId(`run-filter-requires-${row}`)).toHaveText('needs an equals filter on origin.kind');
+	// The hint does not block Apply: the browser invents no validation the
+	// CLI would bypass, and the engine's refusal is shown verbatim.
+	await page.getByTestId('run-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual(['origin.id=trg-0123456789abcdef']);
+	await expect(page.getByTestId('engine-error')).toContainText('filters[0]: origin.id needs an equals (=) filter on origin.kind');
+	await shot(page, 'screenshot-runs-origin-id-alone.png');
+
+	// The same address pasted is the same refusal.
+	await page.goto(`${UI}/runs?ns=${NS}&filter=origin.id%3Dtrg-0123456789abcdef`);
+	await expect(page.getByTestId('engine-error')).toContainText('origin.id needs an equals (=) filter on origin.kind');
+	note('origin.id alone: the requires hint, then the engine refusal, in the browser and from a pasted URL');
+});
+
+/** The `filter` parameters of the page's address, decoded, in order. */
+function urlFilters(page: Page): string[] {
+	return new URL(page.url()).searchParams.getAll('filter');
+}
 
 test('a run recorded without an origin reads unrecorded', async ({ page }) => {
 	const legacyId = `ork-${Date.now()}-legacy`;
@@ -288,8 +315,8 @@ test('a run recorded without an origin reads unrecorded', async ({ page }) => {
 
 	await page.goto(`${UI}/runs?ns=${NS}`);
 	await expect(page.getByTestId(`run-row-origin-${legacyId}`)).toHaveText('unrecorded', { timeout: 60_000 });
-	for (const slug of ['submit', 'trigger', 'schedule', 'parent-run', 'run-again']) {
-		await page.goto(`${UI}/runs?ns=${NS}&origin=${slug}`);
+	for (const kind of ['SUBMIT', 'TRIGGER', 'SCHEDULE', 'PARENT_RUN', 'RUN_AGAIN']) {
+		await page.goto(`${UI}/runs?ns=${NS}&filter=origin.kind%3D${kind}`);
 		await expect(page.getByTestId('engine-error')).toHaveCount(0);
 		await expect(page.getByTestId('run-filters')).toBeVisible();
 		await expect(page.getByTestId(`run-row-${legacyId}`)).toHaveCount(0);

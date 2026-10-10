@@ -21,10 +21,11 @@ test('childLabel is name@version', () => {
 test('childRunHref and childrenListHref keep the namespace and escape the id', () => {
 	expect(childRunHref('team-a', 'ork-1/2')).toBe('/runs/ork-1%2F2?ns=team-a');
 	expect(childrenListHref('team-a', 'ork-1')).toBe(
-		'/runs?origin=parent-run&originId=ork-1&ns=team-a'
+		'/runs?ns=team-a&filter=origin.id%3Dork-1&filter=origin.kind%3DPARENT_RUN'
 	);
-	expect(childrenListHref('', 'ork 1')).toContain('originId=ork+1');
-	expect(childrenListHref('', 'ork-1')).toContain('ns=default');
+	const params = new URL(`http://x${childrenListHref('', 'ork 1')}`).searchParams;
+	expect(params.getAll('filter')).toEqual(['origin.id=ork 1', 'origin.kind=PARENT_RUN']);
+	expect(params.get('ns')).toBe('default');
 });
 
 const childRun = () =>

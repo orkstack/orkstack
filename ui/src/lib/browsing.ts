@@ -1,32 +1,24 @@
 import { timestampFromDate } from '@bufbuild/protobuf/wkt';
-import { Status } from './gen/orkstack/v1/common_pb';
-import { originFilterError } from './origin';
-import { canonicalTexts, type FieldFilter } from './listFilter';
+import { FilterOperator, canonicalTexts, filterOf, type FieldFilter } from './listFilter';
 
-const statuses: Record<string, Status> = {
-	pending: Status.PENDING,
-	running: Status.RUNNING,
-	succeeded: Status.SUCCEEDED,
-	failed: Status.FAILED,
-	canceled: Status.CANCELED,
-	skipped: Status.SKIPPED
-};
-
-export function statusFromParam(value: string): Status { return statuses[value] ?? Status.UNSPECIFIED; }
 export function pageSize(value: string): number { const parsed = Number(value); return [10, 25, 50, 100].includes(parsed) ? parsed : 25; }
 export function instant(value: string) {
 	if (!value) return undefined;
 	const date = new Date(value);
 	return Number.isNaN(date.getTime()) ? undefined : timestampFromDate(date);
 }
-export function runFilterError(status: string, after: string, before: string, origin = '', originId = ''): string | null {
-	if (status && statusFromParam(status) === Status.UNSPECIFIED) return `Unknown run status ${status}.`;
-	const originError = originFilterError(origin, originId);
-	if (originError) return originError;
-	if (after && !instant(after)) return 'Created-since must be a valid timestamp.';
-	if (before && !instant(before)) return 'Created-until must be a valid timestamp.';
-	if (after && before && new Date(before).getTime() <= new Date(after).getTime()) return 'Created-until must be after created-since.';
-	return null;
+// runWindowFilters are the Runs list filters a report row links to: one
+// Orkflow, one status (a short name, e.g. FAILED) and the report's created_at
+// window, each only when it has a value. The window's instants are the
+// report's own RFC 3339 bounds, so the list shows exactly the runs the row
+// counted from.
+export function runWindowFilters(orkflowName: string, status: string, since: string, until: string): FieldFilter[] {
+	const filters: FieldFilter[] = [];
+	if (orkflowName) filters.push(filterOf('orkflow_name', FilterOperator.EQUALS, [orkflowName]));
+	if (status) filters.push(filterOf('status', FilterOperator.EQUALS, [status]));
+	if (since) filters.push(filterOf('created_at', FilterOperator.AT_OR_AFTER, [since]));
+	if (until) filters.push(filterOf('created_at', FilterOperator.BEFORE, [until]));
+	return filters;
 }
 export function pageNumber(value: string): number { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : 1; }
 

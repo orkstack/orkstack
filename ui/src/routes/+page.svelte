@@ -10,7 +10,7 @@
 	import StatCard from '$lib/components/StatCard.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import UsageCard from '$lib/components/UsageCard.svelte';
-	import { sinceInputValue } from '$lib/browsing';
+	import { listHref, runWindowFilters, sinceInputValue } from '$lib/browsing';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import {
 		UNAVAILABLE,
@@ -353,9 +353,10 @@
 									<td class="h-11 px-4 pl-5 align-middle">
 										<a
 											class="font-medium text-fg hover:text-brand-700"
-											href={withNamespace(
-												`/runs?orkflow=${encodeURIComponent(failure.orkflowName)}`,
-												data.namespace
+											href={listHref(
+												'/runs',
+												{ ns: namespaceLabel(data.namespace) },
+												{ filter: runWindowFilters(failure.orkflowName, '', '', '') }
 											)}>{failure.orkflowName}</a
 										>
 									</td>

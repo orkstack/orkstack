@@ -74,6 +74,7 @@
 	import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from '$lib/gen/orkstack/v1/stats_pb';
 	import { flakesCli } from '$lib/flakes';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
+	import { runWindowFilters } from '$lib/browsing';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import {
 		PRINCIPAL_CAPTION,
@@ -1177,7 +1178,7 @@
 		try {
 			const res = await orkstack(fetch).runs.listRuns({
 				namespace: data.namespace,
-				orkflowName: current.orkflowName,
+				filters: runWindowFilters(current.orkflowName, '', '', ''),
 				pageSize: 20
 			});
 			compareCandidates = res.runs.filter((candidate) => candidate.id !== current.id);
@@ -1364,7 +1365,7 @@
 					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
 				>Child runs</a>
 				<CliEquivalent
-					command={runCommand(data.namespace, ['run', 'list', '--origin', `parent-run:${run.id}`])}
+					command={runCommand(data.namespace, ['run', 'list', '--filter', 'origin.kind=PARENT_RUN', '--filter', `origin.id=${run.id}`])}
 					testid="run-children-cli"
 					label="Copy the command that lists this run's child runs"
 				/>
