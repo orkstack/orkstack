@@ -357,7 +357,7 @@ then the variable it becomes.
 | `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | `ork` | enables active per-namespace run retention: retires each finished run at its own namespace's run retention and reclaims its run-scoped logs and completion commits. Default-off because it deletes durable data; when off, every run is kept for the deployment maximum plus `ORK_CLEANUP_RETENTION_BUFFER` regardless of any namespace's own value |
 | `engine.cleanup.interval` | `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts |
 | `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run |
-| `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration |
+| `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration; a full iteration starts the next one at once (a backlog drains without waiting for the interval) |
 | `storage.dir` | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
 | `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `storage.s3.region` | `ORK_S3_REGION` | `us-east-1` | both | — |
@@ -611,6 +611,19 @@ records, and its object-reference markers (`docs/STORAGE.md`, "Reclaiming
 space"). An execution the cluster no longer holds is treated as already
 retired. The archive body, its index rows and the cleanup sidecar are
 permanent, so a retired run stays listable and readable.
+
+On S3 a run's four run-scoped prefixes are emptied concurrently, one
+`DeleteObjects` request per listing page (up to 1000 keys), so the store must
+support `DeleteObjects` (AWS S3 and MinIO do). A key the store refuses fails
+that run's cleanup — it is not marked cleaned and a later pass retries it.
+
+**A backlog drains without waiting.** `ORK_CLEANUP_BATCH_SIZE` bounds one
+pass, not the rate: a pass that processed a full batch starts the next pass at
+once, resuming the index walk after the last run it examined, and the worker
+returns to `ORK_CLEANUP_INTERVAL` after the first pass that reaches the end of
+the index. A backlog of retired runs therefore clears at the store's and the
+cluster's speed, a batch at a time; the next ticked pass walks from the start
+again, so a run a drain passed before it was due is examined once it is.
 
 Cleanup **fails closed**: if the retention policy or any namespace's own value
 is unreadable, that iteration deletes nothing; an archived run the cluster

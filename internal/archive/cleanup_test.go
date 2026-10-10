@@ -119,9 +119,12 @@ func (f *fakePolicyStore) Put(_ context.Context, p *orkstackv1.RetentionPolicy, 
 type fakeNamespaces struct {
 	docs    []*orkstackv1.Namespace
 	listErr error
+	// lists counts List calls: one per cleanup pass.
+	lists int
 }
 
 func (f *fakeNamespaces) List(context.Context) ([]*orkstackv1.Namespace, error) {
+	f.lists++
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -970,6 +973,64 @@ func TestRunOnce_AbsurdBatchSizeStillAsksForABoundedPage(t *testing.T) {
 	for _, q := range store.queries {
 		if q.Limit <= 0 {
 			t.Errorf("query limit = %d, want a positive bound: the doubling wrapped", q.Limit)
+		}
+	}
+}
+
+// A pass that processes a full batch leaves a backlog behind it, so Run starts
+// the next pass at once, after the last run the previous one examined, and
+// returns to the ticker after the first short pass: seven due runs at batch
+// two are four passes inside one Interval, each run deleted exactly once.
+func TestRun_DrainsABacklogWithoutWaitingForTheTicker(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	var entries []artifacts.RunIndexEntry
+	for i := 0; i < 7; i++ {
+		entries = append(entries, artifacts.RunIndexEntry{RunID: fmt.Sprintf("run-%d", i), Namespace: "default", Time: now.Add(time.Duration(-100-i) * time.Hour)})
+	}
+	store := newFakeArchive(entries...)
+	allDeleted := make(chan struct{})
+	deleted := 0
+	store.afterDelete = func(string) {
+		deleted++
+		if deleted == len(entries) {
+			close(allDeleted)
+		}
+	}
+	cluster := newFakeCluster()
+	cluster.retention = 96 * time.Hour
+	namespaces := &fakeNamespaces{}
+	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2},
+		store, cluster, namespaces, newTestController(cluster, 72*time.Hour), testLogger()).WithClock(func() time.Time { return now })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		cleaner.Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-allDeleted:
+	case <-time.After(10 * time.Second):
+		cancel()
+		<-done
+		t.Fatalf("the backlog did not drain within one Interval: %d of %d runs deleted in %d passes", deleted, len(entries), namespaces.lists)
+	}
+	cancel()
+	<-done
+
+	if namespaces.lists != 4 {
+		t.Errorf("passes = %d, want 4 (three full batches of two, then one short)", namespaces.lists)
+	}
+	for _, entry := range entries {
+		if n := store.deletes[entry.RunID]; n != 1 {
+			t.Errorf("run %s deleted %d times, want once", entry.RunID, n)
+		}
+	}
+	// Each drained pass resumes after the previous one: every query after the
+	// first carries a cursor.
+	for i, q := range store.queries[1:] {
+		if q.StartAfterKey == "" {
+			t.Errorf("query %d of the drain restarted the walk from the start", i+1)
 		}
 	}
 }
