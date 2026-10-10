@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
+	import { pollWhileVisible } from '$lib/visibility';
 	import { onDestroy, untrack } from 'svelte';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
@@ -521,24 +522,7 @@
 
 	$effect(() => {
 		if (!run || isTerminal(runStatus) || !anyTaskRunning) return;
-		let timer: ReturnType<typeof setInterval> | undefined;
-		const start = () => {
-			if (timer !== undefined) return;
-			void pollLive();
-			timer = setInterval(() => void pollLive(), LIVE_POLL_MS);
-		};
-		const stop = () => {
-			if (timer === undefined) return;
-			clearInterval(timer);
-			timer = undefined;
-		};
-		const onVisibility = () => (document.visibilityState === 'hidden' ? stop() : start());
-		document.addEventListener('visibilitychange', onVisibility);
-		if (document.visibilityState !== 'hidden') start();
-		return () => {
-			stop();
-			document.removeEventListener('visibilitychange', onVisibility);
-		};
+		return pollWhileVisible(() => void pollLive(), LIVE_POLL_MS, { immediate: true });
 	});
 
 	function seedTasks(): TaskView[] {

@@ -11,6 +11,7 @@
 	// It refetches on its own 60 s timer, never through invalidate('ork:stats'):
 	// the dashboard's 5 s refresh would otherwise re-ask a measurement the
 	// server caches for minutes (ORK_USAGE_CACHE_TTL).
+	import { pollWhileVisible } from '$lib/visibility';
 	import { durationFromMs, timestampFromDate, type Duration } from '@bufbuild/protobuf/wkt';
 	import { errorMessage, orkstack } from '$lib/client';
 	import type { Budget } from '$lib/gen/orkstack/v1/namespace_pb';
@@ -94,16 +95,14 @@
 		void period;
 		void groupBy;
 		void load();
-		const timer = setInterval(() => {
+		// The refetch and the clock tick run only while the tab is visible
+		// ($lib/visibility); returning refreshes both at once.
+		return pollWhileVisible(() => {
 			now = Date.now();
 			void load();
 		}, USAGE_REFRESH_MS);
-		return () => clearInterval(timer);
 	});
-	$effect(() => {
-		const tick = setInterval(() => (now = Date.now()), 5000);
-		return () => clearInterval(tick);
-	});
+	$effect(() => pollWhileVisible(() => (now = Date.now()), 5000));
 
 	const shares = $derived(result ? budgetShareCells(result) : []);
 	const footer = $derived(result ? usageFooter(result) : []);
