@@ -493,7 +493,7 @@ CLI: `run resolve RUN --task TASK [--values JSON | --values-file PATH |
 --reject --reason TEXT]` — `--values-file` is sent verbatim (`-` reads stdin),
 neither flag means `{}`, and every refusable flag combination is refused
 before a request. `run submit`/`run again` print each callback once as a
-shell-safe `curl`; `run get` adds an await table (deadline, remaining,
+shell-safe `curl` (on stderr under `run submit --watch --json`); `run get` adds an await table (deadline, remaining,
 resolved via, by, callback); `run plan` lists awaits; `run timing` reads an
 await as `awaited`. UI: the run page's await panel in place of the log pane —
 state, deadline, live remaining time, **Resolve** (typed fields over the
@@ -503,6 +503,10 @@ for a callback await; the submit dialog shows the one-time callback panel
 before it continues to the run.
 
 ## Reading runs
+
+`run get` prints a run's input and output as one line of JSON each, cut at
+512 bytes and followed by `… (N bytes; orkctl -n NS run get ID --json prints
+it whole)`; `run get --json` is never cut.
 
 ### Run browsing
 
