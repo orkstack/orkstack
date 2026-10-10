@@ -17,7 +17,7 @@ orkctl -n payments cache stats     # cached tasks' hit rate and stored memos (§
 ```
 
 Every read here aggregates one namespace over one window. One run's own
-timing — queue wait against run time, and each attempt's phases — is a run
+timing — the wait for an Orker against run time, and each attempt's phases — is a run
 read, `orkctl run timing` (`docs/UI_CLI_PARITY.md`, "Task timing").
 
 ## 1. Two sources, and no third

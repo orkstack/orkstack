@@ -114,7 +114,7 @@ type taskTiming struct {
 	Scheduled   bool // reached schedule(); false renders "-" across the row
 	PreContract bool // scheduled_at unset with started_at set
 	// Awaited marks an awaited task: it is never queued and no Orker reports
-	// on it, so wait, queue wait and phases do not apply and RUN is the time
+	// on it, so wait, the wait for an Orker and phases do not apply and RUN is the time
 	// it spent awaiting (the run-timing derivation's await row).
 	Awaited bool
 
@@ -613,7 +613,7 @@ func (timing *runTiming) summaryLine() string {
 }
 
 // attemptsBlock renders every scheduled task's attempts, newest first, each
-// retried task's line preceded by its queue wait.
+// retried task's line preceded by how long attempt 1 waited for an Orker.
 func (timing *runTiming) attemptsBlock() string {
 	if !timing.AttemptRecordsAvailable {
 		return noStoreBlock + "\n"
@@ -639,10 +639,10 @@ func (timing *runTiming) attemptsBlock() string {
 		if task.Attempt > 1 {
 			pool := orDash(task.Pool)
 			if task.QueueWait.known {
-				fmt.Fprintf(&b, "%squeue wait on pool %s %s (attempt 1 started %s)\n",
+				fmt.Fprintf(&b, "%swaited for an Orker of pool %s %s (attempt 1 started %s)\n",
 					prefix, pool, formatDuration(task.QueueWait.value), formatTimePtr(task.QueueWaitStart))
 			} else {
-				fmt.Fprintf(&b, "%squeue wait on pool %s: unavailable (%s)\n", prefix, pool, task.QueueWait.reason)
+				fmt.Fprintf(&b, "%swait for an Orker of pool %s: unavailable (%s)\n", prefix, pool, task.QueueWait.reason)
 			}
 		}
 		if task.ReclaimedEmpty {

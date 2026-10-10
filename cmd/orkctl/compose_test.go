@@ -248,7 +248,7 @@ func TestRunTiming_ComposedRowIsLabelledChild(t *testing.T) {
 	if !strings.Contains(line, " child ") || !strings.Contains(line, "17s") {
 		t.Fatalf("release timing row = %q\n%s", line, got.stdout)
 	}
-	if strings.Contains(got.stdout, "  release  queue wait") {
+	if strings.Contains(got.stdout, "  release  waited for an Orker") {
 		t.Fatalf("a composed task listed attempts:\n%s", got.stdout)
 	}
 }

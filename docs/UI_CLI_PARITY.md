@@ -587,8 +587,9 @@ phase it passed through ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md)
 Both clients derive, with one rule (`cmd/orkctl/timing.go`,
 `ui/src/lib/timing.ts`): WAIT = `started_at − scheduled_at`, RUN =
 `finished_at − started_at`, TOTAL = `finished_at − scheduled_at`, and for a
-task decided on a retry the queue wait `attempts[1].started_at −
-scheduled_at` on its pool. A quantity that does not apply is `-`; one that
+task decided on a retry the wait for an Orker `attempts[1].started_at −
+scheduled_at` on its pool (`waited for an Orker of pool P D` in the CLI,
+`Waited for an Orker D on pool P` in the UI). A quantity that does not apply is `-`; one that
 cannot be known is `unavailable` with exactly one of: `no orker reported a
 start`, `clock skew`, `recorded before scheduled time existed`, `attempt
 records reclaimed`, `no attempt record`, `record predates phase spans`, `no
@@ -602,7 +603,7 @@ it and `run get` has a `SCHEDULED` column. `--json` is a CLI-derived document,
 not a proto envelope, so `run get --timing --json` is refused. UI: a running
 card reads `Since scheduled …`; a finished one draws a wait/run bar (an
 unavailable segment hatched and naming its reason); the attempt timeline lists
-each attempt's phases and a retried task's queue wait.
+each attempt's phases and how long a retried task waited for an Orker.
 
 ### Live attempt introspection
 

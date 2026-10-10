@@ -36,10 +36,10 @@ import {
 //       and the CLI's own output for the same run is recorded beside the
 //       screenshots so the two can be compared by eye;
 //   P5  a task that failed once and succeeded on attempt 2 shows two phase
-//       lines and its queue wait.
+//       lines and how long it waited for an Orker.
 //
 // Topology: one engine, the production UI build, and the Orker started AFTER
-// the first submission, so the queue wait is real. Ports and a Temporal
+// the first submission, so the wait for an Orker is real. Ports and a Temporal
 // namespace of this spec's own (AGENTS.md §11.1).
 
 const ENGINE = 'http://127.0.0.1:18293';
@@ -268,8 +268,8 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 	await expect(phases).toBeVisible({ timeout: 30_000 });
 	const phaseText = await phases.innerText();
 	for (const name of ['image', 'run', 'commit']) expect(phaseText).toContain(`${name} `);
-	// Decided on attempt 1: the Wait segment already IS the queue wait.
-	await expect(page.getByTestId('attempt-first-queue-wait')).toHaveCount(0);
+	// Decided on attempt 1: the Wait segment already IS the wait for an Orker.
+	await expect(page.getByTestId('attempt-first-orker-wait')).toHaveCount(0);
 	note(`P3 attempt 1 phases: ${phaseText}`);
 	await shot(page, 'timing-phases.png');
 
@@ -284,7 +284,7 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 	expect(cli).toContain('attempt 1  SUCCEEDED');
 });
 
-test('a task that failed once shows both attempts\' phases and its queue wait', async ({ page }) => {
+test('a task that failed once shows both attempts\' phases and how long it waited for an Orker', async ({ page }) => {
 	startOrker();
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
@@ -304,7 +304,7 @@ test('a task that failed once shows both attempts\' phases and its queue wait', 
 	await expect(page.getByTestId('task-flaky-timing')).toBeVisible({ timeout: 30_000 });
 
 	// P5 — two phase lines, attempt 1 ending in `exit` and attempt 2 in
-	// `commit`, and the queue wait stated off attempt 1's own record.
+	// `commit`, and the wait for an Orker stated off attempt 1's own record.
 	await page.getByTestId('task-inspect-toggle-flaky').click();
 	const first = page.getByTestId('attempt-flaky-1-phases');
 	const second = page.getByTestId('attempt-flaky-2-phases');
@@ -312,8 +312,8 @@ test('a task that failed once shows both attempts\' phases and its queue wait', 
 	await expect(second).toBeVisible();
 	expect(await first.innerText()).toMatch(/exit \S+$/);
 	expect(await second.innerText()).toMatch(/commit \S+$/);
-	const queueWait = page.getByTestId('attempt-flaky-queue-wait');
-	await expect(queueWait).toHaveText(/^Queue wait \S+ on pool \S+$/);
+	const queueWait = page.getByTestId('attempt-flaky-orker-wait');
+	await expect(queueWait).toHaveText(/^Waited for an Orker \S+ on pool \S+$/);
 	note(`P5 ${await queueWait.innerText()}`);
 	note(`P5 attempt 1 phases: ${await first.innerText()}`);
 	note(`P5 attempt 2 phases: ${await second.innerText()}`);
