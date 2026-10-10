@@ -37,6 +37,19 @@ type PutOptions struct {
 	// Metadata is optional key/value data stored alongside the object and
 	// returned by Stat.
 	Metadata map[string]string
+	// ExpectedSHA256 is the lowercase hex sha256 the caller already computed
+	// for the bytes r will yield, and ExpectedSize their length (read only
+	// when ExpectedSHA256 is set; 0 is an empty artifact). A store refuses a
+	// Put whose bytes do not match, and stores nothing. When r is also an
+	// io.ReadSeeker the S3 store uploads straight from it — no spool, no
+	// second hash — with the digest as a checksum the server verifies.
+	ExpectedSHA256 string
+	ExpectedSize   int64
+	// SpoolDir is where a store that must spool a NON-seekable reader puts
+	// the spool file. Empty means the OS temp directory. The Orker names a
+	// directory under its work root, which it reaps at boot, so a process
+	// killed mid-upload leaves nothing behind in TMPDIR.
+	SpoolDir string
 }
 
 // Store persists artifacts and hands back references. Implementations are

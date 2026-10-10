@@ -332,7 +332,7 @@ then the variable it becomes.
 | `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme. A namespace's `allowed_secrets` can only narrow this, never widen it (§5, "Secrets on a shared pool"). Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
-| `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable |
+| `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds `ork-spool/`, where an upload whose source cannot be re-read is staged; boot empties it |
 | `orker.log.flush_bytes` | `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
 | `orker.log.flush_interval` | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
@@ -679,6 +679,26 @@ aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
   --lifecycle-configuration '{"Rules":[{"ID":"ork-task-logs","Status":"Enabled",
     "Filter":{"Prefix":"metadata/logs/"},"Expiration":{"Days":30}}]}'
 ```
+
+**Abort incomplete multipart uploads.** An Orker uploads an output artifact
+larger than 64 MiB in 16 MiB parts, four at a time, so a failed part is
+re-sent alone rather than the whole artifact. A failed upload is aborted, but
+an Orker killed mid-upload leaves its parts in the bucket, invisible to every
+listing and still billed. Add one bucket-wide rule that collects them; it
+touches no complete object:
+
+```bash
+# MinIO needs no rule: it removes incomplete uploads itself, after
+# `stale_uploads_expiry` (24h by default; `mc admin config get local api`).
+
+# AWS S3
+aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
+  --lifecycle-configuration '{"Rules":[{"ID":"ork-abort-incomplete-multipart","Status":"Enabled",
+    "Filter":{"Prefix":""},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":1}}]}'
+```
+
+A `put-bucket-lifecycle-configuration` call replaces the bucket's whole rule
+set, so put this rule in the same document as any expiry rules above.
 
 Retention is separate from `orkctl orkflow delete`, which removes an
 Orkflow's stored versions only after its run-safety gate proves no affected

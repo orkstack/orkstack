@@ -119,6 +119,12 @@ func (s *LocalStore) Put(ctx context.Context, name string, r io.Reader, opts Put
 	}
 
 	sum := hex.EncodeToString(hasher.Sum(nil))
+	// A declared digest the bytes do not have is refused before anything is
+	// committed, as the S3 store's server-verified checksum refuses it.
+	if opts.ExpectedSHA256 != "" && (sum != opts.ExpectedSHA256 || size != opts.ExpectedSize) {
+		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: the bytes hash to %s (%d bytes), not the "+
+			"expected %s (%d bytes)", name, sum, size, opts.ExpectedSHA256, opts.ExpectedSize)
+	}
 	key := objectKey(name, sum)
 	if err := s.root.MkdirAll(path.Dir(key), localDirPerm); err != nil {
 		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: create object dir: %w", name, err)

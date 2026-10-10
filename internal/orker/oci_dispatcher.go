@@ -1608,7 +1608,7 @@ func (d *OCIDispatcher) commit(
 	// Steps 5-7: upload artifacts, then values.json, then the streams.
 	uploaded := make([]*orkstackv1.ArtifactRef, 0, len(items))
 	for _, item := range items {
-		ref, failure := d.upload(ctx, provenance, item.name, item.path, item.contentType)
+		ref, failure := d.upload(ctx, provenance, item.name, item.path, item.contentType, item.sha, item.size)
 		if failure != nil {
 			return nil, failure
 		}
@@ -1698,17 +1698,22 @@ func (d *OCIDispatcher) commit(
 	}
 }
 
+// upload sends the file at path. sha and size are the digest step 3 already
+// computed with HashFile, or "" when nothing has hashed it yet: a known digest
+// lets the store upload straight from the file, once, with the digest as a
+// checksum the server verifies, instead of spooling and hashing it again.
 func (d *OCIDispatcher) upload(
 	ctx context.Context,
 	prov artifacts.Provenance,
-	name, path, contentType string,
+	name, path, contentType, sha string,
+	size int64,
 ) (*orkstackv1.ArtifactRef, *Failure) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, FailCause(ReasonOutputNotReadable, err, "open output artifact %q: %v", name, err)
 	}
 	defer func() { _ = file.Close() }()
-	return d.put(ctx, prov, name, file, contentType)
+	return d.put(ctx, prov, name, file, contentType, sha, size)
 }
 
 func (d *OCIDispatcher) uploadBytes(
@@ -1718,7 +1723,7 @@ func (d *OCIDispatcher) uploadBytes(
 	data []byte,
 	contentType string,
 ) (*orkstackv1.ArtifactRef, *Failure) {
-	return d.put(ctx, prov, name, strings.NewReader(string(data)), contentType)
+	return d.put(ctx, prov, name, strings.NewReader(string(data)), contentType, HashBytes(data), int64(len(data)))
 }
 
 func (d *OCIDispatcher) put(
@@ -1726,7 +1731,8 @@ func (d *OCIDispatcher) put(
 	prov artifacts.Provenance,
 	name string,
 	r io.Reader,
-	contentType string,
+	contentType, sha string,
+	size int64,
 ) (*orkstackv1.ArtifactRef, *Failure) {
 	if d.Store == nil {
 		return nil, Fail(ReasonArtifactUploadFailed, "this orker has no artifact store")
@@ -1734,13 +1740,29 @@ func (d *OCIDispatcher) put(
 	metadata := prov.Metadata(nil)
 	metadata["artifact"] = name
 	ref, err := d.Store.Put(ctx, name, r, artifacts.PutOptions{
-		ContentType: contentType,
-		Metadata:    metadata,
+		ContentType:    contentType,
+		Metadata:       metadata,
+		ExpectedSHA256: sha,
+		ExpectedSize:   size,
+		SpoolDir:       d.spoolDir(),
 	})
 	if err != nil {
 		return nil, FailCause(ReasonArtifactUploadFailed, err, "upload %q: %v", name, err)
 	}
 	return refPtr(ref), nil
+}
+
+// SpoolDirName is the directory under the work root where a store spools a
+// reader it cannot seek. Boot empties it: a spool file outlives its upload only
+// when the process was killed mid-upload, and nothing will ever read it.
+const SpoolDirName = "ork-spool"
+
+func (d *OCIDispatcher) spoolDir() string {
+	root := d.WorkRoot
+	if root == "" {
+		root = os.TempDir()
+	}
+	return filepath.Join(root, SpoolDirName)
 }
 
 // uploadStreams publishes stdout.log and stderr.log as system artifacts.
@@ -1760,7 +1782,9 @@ func (d *OCIDispatcher) uploadStreams(
 		if _, err := os.Stat(stream.path); err != nil {
 			continue
 		}
-		ref, failure := d.upload(ctx, prov, stream.name, stream.path, "text/plain; charset=utf-8")
+		// No digest yet: a stream capture is hashed by the store in one pass
+		// and uploaded from the same file.
+		ref, failure := d.upload(ctx, prov, stream.name, stream.path, "text/plain; charset=utf-8", "", 0)
 		if failure != nil {
 			return nil, failure
 		}
@@ -1824,7 +1848,7 @@ func (d *OCIDispatcher) attachFailureDetail(
 				detail.ScanNotes = append(detail.ScanNotes, readFailure.Error())
 				continue
 			}
-			ref, upFailure := d.upload(upCtx, prov, artifact.Name, artifact.Path, "")
+			ref, upFailure := d.upload(upCtx, prov, artifact.Name, artifact.Path, "", "", 0)
 			if upFailure != nil {
 				detail.ScanNotes = append(detail.ScanNotes,
 					fmt.Sprintf("artifact %q could not be stored: %s", artifact.Name, upFailure.Message))

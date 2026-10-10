@@ -479,7 +479,24 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// worker process that opened its session, so every ork-pin-* under the work
 	// root is dead by construction rather than by heuristic (§6.4).
 	a.reapPinDirectories(root)
+	// And the upload spool, for the same reason: a spool file outlives its
+	// upload only when the process died mid-upload.
+	a.reapScratch(filepath.Join(root, SpoolDirName))
 	return nil
+}
+
+// reapScratch removes one of the work root's process-scoped scratch
+// directories at boot. Like reapPinDirectories, a failure is logged and does
+// not fail Boot: nothing will ever read what is left there.
+func (a *Activities) reapScratch(dir string) {
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err := removeSealedTree(dir); err != nil {
+		a.dispatcher.logger().Warn("boot reap", "path", dir, "error", err)
+		return
+	}
+	a.dispatcher.logger().Info("scratch reaped", "path", dir)
 }
 
 // claimIdentity takes the process-lifetime lock that makes reaping by a stable

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,11 +17,14 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
@@ -42,6 +46,10 @@ type S3Store struct {
 	client  *s3.Client
 	presign *s3.PresignClient
 	bucket  string
+	// multipartThreshold and partSize override the multipart defaults in
+	// tests; zero means the default.
+	multipartThreshold int64
+	partSize           int64
 }
 
 // Provenance is the run coordinates an artifact came from. The S3 store lays
@@ -162,10 +170,30 @@ func newS3Client(ctx context.Context, cfg Config) (*s3.Client, string, error) {
 // Bucket returns the bucket this store reads and writes.
 func (s *S3Store) Bucket() string { return s.bucket }
 
-// Put spools the reader to a local temp file to compute its digest and length,
-// then uploads it under the provenance key derived from opts.Metadata.
-// Spooling keeps the upload body seekable, so an unknown-length, non-seekable
-// reader is supported without buffering it all in memory.
+// Multipart defaults (F-orker-storage-perf-7). Above the threshold a seekable
+// file is uploaded in parts read straight from it, so a failure re-sends one
+// part rather than the whole object.
+const (
+	defaultMultipartThreshold = 64 << 20
+	defaultPartSize           = 16 << 20
+	multipartConcurrency      = 4
+)
+
+// Put uploads r under the provenance key derived from opts.Metadata. How it
+// reads r depends on what r is:
+//
+//   - a seekable reader whose digest the caller already knows
+//     (opts.ExpectedSHA256) is uploaded straight from itself: the first 512
+//     bytes are sniffed for the content type, then the whole is sent once, with
+//     the digest as an x-amz-checksum-sha256 the server verifies. Bytes that do
+//     not match are refused and nothing is stored under the digest-named key.
+//     Above the multipart threshold, a reader that is also an io.ReaderAt (a
+//     file) is sent in parts instead;
+//   - a seekable reader with no expectation (a log capture) is hashed in one
+//     pass, rewound, and uploaded the same way;
+//   - anything else is spooled to a file in opts.SpoolDir — the only shape
+//     whose digest and length cannot be known any other way — and uploaded
+//     from the spool.
 func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOptions) (ArtifactRef, error) {
 	if r == nil {
 		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: nil reader", name)
@@ -173,13 +201,73 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 	if err := ctx.Err(); err != nil {
 		return ArtifactRef{}, err
 	}
+	if opts.ExpectedSHA256 != "" {
+		if !digestPattern.MatchString(opts.ExpectedSHA256) || opts.ExpectedSize < 0 {
+			return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: expected digest %q / size %d is not a "+
+				"lowercase hex sha256 and a length", name, opts.ExpectedSHA256, opts.ExpectedSize)
+		}
+	}
+	if seeker, ok := r.(io.ReadSeeker); ok {
+		return s.putSeekable(ctx, name, seeker, opts)
+	}
+	return s.putSpooled(ctx, name, r, opts)
+}
 
-	tmp, err := os.CreateTemp("", "ork-artifact-*")
+// putSeekable uploads from r itself, never from a copy.
+func (s *S3Store) putSeekable(ctx context.Context, name string, r io.ReadSeeker, opts PutOptions) (ArtifactRef, error) {
+	start, err := r.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: locate reader: %w", name, err)
+	}
+	var (
+		sum  = opts.ExpectedSHA256
+		size = opts.ExpectedSize
+		head []byte
+	)
+	if sum != "" {
+		if opts.ContentType == "" {
+			head = make([]byte, sniffLen)
+			n, err := io.ReadFull(&ctxReader{ctx: ctx, r: r}, head)
+			if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+				return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: sniff: %w", name, err)
+			}
+			head = head[:n]
+		}
+	} else {
+		hasher := sha256.New()
+		sniff := &sniffWriter{}
+		n, err := io.Copy(io.MultiWriter(hasher, sniff), &ctxReader{ctx: ctx, r: r})
+		if err != nil {
+			return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: hash: %w", name, err)
+		}
+		sum, size, head = hex.EncodeToString(hasher.Sum(nil)), n, sniff.head
+	}
+	if _, err := r.Seek(start, io.SeekStart); err != nil {
+		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: rewind: %w", name, err)
+	}
+	// A file is also an io.ReaderAt: give the upload a section of exactly the
+	// declared bytes, which multipart can read in parallel parts.
+	var body io.ReadSeeker = r
+	if at, ok := r.(io.ReaderAt); ok {
+		body = io.NewSectionReader(at, start, size)
+	}
+	return s.upload(ctx, name, body, sum, size, resolveContentType(opts.ContentType, head), opts)
+}
+
+// putSpooled copies a non-seekable reader to a spool file in opts.SpoolDir,
+// hashing it on the way, and uploads from the spool.
+func (s *S3Store) putSpooled(ctx context.Context, name string, r io.Reader, opts PutOptions) (ArtifactRef, error) {
+	if opts.SpoolDir != "" {
+		if err := os.MkdirAll(opts.SpoolDir, 0o700); err != nil {
+			return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: create spool dir: %w", name, err)
+		}
+	}
+	tmp, err := os.CreateTemp(opts.SpoolDir, "ork-artifact-*")
 	if err != nil {
 		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: create spool file: %w", name, err)
 	}
 	defer func() {
-		tmp.Close()
+		_ = tmp.Close()
 		_ = os.Remove(tmp.Name())
 	}()
 
@@ -189,13 +277,22 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 	if err != nil {
 		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: spool: %w", name, err)
 	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: rewind spool: %w", name, err)
-	}
-
 	sum := hex.EncodeToString(hasher.Sum(nil))
+	if opts.ExpectedSHA256 != "" && (sum != opts.ExpectedSHA256 || size != opts.ExpectedSize) {
+		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: the bytes hash to %s (%d bytes), not the "+
+			"expected %s (%d bytes)", name, sum, size, opts.ExpectedSHA256, opts.ExpectedSize)
+	}
+	return s.upload(ctx, name, io.NewSectionReader(tmp, 0, size), sum, size,
+		resolveContentType(opts.ContentType, sniff.head), opts)
+}
+
+// upload sends body — exactly size bytes whose sha256 is sum — under the
+// provenance key, then writes the name manifest when the key cannot hold the
+// name.
+func (s *S3Store) upload(
+	ctx context.Context, name string, body io.ReadSeeker, sum string, size int64, contentType string, opts PutOptions,
+) (ArtifactRef, error) {
 	key := s3ObjectKey(ProvenanceFromMetadata(opts.Metadata), name, sum)
-	contentType := resolveContentType(opts.ContentType, sniff.head)
 	metadata := copyMetadata(opts.Metadata)
 
 	// The digest rides on the object, so Stat and List always report the digest
@@ -206,15 +303,29 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 	}
 	stored[metaContentSHA256] = sum
 
-	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:        aws.String(s.bucket),
-		Key:           aws.String(key),
-		Body:          tmp,
-		ContentLength: aws.Int64(size),
-		ContentType:   aws.String(contentType),
-		Metadata:      stored,
-	}); err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: %w", s.uri(key), err)
+	_, isFile := body.(io.ReaderAt)
+	if isFile && size > s.threshold() {
+		if err := s.uploadMultipart(ctx, key, body, contentType, stored); err != nil {
+			return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: %w", s.uri(key), err)
+		}
+	} else {
+		raw, err := hex.DecodeString(sum)
+		if err != nil {
+			return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: digest %q: %w", name, sum, err)
+		}
+		if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(s.bucket),
+			Key:           aws.String(key),
+			Body:          body,
+			ContentLength: aws.Int64(size),
+			ContentType:   aws.String(contentType),
+			Metadata:      stored,
+			// The server recomputes this over the bytes it receives and refuses
+			// a mismatch, so the object under a digest-named key is that digest.
+			ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(raw)),
+		}, withKnownPayloadHash(sum)); err != nil {
+			return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: %w", s.uri(key), err)
+		}
 	}
 
 	// A clean artifact segment already IS the logical name, so only a name the
@@ -235,6 +346,66 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 		SHA256:      sum,
 		Metadata:    metadata,
 	}, nil
+}
+
+// uploadMultipart sends a large file in parts, multipartConcurrency at a time,
+// each read straight from the file. A part that fails is retried alone by the
+// SDK; an upload that fails outright is aborted (LeavePartsOnError=false), and
+// docs/DEPLOY.md's AbortIncompleteMultipartUpload lifecycle rule collects the
+// parts of a process killed mid-upload.
+//
+// The whole-object digest cannot ride a multipart upload as one checksum, so
+// it is recorded in the object's metadata as for every Put; each part is
+// covered by the request's own payload signature (or TLS).
+func (s *S3Store) uploadMultipart(
+	ctx context.Context, key string, body io.ReadSeeker, contentType string, stored map[string]string,
+) error {
+	uploader := manager.NewUploader(s.client, func(u *manager.Uploader) {
+		u.PartSize = s.part()
+		u.Concurrency = multipartConcurrency
+		u.LeavePartsOnError = false
+		// The same rule the client is built with (newS3Client): no checksum an
+		// S3-compatible server may refuse unless one is required.
+		u.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+	})
+	_, err := uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		Body:        body,
+		ContentType: aws.String(contentType),
+		Metadata:    stored,
+	})
+	return err
+}
+
+func (s *S3Store) threshold() int64 {
+	if s.multipartThreshold > 0 {
+		return s.multipartThreshold
+	}
+	return defaultMultipartThreshold
+}
+
+func (s *S3Store) part() int64 {
+	if s.partSize > 0 {
+		return s.partSize
+	}
+	return defaultPartSize
+}
+
+// withKnownPayloadHash signs a PutObject with the digest the caller already
+// knows, rather than letting the SDK read the whole body once more to compute
+// it over plain HTTP. Over TLS it replaces UNSIGNED-PAYLOAD with the real
+// digest, which the server then verifies too.
+func withKnownPayloadHash(sum string) func(*s3.Options) {
+	return func(o *s3.Options) {
+		o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+			return stack.Initialize.Add(middleware.InitializeMiddlewareFunc("OrkKnownPayloadHash",
+				func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (
+					middleware.InitializeOutput, middleware.Metadata, error) {
+					return next.HandleInitialize(v4.SetPayloadHash(ctx, sum), in)
+				}), middleware.After)
+		})
+	}
 }
 
 // Get opens the object body at uri. The caller closes it.
