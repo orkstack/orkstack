@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -35,47 +34,6 @@ func originKindSlug(kind orkstackv1.RunOriginKind) (string, bool) {
 		return "", false
 	}
 	return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(name, originKindPrefix)), "_", "-"), true
-}
-
-// parseOriginKindSlug is originKindSlug's inverse.
-func parseOriginKindSlug(slug string) (orkstackv1.RunOriginKind, bool) {
-	for number := range orkstackv1.RunOriginKind_name {
-		kind := orkstackv1.RunOriginKind(number)
-		if candidate, ok := originKindSlug(kind); ok && candidate == slug {
-			return kind, true
-		}
-	}
-	return orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED, false
-}
-
-// originKindSlugs lists every declared slug, sorted, for an error message.
-func originKindSlugs() []string {
-	var slugs []string
-	for number := range orkstackv1.RunOriginKind_name {
-		if slug, ok := originKindSlug(orkstackv1.RunOriginKind(number)); ok {
-			slugs = append(slugs, slug)
-		}
-	}
-	sort.Strings(slugs)
-	return slugs
-}
-
-// parseOriginFilter reads --origin KIND[:ID]. It splits on the first ":", so
-// an id may itself contain one. An empty value is no filter.
-func parseOriginFilter(value string) (orkstackv1.RunOriginKind, string, error) {
-	if value == "" {
-		return orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED, "", nil
-	}
-	slug, id, hasID := strings.Cut(value, ":")
-	kind, ok := parseOriginKindSlug(slug)
-	if !ok {
-		return 0, "", fmt.Errorf("invalid --origin %q: unknown origin kind %q (want one of %s, optionally followed by :ID)",
-			value, slug, strings.Join(originKindSlugs(), ", "))
-	}
-	if hasID && id == "" {
-		return 0, "", fmt.Errorf("invalid --origin %q: an empty id after %q; give KIND or KIND:ID", value, slug+":")
-	}
-	return kind, id, nil
 }
 
 // originSummary renders the origin's kind and id in one short phrase:

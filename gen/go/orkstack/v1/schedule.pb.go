@@ -260,8 +260,9 @@ type Schedule struct {
 	// id is opaque, shaped sch-{16 hex}, generated as trg-{16 hex} is (8 bytes
 	// from crypto/rand). It is what RunOrigin.id carries for a scheduled run.
 	// Nothing parses it or derives anything from its shape. It survives an
-	// update and changes on delete-then-create, so `run list --origin
-	// schedule:<id>` names one schedule's lifetime.
+	// update and changes on delete-then-create, so `run list --filter
+	// origin.kind=SCHEDULE --filter origin.id=<id>` names one schedule's
+	// lifetime.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// name is the operator's handle: a slug (^[a-z][a-z0-9-]*$, at most 200
 	// bytes), unique within the namespace, immutable. Every request addresses

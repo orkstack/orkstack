@@ -1,10 +1,12 @@
 import { RunOriginKind, RunOriginKindSchema, type RunOrigin } from './gen/orkstack/v1/run_pb';
 
-// The user-facing spelling of an origin kind: the proto value's name after
-// RUN_ORIGIN_KIND_, lowercased, "_" as "-" — "submit", "trigger", "schedule",
-// "parent-run", "run-again". It is the one rule pkg/artifacts.OriginKindSlug
-// and cmd/orkctl's originKindSlug apply too, so the URL parameter, the CLI
-// flag, the archive key and this page all spell a kind the same way.
+// The user-facing spelling of an origin kind in a rendered row: the proto
+// value's name after RUN_ORIGIN_KIND_, lowercased, "_" as "-" — "submit",
+// "trigger", "schedule", "parent-run", "run-again". It is the one rule
+// pkg/artifacts.OriginKindSlug and cmd/orkctl's originKindSlug apply too, so
+// the CLI's ORIGIN column, the archive key and this page all spell a kind the
+// same way. A filter names a kind by its enum short name (origin.kind=TRIGGER,
+// docs/UI_CLI_PARITY.md "Filtering lists"), which also accepts this spelling.
 const ORIGIN_KIND_PREFIX = 'RUN_ORIGIN_KIND_';
 
 /** originKindSlug spells kind; UNSPECIFIED (and an undeclared number) is ''. */
@@ -13,25 +15,6 @@ export function originKindSlug(kind: RunOriginKind): string {
 	const value = RunOriginKindSchema.values.find((candidate) => candidate.number === kind);
 	if (!value) return '';
 	return value.name.slice(ORIGIN_KIND_PREFIX.length).toLowerCase().replaceAll('_', '-');
-}
-
-/** originKindFromSlug is originKindSlug's inverse; anything else is UNSPECIFIED. */
-export function originKindFromSlug(slug: string): RunOriginKind {
-	if (!slug) return RunOriginKind.UNSPECIFIED;
-	const value = RunOriginKindSchema.values.find(
-		(candidate) => candidate.number !== RunOriginKind.UNSPECIFIED && originKindSlug(candidate.number) === slug
-	);
-	return value ? (value.number as RunOriginKind) : RunOriginKind.UNSPECIFIED;
-}
-
-/** ORIGIN_KIND_SLUGS lists every declared kind's slug, in enum order. */
-export const ORIGIN_KIND_SLUGS: string[] = RunOriginKindSchema.values
-	.map((value) => originKindSlug(value.number))
-	.filter((slug) => slug !== '');
-
-/** The label the filter Select shows beside each slug. */
-export function originKindLabel(slug: string): string {
-	return slug ? slug.charAt(0).toUpperCase() + slug.slice(1).replaceAll('-', ' ') : 'Any';
 }
 
 /** UNRECORDED is what a run recorded before origins existed renders as. */
@@ -90,10 +73,3 @@ export const PRINCIPAL_CAPTION =
 
 /** The caption on an unrecorded origin. */
 export const UNRECORDED_CAPTION = 'This run started before origins were recorded.';
-
-/** The runs-list filter's own validation, beside runFilterError. */
-export function originFilterError(origin: string, originId: string): string | null {
-	if (origin && originKindFromSlug(origin) === RunOriginKind.UNSPECIFIED) return `Unknown origin kind ${origin}.`;
-	if (originId && !origin) return 'An origin id needs an origin kind.';
-	return null;
-}

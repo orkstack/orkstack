@@ -966,16 +966,18 @@ test('the recent-failures section expands into fingerprints that name the task a
 	await page.keyboard.press('Escape');
 	await shot(page, 'screenshot-dashboard-fingerprints.png');
 
-	// The row is a link to the runs it counts: the namespace, the orkflow,
-	// status failed, and the exact window the breakdown answered.
+	// The row is a link to the runs it counts, through the runs list's
+	// filters: the namespace, the orkflow, status FAILED, and the exact window
+	// the breakdown answered.
 	await row.click();
 	await page.waitForURL(/\/runs\?/);
 	const target = new URL(page.url());
-	expect(target.searchParams.get('status')).toBe('failed');
-	expect(target.searchParams.get('orkflow')).toBe(FAILING);
+	const filters = target.searchParams.getAll('filter');
+	expect(filters).toContain('status=FAILED');
+	expect(filters).toContain(`orkflow_name=${FAILING}`);
 	expect(target.searchParams.get('ns')).toBe(ALPHA);
-	expect(target.searchParams.get('since')).toBeTruthy();
-	expect(target.searchParams.get('until')).toBeTruthy();
+	expect(filters.some((f) => f.startsWith('created_at>='))).toBe(true);
+	expect(filters.some((f) => f.startsWith('created_at<'))).toBe(true);
 	await expect(page.getByTestId(`run-row-${failedRun}`)).toBeVisible({ timeout: 30_000 });
 	note(`fingerprint row navigated to ${target.pathname}${target.search}`);
 
@@ -1089,11 +1091,12 @@ test("the dashboard's stability section names the task that retried, its rate an
 	await page.getByTestId('stability-row-0-task').click();
 	await page.waitForURL(/\/runs\?/);
 	const target = new URL(page.url());
-	expect(target.searchParams.get('orkflow')).toBe(RETRYING);
+	const filters = target.searchParams.getAll('filter');
+	expect(filters).toContain(`orkflow_name=${RETRYING}`);
 	expect(target.searchParams.get('ns')).toBe(ALPHA);
-	expect(target.searchParams.get('since')).toBeTruthy();
-	expect(target.searchParams.get('until')).toBeTruthy();
-	expect(target.searchParams.get('status')).toBeNull();
+	expect(filters.some((f) => f.startsWith('created_at>='))).toBe(true);
+	expect(filters.some((f) => f.startsWith('created_at<'))).toBe(true);
+	expect(filters.some((f) => f.startsWith('status'))).toBe(false);
 	await expect(page.getByTestId(`run-row-${retriedRun}`)).toBeVisible({ timeout: 30_000 });
 	note(`stability row navigated to ${target.pathname}${target.search}`);
 

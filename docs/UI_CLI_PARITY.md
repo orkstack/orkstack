@@ -77,8 +77,7 @@ filter form renders it. The matcher is written once, in
 
 Lists that take filters: `ListNamespaces`, `ListOrkflows`, `ListWebhooks`,
 `ListTriggers`, `ListSchedules`, `ListPools`, `ListActivities`, `ListOrkers`,
-`ListReleases`, `ListDeliveries` and `ListAuditRecords`. The run list keeps
-the selectors its own section describes. Child listings of one parent
+`ListReleases`, `ListDeliveries`, `ListAuditRecords` and `ListRuns`. Child listings of one parent
 (`ListOrkflowVersions`, `ListRunArtifacts`, `ListTaskAttempts`), the
 `ListOrkflowCallers` report and `ListTelemetrySinks` take no filters.
 
@@ -184,7 +183,8 @@ A path through a nested message reads each unset message as its zero value:
 `hold.reason=` lists the namespaces with no hold and `hold.reason!=` the held
 ones. Repeated and numeric fields are never filterable. **Opaque ids are
 matched whole** — a webhook, trigger or schedule id, a delivery's `run_id`
-and `webhook_id`, and the digests take equals, not equals and in only — because nothing derives meaning from an
+and `webhook_id`, and the digests take equals, not equals and in only, and a
+run's `origin.id` equals only — because nothing derives meaning from an
 id's parts (`AGENTS.md` §7); operator-chosen names (an Orker id, a release,
 every slug) take all five text operators.
 
@@ -259,6 +259,17 @@ every row read, so a narrower read can never change an answer.
 | Releases | `build_id=`: that release alone is counted; the release rows | filters select release rows only; every other field is the deployment's |
 | Deliveries | every field from the record's key (`created_at`, `namespace`, `run_id`, `webhook_id`, `event`, `delivered`) | a body is read only for a record whose key matches; the `created_at` bounds are the window; 100,000 keys per page at most |
 | Audit trail | each record's body (the key holds only the day and the id) | the `at` bounds are the window; 5,000 records per page at most |
+| Runs | live runs: what the cluster lists for each run (its Orkflow, status, origin and start); finished runs: the run index's keys, never a run body | exactly the fields both halves answer without reading a run: `orkflow_name`, `status`, `created_at`, `origin.kind` and `origin.id`. One `orkflow_name=` or `status=` narrows what each half reads, one `origin.kind=` (and `origin.id=` beside it) selects the origin index, and the `created_at` bounds bound the scan; any other filter is decided per row without narrowing the read. A finished run's body is read only when its key matches |
+
+**Runs.** `created_at` is the instant a run is ordered and paged by: its
+`created_at`, else its `started_at`, else its `finished_at`, at microsecond
+precision — so a `created_at` filter selects a run on exactly the instant the
+list sorts it by, and a run with no time at all matches no `created_at`
+filter. `origin.kind` takes only equals, because a run started before origins
+were recorded is in no origin index and matches no `origin.kind` filter, and
+`origin.id` needs an equals filter on `origin.kind` (an id is meaningful only
+within a kind). `status` never names `AWAITING`, which is a task status: a run
+whose task is awaiting is `RUNNING`.
 
 ### Filters in the browser
 
@@ -398,19 +409,19 @@ is the `Ork-Principal` assertion, recorded and never authenticated. A run
 recorded before origins existed has kind `UNSPECIFIED`, renders `unrecorded`
 (never `submit`) and matches no origin filter.
 
-`ListRuns` filters by kind, or kind and id: live runs through two Temporal
-search attributes, finished runs through the archive's origin index
-([STORAGE.md](STORAGE.md)), merged under the same fail-rather-than-subset rule
-as every list.
+`ListRuns` selects by origin with an `origin.kind=` filter, or `origin.kind=`
+and `origin.id=` ("Filtering lists"), live and finished runs alike — finished
+runs through the archive's origin index ([STORAGE.md](STORAGE.md)) — merged
+under the same fail-rather-than-subset rule as every list.
 
-CLI: `run submit --origin-ref`, `run again --origin-ref`, `run list --origin
-KIND[:ID]`, an `ORIGIN` column (`-` when unrecorded), and `Origin:`,
-`Reference:` and `Principal:` lines on `run get`. UI: the run header's origin
-line — kind chip, the id linked to the source run or the Triggers/Schedules
-tab, the description, the reference linked only when it is an http(s) URL, and
-`asserted by …` with a not-authenticated title; the runs list's **Started
-by** and **Origin id** filters and **Origin** column, both kept in the URL
-(`origin`, `originId`).
+CLI: `run submit --origin-ref`, `run again --origin-ref`, `run list --filter
+origin.kind=KIND [--filter origin.id=ID]`, an `ORIGIN` column (`-` when
+unrecorded), and `Origin:`, `Reference:` and `Principal:` lines on `run get`.
+UI: the run header's origin line — kind chip, the id linked to the source run
+or the Triggers/Schedules tab, the description, the reference linked only when
+it is an http(s) URL, and `asserted by …` with a not-authenticated title; the
+runs list's **Started by** (`origin.kind`) and **Origin id** (`origin.id`)
+filters, kept in the URL as `filter` keys, and its **Origin** column.
 
 ### Run again
 
@@ -462,25 +473,37 @@ before it continues to the run.
 
 ### Run browsing
 
-`ListRuns` takes `created_after` (inclusive) and `created_before` (exclusive);
-an inverted or empty interval is `InvalidArgument`. Rows sort newest
-`created_at` first, then id descending at equal times; nothing parses an id.
-Live and archived records merge by id, the archive preferred for terminal
-records, and each source applies the bounds and cursor before its own limit,
-fetching enough to know whether another matching row exists.
+`ListRuns` takes filters ("Filtering lists"): `orkflow_name`, `status`,
+`created_at`, `origin.kind` and `origin.id`. `created_at>=` is inclusive and
+`created_at<` exclusive; an inverted or empty interval is `InvalidArgument`.
+Rows sort newest `created_at` first, then id descending at equal times;
+nothing parses an id. Live and finished runs merge by id, the archive
+preferred for terminal records; both halves get the same filters, and each
+applies them and the cursor before its own limit, fetching enough to know
+whether another matching row exists.
 
-The page token is opaque and versioned and binds the namespace, Orkflow,
-status, origin, both time bounds and the last returned `created_at`/id. A
-token presented with other filters is `InvalidArgument`; clients clear the
-token when a filter changes, and a page-size change may keep it. A cursor is a
-position, not a frozen snapshot: newly visible records before it appear on
-refresh and statuses may change between pages. A scan cut short by its budget
-is never labelled complete; an undeterminable continuation is an actionable
-failure.
+The page token is opaque and versioned and binds the namespace, the canonical
+filter set and the last returned `created_at`/id. A token presented with other
+filters is `InvalidArgument` (`page_token was issued for other filters; drop
+it and list from the first page`); clients clear the token when a filter
+changes, and a page-size change may keep it. A cursor is a position, not a
+frozen snapshot: newly visible records before it appear on refresh and
+statuses may change between pages — a run whose status changes out of the
+filters between pages simply stops matching. A run that has just finished can
+still be listed as live and `RUNNING` for a moment after its finished record
+exists; under a status filter that excludes its final status (`status!=SUCCEEDED`,
+`status=RUNNING,PENDING`) it is then listed once, as `RUNNING`, until the
+listing catches up — never twice and never with a wrong final status, and a
+refresh corrects it. A scan cut short by its budget is never labelled
+complete; an undeterminable continuation is an actionable failure.
 
-CLI: `run list [--status] [--orkflow] [--origin] [--since RFC3339] [--until
-RFC3339] [--limit N] [--page-token TOKEN]`; human output prints a usable
-next-page command, `--json` carries `next_page_token`.
+CLI: `run list [--filter F…] [--limit N] [--page-token TOKEN]`; human output
+prints a usable next-page command that repeats every `--filter`, `--json`
+carries `next_page_token`. UI: the Runs page's filter form (`ListFilter`),
+whose header reads `Runs for <name>` — and whose **Submit a run** opens that
+Orkflow — when one `orkflow_name=` filter is applied; the dashboard's failure,
+flake and fingerprint rows, an Orkflow's **View runs** and a run's **Child
+runs** open it already filtered.
 
 #### Paging in the browser
 
@@ -491,9 +514,9 @@ footer (`ui/src/lib/browsing.ts`, `Pagination.svelte`):
   `size`, the engine's `cursor`, and `page` (1-based, omitted at 1). A pasted
   link opens the exact page it was copied from. One function writes the query
   string, `listHref`: it sets every scalar key once and omits empty values, so
-  a scalar never appears twice and a cleared filter leaves the bar. On
-  Orkflows and Admin → Namespaces the filters are repeated `filter` keys in
-  canonical order ("Filtering lists") — the one key that repeats.
+  a scalar never appears twice and a cleared filter leaves the bar. On all
+  three the filters are repeated `filter` keys in canonical order ("Filtering
+  lists") — the one key that repeats.
 - **The path back lives in `sessionStorage`**, keyed by the list's canonical
   filter query, written on Next before navigating. Not the URL (it grew by one
   escaped cursor per page), not `localStorage` (a cursor is a position, so a
@@ -811,7 +834,7 @@ A task whose `uses:` is `orkflow:<name>@<version>` ([DSL.md](DSL.md),
 carries the pinned name, version and definition digest, and `run_id` once the
 child's start is confirmed — never before. The child's own origin is
 `{PARENT_RUN, <parent id>}`, so a parent's children are `ListRuns` with
-`--origin parent-run:<id>` — no new RPC; a child is read, watched, cancelled,
+`--filter origin.kind=PARENT_RUN --filter origin.id=<id>` — no new RPC; a child is read, watched, cancelled,
 diffed and exported by its own id. `StreamTaskLogs` refuses a composed task
 with `FailedPrecondition` naming the child and `orkctl run logs <child>`;
 `ListTaskAttempts` answers an empty timeline; `DiffRuns` compares a composed

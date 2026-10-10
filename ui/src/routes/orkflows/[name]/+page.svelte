@@ -10,6 +10,7 @@
 	import OrkflowVersions from '$lib/components/OrkflowVersions.svelte';
 	import OrkflowCallers from '$lib/components/OrkflowCallers.svelte';
 	import RunSubmitPanel from '$lib/components/RunSubmitPanel.svelte';
+	import { listHref, runWindowFilters } from '$lib/browsing';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
 	import { activityLabel, shortDigest } from '$lib/activity';
@@ -277,7 +278,7 @@
 				Submit a run
 			</button>
 			<a
-				href={withNamespace(`/runs?orkflow=${wf.name}`, data.namespace)}
+				href={listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters(wf.name, '', '', '') })}
 				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 			>
 				View runs

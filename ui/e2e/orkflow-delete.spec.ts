@@ -163,17 +163,20 @@ test("a server refusal is shown verbatim in the open confirmation dialog", async
 test("an active run behind 200 old terminal runs disables deletion through an exact status query", async ({
   page,
 }) => {
-  const requests: Array<{ status?: string; pageSize?: number }> = [];
+  type WireFilter = { field: string; op: string; values: string[] };
+  const requests: Array<{ filters?: WireFilter[]; pageSize?: number }> = [];
   await page.route("**/orkstack.v1.RunService/ListRuns", async (route) => {
     const body = route.request().postDataJSON() as {
-      status?: string;
+      filters?: WireFilter[];
       pageSize?: number;
     };
     requests.push(body);
+    // The status the check asks about is a filter now, never a typed field.
+    const status = body.filters?.find((f) => f.field === "status")?.values[0];
     let runs: unknown[] = [];
-    if (body.status === "STATUS_RUNNING") {
+    if (status === "RUNNING") {
       runs = [{ id: "ork-older-active", orkflowName: BLOCKED, status: "STATUS_RUNNING" }];
-    } else if (!body.status) {
+    } else if (!status) {
       const finishedAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
       runs = Array.from({ length: 200 }, (_, index) => ({
         id: `ork-newer-old-${index}`,
@@ -193,11 +196,18 @@ test("an active run behind 200 old terminal runs disables deletion through an ex
   await expect(page.getByTestId("versions-delete-status")).toContainText(
     "At least 1 run(s) block deletion (1 active status(es), 0 finished within 24h",
   );
+  const orkflowFilter = { field: "orkflow_name", op: "FILTER_OPERATOR_EQUALS", values: [BLOCKED] };
   expect(requests).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ status: "STATUS_RUNNING", pageSize: 1 }),
-      expect.objectContaining({ status: "STATUS_PENDING", pageSize: 1 }),
-      expect.objectContaining({ pageSize: 200 }),
+      expect.objectContaining({
+        filters: [orkflowFilter, { field: "status", op: "FILTER_OPERATOR_EQUALS", values: ["RUNNING"] }],
+        pageSize: 1,
+      }),
+      expect.objectContaining({
+        filters: [orkflowFilter, { field: "status", op: "FILTER_OPERATOR_EQUALS", values: ["PENDING"] }],
+        pageSize: 1,
+      }),
+      expect.objectContaining({ filters: [orkflowFilter], pageSize: 200 }),
     ]),
   );
   await page.screenshot({

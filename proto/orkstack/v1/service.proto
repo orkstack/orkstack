@@ -1303,23 +1303,58 @@ message GetRunRequest {
   string namespace = 2;                  // empty = the default namespace
 }
 message GetRunResponse { Run run = 1; }
+// ListRunsRequest lists one namespace's runs, live and finished, newest
+// first. filters narrow it (docs/UI_CLI_PARITY.md "Filtering lists"); every
+// field below is answered for live and finished runs alike without reading a
+// run body. created_at is the instant a run is ordered and paged by: its
+// created_at, else its started_at, else its finished_at. origin.kind takes
+// only equals, and a run recorded before origins existed matches no
+// origin.kind filter; origin.id is meaningful only within a kind, so it
+// needs an equals filter on origin.kind. An id is matched whole, never by
+// part.
 message ListRunsRequest {
-  string orkflow_name = 1;               // optional orkflow name filter
-  Status status = 2;                     // optional filter
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Run"
+    fields: [
+      {
+        path: "orkflow_name"
+        label: "Orkflow"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "status"
+        label: "Status"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+        allowed_values: ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]
+      },
+      {
+        path: "created_at"
+        label: "Created"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      },
+      {
+        path: "origin.kind"
+        label: "Started by"
+        operators: [FILTER_OPERATOR_EQUALS]
+        allowed_values: ["SUBMIT", "TRIGGER", "SCHEDULE", "PARENT_RUN", "RUN_AGAIN"]
+      },
+      {
+        path: "origin.id"
+        label: "Origin id"
+        operators: [FILTER_OPERATOR_EQUALS]
+        requires: "origin.kind"
+      }
+    ]
+  };
+  reserved 1, 2, 6 to 9;
+  reserved "orkflow_name", "status", "created_after", "created_before", "origin_kind", "origin_id";
   int32 page_size = 3;
+  // page_token continues a listing; it binds the namespace and the canonical
+  // filter set, and a token minted under other filters is INVALID_ARGUMENT.
   string page_token = 4;
-  string namespace = 5;                  // empty = the default namespace
-  google.protobuf.Timestamp created_after = 6;  // inclusive
-  google.protobuf.Timestamp created_before = 7; // exclusive
-
-  // origin_kind keeps runs whose origin.kind equals it. UNSPECIFIED means no
-  // origin filter. A run recorded before origins existed has no kind and is
-  // matched by no value of this field.
-  RunOriginKind origin_kind = 8;
-  // origin_id keeps runs whose origin.id equals it, within origin_kind. It
-  // is INVALID_ARGUMENT without origin_kind: an id is meaningful only
-  // within a kind. Exact match; never a prefix.
-  string origin_id = 9;
+  string namespace = 5;                  // the tenant; empty = the default namespace
+  repeated FieldFilter filters = 10;
 }
 message ListRunsResponse {
   // A fan-out task's row carries its `each` and status but never its

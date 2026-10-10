@@ -19,7 +19,8 @@ import (
 )
 
 // TestIntegration_LiveOriginFilterUsesTheIndex lists live runs by origin
-// against a real cluster.
+// against a real cluster, with the query the ListRuns handler builds for
+// --filter origin.kind=TRIGGER --filter origin.id=trg-a.
 //
 // Three runs start with the origin attributes stamped — two from trigger
 // trg-a, one from a submit — and one more starts through a starter told the
@@ -107,9 +108,8 @@ func TestIntegration_LiveOriginFilterUsesTheIndex(t *testing.T) {
 	}
 
 	indexedReader := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(true).WithOriginIndex(true)
-	runs, err := indexedReader.ListRuns(ctx, engine.RunQuery{
-		Namespace: "alpha", OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, OriginID: "trg-a", Limit: 10,
-	})
+	byTriggerA := runListQuery(t, "alpha", 10, "origin.kind=TRIGGER", "origin.id=trg-a")
+	runs, err := indexedReader.ListRuns(ctx, byTriggerA)
 	if err != nil {
 		t.Fatalf("indexed ListRuns(trigger:trg-a): %v", err)
 	}
@@ -122,9 +122,7 @@ func TestIntegration_LiveOriginFilterUsesTheIndex(t *testing.T) {
 	}
 
 	walkingReader := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(true)
-	runs, err = walkingReader.ListRuns(ctx, engine.RunQuery{
-		Namespace: "alpha", OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, OriginID: "trg-a", Limit: 10,
-	})
+	runs, err = walkingReader.ListRuns(ctx, byTriggerA)
 	if err != nil {
 		t.Fatalf("walking ListRuns(trigger:trg-a): %v", err)
 	}

@@ -35,29 +35,36 @@ func withOriginMemo(t *testing.T, info *workflowpb.WorkflowExecutionInfo, kind, 
 }
 
 func TestListQuery_PushesOriginDownOnlyWhenIndexed(t *testing.T) {
-	trigger := orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER
 	reader := newRunReader(&fakeReadClient{}, nil)
+	kindAndID := RunListPlan(runFilters(t, "origin.kind=TRIGGER", "origin.id=trg-1"))
 
-	query, _, originScoped := reader.listQuery(RunQuery{OriginKind: trigger, OriginID: "trg-1"})
+	query, _, originScoped := reader.listQuery(kindAndID)
 	if originScoped || strings.Contains(query, task.SearchAttrOrkflowOriginKind) {
 		t.Fatalf("without the index the query %q pushed the origin down (scoped=%v)", query, originScoped)
 	}
 
 	reader.WithOriginIndex(true)
-	query, _, originScoped = reader.listQuery(RunQuery{OriginKind: trigger, OriginID: "trg-1"})
+	query, _, originScoped = reader.listQuery(kindAndID)
 	want := `WorkflowType = "RunWorkflow" AND OrkflowOriginKind = "trigger" AND OrkflowOriginId = "trg-1"`
 	if !originScoped || query != want {
 		t.Fatalf("indexed kind+id query = %q (scoped=%v), want %q", query, originScoped, want)
 	}
 
-	query, _, originScoped = reader.listQuery(RunQuery{OriginKind: trigger})
+	query, _, originScoped = reader.listQuery(RunListPlan(runFilters(t, "origin.kind=trigger")))
 	if !originScoped || !strings.Contains(query, `OrkflowOriginKind = "trigger"`) || strings.Contains(query, task.SearchAttrOrkflowOriginId) {
 		t.Fatalf("kind-only query = %q (scoped=%v), want the kind predicate and no id predicate", query, originScoped)
 	}
 
-	query, _, originScoped = reader.listQuery(RunQuery{})
+	query, _, originScoped = reader.listQuery(RunListPlan(runFilters(t)))
 	if originScoped || strings.Contains(query, "Origin") {
 		t.Fatalf("an unfiltered query = %q (scoped=%v), want no origin predicate", query, originScoped)
+	}
+
+	// An origin id beside an origin kind that is not one single equals is not
+	// pushed: the kind and the id are decided by the residual filters alone.
+	query, _, originScoped = reader.listQuery(RunListPlan(runFilters(t, "status=RUNNING", "orkflow_name~x")))
+	if originScoped || strings.Contains(query, "Origin") {
+		t.Fatalf("a query with no origin filter = %q (scoped=%v), want no origin predicate", query, originScoped)
 	}
 }
 

@@ -1961,7 +1961,8 @@ func (s *Service) GetRun(
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
-// ListRuns returns runs of one namespace, newest first, with optional filters.
+// ListRuns returns runs of one namespace, newest first, narrowed by the
+// request's filters (docs/UI_CLI_PARITY.md "Filtering lists").
 //
 // The two halves are Temporal's visibility index, which holds every run that
 // started and is the only source for one still executing, and the archive,
@@ -1980,16 +1981,27 @@ func (s *Service) GetRun(
 // and a quiet namespace beside a busy one is told it has no runs. An orkflow
 // name inside one namespace is not a tenancy boundary and stays a filter.
 //
+// Both halves get the SAME filter set. The single-value equalities and the
+// created_at bounds are pushdowns that narrow what each half reads (engine.RunListPlan);
+// the whole set is then applied to every row read, on engine.RunFilterView —
+// so a pushdown can never widen or change an answer, and a run that moves from
+// live to archived between pages is still deduplicated by id.
+//
 // Visibility is eventually consistent. A run submitted a moment ago may not be
 // listed yet; it is readable by id throughout, because GetRun reads history
-// rather than the index.
+// rather than the index. A run that has just finished can still read RUNNING
+// in visibility while its archive record exists: under a status filter that
+// excludes its final status, the live half keeps the stale RUNNING row and the
+// archive half rejects the settled copy, so it is listed once, as RUNNING,
+// until visibility catches up — exactly what a status=RUNNING filter has
+// always answered. Correcting it would cost a body read per live row.
 func (s *Service) ListRuns(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListRunsRequest],
 ) (*connect.Response[orkstackv1.ListRunsResponse], error) {
-	if req.Msg.GetStatus() == orkstackv1.Status_STATUS_AWAITING {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
-			"AWAITING is a task status; a run whose task is awaiting is RUNNING"))
+	set, err := compileFilters(req.Msg)
+	if err != nil {
+		return nil, err
 	}
 	size := int(req.Msg.GetPageSize())
 	if size < 0 {
@@ -1998,14 +2010,7 @@ func (s *Service) ListRuns(
 	if size == 0 {
 		size = engine.DefaultRunPageSize
 	}
-	since, until, err := listRunBounds(req.Msg.GetCreatedAfter(), req.Msg.GetCreatedBefore())
-	if err != nil {
-		return nil, err
-	}
-	originKind, originID := req.Msg.GetOriginKind(), req.Msg.GetOriginId()
-	if err := validateOriginFilter(originKind, originID); err != nil {
-		return nil, err
-	}
+	plan := engine.RunListPlan(set)
 	var (
 		runs       []*orkstackv1.Run
 		fromMemory bool
@@ -2016,30 +2021,26 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
-	cursor, err := decodeRunCursor(req.Msg.GetPageToken(), ns.GetName(), req.Msg.GetOrkflowName(), req.Msg.GetStatus(), since, until, originKind, originID)
+	cursor, err := decodeRunCursor(req.Msg.GetPageToken(), ns.GetName(), set)
 	if err != nil {
 		return nil, err
+	}
+	beforeCreated, beforeID := time.Time{}, ""
+	if cursor != nil {
+		beforeCreated, beforeID = parseCursorTime(cursor.LastCreated), cursor.LastID
 	}
 	binding, err := s.binding(ns.GetName())
 	if err != nil {
 		return nil, err
 	}
 	if binding.Reader != nil {
-		beforeCreated, beforeID := time.Time{}, ""
-		if cursor != nil {
-			beforeCreated, beforeID = parseCursorTime(cursor.LastCreated), cursor.LastID
-		}
-		listed, err := binding.Reader.ListRuns(ctx, engine.RunQuery{
-			Namespace:   ns.GetName(),
-			OrkflowName: req.Msg.GetOrkflowName(),
-			Status:      req.Msg.GetStatus(),
-			OriginKind:  originKind,
-			OriginID:    originID,
-			// Visibility does not promise ID ordering inside equal timestamps.
-			// Complete collects its bounded metadata scan before applying Limit,
-			// so a later higher-ID tie cannot disappear behind this cursor.
-			Since: since, Until: until, BeforeCreated: beforeCreated, BeforeID: beforeID, Limit: size + 1, Complete: true,
-		})
+		query := plan
+		query.Namespace = ns.GetName()
+		// Visibility does not promise ID ordering inside equal timestamps.
+		// Complete collects its bounded metadata scan before applying Limit,
+		// so a later higher-ID tie cannot disappear behind this cursor.
+		query.BeforeCreated, query.BeforeID, query.Limit, query.Complete = beforeCreated, beforeID, size+1, true
+		listed, err := binding.Reader.ListRuns(ctx, query)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("list runs in namespace %q: %w", ns.GetName(), err))
@@ -2048,29 +2049,30 @@ func (s *Service) ListRuns(
 	} else {
 		runs = s.runs.List(engine.ListFilter{
 			Namespace:   ns.GetName(),
-			OrkflowName: req.Msg.GetOrkflowName(),
-			Status:      req.Msg.GetStatus(),
-			OriginKind:  originKind,
-			OriginID:    originID,
+			OrkflowName: plan.OrkflowName,
+			Status:      plan.Status,
+			OriginKind:  plan.OriginKind,
+			OriginID:    plan.OriginID,
+			Keep:        plan.Keep,
 		})
-		runs = filterRunTimes(runs, since, until)
 		if cursor != nil {
 			runs = afterRunCursor(runs, cursor.LastCreated, cursor.LastID)
 		}
 		fromMemory = true
 	}
 	if s.archive != nil {
-		beforeCreated, beforeID := time.Time{}, ""
-		if cursor != nil {
-			beforeCreated, beforeID = parseCursorTime(cursor.LastCreated), cursor.LastID
-		}
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
-			Namespace:   ns.GetName(),
-			OrkflowName: req.Msg.GetOrkflowName(),
-			Status:      req.Msg.GetStatus(),
-			OriginKind:  originKind,
-			OriginID:    originID,
-			Since:       since, Until: until, BeforeCreated: beforeCreated, BeforeID: beforeID, Limit: size + 1,
+			Namespace:     ns.GetName(),
+			OrkflowName:   plan.OrkflowName,
+			Status:        plan.Status,
+			OriginKind:    plan.OriginKind,
+			OriginID:      plan.OriginID,
+			Since:         plan.Since,
+			Until:         plan.Until,
+			Keep:          plan.Keep,
+			BeforeCreated: beforeCreated,
+			BeforeID:      beforeID,
+			Limit:         size + 1,
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal,
@@ -2088,7 +2090,10 @@ func (s *Service) ListRuns(
 	if len(runs) > size {
 		page := runs[:size]
 		last := page[len(page)-1]
-		token, err := encodeRunCursor(runCursor{Version: 1, Namespace: ns.GetName(), Orkflow: req.Msg.GetOrkflowName(), Status: int32(req.Msg.GetStatus()), Since: timeString(since), Until: timeString(until), OriginKind: int32(originKind), OriginID: originID, LastCreated: engine.RunIndexTime(last).UTC().Format(time.RFC3339Nano), LastID: last.GetId()})
+		token, err := encodeRunCursor(runCursor{
+			Version: runCursorVersion, Namespace: ns.GetName(), Filters: set.Key(),
+			LastCreated: engine.RunIndexTime(last).UTC().Format(time.RFC3339Nano), LastID: last.GetId(),
+		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode run page token: %w", err))
 		}
@@ -2105,65 +2110,22 @@ func (s *Service) ListRuns(
 	return connect.NewResponse(response), nil
 }
 
+// runCursorVersion is 2: a version-1 token carried the removed typed filters
+// and is refused as invalid.
+const runCursorVersion = 2
+
+// runCursor is a ListRuns page token: the namespace and canonical filter set
+// it was minted under, and the created_at/id of the last run its page held.
+// A cursor is a position, not a snapshot: a run whose status changes out of
+// the filter between pages simply stops matching.
 type runCursor struct {
-	Version   int    `json:"v"`
-	Namespace string `json:"n"`
-	Orkflow   string `json:"o"`
-	Status    int32  `json:"s"`
-	Since     string `json:"a,omitempty"`
-	Until     string `json:"b,omitempty"`
-	// OriginKind and OriginID bind the origin filter a token was minted
-	// under. Both omitempty, so a token minted before origins existed decodes
-	// with both zero and matches a request that sets neither; Version stays 1.
-	OriginKind  int32  `json:"k,omitempty"`
-	OriginID    string `json:"d,omitempty"`
+	Version     int    `json:"v"`
+	Namespace   string `json:"n"`
+	Filters     string `json:"f"`
 	LastCreated string `json:"c"`
 	LastID      string `json:"i"`
 }
 
-// validateOriginFilter refuses an origin filter that cannot mean anything: an
-// id without a kind (an id is meaningful only within a kind) and a kind the
-// enum does not declare.
-func validateOriginFilter(kind orkstackv1.RunOriginKind, id string) error {
-	if kind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
-		if id != "" {
-			return connect.NewError(connect.CodeInvalidArgument,
-				fmt.Errorf("origin_id needs origin_kind: an origin id is meaningful only within a kind"))
-		}
-		return nil
-	}
-	if _, ok := artifacts.OriginKindSlug(kind); !ok {
-		return connect.NewError(connect.CodeInvalidArgument,
-			fmt.Errorf("origin_kind %d is not a declared origin kind", kind))
-	}
-	return nil
-}
-
-func timeString(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339Nano)
-}
-func listRunBounds(after, before *timestamppb.Timestamp) (time.Time, time.Time, error) {
-	var a, b time.Time
-	if after != nil {
-		if !after.IsValid() {
-			return a, b, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("created_after is invalid"))
-		}
-		a = after.AsTime()
-	}
-	if before != nil {
-		if !before.IsValid() {
-			return a, b, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("created_before is invalid"))
-		}
-		b = before.AsTime()
-	}
-	if !a.IsZero() && !b.IsZero() && !a.Before(b) {
-		return a, b, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("created_after must be before created_before"))
-	}
-	return a, b, nil
-}
 func encodeRunCursor(c runCursor) (string, error) {
 	raw, err := json.Marshal(c)
 	if err != nil {
@@ -2171,7 +2133,10 @@ func encodeRunCursor(c runCursor) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
-func decodeRunCursor(token, namespace, orkflow string, status orkstackv1.Status, since, until time.Time, originKind orkstackv1.RunOriginKind, originID string) (*runCursor, error) {
+
+// decodeRunCursor reads a ListRuns page token, refusing one minted for
+// another namespace or another filter set.
+func decodeRunCursor(token, namespace string, set listfilter.Set) (*runCursor, error) {
 	if token == "" {
 		return nil, nil
 	}
@@ -2180,11 +2145,17 @@ func decodeRunCursor(token, namespace, orkflow string, status orkstackv1.Status,
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
 	}
 	var c runCursor
-	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Namespace != namespace || c.Orkflow != orkflow || c.Status != int32(status) || c.Since != timeString(since) || c.Until != timeString(until) || c.OriginKind != int32(originKind) || c.OriginID != originID || c.LastCreated == "" || c.LastID == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_token does not match these run filters"))
+	if json.Unmarshal(raw, &c) != nil || c.Version != runCursorVersion || c.LastCreated == "" || c.LastID == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
 	}
 	if _, err := time.Parse(time.RFC3339Nano, c.LastCreated); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
+	}
+	if c.Namespace != namespace {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_token does not match this namespace"))
+	}
+	if err := checkFilterKey(c.Filters, set); err != nil {
+		return nil, err
 	}
 	return &c, nil
 }
@@ -2202,17 +2173,6 @@ func afterRunCursor(runs []*orkstackv1.Run, created, id string) []*orkstackv1.Ru
 func parseCursorTime(value string) time.Time {
 	parsed, _ := time.Parse(time.RFC3339Nano, value)
 	return parsed
-}
-func filterRunTimes(runs []*orkstackv1.Run, since, until time.Time) []*orkstackv1.Run {
-	out := runs[:0]
-	for _, run := range runs {
-		t := engine.RunIndexTime(run)
-		if (!since.IsZero() && t.Before(since)) || (!until.IsZero() && !t.Before(until)) {
-			continue
-		}
-		out = append(out, run)
-	}
-	return out
 }
 
 // mergeRuns folds two sources of runs into one page, newest first. preferred

@@ -313,7 +313,7 @@ func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 	}
 
 	listed, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		OrkflowName: "hello-ork",
+		Filters: filters(t, "orkflow_name=hello-ork"),
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns: %v", err)

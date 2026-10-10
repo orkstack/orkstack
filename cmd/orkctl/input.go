@@ -52,23 +52,3 @@ func parseInputValue(raw string) any {
 	}
 	return raw
 }
-
-// parseStatus maps a --status filter onto the Status enum. It accepts the
-// short form (succeeded) and the wire form (STATUS_SUCCEEDED), case
-// insensitively; an empty filter means "any status".
-func parseStatus(raw string) (orkstackv1.Status, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return orkstackv1.Status_STATUS_UNSPECIFIED, nil
-	}
-	name := strings.ToUpper(trimmed)
-	if !strings.HasPrefix(name, "STATUS_") {
-		name = "STATUS_" + name
-	}
-	value, ok := orkstackv1.Status_value[name]
-	if !ok || value == int32(orkstackv1.Status_STATUS_UNSPECIFIED) {
-		return orkstackv1.Status_STATUS_UNSPECIFIED, fmt.Errorf(
-			"invalid --status %q: want one of pending, running, succeeded, failed, canceled, skipped", raw)
-	}
-	return orkstackv1.Status(value), nil
-}

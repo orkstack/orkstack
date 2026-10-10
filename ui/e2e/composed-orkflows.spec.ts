@@ -159,9 +159,18 @@ test('the child run names its parent and the parent lists its children', async (
 	await shot(page, 'screenshot-child-origin.png');
 	await page.getByTestId('run-origin-link').click();
 	await page.waitForURL(new RegExp(`/runs/${runId}`));
+	// O1: Child runs is the runs list filtered to this run's children, and
+	// its CLI equivalent is the same two filters.
+	await page.getByTestId('run-children-cli-trigger').click();
+	await expect(page.getByTestId('run-children-cli-command')).toContainText(
+		`'run' 'list' '--filter' 'origin.kind=PARENT_RUN' '--filter' 'origin.id=${runId}'`
+	);
+	await page.keyboard.press('Escape');
 	await page.getByTestId('run-children-link').click();
 	await page.waitForURL(/\/runs\?/);
+	expect(new URL(page.url()).searchParams.getAll('filter')).toEqual([`origin.id=${runId}`, 'origin.kind=PARENT_RUN']);
 	await expect(page.getByText(childId)).toBeVisible({ timeout: 30_000 });
+	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(1);
 	note(`child ${childId} names parent ${runId}; the parent's Child runs list shows it`);
 	await shot(page, 'screenshot-children-list.png');
 });

@@ -72,7 +72,7 @@ func TestIntegration_CLIComposedTreeAndChildren(t *testing.T) {
 
 	tree := planCLI(t, server, "-n", ns, "run", "get", runID, "--tree").requireExit(t, exitOK)
 	tree.requireContains(t, "release → "+childID+"  release-block@0.1.0  SUCCEEDED", "  sign ", "  publish ")
-	children := planCLI(t, server, "-n", ns, "run", "list", "--origin", "parent-run:"+runID).requireExit(t, exitOK)
+	children := planCLI(t, server, "-n", ns, "run", "list", "--filter", "origin.kind=PARENT_RUN", "--filter", "origin.id="+runID).requireExit(t, exitOK)
 	rows := 0
 	for _, line := range strings.Split(strings.TrimSpace(children.stdout), "\n") {
 		if strings.HasPrefix(line, "ork-") {
@@ -92,7 +92,7 @@ func TestIntegration_CLIComposedTreeAndChildren(t *testing.T) {
 		t.Fatalf("run logs of the parent does not point at the child:\n%s", whole.stdout)
 	}
 	proof.Write(t, "orkctl", "compose-C1.txt", []byte(fmt.Sprintf(
-		"# run get --tree\n%s\n# run list --origin parent-run:%s\n%s\n# run logs --task release\n%s\n# run logs %s\n%s\n",
+		"# run get --tree\n%s\n# run list --filter origin.kind=PARENT_RUN --filter origin.id=%s\n%s\n# run logs --task release\n%s\n# run logs %s\n%s\n",
 		tree.stdout, runID, children.stdout, refused.stderr, childID, logs.stdout)))
 }
 
@@ -109,11 +109,11 @@ func TestIntegration_ComposedRunReadsOnASecondReplica(t *testing.T) {
 
 	tree := planCLI(t, serverB, "-n", ns, "run", "get", runID, "--tree").requireExit(t, exitOK)
 	tree.requireContains(t, "release → "+childID+"  release-block@0.1.0  SUCCEEDED")
-	children := planCLI(t, serverB, "-n", ns, "run", "list", "--origin", "parent-run:"+runID).requireExit(t, exitOK)
+	children := planCLI(t, serverB, "-n", ns, "run", "list", "--filter", "origin.kind=PARENT_RUN", "--filter", "origin.id="+runID).requireExit(t, exitOK)
 	if !strings.Contains(children.stdout, childID) {
 		t.Fatalf("replica B's children list lacks %s:\n%s", childID, children.stdout)
 	}
 	proof.Write(t, "orkctl", "compose-C2.txt", []byte(fmt.Sprintf(
-		"# replica B: run get --tree %s\n%s\n# replica B: run list --origin parent-run:%s\n%s\n",
+		"# replica B: run get --tree %s\n%s\n# replica B: run list --filter origin.kind=PARENT_RUN --filter origin.id=%s\n%s\n",
 		runID, tree.stdout, runID, children.stdout)))
 }

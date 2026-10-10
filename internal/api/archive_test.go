@@ -241,16 +241,19 @@ func TestEngineRestart_RunHistorySurvivesANewProcess(t *testing.T) {
 	}
 
 	onlySucceeded := second.list(t, &orkstackv1.ListRunsRequest{
-		Status: orkstackv1.Status_STATUS_SUCCEEDED,
+		Filters: filters(t, "status=SUCCEEDED"),
 	})
 	if got := listedIDs(onlySucceeded); !sameIDs(got, succeeded) {
-		t.Fatalf("--status SUCCEEDED listed %v after restart, want %v", got, []string{succeeded})
+		t.Fatalf("--filter status=SUCCEEDED listed %v after restart, want %v", got, []string{succeeded})
 	}
 }
 
-// TestListRuns_StatusAndOrkflowFiltersReachTheArchive is the `orkctl run list
-// --status SUCCEEDED --orkflow hello-ork` path with nothing left in memory.
-func TestListRuns_StatusAndOrkflowFiltersReachTheArchive(t *testing.T) {
+// TestListRuns_FiltersReachTheArchiveAsKeyPredicates is the `orkctl run list
+// --filter status=SUCCEEDED --filter orkflow_name=hello-ork` path with nothing
+// left in memory: every filter form — the single-value equalities the archive
+// pushes into its key prefix and the ones it can only decide per key — is
+// answered by the archive alone.
+func TestListRuns_FiltersReachTheArchiveAsKeyPredicates(t *testing.T) {
 	archive := newArchiver(t)
 	start := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
 
@@ -275,25 +278,42 @@ func TestListRuns_StatusAndOrkflowFiltersReachTheArchive(t *testing.T) {
 	}{
 		{
 			name: "status only",
-			req:  &orkstackv1.ListRunsRequest{Status: orkstackv1.Status_STATUS_SUCCEEDED},
+			req:  &orkstackv1.ListRunsRequest{Filters: filters(t, "status=SUCCEEDED")},
 			want: []string{ids[2], ids[0]},
 		},
 		{
+			name: "status not equals",
+			req:  &orkstackv1.ListRunsRequest{Filters: filters(t, "status!=SUCCEEDED")},
+			want: []string{ids[1]},
+		},
+		{
+			name: "status in",
+			req:  &orkstackv1.ListRunsRequest{Filters: filters(t, "status=FAILED,SUCCEEDED")},
+			want: []string{ids[2], ids[1], ids[0]},
+		},
+		{
 			name: "orkflow only",
-			req:  &orkstackv1.ListRunsRequest{OrkflowName: "hello-ork"},
+			req:  &orkstackv1.ListRunsRequest{Filters: filters(t, "orkflow_name=hello-ork")},
+			want: []string{ids[2], ids[1], ids[0]},
+		},
+		{
+			name: "orkflow prefix",
+			req:  &orkstackv1.ListRunsRequest{Filters: filters(t, "orkflow_name^hello")},
 			want: []string{ids[2], ids[1], ids[0]},
 		},
 		{
 			name: "orkflow and status",
-			req: &orkstackv1.ListRunsRequest{
-				OrkflowName: "hello-ork",
-				Status:      orkstackv1.Status_STATUS_FAILED,
-			},
+			req:  &orkstackv1.ListRunsRequest{Filters: filters(t, "orkflow_name=hello-ork", "status=FAILED")},
 			want: []string{ids[1]},
 		},
 		{
 			name: "another orkflow matches nothing",
-			req:  &orkstackv1.ListRunsRequest{OrkflowName: "not-applied"},
+			req:  &orkstackv1.ListRunsRequest{Filters: filters(t, "orkflow_name=not-applied")},
+			want: nil,
+		},
+		{
+			name: "two different equals on one path match nothing",
+			req:  &orkstackv1.ListRunsRequest{Filters: filters(t, "status=FAILED", "status=SUCCEEDED")},
 			want: nil,
 		},
 		{
@@ -388,7 +408,7 @@ func TestSubmitRun_StarterFailureIsArchived(t *testing.T) {
 	}
 
 	restarted := boot(t, archive, "b", clock(start.Add(24*time.Hour), time.Minute))
-	runs := restarted.list(t, &orkstackv1.ListRunsRequest{Status: orkstackv1.Status_STATUS_FAILED})
+	runs := restarted.list(t, &orkstackv1.ListRunsRequest{Filters: filters(t, "status=FAILED")})
 	if len(runs) != 1 {
 		t.Fatalf("archived %d failed runs after restart, want 1", len(runs))
 	}
@@ -406,7 +426,7 @@ func TestListRuns_WithoutAnArchiveIsUnchanged(t *testing.T) {
 		Id: "ork-1", OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED,
 	})
 	resp, err := svc.ListRuns(context.Background(),
-		connect.NewRequest(&orkstackv1.ListRunsRequest{Status: orkstackv1.Status_STATUS_SUCCEEDED}))
+		connect.NewRequest(&orkstackv1.ListRunsRequest{Filters: filters(t, "status=SUCCEEDED")}))
 	if err != nil {
 		t.Fatalf("ListRuns: %v", err)
 	}

@@ -30,6 +30,7 @@
 		verdictWord
 	} from '$lib/compat';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
+	import { runWindowFilters } from '$lib/browsing';
 	import {
 		InterfaceVerdict,
 		OrkflowCallerKind,
@@ -204,9 +205,9 @@
 			// and say why; the server repeats the active-and-recent check
 			// exhaustively at deletion time and is the authority that refuses.
 			const [running, pending, recentPage] = await Promise.all([
-				orkstack(fetch).runs.listRuns({ orkflowName: name, namespace, status: Status.RUNNING, pageSize: 1 }),
-				orkstack(fetch).runs.listRuns({ orkflowName: name, namespace, status: Status.PENDING, pageSize: 1 }),
-				orkstack(fetch).runs.listRuns({ orkflowName: name, namespace, pageSize: 200 })
+				orkstack(fetch).runs.listRuns({ namespace, filters: runWindowFilters(name, 'RUNNING', '', ''), pageSize: 1 }),
+				orkstack(fetch).runs.listRuns({ namespace, filters: runWindowFilters(name, 'PENDING', '', ''), pageSize: 1 }),
+				orkstack(fetch).runs.listRuns({ namespace, filters: runWindowFilters(name, '', '', ''), pageSize: 200 })
 			]);
 			if (sequence !== deleteCheckSequence) return;
 			const cutoff = Date.now() - deletionRunWindowMs;

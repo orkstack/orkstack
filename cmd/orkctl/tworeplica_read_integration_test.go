@@ -17,6 +17,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
@@ -336,7 +337,7 @@ func awaitListedOnB(
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		listed, err := replica.runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-			OrkflowName: orkflowName,
+			Filters: []*orkstackv1.FieldFilter{equalsFilter("orkflow_name", orkflowName)},
 		}))
 		if err != nil {
 			t.Fatalf("ListRuns on %s: %v", replica.name, err)
@@ -609,4 +610,122 @@ func writeTwoReplicaTranscript(
 	fmt.Fprintf(&out, "\narchived stream in MinIO: %d events, identical to B's: %t\n",
 		len(archived), len(archived) == len(streamed))
 	proof.Write(t, "orkctl", "two-replica-read.txt", []byte(out.String()))
+}
+
+// TestTwoReplicas_RunListFiltersAnswerIdentically lists one namespace's runs
+// through `orkctl run list --filter …` on two real `ork` replicas: every
+// filtered listing answers byte-for-byte alike on A and B, and the next-page
+// command A prints, run on B, continues the same listing — the token binds
+// the namespace and the canonical filter set, never a replica.
+//
+// The namespace holds three finished runs of deploy-service, submitted to A
+// and executed by a real Orker, and two runs of another Orkflow only the
+// archive holds (finished before this test, as an expired run's would be),
+// so every filter is answered by both halves of ListRuns.
+func TestTwoReplicas_RunListFiltersAnswerIdentically(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	s := newOriginStack(ctx, t, "filters")
+
+	var submitted []string
+	for range 3 {
+		id := decodeSubmittedID(t, s.cli(t, s.a, exitOK, "--json", "run", "submit", s.orkflow))
+		s.awaitTerminal(ctx, t, s.a, id)
+		submitted = append(submitted, id)
+	}
+	archive, err := artifacts.NewS3RunArchive(ctx, s.artifactCfg)
+	if err != nil {
+		t.Fatalf("NewS3RunArchive: %v", err)
+	}
+	at := time.Now().UTC().Add(-time.Hour)
+	var archived []string
+	for i, status := range []orkstackv1.Status{orkstackv1.Status_STATUS_FAILED, orkstackv1.Status_STATUS_SUCCEEDED} {
+		id := fmt.Sprintf("ork-%d-archived-%d", time.Now().UnixNano(), i)
+		created := at.Add(time.Duration(i) * time.Minute)
+		if err := engine.NewRunArchiver(archive).Archive(ctx, &orkstackv1.Run{
+			Id: id, Namespace: s.namespace, OrkflowName: "build-web", OrkflowVersion: "0.1.0", Status: status,
+			CreatedAt: timestamppb.New(created), StartedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Second)),
+			Origin: &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT},
+		}, nil); err != nil {
+			t.Fatalf("archive %s: %v", id, err)
+		}
+		archived = append(archived, id)
+	}
+	// Both replicas see all five, every one finished, before any comparison:
+	// visibility trails a run's own history.
+	for _, replica := range []*engineReplica{s.a, s.b} {
+		for _, id := range submitted {
+			s.awaitListedFinished(t, replica, id)
+		}
+		s.awaitListed(t, replica, func(ids []string) bool { return len(ids) == 5 })
+	}
+
+	for _, filters := range [][]string{
+		{"orkflow_name=" + s.orkflow},
+		{"orkflow_name!=" + s.orkflow},
+		{"orkflow_name^build"},
+		{"status=FAILED"},
+		{"status!=FAILED", "orkflow_name~web"},
+		{"origin.kind=SUBMIT"},
+		{"created_at<" + at.Add(30*time.Second).Format(time.RFC3339Nano)},
+	} {
+		args := []string{"--json", "run", "list"}
+		for _, f := range filters {
+			args = append(args, "--filter", f)
+		}
+		onA := s.cli(t, s.a, exitOK, args...)
+		onB := s.cli(t, s.b, exitOK, args...)
+		if onA != onB {
+			t.Fatalf("run list %v disagrees between replicas:\nA: %s\nB: %s", filters, onA, onB)
+		}
+		if ids := listedIDs(t, onB); len(ids) == 0 {
+			t.Fatalf("run list %v listed nothing; every filter here selects a run", filters)
+		}
+	}
+	if ids := listedIDs(t, s.cli(t, s.b, exitOK, "--json", "run", "list", "--filter", "orkflow_name^build")); len(ids) != 2 ||
+		!containsID(ids, archived[0]) || !containsID(ids, archived[1]) {
+		t.Fatalf("orkflow_name^build on B = %v, want the two archived runs %v", ids, archived)
+	}
+
+	// Page through deploy-service one run at a time, alternating replicas:
+	// each page's printed command, with its token, is run on the other one.
+	filterArgs := []string{"--filter", "orkflow_name=" + s.orkflow, "--filter", "status=SUCCEEDED"}
+	replicas := []*engineReplica{s.a, s.b}
+	var visited []string
+	token := ""
+	for page := 0; page < 5; page++ {
+		args := append([]string{"run", "list"}, filterArgs...)
+		args = append(args, "--limit", "1")
+		if token != "" {
+			args = append(args, "--page-token", token)
+		}
+		out := s.cli(t, replicas[page%2], exitOK, args...)
+		for _, id := range submitted {
+			if strings.Contains(out, id) {
+				visited = append(visited, id)
+			}
+		}
+		idx := strings.Index(out, "Next page: ")
+		if idx < 0 {
+			break
+		}
+		line := strings.TrimSpace(out[idx+len("Next page: "):])
+		want := fmt.Sprintf("orkctl -n %s run list --filter 'orkflow_name=%s' --filter 'status=SUCCEEDED' --limit 1 --page-token ", s.namespace, s.orkflow)
+		if !strings.HasPrefix(line, want) {
+			t.Fatalf("next-page line = %q, want it to start %q", line, want)
+		}
+		token = strings.TrimPrefix(line, want)
+	}
+	if len(visited) != len(submitted) {
+		t.Fatalf("paging across replicas visited %v, want each of %v once", visited, submitted)
+	}
+	seen := map[string]bool{}
+	for _, id := range visited {
+		if seen[id] {
+			t.Fatalf("paging across replicas visited %s twice: %v", id, visited)
+		}
+		seen[id] = true
+	}
+	proof.Write(t, "orkctl", "run-list-filters-two-replica.txt", []byte(s.transcript.String()))
+	t.Logf("EVIDENCE run_list_filters_two_replica visited=%v", visited)
 }

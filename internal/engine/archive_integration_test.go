@@ -177,7 +177,7 @@ func startEngine(
 // TestIntegration_RunArchivesToS3AndSurvivesEngineRestart is the archive
 // contract on real infrastructure: a run executed on real Temporal is written to
 // real S3 as JSONL, and a second engine with an empty read model still answers
-// `run get` and `run list --status SUCCEEDED` for it.
+// `run get` and `run list --filter status=SUCCEEDED` for it.
 func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
@@ -320,16 +320,15 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 		t.Fatal("recovered run lost its artifact references")
 	}
 
-	// ---- `run list --status SUCCEEDED` is answered from S3 -------------------
+	// ---- `run list --filter status=SUCCEEDED` is answered from S3 -----------
 	listed, err := second.client.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		OrkflowName: "hello-ork",
-		Status:      orkstackv1.Status_STATUS_SUCCEEDED,
+		Filters: equalsFilters("orkflow_name", "hello-ork", "status", "SUCCEEDED"),
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns after restart: %v", err)
 	}
 	if !containsRun(listed.Msg.GetRuns(), runID) {
-		t.Fatalf("`run list --orkflow hello-ork --status SUCCEEDED` did not return %s (got %v)",
+		t.Fatalf("`run list --filter orkflow_name=hello-ork --filter status=SUCCEEDED` did not return %s (got %v)",
 			runID, runIDsOf(listed.Msg.GetRuns()))
 	}
 	for _, run := range listed.Msg.GetRuns() {
@@ -342,14 +341,13 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	}
 
 	failedOnly, err := second.client.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		OrkflowName: "hello-ork",
-		Status:      orkstackv1.Status_STATUS_FAILED,
+		Filters: equalsFilters("orkflow_name", "hello-ork", "status", "FAILED"),
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns(FAILED): %v", err)
 	}
 	if containsRun(failedOnly.Msg.GetRuns(), runID) {
-		t.Fatalf("a succeeded run was returned by --status FAILED")
+		t.Fatalf("a succeeded run was returned by --filter status=FAILED")
 	}
 
 	writeArchiveProof(t, runID, uri, body, recovered, listed.Msg.GetRuns())
@@ -451,4 +449,16 @@ func indentJSON(t *testing.T, data []byte) []byte {
 	}
 	pretty.WriteByte('\n')
 	return pretty.Bytes()
+}
+
+// equalsFilters is one EQUALS filter per field/value pair, the wire form of
+// `--filter field=value`.
+func equalsFilters(pairs ...string) []*orkstackv1.FieldFilter {
+	out := make([]*orkstackv1.FieldFilter, 0, len(pairs)/2)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		out = append(out, &orkstackv1.FieldFilter{
+			Field: pairs[i], Op: orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []string{pairs[i+1]},
+		})
+	}
+	return out
 }

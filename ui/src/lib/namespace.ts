@@ -8,7 +8,7 @@
 // no control to reach it.
 //
 // It lives in the query string because it is a coordinate of what the page is
-// showing, on the same terms as `?orkflow=`: a reload, a back button, a
+// showing, on the same terms as a list's `?filter=`: a reload, a back button, a
 // bookmark and a pasted link all keep it, and the server render and the
 // browser agree without a store to synchronize.
 

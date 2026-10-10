@@ -286,7 +286,7 @@ func TestRunPlan_LeavesNoRunBehind(t *testing.T) {
 	countRuns := func(replica *engineReplica) int {
 		// Filtered to this test's own Orkflow: the shared bucket's archive holds
 		// other suites' runs of the default namespace.
-		resp, err := replica.runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{OrkflowName: name}))
+		resp, err := replica.runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{Filters: []*orkstackv1.FieldFilter{equalsFilter("orkflow_name", name)}}))
 		if err != nil {
 			t.Fatalf("ListRuns on %s: %v", replica.name, err)
 		}

@@ -102,9 +102,11 @@ func TestConnectJSONInputAcceptsShortAndPrefixedEnumNames(t *testing.T) {
 		name string
 		body string
 	}{
-		{"short form", `{"status":"RUNNING"}`},
-		{"proto form", `{"status":"STATUS_RUNNING"}`},
-		{"lower case", `{"status":"running"}`},
+		// The filter operator is the request's enum; the status value is a
+		// filter value, which the filter compiler reads in the same dialect.
+		{"short form", `{"filters":[{"field":"status","op":"EQUALS","values":["RUNNING"]}]}`},
+		{"proto form", `{"filters":[{"field":"status","op":"FILTER_OPERATOR_EQUALS","values":["STATUS_RUNNING"]}]}`},
+		{"lower case", `{"filters":[{"field":"status","op":"equals","values":["running"]}]}`},
 	}
 
 	for _, tc := range cases {
@@ -125,25 +127,22 @@ func TestConnectJSONInputAcceptsShortAndPrefixedEnumNames(t *testing.T) {
 }
 
 // Tolerating two spellings must not turn into tolerating anything: a name that
-// is neither spelling must never be read as a real status. Connect's codec
-// contract (DiscardUnknown, unchanged here) drops it, so the filter stays
-// unset and every run comes back.
-func TestConnectJSONInputNeverInventsAStatusFromAnUnknownName(t *testing.T) {
+// is neither spelling must never be read as a real operator. Connect's codec
+// contract (DiscardUnknown, unchanged here) drops it, so the operator stays
+// unset — and a filter with no operator is refused, never widened into "no
+// filter".
+func TestConnectJSONInputNeverInventsAnOperatorFromAnUnknownName(t *testing.T) {
 	f := newFixture(t)
 	f.runs.Save(&orkstackv1.Run{Id: "run-a", Status: orkstackv1.Status_STATUS_RUNNING})
 	f.runs.Save(&orkstackv1.Run{Id: "run-b", Status: orkstackv1.Status_STATUS_SUCCEEDED})
 
 	code, body := f.postJSON(t, orkstackv1connect.RunServiceListRunsProcedure,
-		`{"status":"BANANA"}`)
-	if code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (unknown values are discarded)\nbody: %s", code, body)
+		`{"filters":[{"field":"status","op":"BANANA","values":["RUNNING"]}]}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (the operator is discarded, then refused)\nbody: %s", code, body)
 	}
-	listed := &orkstackv1.ListRunsResponse{}
-	if err := api.UnmarshalJSON([]byte(body), listed); err != nil {
-		t.Fatalf("decode response %q: %v", body, err)
-	}
-	if len(listed.GetRuns()) != 2 {
-		t.Fatalf("runs = %v, want both (no filter applied)", listed.GetRuns())
+	if !strings.Contains(body, "filters[0]: status: no operator") {
+		t.Fatalf("body = %s, want the no-operator refusal", body)
 	}
 }
 

@@ -1,15 +1,14 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import {
-	ORIGIN_KIND_SLUGS,
 	UNRECORDED,
-	originKindFromSlug,
 	originKindSlug,
 	originLabel,
 	originLinkPath,
 	originReferenceURL
 } from '../src/lib/origin';
-import { runFilterError } from '../src/lib/browsing';
+import { FilterOperator, specFor } from '../src/lib/listFilter';
+import { ListRunsRequestSchema } from '../src/lib/gen/orkstack/v1/service_pb';
 import { RunOriginKind, RunOriginKindSchema, RunOriginSchema } from '../src/lib/gen/orkstack/v1/run_pb';
 
 // The descriptor walk: a kind added to the proto without a slug fails here,
@@ -23,13 +22,9 @@ test('every declared origin kind has a slug that round-trips', () => {
 		}
 		const want = value.name.replace(/^RUN_ORIGIN_KIND_/, '').toLowerCase().replaceAll('_', '-');
 		expect(slug).toBe(want);
-		expect(originKindFromSlug(slug)).toBe(value.number);
 	}
 	expect(originKindSlug(RunOriginKind.PARENT_RUN)).toBe('parent-run');
-	expect(ORIGIN_KIND_SLUGS).toEqual(['submit', 'trigger', 'schedule', 'parent-run', 'run-again']);
-	for (const bad of ['', 'unspecified', 'Trigger', 'parent_run', 'bogus']) {
-		expect(originKindFromSlug(bad)).toBe(RunOriginKind.UNSPECIFIED);
-	}
+	expect(originKindSlug(42 as RunOriginKind)).toBe('');
 });
 
 test('a run with no origin is unrecorded, never submit', () => {
@@ -60,8 +55,13 @@ test('an origin links to the Triggers or Schedules tab or to the source run', ()
 	expect(originLinkPath(create(RunOriginSchema, { kind: RunOriginKind.SUBMIT }), 'deploy')).toBeNull();
 });
 
-test('the runs filter refuses an unknown origin kind and an id without a kind', () => {
-	expect(runFilterError('', '', '', 'bogus', '')).toContain('Unknown origin kind');
-	expect(runFilterError('', '', '', '', 'trg-1')).toBe('An origin id needs an origin kind.');
-	expect(runFilterError('', '', '', 'trigger', 'trg-1')).toBeNull();
+test('the runs list filters by origin kind, and by origin id only within a kind', () => {
+	const fields = specFor(ListRunsRequestSchema).fields;
+	const kind = fields.find((f) => f.path === 'origin.kind');
+	const id = fields.find((f) => f.path === 'origin.id');
+	expect(kind?.kind).toBe('enum');
+	expect(kind?.operators).toEqual([FilterOperator.EQUALS]);
+	expect(kind?.values).toEqual(['SUBMIT', 'TRIGGER', 'SCHEDULE', 'PARENT_RUN', 'RUN_AGAIN']);
+	expect(id?.operators).toEqual([FilterOperator.EQUALS]);
+	expect(id?.requires).toBe('origin.kind');
 });

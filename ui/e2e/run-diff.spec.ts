@@ -122,7 +122,10 @@ test.beforeAll(async () => {
 	// wait until both are there, so what the dialog pre-selects is the settled
 	// answer rather than a race with visibility.
 	await waitFor('both runs listed', async () => {
-		const listed = await rpc<{ runs?: { id: string }[] }>('RunService/ListRuns', { orkflowName: NAME, pageSize: 20 });
+		const listed = await rpc<{ runs?: { id: string }[] }>('RunService/ListRuns', {
+			filters: [{ field: 'orkflow_name', op: 'FILTER_OPERATOR_EQUALS', values: [NAME] }],
+			pageSize: 20
+		});
 		const ids = (listed.runs ?? []).map((run) => run.id);
 		return ids.includes(succeeded) && ids.includes(failed);
 	});

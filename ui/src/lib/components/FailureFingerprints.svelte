@@ -13,7 +13,7 @@
 	// shared spellings, not a second opinion.
 	import { durationFromMs, timestampFromDate, type Timestamp } from '@bufbuild/protobuf/wkt';
 	import { errorMessage, orkstack } from '$lib/client';
-	import { listHref } from '$lib/browsing';
+	import { listHref, runWindowFilters } from '$lib/browsing';
 	import { namespaceLabel } from '$lib/namespace';
 	import { shellQuote } from '$lib/runDetail';
 	import {
@@ -122,13 +122,18 @@
 	// what it has: the namespace, the orkflow when it is a grouped dimension,
 	// status failed, and the exact window the breakdown answered.
 	function rowHref(orkflowName: string): string {
-		return listHref('/runs', {
-			ns: namespaceLabel(namespace),
-			orkflow: groupedByOrkflow ? orkflowName : '',
-			status: 'failed',
-			since: iso(result?.windowSince),
-			until: iso(result?.windowUntil)
-		});
+		return listHref(
+			'/runs',
+			{ ns: namespaceLabel(namespace) },
+			{
+				filter: runWindowFilters(
+					groupedByOrkflow ? orkflowName : '',
+					'FAILED',
+					iso(result?.windowSince),
+					iso(result?.windowUntil)
+				)
+			}
+		);
 	}
 
 	const columns = $derived(result?.groupBy.length ? result.groupBy : groupBy);

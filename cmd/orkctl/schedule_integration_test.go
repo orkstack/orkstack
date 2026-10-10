@@ -300,7 +300,7 @@ func (s *scheduleStack) awaitSchedule(t *testing.T, name string, within time.Dur
 // runsOf lists the runs a schedule started.
 func (s *scheduleStack) runsOf(t *testing.T, scheduleID string) []runRow {
 	t.Helper()
-	out := s.cli(t, s.a, exitOK, "--json", "run", "list", "--origin", "schedule:"+scheduleID)
+	out := s.cli(t, s.a, exitOK, "--json", "run", "list", "--filter", "origin.kind=SCHEDULE", "--filter", "origin.id="+scheduleID)
 	var response struct {
 		Runs []runRow `json:"runs"`
 	}
@@ -525,8 +525,8 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 	s.awaitRunStatus(t, runID, 3*time.Minute, "SUCCEEDED")
 	runs := s.awaitRuns(t, id, 90*time.Second, func(r []runRow) bool { return len(r) == 1 && r[0].ID == runID })
 	t.Logf("EVIDENCE run_list_origin_schedule=%v", runs[0].ID)
-	if ids := listedIDs(t, s.cli(t, s.a, exitOK, "--json", "run", "list", "--origin", "submit")); containsID(ids, runID) {
-		t.Fatalf("--origin submit lists the scheduled run %s", runID)
+	if ids := listedIDs(t, s.cli(t, s.a, exitOK, "--json", "run", "list", "--filter", "origin.kind=SUBMIT")); containsID(ids, runID) {
+		t.Fatalf("--filter origin.kind=SUBMIT lists the scheduled run %s", runID)
 	}
 
 	prefix := fmt.Sprintf("%s/%s/schedule/%s/", artifacts.RunOriginIndexNamespace, s.namespace, id)

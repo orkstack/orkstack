@@ -106,7 +106,7 @@ tasks:
 
 async function runsOfFlow(): Promise<number> {
 	const answer = await rpc<{ runs?: unknown[] }>('RunService/ListRuns', {
-		orkflowName: FLOW,
+		filters: [{ field: 'orkflow_name', op: 'FILTER_OPERATOR_EQUALS', values: [FLOW] }],
 		namespace: NS
 	});
 	return (answer.runs ?? []).length;

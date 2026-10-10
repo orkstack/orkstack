@@ -20,7 +20,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { selectOption } from './uiHelpers';
+import { OP, addListFilter, selectOption } from './uiHelpers';
 
 // Orkflow schedules, against a real engine, Orker, Temporal and MinIO: the
 // Schedules tab creates a schedule the cluster keeps (next fire times and
@@ -302,15 +302,16 @@ test('the runs list filters to one schedule', async ({ page }) => {
 	await page.goto(`${UI}/runs?ns=${NS}`);
 	await expect(page.getByTestId(`run-row-${runId}`)).toBeVisible({ timeout: 60_000 });
 	await expect(page.getByTestId(`run-row-${submitted}`)).toBeVisible({ timeout: 60_000 });
-	await selectOption(page, 'run-filter-origin', 'schedule');
-	await page.getByTestId('run-filter-origin-id').fill(id);
+	await page.waitForLoadState('networkidle');
+	await addListFilter(page, 'run', { field: 'origin.kind', op: OP.equals, select: 'SCHEDULE' });
+	await addListFilter(page, 'run', { field: 'origin.id', op: OP.equals, value: id });
 	await page.getByTestId('run-filters-apply').click();
-	await expect(page).toHaveURL(new RegExp(`origin=schedule&originId=${id}`));
+	await expect.poll(() => new URL(page.url()).searchParams.getAll('filter')).toEqual([`origin.id=${id}`, 'origin.kind=SCHEDULE']);
 	await expect(page.getByTestId(`run-row-${runId}`)).toBeVisible();
 	await expect(page.getByTestId(`run-row-${submitted}`)).toHaveCount(0);
 	await expect(page.getByTestId(`run-row-origin-${runId}`)).toHaveText(`schedule ${id}`);
 	await expect(page.locator('[data-testid^="run-row-origin-"]')).toHaveCount(1);
 	await shot(page, 'screenshot-runs-filtered-by-schedule.png');
-	note(`list filter schedule:${id} -> [${runId}], not the submitted ${submitted}`);
+	note(`list filters origin.kind=SCHEDULE origin.id=${id} -> [${runId}], not the submitted ${submitted}`);
 	await rpc('ScheduleService/DeleteSchedule', { namespace: NS, name: 'listed' });
 });

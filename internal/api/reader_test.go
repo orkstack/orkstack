@@ -208,6 +208,19 @@ func (f *fakeReader) ListRuns(_ context.Context, q engine.RunQuery) ([]*orkstack
 		if q.OriginID != "" && run.GetOrigin().GetId() != q.OriginID {
 			continue
 		}
+		// The residual filters and the cursor, exactly as the production
+		// reader's matchesRunQuery applies them: on RunIndexTime, and Keep on
+		// the filter view rather than the raw run.
+		created := engine.RunIndexTime(run)
+		if (!q.Since.IsZero() && created.Before(q.Since)) || (!q.Until.IsZero() && !created.Before(q.Until)) {
+			continue
+		}
+		if !q.BeforeCreated.IsZero() && !(created.Before(q.BeforeCreated) || (created.Equal(q.BeforeCreated) && run.GetId() < q.BeforeID)) {
+			continue
+		}
+		if q.Keep != nil && !q.Keep(engine.RunFilterView(run)) {
+			continue
+		}
 		out = append(out, run)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -410,7 +423,7 @@ func TestListRuns_AnswersForRunsThisReplicaNeverSaw(t *testing.T) {
 
 	// The filters have to reach the record too, not a local index of them.
 	filtered, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		OrkflowName: "something-else",
+		Filters: filters(t, "orkflow_name=something-else"),
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns(orkflow_name): %v", err)
@@ -462,8 +475,7 @@ func TestListRuns_ArchiveStillAnswersAStatusVisibilityCannotDecode(t *testing.T)
 	}}, func(cfg *api.Config) { cfg.Archive = archive })
 
 	listed, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		OrkflowName: "deploy",
-		Status:      orkstackv1.Status_STATUS_PENDING,
+		Filters: filters(t, "orkflow_name=deploy", "status=PENDING"),
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns(status=PENDING): %v", err)
@@ -483,7 +495,7 @@ func TestListRuns_ArchiveStillAnswersAStatusVisibilityCannotDecode(t *testing.T)
 //
 // The deletion gate needs an exhaustive walk, and for a while any request that
 // named an orkflow and a non-terminal status was given one — which made
-// `orkctl run list --orkflow X --status running` read the whole visibility
+// `orkctl run list --filter orkflow_name=X --filter status=RUNNING` read the whole visibility
 // index and, past the scan budget, fail with a sentence about deletion safety.
 // The exhaustive walk belongs to Service.completeOrkflowRuns alone. From the
 // wire, the status is answered by a visibility PREDICATE instead, so the
@@ -512,9 +524,8 @@ func TestListRuns_StaysBoundedAndNeverAsksForAnExhaustiveWalk(t *testing.T) {
 	f := newReaderFixture(t, &fakeReader{runs: runs})
 
 	asked, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		OrkflowName: "deploy",
-		Status:      orkstackv1.Status_STATUS_RUNNING,
-		PageSize:    10,
+		Filters:  filters(t, "orkflow_name=deploy", "status=RUNNING"),
+		PageSize: 10,
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns(page_size=10): %v", err)
@@ -525,8 +536,7 @@ func TestListRuns_StaysBoundedAndNeverAsksForAnExhaustiveWalk(t *testing.T) {
 
 	// page_size 0 has always meant "one default page", never "all of them".
 	unstated, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		OrkflowName: "deploy",
-		Status:      orkstackv1.Status_STATUS_RUNNING,
+		Filters: filters(t, "orkflow_name=deploy", "status=RUNNING"),
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns(no page_size): %v", err)

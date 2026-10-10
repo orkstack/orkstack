@@ -4,7 +4,9 @@
 // live. Every sentence mirrors cmd/orkctl/compose.go.
 import { Status } from './gen/orkstack/v1/common_pb';
 import { EventType, type Event, type Run, type TaskChild } from './gen/orkstack/v1/run_pb';
-import { withNamespace } from './namespace';
+import { listHref } from './browsing';
+import { FilterOperator, filterOf } from './listFilter';
+import { namespaceLabel, withNamespace } from './namespace';
 import { statusLabel } from './status';
 
 /** "name@version": the child as the parent pinned it. */
@@ -25,10 +27,19 @@ export function childOrkflowHref(namespace: string, name: string, version: strin
 
 /**
  * A parent's children: the runs list filtered to runs whose origin is this
- * run (`orkctl run list --origin parent-run:<id>`).
+ * run (`orkctl run list --filter origin.kind=PARENT_RUN --filter
+ * origin.id=<id>`).
  */
 export function childrenListHref(namespace: string, parentRunId: string): string {
-	return withNamespace(`/runs?origin=parent-run&originId=${encodeURIComponent(parentRunId)}`, namespace);
+	return listHref('/runs', { ns: namespaceLabel(namespace) }, { filter: childrenFilters(parentRunId) });
+}
+
+/** The two filters that select a parent's child runs. */
+export function childrenFilters(parentRunId: string) {
+	return [
+		filterOf('origin.kind', FilterOperator.EQUALS, ['PARENT_RUN']),
+		filterOf('origin.id', FilterOperator.EQUALS, [parentRunId])
+	];
 }
 
 /** One child task in the roll-up: its id and status. */

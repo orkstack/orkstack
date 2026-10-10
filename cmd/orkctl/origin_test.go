@@ -27,43 +27,6 @@ func TestOriginKindSlug_MatchesTheEnum(t *testing.T) {
 		if !ok || slug != want {
 			t.Fatalf("%s slug = %q (%v), want %q", value.Name(), slug, ok, want)
 		}
-		if back, ok := parseOriginKindSlug(slug); !ok || back != kind {
-			t.Fatalf("parseOriginKindSlug(%q) = %v, %v", slug, back, ok)
-		}
-	}
-	if _, ok := parseOriginKindSlug("unspecified"); ok {
-		t.Fatal("unspecified parsed as a kind")
-	}
-}
-
-func TestParseOriginFilter(t *testing.T) {
-	for _, tc := range []struct {
-		in   string
-		kind orkstackv1.RunOriginKind
-		id   string
-	}{
-		{"", orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED, ""},
-		{"trigger", orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, ""},
-		{"trigger:trg-x", orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, "trg-x"},
-		{"parent-run:ork-y", orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, "ork-y"},
-		{"schedule:sch-a:b", orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, "sch-a:b"},
-	} {
-		kind, id, err := parseOriginFilter(tc.in)
-		if err != nil || kind != tc.kind || id != tc.id {
-			t.Fatalf("parseOriginFilter(%q) = %v, %q, %v; want %v, %q", tc.in, kind, id, err, tc.kind, tc.id)
-		}
-	}
-	_, _, err := parseOriginFilter("bogus")
-	if err == nil {
-		t.Fatal("bogus parsed")
-	}
-	for _, slug := range []string{"submit", "trigger", "schedule", "parent-run", "run-again"} {
-		if !strings.Contains(err.Error(), slug) {
-			t.Fatalf("error %q does not name %s", err, slug)
-		}
-	}
-	if _, _, err := parseOriginFilter("trigger:"); err == nil {
-		t.Fatal("an empty id after a colon parsed")
 	}
 }
 
@@ -150,7 +113,7 @@ func seedOriginRuns(f *fixture) {
 	}
 }
 
-func TestRunList_SendsOriginFilter(t *testing.T) {
+func TestRunList_SendsOriginFilters(t *testing.T) {
 	f := newFixture(t)
 	seedOriginRuns(f)
 	all := f.run("run", "list").requireExit(t, exitOK)
@@ -160,23 +123,27 @@ func TestRunList_SendsOriginFilter(t *testing.T) {
 			t.Fatalf("an unrecorded origin renders %q, want a dash in its column", line)
 		}
 	}
-	filtered := f.run("run", "list", "--origin", "trigger:trg-4a1c0e2b7d3f8156").requireExit(t, exitOK)
+	filtered := f.run("run", "list", "--filter", "origin.kind=TRIGGER", "--filter", "origin.id=trg-4a1c0e2b7d3f8156").requireExit(t, exitOK)
 	requireGolden(t, "run-list-origin.golden", filtered.stdout)
 	if strings.Contains(filtered.stdout, "run-submit") || strings.Contains(filtered.stdout, "run-legacy") {
 		t.Fatalf("the filtered list shows other runs:\n%s", filtered.stdout)
 	}
-	submit := f.run("run", "list", "--origin", "submit").requireExit(t, exitOK)
+	submit := f.run("run", "list", "--filter", "origin.kind=submit").requireExit(t, exitOK)
 	if !strings.Contains(submit.stdout, "run-submit") || strings.Contains(submit.stdout, "run-legacy") ||
 		strings.Contains(submit.stdout, "run-trigger") {
-		t.Fatalf("--origin submit =\n%s", submit.stdout)
+		t.Fatalf("--filter origin.kind=submit =\n%s", submit.stdout)
 	}
-	bad := f.run("run", "list", "--origin", "bogus")
-	if bad.code == exitOK || !strings.Contains(bad.stderr, "parent-run") {
-		t.Fatalf("--origin bogus = exit %d, stderr %q", bad.code, bad.stderr)
+	bad := f.run("run", "list", "--filter", "origin.kind=bogus")
+	if bad.code == exitOK || !strings.Contains(bad.stderr, "PARENT_RUN") {
+		t.Fatalf("--filter origin.kind=bogus = exit %d, stderr %q", bad.code, bad.stderr)
 	}
-	paged := f.run("run", "list", "--origin", "trigger", "--limit", "1")
+	alone := f.run("run", "list", "--filter", "origin.id=run-submit")
+	if alone.code == exitOK || !strings.Contains(alone.stderr, "origin.id needs an equals (=) filter on origin.kind") {
+		t.Fatalf("--filter origin.id alone = exit %d, stderr %q", alone.code, alone.stderr)
+	}
+	paged := f.run("run", "list", "--filter", "origin.kind=TRIGGER", "--limit", "1")
 	paged.requireExit(t, exitOK)
-	if strings.Contains(paged.stdout, "Next page") && !strings.Contains(paged.stdout, "--origin trigger") {
+	if strings.Contains(paged.stdout, "Next page") && !strings.Contains(paged.stdout, "--filter 'origin.kind=TRIGGER'") {
 		t.Fatalf("the next-page command drops the origin filter its token is bound to:\n%s", paged.stdout)
 	}
 }

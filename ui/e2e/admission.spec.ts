@@ -139,7 +139,7 @@ async function openSubmitDialog(page: Page, name: string): Promise<void> {
 async function runningCount(): Promise<number> {
 	const answer = await rpc<{ runs?: unknown[] }>('RunService/ListRuns', {
 		namespace: NS,
-		status: 'STATUS_RUNNING'
+		filters: [{ field: 'status', op: 'FILTER_OPERATOR_EQUALS', values: ['RUNNING'] }]
 	});
 	return (answer.runs ?? []).length;
 }

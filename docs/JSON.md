@@ -61,18 +61,21 @@ and `EVENT_TYPE_*` value names. This is a serialization dialect, not a rename.
 ## Input tolerance
 
 Requests may spell an enum value three ways. All of these select the same
-filter:
+runs — the filter's operator is the request's enum, and the status, a filter
+value, is read in the same dialect:
 
 ```bash
-curl -H 'Content-Type: application/json' -d '{"status":"RUNNING"}'        …/RunService/ListRuns
-curl -H 'Content-Type: application/json' -d '{"status":"STATUS_RUNNING"}' …/RunService/ListRuns
-curl -H 'Content-Type: application/json' -d '{"status":"running"}'        …/RunService/ListRuns
+curl -H 'Content-Type: application/json' -d '{"filters":[{"field":"status","op":"EQUALS","values":["RUNNING"]}]}'                 …/RunService/ListRuns
+curl -H 'Content-Type: application/json' -d '{"filters":[{"field":"status","op":"FILTER_OPERATOR_EQUALS","values":["STATUS_RUNNING"]}]}' …/RunService/ListRuns
+curl -H 'Content-Type: application/json' -d '{"filters":[{"field":"status","op":"equals","values":["running"]}]}'                 …/RunService/ListRuns
 ```
 
 A name that is neither spelling is not invented into a value: Connect's codec
-contract discards unknown input, so the field stays unset.
+contract discards unknown input, so the field stays unset — and a filter whose
+operator is unset is refused (`filters[0]: status: no operator`), never read
+as no filter.
 
-`orkctl --status` accepts both forms, in any case (`cmd/orkctl/input.go`).
+`--filter` enum values accept both forms, in any case.
 
 ### Filter values
 

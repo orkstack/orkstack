@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -156,10 +157,14 @@ type ArchiveQuery struct {
 	BeforeCreated time.Time
 	BeforeID      string
 	// OriginKind selects the origin index instead of the run index; OriginID
-	// narrows it to one originating object (ListRunsRequest.origin_kind and
-	// origin_id). A run archived with no origin is matched by neither.
+	// narrows it to one originating object (an origin.kind and origin.id
+	// equals filter). A run archived with no origin is matched by neither.
 	OriginKind orkstackv1.RunOriginKind
 	OriginID   string
+	// Keep is the residual filter set. It is evaluated on indexProjection of
+	// each index entry during the key scan, so a key it rejects is never
+	// hydrated; nil keeps every entry the fields above keep.
+	Keep func(*orkstackv1.Run) bool
 	// Limit caps the runs returned, newest first. 0 means DefaultArchivePageSize
 	// unless Exhaustive is set, in which case zero means every matching entry.
 	Limit      int
@@ -339,6 +344,7 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		BeforeRunID: q.BeforeID,
 		OriginKind:  q.OriginKind,
 		OriginID:    q.OriginID,
+		Keep:        archiveKeep(q.Keep),
 		Limit:       limit,
 	})
 	if err != nil {
@@ -376,6 +382,37 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		out = append(out, run)
 	}
 	return out, nil
+}
+
+// archiveKeep adapts a residual run filter to the index scan: the filter sees
+// indexProjection(entry), never a body.
+func archiveKeep(keep func(*orkstackv1.Run) bool) func(artifacts.RunIndexEntry) bool {
+	if keep == nil {
+		return nil
+	}
+	return func(entry artifacts.RunIndexEntry) bool { return keep(indexProjection(entry)) }
+}
+
+// indexProjection is the Run an archive index key describes: its id,
+// namespace, Orkflow, status (parsed from the key's lowercase segment),
+// created_at (the key's stamp, which the archiver wrote from RunIndexTime, so
+// it is already RunFilterView's created_at) and, when the entry came from the
+// origin index, its origin kind and id. A key whose status names no Status
+// projects UNSPECIFIED, which no status filter selects.
+func indexProjection(entry artifacts.RunIndexEntry) *orkstackv1.Run {
+	run := &orkstackv1.Run{
+		Id:          entry.RunID,
+		Namespace:   entry.Namespace,
+		OrkflowName: entry.Orkflow,
+		Status:      orkstackv1.Status(orkstackv1.Status_value["STATUS_"+strings.ToUpper(entry.Status)]),
+	}
+	if !entry.Time.IsZero() {
+		run.CreatedAt = timestamppb.New(entry.Time)
+	}
+	if entry.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
+		run.Origin = &orkstackv1.RunOrigin{Kind: entry.OriginKind, Id: entry.OriginID}
+	}
+	return run
 }
 
 // archiveStatus renders a Status the way an index key spells it: lowercase and
