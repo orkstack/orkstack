@@ -202,7 +202,9 @@ test('4: a submit past the enforced budget shows the server’s sentence verbati
 });
 
 test('5: Admin → Usage lists every namespace; the budget’s share only in its own window', async ({ page }) => {
-	await page.goto(`${UI_ORIGIN}/admin/usage?window=24h`);
+	// The list is paged (F-ui-perf-8) and the bucket is shared with other
+	// proofs, so this spec's two namespaces are named by a filter.
+	await page.goto(`${UI_ORIGIN}/admin/usage?window=24h&filter=${encodeURIComponent(`name=${NS},${FREE}`)}`);
 	await expect(page.getByTestId('usage-window-24h')).toHaveAttribute('aria-current', 'page');
 	await expect(page.getByTestId(`usage-ns-${NS}-budget`)).toHaveText('1 cpu-s per 1h0m0s (window differs)', { timeout: 120_000 });
 	await expect(page.getByTestId(`usage-ns-${NS}-runs`)).toHaveText('1');
@@ -213,6 +215,46 @@ test('5: Admin → Usage lists every namespace; the budget’s share only in its
 	note(`admin usage row ${NS}: cpu-seconds ${await page.getByTestId(`usage-ns-${NS}-cpu-seconds`).innerText()}, budget ${await page.getByTestId(`usage-ns-${NS}-budget`).innerText()}`);
 	await page.screenshot({ path: out('screenshot-admin-usage.png'), fullPage: true });
 	await page.getByTestId('usage-admin-cli-trigger').click();
+});
+
+// F-ui-perf-8: Admin → Usage asks the usage of the rows on its page only,
+// and page 2 loads its own rows.
+test('5b: Admin → Usage pages its namespaces and measures only the page shown', async ({ page }) => {
+	const prefix = `budgets-pg-${STAMP}-`;
+	const names = Array.from({ length: 12 }, (_, i) => `${prefix}${String(i).padStart(2, '0')}`);
+	for (const name of names) await rpc('NamespaceService/CreateNamespace', { namespace: { name } });
+	try {
+		const asked: string[] = [];
+		page.on('request', (request) => {
+			if (request.url().endsWith('/orkstack.v1.StatsService/GetUsage')) {
+				asked.push(JSON.parse(request.postData() ?? '{}').namespace ?? '');
+			}
+		});
+		await page.goto(`${UI_ORIGIN}/admin/usage?window=24h&size=10&filter=${encodeURIComponent(`name^${prefix}`)}`);
+		for (const name of names.slice(0, 10)) {
+			await expect(page.getByTestId(`usage-ns-${name}-runs`)).toHaveText('0', { timeout: 120_000 });
+		}
+		await expect(page.getByTestId(`usage-ns-${names[10]}`)).toHaveCount(0);
+		await expect(page.getByTestId('usage-namespaces-page-status')).toContainText('10 namespaces');
+		// The first page was rendered on the server; its client-side measurement
+		// is the browser's own, one call per row.
+		await expect.poll(() => new Set(asked).size).toBe(10);
+		expect(asked.every((name) => names.slice(0, 10).includes(name))).toBe(true);
+		await page.screenshot({ path: out('screenshot-admin-usage-page-1.png'), fullPage: true });
+
+		asked.length = 0;
+		await page.getByTestId('usage-namespaces-next').click();
+		await expect(page).toHaveURL(/cursor=.*page=2/);
+		for (const name of names.slice(10)) {
+			await expect(page.getByTestId(`usage-ns-${name}-runs`)).toHaveText('0', { timeout: 120_000 });
+		}
+		await expect(page.getByTestId(`usage-ns-${names[0]}`)).toHaveCount(0);
+		await expect.poll(() => [...new Set(asked)].sort()).toEqual(names.slice(10));
+		note(`admin usage paging: page 1 measured 10 of 12 namespaces, page 2 measured ${names.slice(10).join(', ')}`);
+		await page.screenshot({ path: out('screenshot-admin-usage-page-2.png'), fullPage: true });
+	} finally {
+		for (const name of names) await rpc('NamespaceService/DeleteNamespace', { name }).catch(() => undefined);
+	}
 });
 
 test('6: unchecking Enforce makes the budget soft, and a submit is accepted and succeeds', async ({ page }) => {

@@ -1209,9 +1209,11 @@ field-anchored issue on the offending task.
 description, labels, default pool, hold reason, required signer, telemetry
 sink and the created/updated times; `default` is matched like any other name.
 With `page_size` 0 it answers every match in one response — what `namespace
-list`, the namespace switcher and Admin → Usage ask for. A positive
+list` and the namespace switcher ask for. A positive
 `page_size` pages by name (`next_page_token`, bound to the filter set), which
-is how Admin → Namespaces lists a registry of thousands; its pages are
+is how Admin → Namespaces and Admin → Usage list a registry of thousands
+(Admin → Usage asks `GetUsage` only for the namespaces on the page it shows,
+50 by default); its pages are
 presentation, as on Runs and Orkflows, and `namespace list [--filter F…]`
 still prints every match. What a page costs depends on its filters: the names
 come from the registry's name listing, so with no filter or only name filters
