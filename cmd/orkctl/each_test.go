@@ -61,8 +61,21 @@ func (r *eachReader) Executions(context.Context, engine.StatsWindow) (engine.Exe
 
 func (r *eachReader) RunningCount(context.Context, string) (int64, error) { return 0, nil }
 
-func (r *eachReader) RunStart(context.Context, string) (*engine.RunStartRecord, error) {
-	return nil, engine.ErrRunNotFound
+// RunStart answers what every run's start event says: its definition, naming
+// its orkflow and namespace.
+func (r *eachReader) RunStart(ctx context.Context, runID string) (*engine.RunStartRecord, error) {
+	run, err := r.GetRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	return startOf(run), nil
+}
+
+// startOf is the start record a run's first history event holds.
+func startOf(run *orkstackv1.Run) *engine.RunStartRecord {
+	return &engine.RunStartRecord{Orkflow: &orkstackv1.Orkflow{
+		Name: run.GetOrkflowName(), Version: run.GetOrkflowVersion(), Namespace: run.GetNamespace(),
+	}}
 }
 
 const eachCLIRunID = "ork-each-cli"

@@ -503,6 +503,7 @@ func TestResolveAwait_Refusals(t *testing.T) {
 			if c.noStart {
 				f.reader.mu.Lock()
 				delete(f.reader.starts, run)
+				f.reader.startless = map[string]bool{run: true}
 				f.reader.mu.Unlock()
 			}
 			_, err := f.resolve(c.req, "")

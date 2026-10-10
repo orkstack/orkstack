@@ -19,8 +19,10 @@ import (
 // dialect (enum values without their type prefix: "status":"RUNNING"), so
 // browsers get realtime updates without a streaming RPC client.
 //
-// Both go through Service.StreamRunEvents, so the socket reads the same system
-// of record: any replica serves any run, whether it is executing now, finished
+// Both go through Service.StreamRunEvents' one streaming path — the socket
+// makes the namespace check itself, before the upgrade, and then streams
+// through streamCheckedRunEvents — so the socket reads the same system of
+// record: any replica serves any run, whether it is executing now, finished
 // long ago, or was started by a different process a moment earlier.
 func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 	marshaler := protojson.MarshalOptions{EmitUnpopulated: false}
@@ -69,7 +71,7 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 		// rather than a socket that opens and immediately dies. It is resolved
 		// INSIDE the namespace asked for, so the 404 also covers a run of
 		// another one.
-		if _, err := svc.LookupRunIn(r.Context(), runID, namespace); err != nil {
+		if err := svc.runNamespaceIn(r.Context(), runID, namespace); err != nil {
 			status, message := http.StatusInternalServerError, "read run"
 			switch connect.CodeOf(err) {
 			case connect.CodeNotFound:
@@ -103,7 +105,7 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 
 		ctx := conn.CloseRead(r.Context())
 		terminal := false
-		streamErr := svc.StreamRunEvents(ctx, runID, namespace, fromSequence,
+		streamErr := svc.streamCheckedRunEvents(ctx, runID, fromSequence,
 			func(event *orkstackv1.Event) error {
 				payload, err := MarshalJSONOptions(marshaler, event)
 				if err != nil {
@@ -271,7 +273,7 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 		// Resolving the run before the upgrade keeps a missing run an HTTP
 		// 404 rather than a socket that opens and immediately dies, and it is
 		// resolved INSIDE the namespace asked for.
-		if _, err := svc.LookupRunIn(r.Context(), runID, query.Namespace); err != nil {
+		if err := svc.runNamespaceIn(r.Context(), runID, query.Namespace); err != nil {
 			status, message := http.StatusInternalServerError, "read run"
 			switch connect.CodeOf(err) {
 			case connect.CodeNotFound:

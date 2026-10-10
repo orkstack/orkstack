@@ -740,7 +740,8 @@ type runProjection struct {
 // terminated run's outcome is recorded.
 //
 // wantRun says the caller consumes the run projection, and it alone triggers
-// an object-storage fetch of the referenced snapshot. An event read passes
+// an object-storage fetch of the referenced snapshot. A run read collects no
+// events: projection.events stays empty, because GetRun never reads them. An event read passes
 // false: the events are complete in Temporal history, so a missing snapshot
 // object — or no configured snapshot store at all — must not destroy an
 // answer Temporal already gave. Turning a live run's event read into "not
@@ -813,7 +814,9 @@ func (r *TemporalRunReader) scan(
 				if err := send(event); err != nil {
 					return nil, err
 				}
-			} else {
+			} else if !wantRun {
+				// A run read never looks at the events, so it never keeps
+				// them: GetRun on a 24k-event history allocates none.
 				projection.events = append(projection.events, event)
 			}
 			if isTerminalRunEvent(event) && send != nil {
@@ -844,7 +847,9 @@ func (r *TemporalRunReader) scan(
 				}
 				return projection, nil
 			}
-			projection.events = append(projection.events, terminal)
+			if !wantRun {
+				projection.events = append(projection.events, terminal)
+			}
 		}
 	}
 	if wantRun {

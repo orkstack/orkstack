@@ -64,7 +64,10 @@ func (o LogPollOptions) withDefaults() LogPollOptions {
 //	a LIST of the attempt's chunk prefix        every tick
 //	a read of the run (its whole history)       only on a tick that swept
 //	                                            nothing, and then at most one
-//	                                            per backoff step
+//	                                            per backoff step — shared with
+//	                                            every other quiet follower of
+//	                                            the run on this replica, at most
+//	                                            one per taskTerminalMemoTTL
 //	a LIST of the task's attempt index          the same ticks
 //
 // The two cluster-side reads are on the QUIET path deliberately. A task that
@@ -76,11 +79,13 @@ func (o LogPollOptions) withDefaults() LogPollOptions {
 // cost five whole-history reads a second per open pane: ten panes over two
 // tabs on one run were a hundred history reads a second, for a run nobody had
 // touched. Now a chatty task costs none at all, and a silent one costs one per
-// backoff step, ending at one per Max.
+// backoff step, ending at one per Max — and however many panes follow one
+// quiet run, the replica reads it at most once a second (runReadMemo).
 //
 // What it costs in latency is one poll interval: a task that finishes while
 // talking is noticed on the first tick that finds nothing new, which is the
-// tick after its last chunk. Nothing is lost — the sweep that follows the
+// tick after its last chunk — or up to taskTerminalMemoTTL later, when
+// another follower's read of the run is still fresh. Nothing is lost — the sweep that follows the
 // terminal observation is what delivers the tail (see StreamRunTaskLogs).
 
 // logChunkPage and logChunkPageBytes bound one read, and the ENGINE'S LOG
@@ -410,8 +415,13 @@ func (s *Service) resolveLogAttempt(ctx context.Context, q TaskLogQuery) (int32,
 // A run that reached a terminal state ends every one of its tasks' streams,
 // including a task that never started — otherwise a follower of a skipped task
 // would wait forever for a chunk nobody will write.
+//
+// The read goes through runReads: every quiet follower of one run on this
+// replica — ten panes over two tabs — shares one run read per
+// taskTerminalMemoTTL instead of each replaying the history.
 func (s *Service) taskIsTerminal(ctx context.Context, q TaskLogQuery) (bool, error) {
-	run, err := s.LookupRunIn(ctx, q.RunID, q.Namespace)
+	run, err := s.runReads.get(ctx, runReadKey{runID: q.RunID, namespace: q.Namespace},
+		func(ctx context.Context) (*orkstackv1.Run, error) { return s.LookupRunIn(ctx, q.RunID, q.Namespace) })
 	if err != nil {
 		if ctx.Err() != nil {
 			return true, nil

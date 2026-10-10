@@ -100,7 +100,7 @@ func (s *Service) originForRequest(
 	}
 	sourceRunID := req.Msg.GetSourceRunId()
 	if sourceRunID != "" {
-		if _, err := s.LookupRunIn(ctx, sourceRunID, req.Msg.GetNamespace()); err != nil {
+		if err := s.runNamespaceIn(ctx, sourceRunID, req.Msg.GetNamespace()); err != nil {
 			return nil, err
 		}
 	}
