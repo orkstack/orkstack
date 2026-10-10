@@ -105,6 +105,7 @@ const LABELLED_NS = `admin-labelled-${STAMP}`;
 const LABEL_CONFLICT_NS = `admin-label-conflict-${STAMP}`;
 const DOOMED_NS = `admin-doomed-${STAMP}`;
 const DELETED_DURING_CONFLICT_NS = `admin-deleted-during-conflict-${STAMP}`;
+const GUARDED_NS = `admin-guarded-${STAMP}`;
 // This run's own bucket (see the topology note above): created fresh by
 // test/tools/bucket-ensure before either binary boots, and never
 // shared with another run of this spec.
@@ -552,6 +553,41 @@ test('creating a namespace validates locally, updates round-trip the etag, and a
 	await expect(page.getByTestId(`namespace-edit-form-${OPS_NS}`)).toHaveCount(0);
 	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toContainText('my edit, still in the box');
 	await shot(page, 'screenshot-admin-namespace-conflict-resolved.png');
+});
+
+// F-ui-ux-3: typing in the namespace form survives a navigation the reader
+// did not confirm, and saving is what makes leaving free again.
+test('a typed namespace form asks before leaving, keeps its fields when kept, and saving clears the guard', async ({
+	page
+}) => {
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	await expect(page.getByTestId('namespaces-scope-caption')).toBeVisible();
+	await page.getByTestId('ns-create-name').fill(GUARDED_NS);
+	await page.getByTestId('ns-create-description').fill('typed, not saved');
+
+	const dialogs: string[] = [];
+	page.on('dialog', (dialog) => {
+		dialogs.push(`${dialog.type()}: ${dialog.message()}`);
+		void dialog.dismiss();
+	});
+	const runsLink = page.locator('nav[aria-label="Primary"]').getByRole('link', { name: 'Runs', exact: true });
+	await runsLink.click();
+	await expect.poll(() => dialogs.length).toBe(1);
+	expect(dialogs[0]).toBe('confirm: Discard the namespace changes you have not saved?');
+	await expect(page).toHaveURL(/\/admin\/namespaces/);
+	await expect(page.getByTestId('ns-create-name')).toHaveValue(GUARDED_NS);
+	await expect(page.getByTestId('ns-create-description')).toHaveValue('typed, not saved');
+	await shot(page, 'screenshot-admin-namespace-unsaved-kept.png');
+
+	// Saved: the form resets, and the same click leaves without a question.
+	await page.getByTestId('ns-create-default-pool').fill('main');
+	await page.getByTestId('ns-create-submit').click();
+	await expect(page.getByTestId('ns-create-success')).toBeVisible();
+	await runsLink.click();
+	await expect(page).toHaveURL(/\/runs(\?|$)/);
+	expect(dialogs).toHaveLength(1);
+	note(`unsaved-form guard: ${dialogs[0]}; after saving ${GUARDED_NS}, Runs opened with no dialog`);
+	await rpc('NamespaceService/DeleteNamespace', { name: GUARDED_NS });
 });
 
 // UpdateNamespace replaces the whole mutable document

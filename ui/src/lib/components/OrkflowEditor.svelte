@@ -21,8 +21,8 @@
 	//    REPORTED, with the diff of what arrived and a retarget that moves the
 	//    token and leaves the text exactly as it was typed.
 	import { untrack } from 'svelte';
-	import { beforeNavigate, goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { guardUnsaved } from '$lib/dirtyGuard';
 	import { Code, ConnectError } from '@connectrpc/connect';
 	import DiffView from '$lib/components/DiffView.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -129,18 +129,7 @@
 	const client = () => orkstack(fetch);
 	const dirty = $derived(yaml !== cleanYaml);
 
-	onMount(() => {
-		const warn = (event: BeforeUnloadEvent) => {
-			if (!dirty) return;
-			event.preventDefault();
-			event.returnValue = '';
-		};
-		window.addEventListener('beforeunload', warn);
-		return () => window.removeEventListener('beforeunload', warn);
-	});
-	beforeNavigate((navigation) => {
-		if (dirty && navigation.type !== 'leave' && !confirm('Discard unsaved orkflow YAML?')) navigation.cancel();
-	});
+	guardUnsaved(() => dirty, 'Discard unsaved orkflow YAML?');
 
 	async function validate(): Promise<boolean> {
 		applyError = '';

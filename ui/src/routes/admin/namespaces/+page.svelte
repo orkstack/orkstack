@@ -9,6 +9,7 @@
 	// and `default`'s delete control is disabled BEFORE any click, with the
 	// reason inline.
 	import { goto, invalidateAll } from '$app/navigation';
+	import { guardUnsaved, leavesRoute } from '$lib/dirtyGuard';
 	import { navigating, page } from '$app/state';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ListFilter from '$lib/components/ListFilter.svelte';
@@ -302,6 +303,18 @@
 	let createServerError = $state('');
 	let createSuccess = $state('');
 
+	// What the create form holds, as one comparable value: the form is dirty
+	// when it differs from what it held when it was last opened or reset.
+	function createFields() {
+		return JSON.stringify([
+			createName, createDescription, createDefaultPool, createAllowedPools, createRunRetentionHours,
+			createTelemetrySink, createTaskLogs, createTelemetryAttributesText, createHoldReason, createMaxRunning,
+			createAllowedSecrets, createBudgetCpuSeconds, createBudgetGibSeconds, createBudgetPeriodHours,
+			createBudgetEnforce, createRequireSignedBy
+		]);
+	}
+	let createSeed = createFields();
+
 	function resetCreateForm() {
 		createName = '';
 		createDescription = '';
@@ -319,6 +332,7 @@
 		createBudgetPeriodHours = '';
 		createBudgetEnforce = false;
 		createRequireSignedBy = '';
+		createSeed = createFields();
 	}
 
 	async function submitCreate() {
@@ -449,13 +463,36 @@
 		editErrors = {};
 		editServerError = '';
 		editConflict = false;
+		editSeed = editFields();
 	}
+
+	// The edit form's fields as one value, and the value it was opened with.
+	function editFields() {
+		return JSON.stringify([
+			editDescription, editDefaultPool, editAllowedPools, editRunRetentionHours, editTelemetrySink,
+			editTaskLogs, editTelemetryAttributesText, editHoldReason, editMaxRunning, editAllowedSecrets,
+			editBudgetCpuSeconds, editBudgetGibSeconds, editBudgetPeriodHours, editBudgetEnforce, editRequireSignedBy
+		]);
+	}
+	let editSeed = '';
 
 	function closeEdit() {
 		editingName = '';
 		editConflict = false;
 		editServerError = '';
 	}
+	// Typing in either form survives a navigation the reader did not confirm
+	// (F-ui-ux-3): a save resets the create form / closes the edit form, which
+	// is what makes it clean again. Paging, filtering and the namespace
+	// switcher stay on this route, where the forms stay mounted and lose
+	// nothing, so only leaving the route asks.
+	guardUnsaved(
+		(navigation) =>
+			leavesRoute(navigation) &&
+			(createFields() !== createSeed || (editingName !== '' && editFields() !== editSeed)),
+		'Discard the namespace changes you have not saved?'
+	);
+
 	// editLabels carries a namespace's labels UNTOUCHED through an edit. This
 	// form has no control for them, but UpdateNamespace is a full replace of
 	// the mutable

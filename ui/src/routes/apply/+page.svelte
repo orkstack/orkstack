@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { beforeNavigate, goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { guardUnsaved } from '$lib/dirtyGuard';
 	import { errorMessage, orkstack } from '$lib/client';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/service_pb';
@@ -41,18 +41,7 @@ tasks:
 	let permitNavigation = $state(false);
 	const dirty = $derived(yaml !== cleanYaml);
 
-	onMount(() => {
-		const warn = (event: BeforeUnloadEvent) => {
-			if (!dirty) return;
-			event.preventDefault();
-			event.returnValue = '';
-		};
-		window.addEventListener('beforeunload', warn);
-		return () => window.removeEventListener('beforeunload', warn);
-	});
-	beforeNavigate((navigation) => {
-		if (dirty && !permitNavigation && navigation.type !== 'leave' && !confirm('Discard unsaved orkflow YAML?')) navigation.cancel();
-	});
+	guardUnsaved(() => dirty && !permitNavigation, 'Discard unsaved orkflow YAML?');
 
 	async function validate(): Promise<boolean> {
 		formError = '';
@@ -127,7 +116,7 @@ tasks:
 	The gallery is the repo's `examples/` directory, read at build time by
 	+page.ts. "Use this example" is the same plain assignment `importYaml` makes,
 	so it flows through the existing dirty check: the change is flagged as
-	unsaved and the beforeNavigate guard still protects it, but loading an
+	unsaved and the guardUnsaved guard still protects it, but loading an
 	example is not itself a navigation and does not prompt.
 -->
 <section class="mb-6 max-w-3xl">
