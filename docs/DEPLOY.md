@@ -1458,7 +1458,13 @@ What that costs, stated so nobody has to discover it:
 The pool scope of that read is the durable state the replica can read: the
 deployment's default route, namespace allow-lists, and pools named by any
 stored orkflow version. A pool that no namespace or stored version names cannot
-be inferred from this API. Temporal's task-queue description call requires a
+be inferred from this API. The pools a namespace's stored versions name are
+remembered by each replica for 30 seconds, because collecting them reads every
+stored orkflow's version catalog: an apply or delete through a replica is seen
+by that replica at once, and a pool named only by an orkflow applied through
+ANOTHER replica appears in this replica's pool list (and its stats scope) within
+30 seconds. A namespace whose catalog could not be read is asked again on the
+next call, never remembered. Temporal's task-queue description call requires a
 queue name; it has no read that lists every task queue, and those names stay
 below this user-facing pool surface.
 

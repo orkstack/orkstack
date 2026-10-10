@@ -413,6 +413,9 @@ type Service struct {
 	// (usage.go). It is a measuring component, not a map of answers: its
 	// cache is unexported inside it and reachable only through Measure.
 	usage *UsageMeter
+	// poolScope memoizes each namespace's pools-named-by-orkflows answer
+	// (PoolScopeCacheTTL); ApplyOrkflow and DeleteOrkflow invalidate it.
+	poolScope *poolScopeCache
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
 	system SystemInfo
@@ -548,6 +551,7 @@ func NewService(cfg Config) *Service {
 		svc.now = time.Now
 	}
 	svc.usage = newUsageMeter(cfg.Archive, cfg.Attempts, cfg.UsageCacheTTL, svc.now)
+	svc.poolScope = newPoolScopeCache(PoolScopeCacheTTL, svc.now)
 	if svc.deliveries != nil {
 		svc.deliveryRecorder = NewDeliveryRecorder(svc.deliveries, svc.logger)
 	}
@@ -662,6 +666,9 @@ func (s *Service) ApplyOrkflow(
 	// just extended.
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
 	stored, created, err := s.orkflows.Put(ctx, wf, expected)
+	// Whatever the outcome — a failed write may still have landed — the
+	// namespace's memoized pool scope may now be stale.
+	s.poolScope.invalidate(ns.GetName())
 	if err != nil {
 		var moved *artifacts.HeadMovedError
 		if errors.As(err, &moved) {
