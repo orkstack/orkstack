@@ -660,6 +660,11 @@ func TestIntegration_EveryPinHostCordonedFailsThePinWithPinUnavailable(t *testin
 	a := d.orker("orker-only-"+d.token, pool, pinOrkerConfig{maxPins: 1})
 	awaitPoolServedBy(t, ctx, engine.NewTemporalPoolProbe(d.temporal), pool, a.queue, 1)
 	d.storeOrkflow("quick-"+d.token, pool, cordonQuickPinYAML, 0)
+	// Serving the pool channel does not yet mean the Orker polls its own
+	// control channel, which is what CordonOrker addresses: wait for the
+	// fleet to list it, as the sibling tests do, before cordoning.
+	d.awaitFleet(orkersWhere("orker_id", a.id), time.Minute, "the only pin host listed",
+		func(rows []*orkstackv1.Orker) bool { return len(rows) == 1 })
 
 	const reason = "whole pool patch window"
 	d.cordon(a.id, reason)
