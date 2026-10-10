@@ -125,6 +125,26 @@ test('P1: the gallery lists every example with its name and description', async 
 	await shot(page, 'screenshot-apply-gallery.png');
 });
 
+// F-ui-perf-7: no font face is inlined into the render-blocking stylesheet,
+// and the response preloads exactly the two latin faces every page uses
+// (SvelteKit sends a server-rendered page's preloads as a Link header).
+test('P0: fonts stay out of the stylesheet, and the two latin faces are preloaded', async () => {
+	const response = await fetch(`${UI}/apply?ns=${NS}`);
+	const fonts = (response.headers.get('link') ?? '').split(',').filter((link) => link.includes('as="font"'));
+	expect(fonts.map((link) => /assets\/([a-z-]+)\./.exec(link)?.[1]).sort()).toEqual([
+		'inter-latin-wght-normal',
+		'jetbrains-mono-latin-wght-normal'
+	]);
+	const html = await response.text();
+	const sheets = [...html.matchAll(/<link href="([^"]+\.css)" rel="stylesheet"/g)].map((m) => m[1]);
+	expect(sheets.length > 0).toBe(true);
+	for (const sheet of sheets) {
+		const css = await (await fetch(new URL(sheet, `${UI}/apply`))).text();
+		expect(css, `${sheet} inlines no font`).not.toContain('data:font/woff2');
+	}
+	note(`P0 font preloads: ${fonts.length}; stylesheets checked: ${sheets.join(', ')}`);
+});
+
 // F-ui-perf-5: the page ships names and descriptions; a document is served
 // one at a time, byte for byte, only when a card asks for it.
 test('P1b: the page carries no example YAML; one example is fetched on demand', async ({ page }) => {
