@@ -413,14 +413,14 @@ test('D3: delivered = false with a run_id filter narrows, survives a reload, and
 	await expect(page.getByTestId('deliveries-filter-value-0')).toHaveText('false');
 	await expect(page.getByTestId('deliveries-filter-value-1')).toHaveValue(firstRun);
 	// One run_id equality and no created_at start: the window starts at the run.
-	const run = await rpc<{ run: { createdAt: string } }>('RunService/GetRun', { id: firstRun });
+	const run = await rpc<{ run: { createdAt: string } }>('RunService/GetRun', { runId: firstRun });
 	const runStart = new Date(run.run.createdAt).toISOString().replace(/\.\d{3}Z$/, 'Z');
 	expect((await page.getByTestId('deliveries-window').innerText()).split(' to ')[0]).toBe(runStart);
 	note(`D3 delivered=false run_id=${firstRun}: 2 failed records; window starts at the run's start ${runStart}`);
 });
 
 test("D4: a created_at window through datetime-local is the caption's resolved window", async ({ page }) => {
-	const run = await rpc<{ run: { createdAt: string } }>('RunService/GetRun', { id: firstRun });
+	const run = await rpc<{ run: { createdAt: string } }>('RunService/GetRun', { runId: firstRun });
 	const minute = (d: Date) => d.toISOString().slice(0, 16);
 	const since = minute(new Date(new Date(run.run.createdAt).getTime() - 60 * 60_000));
 	const until = minute(new Date(Date.now() + 60 * 60_000));

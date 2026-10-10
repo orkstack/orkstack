@@ -204,10 +204,13 @@ func TestAudit_TwoEngines_DeploymentWideRecordsByEmptyNamespace(t *testing.T) {
 	if err := json.Unmarshal([]byte(registered), &hook); err != nil || hook.Webhook.ID == "" {
 		t.Fatalf("webhook register --json = %v:\n%s", err, registered)
 	}
-	t.Cleanup(func() {
+	// A deferred call, not t.Cleanup: the replicas run under ctx, which the
+	// earlier `defer cancel()` ends as this function returns — before any
+	// t.Cleanup would run — so the deletes must reach A while it still serves.
+	defer func() {
 		auditCLI(t, replicaA, principal, "webhook", "delete", hook.Webhook.ID)
 		auditCLI(t, replicaA, principal, "namespace", "delete", name)
-	})
+	}()
 
 	list := func(filters ...string) []*orkstackv1.AuditRecord {
 		args := []string{"--json", "admin", "audit", "--filter", "principal=" + principal, "--filter", "at>=" + since}

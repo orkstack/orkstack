@@ -242,7 +242,7 @@ func TestAuditStore_FiltersOverRealRecords(t *testing.T) {
 	update := auditRecord(day.Add(2*time.Hour), "payments", "namespace.update", "dsantos")
 	update.Target, update.Succeeded = "payments", true
 	refused := auditRecord(day.Add(3*time.Hour), "payments", "orkflow.promote", "dsantos")
-	refused.Target, refused.ErrorCode = "deploy@3", "failed_precondition"
+	refused.Target, refused.ErrorCode, refused.Succeeded = "deploy@3", "failed_precondition", false
 	other := auditRecord(day.Add(4*time.Hour), "analytics", "namespace.update", "svc-ci")
 	other.Target, other.Succeeded = "analytics", true
 	for _, rec := range []*orkstackv1.AuditRecord{deployment, update, refused, other} {
