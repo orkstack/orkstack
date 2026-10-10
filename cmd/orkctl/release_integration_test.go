@@ -33,8 +33,17 @@ import (
 
 var releaseBins struct {
 	once               sync.Once
+	dir                string
 	orkctl, ork, orker string
 	err                error
+}
+
+// removeReleaseBinaries deletes the directory releaseBinaries built into, once
+// every test of the process has finished (TestMain).
+func removeReleaseBinaries() {
+	if releaseBins.dir != "" {
+		_ = os.RemoveAll(releaseBins.dir)
+	}
 }
 
 // releaseBinaries builds orkctl, ork and orker once per test process.
@@ -46,6 +55,7 @@ func releaseBinaries(t *testing.T) (string, string, string) {
 			releaseBins.err = err
 			return
 		}
+		releaseBins.dir = dir
 		root := repoRoot(t)
 		for _, name := range []string{"orkctl", "ork", "orker"} {
 			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name), "./cmd/"+name)
