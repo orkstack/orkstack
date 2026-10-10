@@ -980,11 +980,17 @@
 	const socketNamespace = $derived(data.namespace);
 	let socketEpoch = $state(0);
 	let lastSequence = 0n;
+	let lastSequenceRun = '';
 	$effect(() => {
 		const runId = socketRunId;
 		const namespace = socketNamespace;
 		void socketEpoch;
 		if (!runId) return;
+		// A cursor belongs to one run: another run starts from its beginning.
+		if (runId !== lastSequenceRun) {
+			lastSequence = 0n;
+			lastSequenceRun = runId;
+		}
 		streamFailure = '';
 		const batch = eventBatcher(applyEvents);
 		const stop = watchRunEvents(
@@ -1005,9 +1011,11 @@
 		);
 		return () => {
 			stop();
-			// What arrived is applied, never dropped: lastSequence already
-			// counts it, so a restart would not deliver it again.
-			batch.flush();
+			// What arrived for THIS run is applied, never dropped: lastSequence
+			// already counts it, so a restart would not deliver it again. A
+			// page that moved on to another run drops it instead.
+			if (untrack(() => socketRunId) === runId) batch.flush();
+			else batch.cancel();
 		};
 	});
 	function retryStream(): void {
