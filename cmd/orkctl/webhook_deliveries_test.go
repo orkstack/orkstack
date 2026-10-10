@@ -236,6 +236,20 @@ func TestWebhookDeliveries_RunDefaultsSinceToTheRunsStart(t *testing.T) {
 	if strings.Contains(other.stdout, "the run's start") {
 		t.Errorf("an unreadable run claimed the run's start:\n%s", other.stdout)
 	}
+	// The caption is the engine's word, not a guess from the spelling or the
+	// width: an in of one value is the same equality, and a run that started
+	// exactly seven days before the end still started the window.
+	same := f.run("webhook", "deliveries", "--filter", "run_id="+deliveriesRunID+","+deliveriesRunID).requireExit(t, exitOK)
+	same.requireContains(t, "(the run's start)")
+	week := f.run("webhook", "deliveries", "--filter", "run_id="+deliveriesRunID,
+		"--filter", "created_at<2026-01-09T02:04:05Z").requireExit(t, exitOK)
+	week.requireContains(t, "Window: 2026-01-02T02:04:05Z (the run's start) to 2026-01-09T02:04:05Z")
+	// An explicit start is not the run's.
+	bound := f.run("webhook", "deliveries", "--filter", "run_id="+deliveriesRunID,
+		"--filter", "created_at>=2026-01-02T02:30:00Z").requireExit(t, exitOK)
+	if strings.Contains(bound.stdout, "the run's start") {
+		t.Errorf("an explicit created_at start claimed the run's start:\n%s", bound.stdout)
+	}
 }
 
 // TestWebhookDeliveries_RefusesWhatItCannotSend: a syntax error and a bad

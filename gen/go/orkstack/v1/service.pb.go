@@ -4067,10 +4067,16 @@ type ListDeliveriesResponse struct {
 	NextPageToken string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"` // empty when the window is exhausted
 	// since and until are the window the answer covers, resolved, so a client
 	// prints what "the last week" or "since the run started" meant.
-	Since         *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=since,proto3" json:"since,omitempty"`
-	Until         *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=until,proto3" json:"until,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Since *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=since,proto3" json:"since,omitempty"`
+	Until *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=until,proto3" json:"until,omitempty"`
+	// since_is_run_start is true when since is the created_at of the run one
+	// run_id equality filter names, because no created_at lower bound was
+	// given and the engine could read the run. The engine says so rather than
+	// leaving a client to infer it from the window's width. A page token
+	// carries it, so every page of a listing answers the same.
+	SinceIsRunStart bool `protobuf:"varint,5,opt,name=since_is_run_start,json=sinceIsRunStart,proto3" json:"since_is_run_start,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ListDeliveriesResponse) Reset() {
@@ -4129,6 +4135,13 @@ func (x *ListDeliveriesResponse) GetUntil() *timestamppb.Timestamp {
 		return x.Until
 	}
 	return nil
+}
+
+func (x *ListDeliveriesResponse) GetSinceIsRunStart() bool {
+	if x != nil {
+		return x.SinceIsRunStart
+	}
+	return false
 }
 
 type GetDeliveryRequest struct {
@@ -10766,14 +10779,15 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\x05event\x12\x05Event\x1a\x03\x01\x02\x03\"\vRUN_STARTED\"\rRUN_SUCCEEDED\"\n" +
 	"RUN_FAILED\"\fRUN_CANCELED\"\x0eTASK_SCHEDULED\"\fTASK_STARTED\"\rTASK_AWAITING\"\rTASK_RESOLVED\"\x0eTASK_SUCCEEDED\"\vTASK_FAILED\x12\x19\n" +
 	"\tdelivered\x12\tDelivered\x1a\x01\x01J\x04\b\x01\x10\bR\n" +
-	"webhook_idR\x06run_idR\x05eventR\aoutcomeR\tnamespaceR\x05sinceR\x05until\"\xdb\x01\n" +
+	"webhook_idR\x06run_idR\x05eventR\aoutcomeR\tnamespaceR\x05sinceR\x05until\"\x88\x02\n" +
 	"\x16ListDeliveriesResponse\x125\n" +
 	"\n" +
 	"deliveries\x18\x01 \x03(\v2\x15.orkstack.v1.DeliveryR\n" +
 	"deliveries\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x120\n" +
 	"\x05since\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x120\n" +
-	"\x05until\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\"$\n" +
+	"\x05until\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\x12+\n" +
+	"\x12since_is_run_start\x18\x05 \x01(\bR\x0fsinceIsRunStart\"$\n" +
 	"\x12GetDeliveryRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"H\n" +
 	"\x13GetDeliveryResponse\x121\n" +

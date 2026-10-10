@@ -163,7 +163,10 @@ type deliveryCursor struct {
 	Filters     string `json:"f"`
 	WindowSince string `json:"ws"`
 	WindowUntil string `json:"wu"`
-	BeforeKey   string `json:"k"`
+	// RunStart records that WindowSince is a run's created_at, so every page
+	// reports since_is_run_start as the first did.
+	RunStart  bool   `json:"rs,omitempty"`
+	BeforeKey string `json:"k"`
 }
 
 func encodeDeliveryCursor(c deliveryCursor) (string, error) {
@@ -175,29 +178,30 @@ func encodeDeliveryCursor(c deliveryCursor) (string, error) {
 }
 
 // decodeDeliveryCursor reads a page token issued under set, returning the
-// window it carries and the key to continue before.
-func decodeDeliveryCursor(token string, set listfilter.Set) (since, until time.Time, beforeKey string, err error) {
+// window it carries, whether its start is a run's, and the key to continue
+// before.
+func decodeDeliveryCursor(token string, set listfilter.Set) (since, until time.Time, runStart bool, beforeKey string, err error) {
 	invalid := connect.NewError(connect.CodeInvalidArgument, errors.New("invalid page_token"))
 	raw, decodeErr := base64.RawURLEncoding.DecodeString(token)
 	if decodeErr != nil {
-		return time.Time{}, time.Time{}, "", invalid
+		return time.Time{}, time.Time{}, false, "", invalid
 	}
 	var c deliveryCursor
 	if json.Unmarshal(raw, &c) != nil || c.Version != deliveryCursorVersion {
-		return time.Time{}, time.Time{}, "", invalid
+		return time.Time{}, time.Time{}, false, "", invalid
 	}
 	if _, ok := artifacts.ParseDeliveryKey(c.BeforeKey); !ok {
-		return time.Time{}, time.Time{}, "", invalid
+		return time.Time{}, time.Time{}, false, "", invalid
 	}
 	since, sinceErr := time.Parse(time.RFC3339Nano, c.WindowSince)
 	until, untilErr := time.Parse(time.RFC3339Nano, c.WindowUntil)
 	if sinceErr != nil || untilErr != nil {
-		return time.Time{}, time.Time{}, "", invalid
+		return time.Time{}, time.Time{}, false, "", invalid
 	}
 	if err := checkFilterKey(c.Filters, set); err != nil {
-		return time.Time{}, time.Time{}, "", err
+		return time.Time{}, time.Time{}, false, "", err
 	}
-	return since.UTC(), until.UTC(), c.BeforeKey, nil
+	return since.UTC(), until.UTC(), c.RunStart, c.BeforeKey, nil
 }
 
 // emptyWindow is the refusal of a resolved window with no instant in it: the
@@ -260,10 +264,11 @@ func (s *Service) ListDeliveries(
 	}
 
 	var since, until time.Time
+	var runStart bool
 	var beforeKey string
 	if token := msg.GetPageToken(); token != "" {
 		// The window is the one the first page resolved.
-		if since, until, beforeKey, err = decodeDeliveryCursor(token, set); err != nil {
+		if since, until, runStart, beforeKey, err = decodeDeliveryCursor(token, set); err != nil {
 			return nil, err
 		}
 	} else {
@@ -284,6 +289,7 @@ func (s *Service) ListDeliveries(
 			switch {
 			case err == nil && run.GetCreatedAt().IsValid():
 				since = run.GetCreatedAt().AsTime().UTC()
+				runStart = true
 			case err == nil || connect.CodeOf(err) == connect.CodeNotFound:
 				since = until.Add(-DefaultDeliveryLookback)
 			default:
@@ -314,9 +320,10 @@ func (s *Service) ListDeliveries(
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("read delivery records: %w", err))
 	}
 	out := &orkstackv1.ListDeliveriesResponse{
-		Deliveries: page.Deliveries,
-		Since:      timestamppb.New(since),
-		Until:      timestamppb.New(until),
+		Deliveries:      page.Deliveries,
+		Since:           timestamppb.New(since),
+		Until:           timestamppb.New(until),
+		SinceIsRunStart: runStart,
 	}
 	if out.Deliveries == nil {
 		out.Deliveries = []*orkstackv1.Delivery{}
@@ -327,6 +334,7 @@ func (s *Service) ListDeliveries(
 			Filters:     set.Key(),
 			WindowSince: since.Format(time.RFC3339Nano),
 			WindowUntil: until.Format(time.RFC3339Nano),
+			RunStart:    runStart,
 			BeforeKey:   page.NextKey,
 		})
 		if err != nil {

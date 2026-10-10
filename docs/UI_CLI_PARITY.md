@@ -210,7 +210,7 @@ these messages (`i` is the filter's index in the request):
 | value count | `filters[i]: equals (=) takes exactly one value`, `filters[i]: in (=a,b) takes 1 to 64 values`, `filters[i]: in (=a,b) cannot hold an empty value` |
 | a value over 1024 bytes, or not UTF-8 | `filters[i]: a value is at most 1024 bytes of UTF-8` |
 | an empty contains or prefix | `filters[i]: contains (~) needs a non-empty value` |
-| an enum value the list cannot select | `filters[i]: "AWAITING" is not a status this list can select; status is one of …` |
+| an enum value the list cannot select | `filters[i]: "AWAITING" is not a status this list can select; status is one of …` — the article follows the field's name: `"TASK_LOG" is not an event this list can select; event is one of …` |
 | a name, in equals, not equals or in | `filters[i]: namespace "Payments" is not a slug (^[a-z][a-z0-9-]*$)` |
 | an Orker id, in equals, not equals or in | `filters[i]: orker_id: invalid orker id: empty` |
 | bool | `filters[i]: drained is true or false, not "yes"` |
@@ -1004,7 +1004,9 @@ nothing reclaims them; a bucket lifecycle rule is the operator's
   window, so "now" does not move under a paged listing. A scan of more than
   100,000 keys before a page fills is `ResourceExhausted` ("narrow the
   created_at window or add filters"). The response echoes the resolved
-  window.
+  window, and `since_is_run_start` says whether its start is the run's
+  `created_at` — the engine says so, and no client infers it from the
+  window's width or a filter's spelling; the page token carries it.
 - **`GetDelivery`** returns one record.
 - **`RedeliverWebhook`** is one operator-initiated, synchronous POST — no
   retry ladder — to the subscription as it is now (a deleted subscription is
@@ -1018,7 +1020,7 @@ nothing reclaims them; a bucket lifecycle rule is the operator's
 With no store configured, all three answer `FailedPrecondition`. CLI:
 `webhook deliveries [--filter F…] [--limit N] [--page-token T]` (it prints
 `Window: <since> to <until>, newest first.`, with `(the run's start)` when
-the start came from a `run_id=` filter, and its next-page line repeats every
+the response's `since_is_run_start` is true, and its next-page line repeats every
 filter and `--limit`, never a window), `webhook delivery ID`, `webhook
 redeliver ID` (exit 1 when the receiver did not accept it). UI: the
 **Deliveries** panel on Admin → Webhooks — a caption with the resolved window

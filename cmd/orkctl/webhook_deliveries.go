@@ -119,7 +119,8 @@ func renderDeliveries(out io.Writer, req *orkstackv1.ListDeliveriesRequest, resp
 		}
 	}
 	from := formatTime(resp.GetSince())
-	if windowStartedAtTheRun(req, resp) {
+	// The engine says where the start came from; the CLI never infers it.
+	if resp.GetSinceIsRunStart() {
 		from += " (the run's start)"
 	}
 	_, err := fmt.Fprintf(out, "\nWindow: %s to %s, newest first.\n%s%s",
@@ -128,32 +129,6 @@ func renderDeliveries(out io.Writer, req *orkstackv1.ListDeliveriesRequest, resp
 		return fmt.Errorf("write output: %w", err)
 	}
 	return nil
-}
-
-// windowStartedAtTheRun reports whether the engine started the window at a
-// run's start: a first page whose only run_id filter is one equality, with no
-// created_at lower bound — and a start other than the seven-day default,
-// which the engine falls back to when it cannot read the run.
-func windowStartedAtTheRun(req *orkstackv1.ListDeliveriesRequest, resp *orkstackv1.ListDeliveriesResponse) bool {
-	if req.GetPageToken() != "" {
-		return false
-	}
-	runEqualities := 0
-	for _, f := range req.GetFilters() {
-		switch f.GetField() {
-		case "run_id":
-			if f.GetOp() != orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS || len(f.GetValues()) != 1 || f.GetValues()[0] == "" {
-				return false
-			}
-			runEqualities++
-		case "created_at":
-			if f.GetOp() == orkstackv1.FilterOperator_FILTER_OPERATOR_AT_OR_AFTER {
-				return false
-			}
-		}
-	}
-	lookback := resp.GetUntil().AsTime().Sub(resp.GetSince().AsTime())
-	return runEqualities == 1 && lookback != 7*24*time.Hour
 }
 
 func deliveryEventLabel(event orkstackv1.EventType) string {

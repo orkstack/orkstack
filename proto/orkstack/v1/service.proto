@@ -1067,6 +1067,12 @@ message ListDeliveriesResponse {
   // prints what "the last week" or "since the run started" meant.
   google.protobuf.Timestamp since = 3;
   google.protobuf.Timestamp until = 4;
+  // since_is_run_start is true when since is the created_at of the run one
+  // run_id equality filter names, because no created_at lower bound was
+  // given and the engine could read the run. The engine says so rather than
+  // leaving a client to infer it from the window's width. A page token
+  // carries it, so every page of a listing answers the same.
+  bool since_is_run_start = 5;
 }
 
 message GetDeliveryRequest { string id = 1; }

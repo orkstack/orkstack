@@ -464,6 +464,52 @@ func TestListDeliveries_RunIDEqualityDefaultsTheWindowToTheRunsStart(t *testing.
 	}
 }
 
+// TestListDeliveries_SaysWhenTheWindowStartsAtTheRun pins since_is_run_start:
+// the engine names where the window's start came from, so a client never
+// infers it from the window's width or the spelling of the filter.
+func TestListDeliveries_SaysWhenTheWindowStartsAtTheRun(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusOK)
+	f.now = time.Date(2026, 9, 21, 9, 30, 12, 0, time.UTC)
+	run := f.sampleRun(t, "ork-2026-09-21-8f31", orkstackv1.Status_STATUS_SUCCEEDED)
+	sevenDaysOn := run.GetCreatedAt().AsTime().Add(7 * 24 * time.Hour).Format(time.RFC3339)
+	for _, tc := range []struct {
+		name    string
+		filters []string
+		want    bool
+	}{
+		{"one run_id equality", []string{"run_id=" + run.GetId()}, true},
+		// An in of one value is the same equality once canonicalized.
+		{"run_id in of one value", []string{"run_id=" + run.GetId() + "," + run.GetId()}, true},
+		// The run's start, exactly seven days before the end: the width
+		// matches the default, and the start is still the run's.
+		{"run start seven days before the end", []string{"run_id=" + run.GetId(), "created_at<" + sevenDaysOn}, true},
+		{"unknown run", []string{"run_id=ork-unknown"}, false},
+		{"explicit start", []string{"run_id=" + run.GetId(), "created_at>=2026-09-21T09:00:00Z"}, false},
+		{"run_id in", []string{"run_id=" + run.GetId() + ",ork-other"}, false},
+		{"no filter", nil, false},
+	} {
+		resp := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, tc.filters...)})
+		if resp.GetSinceIsRunStart() != tc.want {
+			t.Errorf("%s: since_is_run_start = %v, want %v (since %s, until %s)", tc.name,
+				resp.GetSinceIsRunStart(), tc.want, resp.GetSince().AsTime(), resp.GetUntil().AsTime())
+		}
+	}
+
+	// A later page answers as the first did: the token carries it.
+	seed(t, f.store, run.GetCreatedAt().AsTime().Add(time.Minute), nil, 3)
+	first := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, "run_id="+run.GetId()), PageSize: 2})
+	if first.GetNextPageToken() == "" || !first.GetSinceIsRunStart() {
+		t.Fatalf("first page: token %q, since_is_run_start %v; want a token and true", first.GetNextPageToken(), first.GetSinceIsRunStart())
+	}
+	second := f.list(t, &orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "run_id="+run.GetId()), PageSize: 2, PageToken: first.GetNextPageToken(),
+	})
+	if !second.GetSinceIsRunStart() || !second.GetSince().AsTime().Equal(first.GetSince().AsTime()) {
+		t.Errorf("second page: since_is_run_start %v since %s, want true and the first page's %s",
+			second.GetSinceIsRunStart(), second.GetSince().AsTime(), first.GetSince().AsTime())
+	}
+}
+
 func TestListDeliveries_RunIDInDoesNotMoveTheWindow(t *testing.T) {
 	f := newDeliveryFixture(t, http.StatusOK)
 	f.now = time.Date(2026, 9, 21, 9, 30, 12, 0, time.UTC)
