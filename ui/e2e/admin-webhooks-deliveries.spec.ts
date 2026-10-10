@@ -5,10 +5,12 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
+import { OP, addListFilter, selectOption } from './uiHelpers';
 import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	noteTo,
 	orkerEnv,
 	proofOut,
 	rpc as callEngine,
@@ -22,19 +24,29 @@ import {
 } from './harness';
 
 // Admin → Webhooks → Deliveries, in a browser, against the real engine, Orker,
-// Temporal and MinIO (docs/UI_CLI_PARITY.md "Webhook administration").
+// Temporal and MinIO (docs/UI_CLI_PARITY.md "Webhook deliveries", "Filtering
+// lists"). The panel's filters are the one filter component (ListFilter),
+// riding `deliveryFilter` parameters.
 //
 // What is measured here:
-//   1. a delivery the receiver refused is recorded once it settles, and the
-//      panel shows it failed, with every attempt and the SHA-256 of the exact
-//      bytes the receiver read;
-//   2. Redeliver sends exactly one signed POST naming the delivery it repeats,
-//      reports it inline, and the new record lists first;
-//   3. outcome and run filters narrow the table, and the URL restores them;
-//   4. pagination walks newest first without repeats and survives a reload;
-//   5. a failed deliveries read is an error with Retry beside an intact
-//      webhook table, and Retry recovers once the engine is back;
-//   6. the per-webhook link filters the panel.
+//   - a delivery the receiver refused is recorded once it settles, and the
+//     panel shows it failed, with every attempt and the SHA-256 of the exact
+//     bytes the receiver read;
+//   - Redeliver sends exactly one signed POST naming the delivery it repeats,
+//     reports it inline, and the new record lists first;
+//   D1 a subscription's Deliveries link opens deliveryFilter=webhook_id=<id>;
+//   D2 event = TASK_FAILED through the enum Select matches nothing here, and
+//      RUN_STARTED narrows to that event;
+//   D3 delivered = false with a run_id filter narrows to the failed records,
+//      the URL restores rows and draft, and the window starts at the run's
+//      start;
+//   D4 a created_at window through datetime-local, and the caption's
+//      resolved window;
+//   D5 paging under filters (size 2) walks newest first without repeats and
+//      survives a reload; a changed filter clears the cursor;
+//   D6 the CLI equivalents;
+//   - a failed deliveries read is an error with Retry beside an intact
+//     webhook table, and Retry recovers once the engine is back.
 //
 // The receiver is this spec's own node:http server on 127.0.0.1, answering
 // 502 or 200 as told. Cleanup stops exactly the processes this spec started,
@@ -52,6 +64,7 @@ const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'admin-webhooks-deliveries')
 	: path.join(uiDir, 'test-results', 'admin-webhooks-deliveries');
 const out = proofOut(PROOF_DIR);
+const note = noteTo(out('transcript.txt'));
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
 function orkflowYaml(): string {
@@ -122,9 +135,40 @@ async function stop(child: ChildProcess | null): Promise<void> {
 const forRun = (runId: string, event: string) =>
 	received.filter((r) => r.headers['x-ork-run-id'] === runId && r.headers['x-ork-event'] === event);
 
+// A filter as the engine's JSON codec reads it: the operator in its proto
+// spelling. A removed typed field would be IGNORED and answer a wider list,
+// so every request body here names its filters.
+const equals = (field: string, value: string) => ({ field, op: 'FILTER_OPERATOR_EQUALS', values: [value] });
+
 async function listFor(webhook: string): Promise<DeliveryJSON[]> {
-	const answered = await rpc<{ deliveries?: DeliveryJSON[] }>('WebhookService/ListDeliveries', { webhookId: webhook, pageSize: 200 });
+	const answered = await rpc<{ deliveries?: DeliveryJSON[] }>('WebhookService/ListDeliveries', {
+		filters: [equals('webhook_id', webhook)],
+		pageSize: 200
+	});
 	return answered.deliveries ?? [];
+}
+
+/** The page with the panel narrowed by these filters (CLI grammar), on its first page. */
+function panelUrl(filters: string[], extra: Record<string, string> = {}): string {
+	const params = new URLSearchParams({ ns: 'default' });
+	for (const text of [...filters].sort()) params.append('deliveryFilter', text);
+	for (const [key, value] of Object.entries(extra)) params.set(key, value);
+	return `${UI_ORIGIN}/admin/webhooks?${params.toString()}`;
+}
+
+const deliveryFilters = (page: Page) => new URL(page.url()).searchParams.getAll('deliveryFilter');
+
+const rowIds = (page: Page) =>
+	page
+		.getByTestId('deliveries-table')
+		.locator('tbody tr[data-testid^="delivery-dlv-"]')
+		.evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')!.slice('delivery-'.length)));
+
+async function cliText(page: Page, testid: string): Promise<string> {
+	await page.getByTestId(`${testid}-trigger`).click();
+	const text = await page.getByTestId(`${testid}-command`).innerText();
+	await page.keyboard.press('Escape');
+	return text;
 }
 
 async function submitAndSettle(expectedPerEvent: number): Promise<string> {
@@ -154,6 +198,8 @@ async function expand(page: Page, id: string) {
 }
 
 test.describe.configure({ mode: 'serial' });
+// UTC, so a datetime-local reading is the instant it sends (D4).
+test.use({ timezoneId: 'UTC' });
 
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
@@ -234,7 +280,7 @@ test('a settled delivery appears in the Deliveries panel with its attempts and d
 	expect(failed).toBeTruthy();
 	failedId = failed!.id;
 
-	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}`);
+	await page.goto(panelUrl([`webhook_id=${webhookId}`]));
 	await page.waitForLoadState('networkidle');
 	await expect(page.getByTestId(`delivery-${failedId}`)).toBeVisible();
 	await expect(page.getByTestId(`delivery-outcome-${failedId}`)).toHaveText('failed');
@@ -258,7 +304,7 @@ test('redelivering sends exactly one signed POST and lists the new record first'
 	expect(failedId).not.toBe('');
 	answer = 200;
 	const before = received.length;
-	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}`);
+	await page.goto(panelUrl([`webhook_id=${webhookId}`]));
 	await page.waitForLoadState('networkidle');
 	await expand(page, failedId);
 	await page.getByTestId(`redeliver-${failedId}`).click();
@@ -285,6 +331,11 @@ test('redelivering sends exactly one signed POST and lists the new record first'
 	await expect(page.getByTestId(`delivery-is-redelivery-${newId}`)).toBeVisible();
 	await expand(page, newId);
 	await expect(page.getByTestId(`delivery-redelivery-of-${newId}`)).toHaveText(failedId);
+	// The original's link opens the panel filtered to its run and webhook.
+	await expect(page.getByTestId(`delivery-redelivery-of-${newId}`)).toHaveAttribute(
+		'href',
+		new RegExp(`deliveryFilter=run_id%3D${firstRun}&deliveryFilter=webhook_id%3D${webhookId}`)
+	);
 
 	writeFileSync(
 		out('webhook-redelivery.json'),
@@ -311,73 +362,159 @@ test('redelivering sends exactly one signed POST and lists the new record first'
 	await page.screenshot({ path: out('deliveries-redelivered.png'), fullPage: true });
 });
 
-test('filters narrow by outcome and run and the URL restores them', async ({ page }) => {
-	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}`);
+test("D1: a subscription's Deliveries link opens deliveryFilter=webhook_id=<id>", async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/admin/webhooks`);
 	await page.waitForLoadState('networkidle');
-	await page.getByTestId('deliveries-outcome').click();
-	await page.getByRole('option', { name: 'Failed', exact: true }).click();
-	await expect(page).toHaveURL(/delivered=false/);
-	await page.getByTestId('deliveries-run').fill(firstRun);
-	await page.getByTestId('deliveries-apply').click();
-	await expect(page).toHaveURL(new RegExp(`run=${firstRun}`));
-	const rows = page.getByTestId('deliveries-table').locator('tbody tr[data-testid^="delivery-dlv-"]');
-	await expect(rows).toHaveCount(2);
-	for (const id of await rows.evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')!.slice('delivery-'.length))))
-		await expect(page.getByTestId(`delivery-outcome-${id}`)).toHaveText('failed');
-	const window = await page.getByTestId('deliveries-window').innerText();
-	await page.reload();
-	await page.waitForLoadState('networkidle');
-	await expect(page.getByTestId('deliveries-run')).toHaveValue(firstRun);
-	await expect(page.getByTestId('deliveries-outcome')).toContainText('Failed');
-	await expect(rows).toHaveCount(2);
-	// The caption's window starts at the run's start, as the engine resolved it.
-	expect((await page.getByTestId('deliveries-window').innerText()).split(' to ')[0]).toBe(window.split(' to ')[0]);
+	await page.getByTestId(`webhook-deliveries-${webhookId}`).click();
+	await expect.poll(() => deliveryFilters(page)).toEqual([`webhook_id=${webhookId}`]);
+	// The draft shows the filter the link applied.
+	await expect(page.getByTestId('deliveries-filter-field-0')).toHaveText('Webhook (webhook_id)');
+	await expect(page.getByTestId('deliveries-filter-value-0')).toHaveValue(webhookId);
+	await expect.poll(async () => (await rowIds(page)).length).toBeGreaterThanOrEqual(3);
+	note(`D1 the Deliveries link of ${webhookId} opened ${page.url()}`);
 });
 
-test('pagination walks newest first without repeats', async ({ page }) => {
+test('D2: event = TASK_FAILED through the enum Select matches nothing; RUN_STARTED narrows', async ({ page }) => {
+	await page.goto(panelUrl([`webhook_id=${webhookId}`]));
+	await page.waitForLoadState('networkidle');
+	await addListFilter(page, 'deliveries', { field: 'event', op: OP.equals, select: 'TASK_FAILED' });
+	await page.getByTestId('deliveries-filters-apply').click();
+	await expect.poll(() => deliveryFilters(page)).toEqual(['event=TASK_FAILED', `webhook_id=${webhookId}`]);
+	await expect(page.getByTestId('deliveries-empty')).toHaveText('No deliveries match these filters.');
+	await page.screenshot({ path: out('screenshot-deliveries-no-match.png'), fullPage: true });
+
+	// The draft is refilled in canonical order: the event row is first.
+	await expect(page.getByTestId('deliveries-filter-value-0')).toHaveText('TASK_FAILED');
+	await page.waitForLoadState('networkidle');
+	await selectOption(page, 'deliveries-filter-value-0', 'RUN_STARTED');
+	await page.getByTestId('deliveries-filters-apply').click();
+	await expect.poll(() => deliveryFilters(page)).toEqual(['event=RUN_STARTED', `webhook_id=${webhookId}`]);
+	await expect.poll(async () => (await rowIds(page)).length).toBeGreaterThanOrEqual(1);
+	for (const id of await rowIds(page)) await expect(page.getByTestId(`delivery-event-${id}`)).toHaveText('RUN_STARTED');
+	note(`D2 event=RUN_STARTED: ${(await rowIds(page)).length} records, every one RUN_STARTED`);
+	await page.screenshot({ path: out('screenshot-deliveries-event.png'), fullPage: true });
+});
+
+test('D3: delivered = false with a run_id filter narrows, survives a reload, and starts at the run', async ({ page }) => {
+	await page.goto(panelUrl([`webhook_id=${webhookId}`]));
+	await page.waitForLoadState('networkidle');
+	await addListFilter(page, 'deliveries', { field: 'delivered', op: OP.equals, select: 'false' });
+	await addListFilter(page, 'deliveries', { field: 'run_id', op: OP.equals, value: firstRun });
+	await page.getByTestId('deliveries-filters-apply').click();
+	await expect.poll(() => deliveryFilters(page)).toEqual(['delivered=false', `run_id=${firstRun}`, `webhook_id=${webhookId}`]);
+	await expect.poll(async () => (await rowIds(page)).length).toBe(2);
+	for (const id of await rowIds(page)) await expect(page.getByTestId(`delivery-outcome-${id}`)).toHaveText('failed');
+	await page.screenshot({ path: out('screenshot-deliveries-filtered.png'), fullPage: true });
+
+	await page.reload();
+	await page.waitForLoadState('networkidle');
+	await expect.poll(async () => (await rowIds(page)).length).toBe(2);
+	await expect(page.getByTestId('deliveries-filter-field-0')).toHaveText('Delivered (delivered)');
+	await expect(page.getByTestId('deliveries-filter-value-0')).toHaveText('false');
+	await expect(page.getByTestId('deliveries-filter-value-1')).toHaveValue(firstRun);
+	// One run_id equality and no created_at start: the window starts at the run.
+	const run = await rpc<{ run: { createdAt: string } }>('RunService/GetRun', { id: firstRun });
+	const runStart = new Date(run.run.createdAt).toISOString().replace(/\.\d{3}Z$/, 'Z');
+	expect((await page.getByTestId('deliveries-window').innerText()).split(' to ')[0]).toBe(runStart);
+	note(`D3 delivered=false run_id=${firstRun}: 2 failed records; window starts at the run's start ${runStart}`);
+});
+
+test("D4: a created_at window through datetime-local is the caption's resolved window", async ({ page }) => {
+	const run = await rpc<{ run: { createdAt: string } }>('RunService/GetRun', { id: firstRun });
+	const minute = (d: Date) => d.toISOString().slice(0, 16);
+	const since = minute(new Date(new Date(run.run.createdAt).getTime() - 60 * 60_000));
+	const until = minute(new Date(Date.now() + 60 * 60_000));
+	await page.goto(panelUrl([`webhook_id=${webhookId}`]));
+	await page.waitForLoadState('networkidle');
+	const from = await addListFilter(page, 'deliveries', { field: 'created_at', op: OP.atOrAfter, value: since });
+	const to = await addListFilter(page, 'deliveries', { field: 'created_at', op: OP.before, value: until });
+	await expect(page.getByTestId(`deliveries-filter-utc-${from}`)).toHaveText(`${since}:00Z (UTC)`);
+	await expect(page.getByTestId(`deliveries-filter-utc-${to}`)).toHaveText(`${until}:00Z (UTC)`);
+	await page.getByTestId('deliveries-filters-apply').click();
+	await expect.poll(() => deliveryFilters(page)).toEqual([`created_at<${until}:00Z`, `created_at>=${since}:00Z`, `webhook_id=${webhookId}`]);
+	await expect(page.getByTestId('deliveries-window')).toHaveText(`${since}:00Z to ${until}:00Z`);
+	await expect(page.getByTestId(`delivery-${failedId}`)).toBeVisible();
+	note(`D4 window ${since}:00Z to ${until}:00Z, caption: ${await page.getByTestId('deliveries-scope').innerText()}`);
+	await page.screenshot({ path: out('screenshot-deliveries-window.png'), fullPage: true });
+
+	// An inverted window is the engine's refusal, shown verbatim.
+	await page.goto(panelUrl([`webhook_id=${webhookId}`, `created_at>=${until}:00Z`, `created_at<${since}:00Z`]));
+	await expect(page.getByTestId('deliveries-error')).toContainText('select no instant');
+});
+
+test('D5: paging under filters walks newest first without repeats; a changed filter clears the cursor', async ({ page }) => {
 	// A second run, accepted this time: two more records, five in all.
 	answer = 200;
 	await submitAndSettle(1);
 	expect((await listFor(webhookId)).length).toBeGreaterThanOrEqual(5);
 
-	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}&limit=2`);
+	await page.goto(panelUrl([`webhook_id=${webhookId}`], { limit: '2' }));
 	await page.waitForLoadState('networkidle');
-	const ids = async () =>
-		page
-			.getByTestId('deliveries-table')
-			.locator('tbody tr[data-testid^="delivery-dlv-"]')
-			.evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')!));
 	const seen: string[] = [];
-	seen.push(...(await ids()));
+	seen.push(...(await rowIds(page)));
 	await page.getByTestId('deliveries-next').click();
 	await expect(page).toHaveURL(/page=2/);
-	seen.push(...(await ids()));
+	seen.push(...(await rowIds(page)));
 	await page.getByTestId('deliveries-next').click();
 	await expect(page).toHaveURL(/page=3/);
-	const third = await ids();
+	const third = await rowIds(page);
 	seen.push(...third);
 	await page.reload();
 	await page.waitForLoadState('networkidle');
 	await expect(page.getByTestId('deliveries-page-status')).toContainText('Page 3');
-	expect(await ids()).toEqual(third);
+	expect(await rowIds(page)).toEqual(third);
 	await page.getByTestId('deliveries-previous').click();
 	await expect(page).toHaveURL(/page=2/);
 	expect(new Set(seen).size, `no delivery repeats across pages: ${seen.join(', ')}`).toBe(seen.length);
 	expect(seen.length).toBeGreaterThanOrEqual(5);
 	// Newest first, as the engine answers.
-	const all = (await listFor(webhookId)).map((d) => `delivery-${d.id}`);
+	const all = (await listFor(webhookId)).map((d) => d.id);
 	expect(seen).toEqual(all.slice(0, seen.length));
+
+	// A property filter on page 2: back to page 1, no cursor, the limit kept.
+	await page.waitForLoadState('networkidle');
+	await addListFilter(page, 'deliveries', { field: 'delivered', op: OP.equals, select: 'true' });
+	await page.getByTestId('deliveries-filters-apply').click();
+	await expect.poll(() => deliveryFilters(page)).toEqual(['delivered=true', `webhook_id=${webhookId}`]);
+	const params = new URL(page.url()).searchParams;
+	expect(params.get('cursor')).toBeNull();
+	expect(params.get('page')).toBeNull();
+	expect(params.get('limit')).toBe('2');
+	// A property-filter cursor: the delivered records — the second run's two
+	// and the redelivery — two per page, no repeat and no gap.
+	const delivered = (await listFor(webhookId)).filter((d) => d.delivered).map((d) => d.id);
+	expect(delivered).toHaveLength(3);
+	expect(await rowIds(page)).toEqual(delivered.slice(0, 2));
+	await expect(page.getByTestId('deliveries-page-status')).toContainText('Page 1');
+	await page.getByTestId('deliveries-next').click();
+	await expect(page).toHaveURL(/page=2/);
+	await expect.poll(() => rowIds(page)).toEqual(delivered.slice(2));
+	await expect(page.getByTestId('deliveries-next')).toHaveAttribute('aria-disabled', 'true');
+	const walked = delivered;
+	note(`D5 delivered=true at size 2 walked ${walked.join(' ')}`);
+});
+
+test('D6: the CLI equivalents name the same listing', async ({ page }) => {
+	await page.goto(panelUrl([`webhook_id=${webhookId}`, 'delivered=false', `run_id=${firstRun}`], { limit: '2' }));
+	await page.waitForLoadState('networkidle');
+	const filters = await cliText(page, 'deliveries-filters-cli');
+	expect(filters).toBe(
+		`orkctl webhook deliveries --filter 'delivered=false' --filter 'run_id=${firstRun}' --filter 'webhook_id=${webhookId}'`
+	);
+	const listing = await cliText(page, 'deliveries-cli');
+	expect(listing).toBe(`${filters} --limit 2`);
+	note(`D6 CLI equivalent: ${listing}`);
 });
 
 test('a failed deliveries read shows an error beside an intact webhook table', async ({ page }) => {
-	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}`);
+	await page.goto(panelUrl([`webhook_id=${webhookId}`]));
 	await page.waitForLoadState('networkidle');
 	await expect(page.getByTestId('deliveries-table')).toBeVisible();
 
 	// Only the deliveries read fails: the webhook table must still render.
 	await page.route('**/orkstack.v1.WebhookService/ListDeliveries', (route) => route.abort());
-	await page.getByTestId('deliveries-outcome').click();
-	await page.getByRole('option', { name: 'Delivered', exact: true }).click();
+	await addListFilter(page, 'deliveries', { field: 'delivered', op: OP.equals, select: 'true' });
+	await page.getByTestId('deliveries-filters-apply').click();
 	await expect(page.getByTestId('deliveries-error')).toBeVisible();
 	await expect(page.getByTestId('deliveries-empty')).toHaveCount(0);
 	await expect(page.getByTestId(`webhook-${webhookId}`)).toBeVisible();
@@ -395,16 +532,4 @@ test('a failed deliveries read shows an error beside an intact webhook table', a
 	await page.getByTestId('deliveries-error-retry').click();
 	await expect(page.getByTestId('deliveries-table')).toBeVisible();
 	await expect(page.getByTestId('deliveries-error')).toHaveCount(0);
-});
-
-test('the per-webhook link filters the panel', async ({ page }) => {
-	await page.goto(`${UI_ORIGIN}/admin/webhooks`);
-	await page.waitForLoadState('networkidle');
-	await page.getByTestId(`webhook-deliveries-${webhookId}`).click();
-	await expect(page).toHaveURL(new RegExp(`webhook=${webhookId}`));
-	await expect(page.getByTestId('deliveries-scope-webhook')).toHaveText(webhookId);
-	await expect(page.getByTestId('deliveries-webhook')).toContainText(webhookId);
-	const rows = page.getByTestId('deliveries-table').locator('tbody tr[data-testid^="delivery-dlv-"]');
-	await expect(rows.first()).toBeVisible();
-	expect(await rows.count()).toBeGreaterThanOrEqual(5);
 });

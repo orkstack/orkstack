@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import ListFilter from '$lib/components/ListFilter.svelte';
-	import { canonicalTexts, type FieldFilter } from '$lib/listFilter';
+	import type { FieldFilter } from '$lib/listFilter';
 	import { ListWebhooksRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
@@ -9,7 +9,7 @@
 	import { webhookUpdateCli } from '$lib/automation';
 	import type { Webhook } from '$lib/gen/orkstack/v1/service_pb';
 	import WebhookDeliveries from '$lib/components/WebhookDeliveries.svelte';
-	import { deliveriesHref } from '$lib/deliveries';
+	import { deliveriesHref, webhookDeliveriesFilters } from '$lib/deliveries';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { EventType } from '$lib/gen/orkstack/v1/run_pb';
@@ -22,9 +22,9 @@
 	// deliveriesHref, so the Deliveries panel's own coordinates survive a
 	// change of filters, and its paging keeps them.
 	function applyFilters(filters: FieldFilter[]) {
-		void goto(deliveriesHref(data.coordinates, { subscriptionFilter: canonicalTexts(filters) }), { keepFocus: true, noScroll: true });
+		void goto(deliveriesHref(data.coordinates, { subscriptionFilters: filters }), { keepFocus: true, noScroll: true });
 	}
-	const clearHref = $derived(deliveriesHref(data.coordinates, { subscriptionFilter: [] }));
+	const clearHref = $derived(deliveriesHref(data.coordinates, { subscriptionFilters: [] }));
 	let url = $state(''); let selected = $state<EventType[]>([]); let secret = $state(''); let shownSecret = $state(''); let formError = $state(''); let busy = $state(false); let deleting = $state(''); let deleteError = $state('');
 	// The scope is free text, not a Select over existing namespaces or orkflows:
 	// registration checks shape, never existence, so a subscription may be
@@ -70,8 +70,8 @@
 	{#if shownSecret}<div data-testid="webhook-secret-once" class="mt-4 rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800"><p class="font-medium">Copy this signing secret now. It will not be shown again.</p><code class="mt-1 block break-all font-mono text-xs">{shownSecret}</code></div>{/if}
 </section>
 <ListFilter request={ListWebhooksRequestSchema} applied={data.applied} testid="webhooks" command={['orkctl', 'webhook', 'list']} onapply={applyFilters} {clearHref} />
-{#if data.error}<ErrorPanel testid="webhooks-error" message={data.error} />{:else if data.webhooks.length === 0 && data.applied.length > 0}<p data-testid="webhooks-empty" class="text-sm text-fg-muted">No webhooks match these filters.</p>{:else if data.webhooks.length === 0}<p data-testid="webhooks-empty" class="text-sm text-fg-muted">No webhooks are registered.</p>{:else}<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs"><table class="w-full min-w-[820px] text-left text-sm" data-testid="webhook-list"><thead class="bg-surface-sunken"><tr><th class="p-3">ID</th><th class="p-3">Name</th><th class="p-3">URL</th><th class="p-3">Events</th><th class="p-3">Scope</th><th class="p-3">Created</th><th class="p-3"></th></tr></thead><tbody>{#each data.webhooks as webhook (webhook.id)}<tr class="border-t border-border-subtle" data-testid="webhook-{webhook.id}"><td class="p-3 font-mono text-xs">{webhook.id}</td><td class="p-3 font-mono text-xs" data-testid="webhook-name-{webhook.id}">{webhook.name || '—'}</td><td class="p-3 break-all">{webhook.url}</td><td class="p-3 text-xs">{webhook.events.length ? webhook.events.map(label).join(', ') : 'ALL'}</td><td class="p-3 font-mono text-xs" data-testid="webhook-scope-{webhook.id}">{webhookScope(webhook)}</td><td class="p-3 text-xs text-fg-muted">{fmtTimestamp(webhook.createdAt)}</td><td class="p-3 whitespace-nowrap"><a data-testid="webhook-deliveries-{webhook.id}" href={deliveriesHref(data.coordinates, { webhook: webhook.id, cursor: '', page: 1 }, 'deliveries')} class="mr-3 text-sm font-medium text-brand-700 hover:underline">Deliveries</a><button type="button" data-testid="edit-webhook-{webhook.id}" onclick={() => startEdit(webhook)} class="mr-3 text-sm font-medium text-brand-700 hover:underline">Edit</button><button type="button" data-testid="delete-webhook-{webhook.id}" onclick={() => { deleting = webhook.id; deleteError = ''; }} class="text-sm font-medium text-danger-700 hover:underline">Delete</button></td></tr>{/each}</tbody></table></div>{/if}
-<WebhookDeliveries coordinates={data.coordinates} response={data.deliveries} error={data.deliveriesError} errorCode={data.deliveriesErrorCode} webhooks={data.panelWebhooks} />
+{#if data.error}<ErrorPanel testid="webhooks-error" message={data.error} />{:else if data.webhooks.length === 0 && data.applied.length > 0}<p data-testid="webhooks-empty" class="text-sm text-fg-muted">No webhooks match these filters.</p>{:else if data.webhooks.length === 0}<p data-testid="webhooks-empty" class="text-sm text-fg-muted">No webhooks are registered.</p>{:else}<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs"><table class="w-full min-w-[820px] text-left text-sm" data-testid="webhook-list"><thead class="bg-surface-sunken"><tr><th class="p-3">ID</th><th class="p-3">Name</th><th class="p-3">URL</th><th class="p-3">Events</th><th class="p-3">Scope</th><th class="p-3">Created</th><th class="p-3"></th></tr></thead><tbody>{#each data.webhooks as webhook (webhook.id)}<tr class="border-t border-border-subtle" data-testid="webhook-{webhook.id}"><td class="p-3 font-mono text-xs">{webhook.id}</td><td class="p-3 font-mono text-xs" data-testid="webhook-name-{webhook.id}">{webhook.name || '—'}</td><td class="p-3 break-all">{webhook.url}</td><td class="p-3 text-xs">{webhook.events.length ? webhook.events.map(label).join(', ') : 'ALL'}</td><td class="p-3 font-mono text-xs" data-testid="webhook-scope-{webhook.id}">{webhookScope(webhook)}</td><td class="p-3 text-xs text-fg-muted">{fmtTimestamp(webhook.createdAt)}</td><td class="p-3 whitespace-nowrap"><a data-testid="webhook-deliveries-{webhook.id}" href={deliveriesHref(data.coordinates, { filters: webhookDeliveriesFilters(webhook.id), cursor: '', page: 1 }, 'deliveries')} class="mr-3 text-sm font-medium text-brand-700 hover:underline">Deliveries</a><button type="button" data-testid="edit-webhook-{webhook.id}" onclick={() => startEdit(webhook)} class="mr-3 text-sm font-medium text-brand-700 hover:underline">Edit</button><button type="button" data-testid="delete-webhook-{webhook.id}" onclick={() => { deleting = webhook.id; deleteError = ''; }} class="text-sm font-medium text-danger-700 hover:underline">Delete</button></td></tr>{/each}</tbody></table></div>{/if}
+<WebhookDeliveries coordinates={data.coordinates} response={data.deliveries} error={data.deliveriesError} webhooks={data.panelWebhooks} />
 {#if deleting}<ConfirmDialog testid="delete-webhook-confirm" title="Delete webhook {deleting}?" acceptLabel="Delete" acceptTestid="delete-webhook-accept" cancelTestid="delete-webhook-cancel" busy={busy} error={deleteError} destructive onaccept={remove} oncancel={() => { deleting = ''; deleteError = ''; }}>{#snippet body()}<p>Future matching events will no longer be delivered. In-flight delivery is not cancelled.</p>{/snippet}</ConfirmDialog>{/if}
 
 {#if editing}

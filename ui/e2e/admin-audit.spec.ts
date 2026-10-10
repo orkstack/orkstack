@@ -16,7 +16,7 @@ import {
 	waitForEngine,
 	openNamespaceEdit
 } from './harness';
-import { adminNamespaceUrl, selectOption } from './uiHelpers';
+import { OP, addListFilter, adminNamespaceUrl } from './uiHelpers';
 
 // Admin → Audit, against a real engine on real Temporal and MinIO.
 //
@@ -28,13 +28,19 @@ import { adminNamespaceUrl, selectOption } from './uiHelpers';
 //   2. an Ork-Principal header set IN FRONT of the browser (as a gateway
 //      would) reaches the engine through the SvelteKit proxy unchanged and is
 //      recorded verbatim;
-//   3. the scope is every namespace by default and a namespace narrows it —
-//      the deployment-wide retention write disappears, and the scope line
-//      says which scope is in force;
-//   4. a refused write is a record too, with its error code;
-//   5. pagination walks newest first without repeats, and a reload keeps the
+//   A1 the trail is every namespace by default, deployment-wide writes
+//      included;
+//   A2 `namespace =` (empty) shows only the deployment-wide writes, and
+//      `namespace = <ns>` only that namespace's — the scope line says which;
+//   A3 `action ^ namespace.` narrows to namespace writes;
+//   A4 `succeeded = false` shows a refused write, with its error code;
+//   A5 pagination walks newest first without repeats, and a reload keeps the
 //      page and Previous;
-//   6. a failed read is an ErrorPanel with Retry, never an empty table.
+//   A6 the CLI equivalent is `orkctl admin audit --filter …`, never -n;
+//   - a failed read is an ErrorPanel with Retry, never an empty table.
+//
+// The filters are the one filter component (ListFilter, `filter`
+// parameters; docs/UI_CLI_PARITY.md "Filtering lists").
 //
 // Topology: ONE engine, no Orker (nothing here runs a task), on a Temporal
 // namespace and a bucket this run creates and alone writes to — the retention
@@ -113,6 +119,19 @@ async function rowTexts(page: Page): Promise<string[]> {
 	return page.getByTestId('audit-row').evaluateAll((rows) =>
 		rows.map((row) => (row.textContent ?? '').replace(/\s+/g, ' ').trim())
 	);
+}
+
+const urlFilters = (page: Page) => new URL(page.url()).searchParams.getAll('filter');
+
+async function actions(page: Page): Promise<string[]> {
+	return page.getByTestId('audit-action').evaluateAll((cells) => cells.map((cell) => (cell.textContent ?? '').trim()));
+}
+
+async function cliText(page: Page, testid: string): Promise<string> {
+	await page.getByTestId(`${testid}-trigger`).click();
+	const text = await page.getByTestId(`${testid}-command`).innerText();
+	await page.keyboard.press('Escape');
+	return text;
 }
 
 async function rowIds(page: Page): Promise<string[]> {
@@ -217,32 +236,61 @@ test('an Ork-Principal header set in front of the browser is recorded', async ({
 	}
 });
 
-test('the namespace scope filter narrows to one namespace and the scope line says so', async ({ page }) => {
+test('A1/A2/A6: every namespace by default; namespace = selects the deployment-wide writes', async ({ page }) => {
 	// A deployment-wide write, made through the UI.
 	await page.goto(`${UI_ORIGIN}/admin/retention?ns=${NS}`);
 	await page.getByTestId('retention-set-hours').fill('96');
 	await page.getByTestId('retention-set-submit').click();
 	await expect(page.getByTestId('retention-set-success')).toBeVisible();
 
+	// A1: every namespace, deployment-wide writes included — whatever the
+	// namespace switcher holds.
 	await page.goto(`${UI_ORIGIN}/admin/audit?ns=${NS}`);
 	await expect(page.getByTestId('audit-row').first().getByTestId('audit-action')).toHaveText('retention.update');
+	await expect(page.getByTestId('audit-scope')).toContainText('Showing every namespace, deployment-wide writes included');
 	const everywhere = await rowTexts(page);
-	expect(everywhere.some((row) => row.includes('retention.update'))).toBe(true);
+	expect(await actions(page)).toEqual(['retention.update', 'namespace.update', 'namespace.create']);
+	await page.waitForLoadState('networkidle');
 
-	await selectOption(page, 'audit-scope-select', 'namespace');
-	await expect(page).toHaveURL(/scope=namespace/);
+	// A2: `namespace =` (the empty value) is the deployment-wide writes alone.
+	await addListFilter(page, 'audit', { field: 'namespace', op: OP.equals, value: '' });
+	await page.getByTestId('audit-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual(['namespace=']);
+	await expect(page.getByTestId('audit-scope')).toContainText('Showing only deployment-wide writes');
+	await expect.poll(() => actions(page)).toEqual(['retention.update']);
+	await expect(page.getByTestId('audit-namespace')).toHaveText('-');
+	await shot(page, 'screenshot-audit-namespace-empty.png');
+	note(`namespace= : ${(await rowTexts(page)).join(' | ')}`);
+
+	// One namespace: its writes alone, the deployment-wide one gone.
+	await page.getByTestId('audit-filter-value-0').fill(NS);
+	await page.getByTestId('audit-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual([`namespace=${NS}`]);
 	await expect(page.getByTestId('audit-scope')).toContainText(`Showing namespace ${NS}`);
-	await expect(page.getByTestId('audit-row').first().getByTestId('audit-action')).toHaveText('namespace.update');
+	await expect.poll(() => actions(page)).toEqual(['namespace.update', 'namespace.create']);
 	const narrowed = await rowTexts(page);
-	expect(narrowed.some((row) => row.includes('retention.update'))).toBe(false);
 	expect(narrowed.every((row) => row.includes(NS))).toBe(true);
-	await page.getByTestId('audit-cli-trigger').click();
-	await expect(page.getByTestId('audit-cli-command')).toHaveText(`orkctl -n '${NS}' admin audit`);
+
+	// A6: the CLI equivalent filters; it never sends -n.
+	expect(await cliText(page, 'audit-cli')).toBe(`orkctl admin audit --filter 'namespace=${NS}'`);
+	expect(await cliText(page, 'audit-filters-cli')).toBe(`orkctl admin audit --filter 'namespace=${NS}'`);
 	await shot(page, 'admin-audit-scoped.png');
-	note(`every namespace: ${everywhere.length} rows; namespace ${NS}: ${narrowed.length} rows, no retention.update`);
+	note(`every namespace: ${everywhere.length} rows; namespace=${NS}: ${narrowed.length} rows, no retention.update`);
 });
 
-test('a refused write appears with its error code', async ({ page }) => {
+test('A3: action ^ namespace. narrows to namespace writes', async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/admin/audit?ns=default`);
+	await expect(page.getByTestId('audit-row').first()).toBeVisible();
+	await page.waitForLoadState('networkidle');
+	await addListFilter(page, 'audit', { field: 'action', op: OP.prefix, value: 'namespace.' });
+	await page.getByTestId('audit-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual(['action^namespace.']);
+	await expect.poll(() => actions(page)).toEqual(['namespace.update', 'namespace.create']);
+	expect(await cliText(page, 'audit-filters-cli')).toBe(`orkctl admin audit --filter 'action^namespace.'`);
+	note(`action^namespace. : ${(await actions(page)).join(' ')}`);
+});
+
+test('A4: a refused write appears with its error code, and succeeded = false selects it', async ({ page }) => {
 	// `default`'s Delete is disabled in the UI, so the refusal is produced
 	// through the other write the Admin pages can have refused: lowering the
 	// deployment maximum below this namespace's own 48h run retention.
@@ -256,11 +304,18 @@ test('a refused write appears with its error code', async ({ page }) => {
 	await expect(first.getByTestId('audit-action')).toHaveText('retention.update');
 	await expect(first.getByTestId('audit-result')).toHaveText('refused failed_precondition');
 	await expect(first.getByTestId('audit-namespace')).toHaveText('-');
+	await page.waitForLoadState('networkidle');
+
+	await addListFilter(page, 'audit', { field: 'succeeded', op: OP.equals, select: 'false' });
+	await page.getByTestId('audit-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual(['succeeded=false']);
+	await expect(page.getByTestId('audit-row')).toHaveCount(1);
+	await expect(page.getByTestId('audit-result')).toHaveText('refused failed_precondition');
 	await shot(page, 'admin-audit-refused.png');
-	note(`refused row: ${(await rowTexts(page))[0]}`);
+	note(`succeeded=false: ${(await rowTexts(page))[0]}`);
 });
 
-test('pagination walks newest first without repeats and reload restores the page', async ({ page }) => {
+test('A5: pagination walks newest first without repeats and reload restores the page', async ({ page }) => {
 	for (const name of EXTRA) await rpc('NamespaceService/CreateNamespace', { namespace: { name } });
 	// create, update, retention ok, retention refused, and the two above.
 	await page.goto(`${UI_ORIGIN}/admin/audit?ns=default&limit=2`);

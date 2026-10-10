@@ -1,44 +1,33 @@
 import { Code, ConnectError } from '@connectrpc/connect';
 import { errorMessage, orkstack } from '$lib/client';
-import {
-	auditBound,
-	auditFilterError,
-	auditLimit,
-	auditRequestNamespace,
-	auditScope,
-	type AuditCoordinates
-} from '$lib/audit';
+import { DEFAULT_AUDIT_LIMIT, auditLimit, type AuditCoordinates } from '$lib/audit';
 import type { ListAuditRecordsResponse } from '$lib/gen/orkstack/v1/audit_pb';
 import { pageNumber } from '$lib/browsing';
+import { filtersFromUrl } from '$lib/listFilter';
 import { namespaceFrom, namespaceLabel } from '$lib/namespace';
 import type { PageLoad } from './$types';
 
-// ListAuditRecords reads the control-plane audit trail. The namespace
-// switcher is a FILTER here, and an explicit one: `scope=namespace` narrows to
-// the switcher's namespace; without it the page shows every namespace, the
-// deployment-wide writes included — the one request in the API where an empty
-// namespace means "all of them" (proto/orkstack/v1/audit.proto).
+// ListAuditRecords reads the control-plane audit trail: a deployment-wide
+// listing narrowed by filters (the `filter` parameters). The namespace
+// switcher does not filter it; a `namespace` filter does, and `namespace=`
+// selects the deployment-wide writes, which carry no namespace.
 //
 // Every coordinate lives in the URL (the runs list's discipline): filters,
 // cursor and page number survive a reload. A failed read returns
 // { audit: null, auditError } as retention/+page.ts does, never an empty
-// table.
+// table; a filter parameter that does not parse is shown without a request.
 export const load: PageLoad = async ({ fetch, url }) => {
 	const params = url.searchParams;
 	const cursor = params.get('cursor') ?? '';
+	const { filters, error: filterError } = filtersFromUrl(url);
 	const coordinates: AuditCoordinates = {
-		scope: auditScope(params.get('scope')),
-		namespace: namespaceLabel(namespaceFrom(url)),
-		action: params.get('action') ?? '',
-		principal: params.get('principal') ?? '',
-		since: params.get('since') ?? '',
-		until: params.get('until') ?? '',
+		ns: namespaceLabel(namespaceFrom(url)),
+		filters,
 		limit: auditLimit(params.get('limit')),
 		cursor,
 		// A page number without a cursor names no page the engine could return.
 		page: cursor ? pageNumber(params.get('page') ?? '') : 1
 	};
-	const filterError = auditFilterError(coordinates.since, coordinates.until);
 	if (filterError) {
 		return {
 			coordinates,
@@ -49,12 +38,8 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	}
 	try {
 		const audit = await orkstack(fetch).audit.listAuditRecords({
-			namespace: auditRequestNamespace(coordinates),
-			actionPrefix: coordinates.action,
-			principal: coordinates.principal,
-			since: auditBound(coordinates.since),
-			until: auditBound(coordinates.until),
-			pageSize: coordinates.limit,
+			filters,
+			pageSize: coordinates.limit === DEFAULT_AUDIT_LIMIT ? 0 : coordinates.limit,
 			pageToken: coordinates.cursor
 		});
 		return {
@@ -65,7 +50,11 @@ export const load: PageLoad = async ({ fetch, url }) => {
 		};
 	} catch (err) {
 		const code =
-			err instanceof ConnectError && err.code === Code.ResourceExhausted ? 'resource_exhausted' : 'failed';
+			err instanceof ConnectError && err.code === Code.ResourceExhausted
+				? 'resource_exhausted'
+				: err instanceof ConnectError && err.code === Code.InvalidArgument
+					? 'invalid_argument'
+					: 'failed';
 		return {
 			coordinates,
 			audit: null as ListAuditRecordsResponse | null,
