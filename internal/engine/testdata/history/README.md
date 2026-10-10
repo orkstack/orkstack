@@ -163,5 +163,6 @@ rather than a re-recording of the v1 ones, which stay on `DefaultVersion`.
 - recorders: `TestIntegration_RecordGoldenRunHistory`
   (`golden_history_integration_test.go`) and
   `TestIntegration_RecordEachRunHistory` (`each_integration_test.go`);
-  `ORK_REQUIRE_LEAN_FIXTURES`. Not recorded yet: until they are, their tests
-  skip and name the recorder.
+  `ORK_REQUIRE_LEAN_FIXTURES`. Recorded once, against a real cluster, by the
+  build that introduced `lean-event-path`; like the v1 fixtures they are meant
+  to age, not to be refreshed.

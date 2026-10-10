@@ -23,7 +23,7 @@ import (
 // marker and replay on DefaultVersion — TestRunWorkflow_ReplaysCommittedV1History
 // and TestRunWorkflow_ReplaysCommittedEachHistory hold that. The tests below
 // prove it is the GATE that keeps them green, and hold the lean-path
-// fixtures, once recorded, to the lean command stream.
+// fixtures (run-succeeded-v2.json, run-each-v2.json) to the lean command stream.
 
 const (
 	leanSucceededHistory = "testdata/history/run-succeeded-v2.json"
@@ -72,9 +72,9 @@ func TestCommittedHistory_LeanEventPathWithoutItsGateIsCaught(t *testing.T) {
 	}
 }
 
-// requireLeanFixture skips while a lean-path fixture has not been recorded:
-// it can only be produced against a real cluster. ORK_REQUIRE_LEAN_FIXTURES
-// makes its absence a failure.
+// requireLeanFixture skips when a lean-path fixture is missing, as the each
+// and join guards do: it can only be produced against a real cluster.
+// ORK_REQUIRE_LEAN_FIXTURES makes its absence a failure.
 func requireLeanFixture(t *testing.T, path, recorder string) {
 	t.Helper()
 	if _, err := os.Stat(path); err != nil {
