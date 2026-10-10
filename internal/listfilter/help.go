@@ -10,6 +10,10 @@ import (
 // Help is the allowlist as `orkctl … --filter help` prints it and as every
 // list command's --help ends: one row per field, with the operators it
 // takes in the CLI grammar and what its values must spell.
+//
+// It takes no command name: the table depends only on the resource's
+// allowlist, so every command listing one resource prints the same text and
+// the caller (cmd/orkctl/filter.go) places it under its own usage.
 func (s *Spec) Help() string {
 	type row struct{ field, ops, values string }
 	rows := []row{{"FIELD", "OPERATORS", "VALUES"}}
