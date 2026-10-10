@@ -42,15 +42,37 @@ import (
 // setting, and the size bound decides how big a chunk is rather than how often
 // the store is written.
 //
-// A third bound is the memory guarantee. Once the buffer reaches the ceiling
-// before the pace allows a size-triggered flush, the writer waits with the
-// sink unlocked until the interval permits the upload. The buffer therefore
-// never exceeds flushCeiling plus one line, and normal size-triggered uploads
-// stay at least FlushInterval apart. A single over-long line is split rather
-// than accumulated, and the attempt as a whole stops at MaxBytes with
-// a notice chunk that says so. A runaway task therefore costs one bounded
-// buffer in the Orker and one bounded object count in the bucket, and its
-// reader is told the output was cut instead of quietly receiving a prefix.
+// A third bound is the memory guarantee, and it is what keeps the pace from
+// throttling the workload. Once the buffer reaches the ceiling before the pace
+// allows a flush, the chunk GROWS rather than blocking the writer — up to
+// logChunkMaxBytes (1 MiB, the size one over-long line already reaches). Only
+// past that does the writer wait, with the sink unlocked, until the interval
+// permits the upload. The buffer therefore never exceeds 1 MiB plus one line,
+// uploads stay at least one interval apart, and a workload is throttled only
+// above 1 MiB per interval (2 MiB/s at the default) rather than at 128 KiB/s.
+// There is still no queue and nothing is dropped: the writer's own blocking
+// write(2) is the bound (pkg/logstream/linewriter.go).
+//
+// The interval is not fixed for the life of an attempt. After every
+// logIntervalStepChunks chunks (about a minute at the default pace) it doubles,
+// up to logIntervalMaxFactor times FlushInterval (4 s at the default), so a
+// two-hour task that prints steadily writes about 1,900 objects rather than
+// 14,000, while its first minute keeps the half-second latency a person
+// watching it start is waiting on.
+//
+// A single over-long line is split rather than accumulated, and the attempt as
+// a whole stops at MaxBytes with a notice chunk that says so. A runaway task
+// therefore costs one bounded buffer in the Orker and one bounded object count
+// in the bucket, and its reader is told the output was cut instead of quietly
+// receiving a prefix.
+//
+// A failing store is the last bound. A chunk whose upload exhausts its tries is
+// dropped and counted, and the sink then cools down — logStoreCooldown,
+// doubling to logStoreCooldownMax while the store keeps failing — during which
+// a chunk is counted as dropped at once, without an upload. The producer
+// therefore stalls on at most one failing chunk per cool-down rather than on
+// every chunk, and the loss is reported in the first chunk that lands. Close's
+// terminal writes try regardless: they are the durability barrier.
 const (
 	// DefaultLogFlushBytes is the size bound: buffered bytes that trip a flush.
 	DefaultLogFlushBytes = 64 << 10
@@ -74,6 +96,21 @@ const (
 	// logChunkFinalFlushTimeout bounds a flush that runs after the task's own
 	// context was cancelled, so a dead store cannot hold the activity open.
 	logChunkFinalFlushTimeout = 5 * time.Second
+
+	// logChunkMaxBytes is how far a chunk may grow while the pace holds it,
+	// before the writer is made to wait. It is the default MaxLineBytes: the
+	// size one over-long line already reaches.
+	logChunkMaxBytes = 1 << 20
+	// logIntervalStepChunks is how many chunks an attempt writes at one
+	// interval before the interval doubles; logIntervalMaxFactor caps the
+	// doubling (FlushInterval × 8).
+	logIntervalStepChunks = 120
+	logIntervalMaxFactor  = 8
+	// logStoreCooldown is how long a sink stops trying a store after a chunk
+	// exhausted its tries; it doubles, up to logStoreCooldownMax, while the
+	// store keeps failing.
+	logStoreCooldown    = 5 * time.Second
+	logStoreCooldownMax = 30 * time.Second
 )
 
 // Environment variables tuning the sink. They are the Orker's, because the
@@ -160,7 +197,7 @@ type logChunkSink struct {
 	now func() time.Time
 
 	mu sync.Mutex
-	// buf holds bytes not yet uploaded. It never exceeds flushCeiling plus one
+	// buf holds bytes not yet uploaded. It never exceeds chunkCap plus one
 	// MaxLineBytes piece.
 	buf bytes.Buffer
 	// seq is the sequence of the LAST chunk stored. It advances only on a
@@ -183,6 +220,13 @@ type logChunkSink struct {
 	// truncated latches once the cap is hit; nothing is written afterwards.
 	truncated bool
 	closed    bool
+	// chunks counts upload attempts (stored or dropped), which is what the
+	// interval's doubling is measured in.
+	chunks int
+	// coolUntil is when a failing store is tried again; cooldown is the length
+	// of the next cool-down. Zero coolUntil means the store is not cooling.
+	coolUntil time.Time
+	cooldown  time.Duration
 }
 
 // newLogChunkSink builds a sink for one attempt. A nil store yields a nil
@@ -254,9 +298,10 @@ func (s *logChunkSink) Write(line string) {
 				s.mu.Unlock()
 				return
 			}
-			if s.buf.Len() >= s.flushCeiling() && !s.pacedLocked() {
-				// Do not let a chatty producer bypass the minimum upload gap. The
-				// timer can flush while we wait, so never sleep with s.mu held.
+			if s.buf.Len() >= s.chunkCap() && !s.pacedLocked() {
+				// Below chunkCap the chunk grows while the pace holds it; at it, a
+				// chatty producer waits out the minimum upload gap. The timer can
+				// flush while we wait, so never sleep with s.mu held.
 				wait := s.paceWaitLocked()
 				s.mu.Unlock()
 				if !s.waitForPace(wait) {
@@ -268,9 +313,7 @@ func (s *logChunkSink) Write(line string) {
 				s.armLocked()
 			}
 			s.buf.Write(piece)
-			if s.buf.Len() >= s.flushCeiling() && s.pacedLocked() {
-				s.flushLocked()
-			} else if s.buf.Len() >= s.opts.FlushBytes && s.pacedLocked() {
+			if s.buf.Len() >= s.opts.FlushBytes && s.pacedLocked() {
 				s.flushLocked()
 			}
 			s.mu.Unlock()
@@ -315,7 +358,11 @@ func (s *logChunkSink) Close() {
 	if s.closed {
 		return
 	}
+	// Close's writes try even while a failing store is cooling down: they are
+	// the durability barrier, and each is bounded by uploadContext.
+	s.coolUntil = time.Time{}
 	s.flushLocked()
+	s.coolUntil = time.Time{}
 	// THE LAST FLUSH IS THE ONE WHOSE LOSS HAS NOWHERE TO GO. Loss is
 	// otherwise reported on the front of the NEXT chunk (flushLocked), which
 	// is a chunk that no longer exists once this returns: a stream whose final
@@ -339,12 +386,23 @@ func (s *logChunkSink) pacedLocked() bool {
 	if s.lastFlush.IsZero() {
 		return true
 	}
-	return s.clock().Sub(s.lastFlush) >= s.opts.FlushInterval
+	return s.clock().Sub(s.lastFlush) >= s.interval()
+}
+
+// interval is the attempt's current minimum gap between uploads: FlushInterval,
+// doubled after every logIntervalStepChunks chunks, up to
+// logIntervalMaxFactor times. The caller must hold s.mu.
+func (s *logChunkSink) interval() time.Duration {
+	factor := 1
+	for steps := s.chunks / logIntervalStepChunks; steps > 0 && factor < logIntervalMaxFactor; steps-- {
+		factor *= 2
+	}
+	return s.opts.FlushInterval * time.Duration(factor)
 }
 
 // paceWaitLocked returns the remaining minimum gap. The caller must hold s.mu.
 func (s *logChunkSink) paceWaitLocked() time.Duration {
-	remaining := s.opts.FlushInterval - s.clock().Sub(s.lastFlush)
+	remaining := s.interval() - s.clock().Sub(s.lastFlush)
 	if remaining <= 0 {
 		return 0
 	}
@@ -372,20 +430,16 @@ func (s *logChunkSink) waitForPace(wait time.Duration) bool {
 	}
 }
 
-// flushCeiling is the most this sink holds while a size-triggered flush waits
-// out the pace.
-//
-// It is the operator's size bound, or the default when that is smaller. The
-// two numbers answer different questions: FlushBytes is how big a chunk this
-// deployment WANTS, and the ceiling is how much this process is willing to
-// hold. They are the same until someone tunes FlushBytes below the default —
-// which is what a test does to force chunk boundaries. Below the default,
-// shrinking FlushBytes buys smaller chunks and never more uploads per second.
-func (s *logChunkSink) flushCeiling() int {
-	if s.opts.FlushBytes > DefaultLogFlushBytes {
+// chunkCap is how big the buffer may grow while the pace holds it before a
+// writer waits: logChunkMaxBytes, or FlushBytes when an operator set a larger
+// one. FlushBytes is how big a chunk this deployment WANTS; chunkCap is how
+// much this process is willing to hold while the pace keeps a chunk back.
+// Shrinking FlushBytes buys smaller chunks and never more uploads per second.
+func (s *logChunkSink) chunkCap() int {
+	if s.opts.FlushBytes > logChunkMaxBytes {
 		return s.opts.FlushBytes
 	}
-	return DefaultLogFlushBytes
+	return logChunkMaxBytes
 }
 
 func (s *logChunkSink) clock() time.Time {
@@ -400,7 +454,7 @@ func (s *logChunkSink) clock() time.Time {
 // from the previous upload has elapsed.
 func (s *logChunkSink) armLocked() {
 	s.disarmLocked()
-	delay := s.opts.FlushInterval
+	delay := s.interval()
 	if !s.lastFlush.IsZero() {
 		if remaining := s.paceWaitLocked(); remaining > 0 {
 			delay = remaining
@@ -476,6 +530,8 @@ func (s *logChunkSink) noticeLocked() {
 	data = append(data, s.buf.Bytes()...)
 	data = append(data, notice...)
 	s.buf.Reset()
+	// The terminal chunk tries even while a failing store is cooling down.
+	s.coolUntil = time.Time{}
 	s.putLocked(data, true)
 }
 
@@ -494,6 +550,14 @@ func (s *logChunkSink) putLocked(data []byte, truncated bool) {
 	// one. A store that is refusing chunks is the last thing to hammer at the
 	// writer's own pace, and each try here already costs the retry loop below.
 	s.lastFlush = s.clock()
+	s.chunks++
+	// A store that just failed a chunk is not tried again until its cool-down
+	// ends: the chunk is counted as dropped and reported in the next one that
+	// lands, and the producer does not stall on it.
+	if !s.coolUntil.IsZero() && s.lastFlush.Before(s.coolUntil) {
+		s.dropped += int64(len(data))
+		return
+	}
 	chunk := artifacts.LogChunk{
 		LogRef:    s.ref,
 		Seq:       s.seq + 1,
@@ -510,10 +574,18 @@ func (s *logChunkSink) putLocked(data []byte, truncated bool) {
 		if err = s.store.PutLogChunk(ctx, chunk); err == nil {
 			s.seq = chunk.Seq
 			s.stored += int64(len(data))
+			s.coolUntil, s.cooldown = time.Time{}, 0
 			return
 		}
 	}
 	s.dropped += int64(len(data))
+	switch {
+	case s.cooldown == 0:
+		s.cooldown = logStoreCooldown
+	case s.cooldown < logStoreCooldownMax:
+		s.cooldown = min(2*s.cooldown, logStoreCooldownMax)
+	}
+	s.coolUntil = s.clock().Add(s.cooldown)
 	if s.onError != nil {
 		s.onError(fmt.Errorf("orker: store log chunk %d of task %q in run %q: %w",
 			chunk.Seq, s.ref.TaskID, s.ref.RunID, err))
