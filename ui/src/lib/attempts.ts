@@ -190,3 +190,41 @@ export function retryBadgeLabel(attempts: TaskAttempt[], terminal: boolean): str
 	const retries = retryCount(attempts);
 	return retries > 0 ? `retried ×${retries}` : `${seen} attempts`;
 }
+
+/** What the run page's attempt seed read answered. */
+export interface AttemptSeed {
+	attempts: TaskAttempt[];
+	/** Why the timeline could not be read, if it could not. */
+	error: string | null;
+	/**
+	 * The engine has no attempt store at all (FailedPrecondition): not a
+	 * transient read failure, but "no record will ever exist" — the timing
+	 * derivation names it as its own reason.
+	 */
+	storeAbsent: boolean;
+}
+
+/**
+ * readAttemptSeed reads the retry history of EVERY task of a run in one call
+ * (`taskId: ''`, which the engine answers run-wide). The run page asks it
+ * AFTER it has rendered — the run, its statuses and its logs need only
+ * GetRun — and fills timing in when it lands. It is read tolerantly: a
+ * deployment that cannot say what a task's earlier tries did still renders
+ * everything else.
+ */
+export async function readAttemptSeed(
+	runs: {
+		listTaskAttempts(req: { runId: string; namespace: string; taskId: string }): Promise<{ attempts: TaskAttempt[] }>;
+	},
+	runId: string,
+	namespace: string,
+	describe: (err: unknown) => string,
+	isStoreAbsent: (err: unknown) => boolean
+): Promise<AttemptSeed> {
+	try {
+		const res = await runs.listTaskAttempts({ runId, namespace, taskId: '' });
+		return { attempts: res.attempts, error: null, storeAbsent: false };
+	} catch (err) {
+		return { attempts: [], error: describe(err), storeAbsent: isStoreAbsent(err) };
+	}
+}

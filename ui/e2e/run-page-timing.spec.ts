@@ -319,4 +319,31 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 	note(`P5 attempt 2 phases: ${await second.innerText()}`);
 	await shot(page, 'timing-retried.png');
 	runTimingCLI(run, 'flaky');
+
+	// F-ui-perf-1: the page renders from GetRun alone; the attempt timeline is
+	// read afterwards and fills in when it lands. Held back for two seconds,
+	// the run, its status and the card are on screen while it is pending.
+	let seedAsked = 0;
+	await page.route('**/orkstack.v1.RunService/ListTaskAttempts', async (route) => {
+		const body = JSON.parse(route.request().postData() ?? '{}');
+		if (!body.taskId) {
+			seedAsked++;
+			await new Promise((resolve) => setTimeout(resolve, 2_000));
+		}
+		await route.continue();
+	});
+	await page.reload();
+	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED');
+	await expect(page.getByTestId('task-flaky-timing')).toBeVisible();
+	// The collapsed card's retry badge is the seed's: absent while it is pending.
+	await expect(page.getByTestId('task-flaky-retries')).toHaveCount(0);
+	await shot(page, 'timing-before-seed.png');
+	await expect(page.getByTestId('task-flaky-retries')).toBeVisible({ timeout: 30_000 });
+	expect(seedAsked).toBe(1);
+	await page.getByTestId('task-inspect-toggle-flaky').click();
+	await expect(page.getByTestId('task-flaky-attempts')).toBeVisible();
+	await expect(page.getByTestId('attempt-flaky-2-phases')).toBeVisible({ timeout: 30_000 });
+	await shot(page, 'timing-after-seed.png');
+	note('P5 the run rendered with its attempt timeline pending (held 2 s); the timeline filled in when it arrived');
+	await page.unroute('**/orkstack.v1.RunService/ListTaskAttempts');
 });

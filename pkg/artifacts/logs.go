@@ -121,6 +121,46 @@ type LogStore interface {
 	LatestLogAttempt(ctx context.Context, runID, taskID string, item Item) (int32, error)
 }
 
+// LogScope names one log stream of a run: a task's own (Item NoItem) or one
+// item of a fan-out task.
+type LogScope struct {
+	TaskID string
+	Item   Item
+}
+
+// RunLogAttemptLister is the run-wide form of LatestLogAttempt: every scope's
+// highest attempt that wrote a chunk, for a whole run at once. It is separate
+// from LogStore, and asserted rather than required, on RunAttemptReader's
+// terms: the durable backends implement it, and no Orker or test double of
+// LogStore needs to grow a method it will never be asked for.
+//
+// It is what a run-wide attempt timeline asks (ListTaskAttempts with no task):
+// one call, where asking LatestLogAttempt per task and per fan-out item was
+// one listing of every chunk of every scope.
+type RunLogAttemptLister interface {
+	// LatestLogAttempts returns, for every scope of runID that wrote any
+	// chunk, its highest such attempt — exactly what LatestLogAttempt answers
+	// scope by scope. A scope with no logs is absent; a run with no logs reads
+	// EMPTY, never an error.
+	LatestLogAttempts(ctx context.Context, runID string) (map[LogScope]int32, error)
+}
+
+// LogRunPrefix renders the prefix holding every log chunk of a run:
+// metadata/logs/{run-id}/.
+func LogRunPrefix(runID string) (string, error) {
+	run, err := encodeArchiveSegment(runID)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: task log key: run id: %w", errors.Join(ErrInvalidLogKey, err))
+	}
+	return path.Join(LogPrefix, run) + "/", nil
+}
+
+// logAttemptPrefixEnd is a key just past every chunk of the attempt whose
+// prefix it extends: chunk names are digits and ".trunc", all below '~', so
+// a listing that starts after it starts at the next attempt (or scope)
+// without listing the rest of this one.
+func logAttemptPrefixEnd(attemptPrefix string) string { return attemptPrefix + "~" }
+
 // LogScopePrefix renders the prefix holding every attempt of one scope: the
 // task prefix for NoItem, and metadata/logs/{run-id}/{task-id}/{item:05}/ for
 // an item.

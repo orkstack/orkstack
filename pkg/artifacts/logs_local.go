@@ -26,7 +26,10 @@ type LocalLogStore struct {
 }
 
 // compile-time contract check.
-var _ LogStore = (*LocalLogStore)(nil)
+var (
+	_ LogStore            = (*LocalLogStore)(nil)
+	_ RunLogAttemptLister = (*LocalLogStore)(nil)
+)
 
 // NewLocalLogStore opens (creating if needed) the log tree under dir.
 func NewLocalLogStore(dir string) (*LocalLogStore, error) {
@@ -207,6 +210,63 @@ func (s *LocalLogStore) LatestLogAttempt(ctx context.Context, runID, taskID stri
 	}
 	if latest == 0 {
 		return 0, fmt.Errorf("artifacts: task %q of run %q has no logs: %w", taskID, runID, ErrNotFound)
+	}
+	return latest, nil
+}
+
+// LatestLogAttempts walks the run's directory: each task's attempt
+// directories, and each item's below it. As LatestLogAttempt does, it counts
+// an attempt only while it still holds a chunk.
+func (s *LocalLogStore) LatestLogAttempts(ctx context.Context, runID string) (map[LogScope]int32, error) {
+	prefix, err := LogRunPrefix(runID)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[LogScope]int32{}
+	runDir := strings.TrimSuffix(prefix, "/")
+	tasks, err := fs.ReadDir(s.root.FS(), runDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return latest, nil
+		}
+		return nil, fmt.Errorf("artifacts: local run log attempts %q: %w", runDir, err)
+	}
+	for _, task := range tasks {
+		if !task.IsDir() {
+			continue
+		}
+		taskID, ok := decodeArchiveSegment(task.Name())
+		if !ok {
+			continue
+		}
+		taskDir := runDir + "/" + task.Name()
+		entries, err := fs.ReadDir(s.root.FS(), taskDir)
+		if err != nil {
+			return nil, fmt.Errorf("artifacts: local run log attempts %q: %w", taskDir, err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			if index, isItem := parseItemSegment(entry.Name()); isItem {
+				attempt, err := s.LatestLogAttempt(ctx, runID, taskID, ItemAt(index))
+				switch {
+				case errors.Is(err, ErrNotFound):
+				case err != nil:
+					return nil, err
+				default:
+					latest[LogScope{TaskID: taskID, Item: ItemAt(index)}] = attempt
+				}
+			}
+		}
+		attempt, err := s.LatestLogAttempt(ctx, runID, taskID, NoItem)
+		switch {
+		case errors.Is(err, ErrNotFound):
+		case err != nil:
+			return nil, err
+		default:
+			latest[LogScope{TaskID: taskID, Item: NoItem}] = attempt
+		}
 	}
 	return latest, nil
 }

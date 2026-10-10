@@ -568,11 +568,18 @@ on the log stream.
   task is NotFound, a missing run id `InvalidArgument`, and an engine with no
   attempt store answers `FailedPrecondition` rather than a timeline of
   UNREPORTED rows.
+- **A whole run is read run-wide.** With no task, the engine lists the run's
+  records once and its log attempts once (S3 skips past each attempt rather
+  than listing every chunk), instead of once per task and per fan-out item;
+  the answer is the one the per-task reads give. A task's own read lists its
+  log attempts with the `/` delimiter, so a long attempt costs one request.
 
 CLI: `run attempts RUN [--task TASK] [--item N]` and `run get RUN --attempts`
 (`run get --attempts --json` is refused, pointing at `run attempts --json`).
 UI: a per-task retry badge and an attempt timeline with each failed attempt's
-own error and a link that pins the log pane to that attempt.
+own error and a link that pins the log pane to that attempt. The run page
+renders from `GetRun` and reads the run's timeline afterwards; retry badges
+and timing fill in when it arrives.
 
 ### Task timing
 

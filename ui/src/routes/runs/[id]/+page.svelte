@@ -72,7 +72,8 @@
 		type TaskRun
 	} from '$lib/gen/orkstack/v1/run_pb';
 	import { create } from '@bufbuild/protobuf';
-	import { attemptsKey, attemptsSeen, groupAttemptsByTask, runRetryCount } from '$lib/attempts';
+	import { attemptsKey, attemptsSeen, groupAttemptsByTask, readAttemptSeed, runRetryCount } from '$lib/attempts';
+	import { Code, ConnectError } from '@connectrpc/connect';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from '$lib/gen/orkstack/v1/stats_pb';
 	import { flakesCli } from '$lib/flakes';
@@ -269,31 +270,45 @@
 	);
 	// EVERY TRY OF EVERY TASK, KEPT PER TASK.
 	//
-	// The loader reads the whole run's timeline in one call, and from then on
-	// it is REPLACED PER TASK by the refetch below, because that is the grain
-	// the live triggers have: a task reached its terminal status, or its log
-	// pane saw a higher attempt. $state.raw and a fresh Map per write — the
-	// value is swapped wholesale, and a deep proxy over every attempt record of
-	// a thirty-task run buys nothing.
-	let attemptsByTask = $state.raw<Map<string, TaskAttempt[]>>(
-		untrack(() => groupAttemptsByTask(data.attempts))
-	);
-	// What the timeline could not be read for, if anything. It starts as the
-	// loader's tolerant answer and is updated by the refetches, so a store that
-	// came back reachable stops apologising.
-	let attemptsError = $state<string | null>(untrack(() => data.attemptsError));
-	// The rows this page last seeded from, by reference. Every later loader
-	// answer — a retry, a cancel, the terminal re-read — comes back through
-	// `data`, and re-seeding on a CHANGED reference keeps the timeline fresh
-	// without a second request and without discarding a live refetch on a
-	// re-render that changed nothing.
-	let seededAttempts = $state.raw<TaskAttempt[]>(untrack(() => data.attempts));
+	// The whole run's timeline is read in one call AFTER the page has
+	// rendered — the run, its statuses and its logs need only the loader's
+	// GetRun — and again on every later loader answer (a retry, a cancel, the
+	// terminal re-read), keyed on the run snapshot's reference so a re-render
+	// that changed nothing asks nothing. From then on it is REPLACED PER TASK
+	// by the refetch below, because that is the grain the live triggers have:
+	// a task reached its terminal status, or its log pane saw a higher
+	// attempt. $state.raw and a fresh Map per write — the value is swapped
+	// wholesale, and a deep proxy over every attempt record of a thirty-task
+	// run buys nothing.
+	let attemptsByTask = $state.raw<Map<string, TaskAttempt[]>>(new Map());
+	// What the timeline could not be read for, if anything. It is the seed's
+	// tolerant answer, updated by the refetches, so a store that came back
+	// reachable stops apologising.
+	let attemptsError = $state<string | null>(null);
+	// No attempt store at all (FailedPrecondition): timing names it.
+	let attemptStoreAbsent = $state(false);
+	// Until the seed lands, nothing is said about earlier tries: an empty map
+	// is "not read yet", which must not read as "no record".
+	let attemptsSeeded = $state(false);
+	let seedGeneration = 0;
 	$effect(() => {
-		const rows = data.attempts;
-		if (rows === untrack(() => seededAttempts)) return;
-		seededAttempts = rows;
-		attemptsByTask = groupAttemptsByTask(rows);
-		attemptsError = data.attemptsError;
+		const snapshot = data.run;
+		if (!snapshot) return;
+		const mine = ++seedGeneration;
+		const namespace = untrack(() => data.namespace);
+		void readAttemptSeed(
+			orkstack(fetch).runs,
+			snapshot.id,
+			namespace,
+			errorMessage,
+			(err) => err instanceof ConnectError && err.code === Code.FailedPrecondition
+		).then((seed) => {
+			if (mine !== seedGeneration) return;
+			attemptsByTask = groupAttemptsByTask(seed.attempts);
+			attemptsError = seed.error;
+			attemptStoreAbsent = seed.storeAbsent;
+			attemptsSeeded = true;
+		});
 	});
 	// Refetches in flight, so a task whose terminal event and whose log pane
 	// speak in the same tick asks once. Deliberately a plain Set: it is
@@ -1601,7 +1616,7 @@
 					{@const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt)}
 					{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
 					{@const isAwait = task.await !== undefined || taskDefs.get(task.id)?.await !== undefined}
-					{@const timing = taskTiming({ ...task, awaited: isAwait }, data.attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
+					{@const timing = taskTiming({ ...task, awaited: isAwait }, attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
 					{@const accent = pinAccent(task.pin)}
 					{@const fanOut = task.each !== undefined || taskDefs.get(task.id)?.each !== undefined}
 					{@const composed = task.child !== undefined || taskDefs.get(task.id)?.orkflow !== undefined}
@@ -2118,7 +2133,7 @@
 									page-level notice instead of an empty disclosure in
 									every card.
 								-->
-								{#if !fanOut && (!data.attemptsError || taskAttempts.length > 0)}
+								{#if !fanOut && attemptsSeeded && (!attemptsError || taskAttempts.length > 0)}
 									<AttemptTimeline
 										runId={run.id}
 										taskId={task.id}
