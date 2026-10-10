@@ -58,8 +58,8 @@ silently diverge from. One store cannot disagree with itself.
   unique within a namespace atomically: the cluster refuses a second create.
   A schedule of another namespace is NotFound.
 - A schedule's `id` (`sch-{16 hex}`) is opaque. It survives an update and
-  changes on delete-then-create, so `orkctl run list --origin schedule:<id>`
-  names one schedule's lifetime.
+  changes on delete-then-create, so `orkctl run list --filter
+  origin.kind=SCHEDULE --filter origin.id=<id>` names one schedule's lifetime.
 - Overlap, catch-up, jitter, pause, note, backfill and manual fire are the
   cluster's own. OrkStack never computes a next fire time, never decides
   whether a fire overlaps, never buffers or retries a fire, and never retries
@@ -127,7 +127,8 @@ refusal's own message, recorded as the fire's `refusal` and shown by `orkctl
 schedule get` and the Schedules tab. With `pause_on_failure` the cluster then
 pauses the schedule and writes why into its note. "Did last night's reconcile
 run, and if not, why?" is answered by `orkctl schedule get`; the run it did
-start by `orkctl run list --origin schedule:<id>`.
+start by `orkctl run list --filter origin.kind=SCHEDULE --filter
+origin.id=<id>`.
 
 A recent fire reads one of: a run id, `refused` with its reason, `preparing`
 (it has not prepared yet), or `unavailable` (the fire retired past the

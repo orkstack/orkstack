@@ -1280,9 +1280,10 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   `OrkflowNamespace` (`task.EnsureRunSearchAttributes`) and
   `OrkflowOriginKind`/`OrkflowOriginId`
   (`task.EnsureRunOriginSearchAttributes`) — and stamps every run it starts
-  with them, so `run list -n payments`, `run list --origin trigger:trg-…` and
-  the runs page's **Started by** filter are visibility predicates over live
-  runs rather than filters over a page of everyone's. That is a tenancy
+  with them, so `run list -n payments`, `run list --filter origin.kind=TRIGGER
+  --filter origin.id=trg-…` and an `origin.kind` filter on the runs page are
+  visibility predicates over live runs rather than filters over a page of
+  everyone's. That is a tenancy
   property: filtered afterwards, how far a list could see would be set by how
   busy the OTHER namespaces were. Finished runs come from the archive, whose
   run and origin index keys begin with the namespace (`docs/STORAGE.md`).

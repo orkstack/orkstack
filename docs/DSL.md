@@ -1014,7 +1014,8 @@ tasks:
   run's page.
 
 `orkctl run get <run> --tree` prints every child run under its parent, and
-`orkctl run list --origin parent-run:<run>` lists one parent's children; a
+`orkctl run list --filter origin.kind=PARENT_RUN --filter origin.id=<run>`
+lists one parent's children; a
 child is read, watched and cancelled on its own id. `orkctl run logs` points a
 composed task at its child's logs, and `orkctl task run` refuses one by name.
 See `examples/release-block.ork.yaml` and `examples/composed-release.ork.yaml`.
