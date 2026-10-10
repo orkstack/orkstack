@@ -50,7 +50,11 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
 - **Every action has its CLI equivalent.** The UI shows a shell-escaped,
   runnable `orkctl` (or `curl`) command beside each action, carrying the
   namespace, version, task, attempt and item where they apply; a quote in a
-  value cannot become shell syntax.
+  value cannot become shell syntax. Copy works on a plain-HTTP origin too
+  (where the browser offers no Clipboard API, it falls back to the legacy
+  copy command); when the browser refuses both, the command is selected on
+  screen and the page says to copy it by hand. A copy never silently does
+  nothing.
 - **Deep links and copies keep their coordinates.** A URL or download retains
   the namespace, pinned version, task, attempt, item and inspector tab, and a
   reload restores the selection. Run inputs may contain secrets and never

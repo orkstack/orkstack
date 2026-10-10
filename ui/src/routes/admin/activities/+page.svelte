@@ -13,6 +13,7 @@
 	// sorts nothing. A client-side sort would silently take that guarantee
 	// over from the server, and the next reader would not know which of the
 	// two was in force.
+	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -70,8 +71,13 @@
 
 	let retrying = $state(false);
 	let copiedLocalTool = $state('');
-	function copyLocalTool(command: string, label: string) {
-		void navigator.clipboard?.writeText(command).then(() => (copiedLocalTool = label));
+	async function copyLocalTool(command: string, label: string, shownAt: string) {
+		if ((await copyText(command)) === 'copied') {
+			copiedLocalTool = label;
+			return;
+		}
+		selectByTestid(shownAt);
+		copiedLocalTool = MANUAL_COPY_MESSAGE;
 	}
 	async function retry() {
 		retrying = true;
@@ -179,8 +185,8 @@
 	</p>
 	<p class="mt-2 text-xs text-fg-muted">Prerequisites: a local build context, Docker or another supported OCI runtime, and access to the image registry when pushing.</p>
 	<div class="mt-3 grid gap-3 lg:grid-cols-2">
-		<div class="rounded-md bg-surface-sunken p-3"><p class="text-xs font-medium text-fg">Build an image</p><code data-testid="activity-build-command" class="mt-1 block break-all font-mono text-xs text-fg-secondary">orkctl activity build ./images/my-activity</code><button type="button" onclick={() => copyLocalTool('orkctl activity build ./images/my-activity', 'Build command copied')} class="mt-2 text-xs font-medium text-brand-700 hover:underline">Copy build command</button></div>
-		<div class="rounded-md bg-surface-sunken p-3"><p class="text-xs font-medium text-fg">Run the activity contract test</p><code data-testid="activity-test-command" class="mt-1 block break-all font-mono text-xs text-fg-secondary">orkctl activity test my-image</code><button type="button" onclick={() => copyLocalTool('orkctl activity test my-image', 'Test command copied')} class="mt-2 text-xs font-medium text-brand-700 hover:underline">Copy test command</button></div>
+		<div class="rounded-md bg-surface-sunken p-3"><p class="text-xs font-medium text-fg">Build an image</p><code data-testid="activity-build-command" class="mt-1 block break-all font-mono text-xs text-fg-secondary">orkctl activity build ./images/my-activity</code><button type="button" onclick={() => void copyLocalTool('orkctl activity build ./images/my-activity', 'Build command copied', 'activity-build-command')} class="mt-2 text-xs font-medium text-brand-700 hover:underline">Copy build command</button></div>
+		<div class="rounded-md bg-surface-sunken p-3"><p class="text-xs font-medium text-fg">Run the activity contract test</p><code data-testid="activity-test-command" class="mt-1 block break-all font-mono text-xs text-fg-secondary">orkctl activity test my-image</code><button type="button" onclick={() => void copyLocalTool('orkctl activity test my-image', 'Test command copied', 'activity-test-command')} class="mt-2 text-xs font-medium text-brand-700 hover:underline">Copy test command</button></div>
 	</div>
 	{#if copiedLocalTool}<p data-testid="activity-local-tool-copied" class="mt-2 text-xs text-fg-muted">{copiedLocalTool}</p>{/if}
 </section>

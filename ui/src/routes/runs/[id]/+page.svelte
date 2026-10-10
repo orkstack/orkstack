@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
 	import { onDestroy, untrack } from 'svelte';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
@@ -1062,11 +1063,15 @@
 		logPinByTask[attemptsKey(taskId, item)] = { attempt, nonce: pinNonce };
 		setTaskAttempt(taskId, attempt, item);
 	}
-	function copy(value: string, label: string): void {
-		void navigator.clipboard?.writeText(value).then(
-			() => (copied = label),
-			() => (copied = 'Copy failed')
-		);
+	// `shownAt` is the element showing the same text: on an origin with no
+	// clipboard it is selected, and the status says to copy it by hand.
+	async function copy(value: string, label: string, shownAt: string): Promise<void> {
+		if ((await copyText(value)) === 'copied') {
+			copied = label;
+			return;
+		}
+		selectByTestid(shownAt);
+		copied = MANUAL_COPY_MESSAGE;
 	}
 	function downloadJson(name: string, value: unknown): void {
 		const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
@@ -1483,7 +1488,7 @@
 			<div class="flex items-center justify-between gap-3">
 				<h2 class="text-sm font-semibold text-fg">Inputs</h2>
 				{#if run.input}
-					<button type="button" data-testid="copy-run-input" onclick={() => copy(payloadJson(run.input), 'Inputs copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
+					<button type="button" data-testid="copy-run-input" onclick={() => void copy(payloadJson(run.input), 'Inputs copied', 'run-input')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
 				{/if}
 			</div>
 			<pre data-testid="run-input" class="mt-2 max-h-56 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{run.input ? payloadJson(run.input) : 'No input values are recorded for this run.'}</pre>
@@ -1494,7 +1499,7 @@
 					{declaresOutputs ? 'Declared outputs' : 'Leaf task values'}
 				</h2>
 				{#if run.output}
-					<button type="button" data-testid="copy-run-output" onclick={() => copy(payloadJson(run.output), 'Run output copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
+					<button type="button" data-testid="copy-run-output" onclick={() => void copy(payloadJson(run.output), 'Run output copied', 'run-output')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
 				{/if}
 			</div>
 			<pre data-testid="run-output" class="mt-2 max-h-56 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{run.output ? payloadJson(run.output) : isTerminal(runStatus) ? 'This run finished without aggregated output values.' : 'Run output is not available yet.'}</pre>
@@ -2106,7 +2111,7 @@
 							<div class="mt-3 rounded-md border border-border-subtle bg-surface-sunken p-3">
 								<div class="flex items-center justify-between gap-3">
 									<span class="text-xs font-medium text-fg">Task values</span>
-									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => copy(payloadJson(task.output), 'Task values copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>{/if}
+									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => void copy(payloadJson(task.output), 'Task values copied', `task-values-${task.id}`)} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>{/if}
 								</div>
 								<pre data-testid="task-values-{task.id}" class="mt-2 max-h-40 overflow-auto font-mono text-xs text-fg-secondary">{task.output ? payloadJson(task.output) : isTerminal(task.status) ? 'This task finished without inline values. Its recorded values artifact, if present, is listed under Inspect.' : 'Task values are not available yet.'}</pre>
 							</div>
