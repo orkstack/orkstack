@@ -57,6 +57,9 @@ test('the address carries only coordinates that have a value, namespace first', 
 	expect(href).not.toContain('page=');
 	expect(href).not.toContain('cursor=');
 	expect(listHref('/runs', { ns: 'default', cursor: 'tok', page: '3' })).toBe('/runs?ns=default&cursor=tok&page=3');
+	// Nothing to say is the bare path, never a dangling '?'.
+	expect(listHref('/admin/releases', {})).toBe('/admin/releases');
+	expect(listHref('/admin/releases', {}, { filter: [] })).toBe('/admin/releases');
 });
 test('a page number is a positive integer or the first page', () => {
 	expect(pageNumber('3')).toBe(3);

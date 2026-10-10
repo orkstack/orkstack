@@ -70,7 +70,8 @@ export function listHref(
 	if (coordinates.ns) params.set('ns', coordinates.ns);
 	for (const [param, set] of Object.entries(filters)) for (const text of canonicalTexts(set)) params.append(param, text);
 	for (const [key, value] of Object.entries(coordinates)) if (value && key !== 'ns' && !(key === 'page' && value === '1')) params.set(key, value);
-	return `${path}?${params.toString()}`;
+	const query = params.toString();
+	return query ? `${path}?${query}` : path;
 }
 
 // PAGE_STACK_PREFIX namespaces the per-tab cursor stacks in sessionStorage.
