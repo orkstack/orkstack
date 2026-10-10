@@ -131,6 +131,11 @@ func TestS3Put_SeekableWithExpectationSkipsTheSpool(t *testing.T) {
 	if header.Get("X-Amz-Meta-"+metaContentSHA256) != sum {
 		t.Fatalf("the digest metadata is %q", header.Get("X-Amz-Meta-"+metaContentSHA256))
 	}
+	// Signed with the known digest, so the SDK did not read the file again to
+	// compute it.
+	if header.Get("X-Amz-Content-Sha256") != sum {
+		t.Fatalf("x-amz-content-sha256 = %q; want the known digest %s", header.Get("X-Amz-Content-Sha256"), sum)
+	}
 }
 
 // TestS3Put_AWrongExpectationIsRefused: the server verifies the declared

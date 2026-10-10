@@ -527,7 +527,7 @@ func TestResolveAwait_StoresExactBytesBeforeDelivering(t *testing.T) {
 	}
 	puts := f.store.recorded()
 	if len(puts) != 1 || string(puts[0].body) != body {
-		t.Fatalf("stored %q, want the request's exact bytes %q", puts, body)
+		t.Fatalf("stored %+v, want the request's exact bytes %q", puts, body)
 	}
 	// The provenance an Orker records for the same (orkflow, run, task).
 	want := artifacts.Provenance{Orkflow: "awaited-api", TaskID: "gate", RunID: "ork-await-2"}.Metadata(nil)
