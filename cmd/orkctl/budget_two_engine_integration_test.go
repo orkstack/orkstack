@@ -456,7 +456,7 @@ func TestIntegration_ATriggerInvokeIntoAnExhaustedNamespaceIs412(t *testing.T) {
 	if envelope.Error.Code != "failed_precondition" || !strings.Contains(envelope.Error.Message, "at or above its enforced budget of 1") {
 		t.Errorf("error envelope = %+v, want failed_precondition carrying the budget sentence", envelope.Error)
 	}
-	listed, _ := s.cli(t, s.b, exitOK, "--json", "run", "list", "-n", s.namespace, "--orkflow", s.orkflow)
+	listed, _ := s.cli(t, s.b, exitOK, "--json", "run", "list", "-n", s.namespace, "--filter", "orkflow_name="+s.orkflow)
 	if strings.Contains(listed, `"id"`) {
 		t.Errorf("a refused invoke left a run of %s:\n%s", s.orkflow, listed)
 	}

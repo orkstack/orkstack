@@ -81,7 +81,8 @@ func newScheduleCommand(g *globalFlags) *cobra.Command {
 			"schedule: overlap, catch-up, pause and backfill are its own, and\n" +
 			"OrkStack stores nothing else about a schedule.\n\n" +
 			"Every run a schedule starts carries origin schedule:<id>, so\n" +
-			"'orkctl run list --origin schedule:<id>' is its audit trail.",
+			"'orkctl run list --filter origin.kind=SCHEDULE --filter origin.id=<id>'\n" +
+			"is its audit trail.",
 	}
 	cmd.AddCommand(
 		newScheduleCreateCommand(g),
@@ -549,7 +550,7 @@ func newScheduleFireCommand(g *globalFlags) *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response.Msg)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Fire requested for schedule %s. Its run appears in 'orkctl schedule get %s' "+
-				"once prepared and in 'orkctl run list --origin schedule:%s'.\n",
+				"once prepared and in 'orkctl run list --filter origin.kind=SCHEDULE --filter origin.id=%s'.\n",
 				args[0], args[0], orDash(response.Msg.GetSchedule().GetId()))
 			return nil
 		},
@@ -583,7 +584,7 @@ func newScheduleBackfillCommand(g *globalFlags) *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response.Msg)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Backfill requested for schedule %s from %s to %s. Its runs appear in "+
-				"'orkctl schedule get %s' once prepared and in 'orkctl run list --origin schedule:%s'.\n",
+				"'orkctl schedule get %s' once prepared and in 'orkctl run list --filter origin.kind=SCHEDULE --filter origin.id=%s'.\n",
 				args[0], formatTime(request.GetStart()), formatTime(request.GetEnd()),
 				args[0], orDash(response.Msg.GetSchedule().GetId()))
 			return nil

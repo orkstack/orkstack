@@ -197,19 +197,19 @@ func TestRunList_FiltersByStatusAndRejectsUnknownStatus(t *testing.T) {
 	f.applyExample().requireExit(t, exitOK)
 	f.run("run", "submit", "hello-ork").requireExit(t, exitOK)
 
-	f.run("run", "list", "--status", "succeeded").
+	f.run("run", "list", "--filter", "status=succeeded").
 		requireExit(t, exitOK).
-		requireContains(t, "No runs.")
-	f.run("run", "list", "--status", "pending").
+		requireContains(t, "No runs match --filter 'status=succeeded'.")
+	f.run("run", "list", "--filter", "status=pending").
 		requireExit(t, exitOK).
 		requireContains(t, "run-001")
 
-	outcome := f.run("run", "list", "--status", "nonsense")
+	outcome := f.run("run", "list", "--filter", "status=nonsense")
 	if outcome.code != exitError {
 		t.Fatalf("exit code = %d, want %d", outcome.code, exitError)
 	}
-	if !strings.Contains(outcome.stderr, "invalid --status") {
-		t.Fatalf("stderr does not reject the status:\n%s", outcome.stderr)
+	if !strings.Contains(outcome.stderr, `"nonsense" is not a status this list can select; status is one of PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED, SKIPPED`) {
+		t.Fatalf("stderr does not carry the server's enum refusal:\n%s", outcome.stderr)
 	}
 }
 

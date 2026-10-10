@@ -29,6 +29,11 @@ func TestRemovedFlags_AreUnknown(t *testing.T) {
 		{"admin", "audit", "--until", "2026-01-02"},
 		{"admin", "audit", "--action", "namespace."},
 		{"admin", "audit", "--principal", "dsantos"},
+		{"run", "list", "--orkflow", "hello-ork"},
+		{"run", "list", "--status", "failed"},
+		{"run", "list", "--since", "2026-01-01T00:00:00Z"},
+		{"run", "list", "--until", "2026-01-02T00:00:00Z"},
+		{"run", "list", "--origin", "schedule:sch-4a1c0e2b7d3f8159"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := Execute(append(args, "--server", "http://127.0.0.1:1"), &stdout, &stderr)

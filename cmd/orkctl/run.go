@@ -264,37 +264,24 @@ func appendRunAttempts(cmd *cobra.Command, g *globalFlags, runID string) error {
 
 func newRunListCommand(g *globalFlags) *cobra.Command {
 	var (
-		orkflowName  string
-		statusFilter string
-		limit        int32
-		pageToken    string
-		sinceText    string
-		untilText    string
-		originText   string
+		limit       int32
+		pageToken   string
+		filterTexts *[]string
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List runs, newest first",
-		Long: "list shows runs of the namespace this command acts in, newest first.\n\n" +
-			"--origin KIND[:ID] keeps runs by what started them: submit, trigger,\n" +
-			"schedule, parent-run or run-again, optionally narrowed to one originating\n" +
-			"object (a trigger id, a source or parent run id). A run started before\n" +
-			"origins were recorded matches no --origin filter.",
+		Long: "list shows runs of the namespace this command acts in, live and finished,\n" +
+			"newest first, narrowed by --filter. When more runs match than one page\n" +
+			"holds, the command prints the next page's command.\n\n" +
+			"--filter origin.kind=KIND keeps runs by what started them (SUBMIT, TRIGGER,\n" +
+			"SCHEDULE, PARENT_RUN or RUN_AGAIN), and --filter origin.id=ID beside it\n" +
+			"narrows that to one originating object (a trigger or schedule id, a source\n" +
+			"or parent run id). A run started before origins were recorded matches no\n" +
+			"origin.kind filter.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			status, err := parseStatus(statusFilter)
-			if err != nil {
-				return err
-			}
-			originKind, originID, err := parseOriginFilter(originText)
-			if err != nil {
-				return err
-			}
-			since, err := parseRFC3339Bound("--since", sinceText)
-			if err != nil {
-				return err
-			}
-			until, err := parseRFC3339Bound("--until", untilText)
+			filters, err := parseFilterFlags(*filterTexts)
 			if err != nil {
 				return err
 			}
@@ -302,12 +289,10 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			defer cancel()
 
 			resp, err := g.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-				OrkflowName: orkflowName,
-				Status:      status,
-				PageSize:    limit,
-				Namespace:   g.namespace,
-				PageToken:   pageToken, CreatedAfter: since, CreatedBefore: until,
-				OriginKind: originKind, OriginId: originID,
+				PageSize:  limit,
+				PageToken: pageToken,
+				Namespace: g.namespace,
+				Filters:   filters,
 			}))
 			if err != nil {
 				return rpcError("list runs", err)
@@ -315,21 +300,17 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
+			if len(filters) > 0 && len(resp.Msg.GetRuns()) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("runs", filters))
+				return nil
+			}
 			if err := renderRunList(cmd.OutOrStdout(), resp.Msg.GetRuns()); err != nil {
 				return err
 			}
 			if next := resp.Msg.GetNextPageToken(); next != "" {
 				// The token is bound to the filters it was minted under, so
 				// the next-page command repeats every one of them.
-				args := []string{"run", "list"}
-				for _, flag := range [][2]string{
-					{"--orkflow", orkflowName}, {"--status", statusFilter},
-					{"--since", sinceText}, {"--until", untilText}, {"--origin", originText},
-				} {
-					if flag[1] != "" {
-						args = append(args, flag[0], shellQuote(flag[1]))
-					}
-				}
+				args := append([]string{"run", "list"}, filterArgs(filters)...)
 				if limit != 0 {
 					args = append(args, "--limit", fmt.Sprint(limit))
 				}
@@ -340,15 +321,9 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&orkflowName, "orkflow", "", "only runs of this orkflow")
-	cmd.Flags().StringVar(&statusFilter, "status", "",
-		"only runs with this status (pending, running, succeeded, failed, canceled, skipped)")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of runs to return (0 = server default)")
 	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous list")
-	cmd.Flags().StringVar(&sinceText, "since", "", "created at or after RFC3339 timestamp")
-	cmd.Flags().StringVar(&untilText, "until", "", "created before RFC3339 timestamp")
-	cmd.Flags().StringVar(&originText, "origin", "",
-		"only runs started this way: KIND or KIND:ID (submit, trigger, schedule, parent-run, run-again)")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListRunsRequest{})
 	return cmd
 }
 

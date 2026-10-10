@@ -259,7 +259,7 @@ func (s *admissionStack) awaitRunningIndexed(ctx context.Context, t *testing.T, 
 	for time.Now().Before(deadline) {
 		listed, err := replica.runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 			Namespace: s.namespace,
-			Status:    orkstackv1.Status_STATUS_RUNNING,
+			Filters:   []*orkstackv1.FieldFilter{equalsFilter("status", "RUNNING")},
 		}))
 		if err == nil {
 			last = len(listed.Msg.GetRuns())

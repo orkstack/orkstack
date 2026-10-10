@@ -251,8 +251,8 @@ func TestIntegration_OriginSurvivesReplicaAndReplay(t *testing.T) {
 	// after awaitTerminal can still say RUNNING. Wait until each replica's
 	// listing shows the run finished before comparing the two listings,
 	// or the comparison races the visibility update.
-	s.awaitListedFinished(t, s.b, runID, "--origin", "submit")
-	s.awaitListedFinished(t, s.a, runID, "--origin", "submit")
+	s.awaitListedFinished(t, s.b, runID, "--filter", "origin.kind=SUBMIT")
+	s.awaitListedFinished(t, s.a, runID, "--filter", "origin.kind=SUBMIT")
 	onA := s.cli(t, s.a, exitOK, "--json", "run", "get", runID)
 	onB := s.cli(t, s.b, exitOK, "--json", "run", "get", runID)
 	if onA != onB {
@@ -261,10 +261,10 @@ func TestIntegration_OriginSurvivesReplicaAndReplay(t *testing.T) {
 	if origin := originOf(t, onB); origin["kind"] != "SUBMIT" || origin["reference"] != ref {
 		t.Fatalf("finished run's origin on B = %v", origin)
 	}
-	listA := s.cli(t, s.a, exitOK, "--json", "run", "list", "--origin", "submit")
-	listB := s.cli(t, s.b, exitOK, "--json", "run", "list", "--origin", "submit")
+	listA := s.cli(t, s.a, exitOK, "--json", "run", "list", "--filter", "origin.kind=SUBMIT")
+	listB := s.cli(t, s.b, exitOK, "--json", "run", "list", "--filter", "origin.kind=SUBMIT")
 	if listA != listB {
-		t.Fatalf("run list --origin submit disagrees between replicas:\nA: %s\nB: %s", listA, listB)
+		t.Fatalf("run list --filter origin.kind=SUBMIT disagrees between replicas:\nA: %s\nB: %s", listA, listB)
 	}
 	human := s.cli(t, s.b, exitOK, "run", "get", runID)
 	if !strings.Contains(human, "Origin:     submit") && !strings.Contains(human, "Origin:    submit") {
@@ -277,7 +277,7 @@ func TestIntegration_OriginSurvivesReplicaAndReplay(t *testing.T) {
 
 // TestIntegration_RunAgainRecordsRunAgainAndNeverReusesTheKey re-runs a keyed
 // run: the new run has a new id, origin RUN_AGAIN naming the source, and is
-// the one run `run list --origin run-again:SOURCE` lists.
+// the one run `run list --filter origin.kind=RUN_AGAIN --filter origin.id=SOURCE` lists.
 func TestIntegration_RunAgainRecordsRunAgainAndNeverReusesTheKey(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -294,7 +294,7 @@ func TestIntegration_RunAgainRecordsRunAgainAndNeverReusesTheKey(t *testing.T) {
 		t.Fatalf("run again origin = %v, want RUN_AGAIN %s", origin, source)
 	}
 	ids := s.awaitListed(t, s.b, func(ids []string) bool { return len(ids) == 1 && ids[0] == rerun },
-		"--origin", "run-again:"+source)
+		"--filter", "origin.kind=RUN_AGAIN", "--filter", "origin.id="+source)
 	t.Logf("EVIDENCE run_again source=%s rerun=%s listed_by_origin=%v", source, rerun, ids)
 
 	refused := s.cli(t, s.b, exitError, "run", "again", "ork-does-not-exist")
@@ -324,9 +324,9 @@ func TestIntegration_PreUpgradeRunRendersUnrecorded(t *testing.T) {
 		t.Fatalf("archive a pre-origin run: %v", err)
 	}
 	s.awaitListed(t, s.b, func(ids []string) bool { return containsID(ids, legacyID) })
-	for _, kind := range []string{"submit", "trigger", "schedule", "parent-run", "run-again"} {
-		if ids := listedIDs(t, s.cli(t, s.b, exitOK, "--json", "run", "list", "--origin", kind)); containsID(ids, legacyID) {
-			t.Fatalf("--origin %s lists the pre-origin run %s", kind, legacyID)
+	for _, kind := range []string{"SUBMIT", "TRIGGER", "SCHEDULE", "PARENT_RUN", "RUN_AGAIN"} {
+		if ids := listedIDs(t, s.cli(t, s.b, exitOK, "--json", "run", "list", "--filter", "origin.kind="+kind)); containsID(ids, legacyID) {
+			t.Fatalf("--filter origin.kind=%s lists the pre-origin run %s", kind, legacyID)
 		}
 	}
 	human := s.cli(t, s.b, exitOK, "run", "get", legacyID)

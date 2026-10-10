@@ -396,7 +396,7 @@ func TestScheduleFire_PrintsWhereToLook(t *testing.T) {
 	f, _ := newScheduleFixture(t)
 	f.run("schedule", "create", "nightly", "--orkflow", "hello-ork", "--cron", "@daily").requireExit(t, exitOK)
 	f.run("schedule", "fire", "nightly").requireExit(t, exitOK).requireContains(t,
-		"Fire requested for schedule nightly.", "'orkctl schedule get nightly'", "'orkctl run list --origin schedule:sch-")
+		"Fire requested for schedule nightly.", "'orkctl schedule get nightly'", "'orkctl run list --filter origin.kind=SCHEDULE --filter origin.id=sch-")
 }
 
 func TestScheduleBackfill_ParsesWindow(t *testing.T) {

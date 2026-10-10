@@ -106,10 +106,10 @@ func TestIntegration_TriggerInvokeRecordsOriginEndToEnd(t *testing.T) {
 	fmt.Fprintf(&s.transcript, "$ aws s3 ls s3://%s/%s\n%s\n\n", s.artifactCfg.S3Bucket, prefix, keys[0])
 	t.Logf("EVIDENCE minio_origin_row=%s", keys[0])
 
-	s.awaitListed(t, s.b, func(ids []string) bool { return len(ids) == 1 && ids[0] == runID }, "--origin", "trigger:"+triggerID)
-	s.awaitListed(t, s.b, func(ids []string) bool { return containsID(ids, runID) }, "--origin", "trigger")
-	if ids := listedIDs(t, s.cli(t, s.b, exitOK, "--json", "run", "list", "--origin", "submit")); containsID(ids, runID) {
-		t.Fatalf("--origin submit lists the trigger run %s", runID)
+	s.awaitListed(t, s.b, func(ids []string) bool { return len(ids) == 1 && ids[0] == runID }, "--filter", "origin.kind=TRIGGER", "--filter", "origin.id="+triggerID)
+	s.awaitListed(t, s.b, func(ids []string) bool { return containsID(ids, runID) }, "--filter", "origin.kind=TRIGGER")
+	if ids := listedIDs(t, s.cli(t, s.b, exitOK, "--json", "run", "list", "--filter", "origin.kind=SUBMIT")); containsID(ids, runID) {
+		t.Fatalf("--filter origin.kind=SUBMIT lists the trigger run %s", runID)
 	}
 	human := s.cli(t, s.b, exitOK, "run", "get", runID)
 	for _, fragment := range []string{"trigger " + triggerID + " (GitHub deploy hook)", ref, "ci-github", "not authenticated"} {

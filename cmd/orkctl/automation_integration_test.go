@@ -627,7 +627,7 @@ func TestIntegration_ScheduleFromApplyFiresWithScheduleOrigin(t *testing.T) {
 		s.doc(fmt.Sprintf("schedules:\n  nightly:\n    orkflow: %s\n    cron: \"0 2 * * *\"\n", s.orkflow))))
 	scheduleID := report.GetAutomation()[0].GetResults()[0].GetId()
 	s.cli(t, s.b, exitOK, "schedule", "fire", "nightly")
-	ids := s.awaitListed(t, s.b, func(ids []string) bool { return len(ids) == 1 }, "--origin", "schedule:"+scheduleID)
+	ids := s.awaitListed(t, s.b, func(ids []string) bool { return len(ids) == 1 }, "--filter", "origin.kind=SCHEDULE", "--filter", "origin.id="+scheduleID)
 	origin := originOf(t, s.cli(t, s.a, exitOK, "--json", "run", "get", ids[0]))
 	if origin["kind"] != "SCHEDULE" || origin["id"] != scheduleID {
 		t.Fatalf("origin = %v, want SCHEDULE %s", origin, scheduleID)

@@ -749,14 +749,14 @@ func TestIntegration_AutomationExampleAppliesAndFires(t *testing.T) {
 	var scheduled string
 	deadline := time.Now().Add(2 * time.Minute)
 	for scheduled == "" && time.Now().Before(deadline) {
-		if ids := listedIDs(t, x.in("--json", "run", "list", "--origin", "schedule:"+scheduleID)); len(ids) == 1 {
+		if ids := listedIDs(t, x.in("--json", "run", "list", "--filter", "origin.kind=SCHEDULE", "--filter", "origin.id="+scheduleID)); len(ids) == 1 {
 			scheduled = ids[0]
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	if scheduled == "" {
-		t.Fatalf("no run listed under --origin schedule:%s", scheduleID)
+		t.Fatalf("no run listed under --filter origin.kind=SCHEDULE --filter origin.id=%s", scheduleID)
 	}
 	run := x.await(scheduled, terminal)
 	requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)

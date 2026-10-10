@@ -64,6 +64,7 @@ func TestFilterHelp_EveryListCommandPrintsItsAllowlistWithoutARequest(t *testing
 		{[]string{"release", "status"}, "filter-help-release-status.golden", &orkstackv1.ListReleasesRequest{}},
 		{[]string{"webhook", "deliveries"}, "filter-help-webhook-deliveries.golden", &orkstackv1.ListDeliveriesRequest{}},
 		{[]string{"admin", "audit"}, "filter-help-admin-audit.golden", &orkstackv1.ListAuditRecordsRequest{}},
+		{[]string{"run", "list"}, "filter-help-run-list.golden", &orkstackv1.ListRunsRequest{}},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			f := newFixture(t)
