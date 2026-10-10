@@ -659,6 +659,8 @@ message DescribeOrkerResult {
   string runtime_name = 4;      // "docker"
   string runtime_version = 5;
   string security_profile = 6;  // the profile id the Orker enforces (§9.2)
+  // max_concurrent is ORK_ORKER_MAX_CONCURRENT: how many tasks this Orker runs
+  // at once, the size of its task worker's activity slots.
   int32 max_concurrent = 7;
   bool rootless = 8;
   // max_concurrent_pins is ORK_ORKER_MAX_PINS: how many pins this Orker hosts

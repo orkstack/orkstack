@@ -80,7 +80,9 @@ type Options struct {
 	BuildID string
 	// Pool is the pool this Orker serves, reported by DescribeOrker.
 	Pool string
-	// MaxConcurrent is reported by DescribeOrker.
+	// MaxConcurrent is how many tasks this Orker runs at once: the size of the
+	// task worker's activity slot supplier (WorkerTuner), and what
+	// DescribeOrker reports. Zero means DefaultMaxConcurrent.
 	MaxConcurrent int32
 	// MaxPins is reported by DescribeOrker. Zero — the default — means this
 	// Orker hosts no pins, and a submit that pins a task to its pool is refused
@@ -167,6 +169,10 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	if buildID == "" {
 		buildID = os.Getenv(BuildIDVar)
 	}
+	maxConc := opts.MaxConcurrent
+	if maxConc <= 0 {
+		maxConc = DefaultMaxConcurrent
+	}
 
 	return &Activities{
 		dispatcher: &OCIDispatcher{
@@ -192,7 +198,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			Logger:            opts.Logger,
 		},
 		pool:    opts.Pool,
-		maxConc: opts.MaxConcurrent,
+		maxConc: maxConc,
 		maxPins: opts.MaxPins,
 		cordon:  NewCordon(),
 		pins:    newOpenPins(),

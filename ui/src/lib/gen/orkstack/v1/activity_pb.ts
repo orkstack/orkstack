@@ -1535,6 +1535,9 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
   securityProfile: string;
 
   /**
+   * max_concurrent is ORK_ORKER_MAX_CONCURRENT: how many tasks this Orker runs
+   * at once, the size of its task worker's activity slots.
+   *
    * @generated from field: int32 max_concurrent = 7;
    */
   maxConcurrent: number;

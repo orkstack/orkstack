@@ -428,3 +428,45 @@ func TestBoot_RefusesAnInvalidOrkerID(t *testing.T) {
 		t.Fatalf("Boot with ORK_ORKER_ID=%q = %v; want ORKER_ID_INVALID naming %s", "a b", err, OrkerIDVar)
 	}
 }
+
+// TestWorkerTuner_ActivitySlotsAreTheConfiguredCeiling is
+// F-orker-storage-perf-1: the activity supplier's size is the operator's
+// orker.max_concurrent, and DescribeOrker reports that same number rather than
+// the 0 an unset field used to leave in it. Every other supplier stays at the
+// SDK default.
+func TestWorkerTuner_ActivitySlotsAreTheConfiguredCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		configured int32
+		want       int
+	}{
+		{"configured", 7, 7},
+		{"unset is the default", 0, DefaultMaxConcurrent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewActivitiesWithOptions(nil, Options{
+				OrkerID:       "orker-test",
+				WorkRoot:      t.TempDir(),
+				MaxConcurrent: tc.configured,
+				Runtime:       &reapRecorder{labelled: map[string]int{}},
+			})
+			tuner, err := a.WorkerTuner()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := tuner.GetActivityTaskSlotSupplier().MaxSlots(); got != tc.want {
+				t.Fatalf("activity supplier MaxSlots() = %d; want %d", got, tc.want)
+			}
+			if got := tuner.GetSessionActivitySlotSupplier().MaxSlots(); got != sdkDefaultSlots {
+				t.Fatalf("session supplier MaxSlots() = %d; want the SDK default %d", got, sdkDefaultSlots)
+			}
+			described, err := a.DescribeOrker(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if int(described.GetMaxConcurrent()) != tc.want {
+				t.Fatalf("DescribeOrker max_concurrent = %d; want the tuner's %d", described.GetMaxConcurrent(), tc.want)
+			}
+		})
+	}
+}

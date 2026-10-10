@@ -93,6 +93,13 @@ type config struct {
 	// maxPinsErr is a malformed or negative pin cap, refused at boot by the
 	// same rule as the three errors above.
 	maxPinsErr error
+	// maxConcurrent is MaxConcurrentVar: how many tasks this Orker runs at
+	// once. It sizes the task worker's activity slot supplier and is what
+	// DescribeOrker reports, through orker.Options.MaxConcurrent.
+	maxConcurrent int32
+	// maxConcurrentErr is a malformed or non-positive ceiling, refused at boot
+	// by the same rule as the errors above.
+	maxConcurrentErr error
 }
 
 // TaskLogExportVar turns on the OTel log export path for a task's
@@ -112,11 +119,16 @@ const TaskLogExportVar = "ORK_ORKER_TASK_LOG_EXPORT"
 // set the key must not acquire them.
 const MaxPinsVar = "ORK_ORKER_MAX_PINS"
 
+// MaxConcurrentVar is orker.max_concurrent: how many tasks this Orker runs at
+// once (docs/DEPLOY.md §1).
+const MaxConcurrentVar = orker.MaxConcurrentVar
+
 func loadConfig() config {
 	binding, err := task.ResolvePoolBinding(env("ORK_ORKER_POOL", ""), env("ORK_ORKER_QUEUE", ""))
 	taskLogExport, taskLogExportErr := envBool(TaskLogExportVar, false)
 	heartbeatInterval, heartbeatErr := envHeartbeatInterval()
 	maxPins, maxPinsErr := envMaxPins()
+	maxConcurrent, maxConcurrentErr := envMaxConcurrent()
 	return config{
 		imageLayoutRoot:   env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
 		registryAuthFile:  env(orker.RegistryAuthFileVar, ""),
@@ -132,6 +144,8 @@ func loadConfig() config {
 		heartbeatErr:      heartbeatErr,
 		maxPins:           maxPins,
 		maxPinsErr:        maxPinsErr,
+		maxConcurrent:     maxConcurrent,
+		maxConcurrentErr:  maxConcurrentErr,
 		deployment:        task.DeploymentFromEnv(),
 	}
 }
@@ -158,6 +172,26 @@ func envMaxPins() (int32, error) {
 	if parsed < 0 {
 		return 0, fmt.Errorf(
 			"%s=%q must be zero or more; 0 hosts no pins and is the default", MaxPinsVar, raw)
+	}
+	return int32(parsed), nil
+}
+
+// envMaxConcurrent reads ORK_ORKER_MAX_CONCURRENT.
+//
+// Unset is orker.DefaultMaxConcurrent. A value this process cannot read, or
+// one below 1, comes back as an error for run() to refuse boot with: a ceiling
+// of zero would be an Orker that polls for nothing, and a typo silently read as
+// the default would leave an operator who sized a host believing it was capped.
+func envMaxConcurrent() (int32, error) {
+	raw := env(MaxConcurrentVar, "")
+	if raw == "" {
+		return orker.DefaultMaxConcurrent, nil
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || parsed < 1 {
+		return orker.DefaultMaxConcurrent, fmt.Errorf(
+			"%s=%q must be a whole number of tasks, 1 or more (default %d)",
+			MaxConcurrentVar, raw, orker.DefaultMaxConcurrent)
 	}
 	return int32(parsed), nil
 }
@@ -362,8 +396,9 @@ func workerOptions(cfg config) worker.Options {
 //   - Identity is the orker id, so the poller identity Temporal records for
 //     every worker of this process — and therefore the presence channel's
 //     poller list — is a list of Orker ids;
-//   - Tuner is the cordon's: the SDK's default sizes, with the activity slot
-//     supplier refusing to reserve while cordoned;
+//   - Tuner is the cordon's: the SDK's default sizes, except the activity
+//     slot supplier, which is orker.max_concurrent and refuses to reserve
+//     while cordoned;
 //   - Interceptors carries the cordon interceptor, which counts running tasks
 //     and open pins and refuses a new pin while cordoned.
 //
@@ -465,6 +500,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// symptom and not the typo.
 	if cfg.maxPinsErr != nil {
 		return cfg.maxPinsErr
+	}
+	// And for the task ceiling.
+	if cfg.maxConcurrentErr != nil {
+		return cfg.maxConcurrentErr
 	}
 
 	store, err := artifacts.NewFromEnv()
@@ -622,6 +661,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// said out loud rather than omitted: it is the answer to "why was my
 		// pinned run refused at submit".
 		"max_pins", cfg.maxPins,
+		// How many tasks this Orker runs at once (orker.max_concurrent).
+		"max_concurrent", cfg.maxConcurrent,
 		// The cancellation latency an operator is running with, said out loud:
 		// this is how long a running container can keep running after the
 		// engine asks for it to stop, and the longest Temporal outage one
@@ -677,6 +718,9 @@ func orkerOptions(
 		// is the SAME number workerOptions turns EnableSessionWorker on with, so
 		// an Orker cannot advertise a capacity its worker does not poll for.
 		MaxPins: cfg.maxPins,
+		// The task ceiling: one number sizes the task worker's activity slot
+		// supplier (Activities.WorkerTuner) and is what DescribeOrker reports.
+		MaxConcurrent: cfg.maxConcurrent,
 		// The embedded OCI-layout fallback (§4.6). It is used ONLY when a
 		// pull of an already-pinned digest fails, and only after OrkStack has
 		// hashed the layout's root blob itself and matched it against the
