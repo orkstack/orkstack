@@ -226,7 +226,7 @@
 	--color-fg: #edeff4;
 	--color-fg-secondary: #b7bccb;
 	--color-fg-muted: #868da0;
-	--color-fg-placeholder: #5c6377;
+	--color-fg-placeholder: #7a8296; /* placeholder        4.7:1 on surface */
 	--color-fg-inverse: #0a0d15;
 
 	--color-brand-50: #181c36;
