@@ -2,6 +2,7 @@ package engine
 
 import (
 	"sync"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -21,19 +22,43 @@ import (
 // Publishers also supply a dedupe key (stable across Temporal activity retries
 // and replays). Subscribers receive the backlog followed by live events.
 type EventBus struct {
-	mu     sync.Mutex
-	log    map[string][]*orkstackv1.Event
-	seen   map[string]map[string]int64
-	subs   map[string]map[int64]*subscription
-	nextID int64
+	mu        sync.Mutex
+	log       map[string][]*orkstackv1.Event
+	seen      map[string]map[string]int64
+	subs      map[string]map[int64]*subscription
+	nextID    int64
+	retention terminalRetention
 }
 
-// NewEventBus returns an empty bus.
+// NewEventBus returns an empty bus that keeps every run's log.
 func NewEventBus() *EventBus {
 	return &EventBus{
-		log:  map[string][]*orkstackv1.Event{},
-		seen: map[string]map[string]int64{},
-		subs: map[string]map[int64]*subscription{},
+		log:       map[string][]*orkstackv1.Event{},
+		seen:      map[string]map[string]int64{},
+		subs:      map[string]map[int64]*subscription{},
+		retention: newTerminalRetention(),
+	}
+}
+
+// WithTerminalRetention makes the bus forget a run's log and dedupe keys d
+// after its terminal event was first published, on a later Publish
+// (terminalRetention). d must outlast the projection activity's whole retry
+// window, so a retried terminal publish is still deduplicated. A run with a
+// live subscriber is never forgotten. Zero keeps every log. It returns the
+// same bus so it can be chained onto NewEventBus.
+func (b *EventBus) WithTerminalRetention(d time.Duration) *EventBus {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.retention.ttl = d
+	return b
+}
+
+// sweepLocked forgets every finished run that is due and has no subscriber.
+func (b *EventBus) sweepLocked() {
+	for _, runID := range b.retention.due(func(runID string) bool { return len(b.subs[runID]) > 0 }) {
+		delete(b.log, runID)
+		delete(b.seen, runID)
+		delete(b.subs, runID)
 	}
 }
 
@@ -46,6 +71,7 @@ func (b *EventBus) Publish(event *orkstackv1.Event, dedupeKey string) (*orkstack
 		return nil, false
 	}
 	b.mu.Lock()
+	b.sweepLocked()
 	runID := event.GetRunId()
 	if dedupeKey != "" {
 		if seq, dup := b.seen[runID][dedupeKey]; dup {
@@ -69,6 +95,9 @@ func (b *EventBus) Publish(event *orkstackv1.Event, dedupeKey string) (*orkstack
 			b.seen[runID] = map[string]int64{}
 		}
 		b.seen[runID][dedupeKey] = stored.GetSequence()
+	}
+	if isTerminalRunEvent(stored) {
+		b.retention.mark(runID)
 	}
 	// enqueue only appends to each subscriber's private queue. Holding b.mu
 	// through enqueue preserves the same order for sequence assignment, the
@@ -121,6 +150,7 @@ func (b *EventBus) Discard(runID string) {
 	defer b.mu.Unlock()
 	delete(b.log, runID)
 	delete(b.seen, runID)
+	b.retention.unmark(runID)
 }
 
 // Events returns the recorded events for a run with sequence greater than
