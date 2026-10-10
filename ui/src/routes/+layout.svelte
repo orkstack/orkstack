@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
-	import { page } from '$app/state';
+	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import {
@@ -16,6 +16,22 @@
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
+
+	// Navigation feedback for every route: a slow loader (a run with many
+	// tasks, a cold archive read) otherwise leaves the old page on screen with
+	// nothing saying the click was heard. The bar appears only once a
+	// navigation has been pending for NAV_PROGRESS_DELAY_MS, so a fast one
+	// does not flash it, and <main> is aria-busy for exactly as long as it shows.
+	const NAV_PROGRESS_DELAY_MS = 150;
+	let navPending = $state(false);
+	$effect(() => {
+		if (!navigating.to) {
+			navPending = false;
+			return;
+		}
+		const timer = setTimeout(() => (navPending = true), NAV_PROGRESS_DELAY_MS);
+		return () => clearTimeout(timer);
+	});
 
 	// The namespace this page is in is always offered, even when the list could
 	// not be read: a picker that silently dropped it would move you somewhere
@@ -264,6 +280,17 @@
 	</div>
 {/snippet}
 
+{#if navPending}
+	<div
+		data-testid="nav-progress"
+		role="progressbar"
+		aria-label="Loading the next page"
+		class="pointer-events-none fixed inset-x-0 top-0 z-[60] h-0.5 overflow-hidden bg-brand-100"
+	>
+		<div class="h-full w-2/5 bg-brand-600 animate-nav-progress motion-reduce:animate-pulse-dot"></div>
+	</div>
+{/if}
+
 <div class="flex min-h-screen">
 	<aside
 		class="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-surface lg:flex"
@@ -350,7 +377,10 @@
 			</div>
 		{/if}
 
-		<main class="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
+		<main
+			aria-busy={navPending}
+			class="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
+		>
 			{@render children()}
 		</main>
 	</div>
