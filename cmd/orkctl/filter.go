@@ -72,3 +72,38 @@ func filterArgs(filters []*orkstackv1.FieldFilter) []string {
 func noMatchSentence(noun string, filters []*orkstackv1.FieldFilter) string {
 	return fmt.Sprintf("No %s match %s.\n", noun, strings.Join(filterArgs(filters), " "))
 }
+
+// nextPageCommand is the printed command that continues a paged listing:
+// every filter (the token is bound to them), --limit when it was set, and the
+// token.
+func nextPageCommand(command []string, filters []*orkstackv1.FieldFilter, limit int32, token string) string {
+	args := append([]string{"orkctl"}, command...)
+	args = append(args, filterArgs(filters)...)
+	if limit > 0 {
+		args = append(args, "--limit", fmt.Sprint(limit))
+	}
+	args = append(args, "--page-token", token)
+	return strings.Join(args, " ")
+}
+
+// refuseNamespaceFlag refuses an explicit -n/--namespace on a deployment-wide
+// listing (webhook deliveries, admin audit) before any request: a namespace
+// narrows those only as a filter, and a flag that used to narrow them must
+// not be silently read as something else.
+func refuseNamespaceFlag(cmd *cobra.Command, command string) error {
+	if cmd.Flags().Changed("namespace") {
+		return fmt.Errorf("%s lists every namespace; narrow it with --filter namespace=<ns>", command)
+	}
+	return nil
+}
+
+// everyNamespaceLine is the scope sentence a deployment-wide listing prints
+// when no namespace filter narrows it.
+func everyNamespaceLine(filters []*orkstackv1.FieldFilter) string {
+	for _, f := range filters {
+		if f.GetField() == "namespace" {
+			return ""
+		}
+	}
+	return "Every namespace unless a namespace filter narrows it.\n"
+}

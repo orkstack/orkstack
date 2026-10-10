@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -25,15 +24,16 @@ const deliveryInstantLayout = "2006-01-02T15:04:05.000Z"
 
 // newWebhookDeliveriesCommand lists delivery records.
 //
-// Its scope is the deployment by default, like the webhook surface it
-// belongs to, so the global -n narrows it only when it was typed on THIS
-// command line — never from ORK_NAMESPACE or the saved namespace, which would
-// silently hide the delivery an operator is looking for.
+// It is a deployment-wide listing, like the webhook surface it belongs to: a
+// namespace narrows it only as a filter (--filter namespace=<ns>). The global
+// -n is refused when typed on this command line, so muscle memory cannot
+// silently widen or narrow what an operator reads; ORK_NAMESPACE and the
+// saved namespace are ignored.
 func newWebhookDeliveriesCommand(g *globalFlags) *cobra.Command {
 	var (
-		webhookID, runID, eventText, deliveredText string
-		sinceText, untilText, pageToken            string
-		limit                                      int32
+		pageToken   string
+		limit       int32
+		filterTexts *[]string
 	)
 	cmd := &cobra.Command{
 		Use:   "deliveries",
@@ -42,71 +42,30 @@ func newWebhookDeliveriesCommand(g *globalFlags) *cobra.Command {
 			"attempt, its status and error, the signature sent and the SHA-256 of the\n" +
 			"exact body bytes (the body itself is not stored). Records are read from the\n" +
 			"shared store, so any replica answers. Nothing is queued: a record is a log.\n\n" +
-			"The scope is every namespace unless -n is given on this command line;\n" +
-			"ORK_NAMESPACE and the namespace saved by 'orkctl namespace use' are ignored.\n\n" +
-			"--since takes a lookback (24h; 7d is 168h) or an RFC 3339 instant, --until\n" +
-			"an instant. With --run and no --since the window starts at the run's start;\n" +
-			"otherwise it is the seven days before --until (default now). A window with\n" +
-			"more keys than the engine will scan for one page is refused — narrow it.",
-		Example: "  orkctl webhook deliveries --run ork-2026-09-21-8f31\n" +
-			"  orkctl webhook deliveries --webhook wh-4a1c0e2b7d3f8159 --delivered=false --since 24h",
+			"Every namespace is listed unless a namespace filter narrows it; -n is refused\n" +
+			"here, and ORK_NAMESPACE and the namespace saved by 'orkctl namespace use' are\n" +
+			"ignored. Every filter is decided from a record's key, so a body is read only\n" +
+			"for a record that is listed.\n\n" +
+			"The window is created_at: --filter 'created_at<T' ends it (default now) and\n" +
+			"--filter 'created_at>=T' starts it, both RFC 3339 instants with a zone. With\n" +
+			"no start, one run_id= filter starts the window at that run's start; otherwise\n" +
+			"it is the seven days before its end. A window with more keys than the engine\n" +
+			"will scan for one page is refused — narrow it.",
+		Example: "  orkctl webhook deliveries --filter run_id=ork-2026-09-21-8f31\n" +
+			"  orkctl webhook deliveries --filter webhook_id=wh-4a1c0e2b7d3f8159 --filter delivered=false",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			req := &orkstackv1.ListDeliveriesRequest{WebhookId: webhookID, RunId: runID, PageToken: pageToken}
-			if eventText != "" {
-				event, err := webhooks.ParseEvent(eventText)
-				if err != nil {
-					return err
-				}
-				req.Event = eventType(event)
+			if err := refuseNamespaceFlag(cmd, "webhook deliveries"); err != nil {
+				return err
 			}
-			switch deliveredText {
-			case "":
-			case "true":
-				req.Outcome = orkstackv1.DeliveryOutcome_DELIVERY_OUTCOME_DELIVERED
-			case "false":
-				req.Outcome = orkstackv1.DeliveryOutcome_DELIVERY_OUTCOME_FAILED
-			default:
-				return fmt.Errorf("invalid --delivered %q: want true or false", deliveredText)
-			}
-			if untilText != "" {
-				if _, err := time.ParseDuration(untilText); err == nil {
-					return fmt.Errorf("invalid --until %q: want an instant (2026-09-21 or 2026-09-21T09:00:00Z), not a duration", untilText)
-				}
-				_, at, err := parseSince(untilText)
-				if err != nil {
-					return errors.New(strings.Replace(err.Error(), "--since", "--until", 1))
-				}
-				req.Until = timestamppb.New(at)
-			}
-			if sinceText != "" {
-				lookback, at, err := parseSince(sinceText)
-				if err != nil {
-					return err
-				}
-				if lookback > 0 {
-					// The RPC takes instants. A lookback is measured back from
-					// --until when one was given, so the window is one clock;
-					// otherwise from this machine's now.
-					end := time.Now().UTC()
-					if req.Until != nil {
-						end = req.Until.AsTime()
-					}
-					at = end.Add(-lookback)
-				}
-				req.Since = timestamppb.New(at)
-			}
-			if req.Since != nil && req.Until != nil && !req.Until.AsTime().After(req.Since.AsTime()) {
-				return fmt.Errorf("--until %s must be after --since %s",
-					req.Until.AsTime().UTC().Format(time.RFC3339Nano), req.Since.AsTime().UTC().Format(time.RFC3339Nano))
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
 			}
 			if limit < 0 || limit > 200 {
 				return fmt.Errorf("--limit must be between 0 and 200, got %d", limit)
 			}
-			req.PageSize = limit
-			if cmd.Flags().Changed("namespace") {
-				req.Namespace = g.namespace
-			}
+			req := &orkstackv1.ListDeliveriesRequest{Filters: filters, PageSize: limit, PageToken: pageToken}
 
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
@@ -122,60 +81,31 @@ func newWebhookDeliveriesCommand(g *globalFlags) *cobra.Command {
 				return err
 			}
 			if next := resp.Msg.GetNextPageToken(); next != "" {
-				if _, err := fmt.Fprintf(out, "\nNext page: orkctl webhook deliveries %s--page-token %s\n",
-					deliveriesNextPageArgs(req, eventText, deliveredText), next); err != nil {
+				// The token binds the filters and carries the resolved window,
+				// so the next-page command repeats the filters and no window.
+				if _, err := fmt.Fprintf(out, "\nNext page: %s\n",
+					nextPageCommand([]string{"webhook", "deliveries"}, filters, limit, next)); err != nil {
 					return fmt.Errorf("write output: %w", err)
 				}
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&webhookID, "webhook", "", "only deliveries to this webhook id")
-	cmd.Flags().StringVar(&runID, "run", "", "only deliveries about this run id")
-	cmd.Flags().StringVar(&eventText, "event", "", "only this event: "+strings.Join(eventNames(), " | "))
-	cmd.Flags().StringVar(&deliveredText, "delivered", "", "true for landed deliveries only, false for failed only")
-	cmd.Flags().StringVar(&sinceText, "since", "", "start of the window: a lookback (24h) or an RFC 3339 instant")
-	cmd.Flags().StringVar(&untilText, "until", "", "exclusive end of the window, an RFC 3339 instant (default: now)")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "records per page (0 = server default, 50; at most 200)")
 	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous listing with the same filters")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListDeliveriesRequest{})
 	return cmd
 }
 
-// deliveriesNextPageArgs repeats every filter the page token is bound to —
-// the window as the INSTANTS that were sent, so a lookback does not move
-// between pages — each shell-quoted only when it needs to be.
-func deliveriesNextPageArgs(req *orkstackv1.ListDeliveriesRequest, event, delivered string) string {
-	var b strings.Builder
-	add := func(flag, value string) {
-		if value != "" {
-			b.WriteString(flag + " " + shellArg(value) + " ")
-		}
-	}
-	add("-n", req.GetNamespace())
-	add("--webhook", req.GetWebhookId())
-	add("--run", req.GetRunId())
-	add("--event", event)
-	if delivered != "" {
-		b.WriteString("--delivered=" + delivered + " ")
-	}
-	if req.GetSince() != nil {
-		add("--since", req.GetSince().AsTime().UTC().Format(time.RFC3339Nano))
-	}
-	if req.GetUntil() != nil {
-		add("--until", req.GetUntil().AsTime().UTC().Format(time.RFC3339Nano))
-	}
-	if req.GetPageSize() > 0 {
-		add("--limit", fmt.Sprint(req.GetPageSize()))
-	}
-	return b.String()
-}
-
-// renderDeliveries prints the table, the scope line and the caption. The
-// scope line and caption follow every rendering, an empty page included.
+// renderDeliveries prints the table, the window line and the caption. The
+// window line and caption follow every rendering, an empty page included.
 func renderDeliveries(out io.Writer, req *orkstackv1.ListDeliveriesRequest, resp *orkstackv1.ListDeliveriesResponse) error {
-	if len(resp.GetDeliveries()) == 0 {
+	switch {
+	case len(resp.GetDeliveries()) == 0 && len(req.GetFilters()) > 0:
+		fmt.Fprint(out, noMatchSentence("deliveries", req.GetFilters()))
+	case len(resp.GetDeliveries()) == 0:
 		fmt.Fprintln(out, "No deliveries.")
-	} else {
+	default:
 		table := newTable(out)
 		fmt.Fprintln(table, "DELIVERY\tWEBHOOK\tWHEN\tEVENT\tRUN\tTASK\tDELIVERED\tATTEMPTS\tLAST")
 		for _, d := range resp.GetDeliveries() {
@@ -188,20 +118,42 @@ func renderDeliveries(out io.Writer, req *orkstackv1.ListDeliveriesRequest, resp
 			return fmt.Errorf("write output: %w", err)
 		}
 	}
-	scope := "every namespace"
-	if req.GetNamespace() != "" {
-		scope = "namespace " + req.GetNamespace()
-	}
 	from := formatTime(resp.GetSince())
-	if req.GetSince() == nil && req.GetRunId() != "" && req.GetPageToken() == "" {
+	if windowStartedAtTheRun(req, resp) {
 		from += " (the run's start)"
 	}
-	_, err := fmt.Fprintf(out, "\nScope: %s, %s to %s, newest first.\n%s",
-		scope, from, formatTime(resp.GetUntil()), deliveriesCaption)
+	_, err := fmt.Fprintf(out, "\nWindow: %s to %s, newest first.\n%s%s",
+		from, formatTime(resp.GetUntil()), everyNamespaceLine(req.GetFilters()), deliveriesCaption)
 	if err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
 	return nil
+}
+
+// windowStartedAtTheRun reports whether the engine started the window at a
+// run's start: a first page whose only run_id filter is one equality, with no
+// created_at lower bound — and a start other than the seven-day default,
+// which the engine falls back to when it cannot read the run.
+func windowStartedAtTheRun(req *orkstackv1.ListDeliveriesRequest, resp *orkstackv1.ListDeliveriesResponse) bool {
+	if req.GetPageToken() != "" {
+		return false
+	}
+	runEqualities := 0
+	for _, f := range req.GetFilters() {
+		switch f.GetField() {
+		case "run_id":
+			if f.GetOp() != orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS || len(f.GetValues()) != 1 || f.GetValues()[0] == "" {
+				return false
+			}
+			runEqualities++
+		case "created_at":
+			if f.GetOp() == orkstackv1.FilterOperator_FILTER_OPERATOR_AT_OR_AFTER {
+				return false
+			}
+		}
+	}
+	lookback := resp.GetUntil().AsTime().Sub(resp.GetSince().AsTime())
+	return runEqualities == 1 && lookback != 7*24*time.Hour
 }
 
 func deliveryEventLabel(event orkstackv1.EventType) string {

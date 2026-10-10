@@ -390,7 +390,7 @@ func TestIntegration_AHoldSetOnOneReplicaRefusesSubmitsOnTheOther(t *testing.T) 
 	// The audit trail, read back through B, says why the door was closed and
 	// that it was reopened: the hold's namespace.update record names the
 	// reason, the release's has no hold= key, newest first.
-	listed, _ = s.cli(t, s.b, exitOK, "--json", "-n", s.namespace, "admin", "audit", "--since", since)
+	listed, _ = s.cli(t, s.b, exitOK, "--json", "admin", "audit", "--filter", "namespace="+s.namespace, "--filter", "at>="+since)
 	audit := &orkstackv1.ListAuditRecordsResponse{}
 	if err := protojson.Unmarshal([]byte(listed), audit); err != nil {
 		t.Fatalf("admin audit --json is not a ListAuditRecordsResponse: %v\n%s", err, listed)

@@ -25,7 +25,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
-// TestIntegration_DeliveryRecordedOnOneReplicaListedOnAnother drives delivery
+// TestDeliveries_TwoEngines_FilteredListingAndItsNextPage drives delivery
 // records through two real `ork` processes sharing one Temporal namespace and
 // one MinIO bucket, with the production wiring of cmd/ork/main.go (durable
 // registry, S3 delivery store, the recorder as the notifier's Observe).
@@ -34,7 +34,7 @@ import (
 // projection worker makes — and records — every delivery. Replica B starts
 // afterwards, has made no delivery at all, and still lists the record, shows
 // it, and re-sends it: the read is the shared store, never process memory.
-func TestIntegration_DeliveryRecordedOnOneReplicaListedOnAnother(t *testing.T) {
+func TestDeliveries_TwoEngines_FilteredListingAndItsNextPage(t *testing.T) {
 	address := temporalAddress()
 	requireTemporal(t, address)
 	artifactCfg := artifacts.ConfigFromEnv()
@@ -130,7 +130,7 @@ func TestIntegration_DeliveryRecordedOnOneReplicaListedOnAnother(t *testing.T) {
 
 	var listed *orkstackv1.ListDeliveriesResponse
 	for deadline := time.Now().Add(30 * time.Second); ; {
-		out := deliveriesCLI(t, replicaB, exitOK, "--json", "webhook", "deliveries", "--run", runID, "--webhook", hook.ID)
+		out := deliveriesCLI(t, replicaB, exitOK, "--json", "webhook", "deliveries", "--filter", "run_id="+runID, "--filter", "webhook_id="+hook.ID)
 		listed = &orkstackv1.ListDeliveriesResponse{}
 		// --json is OrkStack's JSON dialect (short enum names), which the
 		// API's own decoder reads.
@@ -138,7 +138,7 @@ func TestIntegration_DeliveryRecordedOnOneReplicaListedOnAnother(t *testing.T) {
 			t.Fatalf("webhook deliveries --json is not a ListDeliveriesResponse: %v\n%s", err, out)
 		}
 		if len(listed.GetDeliveries()) > 0 || time.Now().After(deadline) {
-			fmt.Fprintf(&transcript, "$ orkctl --server <replica B> webhook deliveries --run %s --webhook %s --json\n%s\n\n", runID, hook.ID, out)
+			fmt.Fprintf(&transcript, "$ orkctl --server <replica B> webhook deliveries --filter run_id=%s --filter webhook_id=%s --json\n%s\n\n", runID, hook.ID, out)
 			break
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -152,13 +152,13 @@ func TestIntegration_DeliveryRecordedOnOneReplicaListedOnAnother(t *testing.T) {
 		t.Fatalf("replica B's record = %v, want %s delivered with the signature the subscriber saw (%s)",
 			rec, originalID, original.Get(webhooks.SignatureHeader))
 	}
-	human := deliveriesCLI(t, replicaB, exitOK, "webhook", "deliveries", "--run", runID, "--webhook", hook.ID)
+	human := deliveriesCLI(t, replicaB, exitOK, "webhook", "deliveries", "--filter", "run_id="+runID, "--filter", "webhook_id="+hook.ID)
 	shown := deliveriesCLI(t, replicaB, exitOK, "webhook", "delivery", originalID)
 	if !strings.Contains(human, originalID) || !strings.Contains(human, "(the run's start)") ||
 		!strings.Contains(shown, "SIGNATURE  "+rec.GetSignature()) || !strings.Contains(shown, "1  ") {
 		t.Fatalf("human renderings on B:\n%s\n%s", human, shown)
 	}
-	fmt.Fprintf(&transcript, "$ orkctl --server <replica B> webhook deliveries --run %s\n%s\n$ orkctl --server <replica B> webhook delivery %s\n%s\n",
+	fmt.Fprintf(&transcript, "$ orkctl --server <replica B> webhook deliveries --filter run_id=%s --filter webhook_id=<hook>\n%s\n$ orkctl --server <replica B> webhook delivery %s\n%s\n",
 		runID, human, originalID, shown)
 
 	// ---- B re-sends it: one POST, recorded as a new delivery --------------
@@ -174,11 +174,33 @@ func TestIntegration_DeliveryRecordedOnOneReplicaListedOnAnother(t *testing.T) {
 		t.Fatalf("redelivery headers %v, output:\n%s", again, redelivered)
 	}
 	fmt.Fprintf(&transcript, "$ orkctl --server <replica B> webhook redeliver %s\n%s\n", originalID, redelivered)
-	fromA := deliveriesCLI(t, replicaA, exitOK, "webhook", "deliveries", "--run", runID, "--webhook", hook.ID)
+	fromA := deliveriesCLI(t, replicaA, exitOK, "webhook", "deliveries", "--filter", "run_id="+runID, "--filter", "webhook_id="+hook.ID)
 	if !strings.Contains(fromA, again.Get(webhooks.DeliveryHeader)) {
 		t.Fatalf("replica A does not list the redelivery replica B recorded:\n%s", fromA)
 	}
-	fmt.Fprintf(&transcript, "$ orkctl --server <replica A> webhook deliveries --run %s\n%s\n", runID, fromA)
+	fmt.Fprintf(&transcript, "$ orkctl --server <replica A> webhook deliveries --filter run_id=%s --filter webhook_id=<hook>\n%s\n", runID, fromA)
+
+	// ---- a filtered page on A, its printed next page run on B -------------
+	// The token binds the filter set and carries the resolved window, so the
+	// command A prints continues the same listing on a replica that minted
+	// nothing — and only matching records are listed on either page.
+	firstPage := deliveriesCLI(t, replicaA, exitOK, "webhook", "deliveries",
+		"--filter", "run_id="+runID, "--filter", "webhook_id="+hook.ID, "--filter", "delivered=true", "--limit", "1")
+	idx := strings.Index(firstPage, "Next page: orkctl ")
+	if idx < 0 || !strings.Contains(firstPage, again.Get(webhooks.DeliveryHeader)) {
+		t.Fatalf("replica A's first filtered page of 1 does not hold the newest record and a next page:\n%s", firstPage)
+	}
+	line := strings.TrimSpace(strings.SplitN(firstPage[idx+len("Next page: orkctl "):], "\n", 2)[0])
+	if !strings.Contains(line, "--filter 'run_id="+runID+"'") || !strings.Contains(line, "--filter 'delivered=true'") ||
+		!strings.Contains(line, "--limit 1") {
+		t.Fatalf("next-page line %q does not repeat the filters and the limit", line)
+	}
+	secondPage := deliveriesCLI(t, replicaB, exitOK, shellWords(t, line)...)
+	if !strings.Contains(secondPage, originalID) || strings.Contains(secondPage, again.Get(webhooks.DeliveryHeader)) {
+		t.Fatalf("replica B's run of A's next-page command did not continue the listing:\n%s", secondPage)
+	}
+	fmt.Fprintf(&transcript, "$ orkctl --server <replica A> webhook deliveries --filter run_id=%s --filter webhook_id=<hook> --filter delivered=true --limit 1\n%s\n$ orkctl --server <replica B> %s\n%s\n",
+		runID, firstPage, line, secondPage)
 
 	t.Logf("EVIDENCE delivery_records_two_replica recorded_on=A listed_on=B original=%s redelivered_on=B as=%s %s=%s listed_back_on=A",
 		originalID, again.Get(webhooks.DeliveryHeader), webhooks.RedeliveryHeader, again.Get(webhooks.RedeliveryHeader))

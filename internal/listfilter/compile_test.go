@@ -127,6 +127,11 @@ func TestCompile_RefusesEnumValueNotAllowedOrUnspecified(t *testing.T) {
 	expectRefusal(t, runsSpec(t), `filters[0]: "nonsense" is not a status this list can select; status is one of `+list, "status!=nonsense")
 	expectRefusal(t, specOf(t, &orkstackv1.ListReleasesRequest{}),
 		`filters[0]: "BOGUS" is not a role this list can select; role is one of CURRENT, RAMPING, PREVIOUS, CANDIDATE`, "role=CURRENT,BOGUS")
+	// A field whose name starts with a vowel reads "an": the event a
+	// delivery carries is only ever a subscribable one.
+	expectRefusal(t, specOf(t, &orkstackv1.ListDeliveriesRequest{}),
+		`filters[0]: "TASK_LOG" is not an event this list can select; event is one of RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED, RUN_CANCELED, TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING, TASK_RESOLVED, TASK_SUCCEEDED, TASK_FAILED`,
+		"event=TASK_LOG")
 }
 
 func TestCompile_RefusesBoolSpelling(t *testing.T) {

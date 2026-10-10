@@ -32,16 +32,6 @@ func (r *recordingAuditStore) ListAuditRecords(ctx context.Context, q artifacts.
 	return r.MemoryAuditStore.ListAuditRecords(ctx, q)
 }
 
-func (r *recordingAuditStore) lastQuery(t *testing.T) artifacts.AuditQuery {
-	t.Helper()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.queries) == 0 {
-		t.Fatal("the audit store was never queried")
-	}
-	return r.queries[len(r.queries)-1]
-}
-
 // auditFixture is the real API over a seeded audit store. The records are the
 // worked example of docs/UI_CLI_PARITY.md "Control-plane audit trail",
 // stamped in the fixture's window.
@@ -88,47 +78,58 @@ func TestAdminAudit_Golden(t *testing.T) {
 		t.Fatalf("--json is not the raw envelope with four records: %v\n%s", err, machine.stdout)
 	}
 
-	empty := f.run("admin", "audit", "--action", "webhook.").requireExit(t, exitOK)
+	empty := f.run("admin", "audit", "--filter", "at<2025-12-01T00:00:00Z").requireExit(t, exitOK)
 	requireGolden(t, "admin-audit-empty.golden", empty.stdout)
 
-	paged := f.run("admin", "audit", "--limit", "2", "--principal", "dsantos",
-		"--since", "2026-01-01").requireExit(t, exitOK)
+	filtered := f.run("admin", "audit", "--filter", "action^namespace.", "--filter", "namespace!=").requireExit(t, exitOK)
+	requireGolden(t, "admin-audit-filtered.golden", filtered.stdout)
+
+	none := f.run("admin", "audit", "--filter", "action^webhook.").requireExit(t, exitOK)
+	none.requireContains(t, "No audit records match --filter 'action^webhook.'.")
+
+	paged := f.run("admin", "audit", "--limit", "2", "--filter", "principal=dsantos",
+		"--filter", "at>=2026-01-01T00:00:00Z").requireExit(t, exitOK)
 	requireGolden(t, "admin-audit-next-page.golden", paged.stdout)
 
 	// The printed command continues the same listing rather than being refused
-	// for changed filters.
+	// for changed filters: it repeats the filters and carries no window.
 	line := paged.stdout[strings.Index(paged.stdout, "Next page: orkctl ")+len("Next page: orkctl "):]
 	line = strings.TrimSpace(strings.SplitN(line, "\n", 2)[0])
-	next := f.run(strings.Fields(line)...).requireExit(t, exitOK)
-	if !strings.Contains(next.stdout, "No audit records in this window.") || strings.Contains(next.stdout, "Next page") {
+	if !strings.Contains(line, "--page-token v2:") {
+		t.Errorf("next-page line %q does not carry a v2: token", line)
+	}
+	next := f.run(shellWords(t, line)...).requireExit(t, exitOK)
+	if !strings.Contains(next.stdout, "No audit records match") || strings.Contains(next.stdout, "Next page") {
 		t.Errorf("the next-page command did not finish the listing:\n%s", next.stdout)
 	}
 }
 
-func TestAdminAudit_NamespaceOnlyFromCommandLine(t *testing.T) {
-	f, store := auditFixture(t)
+// TestAdminAudit_EveryNamespaceUnlessAFilterNarrowsIt: the trail is a
+// deployment-wide listing. ORK_NAMESPACE never narrows it; a namespace filter
+// does, and `namespace=` selects the deployment-wide writes.
+func TestAdminAudit_EveryNamespaceUnlessAFilterNarrowsIt(t *testing.T) {
+	f, _ := auditFixture(t)
 	t.Setenv(namespaceEnvVar, "payments")
 
 	every := f.run("admin", "audit").requireExit(t, exitOK)
-	if q := store.lastQuery(t); q.Namespace != "" {
-		t.Errorf("with only ORK_NAMESPACE set the CLI sent namespace %q, want empty (every namespace)", q.Namespace)
+	sent := requestBodies(t, f, "/orkstack.v1.AuditService/ListAuditRecords", func() *orkstackv1.ListAuditRecordsRequest {
+		return &orkstackv1.ListAuditRecordsRequest{}
+	})
+	if got := sent[len(sent)-1].GetFilters(); len(got) != 0 {
+		t.Errorf("with only ORK_NAMESPACE set the CLI sent filters %v, want none", filterTexts(got))
 	}
-	if !strings.Contains(every.stdout, "Scope: every namespace") {
-		t.Errorf("scope line missing:\n%s", every.stdout)
-	}
+	every.requireContains(t, "Every namespace unless a namespace filter narrows it.", "retention.update", "prod-payments")
 
-	one := f.run("-n", "payments", "admin", "audit").requireExit(t, exitOK)
-	if q := store.lastQuery(t); q.Namespace != "payments" {
-		t.Errorf("-n payments sent namespace %q", q.Namespace)
-	}
-	if !strings.Contains(one.stdout, "Scope: namespace payments") {
-		t.Errorf("scope line missing:\n%s", one.stdout)
+	deployment := f.run("admin", "audit", "--filter", "namespace=").requireExit(t, exitOK)
+	deployment.requireContains(t, "retention.update")
+	if strings.Contains(deployment.stdout, "prod-payments") || strings.Contains(deployment.stdout, "Every namespace unless") {
+		t.Errorf("namespace= listed a namespaced write or claimed every namespace:\n%s", deployment.stdout)
 	}
 }
 
 func TestAdminAudit_RendersUnattributed(t *testing.T) {
 	f, _ := auditFixture(t)
-	out := f.run("admin", "audit", "--action", "namespace.delete").requireExit(t, exitOK)
+	out := f.run("admin", "audit", "--filter", "action=namespace.delete").requireExit(t, exitOK)
 	var row string
 	for _, line := range strings.Split(out.stdout, "\n") {
 		if strings.Contains(line, "namespace.delete") {
@@ -143,19 +144,23 @@ func TestAdminAudit_RendersUnattributed(t *testing.T) {
 	}
 }
 
-func TestAdminAudit_RefusesAWindowLocally(t *testing.T) {
+// TestAdminAudit_WindowRefusalsAreTheServers: the CLI checks a filter's
+// syntax only; an inverted window or a time without a zone is the engine's
+// INVALID_ARGUMENT, printed verbatim with a non-zero exit.
+func TestAdminAudit_WindowRefusalsAreTheServers(t *testing.T) {
 	f, _ := auditFixture(t)
+	out := f.run("admin", "audit", "--filter", "at>=2026-02-01T00:00:00Z", "--filter", "at<2026-01-01T00:00:00Z")
+	if out.code == exitOK || !strings.Contains(out.stderr, "at >= 2026-02-01T00:00:00Z and < 2026-01-01T00:00:00Z select no instant") {
+		t.Fatalf("inverted window = %d %q, want the server's interval refusal", out.code, out.stderr)
+	}
+	bad := f.run("admin", "audit", "--filter", "at>=2026-01-01")
+	if bad.code == exitOK || !strings.Contains(bad.stderr, "is not an RFC 3339 instant with a zone") {
+		t.Fatalf("a bare date = %d %q, want the server's refusal", bad.code, bad.stderr)
+	}
 	before := len(f.requests())
-	out := f.run("admin", "audit", "--since", "2026-02-01", "--until", "2026-01-01")
-	if out.code == exitOK || !strings.Contains(out.stderr, "must be after") {
-		t.Fatalf("inverted window = %d %q, want a local refusal", out.code, out.stderr)
-	}
-	bad := f.run("admin", "audit", "--since", "yesterday")
-	if bad.code == exitOK || !strings.Contains(bad.stderr, "RFC3339") {
-		t.Fatalf("--since yesterday = %d %q, want a local refusal", bad.code, bad.stderr)
-	}
-	if after := len(f.requests()); after != before {
-		t.Errorf("a locally refused window still sent %d requests", after-before)
+	syntax := f.run("admin", "audit", "--filter", "at>2026-01-01T00:00:00Z")
+	if syntax.code == exitOK || len(f.requests()) != before {
+		t.Fatalf("a filter syntax error = %d %q and %d requests; want a local refusal", syntax.code, syntax.stderr, len(f.requests())-before)
 	}
 }
 

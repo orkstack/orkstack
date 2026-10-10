@@ -318,7 +318,7 @@ func TestIntegration_AnEnforcedBudgetSetOnOneReplicaRefusesOnTheOther(t *testing
 	runID := s.submitID(t, s.a, s.orkflow)
 	s.awaitStatus(ctx, t, s.a, runID, orkstackv1.Status_STATUS_SUCCEEDED)
 
-	listed, _ := s.cli(t, s.b, exitOK, "--json", "-n", s.namespace, "admin", "audit", "--since", since)
+	listed, _ := s.cli(t, s.b, exitOK, "--json", "admin", "audit", "--filter", "namespace="+s.namespace, "--filter", "at>="+since)
 	audit := &orkstackv1.ListAuditRecordsResponse{}
 	if err := protojson.Unmarshal([]byte(listed), audit); err != nil {
 		t.Fatalf("admin audit --json: %v\n%s", err, listed)

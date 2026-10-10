@@ -700,7 +700,7 @@ func TestIntegration_ReleaseRollbackKeepsTheRolledBackReleasesRunsWhereTheyAre(t
 	if code != 1 || !strings.Contains(stderr, `rollback returns to a release that was current before; v3 is candidate`) {
 		t.Fatalf("rollback v3: exit %d\n%s", code, stderr)
 	}
-	listed := s.mustCLI("admin", "audit", "--action", "release.", "--since", since, "--json")
+	listed := s.mustCLI("admin", "audit", "--filter", "action^release.", "--filter", "at>="+since, "--json")
 	resp := &orkstackv1.ListAuditRecordsResponse{}
 	if err := api.UnmarshalJSON([]byte(listed), resp); err != nil {
 		t.Fatalf("admin audit --json: %v", err)
@@ -872,7 +872,7 @@ func TestIntegration_ReleaseWritesAreAudited(t *testing.T) {
 	s.versionedPair(0, 0)
 	s.awaitStatus("v2 passes", noBlockers("v2"))
 	s.mustCLI("release", "ramp", "v2", "--percent", "10")
-	listed := s.mustCLI("admin", "audit", "--action", "release.", "--since", since, "--json")
+	listed := s.mustCLI("admin", "audit", "--filter", "action^release.", "--filter", "at>="+since, "--json")
 	resp := &orkstackv1.ListAuditRecordsResponse{}
 	if err := api.UnmarshalJSON([]byte(listed), resp); err != nil {
 		t.Fatalf("admin audit --json: %v", err)
@@ -892,7 +892,7 @@ func TestIntegration_ReleaseWritesAreAudited(t *testing.T) {
 	if ramped == nil || ramped.GetTarget() != "v2" || ramped.GetDetail() != "percent=10 was -@0" || !ramped.GetSucceeded() {
 		t.Fatalf("ramp record = %v", ramped)
 	}
-	s.mustCLI("admin", "audit", "--action", "release.", "--since", since)
+	s.mustCLI("admin", "audit", "--filter", "action^release.", "--filter", "at>="+since)
 	s.note("EVIDENCE audit: %s %s %q; %s %s %q", promoted.GetAction(), promoted.GetTarget(), promoted.GetDetail(),
 		ramped.GetAction(), ramped.GetTarget(), ramped.GetDetail())
 }

@@ -470,7 +470,7 @@ func TestIntegration_AFloorTightenedOnOneReplicaRefusesASubmitOnTheOther(t *test
 	runID := s.submitID(t, s.a, "deploy", "")
 	s.awaitStatus(ctx, t, s.a, runID, "", orkstackv1.Status_STATUS_SUCCEEDED)
 
-	stdout, _ := s.cli(t, s.b, exitOK, "--json", "admin", "audit", "--action", "image_policy.", "--since", since)
+	stdout, _ := s.cli(t, s.b, exitOK, "--json", "admin", "audit", "--filter", "action^image_policy.", "--filter", "at>="+since)
 	var page struct {
 		Records []struct {
 			Action    string `json:"action"`

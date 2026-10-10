@@ -169,69 +169,104 @@ func TestWebhookDeliveries_Golden(t *testing.T) {
 		t.Fatalf("--json is not the raw response with three records in the JSON dialect: %v\n%s", err, machine.stdout)
 	}
 
-	empty := f.run("webhook", "deliveries", "--event", "RUN_CANCELED").requireExit(t, exitOK)
+	empty := f.run("webhook", "deliveries", "--filter", "created_at<2025-12-01T00:00:00Z").requireExit(t, exitOK)
 	requireGolden(t, "webhook-deliveries-empty.golden", empty.stdout)
 
-	paged := f.run("webhook", "deliveries", "--limit", "2", "--webhook", deliveriesWebhook,
-		"--since", "2026-01-01").requireExit(t, exitOK)
+	filtered := f.run("webhook", "deliveries", "--filter", "event=TASK_FAILED,RUN_FAILED",
+		"--filter", "delivered=false", "--filter", "namespace=payments").requireExit(t, exitOK)
+	requireGolden(t, "webhook-deliveries-filtered.golden", filtered.stdout)
+
+	none := f.run("webhook", "deliveries", "--filter", "event=RUN_CANCELED").requireExit(t, exitOK)
+	none.requireContains(t, "No deliveries match --filter 'event=RUN_CANCELED'.")
+
+	paged := f.run("webhook", "deliveries", "--limit", "2", "--filter", "webhook_id="+deliveriesWebhook,
+		"--filter", "created_at>=2026-01-01T00:00:00Z").requireExit(t, exitOK)
 	requireGolden(t, "webhook-deliveries-next-page.golden", paged.stdout)
 	line := paged.stdout[strings.Index(paged.stdout, "Next page: orkctl ")+len("Next page: orkctl "):]
 	line = strings.TrimSpace(strings.SplitN(line, "\n", 2)[0])
-	next := f.run(strings.Fields(line)...).requireExit(t, exitOK)
+	// The token carries the resolved window and binds the filter set, so the
+	// printed command repeats every filter — the created_at bound included —
+	// and nothing else.
+	next := f.run(shellWords(t, line)...).requireExit(t, exitOK)
 	if !strings.Contains(next.stdout, "71b0cc19e2d4a6f3") || strings.Contains(next.stdout, "Next page") ||
 		strings.Contains(next.stdout, "9c22a1f04e7b3d58") {
 		t.Errorf("the next-page command did not continue the listing without overlap:\n%s", next.stdout)
 	}
 }
 
-func TestWebhookDeliveries_NamespaceOnlyFromCommandLine(t *testing.T) {
-	f, store, _ := deliveriesFixture(t)
+// TestWebhookDeliveries_EveryNamespaceUnlessAFilterNarrowsIt: deliveries are
+// a deployment-wide listing; ORK_NAMESPACE never narrows it, a namespace
+// filter does.
+func TestWebhookDeliveries_EveryNamespaceUnlessAFilterNarrowsIt(t *testing.T) {
+	f, _, _ := deliveriesFixture(t)
 	t.Setenv(namespaceEnvVar, "payments")
 
 	every := f.run("webhook", "deliveries").requireExit(t, exitOK)
-	if q := store.lastQuery(t); q.Namespace != "" {
-		t.Errorf("with only ORK_NAMESPACE set the CLI sent namespace %q, want empty (every namespace)", q.Namespace)
+	sent := requestBodies(t, f, "/orkstack.v1.WebhookService/ListDeliveries", func() *orkstackv1.ListDeliveriesRequest {
+		return &orkstackv1.ListDeliveriesRequest{}
+	})
+	if got := sent[len(sent)-1].GetFilters(); len(got) != 0 {
+		t.Errorf("with only ORK_NAMESPACE set the CLI sent filters %v, want none", filterTexts(got))
 	}
-	if !strings.Contains(every.stdout, "Scope: every namespace") {
-		t.Errorf("scope line missing:\n%s", every.stdout)
+	every.requireContains(t, "Every namespace unless a namespace filter narrows it.")
+
+	one := f.run("webhook", "deliveries", "--filter", "namespace=payments").requireExit(t, exitOK)
+	sent = requestBodies(t, f, "/orkstack.v1.WebhookService/ListDeliveries", func() *orkstackv1.ListDeliveriesRequest {
+		return &orkstackv1.ListDeliveriesRequest{}
+	})
+	if got := filterTexts(sent[len(sent)-1].GetFilters()); strings.Join(got, " ") != "namespace=payments" {
+		t.Errorf("--filter namespace=payments sent %v", got)
 	}
-	one := f.run("-n", "payments", "webhook", "deliveries").requireExit(t, exitOK)
-	if q := store.lastQuery(t); q.Namespace != "payments" {
-		t.Errorf("-n payments sent namespace %q", q.Namespace)
-	}
-	if !strings.Contains(one.stdout, "Scope: namespace payments") {
-		t.Errorf("scope line does not name the namespace:\n%s", one.stdout)
+	if strings.Contains(one.stdout, "Every namespace unless") {
+		t.Errorf("a namespace filter still claims every namespace:\n%s", one.stdout)
 	}
 }
 
 func TestWebhookDeliveries_RunDefaultsSinceToTheRunsStart(t *testing.T) {
 	f, store, _ := deliveriesFixture(t)
-	out := f.run("webhook", "deliveries", "--run", deliveriesRunID).requireExit(t, exitOK)
-	if q := store.lastQuery(t); !q.Since.Equal(fixedNow.Add(-time.Hour)) || q.RunID != deliveriesRunID {
-		t.Errorf("query = %+v, want since = the run's created_at", q)
+	out := f.run("webhook", "deliveries", "--filter", "run_id="+deliveriesRunID).requireExit(t, exitOK)
+	if q := store.lastQuery(t); !q.Since.Equal(fixedNow.Add(-time.Hour)) {
+		t.Errorf("query since = %s, want the run's created_at", q.Since)
 	}
-	if !strings.Contains(out.stdout, "Scope: every namespace, 2026-01-02T02:04:05Z (the run's start) to 2026-01-02T03:04:05Z") {
-		t.Errorf("scope line does not name the run's start:\n%s", out.stdout)
+	if !strings.Contains(out.stdout, "Window: 2026-01-02T02:04:05Z (the run's start) to 2026-01-02T03:04:05Z") {
+		t.Errorf("window line does not name the run's start:\n%s", out.stdout)
+	}
+	// A run the engine cannot read: the seven-day default, not "the run's start".
+	other := f.run("webhook", "deliveries", "--filter", "run_id=ork-unknown").requireExit(t, exitOK)
+	if strings.Contains(other.stdout, "the run's start") {
+		t.Errorf("an unreadable run claimed the run's start:\n%s", other.stdout)
 	}
 }
 
-func TestWebhookDeliveries_RefusesBadFiltersLocally(t *testing.T) {
+// TestWebhookDeliveries_RefusesWhatItCannotSend: a syntax error and a bad
+// --limit are refused before any request; every semantic refusal is the
+// server's, printed verbatim.
+func TestWebhookDeliveries_RefusesWhatItCannotSend(t *testing.T) {
 	f, _, _ := deliveriesFixture(t)
 	for _, args := range [][]string{
-		{"--event", "TASK_LOG"},
-		{"--event", "RUN_CREATED"},
-		{"--delivered", "maybe"},
-		{"--until", "24h"},
-		{"--since", "yesterday"},
+		{"--filter", "created_at>2026-01-01T00:00:00Z"},
+		{"--filter", ""},
+		{"--filter", "=x"},
 		{"--limit", "201"},
 	} {
 		before := len(f.requests())
 		res := f.run(append([]string{"webhook", "deliveries"}, args...)...)
 		if res.code == exitOK {
-			t.Errorf("orkctl webhook deliveries %v succeeded", args)
+			t.Errorf("orkctl webhook deliveries %q succeeded", args)
 		}
 		if len(f.requests()) != before {
-			t.Errorf("orkctl webhook deliveries %v sent a request before refusing", args)
+			t.Errorf("orkctl webhook deliveries %q sent a request before refusing", args)
+		}
+	}
+	for _, tc := range []struct{ filter, message string }{
+		{"event=TASK_LOG", `"TASK_LOG" is not an event this list can select`},
+		{"delivered=maybe", `delivered is true or false, not "maybe"`},
+		{"created_at>=2026-01-01", "is not an RFC 3339 instant with a zone"},
+		{"namespace=Payments", `namespace "Payments" is not a slug`},
+	} {
+		res := f.run("webhook", "deliveries", "--filter", tc.filter)
+		if res.code == exitOK || !strings.Contains(res.stderr, tc.message) {
+			t.Errorf("--filter %s = %d %q; want the server's refusal %q", tc.filter, res.code, res.stderr, tc.message)
 		}
 	}
 	before := len(f.requests())

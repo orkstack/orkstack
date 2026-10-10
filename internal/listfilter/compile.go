@@ -165,8 +165,8 @@ func (s *Spec) canonicalValue(i int, field *Field, op orkstackv1.FilterOperator,
 				return short, nil
 			}
 		}
-		return "", refuse(i, "%q is not a %s this list can select; %s is one of %s",
-			v, field.Path, field.Path, strings.Join(field.AllowedValues, ", "))
+		return "", refuse(i, "%q is not %s %s this list can select; %s is one of %s",
+			v, article(field.Path), field.Path, field.Path, strings.Join(field.AllowedValues, ", "))
 	case KindBool:
 		if v != "true" && v != "false" {
 			return "", refuse(i, "%s is true or false, not %q", field.Path, v)
@@ -221,4 +221,13 @@ func (s *Spec) paths() []string {
 		out[i] = f.display()
 	}
 	return out
+}
+
+// article is the indefinite article a field's name takes in a sentence:
+// "a status", "an event".
+func article(word string) string {
+	if word != "" && strings.ContainsRune("aeiou", rune(word[0])) {
+		return "an"
+	}
+	return "a"
 }

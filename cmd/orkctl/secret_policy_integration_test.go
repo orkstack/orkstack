@@ -372,7 +372,7 @@ func TestIntegration_AListTightenedOnOneReplicaRefusesASubmitOnTheOther(t *testi
 		t.Fatalf("run get via B does not show the Orker's refusal:\n%s", got)
 	}
 
-	listed, _ := s.cli(t, s.b, exitOK, "--json", "-n", s.namespace, "admin", "audit", "--since", since)
+	listed, _ := s.cli(t, s.b, exitOK, "--json", "admin", "audit", "--filter", "namespace="+s.namespace, "--filter", "at>="+since)
 	audit := &orkstackv1.ListAuditRecordsResponse{}
 	if err := protojson.Unmarshal([]byte(listed), audit); err != nil {
 		t.Fatalf("admin audit --json is not a ListAuditRecordsResponse: %v\n%s", err, listed)

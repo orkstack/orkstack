@@ -4,12 +4,9 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -26,17 +23,18 @@ const auditUnattributed = "unattributed"
 
 // newAdminAuditCommand reads the control-plane audit trail back.
 //
-// Its scope is the deployment by default, like every other `admin` command,
-// so the global -n narrows it only when it was typed on THIS command line —
-// never from ORK_NAMESPACE or the namespace saved by `orkctl namespace use`,
-// which would silently hide every deployment-wide write from an operator who
-// happened to have a namespace selected. The Scope line says which it was.
+// It is a deployment-wide listing, like every other `admin` command: a
+// namespace narrows it only as a filter (--filter namespace=<ns>), and
+// `--filter namespace=` selects the deployment-wide writes. The global -n is
+// refused when typed on this command line; ORK_NAMESPACE and the namespace
+// saved by `orkctl namespace use` are ignored, which would otherwise silently
+// hide every deployment-wide write from an operator who happened to have a
+// namespace selected.
 func newAdminAuditCommand(g *globalFlags) *cobra.Command {
 	var (
-		sinceText, untilText string
-		action, principal    string
-		limit                int32
-		pageToken            string
+		limit       int32
+		pageToken   string
+		filterTexts *[]string
 	)
 	cmd := &cobra.Command{
 		Use:   "audit",
@@ -46,49 +44,39 @@ func newAdminAuditCommand(g *globalFlags) *cobra.Command {
 			"release, cache purge, run cancel, await resolve and Orker cordon changes),\n" +
 			"succeeded or refused, read from the shared store so any replica answers.\n" +
 			"Reads, run submissions and trigger invocations are never recorded.\n\n" +
-			"The scope is every namespace unless -n is given on this command line;\n" +
-			"ORK_NAMESPACE and the namespace saved by 'orkctl namespace use' are ignored.\n" +
-			"Deployment-wide writes (retention, image policy, webhooks, releases, Orker cordons)\n" +
-			"carry no namespace and appear only in the every-namespace scope.\n\n" +
-			"--since and --until are RFC 3339 instants (a bare YYYY-MM-DD means midnight\n" +
-			"UTC); the default window is the seven days before now. A window with more\n" +
-			"records than the engine will scan for one page is refused — narrow it.\n\n" +
+			"Every namespace is listed unless a namespace filter narrows it; -n is refused\n" +
+			"here, and ORK_NAMESPACE and the namespace saved by 'orkctl namespace use' are\n" +
+			"ignored. Deployment-wide writes (retention, image policy, webhooks, releases,\n" +
+			"Orker cordons) carry no namespace: --filter 'namespace=' selects them.\n\n" +
+			"The window is at: --filter 'at<T' ends it (default now) and --filter 'at>=T'\n" +
+			"starts it (default seven days before its end), both RFC 3339 instants with a\n" +
+			"zone. A window with more records than the engine will scan for one page is\n" +
+			"refused — narrow it.\n\n" +
 			"PRINCIPAL is whatever the caller's gateway asserted in the Ork-Principal\n" +
 			"header (ORK_PRINCIPAL makes this CLI assert one); OrkStack records it and\n" +
 			"does not authenticate it, so a gateway that authenticates callers must\n" +
 			"overwrite the header rather than pass it through.",
+		Example: "  orkctl admin audit --filter 'action^namespace.' --filter 'at>=2026-10-01T00:00:00Z'\n" +
+			"  orkctl admin audit --filter 'namespace='",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			since, err := parseAuditBound("--since", sinceText)
-			if err != nil {
+			if err := refuseNamespaceFlag(cmd, "admin audit"); err != nil {
 				return err
 			}
-			until, err := parseAuditBound("--until", untilText)
+			filters, err := parseFilterFlags(*filterTexts)
 			if err != nil {
 				return err
-			}
-			if since != nil && until != nil && !until.AsTime().After(since.AsTime()) {
-				return fmt.Errorf("--until %s must be after --since %s",
-					until.AsTime().UTC().Format(time.RFC3339Nano), since.AsTime().UTC().Format(time.RFC3339Nano))
 			}
 			if limit < 0 {
 				return fmt.Errorf("--limit must not be negative, got %d", limit)
-			}
-			namespace := ""
-			if cmd.Flags().Changed("namespace") {
-				namespace = g.namespace
 			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.auditClient().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
-				Namespace:    namespace,
-				ActionPrefix: action,
-				Principal:    principal,
-				Since:        since,
-				Until:        until,
-				PageSize:     limit,
-				PageToken:    pageToken,
+				Filters:   filters,
+				PageSize:  limit,
+				PageToken: pageToken,
 			}))
 			if err != nil {
 				return rpcError("admin audit", err)
@@ -97,50 +85,34 @@ func newAdminAuditCommand(g *globalFlags) *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
 			out := cmd.OutOrStdout()
-			if err := renderAuditRecords(out, namespace, resp.Msg); err != nil {
+			if err := renderAuditRecords(out, filters, resp.Msg); err != nil {
 				return err
 			}
 			if next := resp.Msg.GetNextPageToken(); next != "" {
-				args := auditNextPageArgs(namespace, action, principal, sinceText, untilText, limit)
-				if _, err := fmt.Fprintf(out, "\nNext page: orkctl admin audit %s--page-token %s\n", args, next); err != nil {
+				if _, err := fmt.Fprintf(out, "\nNext page: %s\n",
+					nextPageCommand([]string{"admin", "audit"}, filters, limit, next)); err != nil {
 					return fmt.Errorf("write output: %w", err)
 				}
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sinceText, "since", "", "inclusive start of the window, RFC3339 (default: seven days before --until)")
-	cmd.Flags().StringVar(&untilText, "until", "", "exclusive end of the window, RFC3339 (default: now)")
-	cmd.Flags().StringVar(&action, "action", "", "only actions starting with this prefix (namespace., orkflow.promote, …)")
-	cmd.Flags().StringVar(&principal, "principal", "", "only records with exactly this asserted principal")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "records per page (0 = server default, 50; at most 200)")
 	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous listing with the same filters")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListAuditRecordsRequest{})
 	return cmd
 }
 
-// parseAuditBound reads --since/--until: RFC 3339, or a bare date meaning
-// midnight UTC, which is how a compliance window is usually written.
-func parseAuditBound(flag, value string) (*timestamppb.Timestamp, error) {
-	if value == "" {
-		return nil, nil
-	}
-	if day, err := time.Parse(time.DateOnly, value); err == nil {
-		return timestamppb.New(day.UTC()), nil
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return nil, fmt.Errorf("%s must be RFC3339 (or YYYY-MM-DD): %w", flag, err)
-	}
-	return timestamppb.New(parsed), nil
-}
-
-// renderAuditRecords prints the table, the scope line and the caption. The
-// scope line and caption are printed on every rendering, empty page included.
-func renderAuditRecords(out io.Writer, namespace string, resp *orkstackv1.ListAuditRecordsResponse) error {
+// renderAuditRecords prints the table, the window line and the caption. The
+// window line and caption are printed on every rendering, empty page included.
+func renderAuditRecords(out io.Writer, filters []*orkstackv1.FieldFilter, resp *orkstackv1.ListAuditRecordsResponse) error {
 	records := resp.GetRecords()
-	if len(records) == 0 {
+	switch {
+	case len(records) == 0 && len(filters) > 0:
+		fmt.Fprint(out, noMatchSentence("audit records", filters))
+	case len(records) == 0:
 		fmt.Fprintln(out, "No audit records in this window.")
-	} else {
+	default:
 		table := newTable(out)
 		fmt.Fprintln(table, "WHEN\tPRINCIPAL\tACTION\tNAMESPACE\tTARGET\tRESULT")
 		for _, rec := range records {
@@ -156,12 +128,8 @@ func renderAuditRecords(out io.Writer, namespace string, resp *orkstackv1.ListAu
 			return fmt.Errorf("write output: %w", err)
 		}
 	}
-	scope := "every namespace"
-	if namespace != "" {
-		scope = "namespace " + namespace
-	}
-	fmt.Fprintf(out, "\nScope: %s, %s to %s (exclusive), newest first.\n",
-		scope, formatTime(resp.GetSince()), formatTime(resp.GetUntil()))
+	fmt.Fprintf(out, "\nWindow: %s to %s (exclusive), newest first.\n%s",
+		formatTime(resp.GetSince()), formatTime(resp.GetUntil()), everyNamespaceLine(filters))
 	_, err := io.WriteString(out, auditCaption)
 	if err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -181,27 +149,6 @@ func auditResultLabel(rec *orkstackv1.AuditRecord) string {
 		return "ok"
 	}
 	return "refused: " + orDash(rec.GetErrorCode())
-}
-
-// auditNextPageArgs repeats the filters the page token is bound to, so the
-// printed command continues the same listing instead of being refused as
-// "filters changed". Each value is shell-quoted only when it needs to be.
-func auditNextPageArgs(namespace, action, principal, since, until string, limit int32) string {
-	var b strings.Builder
-	add := func(flag, value string) {
-		if value != "" {
-			b.WriteString(flag + " " + shellArg(value) + " ")
-		}
-	}
-	add("-n", namespace)
-	add("--since", since)
-	add("--until", until)
-	add("--action", action)
-	add("--principal", principal)
-	if limit > 0 {
-		add("--limit", fmt.Sprint(limit))
-	}
-	return b.String()
 }
 
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9._:/@=+,-]+$`)
