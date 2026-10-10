@@ -159,7 +159,48 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newWebhookCommand(g),
 		newVersionCommand(g),
 	)
+	for _, child := range root.Commands() {
+		refuseUnknownSubcommands(child)
+	}
 	return root, g
+}
+
+// refuseUnknownSubcommands makes every group at or below cmd — a command
+// whose only job is to hold subcommands — a command of its own: bare, it
+// prints its help and exits 0; with an argument that names no subcommand, it
+// fails with `unknown command "x" for "orkctl run"` (and cobra's nearest
+// suggestions) and exits 1.
+//
+// Cobra alone answers a non-runnable group's stray argument with its help and
+// a nil error before it ever validates the arguments, so `orkctl run lsit`
+// would read as success to a script. A group that already runs (stats) keeps
+// its own RunE and argument check. The root is left to cobra, whose own
+// handling of an unknown top-level command already fails.
+func refuseUnknownSubcommands(cmd *cobra.Command) {
+	if cmd.HasSubCommands() && !cmd.Runnable() {
+		cmd.Args = unknownSubcommand
+		cmd.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+	}
+	for _, child := range cmd.Commands() {
+		refuseUnknownSubcommands(child)
+	}
+}
+
+// unknownSubcommand is the argument check refuseUnknownSubcommands installs:
+// no positional argument is valid where only a subcommand may follow.
+func unknownSubcommand(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	message := fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath())
+	// Cobra applies its default distance only on the root's own path.
+	if cmd.SuggestionsMinimumDistance <= 0 {
+		cmd.SuggestionsMinimumDistance = 2
+	}
+	if suggestions := cmd.SuggestionsFor(args[0]); len(suggestions) > 0 {
+		message += "\n\nDid you mean this?\n\t" + strings.Join(suggestions, "\n\t")
+	}
+	return errors.New(message)
 }
 
 // resolveNamespace settles which namespace this invocation acts in.

@@ -58,6 +58,13 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
 - **One-time secrets are shown once.** A trigger token, a generated webhook
   secret and an await callback token appear in the creating response only;
   no listing, URL or later read carries them.
+- **`orkctl` exit codes.** `0` the command succeeded; `1` it failed —
+  including a mistyped subcommand (`orkctl run lsit` fails with
+  `unknown command "lsit" for "orkctl run"` and the nearest suggestion; a
+  bare group such as `orkctl run` prints its help and exits 0); `2` a watched
+  run failed; `3` a watched run was canceled; `4` the command's own negative
+  verdict (`orker drain` timed out, `run plan` contradicts an
+  `--assert-*`, `apply --check` found changes).
 - **The browser invents no validation the CLI bypasses**, and typed input
   controls are a presentation of declared inputs, not a schema language (see
   "Baseline operator flows").
