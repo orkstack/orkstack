@@ -1,4 +1,5 @@
 import { errorMessage, orkstack } from '$lib/client';
+import { FilterOperator, filterOf } from '$lib/listFilter';
 import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
 import type { OrkflowVersion, Trigger } from '$lib/gen/orkstack/v1/service_pb';
 import type { Schedule } from '$lib/gen/orkstack/v1/schedule_pb';
@@ -60,14 +61,14 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			})),
 		tab === 'triggers'
 			? client.triggers
-					.listTriggers({ namespace, orkflowName: name })
+					.listTriggers({ namespace, filters: [filterOf('orkflow_name', FilterOperator.EQUALS, [name])] })
 					.then((res) => ({ triggers: res.triggers, error: null as string | null }))
 					.catch((err) => ({ triggers: [] as Trigger[], error: errorMessage(err) }))
 			: Promise.resolve({ triggers: [] as Trigger[], error: null as string | null }),
 		// Schedules are read the way triggers are, for the tab that shows them.
 		tab === 'schedules'
 			? client.schedules
-					.listSchedules({ namespace, orkflowName: name })
+					.listSchedules({ namespace, filters: [filterOf('orkflow_name', FilterOperator.EQUALS, [name])] })
 					.then((res) => ({ schedules: res.schedules, error: null as string | null }))
 					.catch((err) => ({ schedules: [] as Schedule[], error: errorMessage(err) }))
 			: Promise.resolve({ schedules: [] as Schedule[], error: null as string | null })

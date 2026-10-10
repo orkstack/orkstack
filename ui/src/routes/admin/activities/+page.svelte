@@ -13,9 +13,14 @@
 	// sorts nothing. A client-side sort would silently take that guarantee
 	// over from the server, and the next reader would not know which of the
 	// two was in force.
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ListFilter from '$lib/components/ListFilter.svelte';
+	import { listHref } from '$lib/browsing';
+	import type { FieldFilter } from '$lib/listFilter';
+	import { namespaceLabel } from '$lib/namespace';
+	import { ListActivitiesRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
 	import ActivityInterface from '$lib/components/ActivityInterface.svelte';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import { inspectCommand, interfaceSummary, pinnedReference, shortDigest } from '$lib/activity';
@@ -25,6 +30,14 @@
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	// The catalog's filters (ListFilter; docs/UI_CLI_PARITY.md "Filtering
+	// lists"). `ns` rides along for links out of this page; it does not scope
+	// the catalog.
+	function applyFilters(filters: FieldFilter[]) {
+		void goto(listHref('/admin/activities', { ns: namespaceLabel(data.namespace) }, { filter: filters }), { keepFocus: true, noScroll: true });
+	}
+	const clearHref = $derived(listHref('/admin/activities', { ns: namespaceLabel(data.namespace) }));
 
 	// Which catalog rows have their interface disclosed. Keyed by name, which
 	// the catalog guarantees unique.
@@ -174,6 +187,8 @@
 
 <h2 class="mb-2 text-[11px] font-medium tracking-wider text-fg-muted uppercase">Catalog</h2>
 
+<ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} />
+
 {#if data.activitiesError}
 	<ErrorPanel
 		testid="activities-error"
@@ -185,6 +200,8 @@
 	/>
 {:else if busy}
 	<p class="text-sm text-fg-muted" data-testid="activities-loading">Loading activities…</p>
+{:else if data.activities.length === 0 && data.applied.length > 0}
+	<p class="text-sm text-fg-muted" data-testid="activities-empty">No activities match these filters.</p>
 {:else if data.activities.length === 0}
 	<p class="text-sm text-fg-muted" data-testid="activities-empty">
 		This deployment has no activities configured. A task can still name any registry reference

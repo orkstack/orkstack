@@ -128,6 +128,10 @@ type NamespaceReader interface {
 type NamespaceRegistry interface {
 	NamespaceReader
 	List(ctx context.Context) ([]*orkstackv1.Namespace, error)
+	// ListNames is every registered name plus `default`, sorted, read from
+	// the registry's key listing without reading a document — what a paged
+	// listing walks, so a page reads only the documents it returns.
+	ListNames(ctx context.Context) ([]string, error)
 	Put(
 		ctx context.Context,
 		ns *orkstackv1.Namespace,

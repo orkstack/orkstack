@@ -21,7 +21,7 @@ func TestTriggerCommand_IsDiscoverableFromHelp(t *testing.T) {
 		{[]string{"--help"}, []string{"trigger", "Create and inspect inbound run starters"}},
 		{[]string{"trigger", "--help"}, []string{"create", "list", "delete", "POST /v1/triggers/<id>"}},
 		{[]string{"trigger", "create", "--help"}, []string{"--orkflow", "--version", "--description"}},
-		{[]string{"trigger", "list", "--help"}, []string{"--orkflow"}},
+		{[]string{"trigger", "list", "--help"}, []string{"--filter", "orkflow_name", "Filters (--filter FIELD OP VALUE"}},
 		{[]string{"trigger", "delete", "--help"}, []string{"delete <id>"}},
 	} {
 		var stdout, stderr bytes.Buffer

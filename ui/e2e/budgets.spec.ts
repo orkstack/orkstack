@@ -20,6 +20,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { adminNamespaceUrl } from './uiHelpers';
 
 // Namespace budgets in a browser, against a real engine, Orker, Temporal and
 // MinIO (docs/DEPLOY.md "Namespace budgets"):
@@ -149,11 +150,15 @@ test('1: Admin → Namespaces creates an enforced budget and the Budget column s
 	await page.getByTestId('ns-create-budget-enforce').check();
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${NS}.`);
+	// The create filtered the list to the created name, so its row is on
+	// screen whichever page it sorts onto.
+	await expect(page).toHaveURL(new RegExp(`filter=name%3D${NS}(&|$)`));
 	await expect(page.getByTestId(`namespace-budget-${NS}`)).toHaveText('1 cpu-s/1h0m0s enforced');
-	await expect(page.getByTestId(`namespace-budget-${FREE}`)).toHaveText('unbounded');
 	note(`Budget column of ${NS}: ${await page.getByTestId(`namespace-budget-${NS}`).innerText()}`);
 	await page.getByTestId(`namespace-row-${NS}`).scrollIntoViewIfNeeded();
 	await page.screenshot({ path: out('screenshot-budget-column.png'), fullPage: true });
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, FREE));
+	await expect(page.getByTestId(`namespace-budget-${FREE}`)).toHaveText('unbounded');
 });
 
 test('2–3: a run reserves past the budget, and the Usage card shows the danger bar and the caveat', async ({ page }) => {
@@ -212,7 +217,7 @@ test('5: Admin → Usage lists every namespace; the budget’s share only in its
 
 test('6: unchecking Enforce makes the budget soft, and a submit is accepted and succeeds', async ({ page }) => {
 	test.setTimeout(300_000);
-	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=${NS}`);
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, NS, NS));
 	await openNamespaceEdit(page, NS);
 	await expect(page.getByTestId(`ns-edit-budget-enforce-${NS}`)).toBeChecked();
 	await page.getByTestId(`ns-edit-budget-enforce-${NS}`).uncheck();

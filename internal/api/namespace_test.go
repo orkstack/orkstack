@@ -81,6 +81,21 @@ func (r *fakeRegistry) List(_ context.Context) ([]*orkstackv1.Namespace, error) 
 	return out, nil
 }
 
+// ListNames mirrors the durable store's key listing: every registered name
+// plus `default`, sorted, with no document read.
+func (r *fakeRegistry) ListNames(_ context.Context) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	names := []string{artifacts.DefaultNamespace}
+	for name := range r.docs {
+		if name != artifacts.DefaultNamespace {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 func (r *fakeRegistry) Put(
 	_ context.Context,
 	ns *orkstackv1.Namespace,

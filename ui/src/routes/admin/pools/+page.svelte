@@ -7,9 +7,14 @@
 	//
 	// What a deployment can run is on Admin → Activities; who is serving a
 	// pool is the count below.
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ListFilter from '$lib/components/ListFilter.svelte';
+	import { listHref } from '$lib/browsing';
+	import type { FieldFilter } from '$lib/listFilter';
+	import { shellQuote } from '$lib/runDetail';
+	import { ListPoolsRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
 	import PoolOrkers from '$lib/components/PoolOrkers.svelte';
 	import type { Pool } from '$lib/gen/orkstack/v1/namespace_pb';
 	import { namespaceLabel } from '$lib/namespace';
@@ -17,6 +22,14 @@
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	// The filters narrow the pool cards (ListFilter; docs/UI_CLI_PARITY.md
+	// "Filtering lists"); `ns` stays, because it scopes this view.
+	function applyFilters(filters: FieldFilter[]) {
+		void goto(listHref('/admin/pools', { ns: namespaceLabel(data.namespace) }, { filter: filters }), { keepFocus: true, noScroll: true });
+	}
+	const clearHref = $derived(listHref('/admin/pools', { ns: namespaceLabel(data.namespace) }));
+	const command = $derived(['orkctl', '-n', shellQuote(namespaceLabel(data.namespace)), 'pool', 'list']);
 
 	let retrying = $state(false);
 	async function retry() {
@@ -62,6 +75,8 @@
 	selector above.
 </p>
 
+<ListFilter request={ListPoolsRequestSchema} applied={data.applied} testid="pools" {command} onapply={applyFilters} {clearHref} />
+
 {#if data.poolsError}
 	<ErrorPanel
 		testid="pools-error"
@@ -73,6 +88,8 @@
 	/>
 {:else if busy}
 	<p class="text-sm text-fg-muted" data-testid="pools-loading">Loading pool health…</p>
+{:else if data.pools.length === 0 && data.applied.length > 0}
+	<p class="text-sm text-fg-muted" data-testid="pools-empty">No pools match these filters.</p>
 {:else if data.pools.length === 0}
 	<p class="text-sm text-fg-muted" data-testid="pools-empty">
 		No pools are in scope for namespace {namespaceLabel(data.namespace)}.

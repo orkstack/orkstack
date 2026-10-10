@@ -44,14 +44,23 @@ func (s *Service) RegisterWebhook(ctx context.Context, req *connect.Request[orks
 	return connect.NewResponse(&orkstackv1.RegisterWebhookResponse{Webhook: webhookProto(hook), Secret: hook.Secret}), nil
 }
 
-func (s *Service) ListWebhooks(ctx context.Context, _ *connect.Request[orkstackv1.ListWebhooksRequest]) (*connect.Response[orkstackv1.ListWebhooksResponse], error) {
+// ListWebhooks lists the deployment's subscriptions, narrowed by filters
+// applied to every subscription read. `namespace=` (empty) selects the
+// deployment-wide ones.
+func (s *Service) ListWebhooks(ctx context.Context, req *connect.Request[orkstackv1.ListWebhooksRequest]) (*connect.Response[orkstackv1.ListWebhooksResponse], error) {
+	set, err := compileFilters(req.Msg)
+	if err != nil {
+		return nil, err
+	}
 	hooks, err := s.webhooks.ListContext(ctx)
 	if err != nil {
 		return nil, webhookConnectError(err)
 	}
 	out := make([]*orkstackv1.Webhook, 0, len(hooks))
 	for _, hook := range hooks {
-		out = append(out, webhookProto(hook))
+		if row := webhookProto(hook); set.Match(row) {
+			out = append(out, row)
+		}
 	}
 	return connect.NewResponse(&orkstackv1.ListWebhooksResponse{Webhooks: out}), nil
 }

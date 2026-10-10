@@ -155,6 +155,10 @@ func (r validatingRegistry) List(ctx context.Context) ([]*orkstackv1.Namespace, 
 	return r.inner.List(ctx)
 }
 
+func (r validatingRegistry) ListNames(ctx context.Context) ([]string, error) {
+	return r.inner.ListNames(ctx)
+}
+
 func (r validatingRegistry) Put(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,

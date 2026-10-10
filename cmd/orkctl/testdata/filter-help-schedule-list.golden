@@ -1,0 +1,11 @@
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD             OPERATORS       VALUES
+  id                = != =a,b       text
+  name              = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  orkflow_name      = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  orkflow_version   = != =a,b ~ ^   text; an unreachable row is kept
+  description       = != =a,b ~ ^   text; an unreachable row is kept
+  paused            =               true false; an unreachable row is kept
+  created_at        >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z); an unreachable row is kept
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.

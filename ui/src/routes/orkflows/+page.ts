@@ -1,6 +1,7 @@
 import { errorMessage, orkstack } from '$lib/client';
 import { namespaceFrom } from '$lib/namespace';
 import { pageNumber, pageSize } from '$lib/browsing';
+import { filtersFromUrl } from '$lib/listFilter';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, url }) => {
@@ -11,10 +12,13 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	// the same thing at more length): without a cursor there is no later page
 	// to number, so it is 1.
 	const page = cursor ? pageNumber(url.searchParams.get('page') ?? '') : 1;
+	// A `filter` parameter that does not parse is shown without a request.
+	const { filters: applied, error: filterError } = filtersFromUrl(url);
+	if (filterError) return { orkflows: [], nextPageToken: '', size, cursor, page, namespace, applied, error: filterError as string | null };
 	try {
-		const res = await orkstack(fetch).orkflows.listOrkflows({ namespace, pageSize: size, pageToken: cursor });
-		return { orkflows: res.orkflows, nextPageToken: res.nextPageToken, size, cursor, page, namespace, error: null as string | null };
+		const res = await orkstack(fetch).orkflows.listOrkflows({ namespace, pageSize: size, pageToken: cursor, filters: applied });
+		return { orkflows: res.orkflows, nextPageToken: res.nextPageToken, size, cursor, page, namespace, applied, error: null as string | null };
 	} catch (err) {
-		return { orkflows: [], nextPageToken: '', size, cursor, page, namespace, error: errorMessage(err) };
+		return { orkflows: [], nextPageToken: '', size, cursor, page, namespace, applied, error: errorMessage(err) };
 	}
 };

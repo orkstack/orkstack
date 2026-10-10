@@ -813,6 +813,8 @@ internal/archive/      Run retirement and the cluster retention controller
 internal/automation/   Automation documents: parse, plan, export
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
 internal/testsupport/  Test-only helpers shared by suites
+internal/listfilter/   Structured list filters: allowlist, grammar, matcher
+internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing
@@ -853,7 +855,8 @@ Agent ownership is split as follows:
 - UI agents: `ui/`;
 - artifact agents: `pkg/artifacts`;
 - coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`,
-  `internal/telemetry`, `internal/config`, and this file.
+  `internal/telemetry`, `internal/config`, `internal/listfilter` and
+  `internal/enumname` (engine and CLI agents share both), and this file.
 
 Use Conventional Commits such as `feat(engine): ...`, `fix(orker): ...`,
 `test(dsl): ...`, `docs: ...`, and `chore(proto): ...`. Keep commits scoped and

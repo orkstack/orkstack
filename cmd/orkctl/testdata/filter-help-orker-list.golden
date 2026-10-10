@@ -1,0 +1,8 @@
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD      OPERATORS       VALUES
+  orker_id   = != =a,b ~ ^   an Orker id
+  pool       = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty; an unreachable row is kept
+  build_id   = != =a,b ~ ^   text; an unreachable row is kept
+  cordoned   =               true false; an unreachable row is kept
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.

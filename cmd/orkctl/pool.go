@@ -21,7 +21,8 @@ func newPoolCommand(g *globalFlags) *cobra.Command {
 }
 
 func newPoolListCommand(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var filterTexts *[]string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the pools in scope, with the Orkers serving each",
 		Long: "List the pools this namespace may dispatch onto.\n\n" +
@@ -42,11 +43,15 @@ func newPoolListCommand(g *globalFlags) *cobra.Command {
 			"heard.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.namespaceClient().ListPools(ctx, connect.NewRequest(
-				&orkstackv1.ListPoolsRequest{Namespace: g.namespace},
+				&orkstackv1.ListPoolsRequest{Namespace: g.namespace, Filters: filters},
 			))
 			if err != nil {
 				return rpcError("list pools", err)
@@ -54,9 +59,15 @@ func newPoolListCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
+			if len(filters) > 0 && len(resp.Msg.GetPools()) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("pools", filters))
+				return nil
+			}
 			return renderPoolList(cmd.OutOrStdout(), resp.Msg)
 		},
 	}
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListPoolsRequest{})
+	return cmd
 }
 
 // renderPoolList prints pool health as a table.

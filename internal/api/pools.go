@@ -102,10 +102,17 @@ func (s *Service) existingNamespaces(ctx context.Context) string {
 // names. The one error left is the one that leaves nothing to report — a
 // namespace that cannot be resolved, or a default pool this deployment cannot
 // route, under which no task of this namespace could run at all.
+//
+// Filters apply to the computed rows; default_pool is the namespace's,
+// unfiltered.
 func (s *Service) ListPools(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListPoolsRequest],
 ) (*connect.Response[orkstackv1.ListPoolsResponse], error) {
+	set, err := compileFilters(req.Msg)
+	if err != nil {
+		return nil, err
+	}
 	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
 	if err != nil {
 		return nil, err
@@ -147,11 +154,17 @@ func (s *Service) ListPools(
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("list pools for namespace %q: %w", ns.GetName(), err))
 	}
+	kept := pools[:0]
+	for _, pool := range pools {
+		if set.Match(pool) {
+			kept = append(kept, pool)
+		}
+	}
 	// The default pool comes from the resolver, not from the document: it is
 	// where THIS deployment sends a task that names none, which is the only
 	// answer a client can act on.
 	return connect.NewResponse(&orkstackv1.ListPoolsResponse{
-		Pools:       pools,
+		Pools:       kept,
 		DefaultPool: resolver.DefaultPool(ns),
 	}), nil
 }

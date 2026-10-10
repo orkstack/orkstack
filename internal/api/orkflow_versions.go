@@ -253,7 +253,7 @@ func (s *Service) DeleteOrkflow(
 	// answer, and an unanswerable one refuses the delete on the terms the run
 	// query below does.
 	if s.schedules != nil {
-		views, err := s.schedules.List(ctx, ns.GetName())
+		views, err := s.schedules.List(ctx, ns.GetName(), nil)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
 				"cannot verify whether orkflow %q in namespace %q has schedules: %w",

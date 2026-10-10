@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -52,6 +53,11 @@ type NamespaceStore interface {
 	// List returns every registered namespace ordered by name, with the
 	// default namespace included whether or not it was ever written.
 	List(ctx context.Context) ([]*orkstackv1.Namespace, error)
+	// ListNames returns every registered namespace NAME, sorted, with the
+	// default namespace included whether or not it was ever written. It is
+	// the key listing alone: no document is read, so a caller that pages
+	// through thousands of namespaces reads only the documents it shows.
+	ListNames(ctx context.Context) ([]string, error)
 	// Delete removes a namespace that holds no orkflows. A namespace that
 	// still holds any is refused, and the error says how many.
 	Delete(ctx context.Context, name string) error
@@ -215,7 +221,17 @@ type S3NamespaceStore struct {
 	// now stamps created_at and updated_at. It is a field only so a test can
 	// hold the clock still; every constructor sets it to the wall clock.
 	now func() time.Time
+	// documentsRead counts the namespace documents this store has asked the
+	// backend for (DocumentsRead).
+	documentsRead atomic.Int64
 }
+
+// DocumentsRead is how many namespace documents this store has requested:
+// one per GetObject that read issues, whatever the answer, NotFound
+// included, because a request is the cost. Get, List and Put all read
+// through it. Like S3RunArchive.IndexKeysScanned it exists for tests, which
+// read it as the delta around one call to prove what a listing costs.
+func (s *S3NamespaceStore) DocumentsRead() int64 { return s.documentsRead.Load() }
 
 // compile-time contract check.
 var _ NamespaceStore = (*S3NamespaceStore)(nil)
@@ -629,32 +645,24 @@ func (s *S3NamespaceStore) Get(ctx context.Context, name string) (*orkstackv1.Na
 // namespace is always present, synthesized when no document exists for it, so
 // a caller listing namespaces sees the one every unnamespaced orkflow is in.
 func (s *S3NamespaceStore) List(ctx context.Context) ([]*orkstackv1.Namespace, error) {
-	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(s.bucket),
-		Prefix: aws.String(NamespacePrefix + "/"),
-	})
+	stored, err := s.storedNames(ctx)
+	if err != nil {
+		return nil, err
+	}
 	byName := map[string]*orkstackv1.Namespace{DefaultNamespace: DefaultNamespaceDocument()}
-	for pager.HasMorePages() {
-		page, err := pager.NextPage(ctx)
+	for _, name := range stored {
+		key, err := NamespaceKey(name)
 		if err != nil {
-			return nil, fmt.Errorf("artifacts: list namespaces %q: %w",
-				s.uri(NamespacePrefix+"/"), err)
+			return nil, err
 		}
-		for _, object := range page.Contents {
-			key := aws.ToString(object.Key)
-			name, ok := ParseNamespaceKey(key)
-			if !ok {
-				continue
+		ns, err := s.read(ctx, key)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue // deleted between the listing and the read
 			}
-			ns, err := s.read(ctx, key)
-			if err != nil {
-				if errors.Is(err, ErrNotFound) {
-					continue // deleted between the listing and the read
-				}
-				return nil, err
-			}
-			byName[name] = ns
+			return nil, err
 		}
+		byName[name] = ns
 	}
 	names := make([]string, 0, len(byName))
 	for name := range byName {
@@ -666,6 +674,51 @@ func (s *S3NamespaceStore) List(ctx context.Context) ([]*orkstackv1.Namespace, e
 		out = append(out, byName[name])
 	}
 	return out, nil
+}
+
+// ListNames returns every registered namespace name plus the default, sorted
+// by NAME. It reads no document: the names are the keys.
+//
+// The sort is not a formality. S3 lists keys in byte order of the whole key,
+// suffix included, and `-` sorts before `.`: `a-b.json` is listed before
+// `a.json`, while the name `a` sorts before `a-b`. A cursor over raw keys
+// would therefore skip or repeat a name; a cursor over these names cannot.
+func (s *S3NamespaceStore) ListNames(ctx context.Context) ([]string, error) {
+	stored, err := s.storedNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := []string{DefaultNamespace}
+	for _, name := range stored {
+		if name != DefaultNamespace {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// storedNames lists the names that have a document, in key order, skipping
+// any object under the prefix this package did not write.
+func (s *S3NamespaceStore) storedNames(ctx context.Context) ([]string, error) {
+	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.bucket),
+		Prefix: aws.String(NamespacePrefix + "/"),
+	})
+	var names []string
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("artifacts: list namespaces %q: %w",
+				s.uri(NamespacePrefix+"/"), err)
+		}
+		for _, object := range page.Contents {
+			if name, ok := ParseNamespaceKey(aws.ToString(object.Key)); ok {
+				names = append(names, name)
+			}
+		}
+	}
+	return names, nil
 }
 
 // Delete removes a namespace document.
@@ -733,6 +786,7 @@ func (s *S3NamespaceStore) countOrkflows(ctx context.Context, namespace string) 
 }
 
 func (s *S3NamespaceStore) read(ctx context.Context, key string) (*orkstackv1.Namespace, error) {
+	s.documentsRead.Add(1)
 	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),

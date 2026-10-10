@@ -159,6 +159,21 @@ func (r *memoryRegistry) List(_ context.Context) ([]*orkstackv1.Namespace, error
 	return out, nil
 }
 
+// ListNames mirrors the durable store's key listing: every registered name
+// plus `default`, sorted, with no document read.
+func (r *memoryRegistry) ListNames(_ context.Context) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	names := []string{artifacts.DefaultNamespace}
+	for name := range r.docs {
+		if name != artifacts.DefaultNamespace {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 func (r *memoryRegistry) Put(
 	_ context.Context,
 	ns *orkstackv1.Namespace,
@@ -338,10 +353,13 @@ func newFixtureWith(
 		f.requestsMu.Lock()
 		f.requestLog = append(f.requestLog, r.URL.Path)
 		f.timeoutLog = append(f.timeoutLog, r.Header.Get("Connect-Timeout-Ms"))
-		// Only unary schedule requests are buffered: a streaming body must
-		// reach the handler as it arrives.
+		// Only services whose RPCs are all unary are buffered: a streaming
+		// body must reach the handler as it arrives.
 		var body []byte
-		if strings.Contains(r.URL.Path, "ScheduleService") || strings.Contains(r.URL.Path, "SystemService") || strings.Contains(r.URL.Path, "AutomationService") {
+		if strings.Contains(r.URL.Path, "ScheduleService") || strings.Contains(r.URL.Path, "SystemService") ||
+			strings.Contains(r.URL.Path, "AutomationService") || strings.Contains(r.URL.Path, "ActivityService") ||
+			strings.Contains(r.URL.Path, "NamespaceService") || strings.Contains(r.URL.Path, "OrkflowService") ||
+			strings.Contains(r.URL.Path, "TriggerService") || strings.Contains(r.URL.Path, "WebhookService") {
 			body, _ = io.ReadAll(r.Body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}

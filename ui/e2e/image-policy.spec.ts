@@ -22,6 +22,7 @@ import {
 	waitForEngine,
 	openNamespaceEdit
 } from './harness';
+import { adminNamespaceUrl } from './uiHelpers';
 
 // Image supply-chain policy in a browser, against a real engine, Orker,
 // Temporal, MinIO and registry (docs/DEPLOY.md "Image supply-chain policy"):
@@ -169,9 +170,12 @@ async function openPolicy(page: Page): Promise<void> {
 	await expect(page.getByTestId('image-policy-info')).toBeVisible();
 }
 
+// Admin → Namespaces filtered to PROD, so its row is reached whichever page it
+// sorts onto. Before PROD exists the filter matches nothing, so readiness is
+// the filter itself, not the table.
 async function openNamespaces(page: Page): Promise<void> {
-	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=${PROD}`);
-	await expect(page.getByTestId('namespace-list')).toBeVisible();
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, PROD, PROD));
+	await expect(page.getByTestId('namespaces-filter-value-0')).toHaveValue(PROD);
 }
 
 async function chooseSigner(page: Page, testid: string, value: string): Promise<void> {
@@ -245,13 +249,14 @@ test('3: Admin → Namespaces offers the signer select and shows the Signed by c
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${PROD}.`);
 	await expect(page.getByTestId(`namespace-require-signed-by-${PROD}`)).toHaveText('cosign:e2e');
+	note(`${PROD} Signed by: ${await page.getByTestId(`namespace-require-signed-by-${PROD}`).innerText()}`);
 	await page.screenshot({ path: out('screenshot-signed-by-column.png'), fullPage: true });
 
+	// Each create filters the list to the name it created.
 	await page.getByTestId('ns-create-name').fill(SANDBOX);
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${SANDBOX}.`);
 	await expect(page.getByTestId(`namespace-require-signed-by-${SANDBOX}`)).toHaveText('—');
-	note(`${PROD} Signed by: ${await page.getByTestId(`namespace-require-signed-by-${PROD}`).innerText()}`);
 	note(`${SANDBOX} Signed by: ${await page.getByTestId(`namespace-require-signed-by-${SANDBOX}`).innerText()}`);
 });
 

@@ -460,7 +460,12 @@ func (s *TemporalScheduler) memoString(fields map[string]*commonpb.Payload, key 
 // List returns one namespace's schedules, ordered by name, each described on
 // the cluster for this call. A schedule the cluster could not describe is
 // still listed, carrying Unavailable.
-func (s *TemporalScheduler) List(ctx context.Context, namespace string) ([]ScheduleView, error) {
+//
+// keep, when not nil, decides from the cluster's list entry alone — the
+// schedule's id, name and Orkflow — whether a schedule is wanted, BEFORE it
+// is described, so a narrowed listing describes only what it may return.
+// nil keeps every schedule.
+func (s *TemporalScheduler) List(ctx context.Context, namespace string, keep func(id, name, orkflow string) bool) ([]ScheduleView, error) {
 	iter, err := s.client.ScheduleClient().List(ctx, client.ScheduleListOptions{PageSize: scheduleListPageSize})
 	if err != nil {
 		return nil, fmt.Errorf("list schedules: %w", err)
@@ -482,6 +487,9 @@ func (s *TemporalScheduler) List(ctx context.Context, namespace string) ([]Sched
 		}
 		name, _ := s.memoString(fields, MemoScheduleName)
 		orkflow, _ := s.memoString(fields, MemoOrkflowName)
+		if keep != nil && !keep(id, name, orkflow) {
+			continue
+		}
 		view, err := s.Describe(ctx, namespace, name)
 		if errors.Is(err, ErrScheduleNotFound) {
 			// Listed by visibility, which lags, but already deleted: the

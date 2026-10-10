@@ -33,6 +33,7 @@ type stubReleases struct {
 
 	sets    []engine.Routing
 	awaited []engine.Routing
+	counted []string // every build ReleaseRuns was asked about
 }
 
 func (s *stubReleases) ObserveReleases(context.Context) (engine.ReleaseObservation, error) {
@@ -44,6 +45,7 @@ func (s *stubReleases) ObserveReleases(context.Context) (engine.ReleaseObservati
 func (s *stubReleases) ReleaseRuns(_ context.Context, build string, limit int) (int64, []*orkstackv1.Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.counted = append(s.counted, build)
 	if err := s.runErr[build]; err != nil {
 		return 0, nil, err
 	}
@@ -131,9 +133,14 @@ func releaseService(releases engine.ReleaseCluster, fleet engine.OrkerFleet) *ap
 	return api.NewService(cfg)
 }
 
-func listReleases(t *testing.T, svc *api.Service, build string) *orkstackv1.ListReleasesResponse {
+// listReleases lists the deployment's releases; a non-empty build sends the
+// build_id equality filter `orkctl release wait` sends.
+func listReleases(t *testing.T, svc *api.Service, build string, texts ...string) *orkstackv1.ListReleasesResponse {
 	t.Helper()
-	resp, err := svc.ListReleases(context.Background(), connect.NewRequest(&orkstackv1.ListReleasesRequest{BuildId: build}))
+	if build != "" {
+		texts = append(texts, "build_id="+build)
+	}
+	resp, err := svc.ListReleases(context.Background(), connect.NewRequest(&orkstackv1.ListReleasesRequest{Filters: filters(t, texts...)}))
 	if err != nil {
 		t.Fatalf("ListReleases: %v", err)
 	}
@@ -316,7 +323,7 @@ func TestListReleases_BuildIDFilterKeepsOneReleaseJudgedAgainstAll(t *testing.T)
 	}
 }
 
-func TestListReleases_UnknownBuildIDIsAnEmptyList(t *testing.T) {
+func TestListReleases_UnknownBuildIsAnEmptyList(t *testing.T) {
 	resp := listReleases(t, releaseService(rolloutReleases(), releaseFleet()), "v-never")
 	if !resp.GetVersioned() || len(resp.GetReleases()) != 0 {
 		t.Fatalf("response = %v", resp)

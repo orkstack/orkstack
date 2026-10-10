@@ -30,7 +30,8 @@ func newActivityCommand(g *globalFlags) *cobra.Command {
 }
 
 func newActivityListCommand(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var filterTexts *[]string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the deployment's activity catalog",
 		Long: "List the activities this deployment can run.\n\n" +
@@ -42,11 +43,15 @@ func newActivityListCommand(g *globalFlags) *cobra.Command {
 			"whether a pool has Orkers to run them.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.activityClient().ListActivities(ctx, connect.NewRequest(
-				&orkstackv1.ListActivitiesRequest{},
+				&orkstackv1.ListActivitiesRequest{Filters: filters},
 			))
 			if err != nil {
 				return rpcError("list activities", err)
@@ -54,9 +59,15 @@ func newActivityListCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
+			if len(filters) > 0 && len(resp.Msg.GetActivities()) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("activities", filters))
+				return nil
+			}
 			return renderActivityList(cmd.OutOrStdout(), resp.Msg.GetActivities())
 		},
 	}
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListActivitiesRequest{})
+	return cmd
 }
 
 func renderActivityList(out io.Writer, activities []*orkstackv1.ActivityInfo) error {

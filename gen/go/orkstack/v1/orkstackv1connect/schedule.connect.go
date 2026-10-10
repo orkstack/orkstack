@@ -72,8 +72,10 @@ type ScheduleServiceClient interface {
 	// expression it cannot parse) is InvalidArgument quoting its message.
 	CreateSchedule(context.Context, *connect.Request[v1.CreateScheduleRequest]) (*connect.Response[v1.CreateScheduleResponse], error)
 	// ListSchedules returns one namespace's schedules, ordered by name,
-	// narrowed to one orkflow when orkflow_name is set. Every row is
-	// described on the cluster for this call; a row the cluster could not
+	// narrowed by filters. A filter on id, name or orkflow_name is decided
+	// before a schedule is described, so a narrowed listing describes only
+	// what it may return. Every row it returns is described on the cluster
+	// for this call; a row the cluster could not
 	// describe is still listed, carrying unavailable_reason, on the terms
 	// ListPools narrows rather than refuses.
 	ListSchedules(context.Context, *connect.Request[v1.ListSchedulesRequest]) (*connect.Response[v1.ListSchedulesResponse], error)
@@ -240,8 +242,10 @@ type ScheduleServiceHandler interface {
 	// expression it cannot parse) is InvalidArgument quoting its message.
 	CreateSchedule(context.Context, *connect.Request[v1.CreateScheduleRequest]) (*connect.Response[v1.CreateScheduleResponse], error)
 	// ListSchedules returns one namespace's schedules, ordered by name,
-	// narrowed to one orkflow when orkflow_name is set. Every row is
-	// described on the cluster for this call; a row the cluster could not
+	// narrowed by filters. A filter on id, name or orkflow_name is decided
+	// before a schedule is described, so a narrowed listing describes only
+	// what it may return. Every row it returns is described on the cluster
+	// for this call; a row the cluster could not
 	// describe is still listed, carrying unavailable_reason, on the terms
 	// ListPools narrows rather than refuses.
 	ListSchedules(context.Context, *connect.Request[v1.ListSchedulesRequest]) (*connect.Response[v1.ListSchedulesResponse], error)

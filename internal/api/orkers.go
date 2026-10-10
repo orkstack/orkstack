@@ -28,53 +28,55 @@ var errNoFleet = errors.New("this engine is not wired to a temporal client, so i
 // ListOrkers is the fleet: one row per live Orker, derived on read. It narrows
 // rather than refusing — an Orker that did not answer keeps its row and
 // carries unavailable_reason — and an orker_id nothing polls is an empty list.
+//
+// Filters are compiled first, so a malformed orker_id (the ORKER_ID value
+// rule) is INVALID_ARGUMENT before anything is read. An orker_id EQUALS
+// filter is a pushdown: only that Orker is asked, on its own channel, which
+// is what `orkctl orker get` and the drain loop send. Every filter is then
+// applied to the rows read; an unreachable row is kept under pool, build_id
+// and cordoned, none of which was measured on it.
 func (s *Service) ListOrkers(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListOrkersRequest],
 ) (*connect.Response[orkstackv1.ListOrkersResponse], error) {
+	set, err := compileFilters(req.Msg)
+	if err != nil {
+		return nil, err
+	}
 	if s.fleet == nil {
 		return nil, connect.NewError(connect.CodeUnavailable, errNoFleet)
 	}
-	if id := req.Msg.GetOrkerId(); id != "" {
-		if err := task.ValidOrkerID(id); err != nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
-		}
+	var rows []*orkstackv1.Orker
+	if id, ok := set.Equality("orker_id"); ok {
 		presence, live, err := s.fleet.ObserveOrker(ctx, id)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable, err)
 		}
-		if !live {
-			return connect.NewResponse(&orkstackv1.ListOrkersResponse{}), nil
+		if live {
+			described, err := s.fleet.DescribeOrkerByID(ctx, id)
+			row := orkerRow(presence, described, err)
+			s.logUnavailableOrker(row, err)
+			rows = []*orkstackv1.Orker{row}
 		}
-		described, err := s.fleet.DescribeOrkerByID(ctx, id)
-		row := orkerRow(presence, described, err)
-		s.logUnavailableOrker(row, err)
-		return connect.NewResponse(&orkstackv1.ListOrkersResponse{Orkers: []*orkstackv1.Orker{row}}), nil
+	} else {
+		if rows, err = s.orkerInventory(ctx); err != nil {
+			// Nothing at all was measured: the same verdict ListPools gives
+			// when the namespace itself cannot be resolved.
+			return nil, connect.NewError(connect.CodeUnavailable, err)
+		}
 	}
-
-	rows, err := s.orkerInventory(ctx)
-	if err != nil {
-		// Nothing at all was measured: the same verdict ListPools gives when
-		// the namespace itself cannot be resolved.
-		return nil, connect.NewError(connect.CodeUnavailable, err)
-	}
-	pool := req.Msg.GetPool()
 	kept := rows[:0]
 	for _, row := range rows {
-		// An unavailable row has no pool and is KEPT under a pool filter: it
-		// may be that pool's, and dropping it would hide exactly the host an
-		// operator is looking for.
-		if pool != "" && row.GetUnavailableReason() == "" && row.GetPool() != pool {
-			continue
+		if set.Match(row) {
+			kept = append(kept, row)
 		}
-		kept = append(kept, row)
 	}
 	return connect.NewResponse(&orkstackv1.ListOrkersResponse{Orkers: kept}), nil
 }
 
 // orkerInventory is ListOrkers' body for the whole fleet: the presence list,
 // one describe per Orker, rows sorted by pool then orker_id. ListOrkers keeps
-// its own orker_id branch and its pool filter on top of it; ListReleases
+// its own orker_id pushdown and applies its filters on top of it; ListReleases
 // attributes the same rows to releases, so the release view and the Orker list
 // are one inventory, not two (docs/DEPLOY.md §3).
 func (s *Service) orkerInventory(ctx context.Context) ([]*orkstackv1.Orker, error) {

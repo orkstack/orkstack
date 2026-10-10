@@ -283,19 +283,25 @@ func buildScheduleCreateRequest(
 }
 
 func newScheduleListCommand(g *globalFlags) *cobra.Command {
-	var orkflow string
+	var filterTexts *[]string
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the schedules of this namespace",
 		Long: "list shows the schedules of the namespace this command acts in, each\n" +
-			"described on the cluster for this call. --orkflow narrows the result to\n" +
-			"one orkflow. A row the cluster could not describe reads 'unavailable'.",
+			"described on the cluster for this call, narrowed by --filter: a filter on\n" +
+			"id, name or orkflow_name is decided before a schedule is described. A row\n" +
+			"the cluster could not describe reads 'unavailable', and is kept under a\n" +
+			"filter on a field it could not report.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 			response, err := g.scheduleClient().ListSchedules(ctx, connect.NewRequest(&orkstackv1.ListSchedulesRequest{
-				Namespace: g.namespace, OrkflowName: orkflow,
+				Namespace: g.namespace, Filters: filters,
 			}))
 			if err != nil {
 				return rpcError("list schedules", err)
@@ -303,10 +309,14 @@ func newScheduleListCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), response.Msg)
 			}
+			if len(filters) > 0 && len(response.Msg.GetSchedules()) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("schedules", filters))
+				return nil
+			}
 			return renderScheduleList(cmd.OutOrStdout(), response.Msg.GetSchedules())
 		},
 	}
-	cmd.Flags().StringVar(&orkflow, "orkflow", "", "only schedules of this orkflow")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListSchedulesRequest{})
 	return cmd
 }
 

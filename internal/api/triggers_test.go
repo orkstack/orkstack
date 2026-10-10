@@ -437,7 +437,7 @@ func TestTriggerService_ListNarrowsToOneOrkflowAndCarriesNoSecret(t *testing.T) 
 	}
 
 	listed, err := f.triggerClient().ListTriggers(ctx, connect.NewRequest(
-		&orkstackv1.ListTriggersRequest{OrkflowName: "hello-ork"}))
+		&orkstackv1.ListTriggersRequest{Filters: filters(t, "orkflow_name=hello-ork")}))
 	if err != nil {
 		t.Fatalf("ListTriggers: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestTriggerService_ListNarrowsToOneOrkflowAndCarriesNoSecret(t *testing.T) 
 	}
 
 	narrowed, err := f.triggerClient().ListTriggers(ctx, connect.NewRequest(
-		&orkstackv1.ListTriggersRequest{OrkflowName: "other-ork"}))
+		&orkstackv1.ListTriggersRequest{Filters: filters(t, "orkflow_name=other-ork")}))
 	if err != nil {
 		t.Fatalf("ListTriggers(other-ork): %v", err)
 	}

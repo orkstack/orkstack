@@ -1,0 +1,6 @@
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD        OPERATORS       VALUES
+  name         = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  is_default   =               true false
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.

@@ -538,6 +538,15 @@ func TestIntegration_ReleaseRolloutThroughOrkctl(t *testing.T) {
 	if !strings.Contains(out, "release v1 is current.") || strings.Contains(out, "The change is recorded, but") {
 		t.Fatalf("first promotion:\n%s", out)
 	}
+	// A role filter selects release rows; the deployment lines stay whole.
+	out = s.mustCLI("release", "status", "--filter", "role=CURRENT")
+	if !regexp.MustCompile(`(?m)^v1\s+current\s`).MatchString(out) || !strings.Contains(out, "deployment:") {
+		t.Fatalf("status --filter role=CURRENT:\n%s", out)
+	}
+	if out = s.mustCLI("release", "status", "--filter", "role=CANDIDATE"); regexp.MustCompile(`(?m)^v1\s`).MatchString(out) {
+		t.Fatalf("status --filter role=CANDIDATE lists the current release:\n%s", out)
+	}
+	s.note("release status --filter role=CURRENT lists v1 alone")
 
 	s.applyGated("rel-gated")
 	gated := s.submit("rel-gated")

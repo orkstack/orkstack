@@ -95,17 +95,34 @@ type releaseRunCount struct {
 }
 
 // ListReleases is the deployment's releases as the cluster routes them.
+//
+// Filters select release rows only: every other response field is the
+// deployment's, and blockers are judged against the whole deployment. A
+// build_id EQUALS filter is a pushdown — only that release's runs are
+// counted — and an unknown build is an empty list, never NotFound.
 func (s *Service) ListReleases(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListReleasesRequest],
 ) (*connect.Response[orkstackv1.ListReleasesResponse], error) {
-	if s.releases == nil {
-		return nil, connect.NewError(connect.CodeUnavailable, errNoReleases)
-	}
-	resp, _, err := s.releaseSnapshot(ctx, req.Msg.GetBuildId())
+	set, err := compileFilters(req.Msg)
 	if err != nil {
 		return nil, err
 	}
+	if s.releases == nil {
+		return nil, connect.NewError(connect.CodeUnavailable, errNoReleases)
+	}
+	only, _ := set.Equality("build_id")
+	resp, _, err := s.releaseSnapshot(ctx, only)
+	if err != nil {
+		return nil, err
+	}
+	kept := resp.Releases[:0]
+	for _, release := range resp.GetReleases() {
+		if set.Match(release) {
+			kept = append(kept, release)
+		}
+	}
+	resp.Releases = kept
 	return connect.NewResponse(resp), nil
 }
 

@@ -87,31 +87,53 @@ func newOrkerCommand(g *globalFlags) *cobra.Command {
 }
 
 func newOrkerListCommand(g *globalFlags) *cobra.Command {
-	var pool string
+	var filterTexts *[]string
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List every live Orker with its pool, load and cordon state",
-		Long: "List every live Orker of the deployment.\n\n" +
+		Long: "List every live Orker of the deployment, narrowed by --filter\n" +
+			"(--filter pool=build keeps the Orkers that report serving build).\n\n" +
 			"The list comes from the cluster (who is polling) and from each Orker's own\n" +
 			"answer, so any replica answers the same. An Orker that could not be asked is\n" +
 			"listed as `unknown (unreachable)` with the reason under the table: its load\n" +
-			"is unknown, never zero. PINS is open/max for a pin host and - otherwise.",
+			"is unknown, never zero, and a filter on pool, build_id or cordoned keeps it.\n" +
+			"PINS is open/max for a pin host and - otherwise.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
-			resp, err := g.activityClient().ListOrkers(ctx, connect.NewRequest(&orkstackv1.ListOrkersRequest{Pool: pool}))
+			resp, err := g.activityClient().ListOrkers(ctx, connect.NewRequest(&orkstackv1.ListOrkersRequest{Filters: filters}))
 			if err != nil {
 				return rpcError("list orkers", err)
 			}
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
+			if len(filters) > 0 && len(resp.Msg.GetOrkers()) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("Orkers", filters))
+				return nil
+			}
 			return renderOrkerList(cmd.OutOrStdout(), resp.Msg.GetOrkers())
 		},
 	}
-	cmd.Flags().StringVar(&pool, "pool", "", "keep only the Orkers that report serving this pool")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListOrkersRequest{})
 	return cmd
+}
+
+// oneOrker is the ListOrkers request that asks exactly one Orker: an
+// orker_id equals filter, which the engine answers from that Orker's own
+// channel alone.
+func oneOrker(id string) *orkstackv1.ListOrkersRequest {
+	return &orkstackv1.ListOrkersRequest{Filters: []*orkstackv1.FieldFilter{equalsFilter("orker_id", id)}}
+}
+
+// equalsFilter is field = value.
+func equalsFilter(field, value string) *orkstackv1.FieldFilter {
+	return &orkstackv1.FieldFilter{Field: field, Op: orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []string{value}}
 }
 
 func newOrkerGetCommand(g *globalFlags) *cobra.Command {
@@ -122,7 +144,7 @@ func newOrkerGetCommand(g *globalFlags) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
-			resp, err := g.activityClient().ListOrkers(ctx, connect.NewRequest(&orkstackv1.ListOrkersRequest{OrkerId: args[0]}))
+			resp, err := g.activityClient().ListOrkers(ctx, connect.NewRequest(oneOrker(args[0])))
 			if err != nil {
 				return rpcError("get orker", err)
 			}
@@ -260,7 +282,7 @@ type drainer struct {
 func (d *drainer) poll() (*orkstackv1.ListOrkersResponse, error) {
 	ctx, cancel := context.WithTimeout(d.cmd.Context(), drainPollTimeout)
 	defer cancel()
-	resp, err := d.g.activityClient().ListOrkers(ctx, connect.NewRequest(&orkstackv1.ListOrkersRequest{OrkerId: d.id}))
+	resp, err := d.g.activityClient().ListOrkers(ctx, connect.NewRequest(oneOrker(d.id)))
 	if err != nil {
 		return nil, err
 	}

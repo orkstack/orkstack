@@ -9,13 +9,16 @@
 	// read's blockers, so a decision is made on what is true now, and the
 	// write carries that read's revision: a routing that changed in between
 	// is refused by the engine, and the refusal is shown in the dialog.
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ListFilter from '$lib/components/ListFilter.svelte';
+	import { listHref } from '$lib/browsing';
 	import { errorMessage, orkstack } from '$lib/client';
-	import { ReleaseRole, type ListReleasesResponse, type Release } from '$lib/gen/orkstack/v1/service_pb';
+	import { FilterOperator, filterOf, type FieldFilter } from '$lib/listFilter';
+	import { ListReleasesRequestSchema, ReleaseRole, type ListReleasesResponse, type Release } from '$lib/gen/orkstack/v1/service_pb';
 	import { withNamespace } from '$lib/namespace';
 	import {
 		canPromote,
@@ -55,6 +58,15 @@
 
 	const resp = $derived(data.releases);
 	const current = $derived(resp?.releases.find((r) => r.role === ReleaseRole.CURRENT));
+	// Filters select release ROWS (ListFilter); every other field of the answer
+	// is the deployment's. So "no release is current" is only said of an
+	// unfiltered answer: a filter that leaves the current release out of the
+	// rows says nothing about whether one exists.
+	const filtered = $derived(data.applied.length > 0);
+	function applyFilters(filters: FieldFilter[]) {
+		void goto(listHref('/admin/releases', {}, { filter: filters }), { keepFocus: true, noScroll: true });
+	}
+	const clearHref = listHref('/admin/releases', {});
 
 	let expanded = $state<Record<string, boolean>>({});
 	let result = $state('');
@@ -114,7 +126,7 @@
 		percent = '10';
 		dialogLoading = true;
 		try {
-			dialogRead = await orkstack(fetch).system.listReleases({ buildId: build });
+			dialogRead = await orkstack(fetch).system.listReleases({ filters: [filterOf('build_id', FilterOperator.EQUALS, [build])] });
 			if (!dialogRead.releases.some((r) => r.buildId === build)) {
 				dialogError = `no release ${build} is known to the cluster any more; refresh the page`;
 			}
@@ -214,6 +226,8 @@
 	</p>
 {/if}
 
+<ListFilter request={ListReleasesRequestSchema} applied={data.applied} testid="releases" command={['orkctl', 'release', 'status']} onapply={applyFilters} {clearHref} />
+
 {#if data.releasesError}
 	<ErrorPanel
 		testid="releases-error"
@@ -233,14 +247,14 @@
 		{versioningOffSentence}
 	</p>
 {:else}
-	{#if !current}
+	{#if !current && !filtered}
 		<p
 			class="mb-4 rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800"
 			data-testid="releases-no-current"
 		>
 			No release is current: {noCurrentSentence(resp.unversionedEngineReplicas)}
 		</p>
-	{:else if current.engineReplicas === 0}
+	{:else if current && current.engineReplicas === 0}
 		<p
 			class="mb-4 rounded-md border border-danger-200 bg-danger-50 px-4 py-3 text-sm text-danger-700"
 			data-testid="releases-current-no-engine"
@@ -249,6 +263,9 @@
 		</p>
 	{/if}
 
+	{#if filtered && resp.releases.length === 0}
+		<p class="mb-4 text-sm text-fg-muted" data-testid="releases-empty">No releases match these filters.</p>
+	{/if}
 	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
 		<table class="w-full min-w-[960px] border-collapse text-left text-sm" data-testid="releases-table">
 			<thead class="bg-surface-sunken">

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { FilterOperator, filterOf } from '../src/lib/listFilter';
 import {
 	listHref,
 	pageNumber,
@@ -56,6 +57,9 @@ test('the address carries only coordinates that have a value, namespace first', 
 	expect(href).not.toContain('page=');
 	expect(href).not.toContain('cursor=');
 	expect(listHref('/runs', { ns: 'default', cursor: 'tok', page: '3' })).toBe('/runs?ns=default&cursor=tok&page=3');
+	// Nothing to say is the bare path, never a dangling '?'.
+	expect(listHref('/admin/releases', {})).toBe('/admin/releases');
+	expect(listHref('/admin/releases', {}, { filter: [] })).toBe('/admin/releases');
 });
 test('a page number is a positive integer or the first page', () => {
 	expect(pageNumber('3')).toBe(3);
@@ -112,4 +116,41 @@ test('the custom window round-trips between the input and the URL', () => {
 	expect(sinceInputValue(new Date(typed).toISOString())).toBe(typed);
 	expect(sinceInputValue('')).toBe('');
 	expect(sinceInputValue('not-a-date')).toBe('');
+});
+
+// Filters ride the address as one repeated key per list, in canonical order,
+// after `ns` and before every scalar coordinate (docs/UI_CLI_PARITY.md
+// "Filtering lists").
+test('filters are the one repeated key, in canonical order, after ns', () => {
+	const filters = [
+		filterOf('name', FilterOperator.PREFIX, ['tenant-']),
+		filterOf('labels.team', FilterOperator.EQUALS, ['payments']),
+		filterOf('name', FilterOperator.PREFIX, ['tenant-'])
+	];
+	const href = listHref('/admin/namespaces', { ns: 'default', size: '10', cursor: '', page: '1' }, { filter: filters });
+	expect(href).toBe('/admin/namespaces?ns=default&filter=labels.team%3Dpayments&filter=name%5Etenant-&size=10');
+	const params = new URL(`http://x${href}`).searchParams;
+	expect(params.getAll('filter')).toEqual(['labels.team=payments', 'name^tenant-']);
+	// Scalars are still set once.
+	expect(params.getAll('size')).toEqual(['10']);
+	// The same set in another order is the same address.
+	expect(listHref('/admin/namespaces', { ns: 'default', size: '10' }, { filter: [...filters].reverse() })).toBe(href);
+	// A second list's parameter is its own key.
+	expect(listHref('/admin/webhooks', { ns: 'default' }, { deliveryFilter: [filterOf('delivered', FilterOperator.EQUALS, ['false'])] }))
+		.toBe('/admin/webhooks?ns=default&deliveryFilter=delivered%3Dfalse');
+	// A value with a + is percent-encoded, so the link round-trips.
+	const instant = listHref('/orkflows', { ns: 'default' }, { filter: [filterOf('created_at', FilterOperator.AT_OR_AFTER, ['2026-10-09T00:00:00+02:00'])] });
+	expect(instant).toBe('/orkflows?ns=default&filter=created_at%3E%3D2026-10-09T00%3A00%3A00%2B02%3A00');
+	expect(new URL(`http://x${instant}`).searchParams.getAll('filter')).toEqual(['created_at>=2026-10-09T00:00:00+02:00']);
+});
+
+test('a page stack belongs to one filter set', () => {
+	const storage = fakeStorage();
+	const team = { filter: [filterOf('labels.team', FilterOperator.EQUALS, ['payments'])] };
+	const key = pageStackKey('/admin/namespaces', { ns: 'default', size: '10', cursor: 'c2', page: '2' }, team);
+	expect(key).toBe('orkstack.pages:/admin/namespaces?ns=default&filter=labels.team%3Dpayments&size=10');
+	expect(key).not.toBe(pageStackKey('/admin/namespaces', { ns: 'default', size: '10' }));
+	expect(key).not.toBe(pageStackKey('/admin/namespaces', { ns: 'default', size: '10' }, { filter: [filterOf('labels.team', FilterOperator.EQUALS, ['search'])] }));
+	writePageStack(key, ['', 'c2'], storage);
+	expect(readPageStack(pageStackKey('/admin/namespaces', { ns: 'default', size: '10' }), storage)).toEqual([]);
 });

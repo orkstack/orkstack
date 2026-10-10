@@ -169,24 +169,32 @@ test('runs retain filter/time URL coordinates, reject invalid time ranges, and f
 	await page.screenshot({ path: out('screenshot-runs-invalid-range.png'), fullPage: true });
 });
 
-test('the orkflows page size applies on change and writes one size to the URL', async ({ page }) => {
-	// The four bold-or-not links this replaces concatenated `&size=N` onto a
-	// query that already carried `size=25`: the address grew a second `size`
-	// key, `searchParams.get` answered with the first, and the click did
-	// nothing. The assertion is about the URL — the fixture has one orkflow.
+test('the orkflows page size applies with Apply filters and writes one size to the URL', async ({ page }) => {
+	// Page size is a field of the Orkflows filter form (ListFilter) and
+	// applies with Apply filters, never on change: one form never applies
+	// some fields on change and others on submit. The four bold-or-not links
+	// this once replaced concatenated `&size=N` onto a query that already
+	// carried `size=25`, so the URL is also held to exactly one size key.
 	await page.goto(`${UI}/orkflows?ns=${NS}`);
 	await expect(page.getByTestId('orkflow-list')).toBeVisible();
 	// The picker is a button and a listbox, so it needs the page hydrated
 	// before the panel can open at all.
 	await page.waitForLoadState('networkidle');
+	const before = page.url();
 	await selectOption(page, 'orkflow-page-size', '50');
-	await expect(page).toHaveURL(/size=50/);
 	await expect(page.getByTestId('orkflow-page-size')).toHaveText('50');
+	expect(page.url()).toBe(before);
+	await page.getByTestId('orkflow-filters-apply').click();
+	await expect(page).toHaveURL(/size=50/);
 	expect(new URL(page.url()).searchParams.getAll('size')).toEqual(['50']);
+	expect(new URL(page.url()).searchParams.get('cursor')).toBeNull();
 	await selectOption(page, 'orkflow-page-size', '100');
+	await expect(page).toHaveURL(/size=50/);
+	await page.getByTestId('orkflow-filters-apply').click();
 	await expect(page).toHaveURL(/size=100/);
 	await expect(page.getByTestId('orkflow-page-size')).toHaveText('100');
 	expect(new URL(page.url()).searchParams.getAll('size')).toEqual(['100']);
+	expect(new URL(page.url()).searchParams.get('cursor')).toBeNull();
 	await page.screenshot({ path: out('screenshot-orkflows-page-size.png'), fullPage: true });
 });
 

@@ -1,0 +1,2 @@
+NAME      DEFAULT POOL  ALLOWED POOLS  ALLOWED SECRETS  RUN RETENTION                   HOLD       MAX RUNNING  SIGNED BY  BUDGET     CREATED               DESCRIPTION
+payments  main          -              unrestricted     inherited (deployment maximum)  accepting  unlimited    -          unbounded  2026-01-02T03:04:05Z  the payments tenant

@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
+
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 // This file owns OrkStack's JSON dialect. protojson writes enum values under
@@ -38,7 +39,7 @@ func MarshalJSONOptions(options protojson.MarshalOptions, message proto.Message)
 	if err != nil {
 		return nil, fmt.Errorf("encode json: %w", err)
 	}
-	rewritten, err := rewriteEnums(encoded, message.ProtoReflect().Descriptor(), shortEnumValue)
+	rewritten, err := rewriteEnums(encoded, message.ProtoReflect().Descriptor(), enumname.Short)
 	if err != nil {
 		return nil, fmt.Errorf("encode json: %w", err)
 	}
@@ -56,7 +57,7 @@ func UnmarshalJSONOptions(options protojson.UnmarshalOptions, data []byte, messa
 	// A rewrite failure means the input is not well-formed JSON. Hand the
 	// original bytes to protojson so the caller sees protojson's diagnostics
 	// rather than ours.
-	if rewritten, err := rewriteEnums(data, message.ProtoReflect().Descriptor(), protoEnumValue); err == nil {
+	if rewritten, err := rewriteEnums(data, message.ProtoReflect().Descriptor(), enumname.Proto); err == nil {
 		data = rewritten
 	}
 	return options.Unmarshal(data, message)
@@ -80,59 +81,6 @@ func rewriteEnums(data []byte, md protoreflect.MessageDescriptor, rename renameE
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-// shortEnumValue drops the enum's type prefix: STATUS_SUCCEEDED -> SUCCEEDED.
-func shortEnumValue(enum protoreflect.EnumDescriptor, name string) string {
-	values := enum.Values()
-	if values.ByName(protoreflect.Name(name)) == nil {
-		return name // an unmapped number, or already short
-	}
-	trimmed := strings.TrimPrefix(name, enumValuePrefix(enum))
-	if trimmed == name || trimmed == "" {
-		return name
-	}
-	if values.ByName(protoreflect.Name(trimmed)) != nil {
-		return name // the short spelling is itself a declared value: ambiguous
-	}
-	return trimmed
-}
-
-// protoEnumValue restores the enum's type prefix: SUCCEEDED -> STATUS_SUCCEEDED.
-// Names protojson already understands pass through untouched.
-func protoEnumValue(enum protoreflect.EnumDescriptor, name string) string {
-	values := enum.Values()
-	if values.ByName(protoreflect.Name(name)) != nil {
-		return name
-	}
-	prefix := enumValuePrefix(enum)
-	upper := strings.ToUpper(name)
-	for _, candidate := range []string{prefix + name, upper, prefix + upper} {
-		if values.ByName(protoreflect.Name(candidate)) != nil {
-			return candidate
-		}
-	}
-	return name // unknown: let protojson report it
-}
-
-// enumValuePrefix is the SCREAMING_SNAKE form of the enum's name plus "_",
-// which is the prefix protobuf style gives every value of that enum:
-// Status -> STATUS_, EventType -> EVENT_TYPE_.
-func enumValuePrefix(enum protoreflect.EnumDescriptor) string {
-	name := []rune(string(enum.Name()))
-	var prefix strings.Builder
-	for i, r := range name {
-		if i > 0 && unicode.IsUpper(r) {
-			startsWord := !unicode.IsUpper(name[i-1])
-			endsAcronym := i+1 < len(name) && unicode.IsLower(name[i+1])
-			if startsWord || endsAcronym {
-				prefix.WriteRune('_')
-			}
-		}
-		prefix.WriteRune(unicode.ToUpper(r))
-	}
-	prefix.WriteRune('_')
-	return prefix.String()
 }
 
 // rewriteMessage renames enum values inside one JSON object, guided by md.

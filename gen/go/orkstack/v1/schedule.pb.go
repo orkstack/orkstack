@@ -710,8 +710,8 @@ func (x *CreateScheduleResponse) GetSchedule() *Schedule {
 
 type ListSchedulesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`                        // empty = the default namespace
-	OrkflowName   string                 `protobuf:"bytes,2,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"` // empty = every schedule in the namespace
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"` // the tenant; empty = the default namespace
+	Filters       []*FieldFilter         `protobuf:"bytes,3,rep,name=filters,proto3" json:"filters,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -753,11 +753,11 @@ func (x *ListSchedulesRequest) GetNamespace() string {
 	return ""
 }
 
-func (x *ListSchedulesRequest) GetOrkflowName() string {
+func (x *ListSchedulesRequest) GetFilters() []*FieldFilter {
 	if x != nil {
-		return x.OrkflowName
+		return x.Filters
 	}
-	return ""
+	return nil
 }
 
 type ListSchedulesResponse struct {
@@ -1758,7 +1758,7 @@ var File_orkstack_v1_schedule_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_schedule_proto_rawDesc = "" +
 	"\n" +
-	"\x1aorkstack/v1/schedule.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x19orkstack/v1/orkflow.proto\x1a\x15orkstack/v1/run.proto\"\xb4\x03\n" +
+	"\x1aorkstack/v1/schedule.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x18orkstack/v1/filter.proto\x1a\x19orkstack/v1/orkflow.proto\x1a\x15orkstack/v1/run.proto\"\xb4\x03\n" +
 	"\fScheduleSpec\x12\x12\n" +
 	"\x04cron\x18\x01 \x03(\tR\x04cron\x125\n" +
 	"\binterval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\binterval\x12\x1a\n" +
@@ -1808,10 +1808,19 @@ const file_orkstack_v1_schedule_proto_rawDesc = "" +
 	"\x04spec\x18\a \x01(\v2\x19.orkstack.v1.ScheduleSpecR\x04spec\x12\x16\n" +
 	"\x06paused\x18\b \x01(\bR\x06paused\"K\n" +
 	"\x16CreateScheduleResponse\x121\n" +
-	"\bschedule\x18\x01 \x01(\v2\x15.orkstack.v1.ScheduleR\bschedule\"W\n" +
+	"\bschedule\x18\x01 \x01(\v2\x15.orkstack.v1.ScheduleR\bschedule\"\xfb\x02\n" +
 	"\x14ListSchedulesRequest\x12\x1c\n" +
-	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12!\n" +
-	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\"L\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x122\n" +
+	"\afilters\x18\x03 \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xfc\x01\xa2\xbb\x18\xf7\x01\n" +
+	"\x14orkstack.v1.Schedule\x12\r\n" +
+	"\x02id\x12\x02Id\x1a\x03\x01\x02\x03\x12\x15\n" +
+	"\x04name\x12\x04Name\x1a\x05\x01\x02\x03\x04\x058\x01\x12 \n" +
+	"\forkflow_name\x12\aOrkflow\x1a\x05\x01\x02\x03\x04\x058\x01\x12*\n" +
+	"\x0forkflow_version\x12\x0ePinned version\x1a\x05\x01\x02\x03\x04\x05(\x01\x12#\n" +
+	"\vdescription\x12\vDescription\x1a\x05\x01\x02\x03\x04\x05(\x01\x12\x15\n" +
+	"\x06paused\x12\x06Paused\x1a\x01\x01(\x01\x12\x1b\n" +
+	"\n" +
+	"created_at\x12\aCreated\x1a\x02\x06\a(\x01\x1a\x12unavailable_reasonJ\x04\b\x02\x10\x03R\forkflow_name\"L\n" +
 	"\x15ListSchedulesResponse\x123\n" +
 	"\tschedules\x18\x01 \x03(\v2\x15.orkstack.v1.ScheduleR\tschedules\"F\n" +
 	"\x12GetScheduleRequest\x12\x12\n" +
@@ -1935,8 +1944,9 @@ var file_orkstack_v1_schedule_proto_goTypes = []any{
 	(*durationpb.Duration)(nil),      // 24: google.protobuf.Duration
 	(*timestamppb.Timestamp)(nil),    // 25: google.protobuf.Timestamp
 	(*Payload)(nil),                  // 26: orkstack.v1.Payload
-	(*Run)(nil),                      // 27: orkstack.v1.Run
-	(*Orkflow)(nil),                  // 28: orkstack.v1.Orkflow
+	(*FieldFilter)(nil),              // 27: orkstack.v1.FieldFilter
+	(*Run)(nil),                      // 28: orkstack.v1.Run
+	(*Orkflow)(nil),                  // 29: orkstack.v1.Orkflow
 }
 var file_orkstack_v1_schedule_proto_depIdxs = []int32{
 	24, // 0: orkstack.v1.ScheduleSpec.interval:type_name -> google.protobuf.Duration
@@ -1956,47 +1966,48 @@ var file_orkstack_v1_schedule_proto_depIdxs = []int32{
 	26, // 14: orkstack.v1.CreateScheduleRequest.input:type_name -> orkstack.v1.Payload
 	1,  // 15: orkstack.v1.CreateScheduleRequest.spec:type_name -> orkstack.v1.ScheduleSpec
 	2,  // 16: orkstack.v1.CreateScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
-	2,  // 17: orkstack.v1.ListSchedulesResponse.schedules:type_name -> orkstack.v1.Schedule
-	2,  // 18: orkstack.v1.GetScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
-	26, // 19: orkstack.v1.UpdateScheduleRequest.input:type_name -> orkstack.v1.Payload
-	1,  // 20: orkstack.v1.UpdateScheduleRequest.spec:type_name -> orkstack.v1.ScheduleSpec
-	2,  // 21: orkstack.v1.UpdateScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
-	2,  // 22: orkstack.v1.PauseScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
-	2,  // 23: orkstack.v1.ResumeScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
-	0,  // 24: orkstack.v1.FireScheduleRequest.overlap:type_name -> orkstack.v1.OverlapPolicy
-	2,  // 25: orkstack.v1.FireScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
-	25, // 26: orkstack.v1.BackfillScheduleRequest.start:type_name -> google.protobuf.Timestamp
-	25, // 27: orkstack.v1.BackfillScheduleRequest.end:type_name -> google.protobuf.Timestamp
-	0,  // 28: orkstack.v1.BackfillScheduleRequest.overlap:type_name -> orkstack.v1.OverlapPolicy
-	2,  // 29: orkstack.v1.BackfillScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
-	26, // 30: orkstack.v1.ScheduleRecord.input:type_name -> orkstack.v1.Payload
-	1,  // 31: orkstack.v1.ScheduleRecord.spec:type_name -> orkstack.v1.ScheduleSpec
-	27, // 32: orkstack.v1.ScheduledRunPreparation.run:type_name -> orkstack.v1.Run
-	28, // 33: orkstack.v1.ScheduledRunPreparation.orkflow:type_name -> orkstack.v1.Orkflow
-	26, // 34: orkstack.v1.ScheduledRunPreparation.input:type_name -> orkstack.v1.Payload
-	4,  // 35: orkstack.v1.ScheduleService.CreateSchedule:input_type -> orkstack.v1.CreateScheduleRequest
-	6,  // 36: orkstack.v1.ScheduleService.ListSchedules:input_type -> orkstack.v1.ListSchedulesRequest
-	8,  // 37: orkstack.v1.ScheduleService.GetSchedule:input_type -> orkstack.v1.GetScheduleRequest
-	10, // 38: orkstack.v1.ScheduleService.UpdateSchedule:input_type -> orkstack.v1.UpdateScheduleRequest
-	12, // 39: orkstack.v1.ScheduleService.PauseSchedule:input_type -> orkstack.v1.PauseScheduleRequest
-	14, // 40: orkstack.v1.ScheduleService.ResumeSchedule:input_type -> orkstack.v1.ResumeScheduleRequest
-	16, // 41: orkstack.v1.ScheduleService.FireSchedule:input_type -> orkstack.v1.FireScheduleRequest
-	18, // 42: orkstack.v1.ScheduleService.BackfillSchedule:input_type -> orkstack.v1.BackfillScheduleRequest
-	20, // 43: orkstack.v1.ScheduleService.DeleteSchedule:input_type -> orkstack.v1.DeleteScheduleRequest
-	5,  // 44: orkstack.v1.ScheduleService.CreateSchedule:output_type -> orkstack.v1.CreateScheduleResponse
-	7,  // 45: orkstack.v1.ScheduleService.ListSchedules:output_type -> orkstack.v1.ListSchedulesResponse
-	9,  // 46: orkstack.v1.ScheduleService.GetSchedule:output_type -> orkstack.v1.GetScheduleResponse
-	11, // 47: orkstack.v1.ScheduleService.UpdateSchedule:output_type -> orkstack.v1.UpdateScheduleResponse
-	13, // 48: orkstack.v1.ScheduleService.PauseSchedule:output_type -> orkstack.v1.PauseScheduleResponse
-	15, // 49: orkstack.v1.ScheduleService.ResumeSchedule:output_type -> orkstack.v1.ResumeScheduleResponse
-	17, // 50: orkstack.v1.ScheduleService.FireSchedule:output_type -> orkstack.v1.FireScheduleResponse
-	19, // 51: orkstack.v1.ScheduleService.BackfillSchedule:output_type -> orkstack.v1.BackfillScheduleResponse
-	21, // 52: orkstack.v1.ScheduleService.DeleteSchedule:output_type -> orkstack.v1.DeleteScheduleResponse
-	44, // [44:53] is the sub-list for method output_type
-	35, // [35:44] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	27, // 17: orkstack.v1.ListSchedulesRequest.filters:type_name -> orkstack.v1.FieldFilter
+	2,  // 18: orkstack.v1.ListSchedulesResponse.schedules:type_name -> orkstack.v1.Schedule
+	2,  // 19: orkstack.v1.GetScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
+	26, // 20: orkstack.v1.UpdateScheduleRequest.input:type_name -> orkstack.v1.Payload
+	1,  // 21: orkstack.v1.UpdateScheduleRequest.spec:type_name -> orkstack.v1.ScheduleSpec
+	2,  // 22: orkstack.v1.UpdateScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
+	2,  // 23: orkstack.v1.PauseScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
+	2,  // 24: orkstack.v1.ResumeScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
+	0,  // 25: orkstack.v1.FireScheduleRequest.overlap:type_name -> orkstack.v1.OverlapPolicy
+	2,  // 26: orkstack.v1.FireScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
+	25, // 27: orkstack.v1.BackfillScheduleRequest.start:type_name -> google.protobuf.Timestamp
+	25, // 28: orkstack.v1.BackfillScheduleRequest.end:type_name -> google.protobuf.Timestamp
+	0,  // 29: orkstack.v1.BackfillScheduleRequest.overlap:type_name -> orkstack.v1.OverlapPolicy
+	2,  // 30: orkstack.v1.BackfillScheduleResponse.schedule:type_name -> orkstack.v1.Schedule
+	26, // 31: orkstack.v1.ScheduleRecord.input:type_name -> orkstack.v1.Payload
+	1,  // 32: orkstack.v1.ScheduleRecord.spec:type_name -> orkstack.v1.ScheduleSpec
+	28, // 33: orkstack.v1.ScheduledRunPreparation.run:type_name -> orkstack.v1.Run
+	29, // 34: orkstack.v1.ScheduledRunPreparation.orkflow:type_name -> orkstack.v1.Orkflow
+	26, // 35: orkstack.v1.ScheduledRunPreparation.input:type_name -> orkstack.v1.Payload
+	4,  // 36: orkstack.v1.ScheduleService.CreateSchedule:input_type -> orkstack.v1.CreateScheduleRequest
+	6,  // 37: orkstack.v1.ScheduleService.ListSchedules:input_type -> orkstack.v1.ListSchedulesRequest
+	8,  // 38: orkstack.v1.ScheduleService.GetSchedule:input_type -> orkstack.v1.GetScheduleRequest
+	10, // 39: orkstack.v1.ScheduleService.UpdateSchedule:input_type -> orkstack.v1.UpdateScheduleRequest
+	12, // 40: orkstack.v1.ScheduleService.PauseSchedule:input_type -> orkstack.v1.PauseScheduleRequest
+	14, // 41: orkstack.v1.ScheduleService.ResumeSchedule:input_type -> orkstack.v1.ResumeScheduleRequest
+	16, // 42: orkstack.v1.ScheduleService.FireSchedule:input_type -> orkstack.v1.FireScheduleRequest
+	18, // 43: orkstack.v1.ScheduleService.BackfillSchedule:input_type -> orkstack.v1.BackfillScheduleRequest
+	20, // 44: orkstack.v1.ScheduleService.DeleteSchedule:input_type -> orkstack.v1.DeleteScheduleRequest
+	5,  // 45: orkstack.v1.ScheduleService.CreateSchedule:output_type -> orkstack.v1.CreateScheduleResponse
+	7,  // 46: orkstack.v1.ScheduleService.ListSchedules:output_type -> orkstack.v1.ListSchedulesResponse
+	9,  // 47: orkstack.v1.ScheduleService.GetSchedule:output_type -> orkstack.v1.GetScheduleResponse
+	11, // 48: orkstack.v1.ScheduleService.UpdateSchedule:output_type -> orkstack.v1.UpdateScheduleResponse
+	13, // 49: orkstack.v1.ScheduleService.PauseSchedule:output_type -> orkstack.v1.PauseScheduleResponse
+	15, // 50: orkstack.v1.ScheduleService.ResumeSchedule:output_type -> orkstack.v1.ResumeScheduleResponse
+	17, // 51: orkstack.v1.ScheduleService.FireSchedule:output_type -> orkstack.v1.FireScheduleResponse
+	19, // 52: orkstack.v1.ScheduleService.BackfillSchedule:output_type -> orkstack.v1.BackfillScheduleResponse
+	21, // 53: orkstack.v1.ScheduleService.DeleteSchedule:output_type -> orkstack.v1.DeleteScheduleResponse
+	45, // [45:54] is the sub-list for method output_type
+	36, // [36:45] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_schedule_proto_init() }
@@ -2005,6 +2016,7 @@ func file_orkstack_v1_schedule_proto_init() {
 		return
 	}
 	file_orkstack_v1_common_proto_init()
+	file_orkstack_v1_filter_proto_init()
 	file_orkstack_v1_orkflow_proto_init()
 	file_orkstack_v1_run_proto_init()
 	type x struct{}

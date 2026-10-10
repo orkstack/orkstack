@@ -70,17 +70,29 @@ func newOrkflowValidateCommand(g *globalFlags) *cobra.Command {
 }
 
 func newOrkflowListCommand(g *globalFlags) *cobra.Command {
-	var limit int32
+	var (
+		limit       int32
+		pageToken   string
+		filterTexts *[]string
+	)
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List registered orkflows",
-		Args:  cobra.NoArgs,
+		Long: "list shows the current version of every orkflow in the namespace, ordered by\n" +
+			"name, narrowed by --filter. Filters apply before the page is cut; when more\n" +
+			"orkflows match than one page holds, the command prints the next page's\n" +
+			"command.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.orkflowClient().ListOrkflows(ctx, connect.NewRequest(
-				&orkstackv1.ListOrkflowsRequest{PageSize: limit, Namespace: g.namespace},
+				&orkstackv1.ListOrkflowsRequest{PageSize: limit, PageToken: pageToken, Namespace: g.namespace, Filters: filters},
 			))
 			if err != nil {
 				return rpcError("list orkflows", err)
@@ -88,10 +100,30 @@ func newOrkflowListCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			return renderOrkflowList(cmd.OutOrStdout(), resp.Msg.GetOrkflows())
+			if len(filters) > 0 && len(resp.Msg.GetOrkflows()) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("orkflows", filters))
+				return nil
+			}
+			if err := renderOrkflowList(cmd.OutOrStdout(), resp.Msg.GetOrkflows()); err != nil {
+				return err
+			}
+			if next := resp.Msg.GetNextPageToken(); next != "" {
+				// The token is bound to the filters it was minted under, so
+				// the next-page command repeats every one of them.
+				args := append([]string{"orkflow", "list"}, filterArgs(filters)...)
+				if limit != 0 {
+					args = append(args, "--limit", fmt.Sprint(limit))
+				}
+				args = append(args, "--page-token", next)
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "\nNext page: %s\n", orkctlCommand(g.namespace, args...))
+				return err
+			}
+			return nil
 		},
 	}
 	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of orkflows to return (0 = server default)")
+	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous list")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListOrkflowsRequest{})
 	return cmd
 }
 

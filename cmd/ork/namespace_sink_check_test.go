@@ -37,6 +37,10 @@ func (m *memNamespaceStore) List(context.Context) ([]*orkstackv1.Namespace, erro
 	return m.namespaces, nil
 }
 
+func (m *memNamespaceStore) ListNames(context.Context) ([]string, error) {
+	panic("not needed by warnUndeclaredNamespaceSinks tests")
+}
+
 func (m *memNamespaceStore) Delete(context.Context, string) error {
 	panic("not needed by warnUndeclaredNamespaceSinks tests")
 }

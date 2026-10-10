@@ -62,12 +62,12 @@ func (c *cliSchedules) Describe(_ context.Context, ns, name string) (engine.Sche
 	defer c.mu.Unlock()
 	return c.view(ns, name)
 }
-func (c *cliSchedules) List(_ context.Context, ns string) ([]engine.ScheduleView, error) {
+func (c *cliSchedules) List(_ context.Context, ns string, keep func(id, name, orkflow string) bool) ([]engine.ScheduleView, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var names []string
 	for _, rec := range c.records {
-		if rec.GetNamespace() == ns {
+		if rec.GetNamespace() == ns && (keep == nil || keep(rec.GetScheduleId(), rec.GetName(), rec.GetOrkflowName())) {
 			names = append(names, rec.GetName())
 		}
 	}

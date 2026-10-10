@@ -21,6 +21,7 @@ import {
 	waitForEngine,
 	openNamespaceEdit
 } from './harness';
+import { adminNamespaceUrl } from './uiHelpers';
 
 // Tenant-scoped secret policy in a browser, against a real engine, Orker,
 // Temporal and MinIO:
@@ -141,9 +142,13 @@ test.afterAll(async () => {
 	note(`grep -c <minted E2E_TOKEN> over transcript.txt, engine.log, orker.log, ui.log: 0`);
 });
 
+// Admin → Namespaces filtered to this spec's namespace: the list is paged, and
+// the filter is how a row is reached whichever page it sorts onto. Before the
+// namespace exists the filter matches nothing, so readiness is the filter
+// itself, not the table.
 async function openAdmin(page: Page): Promise<void> {
-	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=${NS}`);
-	await expect(page.getByTestId('namespace-list')).toBeVisible();
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, NS, NS));
+	await expect(page.getByTestId('namespaces-filter-value-0')).toHaveValue(NS);
 }
 
 test('1: Admin → Namespaces shows the Allowed secrets column, set or unrestricted', async ({ page }) => {
@@ -153,13 +158,14 @@ test('1: Admin → Namespaces shows the Allowed secrets column, set or unrestric
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${NS}.`);
 	await expect(page.getByTestId(`namespace-allowed-secrets-${NS}`)).toHaveText('env:SANDBOX_*');
+	note(`${NS} row: ${await page.getByTestId(`namespace-allowed-secrets-${NS}`).innerText()}`);
 	await page.screenshot({ path: out('screenshot-allowed-secrets-column.png'), fullPage: true });
 
+	// Each create filters the list to the name it created.
 	await page.getByTestId('ns-create-name').fill(OPEN_NS);
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${OPEN_NS}.`);
 	await expect(page.getByTestId(`namespace-allowed-secrets-${OPEN_NS}`)).toHaveText('unrestricted');
-	note(`${NS} row: ${await page.getByTestId(`namespace-allowed-secrets-${NS}`).innerText()}`);
 	note(`${OPEN_NS} row: ${await page.getByTestId(`namespace-allowed-secrets-${OPEN_NS}`).innerText()}`);
 });
 

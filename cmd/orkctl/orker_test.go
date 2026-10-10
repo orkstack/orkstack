@@ -178,9 +178,15 @@ func TestOrkerList_Golden(t *testing.T) {
 	}
 
 	before := len(orkerRequests(f))
-	f.run("orker", "list", "--pool", "gpu").requireExit(t, exitOK)
+	f.run("orker", "list", "--filter", "pool=gpu").requireExit(t, exitOK)
 	if got := orkerRequests(f)[before:]; len(got) != 1 || got[0] != "ListOrkers" {
-		t.Fatalf("--pool sent %v; want one ListOrkers", got)
+		t.Fatalf("--filter pool=gpu sent %v; want one ListOrkers", got)
+	}
+	var sent orkstackv1.ListOrkersRequest
+	if !f.lastRequest("/orkstack.v1.ActivityService/ListOrkers", &sent) || len(sent.GetFilters()) != 1 ||
+		sent.GetFilters()[0].GetField() != "pool" || sent.GetFilters()[0].GetOp() != orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS ||
+		strings.Join(sent.GetFilters()[0].GetValues(), ",") != "gpu" {
+		t.Fatalf("--filter pool=gpu sent %v; want the one pool equals filter", &sent)
 	}
 
 	empty := newOrkerFixture(t, &scriptedFleet{script: map[string][]*orkstackv1.DescribeOrkerResult{}})

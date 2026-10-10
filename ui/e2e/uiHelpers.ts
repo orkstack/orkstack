@@ -63,3 +63,53 @@ export async function selectOption(page: Page, testid: string, value: string): P
 export async function expectNamespace(page: Page, name: string): Promise<void> {
 	await expect(page.getByTestId('namespace-picker')).toHaveText(name);
 }
+
+/**
+ * The Admin → Namespaces address that shows `name`'s row: the list filtered
+ * to it (`filter=name=<name>`, the structured list filter) on a first page.
+ *
+ * The list is paged (ui/src/routes/admin/namespaces/+page.ts), so the page a
+ * namespace sorts onto depends on every other namespace in the bucket. A spec
+ * that opened the bare list and looked for its row would pass or fail on what
+ * other runs left behind; through the filter it never depends on that. `ns`
+ * is the switcher's selection, carried as every other link carries it.
+ */
+export function adminNamespaceUrl(origin: string, name: string, ns = 'default'): string {
+	const params = new URLSearchParams({ ns, filter: `name=${name}` });
+	return `${origin}/admin/namespaces?${params.toString()}`;
+}
+
+/**
+ * The operator Select's option values in ListFilter
+ * (ui/src/lib/components/ListFilter.svelte): FilterOperator's numbers.
+ */
+export const OP = {
+	equals: '1',
+	notEquals: '2',
+	in: '3',
+	contains: '4',
+	prefix: '5',
+	atOrAfter: '6',
+	before: '7'
+} as const;
+
+/**
+ * Add one filter row to a ListFilter form and fill it, as a person does:
+ * Add filter, the field, a label key, the operator, then the value. Nothing
+ * is applied — the caller submits with `${testid}-filters-apply`, which is
+ * the point of a draft.
+ */
+export async function addListFilter(
+	page: Page,
+	testid: string,
+	row: { field: string; key?: string; op: (typeof OP)[keyof typeof OP]; value?: string; select?: string }
+): Promise<number> {
+	const index = await page.locator(`[data-testid^="${testid}-filter-row-"]`).count();
+	await page.getByTestId(`${testid}-filter-add`).click();
+	await selectOption(page, `${testid}-filter-field-${index}`, row.field);
+	if (row.key !== undefined) await page.getByTestId(`${testid}-filter-key-${index}`).fill(row.key);
+	await selectOption(page, `${testid}-filter-op-${index}`, row.op);
+	if (row.select !== undefined) await selectOption(page, `${testid}-filter-value-${index}`, row.select);
+	if (row.value !== undefined) await page.getByTestId(`${testid}-filter-value-${index}`).fill(row.value);
+	return index;
+}

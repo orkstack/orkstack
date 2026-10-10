@@ -74,24 +74,32 @@ func (s *Service) CreateTrigger(
 	}), nil
 }
 
-// ListTriggers returns one namespace's triggers, narrowed to one orkflow when
-// orkflow_name is set. It reads the shared store on every call, so a replica
-// answers for a trigger another replica created.
+// ListTriggers returns one namespace's triggers, narrowed by filters. It reads
+// the shared store on every call, so a replica answers for a trigger another
+// replica created. A single orkflow_name equals filter narrows what the store
+// reads; the whole set then applies to every trigger read.
 func (s *Service) ListTriggers(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListTriggersRequest],
 ) (*connect.Response[orkstackv1.ListTriggersResponse], error) {
+	set, err := compileFilters(req.Msg)
+	if err != nil {
+		return nil, err
+	}
 	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
 	if err != nil {
 		return nil, err
 	}
-	list, err := s.triggers.List(ctx, ns.GetName(), req.Msg.GetOrkflowName())
+	orkflow, _ := set.Equality("orkflow_name")
+	list, err := s.triggers.List(ctx, ns.GetName(), orkflow)
 	if err != nil {
 		return nil, triggerConnectError(err)
 	}
 	out := make([]*orkstackv1.Trigger, 0, len(list))
 	for _, trigger := range list {
-		out = append(out, triggerProto(trigger))
+		if row := triggerProto(trigger); set.Match(row) {
+			out = append(out, row)
+		}
 	}
 	return connect.NewResponse(&orkstackv1.ListTriggersResponse{Triggers: out}), nil
 }

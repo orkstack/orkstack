@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -41,6 +42,9 @@ type fakeSchedules struct {
 	calls    int
 	err      error // every call fails with it when set
 	listErr  error
+	// described counts the schedules List described, as the cluster
+	// scheduler describes each listed entry that keep accepts.
+	described int
 }
 
 func newFakeSchedules() *fakeSchedules {
@@ -92,7 +96,7 @@ func (f *fakeSchedules) Describe(_ context.Context, ns, name string) (engine.Sch
 	return f.view(ns, name)
 }
 
-func (f *fakeSchedules) List(_ context.Context, ns string) ([]engine.ScheduleView, error) {
+func (f *fakeSchedules) List(_ context.Context, ns string, keep func(id, name, orkflow string) bool) ([]engine.ScheduleView, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.listErr != nil {
@@ -100,16 +104,19 @@ func (f *fakeSchedules) List(_ context.Context, ns string) ([]engine.ScheduleVie
 	}
 	var out []engine.ScheduleView
 	for _, rec := range f.records {
-		if rec.GetNamespace() == ns {
-			v, _ := f.view(ns, rec.GetName())
-			out = append(out, v)
+		if rec.GetNamespace() != ns || (keep != nil && !keep(rec.GetScheduleId(), rec.GetName(), rec.GetOrkflowName())) {
+			continue
 		}
+		f.described++
+		v, _ := f.view(ns, rec.GetName())
+		out = append(out, v)
 	}
 	for _, v := range f.extra {
-		if v.Namespace == ns {
+		if v.Namespace == ns && (keep == nil || keep(v.ID, v.Name, v.OrkflowName)) {
 			out = append(out, v)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
@@ -451,7 +458,7 @@ func TestListSchedules_NarrowsByOrkflowAndCarriesUnavailableRows(t *testing.T) {
 		{ID: "sch-0000000000000001", Name: "broken", Namespace: "default", OrkflowName: "hello-ork", Unavailable: "cluster busy"},
 		{ID: "sch-0000000000000002", Name: "etl", Namespace: "default", OrkflowName: "etl", Unavailable: "x"},
 	}
-	resp, err := h.svc.ListSchedules(context.Background(), connect.NewRequest(&orkstackv1.ListSchedulesRequest{OrkflowName: "hello-ork"}))
+	resp, err := h.svc.ListSchedules(context.Background(), connect.NewRequest(&orkstackv1.ListSchedulesRequest{Filters: filters(t, "orkflow_name=hello-ork")}))
 	if err != nil {
 		t.Fatal(err)
 	}

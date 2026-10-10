@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -14,6 +17,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -430,25 +434,190 @@ func (s *Service) GetNamespace(
 	return connect.NewResponse(&orkstackv1.GetNamespaceResponse{Namespace: ns}), nil
 }
 
-// ListNamespaces returns every registered namespace, ordered by name, with the
-// built-in default always among them.
+// ListNamespaces returns the registered namespaces, ordered by name, with the
+// built-in default always among them, narrowed by filters.
+//
+// Every page_size has one plan. The names come from the registry's key
+// listing (ListNames: keys only, sorted by name, default included); a
+// filter on name is decided there, before any document is read. When every
+// filter is on name, a page reads only the documents it returns: a page of
+// 25 out of thousands is one listing and 25 reads. Any other filter needs
+// the document, so candidates are read in name order, a batch at a time,
+// until the page is full or the candidates run out. page_size 0 is the same
+// plan with no page bound: every candidate is read, a batch at a time, which
+// is what the namespace switcher, Admin → Usage and `orkctl namespace list`
+// ask for.
+//
+// Every document — default's included — is read through the registry's Get,
+// which synthesizes default when it was never written and returns the
+// stored document once an update wrote it.
 func (s *Service) ListNamespaces(
 	ctx context.Context,
-	_ *connect.Request[orkstackv1.ListNamespacesRequest],
+	req *connect.Request[orkstackv1.ListNamespacesRequest],
 ) (*connect.Response[orkstackv1.ListNamespacesResponse], error) {
+	size := int(req.Msg.GetPageSize())
+	token := req.Msg.GetPageToken()
+	switch {
+	case size < 0:
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_size cannot be negative"))
+	case token != "" && size == 0:
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"page_token continues a paged listing; send the page_size it was issued for (page_size 0 lists everything)"))
+	}
+	set, err := compileFilters(req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	after := ""
+	if token != "" {
+		if after, err = decodeNamespaceCursor(token, set); err != nil {
+			return nil, err
+		}
+	}
+
 	if s.namespaces == nil {
 		// A process with no registry still has the namespace every orkflow
 		// that names none is in. An empty list would say the deployment has no
 		// namespaces, which is never true.
-		return connect.NewResponse(&orkstackv1.ListNamespacesResponse{
-			Namespaces: []*orkstackv1.Namespace{artifacts.DefaultNamespaceDocument()},
-		}), nil
+		return namespacePage(ctx, []string{artifacts.DefaultNamespace}, set, after, size,
+			func(context.Context, string) (*orkstackv1.Namespace, error) {
+				return artifacts.DefaultNamespaceDocument(), nil
+			})
 	}
-	registered, err := s.namespaces.List(ctx)
+	names, err := s.namespaces.ListNames(ctx)
 	if err != nil {
 		return nil, namespaceStoreError(err, "list namespaces")
 	}
-	return connect.NewResponse(&orkstackv1.ListNamespacesResponse{Namespaces: registered}), nil
+	return namespacePage(ctx, names, set, after, size, s.namespaces.Get)
+}
+
+// namespacePageReads is how many documents one batch reads at once.
+const namespacePageReads = 8
+
+// namespacePage answers one page of a name-ordered listing (size 0: every
+// match). candidates are the names after the cursor that pass the set's
+// name filters; documents are read by get, a batch of namespacePageReads at
+// a time, and the WHOLE set is applied to each, so the name pushdown only
+// narrows what is read. A name whose document is gone by the time it is
+// read was deleted between the listing and the read and is left out,
+// exactly as the full listing leaves it out.
+func namespacePage(
+	ctx context.Context,
+	names []string,
+	set listfilter.Set,
+	after string,
+	size int,
+	get func(context.Context, string) (*orkstackv1.Namespace, error),
+) (*connect.Response[orkstackv1.ListNamespacesResponse], error) {
+	byName := set.Restrict("name")
+	var candidates []string
+	for _, name := range names {
+		if name > after && byName.Match(&orkstackv1.Namespace{Name: name}) {
+			candidates = append(candidates, name)
+		}
+	}
+	nameOnly := byName.Len() == set.Len()
+	more := false
+	if nameOnly && size > 0 && len(candidates) > size {
+		// The key listing has decided every filter: read only the page.
+		candidates, more = candidates[:size], true
+	}
+
+	var matched []*orkstackv1.Namespace
+	for start := 0; start < len(candidates); start += namespacePageReads {
+		batch := candidates[start:min(start+namespacePageReads, len(candidates))]
+		docs, err := readNamespaces(ctx, batch, get)
+		if err != nil {
+			return nil, err
+		}
+		for _, doc := range docs {
+			if doc != nil && set.Match(doc) {
+				matched = append(matched, doc)
+			}
+		}
+		if !nameOnly && size > 0 && len(matched) > size {
+			break // the page is full and one more match proves there is more
+		}
+	}
+	if !nameOnly && size > 0 && len(matched) > size {
+		matched, more = matched[:size], true
+	}
+
+	response := &orkstackv1.ListNamespacesResponse{Namespaces: matched}
+	if more {
+		last := candidates[len(candidates)-1]
+		if !nameOnly {
+			last = matched[len(matched)-1].GetName()
+		}
+		token, err := encodeNamespaceCursor(set, last)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		response.NextPageToken = token
+	}
+	return connect.NewResponse(response), nil
+}
+
+// readNamespaces reads one batch concurrently, in order; a document deleted
+// since the listing is nil.
+func readNamespaces(
+	ctx context.Context,
+	batch []string,
+	get func(context.Context, string) (*orkstackv1.Namespace, error),
+) ([]*orkstackv1.Namespace, error) {
+	docs := make([]*orkstackv1.Namespace, len(batch))
+	errs := make([]error, len(batch))
+	var wg sync.WaitGroup
+	for i, name := range batch {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			docs[i], errs[i] = get(ctx, name)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, artifacts.ErrNotFound) {
+			docs[i] = nil // deleted between the listing and the read
+			continue
+		}
+		return nil, namespaceStoreError(err, "read namespace %q", batch[i])
+	}
+	return docs, nil
+}
+
+// namespaceCursor is a ListNamespaces page token: the last name a page held,
+// bound to the canonical filter set it was issued under.
+type namespaceCursor struct {
+	Version int    `json:"v"`
+	Filters string `json:"f"`
+	Name    string `json:"name"`
+}
+
+func encodeNamespaceCursor(set listfilter.Set, name string) (string, error) {
+	raw, err := json.Marshal(namespaceCursor{Version: 1, Filters: set.Key(), Name: name})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeNamespaceCursor(token string, set listfilter.Set) (string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
+	}
+	var c namespaceCursor
+	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Name == "" {
+		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
+	}
+	if err := checkFilterKey(c.Filters, set); err != nil {
+		return "", err
+	}
+	return c.Name, nil
 }
 
 // UpdateNamespace replaces a namespace's mutable fields, compare-and-swapping

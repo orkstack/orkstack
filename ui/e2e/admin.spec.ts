@@ -21,7 +21,7 @@ import {
 	waitForEngine,
 	openNamespaceEdit
 } from './harness';
-import { expectNamespace, selectNamespace } from './uiHelpers';
+import { OP, addListFilter, adminNamespaceUrl, expectNamespace, selectNamespace } from './uiHelpers';
 
 // The Admin section: namespaces, pool health, the activity catalog and
 // system information, in a browser, against the real stack.
@@ -382,6 +382,9 @@ test.afterAll(async () => {
 test('default is undeletable when it is the only namespace this deployment has', async ({
 	page
 }) => {
+	// Unfiltered on purpose, the one exception to reaching a row through the
+	// filter: what is asserted is the WHOLE registry (one row, on the only
+	// page there is), which a filter would narrow away.
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
 	await expect(page.getByTestId('namespaces-empty')).toBeVisible();
 	const list = page.getByTestId('namespace-list');
@@ -491,6 +494,9 @@ test('creating a namespace validates locally, updates round-trip the etag, and a
 	await page.getByTestId('ns-create-description').fill('admin spec namespace');
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toBeVisible();
+	// A create filters the paged list to the created name (filter=name=…), so its row
+	// is on screen whichever page it would sort onto.
+	await expect(page).toHaveURL(new RegExp(`filter=name%3D${OPS_NS}(&|$)`));
 	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toBeVisible();
 	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toContainText('main');
 	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toContainText('cpu');
@@ -564,7 +570,7 @@ test('editing a namespace through the Admin UI does not erase its labels', async
 	});
 	note(`namespace ${LABELLED_NS} created with labels team=payments tier=gold`);
 
-	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, LABELLED_NS));
 	const row = page.getByTestId(`namespace-row-${LABELLED_NS}`);
 	await expect(row).toBeVisible();
 	await openNamespaceEdit(page, LABELLED_NS);
@@ -603,7 +609,7 @@ test('a stale-etag retry re-reads labels too, so a concurrent label change survi
 	});
 	note(`namespace ${LABEL_CONFLICT_NS} created with labels team=payments`);
 
-	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, LABEL_CONFLICT_NS));
 	const row = page.getByTestId(`namespace-row-${LABEL_CONFLICT_NS}`);
 	await expect(row).toBeVisible();
 	await openNamespaceEdit(page, LABEL_CONFLICT_NS);
@@ -685,7 +691,7 @@ test('deleting a namespace between a conflict and its retry shows a normal error
 		`namespace ${DELETED_DURING_CONFLICT_NS} created, to be deleted while its own conflict panel is open`
 	);
 
-	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, DELETED_DURING_CONFLICT_NS));
 	const row = page.getByTestId(`namespace-row-${DELETED_DURING_CONFLICT_NS}`);
 	await expect(row).toBeVisible();
 	await openNamespaceEdit(page, DELETED_DURING_CONFLICT_NS);
@@ -746,11 +752,16 @@ test('deleting a namespace between a conflict and its retry shows a normal error
 test('a delete holding an orkflow is refused naming the count, and default remains undeletable among others', async ({
 	page
 }) => {
-	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
-
+	// `default` among others: the registry holds more than it, and its row —
+	// reached through the filter, as every row here is — is still
+	// undeletable.
+	const listed = await rpc<{ namespaces?: { name: string }[] }>('NamespaceService/ListNamespaces', {});
+	expect((listed.namespaces ?? []).length).toBeGreaterThan(1);
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, 'default'));
 	await expect(page.getByTestId('namespace-delete-default')).toBeDisabled();
 	await expect(page.getByTestId('namespace-delete-default-reason')).toBeVisible();
 
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, HOLDS_NS));
 	const row = page.getByTestId(`namespace-row-${HOLDS_NS}`);
 	await expect(row).toBeVisible();
 	await row.getByTestId(`namespace-delete-${HOLDS_NS}`).click();
@@ -781,7 +792,7 @@ test('deleting the currently-selected namespace resets the selection to default'
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: DOOMED_NS } });
 	note(`namespace ${DOOMED_NS} created, holding no orkflow, to prove the self-delete reset`);
 
-	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=${DOOMED_NS}`);
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, DOOMED_NS, DOOMED_NS));
 	await expectNamespace(page, DOOMED_NS);
 
 	const row = page.getByTestId(`namespace-row-${DOOMED_NS}`);
@@ -1321,6 +1332,11 @@ test('a failed Admin read reports the failure and retries', async ({ page }) => 
 
 	await page.unroute('**/orkstack.v1.NamespaceService/ListNamespaces');
 	await page.getByTestId('namespaces-retry').click();
-	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toBeVisible();
+	await expect(page.getByTestId('namespace-list')).toBeVisible();
 	await expect(page.getByTestId('namespaces-error')).toHaveCount(0);
+	// The retried list is the real one: the filter reaches a row it holds.
+	await addListFilter(page, 'namespaces', { field: 'name', op: OP.equals, value: OPS_NS });
+	await page.getByTestId('namespaces-filters-apply').click();
+	await expect(page).toHaveURL(new RegExp(`filter=name%3D${OPS_NS}(&|$)`));
+	await expect(page.getByTestId(`namespace-row-${OPS_NS}`)).toBeVisible();
 });

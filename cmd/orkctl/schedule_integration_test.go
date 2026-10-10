@@ -980,6 +980,28 @@ func TestIntegration_ScheduleSurvivesReplicaAndRestart(t *testing.T) {
 	}
 	t.Logf("EVIDENCE two_replica_get_json=%s", compactJSON(t, pausedB))
 
+	// Filters answer alike on both replicas: one on the schedule's identity
+	// is decided before any describe, one on its state after.
+	for _, filter := range [][]string{
+		{"--filter", "orkflow_name=hello"},
+		{"--filter", "paused=true"},
+		{"--filter", "orkflow_name=hello", "--filter", "name=nightly", "--filter", "paused=true"},
+	} {
+		args := append([]string{"--json", "schedule", "list"}, filter...)
+		fromA := s.cli(t, s.a, exitOK, args...)
+		fromB := s.cli(t, s.b, exitOK, args...)
+		if fromA != fromB || !strings.Contains(fromA, `"nightly"`) {
+			t.Fatalf("orkctl %s:\nA %s\nB %s", strings.Join(args, " "), fromA, fromB)
+		}
+	}
+	for _, filter := range []string{"paused=false", "orkflow_name=other"} {
+		out := s.cli(t, s.b, exitOK, "schedule", "list", "--filter", filter)
+		if !strings.Contains(out, "No schedules match --filter '"+filter+"'.") {
+			t.Fatalf("schedule list --filter %s:\n%s", filter, out)
+		}
+	}
+	t.Logf("EVIDENCE schedule list filters answer alike on A and B: orkflow_name=hello, paused=true list nightly; paused=false lists nothing")
+
 	addrA, addrB := s.a.addr, s.b.addr
 	s.a.stop()
 	s.b.stop()

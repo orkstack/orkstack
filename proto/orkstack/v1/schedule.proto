@@ -5,6 +5,7 @@ package orkstack.v1;
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/common.proto";
+import "orkstack/v1/filter.proto";
 import "orkstack/v1/orkflow.proto";
 import "orkstack/v1/run.proto";
 
@@ -32,8 +33,10 @@ service ScheduleService {
   // expression it cannot parse) is InvalidArgument quoting its message.
   rpc CreateSchedule(CreateScheduleRequest) returns (CreateScheduleResponse);
   // ListSchedules returns one namespace's schedules, ordered by name,
-  // narrowed to one orkflow when orkflow_name is set. Every row is
-  // described on the cluster for this call; a row the cluster could not
+  // narrowed by filters. A filter on id, name or orkflow_name is decided
+  // before a schedule is described, so a narrowed listing describes only
+  // what it may return. Every row it returns is described on the cluster
+  // for this call; a row the cluster could not
   // describe is still listed, carrying unavailable_reason, on the terms
   // ListPools narrows rather than refuses.
   rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
@@ -247,8 +250,57 @@ message CreateScheduleRequest {
 }
 message CreateScheduleResponse { Schedule schedule = 1; }
 message ListSchedulesRequest {
-  string namespace = 1;                   // empty = the default namespace
-  string orkflow_name = 2;                // empty = every schedule in the namespace
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Schedule"
+    unavailable_field: "unavailable_reason"
+    fields: [
+      {
+        path: "id"
+        label: "Id"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "orkflow_name"
+        label: "Orkflow"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "orkflow_version"
+        label: "Pinned version"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        kept_when_unavailable: true
+      },
+      {
+        path: "description"
+        label: "Description"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        kept_when_unavailable: true
+      },
+      {
+        path: "paused"
+        label: "Paused"
+        operators: [FILTER_OPERATOR_EQUALS]
+        kept_when_unavailable: true
+      },
+      {
+        path: "created_at"
+        label: "Created"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+        kept_when_unavailable: true
+      }
+    ]
+  };
+  reserved 2;
+  reserved "orkflow_name";
+  string namespace = 1;                   // the tenant; empty = the default namespace
+  repeated FieldFilter filters = 3;
 }
 message ListSchedulesResponse { repeated Schedule schedules = 1; }
 message GetScheduleRequest {

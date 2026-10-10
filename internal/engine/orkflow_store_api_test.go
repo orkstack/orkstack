@@ -272,6 +272,10 @@ func (everyNamespace) List(context.Context) ([]*orkstackv1.Namespace, error) {
 	return []*orkstackv1.Namespace{artifacts.DefaultNamespaceDocument()}, nil
 }
 
+func (everyNamespace) ListNames(context.Context) ([]string, error) {
+	return []string{artifacts.DefaultNamespace}, nil
+}
+
 func (everyNamespace) Put(
 	context.Context,
 	*orkstackv1.Namespace,

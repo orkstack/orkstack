@@ -126,16 +126,26 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 }
 
 func newNamespaceListCommand(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var filterTexts *[]string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List namespaces",
-		Args:  cobra.NoArgs,
+		Long: "list shows every namespace, ordered by name, narrowed by --filter — the same\n" +
+			"filters Admin → Namespaces offers. Every match is listed; the browser's pages\n" +
+			"are presentation.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
+			// page_size 0: every match in one response, as this command always
+			// listed.
 			resp, err := g.namespaceClient().ListNamespaces(ctx, connect.NewRequest(
-				&orkstackv1.ListNamespacesRequest{},
+				&orkstackv1.ListNamespacesRequest{Filters: filters},
 			))
 			if err != nil {
 				return rpcError("list namespaces", err)
@@ -143,9 +153,15 @@ func newNamespaceListCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
+			if len(filters) > 0 && len(resp.Msg.GetNamespaces()) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("namespaces", filters))
+				return nil
+			}
 			return renderNamespaceList(cmd.OutOrStdout(), resp.Msg.GetNamespaces())
 		},
 	}
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListNamespacesRequest{})
+	return cmd
 }
 
 func newNamespaceGetCommand(g *globalFlags) *cobra.Command {
