@@ -1,4 +1,3 @@
-import { Code, ConnectError } from '@connectrpc/connect';
 import { errorMessage, orkstack } from '$lib/client';
 import { DEFAULT_AUDIT_LIMIT, auditLimit, type AuditCoordinates } from '$lib/audit';
 import type { ListAuditRecordsResponse } from '$lib/gen/orkstack/v1/audit_pb';
@@ -32,8 +31,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 		return {
 			coordinates,
 			audit: null as ListAuditRecordsResponse | null,
-			auditError: filterError as string | null,
-			auditErrorCode: 'invalid_argument' as string | null
+			auditError: filterError as string | null
 		};
 	}
 	try {
@@ -45,21 +43,13 @@ export const load: PageLoad = async ({ fetch, url }) => {
 		return {
 			coordinates,
 			audit: audit as ListAuditRecordsResponse | null,
-			auditError: null as string | null,
-			auditErrorCode: null as string | null
+			auditError: null as string | null
 		};
 	} catch (err) {
-		const code =
-			err instanceof ConnectError && err.code === Code.ResourceExhausted
-				? 'resource_exhausted'
-				: err instanceof ConnectError && err.code === Code.InvalidArgument
-					? 'invalid_argument'
-					: 'failed';
 		return {
 			coordinates,
 			audit: null as ListAuditRecordsResponse | null,
-			auditError: errorMessage(err) as string | null,
-			auditErrorCode: code as string | null
+			auditError: errorMessage(err) as string | null
 		};
 	}
 };

@@ -1,4 +1,3 @@
-import { Code, ConnectError } from '@connectrpc/connect';
 import { errorMessage, orkstack } from '$lib/client';
 import { pageNumber } from '$lib/browsing';
 import { DEFAULT_DELIVERY_LIMIT, DELIVERY_FILTER_PARAM, deliveryLimit, type DeliveryCoordinates } from '$lib/deliveries';
@@ -55,8 +54,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const deliveriesRead = deliveryFilterError
 		? Promise.resolve({
 				deliveries: null as ListDeliveriesResponse | null,
-				deliveriesError: deliveryFilterError as string | null,
-				deliveriesErrorCode: 'invalid_argument' as string | null
+				deliveriesError: deliveryFilterError as string | null
 			})
 		: client.webhooks
 				.listDeliveries({
@@ -67,17 +65,11 @@ export const load: PageLoad = async ({ fetch, url }) => {
 				.then(
 					(deliveries) => ({
 						deliveries: deliveries as ListDeliveriesResponse | null,
-						deliveriesError: null as string | null,
-						deliveriesErrorCode: null as string | null
+						deliveriesError: null as string | null
 					}),
 					(err) => ({
 						deliveries: null as ListDeliveriesResponse | null,
-						deliveriesError: errorMessage(err) as string | null,
-						deliveriesErrorCode: (err instanceof ConnectError && err.code === Code.ResourceExhausted
-							? 'resource_exhausted'
-							: err instanceof ConnectError && err.code === Code.InvalidArgument
-								? 'invalid_argument'
-								: 'failed') as string | null
+						deliveriesError: errorMessage(err) as string | null
 					})
 				);
 	const [hooks, panelWebhooks, deliveries] = await Promise.all([webhooksRead, panelRead, deliveriesRead]);
