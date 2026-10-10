@@ -6,14 +6,17 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // orkflowYAML is a minimal orkflow named name, labelled team=team.
@@ -86,6 +89,38 @@ func TestListOrkflows_FilteredPastTheDefaultPageHasAToken(t *testing.T) {
 	rest := listOrkflowsPage(t, svc, 0, page.GetNextPageToken(), "labels.team=payments")
 	if got := orkflowNames(rest.GetOrkflows()); got != "flow-200" || rest.GetNextPageToken() != "" {
 		t.Fatalf("second page = %s (token %q), want flow-200 alone", got, rest.GetNextPageToken())
+	}
+}
+
+// TestListOrkflows_TimeFilters: created_at reaches the rows ListOrkflows
+// matches, so an at-or-after or before bound selects by when each orkflow's
+// listed version was applied.
+func TestListOrkflows_TimeFilters(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	for name, day := range map[string]int{"flow-a": 1, "flow-b": 10, "flow-c": 15} {
+		wf := &orkstackv1.Orkflow{
+			Name: name, Version: "1.0.0",
+			CreatedAt: timestamppb.New(time.Date(2026, time.March, day, 12, 0, 0, 0, time.UTC)),
+		}
+		if _, _, err := store.Put(context.Background(), wf, artifacts.NoHeadExpectation()); err != nil {
+			t.Fatalf("Put(%s): %v", name, err)
+		}
+	}
+	svc := api.NewService(api.Config{
+		Orkflows: store, Runs: engine.NewRunStore(), Bus: engine.NewEventBus(),
+		Starter: &fakeStarter{}, NewRunID: func() string { return "run-001" },
+	})
+	for _, tc := range []struct {
+		texts []string
+		want  string
+	}{
+		{[]string{"created_at>=2026-03-10T12:00:00Z"}, "flow-b,flow-c"},
+		{[]string{"created_at<2026-03-10T12:00:00Z"}, "flow-a"},
+		{[]string{"created_at>=2026-03-02T00:00:00Z", "created_at<2026-03-15T00:00:00Z"}, "flow-b"},
+	} {
+		if got := orkflowNames(listOrkflowsPage(t, svc, 0, "", tc.texts...).GetOrkflows()); got != tc.want {
+			t.Errorf("%q = %s, want %s", tc.texts, got, tc.want)
+		}
 	}
 }
 

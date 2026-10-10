@@ -9,9 +9,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
@@ -265,6 +267,40 @@ func TestListNamespaces_LabelsAndHoldFilters(t *testing.T) {
 		{[]string{"hold.reason!="}, "[beta]"},
 		{[]string{"hold.reason="}, "[alpha default gamma]"},
 		{[]string{"hold.reason~billing", "name^b"}, "[beta]"},
+	} {
+		for _, size := range []int32{0, 1, 25} {
+			var got []string
+			for _, page := range walkNamespacePages(t, svc, size, tc.texts...) {
+				got = append(got, page...)
+			}
+			if fmt.Sprint(got) != tc.want {
+				t.Errorf("%q size %d = %v, want %s", tc.texts, size, got, tc.want)
+			}
+		}
+	}
+}
+
+// TestListNamespaces_TimeFilters: created_at and updated_at reach the rows
+// ListNamespaces matches, so an at-or-after or before bound selects by them.
+// The synthesized default carries neither stamp, and an unset time never
+// matches.
+func TestListNamespaces_TimeFilters(t *testing.T) {
+	at := func(day int) *timestamppb.Timestamp {
+		return timestamppb.New(time.Date(2026, time.March, day, 12, 0, 0, 0, time.UTC))
+	}
+	svc, _ := pagedServiceOf(t,
+		&orkstackv1.Namespace{Name: "alpha", CreatedAt: at(1), UpdatedAt: at(20)},
+		&orkstackv1.Namespace{Name: "beta", CreatedAt: at(10), UpdatedAt: at(10)},
+		&orkstackv1.Namespace{Name: "gamma", CreatedAt: at(15), UpdatedAt: at(16)},
+	)
+	for _, tc := range []struct {
+		texts []string
+		want  string
+	}{
+		{[]string{"created_at>=2026-03-10T12:00:00Z"}, "[beta gamma]"},
+		{[]string{"updated_at>=2026-03-16T00:00:00Z"}, "[alpha gamma]"},
+		{[]string{"created_at<2026-03-10T12:00:00Z"}, "[alpha]"},
+		{[]string{"created_at>=2026-03-01T00:00:00Z", "updated_at<2026-03-16T00:00:00Z"}, "[beta]"},
 	} {
 		for _, size := range []int32{0, 1, 25} {
 			var got []string
