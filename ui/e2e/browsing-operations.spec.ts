@@ -26,7 +26,11 @@ import { OP, addListFilter, selectOption } from './uiHelpers';
 const ENGINE = 'http://127.0.0.1:18090';
 const UI = 'http://127.0.0.1:14184';
 const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-browsing';
-const NS = 'browsing-ops';
+// One namespace per execution: R1-R3 count every run of a status, of a
+// contains match or of a window across the whole namespace, and the shared
+// development archive keeps every earlier execution's finished runs there, so
+// a fixed name would hand each rerun the FAILED runs of the ones before it.
+const NS = `browsing-ops-${Date.now().toString(36)}`;
 const FLOW = `browsing-${Date.now().toString(36)}`;
 // A second Orkflow whose every run fails, so the status filters have more
 // than one status to choose between.
