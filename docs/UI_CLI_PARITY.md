@@ -85,7 +85,12 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   bare group such as `orkctl run` prints its help and exits 0); `2` a watched
   run failed; `3` a watched run was canceled; `4` the command's own negative
   verdict (`orker drain` timed out, `run plan` contradicts an
-  `--assert-*`, `apply --check` found changes).
+  `--assert-*`, `apply --check` found changes); `130` interrupted. The first
+  Ctrl-C (SIGINT) or SIGTERM lets the command unwind — a `--json` document
+  is still closed and parses, a partial download leaves no temporary file —
+  then prints `Error: interrupted`; a second one kills `orkctl` at once.
+  `task run` keeps its own code for this: it stops the container and exits
+  3.
 - **The browser invents no validation the CLI bypasses**, and typed input
   controls are a presentation of declared inputs, not a schema language (see
   "Baseline operator flows").

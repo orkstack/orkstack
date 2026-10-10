@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"connectrpc.com/connect"
@@ -38,6 +40,9 @@ const (
 	// would change something: the documents and what is stored differ. It
 	// is that command's own negative verdict, on the terms above.
 	exitApplyCheckChanges = 4
+	// exitInterrupted is SIGINT or SIGTERM ending the command: the shell's
+	// own 128+SIGINT, so a script can tell "stopped" from "failed".
+	exitInterrupted = 130
 )
 
 // defaultServer is used when neither --server, ORK_SERVER nor the config
@@ -79,11 +84,35 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return exitCodeFor(err)
+	// The first SIGINT or SIGTERM cancels the context every command derives
+	// from, so the command unwinds through its defers — a --json document is
+	// closed, a partial download's temporary file removed — and exits 130.
+	// The notifier is stopped on that first signal, so a second one kills
+	// orkctl at once.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	if err := root.ExecuteContext(ctx); err != nil {
+		return reportError(ctx, stderr, err)
 	}
 	return exitOK
+}
+
+// reportError prints a command's error and returns its exit code. A command
+// a signal ended reports itself interrupted (130) — unless it chose its own
+// code for that case (`task run` exits 3 once it has cancelled its
+// container).
+func reportError(ctx context.Context, stderr io.Writer, err error) int {
+	var coded *exitCodeError
+	if ctx.Err() != nil && !errors.As(err, &coded) {
+		fmt.Fprintln(stderr, "Error: interrupted")
+		return exitInterrupted
+	}
+	fmt.Fprintf(stderr, "Error: %v\n", err)
+	return exitCodeFor(err)
 }
 
 // globalFlags holds the persistent flags and the derived API clients.
