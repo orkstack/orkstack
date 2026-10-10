@@ -332,7 +332,7 @@ then the variable it becomes.
 | `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme. A namespace's `allowed_secrets` can only narrow this, never widen it (§5, "Secrets on a shared pool"). Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
-| `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds `ork-spool/`, where an upload whose source cannot be re-read is staged; boot empties it |
+| `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds two process-scoped scratch directories that boot empties: `ork-spool/`, where an upload whose source cannot be re-read is staged, and `ork-stage/`, the staging cache — attempts staging the same input digest at the same time (the items of a fan-out over one upstream) share one verified download, hard-linked into each attempt's read-only input tree and deleted when the last of them ends. Where the root cannot hard-link, each attempt downloads its own copy, as before |
 | `orker.log.flush_bytes` | `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
 | `orker.log.flush_interval` | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
@@ -590,14 +590,27 @@ Two bounds decide when a chunk is written, and a deployment tunes both:
 - `ORK_ORKER_LOG_FLUSH_BYTES` (64 KiB) batches a chatty task, so a hundred
   thousand lines cost a few hundred objects rather than a hundred thousand.
 - `ORK_ORKER_LOG_FLUSH_INTERVAL` (500 ms) bounds the wait for a slow one, so a
-  task printing a line a minute is visible in half a second.
+  task printing a line a minute is visible in half a second. It is also the
+  shortest gap between two uploads of one attempt, and it does not stay fixed:
+  after every 120 chunks (about a minute of steady output) it doubles, up to
+  8× (4 s at the default), so a two-hour task printing steadily writes about
+  1,900 objects rather than 14,000 while its first minute keeps the
+  half-second latency.
+
+While the pace holds a chunk back, the chunk grows — up to 1 MiB — rather than
+blocking the task. Only a task writing more than 1 MiB per interval (2 MiB/s at
+the default) waits on its own `write(2)`, which is the bound: there is no
+queue and nothing is dropped. A store that refuses a chunk after three tries
+costs the task that one stall; for the next 5 s (doubling to 30 s while it
+keeps failing) chunks are counted as dropped without being tried, and the first
+chunk that lands afterwards says how many bytes were lost.
 
 A third bounds the damage. `ORK_ORKER_LOG_MAX_BYTES` (16 MiB) caps ONE task
 attempt: at the cap the Orker writes a final chunk saying so, in words, and
 stores nothing more. **Truncation is visible in the stream**, never silent —
 `orkctl run logs` prints the notice and the RPC sets `truncated` on it. The
-Orker's own memory is one flush buffer per running task, and a single
-over-long line is split rather than accumulated.
+Orker's own memory is one flush buffer per running task — at most 1 MiB plus
+one line — and a single over-long line is split rather than accumulated.
 
 **What one reader costs the engine is bounded in bytes, not in chunks.** A
 replica holds one page per open subscriber: at most **4 MiB of chunk data,

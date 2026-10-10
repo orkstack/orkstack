@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"time"
@@ -788,19 +786,15 @@ func (d *OCIDispatcher) writeMemo(ctx context.Context, in *orkstackv1.ExecuteTas
 }
 
 // completeStaging performs what stageInputs deferred: every recorded fetch,
-// in recorded order, through fetchInto (so a digest mismatch is still
-// INPUT_ARTIFACT_CORRUPT and a missing object INPUT_ARTIFACT_UNAVAILABLE),
+// transferLimit at a time and reporting the lowest-index failure, through
+// fetchInto (so a digest mismatch is still INPUT_ARTIFACT_CORRUPT and a
+// missing object INPUT_ARTIFACT_UNAVAILABLE),
 // then the secrets exactly as stageInputs resolves them. A no-op when nothing
 // was deferred.
 func (d *OCIDispatcher) completeStaging(ctx context.Context, in *orkstackv1.ExecuteTaskInput,
 	ws *Workspace, staged *stagedInputs) *Failure {
-	for _, fetch := range staged.deferred {
-		if err := os.MkdirAll(filepath.Dir(fetch.hostPath), 0o755); err != nil {
-			return FailCause(ReasonWorkdirFailed, err, "stage input artifact %q: %v", fetch.ref.GetName(), err)
-		}
-		if failure := d.fetchInto(ctx, fetch.ref, fetch.hostPath); failure != nil {
-			return failure
-		}
+	if failure := d.fetchAll(ctx, staged, staged.deferred); failure != nil {
+		return failure
 	}
 	staged.deferred = nil
 	if staged.secretsDeferred {

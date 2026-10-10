@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -127,6 +128,34 @@ type OCIDispatcher struct {
 	// now is the memo step's clock (a memo's age, a hit's finished_at). Nil
 	// means time.Now; tests inject one.
 	now func() time.Time
+	// transfers bounds how many object-store requests one phase of one
+	// attempt has in flight; zero means transferParallelism. A test sets 1 for
+	// the serial baseline.
+	transfers int
+	// stage is the process's staging cache, built on first use under the
+	// work root.
+	stageOnce sync.Once
+	stage     *stagingCache
+}
+
+// transferLimit is the per-phase bound on concurrent object-store requests.
+func (d *OCIDispatcher) transferLimit() int {
+	if d.transfers > 0 {
+		return d.transfers
+	}
+	return transferParallelism
+}
+
+// stagingCache is the process's staging cache (staging_cache.go).
+func (d *OCIDispatcher) stagingCache() *stagingCache {
+	d.stageOnce.Do(func() {
+		root := d.WorkRoot
+		if root == "" {
+			root = os.TempDir()
+		}
+		d.stage = newStagingCache(filepath.Join(root, StageDirName))
+	})
+	return d.stage
 }
 
 // PhaseObserver watches one attempt's progress through the §7.1 sequence: it
@@ -557,6 +586,8 @@ func (d *OCIDispatcher) execute(
 	if failure != nil {
 		return nil, failure
 	}
+	// The attempt's holds on the staging cache last as long as the attempt.
+	defer staged.releaseStaging()
 
 	// STEP 5b. The memo step, for a cached task only (docs/OCI_ACTIVITY_
 	// CONTRACT.md §5.4 "Memoized completion"). The render happens here, with
@@ -963,6 +994,33 @@ type stagedInputs struct {
 	// secretsDeferred is set when stageInputs skipped secret resolution
 	// (deferBytes); completeStaging resolves them.
 	secretsDeferred bool
+
+	// leases are this attempt's holds on staging-cache entries, released
+	// when the attempt ends (releaseStaging) so a concurrent attempt staging
+	// the same digest links the same download instead of fetching it again.
+	leaseMu sync.Mutex
+	leases  []*stageLease
+}
+
+func (s *stagedInputs) hold(lease *stageLease) {
+	s.leaseMu.Lock()
+	s.leases = append(s.leases, lease)
+	s.leaseMu.Unlock()
+}
+
+// releaseStaging drops every staging-cache hold this attempt took. Safe on a
+// nil receiver and safe to call twice.
+func (s *stagedInputs) releaseStaging() {
+	if s == nil {
+		return
+	}
+	s.leaseMu.Lock()
+	leases := s.leases
+	s.leases = nil
+	s.leaseMu.Unlock()
+	for _, lease := range leases {
+		lease.Release()
+	}
 }
 
 // noteInputFile records one input file for the memo key.
@@ -977,29 +1035,61 @@ func (s *stagedInputs) noteInputFile(containerPath, name, sha string) {
 	})
 }
 
-// fetch downloads ref into hostPath now, or — with deferBytes — records the
-// download for completeStaging.
-func (d *OCIDispatcher) fetchOrDefer(ctx context.Context, staged *stagedInputs, deferBytes bool,
-	ref *orkstackv1.ArtifactRef, hostPath string) *Failure {
+// fetchOrDefer queues ref for download into hostPath now (into now, which
+// fetchAll performs), or — with deferBytes — records it for completeStaging.
+func fetchOrDefer(staged *stagedInputs, now *[]deferredFetch, deferBytes bool,
+	ref *orkstackv1.ArtifactRef, hostPath string) {
 	if deferBytes {
 		staged.deferred = append(staged.deferred, deferredFetch{ref: ref, hostPath: hostPath})
+		return
+	}
+	*now = append(*now, deferredFetch{ref: ref, hostPath: hostPath})
+}
+
+// fetchAll downloads every fetch, transferLimit at a time, each digest-verified
+// into its own path (creating its directory). The tree it builds is the same
+// whatever order the downloads finish in, because every fetch owns its path;
+// the failure it reports is the lowest-index one, which is the one a serial
+// loop would have reported.
+func (d *OCIDispatcher) fetchAll(ctx context.Context, staged *stagedInputs, fetches []deferredFetch) *Failure {
+	failures := make([]*Failure, len(fetches))
+	at, err := eachBounded(ctx, len(fetches), d.transferLimit(), func(ctx context.Context, i int) error {
+		fetch := fetches[i]
+		if err := os.MkdirAll(filepath.Dir(fetch.hostPath), 0o755); err != nil {
+			failures[i] = FailCause(ReasonWorkdirFailed, err, "stage input artifact %q: %v", fetch.ref.GetName(), err)
+			return err
+		}
+		if failure := d.fetchInto(ctx, staged, fetch.ref, fetch.hostPath); failure != nil {
+			failures[i] = failure
+			return failure
+		}
+		return nil
+	})
+	if err == nil {
 		return nil
 	}
-	return d.fetchInto(ctx, ref, hostPath)
+	if failures[at] != nil {
+		return failures[at]
+	}
+	return FailCause(ReasonInputUnavailable, err, "stage input artifacts: %v", err)
 }
 
 // stageInputs stages every upstream contribution and the secrets. With
-// deferBytes false it is exactly today's staging, in today's order. With
-// deferBytes true — a cached task's attempt — everything is built the same
-// way, upstream values.json objects are still fetched and verified (the
-// render reads them), but every artifact download, and the secrets, are
-// recorded for completeStaging instead of performed.
+// deferBytes false every download happens here; with deferBytes true — a
+// cached task's attempt — everything is built the same way, upstream
+// values.json objects are still fetched and verified (the render reads them),
+// but every artifact download, and the secrets, are recorded for
+// completeStaging instead of performed.
+//
+// The walk that builds task.json's lists is serial and in today's order; only
+// the downloads it queues run in parallel (fetchAll), so task.json, the memo
+// key and the render are byte-identical to a serial staging.
 func (d *OCIDispatcher) stageInputs(
 	ctx context.Context,
 	in *orkstackv1.ExecuteTaskInput,
 	ws *Workspace,
 	deferBytes bool,
-) (*stagedInputs, *Failure) {
+) (result *stagedInputs, failure *Failure) {
 	staged := &stagedInputs{
 		artifacts:         []taskJSONInputArtifact{},
 		upstream:          []taskJSONUpstream{},
@@ -1008,13 +1098,25 @@ func (d *OCIDispatcher) stageInputs(
 		upstreamValues:    map[string]map[string]any{},
 		upstreamArtifacts: map[string][]*orkstackv1.ArtifactRef{},
 	}
+	// A failed staging hands back no stagedInputs, so it drops its own holds.
+	defer func() {
+		if failure != nil {
+			staged.releaseStaging()
+		}
+	}()
 
+	var (
+		now []deferredFetch
+		// decode lists the plain upstreams' values.json to decode for the
+		// render once they are on disk.
+		decode []struct{ producer, hostPath string }
+	)
 	for _, up := range in.GetUpstream() {
 		producer := up.GetTaskId()
 		// A fan-out upstream carries no commit of its own: its items do, and
 		// they are staged one directory per item (§3.1).
 		if up.GetEach() != nil {
-			if failure := d.stageEachUpstream(ctx, in, ws, up, staged, deferBytes); failure != nil {
+			if failure := d.stageEachUpstream(ctx, in, ws, up, staged, &now, deferBytes); failure != nil {
 				return nil, failure
 			}
 			continue
@@ -1031,9 +1133,7 @@ func (d *OCIDispatcher) stageInputs(
 			hostPath := filepath.Join(hostDir, safe)
 			containerPath := ContainerInputArtifacts + "/" + safeComponent(producer) + "/" + safe
 
-			if failure := d.fetchOrDefer(ctx, staged, deferBytes, ref, hostPath); failure != nil {
-				return nil, failure
-			}
+			fetchOrDefer(staged, &now, deferBytes, ref, hostPath)
 			staged.noteInputFile(containerPath, ref.GetName(), ref.GetSha256())
 			entry := taskJSONInputArtifact{
 				Producer:    producer,
@@ -1054,7 +1154,8 @@ func (d *OCIDispatcher) stageInputs(
 
 		// The ancestor's committed values.json, fetched by reference. Fan-in
 		// is O(ancestors) small records, never a transitive copy of every
-		// ancestor's payload (OQ-2).
+		// ancestor's payload (OQ-2). Always fetched now, even under
+		// deferBytes: the render reads it.
 		if values := up.GetValues(); values.GetUri() != "" {
 			hostDir := filepath.Join(ws.Input, "upstream", safeComponent(producer))
 			if err := os.MkdirAll(hostDir, 0o755); err != nil {
@@ -1062,20 +1163,25 @@ func (d *OCIDispatcher) stageInputs(
 					"stage upstream values for %q: %v", producer, err)
 			}
 			hostPath := filepath.Join(hostDir, "values.json")
-			if failure := d.fetchInto(ctx, values, hostPath); failure != nil {
-				return nil, failure
-			}
+			now = append(now, deferredFetch{ref: values, hostPath: hostPath})
 			valuesPath := ContainerUpstream + "/" + safeComponent(producer) + "/values.json"
 			staged.noteInputFile(valuesPath, "values.json", values.GetSha256())
 			staged.upstream = append(staged.upstream, taskJSONUpstream{
 				TaskID:     producer,
 				ValuesPath: valuesPath,
 			})
-			if raw, err := os.ReadFile(hostPath); err == nil {
-				decoded := map[string]any{}
-				if json.Unmarshal(raw, &decoded) == nil {
-					staged.upstreamValues[producer] = decoded
-				}
+			decode = append(decode, struct{ producer, hostPath string }{producer, hostPath})
+		}
+	}
+
+	if failure := d.fetchAll(ctx, staged, now); failure != nil {
+		return nil, failure
+	}
+	for _, values := range decode {
+		if raw, err := os.ReadFile(values.hostPath); err == nil {
+			decoded := map[string]any{}
+			if json.Unmarshal(raw, &decoded) == nil {
+				staged.upstreamValues[values.producer] = decoded
 			}
 		}
 	}
@@ -1113,8 +1219,43 @@ func (d *OCIDispatcher) stageSecrets(in *orkstackv1.ExecuteTaskInput, ws *Worksp
 	return nil
 }
 
-// fetchInto downloads one referenced artifact and verifies its digest.
-func (d *OCIDispatcher) fetchInto(ctx context.Context, ref *orkstackv1.ArtifactRef, dest string) *Failure {
+// fetchInto puts one referenced artifact's verified bytes at dest.
+//
+// A reference with a sha256 goes through the staging cache: the bytes are
+// downloaded and verified once per digest for every attempt staging them at
+// the same time, and hard-linked into each attempt's input tree, with this
+// attempt holding the entry (staged.hold) until it ends. When the cache cannot
+// serve — its directory cannot be made, or the link fails (EXDEV, a filesystem
+// without hard links) — the bytes are downloaded straight to dest, as they
+// always were. A reference with no sha256 cannot be keyed, so it is always
+// downloaded directly.
+func (d *OCIDispatcher) fetchInto(ctx context.Context, staged *stagedInputs, ref *orkstackv1.ArtifactRef, dest string) *Failure {
+	if d.Store == nil {
+		return Fail(ReasonInputUnavailable, "this orker has no artifact store")
+	}
+	if ref.GetSha256() == "" || staged == nil {
+		return d.downloadInto(ctx, ref, dest)
+	}
+	cache := d.stagingCache()
+	path, lease, failure := cache.acquire(ctx, ref, d.downloadInto)
+	if failure != nil {
+		if failure.Reason == ReasonWorkdirFailed {
+			// The cache's own disk work failed; the download itself may not.
+			return d.downloadInto(ctx, ref, dest)
+		}
+		return failure
+	}
+	if err := cache.linkInto(path, dest); err != nil {
+		lease.Release()
+		return d.downloadInto(ctx, ref, dest)
+	}
+	staged.hold(lease)
+	return nil
+}
+
+// downloadInto downloads one referenced artifact to dest and verifies its
+// digest.
+func (d *OCIDispatcher) downloadInto(ctx context.Context, ref *orkstackv1.ArtifactRef, dest string) *Failure {
 	if d.Store == nil {
 		return Fail(ReasonInputUnavailable, "this orker has no artifact store")
 	}
@@ -1605,14 +1746,26 @@ func (d *OCIDispatcher) commit(
 		}
 	}
 
-	// Steps 5-7: upload artifacts, then values.json, then the streams.
-	uploaded := make([]*orkstackv1.ArtifactRef, 0, len(items))
-	for _, item := range items {
+	// Steps 5-7: upload artifacts, then values.json, then the streams. The
+	// artifacts go up transferLimit at a time, each into its own slot, so the
+	// commit lists them in scan order whatever order they finish in, and a
+	// failure names the lowest-index artifact that failed.
+	uploaded := make([]*orkstackv1.ArtifactRef, len(items))
+	uploadFailures := make([]*Failure, len(items))
+	if at, err := eachBounded(ctx, len(items), d.transferLimit(), func(ctx context.Context, i int) error {
+		item := items[i]
 		ref, failure := d.upload(ctx, provenance, item.name, item.path, item.contentType, item.sha, item.size)
 		if failure != nil {
-			return nil, failure
+			uploadFailures[i] = failure
+			return failure
 		}
-		uploaded = append(uploaded, ref)
+		uploaded[i] = ref
+		return nil
+	}); err != nil {
+		if uploadFailures[at] != nil {
+			return nil, uploadFailures[at]
+		}
+		return nil, FailCause(ReasonArtifactUploadFailed, err, "upload output artifacts: %v", err)
 	}
 	valuesRef, failure := d.uploadBytes(ctx, provenance, "values.json", values, "application/json")
 	if failure != nil {

@@ -479,9 +479,11 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// worker process that opened its session, so every ork-pin-* under the work
 	// root is dead by construction rather than by heuristic (§6.4).
 	a.reapPinDirectories(root)
-	// And the upload spool, for the same reason: a spool file outlives its
-	// upload only when the process died mid-upload.
+	// And the upload spool and the staging cache, for the same reason: a
+	// spool file outlives its upload, and a staging entry the attempts that
+	// held it, only when the process died.
 	a.reapScratch(filepath.Join(root, SpoolDirName))
+	a.reapScratch(filepath.Join(root, StageDirName))
 	return nil
 }
 

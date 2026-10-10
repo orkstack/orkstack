@@ -69,6 +69,7 @@ func TestEachBounded_ReportsTheLowestFailingIndex(t *testing.T) {
 // slowStatStore delays every Stat and reports missing the URIs it was told.
 type slowStatStore struct {
 	artifacts.Store
+	flight
 	delay   time.Duration
 	missing map[string]bool
 	calls   atomic.Int32
@@ -76,6 +77,8 @@ type slowStatStore struct {
 
 func (s *slowStatStore) Stat(ctx context.Context, uri string) (artifacts.ArtifactRef, error) {
 	s.calls.Add(1)
+	s.enter()
+	defer s.leave()
 	select {
 	case <-time.After(s.delay):
 	case <-ctx.Done():
@@ -96,21 +99,19 @@ func sourceArtifacts(n int) []*orkstackv1.ArtifactRef {
 }
 
 // TestConfirmSourceArtifacts_IsBoundedParallel is F-orker-storage-perf-8: a
-// cache hit's existence checks run eight at a time, so 64 artifacts at 20 ms
-// each take about 160 ms rather than 1.28 s.
+// cache hit's existence checks run eight at a time — never more, and more
+// than one — rather than one after another.
 func TestConfirmSourceArtifacts_IsBoundedParallel(t *testing.T) {
 	store := &slowStatStore{delay: 20 * time.Millisecond}
-	began := time.Now()
 	at, err := confirmSourceArtifacts(context.Background(), store, sourceArtifacts(64))
-	elapsed := time.Since(began)
 	if err != nil || at != -1 {
 		t.Fatalf("confirm = %d, %v", at, err)
 	}
 	if store.calls.Load() != 64 {
 		t.Fatalf("Stat calls = %d; want 64", store.calls.Load())
 	}
-	if elapsed > 640*time.Millisecond {
-		t.Fatalf("64 checks at 20 ms took %s; serial is 1.28 s, eight at a time is ~160 ms", elapsed)
+	if peak := store.max(); peak < 2 || peak > transferParallelism {
+		t.Fatalf("peak concurrent checks = %d; want 2..%d (serial is 1)", peak, transferParallelism)
 	}
 }
 
