@@ -125,6 +125,42 @@ test('P1: the gallery lists every example with its name and description', async 
 	await shot(page, 'screenshot-apply-gallery.png');
 });
 
+// F-ui-perf-5: the page ships names and descriptions; a document is served
+// one at a time, byte for byte, only when a card asks for it.
+test('P1b: the page carries no example YAML; one example is fetched on demand', async ({ page }) => {
+	const html = await (await fetch(`${UI}/apply?ns=${NS}`)).text();
+	for (const example of EXAMPLES) {
+		// The longest plain line of the document's tasks: in the page, raw or
+		// serialized, only if the document itself were shipped.
+		const yaml = readFileSync(path.join(repoRoot, 'examples', `${example.slug}.ork.yaml`), 'utf8');
+		const tasks = yaml.slice(Math.max(0, yaml.indexOf('\ntasks:')));
+		const needle = tasks
+			.split('\n')
+			.map((line) => line.trim())
+			.filter((line) => !/["'<>&\\]/.test(line))
+			.sort((a, b) => b.length - a.length)[0];
+		expect(needle.length >= 12, `${example.slug} has a distinctive line`).toBe(true);
+		expect(html, `${example.slug}'s document is not in the page`).not.toContain(needle);
+	}
+	const served = await fetch(`${UI}/apply/examples/decide-and-route`);
+	expect(served.status).toBe(200);
+	expect(served.headers.get('content-type')).toContain('text/yaml');
+	expect(await served.text()).toBe(readFileSync(path.join(repoRoot, 'examples', 'decide-and-route.ork.yaml'), 'utf8'));
+	expect((await fetch(`${UI}/apply/examples/no-such-example`)).status).toBe(404);
+
+	const fetched: string[] = [];
+	page.on('request', (request) => {
+		if (request.url().includes('/apply/examples/')) fetched.push(new URL(request.url()).pathname);
+	});
+	await page.goto(`${UI}/apply?ns=${NS}`);
+	await expect(page.getByTestId('apply-examples')).toBeVisible();
+	expect(fetched).toEqual([]);
+	await page.getByTestId('apply-example-use-decide-and-route').click();
+	await expect(page.getByTestId('apply-yaml')).toHaveValue(/name: decide-and-route/);
+	expect(fetched).toEqual(['/apply/examples/decide-and-route']);
+	note(`P1b page HTML ${html.length} bytes with no example document; one fetch on choosing: ${fetched.join(', ')}`);
+});
+
 test('P2: a new example applies, plans and runs from the browser', async ({ page }) => {
 	await page.goto(`${UI}/apply?ns=${NS}`);
 	await page.getByTestId('apply-example-use-decide-and-route').click();
