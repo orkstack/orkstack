@@ -61,6 +61,12 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   --json` prints a submission's await callbacks (the ready `curl`) on
   **stderr**, before the watch starts, so stdout stays the one JSON document
   the watch prints.
+- **Which engine `orkctl` talks to.** Most specific first: `--server`, then
+  `ORK_SERVER`, then the `server` key of its config file (`ORK_CONFIG`, else
+  `orkctl/config.json` in the platform's config directory — the file
+  `namespace use` writes, which keeps a hand-set `server`), then
+  `http://localhost:8080`. The namespace follows the same order with
+  `--namespace`, `ORK_NAMESPACE` and the file's `namespace`.
 - **What cannot be undone is confirmed.** The UI's confirmation dialogs have
   a CLI twin: `orkflow delete`, `namespace delete`, `cache purge`, `release
   promote`, `release rollback` and an `admin retention set` that **lowers**

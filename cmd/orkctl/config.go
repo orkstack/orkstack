@@ -19,8 +19,9 @@ type cliConfig struct {
 	// Namespace is the default `-n` when neither the flag nor the environment
 	// names one. Empty means the built-in default namespace.
 	Namespace string `json:"namespace,omitempty"`
-	// Server is reserved for the same treatment; it is round-tripped rather
-	// than dropped so a hand-written file is not silently rewritten smaller.
+	// Server is the engine base URL when neither --server nor ORK_SERVER
+	// names one. Empty means defaultServer. No command writes it: it is set
+	// by hand, and round-tripped so `namespace use` never drops it.
 	Server string `json:"server,omitempty"`
 }
 

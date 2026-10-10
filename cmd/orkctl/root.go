@@ -40,7 +40,8 @@ const (
 	exitApplyCheckChanges = 4
 )
 
-// defaultServer is used when neither --server nor ORK_SERVER is set.
+// defaultServer is used when neither --server, ORK_SERVER nor the config
+// file's server is set.
 const defaultServer = "http://localhost:8080"
 
 // serverEnvVar is the environment fallback for --server.
@@ -120,12 +121,23 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			if !cmd.Flags().Changed("server") {
-				if fromEnv := os.Getenv(serverEnvVar); fromEnv != "" {
-					g.server = fromEnv
+			// The config file is read at most once, and only when a flag
+			// or the environment left something for it to answer.
+			var cfg *cliConfig
+			config := func() (cliConfig, error) {
+				if cfg == nil {
+					loaded, err := loadConfig()
+					if err != nil {
+						return cliConfig{}, err
+					}
+					cfg = &loaded
 				}
+				return *cfg, nil
 			}
-			if err := g.resolveNamespace(cmd); err != nil {
+			if err := g.resolveServer(cmd, config); err != nil {
+				return err
+			}
+			if err := g.resolveNamespace(cmd, config); err != nil {
 				return err
 			}
 			g.timeoutChanged = cmd.Flags().Changed("timeout")
@@ -133,7 +145,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		},
 	}
 	root.PersistentFlags().StringVar(&g.server, "server", defaultServer,
-		"OrkStack engine base URL (env "+serverEnvVar+")")
+		"OrkStack engine base URL (env "+serverEnvVar+", then the config file's server)")
 	// No backticks in this usage string: Cobra reads a backticked span as the
 	// flag's value placeholder, so "`orkctl namespace use`" would render as
 	// `-n, --namespace orkctl namespace use`.
@@ -220,7 +232,7 @@ func unknownSubcommand(cmd *cobra.Command, args []string) error {
 // An unreadable config file is an error rather than a shrug: running against
 // `default` when the user believes they selected `payments` is the mistake
 // this whole flag exists to prevent.
-func (g *globalFlags) resolveNamespace(cmd *cobra.Command) error {
+func (g *globalFlags) resolveNamespace(cmd *cobra.Command, config func() (cliConfig, error)) error {
 	if cmd.Flags().Changed("namespace") {
 		return nil
 	}
@@ -228,11 +240,32 @@ func (g *globalFlags) resolveNamespace(cmd *cobra.Command) error {
 		g.namespace = fromEnv
 		return nil
 	}
-	cfg, err := loadConfig()
+	cfg, err := config()
 	if err != nil {
 		return err
 	}
 	g.namespace = cfg.Namespace
+	return nil
+}
+
+// resolveServer settles which engine this invocation talks to, by the same
+// precedence as the namespace: the --server flag, ORK_SERVER, the config
+// file's server, then defaultServer.
+func (g *globalFlags) resolveServer(cmd *cobra.Command, config func() (cliConfig, error)) error {
+	if cmd.Flags().Changed("server") {
+		return nil
+	}
+	if fromEnv := os.Getenv(serverEnvVar); fromEnv != "" {
+		g.server = fromEnv
+		return nil
+	}
+	cfg, err := config()
+	if err != nil {
+		return err
+	}
+	if cfg.Server != "" {
+		g.server = cfg.Server
+	}
 	return nil
 }
 
