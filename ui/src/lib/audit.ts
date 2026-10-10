@@ -1,11 +1,18 @@
-import { timestampFromDate } from '@bufbuild/protobuf/wkt';
 import type { AuditRecord } from './gen/orkstack/v1/audit_pb';
-import { shellQuote } from './runDetail';
+import { listHref, pageStackKey } from './browsing';
+import { FilterOperator, equalityOf, filterFlags, type FieldFilter } from './listFilter';
 
-// The Admin → Audit page's pure half: what the URL says, what the request is,
-// what a row reads as, and the CLI command for the same listing. Kept out of
-// the component so each rule is unit-tested once (test/audit.test.ts) and the
-// page and the command can never disagree about a filter.
+// The Admin → Audit page's pure half: the page's address, what a row reads
+// as, and the CLI command for the same listing. Kept out of the component so
+// each rule is unit-tested once (test/audit.test.ts) and the page and the
+// command can never disagree.
+//
+// What the trail may be filtered on is not written here: it is the
+// ListAuditRecordsRequest allowlist, offered by the one filter component
+// (lib/listFilter.ts, components/ListFilter.svelte) and decided by the engine
+// (docs/UI_CLI_PARITY.md "Filtering lists"). The trail is a deployment-wide
+// listing: a `namespace` filter narrows it like any other property, and
+// `namespace=` (the empty value) selects the deployment-wide writes.
 
 /** The caption every rendering carries, empty page included (spec: Attribution). */
 export const AUDIT_CAPTION =
@@ -17,72 +24,19 @@ export const UNATTRIBUTED = 'unattributed';
 export const DEFAULT_AUDIT_LIMIT = 50;
 export const MAX_AUDIT_LIMIT = 200;
 
-/** The action-prefix filter's choices: every noun the trail records. */
-export const AUDIT_ACTION_OPTIONS = [
-	{ value: '', label: 'All actions' },
-	{ value: 'namespace.', label: 'namespace.' },
-	{ value: 'orkflow.', label: 'orkflow.' },
-	{ value: 'run.', label: 'run.' },
-	{ value: 'webhook.', label: 'webhook.' },
-	{ value: 'trigger.', label: 'trigger.' },
-	{ value: 'retention.', label: 'retention.' }
-];
-
-/**
- * The scope is `all` unless the URL says `namespace`: the trail's natural
- * scope is the deployment, and deployment-wide writes (retention, webhooks)
- * carry no namespace, so a namespace scope would hide them.
- */
-export type AuditScope = 'all' | 'namespace';
-
 export interface AuditCoordinates {
-	scope: AuditScope;
-	/** The switcher's namespace, as a NAME (`default` spelled out). Only used when scope is `namespace`. */
-	namespace: string;
-	action: string;
-	principal: string;
-	since: string;
-	until: string;
+	/** The switcher's namespace, preserved in every address; it does NOT filter the trail. */
+	ns: string;
+	filters: FieldFilter[];
 	limit: number;
 	cursor: string;
 	page: number;
-}
-
-export function auditScope(value: string | null): AuditScope {
-	return value === 'namespace' ? 'namespace' : 'all';
 }
 
 /** limit from the URL: 1..200, anything else is the default. */
 export function auditLimit(value: string | null): number {
 	const parsed = Number(value ?? '');
 	return Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_AUDIT_LIMIT ? parsed : DEFAULT_AUDIT_LIMIT;
-}
-
-// RFC 3339 with seconds and a zone, or a bare date meaning midnight UTC — the
-// two spellings `orkctl admin audit --since/--until` accepts, so a window typed
-// here is a window the copied command accepts too.
-const BOUND = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2}))?$/;
-
-export function auditBound(value: string) {
-	if (!value) return undefined;
-	const iso = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00Z` : value;
-	const date = new Date(iso);
-	return Number.isNaN(date.getTime()) ? undefined : timestampFromDate(date);
-}
-
-/** A window the engine would refuse is refused here first, never sent as an unfiltered read. */
-export function auditFilterError(since: string, until: string): string | null {
-	if (since && (!BOUND.test(since) || !auditBound(since))) return 'Since must be an RFC 3339 instant (or YYYY-MM-DD).';
-	if (until && (!BOUND.test(until) || !auditBound(until))) return 'Until must be an RFC 3339 instant (or YYYY-MM-DD).';
-	const s = auditBound(since);
-	const u = auditBound(until);
-	if (s && u && Number(u.seconds) * 1e9 + u.nanos <= Number(s.seconds) * 1e9 + s.nanos) return 'Until must be after since.';
-	return null;
-}
-
-/** The request namespace: empty means EVERY namespace, the one place in the API it does. */
-export function auditRequestNamespace(c: Pick<AuditCoordinates, 'scope' | 'namespace'>): string {
-	return c.scope === 'namespace' ? c.namespace || 'default' : '';
 }
 
 export function auditPrincipalLabel(principal: string): string {
@@ -93,39 +47,45 @@ export function auditResultLabel(rec: Pick<AuditRecord, 'succeeded' | 'errorCode
 	return rec.succeeded ? 'ok' : `refused ${rec.errorCode || '-'}`;
 }
 
-/**
- * The page's address. Only ever `set`s, omits empties, and leaves `page` out
- * at 1 — listHref's rules (lib/browsing.ts), for this page's own keys.
- */
+function coordinatesOf(c: AuditCoordinates): Record<string, string> {
+	return {
+		ns: c.ns || 'default',
+		limit: c.limit === DEFAULT_AUDIT_LIMIT ? '' : String(c.limit),
+		cursor: c.cursor,
+		// A page number without a cursor names no page the engine could return.
+		page: c.cursor ? String(c.page) : ''
+	};
+}
+
+/** The page's address — listHref's rules (lib/browsing.ts), the filters as repeated `filter` keys. */
 export function auditHref(c: AuditCoordinates, changes: Partial<AuditCoordinates> = {}): string {
 	const next = { ...c, ...changes };
-	const params = new URLSearchParams();
-	params.set('ns', next.namespace || 'default');
-	if (next.scope === 'namespace') params.set('scope', 'namespace');
-	if (next.action) params.set('action', next.action);
-	if (next.principal) params.set('principal', next.principal);
-	if (next.since) params.set('since', next.since);
-	if (next.until) params.set('until', next.until);
-	if (next.limit !== DEFAULT_AUDIT_LIMIT) params.set('limit', String(next.limit));
-	if (next.cursor) params.set('cursor', next.cursor);
-	if (next.cursor && next.page > 1) params.set('page', String(next.page));
-	return `/admin/audit?${params.toString()}`;
+	return listHref('/admin/audit', coordinatesOf(next), { filter: next.filters });
 }
 
 /** The sessionStorage key for this filter set's cursor stack: the address without cursor and page. */
 export function auditStackKey(c: AuditCoordinates): string {
-	return `orkstack.pages:${auditHref(c, { cursor: '', page: 1 })}`;
+	return pageStackKey('/admin/audit', coordinatesOf(c), { filter: c.filters });
 }
 
-/** `orkctl admin audit …` for the same listing (first page), every value shell-quoted. */
-export function auditCliCommand(c: AuditCoordinates): string {
-	const parts = ['orkctl'];
-	if (c.scope === 'namespace') parts.push('-n', shellQuote(c.namespace || 'default'));
-	parts.push('admin', 'audit');
-	if (c.since) parts.push('--since', shellQuote(c.since));
-	if (c.until) parts.push('--until', shellQuote(c.until));
-	if (c.action) parts.push('--action', shellQuote(c.action));
-	if (c.principal) parts.push('--principal', shellQuote(c.principal));
+/** `orkctl admin audit …` for the same listing (first page), every value shell-quoted — never -n. */
+export function auditCliCommand(c: Pick<AuditCoordinates, 'filters' | 'limit'>): string {
+	const parts = ['orkctl', 'admin', 'audit', ...filterFlags(c.filters)];
 	if (c.limit !== DEFAULT_AUDIT_LIMIT) parts.push('--limit', String(c.limit));
 	return parts.join(' ');
+}
+
+/** The scope sentence: every namespace, only the deployment-wide writes, one namespace, or a narrowing. */
+export function auditScopeSentence(filters: FieldFilter[]): string {
+	if (!filters.some((f) => f.field === 'namespace')) {
+		return 'Showing every namespace, deployment-wide writes included. The namespace selector does not filter this page; a namespace filter does.';
+	}
+	const only = filters.filter((f) => f.field === 'namespace');
+	if (only.length === 1 && only[0].values.length === 1 && only[0].values[0] === '' && only[0].op === FilterOperator.EQUALS) {
+		return 'Showing only deployment-wide writes (retention, image policy, webhooks, releases, Orker cordons), which carry no namespace.';
+	}
+	const one = equalityOf(filters, 'namespace');
+	return one
+		? `Showing namespace ${one}. Deployment-wide writes carry no namespace; the filter namespace= selects them.`
+		: 'Showing the namespaces the namespace filter selects.';
 }

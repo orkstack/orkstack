@@ -1,0 +1,7 @@
+WHEN                  PRINCIPAL     ACTION            NAMESPACE      TARGET         RESULT
+2026-01-02T01:04:05Z  dsantos       namespace.update  prod-payments  prod-payments  ok
+2026-01-01T23:04:05Z  unattributed  namespace.delete  staging        staging        refused: failed_precondition
+
+Window: 2025-12-26T03:04:05Z to 2026-01-02T03:04:05Z (exclusive), newest first.
+principal is the identity the deployment's gateway asserted in Ork-Principal;
+OrkStack records it and does not authenticate it.

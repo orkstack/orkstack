@@ -33,8 +33,17 @@ import (
 
 var releaseBins struct {
 	once               sync.Once
+	dir                string
 	orkctl, ork, orker string
 	err                error
+}
+
+// removeReleaseBinaries deletes the directory releaseBinaries built into, once
+// every test of the process has finished (TestMain).
+func removeReleaseBinaries() {
+	if releaseBins.dir != "" {
+		_ = os.RemoveAll(releaseBins.dir)
+	}
 }
 
 // releaseBinaries builds orkctl, ork and orker once per test process.
@@ -46,6 +55,7 @@ func releaseBinaries(t *testing.T) (string, string, string) {
 			releaseBins.err = err
 			return
 		}
+		releaseBins.dir = dir
 		root := repoRoot(t)
 		for _, name := range []string{"orkctl", "ork", "orker"} {
 			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name), "./cmd/"+name)
@@ -700,7 +710,7 @@ func TestIntegration_ReleaseRollbackKeepsTheRolledBackReleasesRunsWhereTheyAre(t
 	if code != 1 || !strings.Contains(stderr, `rollback returns to a release that was current before; v3 is candidate`) {
 		t.Fatalf("rollback v3: exit %d\n%s", code, stderr)
 	}
-	listed := s.mustCLI("admin", "audit", "--action", "release.", "--since", since, "--json")
+	listed := s.mustCLI("admin", "audit", "--filter", "action^release.", "--filter", "at>="+since, "--json")
 	resp := &orkstackv1.ListAuditRecordsResponse{}
 	if err := api.UnmarshalJSON([]byte(listed), resp); err != nil {
 		t.Fatalf("admin audit --json: %v", err)
@@ -872,7 +882,7 @@ func TestIntegration_ReleaseWritesAreAudited(t *testing.T) {
 	s.versionedPair(0, 0)
 	s.awaitStatus("v2 passes", noBlockers("v2"))
 	s.mustCLI("release", "ramp", "v2", "--percent", "10")
-	listed := s.mustCLI("admin", "audit", "--action", "release.", "--since", since, "--json")
+	listed := s.mustCLI("admin", "audit", "--filter", "action^release.", "--filter", "at>="+since, "--json")
 	resp := &orkstackv1.ListAuditRecordsResponse{}
 	if err := api.UnmarshalJSON([]byte(listed), resp); err != nil {
 		t.Fatalf("admin audit --json: %v", err)
@@ -892,7 +902,7 @@ func TestIntegration_ReleaseWritesAreAudited(t *testing.T) {
 	if ramped == nil || ramped.GetTarget() != "v2" || ramped.GetDetail() != "percent=10 was -@0" || !ramped.GetSucceeded() {
 		t.Fatalf("ramp record = %v", ramped)
 	}
-	s.mustCLI("admin", "audit", "--action", "release.", "--since", since)
+	s.mustCLI("admin", "audit", "--filter", "action^release.", "--filter", "at>="+since)
 	s.note("EVIDENCE audit: %s %s %q; %s %s %q", promoted.GetAction(), promoted.GetTarget(), promoted.GetDetail(),
 		ramped.GetAction(), ramped.GetTarget(), ramped.GetDetail())
 }

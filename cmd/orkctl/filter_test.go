@@ -62,6 +62,8 @@ func TestFilterHelp_EveryListCommandPrintsItsAllowlistWithoutARequest(t *testing
 		{[]string{"activity", "list"}, "filter-help-activity-list.golden", &orkstackv1.ListActivitiesRequest{}},
 		{[]string{"orker", "list"}, "filter-help-orker-list.golden", &orkstackv1.ListOrkersRequest{}},
 		{[]string{"release", "status"}, "filter-help-release-status.golden", &orkstackv1.ListReleasesRequest{}},
+		{[]string{"webhook", "deliveries"}, "filter-help-webhook-deliveries.golden", &orkstackv1.ListDeliveriesRequest{}},
+		{[]string{"admin", "audit"}, "filter-help-admin-audit.golden", &orkstackv1.ListAuditRecordsRequest{}},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			f := newFixture(t)
@@ -379,4 +381,50 @@ func TestReleaseStatusWatch_SendsTheFiltersOnEveryPoll(t *testing.T) {
 			t.Fatalf("poll %d carried %v", i, got)
 		}
 	}
+}
+
+// shellWords splits a printed command line as a POSIX shell would for the
+// quoting orkctl prints: single quotes (with '\” for a quote inside) and a
+// backslash outside quotes. It lets a test run a next-page line verbatim.
+func shellWords(t *testing.T, line string) []string {
+	t.Helper()
+	var (
+		words   []string
+		current strings.Builder
+		inWord  bool
+		quoted  bool
+	)
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quoted:
+			if c == '\'' {
+				quoted = false
+			} else {
+				current.WriteByte(c)
+			}
+		case c == '\'':
+			quoted, inWord = true, true
+		case c == '\\' && i+1 < len(line):
+			i++
+			current.WriteByte(line[i])
+			inWord = true
+		case c == ' ' || c == '\t':
+			if inWord {
+				words = append(words, current.String())
+				current.Reset()
+				inWord = false
+			}
+		default:
+			current.WriteByte(c)
+			inWord = true
+		}
+	}
+	if quoted {
+		t.Fatalf("unterminated quote in %q", line)
+	}
+	if inWord {
+		words = append(words, current.String())
+	}
+	return words
 }

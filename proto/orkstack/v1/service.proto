@@ -939,13 +939,6 @@ message ListWebhooksResponse { repeated Webhook webhooks = 1; }
 message DeleteWebhookRequest { string id = 1; }
 message DeleteWebhookResponse {}
 
-// DeliveryOutcome selects delivery records by whether they landed.
-enum DeliveryOutcome {
-  DELIVERY_OUTCOME_UNSPECIFIED = 0;   // every record
-  DELIVERY_OUTCOME_DELIVERED = 1;     // the receiver answered 2xx
-  DELIVERY_OUTCOME_FAILED = 2;        // the ladder ended without a 2xx
-}
-
 // DeliveryAttempt is one POST of one delivery, as pkg/webhooks.Attempt
 // recorded it.
 message DeliveryAttempt {
@@ -1007,33 +1000,65 @@ message Delivery {
   string redelivery_of = 20;
 }
 
+// ListDeliveriesRequest lists the deployment's delivery records. It is a
+// deployment-wide listing: a `namespace` filter narrows it to one run
+// namespace like any other property of a record. Every filterable field is
+// in the record's key, so a body is read only for a record that matches
+// (docs/UI_CLI_PARITY.md "Filtering lists", "Webhook deliveries").
+//
+// The window is the created_at interval the filters bound: created_at < T
+// ends it (default: the moment the answer is computed) and created_at >= T
+// starts it (default: the run's created_at when exactly one run_id equals
+// filter names a run the engine can read, otherwise seven days before the
+// end). A window whose end is not after its start is INVALID_ARGUMENT.
 message ListDeliveriesRequest {
-  // Each filter is an exact match; empty (or UNSPECIFIED) means every.
-  string webhook_id = 1;
-  string run_id = 2;
-  // event is only a subscribable event (webhooks.KnownEvents); TASK_LOG and
-  // RUN_CREATED are INVALID_ARGUMENT, never delivered.
-  EventType event = 3;
-  DeliveryOutcome outcome = 4;
-  // namespace filters by the run's namespace. As on ListAuditRecordsRequest,
-  // empty here means EVERY namespace, not the default one: the natural scope
-  // of the webhook surface is the deployment. "default" selects the default
-  // namespace's runs.
-  string namespace = 5;
-  // since is the inclusive start of the window and until the exclusive end,
-  // both against created_at. until empty means the moment the answer is
-  // computed. since empty means: the run's created_at when run_id names a
-  // run the engine can read, otherwise seven days before until. A window
-  // whose end is not after its start is INVALID_ARGUMENT.
-  google.protobuf.Timestamp since = 6;
-  google.protobuf.Timestamp until = 7;
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Delivery"
+    fields: [
+      {
+        path: "created_at"
+        label: "Queued"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      },
+      {
+        path: "namespace"
+        label: "Namespace"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "run_id"
+        label: "Run"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "webhook_id"
+        label: "Webhook"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "event"
+        label: "Event"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+        allowed_values: ["RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED", "TASK_SCHEDULED", "TASK_STARTED", "TASK_AWAITING", "TASK_RESOLVED", "TASK_SUCCEEDED", "TASK_FAILED"]
+      },
+      {
+        path: "delivered"
+        label: "Delivered"
+        operators: [FILTER_OPERATOR_EQUALS]
+      }
+    ]
+  };
+  reserved 1 to 7;
+  reserved "webhook_id", "run_id", "event", "outcome", "namespace", "since", "until";
   // page_size caps the records returned; 0 means the default (50); above
   // the maximum (200) is INVALID_ARGUMENT, not clamped.
   int32 page_size = 8;
-  // page_token continues a listing. It is opaque and versioned and binds
-  // every filter above; a token presented with different filters is
-  // INVALID_ARGUMENT, exactly as ListRunsRequest.page_token behaves.
+  // page_token continues a listing. It is opaque and versioned and binds the
+  // canonical filter set and the resolved window; a token presented with
+  // other filters is INVALID_ARGUMENT.
   string page_token = 9;
+  repeated FieldFilter filters = 10;
 }
 message ListDeliveriesResponse {
   repeated Delivery deliveries = 1;        // newest first
@@ -1042,6 +1067,12 @@ message ListDeliveriesResponse {
   // prints what "the last week" or "since the run started" meant.
   google.protobuf.Timestamp since = 3;
   google.protobuf.Timestamp until = 4;
+  // since_is_run_start is true when since is the created_at of the run one
+  // run_id equality filter names, because no created_at lower bound was
+  // given and the engine could read the run. The engine says so rather than
+  // leaving a client to infer it from the window's width. A page token
+  // carries it, so every page of a listing answers the same.
+  bool since_is_run_start = 5;
 }
 
 message GetDeliveryRequest { string id = 1; }

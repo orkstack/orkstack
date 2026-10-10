@@ -3,6 +3,7 @@ syntax = "proto3";
 package orkstack.v1;
 
 import "google/protobuf/timestamp.proto";
+import "orkstack/v1/filter.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
@@ -52,7 +53,8 @@ message AuditRecord {
   // action is the user-facing name of the write: "namespace.update",
   // "orkflow.apply", "trigger.create", "retention.update", … The complete
   // set is the engine's audited-procedure table (internal/api/audit.go); a
-  // client filters by prefix and never needs to know the set.
+  // client filters by prefix (action^namespace.) and never needs to know the
+  // set.
   string action = 6;
   // procedure is the exact RPC, e.g. "/orkstack.v1.NamespaceService/UpdateNamespace",
   // or the HTTP route for the legacy webhook adapter ("POST /v1/webhooks").
@@ -76,34 +78,68 @@ message AuditRecord {
   string error_code = 12;
 }
 
+// ListAuditRecordsRequest lists the deployment's audit trail. It is a
+// deployment-wide listing: a `namespace` filter narrows it like any other
+// property of a record, and `namespace=` (the empty value) selects the
+// deployment-wide writes, which carry no namespace
+// (docs/UI_CLI_PARITY.md "Filtering lists", "Control-plane audit trail").
+//
+// The window is the `at` interval the filters bound: at < T ends it
+// (default: the moment the answer is computed, on the engine's clock) and
+// at >= T starts it (default: seven days before the end). A window whose
+// end is not after its start is INVALID_ARGUMENT.
 message ListAuditRecordsRequest {
-  // namespace narrows the listing to records of one namespace. It is a
-  // FILTER, and this is the one request in the API where empty does NOT
-  // mean the default namespace: empty means every namespace, deployment-wide
-  // records included, because the natural scope of an audit trail is the
-  // deployment. "default" selects the default namespace's records.
-  // Deployment-wide records carry no namespace and match no name.
-  string namespace = 1;
-  // action_prefix keeps records whose action starts with it ("namespace.",
-  // "orkflow.promote"). Empty keeps every action.
-  string action_prefix = 2;
-  // principal keeps records with exactly this principal. Empty keeps every
-  // principal. There is no way to select "unattributed" records except by
-  // reading them; the value is an assertion, not a key.
-  string principal = 3;
-  // since is the inclusive start of the window; empty means seven days
-  // before `until`. until is the exclusive end; empty means the moment the
-  // answer is computed, on the engine's clock. A window whose end is not
-  // after its start is INVALID_ARGUMENT.
-  google.protobuf.Timestamp since = 4;
-  google.protobuf.Timestamp until = 5;
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.AuditRecord"
+    fields: [
+      {
+        path: "at"
+        label: "When"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      },
+      {
+        path: "namespace"
+        label: "Namespace"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "action"
+        label: "Action"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "principal"
+        label: "Principal"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "target"
+        label: "Target"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "succeeded"
+        label: "Succeeded"
+        operators: [FILTER_OPERATOR_EQUALS]
+      },
+      {
+        path: "error_code"
+        label: "Error code"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      }
+    ]
+  };
+  reserved 1 to 5;
+  reserved "namespace", "action_prefix", "principal", "since", "until";
   // page_size caps the records returned; 0 means the default (50), and a
   // value above the maximum (200) is INVALID_ARGUMENT, not clamped.
   int32 page_size = 6;
   // page_token continues a listing. It is opaque and versioned, and binds
-  // every filter above: a token presented with different filters is
-  // INVALID_ARGUMENT, exactly as ListRunsRequest.page_token behaves.
+  // the canonical filter set and the resolved window: a token presented with
+  // other filters is INVALID_ARGUMENT.
   string page_token = 7;
+  repeated FieldFilter filters = 8;
 }
 
 message ListAuditRecordsResponse {

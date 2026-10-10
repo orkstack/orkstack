@@ -209,7 +209,7 @@ func (s *automationStack) auditActions(t *testing.T, replica *engineReplica, sin
 	t.Setenv(serverEnvVar, "")
 	t.Setenv(namespaceEnvVar, "")
 	t.Setenv(configEnvVar, filepath.Join(t.TempDir(), "config.json"))
-	args := []string{"--json", "admin", "audit", "--since", since.UTC().Format(time.RFC3339Nano), "--limit", "200",
+	args := []string{"--json", "admin", "audit", "--filter", "at>=" + since.UTC().Format(time.RFC3339Nano), "--limit", "200",
 		"--server", "http://" + replica.addr}
 	var stdout, stderr bytes.Buffer
 	if code := Execute(args, &stdout, &stderr); code != exitOK {

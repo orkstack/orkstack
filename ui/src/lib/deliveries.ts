@@ -1,15 +1,17 @@
-import type { MessageInitShape } from '@bufbuild/protobuf';
-import { timestampDate, timestampFromDate, type Duration, type Timestamp } from '@bufbuild/protobuf/wkt';
-import { DeliveryOutcome, ListDeliveriesRequestSchema, type Delivery } from './gen/orkstack/v1/service_pb';
-import { EventType } from './gen/orkstack/v1/run_pb';
-import { shellQuote } from './runDetail';
-import { RUN_EVENTS, TASK_EVENTS } from './webhooks';
+import { timestampDate, type Duration, type Timestamp } from '@bufbuild/protobuf/wkt';
+import type { Delivery } from './gen/orkstack/v1/service_pb';
+import { listHref, pageStackKey } from './browsing';
+import { FilterOperator, equalityOf, filterFlags, filterOf, type FieldFilter } from './listFilter';
 
-// The Deliveries panel's pure half (Admin → Webhooks): what the URL says, the
-// request it becomes, how a record reads, and the orkctl command for the same
-// listing. Kept out of the component so each rule is unit-tested once
-// (test/deliveries.test.ts) and the panel and `orkctl webhook deliveries` can
-// never disagree about a filter.
+// The Deliveries panel's pure half (Admin → Webhooks): the panel's address,
+// how a record reads, and the orkctl command for the same listing. Kept out
+// of the component so each rule is unit-tested once (test/deliveries.test.ts)
+// and the panel and `orkctl webhook deliveries` can never disagree.
+//
+// What the panel may be filtered on is not written here: it is the
+// ListDeliveriesRequest allowlist, offered by the one filter component
+// (lib/listFilter.ts, components/ListFilter.svelte) and decided by the engine
+// (docs/UI_CLI_PARITY.md "Filtering lists").
 
 /** The caption's fixed half: what a record is, and that the body is not in it. */
 export const DELIVERIES_CAPTION =
@@ -18,38 +20,26 @@ export const DELIVERIES_CAPTION =
 export const DEFAULT_DELIVERY_LIMIT = 50;
 export const MAX_DELIVERY_LIMIT = 200;
 
-/** Every event a subscription can receive, which is every event a record can carry. */
-export const DELIVERY_EVENTS: EventType[] = [...RUN_EVENTS, ...TASK_EVENTS];
-
-export const eventName = (event: EventType) => EventType[event] ?? '';
-
-export type DeliveredFilter = '' | 'true' | 'false';
+/**
+ * The panel's filter parameter. Admin → Webhooks holds two lists, so the
+ * panel's filters ride `deliveryFilter` and the subscriptions table's ride
+ * `filter` (lib/browsing.ts listHref).
+ */
+export const DELIVERY_FILTER_PARAM = 'deliveryFilter';
 
 export interface DeliveryCoordinates {
 	/** The page's namespace selector, preserved in every address; it does NOT filter the panel. */
 	ns: string;
-	webhook: string;
-	run: string;
-	/** The event's short name (RUN_FAILED), or empty for every event. */
-	event: string;
-	delivered: DeliveredFilter;
-	/** The panel's own namespace filter; empty means every namespace. */
-	namespace: string;
-	since: string;
-	until: string;
+	/** The panel's filters (its `deliveryFilter` parameters). */
+	filters: FieldFilter[];
 	limit: number;
 	cursor: string;
 	page: number;
 	/**
-	 * The subscriptions table's own filters (its `filter` parameters, in
-	 * canonical order), carried through so paging the panel never drops them.
-	 * They do not filter the panel.
+	 * The subscriptions table's own filters (its `filter` parameters), carried
+	 * through so paging the panel never drops them. They do not filter the panel.
 	 */
-	subscriptionFilter?: string[];
-}
-
-export function deliveredFilter(value: string | null): DeliveredFilter {
-	return value === 'true' || value === 'false' ? value : '';
+	subscriptionFilters: FieldFilter[];
 }
 
 /** limit from the URL: 1..200, anything else is the default. */
@@ -58,94 +48,53 @@ export function deliveryLimit(value: string | null): number {
 	return Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_DELIVERY_LIMIT ? parsed : DEFAULT_DELIVERY_LIMIT;
 }
 
-// RFC 3339 with seconds and a zone, or a bare date meaning midnight UTC — both
-// of which `orkctl webhook deliveries --since/--until` accepts as an instant.
-const BOUND = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2}))?$/;
-const SLUG = /^[a-z][a-z0-9-]*$/;
-
-export function deliveryBound(value: string): Timestamp | undefined {
-	if (!value) return undefined;
-	const iso = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00Z` : value;
-	const date = new Date(iso);
-	return Number.isNaN(date.getTime()) ? undefined : timestampFromDate(date);
+/** The panel's filters for one subscription: what a row's Deliveries link opens. */
+export function webhookDeliveriesFilters(webhookId: string): FieldFilter[] {
+	return [filterOf('webhook_id', FilterOperator.EQUALS, [webhookId])];
 }
 
-/** A filter the engine would refuse is refused here first, never sent as a wider read. */
-export function deliveriesFilterError(c: DeliveryCoordinates): string | null {
-	if (c.event && !DELIVERY_EVENTS.some((event) => eventName(event) === c.event))
-		return `Unknown event ${c.event}: only a subscribable event is ever delivered.`;
-	if (c.namespace && (!SLUG.test(c.namespace) || c.namespace.length > 200))
-		return 'Namespace must be lowercase letters, digits and hyphens, starting with a letter.';
-	if (c.since && (!BOUND.test(c.since) || !deliveryBound(c.since))) return 'Since must be an RFC 3339 instant (or YYYY-MM-DD).';
-	if (c.until && (!BOUND.test(c.until) || !deliveryBound(c.until))) return 'Until must be an RFC 3339 instant (or YYYY-MM-DD).';
-	const s = deliveryBound(c.since);
-	const u = deliveryBound(c.until);
-	if (s && u && timestampDate(u).getTime() <= timestampDate(s).getTime()) return 'Until must be after since.';
-	return null;
+/** The panel's filters for one subscription's deliveries about one run (a redelivery's original). */
+export function runDeliveriesFilters(runId: string, webhookId: string): FieldFilter[] {
+	return [filterOf('run_id', FilterOperator.EQUALS, [runId]), filterOf('webhook_id', FilterOperator.EQUALS, [webhookId])];
 }
 
-/** The ListDeliveries request for these coordinates. */
-export function deliveriesRequest(c: DeliveryCoordinates): MessageInitShape<typeof ListDeliveriesRequestSchema> {
-	const event = DELIVERY_EVENTS.find((candidate) => eventName(candidate) === c.event) ?? EventType.UNSPECIFIED;
-	const outcome =
-		c.delivered === 'true'
-			? DeliveryOutcome.DELIVERED
-			: c.delivered === 'false'
-				? DeliveryOutcome.FAILED
-				: DeliveryOutcome.UNSPECIFIED;
+function coordinatesOf(c: DeliveryCoordinates): Record<string, string> {
 	return {
-		webhookId: c.webhook,
-		runId: c.run,
-		event,
-		outcome,
-		namespace: c.namespace,
-		since: deliveryBound(c.since),
-		until: deliveryBound(c.until),
-		pageSize: c.limit === DEFAULT_DELIVERY_LIMIT ? 0 : c.limit,
-		pageToken: c.cursor
+		ns: c.ns || 'default',
+		limit: c.limit === DEFAULT_DELIVERY_LIMIT ? '' : String(c.limit),
+		cursor: c.cursor,
+		// A page number without a cursor names no page the engine could return.
+		page: c.cursor ? String(c.page) : ''
 	};
 }
 
-/**
- * The page's address with the panel's coordinates. Only ever `set`s, omits
- * empties and leaves `page` out at 1 — listHref's rules (lib/browsing.ts).
- */
+function filtersOf(c: DeliveryCoordinates): Record<string, FieldFilter[]> {
+	return { filter: c.subscriptionFilters, [DELIVERY_FILTER_PARAM]: c.filters };
+}
+
+/** The page's address with the panel's coordinates — listHref's rules (lib/browsing.ts). */
 export function deliveriesHref(c: DeliveryCoordinates, changes: Partial<DeliveryCoordinates> = {}, hash = ''): string {
 	const next = { ...c, ...changes };
-	const params = new URLSearchParams();
-	params.set('ns', next.ns || 'default');
-	for (const text of next.subscriptionFilter ?? []) params.append('filter', text);
-	if (next.webhook) params.set('webhook', next.webhook);
-	if (next.run) params.set('run', next.run);
-	if (next.event) params.set('event', next.event);
-	if (next.delivered) params.set('delivered', next.delivered);
-	if (next.namespace) params.set('namespace', next.namespace);
-	if (next.since) params.set('since', next.since);
-	if (next.until) params.set('until', next.until);
-	if (next.limit !== DEFAULT_DELIVERY_LIMIT) params.set('limit', String(next.limit));
-	if (next.cursor) params.set('cursor', next.cursor);
-	if (next.cursor && next.page > 1) params.set('page', String(next.page));
-	return `/admin/webhooks?${params.toString()}${hash ? `#${hash}` : ''}`;
+	return listHref('/admin/webhooks', coordinatesOf(next), filtersOf(next)) + (hash ? `#${hash}` : '');
 }
 
 /** The sessionStorage key for this filter set's cursor stack. */
 export function deliveriesStackKey(c: DeliveryCoordinates): string {
-	return `orkstack.pages:${deliveriesHref(c, { cursor: '', page: 1 })}`;
+	return pageStackKey('/admin/webhooks', coordinatesOf(c), filtersOf(c));
 }
 
-/** `orkctl webhook deliveries …` for the same listing (first page), every value shell-quoted. */
-export function deliveriesCliCommand(c: DeliveryCoordinates): string {
-	const parts = ['orkctl'];
-	if (c.namespace) parts.push('-n', shellQuote(c.namespace));
-	parts.push('webhook', 'deliveries');
-	if (c.webhook) parts.push('--webhook', shellQuote(c.webhook));
-	if (c.run) parts.push('--run', shellQuote(c.run));
-	if (c.event) parts.push('--event', shellQuote(c.event));
-	if (c.delivered) parts.push(`--delivered=${c.delivered}`);
-	if (c.since) parts.push('--since', shellQuote(c.since));
-	if (c.until) parts.push('--until', shellQuote(c.until));
+/** `orkctl webhook deliveries …` for the same listing (first page), every value shell-quoted — never -n. */
+export function deliveriesCliCommand(c: Pick<DeliveryCoordinates, 'filters' | 'limit'>): string {
+	const parts = ['orkctl', 'webhook', 'deliveries', ...filterFlags(c.filters)];
 	if (c.limit !== DEFAULT_DELIVERY_LIMIT) parts.push('--limit', String(c.limit));
 	return parts.join(' ');
+}
+
+/** What the panel's scope sentence says about namespaces: every one, one, or a narrowing. */
+export function deliveriesNamespaceScope(filters: FieldFilter[]): string {
+	if (!filters.some((f) => f.field === 'namespace')) return 'Showing every namespace';
+	const one = equalityOf(filters, 'namespace');
+	return one ? `Showing namespace ${one}` : 'Showing the namespaces the namespace filter selects';
 }
 
 /** An instant to the millisecond, UTC: what an attempt timeline reads in. */

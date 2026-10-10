@@ -16,6 +16,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -174,11 +176,110 @@ func TestIntegration_S3DeliveryStoreListsNewestFirstAcrossDaysWithCursor(t *test
 		t.Errorf("walked %d pages of 4 over 9 records, want 3", pages)
 	}
 	filtered, err := store.ListDeliveries(ctx, artifacts.DeliveryQuery{
-		Since: days[0], Until: days[2].AddDate(0, 0, 1), Limit: 50, RunID: "ork-list-1",
-		Outcome: orkstackv1.DeliveryOutcome_DELIVERY_OUTCOME_DELIVERED,
+		Since: days[0], Until: days[2].AddDate(0, 0, 1), Limit: 50,
+		Keep: func(k artifacts.DeliveryKeyFields) bool { return k.RunID == "ork-list-1" && k.Delivered },
 	})
 	if err != nil || len(filtered.Deliveries) != 1 || filtered.Deliveries[0].GetRunId() != "ork-list-1" {
 		t.Errorf("filtered listing = %v, %v; want the one delivered record of ork-list-1", filtered.Deliveries, err)
 	}
-	t.Logf("9 records over 3 days listed newest first in %d pages without repeats; run+outcome filter matched 1", pages)
+	t.Logf("9 records over 3 days listed newest first in %d pages without repeats; run+delivered filter matched 1", pages)
+}
+
+func deliveryIDs(records []*orkstackv1.Delivery) []string {
+	out := make([]string, len(records))
+	for i, rec := range records {
+		out[i] = rec.GetId()
+	}
+	return out
+}
+
+// deliveryKeep is the Keep ListDeliveries builds: the compiled filter set
+// matched against a Delivery made of the key's coordinates alone.
+func deliveryKeep(t *testing.T, texts ...string) func(artifacts.DeliveryKeyFields) bool {
+	t.Helper()
+	var filters []*orkstackv1.FieldFilter
+	for _, text := range texts {
+		f, err := listfilter.Parse(text)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", text, err)
+		}
+		filters = append(filters, f)
+	}
+	set, err := listfilter.MustSpec(&orkstackv1.ListDeliveriesRequest{}).Compile(filters)
+	if err != nil {
+		t.Fatalf("Compile(%q): %v", texts, err)
+	}
+	return func(k artifacts.DeliveryKeyFields) bool {
+		return set.Match(&orkstackv1.Delivery{
+			Id: k.ID, CreatedAt: timestamppb.New(k.CreatedAt), Namespace: k.Namespace,
+			RunId: k.RunID, WebhookId: k.WebhookID, Event: k.Event, Delivered: k.Delivered,
+		})
+	}
+}
+
+// TestDeliveryStore_FilteredListingReadsOnlyMatchingBodies proves against
+// MinIO that every delivery filter is decided from the key: a listing reads a
+// body only for a record it returns (BodiesRead counts every GetObject).
+func TestDeliveryStore_FilteredListingReadsOnlyMatchingBodies(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+	store, err := artifacts.NewS3DeliveryStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3DeliveryStore: %v", err)
+	}
+	raw := newRawS3Client(t, cfg)
+	day := auditTestDay(t)
+	cleanupDeliveryDays(t, raw, cfg.S3Bucket, day)
+
+	// 40 records in one day over two webhooks, two runs and both outcomes:
+	// exactly i%8 == 0 (5 records) is webhook A, run 1 and not delivered.
+	webhooksByIndex := []string{"wh-00000000000000aa", "wh-00000000000000bb"}
+	runs := []string{"ork-bodies-1", "ork-bodies-2"}
+	var want []string
+	for i := range 40 {
+		rec := deliveryRecord(t, day.Add(time.Hour+time.Duration(i)*time.Second), runs[(i/2)%2])
+		rec.WebhookId = webhooksByIndex[i%2]
+		rec.Delivered = (i/4)%2 == 1
+		if err := store.PutDelivery(ctx, rec); err != nil {
+			t.Fatalf("PutDelivery: %v", err)
+		}
+		if i%8 == 0 {
+			want = append([]string{rec.GetId()}, want...)
+		}
+	}
+	window := artifacts.DeliveryQuery{Since: day, Until: day.AddDate(0, 0, 1), Limit: 50}
+
+	filtered := window
+	filtered.Keep = deliveryKeep(t, "webhook_id="+webhooksByIndex[0], "run_id="+runs[0], "delivered=false")
+	before := store.BodiesRead()
+	page, err := store.ListDeliveries(ctx, filtered)
+	if err != nil {
+		t.Fatalf("filtered ListDeliveries: %v", err)
+	}
+	filteredReads := store.BodiesRead() - before
+	if got := strings.Join(deliveryIDs(page.Deliveries), ","); got != strings.Join(want, ",") {
+		t.Errorf("filtered listing = %s, want %s", got, strings.Join(want, ","))
+	}
+	if filteredReads != 5 {
+		t.Errorf("filtered listing read %d bodies, want 5 (one per matching record)", filteredReads)
+	}
+
+	unfiltered := window
+	unfiltered.Limit = 10
+	before = store.BodiesRead()
+	page, err = store.ListDeliveries(ctx, unfiltered)
+	if err != nil {
+		t.Fatalf("unfiltered ListDeliveries: %v", err)
+	}
+	unfilteredReads := store.BodiesRead() - before
+	if len(page.Deliveries) != 10 || page.NextKey == "" {
+		t.Errorf("unfiltered page = %d records, next %q; want 10 and a cursor", len(page.Deliveries), page.NextKey)
+	}
+	if unfilteredReads != 10 {
+		t.Errorf("unfiltered page of 10 read %d bodies, want 10", unfilteredReads)
+	}
+	proof.Write(t, "", "deliveries-bodies.txt", fmt.Appendf(nil,
+		"filtered listing: %d bodies read for %d records\nunfiltered page of 10: %d bodies read\n",
+		filteredReads, len(want), unfilteredReads))
 }

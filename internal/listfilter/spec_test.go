@@ -66,9 +66,7 @@ var exempt = map[string]string{
 // filters converts. The test fails if one of them already declares filters,
 // so the table cannot outlive its stage; stage 3 deletes it.
 var notYetFiltered = map[string]string{
-	"ListDeliveries":   "stage 2",
-	"ListAuditRecords": "stage 2",
-	"ListRuns":         "stage 3",
+	"ListRuns": "stage 3",
 }
 
 func TestSpec_EveryListRequestDeclaresItsFilters(t *testing.T) {
@@ -107,6 +105,7 @@ var nameValued = []string{
 	"Webhook.name", "Webhook.namespace", "Webhook.orkflow_name", "Webhook.task_id",
 	"Trigger.name", "Trigger.orkflow_name", "Schedule.name", "Schedule.orkflow_name",
 	"Pool.name", "Orker.pool",
+	"Delivery.namespace", "AuditRecord.namespace",
 }
 
 // opaqueIDs are matched whole, never by part.

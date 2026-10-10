@@ -50,7 +50,8 @@ type AuditRecord struct {
 	// action is the user-facing name of the write: "namespace.update",
 	// "orkflow.apply", "trigger.create", "retention.update", … The complete
 	// set is the engine's audited-procedure table (internal/api/audit.go); a
-	// client filters by prefix and never needs to know the set.
+	// client filters by prefix (action^namespace.) and never needs to know the
+	// set.
 	Action string `protobuf:"bytes,6,opt,name=action,proto3" json:"action,omitempty"`
 	// procedure is the exact RPC, e.g. "/orkstack.v1.NamespaceService/UpdateNamespace",
 	// or the HTTP route for the legacy webhook adapter ("POST /v1/webhooks").
@@ -190,35 +191,26 @@ func (x *AuditRecord) GetErrorCode() string {
 	return ""
 }
 
+// ListAuditRecordsRequest lists the deployment's audit trail. It is a
+// deployment-wide listing: a `namespace` filter narrows it like any other
+// property of a record, and `namespace=` (the empty value) selects the
+// deployment-wide writes, which carry no namespace
+// (docs/UI_CLI_PARITY.md "Filtering lists", "Control-plane audit trail").
+//
+// The window is the `at` interval the filters bound: at < T ends it
+// (default: the moment the answer is computed, on the engine's clock) and
+// at >= T starts it (default: seven days before the end). A window whose
+// end is not after its start is INVALID_ARGUMENT.
 type ListAuditRecordsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// namespace narrows the listing to records of one namespace. It is a
-	// FILTER, and this is the one request in the API where empty does NOT
-	// mean the default namespace: empty means every namespace, deployment-wide
-	// records included, because the natural scope of an audit trail is the
-	// deployment. "default" selects the default namespace's records.
-	// Deployment-wide records carry no namespace and match no name.
-	Namespace string `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	// action_prefix keeps records whose action starts with it ("namespace.",
-	// "orkflow.promote"). Empty keeps every action.
-	ActionPrefix string `protobuf:"bytes,2,opt,name=action_prefix,json=actionPrefix,proto3" json:"action_prefix,omitempty"`
-	// principal keeps records with exactly this principal. Empty keeps every
-	// principal. There is no way to select "unattributed" records except by
-	// reading them; the value is an assertion, not a key.
-	Principal string `protobuf:"bytes,3,opt,name=principal,proto3" json:"principal,omitempty"`
-	// since is the inclusive start of the window; empty means seven days
-	// before `until`. until is the exclusive end; empty means the moment the
-	// answer is computed, on the engine's clock. A window whose end is not
-	// after its start is INVALID_ARGUMENT.
-	Since *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=since,proto3" json:"since,omitempty"`
-	Until *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=until,proto3" json:"until,omitempty"`
 	// page_size caps the records returned; 0 means the default (50), and a
 	// value above the maximum (200) is INVALID_ARGUMENT, not clamped.
 	PageSize int32 `protobuf:"varint,6,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	// page_token continues a listing. It is opaque and versioned, and binds
-	// every filter above: a token presented with different filters is
-	// INVALID_ARGUMENT, exactly as ListRunsRequest.page_token behaves.
-	PageToken     string `protobuf:"bytes,7,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	// the canonical filter set and the resolved window: a token presented with
+	// other filters is INVALID_ARGUMENT.
+	PageToken     string         `protobuf:"bytes,7,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	Filters       []*FieldFilter `protobuf:"bytes,8,rep,name=filters,proto3" json:"filters,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -253,41 +245,6 @@ func (*ListAuditRecordsRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_audit_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *ListAuditRecordsRequest) GetNamespace() string {
-	if x != nil {
-		return x.Namespace
-	}
-	return ""
-}
-
-func (x *ListAuditRecordsRequest) GetActionPrefix() string {
-	if x != nil {
-		return x.ActionPrefix
-	}
-	return ""
-}
-
-func (x *ListAuditRecordsRequest) GetPrincipal() string {
-	if x != nil {
-		return x.Principal
-	}
-	return ""
-}
-
-func (x *ListAuditRecordsRequest) GetSince() *timestamppb.Timestamp {
-	if x != nil {
-		return x.Since
-	}
-	return nil
-}
-
-func (x *ListAuditRecordsRequest) GetUntil() *timestamppb.Timestamp {
-	if x != nil {
-		return x.Until
-	}
-	return nil
-}
-
 func (x *ListAuditRecordsRequest) GetPageSize() int32 {
 	if x != nil {
 		return x.PageSize
@@ -300,6 +257,13 @@ func (x *ListAuditRecordsRequest) GetPageToken() string {
 		return x.PageToken
 	}
 	return ""
+}
+
+func (x *ListAuditRecordsRequest) GetFilters() []*FieldFilter {
+	if x != nil {
+		return x.Filters
+	}
+	return nil
 }
 
 type ListAuditRecordsResponse struct {
@@ -377,7 +341,7 @@ var File_orkstack_v1_audit_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_audit_proto_rawDesc = "" +
 	"\n" +
-	"\x17orkstack/v1/audit.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf6\x02\n" +
+	"\x17orkstack/v1/audit.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/filter.proto\"\xf6\x02\n" +
 	"\vAuditRecord\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12*\n" +
@@ -392,16 +356,22 @@ const file_orkstack_v1_audit_proto_rawDesc = "" +
 	" \x01(\tR\x06detail\x12\x1c\n" +
 	"\tsucceeded\x18\v \x01(\bR\tsucceeded\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\f \x01(\tR\terrorCode\"\x9a\x02\n" +
-	"\x17ListAuditRecordsRequest\x12\x1c\n" +
-	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12#\n" +
-	"\raction_prefix\x18\x02 \x01(\tR\factionPrefix\x12\x1c\n" +
-	"\tprincipal\x18\x03 \x01(\tR\tprincipal\x120\n" +
-	"\x05since\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x120\n" +
-	"\x05until\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\x12\x1b\n" +
+	"error_code\x18\f \x01(\tR\terrorCode\"\x9f\x03\n" +
+	"\x17ListAuditRecordsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x06 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\a \x01(\tR\tpageToken\"\xda\x01\n" +
+	"page_token\x18\a \x01(\tR\tpageToken\x122\n" +
+	"\afilters\x18\b \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xda\x01\xa2\xbb\x18\xd5\x01\n" +
+	"\x17orkstack.v1.AuditRecord\x12\x0e\n" +
+	"\x02at\x12\x04When\x1a\x02\x06\a\x12\x1f\n" +
+	"\tnamespace\x12\tNamespace\x1a\x05\x01\x02\x03\x04\x058\x01\x12\x17\n" +
+	"\x06action\x12\x06Action\x1a\x05\x01\x02\x03\x04\x05\x12\x1d\n" +
+	"\tprincipal\x12\tPrincipal\x1a\x05\x01\x02\x03\x04\x05\x12\x17\n" +
+	"\x06target\x12\x06Target\x1a\x05\x01\x02\x03\x04\x05\x12\x19\n" +
+	"\tsucceeded\x12\tSucceeded\x1a\x01\x01\x12\x1d\n" +
+	"\n" +
+	"error_code\x12\n" +
+	"Error code\x1a\x03\x01\x02\x03J\x04\b\x01\x10\x06R\tnamespaceR\raction_prefixR\tprincipalR\x05sinceR\x05until\"\xda\x01\n" +
 	"\x18ListAuditRecordsResponse\x122\n" +
 	"\arecords\x18\x01 \x03(\v2\x18.orkstack.v1.AuditRecordR\arecords\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x120\n" +
@@ -430,21 +400,21 @@ var file_orkstack_v1_audit_proto_goTypes = []any{
 	(*ListAuditRecordsRequest)(nil),  // 1: orkstack.v1.ListAuditRecordsRequest
 	(*ListAuditRecordsResponse)(nil), // 2: orkstack.v1.ListAuditRecordsResponse
 	(*timestamppb.Timestamp)(nil),    // 3: google.protobuf.Timestamp
+	(*FieldFilter)(nil),              // 4: orkstack.v1.FieldFilter
 }
 var file_orkstack_v1_audit_proto_depIdxs = []int32{
 	3, // 0: orkstack.v1.AuditRecord.at:type_name -> google.protobuf.Timestamp
-	3, // 1: orkstack.v1.ListAuditRecordsRequest.since:type_name -> google.protobuf.Timestamp
-	3, // 2: orkstack.v1.ListAuditRecordsRequest.until:type_name -> google.protobuf.Timestamp
-	0, // 3: orkstack.v1.ListAuditRecordsResponse.records:type_name -> orkstack.v1.AuditRecord
-	3, // 4: orkstack.v1.ListAuditRecordsResponse.since:type_name -> google.protobuf.Timestamp
-	3, // 5: orkstack.v1.ListAuditRecordsResponse.until:type_name -> google.protobuf.Timestamp
-	1, // 6: orkstack.v1.AuditService.ListAuditRecords:input_type -> orkstack.v1.ListAuditRecordsRequest
-	2, // 7: orkstack.v1.AuditService.ListAuditRecords:output_type -> orkstack.v1.ListAuditRecordsResponse
-	7, // [7:8] is the sub-list for method output_type
-	6, // [6:7] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	4, // 1: orkstack.v1.ListAuditRecordsRequest.filters:type_name -> orkstack.v1.FieldFilter
+	0, // 2: orkstack.v1.ListAuditRecordsResponse.records:type_name -> orkstack.v1.AuditRecord
+	3, // 3: orkstack.v1.ListAuditRecordsResponse.since:type_name -> google.protobuf.Timestamp
+	3, // 4: orkstack.v1.ListAuditRecordsResponse.until:type_name -> google.protobuf.Timestamp
+	1, // 5: orkstack.v1.AuditService.ListAuditRecords:input_type -> orkstack.v1.ListAuditRecordsRequest
+	2, // 6: orkstack.v1.AuditService.ListAuditRecords:output_type -> orkstack.v1.ListAuditRecordsResponse
+	6, // [6:7] is the sub-list for method output_type
+	5, // [5:6] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_audit_proto_init() }
@@ -452,6 +422,7 @@ func file_orkstack_v1_audit_proto_init() {
 	if File_orkstack_v1_audit_proto != nil {
 		return
 	}
+	file_orkstack_v1_filter_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

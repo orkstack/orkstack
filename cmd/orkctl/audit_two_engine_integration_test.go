@@ -72,8 +72,8 @@ func TestAudit_TwoReplicas_WriteOnOneListedOnOther(t *testing.T) {
 	fmt.Fprintf(&transcript, "$ ORK_PRINCIPAL=proof-a orkctl --server <replica A> namespace create %s\n%s\n", name, created)
 
 	// ---- 2. listed on B ------------------------------------------------------
-	listed := auditCLI(t, replicaB, "", "--json", "-n", name, "admin", "audit", "--since", since)
-	fmt.Fprintf(&transcript, "$ orkctl --server <replica B> -n %s admin audit --since %s --json\n%s\n", name, since, listed)
+	listed := auditCLI(t, replicaB, "", "--json", "admin", "audit", "--filter", "namespace="+name, "--filter", "at>="+since)
+	fmt.Fprintf(&transcript, "$ orkctl --server <replica B> admin audit --filter namespace=%s --filter 'at>=%s' --json\n%s\n", name, since, listed)
 	resp := &orkstackv1.ListAuditRecordsResponse{}
 	if err := protojson.Unmarshal([]byte(listed), resp); err != nil {
 		t.Fatalf("admin audit --json is not a ListAuditRecordsResponse: %v\n%s", err, listed)
@@ -88,12 +88,12 @@ func TestAudit_TwoReplicas_WriteOnOneListedOnOther(t *testing.T) {
 		rec.GetProcedure() != "/orkstack.v1.NamespaceService/CreateNamespace" || rec.GetSourceAddress() == "" {
 		t.Fatalf("replica B's listing = %v, want the namespace.create of %s by proof-a", resp.GetRecords(), name)
 	}
-	human := auditCLI(t, replicaB, "", "-n", name, "admin", "audit", "--since", since)
-	if !strings.Contains(human, "proof-a") || !strings.Contains(human, "Scope: namespace "+name) ||
+	human := auditCLI(t, replicaB, "", "admin", "audit", "--filter", "namespace="+name, "--filter", "at>="+since)
+	if !strings.Contains(human, "proof-a") || strings.Contains(human, "Every namespace unless") ||
 		!strings.Contains(human, "does not authenticate it") {
 		t.Fatalf("human listing on B:\n%s", human)
 	}
-	fmt.Fprintf(&transcript, "$ orkctl --server <replica B> -n %s admin audit --since %s\n%s\n", name, since, human)
+	fmt.Fprintf(&transcript, "$ orkctl --server <replica B> admin audit --filter namespace=%s --filter 'at>=%s'\n%s\n", name, since, human)
 
 	// ---- 3. the object in MinIO: content type, create-only -----------------
 	key, err := artifacts.AuditKey(rec)
@@ -163,6 +163,95 @@ func TestAudit_RefusedWriteIsRecorded(t *testing.T) {
 	proof.Write(t, "orkctl", "audit-refused-write.txt", []byte(transcript))
 }
 
+// TestAudit_TwoEngines_DeploymentWideRecordsByEmptyNamespace: a
+// deployment-wide write (a webhook registration, which carries no namespace of
+// its own) made through replica A is selected on replica B by the empty
+// namespace filter `--filter namespace=` — which no request could select
+// before filters — and a namespaced write by the same principal is not.
+func TestAudit_TwoEngines_DeploymentWideRecordsByEmptyNamespace(t *testing.T) {
+	address := temporalAddress()
+	requireTemporal(t, address)
+	artifactCfg := artifacts.ConfigFromEnv()
+	artifactCfg.Backend = artifacts.BackendS3
+	requireMinIOForIdempotency(t, artifactCfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	partition := isolatedNamespace()
+	dialIsolatedNamespace(ctx, t, address, partition)
+	enginePath := buildBinary(t, repoRoot(t), t.TempDir(), "ork")
+	queue := idempotencyTaskQueue()
+	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, partition, queue)
+	replicaB := startReplica(ctx, t, "ork-B", enginePath, address, partition, queue)
+	replicaA.awaitReady(ctx, t)
+	replicaB.awaitReady(ctx, t)
+
+	suffix := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
+	principal := "proof-wide-" + suffix
+	name := "audit-wide-" + suffix
+	since := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+
+	// A namespaced write and a deployment-wide one, both through A by the
+	// same principal. The webhook is scoped to the namespace this test owns,
+	// which runs nothing, so it is never delivered to.
+	auditCLI(t, replicaA, principal, "namespace", "create", name)
+	registered := auditCLI(t, replicaA, principal, "--json", "webhook", "register", "http://127.0.0.1:1/never", "-n", name)
+	var hook struct {
+		Webhook struct {
+			ID string `json:"id"`
+		} `json:"webhook"`
+	}
+	if err := json.Unmarshal([]byte(registered), &hook); err != nil || hook.Webhook.ID == "" {
+		t.Fatalf("webhook register --json = %v:\n%s", err, registered)
+	}
+	// A deferred call, not t.Cleanup: the replicas run under ctx, which the
+	// earlier `defer cancel()` ends as this function returns — before any
+	// t.Cleanup would run — so the deletes must reach A while it still serves.
+	defer func() {
+		auditCLI(t, replicaA, principal, "webhook", "delete", hook.Webhook.ID)
+		auditCLI(t, replicaA, principal, "namespace", "delete", name)
+	}()
+
+	list := func(filters ...string) []*orkstackv1.AuditRecord {
+		args := []string{"--json", "admin", "audit", "--filter", "principal=" + principal, "--filter", "at>=" + since}
+		for _, f := range filters {
+			args = append(args, "--filter", f)
+		}
+		out := auditCLI(t, replicaB, "", args...)
+		resp := &orkstackv1.ListAuditRecordsResponse{}
+		if err := protojson.Unmarshal([]byte(out), resp); err != nil {
+			t.Fatalf("admin audit --json is not a ListAuditRecordsResponse: %v\n%s", err, out)
+		}
+		return resp.GetRecords()
+	}
+	actions := func(records []*orkstackv1.AuditRecord) string {
+		var out []string
+		for _, rec := range records {
+			out = append(out, rec.GetAction()+"@"+rec.GetNamespace())
+		}
+		return strings.Join(out, ",")
+	}
+
+	every := list()
+	if got := actions(every); got != "webhook.register@,namespace.create@"+name {
+		t.Fatalf("replica B, every namespace = %s; want the webhook.register (no namespace) and the namespace.create", got)
+	}
+	wide := list("namespace=")
+	if got := actions(wide); got != "webhook.register@" {
+		t.Fatalf("replica B, namespace= = %s; want only the deployment-wide webhook.register", got)
+	}
+	scoped := list("namespace=" + name)
+	if got := actions(scoped); got != "namespace.create@"+name {
+		t.Fatalf("replica B, namespace=%s = %s; want only the namespace.create", name, got)
+	}
+	human := auditCLI(t, replicaB, "", "admin", "audit", "--filter", "principal="+principal, "--filter", "at>="+since, "--filter", "namespace=")
+	transcript := fmt.Sprintf("$ orkctl --server <replica B> admin audit --filter principal=%s --filter 'at>=%s' --filter 'namespace='\n%s",
+		principal, since, human)
+	t.Logf("EVIDENCE audit_deployment_wide written_on=A listed_on=B every=%s namespace_empty=%s namespace_named=%s",
+		actions(every), actions(wide), actions(scoped))
+	proof.Write(t, "orkctl", "audit-deployment-wide.txt", []byte(transcript))
+}
+
 // auditRefusal deletes `default` through writer (refused) and reads the
 // refusal back through reader, with a principal unique to this call so a
 // concurrent suite's refusal cannot be mistaken for this one's.
@@ -176,7 +265,7 @@ func auditRefusal(t *testing.T, writer, reader *engineReplica, since string) str
 	if code == exitOK || !strings.Contains(stderr.String(), "failed_precondition") {
 		t.Fatalf("namespace delete default exited %d (%s), want a failed_precondition refusal", code, stderr.String())
 	}
-	listed := auditCLI(t, reader, "", "admin", "audit", "--principal", principal, "--since", since)
+	listed := auditCLI(t, reader, "", "admin", "audit", "--filter", "principal="+principal, "--filter", "at>="+since)
 	var row string
 	for _, line := range strings.Split(listed, "\n") {
 		if strings.Contains(line, "namespace.delete") && strings.Contains(line, principal) {
@@ -188,7 +277,7 @@ func auditRefusal(t *testing.T, writer, reader *engineReplica, since string) str
 	}
 	t.Logf("EVIDENCE audit_refused_write principal=%s row=%q", principal, strings.Join(strings.Fields(row), " "))
 	return fmt.Sprintf("$ ORK_PRINCIPAL=%s orkctl --server <%s> namespace delete default\nError: %s\n"+
-		"$ orkctl --server <%s> admin audit --principal %s --since %s\n%s",
+		"$ orkctl --server <%s> admin audit --filter principal=%s --filter 'at>=%s'\n%s",
 		principal, writer.name, strings.TrimSpace(stderr.String()), reader.name, principal, since, listed)
 }
 

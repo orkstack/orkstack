@@ -71,7 +71,7 @@ test('specFor resolves every filterable request', () => {
 			if (method.name.startsWith('List') && hasOption(method.input, filterable)) requests.push(method.input);
 		}
 	}
-	expect(requests.length >= 9).toBe(true);
+	expect(requests.length >= 11).toBe(true);
 	for (const request of requests) {
 		const spec = specFor(request);
 		expect(spec.fields.length > 0).toBe(true);

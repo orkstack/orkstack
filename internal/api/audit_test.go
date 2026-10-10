@@ -3,11 +3,14 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -519,12 +522,6 @@ func TestListAuditRecords_WindowDefaultsAndValidation(t *testing.T) {
 	if !resp.Msg.GetUntil().AsTime().Equal(f.now) || !resp.Msg.GetSince().AsTime().Equal(f.now.Add(-7*24*time.Hour)) {
 		t.Errorf("window = [%s, %s), want [now-7d, now)", resp.Msg.GetSince().AsTime(), resp.Msg.GetUntil().AsTime())
 	}
-	_, err = f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
-		Since: timestamppb.New(f.now), Until: timestamppb.New(f.now.Add(-time.Hour)),
-	}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "must be after since") {
-		t.Errorf("inverted window = %v, want InvalidArgument naming both", err)
-	}
 	_, err = f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{PageSize: 201}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Errorf("page_size 201 = %v, want InvalidArgument", err)
@@ -532,6 +529,61 @@ func TestListAuditRecords_WindowDefaultsAndValidation(t *testing.T) {
 	_, err = f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{PageSize: -1}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Errorf("page_size -1 = %v, want InvalidArgument", err)
+	}
+}
+
+func TestListAuditRecords_WindowFromAtBounds(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	list := func(texts ...string) (*orkstackv1.ListAuditRecordsResponse, error) {
+		resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+			Filters: filters(t, texts...),
+		}))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg, nil
+	}
+	window := func(resp *orkstackv1.ListAuditRecordsResponse) string {
+		return resp.GetSince().AsTime().Format(time.RFC3339) + " " + resp.GetUntil().AsTime().Format(time.RFC3339)
+	}
+	for _, tc := range []struct {
+		filters []string
+		want    string
+	}{
+		// The end alone: the start is seven days before it.
+		{[]string{"at<2026-03-10T00:00:00Z"}, "2026-03-03T00:00:00Z 2026-03-10T00:00:00Z"},
+		// The start alone: the end is now.
+		{[]string{"at>=2026-03-14T00:00:00Z"}, "2026-03-14T00:00:00Z 2026-03-14T11:02:44Z"},
+		// Both, as given; several bounds collapse to the tightest.
+		{[]string{"at>=2026-03-01T00:00:00Z", "at>=2026-03-02T00:00:00Z", "at<2026-03-05T00:00:00+01:00"},
+			"2026-03-02T00:00:00Z 2026-03-04T23:00:00Z"},
+	} {
+		resp, err := list(tc.filters...)
+		if err != nil {
+			t.Fatalf("%q: %v", tc.filters, err)
+		}
+		if got := window(resp); got != tc.want {
+			t.Errorf("%q: window %s, want %s", tc.filters, got, tc.want)
+		}
+	}
+	// An inverted interval is refused by the filter rules, naming both bounds.
+	_, err := list("at>=2026-03-14T00:00:00Z", "at<2026-03-13T00:00:00Z")
+	want := "at >= 2026-03-14T00:00:00Z and < 2026-03-13T00:00:00Z select no instant"
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), want) {
+		t.Errorf("inverted window = %v, want InvalidArgument %q", err, want)
+	}
+	// A start after now leaves the resolved window empty: refused, never an
+	// empty page that looks like a quiet week.
+	_, err = list("at>=2026-03-15T00:00:00Z")
+	want = "at >= 2026-03-15T00:00:00Z and < 2026-03-14T11:02:44Z select no instant"
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), want) {
+		t.Errorf("start after now = %v, want InvalidArgument %q", err, want)
+	}
+	// A time without a zone is not an instant.
+	_, err = list("at>=2026-03-14")
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "is not an RFC 3339 instant with a zone") {
+		t.Errorf("bare date = %v, want InvalidArgument (RFC 3339 with a zone)", err)
 	}
 }
 
@@ -563,25 +615,23 @@ func TestListAuditRecords_CursorBindsFilters(t *testing.T) {
 	ctx := context.Background()
 	seeded := f.seed(t, [2]string{"a", "namespace.update"}, [2]string{"a", "namespace.update"}, [2]string{"a", "namespace.update"})
 	first, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
-		ActionPrefix: "namespace.", PageSize: 1,
+		Filters: filters(t, "action^namespace."), PageSize: 1,
 	}))
 	if err != nil || len(first.Msg.GetRecords()) != 1 || first.Msg.GetNextPageToken() == "" {
 		t.Fatalf("first page = %v, %v; want one record and a token", first, err)
 	}
-	if !strings.HasPrefix(first.Msg.GetNextPageToken(), "v1:") {
-		t.Errorf("token %q is not versioned", first.Msg.GetNextPageToken())
-	}
 	_, err = f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
-		ActionPrefix: "orkflow.", PageSize: 1, PageToken: first.Msg.GetNextPageToken(),
+		Filters: filters(t, "action^orkflow."), PageSize: 1, PageToken: first.Msg.GetNextPageToken(),
 	}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "filters changed") {
-		t.Errorf("token replayed with another action_prefix = %v, want InvalidArgument (filters changed)", err)
+	const changed = "page_token was issued for other filters; drop it and list from the first page"
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), changed) {
+		t.Errorf("token replayed with another action filter = %v, want InvalidArgument %q", err, changed)
 	}
 	// The same filters continue — and the page size may change between pages.
 	// The clock moves between pages: the token, not "now", fixes the window.
 	f.now = f.now.Add(time.Hour)
 	second, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
-		ActionPrefix: "namespace.", PageSize: 5, PageToken: first.Msg.GetNextPageToken(),
+		Filters: filters(t, "action^namespace."), PageSize: 5, PageToken: first.Msg.GetNextPageToken(),
 	}))
 	if err != nil {
 		t.Fatalf("second page: %v", err)
@@ -594,33 +644,155 @@ func TestListAuditRecords_CursorBindsFilters(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") || second.Msg.GetNextPageToken() != "" {
 		t.Errorf("walk = %v (next %q), want %v and an exhausted window", got, second.Msg.GetNextPageToken(), want)
 	}
+	if !second.Msg.GetUntil().AsTime().Equal(first.Msg.GetUntil().AsTime()) {
+		t.Errorf("second page window ends %s, want the first page's %s", second.Msg.GetUntil().AsTime(), first.Msg.GetUntil().AsTime())
+	}
 	if _, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
-		PageToken: "v1:not-base64!",
+		PageToken: "v2:not-base64!",
 	})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Errorf("garbage token = %v, want InvalidArgument", err)
 	}
 }
 
-func TestListAuditRecords_NamespaceEmptyMeansEvery(t *testing.T) {
+func TestListAuditRecords_V1TokenIsRefusedAndV2RoundTrips(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	f.seed(t, [2]string{"a", "namespace.update"}, [2]string{"a", "namespace.update"})
+	first, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		Filters: filters(t, "namespace=a"), PageSize: 1,
+	}))
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	token := first.Msg.GetNextPageToken()
+	body, ok := strings.CutPrefix(token, "v2:")
+	if !ok {
+		t.Fatalf("token %q does not start v2:", token)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(body)
+	if err != nil {
+		t.Fatalf("token body: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("token JSON: %v", err)
+	}
+	keys := make([]string, 0, len(decoded))
+	for key := range decoded {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if strings.Join(keys, ",") != "before_key,filters,window_since,window_until" {
+		t.Errorf("token keys = %v, want exactly before_key, filters, window_since, window_until", keys)
+	}
+	if _, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		Filters: filters(t, "namespace=a"), PageSize: 1, PageToken: token,
+	})); err != nil {
+		t.Errorf("v2 token did not continue its listing: %v", err)
+	}
+	// The same body under the old prefix is an old token: refused, never read.
+	_, err = f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		Filters: filters(t, "namespace=a"), PageSize: 1, PageToken: "v1:" + body,
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "invalid page_token") {
+		t.Errorf("v1 token = %v, want InvalidArgument invalid page_token", err)
+	}
+}
+
+func TestListAuditRecords_EmptyNamespaceSelectsDeploymentWideRecords(t *testing.T) {
 	f := newAuditFixture(t, auditOptions{})
 	ctx := context.Background()
 	f.seed(t, [2]string{"", "retention.update"}, [2]string{"default", "namespace.update"}, [2]string{"payments", "orkflow.promote"})
 	for _, tc := range []struct {
-		namespace string
-		want      int
-	}{{"", 3}, {"default", 1}, {"payments", 1}, {"missing", 0}} {
-		resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{Namespace: tc.namespace}))
+		filters []string
+		want    []string // namespaces, newest first
+	}{
+		{nil, []string{"payments", "default", ""}},
+		{[]string{"namespace="}, []string{""}},
+		{[]string{"namespace!="}, []string{"payments", "default"}},
+		{[]string{"namespace=default"}, []string{"default"}},
+		{[]string{"namespace=payments"}, []string{"payments"}},
+		{[]string{"namespace=missing"}, nil},
+	} {
+		resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+			Filters: filters(t, tc.filters...),
+		}))
 		if err != nil {
-			t.Fatalf("ListAuditRecords(%q): %v", tc.namespace, err)
+			t.Fatalf("ListAuditRecords(%q): %v", tc.filters, err)
 		}
-		if got := len(resp.Msg.GetRecords()); got != tc.want {
-			t.Errorf("namespace %q: %d records, want %d", tc.namespace, got, tc.want)
-		}
+		var got []string
 		for _, rec := range resp.Msg.GetRecords() {
-			if tc.namespace != "" && rec.GetNamespace() != tc.namespace {
-				t.Errorf("namespace %q returned a record of %q", tc.namespace, rec.GetNamespace())
-			}
+			got = append(got, rec.GetNamespace())
 		}
+		if fmt.Sprintf("%q", got) != fmt.Sprintf("%q", tc.want) {
+			t.Errorf("filters %q: namespaces %q, want %q", tc.filters, got, tc.want)
+		}
+	}
+	// A namespace filter is held to the name rule.
+	_, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		Filters: filters(t, "namespace=Payments"),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), `namespace "Payments" is not a slug`) {
+		t.Errorf("namespace=Payments = %v, want InvalidArgument (not a slug)", err)
+	}
+}
+
+func TestListAuditRecords_ActionPrefixPrincipalTargetSucceeded(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	at := func(i int) time.Time { return f.now.Add(-time.Duration(10-i) * time.Second) }
+	put := func(i int, namespace, action, principal, target string, succeeded bool, code string) *orkstackv1.AuditRecord {
+		rec := &orkstackv1.AuditRecord{
+			SchemaVersion: artifacts.AuditSchemaVersion, Id: artifacts.NewAuditID(at(i)), At: timestamppb.New(at(i)),
+			Namespace: namespace, Action: action, Principal: principal, Target: target, Succeeded: succeeded, ErrorCode: code,
+		}
+		if err := f.store.PutAuditRecord(ctx, rec); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return rec
+	}
+	update := put(1, "payments", "namespace.update", "dsantos", "payments", true, "")
+	promote := put(2, "payments", "orkflow.promote", "svc-ci", "deploy@3", false, "failed_precondition")
+	retention := put(3, "", "retention.update", "dsantos", "deployment", true, "")
+	for _, tc := range []struct {
+		filters []string
+		want    []*orkstackv1.AuditRecord // newest first
+	}{
+		{[]string{"action^namespace."}, []*orkstackv1.AuditRecord{update}},
+		{[]string{"action^orkflow.promote"}, []*orkstackv1.AuditRecord{promote}},
+		{[]string{"action~.update"}, []*orkstackv1.AuditRecord{retention, update}},
+		{[]string{"principal=dsantos"}, []*orkstackv1.AuditRecord{retention, update}},
+		{[]string{"principal=dsan"}, nil}, // equals is never a prefix
+		{[]string{"principal^dsan"}, []*orkstackv1.AuditRecord{retention, update}},
+		{[]string{"principal="}, nil}, // unattributed records are selectable; there are none here
+		{[]string{"target=deploy@3"}, []*orkstackv1.AuditRecord{promote}},
+		{[]string{"succeeded=false"}, []*orkstackv1.AuditRecord{promote}},
+		{[]string{"succeeded=true", "principal!=dsantos"}, nil},
+		{[]string{"error_code=failed_precondition,not_found"}, []*orkstackv1.AuditRecord{promote}},
+	} {
+		resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+			Filters: filters(t, tc.filters...),
+		}))
+		if err != nil {
+			t.Fatalf("ListAuditRecords(%q): %v", tc.filters, err)
+		}
+		var got, want []string
+		for _, rec := range resp.Msg.GetRecords() {
+			got = append(got, rec.GetId())
+		}
+		for _, rec := range tc.want {
+			want = append(want, rec.GetId())
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("filters %q listed %v, want %v", tc.filters, got, want)
+		}
+	}
+	// A bool is true or false, exactly.
+	_, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		Filters: filters(t, "succeeded=yes"),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), `succeeded is true or false, not "yes"`) {
+		t.Errorf("succeeded=yes = %v, want InvalidArgument", err)
 	}
 }
 
@@ -638,11 +810,11 @@ func TestListAuditRecords_NoStoreIsFailedPrecondition(t *testing.T) {
 	}
 }
 
-func TestListAuditRecords_ScanBudgetIsResourceExhausted(t *testing.T) {
+func TestListAuditRecords_BudgetIsStillRefused(t *testing.T) {
 	f := newAuditFixture(t, auditOptions{store: failingAuditStore{err: fmt.Errorf("walk: %w", artifacts.ErrAuditScanBudget)}})
 	_, err := f.audit().ListAuditRecords(context.Background(), connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{}))
 	if connect.CodeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "5000") ||
-		!strings.Contains(err.Error(), "narrow --since/--until") {
+		!strings.Contains(err.Error(), "narrow the at window or add filters") {
 		t.Fatalf("budget refusal = %v, want ResourceExhausted naming the budget and the fix", err)
 	}
 	f2 := newAuditFixture(t, auditOptions{store: failingAuditStore{err: errors.New("connection refused")}})

@@ -6,93 +6,65 @@
 	// decides what to send. So this panel owes a reader three things, stated
 	// rather than inferred:
 	//   - WHAT it shows: the caption names the window the engine resolved and
-	//     whether every namespace or one is shown; the page's namespace
-	//     selector does not filter it (the webhook surface is deployment-wide);
+	//     whether every namespace or a namespace filter's selection is shown;
+	//     the page's namespace selector does not filter it (the webhook surface
+	//     is deployment-wide);
 	//   - what a record IS: every attempt, the signature that was sent and the
 	//     body's SHA-256 — the body itself is not stored;
-	//   - a failed read is a failure, never an empty table. A scan the engine
-	//     refused for its budget says so beside the window inputs, because
-	//     narrowing the window is the fix.
+	//   - a failed read is a failure, never an empty table. A refused filter or
+	//     a scan the engine refused for its budget is the engine's message,
+	//     verbatim.
+	// The filters are the one filter component's (ListFilter, `deliveryFilter`
+	// parameters): what may be filtered is the ListDeliveriesRequest allowlist.
 	// Redeliver is one POST, now, behind a confirmation that says exactly that.
 	import { goto, invalidateAll } from '$app/navigation';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ListFilter from '$lib/components/ListFilter.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
-	import Select from '$lib/components/Select.svelte';
 	import { readPageStack, writePageStack } from '$lib/browsing';
 	import { errorMessage, orkstack } from '$lib/client';
 	import {
 		DELIVERIES_CAPTION,
-		DELIVERY_EVENTS,
 		deliveriesCliCommand,
 		deliveriesHref,
+		deliveriesNamespaceScope,
 		deliveriesStackKey,
-		eventName,
 		instantMs,
 		instantSeconds,
 		lastAttemptLabel,
 		millis,
 		redeliveryResult,
 		redeliverySentence,
-		type DeliveredFilter,
+		runDeliveriesFilters,
 		type DeliveryCoordinates
 	} from '$lib/deliveries';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import type { Delivery, ListDeliveriesResponse, Webhook } from '$lib/gen/orkstack/v1/service_pb';
+	import { EventType } from '$lib/gen/orkstack/v1/run_pb';
+	import { ListDeliveriesRequestSchema, type Delivery, type ListDeliveriesResponse, type Webhook } from '$lib/gen/orkstack/v1/service_pb';
+	import type { FieldFilter } from '$lib/listFilter';
 	import { fmtTimestamp, statusClasses } from '$lib/status';
 
 	interface Props {
 		coordinates: DeliveryCoordinates;
 		response: ListDeliveriesResponse | null;
 		error: string | null;
-		errorCode: string | null;
 		webhooks: Webhook[];
 	}
-	let { coordinates: c, response, error, errorCode, webhooks }: Props = $props();
+	let { coordinates: c, response, error, webhooks }: Props = $props();
 
+	const eventName = (event: EventType) => EventType[event] ?? '';
 	const deliveries = $derived(response?.deliveries ?? []);
 	const resolvedSince = $derived(instantSeconds(response?.since));
 	const resolvedUntil = $derived(instantSeconds(response?.until));
 
-	const webhookOptions = $derived([
-		{ value: '', label: 'Any webhook' },
-		...webhooks.map((hook) => ({ value: hook.id, label: hook.id })),
-		...(c.webhook && !webhooks.some((hook) => hook.id === c.webhook) ? [{ value: c.webhook, label: c.webhook }] : [])
-	]);
-	const eventOptions = [{ value: '', label: 'Any event' }, ...DELIVERY_EVENTS.map((event) => ({ value: eventName(event), label: eventName(event) }))];
-	const outcomeOptions = [
-		{ value: '', label: 'Any outcome' },
-		{ value: 'true', label: 'Delivered' },
-		{ value: 'false', label: 'Failed' }
-	];
-
-	// The typed filters are a DRAFT of the URL (the runs list's rule); the
-	// selects apply at once. Any navigation refills the draft from the page.
-	function draftFromPage() {
-		return { run: c.run, namespace: c.namespace, since: c.since || resolvedSince, until: c.until || resolvedUntil };
+	// Any filter change drops the cursor and the page: a token is bound to the
+	// filter set it was issued for.
+	function applyFilters(filters: FieldFilter[]) {
+		void goto(deliveriesHref(c, { filters, cursor: '', page: 1 }, 'deliveries'), { noScroll: true, keepFocus: true });
 	}
-	let draft = $state(draftFromPage());
-	$effect(() => {
-		draft = draftFromPage();
-	});
-
-	function go(changes: Partial<DeliveryCoordinates>) {
-		// Any filter change drops the cursor and the page: a token is bound to
-		// the filters it was issued for.
-		void goto(deliveriesHref(c, { cursor: '', page: 1, ...changes }, 'deliveries'), { noScroll: true, keepFocus: true });
-	}
-	function apply(event: SubmitEvent) {
-		event.preventDefault();
-		// A window left exactly as the engine resolved it stays unset, so an
-		// unfiltered listing keeps meaning "the last week, up to now".
-		go({
-			run: draft.run.trim(),
-			namespace: draft.namespace.trim(),
-			since: draft.since === resolvedSince && !c.since ? '' : draft.since.trim(),
-			until: draft.until === resolvedUntil && !c.until ? '' : draft.until.trim()
-		});
-	}
+	const clearHref = $derived(deliveriesHref(c, { filters: [], cursor: '', page: 1 }, 'deliveries'));
 
 	let retrying = $state(false);
 	async function retry() {
@@ -152,7 +124,6 @@
 		}
 	}
 	const outcomeClasses = (ok: boolean) => statusClasses(ok ? Status.SUCCEEDED : Status.FAILED);
-	const inputClass = 'h-9 rounded-md border border-border bg-surface px-3 text-sm';
 </script>
 
 <section id="deliveries" class="mt-8" data-testid="deliveries">
@@ -162,71 +133,25 @@
 	</div>
 	<p class="mb-4 text-sm text-fg-muted" data-testid="deliveries-scope">
 		{DELIVERIES_CAPTION}
-		{#if c.namespace}Showing namespace <span class="font-medium text-fg">{c.namespace}</span>{:else}Showing every namespace{/if}{#if c.webhook}{' '}for webhook <span class="font-mono text-xs text-fg" data-testid="deliveries-scope-webhook">{c.webhook}</span>{/if}{#if response},
+		{deliveriesNamespaceScope(c.filters)}{#if response},
 			<span class="font-mono text-xs" data-testid="deliveries-window">{resolvedSince} to {resolvedUntil}</span>{/if}.
 		The page's namespace selector does not filter this panel.
 	</p>
 
-	<form class="mb-4 rounded-lg border border-border bg-surface p-4 shadow-xs" data-testid="deliveries-filters" onsubmit={apply}>
-		<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-			<div class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">Webhook</span>
-				<Select testid="deliveries-webhook" value={c.webhook} options={webhookOptions} onchange={(value) => go({ webhook: value })} />
-			</div>
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">Run</span>
-				<input data-testid="deliveries-run" bind:value={draft.run} placeholder="exact run id" class="{inputClass} font-mono text-xs" />
-			</label>
-			<div class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">Event</span>
-				<Select testid="deliveries-event" value={c.event} options={eventOptions} onchange={(value) => go({ event: value })} />
-			</div>
-			<div class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">Outcome</span>
-				<Select
-					testid="deliveries-outcome"
-					value={c.delivered}
-					options={outcomeOptions}
-					onchange={(value) => go({ delivered: value as DeliveredFilter })}
-				/>
-			</div>
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">Since <span class="font-normal text-fg-muted">(inclusive)</span></span>
-				<input data-testid="deliveries-since" bind:value={draft.since} placeholder="2026-01-01T00:00:00Z" class="{inputClass} font-mono text-xs" />
-			</label>
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">Until <span class="font-normal text-fg-muted">(exclusive)</span></span>
-				<input data-testid="deliveries-until" bind:value={draft.until} placeholder="now" class="{inputClass} font-mono text-xs" />
-			</label>
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">Namespace <span class="font-normal text-fg-muted">empty means every</span></span>
-				<input data-testid="deliveries-namespace" bind:value={draft.namespace} placeholder="payments" class={inputClass} />
-			</label>
-		</div>
-		{#if errorCode === 'resource_exhausted' || errorCode === 'invalid_argument'}
-			<p class="mt-3 text-sm text-danger-700" data-testid="deliveries-window-error">{error}</p>
-		{/if}
-		<div class="mt-4 flex items-center gap-2">
-			<button
-				type="submit"
-				data-testid="deliveries-apply"
-				class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs hover:bg-brand-700"
-				>Apply</button
-			>
-			<a
-				href={deliveriesHref(c, { webhook: '', run: '', event: '', delivered: '', namespace: '', since: '', until: '', cursor: '', page: 1 }, 'deliveries')}
-				data-testid="deliveries-clear"
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
-				>Clear</a
-			>
-		</div>
-	</form>
+	<ListFilter
+		request={ListDeliveriesRequestSchema}
+		applied={c.filters}
+		testid="deliveries"
+		command={['orkctl', 'webhook', 'deliveries']}
+		onapply={applyFilters}
+		{clearHref}
+	/>
 
 	{#if error}
 		<ErrorPanel testid="deliveries-error" subject="the delivery records" message={error} busy={retrying} onretry={retry} />
 	{:else if deliveries.length === 0}
 		<p class="text-sm text-fg-muted" data-testid="deliveries-empty">
-			No deliveries in this window{c.page > 1 ? ' past the previous page' : ''}.
+			{#if c.filters.length > 0 && c.page === 1}No deliveries match these filters.{:else}No deliveries in this window{c.page > 1 ? ' past the previous page' : ''}.{/if}
 		</p>
 		{#if c.page > 1}
 			<Pagination testid="deliveries" noun="delivery record" page={c.page} count={0} {previousHref} {firstHref} />
@@ -302,7 +227,7 @@
 												<a
 													data-testid="delivery-redelivery-of-{d.id}"
 													class="font-mono text-brand-700 hover:underline"
-													href={deliveriesHref(c, { run: d.runId, webhook: d.webhookId, cursor: '', page: 1 }, `delivery-${d.redeliveryOf}`)}
+													href={deliveriesHref(c, { filters: runDeliveriesFilters(d.runId, d.webhookId), cursor: '', page: 1 }, `delivery-${d.redeliveryOf}`)}
 													>{d.redeliveryOf}</a
 												>
 											</dd>

@@ -3,99 +3,96 @@ import { create } from '@bufbuild/protobuf';
 import { durationFromMs, timestampFromDate } from '@bufbuild/protobuf/wkt';
 import {
 	DEFAULT_DELIVERY_LIMIT,
-	DELIVERY_EVENTS,
-	deliveredFilter,
 	deliveriesCliCommand,
-	deliveriesFilterError,
 	deliveriesHref,
-	deliveriesRequest,
+	deliveriesNamespaceScope,
 	deliveriesStackKey,
 	deliveryLimit,
 	lastAttemptLabel,
 	redeliveryOutcome,
 	redeliveryResult,
 	redeliverySentence,
+	runDeliveriesFilters,
+	webhookDeliveriesFilters,
 	type DeliveryCoordinates
 } from '../src/lib/deliveries';
-import { DeliveryAttemptSchema, DeliveryOutcome } from '../src/lib/gen/orkstack/v1/service_pb';
-import { EventType } from '../src/lib/gen/orkstack/v1/run_pb';
+import { DeliveryAttemptSchema, ListDeliveriesRequestSchema } from '../src/lib/gen/orkstack/v1/service_pb';
+import { parseFilter, specFor, type FieldFilter } from '../src/lib/listFilter';
 
 const base: DeliveryCoordinates = {
 	ns: 'default',
-	webhook: '',
-	run: '',
-	event: '',
-	delivered: '',
-	namespace: '',
-	since: '',
-	until: '',
+	filters: [],
 	limit: DEFAULT_DELIVERY_LIMIT,
 	cursor: '',
-	page: 1
+	page: 1,
+	subscriptionFilters: []
 };
 
-test('the panel offers exactly the eight subscribable events, never TASK_LOG or RUN_CREATED', () => {
-	expect(DELIVERY_EVENTS.length).toBe(10);
-	expect(DELIVERY_EVENTS).not.toContain(EventType.TASK_LOG);
-	expect(DELIVERY_EVENTS).not.toContain(EventType.RUN_CREATED);
+function parsed(...texts: string[]): FieldFilter[] {
+	return texts.map((text) => {
+		const f = parseFilter(text);
+		if ('error' in f) throw new Error(f.error);
+		return f;
+	});
+}
+
+test('the panel offers the ListDeliveries allowlist: the key coordinates, events only a subscription receives', () => {
+	const spec = specFor(ListDeliveriesRequestSchema);
+	expect(spec.resource).toBe('Delivery');
+	expect(spec.fields.map((f) => f.path)).toEqual(['created_at', 'namespace', 'run_id', 'webhook_id', 'event', 'delivered']);
+	const event = spec.fields.find((f) => f.path === 'event');
+	expect(event?.kind).toBe('enum');
+	expect(event?.values).toHaveLength(10);
+	expect(event?.values).not.toContain('TASK_LOG');
+	expect(event?.values).not.toContain('RUN_CREATED');
+	expect(spec.fields.find((f) => f.path === 'delivered')?.kind).toBe('bool');
+	expect(spec.fields.find((f) => f.path === 'created_at')?.kind).toBe('time');
 });
 
-test('URL values outside their domain fall back instead of reaching the engine', () => {
-	expect(deliveredFilter('true')).toBe('true');
-	expect(deliveredFilter('false')).toBe('false');
-	expect(deliveredFilter('maybe')).toBe('');
+test('a limit outside 1..200 falls back to the default instead of reaching the engine', () => {
 	expect(deliveryLimit('2')).toBe(2);
 	expect(deliveryLimit('201')).toBe(DEFAULT_DELIVERY_LIMIT);
 	expect(deliveryLimit(null)).toBe(DEFAULT_DELIVERY_LIMIT);
 });
 
-test('a filter the engine would refuse is refused locally', () => {
-	expect(deliveriesFilterError(base)).toBeNull();
-	expect(deliveriesFilterError({ ...base, event: 'TASK_LOG' })).toContain('Unknown event');
-	expect(deliveriesFilterError({ ...base, namespace: 'Bad Name' })).toContain('Namespace');
-	expect(deliveriesFilterError({ ...base, since: 'yesterday' })).toContain('Since');
-	expect(deliveriesFilterError({ ...base, since: '2026-09-21', until: '2026-09-20' })).toBe('Until must be after since.');
-});
-
-test('the request carries every filter; an empty namespace means every namespace', () => {
-	const request = deliveriesRequest({
-		...base,
-		webhook: 'wh-4a1c0e2b7d3f8159',
-		run: 'ork-1',
-		event: 'RUN_FAILED',
-		delivered: 'false',
-		since: '2026-09-21',
-		limit: 2,
-		cursor: 'tok'
-	});
-	expect(request.webhookId).toBe('wh-4a1c0e2b7d3f8159');
-	expect(request.runId).toBe('ork-1');
-	expect(request.event).toBe(EventType.RUN_FAILED);
-	expect(request.outcome).toBe(DeliveryOutcome.FAILED);
-	expect(request.namespace).toBe('');
-	expect(request.pageSize).toBe(2);
-	expect(request.pageToken).toBe('tok');
-	expect(Number(request.since?.seconds)).toBe(Date.UTC(2026, 8, 21) / 1000);
-	expect(request.until).toBeUndefined();
-	expect(deliveriesRequest({ ...base, delivered: 'true' }).outcome).toBe(DeliveryOutcome.DELIVERED);
-	expect(deliveriesRequest(base).pageSize).toBe(0);
-});
-
-test('the address sets each key once, keeps ns first, and drops the page with the cursor', () => {
-	const c = { ...base, ns: 'payments', webhook: 'wh-1', delivered: 'false' as const, cursor: 'abc', page: 3 };
-	expect(deliveriesHref(c)).toBe('/admin/webhooks?ns=payments&webhook=wh-1&delivered=false&cursor=abc&page=3');
-	expect(deliveriesHref(c, { event: 'RUN_FAILED', cursor: '', page: 1 })).toBe(
-		'/admin/webhooks?ns=payments&webhook=wh-1&event=RUN_FAILED&delivered=false'
+test('the address writes ns first, the panel filters as repeated deliveryFilter keys, and drops the page with the cursor', () => {
+	const c = { ...base, ns: 'payments', filters: parsed('webhook_id=wh-1', 'delivered=false'), cursor: 'abc', page: 3 };
+	expect(deliveriesHref(c)).toBe(
+		'/admin/webhooks?ns=payments&deliveryFilter=delivered%3Dfalse&deliveryFilter=webhook_id%3Dwh-1&cursor=abc&page=3'
 	);
-	expect(deliveriesHref(base, { webhook: 'wh-1' }, 'deliveries')).toBe('/admin/webhooks?ns=default&webhook=wh-1#deliveries');
-	expect(deliveriesStackKey(c)).toBe('orkstack.pages:/admin/webhooks?ns=payments&webhook=wh-1&delivered=false');
+	expect(deliveriesHref(c, { cursor: '', page: 1 })).toBe(
+		'/admin/webhooks?ns=payments&deliveryFilter=delivered%3Dfalse&deliveryFilter=webhook_id%3Dwh-1'
+	);
+	// The subscriptions table's own filters ride `filter` and survive a panel change.
+	const both = { ...c, subscriptionFilters: parsed('url~example') };
+	expect(deliveriesHref(both, { filters: [], cursor: '', page: 1 })).toBe('/admin/webhooks?ns=payments&filter=url%7Eexample');
+	expect(deliveriesHref(base, { limit: 2 }, 'deliveries')).toBe('/admin/webhooks?ns=default&limit=2#deliveries');
+	// A stack key belongs to one filter set, whatever the cursor.
+	expect(deliveriesStackKey(c)).toBe(
+		'orkstack.pages:/admin/webhooks?ns=payments&deliveryFilter=delivered%3Dfalse&deliveryFilter=webhook_id%3Dwh-1'
+	);
+	expect(deliveriesStackKey(c)).toBe(deliveriesStackKey({ ...c, cursor: 'xyz', page: 9 }));
+	expect(deliveriesStackKey(c)).not.toBe(deliveriesStackKey({ ...c, filters: parsed('webhook_id=wh-1') }));
 });
 
-test('the CLI equivalent repeats every filter, shell-quoted, with -n only for a namespace filter', () => {
+test("a subscription's Deliveries link opens deliveryFilter=webhook_id=<id>", () => {
+	const href = deliveriesHref(base, { filters: webhookDeliveriesFilters('wh-4a1c0e2b7d3f8159') }, 'deliveries');
+	expect(new URL(href, 'http://x').searchParams.getAll('deliveryFilter')).toEqual(['webhook_id=wh-4a1c0e2b7d3f8159']);
+	const original = deliveriesHref(base, { filters: runDeliveriesFilters('ork-1', 'wh-1') });
+	expect(new URL(original, 'http://x').searchParams.getAll('deliveryFilter')).toEqual(['run_id=ork-1', 'webhook_id=wh-1']);
+});
+
+test('the CLI equivalent is webhook deliveries with every filter shell-quoted and --limit, never -n', () => {
 	expect(deliveriesCliCommand(base)).toBe('orkctl webhook deliveries');
-	expect(
-		deliveriesCliCommand({ ...base, ns: 'ignored', namespace: 'payments', run: "ork-'x", delivered: 'false', limit: 2 })
-	).toBe(`orkctl -n 'payments' webhook deliveries --run 'ork-'"'"'x' --delivered=false --limit 2`);
+	expect(deliveriesCliCommand({ filters: parsed("run_id=ork-'x", 'delivered=false', 'namespace=payments'), limit: 2 })).toBe(
+		`orkctl webhook deliveries --filter 'delivered=false' --filter 'namespace=payments' --filter 'run_id=ork-'"'"'x' --limit 2`
+	);
+});
+
+test('the scope sentence says every namespace unless a namespace filter narrows the panel', () => {
+	expect(deliveriesNamespaceScope([])).toBe('Showing every namespace');
+	expect(deliveriesNamespaceScope(parsed('namespace=payments'))).toBe('Showing namespace payments');
+	expect(deliveriesNamespaceScope(parsed('namespace^pay'))).toBe('Showing the namespaces the namespace filter selects');
 });
 
 test('an attempt reads as its status, or its error when no response arrived', () => {

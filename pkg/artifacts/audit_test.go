@@ -334,35 +334,40 @@ func TestAuditStore_CursorContinuesWithoutOverlap(t *testing.T) {
 	}
 }
 
-func TestAuditQuery_Matches(t *testing.T) {
+func TestAuditQuery_KeepSeesTheRecord(t *testing.T) {
 	at := time.Date(2026, 3, 14, 11, 2, 44, 0, time.UTC)
 	deployment := auditRecord(at, "", "retention.update", "svc-ci")
-	defaultNS := auditRecord(at, "default", "namespace.update", "dsantos")
-	payments := auditRecord(at, "payments", "orkflow.promote", "dsantos")
-	cases := []struct {
-		name string
-		q    artifacts.AuditQuery
-		rec  *orkstackv1.AuditRecord
-		want bool
-	}{
-		{"every namespace keeps deployment-wide", artifacts.AuditQuery{}, deployment, true},
-		{"every namespace keeps default", artifacts.AuditQuery{}, defaultNS, true},
-		{"every namespace keeps payments", artifacts.AuditQuery{}, payments, true},
-		{"default keeps default", artifacts.AuditQuery{Namespace: "default"}, defaultNS, true},
-		{"default drops deployment-wide", artifacts.AuditQuery{Namespace: "default"}, deployment, false},
-		{"default drops payments", artifacts.AuditQuery{Namespace: "default"}, payments, false},
-		{"payments drops deployment-wide", artifacts.AuditQuery{Namespace: "payments"}, deployment, false},
-		{"action prefix keeps", artifacts.AuditQuery{ActionPrefix: "orkflow."}, payments, true},
-		{"action prefix exact keeps", artifacts.AuditQuery{ActionPrefix: "orkflow.promote"}, payments, true},
-		{"action prefix drops", artifacts.AuditQuery{ActionPrefix: "namespace."}, payments, false},
-		{"principal exact keeps", artifacts.AuditQuery{Principal: "dsantos"}, payments, true},
-		{"principal is not a prefix", artifacts.AuditQuery{Principal: "dsan"}, payments, false},
-		{"principal drops unattributed", artifacts.AuditQuery{Principal: "dsantos"}, auditRecord(at, "x", "a.b", ""), false},
+	payments := auditRecord(at.Add(time.Second), "payments", "orkflow.promote", "dsantos")
+	payments.Target, payments.Succeeded, payments.ErrorCode = "deploy@3", false, "failed_precondition"
+	if !(artifacts.AuditQuery{}).Matches(deployment) {
+		t.Error("a query with no Keep dropped a record; nil Keep keeps every record")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.q.Matches(tc.rec); got != tc.want {
-				t.Errorf("Matches = %v, want %v", got, tc.want)
+	for name, store := range newAuditStores(t) {
+		t.Run(name, func(t *testing.T) {
+			putAll(t, store, deployment, payments)
+			var seen []*orkstackv1.AuditRecord
+			page, err := store.ListAuditRecords(context.Background(), artifacts.AuditQuery{
+				Since: at.Add(-time.Hour), Until: at.Add(time.Hour), Limit: 50,
+				Keep: func(rec *orkstackv1.AuditRecord) bool {
+					seen = append(seen, rec)
+					return rec.GetNamespace() == ""
+				},
+			})
+			if err != nil {
+				t.Fatalf("ListAuditRecords: %v", err)
+			}
+			if len(page.Records) != 1 || page.Records[0].GetId() != deployment.GetId() {
+				t.Errorf("listed %d records, want only the deployment-wide one Keep accepted", len(page.Records))
+			}
+			if len(seen) != 2 {
+				t.Fatalf("Keep saw %d records, want both in the window", len(seen))
+			}
+			// Newest first: the payments record, decoded whole.
+			got := seen[0]
+			if got.GetId() != payments.GetId() || got.GetNamespace() != "payments" || got.GetAction() != "orkflow.promote" ||
+				got.GetPrincipal() != "dsantos" || got.GetTarget() != "deploy@3" || got.GetSucceeded() ||
+				got.GetErrorCode() != "failed_precondition" || !got.GetAt().AsTime().Equal(payments.GetAt().AsTime()) {
+				t.Errorf("Keep saw %v, want the stored record %v", got, payments)
 			}
 		})
 	}
@@ -376,7 +381,8 @@ func TestAuditStore_ScanBudgetRefuses(t *testing.T) {
 				putAll(t, store, auditRecord(base.Add(time.Duration(i)*time.Second), "ns", "namespace.update", ""))
 			}
 			q := artifacts.AuditQuery{
-				Since: base, Until: base.Add(24 * time.Hour), Limit: 50, Principal: "nobody-matches",
+				Since: base, Until: base.Add(24 * time.Hour), Limit: 50,
+				Keep: func(rec *orkstackv1.AuditRecord) bool { return rec.GetPrincipal() == "nobody-matches" },
 			}
 			page, err := store.ListAuditRecords(context.Background(), q)
 			if !errors.Is(err, artifacts.ErrAuditScanBudget) {
@@ -384,7 +390,7 @@ func TestAuditStore_ScanBudgetRefuses(t *testing.T) {
 					len(page.Records), err)
 			}
 			// A filter that fills the page early never meets the budget.
-			q.Principal = ""
+			q.Keep = nil
 			page, err = store.ListAuditRecords(context.Background(), q)
 			if err != nil || len(page.Records) != 50 {
 				t.Fatalf("matching listing = %d records, %v; want a full page", len(page.Records), err)

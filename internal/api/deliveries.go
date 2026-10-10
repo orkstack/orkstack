@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -43,13 +43,10 @@ const (
 	DefaultDeliveryPageSize = 50
 	MaxDeliveryPageSize     = 200
 
-	deliveryCursorVersion = 1
+	// deliveryCursorVersion is 2: version 1 carried the removed typed
+	// filters and is refused.
+	deliveryCursorVersion = 2
 )
-
-// deliveryWebhookIDPattern is the id rule the webhook store applies
-// (pkg/artifacts/webhook_store.go), asked here so a malformed filter is a bad
-// request rather than a listing that can never match.
-var deliveryWebhookIDPattern = regexp.MustCompile(`^wh-[0-9a-f]{16,}$`)
 
 // DeliveryRecorder writes one record per settled delivery. It is the only
 // writer of metadata/deliveries/ in the codebase.
@@ -159,20 +156,17 @@ func deliveryStoreMissing() error {
 	return connect.NewError(connect.CodeFailedPrecondition, errors.New("delivery record store is not configured"))
 }
 
-// deliveryCursor is the page token: every filter as the request sent it, the
+// deliveryCursor is the page token: the canonical filter set's key, the
 // window as the first page resolved it, and the key to continue before.
 type deliveryCursor struct {
 	Version     int    `json:"v"`
-	WebhookID   string `json:"w"`
-	RunID       string `json:"r"`
-	Event       int32  `json:"e"`
-	Outcome     int32  `json:"o"`
-	Namespace   string `json:"n"`
-	Since       string `json:"a"`
-	Until       string `json:"b"`
+	Filters     string `json:"f"`
 	WindowSince string `json:"ws"`
 	WindowUntil string `json:"wu"`
-	BeforeKey   string `json:"k"`
+	// RunStart records that WindowSince is a run's created_at, so every page
+	// reports since_is_run_start as the first did.
+	RunStart  bool   `json:"rs,omitempty"`
+	BeforeKey string `json:"k"`
 }
 
 func encodeDeliveryCursor(c deliveryCursor) (string, error) {
@@ -183,72 +177,77 @@ func encodeDeliveryCursor(c deliveryCursor) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-func decodeDeliveryCursor(token string, want deliveryCursor) (deliveryCursor, error) {
+// decodeDeliveryCursor reads a page token issued under set, returning the
+// window it carries, whether its start is a run's, and the key to continue
+// before.
+func decodeDeliveryCursor(token string, set listfilter.Set) (since, until time.Time, runStart bool, beforeKey string, err error) {
 	invalid := connect.NewError(connect.CodeInvalidArgument, errors.New("invalid page_token"))
-	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		return deliveryCursor{}, invalid
+	raw, decodeErr := base64.RawURLEncoding.DecodeString(token)
+	if decodeErr != nil {
+		return time.Time{}, time.Time{}, false, "", invalid
 	}
 	var c deliveryCursor
-	if err := json.Unmarshal(raw, &c); err != nil || c.Version != deliveryCursorVersion {
-		return deliveryCursor{}, invalid
-	}
-	if c.WebhookID != want.WebhookID || c.RunID != want.RunID || c.Event != want.Event ||
-		c.Outcome != want.Outcome || c.Namespace != want.Namespace || c.Since != want.Since || c.Until != want.Until {
-		return deliveryCursor{}, connect.NewError(connect.CodeInvalidArgument,
-			errors.New("page_token does not match these delivery filters"))
+	if json.Unmarshal(raw, &c) != nil || c.Version != deliveryCursorVersion {
+		return time.Time{}, time.Time{}, false, "", invalid
 	}
 	if _, ok := artifacts.ParseDeliveryKey(c.BeforeKey); !ok {
-		return deliveryCursor{}, invalid
+		return time.Time{}, time.Time{}, false, "", invalid
 	}
-	if _, err := time.Parse(time.RFC3339Nano, c.WindowSince); err != nil {
-		return deliveryCursor{}, invalid
+	since, sinceErr := time.Parse(time.RFC3339Nano, c.WindowSince)
+	until, untilErr := time.Parse(time.RFC3339Nano, c.WindowUntil)
+	if sinceErr != nil || untilErr != nil {
+		return time.Time{}, time.Time{}, false, "", invalid
 	}
-	if _, err := time.Parse(time.RFC3339Nano, c.WindowUntil); err != nil {
-		return deliveryCursor{}, invalid
+	if err := checkFilterKey(c.Filters, set); err != nil {
+		return time.Time{}, time.Time{}, false, "", err
 	}
-	return c, nil
+	return since.UTC(), until.UTC(), c.RunStart, c.BeforeKey, nil
 }
 
-func deliveryTimeString(ts *timestamppb.Timestamp, field string) (string, error) {
-	if ts == nil {
-		return "", nil
+// emptyWindow is the refusal of a resolved window with no instant in it: the
+// §4.4 interval message of docs/UI_CLI_PARITY.md "Filtering lists", spelled
+// with the bounds the listing would have used.
+func emptyWindow(path string, since, until time.Time) error {
+	return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s >= %s and < %s select no instant",
+		path, since.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano)))
+}
+
+// deliveryKeep is the store's Keep for a filter set: every delivery filter is
+// a coordinate of the record's key, so the set is matched against a Delivery
+// built from the key alone and a body is read only for a record that matches.
+func deliveryKeep(set listfilter.Set) func(artifacts.DeliveryKeyFields) bool {
+	if set.Empty() {
+		return nil
 	}
-	if !ts.IsValid() {
-		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s is invalid", field))
+	return func(k artifacts.DeliveryKeyFields) bool {
+		return set.Match(&orkstackv1.Delivery{
+			Id:        k.ID,
+			CreatedAt: timestamppb.New(k.CreatedAt),
+			Namespace: k.Namespace,
+			RunId:     k.RunID,
+			WebhookId: k.WebhookID,
+			Event:     k.Event,
+			Delivered: k.Delivered,
+		})
 	}
-	return ts.AsTime().UTC().Format(time.RFC3339Nano), nil
 }
 
 // ListDeliveries lists delivery records newest first. It reads the shared
 // store on every call and never process memory, so a replica that delivered
 // nothing answers identically to the one that delivered everything.
+//
+// It is a deployment-wide listing narrowed by filters, every one decided
+// from a record's key. The window is the created_at interval the filters
+// bound; its start defaults to the run's created_at when exactly one run_id
+// equals filter names a run the engine can read, otherwise to seven days
+// before its end, and its end to now. A page token carries the resolved
+// window, so "now" does not move under a listing an operator is paging.
 func (s *Service) ListDeliveries(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListDeliveriesRequest],
 ) (*connect.Response[orkstackv1.ListDeliveriesResponse], error) {
-	if s.deliveries == nil {
-		return nil, deliveryStoreMissing()
-	}
 	msg := req.Msg
-	if id := msg.GetWebhookId(); id != "" && !deliveryWebhookIDPattern.MatchString(id) {
-		return nil, connect.NewError(connect.CodeInvalidArgument,
-			fmt.Errorf("webhook_id %q is not a webhook id (want %s)", id, deliveryWebhookIDPattern))
-	}
-	if event := msg.GetEvent(); event != orkstackv1.EventType_EVENT_TYPE_UNSPECIFIED {
-		if _, err := webhooks.ParseEvent(event.String()); err != nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument,
-				fmt.Errorf("event %s is never delivered: %w", strings.TrimPrefix(event.String(), "EVENT_TYPE_"), err))
-		}
-	}
-	if err := validNamespaceSelector(msg.GetNamespace()); err != nil {
-		return nil, err
-	}
-	sinceRaw, err := deliveryTimeString(msg.GetSince(), "since")
-	if err != nil {
-		return nil, err
-	}
-	untilRaw, err := deliveryTimeString(msg.GetUntil(), "until")
+	set, err := compileFilters(msg)
 	if err != nil {
 		return nil, err
 	}
@@ -260,93 +259,84 @@ func (s *Service) ListDeliveries(
 		return nil, connect.NewError(connect.CodeInvalidArgument,
 			fmt.Errorf("page_size %d is outside 1..%d", msg.GetPageSize(), MaxDeliveryPageSize))
 	}
-
-	filters := deliveryCursor{
-		Version:   deliveryCursorVersion,
-		WebhookID: msg.GetWebhookId(),
-		RunID:     msg.GetRunId(),
-		Event:     int32(msg.GetEvent()),
-		Outcome:   int32(msg.GetOutcome()),
-		Namespace: msg.GetNamespace(),
-		Since:     sinceRaw,
-		Until:     untilRaw,
+	if s.deliveries == nil {
+		return nil, deliveryStoreMissing()
 	}
+
 	var since, until time.Time
+	var runStart bool
 	var beforeKey string
 	if token := msg.GetPageToken(); token != "" {
-		cursor, err := decodeDeliveryCursor(token, filters)
-		if err != nil {
+		// The window is the one the first page resolved.
+		if since, until, runStart, beforeKey, err = decodeDeliveryCursor(token, set); err != nil {
 			return nil, err
 		}
-		// The window is the one the first page resolved: "now" does not move
-		// under a listing an operator is paging through.
-		since, _ = time.Parse(time.RFC3339Nano, cursor.WindowSince)
-		until, _ = time.Parse(time.RFC3339Nano, cursor.WindowUntil)
-		beforeKey = cursor.BeforeKey
 	} else {
+		atOrAfter, before := set.Interval("created_at")
 		until = s.now().UTC()
-		if msg.GetUntil() != nil {
-			until = msg.GetUntil().AsTime().UTC()
+		if !before.IsZero() {
+			until = before.UTC()
 		}
+		runID, oneRun := set.Equality("run_id")
 		switch {
-		case msg.GetSince() != nil:
-			since = msg.GetSince().AsTime().UTC()
-		case msg.GetRunId() != "":
+		case !atOrAfter.IsZero():
+			since = atOrAfter.UTC()
+		case oneRun:
 			// Since the run started, when the engine can read the run;
 			// otherwise the ordinary lookback — a run whose history is gone
 			// can still have records.
-			run, err := s.LookupRun(ctx, msg.GetRunId())
+			run, err := s.LookupRun(ctx, runID)
 			switch {
 			case err == nil && run.GetCreatedAt().IsValid():
 				since = run.GetCreatedAt().AsTime().UTC()
+				runStart = true
 			case err == nil || connect.CodeOf(err) == connect.CodeNotFound:
 				since = until.Add(-DefaultDeliveryLookback)
 			default:
 				return nil, connect.NewError(connect.CodeUnavailable,
-					fmt.Errorf("read run %q to resolve the delivery window: %w", msg.GetRunId(), err))
+					fmt.Errorf("read run %q to resolve the delivery window: %w", runID, err))
 			}
 		default:
 			since = until.Add(-DefaultDeliveryLookback)
 		}
-	}
-	if !until.After(since) {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
-			"until %s must be after since %s", until.Format(time.RFC3339Nano), since.Format(time.RFC3339Nano)))
+		if !until.After(since) {
+			return nil, emptyWindow("created_at", since, until)
+		}
 	}
 
 	page, err := s.deliveries.ListDeliveries(ctx, artifacts.DeliveryQuery{
 		Since:     since,
 		Until:     until,
-		WebhookID: msg.GetWebhookId(),
-		RunID:     msg.GetRunId(),
-		Namespace: msg.GetNamespace(),
-		Event:     msg.GetEvent(),
-		Outcome:   msg.GetOutcome(),
+		Keep:      deliveryKeep(set),
 		BeforeKey: beforeKey,
 		Limit:     pageSize,
 	})
 	if err != nil {
 		if errors.Is(err, artifacts.ErrDeliveryScanBudget) {
 			return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf(
-				"scan examined more than %d delivery keys before filling a page; narrow --since/--until or the filters",
+				"scan examined more than %d delivery keys before filling a page; narrow the created_at window or add filters",
 				artifacts.DeliveryScanMaxKeys))
 		}
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("read delivery records: %w", err))
 	}
 	out := &orkstackv1.ListDeliveriesResponse{
-		Deliveries: page.Deliveries,
-		Since:      timestamppb.New(since),
-		Until:      timestamppb.New(until),
+		Deliveries:      page.Deliveries,
+		Since:           timestamppb.New(since),
+		Until:           timestamppb.New(until),
+		SinceIsRunStart: runStart,
 	}
 	if out.Deliveries == nil {
 		out.Deliveries = []*orkstackv1.Delivery{}
 	}
 	if page.NextKey != "" {
-		next := filters
-		next.WindowSince = since.Format(time.RFC3339Nano)
-		next.WindowUntil = until.Format(time.RFC3339Nano)
-		next.BeforeKey = page.NextKey
-		token, err := encodeDeliveryCursor(next)
+		token, err := encodeDeliveryCursor(deliveryCursor{
+			Version:     deliveryCursorVersion,
+			Filters:     set.Key(),
+			WindowSince: since.Format(time.RFC3339Nano),
+			WindowUntil: until.Format(time.RFC3339Nano),
+			RunStart:    runStart,
+			BeforeKey:   page.NextKey,
+		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode page_token: %w", err))
 		}

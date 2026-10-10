@@ -23,8 +23,14 @@ import (
 // Orkflow store; on the shared development bucket that is every earlier run's
 // leftovers, which made each boot cost time proportional to the bucket's
 // history and pushed this package toward its `go test -timeout`.
+//
+// It also removes the release binaries releaseBinaries built, which live
+// outside any t.TempDir because every release test shares them: left behind,
+// each run of this package kept 167 MB in the temp directory.
 func TestMain(m *testing.M) {
-	os.Exit(s3bucket.Main(m, "orkctl"))
+	code := s3bucket.Main(m, "orkctl")
+	removeReleaseBinaries()
+	os.Exit(code)
 }
 
 // TestIntegration_ThisBinaryOwnsItsObjectStore pins that isolation: every

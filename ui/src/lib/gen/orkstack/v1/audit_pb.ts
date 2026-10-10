@@ -6,13 +6,15 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { FieldFilter } from "./filter_pb";
+import { file_orkstack_v1_filter } from "./filter_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file orkstack/v1/audit.proto.
  */
 export const file_orkstack_v1_audit: GenFile = /*@__PURE__*/
-  fileDesc("ChdvcmtzdGFjay92MS9hdWRpdC5wcm90bxILb3Jrc3RhY2sudjEigQIKC0F1ZGl0UmVjb3JkEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEgoKAmlkGAIgASgJEiYKAmF0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCglwcmluY2lwYWwYBCABKAkSFgoOc291cmNlX2FkZHJlc3MYBSABKAkSDgoGYWN0aW9uGAYgASgJEhEKCXByb2NlZHVyZRgHIAEoCRIRCgluYW1lc3BhY2UYCCABKAkSDgoGdGFyZ2V0GAkgASgJEg4KBmRldGFpbBgKIAEoCRIRCglzdWNjZWVkZWQYCyABKAgSEgoKZXJyb3JfY29kZRgMIAEoCSLTAQoXTGlzdEF1ZGl0UmVjb3Jkc1JlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEhUKDWFjdGlvbl9wcmVmaXgYAiABKAkSEQoJcHJpbmNpcGFsGAMgASgJEikKBXNpbmNlGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIpCgV1bnRpbBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJcGFnZV9zaXplGAYgASgFEhIKCnBhZ2VfdG9rZW4YByABKAkitAEKGExpc3RBdWRpdFJlY29yZHNSZXNwb25zZRIpCgdyZWNvcmRzGAEgAygLMhgub3Jrc3RhY2sudjEuQXVkaXRSZWNvcmQSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJEikKBXNpbmNlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIpCgV1bnRpbBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAybwoMQXVkaXRTZXJ2aWNlEl8KEExpc3RBdWRpdFJlY29yZHMSJC5vcmtzdGFjay52MS5MaXN0QXVkaXRSZWNvcmRzUmVxdWVzdBolLm9ya3N0YWNrLnYxLkxpc3RBdWRpdFJlY29yZHNSZXNwb25zZUKmAQoPY29tLm9ya3N0YWNrLnYxQgpBdWRpdFByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp]);
+  fileDesc("ChdvcmtzdGFjay92MS9hdWRpdC5wcm90bxILb3Jrc3RhY2sudjEigQIKC0F1ZGl0UmVjb3JkEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEgoKAmlkGAIgASgJEiYKAmF0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCglwcmluY2lwYWwYBCABKAkSFgoOc291cmNlX2FkZHJlc3MYBSABKAkSDgoGYWN0aW9uGAYgASgJEhEKCXByb2NlZHVyZRgHIAEoCRIRCgluYW1lc3BhY2UYCCABKAkSDgoGdGFyZ2V0GAkgASgJEg4KBmRldGFpbBgKIAEoCRIRCglzdWNjZWVkZWQYCyABKAgSEgoKZXJyb3JfY29kZRgMIAEoCSKBAwoXTGlzdEF1ZGl0UmVjb3Jkc1JlcXVlc3QSEQoJcGFnZV9zaXplGAYgASgFEhIKCnBhZ2VfdG9rZW4YByABKAkSKQoHZmlsdGVycxgIIAMoCzIYLm9ya3N0YWNrLnYxLkZpZWxkRmlsdGVyOtoBorsY1QEKF29ya3N0YWNrLnYxLkF1ZGl0UmVjb3JkEg4KAmF0EgRXaGVuGgIGBxIfCgluYW1lc3BhY2USCU5hbWVzcGFjZRoFAQIDBAU4ARIXCgZhY3Rpb24SBkFjdGlvbhoFAQIDBAUSHQoJcHJpbmNpcGFsEglQcmluY2lwYWwaBQECAwQFEhcKBnRhcmdldBIGVGFyZ2V0GgUBAgMEBRIZCglzdWNjZWVkZWQSCVN1Y2NlZWRlZBoBARIdCgplcnJvcl9jb2RlEgpFcnJvciBjb2RlGgMBAgNKBAgBEAZSCW5hbWVzcGFjZVINYWN0aW9uX3ByZWZpeFIJcHJpbmNpcGFsUgVzaW5jZVIFdW50aWwitAEKGExpc3RBdWRpdFJlY29yZHNSZXNwb25zZRIpCgdyZWNvcmRzGAEgAygLMhgub3Jrc3RhY2sudjEuQXVkaXRSZWNvcmQSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJEikKBXNpbmNlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIpCgV1bnRpbBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAybwoMQXVkaXRTZXJ2aWNlEl8KEExpc3RBdWRpdFJlY29yZHMSJC5vcmtzdGFjay52MS5MaXN0QXVkaXRSZWNvcmRzUmVxdWVzdBolLm9ya3N0YWNrLnYxLkxpc3RBdWRpdFJlY29yZHNSZXNwb25zZUKmAQoPY29tLm9ya3N0YWNrLnYxQgpBdWRpdFByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_filter]);
 
 /**
  * AuditRecord is one control-plane WRITE, recorded immutably at the moment
@@ -71,7 +73,8 @@ export type AuditRecord = Message<"orkstack.v1.AuditRecord"> & {
    * action is the user-facing name of the write: "namespace.update",
    * "orkflow.apply", "trigger.create", "retention.update", … The complete
    * set is the engine's audited-procedure table (internal/api/audit.go); a
-   * client filters by prefix and never needs to know the set.
+   * client filters by prefix (action^namespace.) and never needs to know the
+   * set.
    *
    * @generated from field: string action = 6;
    */
@@ -136,53 +139,20 @@ export const AuditRecordSchema: GenMessage<AuditRecord> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_audit, 0);
 
 /**
+ * ListAuditRecordsRequest lists the deployment's audit trail. It is a
+ * deployment-wide listing: a `namespace` filter narrows it like any other
+ * property of a record, and `namespace=` (the empty value) selects the
+ * deployment-wide writes, which carry no namespace
+ * (docs/UI_CLI_PARITY.md "Filtering lists", "Control-plane audit trail").
+ *
+ * The window is the `at` interval the filters bound: at < T ends it
+ * (default: the moment the answer is computed, on the engine's clock) and
+ * at >= T starts it (default: seven days before the end). A window whose
+ * end is not after its start is INVALID_ARGUMENT.
+ *
  * @generated from message orkstack.v1.ListAuditRecordsRequest
  */
 export type ListAuditRecordsRequest = Message<"orkstack.v1.ListAuditRecordsRequest"> & {
-  /**
-   * namespace narrows the listing to records of one namespace. It is a
-   * FILTER, and this is the one request in the API where empty does NOT
-   * mean the default namespace: empty means every namespace, deployment-wide
-   * records included, because the natural scope of an audit trail is the
-   * deployment. "default" selects the default namespace's records.
-   * Deployment-wide records carry no namespace and match no name.
-   *
-   * @generated from field: string namespace = 1;
-   */
-  namespace: string;
-
-  /**
-   * action_prefix keeps records whose action starts with it ("namespace.",
-   * "orkflow.promote"). Empty keeps every action.
-   *
-   * @generated from field: string action_prefix = 2;
-   */
-  actionPrefix: string;
-
-  /**
-   * principal keeps records with exactly this principal. Empty keeps every
-   * principal. There is no way to select "unattributed" records except by
-   * reading them; the value is an assertion, not a key.
-   *
-   * @generated from field: string principal = 3;
-   */
-  principal: string;
-
-  /**
-   * since is the inclusive start of the window; empty means seven days
-   * before `until`. until is the exclusive end; empty means the moment the
-   * answer is computed, on the engine's clock. A window whose end is not
-   * after its start is INVALID_ARGUMENT.
-   *
-   * @generated from field: google.protobuf.Timestamp since = 4;
-   */
-  since?: Timestamp | undefined;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp until = 5;
-   */
-  until?: Timestamp | undefined;
-
   /**
    * page_size caps the records returned; 0 means the default (50), and a
    * value above the maximum (200) is INVALID_ARGUMENT, not clamped.
@@ -193,12 +163,17 @@ export type ListAuditRecordsRequest = Message<"orkstack.v1.ListAuditRecordsReque
 
   /**
    * page_token continues a listing. It is opaque and versioned, and binds
-   * every filter above: a token presented with different filters is
-   * INVALID_ARGUMENT, exactly as ListRunsRequest.page_token behaves.
+   * the canonical filter set and the resolved window: a token presented with
+   * other filters is INVALID_ARGUMENT.
    *
    * @generated from field: string page_token = 7;
    */
   pageToken: string;
+
+  /**
+   * @generated from field: repeated orkstack.v1.FieldFilter filters = 8;
+   */
+  filters: FieldFilter[];
 };
 
 /**

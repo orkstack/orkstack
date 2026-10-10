@@ -19,13 +19,15 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
 
 - **Namespace.** Every run and Orkflow operation carries its namespace; empty
   means `default`, and a resource of another namespace is NotFound — holding
-  an id is not authority over another tenant. Two reads take the namespace as
-  a **filter** where empty means *every* namespace — the audit trail and the
-  webhook delivery records — and a webhook's namespace scope is likewise
-  optional; for those the CLI sends a namespace only when `-n` is typed on
-  that command line, never from `ORK_NAMESPACE` or `namespace use`. Webhook
-  subscriptions, Orkers, releases, the image policy and the retention maximum
-  are listed deployment-wide and ignore the namespace.
+  an id is not authority over another tenant. The audit trail and the webhook
+  delivery records are **deployment-wide listings**: a `namespace` filter
+  narrows them like any other property ([Filtering lists](#filtering-lists)),
+  and an explicit `-n` on `admin audit` or `webhook deliveries` is refused
+  before any request, so a flag cannot silently narrow or widen them;
+  `ORK_NAMESPACE` and `namespace use` are ignored there. A webhook's namespace
+  scope is optional, and only an explicit `-n` sets it. Webhook subscriptions,
+  Orkers, releases, the image policy and the retention maximum are listed
+  deployment-wide and ignore the namespace.
 - **Any replica answers.** Every read comes from Temporal or the shared store,
   never from process memory, so a replica that started nothing answers
   identically for runs, attempts, deliveries and audit records others made.
@@ -74,9 +76,9 @@ filter form renders it. The matcher is written once, in
 `internal/listfilter`.
 
 Lists that take filters: `ListNamespaces`, `ListOrkflows`, `ListWebhooks`,
-`ListTriggers`, `ListSchedules`, `ListPools`, `ListActivities`, `ListOrkers`
-and `ListReleases`. The run list, webhook deliveries and the audit trail keep
-the selectors their own sections describe. Child listings of one parent
+`ListTriggers`, `ListSchedules`, `ListPools`, `ListActivities`, `ListOrkers`,
+`ListReleases`, `ListDeliveries` and `ListAuditRecords`. The run list keeps
+the selectors its own section describes. Child listings of one parent
 (`ListOrkflowVersions`, `ListRunArtifacts`, `ListTaskAttempts`), the
 `ListOrkflowCallers` report and `ListTelemetrySinks` take no filters.
 
@@ -88,7 +90,16 @@ another namespace's object is NotFound), the one **parent** of a bounded
 child listing, or **paging** (`page_size`, `page_token`). Everything else that
 narrows a listing is a filter — any property of the listed object, including
 an id, a time, or the namespace *recorded on* a deployment-wide object (a
-webhook's scope).
+webhook's scope, an audit record's namespace, a delivery's run namespace).
+
+So webhook deliveries and the audit trail are deployment-wide listings with
+no `namespace` request field: `--filter namespace=payments` narrows them like
+any property, `--filter 'namespace='` selects the audit trail's
+deployment-wide writes (retention, image policy, webhooks, releases, Orker
+cordons), and an explicit `-n` on either command is refused before any
+request (`admin audit lists every namespace; narrow it with --filter
+namespace=<ns>`). A delivery's `webhook_id` and `run_id` are filters too: a
+delivery outlives a deleted subscription and is no child of a run.
 
 ### Operators and the CLI grammar
 
@@ -172,8 +183,8 @@ A filter reads the listed object exactly as the response carries it, in
 A path through a nested message reads each unset message as its zero value:
 `hold.reason=` lists the namespaces with no hold and `hold.reason!=` the held
 ones. Repeated and numeric fields are never filterable. **Opaque ids are
-matched whole** — a webhook, trigger or schedule id and the digests take
-equals, not equals and in only — because nothing derives meaning from an
+matched whole** — a webhook, trigger or schedule id, a delivery's `run_id`
+and `webhook_id`, and the digests take equals, not equals and in only — because nothing derives meaning from an
 id's parts (`AGENTS.md` §7); operator-chosen names (an Orker id, a release,
 every slug) take all five text operators.
 
@@ -199,7 +210,7 @@ these messages (`i` is the filter's index in the request):
 | value count | `filters[i]: equals (=) takes exactly one value`, `filters[i]: in (=a,b) takes 1 to 64 values`, `filters[i]: in (=a,b) cannot hold an empty value` |
 | a value over 1024 bytes, or not UTF-8 | `filters[i]: a value is at most 1024 bytes of UTF-8` |
 | an empty contains or prefix | `filters[i]: contains (~) needs a non-empty value` |
-| an enum value the list cannot select | `filters[i]: "AWAITING" is not a status this list can select; status is one of …` |
+| an enum value the list cannot select | `filters[i]: "AWAITING" is not a status this list can select; status is one of …` — the article follows the field's name: `"TASK_LOG" is not an event this list can select; event is one of …` |
 | a name, in equals, not equals or in | `filters[i]: namespace "Payments" is not a slug (^[a-z][a-z0-9-]*$)` |
 | an Orker id, in equals, not equals or in | `filters[i]: orker_id: invalid orker id: empty` |
 | bool | `filters[i]: drained is true or false, not "yes"` |
@@ -246,6 +257,8 @@ every row read, so a narrower read can never change an answer.
 | Activities | the catalog | |
 | Orkers | `orker_id=`: that one Orker, asked on its own; everything else: the cluster's list of Orkers and each one's answer | a malformed id is refused before anything is asked |
 | Releases | `build_id=`: that release alone is counted; the release rows | filters select release rows only; every other field is the deployment's |
+| Deliveries | every field from the record's key (`created_at`, `namespace`, `run_id`, `webhook_id`, `event`, `delivered`) | a body is read only for a record whose key matches; the `created_at` bounds are the window; 100,000 keys per page at most |
+| Audit trail | each record's body (the key holds only the day and the id) | the `at` bounds are the window; 5,000 records per page at most |
 
 ### Filters in the browser
 
@@ -266,7 +279,8 @@ still there to recover.
 
 The filters live in the URL as one **repeated** key per list — `filter`, one
 value per filter in the CLI grammar, in canonical order, after `ns` — so a
-link is the listing. Values are percent-encoded; in a hand-typed link write a
+link is the listing. Admin → Webhooks holds two lists: the subscriptions
+table's filters are `filter`, the Deliveries panel's `deliveryFilter`. Values are percent-encoded; in a hand-typed link write a
 `+` as `%2B` (or use `Z`), since a literal `+` decodes as a space and is then
 refused as not an instant. A parameter that does not parse is shown as an
 error without a request.
@@ -977,12 +991,22 @@ reads a record to decide what to send — no pending state, lease or scan — an
 nothing reclaims them; a bucket lifecycle rule is the operator's
 ([DEPLOY.md](DEPLOY.md)).
 
-- **`ListDeliveries`** filters by webhook, run, event, outcome and namespace
-  (empty: every namespace) over a window: `until` defaults to now; `since` to
-  the run's start when a run is named, else seven days before `until`. Page
-  size defaults to 50, at most 200; the page token binds every filter and the
-  resolved window. A scan of more than 100,000 keys before a page fills is
-  `ResourceExhausted`. The response echoes the resolved window.
+- **`ListDeliveries`** is a deployment-wide listing narrowed by filters
+  ([Filtering lists](#filtering-lists)) on `created_at`, `namespace`,
+  `run_id`, `webhook_id`, `event` (a subscribable event only) and
+  `delivered` — every one decided from the record's key, so a body is read
+  only for a record that matches. The window is the `created_at` interval the
+  filters bound: `created_at<T` ends it (default now) and `created_at>=T`
+  starts it — by default at the run's start when exactly one `run_id=` filter
+  names a run the engine can read, else seven days before the end; a window
+  with no instant in it is `InvalidArgument`. Page size defaults to 50, at
+  most 200; the page token binds the filter set and carries the resolved
+  window, so "now" does not move under a paged listing. A scan of more than
+  100,000 keys before a page fills is `ResourceExhausted` ("narrow the
+  created_at window or add filters"). The response echoes the resolved
+  window, and `since_is_run_start` says whether its start is the run's
+  `created_at` — the engine says so, and no client infers it from the
+  window's width or a filter's spelling; the page token carries it.
 - **`GetDelivery`** returns one record.
 - **`RedeliverWebhook`** is one operator-initiated, synchronous POST — no
   retry ladder — to the subscription as it is now (a deleted subscription is
@@ -994,13 +1018,17 @@ nothing reclaims them; a bucket lifecycle rule is the operator's
   Nothing is queued: the operator is the retry policy.
 
 With no store configured, all three answer `FailedPrecondition`. CLI:
-`webhook deliveries [--webhook] [--run] [--event] [--delivered] [--since]
-[--until] [--limit] [--page-token] [-n]`, `webhook delivery ID`, `webhook
+`webhook deliveries [--filter F…] [--limit N] [--page-token T]` (it prints
+`Window: <since> to <until>, newest first.`, with `(the run's start)` when
+the response's `since_is_run_start` is true, and its next-page line repeats every
+filter and `--limit`, never a window), `webhook delivery ID`, `webhook
 redeliver ID` (exit 1 when the receiver did not accept it). UI: the
 **Deliveries** panel on Admin → Webhooks — a caption with the resolved window
-and scope, the same filters, a delivered/failed pill, attempts and last
+and scope, the filter form (`deliveryFilter` in the URL) with its CLI
+equivalent, a delivered/failed pill, attempts and last
 status, an expanded row with the signature, body digest and byte count ("body
-not stored") and the attempt timeline, a per-webhook **Deliveries** link, and
+not stored") and the attempt timeline, a per-webhook **Deliveries** link
+(`deliveryFilter=webhook_id=<id>`), and
 **Redeliver** behind a confirmation stating one signed POST, now, of today's
 run, with the result inline.
 
@@ -1043,24 +1071,32 @@ the trigger and await-callback doors are never recorded. A `webhook.*` record
 is deployment-wide (empty namespace) even for a scoped subscription; its
 detail is `url=… events=[…]`, plus `scope=ns/orkflow/task` when scoped.
 
-- The request's `namespace` is a filter, and empty means **every** namespace —
-  deployment-wide writes appear only there. Both clients print the scope they
-  used.
-- The window defaults to the seven days before the engine's `now`; the
-  response echoes the resolved `since`/`until`. Page size defaults to 50, at
-  most 200; a page that would examine more than 5000 records is
-  `ResourceExhausted`.
-- The page token binds namespace, action prefix, principal and window; a token
-  presented with other filters is `InvalidArgument` ("filters changed; drop
-  the page token").
+- It is a deployment-wide listing narrowed by filters ([Filtering
+  lists](#filtering-lists)) on `at`, `namespace`, `action`, `principal`,
+  `target`, `succeeded` and `error_code`, decided on each record's body.
+  `namespace=payments` selects that namespace's writes, `namespace=default`
+  the default namespace's, and `namespace=` (the empty value) the
+  deployment-wide writes, which carry no namespace. Both clients print the
+  scope in force.
+- The window is the `at` interval the filters bound: `at<T` ends it (default
+  the engine's `now`) and `at>=T` starts it (default seven days before the
+  end); the response echoes the resolved `since`/`until`. Page size defaults
+  to 50, at most 200; a page that would examine more than 5000 records is
+  `ResourceExhausted` ("narrow the at window or add filters").
+- The page token binds the filter set and carries the resolved window; a
+  token presented with other filters is `InvalidArgument` ("page_token was
+  issued for other filters; drop it and list from the first page").
 - `principal` is what a gateway asserted in `Ork-Principal`, never
   authenticated; an empty one renders `unattributed`, and both clients print
   the "asserted, not authenticated" caption under every rendering, empty
   page included. `ORK_PRINCIPAL` makes `orkctl` assert one.
 
-CLI: `admin audit [--since] [--until] [--action PREFIX] [--principal NAME]
-[--limit N] [--page-token TOKEN] [-n NS]`. UI: **Admin → Audit** — every
-namespace by default and one on request, action/principal/window filters,
+CLI: `admin audit [--filter F…] [--limit N] [--page-token TOKEN]`, e.g.
+`admin audit --filter 'action^namespace.' --filter 'at>=2026-10-01T00:00:00Z'`;
+it prints `Window: <since> to <until> (exclusive), newest first.` and, with no
+namespace filter, `Every namespace unless a namespace filter narrows it.`. UI:
+**Admin → Audit** — every namespace by default, the filter form (a
+`namespace` filter narrows it) with its CLI equivalent,
 `refused {code}` for a refusal, pagination, the caption.
 
 ### Orker inventory, cordon and drain

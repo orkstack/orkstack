@@ -287,7 +287,7 @@ func TestIntegration_CordonIsAudited(t *testing.T) {
 	if _, stderr, code := s.cli(0, "orker", "cordon", s.orkerID, "--reason", reason); code != 0 {
 		t.Fatalf("cordon exit %d: %s", code, stderr)
 	}
-	listed, _, code := s.cli(0, "admin", "audit", "--action", "orker.", "--since", since, "--json")
+	listed, _, code := s.cli(0, "admin", "audit", "--filter", "action^orker.", "--filter", "at>="+since, "--json")
 	if code != 0 {
 		t.Fatalf("admin audit exit %d", code)
 	}

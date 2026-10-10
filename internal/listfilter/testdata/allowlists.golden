@@ -7,6 +7,31 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
+== ListAuditRecords (orkstack.v1.AuditRecord)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD        OPERATORS       VALUES
+  at           >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  action       = != =a,b ~ ^   text
+  principal    = != =a,b ~ ^   text
+  target       = != =a,b ~ ^   text
+  succeeded    =               true false
+  error_code   = != =a,b       text
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListDeliveries (orkstack.v1.Delivery)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD        OPERATORS       VALUES
+  created_at   >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  run_id       = != =a,b       text
+  webhook_id   = != =a,b       text
+  event        = != =a,b       RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SUCCEEDED TASK_FAILED
+  delivered    =               true false
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
 == ListNamespaces (orkstack.v1.Namespace)
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   FIELD               OPERATORS       VALUES

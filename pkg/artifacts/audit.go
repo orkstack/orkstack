@@ -106,35 +106,21 @@ type AuditStore interface {
 
 // AuditQuery narrows a listing. Since is inclusive, Until exclusive; both are
 // required here — the RPC resolves the defaults, so the store never guesses
-// a window. Namespace "" means every namespace. BeforeKey is the exclusive
+// a window. Keep decides a record from its body (the key holds only the day
+// and the id); nil keeps every record. BeforeKey is the exclusive
 // newest-first cursor (a full object key the store itself handed back).
 type AuditQuery struct {
 	Since, Until time.Time
-	Namespace    string
-	ActionPrefix string
-	Principal    string
+	Keep         func(*orkstackv1.AuditRecord) bool
 	BeforeKey    string
 	Limit        int
 }
 
-// Matches reports whether rec passes the query's filters. The window is not
-// part of it: the walk applies the window from the key before a body is
-// fetched, and again from the body's own time.
-//
-// Namespace "" keeps everything, deployment-wide records included; a name
-// keeps only records of exactly that namespace, so a deployment-wide record —
-// which carries no namespace — matches no name, "default" included.
+// Matches reports whether rec passes Keep. The window is not part of it: the
+// walk applies the window from the key before a body is fetched, and again
+// from the body's own time.
 func (q AuditQuery) Matches(rec *orkstackv1.AuditRecord) bool {
-	if q.Namespace != "" && rec.GetNamespace() != q.Namespace {
-		return false
-	}
-	if q.ActionPrefix != "" && !strings.HasPrefix(rec.GetAction(), q.ActionPrefix) {
-		return false
-	}
-	if q.Principal != "" && rec.GetPrincipal() != q.Principal {
-		return false
-	}
-	return true
+	return q.Keep == nil || q.Keep(rec)
 }
 
 // AuditPage is one page. NextKey is the key of the last record delivered,

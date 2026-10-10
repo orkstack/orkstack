@@ -3,14 +3,17 @@ package api_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +27,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -257,7 +261,7 @@ func TestDeliveryRecorder_RecordsAFailedDeliveryWithEveryAttempt(t *testing.T) {
 	f.announce(t, run, orkstackv1.EventType_EVENT_TYPE_RUN_FAILED, orkstackv1.Status_STATUS_FAILED, "")
 
 	listed := f.list(t, &orkstackv1.ListDeliveriesRequest{
-		Outcome: orkstackv1.DeliveryOutcome_DELIVERY_OUTCOME_FAILED,
+		Filters: filters(t, "delivered=false"),
 	}).GetDeliveries()
 	if len(listed) != 1 {
 		t.Fatalf("recorded %d failed deliveries, want 1", len(listed))
@@ -283,7 +287,7 @@ func TestDeliveryRecorder_RecordsAFailedDeliveryWithEveryAttempt(t *testing.T) {
 		t.Errorf("settled_at %s is before the last attempt %s", rec.GetSettledAt().AsTime(), last)
 	}
 	if got := f.list(t, &orkstackv1.ListDeliveriesRequest{
-		Outcome: orkstackv1.DeliveryOutcome_DELIVERY_OUTCOME_DELIVERED,
+		Filters: filters(t, "delivered=true"),
 	}).GetDeliveries(); len(got) != 0 {
 		t.Errorf("the delivered-only listing holds %d records", len(got))
 	}
@@ -317,7 +321,7 @@ func TestDeliveryRecorder_RecordsTaskOutcomeCoordinates(t *testing.T) {
 	run := f.sampleRun(t, "ork-2026-09-21-8f31", orkstackv1.Status_STATUS_RUNNING)
 	f.announce(t, run, orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED, "extract")
 
-	listed := f.list(t, &orkstackv1.ListDeliveriesRequest{Event: orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED}).GetDeliveries()
+	listed := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, "event=TASK_SUCCEEDED")}).GetDeliveries()
 	if len(listed) != 1 {
 		t.Fatalf("recorded %d task deliveries, want 1", len(listed))
 	}
@@ -365,35 +369,323 @@ func TestSubmitRun_RunThatNeverReachedTemporalIsRecorded(t *testing.T) {
 func TestListDeliveries_WindowDefaultsAndValidation(t *testing.T) {
 	f := newDeliveryFixture(t, http.StatusOK)
 	f.now = time.Date(2026, 9, 21, 9, 30, 12, 0, time.UTC)
-	run := f.sampleRun(t, "ork-2026-09-21-8f31", orkstackv1.Status_STATUS_SUCCEEDED)
 
 	resp := f.list(t, &orkstackv1.ListDeliveriesRequest{})
 	if !resp.GetUntil().AsTime().Equal(f.now) || !resp.GetSince().AsTime().Equal(f.now.Add(-7*24*time.Hour)) {
 		t.Errorf("default window = [%s, %s), want [now-7d, now)", resp.GetSince().AsTime(), resp.GetUntil().AsTime())
 	}
-	resp = f.list(t, &orkstackv1.ListDeliveriesRequest{RunId: run.GetId()})
-	if !resp.GetSince().AsTime().Equal(run.GetCreatedAt().AsTime()) {
-		t.Errorf("since with a known run = %s, want the run's created_at %s", resp.GetSince().AsTime(), run.GetCreatedAt().AsTime())
-	}
-	resp = f.list(t, &orkstackv1.ListDeliveriesRequest{RunId: "ork-unknown"})
-	if !resp.GetSince().AsTime().Equal(f.now.Add(-7 * 24 * time.Hour)) {
-		t.Errorf("since with an unknown run = %s, want the 7-day default", resp.GetSince().AsTime())
-	}
 
 	ctx := context.Background()
 	for name, req := range map[string]*orkstackv1.ListDeliveriesRequest{
-		"inverted window": {Since: timestamppb.New(f.now), Until: timestamppb.New(f.now.Add(-time.Hour))},
-		"empty window":    {Since: timestamppb.New(f.now), Until: timestamppb.New(f.now)},
+		"inverted window": {Filters: filters(t, "created_at>=2026-09-21T09:30:12Z", "created_at<2026-09-21T08:30:12Z")},
+		"empty window":    {Filters: filters(t, "created_at>=2026-09-21T09:30:12Z", "created_at<2026-09-21T09:30:12Z")},
+		"start after now": {Filters: filters(t, "created_at>=2026-09-22T00:00:00Z")},
+		"bare date":       {Filters: filters(t, "created_at>=2026-09-21")},
 		"page_size 201":   {PageSize: 201},
 		"page_size -1":    {PageSize: -1},
-		"TASK_LOG":        {Event: orkstackv1.EventType_EVENT_TYPE_TASK_LOG},
-		"RUN_CREATED":     {Event: orkstackv1.EventType_EVENT_TYPE_RUN_CREATED},
-		"Bad Name":        {Namespace: "Bad Name"},
-		"bad webhook id":  {WebhookId: "not-a-webhook"},
+		"TASK_LOG":        {Filters: filters(t, "event=TASK_LOG")},
+		"RUN_CREATED":     {Filters: filters(t, "event=RUN_CREATED")},
+		"Bad Name":        {Filters: filters(t, "namespace=Bad Name")},
+		"run_id contains": {Filters: filters(t, "run_id~8f31")},
+		"delivered maybe": {Filters: filters(t, "delivered=maybe")},
 		"garbage token":   {PageToken: "!!!"},
 	} {
 		_, err := f.svc.ListDeliveries(ctx, connect.NewRequest(req))
 		wantCode(t, err, connect.CodeInvalidArgument, name)
+	}
+	_, err := f.svc.ListDeliveries(ctx, connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "created_at>=2026-09-22T00:00:00Z"),
+	}))
+	if want := "created_at >= 2026-09-22T00:00:00Z and < 2026-09-21T09:30:12Z select no instant"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("a start after now = %v, want %q", err, want)
+	}
+	_, err = f.svc.ListDeliveries(ctx, connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "delivered=maybe"),
+	}))
+	if want := `delivered is true or false, not "maybe"`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("delivered=maybe = %v, want %q", err, want)
+	}
+}
+
+func TestListDeliveries_WindowFromCreatedAtBounds(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusOK)
+	f.now = time.Date(2026, 9, 21, 9, 30, 12, 0, time.UTC)
+	window := func(texts ...string) string {
+		resp := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, texts...)})
+		return resp.GetSince().AsTime().Format(time.RFC3339) + " " + resp.GetUntil().AsTime().Format(time.RFC3339)
+	}
+	for _, tc := range []struct {
+		filters []string
+		want    string
+	}{
+		{[]string{"created_at<2026-09-20T00:00:00Z"}, "2026-09-13T00:00:00Z 2026-09-20T00:00:00Z"},
+		{[]string{"created_at>=2026-09-21T00:00:00Z"}, "2026-09-21T00:00:00Z 2026-09-21T09:30:12Z"},
+		{[]string{"created_at>=2026-09-01T00:00:00+02:00", "created_at<2026-09-02T00:00:00Z"}, "2026-08-31T22:00:00Z 2026-09-02T00:00:00Z"},
+	} {
+		if got := window(tc.filters...); got != tc.want {
+			t.Errorf("%q: window %s, want %s", tc.filters, got, tc.want)
+		}
+	}
+	// A record outside the bounds is not listed; one inside is.
+	recs := seed(t, f.store, time.Date(2026, 9, 20, 23, 59, 59, 0, time.UTC), nil, 2) // 23:59:59 and 00:00:00
+	got := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, "created_at>=2026-09-21T00:00:00Z")}).GetDeliveries()
+	if len(got) != 1 || got[0].GetId() != recs[1].GetId() {
+		t.Errorf("created_at>= midnight listed %v, want only the record queued at midnight", got)
+	}
+}
+
+func TestListDeliveries_RunIDEqualityDefaultsTheWindowToTheRunsStart(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusOK)
+	f.now = time.Date(2026, 9, 21, 9, 30, 12, 0, time.UTC)
+	run := f.sampleRun(t, "ork-2026-09-21-8f31", orkstackv1.Status_STATUS_SUCCEEDED)
+	resp := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, "run_id="+run.GetId())})
+	if !resp.GetSince().AsTime().Equal(run.GetCreatedAt().AsTime()) || !resp.GetUntil().AsTime().Equal(f.now) {
+		t.Errorf("window with a known run = [%s, %s), want [the run's created_at %s, now)",
+			resp.GetSince().AsTime(), resp.GetUntil().AsTime(), run.GetCreatedAt().AsTime())
+	}
+	resp = f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, "run_id=ork-unknown")})
+	if !resp.GetSince().AsTime().Equal(f.now.Add(-7 * 24 * time.Hour)) {
+		t.Errorf("since with an unknown run = %s, want the 7-day default", resp.GetSince().AsTime())
+	}
+	// An explicit start wins over the run's.
+	resp = f.list(t, &orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "run_id="+run.GetId(), "created_at>=2026-09-21T09:00:00Z"),
+	})
+	if !resp.GetSince().AsTime().Equal(time.Date(2026, 9, 21, 9, 0, 0, 0, time.UTC)) {
+		t.Errorf("since with a run and a created_at bound = %s, want the bound", resp.GetSince().AsTime())
+	}
+	// An end before the run started leaves no instant: refused, naming both.
+	_, err := f.svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "run_id="+run.GetId(), "created_at<2026-09-21T08:00:00Z"),
+	}))
+	want := "created_at >= 2026-09-21T08:30:12Z and < 2026-09-21T08:00:00Z select no instant"
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), want) {
+		t.Errorf("an end before the run's start = %v, want InvalidArgument %q", err, want)
+	}
+}
+
+// TestListDeliveries_SaysWhenTheWindowStartsAtTheRun pins since_is_run_start:
+// the engine names where the window's start came from, so a client never
+// infers it from the window's width or the spelling of the filter.
+func TestListDeliveries_SaysWhenTheWindowStartsAtTheRun(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusOK)
+	f.now = time.Date(2026, 9, 21, 9, 30, 12, 0, time.UTC)
+	run := f.sampleRun(t, "ork-2026-09-21-8f31", orkstackv1.Status_STATUS_SUCCEEDED)
+	sevenDaysOn := run.GetCreatedAt().AsTime().Add(7 * 24 * time.Hour).Format(time.RFC3339)
+	for _, tc := range []struct {
+		name    string
+		filters []string
+		want    bool
+	}{
+		{"one run_id equality", []string{"run_id=" + run.GetId()}, true},
+		// An in of one value is the same equality once canonicalized.
+		{"run_id in of one value", []string{"run_id=" + run.GetId() + "," + run.GetId()}, true},
+		// The run's start, exactly seven days before the end: the width
+		// matches the default, and the start is still the run's.
+		{"run start seven days before the end", []string{"run_id=" + run.GetId(), "created_at<" + sevenDaysOn}, true},
+		{"unknown run", []string{"run_id=ork-unknown"}, false},
+		{"explicit start", []string{"run_id=" + run.GetId(), "created_at>=2026-09-21T09:00:00Z"}, false},
+		{"run_id in", []string{"run_id=" + run.GetId() + ",ork-other"}, false},
+		{"no filter", nil, false},
+	} {
+		resp := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, tc.filters...)})
+		if resp.GetSinceIsRunStart() != tc.want {
+			t.Errorf("%s: since_is_run_start = %v, want %v (since %s, until %s)", tc.name,
+				resp.GetSinceIsRunStart(), tc.want, resp.GetSince().AsTime(), resp.GetUntil().AsTime())
+		}
+	}
+
+	// A later page answers as the first did: the token carries it.
+	seed(t, f.store, run.GetCreatedAt().AsTime().Add(time.Minute), nil, 3)
+	first := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, "run_id="+run.GetId()), PageSize: 2})
+	if first.GetNextPageToken() == "" || !first.GetSinceIsRunStart() {
+		t.Fatalf("first page: token %q, since_is_run_start %v; want a token and true", first.GetNextPageToken(), first.GetSinceIsRunStart())
+	}
+	second := f.list(t, &orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "run_id="+run.GetId()), PageSize: 2, PageToken: first.GetNextPageToken(),
+	})
+	if !second.GetSinceIsRunStart() || !second.GetSince().AsTime().Equal(first.GetSince().AsTime()) {
+		t.Errorf("second page: since_is_run_start %v since %s, want true and the first page's %s",
+			second.GetSinceIsRunStart(), second.GetSince().AsTime(), first.GetSince().AsTime())
+	}
+}
+
+func TestListDeliveries_RunIDInDoesNotMoveTheWindow(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusOK)
+	f.now = time.Date(2026, 9, 21, 9, 30, 12, 0, time.UTC)
+	run := f.sampleRun(t, "ork-2026-09-21-8f31", orkstackv1.Status_STATUS_SUCCEEDED)
+	for _, texts := range [][]string{
+		{"run_id=" + run.GetId() + ",ork-other"},
+		{"run_id!=" + run.GetId()},
+		{"run_id=" + run.GetId(), "run_id=ork-other"}, // two equalities: no pushdown, and no match
+	} {
+		resp := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, texts...)})
+		if !resp.GetSince().AsTime().Equal(f.now.Add(-7 * 24 * time.Hour)) {
+			t.Errorf("%q: since = %s, want the 7-day default (only one run_id equality names a run)",
+				texts, resp.GetSince().AsTime())
+		}
+	}
+}
+
+// keyOnlyStore is a DeliveryStore that hands Keep nothing but each record's
+// key coordinates and counts a "body read" for every record Keep accepts, so
+// a test sees that the handler decides every filter from the key.
+type keyOnlyStore struct {
+	artifacts.DeliveryStore
+	records    []*orkstackv1.Delivery // oldest first
+	bodiesRead int
+	keysSeen   int
+}
+
+func (s *keyOnlyStore) ListDeliveries(_ context.Context, q artifacts.DeliveryQuery) (artifacts.DeliveryPage, error) {
+	var page artifacts.DeliveryPage
+	for i := len(s.records) - 1; i >= 0; i-- {
+		key, err := artifacts.DeliveryKey(s.records[i])
+		if err != nil {
+			return artifacts.DeliveryPage{}, err
+		}
+		fields, ok := artifacts.ParseDeliveryKey(key)
+		if !ok || fields.CreatedAt.Before(q.Since) || !fields.CreatedAt.Before(q.Until) {
+			continue
+		}
+		s.keysSeen++
+		if q.Keep != nil && !q.Keep(fields) {
+			continue
+		}
+		s.bodiesRead++
+		page.Deliveries = append(page.Deliveries, s.records[i])
+		if len(page.Deliveries) == q.Limit {
+			page.NextKey = key
+			break
+		}
+	}
+	return page, nil
+}
+
+func TestListDeliveries_FiltersAreDecidedFromKeys(t *testing.T) {
+	now := time.Date(2026, 9, 21, 9, 30, 12, 0, time.UTC)
+	mem := artifacts.NewMemoryDeliveryStore()
+	recs := seed(t, mem, now.Add(-time.Hour), func(i int, rec *orkstackv1.Delivery) {
+		rec.WebhookId = []string{"wh-00000000000000aa", "wh-00000000000000bb"}[i%2]
+		rec.RunId = []string{"ork-keys-1", "ork-keys-2"}[(i/2)%2]
+		rec.Delivered = (i/4)%2 == 1
+		rec.Namespace = []string{"payments", "analytics"}[(i/8)%2]
+		if i%3 == 0 {
+			rec.Event, rec.TaskId = orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, "load"
+		}
+	}, 16)
+	store := &keyOnlyStore{DeliveryStore: mem, records: recs}
+	svc := api.NewService(api.Config{Deliveries: store, Now: func() time.Time { return now }})
+	for _, tc := range []struct {
+		filters []string
+		want    func(*orkstackv1.Delivery) bool
+	}{
+		{[]string{"webhook_id=wh-00000000000000aa"}, func(r *orkstackv1.Delivery) bool { return r.GetWebhookId() == "wh-00000000000000aa" }},
+		{[]string{"run_id=ork-keys-2", "delivered=false"}, func(r *orkstackv1.Delivery) bool { return r.GetRunId() == "ork-keys-2" && !r.GetDelivered() }},
+		{[]string{"event=TASK_FAILED"}, func(r *orkstackv1.Delivery) bool { return r.GetEvent() == orkstackv1.EventType_EVENT_TYPE_TASK_FAILED }},
+		{[]string{"event!=TASK_FAILED", "namespace^analy"}, func(r *orkstackv1.Delivery) bool {
+			return r.GetEvent() != orkstackv1.EventType_EVENT_TYPE_TASK_FAILED && r.GetNamespace() == "analytics"
+		}},
+		{[]string{"namespace=payments,analytics", "webhook_id!=wh-00000000000000aa"}, func(r *orkstackv1.Delivery) bool { return r.GetWebhookId() != "wh-00000000000000aa" }},
+		{[]string{"run_id=ork-nope"}, func(*orkstackv1.Delivery) bool { return false }},
+	} {
+		store.bodiesRead, store.keysSeen = 0, 0
+		resp, err := svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+			Filters: filters(t, tc.filters...),
+		}))
+		if err != nil {
+			t.Fatalf("%q: %v", tc.filters, err)
+		}
+		var want []string
+		for i := len(recs) - 1; i >= 0; i-- {
+			if tc.want(recs[i]) {
+				want = append(want, recs[i].GetId())
+			}
+		}
+		var got []string
+		for _, rec := range resp.Msg.GetDeliveries() {
+			got = append(got, rec.GetId())
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%q listed %v, want %v", tc.filters, got, want)
+		}
+		if store.bodiesRead != len(want) || store.keysSeen != len(recs) {
+			t.Errorf("%q: %d bodies read over %d keys, want %d bodies (one per match) over %d keys",
+				tc.filters, store.bodiesRead, store.keysSeen, len(want), len(recs))
+		}
+	}
+}
+
+func TestListDeliveries_EventAllowedValuesAreTheKnownEvents(t *testing.T) {
+	spec := listfilter.MustSpec(&orkstackv1.ListDeliveriesRequest{})
+	var declared []string
+	for _, field := range spec.Fields {
+		if field.Path == "event" {
+			declared = slices.Clone(field.AllowedValues)
+		}
+	}
+	var known []string
+	for _, event := range webhooks.KnownEvents() {
+		known = append(known, string(event))
+	}
+	slices.Sort(declared)
+	slices.Sort(known)
+	if !slices.Equal(declared, known) {
+		t.Errorf("ListDeliveriesRequest event allowed_values = %v, want webhooks.KnownEvents() %v", declared, known)
+	}
+}
+
+func TestListDeliveries_NoLongerRefusesAMalformedWebhookID(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusOK)
+	seed(t, f.store, f.now.Add(-time.Hour), nil, 2)
+	for _, id := range []string{"not-a-webhook", "wh-nope", "WH-4A1C0E2B7D3F8159"} {
+		resp, err := f.svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+			Filters: filters(t, "webhook_id="+id),
+		}))
+		if err != nil {
+			t.Errorf("webhook_id=%s = %v; an opaque id is never shape-checked", id, err)
+			continue
+		}
+		if n := len(resp.Msg.GetDeliveries()); n != 0 {
+			t.Errorf("webhook_id=%s matched %d records, want none", id, n)
+		}
+	}
+}
+
+func TestListDeliveries_NamespaceFilterIsHeldToTheNameRule(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusOK)
+	_, err := f.svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "namespace=Payments"),
+	}))
+	want := `filters[0]: namespace "Payments" is not a slug`
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), want) {
+		t.Errorf("namespace=Payments = %v, want InvalidArgument %q", err, want)
+	}
+	// A fragment is not a name.
+	if _, err := f.svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "namespace~Pay"),
+	})); err != nil {
+		t.Errorf("namespace~Pay = %v; a contains value is never name-checked", err)
+	}
+}
+
+func TestListDeliveries_OldTokenIsRefused(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusOK)
+	recs := seed(t, f.store, f.now.Add(-time.Hour), nil, 3)
+	key, err := artifacts.DeliveryKey(recs[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A version-1 token, shaped as the removed typed filters minted it.
+	old, _ := json.Marshal(map[string]any{
+		"v": 1, "w": "wh-4a1c0e2b7d3f8159", "r": "", "e": 0, "o": 0, "n": "", "a": "", "b": "",
+		"ws": f.now.Add(-7 * 24 * time.Hour).Format(time.RFC3339Nano), "wu": f.now.Format(time.RFC3339Nano), "k": key,
+	})
+	_, err = f.svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+		PageToken: base64.RawURLEncoding.EncodeToString(old),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "invalid page_token") {
+		t.Errorf("a version-1 token = %v, want InvalidArgument invalid page_token", err)
 	}
 }
 
@@ -425,27 +717,58 @@ func seed(t *testing.T, store artifacts.DeliveryStore, at time.Time, mutate func
 	return out
 }
 
-func TestListDeliveries_CursorBindsFilters(t *testing.T) {
+func TestListDeliveries_TokenBindsTheSetAndTheResolvedWindow(t *testing.T) {
 	f := newDeliveryFixture(t, http.StatusOK)
 	seed(t, f.store, f.now.Add(-time.Hour), nil, 5)
-	first := f.list(t, &orkstackv1.ListDeliveriesRequest{WebhookId: "wh-4a1c0e2b7d3f8159", PageSize: 2})
+	first := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, "webhook_id=wh-4a1c0e2b7d3f8159"), PageSize: 2})
 	if first.GetNextPageToken() == "" {
 		t.Fatal("no next page token after a full page")
 	}
-	_, err := f.svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
-		WebhookId: "wh-0000000000000000", PageSize: 2, PageToken: first.GetNextPageToken(),
+	raw, err := base64.RawURLEncoding.DecodeString(first.GetNextPageToken())
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("token JSON: %v", err)
+	}
+	keys := slices.Sorted(maps.Keys(decoded))
+	if strings.Join(keys, ",") != "f,k,v,ws,wu" || decoded["v"] != float64(2) {
+		t.Errorf("token %v, want exactly v (2), f, ws, wu, k", decoded)
+	}
+	_, err = f.svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "webhook_id=wh-0000000000000000"), PageSize: 2, PageToken: first.GetNextPageToken(),
 	}))
-	wantCode(t, err, connect.CodeInvalidArgument, "token replayed with another webhook_id")
-	if err != nil && !strings.Contains(err.Error(), "page_token does not match these delivery filters") {
-		t.Errorf("refusal %q does not say the filters changed", err)
+	const changed = "page_token was issued for other filters; drop it and list from the first page"
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), changed) {
+		t.Errorf("token replayed with another webhook_id = %v, want InvalidArgument %q", err, changed)
+	}
+
+	// A token presented with a filter added is refused too.
+	_, err = f.svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "delivered=false", "webhook_id=wh-4a1c0e2b7d3f8159"), PageToken: first.GetNextPageToken(),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), changed) {
+		t.Errorf("token with an added filter = %v, want InvalidArgument %q", err, changed)
 	}
 
 	seen := map[string]bool{}
-	req := &orkstackv1.ListDeliveriesRequest{WebhookId: "wh-4a1c0e2b7d3f8159", PageSize: 2}
+	for _, rec := range first.GetDeliveries() {
+		seen[rec.GetId()] = true
+	}
+	// The same set in another spelling (an in of one value is equals)
+	// continues the same listing, and page size is not bound.
+	req := &orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "webhook_id=wh-4a1c0e2b7d3f8159,wh-4a1c0e2b7d3f8159"), PageSize: 3, PageToken: first.GetNextPageToken(),
+	}
 	for page := 0; page < 5; page++ {
 		// The clock moving between pages must not move the window.
 		f.now = f.now.Add(time.Minute)
 		resp := f.list(t, req)
+		if !resp.GetUntil().AsTime().Equal(first.GetUntil().AsTime()) || !resp.GetSince().AsTime().Equal(first.GetSince().AsTime()) {
+			t.Errorf("page %d window [%s, %s), want the first page's [%s, %s)", page+2,
+				resp.GetSince().AsTime(), resp.GetUntil().AsTime(), first.GetSince().AsTime(), first.GetUntil().AsTime())
+		}
 		for _, rec := range resp.GetDeliveries() {
 			if seen[rec.GetId()] {
 				t.Errorf("delivery %s listed twice", rec.GetId())
@@ -456,24 +779,23 @@ func TestListDeliveries_CursorBindsFilters(t *testing.T) {
 			break
 		}
 		req.PageToken = resp.GetNextPageToken()
-		req.PageSize = 3 // page size is not bound
 	}
 	if len(seen) != 5 {
 		t.Errorf("paged through %d records, want 5", len(seen))
 	}
 }
 
-func TestListDeliveries_NamespaceEmptyMeansEvery(t *testing.T) {
+func TestListDeliveries_UnfilteredListsEveryNamespace(t *testing.T) {
 	f := newDeliveryFixture(t, http.StatusOK)
 	seed(t, f.store, f.now.Add(-time.Hour), func(i int, rec *orkstackv1.Delivery) {
 		rec.Namespace = []string{"default", "analytics"}[i]
 	}, 2)
 	if got := f.list(t, &orkstackv1.ListDeliveriesRequest{}).GetDeliveries(); len(got) != 2 {
-		t.Errorf("empty namespace listed %d records, want both namespaces", len(got))
+		t.Errorf("no filter listed %d records, want both namespaces", len(got))
 	}
-	got := f.list(t, &orkstackv1.ListDeliveriesRequest{Namespace: "default"}).GetDeliveries()
+	got := f.list(t, &orkstackv1.ListDeliveriesRequest{Filters: filters(t, "namespace=default")}).GetDeliveries()
 	if len(got) != 1 || got[0].GetNamespace() != "default" {
-		t.Errorf("namespace default listed %v, want the one default record", got)
+		t.Errorf("namespace=default listed %v, want the one default record", got)
 	}
 }
 
@@ -499,7 +821,7 @@ func TestListDeliveries_ScanBudgetIsResourceExhausted(t *testing.T) {
 	svc := api.NewService(api.Config{Deliveries: budgetStore{artifacts.NewMemoryDeliveryStore()}})
 	_, err := svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{}))
 	wantCode(t, err, connect.CodeResourceExhausted, "over budget")
-	if err != nil && !strings.Contains(err.Error(), "100000 delivery keys") {
+	if err != nil && !strings.Contains(err.Error(), "100000 delivery keys before filling a page; narrow the created_at window or add filters") {
 		t.Errorf("refusal %q does not name the budget", err)
 	}
 }
@@ -605,7 +927,9 @@ func TestRedeliverWebhook_PostsOnceSignedWithTheCurrentSecretAndRecordsANewDeliv
 			t.Errorf("original record %s changed after the redelivery", key)
 		}
 	}
-	listed := f.list(t, &orkstackv1.ListDeliveriesRequest{Until: timestamppb.New(f.now.Add(time.Second))}).GetDeliveries()
+	listed := f.list(t, &orkstackv1.ListDeliveriesRequest{
+		Filters: filters(t, "created_at<"+f.now.Add(time.Second).Format(time.RFC3339Nano)),
+	}).GetDeliveries()
 	if len(listed) != 2 || listed[0].GetId() != rec.GetId() {
 		t.Errorf("listing = %v, want the redelivery first", listed)
 	}
