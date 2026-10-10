@@ -486,16 +486,18 @@ func (d *OCIDispatcher) lookupMemo(ctx context.Context, in *orkstackv1.ExecuteTa
 		trace.miss(key, MemoMissSourceObjectAbsent, "this orker has no artifact store to confirm the source's objects")
 		return nil
 	}
-	for _, artifact := range commit.GetArtifacts() {
-		if _, err := d.Store.Stat(lookupCtx, artifact.GetUri()); err != nil {
-			if timedOut() {
-				trace.miss(key, MemoMissUnreadable, "the memo lookup for key %s timed out after %s", key.short(), memoLookupTimeout)
-				return nil
-			}
-			trace.miss(key, MemoMissSourceObjectAbsent, "the source artifact %q at %s is unavailable: %v",
-				artifact.GetName(), artifact.GetUri(), err)
+	// Every source artifact must still exist, checked transferParallelism at a
+	// time under the same lookup deadline; the miss names the lowest-index
+	// artifact that failed, as a serial check would.
+	if at, err := confirmSourceArtifacts(lookupCtx, d.Store, commit.GetArtifacts()); err != nil {
+		if timedOut() {
+			trace.miss(key, MemoMissUnreadable, "the memo lookup for key %s timed out after %s", key.short(), memoLookupTimeout)
 			return nil
 		}
+		artifact := commit.GetArtifacts()[at]
+		trace.miss(key, MemoMissSourceObjectAbsent, "the source artifact %q at %s is unavailable: %v",
+			artifact.GetName(), artifact.GetUri(), err)
+		return nil
 	}
 	// A memo pointing at a HIT commit is followed once: cache.source always
 	// names the run whose container produced the bytes, and no chain forms.
