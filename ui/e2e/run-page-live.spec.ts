@@ -289,3 +289,44 @@ test('the live poll pauses while the page is hidden and resumes when shown', asy
 	await rpc('RunService/CancelRun', { runId: run });
 	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
 });
+
+// F-ui-ux-7: a run whose event socket can never be served stops saying
+// CONNECTING. After its bounded reconnects it says live updates stopped, with
+// the reason, and Retry resumes the stream from the last event it applied.
+test('a dead event socket ends in a stopped banner, and Retry resumes live updates', async ({ page }) => {
+	startOrker();
+	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: ORKFLOW });
+	const run = submitted.run.id;
+	let blocked = true;
+	const opened: string[] = [];
+	await page.routeWebSocket(
+		(url) => url.pathname === `/ws/runs/${run}`,
+		(ws) => {
+			opened.push(ws.url());
+			if (blocked) {
+				ws.close({ code: 1011, reason: 'blocked by the e2e' });
+				return;
+			}
+			ws.connectToServer();
+		}
+	);
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+	// Six reconnects with a doubling backoff: about half a minute.
+	await expect(page.getByTestId('live-stopped')).toBeVisible({ timeout: 90_000 });
+	await expect(page.getByTestId('live-stopped')).toContainText('Live updates stopped:');
+	await expect(page.getByTestId('live-badge')).toHaveText('STOPPED');
+	expect(opened.length).toBe(7);
+	note(`P6 stopped after ${opened.length} sockets: ${await page.getByTestId('live-stopped').innerText()}`);
+	await shot(page, 'live-stopped.png');
+
+	blocked = false;
+	await page.getByTestId('live-retry').click();
+	await expect(page.getByTestId('live-badge')).toHaveText('LIVE', { timeout: 30_000 });
+	await expect(page.getByTestId('live-stopped')).toHaveCount(0);
+	expect(opened.length).toBe(8);
+	await shot(page, 'live-resumed.png');
+
+	await rpc('RunService/CancelRun', { runId: run });
+	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
+	note(`P6 Retry resumed from ${opened[opened.length - 1]}; the CANCELED transition arrived on the resumed stream`);
+});

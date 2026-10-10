@@ -638,6 +638,13 @@ card polls the same read every 5 s while the page is visible and shows
 MiB logged · heartbeat 3s ago`, `… — STALE`, `Attempt 3 scheduled for …`,
 `Cancelling · phase …`, `Phase unavailable · <reason>`) and the Orker.
 
+The run page's live updates come from the run's event socket, which resumes
+from the last event it applied after a dropped connection. Six reconnects in
+a row that deliver nothing end it: the badge reads `STOPPED`, the page says
+`Live updates stopped: <reason>` (the socket never opened, or opened and
+delivered nothing), and **Retry live updates** resumes from the last event.
+A composed task's child roll-up says the same.
+
 ### Task pins
 
 A **pin** is a named group of tasks of one Orkflow that execute on one Orker
@@ -856,7 +863,9 @@ it cannot read (`--tree --json` is refused, naming `taskRuns[].child.runId`);
 `orkflow get` adds `COMPOSED` and `OUTPUT` tables; `task run` refuses a
 composed task by name. UI: a composed task's card links the pinned child
 Orkflow and, once `TASK_STARTED` arrives, the child run, with its status and a
-live roll-up of the child's tasks from the child's own stream; the header's
+live roll-up of the child's tasks from the child's own stream — read and
+followed only while the card is on screen, so a run of many composed tasks
+opens a child socket per card a reader can see, not per card; the header's
 **Child runs** link opens the runs list filtered to the children; the Orkflow
 page links each child at its version with the pinned digest and lists the
 declared outputs.

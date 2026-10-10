@@ -133,12 +133,37 @@ async function childRunId(page: Page, taskId: string): Promise<string> {
 }
 
 test('a composed task links to its child run and rolls up its tasks live', async ({ page }) => {
+	// F-ui-perf-9: a composed card reads its child and opens its socket only
+	// once it is on screen. A short viewport keeps the card below the fold
+	// until it is scrolled to.
+	await page.setViewportSize({ width: 1280, height: 360 });
+	const childReads: string[] = [];
+	const childSockets: string[] = [];
+	page.on('request', (request) => {
+		if (request.url().endsWith('/orkstack.v1.RunService/GetRun')) {
+			childReads.push(JSON.parse(request.postData() ?? '{}').runId ?? '');
+		}
+	});
+	page.on('websocket', (socket) => childSockets.push(socket.url()));
 	const runId = await submit('composed-release');
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
-	await expect(page.getByTestId('task-release-child')).toBeVisible();
+	await expect(page.getByTestId('task-release-child')).toBeAttached();
 	await expect(page.getByTestId('task-release-child-orkflow')).toHaveText('release-block@0.1.0');
-	const childId = await childRunId(page, 'release');
+	const link = page.getByTestId('task-release-child-link');
+	await expect(link).toBeAttached({ timeout: 120_000 });
+	const childId = ((await link.textContent()) ?? '').trim();
 	expect(childId).toMatch(/^ork-\d+-\d+$/);
+	await expect(page.getByTestId('task-release-child')).not.toBeInViewport();
+	expect(childReads.filter((id) => id === childId), 'no child read before the card is seen').toHaveLength(0);
+	expect(childSockets.filter((url) => url.includes(`/ws/runs/${childId}?`)), 'no child socket before the card is seen').toHaveLength(0);
+	await expect(page.getByTestId('task-release-child')).toHaveAttribute('data-following', 'idle');
+	await page.getByTestId('task-release-child').scrollIntoViewIfNeeded();
+	await expect(page.getByTestId('task-release-child')).toHaveAttribute('data-following', 'read', { timeout: 30_000 });
+	expect(childReads.filter((id) => id === childId).length >= 1).toBe(true);
+	expect(childSockets.filter((url) => url.includes(`/ws/runs/${childId}?`)).length <= 1).toBe(true);
+	note(`composed card below the fold: 0 child reads and 0 child sockets until scrolled to; then ${childReads.filter((id) => id === childId).length} read(s)`);
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await page.getByTestId('task-release-child').scrollIntoViewIfNeeded();
 	await expect(page.getByTestId('task-release-child-task-sign-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
 	await expect(page.getByTestId('task-release-child-task-publish-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
 	await expect(page.getByTestId('task-release-child-rollup')).toHaveText('2 tasks: 2 succeeded');
@@ -199,6 +224,7 @@ test('a failed child fails the parent task with its reason and a link', async ({
 	await expect(page.getByTestId('task-release-error')).toContainText('CHILD_RUN_FAILED');
 	await expect(page.getByTestId('task-release-error')).toContainText('(failing-block@0.1.0) failed');
 	await expect(page.getByTestId('task-release-child-link')).toBeVisible();
+	await page.getByTestId('task-release-child').scrollIntoViewIfNeeded();
 	await expect(page.getByTestId('task-release-child-task-attest-status')).toHaveText('FAILED', { timeout: 60_000 });
 	note(`run ${runId}: release FAILED CHILD_RUN_FAILED naming failing-block@0.1.0`);
 	await shot(page, 'screenshot-child-failed.png');
@@ -208,6 +234,7 @@ test('cancelling the parent cancels the child', async ({ page }) => {
 	const runId = await submit('composed-slow');
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
 	const childId = await childRunId(page, 'release');
+	await page.getByTestId('task-release-child').scrollIntoViewIfNeeded();
 	await expect(page.getByTestId('task-release-child-task-wait-status')).toHaveText('RUNNING', { timeout: 120_000 });
 	await page.getByTestId('cancel-run').click();
 	await expect(page.getByTestId('cancel-run-confirm')).toBeVisible();

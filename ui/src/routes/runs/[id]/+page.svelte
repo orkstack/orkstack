@@ -241,10 +241,14 @@
 	let failingNote = $state('');
 	let socketState = $state<RunSocketState>('connecting');
 	let streamDelivered = $state(false);
+	// Why the stream stopped for good ('failed'), in watchRunEvents' words.
+	let streamFailure = $state('');
 	// The socket is only 'live' once it has actually delivered something.
 	// 'error' or a reconnect loop that never delivers means the browser is
 	// not receiving this run, whatever the run itself is doing.
-	const streamBroken = $derived(!streamDelivered && (socketState === 'error' || socketState === 'closed'));
+	const streamBroken = $derived(
+		socketState === 'failed' || (!streamDelivered && (socketState === 'error' || socketState === 'closed'))
+	);
 	// The event stream, BOUNDED. The socket delivers every event whether or
 	// not the inspector is open — the backlog has to be there when it opens —
 	// so this is what a long run grows, and appendEvent caps it at
@@ -930,23 +934,41 @@
 	// event log reading "Waiting for events…", while the run had in fact
 	// finished. Track whether the stream ever delivered anything so the page
 	// can say "not connected" instead of implying "nothing has happened".
+	//
+	// A stream that stopped for good ('failed': six reconnects in a row that
+	// delivered nothing) says so, with the reason, and offers Retry. Retry
+	// bumps `socketEpoch`, which restarts this effect from `lastSequence` — a
+	// plain variable, read once per start, never a dependency — so the events
+	// already applied are not replayed into the reducer or the buffer.
 	const socketRunId = $derived(data.run?.id ?? '');
 	const socketNamespace = $derived(data.namespace);
+	let socketEpoch = $state(0);
+	let lastSequence = 0n;
 	$effect(() => {
 		const runId = socketRunId;
 		const namespace = socketNamespace;
+		void socketEpoch;
 		if (!runId) return;
+		streamFailure = '';
 		const stop = watchRunEvents(
 			runId,
 			namespace,
 			(event) => {
 				streamDelivered = true;
+				if (event.sequence > lastSequence) lastSequence = event.sequence;
 				onEvent(event);
 			},
-			(s) => (socketState = s)
+			(s, detail) => {
+				socketState = s;
+				if (s === 'failed') streamFailure = detail ?? 'the event stream stopped';
+			},
+			{ fromSequence: lastSequence }
 		);
 		return stop;
 	});
+	function retryStream(): void {
+		socketEpoch += 1;
+	}
 
 	// The event list is URL state — `?events=1`, and nothing else — independent
 	// of the live subscription above. There is no containing panel to open
@@ -1331,9 +1353,11 @@
 					? 'ENDED'
 					: socketState === 'open'
 						? 'LIVE'
-						: streamBroken
-							? 'NOT CONNECTED'
-							: 'CONNECTING'}
+						: socketState === 'failed'
+							? 'STOPPED'
+							: streamBroken
+								? 'NOT CONNECTED'
+								: 'CONNECTING'}
 			</span>
 		</div>
 		<div class="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -1403,6 +1427,17 @@
 	</div>
 	{#if copied}
 		<p data-testid="copy-status" class="-mt-4 mb-4 text-xs text-fg-muted">{copied}</p>
+	{/if}
+	{#if socketState === 'failed' && !isTerminal(runStatus)}
+		<div class="mb-4">
+			<ErrorPanel
+				testid="live-stopped"
+				retryTestid="live-retry"
+				retryLabel="Retry live updates"
+				message="Live updates stopped: {streamFailure}. The statuses on this page are as of the last event received."
+				onretry={retryStream}
+			/>
+		</div>
 	{/if}
 	{#if cancellationRequested && !isTerminal(runStatus)}
 		<p data-testid="cancellation-requested" class="mb-4 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-700">
