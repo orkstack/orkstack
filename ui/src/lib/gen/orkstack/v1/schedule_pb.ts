@@ -135,8 +135,9 @@ export type Schedule = Message<"orkstack.v1.Schedule"> & {
    * id is opaque, shaped sch-{16 hex}, generated as trg-{16 hex} is (8 bytes
    * from crypto/rand). It is what RunOrigin.id carries for a scheduled run.
    * Nothing parses it or derives anything from its shape. It survives an
-   * update and changes on delete-then-create, so `run list --origin
-   * schedule:<id>` names one schedule's lifetime.
+   * update and changes on delete-then-create, so `run list --filter
+   * origin.kind=SCHEDULE --filter origin.id=<id>` names one schedule's
+   * lifetime.
    *
    * @generated from field: string id = 1;
    */
@@ -1085,7 +1086,8 @@ export const ScheduleService: GenService<{
    * FireSchedule fires once, now, as Temporal's TriggerImmediately does. It
    * works on a paused schedule. The fire's run id is not known when this
    * returns: it appears in recent_fires once the fire has prepared, and
-   * `run list --origin schedule:<id>` lists it.
+   * `run list --filter origin.kind=SCHEDULE --filter origin.id=<id>` lists
+   * it.
    *
    * @generated from rpc orkstack.v1.ScheduleService.FireSchedule
    */

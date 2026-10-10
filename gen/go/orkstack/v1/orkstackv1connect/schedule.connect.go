@@ -95,7 +95,8 @@ type ScheduleServiceClient interface {
 	// FireSchedule fires once, now, as Temporal's TriggerImmediately does. It
 	// works on a paused schedule. The fire's run id is not known when this
 	// returns: it appears in recent_fires once the fire has prepared, and
-	// `run list --origin schedule:<id>` lists it.
+	// `run list --filter origin.kind=SCHEDULE --filter origin.id=<id>` lists
+	// it.
 	FireSchedule(context.Context, *connect.Request[v1.FireScheduleRequest]) (*connect.Response[v1.FireScheduleResponse], error)
 	// BackfillSchedule fires once for every nominal time the spec names in
 	// [start, end], as if that time passed now, under the overlap policy.
@@ -265,7 +266,8 @@ type ScheduleServiceHandler interface {
 	// FireSchedule fires once, now, as Temporal's TriggerImmediately does. It
 	// works on a paused schedule. The fire's run id is not known when this
 	// returns: it appears in recent_fires once the fire has prepared, and
-	// `run list --origin schedule:<id>` lists it.
+	// `run list --filter origin.kind=SCHEDULE --filter origin.id=<id>` lists
+	// it.
 	FireSchedule(context.Context, *connect.Request[v1.FireScheduleRequest]) (*connect.Response[v1.FireScheduleResponse], error)
 	// BackfillSchedule fires once for every nominal time the spec names in
 	// [start, end], as if that time passed now, under the overlap policy.
