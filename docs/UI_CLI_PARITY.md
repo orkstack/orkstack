@@ -259,7 +259,7 @@ every row read, so a narrower read can never change an answer.
 | Releases | `build_id=`: that release alone is counted; the release rows | filters select release rows only; every other field is the deployment's |
 | Deliveries | every field from the record's key (`created_at`, `namespace`, `run_id`, `webhook_id`, `event`, `delivered`) | a body is read only for a record whose key matches; the `created_at` bounds are the window; 100,000 keys per page at most |
 | Audit trail | each record's body (the key holds only the day and the id) | the `at` bounds are the window; bodies are read eight at a time, newest first, and decided in key order; 5,000 records per page at most |
-| Runs | live runs: what the cluster lists for each run (its Orkflow, status, origin and start); finished runs: the run index's keys, never a run body | exactly the fields both halves answer without reading a run: `orkflow_name`, `status`, `created_at`, `origin.kind` and `origin.id`. One `orkflow_name=` or `status=` narrows what each half reads, one `origin.kind=` (and `origin.id=` beside it) selects the origin index, and the `created_at` bounds bound the scan; any other filter is decided per row without narrowing the read. A finished run's body is read only when its key matches |
+| Runs | live runs: what the cluster lists for each run (its Orkflow, status, origin and start); finished runs: the archive's index keys (the newest-first index, read from the page cursor until the page is full), never a run body | exactly the fields both halves answer without reading a run: `orkflow_name`, `status`, `created_at`, `origin.kind` and `origin.id`. One `orkflow_name=` or `status=` narrows what each half reads, one `origin.kind=` (and `origin.id=` beside it) selects the origin index, and the `created_at` bounds bound the scan; any other filter is decided per row without narrowing the read. A finished run's body is read only when its key matches |
 
 **Runs.** `created_at` is the instant a run is ordered and paged by: its
 `created_at`, else its `started_at`, else its `finished_at`, at microsecond
@@ -497,7 +497,8 @@ listing catches up — never twice and never with a wrong final status, and a
 refresh corrects it. A scan cut short by its budget is never labelled
 complete; an undeterminable continuation is an actionable failure.
 
-CLI: `run list [--filter F…] [--limit N] [--page-token TOKEN]`; human output
+CLI: `run list [--filter F…] [--limit N] [--page-token TOKEN]` (`--limit` is
+at most 200, the default; a larger page is refused, never clamped); human output
 prints a usable next-page command that repeats every `--filter`, `--json`
 carries `next_page_token`. UI: the Runs page's filter form (`ListFilter`),
 whose header reads `Runs for <name>` — and whose **Submit a run** opens that

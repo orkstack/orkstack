@@ -321,7 +321,7 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of runs to return (0 = server default)")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of runs to return, at most 200 (0 = server default, 200)")
 	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous list")
 	filterTexts = addFilterFlag(cmd, &orkstackv1.ListRunsRequest{})
 	return cmd

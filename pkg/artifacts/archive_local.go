@@ -78,6 +78,10 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if err != nil {
 		return err
 	}
+	recentKey, err := RunRecentIndexKey(rec)
+	if err != nil {
+		return err
+	}
 	objectIDs := dedupeObjectIDs(rec.ObjectIDs)
 	listKey, err := RunObjectListKey(rec.RunID)
 	if err != nil {
@@ -126,6 +130,9 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		if err := a.writeAtomic(originKey, nil); err != nil {
 			return fmt.Errorf("artifacts: local archive run %q: write origin index: %w", rec.RunID, err)
 		}
+	}
+	if err := a.writeAtomic(recentKey, nil); err != nil {
+		return fmt.Errorf("artifacts: local archive run %q: write recent index: %w", rec.RunID, err)
 	}
 	if err := a.writeAtomic(indexKey, nil); err != nil {
 		return fmt.Errorf("artifacts: local archive run %q: %w", rec.RunID, err)
@@ -385,6 +392,9 @@ func (a *LocalRunArchive) DeleteUnreferencedObjects(ctx context.Context, objectI
 // A KeyOrder query takes the resumable walk instead, which stops at the page
 // boundary rather than enumerating the subtree and sorting it.
 func (a *LocalRunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntry, error) {
+	if q.usesRecent() {
+		return a.listRecent(ctx, q)
+	}
 	prefix, _, err := q.ScanPrefix()
 	if err != nil {
 		return nil, err
@@ -484,6 +494,62 @@ func (a *LocalRunArchive) listRunsInKeyOrder(ctx context.Context, q RunQuery, wa
 		return nil, fmt.Errorf("artifacts: local archive list %q: %w", prefix, err)
 	}
 	return entries, nil
+}
+
+// listRecent walks the newest-first family one instant at a time: the
+// namespace directory's children are the inverted stamps, whose names sort in
+// key order (fixed width, digits only), and every key of one instant lies in
+// that instant's directory. The order of keys WITHIN an instant does not
+// matter — recentWalk reads an instant whole and finish orders its ties — so
+// each instant's directory is walked in whatever order the filesystem gives.
+func (a *LocalRunArchive) listRecent(ctx context.Context, q RunQuery) ([]RunIndexEntry, error) {
+	prefix, startAfter, err := q.recentScan()
+	if err != nil {
+		return nil, err
+	}
+	root := strings.TrimSuffix(prefix, "/")
+	stamps, err := fs.ReadDir(a.root.FS(), root)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return []RunIndexEntry{}, nil // nothing archived in this namespace yet
+		}
+		return nil, fmt.Errorf("artifacts: local archive list %q: %w", prefix, err)
+	}
+	sort.Slice(stamps, func(i, j int) bool { return stamps[i].Name() < stamps[j].Name() })
+	walk := newRecentWalk(q)
+	for _, stamp := range stamps {
+		dir := path.Join(root, stamp.Name())
+		// Every key of this instant starts with dir+"/"; skip the instants at
+		// or before the cursor without reading them.
+		if !stamp.IsDir() || dir+"/" <= startAfter {
+			continue
+		}
+		done := false
+		err := fs.WalkDir(a.root.FS(), dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			if d.IsDir() {
+				return nil
+			}
+			a.indexKeysScanned.Add(1)
+			if walk.add(p) {
+				done = true
+				return fs.SkipAll
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("artifacts: local archive list %q: %w", prefix, err)
+		}
+		if done {
+			break
+		}
+	}
+	return walk.page(), nil
 }
 
 // keyOrderName renders the string a child's keys begin with, so sorting by it

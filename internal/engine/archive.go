@@ -117,6 +117,47 @@ func UnmarshalRunArchive(body []byte) (*orkstackv1.Run, []*orkstackv1.Event, err
 	return run, events, nil
 }
 
+// UnmarshalRunLine decodes only the archive body's run line: what `run get`
+// and a list page need. MarshalRunArchive writes it first, so the read stops
+// at line one and no event line is decoded; a body whose run line is not the
+// first is still read correctly, with every line before it skipped unparsed
+// beyond its kind. A body with no run line is the error UnmarshalRunArchive
+// returns.
+func UnmarshalRunLine(body []byte) (*orkstackv1.Run, error) {
+	opts := protojson.UnmarshalOptions{DiscardUnknown: true}
+	for number := 1; len(body) > 0; number++ {
+		raw := body
+		if i := bytes.IndexByte(body, '\n'); i >= 0 {
+			raw, body = body[:i], body[i+1:]
+		} else {
+			body = nil
+		}
+		line := bytes.TrimSpace(raw)
+		if len(line) == 0 {
+			continue
+		}
+		var kind struct {
+			Kind string          `json:"kind"`
+			Run  json.RawMessage `json:"run,omitempty"`
+		}
+		if err := json.Unmarshal(line, &kind); err != nil {
+			return nil, fmt.Errorf("engine: read archive line %d: %w", number, err)
+		}
+		switch kind.Kind {
+		case ArchiveKindRun:
+			decoded := &orkstackv1.Run{}
+			if err := opts.Unmarshal(kind.Run, decoded); err != nil {
+				return nil, fmt.Errorf("engine: read archive line %d: run: %w", number, err)
+			}
+			return decoded, nil
+		case ArchiveKindEvent:
+		default:
+			return nil, fmt.Errorf("engine: read archive line %d: unknown kind %q", number, kind.Kind)
+		}
+	}
+	return nil, fmt.Errorf("engine: read archive: no %q line", ArchiveKindRun)
+}
+
 func appendArchiveLine(out *bytes.Buffer, line archiveLine) error {
 	encoded, err := json.Marshal(line)
 	if err != nil {
@@ -311,10 +352,19 @@ func (a *RunArchiver) LoadRunBody(ctx context.Context, runID string) ([]byte, er
 	return a.archive.GetRun(ctx, runID)
 }
 
-// LoadRun returns just the archived run snapshot.
+// LoadRun returns just the archived run snapshot. It decodes the body's run
+// line only (UnmarshalRunLine): the event lines are fetched with the body but
+// never decoded.
 func (a *RunArchiver) LoadRun(ctx context.Context, runID string) (*orkstackv1.Run, error) {
-	run, _, err := a.Load(ctx, runID)
-	return run, err
+	body, err := a.LoadRunBody(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	run, err := UnmarshalRunLine(body)
+	if err != nil {
+		return nil, fmt.Errorf("engine: load run %q: %w", runID, err)
+	}
+	return run, nil
 }
 
 // LoadRunEvents returns just the archived event log, in sequence order.
@@ -323,9 +373,11 @@ func (a *RunArchiver) LoadRunEvents(ctx context.Context, runID string) ([]*orkst
 	return events, err
 }
 
-// ListRuns answers a query: one prefix scan over index keys, then one body read
-// per run on the resulting page. Filtering never reads a body, so the cost is
-// set by the page size, not by how much history the archive holds.
+// ListRuns answers a query: one scan over index keys, then one body read per
+// run on the resulting page, decoding only each body's run line. Filtering
+// never reads a body. A bounded page of one namespace walks the newest-first
+// index and stops at the page, so its cost is set by the page size, not by how
+// much history the namespace holds.
 func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstackv1.Run, error) {
 	if a == nil {
 		return nil, nil
@@ -346,6 +398,10 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		OriginID:    q.OriginID,
 		Keep:        archiveKeep(q.Keep),
 		Limit:       limit,
+		// A bounded page of one namespace walks the newest-first family and
+		// stops at the page; the backend keeps the narrower family where one
+		// serves the query better (artifacts.RunQuery.Recent).
+		Recent: true,
 	})
 	if err != nil {
 		return nil, err
@@ -363,8 +419,7 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		go func(i int, runID string) {
 			defer wg.Done()
 			defer func() { <-slots }()
-			run, _, err := a.Load(ctx, runID)
-			runs[i], errs[i] = run, err
+			runs[i], errs[i] = a.LoadRun(ctx, runID)
 		}(i, entry.RunID)
 	}
 	wg.Wait()

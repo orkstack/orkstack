@@ -15,7 +15,7 @@ import (
 
 // s3Double is the smallest S3-compatible server a unit test can point the
 // real SDK client at: path-style PutObject (honouring If-None-Match: *),
-// GetObject, DeleteObject, DeleteObjects, and ListObjectsV2 with prefix,
+// GetObject, HeadObject, DeleteObject, DeleteObjects, and ListObjectsV2 with prefix,
 // start-after, max-keys and continuation. It counts each call, so a test can
 // say how many bodies a listing fetched and how many list requests a read
 // made. A key in refuse is never deleted; DeleteObjects reports it AccessDenied.
@@ -110,6 +110,14 @@ func (d *s3Double) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2":
 		d.lists++
 		d.list(w, r)
+	case r.Method == http.MethodHead && key != "":
+		body, exists := d.objects[key]
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(http.StatusOK)
 	case r.Method == http.MethodDelete && key != "":
 		d.deletes++
 		if !d.refuse[key] {

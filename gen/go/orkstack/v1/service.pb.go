@@ -5407,8 +5407,10 @@ func (x *GetRunResponse) GetRun() *Run {
 // needs an equals filter on origin.kind. An id is matched whole, never by
 // part.
 type ListRunsRequest struct {
-	state    protoimpl.MessageState `protogen:"open.v1"`
-	PageSize int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// page_size caps the runs returned; 0 means the default (200); above the
+	// maximum (200) is INVALID_ARGUMENT, not clamped.
+	PageSize int32 `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	// page_token continues a listing; it binds the namespace and the canonical
 	// filter set, and a token minted under other filters is INVALID_ARGUMENT.
 	PageToken     string         `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`

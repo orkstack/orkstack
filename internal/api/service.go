@@ -1968,6 +1968,11 @@ func (s *Service) GetRun(
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
+// MaxRunPageSize is the most runs one ListRuns page returns. A larger
+// page_size is INVALID_ARGUMENT, on the deliveries precedent: an archived row
+// on a page costs one body read, so the ceiling bounds what one request reads.
+const MaxRunPageSize = 200
+
 // ListRuns returns runs of one namespace, newest first, narrowed by the
 // request's filters (docs/UI_CLI_PARITY.md "Filtering lists").
 //
@@ -2011,10 +2016,15 @@ func (s *Service) ListRuns(
 		return nil, err
 	}
 	size := int(req.Msg.GetPageSize())
-	if size < 0 {
+	switch {
+	case size < 0:
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_size cannot be negative"))
-	}
-	if size == 0 {
+	case size > MaxRunPageSize:
+		// Refused, never clamped: a page is a body read per archived row, so
+		// the ceiling is what bounds one request's cost.
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("page_size %d is above the maximum %d", size, MaxRunPageSize))
+	case size == 0:
 		size = engine.DefaultRunPageSize
 	}
 	plan := engine.RunListPlan(set)

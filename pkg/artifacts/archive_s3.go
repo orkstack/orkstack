@@ -75,6 +75,10 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if err != nil {
 		return err
 	}
+	recentKey, err := RunRecentIndexKey(rec)
+	if err != nil {
+		return err
+	}
 	objectIDs := dedupeObjectIDs(rec.ObjectIDs)
 	listKey, err := RunObjectListKey(rec.RunID)
 	if err != nil {
@@ -128,6 +132,13 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		}); err != nil {
 			return fmt.Errorf("artifacts: s3 archive run %q: write origin index %q: %w", rec.RunID, originKey, err)
 		}
+	}
+	// The newest-first row, likewise zero bytes and likewise before the run
+	// index.
+	if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(a.bucket), Key: aws.String(recentKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
+	}); err != nil {
+		return fmt.Errorf("artifacts: s3 archive run %q: write recent index %q: %w", rec.RunID, recentKey, err)
 	}
 	// The index carries everything in its key, so its body is empty. Publishing
 	// it last makes all prior durable records visible to cleanup first.
@@ -530,6 +541,9 @@ func (a *S3RunArchive) DeleteUnreferencedObjects(ctx context.Context, objectIDs 
 // full, so paging a whole traversal costs one enumeration rather than one per
 // page. S3 already lists in key order, so the cursor is just StartAfter.
 func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntry, error) {
+	if q.usesRecent() {
+		return a.listRecent(ctx, q)
+	}
 	prefix, startAfter, err := q.ScanPrefix()
 	if err != nil {
 		return nil, err
@@ -576,6 +590,35 @@ func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntr
 		}
 	}
 	return a.finishList(q, entries), nil
+}
+
+// listRecent walks the newest-first family from the cursor and stops at the
+// page (recentWalk). S3 lists in key order, so a listing page is consumed in
+// the order the walk needs, and the walk usually ends inside the first page.
+func (a *S3RunArchive) listRecent(ctx context.Context, q RunQuery) ([]RunIndexEntry, error) {
+	prefix, startAfter, err := q.recentScan()
+	if err != nil {
+		return nil, err
+	}
+	input := &s3.ListObjectsV2Input{Bucket: aws.String(a.bucket), Prefix: aws.String(prefix)}
+	if startAfter != "" {
+		input.StartAfter = aws.String(startAfter)
+	}
+	walk := newRecentWalk(q)
+	pager := s3.NewListObjectsV2Paginator(a.client, input)
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("artifacts: s3 archive list %q: %w", prefix, err)
+		}
+		for _, obj := range page.Contents {
+			a.indexKeysScanned.Add(1)
+			if walk.add(aws.ToString(obj.Key)) {
+				return walk.page(), nil
+			}
+		}
+	}
+	return walk.page(), nil
 }
 
 // finishList applies the newest-first ordering unless the caller asked for a

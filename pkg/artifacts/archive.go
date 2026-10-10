@@ -24,6 +24,9 @@ import (
 //	metadata/runs/{run-id}.jsonl                                  the immutable body
 //	metadata/index/runs/{namespace}/{orkflow}/{status}/{stamp}/{run-id}
 //
+// (with two sibling index families beside the run index: origins, below, and
+// the newest-first family in archive_recent.go)
+//
 // The body holds the run and every one of its events, one JSON record per line.
 // It is written once, when the run reaches a terminal state, and never
 // rewritten.
@@ -210,6 +213,14 @@ type RunQuery struct {
 	// StartAfterKey is the exclusive index-key cursor for a KeyOrder walk. It
 	// is ignored unless KeyOrder is set.
 	StartAfterKey string
+	// Recent asks for a newest-first page from the newest-first family
+	// (metadata/index/recent/…), which stops at the page instead of reading
+	// every key of the namespace and sorting it. The answer is the same
+	// entries in the same order; only the cost differs. It is honoured only
+	// where that family is the better scan (usesRecent): a bounded page of
+	// one namespace, with no origin filter and not both orkflow and status
+	// pinned. Otherwise it is ignored.
+	Recent bool
 	// Limit caps the number of entries returned. 0 means all. By default it
 	// truncates the newest-first result after the scan, so it bounds the
 	// answer rather than the work; under KeyOrder it bounds the page the walk
