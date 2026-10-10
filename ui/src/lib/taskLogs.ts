@@ -143,7 +143,7 @@ export interface FollowTaskLogsOptions {
 // batch — and therefore memory — bounded by time as well as by frames.
 const FRAME_BACKSTOP_MS = 250;
 
-function scheduleFrame(flush: () => void): () => void {
+export function scheduleFrame(flush: () => void): () => void {
 	let fired = false;
 	const once = () => {
 		if (fired) return;

@@ -124,6 +124,27 @@ export function applyItemEvent(items: ItemView[], event: Event): ItemView[] {
 }
 
 /**
+ * applyItemEvents is applyItemEvent over a batch, in order, with ONE copy of
+ * the array however many events the batch holds — the run page applies a
+ * frame's worth of a fan-out's events at once. It returns `items` itself when
+ * no event in the batch is an item event.
+ */
+export function applyItemEvents(items: ItemView[], events: Event[]): ItemView[] {
+	let next: ItemView[] | undefined;
+	for (const event of events) {
+		if (event.item === undefined || event.item < 0) continue;
+		next ??= items.slice();
+		const index = event.item;
+		for (let i = next.length; i <= index; i++) {
+			next.push({ index: i, status: Status.PENDING, attempt: 0, message: '' });
+		}
+		const status = event.status === Status.UNSPECIFIED ? next[index].status : event.status;
+		next[index] = { ...next[index], status, message: event.message };
+	}
+	return next ?? items;
+}
+
+/**
  * mergeItems folds a snapshot's items over the ones the page already holds.
  * The snapshot wins — it carries every per-attempt fact an event does not —
  * except where an event already settled an item the snapshot, read a moment

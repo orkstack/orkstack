@@ -59,6 +59,43 @@ export function appendEvent(
 	};
 }
 
+/**
+ * appendEvents appends a whole batch in ONE new buffer — one concat, at most
+ * one slice — where appending event by event copied the buffer once per
+ * event: a cached 1000-item fan-out replaying its backlog was a million
+ * element copies and a thousand reactive writes. The result is exactly what
+ * appending each event in turn would give.
+ */
+export function appendEvents(
+	buffer: EventBuffer,
+	events: Event[],
+	cap: number = EVENT_BUFFER_CAP
+): EventBuffer {
+	if (events.length === 0) return buffer;
+	const next = buffer.events.concat(events);
+	const overflow = next.length > cap ? next.length - cap : 0;
+	return {
+		events: overflow > 0 ? next.slice(overflow) : next,
+		dropped: buffer.dropped + overflow,
+		total: buffer.total + events.length
+	};
+}
+
+/** How many rows the inspector renders before a reader asks for more. */
+export const EVENT_WINDOW = 200;
+/** How many more each "Show earlier" adds. */
+export const EVENT_WINDOW_STEP = 500;
+
+/**
+ * eventWindow is the TAIL of the shown events the inspector renders: the
+ * newest `size`, with how many earlier ones are held but not drawn. The
+ * buffer still holds up to EVENT_BUFFER_CAP; this bounds the DOM.
+ */
+export function eventWindow<T>(shown: T[], size: number): { rows: T[]; earlier: number } {
+	if (shown.length <= size) return { rows: shown, earlier: 0 };
+	return { rows: shown.slice(shown.length - size), earlier: shown.length - size };
+}
+
 /** The filters the inspector's toolbar offers, in the order it offers them. */
 export type EventFilter = 'all' | 'run' | 'tasks' | 'failures';
 

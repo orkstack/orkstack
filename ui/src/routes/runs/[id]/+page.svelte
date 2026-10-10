@@ -18,7 +18,7 @@
 	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
 	import EachItemGrid from '$lib/components/EachItemGrid.svelte';
 	import {
-		applyItemEvent,
+		applyItemEvents,
 		itemFromUrl,
 		itemsFromTaskRun,
 		mergeItems,
@@ -55,7 +55,8 @@
 	import { defaultCompareTarget } from '$lib/runDiff';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, taskRunCommand, timestampJson } from '$lib/runDetail';
-	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
+	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '$lib/eventBuffer';
+	import { eventBatcher } from '$lib/eventBatch';
 	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
 	import {
 		EventType,
@@ -86,7 +87,7 @@
 		originLinkPath,
 		originReferenceURL
 	} from '$lib/origin';
-	import { fmtTimestamp, isTerminal, keepsEventMessage, statusLabel, taskDispatched } from '$lib/status';
+	import { fmtTimestamp, isTerminal, isTerminalEventType, keepsEventMessage, statusLabel, taskDispatched } from '$lib/status';
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
 	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
 	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
@@ -251,7 +252,7 @@
 	);
 	// The event stream, BOUNDED. The socket delivers every event whether or
 	// not the inspector is open — the backlog has to be there when it opens —
-	// so this is what a long run grows, and appendEvent caps it at
+	// so this is what a long run grows, and appendEvents caps it at
 	// EVENT_BUFFER_CAP and counts what it drops. $state.raw because the buffer
 	// is replaced wholesale and a deeply reactive proxy per event is what made
 	// a chatty run's page heavy.
@@ -753,19 +754,39 @@
 		})();
 	}
 
-	function onEvent(event: Event) {
-		buffer = appendEvent(buffer, event);
+	// applyEvents takes one frame's worth of socket events ($lib/eventBatch),
+	// in delivery order: ONE buffer append for the batch, ONE item-array copy
+	// and write per fan-out it touches, and the reducer below for every other
+	// event.
+	function applyEvents(events: Event[]) {
+		buffer = appendEvents(buffer, events);
 		// AN ITEM'S EVENT MOVES THAT ITEM'S CELL AND NOTHING ELSE. It is a
 		// TASK_LOG carrying `item`; the task's own status is the node's, and
 		// is never set from one of its items.
-		if (event.item !== undefined) {
-			const known = tasks.find((t) => t.id === event.taskId);
-			upsertTask(event.taskId, { items: applyItemEvent(known?.items ?? [], event) });
-			if (isTerminal(event.status) && selectedItemByTask[event.taskId] === event.item) {
-				void refreshAttempts(event.taskId, event.item);
+		const itemEvents = new Map<string, Event[]>();
+		for (const event of events) {
+			if (event.item !== undefined) {
+				const list = itemEvents.get(event.taskId);
+				if (list) list.push(event);
+				else itemEvents.set(event.taskId, [event]);
+				continue;
 			}
-			return;
+			onEvent(event);
 		}
+		for (const [taskId, list] of itemEvents) {
+			const known = tasks.find((t) => t.id === taskId);
+			upsertTask(taskId, { items: applyItemEvents(known?.items ?? [], list) });
+			for (const event of list) {
+				if (isTerminal(event.status) && selectedItemByTask[taskId] === event.item) {
+					void refreshAttempts(taskId, event.item);
+				}
+			}
+		}
+	}
+
+	// onEvent reduces one event that is not an item's into the run's and its
+	// tasks' state.
+	function onEvent(event: Event) {
 		const status = event.status === Status.UNSPECIFIED ? undefined : event.status;
 		switch (event.type) {
 			case EventType.RUN_CREATED:
@@ -950,13 +971,16 @@
 		void socketEpoch;
 		if (!runId) return;
 		streamFailure = '';
+		const batch = eventBatcher(applyEvents);
 		const stop = watchRunEvents(
 			runId,
 			namespace,
 			(event) => {
 				streamDelivered = true;
 				if (event.sequence > lastSequence) lastSequence = event.sequence;
-				onEvent(event);
+				batch.push(event);
+				// The run's own end is applied at once, not a frame later.
+				if (isTerminalEventType(event.type)) batch.flush();
 			},
 			(s, detail) => {
 				socketState = s;
@@ -964,7 +988,12 @@
 			},
 			{ fromSequence: lastSequence }
 		);
-		return stop;
+		return () => {
+			stop();
+			// What arrived is applied, never dropped: lastSequence already
+			// counts it, so a restart would not deliver it again.
+			batch.flush();
+		};
 	});
 	function retryStream(): void {
 		socketEpoch += 1;
