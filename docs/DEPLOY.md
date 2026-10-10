@@ -1604,7 +1604,8 @@ WHEN                  PRINCIPAL        ACTION            NAMESPACE      TARGET  
 2026-03-14T11:02:44Z  svc-platform-ci  retention.update  -              deployment     ok
 2026-02-28T16:44:58Z  unattributed     namespace.delete  staging        staging        refused: failed_precondition
 
-Scope: every namespace, 2026-03-07T11:02:44Z to 2026-03-14T11:02:44Z (exclusive), newest first.
+Window: 2026-03-07T11:02:44Z to 2026-03-14T11:02:44Z (exclusive), newest first.
+Every namespace unless a namespace filter narrows it.
 principal is the identity the deployment's gateway asserted in Ork-Principal;
 OrkStack records it and does not authenticate it.
 ```
@@ -1642,8 +1643,10 @@ OrkStack records it and does not authenticate it.
   retention for it. There is no setting: a deployment that upgrades gets
   records, unattributed until something asserts a principal.
 - **A listing is bounded.** The default window is the seven days before now;
-  `--since`/`--until` choose another, and `--action` (a prefix), `--principal`
-  and `-n` filter. Pages hold 50 records by default, 200 at most. A page that
+  `at>=`/`at<` filters choose another, and `action^`, `principal=` and
+  `namespace=` filters narrow it (`namespace=` alone selects the
+  deployment-wide writes; docs/UI_CLI_PARITY.md "Filtering lists"). Pages hold
+  50 records by default, 200 at most. A page that
   would examine more than 5000 records before filling is refused
   (`resource_exhausted`) rather than answered from the subset it read —
   narrow the window, and page a long compliance range month by month.
