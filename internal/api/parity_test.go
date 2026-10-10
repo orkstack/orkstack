@@ -114,21 +114,44 @@ func TestListRunsCursorKeepsTiesAndRejectsChangedFilters(t *testing.T) {
 	for _, id := range []string{"ork-a", "ork-b", "ork-c"} {
 		runs.Save(&orkstackv1.Run{Id: id, OrkflowName: "deploy", Status: orkstackv1.Status_STATUS_SUCCEEDED, CreatedAt: timestamppb.New(at)})
 	}
+	runs.Save(&orkstackv1.Run{Id: "ork-z", OrkflowName: "other", Status: orkstackv1.Status_STATUS_FAILED, CreatedAt: timestamppb.New(at)})
 	svc := api.NewService(api.Config{Runs: runs})
-	first, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageSize: 2}))
+	list := func(req *orkstackv1.ListRunsRequest) (*orkstackv1.ListRunsResponse, error) {
+		resp, err := svc.ListRuns(context.Background(), connect.NewRequest(req))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg, nil
+	}
+	set := []string{"orkflow_name=deploy", "status!=FAILED"}
+	first, err := list(&orkstackv1.ListRunsRequest{PageSize: 2, Filters: filters(t, set...)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := first.Msg.GetRuns(); len(got) != 2 || got[0].GetId() != "ork-c" || got[1].GetId() != "ork-b" || first.Msg.GetNextPageToken() == "" {
-		t.Fatalf("first page = %#v", first.Msg)
+	if got := first.GetRuns(); len(got) != 2 || got[0].GetId() != "ork-c" || got[1].GetId() != "ork-b" || first.GetNextPageToken() == "" {
+		t.Fatalf("first page = %#v", first)
 	}
-	second, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageSize: 2, PageToken: first.Msg.GetNextPageToken()}))
-	if err != nil || len(second.Msg.GetRuns()) != 1 || second.Msg.GetRuns()[0].GetId() != "ork-a" {
+	// The same set in another order and spelling is the same canonical set,
+	// so it continues the listing, and the tie at one instant keeps ork-a.
+	second, err := list(&orkstackv1.ListRunsRequest{PageSize: 2, PageToken: first.GetNextPageToken(),
+		Filters: filters(t, "status!=failed", "orkflow_name=deploy")})
+	if err != nil || len(second.GetRuns()) != 1 || second.GetRuns()[0].GetId() != "ork-a" {
 		t.Fatalf("second = %#v, %v", second, err)
 	}
-	_, err = svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageToken: first.Msg.GetNextPageToken(), Status: orkstackv1.Status_STATUS_SUCCEEDED}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument {
-		t.Fatalf("changed filters = %v, want InvalidArgument", err)
+	for name, changed := range map[string][]string{
+		"filter dropped": {"orkflow_name=deploy"},
+		"filter added":   {"orkflow_name=deploy", "status!=FAILED", "status!=CANCELED"},
+		"value changed":  {"orkflow_name=deploy", "status!=CANCELED"},
+		"no filters":     nil,
+	} {
+		_, err := list(&orkstackv1.ListRunsRequest{PageSize: 2, PageToken: first.GetNextPageToken(), Filters: filters(t, changed...)})
+		if connect.CodeOf(err) != connect.CodeInvalidArgument ||
+			!strings.Contains(err.Error(), "page_token was issued for other filters; drop it and list from the first page") {
+			t.Fatalf("%s: token replayed = %v, want the filter-set refusal", name, err)
+		}
+	}
+	if _, err := list(&orkstackv1.ListRunsRequest{PageSize: 2, PageToken: first.GetNextPageToken(), Namespace: "payments", Filters: filters(t, set...)}); err == nil {
+		t.Fatal("a token replayed in another namespace was accepted")
 	}
 }
 

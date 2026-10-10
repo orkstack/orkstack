@@ -186,6 +186,11 @@ type RunQuery struct {
 	// engine hydrates any run bodies.
 	BeforeTime  time.Time
 	BeforeRunID string
+	// Keep is a residual predicate over the index entry. Matches calls it
+	// after every other check, during the key scan — before Limit and before
+	// any engine reads a run body — so a rejected key costs no body read. Nil
+	// keeps every entry the fields above keep.
+	Keep func(RunIndexEntry) bool
 	// KeyOrder switches the scan from "newest first, then truncate" to a
 	// resumable walk in index-key order that stops as soon as Limit matching
 	// entries are collected.
@@ -702,6 +707,9 @@ func (q RunQuery) Matches(entry RunIndexEntry) bool {
 		return false
 	}
 	if !q.BeforeTime.IsZero() && !(entry.Time.Before(q.BeforeTime) || (entry.Time.Equal(q.BeforeTime) && entry.RunID < q.BeforeRunID)) {
+		return false
+	}
+	if q.Keep != nil && !q.Keep(entry) {
 		return false
 	}
 	return true

@@ -420,20 +420,6 @@ func TestTriggerInvoke_UnauthenticatedNeverReachesTheReference(t *testing.T) {
 	}
 }
 
-func TestListRuns_OriginFilterValidation(t *testing.T) {
-	svc := api.NewService(api.Config{Runs: engine.NewRunStore()})
-	for name, req := range map[string]*orkstackv1.ListRunsRequest{
-		"id without kind":  {OriginId: "trg-1"},
-		"undeclared kind":  {OriginKind: orkstackv1.RunOriginKind(42)},
-		"undeclared+an id": {OriginKind: orkstackv1.RunOriginKind(42), OriginId: "x"},
-	} {
-		_, err := svc.ListRuns(context.Background(), connect.NewRequest(req))
-		if connect.CodeOf(err) != connect.CodeInvalidArgument {
-			t.Fatalf("%s: ListRuns = %v, want InvalidArgument", name, err)
-		}
-	}
-}
-
 func TestListRuns_OriginFilterMergesLiveAndArchive(t *testing.T) {
 	at := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	trigger := func(id string) *orkstackv1.RunOrigin {
@@ -477,15 +463,15 @@ func TestListRuns_OriginFilterMergesLiveAndArchive(t *testing.T) {
 		}
 		return ids
 	}
-	got := list(&orkstackv1.ListRunsRequest{OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, OriginId: "trg-1"})
+	got := list(&orkstackv1.ListRunsRequest{Filters: filters(t, "origin.kind=TRIGGER", "origin.id=trg-1")})
 	if want := []string{"ork-l2", "ork-l1", "ork-a2", "ork-a1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("trigger:trg-1 = %v, want %v newest first with no duplicate", got, want)
 	}
-	got = list(&orkstackv1.ListRunsRequest{OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT})
+	got = list(&orkstackv1.ListRunsRequest{Filters: filters(t, "origin.kind=SUBMIT")})
 	if want := []string{"ork-a3"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("submit = %v, want %v", got, want)
 	}
-	got = list(&orkstackv1.ListRunsRequest{OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER})
+	got = list(&orkstackv1.ListRunsRequest{Filters: filters(t, "origin.kind=TRIGGER")})
 	if want := []string{"ork-l3", "ork-l2", "ork-l1", "ork-a2", "ork-a1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("trigger = %v, want %v", got, want)
 	}
@@ -504,7 +490,7 @@ func TestListRuns_CursorBindsOriginFilter(t *testing.T) {
 			CreatedAt: timestamppb.New(at), Origin: &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, Id: "x"}})
 	}
 	svc := api.NewService(api.Config{Runs: runs})
-	filtered := &orkstackv1.ListRunsRequest{PageSize: 2, OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, OriginId: "x"}
+	filtered := &orkstackv1.ListRunsRequest{PageSize: 2, Filters: filters(t, "origin.kind=TRIGGER", "origin.id=x")}
 	first, err := svc.ListRuns(context.Background(), connect.NewRequest(filtered))
 	if err != nil || first.Msg.GetNextPageToken() == "" {
 		t.Fatalf("first filtered page = %v, %v", first, err)
@@ -517,28 +503,25 @@ func TestListRuns_CursorBindsOriginFilter(t *testing.T) {
 	}
 	for name, changed := range map[string]*orkstackv1.ListRunsRequest{
 		"filter dropped": {PageSize: 2, PageToken: first.Msg.GetNextPageToken()},
-		"id changed":     {PageSize: 2, PageToken: first.Msg.GetNextPageToken(), OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, OriginId: "y"},
-		"kind changed":   {PageSize: 2, PageToken: first.Msg.GetNextPageToken(), OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT},
+		"id changed":     {PageSize: 2, PageToken: first.Msg.GetNextPageToken(), Filters: filters(t, "origin.kind=TRIGGER", "origin.id=y")},
+		"kind changed":   {PageSize: 2, PageToken: first.Msg.GetNextPageToken(), Filters: filters(t, "origin.kind=SUBMIT")},
 	} {
 		if _, err := svc.ListRuns(context.Background(), connect.NewRequest(changed)); connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("%s: token replayed = %v, want InvalidArgument", name, err)
 		}
 	}
 
-	// A token minted before origins existed carries neither k nor d, and a
-	// request with no origin filter still accepts it.
+	// A version-1 token — the typed filters' shape — is refused, never read
+	// as an unfiltered position.
 	legacy := map[string]any{"v": 1, "n": "default", "o": "", "s": 0, "c": at.Format(time.RFC3339Nano), "i": "ork-c"}
 	raw, err := json.Marshal(legacy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
-	resp, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageSize: 2, PageToken: token}))
-	if err != nil {
-		t.Fatalf("a pre-origin token with no origin filter = %v, want accepted", err)
-	}
-	if got := len(resp.Msg.GetRuns()); got != 2 {
-		t.Fatalf("a pre-origin token paged %d runs, want the 2 after ork-c", got)
+	_, err = svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageSize: 2, PageToken: token}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "invalid page_token") {
+		t.Fatalf("a version-1 token = %v, want invalid page_token", err)
 	}
 }
 

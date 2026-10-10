@@ -62,13 +62,6 @@ var exempt = map[string]string{
 	"ListTelemetrySinks":  "a handful of names from one setting",
 }
 
-// notYetFiltered is TEMPORARY: the lists a later stage of the structured
-// filters converts. The test fails if one of them already declares filters,
-// so the table cannot outlive its stage; stage 3 deletes it.
-var notYetFiltered = map[string]string{
-	"ListRuns": "stage 3",
-}
-
 func TestSpec_EveryListRequestDeclaresItsFilters(t *testing.T) {
 	methods := listMethods(t)
 	if len(methods) < 17 {
@@ -81,10 +74,6 @@ func TestSpec_EveryListRequestDeclaresItsFilters(t *testing.T) {
 		case exempt[name] != "":
 			if declared {
 				t.Errorf("%s is exempt (%s) but declares filters", name, exempt[name])
-			}
-		case notYetFiltered[name] != "":
-			if declared {
-				t.Errorf("%s declares filters; delete it from notYetFiltered (%s)", name, notYetFiltered[name])
 			}
 		default:
 			if !declared {
@@ -106,6 +95,7 @@ var nameValued = []string{
 	"Trigger.name", "Trigger.orkflow_name", "Schedule.name", "Schedule.orkflow_name",
 	"Pool.name", "Orker.pool",
 	"Delivery.namespace", "AuditRecord.namespace",
+	"Run.orkflow_name",
 }
 
 // opaqueIDs are matched whole, never by part.

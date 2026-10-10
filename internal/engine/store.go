@@ -107,6 +107,9 @@ type ListFilter struct {
 	// RunQuery states; a run with no origin matches no origin filter.
 	OriginKind orkstackv1.RunOriginKind
 	OriginID   string
+	// Keep is the residual filter set, evaluated on RunFilterView(run) as
+	// RunQuery.Keep is; nil keeps every run the fields above keep.
+	Keep func(*orkstackv1.Run) bool
 }
 
 // List returns clones of the stored runs, newest first.
@@ -132,6 +135,9 @@ func (s *RunStore) List(filter ListFilter) []*orkstackv1.Run {
 			continue
 		}
 		if filter.OriginID != "" && run.GetOrigin().GetId() != filter.OriginID {
+			continue
+		}
+		if filter.Keep != nil && !filter.Keep(RunFilterView(run)) {
 			continue
 		}
 		out = append(out, proto.Clone(run).(*orkstackv1.Run))

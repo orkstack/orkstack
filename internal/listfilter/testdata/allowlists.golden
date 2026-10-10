@@ -86,6 +86,17 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
+== ListRuns (orkstack.v1.Run)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD          OPERATORS       VALUES
+  orkflow_name   = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  status         = != =a,b       PENDING RUNNING SUCCEEDED FAILED CANCELED SKIPPED
+  created_at     >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  origin.kind    =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN
+  origin.id      =               text; needs origin.kind=
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
 == ListSchedules (orkstack.v1.Schedule)
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   FIELD             OPERATORS       VALUES

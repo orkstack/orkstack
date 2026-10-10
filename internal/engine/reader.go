@@ -24,6 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -90,6 +91,12 @@ type RunQuery struct {
 	// OriginKind — exact match, never a prefix (ListRunsRequest).
 	OriginKind orkstackv1.RunOriginKind
 	OriginID   string
+	// Keep is the residual filter set (docs/UI_CLI_PARITY.md "Filtering
+	// lists"): when set, a run is listed only if Keep holds for its
+	// RunFilterView. The fields above are pushdowns that narrow what is read;
+	// Keep decides. Nil means no residual, which every caller but ListRuns
+	// passes.
+	Keep func(*orkstackv1.Run) bool
 	// BeforeCreated/BeforeID continue after a descending cursor. They are
 	// selected before Limit so a paged caller does not receive a short page
 	// merely because the source's first rows preceded its cursor.
@@ -1116,7 +1123,68 @@ func matchesRunQuery(run *orkstackv1.Run, q RunQuery) bool {
 	if !q.BeforeCreated.IsZero() && !(created.Before(q.BeforeCreated) || (created.Equal(q.BeforeCreated) && run.GetId() < q.BeforeID)) {
 		return false
 	}
+	if q.Keep != nil && !q.Keep(RunFilterView(run)) {
+		return false
+	}
 	return true
+}
+
+// RunListPlan turns a compiled ListRuns filter set into the query both run
+// sources share: the pushdowns each can use to read less, and Keep, the whole
+// set, which decides every row (docs/UI_CLI_PARITY.md "Filtering lists").
+//
+// A field is pushed down only through Set.Equality — exactly one non-empty
+// equals on its path — or, for created_at, Set.Interval. Anything else (two
+// different equals on one path, an empty equals, an equals beside another
+// operator, not equals, in, contains, prefix) pushes nothing, and the source
+// is read as if unfiltered on that field; Keep then applies it. So a pushdown
+// only ever narrows what is read and can never change an answer. The
+// namespace, the cursor and the limit are the caller's to set.
+func RunListPlan(set listfilter.Set) RunQuery {
+	var plan RunQuery
+	if name, ok := set.Equality("orkflow_name"); ok {
+		plan.OrkflowName = name
+	}
+	if status, ok := set.Equality("status"); ok {
+		plan.Status = orkstackv1.Status(orkstackv1.Status_value["STATUS_"+status])
+	}
+	if kind, ok := set.Equality("origin.kind"); ok {
+		plan.OriginKind = orkstackv1.RunOriginKind(orkstackv1.RunOriginKind_value["RUN_ORIGIN_KIND_"+kind])
+		// An id is meaningful only within a kind, so it is pushed down only
+		// beside one; the allowlist already refuses origin.id without
+		// an origin.kind equals.
+		if id, ok := set.Equality("origin.id"); ok {
+			plan.OriginID = id
+		}
+	}
+	plan.Since, plan.Until = set.Interval("created_at")
+	if !set.Empty() {
+		plan.Keep = func(view *orkstackv1.Run) bool { return set.Match(view) }
+	}
+	return plan
+}
+
+// RunFilterView is the Run a list filter reads: the fields both run sources
+// serve without reading a run body (its id, namespace, Orkflow, status and
+// origin), with created_at set to RunIndexTime — the instant a run is
+// ordered, paged and pushed down by. A run that records only started_at is
+// therefore selected by created_at filters on its started_at, and one with
+// no time at all has no created_at and matches no created_at filter. Every
+// residual filter (RunQuery.Keep, ListFilter.Keep, ArchiveQuery.Keep) is
+// evaluated on this view, never on a raw run, so the live, in-memory and
+// archived halves select a run on exactly the instant they order it by.
+func RunFilterView(run *orkstackv1.Run) *orkstackv1.Run {
+	view := &orkstackv1.Run{
+		Id:          run.GetId(),
+		Namespace:   run.GetNamespace(),
+		OrkflowName: run.GetOrkflowName(),
+		Status:      run.GetStatus(),
+		Origin:      run.GetOrigin(),
+	}
+	if at := RunIndexTime(run); !at.IsZero() {
+		view.CreatedAt = timestamppb.New(at)
+	}
+	return view
 }
 
 // closedExecution maps a history event that closes an execution onto the run

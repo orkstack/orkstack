@@ -798,17 +798,6 @@ func TestAwaitDoor_RefusalsStoreAndSendNothing(t *testing.T) {
 	}
 }
 
-func TestListRuns_RefusesAwaitingStatus(t *testing.T) {
-	f := newFixture(t)
-	_, err := f.runClient().ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{
-		Status: orkstackv1.Status_STATUS_AWAITING,
-	}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument ||
-		!strings.Contains(err.Error(), "AWAITING is a task status; a run whose task is awaiting is RUNNING") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
 func TestStreamTaskLogs_RefusesAnAwaitedTask(t *testing.T) {
 	run := runningRun("ork-logs-await", "gate")
 	run.TaskRuns[0].Status = orkstackv1.Status_STATUS_AWAITING

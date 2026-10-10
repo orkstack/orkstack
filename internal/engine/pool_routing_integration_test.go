@@ -472,7 +472,7 @@ tasks:
 	// pass or fail it.
 	awaitRunListed(t, ctx, runClient, nsName, twoPoolName, runID)
 	listed, err := runClient.ListRuns(ctx, connect.NewRequest(
-		&orkstackv1.ListRunsRequest{OrkflowName: coldName, Namespace: nsName}))
+		&orkstackv1.ListRunsRequest{Filters: equalsFilters("orkflow_name", coldName), Namespace: nsName}))
 	if err != nil {
 		t.Fatalf("ListRuns(%s): %v", coldName, err)
 	}
@@ -568,7 +568,7 @@ func awaitRunListed(
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		listed, err := runs.ListRuns(ctx, connect.NewRequest(
-			&orkstackv1.ListRunsRequest{OrkflowName: orkflow, Namespace: namespace}))
+			&orkstackv1.ListRunsRequest{Filters: equalsFilters("orkflow_name", orkflow), Namespace: namespace}))
 		if err == nil {
 			for _, run := range listed.Msg.GetRuns() {
 				if run.GetId() == runID {
