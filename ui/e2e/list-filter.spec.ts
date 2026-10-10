@@ -205,6 +205,10 @@ test('L3: Admin → Pools, is_default = true leaves the default pool', async ({ 
 	await expect(page.getByTestId('pool-card-gpu')).toBeVisible();
 	await page.waitForLoadState('networkidle');
 	await addListFilter(page, 'pools', { field: 'is_default', op: OP.equals, select: 'true' });
+	// F-ui-ux-9: the comboboxes whose caption is not a <label> carry a name
+	// of their own — the sidebar's namespace picker, and a filter row's value.
+	await expect(page.getByRole('combobox', { name: 'Namespace', exact: true })).toBeVisible();
+	await expect(page.getByRole('combobox', { name: / value$/ })).toHaveAttribute('data-testid', 'pools-filter-value-0');
 	await page.getByTestId('pools-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['is_default=true']);
 	await expect(page.getByTestId('pool-card-main')).toBeVisible();

@@ -169,6 +169,7 @@
 		</div>
 		<Select
 			testid="namespace-picker"
+			label="Namespace"
 			value={namespaceLabel(data.namespace)}
 			options={options.map((name) => ({ value: name, label: name }))}
 			onchange={switchTo}

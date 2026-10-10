@@ -15,6 +15,7 @@
 	// exactly two gestures — Enter/Space on a highlighted row, or a click on a
 	// row — and Escape is guaranteed to leave the value it found.
 	import { dismissOnOutsideOrEscape } from '$lib/dismiss';
+	import { selectAria } from '$lib/selectName';
 
 	interface Option {
 		value: string;
@@ -29,6 +30,11 @@
 		testid: string;
 		/** Set when a sibling <label for=...> names this field. */
 		id?: string;
+		/**
+		 * The field's name when no <label for=id> names it: rendered as the
+		 * trigger's and the listbox's aria-label (selectName.ts).
+		 */
+		label?: string;
 		/** 'console' is the dark log-pane surface, where this sits among 11px mono chrome. */
 		variant?: 'default' | 'console';
 	}
@@ -40,6 +46,7 @@
 		disabled = false,
 		testid,
 		id = undefined,
+		label = undefined,
 		variant = 'default'
 	}: Props = $props();
 
@@ -64,6 +71,7 @@
 	// operator needs to SEE, not a control that looks unset.
 	const selectedLabel = $derived(selectedIndex >= 0 ? options[selectedIndex].label : value);
 	const listboxId = $derived(`${testid}-listbox`);
+	const aria = $derived(selectAria(id, label));
 	const activeOptionId = $derived(
 		open && highlighted >= 0 && highlighted < options.length
 			? `${testid}-option-${options[highlighted].value}`
@@ -220,6 +228,7 @@
 		aria-expanded={open}
 		aria-controls={listboxId}
 		aria-activedescendant={activeOptionId}
+		{...aria.trigger}
 		data-testid={testid}
 		{disabled}
 		onclick={() => (open ? closePanel() : openPanel())}
@@ -248,7 +257,7 @@
 			bind:this={panel}
 			id={listboxId}
 			role="listbox"
-			aria-labelledby={id}
+			{...aria.listbox}
 			data-testid="{testid}-listbox"
 			class={isConsole
 				? 'absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-sm border border-console-border bg-console-header normal-case shadow-md'
