@@ -269,7 +269,7 @@ func TestIntegration_RunDiffIsAnsweredByTheReplicaThatStartedNeitherRun(t *testi
 	other := fmt.Sprintf("diff-other-%d", time.Now().UnixNano()%1_000_000_000)
 	s.mustCLI(1, "namespace", "create", other)
 	// A defer, not t.Cleanup: it must run while the stack's context is live.
-	defer func() { _, _, _ = s.cli(1, "namespace", "delete", other) }()
+	defer func() { _, _, _ = s.cli(1, "namespace", "delete", other, "--yes") }()
 	stdout, stderr, code := s.cli(1, "-n", other, "run", "diff", run1, run2)
 	if code == 0 || !strings.Contains(stderr, "not_found") || !strings.Contains(stderr, other) {
 		t.Fatalf("-n %s run diff exit=%d, want non-zero NotFound naming the namespace\nstdout:\n%s\nstderr:\n%s", other, code, stdout, stderr)

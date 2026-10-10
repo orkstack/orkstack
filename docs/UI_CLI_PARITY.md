@@ -61,6 +61,18 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   --json` prints a submission's await callbacks (the ready `curl`) on
   **stderr**, before the watch starts, so stdout stays the one JSON document
   the watch prints.
+- **What cannot be undone is confirmed.** The UI's confirmation dialogs have
+  a CLI twin: `orkflow delete`, `namespace delete`, `cache purge`, `release
+  promote`, `release rollback` and an `admin retention set` that **lowers**
+  the maximum state what they are about to do — the namespace, the purge's
+  scope, the release current now and the one that will be, the old and new
+  maximum and what the next cleanup pass removes — and ask for `yes` before
+  any write is sent. Anything else is `<action>: cancelled`, exit 1. With no
+  terminal on standard input they refuse (`refusing to … without
+  confirmation: standard input is not a terminal; pass --yes`, exit 1)
+  rather than read a pipe or silently do nothing; `--yes` skips the question,
+  and `--json` does not. Raising the retention maximum, or promoting the
+  release already current, asks nothing.
 - **`orkctl` exit codes.** `0` the command succeeded; `1` it failed —
   including a mistyped subcommand (`orkctl run lsit` fails with
   `unknown command "lsit" for "orkctl run"` and the nearest suggestion; a
@@ -883,8 +895,8 @@ CLI: `run submit|again --no-cache`; `run get` labels a hit `SUCCEEDED
 (cached)` with one cache line per cached task; `run attempts` adds a `CACHE`
 column; `orkflow get` a `CACHED` table; `cache stats [--orkflow] [--since]
 [--until]`; `cache purge (--orkflow NAME | --namespace-scoped | --all)
-[--task] [--older-than]`, refused before any request unless exactly one
-selector is given. UI: **Cached** (linking the producing run), **Cache miss**
+[--task] [--older-than] [--yes]`, refused before any request unless exactly
+one selector is given, and confirmed after naming its scope. UI: **Cached** (linking the producing run), **Cache miss**
 with its reason, or **Cache bypassed** on the task card; Inspect shows the
 key, source commit and memo write; the submit panel offers *Ignore cached
 results*; **Admin → Cache** shows hit rate, reused time and memos and purges
@@ -1174,9 +1186,10 @@ or `release.ramp` audit record.
 CLI: `release status [--watch] [--filter F…]` (`--watch --json` is
 refused; the filters select release rows and are sent on every poll),
 `release ramp
-BUILD --percent N` (1–100; 0 stops the ramp), `release promote BUILD`,
-`release rollback BUILD` (refused client-side unless the target is a previous
-release), `release wait BUILD [--timeout]` — a client-side loop: exit 0
+BUILD --percent N` (1–100; 0 stops the ramp), `release promote BUILD
+[--yes]`, `release rollback BUILD [--yes]` (refused client-side unless the
+target is a previous release; both name the current release and the target
+and confirm before writing), `release wait BUILD [--timeout]` — a client-side loop: exit 0
 drained, 4 timed out naming every run and pin left, 1 otherwise. A count that
 could not be read is `unknown`, never 0. Release commands ignore
 `--namespace`. UI: **Admin → Releases** — the filter form over the release

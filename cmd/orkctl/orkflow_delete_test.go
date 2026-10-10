@@ -21,7 +21,7 @@ const (
 	deleteTestName       = "hello-ork"
 	deleteTestNamespace  = "payments"
 	deleteNamespaceFlag  = "--namespace"
-	deleteForceFlag      = "--force"
+	deleteYesFlag        = "--yes"
 	noDeleteCallsMessage = "Delete calls = %v, want none"
 )
 
@@ -97,7 +97,7 @@ func deleteFixture(t *testing.T) (*fixture, *recordingOrkflowStore) {
 func TestOrkflowDelete_ConfirmedWarningNamesTheTargetAndDeletesExactlyOnce(t *testing.T) {
 	f, store := deleteFixture(t)
 
-	got := runCLIWithInput(t, f.baseURL, strings.NewReader("yes\n"),
+	got := runConfirming(t, f.baseURL, strings.NewReader("yes\n"), true,
 		"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace).requireExit(t, exitOK)
 
 	requireGolden(t, "orkflow-delete-warning.golden", got.stderr)
@@ -108,6 +108,9 @@ func TestOrkflowDelete_ConfirmedWarningNamesTheTargetAndDeletesExactlyOnce(t *te
 	}
 }
 
+// TestOrkflowDelete_DecliningEmptyAndClosedInputNeverDelete: anything but
+// "yes" at the terminal is a cancellation, and a cancellation is a failure
+// (exit 1) — the command did not do what it was asked.
 func TestOrkflowDelete_DecliningEmptyAndClosedInputNeverDelete(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -119,27 +122,44 @@ func TestOrkflowDelete_DecliningEmptyAndClosedInputNeverDelete(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, store := deleteFixture(t)
-			got := runCLIWithInput(t, f.baseURL, strings.NewReader(tc.input),
-				"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace).requireExit(t, exitOK)
+			got := runConfirming(t, f.baseURL, strings.NewReader(tc.input), true,
+				"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace).requireExit(t, exitError)
 			if calls := store.deleteCalls(); len(calls) != 0 {
 				t.Fatalf(noDeleteCallsMessage, calls)
 			}
-			if !strings.Contains(got.stderr, "Cancelled.") {
+			if !strings.Contains(got.stderr, `Error: delete orkflow "hello-ork": cancelled`) {
 				t.Fatalf("stderr does not report cancellation:\n%s", got.stderr)
 			}
 		})
 	}
 }
 
+// TestOrkflowDelete_PipedStdinRefusesWithoutDeleting: with no terminal on
+// standard input nobody can answer, so the command refuses and names --yes
+// rather than reading a "yes" a pipe happens to carry, or silently doing
+// nothing.
+func TestOrkflowDelete_PipedStdinRefusesWithoutDeleting(t *testing.T) {
+	f, store := deleteFixture(t)
+	got := runConfirming(t, f.baseURL, strings.NewReader("yes\n"), false,
+		"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace).requireExit(t, exitError)
+	const refusal = `refusing to delete orkflow "hello-ork" without confirmation: standard input is not a terminal; pass --yes`
+	if !strings.Contains(got.stderr, refusal) {
+		t.Fatalf("stderr does not contain %q:\n%s", refusal, got.stderr)
+	}
+	if calls := store.deleteCalls(); len(calls) != 0 {
+		t.Fatalf(noDeleteCallsMessage, calls)
+	}
+}
+
 func TestOrkflowDelete_JSONCancellationWritesNoDocumentAndDoesNotDelete(t *testing.T) {
 	f, store := deleteFixture(t)
-	got := runCLIWithInput(t, f.baseURL, strings.NewReader("no\n"),
-		"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace, "--json").requireExit(t, exitOK)
+	got := runConfirming(t, f.baseURL, strings.NewReader("no\n"), true,
+		"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace, "--json").requireExit(t, exitError)
 
 	if got.stdout != "" {
 		t.Fatalf("stdout = %q, want no JSON document for a cancelled operation", got.stdout)
 	}
-	if !strings.Contains(got.stderr, "Cancelled.") {
+	if !strings.Contains(got.stderr, "cancelled") {
 		t.Fatalf("stderr does not report cancellation:\n%s", got.stderr)
 	}
 	if calls := store.deleteCalls(); len(calls) != 0 {
@@ -154,18 +174,18 @@ func (r *failOnRead) Read([]byte) (int, error) {
 	return 0, errors.New("stdin must not be read")
 }
 
-func TestOrkflowDelete_ForceSkipsOnlyTheLocalPromptAndDoesNotReadStdin(t *testing.T) {
+func TestOrkflowDelete_YesSkipsOnlyTheLocalPromptAndDoesNotReadStdin(t *testing.T) {
 	f, store := deleteFixture(t)
 	in := &failOnRead{}
 
 	got := runCLIWithInput(t, f.baseURL, in,
-		"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace, deleteForceFlag).requireExit(t, exitOK)
+		"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace, deleteYesFlag).requireExit(t, exitOK)
 
 	if in.reads != 0 {
 		t.Fatalf("stdin reads = %d, want 0", in.reads)
 	}
 	if strings.Contains(got.stderr, "cannot be reversed") || strings.Contains(got.stderr, "confirm") {
-		t.Fatalf("forced deletion printed an interactive prompt:\n%s", got.stderr)
+		t.Fatalf("--yes printed an interactive prompt:\n%s", got.stderr)
 	}
 	if calls := store.deleteCalls(); len(calls) != 1 {
 		t.Fatalf("Delete calls = %v, want exactly one", calls)
@@ -178,7 +198,7 @@ func TestOrkflowDelete_ServerRunRefusalPreservesTheReasonAndExitsNonZero(t *test
 	f.run("run", "submit", deleteTestName).requireExit(t, exitOK)
 
 	got := runCLIWithInput(t, f.baseURL, strings.NewReader(""),
-		"orkflow", "delete", deleteTestName, deleteForceFlag)
+		"orkflow", "delete", deleteTestName, deleteYesFlag)
 	if got.code != exitError {
 		t.Fatalf("exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s", got.code, exitError, got.stdout, got.stderr)
 	}
@@ -191,7 +211,7 @@ func TestOrkflowDelete_ServerRunRefusalPreservesTheReasonAndExitsNonZero(t *test
 func TestOrkflowDelete_JSONEmitsTheDeleteResponseMessage(t *testing.T) {
 	f, _ := deleteFixture(t)
 	got := runCLIWithInput(t, f.baseURL, strings.NewReader(""),
-		"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace, deleteForceFlag, "--json").requireExit(t, exitOK)
+		"orkflow", "delete", deleteTestName, deleteNamespaceFlag, deleteTestNamespace, deleteYesFlag, "--json").requireExit(t, exitOK)
 
 	var doc map[string]any
 	if err := json.Unmarshal([]byte(got.stdout), &doc); err != nil {
@@ -204,8 +224,8 @@ func TestOrkflowDelete_JSONEmitsTheDeleteResponseMessage(t *testing.T) {
 
 func TestOrkflowDelete_WrongArgumentCountIsAUsageErrorWithoutDeleting(t *testing.T) {
 	for _, args := range [][]string{
-		{"orkflow", "delete", deleteForceFlag},
-		{"orkflow", "delete", "one", "two", deleteForceFlag},
+		{"orkflow", "delete", deleteYesFlag},
+		{"orkflow", "delete", "one", "two", deleteYesFlag},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			f, store := deleteFixture(t)
@@ -223,11 +243,11 @@ func TestOrkflowDelete_WrongArgumentCountIsAUsageErrorWithoutDeleting(t *testing
 	}
 }
 
-func TestOrkflowDelete_ForceHelpSaysItCannotBypassServerRunSafety(t *testing.T) {
+func TestOrkflowDelete_YesHelpSaysItCannotBypassServerRunSafety(t *testing.T) {
 	f := newFixture(t)
 	got := runCLIWithInput(t, f.baseURL, strings.NewReader(""),
 		"orkflow", "delete", "--help").requireExit(t, exitOK)
-	const help = "skip only the local confirmation prompt; server run-safety checks still apply"
+	const help = "server run-safety checks still apply"
 	if !strings.Contains(got.stdout, help) {
 		t.Fatalf("help does not contain %q:\n%s", help, got.stdout)
 	}

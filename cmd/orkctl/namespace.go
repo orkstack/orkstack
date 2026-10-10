@@ -349,14 +349,23 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 }
 
 func newNamespaceDeleteCommand(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Remove an empty namespace",
 		Long: "delete removes a namespace that holds no orkflows. One that still holds any\n" +
 			"is refused, and the refusal names them: removing the namespace would not\n" +
-			"remove the definitions, and they would survive where nothing lists them.",
+			"remove the definitions, and they would survive where nothing lists them.\n\n" +
+			"It asks for confirmation first, and refuses when standard input is not a\n" +
+			"terminal unless --yes is given.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			prompt := fmt.Sprintf("Delete namespace %q? This removes its registry entry and every setting on it\n"+
+				"(pools, secrets, retention, budget, telemetry); it is refused while any orkflow is still stored in it.",
+				args[0])
+			if err := confirmDestructive(cmd, g, fmt.Sprintf("delete namespace %q", args[0]), prompt, yes); err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -373,6 +382,8 @@ func newNamespaceDeleteCommand(g *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
+	addYesFlag(cmd, &yes)
+	return cmd
 }
 
 func newNamespaceUseCommand(g *globalFlags) *cobra.Command {

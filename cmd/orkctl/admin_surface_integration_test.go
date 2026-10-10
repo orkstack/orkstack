@@ -385,7 +385,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 
 	// 2. The default namespace is refused unconditionally, and still resolves
 	//    afterwards: every orkflow that names no namespace is in it.
-	_, stderr, code = onB("namespace", "delete", artifacts.DefaultNamespace)
+	_, stderr, code = onB("namespace", "delete", artifacts.DefaultNamespace, "--yes")
 	if code == 0 {
 		t.Fatal("the default namespace was deleted")
 	}
@@ -401,7 +401,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// 3. A delete is refused while the namespace holds orkflows, and says how
 	//    many and which: deleting the registry entry would not delete the
 	//    definitions, and they would survive under a namespace nothing lists.
-	_, stderr, code = onB("namespace", "delete", namespace)
+	_, stderr, code = onB("namespace", "delete", namespace, "--yes")
 	if code == 0 {
 		t.Fatal("a namespace holding an orkflow was deleted")
 	}

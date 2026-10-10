@@ -465,7 +465,10 @@ func newReleasePromoteCommand(g *globalFlags, rollback bool) *cobra.Command {
 				"previous release. Runs executing on the release rolled back from finish there.",
 			"release rollback"
 	}
-	return &cobra.Command{
+	long += "\n\nIt names the release that is current now and asks for confirmation before the\n" +
+		"change, and refuses when standard input is not a terminal unless --yes is given."
+	var yes bool
+	cmd := &cobra.Command{
 		Use:   use,
 		Short: short,
 		Long:  long,
@@ -486,6 +489,14 @@ func newReleasePromoteCommand(g *globalFlags, rollback bool) *cobra.Command {
 						build, roleWord(target), build)
 				}
 			}
+			// Promoting the release that is already current changes nothing,
+			// so it asks nothing.
+			if target.GetRole() != orkstackv1.ReleaseRole_RELEASE_ROLE_CURRENT {
+				action, prompt := releaseConfirmation(read, build, rollback)
+				if err := confirmDestructive(cmd, g, action, prompt, yes); err != nil {
+					return err
+				}
+			}
 			// The write is its own request with its own bound: the
 			// server may spend up to 10s confirming routing after the change,
 			// and the read above must not have spent that budget already.
@@ -503,6 +514,28 @@ func newReleasePromoteCommand(g *globalFlags, rollback bool) *cobra.Command {
 			return nil
 		},
 	}
+	addYesFlag(cmd, &yes)
+	return cmd
+}
+
+// releaseConfirmation is what promote and rollback ask before they write:
+// the release current now, the one that will be, and that every new run
+// follows the change.
+func releaseConfirmation(read *orkstackv1.ListReleasesResponse, build string, rollback bool) (action, prompt string) {
+	current := "none"
+	for _, r := range read.GetReleases() {
+		if r.GetRole() == orkstackv1.ReleaseRole_RELEASE_ROLE_CURRENT {
+			current = r.GetBuildId()
+		}
+	}
+	question := fmt.Sprintf("Promote release %s?", build)
+	action = fmt.Sprintf("promote release %q", build)
+	if rollback {
+		question = fmt.Sprintf("Roll back to release %s?", build)
+		action = fmt.Sprintf("roll back to release %q", build)
+	}
+	return action, fmt.Sprintf("%s current %s → %s; every new run is routed to %s.\n"+
+		"Runs already executing finish where they are.", question, current, build, build)
 }
 
 func renderPromote(out io.Writer, read *orkstackv1.ListReleasesResponse, target *orkstackv1.Release,

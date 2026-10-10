@@ -315,13 +315,13 @@ func TestCachePurge_TaskWithAllIsRefused(t *testing.T) {
 
 func TestCachePurge_GoldenHumanAndJSON(t *testing.T) {
 	f := cacheStatsFixture(t, true)
-	human := f.run("cache", "purge", "--orkflow", "cached-pipeline", "--task", "train").requireExit(t, exitOK)
+	human := f.run("cache", "purge", "--orkflow", "cached-pipeline", "--task", "train", "--yes").requireExit(t, exitOK)
 	requireGolden(t, "cache-purge.golden", human.stdout)
 	human.requireContains(t, "Purged 2 memos (orkflow cached-pipeline, task train) in namespace default.",
 		"No run, commit or artifact was touched")
 
 	g := cacheStatsFixture(t, true)
-	machine := g.run("--json", "cache", "purge", "--all", "--older-than", "48h").requireExit(t, exitOK)
+	machine := g.run("--json", "cache", "purge", "--all", "--older-than", "48h", "--yes").requireExit(t, exitOK)
 	requireGolden(t, "cache-purge.json.golden", machine.stdout)
 	machine.requireContains(t, `"deleted": "1"`, `"kept": "3"`)
 }
@@ -364,7 +364,7 @@ func servePagingCache(t *testing.T) (string, *pagingCache) {
 
 func TestCachePurge_LoopsWhileMore(t *testing.T) {
 	server, paging := servePagingCache(t)
-	out := runAgainst(t, server, "cache", "purge", "--all").requireExit(t, exitOK)
+	out := runAgainst(t, server, "cache", "purge", "--all", "--yes").requireExit(t, exitOK)
 	out.requireContains(t, "Purged 30000 memos (all) in namespace default.")
 	if paging.calls != 3 {
 		t.Fatalf("calls = %d, want 3", paging.calls)
@@ -373,7 +373,7 @@ func TestCachePurge_LoopsWhileMore(t *testing.T) {
 
 func TestCachePurge_JSONMakesOneCall(t *testing.T) {
 	server, paging := servePagingCache(t)
-	out := runAgainst(t, server, "--json", "cache", "purge", "--all").requireExit(t, exitOK)
+	out := runAgainst(t, server, "--json", "cache", "purge", "--all", "--yes").requireExit(t, exitOK)
 	out.requireContains(t, `"more": true`)
 	if paging.calls != 1 {
 		t.Fatalf("calls = %d, want 1", paging.calls)

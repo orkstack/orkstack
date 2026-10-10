@@ -267,7 +267,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	}
 
 	// ── 6. delete refuses while the namespace holds an orkflow ─────────────
-	_, stderr, code = cli("namespace", "delete", alpha)
+	_, stderr, code = cli("namespace", "delete", alpha, "--yes")
 	if code == 0 {
 		t.Fatal("deleting a namespace that still holds an orkflow succeeded")
 	}

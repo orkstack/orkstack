@@ -523,7 +523,7 @@ func (s *relStack) versionedPair(v1Pins, v2Pins int) {
 	s.startEngine("ork-v1", "v1")
 	s.startOrker("orker-v1", "v1", v1Pins)
 	s.awaitStatus("v1 registered with its engine and Orker", readyRelease("v1", 1))
-	s.mustCLI("release", "promote", "v1")
+	s.mustCLI("release", "promote", "v1", "--yes")
 	s.startEngine("ork-v2", "v2")
 	s.startOrker("orker-v2", "v2", v2Pins)
 	s.awaitStatus("v2 registered with its engine and Orker", readyRelease("v2", 1))
@@ -544,7 +544,7 @@ func TestIntegration_ReleaseRolloutThroughOrkctl(t *testing.T) {
 	}
 	_ = status
 
-	out = s.mustCLI("release", "promote", "v1")
+	out = s.mustCLI("release", "promote", "v1", "--yes")
 	if !strings.Contains(out, "release v1 is current.") || strings.Contains(out, "The change is recorded, but") {
 		t.Fatalf("first promotion:\n%s", out)
 	}
@@ -581,7 +581,7 @@ func TestIntegration_ReleaseRolloutThroughOrkctl(t *testing.T) {
 	if !strings.Contains(out, "not ready (1 blocker)") || !strings.Contains(out, refusal) {
 		t.Fatalf("status with v2's engine only:\n%s", out)
 	}
-	_, stderr, code := s.cli("release", "promote", "v2")
+	_, stderr, code := s.cli("release", "promote", "v2", "--yes")
 	if code != 1 || !strings.Contains(stderr, "release v2 cannot take new runs yet:") || !strings.Contains(stderr, refusal) {
 		t.Fatalf("promote v2 without an Orker: exit %d\n%s", code, stderr)
 	}
@@ -593,7 +593,7 @@ func TestIntegration_ReleaseRolloutThroughOrkctl(t *testing.T) {
 
 	s.startOrker("orker-v2", "v2", 0)
 	s.awaitStatus("v2 passes", noBlockers("v2"))
-	out = s.mustCLI("release", "promote", "v2")
+	out = s.mustCLI("release", "promote", "v2", "--yes")
 	if !strings.Contains(out, "release v2 is current (was v1).") || strings.Contains(out, "The change is recorded, but") {
 		t.Fatalf("promote v2:\n%s", out)
 	}
@@ -680,14 +680,14 @@ func TestIntegration_ReleaseRollbackKeepsTheRolledBackReleasesRunsWhereTheyAre(t
 	since := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
 	s.versionedPair(0, 0)
 	s.awaitStatus("v2 passes", noBlockers("v2"))
-	s.mustCLI("release", "promote", "v2")
+	s.mustCLI("release", "promote", "v2", "--yes")
 
 	s.applyGated("rel-gated")
 	gated := s.submit("rel-gated")
 	s.awaitOrker("orker-v2", func(o *orkstackv1.Orker) bool { return o.GetRunningTasks() >= 1 })
 	s.awaitStatus("v1 can be rolled back to", noBlockers("v1"))
 
-	out := s.mustCLI("release", "rollback", "v1")
+	out := s.mustCLI("release", "rollback", "v1", "--yes")
 	if !strings.Contains(out, "release v1 is current again (was v2).") {
 		t.Fatalf("rollback:\n%s", out)
 	}
@@ -706,7 +706,7 @@ func TestIntegration_ReleaseRollbackKeepsTheRolledBackReleasesRunsWhereTheyAre(t
 		v3 := releaseNamed(r, "v3")
 		return v3 != nil && v3.GetRole() == orkstackv1.ReleaseRole_RELEASE_ROLE_CANDIDATE
 	})
-	_, stderr, code := s.cli("release", "rollback", "v3")
+	_, stderr, code := s.cli("release", "rollback", "v3", "--yes")
 	if code != 1 || !strings.Contains(stderr, `rollback returns to a release that was current before; v3 is candidate`) {
 		t.Fatalf("rollback v3: exit %d\n%s", code, stderr)
 	}
@@ -737,13 +737,13 @@ func TestIntegration_ACordonedOrkerDoesNotServeARelease(t *testing.T) {
 		}
 		return false
 	})
-	_, stderr, code := s.cli("release", "promote", "v2")
+	_, stderr, code := s.cli("release", "promote", "v2", "--yes")
 	if code != 1 || !strings.Contains(stderr, want) {
 		t.Fatalf("promote with v2's only Orker cordoned: exit %d\n%s", code, stderr)
 	}
 	s.mustCLI("orker", "uncordon", "orker-v2")
 	s.awaitStatus("v2 passes again", noBlockers("v2"))
-	out := s.mustCLI("release", "promote", "v2")
+	out := s.mustCLI("release", "promote", "v2", "--yes")
 	if !strings.Contains(out, "release v2 is current (was v1).") {
 		t.Fatalf("promote after uncordon:\n%s", out)
 	}
@@ -761,14 +761,14 @@ func TestIntegration_APinHostIsRequiredWherePinsAreHosted(t *testing.T) {
 		}
 		return false
 	})
-	_, stderr, code := s.cli("release", "promote", "v2")
+	_, stderr, code := s.cli("release", "promote", "v2", "--yes")
 	if code != 1 || !strings.Contains(stderr, want) {
 		t.Fatalf("promote without a pin host: exit %d\n%s", code, stderr)
 	}
 	s.stopProc("orker-v2")
 	s.startOrker("orker-v2", "v2", 1)
 	s.awaitStatus("v2 passes with a pin host", noBlockers("v2"))
-	out := s.mustCLI("release", "promote", "v2")
+	out := s.mustCLI("release", "promote", "v2", "--yes")
 	if !strings.Contains(out, "release v2 is current (was v1).") {
 		t.Fatalf("promote with a pin host:\n%s", out)
 	}
@@ -779,7 +779,7 @@ func TestIntegration_ReleaseStatusNamesAnOpenPinAndItsHost(t *testing.T) {
 	s.startEngine("ork-v1", "v1")
 	s.startOrker("orker-v1", "v1", 1)
 	s.awaitStatus("v1 registered", readyRelease("v1", 1))
-	s.mustCLI("release", "promote", "v1")
+	s.mustCLI("release", "promote", "v1", "--yes")
 	s.applyPinnedGated("rel-pinned")
 	pinned := s.submit("rel-pinned")
 	s.awaitOrker("orker-v1", func(o *orkstackv1.Orker) bool { return o.GetOpenPins() == 1 && o.GetRunningTasks() >= 1 })
@@ -788,7 +788,7 @@ func TestIntegration_ReleaseStatusNamesAnOpenPinAndItsHost(t *testing.T) {
 	s.startEngine("ork-v2", "v2")
 	s.startOrker("orker-v2", "v2", 1)
 	s.awaitStatus("v2 passes", noBlockers("v2"))
-	s.mustCLI("release", "promote", "v2")
+	s.mustCLI("release", "promote", "v2", "--yes")
 
 	pinLine := `pin "build" of run ` + pinned + ` on orker-v1`
 	s.awaitStatus("v1 previous holding the pin", func(r *orkstackv1.ListReleasesResponse) bool {
@@ -839,7 +839,7 @@ func TestIntegration_FirstPromotionWaitsForRunsStartedBeforeVersioning(t *testin
 		}
 		return false
 	})
-	_, stderr, code := s.cli("release", "promote", "v1")
+	_, stderr, code := s.cli("release", "promote", "v1", "--yes")
 	if code != 1 || !strings.Contains(stderr, want) {
 		t.Fatalf("first promotion with an unversioned run in flight: exit %d\n%s", code, stderr)
 	}
@@ -847,7 +847,7 @@ func TestIntegration_FirstPromotionWaitsForRunsStartedBeforeVersioning(t *testin
 	run := s.awaitRun(gated, 3*time.Minute)
 	requireAllOn(t, run, "orker-u")
 	s.awaitStatus("the unversioned run is no longer counted", noBlockers("v1"))
-	out := s.mustCLI("release", "promote", "v1")
+	out := s.mustCLI("release", "promote", "v1", "--yes")
 	if !strings.Contains(out, "release v1 is current.") {
 		t.Fatalf("first promotion after the run finished:\n%s", out)
 	}
@@ -857,7 +857,7 @@ func TestIntegration_ListReleasesIsAnsweredByAReplicaThatPromotedNothing(t *test
 	s := newRelStack(t, "two-replicas", 10*time.Minute)
 	s.versionedPair(0, 0)
 	s.awaitStatus("v2 passes", noBlockers("v2"))
-	s.cliOn("ork-v1", "release", "promote", "v2")
+	s.cliOn("ork-v1", "release", "promote", "v2", "--yes")
 	var a, b *orkstackv1.ListReleasesResponse
 	for attempt := 0; attempt < 15; attempt++ {
 		a, b = s.statusOn("ork-v1"), s.statusOn("ork-v2")

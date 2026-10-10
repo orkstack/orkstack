@@ -99,6 +99,11 @@ type globalFlags struct {
 	// dispatcher through. Nil means the Orker's own default runtime
 	// (orker.NewDockerRuntime); no flag sets it.
 	containerRuntime orker.ContainerRuntime
+
+	// terminal is the test seam for "is standard input a terminal a person
+	// can answer a confirmation from" (confirm.go). Nil means the real
+	// check; no flag sets it.
+	terminal func() bool
 }
 
 // newRootCommand builds the command tree and the shared flag state.

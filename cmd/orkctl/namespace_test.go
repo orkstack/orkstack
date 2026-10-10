@@ -93,7 +93,7 @@ func TestNamespaceCommands_GoldenHumanAndJSON(t *testing.T) {
 	requireGolden(t, "namespace-clear-budget.golden", clearedBudget.stdout)
 
 	f.run("namespace", "create", "scratch").requireExit(t, exitOK)
-	deleted := f.run("namespace", "delete", "scratch").requireExit(t, exitOK)
+	deleted := f.run("namespace", "delete", "scratch", "--yes").requireExit(t, exitOK)
 	requireGolden(t, "namespace-delete.golden", deleted.stdout)
 
 	// --json for each of the five.
@@ -152,7 +152,7 @@ func TestNamespaceCommands_GoldenHumanAndJSON(t *testing.T) {
 	requireGolden(t, "namespace-clear-budget.json.golden", clearedBudgetJSON.stdout)
 
 	jsonFixture.run("--json", "namespace", "create", "scratch").requireExit(t, exitOK)
-	deletedJSON := jsonFixture.run("--json", "namespace", "delete", "scratch").
+	deletedJSON := jsonFixture.run("--json", "namespace", "delete", "scratch", "--yes").
 		requireExit(t, exitOK)
 	requireGolden(t, "namespace-delete.json.golden", deletedJSON.stdout)
 }
@@ -291,7 +291,7 @@ func TestNamespaceDelete_RefusesWhileItHoldsOrkflowsAndNamesThem(t *testing.T) {
 	f.run("apply", writeOrkflow(t, "nightly-close", "settle"), "-n", "payments").
 		requireExit(t, exitOK)
 
-	outcome := f.run("namespace", "delete", "payments")
+	outcome := f.run("namespace", "delete", "payments", "--yes")
 	if outcome.code == exitOK {
 		t.Fatalf("deleting a namespace holding an orkflow succeeded:\n%s", outcome.stdout)
 	}
@@ -307,7 +307,7 @@ func TestNamespaceDelete_RefusesWhileItHoldsOrkflowsAndNamesThem(t *testing.T) {
 func TestNamespaceDelete_RefusesTheDefault(t *testing.T) {
 	f := newFixture(t)
 
-	outcome := f.run("namespace", "delete", "default")
+	outcome := f.run("namespace", "delete", "default", "--yes")
 	if outcome.code == exitOK {
 		t.Fatalf("deleting the default namespace succeeded:\n%s", outcome.stdout)
 	}

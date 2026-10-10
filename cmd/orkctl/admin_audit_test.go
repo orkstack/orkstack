@@ -191,7 +191,7 @@ func TestPrincipalHeader_SentOnlyWhenEnvSet(t *testing.T) {
 		{"admin", "info"},
 		{"admin", "audit"},
 		{"namespace", "create", "payments"},
-		{"admin", "retention", "set", "24h"},
+		{"admin", "retention", "set", "24h", "--yes"},
 		{"run", "list"},
 	}
 	drive := func() []string {
