@@ -995,3 +995,14 @@ func (f *fakeStarter) startedPlans() []engine.RunPlan {
 	defer f.mu.Unlock()
 	return append([]engine.RunPlan(nil), f.plans...)
 }
+
+func TestListRuns_RefusesAPageSizeAboveTheMaximum(t *testing.T) {
+	svc := api.NewService(api.Config{})
+	_, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageSize: api.MaxRunPageSize + 1}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "page_size 201 is above the maximum 200") {
+		t.Fatalf("page_size %d answered %v, want InvalidArgument naming the maximum", api.MaxRunPageSize+1, err)
+	}
+	if _, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageSize: api.MaxRunPageSize})); err != nil {
+		t.Fatalf("page_size %d (the maximum) was refused: %v", api.MaxRunPageSize, err)
+	}
+}

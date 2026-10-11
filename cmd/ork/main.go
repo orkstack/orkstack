@@ -880,8 +880,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"run_namespace_index", namespaceIndexed,
 		"run_origin_index", originIndexed)
 
-	bus := engine.NewEventBus()
-	runs := engine.NewRunStore()
+	// Every read is answered by Temporal and the archive (AGENTS.md §7), so
+	// the bus and the store are write-side helpers here: each forgets a run
+	// a while after it finished instead of holding it until restart.
+	bus := engine.NewEventBus().WithTerminalRetention(engine.ProjectionRetention)
+	runs := engine.NewRunStore().WithTerminalRetention(engine.ProjectionRetention)
 
 	// Webhooks: registrations live in the same shared object store as every
 	// other control-plane record. The registry reads that store on every

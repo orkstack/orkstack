@@ -17,17 +17,22 @@ import (
 
 // s3Double is the smallest S3-compatible server a unit test can point the
 // real SDK client at: path-style PutObject (honouring If-None-Match: *),
-// GetObject, and ListObjectsV2 with prefix, start-after, max-keys and
-// continuation. It counts each call, so a test can say how many bodies a
-// listing fetched and how many list requests a read made.
+// GetObject, HeadObject, DeleteObject, DeleteObjects, and ListObjectsV2 with prefix,
+// start-after, max-keys and continuation. It counts each call, so a test can
+// say how many bodies a listing fetched and how many list requests a read
+// made. A key in refuse is never deleted; DeleteObjects reports it AccessDenied.
 type s3Double struct {
-	mu      sync.Mutex
-	bucket  string
-	objects map[string][]byte
-	puts    int
-	gets    int
-	lists   int
-	server  *httptest.Server
+	mu           sync.Mutex
+	bucket       string
+	objects      map[string][]byte
+	puts         int
+	gets         int
+	lists        int
+	deletes      int
+	batchDeletes int
+	batchKeys    []int
+	refuse       map[string]bool
+	server       *httptest.Server
 
 	// headers is the last PutObject (or CreateMultipartUpload) request's
 	// headers per key, for content-type, metadata and checksum assertions.
@@ -52,7 +57,7 @@ type doubleUpload struct {
 
 func newS3Double(t *testing.T) *s3Double {
 	t.Helper()
-	d := &s3Double{bucket: "double", objects: map[string][]byte{},
+	d := &s3Double{bucket: "double", objects: map[string][]byte{}, refuse: map[string]bool{},
 		headers: map[string]http.Header{}, uploads: map[string]*doubleUpload{},
 		partRequests: map[int]int{}, failParts: map[int]int{}}
 	d.server = httptest.NewServer(http.HandlerFunc(d.serve))
@@ -146,6 +151,23 @@ func (d *s3Double) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2":
 		d.lists++
 		d.list(w, r)
+	case r.Method == http.MethodHead && key != "":
+		body, exists := d.objects[key]
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(http.StatusOK)
+	case r.Method == http.MethodDelete && key != "":
+		d.deletes++
+		if !d.refuse[key] {
+			delete(d.objects, key)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodPost && key == "" && r.URL.Query().Has("delete"):
+		d.batchDeletes++
+		d.deleteBatch(w, r)
 	default:
 		s3Error(w, http.StatusNotImplemented, "NotImplemented")
 	}
@@ -265,6 +287,52 @@ func (d *s3Double) list(w http.ResponseWriter, r *http.Request) {
 		out.Contents = append(out.Contents, listedContent{Key: key, Size: len(d.objects[key])})
 	}
 	out.KeyCount = len(out.Contents)
+	w.Header().Set("Content-Type", "application/xml")
+	_, _ = io.WriteString(w, xml.Header)
+	_ = xml.NewEncoder(w).Encode(out)
+}
+
+type deleteRequest struct {
+	Quiet   bool `xml:"Quiet"`
+	Objects []struct {
+		Key string `xml:"Key"`
+	} `xml:"Object"`
+}
+
+type deleteResult struct {
+	XMLName xml.Name        `xml:"DeleteResult"`
+	Deleted []deletedObject `xml:"Deleted"`
+	Errors  []deleteError   `xml:"Error"`
+}
+
+type deletedObject struct {
+	Key string `xml:"Key"`
+}
+
+type deleteError struct {
+	Key     string `xml:"Key"`
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
+}
+
+func (d *s3Double) deleteBatch(w http.ResponseWriter, r *http.Request) {
+	var req deleteRequest
+	if err := xml.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Objects) > 1000 {
+		s3Error(w, http.StatusBadRequest, "MalformedXML")
+		return
+	}
+	d.batchKeys = append(d.batchKeys, len(req.Objects))
+	out := deleteResult{}
+	for _, object := range req.Objects {
+		if d.refuse[object.Key] {
+			out.Errors = append(out.Errors, deleteError{Key: object.Key, Code: "AccessDenied", Message: "Access Denied"})
+			continue
+		}
+		delete(d.objects, object.Key)
+		if !req.Quiet {
+			out.Deleted = append(out.Deleted, deletedObject{Key: object.Key})
+		}
+	}
 	w.Header().Set("Content-Type", "application/xml")
 	_, _ = io.WriteString(w, xml.Header)
 	_ = xml.NewEncoder(w).Encode(out)

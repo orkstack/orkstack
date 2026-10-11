@@ -2,6 +2,7 @@ package engine
 
 import (
 	"sync"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -12,14 +13,57 @@ import (
 // RunStore is the in-process read model for runs. Temporal remains the source
 // of truth; this store materializes Run/TaskRun snapshots for the API.
 type RunStore struct {
-	mu    sync.RWMutex
-	runs  map[string]*orkstackv1.Run
-	order []string
+	mu        sync.RWMutex
+	runs      map[string]*orkstackv1.Run
+	order     []string
+	retention terminalRetention
 }
 
-// NewRunStore returns an empty store.
+// NewRunStore returns an empty store that keeps every run it is given.
 func NewRunStore() *RunStore {
-	return &RunStore{runs: map[string]*orkstackv1.Run{}}
+	return &RunStore{runs: map[string]*orkstackv1.Run{}, retention: newTerminalRetention()}
+}
+
+// WithTerminalRetention makes the store forget a run d after it was first
+// saved or applied with a terminal status, on a later write (terminalRetention).
+// Zero keeps every run, which is right only where the store is the read model:
+// a deployment with no RunReader, and unit tests. It returns the same store so
+// it can be chained onto NewRunStore.
+func (s *RunStore) WithTerminalRetention(d time.Duration) *RunStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retention.ttl = d
+	return s
+}
+
+// trackLocked marks or unmarks run for retention by its status, then forgets
+// every finished run that is due.
+func (s *RunStore) trackLocked(run *orkstackv1.Run) {
+	if !s.retention.enabled() {
+		return
+	}
+	if isTerminal(run.GetStatus()) {
+		s.retention.mark(run.GetId())
+	} else {
+		s.retention.unmark(run.GetId())
+	}
+	due := s.retention.due(nil)
+	if len(due) == 0 {
+		return
+	}
+	forget := make(map[string]bool, len(due))
+	for _, id := range due {
+		forget[id] = true
+		delete(s.runs, id)
+	}
+	kept := s.order[:0]
+	for _, id := range s.order {
+		if !forget[id] {
+			kept = append(kept, id)
+		}
+	}
+	clear(s.order[len(kept):])
+	s.order = kept
 }
 
 // Save upserts a run snapshot wholesale.
@@ -33,6 +77,7 @@ func (s *RunStore) Save(run *orkstackv1.Run) {
 		s.order = append(s.order, run.GetId())
 	}
 	s.runs[run.GetId()] = proto.Clone(run).(*orkstackv1.Run)
+	s.trackLocked(run)
 }
 
 // Delete removes a run from the read model.
@@ -48,6 +93,7 @@ func (s *RunStore) Delete(runID string) {
 		return
 	}
 	delete(s.runs, runID)
+	s.retention.unmark(runID)
 	for i, id := range s.order {
 		if id == runID {
 			s.order = append(s.order[:i], s.order[i+1:]...)
@@ -85,6 +131,7 @@ func (s *RunStore) Apply(run *orkstackv1.Run) {
 		s.order = append(s.order, run.GetId())
 	}
 	s.runs[run.GetId()] = next
+	s.trackLocked(next)
 }
 
 // Get returns a clone of the stored run.

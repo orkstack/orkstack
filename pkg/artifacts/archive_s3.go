@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // S3RunArchive is the S3-compatible RunArchive. It writes
@@ -73,6 +75,10 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if err != nil {
 		return err
 	}
+	recentKey, err := RunRecentIndexKey(rec)
+	if err != nil {
+		return err
+	}
 	objectIDs := dedupeObjectIDs(rec.ObjectIDs)
 	listKey, err := RunObjectListKey(rec.RunID)
 	if err != nil {
@@ -126,6 +132,13 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		}); err != nil {
 			return fmt.Errorf("artifacts: s3 archive run %q: write origin index %q: %w", rec.RunID, originKey, err)
 		}
+	}
+	// The newest-first row, likewise zero bytes and likewise before the run
+	// index.
+	if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(a.bucket), Key: aws.String(recentKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
+	}); err != nil {
+		return fmt.Errorf("artifacts: s3 archive run %q: write recent index %q: %w", rec.RunID, recentKey, err)
 	}
 	// The index carries everything in its key, so its body is empty. Publishing
 	// it last makes all prior durable records visible to cleanup first.
@@ -269,22 +282,31 @@ func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID 
 	if err != nil {
 		return CleanupResult{}, err
 	}
+	// The four prefixes are independent, so they are emptied concurrently,
+	// each one listing page at a time with ONE DeleteObjects per page (a
+	// listing page holds at most s3DeleteBatch keys, DeleteObjects' own
+	// maximum). Every prefix is walked to the end even after another fails,
+	// and every failure is joined: an error means the run is NOT clean, and
+	// the caller must not mark it so.
+	prefixes := []string{logPrefix, attemptPrefix, commitPrefix, snapshotPrefix}
+	results := make([]CleanupResult, len(prefixes))
+	errs := make([]error, len(prefixes))
+	var wg sync.WaitGroup
+	for i, prefix := range prefixes {
+		wg.Add(1)
+		go func(i int, prefix string) {
+			defer wg.Done()
+			results[i], errs[i] = a.deletePrefix(ctx, runID, prefix)
+		}(i, prefix)
+	}
+	wg.Wait()
 	var result CleanupResult
-	for _, prefix := range []string{logPrefix, attemptPrefix, commitPrefix, snapshotPrefix} {
-		pager := s3.NewListObjectsV2Paginator(a.client, &s3.ListObjectsV2Input{Bucket: aws.String(a.bucket), Prefix: aws.String(prefix)})
-		for pager.HasMorePages() {
-			page, err := pager.NextPage(ctx)
-			if err != nil {
-				return result, fmt.Errorf("artifacts: s3 cleanup run %q list %q: %w", runID, prefix, err)
-			}
-			for _, object := range page.Contents {
-				if _, err := a.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(a.bucket), Key: object.Key}); err != nil {
-					return result, fmt.Errorf("artifacts: s3 cleanup run %q delete %q: %w", runID, aws.ToString(object.Key), err)
-				}
-				result.ObjectsDeleted++
-				result.BytesReclaimed += aws.ToInt64(object.Size)
-			}
-		}
+	for _, r := range results {
+		result.ObjectsDeleted += r.ObjectsDeleted
+		result.BytesReclaimed += r.BytesReclaimed
+	}
+	if err := errors.Join(errs...); err != nil {
+		return result, err
 	}
 	listKey, err := RunObjectListKey(runID)
 	if err != nil {
@@ -310,13 +332,18 @@ func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID 
 	if closeErr != nil {
 		return result, fmt.Errorf("artifacts: s3 cleanup run %q close object list: %w", runID, closeErr)
 	}
+	markers := make([]string, 0, len(objectIDs))
 	for _, objectID := range objectIDs {
 		key, err := RunObjectRefKey(objectID, runID)
 		if err != nil {
 			return result, err
 		}
-		if _, err := a.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(key)}); err != nil {
-			return result, fmt.Errorf("artifacts: s3 cleanup run %q delete object reference %q: %w", runID, key, err)
+		markers = append(markers, key)
+	}
+	for start := 0; start < len(markers); start += s3DeleteBatch {
+		batch := markers[start:min(start+s3DeleteBatch, len(markers))]
+		if failed, err := a.deleteKeys(ctx, batch); err != nil || len(failed) > 0 {
+			return result, fmt.Errorf("artifacts: s3 cleanup run %q delete object references: %w", runID, errors.Join(err, joinDeleteFailures(failed)))
 		}
 	}
 	if _, err := a.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(listKey)}); err != nil {
@@ -324,6 +351,106 @@ func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID 
 	}
 
 	return result, nil
+}
+
+// s3DeleteBatch is the most keys one DeleteObjects request may name, and the
+// most one ListObjectsV2 page returns, so one listing page is one request.
+const s3DeleteBatch = 1000
+
+// deletePrefix empties one run-owned prefix: one DeleteObjects per listing
+// page. Bytes are counted from the listing, for the keys the store reports
+// deleted. A key the store refused is reported, never counted, and the walk
+// continues so one bad key does not hide the state of the rest.
+func (a *S3RunArchive) deletePrefix(ctx context.Context, runID, prefix string) (CleanupResult, error) {
+	var (
+		result CleanupResult
+		errs   []error
+	)
+	pager := s3.NewListObjectsV2Paginator(a.client, &s3.ListObjectsV2Input{Bucket: aws.String(a.bucket), Prefix: aws.String(prefix)})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("artifacts: s3 cleanup run %q list %q: %w", runID, prefix, err))
+			break
+		}
+		if len(page.Contents) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(page.Contents))
+		sizes := make(map[string]int64, len(page.Contents))
+		for _, object := range page.Contents {
+			key := aws.ToString(object.Key)
+			keys = append(keys, key)
+			sizes[key] = aws.ToInt64(object.Size)
+		}
+		for start := 0; start < len(keys); start += s3DeleteBatch {
+			batch := keys[start:min(start+s3DeleteBatch, len(keys))]
+			failed, err := a.deleteKeys(ctx, batch)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("artifacts: s3 cleanup run %q delete under %q: %w", runID, prefix, err))
+				return result, errors.Join(errs...)
+			}
+			for _, key := range batch {
+				if _, refused := failed[key]; refused {
+					continue
+				}
+				result.ObjectsDeleted++
+				result.BytesReclaimed += sizes[key]
+			}
+			if len(failed) > 0 {
+				errs = append(errs, fmt.Errorf("artifacts: s3 cleanup run %q delete under %q: %w", runID, prefix, joinDeleteFailures(failed)))
+			}
+		}
+	}
+	return result, errors.Join(errs...)
+}
+
+// deleteKeys removes up to s3DeleteBatch keys with one DeleteObjects request
+// in quiet mode, so the response names only the keys that were NOT deleted.
+// A request that fails as a whole is the error; a per-key refusal is in
+// failed, keyed by object key. A key that does not exist is not a refusal: S3
+// reports deleting an absent key as success.
+func (a *S3RunArchive) deleteKeys(ctx context.Context, keys []string) (failed map[string]error, err error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	objects := make([]types.ObjectIdentifier, 0, len(keys))
+	for _, key := range keys {
+		objects = append(objects, types.ObjectIdentifier{Key: aws.String(key)})
+	}
+	out, err := a.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		Bucket: aws.String(a.bucket),
+		Delete: &types.Delete{Objects: objects, Quiet: aws.Bool(true)},
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, refused := range out.Errors {
+		if failed == nil {
+			failed = map[string]error{}
+		}
+		failed[aws.ToString(refused.Key)] = fmt.Errorf("delete %q: %s: %s",
+			aws.ToString(refused.Key), aws.ToString(refused.Code), aws.ToString(refused.Message))
+	}
+	return failed, nil
+}
+
+// joinDeleteFailures joins per-key refusals in key order, so a message is
+// stable.
+func joinDeleteFailures(failed map[string]error) error {
+	if len(failed) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(failed))
+	for key := range failed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	errs := make([]error, 0, len(keys))
+	for _, key := range keys {
+		errs = append(errs, failed[key])
+	}
+	return errors.Join(errs...)
 }
 
 // ListObjectReferences pages one object's marker prefix — the prefix
@@ -414,6 +541,9 @@ func (a *S3RunArchive) DeleteUnreferencedObjects(ctx context.Context, objectIDs 
 // full, so paging a whole traversal costs one enumeration rather than one per
 // page. S3 already lists in key order, so the cursor is just StartAfter.
 func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntry, error) {
+	if q.usesRecent() {
+		return a.listRecent(ctx, q)
+	}
 	prefix, startAfter, err := q.ScanPrefix()
 	if err != nil {
 		return nil, err
@@ -460,6 +590,35 @@ func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntr
 		}
 	}
 	return a.finishList(q, entries), nil
+}
+
+// listRecent walks the newest-first family from the cursor and stops at the
+// page (recentWalk). S3 lists in key order, so a listing page is consumed in
+// the order the walk needs, and the walk usually ends inside the first page.
+func (a *S3RunArchive) listRecent(ctx context.Context, q RunQuery) ([]RunIndexEntry, error) {
+	prefix, startAfter, err := q.recentScan()
+	if err != nil {
+		return nil, err
+	}
+	input := &s3.ListObjectsV2Input{Bucket: aws.String(a.bucket), Prefix: aws.String(prefix)}
+	if startAfter != "" {
+		input.StartAfter = aws.String(startAfter)
+	}
+	walk := newRecentWalk(q)
+	pager := s3.NewListObjectsV2Paginator(a.client, input)
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("artifacts: s3 archive list %q: %w", prefix, err)
+		}
+		for _, obj := range page.Contents {
+			a.indexKeysScanned.Add(1)
+			if walk.add(aws.ToString(obj.Key)) {
+				return walk.page(), nil
+			}
+		}
+	}
+	return walk.page(), nil
 }
 
 // finishList applies the newest-first ordering unless the caller asked for a

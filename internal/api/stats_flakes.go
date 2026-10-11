@@ -19,13 +19,16 @@ import (
 // The flake index is the second stats read that opens run BODIES, and it
 // opens more of them than the failure breakdown does: every FINISHED run in
 // the window, not only the failed ones, because the instability it exposes is
-// exactly the kind a SUCCEEDED status hides. It also lists one task's attempt
-// records per dispatched task — the one aggregation in the tree that reads
-// attempt records ACROSS runs.
+// exactly the kind a SUCCEEDED status hides. It also reads the attempt
+// records of every dispatched task and fan-out item — the one aggregation in
+// the tree that reads attempt records ACROSS runs — with one run-wide listing
+// per run where the store offers one.
 //
-// The crossing is bounded the same three ways the breakdown's is: by the
-// window, by an optional orkflow, and by FlakeIndexMaxScan, past which the
-// call FAILS rather than answering from a subset. What docs/STATS.md §1
+// The crossing is bounded the way the breakdown's is — by the window, by an
+// optional orkflow, and by FlakeIndexMaxScan — and once more by
+// FlakeIndexMaxRows, the dispatched rows summed from the bodies before any
+// attempt read. Past either cap the call FAILS rather than answering from a
+// subset. What docs/STATS.md §1
 // protects is preserved: bodies hold references, not bytes, and attempt
 // records are bounded (artifacts.AttemptMaxBytes), so the read is
 // proportional to runs × dispatched tasks, never to output size. Never clamp,
@@ -43,6 +46,11 @@ const (
 	// in the message. A constant on MostFailingLimit's precedent, not a
 	// setting.
 	FlakeIndexMaxScan = 5000
+	// FlakeIndexMaxRows is the most dispatched rows — tasks, plus each item
+	// of a fan-out — whose attempt records one flake index will read. It is
+	// summed from the bodies before any attempt record is read, because the
+	// run cap alone does not bound a run holding a 1000-item fan-out.
+	FlakeIndexMaxRows = 50000
 )
 
 // DefaultFlakeGroupBy is what an empty group_by means before ORKFLOW is made
@@ -139,8 +147,8 @@ func resolveFlakeLimit(limit int32) (int, error) {
 	}
 }
 
-// computeFlakes reads the population's keys, then every body and one attempt
-// listing per dispatched task, and folds the samples into groups.
+// computeFlakes reads the population's keys, then every body, then the
+// attempt records of every dispatched row, and folds the samples into groups.
 func (h *StatsHandler) computeFlakes(
 	ctx context.Context,
 	window engine.StatsWindow,
@@ -174,7 +182,7 @@ func (h *StatsHandler) computeFlakes(
 			window.Namespace, len(entries), FlakeIndexMaxScan))
 	}
 
-	scanned, samples, err := h.scanFlakes(ctx, entries)
+	scanned, samples, err := h.scanFlakes(ctx, window.Namespace, entries)
 	if err != nil {
 		return nil, err
 	}
@@ -196,10 +204,17 @@ func (h *StatsHandler) computeFlakes(
 	}, nil
 }
 
-// scanFlakes reads one body per entry and one attempt listing per dispatched
-// task through a bounded worker pool of failureScanConcurrency, and returns
-// how many entries had a body and every dispatched task's sample, in the
-// index's own order.
+// scanFlakes reads the population in two phases, each through a bounded
+// worker pool of failureScanConcurrency, and returns how many entries had a
+// body and every dispatched task's sample, in the index's own order.
+//
+// The first phase reads every body and keeps only the dispatched rows (tasks,
+// and a fan-out's items). Their sum is the attempt read's size, and it is
+// checked against FlakeIndexMaxRows BEFORE any attempt record is read: a run
+// cap alone bounds nothing when one run holds a 1000-item fan-out. The second
+// phase reads each run's attempt records — with ONE run-wide listing when the
+// store can (artifacts.ReadRunAttempts), and one listing per dispatched row
+// otherwise.
 //
 // An index row with no body is the crash window between the archive's two
 // writes and is skipped (runs_scanned < runs_in_window). Any OTHER error —
@@ -207,94 +222,125 @@ func (h *StatsHandler) computeFlakes(
 // answer, naming the run: "could not read" and "was reclaimed" are different
 // facts, and only the second is a number.
 func (h *StatsHandler) scanFlakes(
-	parent context.Context,
+	ctx context.Context,
+	namespace string,
 	entries []artifacts.RunIndexEntry,
 ) (int64, []engine.TaskSample, error) {
+	bodies := make([]flakeBody, len(entries))
+	err := scanPool(ctx, len(entries), func(ctx context.Context, i int) error {
+		body, err := h.flakeBodyOf(ctx, entries[i])
+		bodies[i] = body
+		return err
+	})
+	if err != nil {
+		return 0, nil, err
+	}
+
+	var scanned, rows int64
+	for _, body := range bodies {
+		if body.present {
+			scanned++
+			rows += int64(len(body.rows))
+		}
+	}
+	if rows > FlakeIndexMaxRows {
+		return 0, nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf(
+			"flake index for namespace %q would read the attempt records of %d dispatched tasks and "+
+				"fan-out items, more than the %d this read is bounded to; narrow the window with "+
+				"since/until or name one orkflow",
+			namespace, rows, FlakeIndexMaxRows))
+	}
+
+	results := make([][]engine.TaskSample, len(entries))
+	err = scanPool(ctx, len(entries), func(ctx context.Context, i int) error {
+		if !bodies[i].present {
+			return nil
+		}
+		samples, err := h.sampleRun(ctx, entries[i], bodies[i])
+		results[i] = samples
+		return err
+	})
+	if err != nil {
+		return 0, nil, err
+	}
+	samples := []engine.TaskSample{}
+	for _, result := range results {
+		samples = append(samples, result...)
+	}
+	return scanned, samples, nil
+}
+
+// scanPool calls read(ctx, i) for every i in [0, n) through a bounded worker
+// pool of failureScanConcurrency. The first error cancels the reads after it.
+// The caller going away is reported first, as Canceled; otherwise the first
+// real error in index order wins over the reads it cancelled.
+func scanPool(parent context.Context, n int, read func(ctx context.Context, i int) error) error {
 	ctx, stop := context.WithCancel(parent)
 	defer stop()
 
-	type result struct {
-		samples []engine.TaskSample
-		present bool
-		err     error
-	}
-	results := make([]result, len(entries))
+	errs := make([]error, n)
 	var (
 		wg    sync.WaitGroup
 		slots = make(chan struct{}, failureScanConcurrency)
 	)
-	for i, entry := range entries {
+	for i := 0; i < n; i++ {
 		if ctx.Err() != nil {
 			break
 		}
 		wg.Add(1)
 		slots <- struct{}{}
-		go func(i int, entry artifacts.RunIndexEntry) {
+		go func(i int) {
 			defer wg.Done()
 			defer func() { <-slots }()
-			samples, present, err := h.sampleRun(ctx, entry)
-			results[i] = result{samples: samples, present: present, err: err}
-			if err != nil {
+			if err := read(ctx, i); err != nil {
+				errs[i] = err
 				stop()
 			}
-		}(i, entry)
+		}(i)
 	}
 	wg.Wait()
 
-	// The caller going away is its own answer, checked first: every result
-	// after it may be a casualty of it rather than a fact.
 	if err := parent.Err(); err != nil {
-		return 0, nil, connect.NewError(connect.CodeCanceled, err)
+		return connect.NewError(connect.CodeCanceled, err)
 	}
-	// A real failure is reported in preference to the reads it cancelled, and
-	// the first in index order, so the error names the run that caused it.
 	var casualty error
-	for _, result := range results {
-		if result.err == nil {
-			continue
-		}
-		if errors.Is(result.err, context.Canceled) {
+	for _, err := range errs {
+		switch {
+		case err == nil:
+		case errors.Is(err, context.Canceled):
 			if casualty == nil {
-				casualty = result.err
+				casualty = err
 			}
-			continue
-		}
-		return 0, nil, result.err
-	}
-	if casualty != nil {
-		return 0, nil, casualty
-	}
-
-	var scanned int64
-	samples := []engine.TaskSample{}
-	for _, result := range results {
-		if result.present {
-			scanned++
-			samples = append(samples, result.samples...)
+		default:
+			return err
 		}
 	}
-	return scanned, samples, nil
+	return casualty
 }
 
-// sampleRun reads one finished run and the attempt records of each task it
-// dispatched. A task that was never dispatched is never listed. present is
+// flakeBody is what the flake index keeps of one archived body: its orkflow
+// and its dispatched rows, trimmed to the fields SampleTask reads. present is
 // false only for an index row with no body.
-func (h *StatsHandler) sampleRun(
-	ctx context.Context,
-	entry artifacts.RunIndexEntry,
-) ([]engine.TaskSample, bool, error) {
+type flakeBody struct {
+	present bool
+	orkflow string
+	rows    []*orkstackv1.TaskRun
+}
+
+// flakeBodyOf reads one finished run's body and keeps its dispatched rows. A
+// task that was never dispatched is never listed; a fan-out's own row is no
+// sample, and each of its items is one.
+func (h *StatsHandler) flakeBodyOf(ctx context.Context, entry artifacts.RunIndexEntry) (flakeBody, error) {
 	run, err := h.svc.archive.LoadRun(ctx, entry.RunID)
 	switch {
 	case errors.Is(err, artifacts.ErrNotFound):
-		return nil, false, nil
+		return flakeBody{}, nil
 	case err != nil:
-		return nil, false, connect.NewError(connect.CodeUnavailable,
+		return flakeBody{}, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("read the archived body of run %q: %w", entry.RunID, err))
 	}
-	var samples []engine.TaskSample
+	body := flakeBody{present: true, orkflow: run.GetOrkflowName()}
 	for _, task := range run.GetTaskRuns() {
-		// A fan-out's own row produces no sample: each item is one sample
-		// of its node, grouped under the node's task id.
 		rows := []*orkstackv1.TaskRun{task}
 		if task.GetEach() != nil {
 			rows = task.GetItems()
@@ -303,15 +349,45 @@ func (h *StatsHandler) sampleRun(
 			if !engine.Dispatched(row) {
 				continue
 			}
-			records, err := h.svc.attempts.ListAttempts(ctx, entry.RunID, row.GetTaskId(), artifacts.ItemOf(row.Item))
-			if err != nil {
-				return nil, false, connect.NewError(connect.CodeUnavailable,
-					fmt.Errorf("read attempt records of task %q in run %q: %w", row.GetTaskId(), entry.RunID, err))
-			}
-			samples = append(samples, engine.SampleTask(entry, run, row, records))
+			body.rows = append(body.rows, &orkstackv1.TaskRun{
+				TaskId: row.GetTaskId(), Pool: row.GetPool(), Attempt: row.GetAttempt(), Item: row.Item,
+			})
 		}
 	}
-	return samples, true, nil
+	return body, nil
+}
+
+// sampleRun reads the attempt records of each row one run dispatched: with
+// one run-wide listing when the store implements artifacts.RunAttemptReader
+// (every durable backend does), and one listing per row otherwise.
+func (h *StatsHandler) sampleRun(
+	ctx context.Context,
+	entry artifacts.RunIndexEntry,
+	body flakeBody,
+) ([]engine.TaskSample, error) {
+	run := &orkstackv1.Run{Id: entry.RunID, OrkflowName: body.orkflow}
+	samples := make([]engine.TaskSample, 0, len(body.rows))
+	if reader, ok := h.svc.attempts.(artifacts.RunAttemptReader); ok && len(body.rows) > 0 {
+		grouped, err := artifacts.ReadRunAttempts(ctx, reader, entry.RunID, artifacts.RunAttemptReadConcurrency)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("read attempt records of run %q: %w", entry.RunID, err))
+		}
+		for _, row := range body.rows {
+			scope := artifacts.AttemptScope{TaskID: row.GetTaskId(), Item: artifacts.ItemOf(row.Item)}
+			samples = append(samples, engine.SampleTask(entry, run, row, grouped[scope]))
+		}
+		return samples, nil
+	}
+	for _, row := range body.rows {
+		records, err := h.svc.attempts.ListAttempts(ctx, entry.RunID, row.GetTaskId(), artifacts.ItemOf(row.Item))
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("read attempt records of task %q in run %q: %w", row.GetTaskId(), entry.RunID, err))
+		}
+		samples = append(samples, engine.SampleTask(entry, run, row, records))
+	}
+	return samples, nil
 }
 
 // lookupFlakes returns a cached answer, or reports that there is none.
