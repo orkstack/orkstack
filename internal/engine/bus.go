@@ -174,7 +174,12 @@ func (b *EventBus) Subscribe(runID string, fromSequence int64) (<-chan *orkstack
 }
 
 func isTerminalRunEvent(event *orkstackv1.Event) bool {
-	switch event.GetType() {
+	return isTerminalRunEventType(event.GetType())
+}
+
+// isTerminalRunEventType is isTerminalRunEvent for an event not built yet.
+func isTerminalRunEventType(eventType orkstackv1.EventType) bool {
+	switch eventType {
 	case orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED:

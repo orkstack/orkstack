@@ -1943,6 +1943,17 @@ They catch different halves, and neither is enough alone:
 | `TestJoinHistory_ActivityPayloadsMatchWhatCurrentCodeSends` | the join fixture's payloads, re-executed from its own input | a changed `ExecuteTaskInput.join` or failed-need reference, a reworded skip, cancel or failing sentence |
 | `TestJoinHistory_CatchesAHandlerOnTheRunContext` | the replayer, against a body that dispatches failure handlers on the run's own context — it must FAIL | the join guard going blind to where a handler's activities are scheduled |
 | `TestCommittedFixtures_DeclareNoJoin` | every other fixture's `RunWorkflow` input | a fixture that declares `join:`, which would void the premise that no earlier history reaches a join branch |
+| `TestCommittedHistory_LeanEventPathWithoutItsGateIsCaught` | the replayer, against `run-succeeded-v1.json` and `run-each-v1.json` with the lean event path forced on without its `lean-event-path` version check — it must FAIL | the gate going missing: those fixtures predate the version, so they replay only because it sends them down the old path |
+| `TestRunWorkflow_ReplaysCommittedLeanHistories`, `TestLeanHistory_CatchesASnapshotWrittenForTaskStarted`, `TestLeanHistory_TaskStartedCarriesItsScheduledURI` | the lean-path fixtures (`run-succeeded-v2.json`, `run-each-v2.json`): the command stream, a body that writes `TASK_STARTED` its own snapshot again (it must FAIL), and the recorded URI reuse | a change to the lean event path itself (a missing fixture skips, and `ORK_REQUIRE_LEAN_FIXTURES=1` makes that a failure) |
+
+**The lean event path is a versioned change.** A run that records the
+`lean-event-path` version publishes a task's `TASK_STARTED` with the snapshot
+its `TASK_SCHEDULED` just wrote (nothing changes between the two), and
+publishes a fan-out's snapshot-less item events without waiting for each — at
+most 32 outstanding, every one awaited before the run's terminal event. A run
+started before that version carries no marker, so it keeps the old command
+stream for its whole life, on any build. Events, their sequence numbers and
+the stream a reader sees are the same on both paths.
 
 The replayer never looks inside a payload: adding a field to
 `task.ExecuteTaskInput` replays perfectly clean, and an Orker of the recorded
