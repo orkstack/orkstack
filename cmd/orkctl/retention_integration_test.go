@@ -114,7 +114,7 @@ func TestIntegration_CLISetsMaximumRunRetentionOnTheRealCluster(t *testing.T) {
 	// the assertions below prove a real transition rather than a no-op that
 	// happened to already match.
 	want := baseline + time.Hour
-	setStdout, setStderr, code := cli("--json", "admin", "retention", "set", want.String())
+	setStdout, setStderr, code := cli("--json", "admin", "retention", "set", want.String(), "--yes")
 	if code != 0 {
 		t.Fatalf("admin retention set exit = %d\nstdout:\n%s\nstderr:\n%s", code, setStdout, setStderr)
 	}

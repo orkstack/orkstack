@@ -713,6 +713,10 @@ One call fixes it, and no worker has to restart:
 orkctl release promote "$ORK_BUILD_ID"
 ```
 
+`release promote` and `release rollback` name the release current now and
+the one that will be, and ask for confirmation before they write; in a
+script (no terminal on standard input) they refuse unless given `--yes`.
+
 `orkctl release` speaks OrkStack's own vocabulary — a **release** is one build
 of `ork` and `orker` deployed together — and reads the deployment, the
 namespace and the cluster address from the engine it talks to, so there is
@@ -1759,7 +1763,11 @@ worker's own doc comment (`internal/archive/cleanup.go`) for the mechanism.
 `<duration>` uses Go's `time.ParseDuration` syntax (`168h`, `24h30m`, …), the
 same flavour every `ORK_*_TTL`/`ORK_*_INTERVAL` variable in the table above
 uses. A zero or negative duration is refused locally, before any request
-leaves the process:
+leaves the process. Lowering the maximum first reads the one in force, states
+what the next cleanup pass removes (every finished run older than the new
+maximum, in a namespace without its own run retention, loses its logs,
+attempt records, snapshots and commits) and asks for confirmation; a script
+passes `--yes`. Raising it asks nothing:
 
 ```
 $ orkctl admin retention get

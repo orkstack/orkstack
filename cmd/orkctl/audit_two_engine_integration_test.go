@@ -136,7 +136,7 @@ func TestAudit_TwoReplicas_WriteOnOneListedOnOther(t *testing.T) {
 	fmt.Fprintf(&transcript, "%s\n", refusal)
 
 	// Leave nothing behind in the shared namespace registry.
-	auditCLI(t, replicaA, "proof-a", "namespace", "delete", name)
+	auditCLI(t, replicaA, "proof-a", "namespace", "delete", name, "--yes")
 	proof.Write(t, "orkctl", "audit-two-replicas.txt", []byte(transcript.String()))
 }
 
@@ -209,7 +209,7 @@ func TestAudit_TwoEngines_DeploymentWideRecordsByEmptyNamespace(t *testing.T) {
 	// t.Cleanup would run — so the deletes must reach A while it still serves.
 	defer func() {
 		auditCLI(t, replicaA, principal, "webhook", "delete", hook.Webhook.ID)
-		auditCLI(t, replicaA, principal, "namespace", "delete", name)
+		auditCLI(t, replicaA, principal, "namespace", "delete", name, "--yes")
 	}()
 
 	list := func(filters ...string) []*orkstackv1.AuditRecord {
@@ -260,7 +260,7 @@ func auditRefusal(t *testing.T, writer, reader *engineReplica, since string) str
 	principal := fmt.Sprintf("proof-refusal-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	var stdout, stderr bytes.Buffer
 	t.Setenv(principalEnvVar, principal)
-	code := Execute([]string{"namespace", "delete", "default", "--server", "http://" + writer.addr}, &stdout, &stderr)
+	code := Execute([]string{"namespace", "delete", "default", "--yes", "--server", "http://" + writer.addr}, &stdout, &stderr)
 	t.Setenv(principalEnvVar, "")
 	if code == exitOK || !strings.Contains(stderr.String(), "failed_precondition") {
 		t.Fatalf("namespace delete default exited %d (%s), want a failed_precondition refusal", code, stderr.String())
@@ -276,7 +276,7 @@ func auditRefusal(t *testing.T, writer, reader *engineReplica, since string) str
 		t.Fatalf("the refusal was not recorded:\n%s", listed)
 	}
 	t.Logf("EVIDENCE audit_refused_write principal=%s row=%q", principal, strings.Join(strings.Fields(row), " "))
-	return fmt.Sprintf("$ ORK_PRINCIPAL=%s orkctl --server <%s> namespace delete default\nError: %s\n"+
+	return fmt.Sprintf("$ ORK_PRINCIPAL=%s orkctl --server <%s> namespace delete default --yes\nError: %s\n"+
 		"$ orkctl --server <%s> admin audit --filter principal=%s --filter 'at>=%s'\n%s",
 		principal, writer.name, strings.TrimSpace(stderr.String()), reader.name, principal, since, listed)
 }

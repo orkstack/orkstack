@@ -457,6 +457,55 @@ func TestServerFlag_OverridesTheEnvironmentVariable(t *testing.T) {
 	f.run("orkflow", "list").requireExit(t, exitOK).requireContains(t, "No orkflows.")
 }
 
+// writeServerConfig saves a config file naming server at the fixture's
+// ORK_CONFIG path.
+func writeServerConfig(t *testing.T, f *fixture, server string) {
+	t.Helper()
+	raw, err := json.Marshal(cliConfig{Server: server})
+	if err != nil {
+		t.Fatalf("encode config: %v", err)
+	}
+	if err := os.WriteFile(f.configPath, raw, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}
+
+// TestServerConfig_IsUsedWhenNeitherFlagNorEnvironmentNamesOne: the config
+// file's server is the third source, after --server and ORK_SERVER.
+func TestServerConfig_IsUsedWhenNeitherFlagNorEnvironmentNamesOne(t *testing.T) {
+	f := newFixture(t)
+	writeServerConfig(t, f, f.baseURL)
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{"orkflow", "list"}, &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("exit code = %d, want %d\nstderr:\n%s", code, exitOK, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "No orkflows.") {
+		t.Fatalf("unexpected stdout:\n%s", stdout.String())
+	}
+}
+
+func TestServerConfig_TheEnvironmentOverridesTheFile(t *testing.T) {
+	f := newFixture(t)
+	writeServerConfig(t, f, "http://"+closedAddress(t))
+	t.Setenv(serverEnvVar, f.baseURL)
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{"orkflow", "list"}, &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("exit code = %d, want %d\nstderr:\n%s", code, exitOK, stderr.String())
+	}
+}
+
+func TestServerConfig_TheFlagOverridesTheEnvironmentAndTheFile(t *testing.T) {
+	f := newFixture(t)
+	writeServerConfig(t, f, "http://"+closedAddress(t))
+	t.Setenv(serverEnvVar, "http://"+closedAddress(t))
+
+	f.run("orkflow", "list").requireExit(t, exitOK).requireContains(t, "No orkflows.")
+}
+
 func TestUnreachableServer_ExitsNonZero(t *testing.T) {
 	address := closedAddress(t)
 

@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"connectrpc.com/connect"
@@ -38,9 +40,13 @@ const (
 	// would change something: the documents and what is stored differ. It
 	// is that command's own negative verdict, on the terms above.
 	exitApplyCheckChanges = 4
+	// exitInterrupted is SIGINT or SIGTERM ending the command: the shell's
+	// own 128+SIGINT, so a script can tell "stopped" from "failed".
+	exitInterrupted = 130
 )
 
-// defaultServer is used when neither --server nor ORK_SERVER is set.
+// defaultServer is used when neither --server, ORK_SERVER nor the config
+// file's server is set.
 const defaultServer = "http://localhost:8080"
 
 // serverEnvVar is the environment fallback for --server.
@@ -78,11 +84,35 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return exitCodeFor(err)
+	// The first SIGINT or SIGTERM cancels the context every command derives
+	// from, so the command unwinds through its defers — a --json document is
+	// closed, a partial download's temporary file removed — and exits 130.
+	// The notifier is stopped on that first signal, so a second one kills
+	// orkctl at once.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	if err := root.ExecuteContext(ctx); err != nil {
+		return reportError(ctx, stderr, err)
 	}
 	return exitOK
+}
+
+// reportError prints a command's error and returns its exit code. A command
+// a signal ended reports itself interrupted (130) — unless it chose its own
+// code for that case (`task run` exits 3 once it has cancelled its
+// container).
+func reportError(ctx context.Context, stderr io.Writer, err error) int {
+	var coded *exitCodeError
+	if ctx.Err() != nil && !errors.As(err, &coded) {
+		fmt.Fprintln(stderr, "Error: interrupted")
+		return exitInterrupted
+	}
+	fmt.Fprintf(stderr, "Error: %v\n", err)
+	return exitCodeFor(err)
 }
 
 // globalFlags holds the persistent flags and the derived API clients.
@@ -99,6 +129,11 @@ type globalFlags struct {
 	// dispatcher through. Nil means the Orker's own default runtime
 	// (orker.NewDockerRuntime); no flag sets it.
 	containerRuntime orker.ContainerRuntime
+
+	// terminal is the test seam for "is standard input a terminal a person
+	// can answer a confirmation from" (confirm.go). Nil means the real
+	// check; no flag sets it.
+	terminal func() bool
 }
 
 // newRootCommand builds the command tree and the shared flag state.
@@ -115,12 +150,23 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			if !cmd.Flags().Changed("server") {
-				if fromEnv := os.Getenv(serverEnvVar); fromEnv != "" {
-					g.server = fromEnv
+			// The config file is read at most once, and only when a flag
+			// or the environment left something for it to answer.
+			var cfg *cliConfig
+			config := func() (cliConfig, error) {
+				if cfg == nil {
+					loaded, err := loadConfig()
+					if err != nil {
+						return cliConfig{}, err
+					}
+					cfg = &loaded
 				}
+				return *cfg, nil
 			}
-			if err := g.resolveNamespace(cmd); err != nil {
+			if err := g.resolveServer(cmd, config); err != nil {
+				return err
+			}
+			if err := g.resolveNamespace(cmd, config); err != nil {
 				return err
 			}
 			g.timeoutChanged = cmd.Flags().Changed("timeout")
@@ -128,7 +174,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		},
 	}
 	root.PersistentFlags().StringVar(&g.server, "server", defaultServer,
-		"OrkStack engine base URL (env "+serverEnvVar+")")
+		"OrkStack engine base URL (env "+serverEnvVar+", then the config file's server)")
 	// No backticks in this usage string: Cobra reads a backticked span as the
 	// flag's value placeholder, so "`orkctl namespace use`" would render as
 	// `-n, --namespace orkctl namespace use`.
@@ -159,7 +205,48 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newWebhookCommand(g),
 		newVersionCommand(g),
 	)
+	for _, child := range root.Commands() {
+		refuseUnknownSubcommands(child)
+	}
 	return root, g
+}
+
+// refuseUnknownSubcommands makes every group at or below cmd — a command
+// whose only job is to hold subcommands — a command of its own: bare, it
+// prints its help and exits 0; with an argument that names no subcommand, it
+// fails with `unknown command "x" for "orkctl run"` (and cobra's nearest
+// suggestions) and exits 1.
+//
+// Cobra alone answers a non-runnable group's stray argument with its help and
+// a nil error before it ever validates the arguments, so `orkctl run lsit`
+// would read as success to a script. A group that already runs (stats) keeps
+// its own RunE and argument check. The root is left to cobra, whose own
+// handling of an unknown top-level command already fails.
+func refuseUnknownSubcommands(cmd *cobra.Command) {
+	if cmd.HasSubCommands() && !cmd.Runnable() {
+		cmd.Args = unknownSubcommand
+		cmd.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+	}
+	for _, child := range cmd.Commands() {
+		refuseUnknownSubcommands(child)
+	}
+}
+
+// unknownSubcommand is the argument check refuseUnknownSubcommands installs:
+// no positional argument is valid where only a subcommand may follow.
+func unknownSubcommand(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	message := fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath())
+	// Cobra applies its default distance only on the root's own path.
+	if cmd.SuggestionsMinimumDistance <= 0 {
+		cmd.SuggestionsMinimumDistance = 2
+	}
+	if suggestions := cmd.SuggestionsFor(args[0]); len(suggestions) > 0 {
+		message += "\n\nDid you mean this?\n\t" + strings.Join(suggestions, "\n\t")
+	}
+	return errors.New(message)
 }
 
 // resolveNamespace settles which namespace this invocation acts in.
@@ -174,7 +261,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 // An unreadable config file is an error rather than a shrug: running against
 // `default` when the user believes they selected `payments` is the mistake
 // this whole flag exists to prevent.
-func (g *globalFlags) resolveNamespace(cmd *cobra.Command) error {
+func (g *globalFlags) resolveNamespace(cmd *cobra.Command, config func() (cliConfig, error)) error {
 	if cmd.Flags().Changed("namespace") {
 		return nil
 	}
@@ -182,11 +269,32 @@ func (g *globalFlags) resolveNamespace(cmd *cobra.Command) error {
 		g.namespace = fromEnv
 		return nil
 	}
-	cfg, err := loadConfig()
+	cfg, err := config()
 	if err != nil {
 		return err
 	}
 	g.namespace = cfg.Namespace
+	return nil
+}
+
+// resolveServer settles which engine this invocation talks to, by the same
+// precedence as the namespace: the --server flag, ORK_SERVER, the config
+// file's server, then defaultServer.
+func (g *globalFlags) resolveServer(cmd *cobra.Command, config func() (cliConfig, error)) error {
+	if cmd.Flags().Changed("server") {
+		return nil
+	}
+	if fromEnv := os.Getenv(serverEnvVar); fromEnv != "" {
+		g.server = fromEnv
+		return nil
+	}
+	cfg, err := config()
+	if err != nil {
+		return err
+	}
+	if cfg.Server != "" {
+		g.server = cfg.Server
+	}
 	return nil
 }
 

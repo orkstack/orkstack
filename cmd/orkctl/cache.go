@@ -295,15 +295,17 @@ var errCachePurgeSelector = errors.New(
 
 func newCachePurgeCommand(g *globalFlags) *cobra.Command {
 	var (
-		orkflow, task, olderThan string
-		namespaceScoped, all     bool
+		orkflow, task, olderThan  string
+		namespaceScoped, all, yes bool
 	)
 	cmd := &cobra.Command{
 		Use:   "purge (--orkflow NAME | --namespace-scoped | --all) [--task ID] [--older-than DURATION]",
 		Short: "Delete memos, so the next run of those cached tasks runs its container",
 		Long: "purge deletes memos and nothing else: no run, commit or artifact is touched.\n" +
 			"It changes no result — only whether the next run of a cached task runs its\n" +
-			"container and writes a fresh memo. It never has a default scope.",
+			"container and writes a fresh memo. It never has a default scope.\n\n" +
+			"It names the memos it will delete and asks for confirmation first, and\n" +
+			"refuses when standard input is not a terminal unless --yes is given.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			selectors := 0
@@ -327,6 +329,9 @@ func newCachePurgeCommand(g *globalFlags) *cobra.Command {
 					return fmt.Errorf("invalid --older-than %q: want a Go duration such as 72h", olderThan)
 				}
 				req.OlderThan = durationpb.New(d)
+			}
+			if err := confirmDestructive(cmd, g, "purge cache memos", purgePrompt(req), yes); err != nil {
+				return err
 			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
@@ -365,7 +370,32 @@ func newCachePurgeCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "purge every memo of the namespace")
 	cmd.Flags().StringVar(&task, "task", "", "narrow --orkflow or --namespace-scoped to one task")
 	cmd.Flags().StringVar(&olderThan, "older-than", "", "keep memos written within this duration, e.g. 72h")
+	addYesFlag(cmd, &yes)
 	return cmd
+}
+
+// purgePrompt states which memos a purge deletes, before it is sent.
+// PurgeCache has no count-only mode, so the scope is named rather than
+// counted.
+func purgePrompt(req *orkstackv1.PurgeCacheRequest) string {
+	var scope string
+	switch {
+	case req.GetOrkflowName() != "":
+		scope = fmt.Sprintf("the orkflow-scoped memos of orkflow %q", req.GetOrkflowName())
+	case req.GetNamespaceScoped():
+		scope = "the namespace-scoped memos"
+	default:
+		scope = "every memo"
+	}
+	if req.GetTaskId() != "" {
+		scope += fmt.Sprintf(", task %q,", req.GetTaskId())
+	}
+	scope += fmt.Sprintf(" in namespace %q", displayNamespace(req.GetNamespace()))
+	if d := req.GetOlderThan(); d != nil && d.AsDuration() > 0 {
+		scope += ", except those written in the last " + shortDuration(d.AsDuration())
+	}
+	return "Purge " + scope + "?\n" +
+		"No run, commit or artifact is touched; the next run of each of those cached tasks runs its container."
 }
 
 // renderPurged prints what a purge did.

@@ -318,7 +318,7 @@ func TestReleasePromote_Golden(t *testing.T) {
 	fleet.described["orker-c3"] = &orkstackv1.DescribeOrkerResult{OrkerId: "orker-c3", Pool: "build", BuildId: relC, MaxConcurrentPins: 1}
 	releases := newScriptedReleases(step)
 	f := newReleaseFixture(t, releases, fleet)
-	out := f.run("release", "promote", relC).requireExit(t, exitOK)
+	out := f.run("release", "promote", relC, "--yes").requireExit(t, exitOK)
 	requireGolden(t, "release-promote.golden", out.stdout)
 	if w := releases.writes(); len(w) != 1 || w[0] != (engine.Routing{Current: relC}) {
 		t.Fatalf("writes = %v", w)
@@ -329,7 +329,7 @@ func TestReleasePromote_RefusedGolden(t *testing.T) {
 	useReleaseClock(t, releaseClockStart)
 	releases := newScriptedReleases(rolloutStep())
 	f := newReleaseFixture(t, releases, releaseFleetFor())
-	out := f.run("release", "promote", relC).requireExit(t, exitError)
+	out := f.run("release", "promote", relC, "--yes").requireExit(t, exitError)
 	requireGolden(t, "release-promote-refused.golden", out.stderr)
 	if len(releases.writes()) != 0 {
 		t.Fatal("a refused promote wrote")
@@ -340,7 +340,7 @@ func TestReleasePromote_SendsTheRevisionItRead(t *testing.T) {
 	useReleaseClock(t, releaseClockStart)
 	step := rolloutStep()
 	f := newReleaseFixture(t, newScriptedReleases(step), releaseFleetFor())
-	f.run("release", "promote", relA).requireExit(t, exitOK)
+	f.run("release", "promote", relA, "--yes").requireExit(t, exitOK)
 	var sent orkstackv1.PromoteReleaseRequest
 	if !f.lastRequest("/orkstack.v1.SystemService/PromoteRelease", &sent) {
 		t.Fatal("no PromoteRelease was sent")
@@ -376,8 +376,8 @@ func TestReleaseWrites_BoundTheWriteOnItsOwn(t *testing.T) {
 		args  []string
 		fleet func() *scriptedFleet
 	}{
-		{"promote", []string{"release", "promote", relC}, withOrker("orker-c3", "build", relC, 1)},
-		{"rollback", []string{"release", "rollback", relP}, withOrker("orker-p2", "gpu", relP, 0)},
+		{"promote", []string{"release", "promote", relC, "--yes"}, withOrker("orker-c3", "build", relC, 1)},
+		{"rollback", []string{"release", "rollback", relP, "--yes"}, withOrker("orker-p2", "gpu", relP, 0)},
 		{"ramp", []string{"release", "ramp", relC, "--percent", "10"}, withOrker("orker-c3", "build", relC, 1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -412,14 +412,14 @@ func TestReleasePromote_UnconfirmedRoutingGolden(t *testing.T) {
 	releases := newScriptedReleases(step)
 	releases.awaitOK = false
 	f := newReleaseFixture(t, releases, fleet)
-	out := f.run("release", "promote", relC).requireExit(t, exitOK)
+	out := f.run("release", "promote", relC, "--yes").requireExit(t, exitOK)
 	requireGolden(t, "release-promote-unconfirmed.golden", out.stdout)
 }
 
 func TestReleaseRollback_RefusesATargetThatNeverServedBeforePromoting(t *testing.T) {
 	useReleaseClock(t, releaseClockStart)
 	f := newReleaseFixture(t, newScriptedReleases(rolloutStep()), releaseFleetFor())
-	out := f.run("release", "rollback", relC).requireExit(t, exitError)
+	out := f.run("release", "rollback", relC, "--yes").requireExit(t, exitError)
 	if !strings.Contains(out.stderr, `rollback returns to a release that was current before; `+relC+` is candidate — use "orkctl release promote `+relC+`"`) {
 		t.Fatalf("stderr = %s", out.stderr)
 	}
@@ -441,7 +441,7 @@ func TestReleaseRollback_Golden(t *testing.T) {
 	fleet.described["orker-p2"] = &orkstackv1.DescribeOrkerResult{OrkerId: "orker-p2", Pool: "gpu", BuildId: relP}
 	releases := newScriptedReleases(step)
 	f := newReleaseFixture(t, releases, fleet)
-	out := f.run("release", "rollback", relP).requireExit(t, exitOK)
+	out := f.run("release", "rollback", relP, "--yes").requireExit(t, exitOK)
 	requireGolden(t, "release-rollback.golden", out.stdout)
 	if w := releases.writes(); len(w) != 1 || w[0] != (engine.Routing{Current: relP}) {
 		t.Fatalf("writes = %v", w)

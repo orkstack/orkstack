@@ -57,7 +57,40 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   enter a shareable URL: a run is shared by its id alone.
 - **One-time secrets are shown once.** A trigger token, a generated webhook
   secret and an await callback token appear in the creating response only;
-  no listing, URL or later read carries them.
+  no listing, URL or later read carries them. `orkctl run submit --watch
+  --json` prints a submission's await callbacks (the ready `curl`) on
+  **stderr**, before the watch starts, so stdout stays the one JSON document
+  the watch prints.
+- **Which engine `orkctl` talks to.** Most specific first: `--server`, then
+  `ORK_SERVER`, then the `server` key of its config file (`ORK_CONFIG`, else
+  `orkctl/config.json` in the platform's config directory — the file
+  `namespace use` writes, which keeps a hand-set `server`), then
+  `http://localhost:8080`. The namespace follows the same order with
+  `--namespace`, `ORK_NAMESPACE` and the file's `namespace`.
+- **What cannot be undone is confirmed.** The UI's confirmation dialogs have
+  a CLI twin: `orkflow delete`, `namespace delete`, `cache purge`, `release
+  promote`, `release rollback` and an `admin retention set` that **lowers**
+  the maximum state what they are about to do — the namespace, the purge's
+  scope, the release current now and the one that will be, the old and new
+  maximum and what the next cleanup pass removes — and ask for `yes` before
+  any write is sent. Anything else is `<action>: cancelled`, exit 1. With no
+  terminal on standard input they refuse (`refusing to … without
+  confirmation: standard input is not a terminal; pass --yes`, exit 1)
+  rather than read a pipe or silently do nothing; `--yes` skips the question,
+  and `--json` does not. Raising the retention maximum, or promoting the
+  release already current, asks nothing.
+- **`orkctl` exit codes.** `0` the command succeeded; `1` it failed —
+  including a mistyped subcommand (`orkctl run lsit` fails with
+  `unknown command "lsit" for "orkctl run"` and the nearest suggestion; a
+  bare group such as `orkctl run` prints its help and exits 0); `2` a watched
+  run failed; `3` a watched run was canceled; `4` the command's own negative
+  verdict (`orker drain` timed out, `run plan` contradicts an
+  `--assert-*`, `apply --check` found changes); `130` interrupted. The first
+  Ctrl-C (SIGINT) or SIGTERM lets the command unwind — a `--json` document
+  is still closed and parses, a partial download leaves no temporary file —
+  then prints `Error: interrupted`; a second one kills `orkctl` at once.
+  `task run` keeps its own code for this: it stops the container and exits
+  3.
 - **The browser invents no validation the CLI bypasses**, and typed input
   controls are a presentation of declared inputs, not a schema language (see
   "Baseline operator flows").
@@ -460,7 +493,7 @@ CLI: `run resolve RUN --task TASK [--values JSON | --values-file PATH |
 --reject --reason TEXT]` — `--values-file` is sent verbatim (`-` reads stdin),
 neither flag means `{}`, and every refusable flag combination is refused
 before a request. `run submit`/`run again` print each callback once as a
-shell-safe `curl`; `run get` adds an await table (deadline, remaining,
+shell-safe `curl` (on stderr under `run submit --watch --json`); `run get` adds an await table (deadline, remaining,
 resolved via, by, callback); `run plan` lists awaits; `run timing` reads an
 await as `awaited`. UI: the run page's await panel in place of the log pane —
 state, deadline, live remaining time, **Resolve** (typed fields over the
@@ -470,6 +503,10 @@ for a callback await; the submit dialog shows the one-time callback panel
 before it continues to the run.
 
 ## Reading runs
+
+`run get` prints a run's input and output as one line of JSON each, cut at
+512 bytes and followed by `… (N bytes; orkctl -n NS run get ID --json prints
+it whole)`; `run get --json` is never cut.
 
 ### Run browsing
 
@@ -873,8 +910,8 @@ CLI: `run submit|again --no-cache`; `run get` labels a hit `SUCCEEDED
 (cached)` with one cache line per cached task; `run attempts` adds a `CACHE`
 column; `orkflow get` a `CACHED` table; `cache stats [--orkflow] [--since]
 [--until]`; `cache purge (--orkflow NAME | --namespace-scoped | --all)
-[--task] [--older-than]`, refused before any request unless exactly one
-selector is given. UI: **Cached** (linking the producing run), **Cache miss**
+[--task] [--older-than] [--yes]`, refused before any request unless exactly
+one selector is given, and confirmed after naming its scope. UI: **Cached** (linking the producing run), **Cache miss**
 with its reason, or **Cache bypassed** on the task card; Inspect shows the
 key, source commit and memo write; the submit panel offers *Ignore cached
 results*; **Admin → Cache** shows hit rate, reused time and memos and purges
@@ -1164,9 +1201,10 @@ or `release.ramp` audit record.
 CLI: `release status [--watch] [--filter F…]` (`--watch --json` is
 refused; the filters select release rows and are sent on every poll),
 `release ramp
-BUILD --percent N` (1–100; 0 stops the ramp), `release promote BUILD`,
-`release rollback BUILD` (refused client-side unless the target is a previous
-release), `release wait BUILD [--timeout]` — a client-side loop: exit 0
+BUILD --percent N` (1–100; 0 stops the ramp), `release promote BUILD
+[--yes]`, `release rollback BUILD [--yes]` (refused client-side unless the
+target is a previous release; both name the current release and the target
+and confirm before writing), `release wait BUILD [--timeout]` — a client-side loop: exit 0
 drained, 4 timed out naming every run and pin left, 1 otherwise. A count that
 could not be read is `unknown`, never 0. Release commands ignore
 `--namespace`. UI: **Admin → Releases** — the filter form over the release

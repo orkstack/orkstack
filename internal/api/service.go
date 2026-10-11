@@ -1934,6 +1934,12 @@ func (s *Service) LookupRunIn(ctx context.Context, runID, namespace string) (*or
 // namespace once and reports a namespace error once, unattributed to a side.
 func (s *Service) lookupRunInResolved(ctx context.Context, runID, namespace string) (*orkstackv1.Run, error) {
 	run, err := s.LookupRun(ctx, runID)
+	if connect.CodeOf(err) == connect.CodeNotFound {
+		// The same words as a run of another namespace: the message says
+		// where it looked, and the two cases stay indistinguishable.
+		return nil, connect.NewError(connect.CodeNotFound,
+			fmt.Errorf("run %q not found in namespace %q", runID, namespace))
+	}
 	if err != nil {
 		return nil, err
 	}

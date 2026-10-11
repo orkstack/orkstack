@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"regexp"
@@ -532,5 +533,18 @@ func TestTaskStatusLabel_NeverStartedReadsScheduledAt(t *testing.T) {
 	never := &orkstackv1.TaskRun{Status: orkstackv1.Status_STATUS_CANCELED}
 	if got := taskStatusLabel(never); got != "CANCELED (never started)" {
 		t.Errorf("never scheduled = %q, want CANCELED (never started)", got)
+	}
+}
+
+// TestRunTimingHelp_SaysJSONIsTheCLIsOwnDocument: run timing --json is the
+// exception to "--json is the raw response envelope", and its help says so.
+func TestRunTimingHelp_SaysJSONIsTheCLIsOwnDocument(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Execute([]string{"run", "timing", "--help"}, &stdout, &stderr); code != exitOK {
+		t.Fatalf("exit code = %d\n%s", code, stderr.String())
+	}
+	const want = "--json prints this command's own timing document (the table's data), not a\nresponse envelope."
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("help does not contain %q:\n%s", want, stdout.String())
 	}
 }

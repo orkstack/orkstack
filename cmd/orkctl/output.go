@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -133,8 +134,14 @@ func errorLine(runErr *orkstackv1.Error) string {
 	}
 }
 
-// payloadSummary renders a Payload compactly for human output.
-func payloadSummary(payload *orkstackv1.Payload) string {
+// payloadSummaryMax is the most of a payload run get prints on its one line.
+const payloadSummaryMax = 512
+
+// payloadSummary renders a Payload compactly for human output: its JSON on
+// one line, cut at payloadSummaryMax bytes (on a character boundary) with
+// its full size and the command that prints it whole — a 256 KiB output on
+// one terminal line hides everything after it. --json is never cut.
+func payloadSummary(payload *orkstackv1.Payload, runID, namespace string) string {
 	data := payload.GetData()
 	if data == nil || len(data.GetFields()) == 0 {
 		return dash
@@ -143,7 +150,15 @@ func payloadSummary(payload *orkstackv1.Payload) string {
 	if err != nil {
 		return dash
 	}
-	return string(encoded)
+	if len(encoded) <= payloadSummaryMax {
+		return string(encoded)
+	}
+	cut := payloadSummaryMax
+	for cut > 0 && !utf8.RuneStart(encoded[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s… (%d bytes; %s prints it whole)", encoded[:cut], len(encoded),
+		orkctlCommand(namespace, "run", "get", runID, "--json"))
 }
 
 // structToMap converts a protobuf Struct to plain Go values.

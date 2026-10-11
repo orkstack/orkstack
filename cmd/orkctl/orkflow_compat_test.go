@@ -255,7 +255,7 @@ func TestOrkflowCallers_GoldenHumanAndJSON(t *testing.T) {
 
 	f.run("apply", writeVersionedOrkflow(t, "ghost-block", "1.0.0", "ghost")).requireExit(t, exitOK)
 	f.run("trigger", "create", "--orkflow", "ghost-block", "--name", "ghost-trigger").requireExit(t, exitOK)
-	f.run("orkflow", "delete", "ghost-block", "--force").requireExit(t, exitOK)
+	f.run("orkflow", "delete", "ghost-block", "--yes").requireExit(t, exitOK)
 	deleted := f.run("orkflow", "callers", "ghost-block").requireExit(t, exitOK)
 	requireGolden(t, "orkflow-callers-deleted.golden", deleted.stdout)
 }
