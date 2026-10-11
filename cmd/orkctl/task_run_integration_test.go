@@ -321,14 +321,23 @@ func TestIntegration_TaskRunWritesNothingToTheDeployment(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	// Every run the deployment lists, paged at the 200-run maximum.
 	listRuns := func() []string {
-		res, err := s.replicas[0].runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{PageSize: 1000}))
-		if err != nil {
-			t.Fatalf("ListRuns: %v", err)
-		}
 		var ids []string
-		for _, r := range res.Msg.GetRuns() {
-			ids = append(ids, r.GetId())
+		token := ""
+		for {
+			res, err := s.replicas[0].runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
+				PageSize: 200, PageToken: token,
+			}))
+			if err != nil {
+				t.Fatalf("ListRuns: %v", err)
+			}
+			for _, r := range res.Msg.GetRuns() {
+				ids = append(ids, r.GetId())
+			}
+			if token = res.Msg.GetNextPageToken(); token == "" {
+				break
+			}
 		}
 		sort.Strings(ids)
 		return ids
