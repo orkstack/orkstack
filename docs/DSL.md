@@ -199,8 +199,14 @@ declaration with a default is never required. A composing task's `with:` check
 (rule 32) and the promote gate ("Promoting compares declared interfaces") both
 read it that way.
 
-Submit fills every omitted input that has a `default` and checks nothing
-else: it does not refuse a missing required input or a value of another type.
+Submit fills every omitted input that has a `default` and checks its size,
+nothing else: it does not refuse a missing required input or a value of
+another type. The run input, the stored definition and the run's plan each
+travel as one payload of the run's start, and each is bounded by the same
+256 KiB as any payload (AGENTS.md §2.2): an input over it is refused at
+submit (and at a schedule's fire) as `INVALID_ARGUMENT` with
+`INPUT_TOO_LARGE`, and nothing starts. Pass a reference to large data — a
+URL or an object key — never the bytes.
 A task whose template reads an input nobody supplied fails `RENDER_FAILED`
 (`ContractViolation`) rather than running with an empty string.
 
