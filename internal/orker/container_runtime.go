@@ -3,6 +3,7 @@ package orker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -174,6 +175,11 @@ type ContainerRuntime interface {
 	// containers: after SIGKILL of the managing process the labelled container
 	// was still running three seconds later, and the --rm control was also
 	// still running, because --rm fires on container EXIT (§5.5, §14.17).
+	//
+	// It tries every container it finds. When some could not be removed, the
+	// error is a *ReapIncompleteError carrying each failure, and the count is
+	// what WAS removed; any other error means the containers could not even be
+	// listed.
 	Reap(ctx context.Context, orkerID string) (int, error)
 	// Describe reports the runtime's identity for the DescribeOrker pool
 	// liveness probe (§6.5).
@@ -198,6 +204,24 @@ var ErrNotInLayout = errors.New("digest not present in OCI image layout")
 // host misconfiguration (§3.1). It is surfaced as WORKDIR_NOT_BINDABLE at
 // boot rather than as a mysterious failure of every task later.
 var ErrNotBindable = errors.New("path is not bind-mountable by the container runtime")
+
+// ErrProbeImageUnavailable reports that the boot-time bind probe could not
+// obtain the image it runs. It is distinct from ErrNotBindable: a registry
+// that is slow, unreachable or rate-limited says nothing about whether the
+// work root can be bound.
+var ErrProbeImageUnavailable = errors.New("the bind probe image is unavailable")
+
+// ReapIncompleteError is Reap's report that it removed every orphan it could
+// and some it could not. Boot logs each failure and proceeds: one container
+// stuck in removal must not stop an Orker from starting.
+type ReapIncompleteError struct {
+	Failures []error
+}
+
+func (e *ReapIncompleteError) Error() string {
+	return fmt.Sprintf("%d orphaned container(s) could not be removed: %v",
+		len(e.Failures), errors.Join(e.Failures...))
+}
 
 // DefaultImageLayoutRoot is where the embedded OCI image layouts live when
 // ORK_ORKER_IMAGE_LAYOUT says nothing (§4.6).

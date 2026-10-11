@@ -105,10 +105,14 @@ func (c *Cordon) Wait(ctx context.Context) error {
 
 // ------------------------------------------------------------- slot supplier
 
-// orkerActivitySlots mirrors the SDK default the task worker ran at before a
-// Tuner was set (defaultMaxConcurrentActivityExecutionSize), so setting one
-// changes nothing about concurrency.
-const orkerActivitySlots = 1000
+// DefaultMaxConcurrent is orker.max_concurrent's default: how many tasks one
+// Orker runs at once (docs/DEPLOY.md §1). It mirrors the SDK default the task
+// worker ran at before a Tuner was set (defaultMaxConcurrentActivityExecutionSize),
+// so an Orker that never sets the key runs exactly as it always did.
+const DefaultMaxConcurrent = 1000
+
+// MaxConcurrentVar is orker.max_concurrent's environment variable.
+const MaxConcurrentVar = "ORK_ORKER_MAX_CONCURRENT"
 
 // sdkDefaultSlots is the SDK's own default for every other supplier the tuner
 // must name (go.temporal.io/sdk/internal/internal_worker.go, v1.47.0).
@@ -148,14 +152,16 @@ func (s *cordonSlotSupplier) ReleaseSlot(info worker.SlotReleaseInfo)   { s.inne
 func (s *cordonSlotSupplier) MaxSlots() int                             { return s.inner.MaxSlots() }
 
 // WorkerTuner is the task worker's Tuner: the SDK's default fixed sizes
-// everywhere, with the activity supplier wrapped by the cordon.
+// everywhere except the activity supplier, which is this Orker's configured
+// ceiling (Options.MaxConcurrent — the same number DescribeOrker reports) and
+// is wrapped by the cordon.
 func (a *Activities) WorkerTuner() (worker.WorkerTuner, error) {
 	fixed := func(n int) (worker.SlotSupplier, error) { return worker.NewFixedSizeSlotSupplier(n) }
 	workflowSlots, err := fixed(sdkDefaultSlots)
 	if err != nil {
 		return nil, err
 	}
-	activitySlots, err := fixed(orkerActivitySlots)
+	activitySlots, err := fixed(int(a.maxConc))
 	if err != nil {
 		return nil, err
 	}

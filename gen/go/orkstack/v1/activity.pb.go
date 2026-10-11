@@ -2557,8 +2557,10 @@ type DescribeOrkerResult struct {
 	RuntimeName     string                 `protobuf:"bytes,4,opt,name=runtime_name,json=runtimeName,proto3" json:"runtime_name,omitempty"` // "docker"
 	RuntimeVersion  string                 `protobuf:"bytes,5,opt,name=runtime_version,json=runtimeVersion,proto3" json:"runtime_version,omitempty"`
 	SecurityProfile string                 `protobuf:"bytes,6,opt,name=security_profile,json=securityProfile,proto3" json:"security_profile,omitempty"` // the profile id the Orker enforces (§9.2)
-	MaxConcurrent   int32                  `protobuf:"varint,7,opt,name=max_concurrent,json=maxConcurrent,proto3" json:"max_concurrent,omitempty"`
-	Rootless        bool                   `protobuf:"varint,8,opt,name=rootless,proto3" json:"rootless,omitempty"`
+	// max_concurrent is ORK_ORKER_MAX_CONCURRENT: how many tasks this Orker runs
+	// at once, the size of its task worker's activity slots.
+	MaxConcurrent int32 `protobuf:"varint,7,opt,name=max_concurrent,json=maxConcurrent,proto3" json:"max_concurrent,omitempty"`
+	Rootless      bool  `protobuf:"varint,8,opt,name=rootless,proto3" json:"rootless,omitempty"`
 	// max_concurrent_pins is ORK_ORKER_MAX_PINS: how many pins this Orker hosts
 	// at once. 0 means it hosts none, and a submit that pins a task to this
 	// Orker's pool is refused at submit rather than left waiting.

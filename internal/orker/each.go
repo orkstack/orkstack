@@ -39,14 +39,19 @@ func itemSegmentOf(index int32) string {
 // stageEachUpstream stages every item of one fan-out upstream for a direct
 // dependent: each item's commit is read from the commit URI the engine would
 // have dispatched it at, its identity checked, and its values and artifacts
-// fetched digest-verified into upstream/<task>/<item>/ and
-// artifacts/<task>/<item>/. Sequential, in index order.
+// queued for a digest-verified fetch (into now, or deferred) into
+// upstream/<task>/<item>/ and artifacts/<task>/<item>/.
+//
+// The commit reads run transferLimit at a time; what they yield is then walked
+// in index order, so task.json's lists are exactly a serial staging's, and the
+// failure reported is the lowest-index item's.
 func (d *OCIDispatcher) stageEachUpstream(
 	ctx context.Context,
 	in *orkstackv1.ExecuteTaskInput,
 	ws *Workspace,
 	up *orkstackv1.UpstreamRef,
 	staged *stagedInputs,
+	now *[]deferredFetch,
 	deferBytes bool,
 ) *Failure {
 	producer := up.GetTaskId()
@@ -68,41 +73,25 @@ func (d *OCIDispatcher) stageEachUpstream(
 		return Fail(ReasonInputUnavailable,
 			"this orker has no commit store, so it cannot read the items of fan-out task %q", producer)
 	}
-	root := strings.TrimSuffix(each.GetCommitRoot(), "/")
+	commits := make([]*orkstackv1.ActivityCommit, each.GetCount())
+	failures := make([]*Failure, each.GetCount())
+	at, err := eachBounded(ctx, int(each.GetCount()), d.transferLimit(), func(ctx context.Context, i int) error {
+		commit, failure := d.readItemCommit(ctx, in, producer, each.GetCommitRoot(), int32(i))
+		if failure != nil {
+			failures[i] = failure
+			return failure
+		}
+		commits[i] = commit
+		return nil
+	})
+	if err != nil {
+		if failures[at] != nil {
+			return failures[at]
+		}
+		return FailCause(ReasonInputUnavailable, err, "stage the items of fan-out task %q: %v", producer, err)
+	}
 	for i := int32(0); i < each.GetCount(); i++ {
-		if err := ctx.Err(); err != nil {
-			return FailCause(ReasonInputUnavailable, err, "stage the items of fan-out task %q: %v", producer, err)
-		}
-		key, err := artifacts.ItemCommitKey(in.GetNamespace(), in.GetRunId(), producer, i)
-		if err != nil {
-			return FailCause(ReasonInputUnavailable, err,
-				"fan-out task %q item %d: compose its commit key: %v", producer, i, err)
-		}
-		uri := root + "/" + key
-		record, err := d.Commits.Get(ctx, uri)
-		switch {
-		case err == nil:
-		case errors.Is(err, artifacts.ErrNotFound):
-			return FailCause(ReasonInputUnavailable, err,
-				"fan-out task %q item %d has no commit at %s", producer, i, uri)
-		case errors.Is(err, artifacts.ErrCommitUndecodable):
-			return FailCause(ReasonCommitUndecodable, err,
-				"fan-out task %q item %d: the object at %s is not a valid ActivityCommit", producer, i, uri)
-		default:
-			return FailCause(ReasonCommitReadFailed, err,
-				"fan-out task %q item %d: read the commit at %s: %v", producer, i, uri, err)
-		}
-		commit := record.Commit
-		if commit.GetSchemaVersion() != artifacts.CommitSchemaVersion {
-			return Fail(ReasonCommitSchema,
-				"fan-out task %q item %d: the commit at %s has schema_version %d; this orker understands %d",
-				producer, i, uri, commit.GetSchemaVersion(), artifacts.CommitSchemaVersion)
-		}
-		if mismatch := itemCommitIdentityMismatch(commit, in, producer, i); mismatch != "" {
-			return Fail(ReasonCommitIdentity,
-				"fan-out task %q item %d: the commit at %s is for a different activity: %s",
-				producer, i, uri, mismatch)
-		}
+		commit := commits[i]
 		segment := itemSegmentOf(i)
 		index := i
 		if values := commit.GetValues(); values.GetUri() != "" {
@@ -110,9 +99,7 @@ func (d *OCIDispatcher) stageEachUpstream(
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return FailCause(ReasonWorkdirFailed, err, "stage fan-out task %q item %d: %v", producer, i, err)
 			}
-			if failure := d.fetchOrDefer(ctx, staged, deferBytes, values, filepath.Join(dir, "values.json")); failure != nil {
-				return failure
-			}
+			fetchOrDefer(staged, now, deferBytes, values, filepath.Join(dir, "values.json"))
 			valuesPath := ContainerUpstream + "/" + safeProducer + "/" + segment + "/values.json"
 			staged.noteInputFile(valuesPath, "values.json", values.GetSha256())
 			staged.upstream = append(staged.upstream, taskJSONUpstream{
@@ -128,9 +115,7 @@ func (d *OCIDispatcher) stageEachUpstream(
 			}
 			for _, ref := range commit.GetArtifacts() {
 				safe := safeComponent(ref.GetName())
-				if failure := d.fetchOrDefer(ctx, staged, deferBytes, ref, filepath.Join(dir, safe)); failure != nil {
-					return failure
-				}
+				fetchOrDefer(staged, now, deferBytes, ref, filepath.Join(dir, safe))
 				containerPath := ContainerInputArtifacts + "/" + safeProducer + "/" + segment + "/" + safe
 				staged.noteInputFile(containerPath, ref.GetName(), ref.GetSha256())
 				entry := taskJSONInputArtifact{
@@ -152,6 +137,46 @@ func (d *OCIDispatcher) stageEachUpstream(
 		// both unreachable for a fan-out.
 	}
 	return nil
+}
+
+// readItemCommit reads and checks one item's commit of a fan-out upstream.
+func (d *OCIDispatcher) readItemCommit(
+	ctx context.Context, in *orkstackv1.ExecuteTaskInput, producer, commitRoot string, i int32,
+) (*orkstackv1.ActivityCommit, *Failure) {
+	if err := ctx.Err(); err != nil {
+		return nil, FailCause(ReasonInputUnavailable, err, "stage the items of fan-out task %q: %v", producer, err)
+	}
+	key, err := artifacts.ItemCommitKey(in.GetNamespace(), in.GetRunId(), producer, i)
+	if err != nil {
+		return nil, FailCause(ReasonInputUnavailable, err,
+			"fan-out task %q item %d: compose its commit key: %v", producer, i, err)
+	}
+	uri := strings.TrimSuffix(commitRoot, "/") + "/" + key
+	record, err := d.Commits.Get(ctx, uri)
+	switch {
+	case err == nil:
+	case errors.Is(err, artifacts.ErrNotFound):
+		return nil, FailCause(ReasonInputUnavailable, err,
+			"fan-out task %q item %d has no commit at %s", producer, i, uri)
+	case errors.Is(err, artifacts.ErrCommitUndecodable):
+		return nil, FailCause(ReasonCommitUndecodable, err,
+			"fan-out task %q item %d: the object at %s is not a valid ActivityCommit", producer, i, uri)
+	default:
+		return nil, FailCause(ReasonCommitReadFailed, err,
+			"fan-out task %q item %d: read the commit at %s: %v", producer, i, uri, err)
+	}
+	commit := record.Commit
+	if commit.GetSchemaVersion() != artifacts.CommitSchemaVersion {
+		return nil, Fail(ReasonCommitSchema,
+			"fan-out task %q item %d: the commit at %s has schema_version %d; this orker understands %d",
+			producer, i, uri, commit.GetSchemaVersion(), artifacts.CommitSchemaVersion)
+	}
+	if mismatch := itemCommitIdentityMismatch(commit, in, producer, i); mismatch != "" {
+		return nil, Fail(ReasonCommitIdentity,
+			"fan-out task %q item %d: the commit at %s is for a different activity: %s",
+			producer, i, uri, mismatch)
+	}
+	return commit, nil
 }
 
 // itemCommitIdentityMismatch is commitIdentityMismatch for one item of a

@@ -1535,6 +1535,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error — the container never ran |
 | `WORKSPACE_NOT_BINDABLE` | InfrastructureError | **no** | the daemon cannot bind the workspace path — a host misconfiguration retrying will not fix |
 | `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | the boot probe found `ORK_ORKER_WORKDIR` not bind-mountable; the Orker refuses to start |
+| `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`alpine:3.20`) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
 | `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out (`ORK_DOCKER_PULL_TIMEOUT`), and no verified embedded copy exists |
 | `IMAGE_DIGEST_MISMATCH` | ContractViolation | no | pulled or embedded content does not match `image.pinned` |

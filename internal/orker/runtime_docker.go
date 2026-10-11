@@ -61,13 +61,16 @@ type DockerRuntime struct {
 	// DefaultPullTimeout.
 	PullTimeout time.Duration
 
-	// mu guards attaches.
+	// mu guards attaches and described.
 	mu sync.Mutex
 	// attaches tracks, per container, the `docker start --attach` process
 	// Start span. Wait consumes and removes its entry so it can block on the
 	// SAME attach draining fully before reporting the exit status — see
 	// dockerAttach and Wait for why that join is load-bearing.
 	attaches map[ContainerID]*dockerAttach
+	// described is the first successful Describe, kept for the process's
+	// lifetime. A failure is never kept.
+	described *RuntimeInfo
 }
 
 var _ ContainerRuntime = (*DockerRuntime)(nil)
@@ -135,11 +138,13 @@ func (d *DockerRuntime) Pull(ctx context.Context, pinned string) (PullInfo, erro
 		return PullInfo{}, fmt.Errorf("%w: image %q is not digest-addressed", errNotPinned, pinned)
 	}
 
-	present, err := d.imagePresent(ctx, pinned)
+	// One inspect answers both questions — is the image local, and what are
+	// its platform facts — so a cached image (the common case) costs one
+	// docker process rather than two. A non-zero exit is "absent".
+	info, present, err := d.lookupImage(ctx, pinned)
 	if err != nil {
 		return PullInfo{}, err
 	}
-	cached := present
 	if !present {
 		code, out, err := d.controlWithin(ctx, d.pullTimeout(), "pull", "--quiet", pinned)
 		if err != nil {
@@ -148,12 +153,13 @@ func (d *DockerRuntime) Pull(ctx context.Context, pinned string) (PullInfo, erro
 		if code != 0 {
 			return PullInfo{}, fmt.Errorf("pull %s: docker exited %d: %s", pinned, code, strings.TrimSpace(out))
 		}
+		// Re-inspected only after an actual pull, for the facts of what was
+		// pulled.
+		if info, err = d.inspectImage(ctx, pinned); err != nil {
+			return PullInfo{}, err
+		}
 	}
-	info, err := d.inspectImage(ctx, pinned)
-	if err != nil {
-		return PullInfo{}, err
-	}
-	info.Cached = cached
+	info.Cached = present
 	info.Delivery = DeliveryRegistry
 	return info, nil
 }
@@ -196,14 +202,29 @@ func (d *DockerRuntime) imagePresent(ctx context.Context, ref string) (bool, err
 	return code == 0, nil
 }
 
-// inspectImage reads the platform facts the commit records as audit data.
+// inspectImage reads the platform facts the commit records as audit data. An
+// absent image is an error.
 func (d *DockerRuntime) inspectImage(ctx context.Context, ref string) (PullInfo, error) {
-	code, out, err := d.control(ctx, "image", "inspect", "--format", "{{json .}}", ref)
+	info, present, err := d.lookupImage(ctx, ref)
 	if err != nil {
 		return PullInfo{}, err
 	}
+	if !present {
+		return PullInfo{}, fmt.Errorf("image inspect %s: the image is not present", ref)
+	}
+	return info, nil
+}
+
+// lookupImage is one `image inspect`: whether ref is local, and if it is, its
+// platform facts. A non-zero exit means absent; only a CLI that could not run,
+// or output that does not decode, is an error.
+func (d *DockerRuntime) lookupImage(ctx context.Context, ref string) (PullInfo, bool, error) {
+	code, out, err := d.control(ctx, "image", "inspect", "--format", "{{json .}}", ref)
+	if err != nil {
+		return PullInfo{}, false, err
+	}
 	if code != 0 {
-		return PullInfo{}, fmt.Errorf("image inspect %s: docker exited %d: %s", ref, code, strings.TrimSpace(out))
+		return PullInfo{}, false, nil
 	}
 	var raw struct {
 		ID           string   `json:"Id"`
@@ -213,13 +234,13 @@ func (d *DockerRuntime) inspectImage(ctx context.Context, ref string) (PullInfo,
 		Variant      string   `json:"Variant"`
 	}
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
-		return PullInfo{}, fmt.Errorf("image inspect %s: decode: %w", ref, err)
+		return PullInfo{}, false, fmt.Errorf("image inspect %s: decode: %w", ref, err)
 	}
 	platform := raw.Os + "/" + raw.Architecture
 	if raw.Variant != "" {
 		platform += "/" + raw.Variant
 	}
-	return PullInfo{PlatformDigest: raw.ID, Platform: platform}, nil
+	return PullInfo{PlatformDigest: raw.ID, Platform: platform}, true, nil
 }
 
 func (d *DockerRuntime) pullTimeout() time.Duration {
@@ -477,6 +498,7 @@ func (d *DockerRuntime) awaitLeftCreated(
 	diagnostics *boundedBuffer,
 ) error {
 	deadline := time.Now().Add(startStateTimeout)
+	poll := startStatePoll
 	for {
 		started, err := d.leftCreated(ctx, id)
 		if err != nil {
@@ -501,7 +523,13 @@ func (d *DockerRuntime) awaitLeftCreated(
 				id, attach.err, strings.TrimSpace(diagnostics.String()))
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(startStatePoll):
+		case <-time.After(poll):
+		}
+		// Back off: a container that starts at once is seen on the first or
+		// second observation, and one the daemon is slow to start (a large
+		// image's layers, a busy host) is not observed fifty times a second.
+		if poll *= 2; poll > startStatePollMax {
+			poll = startStatePollMax
 		}
 
 		if time.Now().After(deadline) {
@@ -563,10 +591,11 @@ const (
 	// startStateTimeout bounds how long the daemon may take to move a
 	// container out of `created`.
 	startStateTimeout = 60 * time.Second
-	// startStatePoll is the gap between state observations. It is a poll of a
-	// real condition with a deadline, not a sleep standing in for
-	// synchronization.
-	startStatePoll = 20 * time.Millisecond
+	// startStatePoll is the first gap between state observations; each later
+	// gap doubles, up to startStatePollMax. It is a poll of a real condition
+	// with a deadline, not a sleep standing in for synchronization.
+	startStatePoll    = 20 * time.Millisecond
+	startStatePollMax = 200 * time.Millisecond
 )
 
 // Signal delivers sig to the container's PID 1.
@@ -616,7 +645,12 @@ func (d *DockerRuntime) Wait(ctx context.Context, id ContainerID) (ExitStatus, e
 			id, strings.TrimSpace(out.String()), err)
 	}
 	status := ExitStatus{Code: int32(code)}
-	status.OOMKilled = d.oomKilled(ctx, id)
+	// Only a non-zero status reads OOMKilled (the dispatcher names an OOM kill
+	// in a CONTAINER_EXIT_NONZERO message), so a successful container costs no
+	// extra inspect.
+	if status.Code != 0 {
+		status.OOMKilled = d.oomKilled(ctx, id)
+	}
 
 	if attach := d.takeAttach(id); attach != nil {
 		select {
@@ -677,18 +711,44 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 	if code != 0 {
 		return 0, fmt.Errorf("reap: list containers: docker exited %d: %s", code, strings.TrimSpace(out))
 	}
-	var removed int
+	var (
+		removed  int
+		failures []error
+	)
 	for _, id := range strings.Fields(out) {
+		// One container that cannot be removed (a removal already in
+		// progress, a daemon hiccup) must not leave every other orphan
+		// running, so every one is tried and the failures are reported
+		// together.
 		if err := d.Remove(ctx, ContainerID(id)); err != nil {
-			return removed, fmt.Errorf("reap container %s: %w", id, err)
+			failures = append(failures, fmt.Errorf("reap container %s: %w", id, err))
+			continue
 		}
 		removed++
+	}
+	if len(failures) > 0 {
+		return removed, &ReapIncompleteError{Failures: failures}
 	}
 	return removed, nil
 }
 
 // Describe reports the runtime's identity for DescribeOrker.
+//
+// The answer is process-lifetime data — the daemon's version and whether it is
+// rootless do not change under a running Orker — and DescribeOrker is the pool
+// liveness probe, asked several times per submit. So the first SUCCESSFUL
+// answer is kept and every later call returns it without spawning a process. A
+// failure is not kept: a daemon that comes up after the Orker did is still seen
+// on the next call.
 func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
+	d.mu.Lock()
+	if d.described != nil {
+		info := *d.described
+		d.mu.Unlock()
+		return info, nil
+	}
+	d.mu.Unlock()
+
 	info := RuntimeInfo{Name: "docker"}
 	code, out, err := d.control(ctx, "version", "--format", "{{.Server.Version}}")
 	if err != nil {
@@ -703,6 +763,10 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 	if code, out, err := d.control(ctx, "info", "--format", "{{.SecurityOptions}}"); err == nil && code == 0 {
 		info.Rootless = strings.Contains(out, "rootless")
 	}
+	d.mu.Lock()
+	kept := info
+	d.described = &kept
+	d.mu.Unlock()
 	return info, nil
 }
 
@@ -718,6 +782,27 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 		return fmt.Errorf("%w: cannot create a probe directory under %s: %w", ErrNotBindable, root, err)
 	}
 	defer func() { _ = os.RemoveAll(probe) }()
+
+	// The probe image is fetched first, under the PULL timeout rather than the
+	// 30 s control timeout `run` would give an implicit pull, and a failure to
+	// fetch it is its own error: a slow or rate-limited registry is not a work
+	// root the daemon cannot bind, and naming it as one sends an operator to
+	// the wrong fix.
+	present, err := d.imagePresent(ctx, bindProbeImage)
+	if err != nil {
+		return fmt.Errorf("%w: the bind probe image %s: %w", ErrProbeImageUnavailable, bindProbeImage, err)
+	}
+	if !present {
+		code, out, err := d.controlWithin(ctx, d.pullTimeout(), "pull", "--quiet", bindProbeImage)
+		if err != nil {
+			return fmt.Errorf("%w: the bind probe image %s could not be pulled: %w",
+				ErrProbeImageUnavailable, bindProbeImage, err)
+		}
+		if code != 0 {
+			return fmt.Errorf("%w: the bind probe image %s could not be pulled: docker exited %d: %s",
+				ErrProbeImageUnavailable, bindProbeImage, code, strings.TrimSpace(out))
+		}
+	}
 
 	code, out, err := d.control(ctx, "run", "--rm",
 		"--network", "none",
