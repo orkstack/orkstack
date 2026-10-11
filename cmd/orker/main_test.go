@@ -574,3 +574,51 @@ func TestControlChannelOptions_AreUnversionedAndOneProcess(t *testing.T) {
 		t.Fatalf("the control channel is versioned: %+v", options.DeploymentOptions)
 	}
 }
+
+// TestLoadConfig_MaxConcurrent is F-orker-storage-perf-1's boot half: an
+// unset ceiling is the documented default, a readable one is carried to both
+// the tuner and DescribeOrker through orker.Options, and one this process
+// cannot honor is refused at boot naming the variable rather than clamped.
+func TestLoadConfig_MaxConcurrent(t *testing.T) {
+	clearTelemetryEnv(t)
+	t.Run("unset is the default", func(t *testing.T) {
+		cfg := loadConfig()
+		if cfg.maxConcurrentErr != nil || cfg.maxConcurrent != orker.DefaultMaxConcurrent {
+			t.Fatalf("maxConcurrent = %d, %v; want %d", cfg.maxConcurrent, cfg.maxConcurrentErr, orker.DefaultMaxConcurrent)
+		}
+	})
+	for _, raw := range []string{"0", "-1", "two", "1.5"} {
+		t.Run("refuses "+raw, func(t *testing.T) {
+			t.Setenv(MaxConcurrentVar, raw)
+			cfg := loadConfig()
+			if cfg.maxConcurrentErr == nil || !strings.Contains(cfg.maxConcurrentErr.Error(), MaxConcurrentVar) {
+				t.Fatalf("%s=%s: err = %v; want a refusal naming the variable", MaxConcurrentVar, raw, cfg.maxConcurrentErr)
+			}
+			if err := run(nil, telemetry.Config{}, nil, cfg); err == nil {
+				t.Fatal("run() started with a ceiling it cannot read")
+			}
+		})
+	}
+	t.Run("carried to the activities", func(t *testing.T) {
+		t.Setenv(MaxConcurrentVar, "3")
+		cfg := loadConfig()
+		if cfg.maxConcurrentErr != nil || cfg.maxConcurrent != 3 {
+			t.Fatalf("maxConcurrent = %d, %v; want 3", cfg.maxConcurrent, cfg.maxConcurrentErr)
+		}
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		tcfg, sinks, err := telemetry.Boot(telemetry.ServiceOrker)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
+		opts.OrkerID, opts.WorkRoot = "orker-test", t.TempDir()
+		activities := orker.NewActivitiesWithOptions(nil, opts)
+		options, err := taskWorkerOptions(cfg, activities)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := options.Tuner.GetActivityTaskSlotSupplier().MaxSlots(); got != 3 {
+			t.Fatalf("activity slots = %d; want 3", got)
+		}
+	})
+}

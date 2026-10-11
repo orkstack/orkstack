@@ -307,10 +307,11 @@ func TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask(t *testing.T) {
 // TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace is the
 // other side of the pace: it may never become a memory leak or a write storm.
 //
-// Traffic well past the ceiling must apply backpressure until the interval
-// permits the next upload. The timestamps make the failure visible: the old
-// ceiling escape produced several immediate uploads even with a one-hour
-// interval.
+// Traffic past the 1 MiB chunk cap (logChunkMaxBytes) must apply backpressure
+// until the interval permits the next upload, and below the cap the chunk grows
+// instead of blocking (F-orker-storage-perf-6). The timestamps make a bypass
+// visible: no two uploads closer than the interval, and no chunk above the cap
+// plus one line.
 func TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace(t *testing.T) {
 	const interval = 20 * time.Millisecond
 	store := &recordingLogStore{}
@@ -322,26 +323,172 @@ func TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace(t *testing
 	})
 
 	line := strings.Repeat("y", 1023) // 1 KiB with the newline
-	for i := 0; i < 400; i++ {        // 400 KiB, well past a 64 KiB ceiling
+	for i := 0; i < 4096; i++ {       // 4 MiB, four times the chunk cap
 		sink.Write(line)
 	}
 	beforeClose := store.stored()
 	stamps := store.uploadTimes()
-	if len(beforeClose) < 5 {
-		t.Fatalf("400 KiB produced %d chunks before Close; traffic past the ceiling was not uploaded while it ran", len(beforeClose))
+	if len(beforeClose) < 3 {
+		t.Fatalf("4 MiB produced %d chunks before Close; traffic past the cap was not uploaded while it ran", len(beforeClose))
 	}
 	for i := 1; i < len(stamps); i++ {
 		gap := stamps[i].Sub(stamps[i-1])
 		if gap+2*time.Millisecond < interval {
-			t.Fatalf("uploads %d and %d were only %s apart, want at least %s: the ceiling bypassed pacing", i, i+1, gap, interval)
+			t.Fatalf("uploads %d and %d were only %s apart, want at least %s: the cap bypassed pacing", i, i+1, gap, interval)
 		}
 	}
 	for i, chunk := range beforeClose {
-		if len(chunk.Data) > DefaultLogFlushBytes+len(line)+1 {
-			t.Errorf("chunk %d is %d bytes, above the ceiling plus one line", i, len(chunk.Data))
+		if len(chunk.Data) > logChunkMaxBytes+len(line)+1 {
+			t.Errorf("chunk %d is %d bytes, above the 1 MiB cap plus one line", i, len(chunk.Data))
 		}
 	}
 	sink.Close()
+}
+
+// TestLogChunkSink_ABurstGrowsTheChunkInsteadOfThrottlingTheWriter is
+// F-orker-storage-perf-6 (a): a 4 MiB burst at the default 500 ms pace used to
+// block the workload's write(2) for a full interval every 64 KiB (128 KiB/s).
+// Now the chunk grows to 1 MiB first, so no single write waits longer than
+// one interval, every byte arrives in order, and uploads stay paced.
+func TestLogChunkSink_ABurstGrowsTheChunkInsteadOfThrottlingTheWriter(t *testing.T) {
+	const interval = 50 * time.Millisecond
+	store := &recordingLogStore{}
+	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+		FlushInterval: interval,
+		MaxBytes:      64 << 20,
+	})
+	line := strings.Repeat("z", 1023)
+	var longest time.Duration
+	blocked := 0
+	began := time.Now()
+	for i := 0; i < 4096; i++ {
+		start := time.Now()
+		sink.Write(line)
+		if took := time.Since(start); took > longest {
+			longest = took
+		}
+		if time.Since(start) > interval/2 {
+			blocked++
+		}
+	}
+	elapsed := time.Since(began)
+	sink.Close()
+	if longest > interval+25*time.Millisecond {
+		t.Fatalf("one write blocked %s, longer than one %s interval", longest, interval)
+	}
+	// 4 MiB at 1 MiB per interval is about four waits; at 64 KiB per interval
+	// it was sixty-four.
+	if blocked > 8 {
+		t.Fatalf("the writer was held %d times for 4 MiB; at a 1 MiB chunk it is about 4", blocked)
+	}
+	if store.body() != strings.Repeat(line+"\n", 4096) {
+		t.Fatal("the burst was not stored whole and in order")
+	}
+	t.Logf("4 MiB in %s, %d chunks, longest write %s", elapsed, len(store.stored()), longest)
+}
+
+// TestLogChunkSink_TheIntervalDoublesForALongTrickle is F-orker-storage-perf-6
+// (b): a line every 100 ms for ten minutes was one chunk per 500 ms (1,200
+// objects); the interval now doubles every 120 chunks up to 4 s, while the
+// first chunk still lands one interval after the first line.
+func TestLogChunkSink_TheIntervalDoublesForALongTrickle(t *testing.T) {
+	store := &recordingLogStore{}
+	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+		FlushBytes:    1, // every line is flush-worthy; only the pace batches
+		FlushInterval: time.Hour,
+		MaxBytes:      64 << 20,
+	})
+	// The pace is read from this clock; the hour-long real timer never fires.
+	clock := newTestClock()
+	sink.now = clock.now
+	sink.opts.FlushInterval = 500 * time.Millisecond
+
+	sink.Write("first line")
+	if got := len(store.stored()); got != 1 {
+		t.Fatalf("the first line made %d chunks; the first chunk is immediate", got)
+	}
+	var gaps []time.Duration
+	last := clock.now()
+	for step := 0; step < 6000; step++ { // 600 s at 100 ms
+		clock.advance(100 * time.Millisecond)
+		before := len(store.stored())
+		sink.Write(fmt.Sprintf("line %d", step))
+		if len(store.stored()) > before {
+			gaps = append(gaps, clock.now().Sub(last))
+			last = clock.now()
+		}
+	}
+	sink.Close()
+	chunks := len(store.stored())
+	if chunks > 450 {
+		t.Fatalf("ten minutes of a 100 ms trickle wrote %d chunks; want about 400 (it was 1,200)", chunks)
+	}
+	if gaps[0] != 500*time.Millisecond {
+		t.Fatalf("the second chunk came %s after the first; the first minute keeps the 500 ms pace", gaps[0])
+	}
+	if final := gaps[len(gaps)-1]; final != 4*time.Second {
+		t.Fatalf("the late pace is %s; want the 8× cap of 4 s", final)
+	}
+}
+
+// TestLogChunkSink_AFailingStoreBlocksOnceThenDrops is F-orker-storage-perf-6
+// (c): the first chunk a failing store refuses costs its tries; until the
+// cool-down ends every further chunk is dropped without an upload; and once
+// the store is back, the next chunk lands and says what was lost.
+func TestLogChunkSink_AFailingStoreBlocksOnceThenDrops(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		failing = true
+		tries   int
+	)
+	store := &recordingLogStore{}
+	store.fail = func(int64) error {
+		mu.Lock()
+		defer mu.Unlock()
+		tries++
+		if failing {
+			return errors.New("bucket unavailable")
+		}
+		return nil
+	}
+	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+		FlushBytes: 1, FlushInterval: time.Hour, MaxBytes: 1 << 20,
+	})
+	clock := newTestClock()
+	sink.now = clock.now
+	sink.opts.FlushInterval = time.Second
+
+	sink.Write("lost to the outage") // the first chunk: all its tries
+	mu.Lock()
+	afterFirst := tries
+	mu.Unlock()
+	if afterFirst != logChunkUploadTries {
+		t.Fatalf("the first failing chunk was tried %d times; want %d", afterFirst, logChunkUploadTries)
+	}
+	for i := 0; i < 4; i++ { // inside the 5 s cool-down: dropped, not tried
+		clock.advance(time.Second)
+		start := time.Now()
+		sink.Write(fmt.Sprintf("during the cool-down %d", i))
+		if took := time.Since(start); took > 50*time.Millisecond {
+			t.Fatalf("a write during the cool-down blocked %s", took)
+		}
+	}
+	mu.Lock()
+	if tries != afterFirst {
+		t.Fatalf("the store was tried %d more times during its cool-down", tries-afterFirst)
+	}
+	failing = false
+	mu.Unlock()
+	clock.advance(2 * time.Second) // past the cool-down
+	sink.Write("after the outage")
+	sink.Close()
+	chunks := store.stored()
+	if len(chunks) == 0 || chunks[0].Seq != 1 {
+		t.Fatalf("stored %v; want the first chunk to land at seq 1 after the outage", chunks)
+	}
+	if body := store.body(); !strings.Contains(body, "dropped") || !strings.Contains(body, "after the outage") {
+		t.Fatalf("the stream reads %q; want the loss reported and the new line stored", body)
+	}
 }
 
 // Sequences are dense and 1-based, because that is the resume contract the

@@ -1091,7 +1091,7 @@ func TestIntegration_DeleteOrkflowRefusedWhileScheduled(t *testing.T) {
 	s := newScheduleStack(ctx, t, "delorkflow", 1)
 	s.apply(t, scheduleOrkflowYAML("hello", "0.1.0", 0, ""))
 	s.create(t, "nightly", "--orkflow", "hello", "--cron", "0 2 * * *", "--paused")
-	_, stderr, code := s.cliRaw(t, s.a, "orkflow", "delete", "hello", "--force")
+	_, stderr, code := s.cliRaw(t, s.a, "orkflow", "delete", "hello", "--yes")
 	if code == exitOK || !strings.Contains(stderr, "failed_precondition") || !strings.Contains(stderr, "nightly") {
 		t.Fatalf("orkflow delete while scheduled = exit %d: %s", code, stderr)
 	}
@@ -1101,6 +1101,6 @@ func TestIntegration_DeleteOrkflowRefusedWhileScheduled(t *testing.T) {
 	if code == exitOK || !strings.Contains(stderr, "not_found") {
 		t.Fatalf("repeat schedule delete = exit %d: %s", code, stderr)
 	}
-	s.cli(t, s.a, exitOK, "orkflow", "delete", "hello", "--force")
+	s.cli(t, s.a, exitOK, "orkflow", "delete", "hello", "--yes")
 	s.writeProof(t, "schedule-orkflow-delete.txt")
 }

@@ -1349,6 +1349,8 @@ message ListRunsRequest {
   };
   reserved 1, 2, 6 to 9;
   reserved "orkflow_name", "status", "created_after", "created_before", "origin_kind", "origin_id";
+  // page_size caps the runs returned; 0 means the default (200); above the
+  // maximum (200) is INVALID_ARGUMENT, not clamped.
   int32 page_size = 3;
   // page_token continues a listing; it binds the namespace and the canonical
   // filter set, and a token minted under other filters is INVALID_ARGUMENT.

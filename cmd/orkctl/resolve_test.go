@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -309,3 +310,53 @@ func sha256Hex(b []byte) string {
 }
 
 func sha256Sum(b []byte) [32]byte { return sha256.Sum256(b) }
+
+// TestRunSubmitWatchJSON_PrintsTheCallbackOnStderr: under --watch --json the
+// one-time await callback is still shown once — on stderr, so stdout stays
+// the single JSON document the watch prints.
+func TestRunSubmitWatchJSON_PrintsTheCallbackOnStderr(t *testing.T) {
+	f := newFixture(t)
+	path := writePlanFile(t, "awaited.ork.yaml", awaitedCLIYAML)
+	f.run("apply", path).requireExit(t, exitOK)
+	f.starter.onStart = func(runID string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload) {
+		f.finishRun(runID, orkstackv1.Status_STATUS_SUCCEEDED, nil)
+		f.publish(runID, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+			orkstackv1.Status_STATUS_SUCCEEDED, "run succeeded")
+	}
+	out := f.run("run", "submit", "awaited-cli", "--watch", "--json").requireExit(t, exitOK)
+	if tokens := tokenPattern.FindAllString(out.stderr, -1); len(tokens) != 1 {
+		t.Fatalf("stderr carries %d tokens, want exactly one (training):\n%s", len(tokens), out.stderr)
+	}
+	for _, want := range []string{"Callback for await training", "curl -X POST", "/awaits/training"} {
+		if !strings.Contains(out.stderr, want) {
+			t.Fatalf("stderr does not contain %q:\n%s", want, out.stderr)
+		}
+	}
+	if tokenPattern.MatchString(out.stdout) {
+		t.Fatalf("stdout carries the token; it belongs on stderr only:\n%s", out.stdout)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out.stdout), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, out.stdout)
+	}
+}
+
+// TestRunSubmitWatchJSON_NoCallbacksLeavesStderrEmpty: a run with nothing to
+// disclose writes nothing to stderr.
+func TestRunSubmitWatchJSON_NoCallbacksLeavesStderrEmpty(t *testing.T) {
+	f := newFixture(t)
+	f.applyExample().requireExit(t, exitOK)
+	f.starter.onStart = func(runID string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload) {
+		f.finishRun(runID, orkstackv1.Status_STATUS_SUCCEEDED, nil)
+		f.publish(runID, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+			orkstackv1.Status_STATUS_SUCCEEDED, "run succeeded")
+	}
+	out := f.run("run", "submit", "hello-ork", "--watch", "--json").requireExit(t, exitOK)
+	if out.stderr != "" {
+		t.Fatalf("stderr = %q, want empty", out.stderr)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out.stdout), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, out.stdout)
+	}
+}

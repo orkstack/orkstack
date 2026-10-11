@@ -56,8 +56,13 @@ contract (`docs/OCI_ACTIVITY_CONTRACT.md` §2.1), not a refactor.
 - command: `TestRunWorkflow_ReplaysCommittedV1History`
 - payload: `TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends`
 - negative: `TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream`
-- recorder: `TestIntegration_RecordGoldenRunHistory`
-  (`golden_history_integration_test.go`)
+- lean-path gate: `TestCommittedHistory_LeanEventPathWithoutItsGateIsCaught`
+  replays it against the lean event path with its version check removed and
+  must fail: this history predates `lean-event-path`, so it replays only
+  because the gate sends it down the old path
+- recorder: none any more. `TestIntegration_RecordGoldenRunHistory` now
+  records `run-succeeded-v2.json`, because today's code records the
+  `lean-event-path` marker
 
 ### `run-awaited-resolved-v1.json`, `run-awaited-timeout-v1.json` — awaits
 
@@ -86,8 +91,10 @@ without their own snapshot, and the `EachUpstream` reference.
   `TestEachHistory_ReplayNeverRecountsTheArray` (the count comes from the
   marker, whatever a store would now answer)
 - negative: `TestEachHistory_CatchesAReorderedDispatch`
-- recorder: `TestIntegration_RecordEachRunHistory`
-  (`each_integration_test.go`); `ORK_REQUIRE_EACH_FIXTURE`
+- lean-path gate: `TestCommittedHistory_LeanEventPathWithoutItsGateIsCaught`,
+  as for `run-succeeded-v1.json`
+- recorder: none any more (`TestIntegration_RecordEachRunHistory` now records
+  `run-each-v2.json`); `ORK_REQUIRE_EACH_FIXTURE`
 
 ### `run-composed-parent-v1.json`, `run-composed-child-v1.json` — composition
 
@@ -136,3 +143,26 @@ and `RUN_FAILED` after the handlers end.
   dispatched on the run context fail-fast cancels
 - recorder: `TestIntegration_RecordJoinRunHistory`
   (`join_integration_test.go`); `ORK_REQUIRE_JOIN_FIXTURE`
+
+### `run-succeeded-v2.json`, `run-each-v2.json` — the lean event path
+
+The same two runs as `run-succeeded-v1.json` and `run-each-v1.json`, recorded
+by a build that records the `lean-event-path` version marker
+(`internal/engine/lean_events.go`). Each task's `TASK_STARTED` publishes with
+the snapshot URI its `TASK_SCHEDULED` wrote, with no snapshot write of its own,
+and the fan-out's item events without a snapshot are published without the
+run waiting for each. This is a new command path, so it gets its own fixtures
+rather than a re-recording of the v1 ones, which stay on `DefaultVersion`.
+
+- command: `TestRunWorkflow_ReplaysCommittedLeanHistories`
+- payload: `TestLeanHistory_TaskStartedCarriesItsScheduledURI` (the recorded
+  marker, and every `TASK_STARTED` carrying its `TASK_SCHEDULED`'s URI); the
+  v1 payload tests already re-execute both inputs on the lean path
+- negative: `TestLeanHistory_CatchesASnapshotWrittenForTaskStarted`, a body
+  that records the marker but writes `TASK_STARTED` its own snapshot again
+- recorders: `TestIntegration_RecordGoldenRunHistory`
+  (`golden_history_integration_test.go`) and
+  `TestIntegration_RecordEachRunHistory` (`each_integration_test.go`);
+  `ORK_REQUIRE_LEAN_FIXTURES`. Recorded once, against a real cluster, by the
+  build that introduced `lean-event-path`; like the v1 fixtures they are meant
+  to age, not to be refreshed.

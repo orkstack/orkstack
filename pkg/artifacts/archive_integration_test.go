@@ -63,7 +63,7 @@ func cleanupArchivedRun(t *testing.T, cfg artifacts.Config, runID string) {
 			t.Fatalf("RunObjectListKey: %v", err)
 		}
 		keys := []string{body, list}
-		for _, prefix := range []string{artifacts.RunIndexNamespace + "/", artifacts.RunOriginIndexNamespace + "/", artifacts.RunObjectRefNamespace + "/"} {
+		for _, prefix := range []string{artifacts.RunIndexNamespace + "/", artifacts.RunOriginIndexNamespace + "/", artifacts.RunRecentIndexNamespace + "/", artifacts.RunObjectRefNamespace + "/"} {
 			for _, key := range listKeys(t, ctx, client, cfg.S3Bucket, prefix) {
 				if strings.HasSuffix(key, "/"+runID) {
 					keys = append(keys, key)
@@ -808,4 +808,97 @@ func TestS3RunArchive_OriginIndexAgainstMinIO(t *testing.T) {
 		t.Fatalf("origin row %q not in MinIO; keys under the namespace: %v", key, keys)
 	}
 	t.Logf("EVIDENCE origin_row=%s", key)
+}
+
+// TestS3RunArchive_RecentPagingAgainstMinIO is the newest-first family's
+// paging-safety test against real object storage: page one of a namespace
+// reads its page and boundary instant rather than the namespace, and paging
+// by the (time, id) cursor visits every run exactly once, in exactly the
+// order the full scan of the run index answers — ties included.
+func TestS3RunArchive_RecentPagingAgainstMinIO(t *testing.T) {
+	archive, cfg := newS3RunArchive(t)
+	ctx := context.Background()
+	client := newRawS3Client(t, cfg)
+
+	namespace := "recent-" + uniqueToken(t)
+	orkflows := []string{"f", "f-g", "nightly", "nightly-build"}
+	statuses := []string{"succeeded", "failed", "canceled"}
+	base := time.Date(2026, 4, 5, 6, 7, 8, 0, time.UTC)
+	const runs, ties = 60, 5
+
+	t.Cleanup(func() {
+		for _, family := range []string{artifacts.RunIndexNamespace, artifacts.RunRecentIndexNamespace} {
+			deleteByPrefix(t, ctx, client, cfg.S3Bucket, family+"/"+namespace+"/")
+		}
+	})
+	for i := 0; i < runs; i++ {
+		runID := archiveTestRun(t, fmt.Sprintf("-re-%02d", i))
+		cleanupArchivedRun(t, cfg, runID)
+		if err := archive.PutRun(ctx, artifacts.RunRecord{
+			RunID:     runID,
+			Namespace: namespace,
+			Orkflow:   orkflows[i%len(orkflows)],
+			Status:    statuses[i%len(statuses)],
+			Time:      base.Add(time.Duration(i/ties) * time.Minute),
+			JSONL:     []byte(runID + "\n"),
+		}); err != nil {
+			t.Fatalf("PutRun %q: %v", runID, err)
+		}
+	}
+
+	page := func(q artifacts.RunQuery) []artifacts.RunIndexEntry {
+		got, err := archive.ListRuns(ctx, q)
+		if err != nil {
+			t.Fatalf("ListRuns(%+v): %v", q, err)
+		}
+		return got
+	}
+	walk := func(q artifacts.RunQuery) []string {
+		var ids []string
+		for {
+			got := page(q)
+			for _, entry := range got {
+				ids = append(ids, entry.RunID)
+			}
+			if len(got) < q.Limit {
+				return ids
+			}
+			last := got[len(got)-1]
+			q.BeforeTime, q.BeforeRunID = last.Time, last.RunID
+		}
+	}
+
+	const limit = 7
+	before := archive.IndexKeysScanned()
+	first := page(artifacts.RunQuery{Namespace: namespace, Limit: limit, Recent: true})
+	if scanned := archive.IndexKeysScanned() - before; scanned > limit+ties+1 {
+		t.Errorf("page one scanned %d index keys, want at most %d", scanned, limit+ties+1)
+	}
+	if len(first) != limit {
+		t.Fatalf("page one holds %d runs, want %d", len(first), limit)
+	}
+
+	for _, q := range []artifacts.RunQuery{
+		{Namespace: namespace, Limit: limit},
+		{Namespace: namespace, Orkflow: "f-g", Limit: 3},
+		{Namespace: namespace, Status: "failed", Limit: 4},
+	} {
+		want := walk(q)
+		recent := q
+		recent.Recent = true
+		got := walk(recent)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("query %+v: the newest-first walk listed\n%v\nthe run index lists\n%v", q, got, want)
+		}
+		seen := map[string]bool{}
+		for _, id := range got {
+			if seen[id] {
+				t.Fatalf("query %+v: run %s listed twice", q, id)
+			}
+			seen[id] = true
+		}
+	}
+	if all := walk(artifacts.RunQuery{Namespace: namespace, Limit: limit, Recent: true}); len(all) != runs {
+		t.Fatalf("paging the namespace listed %d runs, want %d", len(all), runs)
+	}
 }

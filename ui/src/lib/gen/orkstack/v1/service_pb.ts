@@ -2628,6 +2628,9 @@ export const GetRunResponseSchema: GenMessage<GetRunResponse> = /*@__PURE__*/
  */
 export type ListRunsRequest = Message<"orkstack.v1.ListRunsRequest"> & {
   /**
+   * page_size caps the runs returned; 0 means the default (200); above the
+   * maximum (200) is INVALID_ARGUMENT, not clamped.
+   *
    * @generated from field: int32 page_size = 3;
    */
   pageSize: number;

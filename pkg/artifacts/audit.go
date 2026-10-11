@@ -367,6 +367,9 @@ func walkAudit(ctx context.Context, src auditSource, q AuditQuery) (AuditPage, e
 			return false, err
 		}
 		sort.Strings(keys)
+		// The candidates of this day, newest first: in the window and before
+		// the cursor. Deciding them needs keys only.
+		candidates := make([]string, 0, len(keys))
 		for i := len(keys) - 1; i >= 0; i-- {
 			key := keys[i]
 			if q.BeforeKey != "" && key >= q.BeforeKey {
@@ -385,26 +388,41 @@ func walkAudit(ctx context.Context, src auditSource, q AuditQuery) (AuditPage, e
 			if !stamp.Before(until) {
 				continue
 			}
+			candidates = append(candidates, key)
+		}
+		// Bodies are fetched auditPrefetchWindow at a time, in parallel, and
+		// then evaluated strictly in key order exactly as a serial walk
+		// would: examined counts only evaluated keys, so the budget, the page
+		// and NextKey are the serial walk's, and a page that fills mid-window
+		// wastes at most auditPrefetchWindow-1 fetches. A fetch error is
+		// returned only when its key is reached, as it would have been.
+		for start := 0; start < len(candidates); {
 			if examined >= AuditScanMaxObjects {
 				return false, ErrAuditScanBudget
 			}
-			examined++
-			rec, ok, err := readAuditCandidate(ctx, src, key, day)
-			if err != nil {
-				return false, err
+			n := min(auditPrefetchWindow, len(candidates)-start, AuditScanMaxObjects-examined)
+			window := candidates[start : start+n]
+			fetched := prefetchAuditCandidates(ctx, src, window, day)
+			for j, key := range window {
+				examined++
+				if fetched[j].err != nil {
+					return false, fetched[j].err
+				}
+				if !fetched[j].ok {
+					continue
+				}
+				rec := fetched[j].rec
+				at := rec.GetAt().AsTime()
+				if at.Before(since) || !at.Before(until) || !q.Matches(rec) {
+					continue
+				}
+				page.Records = append(page.Records, rec)
+				if len(page.Records) == q.Limit {
+					page.NextKey = key
+					return true, nil
+				}
 			}
-			if !ok {
-				continue
-			}
-			at := rec.GetAt().AsTime()
-			if at.Before(since) || !at.Before(until) || !q.Matches(rec) {
-				continue
-			}
-			page.Records = append(page.Records, rec)
-			if len(page.Records) == q.Limit {
-				page.NextKey = key
-				return true, nil
-			}
+			start += n
 		}
 		return false, nil
 	})
@@ -412,6 +430,38 @@ func walkAudit(ctx context.Context, src auditSource, q AuditQuery) (AuditPage, e
 		return AuditPage{}, err
 	}
 	return page, nil
+}
+
+// auditPrefetchWindow is how many candidate bodies a listing fetches at once:
+// the bound every other fan-out read in the tree uses.
+const auditPrefetchWindow = 8
+
+type auditCandidate struct {
+	rec *orkstackv1.AuditRecord
+	ok  bool
+	err error
+}
+
+// prefetchAuditCandidates reads every key of one window concurrently, and
+// returns each one's readAuditCandidate result in the window's order.
+func prefetchAuditCandidates(ctx context.Context, src auditSource, keys []string, day time.Time) []auditCandidate {
+	out := make([]auditCandidate, len(keys))
+	if len(keys) == 1 {
+		rec, ok, err := readAuditCandidate(ctx, src, keys[0], day)
+		out[0] = auditCandidate{rec: rec, ok: ok, err: err}
+		return out
+	}
+	var wg sync.WaitGroup
+	for i, key := range keys {
+		wg.Add(1)
+		go func(i int, key string) {
+			defer wg.Done()
+			rec, ok, err := readAuditCandidate(ctx, src, key, day)
+			out[i] = auditCandidate{rec: rec, ok: ok, err: err}
+		}(i, key)
+	}
+	wg.Wait()
+	return out
 }
 
 // readAuditCandidate fetches and checks one body. A body that vanished, does

@@ -133,7 +133,7 @@ func TestAdminRetentionSet_ParsesGoDurationSyntax(t *testing.T) {
 	admin := &retentionAdmin{}
 	f := retentionFixture(t, admin, 72*time.Hour)
 
-	f.run("admin", "retention", "set", "24h30m").requireExit(t, exitOK)
+	f.run("admin", "retention", "set", "24h30m", "--yes").requireExit(t, exitOK)
 	if got := admin.requestedValues[len(admin.requestedValues)-1]; got != 24*time.Hour+30*time.Minute+24*time.Hour {
 		t.Errorf("reconciled backstop duration = %s, want 24h30m + the 24h margin", got)
 	}

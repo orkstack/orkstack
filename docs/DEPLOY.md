@@ -332,11 +332,12 @@ then the variable it becomes.
 | `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme. A namespace's `allowed_secrets` can only narrow this, never widen it (§5, "Secrets on a shared pool"). Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
-| `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable |
+| `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds two process-scoped scratch directories that boot empties: `ork-spool/`, where an upload whose source cannot be re-read is staged, and `ork-stage/`, the staging cache — attempts staging the same input digest at the same time (the items of a fan-out over one upstream) share one verified download, hard-linked into each attempt's read-only input tree and deleted when the last of them ends. Where the root cannot hard-link, each attempt downloads its own copy, as before |
 | `orker.log.flush_bytes` | `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
 | `orker.log.flush_interval` | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
 | `orker.heartbeat_interval` | `ORK_ORKER_HEARTBEAT_INTERVAL` | `5s` | `orker` | how often a running task's heartbeat actually reaches Temporal. Two consequences, both real: it is the longest a **cancellation** waits before the Orker acts on it — Temporal delivers cancellation only in a heartbeat's response, so a failing run's still-running siblings keep burning resources for up to this long — and it is the longest **Temporal frontend outage** a running container survives, since the SDK gives up on an activity whose heartbeat RPC keeps failing for a whole interval. Must be between `1s` and `10s` (a third of the 30 s heartbeat timeout); anything else is refused at boot rather than clamped. Lower it towards `2s` where Temporal is local or highly available; raise it where the frontend is flaky |
+| `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `1000` | `orker` | how many tasks this Orker runs at once — the size of its task worker's activity slots, and the **Max concurrent** Admin → Activities reports. A whole number, 1 or more; anything else is refused at boot. The default is the Temporal SDK's own and caps nothing a real host could run, so size it — see "Sizing an Orker's task ceiling" below |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no extra pollers; above zero makes this Orker a pin host. Pool-wide — see below |
 | `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
@@ -357,7 +358,7 @@ then the variable it becomes.
 | `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | `ork` | enables active per-namespace run retention: retires each finished run at its own namespace's run retention and reclaims its run-scoped logs and completion commits. Default-off because it deletes durable data; when off, every run is kept for the deployment maximum plus `ORK_CLEANUP_RETENTION_BUFFER` regardless of any namespace's own value |
 | `engine.cleanup.interval` | `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts |
 | `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run |
-| `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration |
+| `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration; a full iteration starts the next one at once (a backlog drains without waiting for the interval) |
 | `storage.dir` | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
 | `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `storage.s3.region` | `ORK_S3_REGION` | `us-east-1` | both | — |
@@ -396,6 +397,25 @@ identical file to stdout and exit, with no config file or environment
 needed) — every key present, each at its own default. `deploy/orkstack.example.yaml` stays the worked,
 hand-annotated example for a real deployment to start from; the generated
 file is the reference, not something to copy and edit by hand.
+
+### Sizing an Orker's task ceiling
+
+`orker.max_concurrent` is how many task containers one Orker runs at once.
+Past it the Orker stops polling: further tasks wait in its pool for this Orker
+or another to free a slot, which is the right place for them to wait — a
+container the host cannot afford to run is a task that fails `OOMKilled` or
+crawls, not one that runs sooner.
+
+The default, `1000`, is the Temporal SDK's own and is not a sizing decision.
+Size it from the host and the task defaults: a task that requests nothing is
+given `orker.resources.default_cpu` (`1`) and `orker.resources.default_memory`
+(`1Gi`), so a host with 16 CPUs and 64 GiB that runs mostly default-sized tasks
+is bounded by `min(16 ÷ 1, 64 ÷ 1) = 16`. Leave headroom for the Orker itself
+and the container daemon, and size by the larger requests where a pool runs
+them. A fan-out (`each:`) without `max_parallel` is the case this bounds:
+every item is dispatched at once, and only this ceiling decides how many of
+them one Orker takes. The value is logged at boot (`max_concurrent`) and
+reported by Admin → Activities.
 
 ### Pin hosting is a pool-wide setting
 
@@ -570,14 +590,27 @@ Two bounds decide when a chunk is written, and a deployment tunes both:
 - `ORK_ORKER_LOG_FLUSH_BYTES` (64 KiB) batches a chatty task, so a hundred
   thousand lines cost a few hundred objects rather than a hundred thousand.
 - `ORK_ORKER_LOG_FLUSH_INTERVAL` (500 ms) bounds the wait for a slow one, so a
-  task printing a line a minute is visible in half a second.
+  task printing a line a minute is visible in half a second. It is also the
+  shortest gap between two uploads of one attempt, and it does not stay fixed:
+  after every 120 chunks (about a minute of steady output) it doubles, up to
+  8× (4 s at the default), so a two-hour task printing steadily writes about
+  1,900 objects rather than 14,000 while its first minute keeps the
+  half-second latency.
+
+While the pace holds a chunk back, the chunk grows — up to 1 MiB — rather than
+blocking the task. Only a task writing more than 1 MiB per interval (2 MiB/s at
+the default) waits on its own `write(2)`, which is the bound: there is no
+queue and nothing is dropped. A store that refuses a chunk after three tries
+costs the task that one stall; for the next 5 s (doubling to 30 s while it
+keeps failing) chunks are counted as dropped without being tried, and the first
+chunk that lands afterwards says how many bytes were lost.
 
 A third bounds the damage. `ORK_ORKER_LOG_MAX_BYTES` (16 MiB) caps ONE task
 attempt: at the cap the Orker writes a final chunk saying so, in words, and
 stores nothing more. **Truncation is visible in the stream**, never silent —
 `orkctl run logs` prints the notice and the RPC sets `truncated` on it. The
-Orker's own memory is one flush buffer per running task, and a single
-over-long line is split rather than accumulated.
+Orker's own memory is one flush buffer per running task — at most 1 MiB plus
+one line — and a single over-long line is split rather than accumulated.
 
 **What one reader costs the engine is bounded in bytes, not in chunks.** A
 replica holds one page per open subscriber: at most **4 MiB of chunk data,
@@ -611,6 +644,19 @@ records, and its object-reference markers (`docs/STORAGE.md`, "Reclaiming
 space"). An execution the cluster no longer holds is treated as already
 retired. The archive body, its index rows and the cleanup sidecar are
 permanent, so a retired run stays listable and readable.
+
+On S3 a run's four run-scoped prefixes are emptied concurrently, one
+`DeleteObjects` request per listing page (up to 1000 keys), so the store must
+support `DeleteObjects` (AWS S3 and MinIO do). A key the store refuses fails
+that run's cleanup — it is not marked cleaned and a later pass retries it.
+
+**A backlog drains without waiting.** `ORK_CLEANUP_BATCH_SIZE` bounds one
+pass, not the rate: a pass that processed a full batch starts the next pass at
+once, resuming the index walk after the last run it examined, and the worker
+returns to `ORK_CLEANUP_INTERVAL` after the first pass that reaches the end of
+the index. A backlog of retired runs therefore clears at the store's and the
+cluster's speed, a batch at a time; the next ticked pass walks from the start
+again, so a run a drain passed before it was due is examined once it is.
 
 Cleanup **fails closed**: if the retention policy or any namespace's own value
 is unreadable, that iteration deletes nothing; an archived run the cluster
@@ -659,6 +705,26 @@ aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
   --lifecycle-configuration '{"Rules":[{"ID":"ork-task-logs","Status":"Enabled",
     "Filter":{"Prefix":"metadata/logs/"},"Expiration":{"Days":30}}]}'
 ```
+
+**Abort incomplete multipart uploads.** An Orker uploads an output artifact
+larger than 64 MiB in 16 MiB parts, four at a time, so a failed part is
+re-sent alone rather than the whole artifact. A failed upload is aborted, but
+an Orker killed mid-upload leaves its parts in the bucket, invisible to every
+listing and still billed. Add one bucket-wide rule that collects them; it
+touches no complete object:
+
+```bash
+# MinIO needs no rule: it removes incomplete uploads itself, after
+# `stale_uploads_expiry` (24h by default; `mc admin config get local api`).
+
+# AWS S3
+aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
+  --lifecycle-configuration '{"Rules":[{"ID":"ork-abort-incomplete-multipart","Status":"Enabled",
+    "Filter":{"Prefix":""},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":1}}]}'
+```
+
+A `put-bucket-lifecycle-configuration` call replaces the bucket's whole rule
+set, so put this rule in the same document as any expiry rules above.
 
 Retention is separate from `orkctl orkflow delete`, which removes an
 Orkflow's stored versions only after its run-safety gate proves no affected
@@ -712,6 +778,10 @@ One call fixes it, and no worker has to restart:
 ```bash
 orkctl release promote "$ORK_BUILD_ID"
 ```
+
+`release promote` and `release rollback` name the release current now and
+the one that will be, and ask for confirmation before they write; in a
+script (no terminal on standard input) they refuse unless given `--yes`.
 
 `orkctl release` speaks OrkStack's own vocabulary — a **release** is one build
 of `ork` and `orker` deployed together — and reads the deployment, the
@@ -1445,7 +1515,13 @@ What that costs, stated so nobody has to discover it:
 The pool scope of that read is the durable state the replica can read: the
 deployment's default route, namespace allow-lists, and pools named by any
 stored orkflow version. A pool that no namespace or stored version names cannot
-be inferred from this API. Temporal's task-queue description call requires a
+be inferred from this API. The pools a namespace's stored versions name are
+remembered by each replica for 30 seconds, because collecting them reads every
+stored orkflow's version catalog: an apply or delete through a replica is seen
+by that replica at once, and a pool named only by an orkflow applied through
+ANOTHER replica appears in this replica's pool list (and its stats scope) within
+30 seconds. A namespace whose catalog could not be read is asked again on the
+next call, never remembered. Temporal's task-queue description call requires a
 queue name; it has no read that lists every task queue, and those names stay
 below this user-facing pool surface.
 
@@ -1759,7 +1835,11 @@ worker's own doc comment (`internal/archive/cleanup.go`) for the mechanism.
 `<duration>` uses Go's `time.ParseDuration` syntax (`168h`, `24h30m`, …), the
 same flavour every `ORK_*_TTL`/`ORK_*_INTERVAL` variable in the table above
 uses. A zero or negative duration is refused locally, before any request
-leaves the process:
+leaves the process. Lowering the maximum first reads the one in force, states
+what the next cleanup pass removes (every finished run older than the new
+maximum, in a namespace without its own run retention, loses its logs,
+attempt records, snapshots and commits) and asks for confirmation; a script
+passes `--yes`. Raising it asks nothing:
 
 ```
 $ orkctl admin retention get
@@ -1948,6 +2028,17 @@ They catch different halves, and neither is enough alone:
 | `TestJoinHistory_ActivityPayloadsMatchWhatCurrentCodeSends` | the join fixture's payloads, re-executed from its own input | a changed `ExecuteTaskInput.join` or failed-need reference, a reworded skip, cancel or failing sentence |
 | `TestJoinHistory_CatchesAHandlerOnTheRunContext` | the replayer, against a body that dispatches failure handlers on the run's own context — it must FAIL | the join guard going blind to where a handler's activities are scheduled |
 | `TestCommittedFixtures_DeclareNoJoin` | every other fixture's `RunWorkflow` input | a fixture that declares `join:`, which would void the premise that no earlier history reaches a join branch |
+| `TestCommittedHistory_LeanEventPathWithoutItsGateIsCaught` | the replayer, against `run-succeeded-v1.json` and `run-each-v1.json` with the lean event path forced on without its `lean-event-path` version check — it must FAIL | the gate going missing: those fixtures predate the version, so they replay only because it sends them down the old path |
+| `TestRunWorkflow_ReplaysCommittedLeanHistories`, `TestLeanHistory_CatchesASnapshotWrittenForTaskStarted`, `TestLeanHistory_TaskStartedCarriesItsScheduledURI` | the lean-path fixtures (`run-succeeded-v2.json`, `run-each-v2.json`): the command stream, a body that writes `TASK_STARTED` its own snapshot again (it must FAIL), and the recorded URI reuse | a change to the lean event path itself (a missing fixture skips, and `ORK_REQUIRE_LEAN_FIXTURES=1` makes that a failure) |
+
+**The lean event path is a versioned change.** A run that records the
+`lean-event-path` version publishes a task's `TASK_STARTED` with the snapshot
+its `TASK_SCHEDULED` just wrote (nothing changes between the two), and
+publishes a fan-out's snapshot-less item events without waiting for each — at
+most 32 outstanding, every one awaited before the run's terminal event. A run
+started before that version carries no marker, so it keeps the old command
+stream for its whole life, on any build. Events, their sequence numbers and
+the stream a reader sees are the same on both paths.
 
 The replayer never looks inside a payload: adding a field to
 `task.ExecuteTaskInput` replays perfectly clean, and an Orker of the recorded

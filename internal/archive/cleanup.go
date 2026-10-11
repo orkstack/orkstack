@@ -212,23 +212,41 @@ func (c *Cleaner) WithClock(now func() time.Time) *Cleaner {
 }
 
 // Run scans immediately, then periodically, until ctx is canceled.
+//
+// A pass that stops because it processed a full BatchSize has left a backlog
+// behind it, so the next pass starts at once, resuming the index walk after
+// the last run the previous pass examined, instead of waiting a whole
+// Interval: a backlog drains at the store's speed, BatchSize runs at a time.
+// The first pass that reaches the end of the index returns Run to the ticker,
+// and the next ticked pass walks from the start again, so a run that was not
+// yet due when a drain passed it is examined once it is.
 func (c *Cleaner) Run(ctx context.Context) {
-	c.runAndLog(ctx)
+	resume := c.runAndLog(ctx, "")
 	ticker := time.NewTicker(c.config.Interval)
 	defer ticker.Stop()
 	for {
+		if resume != "" {
+			if ctx.Err() != nil {
+				return
+			}
+			resume = c.runAndLog(ctx, resume)
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.runAndLog(ctx)
+			resume = c.runAndLog(ctx, "")
 		}
 	}
 }
 
-func (c *Cleaner) runAndLog(ctx context.Context) {
-	c.logger.Info("artifact cleanup iteration started")
-	stats, err := c.RunOnce(ctx)
+// runAndLog runs one pass after startAfter and logs it. It returns where a
+// drain continues: the index key after which the next pass starts, or "" when
+// this pass reached the end of the index.
+func (c *Cleaner) runAndLog(ctx context.Context, startAfter string) string {
+	c.logger.Info("artifact cleanup iteration started", "drain", startAfter != "")
+	stats, resume, err := c.pass(ctx, startAfter)
 	args := []any{
 		"runs_scanned", stats.RunsScanned,
 		"runs_cleaned", stats.RunsCleaned,
@@ -239,33 +257,43 @@ func (c *Cleaner) runAndLog(ctx context.Context) {
 	if err != nil {
 		args = append(args, "error", err)
 		c.logger.Error("artifact cleanup iteration completed", args...)
-		return
+		return resume
 	}
 	c.logger.Info("artifact cleanup iteration completed", args...)
+	return resume
 }
 
-// RunOnce performs one fail-closed scan. Per-run failures are joined and do not
-// prevent later eligible runs from being processed.
+// RunOnce performs one fail-closed scan from the start of the index. Per-run
+// failures are joined and do not prevent later eligible runs from being
+// processed.
 func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
-	var stats CleanupStats
+	stats, _, err := c.pass(ctx, "")
+	return stats, err
+}
+
+// pass is RunOnce starting after the index key startAfter ("" is the start).
+// resume is the index key of the last run it examined when it stopped
+// because it had processed a full BatchSize — where a drain continues — and
+// "" when it reached the end of the index or stopped for any other reason.
+func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupStats, resume string, err error) {
 	if c.archive == nil || c.cluster == nil || c.namespaces == nil || c.retention == nil {
-		return stats, fmt.Errorf("archive cleanup: worker is not fully configured")
+		return stats, "", fmt.Errorf("archive cleanup: worker is not fully configured")
 	}
 	if c.config.TemporalNamespace == "" {
-		return stats, fmt.Errorf("archive cleanup: Temporal namespace is empty")
+		return stats, "", fmt.Errorf("archive cleanup: Temporal namespace is empty")
 	}
 	policy, err := c.retention.Policy(ctx)
 	if err != nil {
 		stats.Errors = 1
 		c.logger.Error("artifact cleanup retention policy read failed", "error", err)
-		return stats, fmt.Errorf("archive cleanup: read retention policy: %w", err)
+		return stats, "", fmt.Errorf("archive cleanup: read retention policy: %w", err)
 	}
 	max := policy.GetMaxRunRetention().AsDuration()
 	docs, err := c.namespaces.List(ctx)
 	if err != nil {
 		stats.Errors = 1
 		c.logger.Error("artifact cleanup namespace list failed", "error", err)
-		return stats, fmt.Errorf("archive cleanup: list namespaces: %w", err)
+		return stats, "", fmt.Errorf("archive cleanup: list namespaces: %w", err)
 	}
 	byName := make(map[string]time.Duration, len(docs))
 	minRetention := max
@@ -298,7 +326,7 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 	// per-namespace, close-time cutoff is applied per entry below.
 	prefilter := now.Add(-minRetention)
 	pageLimit := doubleSaturating(c.config.BatchSize)
-	cursor := ""
+	cursor := startAfter
 	// Pages are walked in index-key order, so the backend stops at the page
 	// boundary and one whole iteration enumerates each index key once no matter
 	// how many pages it takes. Ordering by key rather than by time is what makes
@@ -312,7 +340,7 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 		})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("archive cleanup: list runs: %w", err))
-			return stats, errors.Join(errs...)
+			return stats, "", errors.Join(errs...)
 		}
 		if len(entries) == 0 {
 			break
@@ -335,7 +363,7 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 			// here leaves every run either fully cleaned or wholly untouched.
 			if err := ctx.Err(); err != nil {
 				errs = append(errs, fmt.Errorf("archive cleanup: canceled: %w", err))
-				return stats, errors.Join(errs...)
+				return stats, "", errors.Join(errs...)
 			}
 			stats.RunsScanned++
 			state, stateErr := c.archive.CleanupState(ctx, entry.RunID)
@@ -406,6 +434,12 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 				}
 			}
 			if processed >= c.config.BatchSize {
+				// A full batch: a drain resumes after this run. A key that
+				// cannot be rendered, or that does not advance, ends the
+				// drain rather than repeat work.
+				if key, keyErr := artifacts.RunIndexKeyForEntry(entry); keyErr == nil && key > startAfter {
+					resume = key
+				}
 				break
 			}
 		}
@@ -421,5 +455,5 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 		// cursor only has to advance while full pages keep coming back.
 		cursor = next
 	}
-	return stats, errors.Join(errs...)
+	return stats, resume, errors.Join(errs...)
 }

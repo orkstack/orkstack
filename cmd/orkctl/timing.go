@@ -885,7 +885,9 @@ func newRunTimingCommand(g *globalFlags) *cobra.Command {
 			"dash means the quantity does not apply: the task was never scheduled or\n" +
 			"has not finished yet.\n\n" +
 			"It reads the run snapshot and the per-attempt records; nothing is\n" +
-			"computed on the server.",
+			"computed on the server.\n\n" +
+			"--json prints this command's own timing document (the table's data), not a\n" +
+			"response envelope.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selected, err := item.resolve(cmd, task)

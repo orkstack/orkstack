@@ -13,6 +13,7 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -1743,8 +1744,18 @@ tasks:
 		{"input over the bound", "rollback", func(t *testing.T) outcome {
 			return containerRun(t, "run-refused-handler-0", bigWith, 4096, nil)
 		}, task.ReasonInputTooLarge},
+		{"TASK_SCHEDULED write fails", "rollback", func(t *testing.T) outcome {
+			return containerRun(t, "run-refused-handler-1a", "small", 0, failNthSnapshotWhere(rollbackRunning, 0))
+		}, "object store unavailable"},
 		{"TASK_STARTED write fails", "rollback", func(t *testing.T) outcome {
-			return containerRun(t, "run-refused-handler-1", "small", 0, failNthSnapshotWhere(rollbackRunning, 1))
+			// TASK_STARTED writes a snapshot of its own only on the old event
+			// path: on the lean one it reuses TASK_SCHEDULED's (lean_events.go).
+			// A run that started before "lean-event-path" stays on the old path
+			// for good, so this write can still fail and must still be recorded.
+			return containerRun(t, "run-refused-handler-1", "small", 0, func(h *harness) func(*orkstackv1.Run, int64) error {
+				h.env.OnGetVersion("lean-event-path", workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
+				return failNthSnapshotWhere(rollbackRunning, 1)(h)
+			})
 		}, "object store unavailable"},
 		{"composed TASK_SCHEDULED write fails", "compensate", func(t *testing.T) outcome {
 			run, h := composedHandlerRun(t, "run-refused-handler-2", failNthSnapshotWhere(compensateRunning, 0))

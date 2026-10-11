@@ -175,12 +175,18 @@ func (s *Service) ListPools(
 //
 // What a store failure MEANS is the caller's decision, not this one's: the
 // caller degrades, and this reports.
+//
+// The answer is memoized per namespace for PoolScopeCacheTTL, shared by
+// concurrent callers, and invalidated by an apply or delete on this replica
+// (poolScopeCache). A failure is never memoized.
 func (s *Service) poolsNamedByOrkflows(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
 ) ([]string, error) {
-	named, errs := s.poolsNamedByOrkflowsAcross(ctx, []*orkstackv1.Namespace{ns})
-	return named[0], errs[0]
+	return s.poolScope.get(ctx, ns, func(ctx context.Context, ns *orkstackv1.Namespace) ([]string, error) {
+		named, errs := s.poolsNamedByOrkflowsAcross(ctx, []*orkstackv1.Namespace{ns})
+		return named[0], errs[0]
+	})
 }
 
 // poolsNamedByOrkflowsAcross is that same scan over several namespaces, and

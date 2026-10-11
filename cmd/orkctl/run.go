@@ -107,6 +107,11 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 					return err
 				}
 				fmt.Fprintln(cmd.OutOrStdout())
+			} else if callbacks := resp.Msg.GetAwaitCallbacks(); len(callbacks) > 0 {
+				// The callback tokens are disclosed by this response and
+				// nowhere else, but stdout belongs to the one JSON document
+				// the watch prints: they go to stderr, once.
+				renderAwaitCallbacks(cmd.ErrOrStderr(), g.baseURL(), callbacks)
 			}
 			return watchRun(cmd, g, run.GetId(), 0)
 		},
@@ -321,7 +326,7 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of runs to return (0 = server default)")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of runs to return, at most 200 (0 = server default, 200)")
 	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous list")
 	filterTexts = addFilterFlag(cmd, &orkstackv1.ListRunsRequest{})
 	return cmd
@@ -393,8 +398,8 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	fmt.Fprintf(header, "Started:\t%s\n", formatTime(run.GetStartedAt()))
 	fmt.Fprintf(header, "Finished:\t%s\n", formatTime(run.GetFinishedAt()))
 	writeOriginLines(header, run.GetOrigin())
-	fmt.Fprintf(header, "Input:\t%s\n", payloadSummary(run.GetInput()))
-	fmt.Fprintf(header, "Output:\t%s\n", payloadSummary(run.GetOutput()))
+	fmt.Fprintf(header, "Input:\t%s\n", payloadSummary(run.GetInput(), run.GetId(), run.GetNamespace()))
+	fmt.Fprintf(header, "Output:\t%s\n", payloadSummary(run.GetOutput(), run.GetId(), run.GetNamespace()))
 	if run.GetError() != nil {
 		fmt.Fprintf(header, "Error:\t%s\n", errorLine(run.GetError()))
 	}

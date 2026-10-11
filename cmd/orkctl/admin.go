@@ -142,7 +142,8 @@ func newAdminRetentionGetCommand(g *globalFlags) *cobra.Command {
 }
 
 func newAdminRetentionSetCommand(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:   "set <duration>",
 		Short: "Change the deployment's maximum run retention",
 		Long: "Change the deployment's maximum run retention.\n\n" +
@@ -154,7 +155,10 @@ func newAdminRetentionSetCommand(g *globalFlags) *cobra.Command {
 			"namespace — lower the namespace first (`orkctl namespace update\n" +
 			"--run-retention`). Namespaces that set no run retention follow the new maximum\n" +
 			"at once: finished runs already older than it are retired on the next cleanup\n" +
-			"pass.",
+			"pass.\n\n" +
+			"Lowering it reads the current maximum, states what the next cleanup pass\n" +
+			"removes and asks for confirmation; it refuses when standard input is not a\n" +
+			"terminal unless --yes is given. Raising it asks nothing.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			retention, err := time.ParseDuration(args[0])
@@ -169,6 +173,11 @@ func newAdminRetentionSetCommand(g *globalFlags) *cobra.Command {
 				// isn't this CLI), but that is defense in depth, not where
 				// this promise is kept for `orkctl`.
 				return fmt.Errorf("retention must be a positive duration, got %s", retention)
+			}
+			if !yes {
+				if err := confirmRetentionLowering(cmd, g, retention); err != nil {
+					return err
+				}
 			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
@@ -187,6 +196,29 @@ func newAdminRetentionSetCommand(g *globalFlags) *cobra.Command {
 			return renderRetentionPolicy(cmd.OutOrStdout(), resp.Msg)
 		},
 	}
+	addYesFlag(cmd, &yes)
+	return cmd
+}
+
+// confirmRetentionLowering reads the maximum in force and, only when the new
+// one is lower, states what the next cleanup pass removes and asks. Raising
+// the maximum, or setting the value it already has, loses nothing.
+func confirmRetentionLowering(cmd *cobra.Command, g *globalFlags, retention time.Duration) error {
+	ctx, cancel := g.unaryContext(cmd)
+	defer cancel()
+	read, err := g.systemClient().GetRetentionPolicy(ctx, connect.NewRequest(&orkstackv1.GetRetentionPolicyRequest{}))
+	if err != nil {
+		return rpcError("admin retention set: read the current maximum", err)
+	}
+	current := read.Msg.GetPolicy().GetMaxRunRetention().AsDuration()
+	if retention >= current {
+		return nil
+	}
+	prompt := fmt.Sprintf("Lowering the maximum run retention from %s to %s: every finished run older than %s\n"+
+		"in a namespace without its own run retention loses its logs, attempt records, snapshots and commits\n"+
+		"on the next cleanup pass.",
+		shortDuration(current), shortDuration(retention), shortDuration(retention))
+	return confirmDestructive(cmd, g, "lower the maximum run retention", prompt, false)
 }
 
 // retentionPolicyMessage is the shape GetRetentionPolicyResponse and

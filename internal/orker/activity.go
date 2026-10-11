@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -80,7 +81,9 @@ type Options struct {
 	BuildID string
 	// Pool is the pool this Orker serves, reported by DescribeOrker.
 	Pool string
-	// MaxConcurrent is reported by DescribeOrker.
+	// MaxConcurrent is how many tasks this Orker runs at once: the size of the
+	// task worker's activity slot supplier (WorkerTuner), and what
+	// DescribeOrker reports. Zero means DefaultMaxConcurrent.
 	MaxConcurrent int32
 	// MaxPins is reported by DescribeOrker. Zero — the default — means this
 	// Orker hosts no pins, and a submit that pins a task to its pool is refused
@@ -167,6 +170,10 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	if buildID == "" {
 		buildID = os.Getenv(BuildIDVar)
 	}
+	maxConc := opts.MaxConcurrent
+	if maxConc <= 0 {
+		maxConc = DefaultMaxConcurrent
+	}
 
 	return &Activities{
 		dispatcher: &OCIDispatcher{
@@ -192,7 +199,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			Logger:            opts.Logger,
 		},
 		pool:    opts.Pool,
-		maxConc: opts.MaxConcurrent,
+		maxConc: maxConc,
 		maxPins: opts.MaxPins,
 		cordon:  NewCordon(),
 		pins:    newOpenPins(),
@@ -381,6 +388,27 @@ func (a *Activities) reapPinDirectories(root string) {
 	}
 }
 
+// reapContainers runs the runtime's Reap and logs what it removed and each
+// orphan it could not remove. Only a failure to list is returned.
+func (a *Activities) reapContainers(ctx context.Context) error {
+	removed, err := a.dispatcher.Runtime.Reap(ctx, a.dispatcher.OrkerID)
+	if removed > 0 {
+		a.dispatcher.logger().Info("orphaned containers reaped", "removed", removed)
+	}
+	var partial *ReapIncompleteError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &partial):
+		for _, failure := range partial.Failures {
+			a.dispatcher.logger().Warn("orphan container reap", "error", failure)
+		}
+		return nil
+	default:
+		return fmt.Errorf("reap orphaned containers: %w", err)
+	}
+}
+
 // Boot performs the checks an Orker must pass before it accepts work.
 //
 // Refusing to start is the only honest response to any of these failures. An
@@ -414,6 +442,9 @@ func (a *Activities) Boot(ctx context.Context) error {
 		ProbeBindable(context.Context, string) error
 	}); ok {
 		if err := prober.ProbeBindable(ctx, root); err != nil {
+			if errors.Is(err, ErrProbeImageUnavailable) {
+				return fmt.Errorf("%s: %w", ReasonBindProbeImageUnavailable, err)
+			}
 			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
 	}
@@ -433,15 +464,41 @@ func (a *Activities) Boot(ctx context.Context) error {
 	}
 	// Reap this Orker's own previous life's containers. An Orker crash does
 	// not stop its containers (§14.17), so a restarted Orker inherits them.
-	if _, err := a.dispatcher.Runtime.Reap(ctx, a.dispatcher.OrkerID); err != nil {
-		return fmt.Errorf("reap orphaned containers: %w", err)
+	//
+	// Every orphan is tried. One that cannot be removed is logged, by the same
+	// policy as reapPinDirectories below, and does not stop boot: refusing to
+	// start over one container stuck in removal would leave the pool short an
+	// Orker for a container the next boot tries again. Only a reap that could
+	// not even LIST the containers refuses, because then this Orker cannot
+	// account for any of them.
+	if err := a.reapContainers(ctx); err != nil {
+		return err
 	}
 	// And its own previous life's pin directories, beside the containers, for
 	// the same reason and with a stronger guarantee: a pin cannot outlive the
 	// worker process that opened its session, so every ork-pin-* under the work
 	// root is dead by construction rather than by heuristic (§6.4).
 	a.reapPinDirectories(root)
+	// And the upload spool and the staging cache, for the same reason: a
+	// spool file outlives its upload, and a staging entry the attempts that
+	// held it, only when the process died.
+	a.reapScratch(filepath.Join(root, SpoolDirName))
+	a.reapScratch(filepath.Join(root, StageDirName))
 	return nil
+}
+
+// reapScratch removes one of the work root's process-scoped scratch
+// directories at boot. Like reapPinDirectories, a failure is logged and does
+// not fail Boot: nothing will ever read what is left there.
+func (a *Activities) reapScratch(dir string) {
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err := removeSealedTree(dir); err != nil {
+		a.dispatcher.logger().Warn("boot reap", "path", dir, "error", err)
+		return
+	}
+	a.dispatcher.logger().Info("scratch reaped", "path", dir)
 }
 
 // claimIdentity takes the process-lifetime lock that makes reaping by a stable

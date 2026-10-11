@@ -413,6 +413,12 @@ type Service struct {
 	// (usage.go). It is a measuring component, not a map of answers: its
 	// cache is unexported inside it and reachable only through Measure.
 	usage *UsageMeter
+	// poolScope memoizes each namespace's pools-named-by-orkflows answer
+	// (PoolScopeCacheTTL); ApplyOrkflow and DeleteOrkflow invalidate it.
+	poolScope *poolScopeCache
+	// runReads shares one run read between the quiet log followers of a run
+	// (taskIsTerminal) for taskTerminalMemoTTL.
+	runReads *runReadMemo
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
 	system SystemInfo
@@ -548,6 +554,8 @@ func NewService(cfg Config) *Service {
 		svc.now = time.Now
 	}
 	svc.usage = newUsageMeter(cfg.Archive, cfg.Attempts, cfg.UsageCacheTTL, svc.now)
+	svc.poolScope = newPoolScopeCache(PoolScopeCacheTTL, svc.now)
+	svc.runReads = newRunReadMemo(taskTerminalMemoTTL)
 	if svc.deliveries != nil {
 		svc.deliveryRecorder = NewDeliveryRecorder(svc.deliveries, svc.logger)
 	}
@@ -662,6 +670,9 @@ func (s *Service) ApplyOrkflow(
 	// just extended.
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
 	stored, created, err := s.orkflows.Put(ctx, wf, expected)
+	// Whatever the outcome — a failed write may still have landed — the
+	// namespace's memoized pool scope may now be stale.
+	s.poolScope.invalidate(ns.GetName())
 	if err != nil {
 		var moved *artifacts.HeadMovedError
 		if errors.As(err, &moved) {
@@ -1934,14 +1945,77 @@ func (s *Service) LookupRunIn(ctx context.Context, runID, namespace string) (*or
 // namespace once and reports a namespace error once, unattributed to a side.
 func (s *Service) lookupRunInResolved(ctx context.Context, runID, namespace string) (*orkstackv1.Run, error) {
 	run, err := s.LookupRun(ctx, runID)
+	if connect.CodeOf(err) == connect.CodeNotFound {
+		// The same words as a run of another namespace: the message says
+		// where it looked, and the two cases stay indistinguishable.
+		return nil, connect.NewError(connect.CodeNotFound,
+			fmt.Errorf("run %q not found in namespace %q", runID, namespace))
+	}
 	if err != nil {
 		return nil, err
 	}
 	if artifacts.ResolveNamespace(run.GetNamespace()) != namespace {
-		return nil, connect.NewError(connect.CodeNotFound,
-			fmt.Errorf("run %q not found in namespace %q", runID, namespace))
+		return nil, errRunNotInNamespace(runID, namespace)
 	}
 	return run, nil
+}
+
+// errRunNotInNamespace is the NotFound for a run of another namespace, worded
+// once for LookupRunIn and runNamespaceIn alike.
+func errRunNotInNamespace(runID, namespace string) error {
+	return connect.NewError(connect.CodeNotFound,
+		fmt.Errorf("run %q not found in namespace %q", runID, namespace))
+}
+
+// runNamespaceIn answers LookupRunIn's question — does this run exist in this
+// namespace? — without reading the run, for a caller that needs only the
+// answer: the WebSocket bridges' 404 before the upgrade, StreamRunEvents, and
+// a source-run check at submit.
+//
+// It reads the run's start event alone (engine.RunReader.RunStart, one
+// history event), whose definition names the run's namespace, where
+// LookupRunIn replays the run's whole history. A run the cluster no longer
+// holds is answered from the archive's run line, as LookupRun answers it. The
+// errors are LookupRunIn's, word for word: NotFound for a missing run and for
+// a run of another namespace alike.
+func (s *Service) runNamespaceIn(ctx context.Context, runID, namespace string) error {
+	ns, err := s.namespace(ctx, namespace)
+	if err != nil {
+		return err
+	}
+	resolved := ns.GetName()
+	binding, err := s.locate(ctx, runID)
+	if err != nil {
+		return err
+	}
+	found, runNamespace := false, ""
+	if binding.Reader != nil {
+		start, err := binding.Reader.RunStart(ctx, runID)
+		switch {
+		case err == nil:
+			found, runNamespace = true, start.Orkflow.GetNamespace()
+		case !errors.Is(err, artifacts.ErrNotFound):
+			return connect.NewError(connect.CodeUnavailable, fmt.Errorf("read run %q: %w", runID, err))
+		}
+	} else if run, ok := s.runs.Get(runID); ok {
+		found, runNamespace = true, run.GetNamespace()
+	}
+	if !found && s.archive != nil {
+		run, err := s.archive.LoadRun(ctx, runID)
+		switch {
+		case err == nil:
+			found, runNamespace = true, run.GetNamespace()
+		case !errors.Is(err, artifacts.ErrNotFound):
+			return connect.NewError(connect.CodeInternal,
+				fmt.Errorf("read run %q from archive: %w", runID, err))
+		}
+	}
+	if !found || artifacts.ResolveNamespace(runNamespace) != resolved {
+		// An unknown id and another namespace's run read the same, as in
+		// lookupRunInResolved: the message names where it looked.
+		return errRunNotInNamespace(runID, resolved)
+	}
+	return nil
 }
 
 // GetRun returns a run of one namespace, from whichever replica the request
@@ -1960,6 +2034,11 @@ func (s *Service) GetRun(
 	}
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
+
+// MaxRunPageSize is the most runs one ListRuns page returns. A larger
+// page_size is INVALID_ARGUMENT, on the deliveries precedent: an archived row
+// on a page costs one body read, so the ceiling bounds what one request reads.
+const MaxRunPageSize = 200
 
 // ListRuns returns runs of one namespace, newest first, narrowed by the
 // request's filters (docs/UI_CLI_PARITY.md "Filtering lists").
@@ -2004,10 +2083,15 @@ func (s *Service) ListRuns(
 		return nil, err
 	}
 	size := int(req.Msg.GetPageSize())
-	if size < 0 {
+	switch {
+	case size < 0:
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_size cannot be negative"))
-	}
-	if size == 0 {
+	case size > MaxRunPageSize:
+		// Refused, never clamped: a page is a body read per archived row, so
+		// the ceiling is what bounds one request's cost.
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("page_size %d is above the maximum %d", size, MaxRunPageSize))
+	case size == 0:
 		size = engine.DefaultRunPageSize
 	}
 	plan := engine.RunListPlan(set)
@@ -2261,6 +2345,10 @@ func (s *Service) StreamEvents(
 // same reason the streaming is: a scope one caller enforces and the other
 // forgets is not a scope. A run of another namespace is NotFound before a
 // single event is sent.
+//
+// The check reads the run's start event (runNamespaceIn), never its whole
+// history: the stream that follows reads the history once, and that is the
+// only full read a stream costs.
 func (s *Service) StreamRunEvents(
 	ctx context.Context,
 	runID string,
@@ -2268,9 +2356,22 @@ func (s *Service) StreamRunEvents(
 	fromSequence int64,
 	send func(*orkstackv1.Event) error,
 ) error {
-	if _, err := s.LookupRunIn(ctx, runID, namespace); err != nil {
+	if err := s.runNamespaceIn(ctx, runID, namespace); err != nil {
 		return err
 	}
+	return s.streamCheckedRunEvents(ctx, runID, fromSequence, send)
+}
+
+// streamCheckedRunEvents is StreamRunEvents after its namespace check, for
+// the one caller that has just made that same check itself: the WebSocket
+// bridge, which must answer a run of another namespace with an HTTP 404
+// BEFORE the upgrade, and would otherwise pay the check twice per socket.
+func (s *Service) streamCheckedRunEvents(
+	ctx context.Context,
+	runID string,
+	fromSequence int64,
+	send func(*orkstackv1.Event) error,
+) error {
 	binding, err := s.locate(ctx, runID)
 	if err != nil {
 		return err

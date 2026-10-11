@@ -608,10 +608,16 @@ func TestIntegration_EachSubmitRefusesAPoolWhoseOrkerPredatesFanOut(t *testing.T
 	}
 }
 
-// Opt-in recorder of testdata/history/run-each-v1.json.
+// leanEachHistoryPath is where TestIntegration_RecordEachRunHistory writes.
+// run-each-v1.json was recorded before the "lean-event-path" version existed
+// and is never re-recorded; today's code records that version's marker, so a
+// recording now is the lean-path fixture (lean_events_internal_test.go).
+const leanEachHistoryPath = "testdata/history/run-each-v2.json"
+
+// Opt-in recorder of testdata/history/run-each-v2.json.
 func TestIntegration_RecordEachRunHistory(t *testing.T) {
 	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") == "" {
-		t.Skip("set ORK_RECORD_GOLDEN_HISTORY=1 to record " + eachHistory +
+		t.Skip("set ORK_RECORD_GOLDEN_HISTORY=1 to record " + leanEachHistoryPath +
 			" — the committed fixture is meant to age, not to be refreshed")
 	}
 	address := temporalAddress()
@@ -704,11 +710,11 @@ func TestIntegration_RecordEachRunHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode history: %v", err)
 	}
-	if err := os.WriteFile(eachHistory, append(encoded, '\n'), 0o644); err != nil {
-		t.Fatalf("write %s: %v", eachHistory, err)
+	if err := os.WriteFile(leanEachHistoryPath, append(encoded, '\n'), 0o644); err != nil {
+		t.Fatalf("write %s: %v", leanEachHistoryPath, err)
 	}
 	t.Logf("recorded %d history events for run %s into %s (deployment version %s)",
-		len(recorded.Events), runID, eachHistory, deployment)
+		len(recorded.Events), runID, leanEachHistoryPath, deployment)
 }
 
 func readValues(t *testing.T, e *eachE2E, ref *orkstackv1.ArtifactRef) string {

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -110,6 +111,23 @@ func (r *cacheRuntime) counts() (int, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.pulls, r.creates
+}
+
+// blockingStatStore blocks every Stat until its context ends while armed, and
+// disarms itself the first time one does, so only the memo lookup's checks
+// time out.
+type blockingStatStore struct {
+	artifacts.Store
+	armed atomic.Bool
+}
+
+func (s *blockingStatStore) Stat(ctx context.Context, uri string) (artifacts.ArtifactRef, error) {
+	if s.armed.Load() {
+		<-ctx.Done()
+		s.armed.Store(false)
+		return artifacts.ArtifactRef{}, ctx.Err()
+	}
+	return s.Store.Stat(ctx, uri)
 }
 
 // memoEventLog records the order of commit creates and memo puts.
@@ -892,6 +910,14 @@ func TestExecute_CacheMissReasons(t *testing.T) {
 			if err := os.Remove(localPath(t, f.source.GetArtifacts()[0].GetUri())); err != nil {
 				t.Fatal(err)
 			}
+		}},
+		{"artifact check times out", MemoMissUnreadable, func(t *testing.T, f *fixture) {
+			blocking := &blockingStatStore{Store: f.h.store}
+			blocking.armed.Store(true)
+			f.h.dispatcher.Store = blocking
+			saved := memoLookupTimeout
+			memoLookupTimeout = 50 * time.Millisecond
+			t.Cleanup(func() { memoLookupTimeout = saved })
 		}},
 		{"hit commit over commit_max_bytes", MemoMissSourceOverLimits, func(_ *testing.T, f *fixture) { f.in.Limits.CommitMaxBytes = 64 }},
 	}

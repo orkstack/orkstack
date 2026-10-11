@@ -127,7 +127,7 @@ func TestIntegration_CLICacheStatsAndPurge(t *testing.T) {
 	if !strings.Contains(human, "featurize") || !strings.Contains(human, "MEMOS") {
 		t.Fatalf("cache stats:\n%s", human)
 	}
-	purged := s.mustCLI(0, "cache", "purge", "--orkflow", name, "--task", "featurize")
+	purged := s.mustCLI(0, "cache", "purge", "--orkflow", name, "--task", "featurize", "--yes")
 	if !strings.Contains(purged, "Purged 1 memo") {
 		t.Fatalf("cache purge:\n%s", purged)
 	}
@@ -159,7 +159,7 @@ func TestIntegration_CacheReadsOnASecondReplica(t *testing.T) {
 		t.Fatalf("replica B's featurize hits = %q", hits)
 	}
 	// featurize's one memo and train's two (stamp moves train's key every run).
-	purged := s.mustCLI(1, "cache", "purge", "--orkflow", name)
+	purged := s.mustCLI(1, "cache", "purge", "--orkflow", name, "--yes")
 	if !strings.Contains(purged, "Purged 3 memos") {
 		t.Fatalf("replica B's purge:\n%s", purged)
 	}

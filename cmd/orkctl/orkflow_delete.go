@@ -1,11 +1,7 @@
 package main
 
 import (
-	"bufio"
-	"errors"
 	"fmt"
-	"io"
-	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -16,26 +12,23 @@ import (
 const orkflowDeleteWarning = "This action will delete all versions and cannot be reversed."
 
 func newOrkflowDeleteCommand(g *globalFlags) *cobra.Command {
-	var force bool
+	var yes bool
 	cmd := &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete an orkflow and all its versions",
 		Long: "delete permanently removes an orkflow definition and all its stored versions.\n" +
 			orkflowDeleteWarning + "\n\n" +
-			"Deletion is still refused when active or recent runs use the orkflow.\n" +
-			"--force skips only the local confirmation prompt; server run-safety checks still apply.",
+			"It asks for confirmation first, and refuses when standard input is not a\n" +
+			"terminal unless --yes is given. Deletion is still refused when active or\n" +
+			"recent runs use the orkflow: --yes skips only the local confirmation prompt;\n" +
+			"server run-safety checks still apply.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			if !force {
-				confirmed, err := confirmOrkflowDeletion(cmd, name, g.namespace)
-				if err != nil {
-					return err
-				}
-				if !confirmed {
-					fmt.Fprintln(cmd.ErrOrStderr(), "Cancelled.")
-					return nil
-				}
+			prompt := fmt.Sprintf("WARNING: %s\nDelete orkflow %q in namespace %q?",
+				orkflowDeleteWarning, name, displayNamespace(g.namespace))
+			if err := confirmDestructive(cmd, g, fmt.Sprintf("delete orkflow %q", name), prompt, yes); err != nil {
+				return err
 			}
 
 			ctx, cancel := g.unaryContext(cmd)
@@ -54,22 +47,8 @@ func newOrkflowDeleteCommand(g *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false,
-		"skip only the local confirmation prompt; server run-safety checks still apply")
+	cmd.Flags().BoolVar(&yes, "yes", false,
+		"do not ask for confirmation (required when standard input is not a terminal); "+
+			"server run-safety checks still apply")
 	return cmd
-}
-
-func confirmOrkflowDeletion(cmd *cobra.Command, name, namespace string) (bool, error) {
-	if namespace == "" {
-		namespace = "default"
-	}
-	fmt.Fprintln(cmd.ErrOrStderr(), "WARNING:", orkflowDeleteWarning)
-	fmt.Fprintf(cmd.ErrOrStderr(),
-		"Delete orkflow %q in namespace %q? Type 'yes' to confirm:", name, namespace)
-
-	answer, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, fmt.Errorf("read confirmation: %w", err)
-	}
-	return strings.TrimSpace(answer) == "yes", nil
 }

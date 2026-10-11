@@ -297,7 +297,9 @@ func (s *Service) DeleteOrkflow(
 			name, ns.GetName(), active+recent, active, recent, OrkflowDeletionRunWindow))
 	}
 
-	if err := s.orkflows.Delete(ctx, ns.GetName(), name); err != nil {
+	err = s.orkflows.Delete(ctx, ns.GetName(), name)
+	s.poolScope.invalidate(ns.GetName())
+	if err != nil {
 		return nil, orkflowStoreError(err, "delete orkflow %q in namespace %q", name, ns.GetName())
 	}
 	return connect.NewResponse(&orkstackv1.DeleteOrkflowResponse{

@@ -71,21 +71,35 @@ type fakeReader struct {
 	// unreadable rather than absent.
 	starts   map[string]*engine.RunStartRecord
 	startErr error
+	// runStartCount counts RunStart, the one-event read.
+	runStartCount int
+	// streamCount counts StreamEvents, one history walk apiece.
+	streamCount int
+	// startless names runs whose start event reads as gone (aged out of
+	// history while the run record is still answered elsewhere).
+	startless map[string]bool
 }
 
 // RunStart answers from starts, the way TemporalRunReader answers from a
-// run's first history event.
+// run's first history event. A run the record holds but no test gave a start
+// has the start every run has: its definition, naming its orkflow and its
+// namespace — what the start event of a run in runs would say.
 func (f *fakeReader) RunStart(_ context.Context, runID string) (*engine.RunStartRecord, error) {
 	if f.startErr != nil {
 		return nil, f.startErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	start, ok := f.starts[runID]
-	if !ok {
-		return nil, fmt.Errorf("fake reader: %s: %w", runID, engine.ErrRunNotFound)
+	f.runStartCount++
+	if start, ok := f.starts[runID]; ok {
+		return start, nil
 	}
-	return start, nil
+	if run, ok := f.runs[runID]; ok && !f.startless[runID] {
+		return &engine.RunStartRecord{Orkflow: &orkstackv1.Orkflow{
+			Name: run.GetOrkflowName(), Version: run.GetOrkflowVersion(), Namespace: run.GetNamespace(),
+		}}, nil
+	}
+	return nil, fmt.Errorf("fake reader: %s: %w", runID, engine.ErrRunNotFound)
 }
 
 // setStart records what a run was started with.
@@ -250,6 +264,9 @@ func (f *fakeReader) StreamEvents(
 	fromSequence int64,
 	send func(*orkstackv1.Event) error,
 ) error {
+	f.mu.Lock()
+	f.streamCount++
+	f.mu.Unlock()
 	events, ok := f.events[runID]
 	if !ok {
 		return fmt.Errorf("fake reader: %s: %w", runID, engine.ErrRunNotFound)

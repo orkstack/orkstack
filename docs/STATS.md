@@ -325,12 +325,12 @@ that did not retry a task that retries elsewhere).
 line, and it crosses it further: it reads the body of **every** finished run
 in the window — succeeded, failed and canceled — because the instability it
 exposes is exactly the kind a `SUCCEEDED` status hides, and the body is the
-only record of which tasks were dispatched. It then lists one task's attempt
-records per dispatched task: the one aggregation that reads attempt records
-across runs. The cost stays proportional to runs × dispatched tasks in the
-window, never to output size — bodies hold references, attempt records are
-bounded at 64 KiB — and it is bounded by the window, an optional orkflow, and
-a scan budget.
+only record of which tasks were dispatched. It then reads the attempt records
+of every dispatched task and fan-out item: the one aggregation that reads
+attempt records across runs. The cost stays proportional to runs × dispatched
+rows in the window, never to output size — bodies hold references, attempt
+records are bounded at 64 KiB — and it is bounded by the window, an optional
+orkflow, a run budget and a row budget.
 
 **One window, one population.** The window is `GetStats`' (§2), resolved by
 `windowOf`. The population is every index key under the namespace (and
@@ -390,7 +390,11 @@ an attempt count some run actually reached.
 **Fail rather than answer from a subset.** More than 5000 finished runs in the
 window (`FlakeIndexMaxScan`) is `ResourceExhausted` before a single body or
 listing is read; the message names the population, the bound, and what to
-narrow. An index row with no body is skipped (`runs_scanned <
+narrow. The bodies' dispatched rows — each task, plus each item of a fan-out —
+are then summed, and more than 50,000 (`FlakeIndexMaxRows`) is
+`ResourceExhausted` the same way, before a single attempt record is read: a
+run budget alone bounds nothing when one run holds a 1000-item fan-out. An
+index row with no body is skipped (`runs_scanned <
 runs_in_window`); any other unreadable body, or an attempt listing that
 errors, fails the call with `Unavailable` naming the run. An engine with no
 attempt store refuses with `FailedPrecondition` rather than answer "everything
@@ -409,8 +413,11 @@ namespace, window and every field are validated before the lookup.
 
 **Cost**: one keys-only prefix scan of
 `metadata/index/runs/{namespace}/{orkflow?}/` (every status), one body read per
-finished run in the window and one prefix listing of
-`metadata/attempts/{run-id}/{task-id}/` per dispatched task, eight at a time.
+finished run in the window, then per run one prefix listing of
+`metadata/attempts/{run-id}/` and one read per record (eight runs at a time,
+eight records at a time within a run). A store without the run-wide listing
+falls back to one listing of `metadata/attempts/{run-id}/{task-id}/` per
+dispatched row.
 Nothing is written; no counter, rollup or trend store exists. A flake rate
 graphed over weeks belongs to the telemetry pipeline (`ork.task.attempts`).
 

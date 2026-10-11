@@ -47,10 +47,11 @@ One bucket, one key family per kind of record. The builders in
 | `metadata/runs/{run-id}.jsonl` | an archived run: the run record then every event, one JSON line each (`RunArchiveKey`) | once, at the run's terminal event; read verbatim as `run.jsonl` by `ExportRunEvidence` (`docs/RUN_EVIDENCE.md`) | nothing |
 | `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row, stamped by `created_at` (`RunIndexKey`) | with the archive body | nothing |
 | `metadata/index/origins/{ns}/{kind}/{origin-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the origin index row (`RunOriginIndexKey`): `kind` is `submit`, `trigger`, `schedule`, `parent-run` or `run-again`, `origin-id` the originating object's id or `none`; read keys-only by an origin-filtered `ListRuns` | with the archive body, only for a run with a recorded origin, before its run-index row | nothing |
+| `metadata/index/recent/{ns}/{inverted-stamp}/{orkflow}/{status}/{run-id}` | zero bytes; the newest-first index row (`RunRecentIndexKey`): `inverted-stamp` is the `created_at` stamp with every digit `d` written `9-d`, so ascending key order is newest first; read keys-only by a `ListRuns` page, which walks it from the page cursor and stops once the page and its last instant's ties are read | with the archive body, before its run-index row | nothing |
 | `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`) | with the archive body | cleanup, when it releases the run's claims |
 | `metadata/index/run-objects/{run-id}.json` | the object ids the run references (`RunObjectListKey`) | with the archive body | cleanup |
 | `metadata/cleanup/runs/{run-id}.json` | the sidecar recording that the run was retired and cleaned (`RunCleanupKey`) | once, by cleanup | nothing |
-| `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind each projected event, kept out of Temporal history (`RunSnapshotKey`) | by the workflow's snapshot local activity | cleanup |
+| `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind a projected event, kept out of Temporal history (`RunSnapshotKey`); a fan-out's item events between its stride snapshots carry none, and on a run that records the `lean-event-path` version (`docs/DEPLOY.md` §6) a plain or fan-out task's `TASK_STARTED` publishes with its `TASK_SCHEDULED`'s object, since nothing changes between them | by the workflow's snapshot local activity | cleanup |
 | `metadata/logs/{run-id}/{task-id}/[{item:05}/]{attempt}/{seq}` (and `.trunc`) | live task stdout/stderr chunks; order is the zero-padded key (`LogChunkKey`, `LogScopePrefix`) | by the Orker while the attempt runs | cleanup, or a bucket lifecycle rule |
 | `metadata/attempts/{run-id}/{task-id}/[{item:05}/]{attempt}.json` | one `TaskAttempt`: outcome, error, exit code, the phase it ended in and every phase it passed through (`docs/OCI_ACTIVITY_CONTRACT.md` §7.1), the image it ran, and the cpu and memory the Orker reserved (`AttemptKey`, `AttemptScopePrefix`); each item numbers its attempts from 1 | by the Orker at the end of every attempt, best-effort, plain put; read verbatim as `attempts/{n}.json` by `ExportRunEvidence` | cleanup, or a bucket lifecycle rule |
 | `metadata/commits/{ns}/{run-id}/{task-id}/[{item:05}/]commit.json` | the immutable activity completion record of a task, or of one fan-out item (`CommitKey`, `ItemCommitKey`); a dependent of a fan-out reads every item's to stage its files | conditional create-if-absent; read verbatim as `commit.json` by `ExportRunEvidence`, only at the `CommitRef.uri` the run snapshot recorded | cleanup |
@@ -140,8 +141,8 @@ pointers, so a pointer can never be read as a version.
 - **Logs and records, never queues.** Nothing in OrkStack reads an audit or
   delivery record to decide what to do or send; expiring one only shortens
   how far back `orkctl admin audit` or `orkctl webhook deliveries` can look.
-- **The archive is append-only.** Bodies and index rows — the run index and
-  the origin index alike — are never deleted; what cleanup reclaims is the
+- **The archive is append-only.** Bodies and index rows — the run index, the
+  origin index and the newest-first index alike — are never deleted; what cleanup reclaims is the
   run's logs, attempt records, snapshots, commit records and object markers,
   and it records that in the cleanup sidecar.
 
@@ -188,10 +189,21 @@ execution, deletes the run's `metadata/logs/{run-id}/`,
 `metadata/snapshots/{ns}/{run-id}/`, releases its object markers, and writes
 the cleanup sidecar.
 
-Paging is in key order, not newest first, because the stamp is the fourth
-segment of a run-index key: a newest-first page cannot be produced without
-reading and sorting every key under the prefix, which would re-read the whole
-index once per page.
+Cleanup pages in run-index key order, because it must visit every archived
+run once and order does not matter to it: the walk resumes after the last key
+it read, so a whole traversal reads the index once. A run list needs the
+opposite — the newest page — which the run index cannot give cheaply (its
+stamp is the fourth segment, below orkflow and status), so a `ListRuns` page
+reads `metadata/index/recent/{ns}/` instead: newest first by key, resumed from
+the page cursor, and stopped once the page is full and the instant of its last
+run has been read whole (ties are ordered by run id, which is not key order
+within an instant). A page therefore reads about its own size in keys and one
+run line per run, whatever the namespace holds. A query pinning both orkflow
+and status reads that run-index subtree, which is already time-ordered, and an
+origin filter reads the origin index. A run archived before the newest-first
+index existed has no row in it: it stays readable by id but is absent from
+the default list (there is no backfill; reset a development stack with
+`make reset`).
 
 Cleanup never touches `metadata/audit/`, `metadata/deliveries/` or
 `metadata/memo/`; a bucket lifecycle rule is the only retention for each.
