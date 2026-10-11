@@ -112,6 +112,20 @@ func (s *memoryLogStore) LatestLogAttempt(_ context.Context, runID, taskID strin
 	return latest, nil
 }
 
+// LatestLogAttempts is the run-wide form, answered from the same chunks.
+func (s *memoryLogStore) LatestLogAttempts(_ context.Context, runID string) (map[artifacts.LogScope]int32, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	latest := map[artifacts.LogScope]int32{}
+	for _, chunk := range s.chunks {
+		scope := artifacts.LogScope{TaskID: chunk.TaskID, Item: chunk.Item}
+		if chunk.RunID == runID && chunk.Attempt > latest[scope] {
+			latest[scope] = chunk.Attempt
+		}
+	}
+	return latest, nil
+}
+
 func (s *memoryLogStore) write(ref artifacts.LogRef, seq int64, body string) {
 	if err := s.PutLogChunk(context.Background(), artifacts.LogChunk{
 		LogRef: ref, Seq: seq, Data: []byte(body),

@@ -143,7 +143,7 @@ export interface FollowTaskLogsOptions {
 // batch — and therefore memory — bounded by time as well as by frames.
 const FRAME_BACKSTOP_MS = 250;
 
-function scheduleFrame(flush: () => void): () => void {
+export function scheduleFrame(flush: () => void): () => void {
 	let fired = false;
 	const once = () => {
 		if (fired) return;
@@ -168,7 +168,7 @@ function scheduleFrame(flush: () => void): () => void {
  * closure with no status — but a code and a server's reason are the difference
  * between "something went wrong" and a line an operator can act on.
  */
-function describeClose(event?: { code?: number; reason?: string }): string {
+export function describeClose(event?: { code?: number; reason?: string }): string {
 	const code = event?.code;
 	const reason = event?.reason?.trim();
 	if (!code && !reason) return 'the connection dropped';

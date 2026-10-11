@@ -315,6 +315,33 @@ test('an invalid scope is refused with the server\'s message', async ({ page }) 
 	expect((await listWebhooks()).some((hook) => hook.url === `${receiverURL}/invalid`)).toBe(false);
 });
 
+// F-ui-ux-10: a failed subscriptions read offers Retry, and Retry re-reads in
+// place. The page is reached by a CLIENT navigation from the overview so the
+// loader runs in the browser, where page.route can fail its first read (a
+// server render's read never passes through the browser).
+test('a failed subscriptions read offers Retry, and Retry renders the list', async ({ page }) => {
+	expect(scopedId).not.toBe('');
+	await page.goto(`${UI_ORIGIN}/admin`);
+	let failed = 0;
+	await page.route('**/orkstack.v1.WebhookService/ListWebhooks', async (route) => {
+		if (failed === 0) {
+			failed++;
+			await route.abort();
+			return;
+		}
+		await route.continue();
+	});
+	await page.getByTestId('admin-tab-webhooks').click();
+	await expect(page.getByTestId('webhooks-error')).toBeVisible();
+	await expect(page.getByTestId('webhooks-retry')).toBeEnabled();
+	await page.screenshot({ path: out('webhooks-list-error-retry.png'), fullPage: true });
+	await page.getByTestId('webhooks-retry').click();
+	await expect(page.getByTestId('webhooks-error')).toHaveCount(0);
+	await expect(page.getByTestId(`webhook-${scopedId}`)).toBeVisible();
+	expect(failed).toBe(1);
+	await page.screenshot({ path: out('webhooks-list-after-retry.png'), fullPage: true });
+});
+
 test('deleting the scoped webhook removes its row', async ({ page }) => {
 	expect(scopedId).not.toBe('');
 	await page.goto(`${UI_ORIGIN}/admin/webhooks`);

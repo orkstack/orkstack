@@ -324,6 +324,52 @@ test('the merge task read every item', async ({ page }) => {
 	await shot(page, 'screenshot-each-merge.png');
 });
 
+// F-ui-perf-2: a burst of a thousand item events — what a cached 1000-item
+// fan-out replays on open — is applied in frame-sized batches, the grid grows
+// to every cell, and the inspector renders a window of rows and stays
+// interactive. The burst is played through a mocked run socket so the scale
+// does not need a thousand containers.
+test('a burst of 1000 item events renders, and the open inspector stays interactive', async ({ page }) => {
+	expect(fanOutRun).not.toBe('');
+	const BURST = 1000;
+	await page.routeWebSocket(
+		(url) => url.pathname === `/ws/runs/${fanOutRun}`,
+		(ws) => {
+			for (let i = 0; i < BURST; i++) {
+				ws.send(
+					JSON.stringify({
+						runId: fanOutRun,
+						sequence: String(i + 1),
+						type: 'TASK_LOG',
+						status: 'SUCCEEDED',
+						taskId: 'convert',
+						item: i,
+						message: `item ${i} reused a cached result`
+					})
+				);
+			}
+		}
+	);
+	const started = Date.now();
+	await page.goto(`${UI_ORIGIN}/runs/${fanOutRun}?ns=default&events=1`);
+	await expect(page.getByTestId(`task-convert-item-${BURST - 1}`)).toHaveAttribute('data-status', 'SUCCEEDED', {
+		timeout: 60_000
+	});
+	await expect(page.getByTestId('event-count')).toHaveText(`${BURST} events`);
+	const rendered = Date.now() - started;
+	// The inspector draws a window of the newest rows, not all of them.
+	await expect(page.getByTestId('event-entry')).toHaveCount(200);
+	await expect(page.getByTestId('event-show-earlier')).toContainText('500 of 800 more');
+	// Interactive: a filter answers, and Show earlier draws more.
+	await page.getByTestId('event-filter-run').click();
+	await expect(page.getByTestId('event-filter-empty')).toBeVisible();
+	await page.getByTestId('event-filter-all').click();
+	await page.getByTestId('event-show-earlier').click();
+	await expect(page.getByTestId('event-entry')).toHaveCount(700);
+	note(`burst of ${BURST} item events: last cell SUCCEEDED and inspector at ${BURST} events ${rendered} ms after navigation`);
+	await shot(page, 'screenshot-each-burst-1000.png');
+});
+
 test('a failed item fails the run and names itself', async ({ page }) => {
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', {
 		orkflowName: FAILING,

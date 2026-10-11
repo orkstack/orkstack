@@ -226,9 +226,9 @@
 							{/each}
 						</div>
 					{:else if field?.kind === 'enum'}
-						<Select testid="{testid}-filter-value-{i}" value={row.text} options={field.values.map((v) => ({ value: v, label: v }))} onchange={(next) => (rows[i].text = next)} />
+						<Select testid="{testid}-filter-value-{i}" label="{field.label} value" value={row.text} options={field.values.map((v) => ({ value: v, label: v }))} onchange={(next) => (rows[i].text = next)} />
 					{:else if field?.kind === 'bool'}
-						<Select testid="{testid}-filter-value-{i}" value={row.text} options={[{ value: 'true', label: 'true' }, { value: 'false', label: 'false' }]} onchange={(next) => (rows[i].text = next)} />
+						<Select testid="{testid}-filter-value-{i}" label="{field.label} value" value={row.text} options={[{ value: 'true', label: 'true' }, { value: 'false', label: 'false' }]} onchange={(next) => (rows[i].text = next)} />
 					{:else if field?.kind === 'time'}
 						<input type="datetime-local" class={inputClass} data-testid="{testid}-filter-value-{i}" bind:value={rows[i].text} />
 						<span class="text-xs text-fg-muted tabular-nums" data-testid="{testid}-filter-utc-{i}">{row.text ? `${isoFromLocal(row.text)} (UTC)` : 'no instant'}</span>

@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { beforeNavigate, goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { guardUnsaved } from '$lib/dirtyGuard';
+	import { exampleHref } from '$lib/examples';
 	import { errorMessage, orkstack } from '$lib/client';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/service_pb';
@@ -41,18 +42,26 @@ tasks:
 	let permitNavigation = $state(false);
 	const dirty = $derived(yaml !== cleanYaml);
 
-	onMount(() => {
-		const warn = (event: BeforeUnloadEvent) => {
-			if (!dirty) return;
-			event.preventDefault();
-			event.returnValue = '';
-		};
-		window.addEventListener('beforeunload', warn);
-		return () => window.removeEventListener('beforeunload', warn);
-	});
-	beforeNavigate((navigation) => {
-		if (dirty && !permitNavigation && navigation.type !== 'leave' && !confirm('Discard unsaved orkflow YAML?')) navigation.cancel();
-	});
+	guardUnsaved(() => dirty && !permitNavigation, 'Discard unsaved orkflow YAML?');
+
+	// An example's YAML is fetched when its card is chosen, not shipped with
+	// the page ($lib/examples). A second click while one is loading is not
+	// offered, so the editor ends up holding the example last asked for.
+	let loadingExample = $state('');
+	let exampleError = $state('');
+	async function useExample(slug: string) {
+		loadingExample = slug;
+		exampleError = '';
+		try {
+			const response = await fetch(exampleHref(slug));
+			if (!response.ok) throw new Error(`Could not load example ${slug}: HTTP ${response.status} ${(await response.text()).trim()}`);
+			yaml = await response.text();
+		} catch (err) {
+			exampleError = err instanceof Error ? err.message : String(err);
+		} finally {
+			loadingExample = '';
+		}
+	}
 
 	async function validate(): Promise<boolean> {
 		formError = '';
@@ -125,9 +134,10 @@ tasks:
 
 <!--
 	The gallery is the repo's `examples/` directory, read at build time by
-	+page.ts. "Use this example" is the same plain assignment `importYaml` makes,
+	+page.server.ts; a card's YAML is fetched from /apply/examples/[slug] only
+	when it is chosen. "Use this example" is then the same plain assignment `importYaml` makes,
 	so it flows through the existing dirty check: the change is flagged as
-	unsaved and the beforeNavigate guard still protects it, but loading an
+	unsaved and the guardUnsaved guard still protects it, but loading an
 	example is not itself a navigation and does not prompt.
 -->
 <section class="mb-6 max-w-3xl">
@@ -143,14 +153,18 @@ tasks:
 				<button
 					type="button"
 					data-testid="apply-example-use-{example.slug}"
-					onclick={() => (yaml = example.yaml)}
-					class="mt-3 self-start text-sm font-medium text-brand-700 hover:underline"
+					disabled={loadingExample !== ''}
+					onclick={() => void useExample(example.slug)}
+					class="mt-3 self-start text-sm font-medium text-brand-700 hover:underline disabled:opacity-50"
 				>
-					Use this example
+					{loadingExample === example.slug ? 'Loading…' : 'Use this example'}
 				</button>
 			</div>
 		{/each}
 	</div>
+	{#if exampleError}
+		<div class="mt-3"><ErrorPanel testid="apply-example-error" message={exampleError} /></div>
+	{/if}
 </section>
 
 <form

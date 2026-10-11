@@ -7,11 +7,16 @@
 	// stream. A child task that itself composes shows its own child link and
 	// is not expanded here: one level per card.
 	//
-	// The panel reads the child ONCE when its run id is known, then follows
-	// the child's socket while it is not terminal, applying each TASK_* event
-	// to its row; the child's terminal event triggers one re-read and the
-	// socket closes itself. Unmounting closes it. At most one socket per card.
+	// The panel reads the child ONCE when its run id is known AND the card is
+	// on screen, then follows the child's socket while it is not terminal,
+	// applying each TASK_* event to its row; the child's terminal event
+	// triggers one re-read and the socket closes itself. Scrolling the card
+	// away closes the socket, and unmounting closes it ($lib/childFollower):
+	// a run of twenty composed tasks opens sockets only for the cards a reader
+	// can see. At most one socket per card.
 	import { onDestroy } from 'svelte';
+	import { childFollower } from '$lib/childFollower';
+	import ErrorPanel from './ErrorPanel.svelte';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import StatusPill from './StatusPill.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
@@ -50,57 +55,74 @@
 	let readError = $state('');
 	let read = $state(false);
 
-	let stopSocket: (() => void) | undefined;
-	let generation = 0;
-	onDestroy(() => stopSocket?.());
+	let streamFailure = $state('');
+	let panel = $state<HTMLDivElement | undefined>(undefined);
 
-	async function readChild(id: string, mine: number): Promise<boolean> {
+	async function readChild(id: string, current: () => boolean): Promise<boolean> {
 		try {
 			const res = await orkstack(fetch).runs.getRun({ runId: id, namespace });
-			if (mine !== generation) return false;
+			if (!current()) return false;
 			childStatus = res.run?.status ?? Status.UNSPECIFIED;
 			rollup = childRollup(res.run);
 			readError = '';
 			read = true;
-			return true;
+			return !isTerminal(childStatus);
 		} catch (err) {
-			if (mine !== generation) return false;
+			if (!current()) return false;
 			readError = errorMessage(err);
 			read = true;
 			return false;
 		}
 	}
 
-	// One read, then the child's own stream while it runs. Keyed on the child
-	// run id alone: a re-render that hands the same id back changes nothing.
+	const follower = childFollower({
+		read: readChild,
+		watch: (id, current, onState) =>
+			watchRunEvents(
+				id,
+				namespace,
+				(event) => {
+					if (!current()) return;
+					rollup = applyChildEvent(rollup, event);
+					if (isTerminalEventType(event.type)) {
+						// The child's terminal facts arrive with one re-read.
+						void readChild(id, current);
+					}
+				},
+				onState
+			),
+		onFailure: (detail) => (streamFailure = detail)
+	});
+	onDestroy(() => follower.dispose());
+
+	// Keyed on the child run id alone: a re-render that hands the same id back
+	// changes nothing.
 	$effect(() => {
-		const id = childRunId;
-		if (!id) return;
-		const mine = ++generation;
-		void (async () => {
-			const ok = await readChild(id, mine);
-			if (!ok || mine !== generation || isTerminal(childStatus)) return;
-			stopSocket?.();
-			stopSocket = watchRunEvents(id, namespace, (event) => {
-				if (mine !== generation) return;
-				rollup = applyChildEvent(rollup, event);
-				if (isTerminalEventType(event.type)) {
-					// The child's terminal facts arrive with one re-read.
-					void readChild(id, mine);
-				}
-			});
-		})();
-		return () => {
-			generation++;
-			stopSocket?.();
-			stopSocket = undefined;
-		};
+		follower.setRunId(childRunId);
+	});
+
+	// On screen or not. Without an IntersectionObserver (an old browser) the
+	// card counts as visible, which is what every card was before.
+	$effect(() => {
+		const node = panel;
+		if (!node) return;
+		if (typeof IntersectionObserver === 'undefined') {
+			follower.setVisible(true);
+			return;
+		}
+		const observer = new IntersectionObserver((entries) => {
+			for (const entry of entries) follower.setVisible(entry.isIntersecting);
+		});
+		observer.observe(node);
+		return () => observer.disconnect();
 	});
 </script>
 
 <div
+	bind:this={panel}
 	class="mt-3 rounded-md border border-border-subtle bg-surface-sunken px-3 py-2 text-sm"
 	data-testid="task-{taskId}-child"
+	data-following={read ? 'read' : 'idle'}
 >
 	<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-fg-secondary">
 		{#if childRunId}
@@ -144,6 +166,17 @@
 				Child run {childRunId} is no longer readable ({readError}).
 			</p>
 		{:else if read}
+			{#if streamFailure && !isTerminal(childStatus)}
+				<div class="mt-2">
+					<ErrorPanel
+						testid="task-{taskId}-child-live-stopped"
+						retryTestid="task-{taskId}-child-live-retry"
+						retryLabel="Retry live updates"
+						message="Live updates stopped: {streamFailure}."
+						onretry={() => follower.retry()}
+					/>
+				</div>
+			{/if}
 			<p class="mt-2 text-xs text-fg-muted" data-testid="task-{taskId}-child-rollup">{rollupSummary(rollup)}</p>
 			<ul class="mt-1 space-y-1">
 				{#each rollup.tasks as row (row.id)}

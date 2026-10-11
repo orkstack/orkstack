@@ -32,7 +32,8 @@ export type ListPath =
 	| '/admin/audit'
 	| '/admin/pools'
 	| '/admin/activities'
-	| '/admin/releases';
+	| '/admin/releases'
+	| '/admin/usage';
 
 // listHref turns a list's coordinates into its address, and it is the ONLY
 // place a list writes a query string.

@@ -65,7 +65,7 @@ export interface TimedTask {
 	attempt: number;
 	/**
 	 * Set for an awaited task (TaskRun.await present): never queued and never
-	 * reported on by an Orker, so wait, queue wait and phases do not apply and
+	 * reported on by an Orker, so wait, the wait for an Orker and phases do not apply and
 	 * RUN is the time it spent awaiting — the derivation's await row.
 	 */
 	awaited?: boolean;

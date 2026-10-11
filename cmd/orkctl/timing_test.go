@@ -134,7 +134,7 @@ func scenarioNightly() (*orkstackv1.Run, []*orkstackv1.TaskAttempt) {
 }
 
 // scenarioRender is the --task worked example: decided on attempt 2, and attempt
-// 1 HAS a record, so the queue wait is a number.
+// 1 HAS a record, so the wait for an Orker is a number.
 func scenarioRender(runID string) (*orkstackv1.TaskRun, []*orkstackv1.TaskAttempt) {
 	S := at("2026-09-22T10:02:00Z")
 	B := S.Add(77 * time.Second)
@@ -298,8 +298,8 @@ func TestRunTiming_TaskNarrowsToOneTaskAndPrintsItsPhases(t *testing.T) {
 	if strings.Contains(got.stdout, "plain") {
 		t.Errorf("--task render printed another task:\n%s", got.stdout)
 	}
-	if !strings.Contains(got.stdout, "queue wait on pool gpu 2s (attempt 1 started 2026-09-22T10:02:02Z)") {
-		t.Errorf("no numeric queue wait line:\n%s", got.stdout)
+	if !strings.Contains(got.stdout, "waited for an Orker of pool gpu 2s (attempt 1 started 2026-09-22T10:02:02Z)") {
+		t.Errorf("no numeric wait-for-an-Orker line:\n%s", got.stdout)
 	}
 
 	unknown := f.run("run", "timing", "run-timing-render", "--task", "nope")
@@ -350,7 +350,7 @@ func TestRunTiming_ClockSkewIsUnavailableNotNegative(t *testing.T) {
 	}
 	for _, want := range []string{
 		"skewed  SUCCEEDED  main  2        2026-09-22T12:00:05Z  unavailable  16s  13s",
-		"skewed  queue wait on pool main: unavailable (clock skew)",
+		"skewed  wait for an Orker of pool main: unavailable (clock skew)",
 	} {
 		if !strings.Contains(strings.Join(strings.Fields(got.stdout), " "), strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("output lacks %q:\n%s", want, got.stdout)

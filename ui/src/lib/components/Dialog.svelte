@@ -12,6 +12,7 @@
 	// itself would need the caller to keep a second copy of the same fact.
 	import type { Snippet } from 'svelte';
 	import { dismissOnOutsideOrEscape } from '$lib/dismiss';
+	import { focusTrap } from '$lib/focusTrap';
 
 	interface Props {
 		title: string;
@@ -24,28 +25,24 @@
 
 	let { title, testid, onclose, body, widthClass = 'max-w-lg' }: Props = $props();
 
-	let panel = $state<HTMLDivElement | undefined>(undefined);
-
-	// The panel takes the focus when it opens. Two reasons, both about the
-	// keyboard: Tab starts inside the dialog rather than continuing down the
-	// page behind it, and Escape is answered by THIS dialog rather than by
-	// whatever the reader's focus was left on when it opened.
-	$effect(() => {
-		panel?.focus();
-	});
+	// The panel takes the focus when it opens (focusTrap). Two reasons, both
+	// about the keyboard: Tab starts inside the dialog rather than continuing
+	// down the page behind it, and Escape is answered by THIS dialog rather
+	// than by whatever the reader's focus was left on when it opened. The trap
+	// then keeps Tab inside and hands the focus back to the opener on close.
 </script>
 
 <div
 	class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4 animate-fade-in motion-reduce:animate-none"
 >
 	<div
-		bind:this={panel}
 		data-testid={testid}
 		role="dialog"
 		aria-modal="true"
 		aria-label={title}
 		tabindex="-1"
 		use:dismissOnOutsideOrEscape={onclose}
+		use:focusTrap={{ focusContainer: true }}
 		class="flex max-h-[85vh] w-full {widthClass} flex-col rounded-xl border border-border bg-surface-raised p-6 shadow-lg animate-dialog-in focus:outline-none motion-reduce:animate-none"
 	>
 		<div class="flex shrink-0 items-start justify-between gap-4">

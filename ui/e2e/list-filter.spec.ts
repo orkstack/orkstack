@@ -205,6 +205,10 @@ test('L3: Admin → Pools, is_default = true leaves the default pool', async ({ 
 	await expect(page.getByTestId('pool-card-gpu')).toBeVisible();
 	await page.waitForLoadState('networkidle');
 	await addListFilter(page, 'pools', { field: 'is_default', op: OP.equals, select: 'true' });
+	// F-ui-ux-9: the comboboxes whose caption is not a <label> carry a name
+	// of their own — the sidebar's namespace picker, and a filter row's value.
+	await expect(page.getByRole('combobox', { name: 'Namespace', exact: true })).toBeVisible();
+	await expect(page.getByRole('combobox', { name: / value$/ })).toHaveAttribute('data-testid', 'pools-filter-value-0');
 	await page.getByTestId('pools-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['is_default=true']);
 	await expect(page.getByTestId('pool-card-main')).toBeVisible();
@@ -255,4 +259,37 @@ test('L6: changing a filter on page 2 returns to page 1 with no cursor', async (
 	await expect.poll(() => orkflowRows(page)).toEqual(SEARCH);
 	await expect(page.getByTestId('orkflows-page-status')).toHaveText('6 orkflows');
 	note(`L6 a new filter on page 2 landed on ${page.url()}`);
+});
+
+// F-ui-ux-6: Copy on an origin with no Clipboard API (a plain-HTTP deployment
+// address) still copies through the legacy path, and when that is refused too
+// the page selects the command and says to copy it by hand — never a silent
+// nothing. Both are forced in the page before any app code runs.
+test('L7: Copy without a Clipboard API falls back, then says to copy by hand', async ({ page }) => {
+	await page.addInitScript(() => {
+		Object.defineProperty(Navigator.prototype, 'clipboard', { get: () => undefined, configurable: true });
+		const calls: string[] = [];
+		(window as unknown as { __execCalls: string[] }).__execCalls = calls;
+		(window as unknown as { __execResult: boolean }).__execResult = true;
+		document.execCommand = (command: string) => {
+			calls.push(command);
+			return (window as unknown as { __execResult: boolean }).__execResult;
+		};
+	});
+	await page.goto(`${UI_ORIGIN}/admin/pools?ns=${NS}`);
+	await expect(page.getByTestId('pool-card-gpu')).toBeVisible();
+	await page.waitForLoadState('networkidle');
+
+	await page.getByTestId('pools-filters-cli-trigger').click();
+	await page.getByTestId('pools-filters-cli-copy').click();
+	await expect(page.getByTestId('pools-filters-cli-copied')).toHaveText('Copied');
+	expect(await page.evaluate(() => (window as unknown as { __execCalls: string[] }).__execCalls)).toEqual(['copy']);
+
+	await page.evaluate(() => ((window as unknown as { __execResult: boolean }).__execResult = false));
+	await page.getByTestId('pools-filters-cli-copy').click();
+	await expect(page.getByTestId('pools-filters-cli-copied')).toContainText('copy it by hand');
+	const command = (await page.getByTestId('pools-filters-cli-command').innerText()).trim();
+	expect((await page.evaluate(() => window.getSelection()?.toString() ?? '')).trim()).toBe(command);
+	note(`L7 no clipboard: fallback copied, then manual with "${command}" selected`);
+	await page.screenshot({ path: out('screenshot-copy-manual.png'), fullPage: true });
 });

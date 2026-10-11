@@ -5,7 +5,12 @@
 	// because "are you sure?" over an unnamed subject is a click-through, and
 	// the mistake this guards against is promoting the row above the one you
 	// meant.
+	//
+	// It takes the focus when it opens and keeps Tab inside (focusTrap): a
+	// destructive one starts on Cancel, so the Enter that opened it cannot
+	// also confirm it; any other starts on its first control.
 	import type { Snippet } from 'svelte';
+	import { focusTrap } from '$lib/focusTrap';
 
 	interface Props {
 		title: string;
@@ -48,7 +53,9 @@
 		role="dialog"
 		aria-modal="true"
 		aria-label={title}
-		class="w-full max-w-lg rounded-xl border border-border bg-surface-raised p-6 shadow-lg animate-dialog-in motion-reduce:animate-none"
+		tabindex="-1"
+		use:focusTrap={{ initial: destructive ? '[data-confirm-cancel]' : undefined }}
+		class="w-full max-w-lg focus:outline-none rounded-xl border border-border bg-surface-raised p-6 shadow-lg animate-dialog-in motion-reduce:animate-none"
 	>
 		<h2 class="text-base font-semibold text-fg">{title}</h2>
 		<div class="mt-2 text-sm text-fg-secondary">{@render body()}</div>
@@ -64,6 +71,7 @@
 			<button
 				type="button"
 				data-testid={cancelTestid}
+				data-confirm-cancel
 				disabled={busy}
 				onclick={() => oncancel()}
 				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-50"

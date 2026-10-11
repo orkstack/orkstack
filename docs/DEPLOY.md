@@ -1869,7 +1869,12 @@ The same reads and writes are the UI's Admin → Retention page
 (`ui/src/routes/admin/retention`) for the deployment maximum, and the Admin →
 Namespaces page for each namespace's own value — the ceiling sits apart from
 `/admin/namespaces` because it bounds all of them, not because it belongs to
-one.
+one. The page's field starts at the maximum in force. Raising it applies at
+once; lowering it opens a confirmation that names the current and the new
+maximum and what the next cleanup pass reclaims (the logs, attempt records,
+snapshots and commits of finished runs older than the new value, in every
+namespace without a run retention of its own), and it applies only once the
+new value is typed into it. Cancel sends nothing.
 
 **First boot.** With no stored policy, the engine stores the cluster's
 current retention TTL (72h on a fresh cluster) as the maximum, unchanged —

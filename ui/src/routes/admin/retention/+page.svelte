@@ -8,11 +8,20 @@
 	// that page manages each orkstack.v1.Namespace's OWN run retention — a
 	// value this page only bounds, never sets directly. This page is the
 	// single deployment-wide ceiling, and every label on it says so.
+	import { untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
-	import { hoursToMs, parseRetentionHours } from '$lib/retentionForm';
+	import {
+		confirmMatches,
+		hoursToMs,
+		isLowering,
+		lowerConsequence,
+		parseRetentionHours,
+		retentionHours
+	} from '$lib/retentionForm';
 	import { fmtDuration } from '$lib/stats';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
@@ -41,14 +50,23 @@
 	// time.ParseDuration syntax (what `orkctl admin retention set` accepts)
 	// in the browser: a plain, validated number is less to get wrong here,
 	// and the RPC carries a google.protobuf.Duration either way.
-	let hours = $state('');
+	//
+	// The field starts at the maximum in force, and is reset to it whenever
+	// the page re-reads it. LOWERING the maximum retires stored runs on the
+	// next cleanup pass, so a lower value opens a destructive confirmation
+	// that names both values and what is reclaimed, and Accept waits for the
+	// new value to be typed; raising it is applied at once.
+	const current = $derived(data.retention?.policy?.maxRunRetention);
+	let hours = $state(retentionHours(untrack(() => current)));
+	$effect(() => {
+		hours = retentionHours(current);
+	});
 	let setBusy = $state(false);
 	let setError = $state('');
 	let setSuccess = $state('');
-
-	function resetForm() {
-		hours = '';
-	}
+	// The lower value awaiting confirmation, and what has been typed for it.
+	let pendingLower = $state<number | null>(null);
+	let confirmTyped = $state('');
 
 	async function submitSet() {
 		setError = '';
@@ -58,14 +76,22 @@
 			setError = result.error;
 			return;
 		}
+		if (isLowering(current, result.hours)) {
+			pendingLower = result.hours;
+			confirmTyped = '';
+			return;
+		}
+		await applySet(result.hours);
+	}
 
+	async function applySet(next: number) {
 		setBusy = true;
 		try {
 			const res = await orkstack(fetch).system.updateRetentionPolicy({
-				maxRunRetention: durationFromMs(hoursToMs(result.hours))
+				maxRunRetention: durationFromMs(hoursToMs(next))
 			});
 			setSuccess = `Maximum run retention is now ${fmtDuration(res.policy?.maxRunRetention)}.`;
-			resetForm();
+			pendingLower = null;
 			await invalidateAll();
 		} catch (err) {
 			// A non-positive duration never reaches here (refused above), so
@@ -74,6 +100,7 @@
 			// maximum — shown verbatim, never translated into a generic
 			// message that would hide what an operator needs to change.
 			setError = errorMessage(err);
+			pendingLower = null;
 		} finally {
 			setBusy = false;
 		}
@@ -177,7 +204,41 @@
 		{/if}
 		<p class="mt-3 text-xs text-fg-muted">
 			Namespaces that set no run retention follow the new maximum at once; a namespace whose own
-			value is above it must be lowered first.
+			value is above it must be lowered first. Lowering it asks for confirmation.
 		</p>
 	</section>
+{/if}
+
+{#if pendingLower !== null}
+	{@const next = pendingLower}
+	<ConfirmDialog
+		testid="retention-lower-confirm"
+		title="Lower the maximum run retention to {next}h?"
+		acceptLabel="Lower to {next}h"
+		acceptTestid="retention-lower-accept"
+		cancelTestid="retention-lower-cancel"
+		busy={setBusy}
+		error={setError}
+		destructive
+		acceptDisabled={!confirmMatches(confirmTyped, next)}
+		onaccept={() => void applySet(next)}
+		oncancel={() => {
+			pendingLower = null;
+			confirmTyped = '';
+		}}
+	>
+		{#snippet body()}
+			<p data-testid="retention-lower-consequence">{lowerConsequence(fmtDuration(current), next)}</p>
+			<label class="mt-3 flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">Type <code>{next}</code> to confirm</span>
+				<input
+					data-testid="retention-lower-typed"
+					bind:value={confirmTyped}
+					inputmode="decimal"
+					autocomplete="off"
+					class="h-9 w-32 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				/>
+			</label>
+		{/snippet}
+	</ConfirmDialog>
 {/if}

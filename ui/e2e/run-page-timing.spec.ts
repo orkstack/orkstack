@@ -36,10 +36,10 @@ import {
 //       and the CLI's own output for the same run is recorded beside the
 //       screenshots so the two can be compared by eye;
 //   P5  a task that failed once and succeeded on attempt 2 shows two phase
-//       lines and its queue wait.
+//       lines and how long it waited for an Orker.
 //
 // Topology: one engine, the production UI build, and the Orker started AFTER
-// the first submission, so the queue wait is real. Ports and a Temporal
+// the first submission, so the wait for an Orker is real. Ports and a Temporal
 // namespace of this spec's own (AGENTS.md §11.1).
 
 const ENGINE = 'http://127.0.0.1:18293';
@@ -268,8 +268,8 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 	await expect(phases).toBeVisible({ timeout: 30_000 });
 	const phaseText = await phases.innerText();
 	for (const name of ['image', 'run', 'commit']) expect(phaseText).toContain(`${name} `);
-	// Decided on attempt 1: the Wait segment already IS the queue wait.
-	await expect(page.getByTestId('attempt-first-queue-wait')).toHaveCount(0);
+	// Decided on attempt 1: the Wait segment already IS the wait for an Orker.
+	await expect(page.getByTestId('attempt-first-orker-wait')).toHaveCount(0);
 	note(`P3 attempt 1 phases: ${phaseText}`);
 	await shot(page, 'timing-phases.png');
 
@@ -284,7 +284,7 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 	expect(cli).toContain('attempt 1  SUCCEEDED');
 });
 
-test('a task that failed once shows both attempts\' phases and its queue wait', async ({ page }) => {
+test('a task that failed once shows both attempts\' phases and how long it waited for an Orker', async ({ page }) => {
 	startOrker();
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
@@ -304,7 +304,7 @@ test('a task that failed once shows both attempts\' phases and its queue wait', 
 	await expect(page.getByTestId('task-flaky-timing')).toBeVisible({ timeout: 30_000 });
 
 	// P5 — two phase lines, attempt 1 ending in `exit` and attempt 2 in
-	// `commit`, and the queue wait stated off attempt 1's own record.
+	// `commit`, and the wait for an Orker stated off attempt 1's own record.
 	await page.getByTestId('task-inspect-toggle-flaky').click();
 	const first = page.getByTestId('attempt-flaky-1-phases');
 	const second = page.getByTestId('attempt-flaky-2-phases');
@@ -312,11 +312,49 @@ test('a task that failed once shows both attempts\' phases and its queue wait', 
 	await expect(second).toBeVisible();
 	expect(await first.innerText()).toMatch(/exit \S+$/);
 	expect(await second.innerText()).toMatch(/commit \S+$/);
-	const queueWait = page.getByTestId('attempt-flaky-queue-wait');
-	await expect(queueWait).toHaveText(/^Queue wait \S+ on pool \S+$/);
+	const queueWait = page.getByTestId('attempt-flaky-orker-wait');
+	await expect(queueWait).toHaveText(/^Waited for an Orker \S+ on pool \S+$/);
 	note(`P5 ${await queueWait.innerText()}`);
 	note(`P5 attempt 1 phases: ${await first.innerText()}`);
 	note(`P5 attempt 2 phases: ${await second.innerText()}`);
 	await shot(page, 'timing-retried.png');
 	runTimingCLI(run, 'flaky');
+
+	// F-ui-perf-1: the page renders from GetRun alone; the attempt timeline is
+	// read afterwards and fills in when it lands. Held back for two seconds,
+	// the run, its status and the card are on screen while it is pending.
+	let seedAsked = 0;
+	await page.route('**/orkstack.v1.RunService/ListTaskAttempts', async (route) => {
+		const body = JSON.parse(route.request().postData() ?? '{}');
+		if (!body.taskId) {
+			seedAsked++;
+			await new Promise((resolve) => setTimeout(resolve, 2_000));
+		}
+		await route.continue();
+	});
+	// The browser's own GetRun reads: the first loader answer is the server's,
+	// so one here is the re-read the socket's replayed RUN_SUCCEEDED starts.
+	let rereads = 0;
+	page.on('request', (request) => {
+		if (request.url().endsWith('/orkstack.v1.RunService/GetRun')) rereads++;
+	});
+	await page.reload();
+	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED');
+	await expect(page.getByTestId('task-flaky-timing')).toBeVisible();
+	// The collapsed card's retry badge is the seed's: absent while it is pending.
+	await expect(page.getByTestId('task-flaky-retries')).toHaveCount(0);
+	await shot(page, 'timing-before-seed.png');
+	await expect(page.getByTestId('task-flaky-retries')).toBeVisible({ timeout: 30_000 });
+	// Once, though the socket's replayed RUN_SUCCEEDED re-reads the run: a
+	// finished run's timeline is final, so that later loader answer keeps it.
+	await expect.poll(() => rereads, { timeout: 30_000 }).toBeGreaterThan(0);
+	await page.waitForLoadState('networkidle');
+	expect(seedAsked).toBe(1);
+	note(`P5 one seed read across ${rereads + 1} loader answers (the server's and ${rereads} re-read)`);
+	await page.getByTestId('task-inspect-toggle-flaky').click();
+	await expect(page.getByTestId('task-flaky-attempts')).toBeVisible();
+	await expect(page.getByTestId('attempt-flaky-2-phases')).toBeVisible({ timeout: 30_000 });
+	await shot(page, 'timing-after-seed.png');
+	note('P5 the run rendered with its attempt timeline pending (held 2 s); the timeline filled in when it arrived');
+	await page.unroute('**/orkstack.v1.RunService/ListTaskAttempts');
 });

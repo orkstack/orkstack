@@ -1,48 +1,45 @@
 <script lang="ts">
-	// Admin → Usage: what every namespace RESERVED over one window, side by
+	// Admin → Usage: what each namespace RESERVED over one window, side by
 	// side — the browser form of `orkctl stats usage --group-by namespace`.
 	//
-	// One GetUsage per namespace, four at a time, each row with its own
-	// loading and error state: a namespace the server cannot measure says so
-	// in its own row, in the server's words, and the others still render.
-	import { invalidateAll } from '$app/navigation';
+	// One page of namespaces at a time, paged and filtered like Admin →
+	// Namespaces, and one GetUsage per row ON THIS PAGE, four at a time, each
+	// row with its own loading and error state: a namespace the server cannot
+	// measure says so in its own row, in the server's words, and the others
+	// still render ($lib/adminUsage).
+	import { goto, invalidateAll } from '$app/navigation';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ListFilter from '$lib/components/ListFilter.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
+	import { measureUsage, type UsageRow } from '$lib/adminUsage';
+	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
+	import { ListNamespacesRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
 	import type { GetUsageResponse } from '$lib/gen/orkstack/v1/stats_pb';
-	import { withNamespace } from '$lib/namespace';
+	import type { FieldFilter } from '$lib/listFilter';
+	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtInstant } from '$lib/stats';
 	import { USAGE_CAVEAT, USAGE_WINDOWS, adminUsageCli, budgetCellLabel, fmtUnitSeconds } from '$lib/usage';
-	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
-	const WINDOW_MS: Record<string, number> = { '24h': 24 * 3_600_000, '168h': 168 * 3_600_000, '720h': 720 * 3_600_000 };
-	const FAN_OUT = 4;
-
-	type Row = { loading: boolean; resp: GetUsageResponse | null; error: string | null };
+	type Row = UsageRow<GetUsageResponse>;
 	let rows = $state<Record<string, Row>>({});
 	let generation = 0;
 
 	async function measure(names: string[], window: string) {
 		const mine = ++generation;
 		rows = Object.fromEntries(names.map((name) => [name, { loading: true, resp: null, error: null }]));
-		let next = 0;
-		async function worker() {
-			while (next < names.length) {
-				const name = names[next++];
-				try {
-					const resp = await orkstack(fetch).stats.getUsage({ namespace: name, lookback: durationFromMs(WINDOW_MS[window]) });
-					if (mine !== generation) return;
-					rows[name] = { loading: false, resp, error: null };
-				} catch (err) {
-					if (mine !== generation) return;
-					rows[name] = { loading: false, resp: null, error: errorMessage(err) };
-				}
-			}
-		}
-		await Promise.all(Array.from({ length: Math.min(FAN_OUT, names.length) }, worker));
+		await measureUsage(
+			names,
+			window,
+			(req) => orkstack(fetch).stats.getUsage(req),
+			(name, row) => (rows[name] = row),
+			errorMessage,
+			() => mine === generation
+		);
 	}
 
 	$effect(() => {
@@ -62,7 +59,40 @@
 		}
 	}
 
-	const href = (window: string) => withNamespace(`/admin/usage?window=${window}`, data.namespace);
+	// ── paging and filters: Admin → Namespaces' coordinates and cursor stack,
+	// plus the window. A new window or filter set is a new page 1.
+	const coordinates = $derived({
+		ns: namespaceLabel(data.namespace),
+		window: data.window,
+		size: String(data.size),
+		cursor: data.cursor,
+		page: String(data.page)
+	});
+	const applied = $derived({ filter: data.applied });
+	function href(changes: Record<string, string>, filters: Record<string, FieldFilter[]> = applied) {
+		return listHref('/admin/usage', { ...coordinates, ...changes }, filters);
+	}
+	const stackKey = $derived(pageStackKey('/admin/usage', coordinates, applied));
+	let stack = $state<string[]>([]);
+	$effect(() => {
+		stack = readPageStack(stackKey);
+	});
+	function next() {
+		const ahead = Array.from({ length: Math.max(stack.length, data.page + 1) }, (_, at) => stack[at] ?? '');
+		[ahead[data.page - 1], ahead[data.page]] = [data.cursor, data.nextPageToken];
+		writePageStack(stackKey, ahead);
+		stack = ahead;
+	}
+	const walked = $derived(data.page > 1 && stack[data.page - 1] === data.cursor);
+	const previousHref = $derived(walked ? href({ cursor: stack[data.page - 2] ?? '', page: String(data.page - 1) }) : undefined);
+	const nextHref = $derived(data.nextPageToken ? href({ cursor: data.nextPageToken, page: String(data.page + 1) }) : undefined);
+	const firstHref = $derived(href({ cursor: '', page: '' }));
+	function applyFilters(filters: FieldFilter[]) {
+		writePageStack(stackKey, []);
+		void goto(href({ cursor: '', page: '' }, { filter: filters }), { keepFocus: true, noScroll: true });
+	}
+	const clearHref = $derived(href({ cursor: '', page: '' }, {}));
+	const windowHref = (window: string) => href({ window, cursor: '', page: '' });
 </script>
 
 <svelte:head><title>Admin — Usage — OrkStack</title></svelte:head>
@@ -70,8 +100,8 @@
 <div class="mb-4 flex flex-wrap items-center gap-3">
 	<h2 class="text-base font-semibold text-fg">Usage</h2>
 	<p class="text-sm text-fg-muted">
-		What every namespace RESERVED over the last {data.window}, each measured on its own. Deployment-wide: the namespace
-		switcher does not filter this page.
+		What each namespace RESERVED over the last {data.window}, each measured on its own, one page of namespaces at a
+		time. Deployment-wide: the namespace switcher does not filter this page; the filters below do.
 	</p>
 </div>
 
@@ -82,7 +112,7 @@
 			<a
 				data-testid="usage-window-{preset}"
 				aria-current={data.window === preset ? 'page' : undefined}
-				href={href(preset)}
+				href={windowHref(preset)}
 				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors duration-150 first:rounded-l-md last:rounded-r-md last:border-r-0 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700"
 				>{preset}</a
 			>
@@ -90,6 +120,15 @@
 	</div>
 	<div class="ml-auto"><CliEquivalent command={adminUsageCli(data.window)} testid="usage-admin-cli" /></div>
 </section>
+
+<ListFilter
+	request={ListNamespacesRequestSchema}
+	applied={data.applied}
+	testid="usage-namespaces"
+	command={['orkctl', 'namespace', 'list']}
+	onapply={applyFilters}
+	{clearHref}
+/>
 
 {#if data.namespacesError}
 	<ErrorPanel
@@ -147,5 +186,6 @@
 			</tbody>
 		</table>
 	</div>
+	<Pagination testid="usage-namespaces" noun="namespace" page={data.page} count={data.namespacesList.length} {previousHref} {nextHref} {firstHref} onnext={next} />
 	<p class="mt-3 text-xs font-medium text-fg-secondary" data-testid="usage-admin-caveat">{USAGE_CAVEAT}</p>
 {/if}

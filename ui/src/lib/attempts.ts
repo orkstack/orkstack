@@ -190,3 +190,60 @@ export function retryBadgeLabel(attempts: TaskAttempt[], terminal: boolean): str
 	const retries = retryCount(attempts);
 	return retries > 0 ? `retried ×${retries}` : `${seen} attempts`;
 }
+
+/** What the run page's attempt seed read answered. */
+export interface AttemptSeed {
+	attempts: TaskAttempt[];
+	/** Why the timeline could not be read, if it could not. */
+	error: string | null;
+	/**
+	 * The engine has no attempt store at all (FailedPrecondition): not a
+	 * transient read failure, but "no record will ever exist" — the timing
+	 * derivation names it as its own reason.
+	 */
+	storeAbsent: boolean;
+}
+
+/**
+ * readAttemptSeed reads the retry history of EVERY task of a run in one call
+ * (`taskId: ''`, which the engine answers run-wide). The run page asks it
+ * AFTER it has rendered — the run, its statuses and its logs need only
+ * GetRun — and fills timing in when it lands. It is read tolerantly: a
+ * deployment that cannot say what a task's earlier tries did still renders
+ * everything else.
+ */
+export async function readAttemptSeed(
+	runs: {
+		listTaskAttempts(req: { runId: string; namespace: string; taskId: string }): Promise<{ attempts: TaskAttempt[] }>;
+	},
+	runId: string,
+	namespace: string,
+	describe: (err: unknown) => string,
+	isStoreAbsent: (err: unknown) => boolean
+): Promise<AttemptSeed> {
+	try {
+		const res = await runs.listTaskAttempts({ runId, namespace, taskId: '' });
+		return { attempts: res.attempts, error: null, storeAbsent: false };
+	} catch (err) {
+		return { attempts: [], error: describe(err), storeAbsent: isStoreAbsent(err) };
+	}
+}
+
+/** The run and terminality a seed read was issued for. */
+export interface SeedKey {
+	runId: string;
+	terminal: boolean;
+}
+
+/**
+ * seedStillCurrent says whether a later loader answer can keep the seed
+ * already read (or in flight) instead of reading it again. Only one case
+ * can: the same run, terminal then and terminal now. A finished run's
+ * attempt records are final, and the re-read its socket's replayed terminal
+ * event starts would otherwise ask the whole timeline a second time on every
+ * open of a finished run. A run that is live, became terminal since, or is
+ * another run reads again — its timeline may have grown.
+ */
+export function seedStillCurrent(prev: SeedKey | null, runId: string, terminal: boolean): boolean {
+	return prev !== null && prev.runId === runId && prev.terminal && terminal;
+}

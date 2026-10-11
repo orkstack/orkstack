@@ -1,5 +1,6 @@
 import type { Handle } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import { preloadAsset } from '$lib/preload';
 
 // The browser talks to the OrkStack engine through this same-origin proxy so
 // the Connect handlers need no CORS configuration. Anything under the Connect
@@ -53,6 +54,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// "Could not reach the engine" even though the engine is up.
 	return resolve(event, {
 		filterSerializedResponseHeaders: (name) =>
-			name === 'content-type' || name.startsWith('connect-') || name.startsWith('grpc-')
+			name === 'content-type' || name.startsWith('connect-') || name.startsWith('grpc-'),
+		// Scripts and styles as before, plus the two latin font faces every
+		// page renders with ($lib/preload).
+		preload: preloadAsset
 	});
 };

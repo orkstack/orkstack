@@ -2,6 +2,9 @@
 	import { EventType, type Event } from '$lib/gen/orkstack/v1/run_pb';
 	import {
 		EVENT_FILTERS,
+		EVENT_WINDOW,
+		EVENT_WINDOW_STEP,
+		eventWindow,
 		isFailureEvent,
 		matchesFilter,
 		type EventFilter
@@ -39,6 +42,11 @@
 
 	let filter = $state<EventFilter>('all');
 	const shown = $derived(events.filter((event) => matchesFilter(event, filter)));
+	// Only the newest rows are drawn ($lib/eventBuffer eventWindow): the
+	// buffer may hold two thousand events, and two thousand grid rows is what
+	// made an open inspector slow. "Show earlier" draws more on request.
+	let windowSize = $state(EVENT_WINDOW);
+	const drawn = $derived(eventWindow(shown, windowSize));
 	const lastSequence = $derived(
 		events.length > 0 ? events[events.length - 1].sequence.toString() : '—'
 	);
@@ -57,10 +65,21 @@
 		following = box.scrollHeight - box.scrollTop - box.clientHeight <= 8;
 	}
 
+	// Followed in an animation frame, once per frame however many events
+	// arrived: reading scrollHeight forces a layout, and doing that per event
+	// is what made a burst of events stall the page.
+	let scrollFrame = 0;
 	$effect(() => {
-		shown.length; // track
-		if (!box || !following) return;
-		box.scrollTop = box.scrollHeight;
+		drawn.rows.length; // track
+		events.length; // track
+		if (!box || !following || scrollFrame) return;
+		scrollFrame = requestAnimationFrame(() => {
+			scrollFrame = 0;
+			if (box && following) box.scrollTop = box.scrollHeight;
+		});
+	});
+	$effect(() => () => {
+		if (scrollFrame) cancelAnimationFrame(scrollFrame);
 	});
 
 	function chipClasses(event: Event): string {
@@ -135,7 +154,17 @@
 				No {filter} events in the {events.length} this page holds.
 			</p>
 		{:else}
-			{#each shown as event (event.sequence.toString())}
+			{#if drawn.earlier > 0}
+				<button
+					type="button"
+					data-testid="event-show-earlier"
+					onclick={() => (windowSize += EVENT_WINDOW_STEP)}
+					class="mb-1 px-1 text-xs font-medium text-brand-700 hover:underline"
+				>
+					Show earlier ({Math.min(EVENT_WINDOW_STEP, drawn.earlier)} of {drawn.earlier} more)
+				</button>
+			{/if}
+			{#each drawn.rows as event (event.sequence.toString())}
 				<div
 					data-testid="event-entry"
 					data-kind={eventTypeLabel(event.type)}

@@ -11,7 +11,7 @@ retried task the earlier attempts are inside it. See the attempts below.
 
 attempts:
   extract    attempt 1  SUCCEEDED   start 3ms  commit-check 40ms  workspace 2ms  stage-inputs 105ms  image 900ms  render 4ms  create 205ms  run 1m1.2s  exit 1ms  validate 8ms  commit 500ms
-  transform  queue wait on pool gpu: unavailable (no attempt record)
+  transform  wait for an Orker of pool gpu: unavailable (no attempt record)
   transform  attempt 3  SUCCEEDED   start 3ms  commit-check 41ms  workspace 2ms  stage-inputs 118ms  image 1.2s  render 4ms  create 210ms  run 50.1s  exit 1ms  validate 9ms  commit 700ms
   transform  attempt 2  FAILED      start 2ms  commit-check 38ms  workspace 2ms  stage-inputs 97ms  image 1.1s  render 3ms  create 190ms  run 12.4s  exit 1ms
   transform  attempt 1  unavailable (no attempt record: the orker crashed or lost its heartbeat)
