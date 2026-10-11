@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -24,7 +25,10 @@ type S3LogStore struct {
 }
 
 // compile-time contract check.
-var _ LogStore = (*S3LogStore)(nil)
+var (
+	_ LogStore            = (*S3LogStore)(nil)
+	_ RunLogAttemptLister = (*S3LogStore)(nil)
+)
 
 // NewS3LogStore builds the log store from the same ORK_S3_* config the
 // artifact, orkflow and namespace stores use.
@@ -164,16 +168,22 @@ func (s *S3LogStore) ReadLogChunks(
 }
 
 // LatestLogAttempt returns the highest attempt of a task that wrote a chunk.
-// The scan reads KEYS only: which attempts exist is written in the key, and
-// fetching bodies to answer it would download a whole log to count its tries.
+//
+// The listing is DELIMITED at the attempt level: S3 answers the scope's
+// attempt prefixes (and its items' prefixes, which are told apart by their
+// width and skipped) rather than every chunk key under them, so a task whose
+// attempt wrote twelve thousand chunks costs one short listing, not twelve
+// pages. A prefix exists only while some object is under it, which is the
+// "still has something to read" the other backends check.
 func (s *S3LogStore) LatestLogAttempt(ctx context.Context, runID, taskID string, item Item) (int32, error) {
 	prefix, err := LogScopePrefix(runID, taskID, item)
 	if err != nil {
 		return 0, err
 	}
 	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(s.bucket),
-		Prefix: aws.String(prefix),
+		Bucket:    aws.String(s.bucket),
+		Prefix:    aws.String(prefix),
+		Delimiter: aws.String("/"),
 	})
 	latest := int32(0)
 	for pager.HasMorePages() {
@@ -181,13 +191,14 @@ func (s *S3LogStore) LatestLogAttempt(ctx context.Context, runID, taskID string,
 		if err != nil {
 			return 0, fmt.Errorf("artifacts: list log attempts %q: %w", s.uri(prefix), err)
 		}
-		for _, object := range page.Contents {
-			ref, _, _, ok := ParseLogChunkKey(aws.ToString(object.Key))
-			if !ok || ref.RunID != runID || ref.TaskID != taskID || ref.Item != item {
+		for _, common := range page.CommonPrefixes {
+			segment := strings.TrimSuffix(strings.TrimPrefix(aws.ToString(common.Prefix), prefix), "/")
+			attempt, ok := parseFixedWidth(segment, logAttemptWidth)
+			if !ok || attempt < 1 || attempt > (1<<31-1) {
 				continue
 			}
-			if ref.Attempt > latest {
-				latest = ref.Attempt
+			if int32(attempt) > latest {
+				latest = int32(attempt)
 			}
 		}
 	}
@@ -195,4 +206,58 @@ func (s *S3LogStore) LatestLogAttempt(ctx context.Context, runID, taskID string,
 		return 0, fmt.Errorf("artifacts: task %q of run %q has no logs: %w", taskID, runID, ErrNotFound)
 	}
 	return latest, nil
+}
+
+// LatestLogAttempts answers every scope of a run from ONE listing of the
+// run's prefix, reading keys only.
+//
+// A long attempt is not listed to its end: when a page stops inside an
+// attempt, the next request starts just past that attempt's prefix (a fresh
+// StartAfter rather than the continuation token), because the attempt's
+// remaining chunks can only repeat what the page already said. So the listing
+// costs about one request per page of DISTINCT attempts, never one per page of
+// chunks.
+func (s *S3LogStore) LatestLogAttempts(ctx context.Context, runID string) (map[LogScope]int32, error) {
+	prefix, err := LogRunPrefix(runID)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[LogScope]int32{}
+	startAfter := ""
+	for {
+		input := &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix)}
+		if startAfter != "" {
+			input.StartAfter = aws.String(startAfter)
+		}
+		page, err := s.client.ListObjectsV2(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("artifacts: list run log attempts %q: %w", s.uri(prefix), err)
+		}
+		for _, object := range page.Contents {
+			ref, _, _, ok := ParseLogChunkKey(aws.ToString(object.Key))
+			if !ok || ref.RunID != runID {
+				continue
+			}
+			scope := LogScope{TaskID: ref.TaskID, Item: ref.Item}
+			if ref.Attempt > latest[scope] {
+				latest[scope] = ref.Attempt
+			}
+		}
+		if !aws.ToBool(page.IsTruncated) || len(page.Contents) == 0 {
+			return latest, nil
+		}
+		last := aws.ToString(page.Contents[len(page.Contents)-1].Key)
+		next := last
+		if ref, _, _, ok := ParseLogChunkKey(last); ok {
+			if attemptPrefix, err := LogAttemptPrefix(ref); err == nil {
+				next = logAttemptPrefixEnd(attemptPrefix)
+			}
+		}
+		if next <= startAfter {
+			// Never re-ask from where this request started: a listing that
+			// did not move would loop for ever.
+			next = last
+		}
+		startAfter = next
+	}
 }

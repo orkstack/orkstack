@@ -286,6 +286,7 @@
 						<div class="ml-6">
 							<Select
 								testid="cache-purge-orkflow-select"
+								label="Orkflow"
 								value={purgeOrkflow}
 								options={[...new Set([...(data.orkflow ? [data.orkflow] : []), ...data.orkflowNames])].map((name) => ({ value: name, label: name }))}
 								onchange={(next) => (purgeOrkflow = next)}

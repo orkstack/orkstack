@@ -28,3 +28,43 @@ export function parseRetentionHours(raw: string): { hours: number } | { error: s
 export function hoursToMs(hours: number): number {
 	return hours * 60 * 60 * 1000;
 }
+
+/**
+ * retentionHours is a stored duration in the form's unit, to prefill the
+ * field with the value in force: '' when there is none.
+ */
+export function retentionHours(d: { seconds: bigint; nanos: number } | undefined): string {
+	if (!d) return '';
+	const hours = (Number(d.seconds) + d.nanos / 1e9) / 3600;
+	if (!(hours > 0)) return '';
+	return String(Number(hours.toFixed(6)));
+}
+
+/**
+ * isLowering says whether a new maximum (hours) is below the one in force.
+ * Lowering retires stored runs on the next cleanup pass, so it is the one
+ * change the page asks to be confirmed; raising, or setting the same value,
+ * is not.
+ */
+export function isLowering(current: { seconds: bigint; nanos: number } | undefined, hours: number): boolean {
+	if (!current) return false;
+	return hoursToMs(hours) < Number(current.seconds) * 1000 + current.nanos / 1e6;
+}
+
+/**
+ * lowerConsequence is what the confirmation says lowering does, naming both
+ * values: in words, not an "are you sure?".
+ */
+export function lowerConsequence(currentLabel: string, newHours: number): string {
+	return (
+		`Lowering the maximum run retention from ${currentLabel} to ${newHours}h reclaims, on the next ` +
+		`cleanup pass, the logs, attempt records, snapshots and commits of every finished run older than ` +
+		`${newHours}h in every namespace that sets no run retention of its own. This cannot be undone.`
+	);
+}
+
+/** confirmMatches: the reader typed the new value itself, numerically equal. */
+export function confirmMatches(typed: string, hours: number): boolean {
+	const trimmed = typed.trim();
+	return trimmed !== '' && Number(trimmed) === hours;
+}

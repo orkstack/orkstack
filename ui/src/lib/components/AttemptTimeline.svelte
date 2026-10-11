@@ -40,11 +40,11 @@
 		attempts: TaskAttempt[];
 		/** Pins the task's log pane to one attempt — the same control its selector uses. */
 		onViewLogs: (attempt: number) => void;
-		/** The pool the task was dispatched to, for the queue-wait line. */
+		/** The pool the task was dispatched to, for the wait-for-an-Orker line. */
 		pool?: string;
 		/** The attempt that decided the task (TaskRun.attempt). */
 		decidedOn?: number;
-		/** The task's derived timing ($lib/timing), for the queue wait. */
+		/** The task's derived timing ($lib/timing), for the wait for an Orker. */
 		timing?: TaskTiming;
 		/** One item of a fan-out: the timeline is that item's, and its CLI says --item. */
 		item?: number;
@@ -115,19 +115,19 @@
 
 	{#if open}
 		<!--
-			QUEUE WAIT, only for a task decided on a retry. For a task decided on
-			its first attempt the card's Wait segment already IS the queue wait,
+			THE WAIT FOR AN ORKER, only for a task decided on a retry. For a task
+			decided on its first attempt the card's Wait segment already IS that wait,
 			and saying it twice would suggest two different numbers. For a retried
 			task Wait includes the earlier attempts and the backoff between them,
 			so the time before attempt 1 started is stated here, off attempt 1's
 			own record — the same rule and reasons as `orkctl run timing`.
 		-->
 		{#if timing && decidedOn > 1 && timing.queueWait.kind !== 'na'}
-			<p class="mt-2 text-xs text-fg-secondary" data-testid="attempt-{taskId}-queue-wait">
+			<p class="mt-2 text-xs text-fg-secondary" data-testid="attempt-{taskId}-orker-wait">
 				{#if timing.queueWait.kind === 'value'}
-					Queue wait {formatQuantity(timing.queueWait)}{pool ? ` on pool ${pool}` : ''}
+					Waited for an Orker {formatQuantity(timing.queueWait)}{pool ? ` on pool ${pool}` : ''}
 				{:else}
-					Queue wait unavailable ({timing.queueWait.reason})
+					Wait for an Orker: unavailable ({timing.queueWait.reason})
 				{/if}
 			</p>
 		{/if}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"connectrpc.com/connect"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -50,6 +51,20 @@ func (s *Service) ListTaskAttempts(
 	if err != nil {
 		return nil, err
 	}
+	// The whole run at once — the run page's seed, `run get --attempts`, `run
+	// timing` — is read run-wide when the stores can: one listing of the
+	// run's records and one of its log attempts, where the scope-by-scope
+	// path below costs a listing of each (and a listing of every log chunk of
+	// each) per task and per fan-out item. The answer is identical.
+	if taskID == "" {
+		if reader, ok := s.attempts.(artifacts.RunAttemptReader); ok {
+			attempts, err := s.runAttemptTimelines(ctx, run, reader)
+			if err != nil {
+				return nil, err
+			}
+			return connect.NewResponse(&orkstackv1.ListTaskAttemptsResponse{Attempts: attempts}), nil
+		}
+	}
 	// Task order is the snapshot's order, never the store's: the run says what
 	// the tasks are and in which order an operator already sees them, and a
 	// listing sorted by key would put "build" after "apply" for no reason a
@@ -79,9 +94,104 @@ func (s *Service) ListTaskAttempts(
 				fmt.Errorf("read attempt records of task %q in run %q: %w",
 					task.GetTaskId(), run.GetId(), err))
 		}
-		attempts = append(attempts, s.taskAttemptTimeline(ctx, run, task, records)...)
+		logged := s.latestLoggedAttempt(ctx, run.GetId(), task.GetTaskId(), artifacts.NoItem)
+		attempts = append(attempts, taskAttemptTimeline(run, task, records, logged)...)
 	}
 	return connect.NewResponse(&orkstackv1.ListTaskAttemptsResponse{Attempts: attempts}), nil
+}
+
+// runAttemptTimelines answers ListTaskAttempts for a whole run from two
+// run-wide reads: every record key in one listing (then the records, at most
+// storeFanout in flight), and — when the log store can — every scope's
+// highest logged attempt in one more. The timelines are then laid out exactly
+// as the scope-by-scope path lays them out: snapshot task order, a fan-out's
+// items in their order, each by taskAttemptTimeline.
+func (s *Service) runAttemptTimelines(
+	ctx context.Context,
+	run *orkstackv1.Run,
+	reader artifacts.RunAttemptReader,
+) ([]*orkstackv1.TaskAttempt, error) {
+	refs, err := reader.ListRunAttemptRefs(ctx, run.GetId())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable,
+			fmt.Errorf("list the attempt records of run %q: %w", run.GetId(), err))
+	}
+	records := make([]*orkstackv1.TaskAttempt, len(refs))
+	errs := make([]error, len(refs))
+	inParallel(len(refs), func(i int) {
+		record, err := reader.GetAttempt(ctx, refs[i])
+		switch {
+		case errors.Is(err, artifacts.ErrNotFound):
+			// Reclaimed between the listing and this read: a missing record
+			// reads as a missing record, as it does scope by scope.
+		case err != nil:
+			errs[i] = connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("read attempt %d of task %q in run %q: %w",
+					refs[i].Attempt, refs[i].TaskID, run.GetId(), err))
+		default:
+			records[i] = record
+		}
+	})
+	byScope := make(map[artifacts.LogScope][]*orkstackv1.TaskAttempt)
+	for i, ref := range refs {
+		if errs[i] != nil {
+			return nil, errs[i]
+		}
+		if records[i] == nil {
+			continue
+		}
+		scope := artifacts.LogScope{TaskID: ref.TaskID, Item: ref.Item}
+		byScope[scope] = append(byScope[scope], records[i])
+	}
+	logged := s.latestLoggedAttempts(ctx, run.GetId())
+
+	timeline := func(row *orkstackv1.TaskRun) []*orkstackv1.TaskAttempt {
+		scope := artifacts.LogScope{TaskID: row.GetTaskId(), Item: artifacts.ItemOf(row.Item)}
+		scoped := byScope[scope]
+		// The listing is in key order, which is attempt order; the stable
+		// sort by the record's own attempt is what ListAttempts does too.
+		sort.SliceStable(scoped, func(i, j int) bool { return scoped[i].GetAttempt() < scoped[j].GetAttempt() })
+		mark := int32(0)
+		if logged != nil {
+			mark = logged[scope]
+		} else {
+			mark = s.latestLoggedAttempt(ctx, run.GetId(), row.GetTaskId(), scope.Item)
+		}
+		return taskAttemptTimeline(run, row, scoped, mark)
+	}
+	attempts := make([]*orkstackv1.TaskAttempt, 0, len(run.GetTaskRuns()))
+	for _, task := range run.GetTaskRuns() {
+		if task.GetEach() != nil {
+			for _, item := range task.GetItems() {
+				attempts = append(attempts, timeline(item)...)
+			}
+			continue
+		}
+		attempts = append(attempts, timeline(task)...)
+	}
+	return attempts, nil
+}
+
+// latestLoggedAttempts is latestLoggedAttempt for a whole run, in one call,
+// when the log store can answer run-wide. nil means it cannot (no store, or a
+// store without the run-wide read), and the caller asks scope by scope. Like
+// the per-scope read it never fails the RPC: an unreachable store is "no
+// opinion" for every scope.
+func (s *Service) latestLoggedAttempts(ctx context.Context, runID string) map[artifacts.LogScope]int32 {
+	if s.logs == nil {
+		return map[artifacts.LogScope]int32{}
+	}
+	lister, ok := s.logs.(artifacts.RunLogAttemptLister)
+	if !ok {
+		return nil
+	}
+	latest, err := lister.LatestLogAttempts(ctx, runID)
+	if err != nil {
+		s.logger.Warn("latest logged attempts unavailable; attempt timelines may be short",
+			"run_id", runID, "error", err)
+		return map[artifacts.LogScope]int32{}
+	}
+	return latest
 }
 
 // taskAttemptTimeline merges one task's stored records with the attempts that
@@ -102,11 +212,14 @@ func (s *Service) ListTaskAttempts(
 // A task nothing knows anything about (never dispatched) yields an EMPTY
 // timeline, not a synthesized attempt 1: no attempt has happened, and claiming
 // an unreported one would invent a failure.
-func (s *Service) taskAttemptTimeline(
-	ctx context.Context,
+//
+// logged is the log store's answer for this scope (latestLoggedAttempt or the
+// run-wide latestLoggedAttempts): 0 when it has none.
+func taskAttemptTimeline(
 	run *orkstackv1.Run,
 	task *orkstackv1.TaskRun,
 	records []*orkstackv1.TaskAttempt,
+	logged int32,
 ) []*orkstackv1.TaskAttempt {
 	highest := task.GetAttempt()
 	byAttempt := make(map[int32]*orkstackv1.TaskAttempt, len(records))
@@ -125,7 +238,7 @@ func (s *Service) taskAttemptTimeline(
 			highest = record.GetAttempt()
 		}
 	}
-	if logged := s.latestLoggedAttempt(ctx, run.GetId(), task.GetTaskId(), artifacts.ItemOf(task.Item)); logged > highest {
+	if logged > highest {
 		highest = logged
 	}
 	if highest < 1 {
@@ -187,7 +300,8 @@ func (s *Service) itemTimelines(ctx context.Context, run *orkstackv1.Run, items 
 					item.GetTaskId(), item.GetItem(), run.GetId(), err))
 			return
 		}
-		timelines[i] = s.taskAttemptTimeline(ctx, run, item, records)
+		logged := s.latestLoggedAttempt(ctx, run.GetId(), item.GetTaskId(), artifacts.ItemOf(item.Item))
+		timelines[i] = taskAttemptTimeline(run, item, records, logged)
 	})
 	var out []*orkstackv1.TaskAttempt
 	for i := range items {

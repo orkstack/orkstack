@@ -293,10 +293,15 @@ test('A3: action ^ namespace. narrows to namespace writes', async ({ page }) => 
 test('A4: a refused write appears with its error code, and succeeded = false selects it', async ({ page }) => {
 	// `default`'s Delete is disabled in the UI, so the refusal is produced
 	// through the other write the Admin pages can have refused: lowering the
-	// deployment maximum below this namespace's own 48h run retention.
+	// deployment maximum below this namespace's own 48h run retention. A
+	// lower maximum is confirmed first, so the refusal is the engine's answer
+	// to a confirmed write, not the page holding it back.
 	await page.goto(`${UI_ORIGIN}/admin/retention?ns=default`);
 	await page.getByTestId('retention-set-hours').fill('24');
 	await page.getByTestId('retention-set-submit').click();
+	await expect(page.getByTestId('retention-lower-confirm')).toBeVisible();
+	await page.getByTestId('retention-lower-typed').fill('24');
+	await page.getByTestId('retention-lower-accept').click();
 	await expect(page.getByTestId('retention-set-error')).toBeVisible();
 
 	await page.goto(`${UI_ORIGIN}/admin/audit?ns=default`);

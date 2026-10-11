@@ -50,7 +50,11 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
 - **Every action has its CLI equivalent.** The UI shows a shell-escaped,
   runnable `orkctl` (or `curl`) command beside each action, carrying the
   namespace, version, task, attempt and item where they apply; a quote in a
-  value cannot become shell syntax.
+  value cannot become shell syntax. Copy works on a plain-HTTP origin too
+  (where the browser offers no Clipboard API, it falls back to the legacy
+  copy command); when the browser refuses both, the command is selected on
+  screen and the page says to copy it by hand. A copy never silently does
+  nothing.
 - **Deep links and copies keep their coordinates.** A URL or download retains
   the namespace, pinned version, task, attempt, item and inspector tab, and a
   reload restores the selection. Run inputs may contain secrets and never
@@ -602,11 +606,18 @@ on the log stream.
   task is NotFound, a missing run id `InvalidArgument`, and an engine with no
   attempt store answers `FailedPrecondition` rather than a timeline of
   UNREPORTED rows.
+- **A whole run is read run-wide.** With no task, the engine lists the run's
+  records once and its log attempts once (S3 skips past each attempt rather
+  than listing every chunk), instead of once per task and per fan-out item;
+  the answer is the one the per-task reads give. A task's own read lists its
+  log attempts with the `/` delimiter, so a long attempt costs one request.
 
 CLI: `run attempts RUN [--task TASK] [--item N]` and `run get RUN --attempts`
 (`run get --attempts --json` is refused, pointing at `run attempts --json`).
 UI: a per-task retry badge and an attempt timeline with each failed attempt's
-own error and a link that pins the log pane to that attempt.
+own error and a link that pins the log pane to that attempt. The run page
+renders from `GetRun` and reads the run's timeline afterwards; retry badges
+and timing fill in when it arrives.
 
 ### Task timing
 
@@ -621,8 +632,9 @@ phase it passed through ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md)
 Both clients derive, with one rule (`cmd/orkctl/timing.go`,
 `ui/src/lib/timing.ts`): WAIT = `started_at − scheduled_at`, RUN =
 `finished_at − started_at`, TOTAL = `finished_at − scheduled_at`, and for a
-task decided on a retry the queue wait `attempts[1].started_at −
-scheduled_at` on its pool. A quantity that does not apply is `-`; one that
+task decided on a retry the wait for an Orker `attempts[1].started_at −
+scheduled_at` on its pool (`waited for an Orker of pool P D` in the CLI,
+`Waited for an Orker D on pool P` in the UI). A quantity that does not apply is `-`; one that
 cannot be known is `unavailable` with exactly one of: `no orker reported a
 start`, `clock skew`, `recorded before scheduled time existed`, `attempt
 records reclaimed`, `no attempt record`, `record predates phase spans`, `no
@@ -636,7 +648,7 @@ it and `run get` has a `SCHEDULED` column. `--json` is a CLI-derived document,
 not a proto envelope, so `run get --timing --json` is refused. UI: a running
 card reads `Since scheduled …`; a finished one draws a wait/run bar (an
 unavailable segment hatched and naming its reason); the attempt timeline lists
-each attempt's phases and a retried task's queue wait.
+each attempt's phases and how long a retried task waited for an Orker.
 
 ### Live attempt introspection
 
@@ -671,6 +683,13 @@ card polls the same read every 5 s while the page is visible and shows
 `Running for …`, a live line (`Waiting for an orker · …`, `Phase run · 412.0
 MiB logged · heartbeat 3s ago`, `… — STALE`, `Attempt 3 scheduled for …`,
 `Cancelling · phase …`, `Phase unavailable · <reason>`) and the Orker.
+
+The run page's live updates come from the run's event socket, which resumes
+from the last event it applied after a dropped connection. Six reconnects in
+a row that deliver nothing end it: the badge reads `STOPPED`, the page says
+`Live updates stopped: <reason>` (the socket never opened, or opened and
+delivered nothing), and **Retry live updates** resumes from the last event.
+A composed task's child roll-up says the same.
 
 ### Task pins
 
@@ -834,8 +853,11 @@ run's header opens a dialog that shows the manifest summary before any bundle
 byte is fetched (`N present · … · size`), the definition line, absent members
 with their sentences, **View manifest**, **Include logs**/**Include
 artifacts** toggles that re-fetch the manifest, and a browser download —
-refused above 512 MiB, where the CLI is the tool — that completes only on
-`last`.
+refused above 256 MiB, where the dialog names the bundle's size and shows the
+`orkctl run evidence export` command to use instead — that completes only on
+`last`. The browser keeps the streamed chunks as delivered and builds the file
+from them without a further copy, so a download holds about twice the bundle
+at its peak.
 
 ### Fan-out
 
@@ -887,7 +909,9 @@ it cannot read (`--tree --json` is refused, naming `taskRuns[].child.runId`);
 `orkflow get` adds `COMPOSED` and `OUTPUT` tables; `task run` refuses a
 composed task by name. UI: a composed task's card links the pinned child
 Orkflow and, once `TASK_STARTED` arrives, the child run, with its status and a
-live roll-up of the child's tasks from the child's own stream; the header's
+live roll-up of the child's tasks from the child's own stream — read and
+followed only while the card is on screen, so a run of many composed tasks
+opens a child socket per card a reader can see, not per card; the header's
 **Child runs** link opens the runs list filtered to the children; the Orkflow
 page links each child at its version with the pinned digest and lists the
 declared outputs.
@@ -1241,9 +1265,11 @@ field-anchored issue on the offending task.
 description, labels, default pool, hold reason, required signer, telemetry
 sink and the created/updated times; `default` is matched like any other name.
 With `page_size` 0 it answers every match in one response — what `namespace
-list`, the namespace switcher and Admin → Usage ask for. A positive
+list` and the namespace switcher ask for. A positive
 `page_size` pages by name (`next_page_token`, bound to the filter set), which
-is how Admin → Namespaces lists a registry of thousands; its pages are
+is how Admin → Namespaces and Admin → Usage list a registry of thousands
+(Admin → Usage asks `GetUsage` only for the namespaces on the page it shows,
+50 by default); its pages are
 presentation, as on Runs and Orkflows, and `namespace list [--filter F…]`
 still prints every match. What a page costs depends on its filters: the names
 come from the registry's name listing, so with no filter or only name filters
@@ -1305,7 +1331,7 @@ both, in [STATS.md](STATS.md).
 | Inputs and results | Run inputs/outputs, task values and metadata with copy and JSON export (`run get --json`); empty values are distinct from unavailable values. |
 | Typed inputs | String/number/boolean controls with required/default hints; object and array use JSON editors, with a JSON alternative for the whole input. Switching modes preserves values; false/zero/empty string not dropped; invalid numeric/JSON data cannot silently coerce; unknown user-supplied keys are kept; unknown or complex declarations keep the JSON editor. The submitted JSON equals `run submit --input`'s. |
 | Retained logs | `run logs` (task, attempt, item, `--from-seq` cursor with its attempt) and a full retained-log download that bypasses the pane's scrollback cap; older chunks can be browsed; search says it covers loaded lines; truncation notices stay visible; a failed download never looks complete. |
-| Editor protection | Warn on navigation with unsaved YAML; import a local file; export the draft or source; conflict handling on apply; a successful save clears dirty state. |
+| Editor protection | Warn on navigation with unsaved YAML, and on leaving Admin → Namespaces with a typed create or edit form (paging, filtering and the namespace switcher stay on the page and keep the form); import a local file; export the draft or source; conflict handling on apply; a successful save clears dirty state. |
 | Run timing basics | Elapsed time from authoritative start/end, updating while running; missing timestamps render unknown; no invented retry schedule. |
 
 ## Parity exceptions

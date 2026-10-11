@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { pollWhileVisible } from '$lib/visibility';
 	import { goto, invalidate } from '$app/navigation';
 	import { navigating } from '$app/state';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
@@ -96,9 +97,11 @@
 	// dashboard is never lost to the timer.
 	let now = $state(Date.now());
 	let refreshing = $state(false);
+	// Only while the tab is visible ($lib/visibility): a background dashboard
+	// asks nothing, and coming back refreshes at once.
 	$effect(() => {
 		let mounted = true;
-		const timer = setInterval(() => {
+		const stop = pollWhileVisible(() => {
 			now = Date.now();
 			void afterNavigation(
 				() => navigating.complete,
@@ -108,7 +111,7 @@
 		}, 5000);
 		return () => {
 			mounted = false;
-			clearInterval(timer);
+			stop();
 		};
 	});
 

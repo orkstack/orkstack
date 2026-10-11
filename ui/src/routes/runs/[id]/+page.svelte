@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
+	import { pollWhileVisible } from '$lib/visibility';
 	import { onDestroy, untrack } from 'svelte';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
@@ -16,7 +18,7 @@
 	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
 	import EachItemGrid from '$lib/components/EachItemGrid.svelte';
 	import {
-		applyItemEvent,
+		applyItemEvents,
 		itemFromUrl,
 		itemsFromTaskRun,
 		mergeItems,
@@ -53,7 +55,8 @@
 	import { defaultCompareTarget } from '$lib/runDiff';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, taskRunCommand, timestampJson } from '$lib/runDetail';
-	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
+	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '$lib/eventBuffer';
+	import { eventBatcher } from '$lib/eventBatch';
 	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
 	import {
 		EventType,
@@ -69,7 +72,16 @@
 		type TaskRun
 	} from '$lib/gen/orkstack/v1/run_pb';
 	import { create } from '@bufbuild/protobuf';
-	import { attemptsKey, attemptsSeen, groupAttemptsByTask, runRetryCount } from '$lib/attempts';
+	import {
+		attemptsKey,
+		attemptsSeen,
+		groupAttemptsByTask,
+		readAttemptSeed,
+		runRetryCount,
+		seedStillCurrent,
+		type SeedKey
+	} from '$lib/attempts';
+	import { Code, ConnectError } from '@connectrpc/connect';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from '$lib/gen/orkstack/v1/stats_pb';
 	import { flakesCli } from '$lib/flakes';
@@ -84,7 +96,7 @@
 		originLinkPath,
 		originReferenceURL
 	} from '$lib/origin';
-	import { fmtTimestamp, isTerminal, keepsEventMessage, statusLabel, taskDispatched } from '$lib/status';
+	import { fmtTimestamp, isTerminal, isTerminalEventType, keepsEventMessage, statusLabel, taskDispatched } from '$lib/status';
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
 	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
 	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
@@ -239,13 +251,17 @@
 	let failingNote = $state('');
 	let socketState = $state<RunSocketState>('connecting');
 	let streamDelivered = $state(false);
+	// Why the stream stopped for good ('failed'), in watchRunEvents' words.
+	let streamFailure = $state('');
 	// The socket is only 'live' once it has actually delivered something.
 	// 'error' or a reconnect loop that never delivers means the browser is
 	// not receiving this run, whatever the run itself is doing.
-	const streamBroken = $derived(!streamDelivered && (socketState === 'error' || socketState === 'closed'));
+	const streamBroken = $derived(
+		socketState === 'failed' || (!streamDelivered && (socketState === 'error' || socketState === 'closed'))
+	);
 	// The event stream, BOUNDED. The socket delivers every event whether or
 	// not the inspector is open — the backlog has to be there when it opens —
-	// so this is what a long run grows, and appendEvent caps it at
+	// so this is what a long run grows, and appendEvents caps it at
 	// EVENT_BUFFER_CAP and counts what it drops. $state.raw because the buffer
 	// is replaced wholesale and a deeply reactive proxy per event is what made
 	// a chatty run's page heavy.
@@ -262,31 +278,54 @@
 	);
 	// EVERY TRY OF EVERY TASK, KEPT PER TASK.
 	//
-	// The loader reads the whole run's timeline in one call, and from then on
-	// it is REPLACED PER TASK by the refetch below, because that is the grain
-	// the live triggers have: a task reached its terminal status, or its log
-	// pane saw a higher attempt. $state.raw and a fresh Map per write — the
-	// value is swapped wholesale, and a deep proxy over every attempt record of
-	// a thirty-task run buys nothing.
-	let attemptsByTask = $state.raw<Map<string, TaskAttempt[]>>(
-		untrack(() => groupAttemptsByTask(data.attempts))
-	);
-	// What the timeline could not be read for, if anything. It starts as the
-	// loader's tolerant answer and is updated by the refetches, so a store that
-	// came back reachable stops apologising.
-	let attemptsError = $state<string | null>(untrack(() => data.attemptsError));
-	// The rows this page last seeded from, by reference. Every later loader
-	// answer — a retry, a cancel, the terminal re-read — comes back through
-	// `data`, and re-seeding on a CHANGED reference keeps the timeline fresh
-	// without a second request and without discarding a live refetch on a
-	// re-render that changed nothing.
-	let seededAttempts = $state.raw<TaskAttempt[]>(untrack(() => data.attempts));
+	// The whole run's timeline is read in one call AFTER the page has
+	// rendered — the run, its statuses and its logs need only the loader's
+	// GetRun — and again on every later loader answer (a retry, a cancel, the
+	// terminal re-read), keyed on the run snapshot's reference so a re-render
+	// that changed nothing asks nothing. From then on it is REPLACED PER TASK
+	// by the refetch below, because that is the grain the live triggers have:
+	// a task reached its terminal status, or its log pane saw a higher
+	// attempt. $state.raw and a fresh Map per write — the value is swapped
+	// wholesale, and a deep proxy over every attempt record of a thirty-task
+	// run buys nothing.
+	let attemptsByTask = $state.raw<Map<string, TaskAttempt[]>>(new Map());
+	// What the timeline could not be read for, if anything. It is the seed's
+	// tolerant answer, updated by the refetches, so a store that came back
+	// reachable stops apologising.
+	let attemptsError = $state<string | null>(null);
+	// No attempt store at all (FailedPrecondition): timing names it.
+	let attemptStoreAbsent = $state(false);
+	// Until the seed lands, nothing is said about earlier tries: an empty map
+	// is "not read yet", which must not read as "no record".
+	let attemptsSeeded = $state(false);
+	let seedGeneration = 0;
+	// What the last seed read was issued for: a finished run's later loader
+	// answers (its replayed terminal event re-reads the run) keep it.
+	let seededFor: SeedKey | null = null;
 	$effect(() => {
-		const rows = data.attempts;
-		if (rows === untrack(() => seededAttempts)) return;
-		seededAttempts = rows;
-		attemptsByTask = groupAttemptsByTask(rows);
-		attemptsError = data.attemptsError;
+		const snapshot = data.run;
+		if (!snapshot) return;
+		const terminal = isTerminal(snapshot.status);
+		if (seedStillCurrent(seededFor, snapshot.id, terminal)) return;
+		const key: SeedKey = { runId: snapshot.id, terminal };
+		seededFor = key;
+		const mine = ++seedGeneration;
+		const namespace = untrack(() => data.namespace);
+		void readAttemptSeed(
+			orkstack(fetch).runs,
+			snapshot.id,
+			namespace,
+			errorMessage,
+			(err) => err instanceof ConnectError && err.code === Code.FailedPrecondition
+		).then((seed) => {
+			if (mine !== seedGeneration) return;
+			// A read that failed is not kept: the next loader answer asks again.
+			if (seed.error !== null && seededFor === key) seededFor = null;
+			attemptsByTask = groupAttemptsByTask(seed.attempts);
+			attemptsError = seed.error;
+			attemptStoreAbsent = seed.storeAbsent;
+			attemptsSeeded = true;
+		});
 	});
 	// Refetches in flight, so a task whose terminal event and whose log pane
 	// speak in the same tick asks once. Deliberately a plain Set: it is
@@ -520,24 +559,7 @@
 
 	$effect(() => {
 		if (!run || isTerminal(runStatus) || !anyTaskRunning) return;
-		let timer: ReturnType<typeof setInterval> | undefined;
-		const start = () => {
-			if (timer !== undefined) return;
-			void pollLive();
-			timer = setInterval(() => void pollLive(), LIVE_POLL_MS);
-		};
-		const stop = () => {
-			if (timer === undefined) return;
-			clearInterval(timer);
-			timer = undefined;
-		};
-		const onVisibility = () => (document.visibilityState === 'hidden' ? stop() : start());
-		document.addEventListener('visibilitychange', onVisibility);
-		if (document.visibilityState !== 'hidden') start();
-		return () => {
-			stop();
-			document.removeEventListener('visibilitychange', onVisibility);
-		};
+		return pollWhileVisible(() => void pollLive(), LIVE_POLL_MS, { immediate: true });
 	});
 
 	function seedTasks(): TaskView[] {
@@ -764,19 +786,39 @@
 		})();
 	}
 
-	function onEvent(event: Event) {
-		buffer = appendEvent(buffer, event);
+	// applyEvents takes one frame's worth of socket events ($lib/eventBatch),
+	// in delivery order: ONE buffer append for the batch, ONE item-array copy
+	// and write per fan-out it touches, and the reducer below for every other
+	// event.
+	function applyEvents(events: Event[]) {
+		buffer = appendEvents(buffer, events);
 		// AN ITEM'S EVENT MOVES THAT ITEM'S CELL AND NOTHING ELSE. It is a
 		// TASK_LOG carrying `item`; the task's own status is the node's, and
 		// is never set from one of its items.
-		if (event.item !== undefined) {
-			const known = tasks.find((t) => t.id === event.taskId);
-			upsertTask(event.taskId, { items: applyItemEvent(known?.items ?? [], event) });
-			if (isTerminal(event.status) && selectedItemByTask[event.taskId] === event.item) {
-				void refreshAttempts(event.taskId, event.item);
+		const itemEvents = new Map<string, Event[]>();
+		for (const event of events) {
+			if (event.item !== undefined) {
+				const list = itemEvents.get(event.taskId);
+				if (list) list.push(event);
+				else itemEvents.set(event.taskId, [event]);
+				continue;
 			}
-			return;
+			onEvent(event);
 		}
+		for (const [taskId, list] of itemEvents) {
+			const known = tasks.find((t) => t.id === taskId);
+			upsertTask(taskId, { items: applyItemEvents(known?.items ?? [], list) });
+			for (const event of list) {
+				if (isTerminal(event.status) && selectedItemByTask[taskId] === event.item) {
+					void refreshAttempts(taskId, event.item);
+				}
+			}
+		}
+	}
+
+	// onEvent reduces one event that is not an item's into the run's and its
+	// tasks' state.
+	function onEvent(event: Event) {
 		const status = event.status === Status.UNSPECIFIED ? undefined : event.status;
 		switch (event.type) {
 			case EventType.RUN_CREATED:
@@ -945,23 +987,57 @@
 	// event log reading "Waiting for events…", while the run had in fact
 	// finished. Track whether the stream ever delivered anything so the page
 	// can say "not connected" instead of implying "nothing has happened".
+	//
+	// A stream that stopped for good ('failed': six reconnects in a row that
+	// delivered nothing) says so, with the reason, and offers Retry. Retry
+	// bumps `socketEpoch`, which restarts this effect from `lastSequence` — a
+	// plain variable, read once per start, never a dependency — so the events
+	// already applied are not replayed into the reducer or the buffer.
 	const socketRunId = $derived(data.run?.id ?? '');
 	const socketNamespace = $derived(data.namespace);
+	let socketEpoch = $state(0);
+	let lastSequence = 0n;
+	let lastSequenceRun = '';
 	$effect(() => {
 		const runId = socketRunId;
 		const namespace = socketNamespace;
+		void socketEpoch;
 		if (!runId) return;
+		// A cursor belongs to one run: another run starts from its beginning.
+		if (runId !== lastSequenceRun) {
+			lastSequence = 0n;
+			lastSequenceRun = runId;
+		}
+		streamFailure = '';
+		const batch = eventBatcher(applyEvents);
 		const stop = watchRunEvents(
 			runId,
 			namespace,
 			(event) => {
 				streamDelivered = true;
-				onEvent(event);
+				if (event.sequence > lastSequence) lastSequence = event.sequence;
+				batch.push(event);
+				// The run's own end is applied at once, not a frame later.
+				if (isTerminalEventType(event.type)) batch.flush();
 			},
-			(s) => (socketState = s)
+			(s, detail) => {
+				socketState = s;
+				if (s === 'failed') streamFailure = detail ?? 'the event stream stopped';
+			},
+			{ fromSequence: lastSequence }
 		);
-		return stop;
+		return () => {
+			stop();
+			// What arrived for THIS run is applied, never dropped: lastSequence
+			// already counts it, so a restart would not deliver it again. A
+			// page that moved on to another run drops it instead.
+			if (untrack(() => socketRunId) === runId) batch.flush();
+			else batch.cancel();
+		};
 	});
+	function retryStream(): void {
+		socketEpoch += 1;
+	}
 
 	// The event list is URL state — `?events=1`, and nothing else — independent
 	// of the live subscription above. There is no containing panel to open
@@ -1062,11 +1138,15 @@
 		logPinByTask[attemptsKey(taskId, item)] = { attempt, nonce: pinNonce };
 		setTaskAttempt(taskId, attempt, item);
 	}
-	function copy(value: string, label: string): void {
-		void navigator.clipboard?.writeText(value).then(
-			() => (copied = label),
-			() => (copied = 'Copy failed')
-		);
+	// `shownAt` is the element showing the same text: on an origin with no
+	// clipboard it is selected, and the status says to copy it by hand.
+	async function copy(value: string, label: string, shownAt: string): Promise<void> {
+		if ((await copyText(value)) === 'copied') {
+			copied = label;
+			return;
+		}
+		selectByTestid(shownAt);
+		copied = MANUAL_COPY_MESSAGE;
 	}
 	function downloadJson(name: string, value: unknown): void {
 		const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
@@ -1342,9 +1422,11 @@
 					? 'ENDED'
 					: socketState === 'open'
 						? 'LIVE'
-						: streamBroken
-							? 'NOT CONNECTED'
-							: 'CONNECTING'}
+						: socketState === 'failed'
+							? 'STOPPED'
+							: streamBroken
+								? 'NOT CONNECTED'
+								: 'CONNECTING'}
 			</span>
 		</div>
 		<div class="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -1415,6 +1497,17 @@
 	{#if copied}
 		<p data-testid="copy-status" class="-mt-4 mb-4 text-xs text-fg-muted">{copied}</p>
 	{/if}
+	{#if socketState === 'failed' && !isTerminal(runStatus)}
+		<div class="mb-4">
+			<ErrorPanel
+				testid="live-stopped"
+				retryTestid="live-retry"
+				retryLabel="Retry live updates"
+				message="Live updates stopped: {streamFailure}. The statuses on this page are as of the last event received."
+				onretry={retryStream}
+			/>
+		</div>
+	{/if}
 	{#if cancellationRequested && !isTerminal(runStatus)}
 		<p data-testid="cancellation-requested" class="mb-4 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-700">
 			Cancellation requested. Waiting for the run to stop.
@@ -1483,7 +1576,7 @@
 			<div class="flex items-center justify-between gap-3">
 				<h2 class="text-sm font-semibold text-fg">Inputs</h2>
 				{#if run.input}
-					<button type="button" data-testid="copy-run-input" onclick={() => copy(payloadJson(run.input), 'Inputs copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
+					<button type="button" data-testid="copy-run-input" onclick={() => void copy(payloadJson(run.input), 'Inputs copied', 'run-input')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
 				{/if}
 			</div>
 			<pre data-testid="run-input" class="mt-2 max-h-56 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{run.input ? payloadJson(run.input) : 'No input values are recorded for this run.'}</pre>
@@ -1494,7 +1587,7 @@
 					{declaresOutputs ? 'Declared outputs' : 'Leaf task values'}
 				</h2>
 				{#if run.output}
-					<button type="button" data-testid="copy-run-output" onclick={() => copy(payloadJson(run.output), 'Run output copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
+					<button type="button" data-testid="copy-run-output" onclick={() => void copy(payloadJson(run.output), 'Run output copied', 'run-output')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
 				{/if}
 			</div>
 			<pre data-testid="run-output" class="mt-2 max-h-56 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{run.output ? payloadJson(run.output) : isTerminal(runStatus) ? 'This run finished without aggregated output values.' : 'Run output is not available yet.'}</pre>
@@ -1548,7 +1641,7 @@
 					{@const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt)}
 					{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
 					{@const isAwait = task.await !== undefined || taskDefs.get(task.id)?.await !== undefined}
-					{@const timing = taskTiming({ ...task, awaited: isAwait }, data.attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
+					{@const timing = taskTiming({ ...task, awaited: isAwait }, attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
 					{@const accent = pinAccent(task.pin)}
 					{@const fanOut = task.each !== undefined || taskDefs.get(task.id)?.each !== undefined}
 					{@const composed = task.child !== undefined || taskDefs.get(task.id)?.orkflow !== undefined}
@@ -2065,7 +2158,7 @@
 									page-level notice instead of an empty disclosure in
 									every card.
 								-->
-								{#if !fanOut && (!data.attemptsError || taskAttempts.length > 0)}
+								{#if !fanOut && attemptsSeeded && (!attemptsError || taskAttempts.length > 0)}
 									<AttemptTimeline
 										runId={run.id}
 										taskId={task.id}
@@ -2106,7 +2199,7 @@
 							<div class="mt-3 rounded-md border border-border-subtle bg-surface-sunken p-3">
 								<div class="flex items-center justify-between gap-3">
 									<span class="text-xs font-medium text-fg">Task values</span>
-									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => copy(payloadJson(task.output), 'Task values copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>{/if}
+									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => void copy(payloadJson(task.output), 'Task values copied', `task-values-${task.id}`)} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>{/if}
 								</div>
 								<pre data-testid="task-values-{task.id}" class="mt-2 max-h-40 overflow-auto font-mono text-xs text-fg-secondary">{task.output ? payloadJson(task.output) : isTerminal(task.status) ? 'This task finished without inline values. Its recorded values artifact, if present, is listed under Inspect.' : 'Task values are not available yet.'}</pre>
 							</div>

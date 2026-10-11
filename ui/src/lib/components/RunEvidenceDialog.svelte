@@ -13,12 +13,14 @@
 	import ErrorPanel from './ErrorPanel.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
 	import {
-		EVIDENCE_BROWSER_MAX_BYTES,
 		absentMembers,
+		collectEvidence,
 		definitionLine,
+		evidenceBlob,
 		evidenceCommand,
 		evidenceFilename,
 		evidenceSummary,
+		evidenceTooLarge,
 		parseManifest,
 		type Manifest
 	} from '$lib/evidence';
@@ -48,7 +50,10 @@
 	});
 
 	const absent = $derived(manifest ? absentMembers(manifest) : []);
-	const tooLarge = $derived(manifest ? manifest.counts.bytes_present > EVIDENCE_BROWSER_MAX_BYTES : false);
+	const overLimit = $derived(
+		manifest ? evidenceTooLarge(manifest, namespace, runId, { logs: includeLogs, artifacts: includeArtifacts }) : null
+	);
+	const tooLarge = $derived(overLimit !== null);
 	const command = $derived(evidenceCommand(namespace, runId, { logs: includeLogs, artifacts: includeArtifacts }));
 
 	function request(manifestOnly: boolean) {
@@ -61,22 +66,9 @@
 		};
 	}
 
-	// Collects one stream; resolves only when `last` arrived.
-	async function collect(manifestOnly: boolean, signal: AbortSignal): Promise<Uint8Array[]> {
-		const parts: Uint8Array[] = [];
-		let complete = false;
-		for await (const chunk of orkstack(fetch).runs.exportRunEvidence(request(manifestOnly), { signal })) {
-			if (chunk.data.length) parts.push(chunk.data.slice());
-			if (chunk.last) complete = true;
-		}
-		if (!complete) {
-			throw new Error(
-				manifestOnly
-					? 'Manifest stream ended before the engine confirmed a complete manifest.'
-					: 'Evidence stream ended before the engine confirmed a complete bundle.'
-			);
-		}
-		return parts;
+	// Collects one stream; resolves only when `last` arrived ($lib/evidence).
+	function collect(manifestOnly: boolean, signal: AbortSignal): Promise<Uint8Array[]> {
+		return collectEvidence(orkstack(fetch).runs.exportRunEvidence(request(manifestOnly), { signal }), manifestOnly);
 	}
 
 	async function loadManifest(): Promise<void> {
@@ -124,11 +116,8 @@
 		downloading = true;
 		error = '';
 		try {
-			const parts = await collect(false, abort.signal);
-			const blob = new Blob(
-				parts.map((part) => part.slice().buffer as ArrayBuffer),
-				{ type: 'application/gzip' }
-			);
+			// evidenceBlob empties `parts`: from here the Blob is the only copy.
+			const blob = evidenceBlob(await collect(false, abort.signal));
 			const url = URL.createObjectURL(blob);
 			const link = document.createElement('a');
 			link.href = url;
@@ -220,6 +209,21 @@
 							data-testid="run-evidence-manifest"
 							class="mt-2 max-h-64 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{manifestText}</pre>
 					{/if}
+				</div>
+			{/if}
+
+			{#if overLimit}
+				<div
+					data-testid="run-evidence-too-large"
+					class="rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
+				>
+					<p>{overLimit.message}</p>
+					<div class="mt-2 flex items-start gap-2">
+						<pre
+							data-testid="run-evidence-too-large-command"
+							class="min-w-0 flex-1 overflow-x-auto rounded bg-surface-sunken p-2 font-mono text-xs text-fg">{overLimit.command}</pre>
+						<CliEquivalent command={overLimit.command} testid="run-evidence-too-large-cli" label="Copy the export command" />
+					</div>
 				</div>
 			{/if}
 

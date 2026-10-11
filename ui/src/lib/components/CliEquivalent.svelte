@@ -8,6 +8,7 @@
 	// wants the CLI finds it in the same corner every time, and a reader who
 	// does not is not asked to read a shell command to use a button.
 	import Popover from './Popover.svelte';
+	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
 
 	interface Props {
 		command: string;
@@ -29,11 +30,15 @@
 		if (open) copied = '';
 	}
 
-	function copy(): void {
-		void navigator.clipboard?.writeText(command).then(
-			() => (copied = 'Copied'),
-			() => (copied = 'Copy failed')
-		);
+	// On an origin with no clipboard the command shown above is selected
+	// instead, and the status says to copy it by hand ($lib/clipboard).
+	async function copy(): Promise<void> {
+		if ((await copyText(command)) === 'copied') {
+			copied = 'Copied';
+			return;
+		}
+		selectByTestid(`${testid}-command`);
+		copied = MANUAL_COPY_MESSAGE;
 	}
 </script>
 
@@ -79,7 +84,7 @@
 			<button
 				type="button"
 				data-testid="{testid}-copy"
-				onclick={copy}
+				onclick={() => void copy()}
 				class="inline-flex h-8 items-center justify-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none"
 			>
 				Copy command

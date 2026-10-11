@@ -115,6 +115,25 @@ test('cancel confirmation, authoritative status, pinned version, deep links and 
 	await expect(page.getByTestId('pinned-orkflow-link')).toHaveAttribute('href', new RegExp(`version=0.1.0.*ns=default`));
 	await page.getByTestId('cancel-run').click();
 	await expect(page.getByTestId('cancel-run-confirm')).toBeVisible();
+	// F-ui-ux-2: a destructive confirmation takes the focus on Cancel, Tab and
+	// Shift+Tab never leave it, and dismissing it hands the focus back.
+	await expect(page.getByTestId('cancel-run-dismiss')).toBeFocused();
+	const insideConfirm = () =>
+		page.evaluate(() => !!document.activeElement?.closest('[data-testid="cancel-run-confirm"]'));
+	for (let i = 0; i < 6; i++) {
+		await page.keyboard.press('Tab');
+		expect(await insideConfirm(), `Tab ${i + 1} stays in the dialog`).toBe(true);
+	}
+	for (let i = 0; i < 6; i++) {
+		await page.keyboard.press('Shift+Tab');
+		expect(await insideConfirm(), `Shift+Tab ${i + 1} stays in the dialog`).toBe(true);
+	}
+	await page.screenshot({ path: out('screenshot-cancel-confirm-focus.png'), fullPage: true });
+	await page.getByTestId('cancel-run-dismiss').click();
+	await expect(page.getByTestId('cancel-run-confirm')).toHaveCount(0);
+	await expect(page.getByTestId('cancel-run')).toBeFocused();
+	await page.getByTestId('cancel-run').click();
+	await expect(page.getByTestId('cancel-run-confirm')).toBeVisible();
 	await page.getByTestId('cancel-reason').fill('operator cancelled this run');
 	await page.getByTestId('cancel-run-accept').click();
 	await expect(page.getByTestId('cancellation-requested')).toContainText('Waiting for the run to stop');
@@ -199,4 +218,28 @@ test('completed values, bounded pane replay, JSON export and recorded artifacts 
 	await artifactFile.saveAs(artifactPath);
 	expect(readFileSync(artifactPath, 'utf8')).toBe('REPORT');
 	await page.screenshot({ path: out('screenshot-completed-retrieval.png'), fullPage: true });
+});
+
+// F-ui-ux-4: a slow loader on a main route shows the navigation bar (after
+// its 150 ms grace) with <main> aria-busy, and both clear once the page is
+// ready. The run page's GetRun is held for a second on the browser side.
+test('a slow client navigation shows the progress bar until the destination loads', async ({ page }) => {
+	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: COMPLETED_NAME, input: { data: { requested: 'progress' } } });
+	const runId = submitted.run.id;
+	await page.goto(`${UI_ORIGIN}/runs?ns=default`);
+	await expect(page.getByTestId(`run-row-${runId}`)).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByTestId('nav-progress')).toHaveCount(0);
+	await page.route('**/orkstack.v1.RunService/GetRun', async (route) => {
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
+		await route.continue();
+	});
+	await page.getByTestId(`run-row-${runId}`).getByRole('link', { name: runId }).click();
+	await expect(page.getByTestId('nav-progress')).toBeVisible();
+	await expect(page.locator('main')).toHaveAttribute('aria-busy', 'true');
+	await page.screenshot({ path: out('screenshot-nav-progress.png'), fullPage: true });
+	await expect(page.getByTestId('run-status')).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByTestId('nav-progress')).toHaveCount(0);
+	await expect(page.locator('main')).toHaveAttribute('aria-busy', 'false');
+	await page.unroute('**/orkstack.v1.RunService/GetRun');
+	await page.screenshot({ path: out('screenshot-nav-progress-done.png'), fullPage: true });
 });

@@ -17,7 +17,7 @@ orkctl -n payments cache stats     # cached tasks' hit rate and stored memos (§
 ```
 
 Every read here aggregates one namespace over one window. One run's own
-timing — queue wait against run time, and each attempt's phases — is a run
+timing — the wait for an Orker against run time, and each attempt's phases — is a run
 read, `orkctl run timing` (`docs/UI_CLI_PARITY.md`, "Task timing").
 
 ## 1. Two sources, and no third
@@ -435,7 +435,9 @@ orkctl stats usage --since 720h --group-by namespace          # every namespace,
 ```
 
 The dashboard's **Usage** card and **Admin → Usage** render the same answers
-(`ui/src/lib/usage.ts`).
+(`ui/src/lib/usage.ts`). Admin → Usage pages and filters the namespace list as
+Admin → Namespaces does and asks one `GetUsage` per namespace on the page it
+shows (50 by default), never one per namespace in the deployment.
 
 **Three units, all reserved, none measured.**
 

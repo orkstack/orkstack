@@ -4,6 +4,6 @@ WAIT is scheduling to the start of the attempt that produced the outcome; for a
 retried task the earlier attempts are inside it. See the attempts below.
 
 attempts:
-  render  queue wait on pool gpu 2s (attempt 1 started 2026-09-22T10:02:02Z)
+  render  waited for an Orker of pool gpu 2s (attempt 1 started 2026-09-22T10:02:02Z)
   render  attempt 2  SUCCEEDED   start 3ms  commit-check 40ms  workspace 2ms  stage-inputs 101ms  image 1.1s  render 4ms  create 205ms  run 46.2s  exit 1ms  validate 8ms  commit 600ms
   render  attempt 1  FAILED      start 3ms  commit-check 39ms  workspace 2ms  stage-inputs 99ms  image 1.1s  render 4ms  create 201ms  run 14.9s  exit 1ms
