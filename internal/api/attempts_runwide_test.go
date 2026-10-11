@@ -51,9 +51,9 @@ func (c *countingAttempts) ListAttempts(ctx context.Context, runID, taskID strin
 	return c.MemoryAttemptStore.ListAttempts(ctx, runID, taskID, item)
 }
 
-// scopedAttempts is the same store seen through AttemptStore alone: no
+// scopeOnlyAttempts is the same store seen through AttemptStore alone: no
 // run-wide read, so the Service takes the scope-by-scope path.
-type scopedAttempts struct{ artifacts.AttemptStore }
+type scopeOnlyAttempts struct{ artifacts.AttemptStore }
 
 // countingLogs counts the log reads.
 type countingLogs struct {
@@ -191,7 +191,7 @@ func TestListTaskAttempts_RunWideAnswersExactlyAsScopeByScope(t *testing.T) {
 	seedRunWide(t, store, logs, run.GetId(), n)
 
 	wide := listAll(t, store, logs, run)
-	scoped := listAll(t, scopedAttempts{store}, scopedLogs{logs}, run)
+	scoped := listAll(t, scopeOnlyAttempts{store}, scopedLogs{logs}, run)
 	// Run-wide records with per-scope logs, and the reverse, too.
 	mixed := listAll(t, store, scopedLogs{logs}, run)
 	if fmt.Sprint(timelineRows(wide)) != fmt.Sprint(timelineRows(scoped)) {
