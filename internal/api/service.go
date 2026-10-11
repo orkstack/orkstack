@@ -2010,10 +2010,9 @@ func (s *Service) runNamespaceIn(ctx context.Context, runID, namespace string) e
 				fmt.Errorf("read run %q from archive: %w", runID, err))
 		}
 	}
-	if !found {
-		return connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
-	}
-	if artifacts.ResolveNamespace(runNamespace) != resolved {
+	if !found || artifacts.ResolveNamespace(runNamespace) != resolved {
+		// An unknown id and another namespace's run read the same, as in
+		// lookupRunInResolved: the message names where it looked.
 		return errRunNotInNamespace(runID, resolved)
 	}
 	return nil

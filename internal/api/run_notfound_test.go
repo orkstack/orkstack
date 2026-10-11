@@ -33,3 +33,25 @@ func TestGetRun_UnknownIDNamesTheNamespace(t *testing.T) {
 		t.Fatalf("GetRun error = %q, want %q", err.Error(), want)
 	}
 }
+
+// TestStreamRunEvents_UnknownIDNamesTheNamespace: the stream's existence check
+// reads only the run's start (runNamespaceIn), never the run, and it answers an
+// unknown id in the same words GetRun does.
+func TestStreamRunEvents_UnknownIDNamesTheNamespace(t *testing.T) {
+	svc := api.NewService(api.Config{
+		Orkflows:   engine.NewMemoryOrkflowStore(),
+		Namespaces: newFakeRegistry(&orkstackv1.Namespace{Name: "alpha"}),
+		Runs:       engine.NewRunStore(),
+		Bus:        engine.NewEventBus(),
+		Starter:    &fakeStarter{},
+	})
+	err := svc.StreamRunEvents(context.Background(), "ork-missing", "alpha", 0,
+		func(*orkstackv1.Event) error { return nil })
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("StreamRunEvents = %v, want NotFound", err)
+	}
+	const want = `not_found: run "ork-missing" not found in namespace "alpha"`
+	if err.Error() != want {
+		t.Fatalf("StreamRunEvents error = %q, want %q", err.Error(), want)
+	}
+}
