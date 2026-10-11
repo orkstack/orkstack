@@ -332,6 +332,12 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 		}
 		await route.continue();
 	});
+	// The browser's own GetRun reads: the first loader answer is the server's,
+	// so one here is the re-read the socket's replayed RUN_SUCCEEDED starts.
+	let rereads = 0;
+	page.on('request', (request) => {
+		if (request.url().endsWith('/orkstack.v1.RunService/GetRun')) rereads++;
+	});
 	await page.reload();
 	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED');
 	await expect(page.getByTestId('task-flaky-timing')).toBeVisible();
@@ -339,7 +345,12 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 	await expect(page.getByTestId('task-flaky-retries')).toHaveCount(0);
 	await shot(page, 'timing-before-seed.png');
 	await expect(page.getByTestId('task-flaky-retries')).toBeVisible({ timeout: 30_000 });
+	// Once, though the socket's replayed RUN_SUCCEEDED re-reads the run: a
+	// finished run's timeline is final, so that later loader answer keeps it.
+	await expect.poll(() => rereads, { timeout: 30_000 }).toBeGreaterThan(0);
+	await page.waitForLoadState('networkidle');
 	expect(seedAsked).toBe(1);
+	note(`P5 one seed read across ${rereads + 1} loader answers (the server's and ${rereads} re-read)`);
 	await page.getByTestId('task-inspect-toggle-flaky').click();
 	await expect(page.getByTestId('task-flaky-attempts')).toBeVisible();
 	await expect(page.getByTestId('attempt-flaky-2-phases')).toBeVisible({ timeout: 30_000 });

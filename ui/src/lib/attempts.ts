@@ -228,3 +228,22 @@ export async function readAttemptSeed(
 		return { attempts: [], error: describe(err), storeAbsent: isStoreAbsent(err) };
 	}
 }
+
+/** The run and terminality a seed read was issued for. */
+export interface SeedKey {
+	runId: string;
+	terminal: boolean;
+}
+
+/**
+ * seedStillCurrent says whether a later loader answer can keep the seed
+ * already read (or in flight) instead of reading it again. Only one case
+ * can: the same run, terminal then and terminal now. A finished run's
+ * attempt records are final, and the re-read its socket's replayed terminal
+ * event starts would otherwise ask the whole timeline a second time on every
+ * open of a finished run. A run that is live, became terminal since, or is
+ * another run reads again — its timeline may have grown.
+ */
+export function seedStillCurrent(prev: SeedKey | null, runId: string, terminal: boolean): boolean {
+	return prev !== null && prev.runId === runId && prev.terminal && terminal;
+}

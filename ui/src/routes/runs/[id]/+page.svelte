@@ -72,7 +72,15 @@
 		type TaskRun
 	} from '$lib/gen/orkstack/v1/run_pb';
 	import { create } from '@bufbuild/protobuf';
-	import { attemptsKey, attemptsSeen, groupAttemptsByTask, readAttemptSeed, runRetryCount } from '$lib/attempts';
+	import {
+		attemptsKey,
+		attemptsSeen,
+		groupAttemptsByTask,
+		readAttemptSeed,
+		runRetryCount,
+		seedStillCurrent,
+		type SeedKey
+	} from '$lib/attempts';
 	import { Code, ConnectError } from '@connectrpc/connect';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from '$lib/gen/orkstack/v1/stats_pb';
@@ -291,9 +299,16 @@
 	// is "not read yet", which must not read as "no record".
 	let attemptsSeeded = $state(false);
 	let seedGeneration = 0;
+	// What the last seed read was issued for: a finished run's later loader
+	// answers (its replayed terminal event re-reads the run) keep it.
+	let seededFor: SeedKey | null = null;
 	$effect(() => {
 		const snapshot = data.run;
 		if (!snapshot) return;
+		const terminal = isTerminal(snapshot.status);
+		if (seedStillCurrent(seededFor, snapshot.id, terminal)) return;
+		const key: SeedKey = { runId: snapshot.id, terminal };
+		seededFor = key;
 		const mine = ++seedGeneration;
 		const namespace = untrack(() => data.namespace);
 		void readAttemptSeed(
@@ -304,6 +319,8 @@
 			(err) => err instanceof ConnectError && err.code === Code.FailedPrecondition
 		).then((seed) => {
 			if (mine !== seedGeneration) return;
+			// A read that failed is not kept: the next loader answer asks again.
+			if (seed.error !== null && seededFor === key) seededFor = null;
 			attemptsByTask = groupAttemptsByTask(seed.attempts);
 			attemptsError = seed.error;
 			attemptStoreAbsent = seed.storeAbsent;

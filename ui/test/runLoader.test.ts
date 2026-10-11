@@ -3,7 +3,7 @@ import { create, toJson } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { GetRunResponseSchema } from '../src/lib/gen/orkstack/v1/service_pb';
 import { TaskAttemptSchema } from '../src/lib/gen/orkstack/v1/run_pb';
-import { readAttemptSeed } from '../src/lib/attempts';
+import { readAttemptSeed, seedStillCurrent } from '../src/lib/attempts';
 import { load } from '../src/routes/runs/[id]/+page';
 
 // F-ui-perf-1: the run page renders after GetRun. Its loader never asks for
@@ -92,4 +92,21 @@ test('the seed is the whole run in one call, read tolerantly', async () => {
 	);
 	expect(down.storeAbsent).toBe(false);
 	expect(down.error).toContain('store unreachable');
+});
+
+// A finished run's seed is read once per open: the re-read its replayed
+// terminal event starts keeps it. Anything that may have grown the timeline
+// (a live run, one that finished since, another run) reads again.
+test('only a finished run that was finished when seeded keeps its seed', () => {
+	const cases: [string, Parameters<typeof seedStillCurrent>, boolean][] = [
+		['nothing read yet', [null, 'ork-1', true], false],
+		['finished then and now', [{ runId: 'ork-1', terminal: true }, 'ork-1', true], true],
+		['live when read, finished now', [{ runId: 'ork-1', terminal: false }, 'ork-1', true], false],
+		['live then and now', [{ runId: 'ork-1', terminal: false }, 'ork-1', false], false],
+		['finished then, live again now', [{ runId: 'ork-1', terminal: true }, 'ork-1', false], false],
+		['another run', [{ runId: 'ork-1', terminal: true }, 'ork-2', true], false]
+	];
+	for (const [name, args, want] of cases) {
+		expect([name, seedStillCurrent(...args)]).toEqual([name, want]);
+	}
 });
