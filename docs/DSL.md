@@ -205,8 +205,10 @@ another type. The run input, the stored definition and the run's plan each
 travel as one payload of the run's start, and each is bounded by the same
 256 KiB as any payload (AGENTS.md §2.2): an input over it is refused at
 submit (and at a schedule's fire) as `INVALID_ARGUMENT` with
-`INPUT_TOO_LARGE`, and nothing starts. Pass a reference to large data — a
-URL or an object key — never the bytes.
+`INPUT_TOO_LARGE`; a definition or plan over it is refused as
+`FAILED_PRECONDITION` naming its size. Nothing starts. The bound is on the
+JSON the payload is sent as, so quotes and newlines count twice. Pass a
+reference to large data — a URL or an object key — never the bytes.
 A task whose template reads an input nobody supplied fails `RENDER_FAILED`
 (`ContractViolation`) rather than running with an empty string.
 

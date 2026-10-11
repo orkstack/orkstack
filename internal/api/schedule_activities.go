@@ -86,8 +86,11 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 		NamespaceIndexed: nsIdx,
 		OriginIndexed:    orIdx,
 	}
-	// The same bytes travel as RunWorkflow's start arguments; a preparation
-	// that does not fit would not have fit as a submission either.
+	// prepare has already bounded each start payload — input, definition and
+	// plan — separately, as a submission is. This bounds the preparation the
+	// local activity hands back as ONE record, so a fire can refuse a run
+	// whose payloads each fit but whose sum does not; a submission would
+	// start it.
 	if proto.Size(prep) > task.MaxActivityInputBytes {
 		return nil, refusedFire("prepared run exceeds 256 KiB")
 	}

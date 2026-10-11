@@ -1554,7 +1554,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `OUTPUT_NOT_READABLE` | ContractViolation | no | the Orker cannot open a file the workload wrote; names path, mode and owner; the fix is `umask 022` (§3.1) |
 | `INPUT_ARTIFACT_UNAVAILABLE` | InfrastructureError | yes | an upstream artifact could not be fetched |
 | `INPUT_ARTIFACT_CORRUPT` | ContractViolation | no | fetched bytes do not match the recorded sha256 |
-| `INPUT_TOO_LARGE` | ContractViolation | no | `ExecuteTaskInput` would exceed 256 KiB (raised by the engine) |
+| `INPUT_TOO_LARGE` | ContractViolation | no | `ExecuteTaskInput` would exceed 256 KiB (raised by the engine); the same code refuses a run input over 256 KiB at submit, before any run starts (`docs/DSL.md`, "Inputs") |
 | `EACH_ITEM_UNAVAILABLE` | ContractViolation | no | an item's `each.over` no longer resolves to the array, of the length, the engine counted — unreachable while the store honours its digests |
 | `RENDER_FAILED` | ContractViolation | no | template error, missing key, `<no value>`, or an `env` name not allowlisted |
 | `SECRET_UNRESOLVED` | InfrastructureError | yes | a `SecretRef.source` could not be resolved |

@@ -24,6 +24,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/schedules"
 )
@@ -816,8 +817,9 @@ func TestPrepareScheduledRun_OversizedPreparationIsRefused(t *testing.T) {
 	rec.Input = &orkstackv1.Payload{Data: input}
 	_, err := acts.PrepareScheduledRun(context.Background(), rec, time.Now())
 	var app *temporal.ApplicationError
-	if !errors.As(err, &app) || app.Type() != engine.ScheduleFireRefusedType || !strings.Contains(app.Message(), "256 KiB") {
-		t.Fatalf("oversized preparation = %v, want a refusal naming 256 KiB", err)
+	if !errors.As(err, &app) || app.Type() != engine.ScheduleFireRefusedType ||
+		!strings.Contains(app.Message(), "256 KiB") || !strings.Contains(app.Message(), task.ReasonInputTooLarge) {
+		t.Fatalf("oversized preparation = %v, want an INPUT_TOO_LARGE refusal naming 256 KiB", err)
 	}
 }
 

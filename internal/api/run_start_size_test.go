@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -64,5 +65,46 @@ func TestSubmitRun_AcceptsARunInputUnderThePayloadBound(t *testing.T) {
 	inputs := starter.startedInputs()
 	if len(inputs) != 1 || inputs[0]["url"] != url {
 		t.Fatalf("started inputs = %d, want the one submitted input unchanged", len(inputs))
+	}
+}
+
+// TestSubmitRun_MeasuresTheInputAsSent pins the measure: the bound is on the
+// JSON Temporal records, where every quote is escaped. An input of quotes
+// that fits in raw bytes but not once escaped is refused.
+func TestSubmitRun_MeasuresTheInputAsSent(t *testing.T) {
+	starter := &fakeStarter{}
+	f := newRunIDFixture(t, starter, nil)
+
+	quotes := strings.Repeat(`"`, task.MaxActivityInputBytes*3/4)
+	err := submitWithURL(t, f, quotes)
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(fmt.Sprint(err), task.ReasonInputTooLarge) {
+		t.Fatalf("%d raw bytes of quotes = %v, want INPUT_TOO_LARGE: escaped they exceed the bound", len(quotes), err)
+	}
+	if started := starter.startedRuns(); len(started) != 0 {
+		t.Errorf("started %v, want nothing", started)
+	}
+}
+
+// TestSubmitRun_RefusesADefinitionOverThePayloadBound: a stored definition
+// that serializes past 256 KiB is the Orkflow's problem, not the caller's —
+// FAILED_PRECONDITION naming it — and starts nothing.
+func TestSubmitRun_RefusesADefinitionOverThePayloadBound(t *testing.T) {
+	starter := &fakeStarter{}
+	f := newRunIDFixture(t, starter, nil)
+	yaml := "name: big-ork\nversion: \"1.0.0\"\ndescription: \"" +
+		strings.Repeat("d", task.MaxActivityInputBytes+1) + "\"\n" +
+		"tasks:\n  - id: one\n    uses: shell\n    with: {op: exec, command: [\"true\"]}\n"
+	if _, err := f.svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: yaml})); err != nil {
+		t.Fatalf("ApplyOrkflow: %v", err)
+	}
+	_, err := f.svc.SubmitRun(context.Background(),
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "big-ork"}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition ||
+		!strings.Contains(fmt.Sprint(err), "orkflow big-ork@1.0.0 serializes to") {
+		t.Fatalf("SubmitRun = %v, want FailedPrecondition naming the definition", err)
+	}
+	if started := starter.startedRuns(); len(started) != 0 {
+		t.Errorf("started %v, want nothing", started)
 	}
 }
