@@ -1,8 +1,4 @@
-import {
-	HeartbeatUnavailableReason,
-	LiveAttemptState,
-	type LiveAttempt
-} from './gen/orkstack/v1/service_pb';
+import { HeartbeatUnavailableReason, LiveAttemptState, type LiveAttempt } from './gen/orkstack/v1/run_service_pb';
 
 // The run page's live line: what an in-flight attempt is doing right now,
 // derived from ONE InspectRun answer and the engine's clock.

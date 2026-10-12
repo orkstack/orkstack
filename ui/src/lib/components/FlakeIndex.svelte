@@ -13,7 +13,8 @@
 	// response (cmd/orkctl/stats_flakes.go): the helpers in $lib/flakes are
 	// shared spellings, not a second opinion.
 	import { durationFromMs, timestampFromDate, type Timestamp } from '@bufbuild/protobuf/wkt';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { statsClient } from '$lib/clients/stats';
 	import { listHref, runWindowFilters } from '$lib/browsing';
 	import { namespaceLabel } from '$lib/namespace';
 	import { groupBySpelling, timestampMs } from '$lib/stats';
@@ -88,7 +89,7 @@
 		const mine = ++generation;
 		loading = true;
 		try {
-			const resp = await orkstack(fetch).stats.getFlakeIndex({ namespace, ...windowFields(), groupBy: dims });
+			const resp = await statsClient(fetch).getFlakeIndex({ namespace, ...windowFields(), groupBy: dims });
 			if (mine !== generation) return;
 			result = resp;
 			error = null;

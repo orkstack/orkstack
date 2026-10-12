@@ -7,7 +7,7 @@
 	// cmd/orkctl/run_plan.go, so this component holds no logic of its own. A
 	// plan is not a run: the outcome badges are deliberately NOT the status
 	// palette's succeeded/failed, because nothing succeeded or failed.
-	import { PlanOutcome, type PlanRunResponse } from '$lib/gen/orkstack/v1/service_pb';
+	import { PlanOutcome, type PlanRunResponse } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import {
 		planCaveats,
 		planDetail,

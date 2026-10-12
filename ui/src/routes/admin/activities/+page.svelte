@@ -21,12 +21,13 @@
 	import { listHref } from '$lib/browsing';
 	import type { FieldFilter } from '$lib/listFilter';
 	import { namespaceLabel } from '$lib/namespace';
-	import { ListActivitiesRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
+	import { ListActivitiesRequestSchema } from '$lib/gen/orkstack/v1/activity_service_pb';
 	import ActivityInterface from '$lib/components/ActivityInterface.svelte';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import { inspectCommand, interfaceSummary, pinnedReference, shortDigest } from '$lib/activity';
-	import { errorMessage, orkstack } from '$lib/client';
-	import type { ActivityInfo } from '$lib/gen/orkstack/v1/service_pb';
+	import { errorMessage } from '$lib/client';
+	import { activityClient } from '$lib/clients/activities';
+	import type { ActivityInfo } from '$lib/gen/orkstack/v1/activity_service_pb';
 	import { fmtTimestamp } from '$lib/status';
 	import type { PageProps } from './$types';
 
@@ -59,7 +60,7 @@
 		inspectError = '';
 		inspected = null;
 		try {
-			const res = await orkstack(fetch).activities.inspectActivity({ reference });
+			const res = await activityClient(fetch).inspectActivity({ reference });
 			inspected = res.activity ?? null;
 			if (!inspected) inspectError = 'the engine answered with no activity';
 		} catch (err) {

@@ -16,9 +16,10 @@
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import ListFilter from '$lib/components/ListFilter.svelte';
 	import { listHref } from '$lib/browsing';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { systemClient } from '$lib/clients/system';
 	import { FilterOperator, filterOf, type FieldFilter } from '$lib/listFilter';
-	import { ListReleasesRequestSchema, ReleaseRole, type ListReleasesResponse, type Release } from '$lib/gen/orkstack/v1/service_pb';
+	import { ListReleasesRequestSchema, ReleaseRole, type ListReleasesResponse, type Release } from '$lib/gen/orkstack/v1/system_service_pb';
 	import { withNamespace } from '$lib/namespace';
 	import {
 		canPromote,
@@ -126,7 +127,7 @@
 		percent = '10';
 		dialogLoading = true;
 		try {
-			dialogRead = await orkstack(fetch).system.listReleases({ filters: [filterOf('build_id', FilterOperator.EQUALS, [build])] });
+			dialogRead = await systemClient(fetch).listReleases({ filters: [filterOf('build_id', FilterOperator.EQUALS, [build])] });
 			if (!dialogRead.releases.some((r) => r.buildId === build)) {
 				dialogError = `no release ${build} is known to the cluster any more; refresh the page`;
 			}
@@ -151,14 +152,14 @@
 		dialogError = '';
 		try {
 			if (kind === 'promote' || kind === 'rollback') {
-				const res = await orkstack(fetch).system.promoteRelease({
+				const res = await systemClient(fetch).promoteRelease({
 					buildId: build,
 					expectedRevision: dialogRead.revision
 				});
 				result = promoteResult(pageRead, build, res, kind === 'rollback');
 			} else {
 				const p = kind === 'ramp' ? (rampPercent ?? 0) : 0;
-				const res = await orkstack(fetch).system.rampRelease({
+				const res = await systemClient(fetch).rampRelease({
 					buildId: build,
 					percent: p,
 					expectedRevision: dialogRead.revision

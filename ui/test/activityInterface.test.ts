@@ -5,7 +5,7 @@ import {
 	ActivityInterfaceSchema,
 	type ActivityInfo,
 	type ActivityInterface
-} from '../src/lib/gen/orkstack/v1/service_pb';
+} from '../src/lib/gen/orkstack/v1/activity_service_pb';
 import {
 	inspectCommand,
 	interfaceHeadline,

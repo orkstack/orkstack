@@ -1,5 +1,5 @@
 import { fromJson } from '@bufbuild/protobuf';
-import { TaskLogChunkSchema, type TaskLogChunk } from './gen/orkstack/v1/service_pb';
+import { TaskLogChunkSchema, type TaskLogChunk } from './gen/orkstack/v1/run_service_pb';
 import { wsBaseUrl } from './ws';
 
 // Following one task's output, live, in a browser.

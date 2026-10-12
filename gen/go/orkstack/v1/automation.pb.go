@@ -1362,7 +1362,7 @@ var File_orkstack_v1_automation_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_automation_proto_rawDesc = "" +
 	"\n" +
-	"\x1corkstack/v1/automation.proto\x12\vorkstack.v1\x1a\x1aorkstack/v1/schedule.proto\x1a\x19orkstack/v1/service.proto\"[\n" +
+	"\x1corkstack/v1/automation.proto\x12\vorkstack.v1\x1a\x1aorkstack/v1/schedule.proto\x1a#orkstack/v1/namespace_service.proto\x1a!orkstack/v1/orkflow_service.proto\x1a!orkstack/v1/trigger_service.proto\x1a!orkstack/v1/webhook_service.proto\"[\n" +
 	"\x15AutomationFieldChange\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x12\x16\n" +
 	"\x06before\x18\x02 \x01(\tR\x06before\x12\x14\n" +
@@ -1565,7 +1565,10 @@ func file_orkstack_v1_automation_proto_init() {
 		return
 	}
 	file_orkstack_v1_schedule_proto_init()
-	file_orkstack_v1_service_proto_init()
+	file_orkstack_v1_namespace_service_proto_init()
+	file_orkstack_v1_orkflow_service_proto_init()
+	file_orkstack_v1_trigger_service_proto_init()
+	file_orkstack_v1_webhook_service_proto_init()
 	file_orkstack_v1_automation_proto_msgTypes[1].OneofWrappers = []any{
 		(*AutomationStep_CreateNamespace)(nil),
 		(*AutomationStep_UpdateNamespace)(nil),

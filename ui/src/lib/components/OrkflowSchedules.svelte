@@ -16,9 +16,10 @@
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { parseInputObject } from '$lib/authoring';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { scheduleClient } from '$lib/clients/schedules';
 	import { PayloadSchema } from '$lib/gen/orkstack/v1/common_pb';
-	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/service_pb';
+	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { ScheduleSpecSchema, type Schedule } from '$lib/gen/orkstack/v1/schedule_pb';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import {
@@ -145,7 +146,7 @@
 		const created = scheduleName.trim();
 		creating = true;
 		try {
-			await orkstack(fetch).schedules.createSchedule({
+			await scheduleClient(fetch).createSchedule({
 				namespace,
 				name: created,
 				orkflowName: name,
@@ -196,24 +197,24 @@
 
 	const pause = () =>
 		act(
-			() => orkstack(fetch).schedules.pauseSchedule({ namespace, name: pausing, reason: pauseReason }),
+			() => scheduleClient(fetch).pauseSchedule({ namespace, name: pausing, reason: pauseReason }),
 			() => {
 				pausing = '';
 				pauseReason = '';
 			}
 		);
 	const resume = (target: string) =>
-		act(() => orkstack(fetch).schedules.resumeSchedule({ namespace, name: target }), () => {});
+		act(() => scheduleClient(fetch).resumeSchedule({ namespace, name: target }), () => {});
 	// No overlap: the schedule's own policy applies to a fire from this button.
 	const fire = () =>
 		act(
-			() => orkstack(fetch).schedules.fireSchedule({ namespace, name: firing }),
+			() => scheduleClient(fetch).fireSchedule({ namespace, name: firing }),
 			() => (firing = '')
 		);
 	function remove() {
 		const removed = deleting;
 		return act(
-			() => orkstack(fetch).schedules.deleteSchedule({ namespace, name: removed }),
+			() => scheduleClient(fetch).deleteSchedule({ namespace, name: removed }),
 			() => (deleting = ''),
 			() => !schedules.some((row) => row.name === removed)
 		);

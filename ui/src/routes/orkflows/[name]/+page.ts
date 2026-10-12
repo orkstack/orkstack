@@ -1,7 +1,11 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { orkflowClient } from '$lib/clients/orkflows';
+import { scheduleClient } from '$lib/clients/schedules';
+import { triggerClient } from '$lib/clients/triggers';
 import { FilterOperator, filterOf } from '$lib/listFilter';
 import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
-import type { OrkflowVersion, Trigger } from '$lib/gen/orkstack/v1/service_pb';
+import type { OrkflowVersion } from '$lib/gen/orkstack/v1/orkflow_service_pb';
+import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 import type { Schedule } from '$lib/gen/orkstack/v1/schedule_pb';
 import { namespaceFrom } from '$lib/namespace';
 import type { PageLoad } from './$types';
@@ -27,7 +31,6 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 	// call by the same name.
 	const namespace = namespaceFrom(url);
 	const tab = tabFrom(url.searchParams.get('tab'));
-	const client = orkstack(fetch);
 
 	// The reads are independent and are reported independently: a version
 	// listing the engine will not answer must not blank the DAG, and a document
@@ -41,11 +44,11 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 	// the same fact living in the component. It is fetched only for the tab that
 	// shows it — the other three would pay a request for a list nobody renders.
 	const [detail, catalog, triggerList, scheduleList] = await Promise.all([
-		client.orkflows
+		orkflowClient(fetch)
 			.getOrkflow({ name, version, namespace })
 			.then((res) => ({ orkflow: res.orkflow ?? null, error: null as string | null }))
 			.catch((err) => ({ orkflow: null as Orkflow | null, error: errorMessage(err) })),
-		client.orkflows
+		orkflowClient(fetch)
 			.listOrkflowVersions({ name, namespace })
 			.then((res) => ({
 				versions: res.versions,
@@ -60,14 +63,14 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 				error: errorMessage(err)
 			})),
 		tab === 'triggers'
-			? client.triggers
+			? triggerClient(fetch)
 					.listTriggers({ namespace, filters: [filterOf('orkflow_name', FilterOperator.EQUALS, [name])] })
 					.then((res) => ({ triggers: res.triggers, error: null as string | null }))
 					.catch((err) => ({ triggers: [] as Trigger[], error: errorMessage(err) }))
 			: Promise.resolve({ triggers: [] as Trigger[], error: null as string | null }),
 		// Schedules are read the way triggers are, for the tab that shows them.
 		tab === 'schedules'
-			? client.schedules
+			? scheduleClient(fetch)
 					.listSchedules({ namespace, filters: [filterOf('orkflow_name', FilterOperator.EQUALS, [name])] })
 					.then((res) => ({ schedules: res.schedules, error: null as string | null }))
 					.catch((err) => ({ schedules: [] as Schedule[], error: errorMessage(err) }))
@@ -105,7 +108,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 		else editError = detail.error ?? `the engine returned no document for ${name}@${editVersion}`;
 	} else {
 		try {
-			const res = await client.orkflows.getOrkflow({ name, version: editVersion, namespace });
+			const res = await orkflowClient(fetch).getOrkflow({ name, version: editVersion, namespace });
 			const doc = res.orkflow ?? null;
 			if (doc) editYaml = doc.sourceYaml;
 			else editError = `the engine returned no document for ${name}@${editVersion}`;

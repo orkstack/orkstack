@@ -10,7 +10,7 @@
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import { shellQuote } from '$lib/runDetail';
 	import type { FieldFilter } from '$lib/listFilter';
-	import { ListOrkflowsRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
+	import { ListOrkflowsRequestSchema } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

@@ -1,23 +1,24 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { orkflowClient } from '$lib/clients/orkflows';
+import { runClient } from '$lib/clients/runs';
 import { namespaceFrom } from '$lib/namespace';
-import type { RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
+import type { RunArtifact } from '$lib/gen/orkstack/v1/run_service_pb';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, params, url }) => {
-	const client = orkstack(fetch);
 	// A run id addresses a run inside a namespace, not across the deployment:
 	// the engine answers NotFound for a run of another one, so the page has to
 	// say which it is asking about.
 	const namespace = namespaceFrom(url);
 	try {
-		const res = await client.runs.getRun({ runId: params.id, namespace });
+		const res = await runClient(fetch).getRun({ runId: params.id, namespace });
 		const run = res.run ?? null;
 		let artifacts: RunArtifact[] = [];
 		let artifactsError: string | null = null;
 		let orkflow = null;
 		if (run) {
 			try {
-				const artifactRes = await client.runs.listRunArtifacts({ runId: run.id, namespace, taskId: '' });
+				const artifactRes = await runClient(fetch).listRunArtifacts({ runId: run.id, namespace, taskId: '' });
 				artifacts = artifactRes.artifacts;
 			} catch (err) {
 				artifactsError = errorMessage(err);
@@ -28,7 +29,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			// draw. The page reads it once it has rendered ($lib/attempts
 			// readAttemptSeed) and fills timing in when it lands.
 			try {
-				const wfRes = await client.orkflows.getOrkflow({
+				const wfRes = await orkflowClient(fetch).getOrkflow({
 					name: run.orkflowName,
 					version: run.orkflowVersion,
 					namespace

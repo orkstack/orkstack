@@ -1,4 +1,5 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { auditClient } from '$lib/clients/audit';
 import { DEFAULT_AUDIT_LIMIT, auditLimit, type AuditCoordinates } from '$lib/audit';
 import type { ListAuditRecordsResponse } from '$lib/gen/orkstack/v1/audit_pb';
 import { pageNumber } from '$lib/browsing';
@@ -35,7 +36,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 		};
 	}
 	try {
-		const audit = await orkstack(fetch).audit.listAuditRecords({
+		const audit = await auditClient(fetch).listAuditRecords({
 			filters,
 			pageSize: coordinates.limit === DEFAULT_AUDIT_LIMIT ? 0 : coordinates.limit,
 			pageToken: coordinates.cursor

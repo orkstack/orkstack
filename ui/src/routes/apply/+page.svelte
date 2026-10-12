@@ -2,9 +2,10 @@
 	import { goto } from '$app/navigation';
 	import { guardUnsaved } from '$lib/dirtyGuard';
 	import { exampleHref } from '$lib/examples';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { orkflowClient } from '$lib/clients/orkflows';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/service_pb';
+	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
@@ -71,7 +72,7 @@ tasks:
 		const validatedNamespace = data.namespace;
 		validating = true;
 		try {
-			const result = await orkstack(fetch).orkflows.validateOrkflow({ yaml: validatedYaml, namespace: validatedNamespace });
+			const result = await orkflowClient(fetch).validateOrkflow({ yaml: validatedYaml, namespace: validatedNamespace });
 			if (yaml !== validatedYaml || data.namespace !== validatedNamespace) return false;
 			issues = result.issues;
 			return !result.issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
@@ -90,7 +91,7 @@ tasks:
 		const submittedNamespace = data.namespace;
 		applying = true;
 		try {
-			const res = await orkstack(fetch).orkflows.applyOrkflow({ yaml: submittedYaml, namespace: submittedNamespace });
+			const res = await orkflowClient(fetch).applyOrkflow({ yaml: submittedYaml, namespace: submittedNamespace });
 			warnings = res.warnings;
 			if (res.orkflow) {
 				if (res.warnings.length > 0) {

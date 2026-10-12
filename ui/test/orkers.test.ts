@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
-import { OrkerSchema } from '../src/lib/gen/orkstack/v1/service_pb';
+import { OrkerSchema } from '../src/lib/gen/orkstack/v1/activity_pb';
 import { cordonCommand, orkerCommand, orkerLoad, orkerPins, orkerState, orkerTasks } from '../src/lib/orkers';
 
 test('an Orker that could not be asked is unreachable and has no numbers, never zero', () => {

@@ -1,4 +1,6 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { cacheClient } from '$lib/clients/cache';
+import { orkflowClient } from '$lib/clients/orkflows';
 import { cacheWindowFrom } from '$lib/cache';
 import type { GetCacheStatsResponse } from '$lib/gen/orkstack/v1/cache_pb';
 import { namespaceFrom } from '$lib/namespace';
@@ -14,14 +16,13 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const namespace = namespaceFrom(url);
 	const window = cacheWindowFrom(url);
 	const orkflow = url.searchParams.get('orkflow') ?? '';
-	const client = orkstack(fetch);
 	const request =
 		window.window === 'custom'
 			? { namespace, orkflowName: orkflow, since: timestampFromDate(new Date(window.since ?? '')) }
 			: { namespace, orkflowName: orkflow, lookback: durationFromMs((window.lookbackSeconds ?? 86400) * 1000) };
 	const [stats, orkflows] = await Promise.allSettled([
-		client.cache.getCacheStats(request),
-		client.orkflows.listOrkflows({ namespace, pageSize: 200 })
+		cacheClient(fetch).getCacheStats(request),
+		orkflowClient(fetch).listOrkflows({ namespace, pageSize: 200 })
 	]);
 	return {
 		namespace,

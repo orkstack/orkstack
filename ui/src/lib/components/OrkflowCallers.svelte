@@ -6,7 +6,8 @@
 	// which not every tab should pay for (docs/UI_CLI_PARITY.md "Interface compatibility").
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { orkflowClient } from '$lib/clients/orkflows';
 	import {
 		callerHref,
 		callerKindWord,
@@ -15,7 +16,7 @@
 		callersFooter,
 		pinsLabel
 	} from '$lib/compat';
-	import { OrkflowCallerKind, type ListOrkflowCallersResponse } from '$lib/gen/orkstack/v1/service_pb';
+	import { OrkflowCallerKind, type ListOrkflowCallersResponse } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { namespaceLabel } from '$lib/namespace';
 
 	interface Props {
@@ -36,7 +37,7 @@
 		loading = true;
 		error = '';
 		try {
-			const res = await orkstack(fetch).orkflows.listOrkflowCallers({ name, namespace, allVersions });
+			const res = await orkflowClient(fetch).listOrkflowCallers({ name, namespace, allVersions });
 			if (mine !== sequence) return;
 			response = res;
 		} catch (err) {

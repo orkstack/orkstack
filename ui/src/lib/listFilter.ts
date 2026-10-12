@@ -10,7 +10,7 @@
 // test/listFilter.test.ts). The browser checks SYNTAX only: what a field may
 // take is the server's to refuse, and its refusal is shown verbatim, so the
 // browser invents no validation the CLI would bypass.
-import { create, createRegistry, getOption, type DescEnum, type DescField, type DescMessage } from '@bufbuild/protobuf';
+import { create, createRegistry, getOption, type DescEnum, type DescField, type DescFile, type DescMessage } from '@bufbuild/protobuf';
 import { ScalarType } from '@bufbuild/protobuf';
 import {
 	FieldFilterSchema,
@@ -19,12 +19,6 @@ import {
 	filterable,
 	type FieldFilter
 } from './gen/orkstack/v1/filter_pb';
-import { file_orkstack_v1_audit } from './gen/orkstack/v1/audit_pb';
-import { file_orkstack_v1_namespace } from './gen/orkstack/v1/namespace_pb';
-import { file_orkstack_v1_orkflow } from './gen/orkstack/v1/orkflow_pb';
-import { file_orkstack_v1_run } from './gen/orkstack/v1/run_pb';
-import { file_orkstack_v1_schedule } from './gen/orkstack/v1/schedule_pb';
-import { file_orkstack_v1_service } from './gen/orkstack/v1/service_pb';
 import { shellQuote } from './runDetail';
 
 export type { FieldFilter };
@@ -76,16 +70,18 @@ const OPERATOR_TEXT: Record<FilterOperator, string> = {
 	[FilterOperator.BEFORE]: '<'
 };
 
-// The files that declare a listed message. A resource is looked up here by
-// the full name the declaration gives.
-const resources = createRegistry(
-	file_orkstack_v1_service,
-	file_orkstack_v1_schedule,
-	file_orkstack_v1_namespace,
-	file_orkstack_v1_orkflow,
-	file_orkstack_v1_run,
-	file_orkstack_v1_audit
-);
+// filesOf is a request's own file and everything it imports, transitively.
+// A listed message is looked up there by the full name the declaration gives:
+// the request's file declares the response that carries the listed message,
+// so it defines or imports it. Resolving through the request — rather than a
+// registry of every generated file — is what keeps this module from pulling
+// every service's schemas into each route that renders a filter bar.
+function filesOf(file: DescFile, seen = new Set<DescFile>()): Set<DescFile> {
+	if (seen.has(file)) return seen;
+	seen.add(file);
+	for (const dependency of file.dependencies) filesOf(dependency, seen);
+	return seen;
+}
 
 /**
  * enumPrefix is the SCREAMING_SNAKE form of the enum's name plus "_" — the
@@ -143,7 +139,7 @@ export function specFor(request: DescMessage): FilterSpec {
 	const cached = specs.get(request.typeName);
 	if (cached) return cached;
 	const declared = getOption(request, filterable);
-	const resource = resources.getMessage(declared.resource);
+	const resource = createRegistry(...filesOf(request.file)).getMessage(declared.resource);
 	if (!resource) throw new Error(`${request.typeName}: resource ${declared.resource} is not a known message`);
 	const spec: FilterSpec = {
 		resource: resource.name,

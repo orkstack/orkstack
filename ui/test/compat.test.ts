@@ -23,11 +23,11 @@ import {
 	InterfaceVerdict,
 	OrkflowCallerKind,
 	OrkflowCallerSchema,
-	file_orkstack_v1_service
-} from '../src/lib/gen/orkstack/v1/service_pb';
+	file_orkstack_v1_orkflow_service
+} from '../src/lib/gen/orkstack/v1/orkflow_service_pb';
 
 function enumValues(name: string): number[] {
-	const e = file_orkstack_v1_service.enums.find((x) => x.name === name);
+	const e = file_orkstack_v1_orkflow_service.enums.find((x) => x.name === name);
 	if (!e) throw new Error(`enum ${name} not found`);
 	return e.values.map((v) => v.number);
 }

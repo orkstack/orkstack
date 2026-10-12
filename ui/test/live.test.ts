@@ -6,7 +6,7 @@ import {
 	LiveAttemptSchema,
 	LiveAttemptState,
 	type LiveAttempt
-} from '../src/lib/gen/orkstack/v1/service_pb';
+} from '../src/lib/gen/orkstack/v1/run_service_pb';
 import { formatBytes, heartbeatAge, liveLine } from '../src/lib/live';
 
 // The live-attempt derivation's scenario table, L1–L11, as the server answers

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { TimestampSchema } from '@bufbuild/protobuf/wkt';
-import { ArtifactKind, ReferenceState } from '../src/lib/gen/orkstack/v1/service_pb';
+import { ArtifactKind, ReferenceState } from '../src/lib/gen/orkstack/v1/run_service_pb';
 import {
 	artifactKindFlag,
 	provenanceCommand,

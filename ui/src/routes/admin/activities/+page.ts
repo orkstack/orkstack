@@ -1,5 +1,6 @@
-import { errorMessage, orkstack } from '$lib/client';
-import type { ActivityInfo } from '$lib/gen/orkstack/v1/service_pb';
+import { errorMessage } from '$lib/client';
+import { activityClient } from '$lib/clients/activities';
+import type { ActivityInfo } from '$lib/gen/orkstack/v1/activity_service_pb';
 import type { DescribeOrkerResult } from '$lib/gen/orkstack/v1/activity_pb';
 import { namespaceFrom } from '$lib/namespace';
 import { filtersFromUrl } from '$lib/listFilter';
@@ -19,7 +20,6 @@ import type { PageLoad } from './$types';
 // either failure erase the other's answer.
 export const load: PageLoad = async ({ fetch, url }) => {
 	const namespace = namespaceFrom(url);
-	const client = orkstack(fetch);
 	// The catalog's filters are the URL's `filter` parameters; one that does
 	// not parse is shown without a request.
 	const { filters: applied, error: filterError } = filtersFromUrl(url);
@@ -27,11 +27,11 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const [catalog, orker] = await Promise.all([
 		filterError
 			? Promise.resolve({ activities: [] as ActivityInfo[], error: filterError as string | null })
-			: client.activities
+			: activityClient(fetch)
 					.listActivities({ filters: applied })
 					.then((res) => ({ activities: res.activities, error: null as string | null }))
 					.catch((err) => ({ activities: [] as ActivityInfo[], error: errorMessage(err) })),
-		client.activities
+		activityClient(fetch)
 			.describeOrker({})
 			.then((res) => ({
 				orker: res.orker ?? null,

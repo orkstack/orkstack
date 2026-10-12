@@ -26,8 +26,9 @@
 	import { Code, ConnectError } from '@connectrpc/connect';
 	import DiffView from '$lib/components/DiffView.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
-	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/service_pb';
+	import { errorMessage } from '$lib/client';
+	import { orkflowClient } from '$lib/clients/orkflows';
+	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { namespaceLabel } from '$lib/namespace';
 
 	interface Props {
@@ -126,7 +127,6 @@
 		conflict = null;
 	});
 
-	const client = () => orkstack(fetch);
 	const dirty = $derived(yaml !== cleanYaml);
 
 	guardUnsaved(() => dirty, 'Discard unsaved orkflow YAML?');
@@ -139,7 +139,7 @@
 		const validatedNamespace = namespace;
 		validating = true;
 		try {
-			const res = await client().orkflows.validateOrkflow({ yaml: validatedYaml, namespace: validatedNamespace });
+			const res = await orkflowClient(fetch).validateOrkflow({ yaml: validatedYaml, namespace: validatedNamespace });
 			if (yaml !== validatedYaml || namespace !== validatedNamespace) return false;
 			issues = res.issues;
 			return !res.issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
@@ -184,7 +184,7 @@
 		const submittedYaml = yaml;
 		const submittedNamespace = namespace;
 		try {
-			const res = await client().orkflows.applyOrkflow({
+			const res = await orkflowClient(fetch).applyOrkflow({
 				yaml: submittedYaml,
 				namespace: submittedNamespace,
 				baseVersion: base,
@@ -239,7 +239,7 @@
 		conflictBusy = true;
 		conflictHeadError = '';
 		try {
-			const res = await client().orkflows.listOrkflowVersions({ name, namespace });
+			const res = await orkflowClient(fetch).listOrkflowVersions({ name, namespace });
 			conflictHead = res.headVersion;
 		} catch (err) {
 			conflictHead = '';
@@ -258,7 +258,7 @@
 		conflictDiffError = '';
 		conflictDiff = null;
 		try {
-			const res = await client().orkflows.diffOrkflowVersions({
+			const res = await orkflowClient(fetch).diffOrkflowVersions({
 				name,
 				fromVersion: conflict?.expectedHead ?? '',
 				toVersion: conflictHead,

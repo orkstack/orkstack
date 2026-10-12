@@ -14,7 +14,8 @@
 	import DeclaredInputs from './DeclaredInputs.svelte';
 	import Dialog from './Dialog.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { runClient } from '$lib/clients/runs';
 	import {
 		awaitCallbackUrl,
 		awaitCurl,
@@ -141,7 +142,7 @@
 		busy = true;
 		error = '';
 		try {
-			const res = await orkstack(fetch).runs.resolveAwait({
+			const res = await runClient(fetch).resolveAwait({
 				runId,
 				namespace,
 				taskId: task.id,
@@ -160,7 +161,7 @@
 		busy = true;
 		error = '';
 		try {
-			const res = await orkstack(fetch).runs.resolveAwait({
+			const res = await runClient(fetch).resolveAwait({
 				runId,
 				namespace,
 				taskId: task.id,

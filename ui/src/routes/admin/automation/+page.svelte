@@ -14,7 +14,12 @@
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { automationClient } from '$lib/clients/automation';
+	import { namespaceClient } from '$lib/clients/namespaces';
+	import { scheduleClient } from '$lib/clients/schedules';
+	import { triggerClient } from '$lib/clients/triggers';
+	import { webhookClient } from '$lib/clients/webhooks';
 	import {
 		automationActionSymbol,
 		automationActionWord,
@@ -27,7 +32,8 @@
 		freshPlanRefused,
 		isActionable,
 		planCounts,
-		planHasErrors
+		planHasErrors,
+		type AutomationWriters
 	} from '$lib/automation';
 	import {
 		AutomationAction,
@@ -36,7 +42,7 @@
 		type ExportAutomationResponse,
 		type PlanAutomationResponse
 	} from '$lib/gen/orkstack/v1/automation_pb';
-	import { ValidationSeverity } from '$lib/gen/orkstack/v1/service_pb';
+	import { ValidationSeverity } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { namespaceLabel } from '$lib/namespace';
 	import { shellQuote } from '$lib/runDetail';
 	import type { PageProps } from './$types';
@@ -113,7 +119,7 @@
 		exporting = true;
 		exportError = '';
 		try {
-			exported = await orkstack(fetch).automation.exportAutomation({ namespace });
+			exported = await automationClient(fetch).exportAutomation({ namespace });
 		} catch (err) {
 			exported = null;
 			exportError = errorMessage(err);
@@ -138,7 +144,7 @@
 	// one, and a document for another namespace answers with the issue that
 	// says so.
 	async function requestPlan(): Promise<PlanAutomationResponse> {
-		return orkstack(fetch).automation.planAutomation({
+		return automationClient(fetch).planAutomation({
 			yaml,
 			namespace: namespaceLabel(namespace),
 			prune
@@ -193,7 +199,12 @@
 			return;
 		}
 		confirming = false;
-		const client = orkstack(fetch);
+		const client: AutomationWriters = {
+			namespaces: namespaceClient(fetch),
+			schedules: scheduleClient(fetch),
+			triggers: triggerClient(fetch),
+			webhooks: webhookClient(fetch)
+		};
 		const results: Record<number, Outcome> = {};
 		const secretsOut: Disclosed[] = [];
 		let failed = false;

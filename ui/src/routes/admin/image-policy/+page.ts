@@ -1,4 +1,5 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { systemClient } from '$lib/clients/system';
 import type { ImagePolicy } from '$lib/gen/orkstack/v1/image_policy_pb';
 import type { PageLoad } from './$types';
 
@@ -9,7 +10,7 @@ import type { PageLoad } from './$types';
 // tightening (require_signed_by) is set on /admin/namespaces.
 export const load: PageLoad = async ({ fetch }) => {
 	try {
-		const res = await orkstack(fetch).system.getImagePolicy({});
+		const res = await systemClient(fetch).getImagePolicy({});
 		return { imagePolicy: res.policy ?? null, imagePolicyError: null as string | null };
 	} catch (err) {
 		return { imagePolicy: null as ImagePolicy | null, imagePolicyError: errorMessage(err) };

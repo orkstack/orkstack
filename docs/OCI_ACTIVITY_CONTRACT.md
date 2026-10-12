@@ -208,10 +208,11 @@ Rules the field comments state and every change must keep:
 - `image_policy.proto`: `ImagePolicy` (the stored deployment floor) and
   `ImagePolicySelection` (the policy in force for one run, carried on
   `ExecuteTaskInput.image_policy`, §4.7).
-- `service.proto`: `ActivityService.ListActivities` (the catalog, resolved,
-  ordered by name, with each image's declared interface) and `DescribeOrker`
-  (the pool-liveness probe, §6.5); `RunService.InspectRun` and its
-  `LiveAttempt` (§6.6).
+- `activity_service.proto`: `ActivityService.ListActivities` (the catalog,
+  resolved, ordered by name, with each image's declared interface) and
+  `DescribeOrker` (the pool-liveness probe, §6.5). `run_service.proto`:
+  `RunService.InspectRun` and its `LiveAttempt` (§6.6). Each service has its
+  own file, so a client loads only the schemas of the service it calls.
 
 ---
 

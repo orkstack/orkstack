@@ -6,7 +6,7 @@ import { CacheOutcome } from './gen/orkstack/v1/activity_pb';
 import { Status } from './gen/orkstack/v1/common_pb';
 import type { Event, TaskRun } from './gen/orkstack/v1/run_pb';
 import type { EachSpec } from './gen/orkstack/v1/orkflow_pb';
-import type { PlanTask } from './gen/orkstack/v1/service_pb';
+import type { PlanTask } from './gen/orkstack/v1/orkflow_service_pb';
 import { runCommand } from './runDetail';
 import { isTerminal, statusLabel } from './status';
 

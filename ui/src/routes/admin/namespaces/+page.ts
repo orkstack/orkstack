@@ -1,4 +1,6 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { namespaceClient } from '$lib/clients/namespaces';
+import { systemClient } from '$lib/clients/system';
 import type { Namespace } from '$lib/gen/orkstack/v1/namespace_pb';
 import { pageNumber, pageSize } from '$lib/browsing';
 import { namespaceFrom } from '$lib/namespace';
@@ -34,7 +36,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 
 async function loadNamespaces(fetchFn: typeof fetch, size: number, cursor: string, filters: FieldFilter[]) {
 	try {
-		const res = await orkstack(fetchFn).namespaces.listNamespaces({ pageSize: size, pageToken: cursor, filters });
+		const res = await namespaceClient(fetchFn).listNamespaces({ pageSize: size, pageToken: cursor, filters });
 		return {
 			namespacesList: res.namespaces,
 			nextPageToken: res.nextPageToken,
@@ -58,7 +60,7 @@ async function loadNamespaces(fetchFn: typeof fetch, size: number, cursor: strin
 // read and write everything else.
 async function loadTelemetrySinks(fetchFn: typeof fetch) {
 	try {
-		const res = await orkstack(fetchFn).system.listTelemetrySinks({});
+		const res = await systemClient(fetchFn).listTelemetrySinks({});
 		return {
 			telemetrySinks: res.names,
 			telemetrySinksError: null as string | null
@@ -78,7 +80,7 @@ async function loadTelemetrySinks(fetchFn: typeof fetch) {
 // the signer, on the same terms as the telemetry sink select.
 async function loadImagePolicy(fetchFn: typeof fetch) {
 	try {
-		const res = await orkstack(fetchFn).system.getImagePolicy({});
+		const res = await systemClient(fetchFn).getImagePolicy({});
 		return {
 			signingKeys: Object.keys(res.policy?.signingKeys ?? {}).sort(),
 			signingKeysError: null as string | null

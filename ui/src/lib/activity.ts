@@ -2,11 +2,7 @@ import { FailureCategory } from './gen/orkstack/v1/common_pb';
 import type { Error as OrkError } from './gen/orkstack/v1/common_pb';
 import type { ImageRef } from './gen/orkstack/v1/activity_pb';
 import type { Task } from './gen/orkstack/v1/orkflow_pb';
-import type {
-	ActivityInfo,
-	ActivityInterface,
-	FieldSchema
-} from './gen/orkstack/v1/service_pb';
+import type { ActivityInfo, ActivityInterface, FieldSchema } from './gen/orkstack/v1/activity_service_pb';
 import { toJson } from '@bufbuild/protobuf';
 import { ValueSchema } from '@bufbuild/protobuf/wkt';
 import { shellQuote } from './runDetail';

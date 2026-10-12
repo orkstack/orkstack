@@ -1,16 +1,16 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { timestampFromDate } from '@bufbuild/protobuf/wkt';
+import { OrkerSchema } from '../src/lib/gen/orkstack/v1/activity_pb';
 import {
 	ListReleasesResponseSchema,
-	OrkerSchema,
 	PromoteReleaseResponseSchema,
 	RampReleaseResponseSchema,
 	ReleaseBlockerSchema,
 	ReleaseDrainState,
 	ReleaseRole,
 	ReleaseSchema
-} from '../src/lib/gen/orkstack/v1/service_pb';
+} from '../src/lib/gen/orkstack/v1/system_service_pb';
 import { OpenPinSchema } from '../src/lib/gen/orkstack/v1/activity_pb';
 import { RunSchema } from '../src/lib/gen/orkstack/v1/run_pb';
 import {

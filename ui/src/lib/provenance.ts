@@ -3,7 +3,7 @@
 // cmd/orkctl/provenance.go) word for word, so a screenshot and a golden file
 // describe one answer.
 import type { Timestamp } from '@bufbuild/protobuf/wkt';
-import { ArtifactKind, ReferenceState } from './gen/orkstack/v1/service_pb';
+import { ArtifactKind, ReferenceState } from './gen/orkstack/v1/run_service_pb';
 import { runCommand } from './runDetail';
 
 export const BYTES_PRESENT = 'Bytes present in the object store';

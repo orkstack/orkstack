@@ -53,7 +53,9 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { defaultCompareTarget } from '$lib/runDiff';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { runClient } from '$lib/clients/runs';
+	import { statsClient } from '$lib/clients/stats';
 	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, taskRunCommand, timestampJson } from '$lib/runDetail';
 	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '$lib/eventBuffer';
 	import { eventBatcher } from '$lib/eventBatch';
@@ -100,7 +102,7 @@
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
 	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
 	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
-	import { ArtifactKind, type LiveAttempt, type RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
+	import { ArtifactKind, type LiveAttempt, type RunArtifact } from '$lib/gen/orkstack/v1/run_service_pb';
 	import { liveLine } from '$lib/live';
 	import { afterNavigation } from '$lib/settle';
 	import type { PageProps } from './$types';
@@ -312,7 +314,7 @@
 		const mine = ++seedGeneration;
 		const namespace = untrack(() => data.namespace);
 		void readAttemptSeed(
-			orkstack(fetch).runs,
+			runClient(fetch),
 			snapshot.id,
 			namespace,
 			errorMessage,
@@ -349,7 +351,7 @@
 		if (!run || !taskId || attemptsInFlight.has(key)) return;
 		attemptsInFlight.add(key);
 		try {
-			const res = await orkstack(fetch).runs.listTaskAttempts({
+			const res = await runClient(fetch).listTaskAttempts({
 				runId: run.id,
 				namespace: data.namespace,
 				taskId,
@@ -416,7 +418,7 @@
 		const mine = ++historyGeneration;
 		historyLoading = true;
 		try {
-			const resp = await orkstack(fetch).stats.getFlakeIndex({
+			const resp = await statsClient(fetch).getFlakeIndex({
 				namespace,
 				orkflowName,
 				lookback: durationFromMs(HISTORY_LOOKBACK_MS),
@@ -540,7 +542,7 @@
 		if (!run || liveInFlight) return;
 		liveInFlight = true;
 		try {
-			const res = await orkstack(fetch).runs.inspectRun({ runId: run.id, namespace: data.namespace });
+			const res = await runClient(fetch).inspectRun({ runId: run.id, namespace: data.namespace });
 			const next = new Map<string, LiveAttempt>();
 			for (const attempt of res.attempts) next.set(attemptsKey(attempt.taskId, attempt.item), attempt);
 			liveByTask = next;
@@ -1184,7 +1186,7 @@
 		cancelBusy = true;
 		cancelError = '';
 		try {
-			await orkstack(fetch).runs.cancelRun({ runId: run.id, namespace: data.namespace, reason: cancelReason.trim() });
+			await runClient(fetch).cancelRun({ runId: run.id, namespace: data.namespace, reason: cancelReason.trim() });
 			cancellationRequested = true;
 			cancelDialog = false;
 			await invalidateAll();
@@ -1212,7 +1214,7 @@
 			let receivedName = record.artifact.name;
 			let received = 0n;
 			let complete = false;
-			for await (const chunk of orkstack(fetch).runs.readArtifact({
+			for await (const chunk of runClient(fetch).readArtifact({
 				runId: run.id, namespace: data.namespace, taskId: record.taskId, kind: record.kind, name: record.artifact.name,
 				item: record.item
 			}, { signal: abort.signal })) {
@@ -1256,7 +1258,7 @@
 		compareLoading = true;
 		const current = run;
 		try {
-			const res = await orkstack(fetch).runs.listRuns({
+			const res = await runClient(fetch).listRuns({
 				namespace: data.namespace,
 				filters: runWindowFilters(current.orkflowName, '', '', ''),
 				pageSize: 20

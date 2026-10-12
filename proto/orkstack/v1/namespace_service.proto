@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "orkstack/v1/filter.proto";
+import "orkstack/v1/namespace.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// NamespaceService manages namespaces and reports the pools they may dispatch
+// onto.
+//
+// A namespace is a scope that owns orkflow names, runs and pool defaults. The
+// registry is durable (the artifact store), so any replica answers for any
+// namespace, including one it never created.
+service NamespaceService {
+  // CreateNamespace registers a namespace.
+  //
+  // It is idempotent for an identical spec: creating the same namespace twice
+  // with the same description, labels, default pool and allowed pools returns
+  // the existing document rather than an error, so a provisioning script is
+  // safe to re-run. A second create that differs is AlreadyExists, naming what
+  // differs — that one is a collision, not a repeat.
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+  // GetNamespace reads one namespace. The default namespace always resolves,
+  // whether or not anyone created it.
+  rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
+  // ListNamespaces returns the registered namespaces, ordered by name, with
+  // the built-in default always among them.
+  //
+  // page_size 0 returns every match in one response; a positive page_size
+  // returns one page and a next_page_token. The names come from the
+  // registry's key listing, so a page filtered by name alone (or not at all)
+  // reads only the documents it holds: a page of 25 out of thousands costs
+  // one listing and 25 reads. A filter on any other field reads documents
+  // in name order, a batch at a time, until the page is full.
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+  // UpdateNamespace replaces a namespace's mutable fields.
+  //
+  // It is a compare-and-swap on Namespace.etag: the token a read handed back.
+  // A stale token is FailedPrecondition, so two operators editing at once
+  // cannot silently clobber each other — the loser re-reads and re-applies.
+  rpc UpdateNamespace(UpdateNamespaceRequest) returns (UpdateNamespaceResponse);
+  // DeleteNamespace removes a namespace that holds no orkflows.
+  //
+  // It refuses while any orkflow is still stored in it, and says how many:
+  // deleting the registry entry would not delete the definitions, so they
+  // would survive under a namespace nothing lists. The default namespace is
+  // refused unconditionally — every orkflow that names none is in it.
+  rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse);
+  // ListPools reports every pool a namespace may dispatch onto, each with the
+  // number of Orkers serving it right now.
+  //
+  // The answer is read from the cluster, never from process memory, so any
+  // replica answers — including one that started nothing.
+  //
+  // It NARROWS rather than refusing. A source that cannot be reached costs
+  // this read what that source knew and nothing else: a pool the cluster did
+  // not answer for is still listed, carrying Pool.unavailable_reason instead
+  // of a count; an orkflow store that cannot be read narrows the answer to
+  // the pools the namespace document itself names. An admin read is opened
+  // when something is already wrong, and a refusal hides the healthy pools
+  // beside the broken one.
+  rpc ListPools(ListPoolsRequest) returns (ListPoolsResponse);
+}
+
+message CreateNamespaceRequest {
+  Namespace namespace = 1;               // name is required; times are the registry's
+}
+
+message CreateNamespaceResponse {
+  Namespace namespace = 1;
+  // created is false when an identical namespace already existed, so an
+  // idempotent repeat is distinguishable from the write that did it.
+  bool created = 2;
+}
+
+message GetNamespaceRequest { string name = 1; }
+
+message GetNamespaceResponse { Namespace namespace = 1; }
+
+message ListNamespacesRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Namespace"
+    fields: [
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "description"
+        label: "Description"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "labels"
+        label: "Label"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "default_pool"
+        label: "Default pool"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "hold.reason"
+        label: "Hold reason"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "require_signed_by"
+        label: "Required signer"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "telemetry.sink"
+        label: "Telemetry sink"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "created_at"
+        label: "Created"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      },
+      {
+        path: "updated_at"
+        label: "Updated"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  // page_size 0 returns EVERY matching namespace in one response (the
+  // switcher, Admin → Usage and `orkctl namespace list` ask for it); a
+  // positive page_size returns one page in name order; negative is
+  // INVALID_ARGUMENT.
+  int32 page_size = 1;
+  // page_token continues a paged listing; it binds the canonical filter set,
+  // and is INVALID_ARGUMENT with page_size 0.
+  string page_token = 2;
+  repeated FieldFilter filters = 3;
+}
+
+message ListNamespacesResponse {
+  repeated Namespace namespaces = 1;
+  string next_page_token = 2;              // set when more namespaces match
+}
+
+message UpdateNamespaceRequest {
+  // namespace carries the new spec and the etag it was read at. Every update
+  // is conditional: the etag names the stored version this edit replaces, and
+  // an empty etag says the version it edited had no stored bytes at all —
+  // which is what a read of the synthesized `default` namespace hands back.
+  // Both are compare-and-swaps, and a write whose condition no longer holds
+  // is FAILED_PRECONDITION: re-read and re-apply. There is no unconditional
+  // mode; see Namespace.etag for why an empty token cannot be one.
+  Namespace namespace = 1;
+}
+
+message UpdateNamespaceResponse { Namespace namespace = 1; }
+
+message DeleteNamespaceRequest { string name = 1; }
+
+message DeleteNamespaceResponse {}
+
+message ListPoolsRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Pool"
+    fields: [
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "is_default"
+        label: "Default"
+        operators: [FILTER_OPERATOR_EQUALS]
+      }
+    ]
+  };
+  string namespace = 1;                  // the tenant; empty = the default namespace
+  repeated FieldFilter filters = 2;
+}
+
+message ListPoolsResponse {
+  repeated Pool pools = 1;               // ordered by name
+  string default_pool = 2;               // where a task naming no pool runs
+}

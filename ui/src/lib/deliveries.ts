@@ -1,5 +1,5 @@
 import { timestampDate, type Duration, type Timestamp } from '@bufbuild/protobuf/wkt';
-import type { Delivery } from './gen/orkstack/v1/service_pb';
+import type { Delivery } from './gen/orkstack/v1/webhook_service_pb';
 import { listHref, pageStackKey } from './browsing';
 import { FilterOperator, equalityOf, filterFlags, filterOf, type FieldFilter } from './listFilter';
 

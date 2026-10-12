@@ -8,9 +8,10 @@
 	// UNREACHABLE and none of its numbers are drawn: "not measured" rendered
 	// as "idle" would send an operator to stop a host that may be mid-task.
 	import { onMount } from 'svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { activityClient } from '$lib/clients/activities';
 	import { FilterOperator, filterOf } from '$lib/listFilter';
-	import type { Orker } from '$lib/gen/orkstack/v1/service_pb';
+	import type { Orker } from '$lib/gen/orkstack/v1/activity_pb';
 	import { withNamespace } from '$lib/namespace';
 	import {
 		cordonCommand,
@@ -49,7 +50,7 @@
 		loading = true;
 		try {
 			// The pool is this disclosure's scope: a fixed filter, no form.
-			const res = await orkstack(fetch).activities.listOrkers({ filters: [filterOf('pool', FilterOperator.EQUALS, [pool])] });
+			const res = await activityClient(fetch).listOrkers({ filters: [filterOf('pool', FilterOperator.EQUALS, [pool])] });
 			orkers = res.orkers;
 			loadError = '';
 		} catch (err) {
@@ -75,7 +76,7 @@
 		cordonBusy = true;
 		cordonError = '';
 		try {
-			await orkstack(fetch).activities.cordonOrker({
+			await activityClient(fetch).cordonOrker({
 				orkerId: cordoning.orkerId,
 				cordoned: true,
 				reason: reason.trim()
@@ -96,7 +97,7 @@
 		uncordonBusy = orker.orkerId;
 		actionError = '';
 		try {
-			await orkstack(fetch).activities.cordonOrker({ orkerId: orker.orkerId, cordoned: false });
+			await activityClient(fetch).cordonOrker({ orkerId: orker.orkerId, cordoned: false });
 		} catch (err) {
 			actionError = `Uncordon ${orker.orkerId}: ${errorMessage(err)}`;
 		} finally {

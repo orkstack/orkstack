@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { Status } from '../src/lib/gen/orkstack/v1/common_pb';
 import { RunSchema, type Run } from '../src/lib/gen/orkstack/v1/run_pb';
-import { DiffRunsResponseSchema, RunFieldDiffSchema } from '../src/lib/gen/orkstack/v1/service_pb';
+import { DiffRunsResponseSchema, RunFieldDiffSchema } from '../src/lib/gen/orkstack/v1/run_service_pb';
 import {
 	DIFF_FIELDS,
 	defaultCompareTarget,

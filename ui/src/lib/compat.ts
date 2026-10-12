@@ -10,7 +10,7 @@ import {
 	OrkflowCallerKind,
 	type InterfaceFinding,
 	type OrkflowCaller
-} from './gen/orkstack/v1/service_pb';
+} from './gen/orkstack/v1/orkflow_service_pb';
 import { withNamespace } from './namespace';
 import { runCommand } from './runDetail';
 

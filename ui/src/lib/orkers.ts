@@ -1,4 +1,4 @@
-import type { Orker } from './gen/orkstack/v1/service_pb';
+import type { Orker } from './gen/orkstack/v1/activity_pb';
 import { shellQuote } from './runDetail';
 
 // The Orker inventory's rendering rules, shared by Admin → Pools and its

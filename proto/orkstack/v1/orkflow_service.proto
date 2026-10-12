@@ -1,0 +1,683 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
+import "orkstack/v1/common.proto";
+import "orkstack/v1/filter.proto";
+import "orkstack/v1/orkflow.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// OrkflowService manages orkflow definitions (the compiled DSL).
+//
+// A version is immutable and a name is unique within a namespace, so the three
+// coordinates (namespace, name, version) address one document for all time.
+// What moves is a per-orkflow POINTER: `current` decides which version an
+// empty version resolves to, and moving it is the only mutation this service
+// performs on an existing orkflow.
+service OrkflowService {
+  // ValidateOrkflow performs the same non-mutating preparation as apply.
+  rpc ValidateOrkflow(ValidateOrkflowRequest) returns (ValidateOrkflowResponse);
+  // ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+  //
+  // It never rewrites a stored version: identical YAML under an existing
+  // version is a no-op that writes nothing, and DIFFERENT YAML under an
+  // existing version is refused (AlreadyExists). An edit therefore always
+  // arrives as a new version — which is what lets a run pinned to a version
+  // keep reading the bytes it pinned.
+  rpc ApplyOrkflow(ApplyOrkflowRequest) returns (ApplyOrkflowResponse);
+  rpc GetOrkflow(GetOrkflowRequest) returns (GetOrkflowResponse);
+  rpc ListOrkflows(ListOrkflowsRequest) returns (ListOrkflowsResponse);
+  // ListOrkflowVersions lists every stored version of one orkflow, newest
+  // applied first, marking the one an empty version resolves to.
+  rpc ListOrkflowVersions(ListOrkflowVersionsRequest) returns (ListOrkflowVersionsResponse);
+  // SetCurrentOrkflowVersion moves the orkflow's current pointer.
+  //
+  // The target must already exist: promoting to an unknown version is
+  // NotFound, so a reader can never observe a pointer to a version that is not
+  // there. Two replicas promoting at once are arbitrated by the store's
+  // compare-and-swap — one value wins, and it is one of the two asked for.
+  //
+  // It compares the target's declared interface with the version a run that
+  // names no version executes now, and REFUSES (FailedPrecondition, naming
+  // each breaking finding) a BREAKING change unless acknowledge_breaking is
+  // set. COMPATIBLE and UNKNOWN changes are never refused. The swap is made
+  // only while the pointer still names what the comparison was made
+  // against: a promotion that loses that race is FailedPrecondition, never
+  // an unchecked move.
+  rpc SetCurrentOrkflowVersion(SetCurrentOrkflowVersionRequest) returns (SetCurrentOrkflowVersionResponse);
+  // DiffOrkflowVersions renders the unified diff between two versions'
+  // source_yaml.
+  //
+  // The diff is computed SERVER-side, deliberately. Two clients read it (the
+  // CLI and the UI) and a third will follow; a client-side diff would put a
+  // diff dependency in each of them and let their renderings drift, so that
+  // `orkctl orkflow diff` and the version page could disagree about what
+  // changed. One implementation, golden-tested once, rendered verbatim by
+  // every client.
+  rpc DiffOrkflowVersions(DiffOrkflowVersionsRequest) returns (DiffOrkflowVersionsResponse);
+  // DeleteOrkflow removes all versions of an orkflow from the registry.
+  //
+  // It refuses (FailedPrecondition) if any runs are currently executing or
+  // queued for this orkflow, or if runs have completed recently (within the
+  // past 24 hours). The check is conservative: an orkflow with any recent
+  // activity cannot be deleted. This protects against accidental deletion of
+  // an orkflow in active use.
+  //
+  // The operation is NOT reversible: all versions and their metadata are
+  // permanently deleted. Runs that pinned the orkflow keep executing — they
+  // have the version they started with — but any new run will fail with
+  // NotFound.
+  rpc DeleteOrkflow(DeleteOrkflowRequest) returns (DeleteOrkflowResponse);
+  // PlanRun answers "for this input, which tasks of this definition would
+  // run, which would be skipped and why, and in what order" WITHOUT
+  // starting anything.
+  //
+  // It is a read in the shape of ValidateOrkflow: it resolves the same
+  // definition SubmitRun would (or prepares an unapplied document exactly
+  // as ValidateOrkflow does), applies the same declared input defaults, and
+  // walks the DAG with the interpreter's own condition evaluator — the
+  // same function RunWorkflow calls, not a copy of it. It writes no
+  // definition, no pointer, no execution, no idempotency claim, and no
+  // event; no run id is minted. There is no flag that makes it submit.
+  //
+  // A plan proves WIRING, never behaviour: a task reported RUNS is a task
+  // the interpreter would dispatch, not a task that would succeed. It is
+  // also not an admission check — pools, holds, and limits are SubmitRun's
+  // questions and are not asked here.
+  rpc PlanRun(PlanRunRequest) returns (PlanRunResponse);
+  // CompareInterfaces classifies how the DECLARED interface of one stored
+  // version — its inputs: and its outputs: — changes in another
+  // (docs/DSL.md "Which version runs"). It speaks about declarations only:
+  // tasks, images, with:, pools and output templates are implementation,
+  // and DiffOrkflowVersions reports them. Computed on every call from the
+  // two immutable documents, stored nowhere; any replica answers.
+  rpc CompareInterfaces(CompareInterfacesRequest) returns (CompareInterfacesResponse);
+  // ListOrkflowCallers lists what, in this namespace, references one
+  // orkflow and which version it pins: every composing task of every other
+  // orkflow's scanned version, every trigger, and every schedule. It is a
+  // scan of the namespace's stored definitions and a read of its triggers
+  // and schedules, made per request — there is no caller index — so its
+  // cost grows with the namespace, and the response says how much it read.
+  rpc ListOrkflowCallers(ListOrkflowCallersRequest) returns (ListOrkflowCallersResponse);
+}
+
+message ApplyOrkflowRequest {
+  string yaml = 1;                       // raw DSL document
+  // namespace selects where the document is applied. Empty honours the
+  // document's own `namespace:` (itself empty = "default"); a non-empty value
+  // must EQUAL the document's namespace, or the document names none and is
+  // applied INTO this one. The two are never allowed to disagree silently: a
+  // file that says `namespace: payments` applied with -n staging is a mistake
+  // one of the two made, and guessing which would store the definition
+  // somewhere its author cannot find it.
+  string namespace = 2;
+  // base_version is the stored version this edit was derived from — its
+  // PROVENANCE and the anchor a diff is taken against, not the concurrency
+  // token. ANY stored version is a valid base: editing an old one is how a
+  // user forks forward from it, and the apply lands as the new head with the
+  // `current` pointer untouched. A non-empty value that names no stored
+  // version is NotFound, naming it.
+  //
+  // It is a VERSION token rather than a content hash. Both name where an edit
+  // came from; only the token names something the user can act on —
+  // `orkctl orkflow diff <name> <base_version> <head>` shows exactly what
+  // arrived underneath the edit. A hash names nothing.
+  string base_version = 3;
+  // expected_head_version is the optimistic-concurrency token: the head
+  // version the editor observed when it fetched. Non-empty and different from
+  // the stored head is refused (FailedPrecondition) naming both, WHATEVER
+  // base was chosen — so an edit made while somebody else applied is reported
+  // instead of landing beside a newer version nobody looked at.
+  //
+  // Empty with an empty base_version is unchecked, which is what a plain
+  // `orkctl apply file.yaml` sends. Empty with a non-empty base_version is
+  // InvalidArgument naming both fields: a base is provenance, not a head
+  // claim, and an editor that read a base also read the head it was under.
+  //
+  // Two fields because there are two facts. With one, the server cannot tell
+  // "derived from an old version on purpose" from "derived from a head that
+  // has since moved", and the first is the whole point of this contract.
+  string expected_head_version = 4;
+}
+
+enum ValidationSeverity {
+  VALIDATION_SEVERITY_UNSPECIFIED = 0;
+  VALIDATION_SEVERITY_ERROR = 1;
+  VALIDATION_SEVERITY_WARNING = 2;
+}
+
+message ValidationIssue {
+  string field = 1;
+  string message = 2;
+  ValidationSeverity severity = 3;
+}
+
+message ValidateOrkflowRequest {
+  string yaml = 1;
+  string namespace = 2;
+}
+
+message ValidateOrkflowResponse {
+  Orkflow orkflow = 1;
+  repeated ValidationIssue issues = 2;
+}
+
+message ApplyOrkflowResponse {
+  Orkflow orkflow = 1;
+  repeated string warnings = 2;
+  // created is false when this apply stored nothing because the version was
+  // already there with byte-identical source YAML. The orkflow above is then
+  // the STORED document, created_at and all, not the one this request would
+  // have written.
+  bool created = 3;
+}
+
+message GetOrkflowRequest {
+  string name = 1;
+  // version selects one stored version, and ANY stored version answers with
+  // its own source_yaml — that is the read an editor starts from, whether it
+  // is editing the head, the current version, or one older than both. Empty
+  // resolves through the current pointer when one has been set, and to the
+  // most recently applied version when none ever was.
+  string version = 2;
+  string namespace = 3;                  // empty = the default namespace
+}
+
+message GetOrkflowResponse { Orkflow orkflow = 1; }
+
+message ListOrkflowsRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Orkflow"
+    fields: [
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "version"
+        label: "Current version"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "description"
+        label: "Description"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "labels"
+        label: "Label"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "definition_digest"
+        label: "Definition digest"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "created_at"
+        label: "Applied"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  // page_size bounds one page; 0 means the engine's default page (200).
+  // Filters apply before the page is cut, so a filtered listing past one
+  // page carries a next_page_token like an unfiltered one.
+  int32 page_size = 1;
+  // page_token continues a listing; it binds the namespace and the
+  // canonical filter set.
+  string page_token = 2;
+  string namespace = 3;                  // the tenant; empty = the default namespace
+  repeated FieldFilter filters = 4;
+}
+
+message ListOrkflowsResponse {
+  repeated Orkflow orkflows = 1;
+  string next_page_token = 2;
+}
+
+// OrkflowVersion is one stored version in a version listing: the document's
+// coordinates, not the document.
+message OrkflowVersion {
+  string version = 1;
+  google.protobuf.Timestamp applied_at = 2;
+  // is_current marks the version an empty version resolves to — the pointer's
+  // target when one is set, otherwise the most recently applied version.
+  bool is_current = 3;
+  string description = 4;
+  // interface_verdict is this version's declared interface compared with
+  // the version marked is_current — "what would promoting this version
+  // break" (CompareInterfaces with from = current, to = this). UNSPECIFIED
+  // on the is_current row itself. Computed on read from documents the
+  // listing already reads; stored nowhere.
+  InterfaceVerdict interface_verdict = 5;
+}
+
+message ListOrkflowVersionsRequest {
+  string name = 1;
+  string namespace = 2;                  // empty = the default namespace
+}
+
+message ListOrkflowVersionsResponse {
+  repeated OrkflowVersion versions = 1;  // newest applied first
+  // current_version is the pointer's target, empty when nobody ever promoted
+  // this orkflow. Empty does NOT mean "nothing runs": resolution then falls
+  // back to head_version.
+  string current_version = 2;
+  // head_version is the most recently applied version — the edit lineage's
+  // tip, and the expected_head_version an editor sends back with its apply.
+  // The base an editor sends is whichever version it actually READ, which
+  // need not be this one.
+  //
+  // A client renders "is head" as `version == head_version`, exactly as it
+  // renders "is current" from is_current: head is a property of the listing,
+  // not of a version, so a per-row flag would be a second place to keep the
+  // same fact.
+  string head_version = 3;
+}
+
+message SetCurrentOrkflowVersionRequest {
+  string name = 1;
+  string version = 2;                    // must already exist
+  string namespace = 3;                  // empty = the default namespace
+  // acknowledge_breaking permits a promotion whose target BREAKS the
+  // declared interface of the version runs execute now. Without it such a
+  // promotion is FailedPrecondition and nothing moves. It permits; it never
+  // requires: set on a compatible promotion it changes nothing. It accepts
+  // the break against whichever version the pointer names when the request
+  // is served.
+  bool acknowledge_breaking = 4;
+}
+
+message SetCurrentOrkflowVersionResponse {
+  string name = 1;
+  string namespace = 2;
+  string current_version = 3;
+  // previous_version is what the pointer named before, empty when it was
+  // never set. It is what a rollback promotes back to.
+  string previous_version = 4;
+  google.protobuf.Timestamp updated_at = 5;
+  // interface_verdict is the promoted version's declared interface compared
+  // with compared_version — what ran when no version was named, until now.
+  // UNSPECIFIED, with compared_version empty, when the promotion did not
+  // change what runs. BREAKING here means the request acknowledged it.
+  InterfaceVerdict interface_verdict = 6;
+  string compared_version = 7;
+}
+
+message DiffOrkflowVersionsRequest {
+  string name = 1;
+  string from_version = 2;               // empty = the resolved current version
+  string to_version = 3;                 // empty = the resolved current version
+  string namespace = 4;                  // empty = the default namespace
+}
+
+message DiffOrkflowVersionsResponse {
+  // unified_diff is standard unified-diff text, empty when the two versions'
+  // source YAML is identical.
+  string unified_diff = 1;
+  string from_version = 2;               // resolved
+  string to_version = 3;                 // resolved
+}
+
+// PlanRunRequest names ONE definition, one input, and optional stub outputs.
+//
+// Exactly one of orkflow_name and yaml is set. With orkflow_name, the
+// definition is the stored version the three coordinates address, resolved
+// exactly as GetOrkflow and SubmitRun resolve it (empty version = the
+// current pointer). With yaml, the definition is prepared from the document
+// exactly as ValidateOrkflow prepares it — compiled against the deployment's
+// activity catalog, namespace-checked, images resolved, digest computed —
+// and stored nowhere.
+message PlanRunRequest {
+  string orkflow_name = 1;
+  string orkflow_version = 2;            // empty = the current pointer
+  string namespace = 3;                  // empty = the default namespace
+  // input is the run input exactly as SubmitRunRequest.input would carry
+  // it; the definition's declared defaults fill omitted keys, caller keys
+  // always win. The effective, defaulted input is echoed on the response.
+  Payload input = 4;
+  // assumed_outputs stubs the values.json of a task that would run, keyed
+  // by task id, so a downstream condition that reads
+  // .tasks.<id>.output.<field> can be planned both ways. A key that is not
+  // a task id of the definition is InvalidArgument naming it. A task that
+  // runs with no entry here is planned with an EMPTY output map — which is
+  // exactly what the interpreter gives a condition when the upstream wrote
+  // no such field — and every task whose condition read such an output is
+  // listed in PlanTask.assumed_absent. An entry for a task that does not
+  // run is reported in unused_assumed_outputs, never silently dropped.
+  map<string, Payload> assumed_outputs = 5;
+  // yaml is an unapplied document to plan instead of a stored version. It
+  // is prepared, not stored: the same function ValidateOrkflow uses, with
+  // the same errors. namespace, when set, must agree with the document's
+  // own `namespace:` on the same rule ApplyOrkflow applies.
+  string yaml = 6;
+  // assume_failed plans the run as if each named task, when it would run,
+  // FAILED after its retries: its failure handlers are planned, every task
+  // that is not a failure handler and transitively needs it is UNREACHED, and
+  // work that does not depend on it is planned as if nothing had failed (in a
+  // run it may be canceled in flight). Each entry is a task id of the
+  // definition, at most once; an unknown or repeated id is InvalidArgument
+  // naming it. An entry whose task does not run is reported in
+  // unused_assume_failed.
+  repeated string assume_failed = 7;
+}
+
+// PlanOutcome is what the interpreter would do with one task, given the
+// planned input and the request's assumed failures. It is deliberately not
+// orkstack.v1.Status: a plan executes nothing, and the enum must not be
+// mistaken for an execution record. FAILS is a decision the interpreter would
+// itself take (a condition it cannot evaluate); ASSUMED_FAILED is the
+// request's assumption, never a prediction that the task fails.
+enum PlanOutcome {
+  PLAN_OUTCOME_UNSPECIFIED = 0;
+  // RUNS: the interpreter would schedule this task's activity.
+  PLAN_OUTCOME_RUNS = 1;
+  // SKIPPED: the interpreter would mark it STATUS_SKIPPED, for the reason
+  // in PlanTask.skip_reason, without reaching an Orker.
+  PLAN_OUTCOME_SKIPPED = 2;
+  // FAILS: evaluating this task's condition returns an error. Unless an
+  // earlier task already did, the run starts failing at that point
+  // (RUN_FAILED with the error's text); in a definition with a failure
+  // handler the interpreter also records the task FAILED (CONDITION_FAILED).
+  // A FAILS of a failure handler decided after fails_at is recorded on that
+  // handler and cuts nothing, so a plan of a definition with failure handlers
+  // may hold more than one FAILS; without a failure handler it holds at most
+  // one. PlanTask.error carries it.
+  PLAN_OUTCOME_FAILS = 3;
+  // UNREACHED: a task that is not a failure handler and is certainly never
+  // started: it transitively needs an ASSUMED_FAILED task, or a FAILS of a
+  // task that is not a failure handler was decided before it (unreached_by
+  // names which); only present when fails_at is set.
+  PLAN_OUTCOME_UNREACHED = 4;
+  // AWAITS: the task is an awaited task the interpreter would open: it takes
+  // a wave as RUNS does and starts no activity.
+  PLAN_OUTCOME_AWAITS = 5;
+  // ASSUMED_FAILED: the request's assume_failed names this task and it would
+  // run; it is planned as having run and FAILED. It takes a wave as RUNS
+  // does, contributes no output, and is where the planned run starts failing
+  // unless an earlier task already did.
+  PLAN_OUTCOME_ASSUMED_FAILED = 6;
+}
+
+// PlanTask is one task's planned outcome. Tasks are listed in declaration
+// order, the order readyTasks scans them in.
+message PlanTask {
+  string task_id = 1;
+  PlanOutcome outcome = 2;
+  // wave is the dispatch depth: 1 for a task with no needs, otherwise one
+  // more than the highest wave among its needs. A SKIPPED task carries the
+  // wave it WOULD have been dispatched in, so a reader sees where in the
+  // graph the branch closed; it is not counted in PlanRunResponse.wave_count
+  // because a skip costs the interpreter no activity and no wait. 0 for
+  // FAILS and UNREACHED.
+  //
+  // A wave is a depth, not a clock: the interpreter re-scans after EVERY
+  // completion, so with real durations a wave-3 task may start before a
+  // slower wave-2 task on another branch finishes. wave_count is the
+  // minimum number of sequential dispatch rounds, which is what an author
+  // asking "how parallel is this" wants to know.
+  int32 wave = 3;
+  // skip_reason is, for SKIPPED, the exact sentence the interpreter logs
+  // after "task skipped: " — `upstream task "<id>" was skipped` or
+  // `condition "<expression>" evaluated false`. Empty otherwise.
+  string skip_reason = 4;
+  // skipped_by is, for an upstream skip, the id of the need that caused it
+  // (the first skipped entry of `needs:`, as classify finds it). Empty for
+  // a condition skip and for every other outcome.
+  string skipped_by = 5;
+  // condition is the task's `condition:` as written, empty when it has none.
+  string condition = 6;
+  // pin is the task's `pin:` as written, empty when unpinned. Rendered so a
+  // reader sees which RUNS tasks would open and share a pin; a pin whose
+  // every member is SKIPPED is never opened by the interpreter and is
+  // rendered as such.
+  string pin = 7;
+  // assumed_absent lists the upstream task ids this task's condition reads
+  // through .tasks.<id> for which the request supplied no assumed output,
+  // in sorted order. Those outputs were planned as {}. Set only when the
+  // condition was actually evaluated (RUNS, or SKIPPED by its condition);
+  // empty for an upstream skip, FAILS, and UNREACHED.
+  repeated string assumed_absent = 8;
+  // error is set for FAILS and ASSUMED_FAILED: for the task at fails_at, the
+  // error the interpreter records on the RUN (code RUN_FAILED for a condition
+  // error, ASSUMED_FAILED for an assumption); for any later FAILS, the error
+  // recorded on that task (code CONDITION_FAILED).
+  Error error = 9;
+  // await is the task's AwaitSpec, set for an awaited task whatever its
+  // outcome, so a reader sees the deadline and whether it takes a callback.
+  AwaitSpec await = 10;
+  // each is the task's EachSpec, set for a fan-out whatever its outcome.
+  EachSpec each = 11;
+  // each_count is the number of items the plan can already count: set when
+  // the source is an input, or a task whose values assumed_outputs stubs;
+  // unset when the count is a run-time fact.
+  optional int32 each_count = 12;
+  // orkflow is the task's Task.orkflow, set for a composed task whatever its
+  // outcome. A plan never recurses into the child: its input is rendered at
+  // run time and its own plan is one more PlanRun call.
+  OrkflowRef orkflow = 13;
+  // cache is the task's CacheSpec, set for a cached task whatever its
+  // outcome. A plan never predicts a hit: that is decided on the Orker, from
+  // the rendered config and the input digests, when the run reaches it.
+  CacheSpec cache = 14;
+  // join is the task's join policy, set whatever its outcome when the
+  // definition declares one other than all_succeeded.
+  JoinPolicy join = 15;
+  // unreached_by is, for UNREACHED, the task whose failure leaves this one
+  // unreached: the first decision-time failure (a FAILS) decided before it,
+  // or else the first ASSUMED_FAILED task of its needs closure in declaration
+  // order. Empty for every other outcome.
+  string unreached_by = 16;
+}
+
+// PlanWave lists the RUNS, AWAITS and ASSUMED_FAILED tasks of one wave, in
+// declaration order. There is one entry per wave from 1 to wave_count;
+// SKIPPED tasks are not members.
+message PlanWave {
+  int32 wave = 1;
+  repeated string task_ids = 2;
+}
+
+message PlanRunResponse {
+  // The definition that was planned: the coordinates and the digest of the
+  // exact document, so a plan of a pinned version and a plan of `current`
+  // can be told apart after the pointer moves.
+  string orkflow_name = 1;
+  string orkflow_version = 2;
+  string namespace = 3;
+  string definition_digest = 4;
+  // from_yaml is true when the request planned an unapplied document; the
+  // version is then whatever the document pins or the derived source hash,
+  // and nothing under these coordinates is stored.
+  bool from_yaml = 5;
+  // input is the EFFECTIVE input: the request's, with declared defaults
+  // applied, exactly what RunWorkflow would see as .inputs.
+  Payload input = 6;
+  repeated PlanTask tasks = 7;           // declaration order
+  repeated PlanWave waves = 8;           // 1..wave_count, RUNS tasks only
+  int32 runs = 9;                        // count of RUNS
+  int32 skipped = 10;                    // count of SKIPPED
+  // wave_count is the highest wave of any RUNS task; 0 when nothing runs.
+  int32 wave_count = 11;
+  // unused_assumed_outputs lists request keys whose task did not RUN, in
+  // sorted order: the stub was accepted and had no effect.
+  repeated string unused_assumed_outputs = 12;
+  int32 awaits = 13;                     // count of AWAITS
+  int32 assumed_failed = 14;             // count of ASSUMED_FAILED
+  // unused_assume_failed lists request entries whose task is not
+  // ASSUMED_FAILED (it was SKIPPED or UNREACHED), in request order.
+  repeated string unused_assume_failed = 15;
+  // fails_at is the task at which the planned run starts failing — the first
+  // FAILS or ASSUMED_FAILED in decision order — or empty when nothing fails.
+  // The run is planned FAILED exactly when it is set; each UNREACHED task
+  // names its own cause in PlanTask.unreached_by.
+  string fails_at = 16;
+}
+
+// InterfaceVerdict is how one version's DECLARED interface — its inputs:
+// and its outputs: — compares with another's.
+enum InterfaceVerdict {
+  // UNSPECIFIED means nothing was compared: a version listed beside itself,
+  // or a promotion that did not change what runs.
+  INTERFACE_VERDICT_UNSPECIFIED = 0;
+  // COMPATIBLE: every finding is compatible.
+  INTERFACE_VERDICT_COMPATIBLE = 1;
+  // BREAKING: at least one finding breaks. Promoting such a version is
+  // refused until acknowledged.
+  INTERFACE_VERDICT_BREAKING = 2;
+  // UNKNOWN: nothing breaks, but part of the interface is not declared — an
+  // orkflow with no outputs: declares no return contract, so whether its
+  // output changed cannot be stated. Never reported as COMPATIBLE, never
+  // refused.
+  INTERFACE_VERDICT_UNKNOWN = 3;
+}
+
+// InterfaceChange is what one finding says happened.
+enum InterfaceChange {
+  INTERFACE_CHANGE_UNSPECIFIED = 0;
+  INTERFACE_CHANGE_UNCHANGED = 1;
+  INTERFACE_CHANGE_ADDED = 2;
+  INTERFACE_CHANGE_REMOVED = 3;
+  // RETYPED: an input's type differs, or it is typed where it was not.
+  INTERFACE_CHANGE_RETYPED = 4;
+  // UNTYPED: an input's type was dropped.
+  INTERFACE_CHANGE_UNTYPED = 5;
+  INTERFACE_CHANGE_NOW_REQUIRED = 6;
+  INTERFACE_CHANGE_NO_LONGER_REQUIRED = 7;
+  INTERFACE_CHANGE_DEFAULT_ADDED = 8;
+  INTERFACE_CHANGE_DEFAULT_REMOVED = 9;
+  INTERFACE_CHANGE_DEFAULT_CHANGED = 10;
+  // OUTPUTS_UNDECLARED: neither version declares outputs:.
+  INTERFACE_CHANGE_OUTPUTS_UNDECLARED = 11;
+  // OUTPUTS_DECLARED: the later version declares outputs: and the earlier
+  // one did not.
+  INTERFACE_CHANGE_OUTPUTS_DECLARED = 12;
+}
+
+// InterfaceFinding is one statement about one declared input, one declared
+// output, or the outputs: block as a whole.
+message InterfaceFinding {
+  // field is "inputs.<name>", "outputs.<name>", or "outputs".
+  string field = 1;
+  InterfaceChange change = 2;
+  // verdict is this finding's own: COMPATIBLE, BREAKING or UNKNOWN, never
+  // UNSPECIFIED.
+  InterfaceVerdict verdict = 3;
+  // from and to render the declaration on each side for a reader — an input
+  // as "string, required" or "number, optional, default 300", an output as
+  // "declared", the outputs: block as "none" or "3 outputs" — and are empty
+  // on the side where it does not exist.
+  string from = 4;
+  string to = 5;
+  // message is the one sentence every client prints for this finding,
+  // verbatim.
+  string message = 6;
+}
+
+// CompareInterfacesRequest's fields mirror DiffOrkflowVersionsRequest, the
+// sibling read, field for field.
+message CompareInterfacesRequest {
+  string name = 1;
+  string from_version = 2;               // empty = the resolved current version
+  string to_version = 3;                 // empty = the resolved current version
+  string namespace = 4;                  // empty = the default namespace
+}
+
+message CompareInterfacesResponse {
+  // findings: every input of either version, sorted by name, then the
+  // output side (docs/DSL.md "Which version runs" gives the table).
+  repeated InterfaceFinding findings = 1;
+  // verdict is BREAKING when any finding is, else UNKNOWN when any finding
+  // is, else COMPATIBLE.
+  InterfaceVerdict verdict = 2;
+  string from_version = 3;               // resolved
+  string to_version = 4;                 // resolved
+}
+
+// OrkflowCallerKind is what references an orkflow.
+enum OrkflowCallerKind {
+  ORKFLOW_CALLER_KIND_UNSPECIFIED = 0;
+  // ORKFLOW: a composed task (uses: orkflow:<name>@<version>) of a stored
+  // version of another orkflow. It always pins a version and is never moved
+  // by a promotion.
+  ORKFLOW_CALLER_KIND_ORKFLOW = 1;
+  ORKFLOW_CALLER_KIND_TRIGGER = 2;
+  ORKFLOW_CALLER_KIND_SCHEDULE = 3;
+}
+
+// OrkflowCaller is one reference to an orkflow. Fields marked with a kind
+// are set only for that kind.
+message OrkflowCaller {
+  OrkflowCallerKind kind = 1;
+  // name is the composing orkflow's name (ORKFLOW), the schedule's name
+  // (SCHEDULE), or the trigger's optional name (TRIGGER; may be empty).
+  string name = 2;
+  // id is the trigger's or the schedule's opaque id; empty for ORKFLOW.
+  string id = 3;
+  // ORKFLOW: the composing version, whether it is that orkflow's resolved
+  // current version, and the composed task.
+  string caller_version = 4;
+  bool caller_version_is_current = 5;
+  string task_id = 6;
+  // pinned_version is the version of THIS orkflow the caller starts. Always
+  // set for ORKFLOW. Empty for a trigger or schedule that follows the
+  // current pointer — or, for a SCHEDULE, when unavailable_reason is set,
+  // in which case it is UNKNOWN, not "follows current".
+  string pinned_version = 7;
+  // ORKFLOW: the definition digest the composing version pinned.
+  string pinned_definition_digest = 8;
+  // ORKFLOW: the output names of this orkflow the composing version's
+  // templates read through the composed task (with:, condition:, outputs:),
+  // sorted and distinct.
+  repeated string outputs_read = 9;
+  // ORKFLOW: the top-level keys of the composed task's with: — the inputs
+  // it supplies — sorted.
+  repeated string inputs_supplied = 10;
+  // TRIGGER, SCHEDULE: the operator's description, verbatim.
+  string description = 11;
+  // SCHEDULE: set when the cluster did not describe the schedule for this
+  // read, so the version it pins is not known. Never a guess.
+  string unavailable_reason = 12;
+}
+
+message ListOrkflowCallersRequest {
+  string name = 1;
+  string namespace = 2;                  // empty = the default namespace
+  // all_versions scans every stored version of every orkflow in the
+  // namespace. False scans each orkflow's resolved current version only —
+  // the version its own starters run.
+  bool all_versions = 3;
+}
+
+message ListOrkflowCallersResponse {
+  // callers: ORKFLOW rows by orkflow name, then version (newest applied
+  // first), then task declaration order; then TRIGGER rows oldest first;
+  // then SCHEDULE rows by name.
+  repeated OrkflowCaller callers = 1;
+  // current_version is what a run of this orkflow that names no version
+  // executes; empty when no version is stored.
+  string current_version = 2;
+  // stored_versions counts this orkflow's stored versions. 0 with callers
+  // present is an orkflow that was deleted while something still names it.
+  int32 stored_versions = 3;
+  // scanned_versions counts the other orkflows' definitions read.
+  int32 scanned_versions = 4;
+  bool all_versions = 5;                 // echoed
+}
+
+message DeleteOrkflowRequest {
+  string name = 1;
+  string namespace = 2;                  // empty = the default namespace
+}
+
+message DeleteOrkflowResponse {
+  string name = 1;
+  string namespace = 2;
+  google.protobuf.Timestamp deleted_at = 3;
+}

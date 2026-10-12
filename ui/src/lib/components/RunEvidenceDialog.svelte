@@ -11,7 +11,8 @@
 	import CliEquivalent from './CliEquivalent.svelte';
 	import Dialog from './Dialog.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { runClient } from '$lib/clients/runs';
 	import {
 		absentMembers,
 		collectEvidence,
@@ -68,7 +69,7 @@
 
 	// Collects one stream; resolves only when `last` arrived ($lib/evidence).
 	function collect(manifestOnly: boolean, signal: AbortSignal): Promise<Uint8Array[]> {
-		return collectEvidence(orkstack(fetch).runs.exportRunEvidence(request(manifestOnly), { signal }), manifestOnly);
+		return collectEvidence(runClient(fetch).exportRunEvidence(request(manifestOnly), { signal }), manifestOnly);
 	}
 
 	async function loadManifest(): Promise<void> {

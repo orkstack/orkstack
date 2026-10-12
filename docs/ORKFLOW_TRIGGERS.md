@@ -9,7 +9,7 @@ webhook, a schedule ([ORKFLOW_SCHEDULES.md](ORKFLOW_SCHEDULES.md)), a
 subscription, or a new execution authority: an invocation is one `SubmitRun`
 call, and Temporal owns everything after it.
 
-`TriggerService` (`proto/orkstack/v1/service.proto`) manages triggers;
+`TriggerService` (`proto/orkstack/v1/trigger_service.proto`) manages triggers;
 `orkctl trigger` and the Orkflow page's **Triggers** tab are its two clients,
 with parity as [UI_CLI_PARITY.md](UI_CLI_PARITY.md) defines it.
 

@@ -11,7 +11,7 @@
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import { shellQuote } from '$lib/runDetail';
 	import { equalityOf, type FieldFilter } from '$lib/listFilter';
-	import { ListRunsRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
+	import { ListRunsRequestSchema } from '$lib/gen/orkstack/v1/run_service_pb';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

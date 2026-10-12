@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create, toJson } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
-import { GetRunResponseSchema } from '../src/lib/gen/orkstack/v1/service_pb';
+import { GetRunResponseSchema } from '../src/lib/gen/orkstack/v1/run_service_pb';
 import { TaskAttemptSchema } from '../src/lib/gen/orkstack/v1/run_pb';
 import { readAttemptSeed, seedStillCurrent } from '../src/lib/attempts';
 import { load } from '../src/routes/runs/[id]/+page';

@@ -19,7 +19,8 @@
 	import ErrorPanel from './ErrorPanel.svelte';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import StatusPill from './StatusPill.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { runClient } from '$lib/clients/runs';
 	import {
 		applyChildEvent,
 		childLabel,
@@ -60,7 +61,7 @@
 
 	async function readChild(id: string, current: () => boolean): Promise<boolean> {
 		try {
-			const res = await orkstack(fetch).runs.getRun({ runId: id, namespace });
+			const res = await runClient(fetch).getRun({ runId: id, namespace });
 			if (!current()) return false;
 			childStatus = res.run?.status ?? Status.UNSPECIFIED;
 			rollup = childRollup(res.run);

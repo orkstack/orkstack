@@ -1571,7 +1571,7 @@ type ExecuteTaskInput struct {
 	// already writes into /orkstack/input/task.json, and there is nothing to
 	// collide with — proto scopes field names per message, and the run
 	// submission key lives on a different message entirely
-	// (SubmitRunRequest.idempotency_key = 4, service.proto). The Go
+	// (SubmitRunRequest.idempotency_key = 4, run_service.proto). The Go
 	// identifiers stay distinct.
 	IdempotencyKey string `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
 	// commit_uri is the deterministic object URI of this activity's commit
@@ -2902,6 +2902,147 @@ func (x *CordonOrkerInput) GetReason() string {
 	return ""
 }
 
+// Orker is one execution process, observed live.
+type Orker struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	OrkerId string                 `protobuf:"bytes,1,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	// pool is the pool the Orker reports serving (DescribeOrkerResult.pool).
+	Pool              string                 `protobuf:"bytes,2,opt,name=pool,proto3" json:"pool,omitempty"`
+	BuildId           string                 `protobuf:"bytes,3,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"` // empty when versioning is off
+	RunningTasks      int32                  `protobuf:"varint,4,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
+	OpenPins          int32                  `protobuf:"varint,5,opt,name=open_pins,json=openPins,proto3" json:"open_pins,omitempty"`
+	MaxConcurrentPins int32                  `protobuf:"varint,6,opt,name=max_concurrent_pins,json=maxConcurrentPins,proto3" json:"max_concurrent_pins,omitempty"` // ORK_ORKER_MAX_PINS; 0 means not a pin host
+	Cordoned          bool                   `protobuf:"varint,7,opt,name=cordoned,proto3" json:"cordoned,omitempty"`
+	CordonReason      string                 `protobuf:"bytes,8,opt,name=cordon_reason,json=cordonReason,proto3" json:"cordon_reason,omitempty"` // empty when not cordoned
+	CordonedAt        *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=cordoned_at,json=cordonedAt,proto3" json:"cordoned_at,omitempty"`
+	// last_seen is the most recent moment this Orker was observed polling.
+	// It answers "how fresh is this row", never "when did this Orker die".
+	LastSeen *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	// unavailable_reason says this Orker COULD NOT BE ASKED, and why — the
+	// same three-state distinction Pool.unavailable_reason makes, for the same
+	// reason: "not measured" rendered as "measured zero" sends an operator to
+	// stop a host that may be mid-task. When set, fields 2–9 and 12 are
+	// unset: nothing was measured, so there is no number to report.
+	UnavailableReason string     `protobuf:"bytes,11,opt,name=unavailable_reason,json=unavailableReason,proto3" json:"unavailable_reason,omitempty"`
+	Pins              []*OpenPin `protobuf:"bytes,12,rep,name=pins,proto3" json:"pins,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *Orker) Reset() {
+	*x = Orker{}
+	mi := &file_orkstack_v1_activity_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Orker) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Orker) ProtoMessage() {}
+
+func (x *Orker) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_activity_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Orker.ProtoReflect.Descriptor instead.
+func (*Orker) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_activity_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *Orker) GetOrkerId() string {
+	if x != nil {
+		return x.OrkerId
+	}
+	return ""
+}
+
+func (x *Orker) GetPool() string {
+	if x != nil {
+		return x.Pool
+	}
+	return ""
+}
+
+func (x *Orker) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+func (x *Orker) GetRunningTasks() int32 {
+	if x != nil {
+		return x.RunningTasks
+	}
+	return 0
+}
+
+func (x *Orker) GetOpenPins() int32 {
+	if x != nil {
+		return x.OpenPins
+	}
+	return 0
+}
+
+func (x *Orker) GetMaxConcurrentPins() int32 {
+	if x != nil {
+		return x.MaxConcurrentPins
+	}
+	return 0
+}
+
+func (x *Orker) GetCordoned() bool {
+	if x != nil {
+		return x.Cordoned
+	}
+	return false
+}
+
+func (x *Orker) GetCordonReason() string {
+	if x != nil {
+		return x.CordonReason
+	}
+	return ""
+}
+
+func (x *Orker) GetCordonedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CordonedAt
+	}
+	return nil
+}
+
+func (x *Orker) GetLastSeen() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastSeen
+	}
+	return nil
+}
+
+func (x *Orker) GetUnavailableReason() string {
+	if x != nil {
+		return x.UnavailableReason
+	}
+	return ""
+}
+
+func (x *Orker) GetPins() []*OpenPin {
+	if x != nil {
+		return x.Pins
+	}
+	return nil
+}
+
 var File_orkstack_v1_activity_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_activity_proto_rawDesc = "" +
@@ -3153,7 +3294,22 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"F\n" +
 	"\x10CordonOrkerInput\x12\x1a\n" +
 	"\bcordoned\x18\x01 \x01(\bR\bcordoned\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason*\\\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xd3\x03\n" +
+	"\x05Orker\x12\x19\n" +
+	"\borker_id\x18\x01 \x01(\tR\aorkerId\x12\x12\n" +
+	"\x04pool\x18\x02 \x01(\tR\x04pool\x12\x19\n" +
+	"\bbuild_id\x18\x03 \x01(\tR\abuildId\x12#\n" +
+	"\rrunning_tasks\x18\x04 \x01(\x05R\frunningTasks\x12\x1b\n" +
+	"\topen_pins\x18\x05 \x01(\x05R\bopenPins\x12.\n" +
+	"\x13max_concurrent_pins\x18\x06 \x01(\x05R\x11maxConcurrentPins\x12\x1a\n" +
+	"\bcordoned\x18\a \x01(\bR\bcordoned\x12#\n" +
+	"\rcordon_reason\x18\b \x01(\tR\fcordonReason\x12;\n" +
+	"\vcordoned_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"cordonedAt\x127\n" +
+	"\tlast_seen\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12-\n" +
+	"\x12unavailable_reason\x18\v \x01(\tR\x11unavailableReason\x12(\n" +
+	"\x04pins\x18\f \x03(\v2\x14.orkstack.v1.OpenPinR\x04pins*\\\n" +
 	"\vNetworkMode\x12\x1c\n" +
 	"\x18NETWORK_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14NETWORK_MODE_DEFAULT\x10\x01\x12\x15\n" +
@@ -3189,7 +3345,7 @@ func file_orkstack_v1_activity_proto_rawDescGZIP() []byte {
 }
 
 var file_orkstack_v1_activity_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_orkstack_v1_activity_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_orkstack_v1_activity_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_orkstack_v1_activity_proto_goTypes = []any{
 	(NetworkMode)(0),              // 0: orkstack.v1.NetworkMode
 	(JoinPolicy)(0),               // 1: orkstack.v1.JoinPolicy
@@ -3219,84 +3375,88 @@ var file_orkstack_v1_activity_proto_goTypes = []any{
 	(*DescribeOrkerResult)(nil),   // 25: orkstack.v1.DescribeOrkerResult
 	(*OpenPin)(nil),               // 26: orkstack.v1.OpenPin
 	(*CordonOrkerInput)(nil),      // 27: orkstack.v1.CordonOrkerInput
-	nil,                           // 28: orkstack.v1.CacheResult.KeyComponentsEntry
-	nil,                           // 29: orkstack.v1.CacheMemo.KeyComponentsEntry
-	nil,                           // 30: orkstack.v1.ExecuteTaskInput.EnvEntry
-	(*ArtifactRef)(nil),           // 31: orkstack.v1.ArtifactRef
-	(Status)(0),                   // 32: orkstack.v1.Status
-	(*Error)(nil),                 // 33: orkstack.v1.Error
-	(*timestamppb.Timestamp)(nil), // 34: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 35: google.protobuf.Struct
-	(*Payload)(nil),               // 36: orkstack.v1.Payload
-	(*TelemetrySelection)(nil),    // 37: orkstack.v1.TelemetrySelection
-	(*ImagePolicySelection)(nil),  // 38: orkstack.v1.ImagePolicySelection
-	(FailureCategory)(0),          // 39: orkstack.v1.FailureCategory
+	(*Orker)(nil),                 // 28: orkstack.v1.Orker
+	nil,                           // 29: orkstack.v1.CacheResult.KeyComponentsEntry
+	nil,                           // 30: orkstack.v1.CacheMemo.KeyComponentsEntry
+	nil,                           // 31: orkstack.v1.ExecuteTaskInput.EnvEntry
+	(*ArtifactRef)(nil),           // 32: orkstack.v1.ArtifactRef
+	(Status)(0),                   // 33: orkstack.v1.Status
+	(*Error)(nil),                 // 34: orkstack.v1.Error
+	(*timestamppb.Timestamp)(nil), // 35: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 36: google.protobuf.Struct
+	(*Payload)(nil),               // 37: orkstack.v1.Payload
+	(*TelemetrySelection)(nil),    // 38: orkstack.v1.TelemetrySelection
+	(*ImagePolicySelection)(nil),  // 39: orkstack.v1.ImagePolicySelection
+	(FailureCategory)(0),          // 40: orkstack.v1.FailureCategory
 }
 var file_orkstack_v1_activity_proto_depIdxs = []int32{
-	31, // 0: orkstack.v1.UpstreamRef.values:type_name -> orkstack.v1.ArtifactRef
-	31, // 1: orkstack.v1.UpstreamRef.artifacts:type_name -> orkstack.v1.ArtifactRef
+	32, // 0: orkstack.v1.UpstreamRef.values:type_name -> orkstack.v1.ArtifactRef
+	32, // 1: orkstack.v1.UpstreamRef.artifacts:type_name -> orkstack.v1.ArtifactRef
 	18, // 2: orkstack.v1.UpstreamRef.each:type_name -> orkstack.v1.EachUpstream
-	32, // 3: orkstack.v1.NeedOutcome.status:type_name -> orkstack.v1.Status
-	33, // 4: orkstack.v1.NeedOutcome.error:type_name -> orkstack.v1.Error
+	33, // 3: orkstack.v1.NeedOutcome.status:type_name -> orkstack.v1.Status
+	34, // 4: orkstack.v1.NeedOutcome.error:type_name -> orkstack.v1.Error
 	1,  // 5: orkstack.v1.JoinContext.policy:type_name -> orkstack.v1.JoinPolicy
 	11, // 6: orkstack.v1.JoinContext.needs:type_name -> orkstack.v1.NeedOutcome
 	2,  // 7: orkstack.v1.CacheContext.scope:type_name -> orkstack.v1.CacheScope
-	34, // 8: orkstack.v1.CacheSource.started_at:type_name -> google.protobuf.Timestamp
-	34, // 9: orkstack.v1.CacheSource.finished_at:type_name -> google.protobuf.Timestamp
+	35, // 8: orkstack.v1.CacheSource.started_at:type_name -> google.protobuf.Timestamp
+	35, // 9: orkstack.v1.CacheSource.finished_at:type_name -> google.protobuf.Timestamp
 	3,  // 10: orkstack.v1.CacheResult.outcome:type_name -> orkstack.v1.CacheOutcome
 	14, // 11: orkstack.v1.CacheResult.source:type_name -> orkstack.v1.CacheSource
-	28, // 12: orkstack.v1.CacheResult.key_components:type_name -> orkstack.v1.CacheResult.KeyComponentsEntry
+	29, // 12: orkstack.v1.CacheResult.key_components:type_name -> orkstack.v1.CacheResult.KeyComponentsEntry
 	2,  // 13: orkstack.v1.CacheMemo.scope:type_name -> orkstack.v1.CacheScope
 	14, // 14: orkstack.v1.CacheMemo.source:type_name -> orkstack.v1.CacheSource
-	29, // 15: orkstack.v1.CacheMemo.key_components:type_name -> orkstack.v1.CacheMemo.KeyComponentsEntry
-	34, // 16: orkstack.v1.CacheMemo.created_at:type_name -> google.protobuf.Timestamp
+	30, // 15: orkstack.v1.CacheMemo.key_components:type_name -> orkstack.v1.CacheMemo.KeyComponentsEntry
+	35, // 16: orkstack.v1.CacheMemo.created_at:type_name -> google.protobuf.Timestamp
 	6,  // 17: orkstack.v1.EachContext.source:type_name -> orkstack.v1.EachSource
 	4,  // 18: orkstack.v1.ExecuteTaskInput.image:type_name -> orkstack.v1.ImageRef
-	35, // 19: orkstack.v1.ExecuteTaskInput.with:type_name -> google.protobuf.Struct
-	30, // 20: orkstack.v1.ExecuteTaskInput.env:type_name -> orkstack.v1.ExecuteTaskInput.EnvEntry
+	36, // 19: orkstack.v1.ExecuteTaskInput.with:type_name -> google.protobuf.Struct
+	31, // 20: orkstack.v1.ExecuteTaskInput.env:type_name -> orkstack.v1.ExecuteTaskInput.EnvEntry
 	7,  // 21: orkstack.v1.ExecuteTaskInput.secrets:type_name -> orkstack.v1.SecretRef
 	5,  // 22: orkstack.v1.ExecuteTaskInput.resources:type_name -> orkstack.v1.ResourceRequest
 	0,  // 23: orkstack.v1.ExecuteTaskInput.network:type_name -> orkstack.v1.NetworkMode
 	8,  // 24: orkstack.v1.ExecuteTaskInput.limits:type_name -> orkstack.v1.WorkspaceLimits
-	36, // 25: orkstack.v1.ExecuteTaskInput.run_input:type_name -> orkstack.v1.Payload
+	37, // 25: orkstack.v1.ExecuteTaskInput.run_input:type_name -> orkstack.v1.Payload
 	9,  // 26: orkstack.v1.ExecuteTaskInput.upstream:type_name -> orkstack.v1.UpstreamRef
-	37, // 27: orkstack.v1.ExecuteTaskInput.telemetry:type_name -> orkstack.v1.TelemetrySelection
+	38, // 27: orkstack.v1.ExecuteTaskInput.telemetry:type_name -> orkstack.v1.TelemetrySelection
 	10, // 28: orkstack.v1.ExecuteTaskInput.pin:type_name -> orkstack.v1.PinContext
-	38, // 29: orkstack.v1.ExecuteTaskInput.image_policy:type_name -> orkstack.v1.ImagePolicySelection
+	39, // 29: orkstack.v1.ExecuteTaskInput.image_policy:type_name -> orkstack.v1.ImagePolicySelection
 	17, // 30: orkstack.v1.ExecuteTaskInput.each:type_name -> orkstack.v1.EachContext
 	13, // 31: orkstack.v1.ExecuteTaskInput.cache:type_name -> orkstack.v1.CacheContext
 	12, // 32: orkstack.v1.ExecuteTaskInput.join:type_name -> orkstack.v1.JoinContext
 	10, // 33: orkstack.v1.ReleasePinInput.pin:type_name -> orkstack.v1.PinContext
-	34, // 34: orkstack.v1.CommitRef.created_at:type_name -> google.protobuf.Timestamp
+	35, // 34: orkstack.v1.CommitRef.created_at:type_name -> google.protobuf.Timestamp
 	21, // 35: orkstack.v1.ExecuteTaskResult.commit:type_name -> orkstack.v1.CommitRef
-	31, // 36: orkstack.v1.ExecuteTaskResult.artifacts:type_name -> orkstack.v1.ArtifactRef
-	31, // 37: orkstack.v1.ExecuteTaskResult.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	31, // 38: orkstack.v1.ExecuteTaskResult.values_ref:type_name -> orkstack.v1.ArtifactRef
+	32, // 36: orkstack.v1.ExecuteTaskResult.artifacts:type_name -> orkstack.v1.ArtifactRef
+	32, // 37: orkstack.v1.ExecuteTaskResult.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	32, // 38: orkstack.v1.ExecuteTaskResult.values_ref:type_name -> orkstack.v1.ArtifactRef
 	4,  // 39: orkstack.v1.ExecuteTaskResult.image:type_name -> orkstack.v1.ImageRef
-	34, // 40: orkstack.v1.ExecuteTaskResult.started_at:type_name -> google.protobuf.Timestamp
-	34, // 41: orkstack.v1.ExecuteTaskResult.finished_at:type_name -> google.protobuf.Timestamp
+	35, // 40: orkstack.v1.ExecuteTaskResult.started_at:type_name -> google.protobuf.Timestamp
+	35, // 41: orkstack.v1.ExecuteTaskResult.finished_at:type_name -> google.protobuf.Timestamp
 	15, // 42: orkstack.v1.ExecuteTaskResult.cache:type_name -> orkstack.v1.CacheResult
 	4,  // 43: orkstack.v1.ActivityCommit.image:type_name -> orkstack.v1.ImageRef
-	31, // 44: orkstack.v1.ActivityCommit.values:type_name -> orkstack.v1.ArtifactRef
-	31, // 45: orkstack.v1.ActivityCommit.artifacts:type_name -> orkstack.v1.ArtifactRef
-	31, // 46: orkstack.v1.ActivityCommit.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	34, // 47: orkstack.v1.ActivityCommit.started_at:type_name -> google.protobuf.Timestamp
-	34, // 48: orkstack.v1.ActivityCommit.finished_at:type_name -> google.protobuf.Timestamp
+	32, // 44: orkstack.v1.ActivityCommit.values:type_name -> orkstack.v1.ArtifactRef
+	32, // 45: orkstack.v1.ActivityCommit.artifacts:type_name -> orkstack.v1.ArtifactRef
+	32, // 46: orkstack.v1.ActivityCommit.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	35, // 47: orkstack.v1.ActivityCommit.started_at:type_name -> google.protobuf.Timestamp
+	35, // 48: orkstack.v1.ActivityCommit.finished_at:type_name -> google.protobuf.Timestamp
 	15, // 49: orkstack.v1.ActivityCommit.cache:type_name -> orkstack.v1.CacheResult
-	39, // 50: orkstack.v1.ActivityFailureDetail.category:type_name -> orkstack.v1.FailureCategory
-	31, // 51: orkstack.v1.ActivityFailureDetail.artifacts:type_name -> orkstack.v1.ArtifactRef
-	31, // 52: orkstack.v1.ActivityFailureDetail.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	40, // 50: orkstack.v1.ActivityFailureDetail.category:type_name -> orkstack.v1.FailureCategory
+	32, // 51: orkstack.v1.ActivityFailureDetail.artifacts:type_name -> orkstack.v1.ArtifactRef
+	32, // 52: orkstack.v1.ActivityFailureDetail.system_artifacts:type_name -> orkstack.v1.ArtifactRef
 	4,  // 53: orkstack.v1.ActivityFailureDetail.image:type_name -> orkstack.v1.ImageRef
-	34, // 54: orkstack.v1.ActivityFailureDetail.started_at:type_name -> google.protobuf.Timestamp
-	34, // 55: orkstack.v1.DescribeOrkerResult.cordoned_at:type_name -> google.protobuf.Timestamp
+	35, // 54: orkstack.v1.ActivityFailureDetail.started_at:type_name -> google.protobuf.Timestamp
+	35, // 55: orkstack.v1.DescribeOrkerResult.cordoned_at:type_name -> google.protobuf.Timestamp
 	26, // 56: orkstack.v1.DescribeOrkerResult.pins:type_name -> orkstack.v1.OpenPin
-	34, // 57: orkstack.v1.OpenPin.since:type_name -> google.protobuf.Timestamp
-	34, // 58: orkstack.v1.OpenPin.expires_at:type_name -> google.protobuf.Timestamp
-	59, // [59:59] is the sub-list for method output_type
-	59, // [59:59] is the sub-list for method input_type
-	59, // [59:59] is the sub-list for extension type_name
-	59, // [59:59] is the sub-list for extension extendee
-	0,  // [0:59] is the sub-list for field type_name
+	35, // 57: orkstack.v1.OpenPin.since:type_name -> google.protobuf.Timestamp
+	35, // 58: orkstack.v1.OpenPin.expires_at:type_name -> google.protobuf.Timestamp
+	35, // 59: orkstack.v1.Orker.cordoned_at:type_name -> google.protobuf.Timestamp
+	35, // 60: orkstack.v1.Orker.last_seen:type_name -> google.protobuf.Timestamp
+	26, // 61: orkstack.v1.Orker.pins:type_name -> orkstack.v1.OpenPin
+	62, // [62:62] is the sub-list for method output_type
+	62, // [62:62] is the sub-list for method input_type
+	62, // [62:62] is the sub-list for extension type_name
+	62, // [62:62] is the sub-list for extension extendee
+	0,  // [0:62] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_activity_proto_init() }
@@ -3314,7 +3474,7 @@ func file_orkstack_v1_activity_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_activity_proto_rawDesc), len(file_orkstack_v1_activity_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   27,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

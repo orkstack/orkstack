@@ -6,7 +6,7 @@ import {
 	type PromoteReleaseResponse,
 	type RampReleaseResponse,
 	type Release
-} from './gen/orkstack/v1/service_pb';
+} from './gen/orkstack/v1/system_service_pb';
 import { shellQuote } from './runDetail';
 import { fmtTimestamp } from './status';
 
