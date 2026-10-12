@@ -441,7 +441,7 @@ func TestWorkerTuner_ActivitySlotsAreTheConfiguredCeiling(t *testing.T) {
 		want       int
 	}{
 		{"configured", 7, 7},
-		{"unset is the default", 0, DefaultMaxConcurrent},
+		{"unset is the default", 0, 16},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := NewActivitiesWithOptions(nil, Options{

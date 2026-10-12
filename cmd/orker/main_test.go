@@ -509,7 +509,6 @@ func TestWorkerOptions_ZeroCordon_IsTheSameWorker(t *testing.T) {
 	}
 	for name, supplier := range map[string]worker.SlotSupplier{
 		"workflow":         tuner.GetWorkflowTaskSlotSupplier(),
-		"activity":         tuner.GetActivityTaskSlotSupplier(),
 		"local activity":   tuner.GetLocalActivitySlotSupplier(),
 		"nexus":            tuner.GetNexusSlotSupplier(),
 		"session activity": tuner.GetSessionActivitySlotSupplier(),
@@ -517,6 +516,11 @@ func TestWorkerOptions_ZeroCordon_IsTheSameWorker(t *testing.T) {
 		if supplier.MaxSlots() != 1000 {
 			t.Errorf("%s supplier MaxSlots() = %d; want the SDK default 1000", name, supplier.MaxSlots())
 		}
+	}
+	// The activity supplier alone is orker.max_concurrent, whose default is a
+	// sizing decision (16), not the SDK's 1000.
+	if got := tuner.GetActivityTaskSlotSupplier().MaxSlots(); got != orker.DefaultMaxConcurrent {
+		t.Errorf("activity supplier MaxSlots() = %d; want orker.max_concurrent's default %d", got, orker.DefaultMaxConcurrent)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -583,8 +587,11 @@ func TestLoadConfig_MaxConcurrent(t *testing.T) {
 	clearTelemetryEnv(t)
 	t.Run("unset is the default", func(t *testing.T) {
 		cfg := loadConfig()
-		if cfg.maxConcurrentErr != nil || cfg.maxConcurrent != orker.DefaultMaxConcurrent {
-			t.Fatalf("maxConcurrent = %d, %v; want %d", cfg.maxConcurrent, cfg.maxConcurrentErr, orker.DefaultMaxConcurrent)
+		// 16, spelled out rather than read back from the constant: an Orker
+		// that sets nothing must boot with the sized default docs/DEPLOY.md
+		// documents, not the Temporal SDK's 1000.
+		if cfg.maxConcurrentErr != nil || cfg.maxConcurrent != 16 {
+			t.Fatalf("maxConcurrent = %d, %v; want 16", cfg.maxConcurrent, cfg.maxConcurrentErr)
 		}
 	})
 	for _, raw := range []string{"0", "-1", "two", "1.5"} {

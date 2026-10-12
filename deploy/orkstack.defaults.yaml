@@ -79,7 +79,7 @@ orker:
   registry_auth_file: ""  # orker
   task_log_export: false  # orker
   heartbeat_interval: 5s  # orker
-  max_concurrent: 1000  # orker
+  max_concurrent: 16  # orker
   pins:
     max_concurrent: 0  # orker
   log:

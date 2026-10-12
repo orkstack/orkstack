@@ -106,10 +106,15 @@ func (c *Cordon) Wait(ctx context.Context) error {
 // ------------------------------------------------------------- slot supplier
 
 // DefaultMaxConcurrent is orker.max_concurrent's default: how many tasks one
-// Orker runs at once (docs/DEPLOY.md §1). It mirrors the SDK default the task
-// worker ran at before a Tuner was set (defaultMaxConcurrentActivityExecutionSize),
-// so an Orker that never sets the key runs exactly as it always did.
-const DefaultMaxConcurrent = 1000
+// Orker runs at once (docs/DEPLOY.md §1, "Sizing an Orker's task ceiling").
+//
+// It is a sizing decision, not the Temporal SDK's 1000: a task that requests
+// nothing gets orker.resources.default_cpu (1) and default_memory (1Gi), so 16
+// is what a modest 16-CPU, 64 GiB host can actually run at once. The SDK's
+// 1000 capped nothing a real host could run — an unbounded fan-out took every
+// item onto whichever Orker polled first and failed them OOMKilled rather
+// than leaving them queued for the pool. Larger hosts raise it explicitly.
+const DefaultMaxConcurrent = 16
 
 // MaxConcurrentVar is orker.max_concurrent's environment variable.
 const MaxConcurrentVar = "ORK_ORKER_MAX_CONCURRENT"
