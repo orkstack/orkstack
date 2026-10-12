@@ -1,0 +1,426 @@
+package main
+
+import (
+	"os"
+	"path"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// A miniature repository: two integration packages (engine, orkctl), one
+// plain package (dsl), the UI's specs and unit tests, a test tool and an
+// example. The dependency index is written by hand to match it, so these
+// tests exercise the selection rules and nothing of `go list`.
+
+const (
+	pEngine = modulePath + "/internal/engine"
+	pOrker  = modulePath + "/internal/orker"
+	pDSL    = modulePath + "/internal/dsl"
+	pOrkctl = modulePath + "/cmd/orkctl"
+	pOrk    = modulePath + "/cmd/ork"
+	pOrkerB = modulePath + "/cmd/orker"
+)
+
+var baseTree = map[string]string{
+	"internal/engine/run.go":      "package engine\n\nfunc Run() int { return 1 }\n",
+	"internal/engine/run_test.go": "package engine\n\nimport \"testing\"\n\nfunc TestRunUnit(t *testing.T) { _ = Run() }\n",
+	"internal/engine/live_integration_test.go": `//go:build integration
+
+package engine
+
+import "testing"
+
+func boot(t *testing.T) int { return Run() }
+
+func TestIntegration_Fast(t *testing.T) { _ = boot(t) }
+
+func TestIntegration_Slow(t *testing.T) { _ = boot(t) }
+
+func TestIntegration_Uses(t *testing.T) { _ = Run() }
+`,
+	"internal/orker/activity.go":   "package orker\n\nfunc Boot() {}\n",
+	"internal/dsl/parse.go":        "package dsl\n\nfunc Parse() int { return 1 }\n",
+	"internal/dsl/parse_test.go":   "package dsl\n\nimport \"testing\"\n\nfunc TestParse(t *testing.T) { _ = Parse() }\n",
+	"internal/dsl/testdata/a.yaml": "a: 1\n",
+	"cmd/orkctl/main.go":           "package main\n\nfunc main() {}\n",
+	"cmd/orkctl/cli_integration_test.go": `//go:build integration
+
+package main
+
+import "testing"
+
+func sign(t *testing.T) string { return "./test/tools/cosign-sign" }
+
+func TestIntegration_CLI(t *testing.T) {}
+
+func TestIntegration_Signs(t *testing.T) { _ = sign(t) }
+
+func TestIntegration_Examples(t *testing.T) { _ = "examples/hello.ork.yaml" }
+`,
+	"ui/e2e/admin.spec.ts":            "test('admin', () => {});\n",
+	"ui/e2e/examples-gallery.spec.ts": "test('gallery', () => {});\n",
+	"ui/e2e/signing.spec.ts":          "execFileSync('go', ['run', './test/tools/cosign-sign']);\n",
+	"ui/test/flakes.test.ts":          "test('flakes', () => {});\n",
+	"ui/src/lib/flakes.ts":            "export const x = 1;\n",
+	"ui/src/routes/page.svelte":       "<p>hi</p>\n",
+	"test/tools/cosign-sign/main.go":  "package main\n\nfunc main() {}\n",
+	"test/tools/lonely/main.go":       "package main\n\nfunc main() {}\n",
+	"examples/hello.ork.yaml":         "name: hello\n",
+	"images/activity-shell/entry.sh":  "#!/bin/sh\n",
+	"docs/DSL.md":                     "# DSL\n",
+}
+
+func fakeDeps() depIndex {
+	set := func(p ...string) map[string]bool {
+		m := map[string]bool{}
+		for _, x := range p {
+			m[x] = true
+		}
+		return m
+	}
+	return depIndex{
+		test: map[string]map[string]map[string]bool{
+			cfgUnit: {
+				pEngine: set(pEngine, pDSL),
+				pDSL:    set(pDSL),
+				pOrkctl: set(pOrkctl, pDSL),
+			},
+			cfgIntegration: {
+				pEngine: set(pEngine, pDSL),
+				pDSL:    set(pDSL),
+				pOrkctl: set(pOrkctl, pDSL),
+			},
+		},
+		bins: map[string][]binaryUse{pOrkctl: {{Package: pOrk}, {Package: pOrkerB}}},
+		binDeps: map[string]map[string]bool{
+			pOrk:    set(pOrk, pEngine, pDSL),
+			pOrkerB: set(pOrkerB, pOrker, pEngine),
+		},
+	}
+}
+
+type change struct {
+	path    string
+	content string // "" deletes the file
+}
+
+// fakeSelect writes the base tree with changes applied to a temp dir (the
+// new side), keeps the base tree as the old side, and selects.
+func fakeSelect(t *testing.T, changes []change, tests, specs []string) *selection {
+	t.Helper()
+	root := t.TempDir()
+	newTree := map[string]string{}
+	for p, c := range baseTree {
+		newTree[p] = c
+	}
+	var paths []changedPath
+	for _, c := range changes {
+		status := "M"
+		if _, existed := baseTree[c.path]; !existed {
+			status = "A"
+		}
+		if c.content == "" {
+			delete(newTree, c.path)
+			status = "D"
+		} else {
+			newTree[c.path] = c.content
+		}
+		paths = append(paths, changedPath{Path: c.path, Status: status})
+	}
+	for p, c := range newTree {
+		full := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scope, err := readScope(filepath.Join("..", "..", "..", "scripts", "proof-scope.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgs := func(names ...string) []pkgInfo {
+		var out []pkgInfo
+		for _, n := range names {
+			out = append(out, pkgInfo{ImportPath: n, Dir: filepath.Join(root, relDir(n))})
+		}
+		return out
+	}
+	in := selectInput{
+		root: root, paths: paths, scope: scope, tests: tests, specs: specs,
+		slow: map[testKey]slowEntry{{pEngine, "TestIntegration_Slow"}: {Seconds: 120}},
+		readNew: func(p string) []byte {
+			if c, ok := newTree[p]; ok {
+				return []byte(c)
+			}
+			return nil
+		},
+		readOld: func(p string) []byte {
+			if c, ok := baseTree[p]; ok {
+				return []byte(c)
+			}
+			return nil
+		},
+		listOld: func(dir string) []string {
+			var out []string
+			for p := range baseTree {
+				if path.Dir(p) == dir {
+					out = append(out, path.Base(p))
+				}
+			}
+			return out
+		},
+		deps:            func() (depIndex, []string, error) { return fakeDeps(), nil, nil },
+		integrationPkgs: func() ([]pkgInfo, error) { return pkgs(pEngine, pOrkctl), nil },
+		allPkgs:         func() ([]pkgInfo, error) { return pkgs(pEngine, pDSL, pOrkctl, pOrker), nil },
+	}
+	sel := &selection{Integration: map[string]*pkgSelection{}}
+	if err := selectInto(sel, in); err != nil {
+		t.Fatal(err)
+	}
+	return sel
+}
+
+func evidenceNames(sel *selection, pkg string) []string {
+	ps := sel.Integration[pkg]
+	if ps == nil {
+		return []string{}
+	}
+	return keys(ps.Evidence)
+}
+
+func regressionNames(sel *selection, pkg string) []string {
+	ps := sel.Integration[pkg]
+	if ps == nil {
+		return []string{}
+	}
+	return orEmpty(ps.Regression)
+}
+
+func unitNames(sel *selection) []string {
+	out := []string{}
+	for _, u := range sel.UnitEvidence {
+		out = append(out, relDir(u.Package)+"."+u.Test)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func specFiles(sel *selection) []string {
+	out := []string{}
+	for _, s := range sel.Specs {
+		out = append(out, s.File)
+	}
+	return out
+}
+
+func requireErrors(t *testing.T, sel *selection, fragments ...string) {
+	t.Helper()
+	joined := strings.Join(sel.Errors, "\n")
+	if len(fragments) == 0 && len(sel.Errors) > 0 {
+		t.Fatalf("unexpected errors:\n%s", joined)
+	}
+	for _, f := range fragments {
+		if !strings.Contains(joined, f) {
+			t.Errorf("errors lack %q:\n%s", f, joined)
+		}
+	}
+}
+
+var engineChange = change{"internal/engine/run.go", "package engine\n\nfunc Run() int { return 2 }\n"}
+
+func TestSelect_ProductionChangeWithoutEvidenceIsRefused(t *testing.T) {
+	sel := fakeSelect(t, []change{engineChange}, nil, nil)
+	requireErrors(t, sel, "internal/engine changed (func Run) and no evidence test depends on it",
+		"integration packages that depend on it: internal/engine, cmd/orkctl")
+}
+
+func TestSelect_NamedIntegrationEvidenceAndTheRegressionSet(t *testing.T) {
+	sel := fakeSelect(t, []change{engineChange}, []string{"internal/engine:TestIntegration_Uses"}, nil)
+	requireErrors(t, sel)
+	if got, want := evidenceNames(sel, pEngine), []string{"TestIntegration_Uses"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("engine evidence = %v, want %v", got, want)
+	}
+	// The slow test is deferred and named; the evidence is not repeated.
+	if got, want := regressionNames(sel, pEngine), []string{"TestIntegration_Fast"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("engine regression = %v, want %v", got, want)
+	}
+	if d := sel.Integration[pEngine].Deferred; len(d) != 1 || d[0].Test != "TestIntegration_Slow" || d[0].Seconds != 120 {
+		t.Errorf("engine deferred = %v", d)
+	}
+	// orkctl links no engine, but runs cmd/ork, which does: a binary edge.
+	if got, want := regressionNames(sel, pOrkctl), []string{"TestIntegration_CLI", "TestIntegration_Examples", "TestIntegration_Signs"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("orkctl regression = %v, want %v", got, want)
+	}
+	if !strings.Contains(sel.Integration[pOrkctl].Why, "runs cmd/ork, which links it") {
+		t.Errorf("orkctl why = %q", sel.Integration[pOrkctl].Why)
+	}
+	// The regression set is never evidence.
+	if len(sel.Evidence) != 1 || !reflect.DeepEqual(sel.Evidence[0].Evidence, []string{"internal/engine.TestIntegration_Uses"}) {
+		t.Errorf("evidence = %+v", sel.Evidence)
+	}
+	// And the UI suite, which runs ork and orker, ran no spec for it.
+	if !strings.Contains(strings.Join(sel.Notes, "\n"), "no Playwright spec ran for the Go changes in internal/engine; only the merge proof runs them") {
+		t.Errorf("notes = %v", sel.Notes)
+	}
+}
+
+func TestSelect_TemporalFacingPackagesNeedIntegrationEvidence(t *testing.T) {
+	sel := fakeSelect(t, []change{engineChange}, []string{"internal/engine:TestRunUnit"}, nil)
+	requireErrors(t, sel, "internal/engine is Temporal- or storage-facing and its evidence has no integration test")
+	if got := unitNames(sel); !reflect.DeepEqual(got, []string{"internal/engine.TestRunUnit"}) {
+		t.Errorf("unit evidence = %v", got)
+	}
+}
+
+func TestSelect_UnitEvidenceIsEnoughForAPlainPackage(t *testing.T) {
+	sel := fakeSelect(t, []change{{"internal/dsl/parse.go", "package dsl\n\nfunc Parse() int { return 2 }\n"}},
+		[]string{"./internal/dsl:TestParse"}, nil)
+	requireErrors(t, sel)
+	if got := unitNames(sel); !reflect.DeepEqual(got, []string{"internal/dsl.TestParse"}) {
+		t.Errorf("unit evidence = %v", got)
+	}
+	// Both integration packages link dsl: both run their regression set.
+	if len(regressionNames(sel, pEngine)) == 0 || len(regressionNames(sel, pOrkctl)) == 0 {
+		t.Errorf("regression = engine %v, orkctl %v", regressionNames(sel, pEngine), regressionNames(sel, pOrkctl))
+	}
+}
+
+func TestSelect_TestdataIsAChangeToItsPackage(t *testing.T) {
+	sel := fakeSelect(t, []change{{"internal/dsl/testdata/a.yaml", "a: 2\n"}}, nil, nil)
+	requireErrors(t, sel, "internal/dsl changed (a.yaml) and no evidence test depends on it")
+}
+
+func TestSelect_AChangedTestIsItsOwnEvidenceAndRunsEvenWhenSlow(t *testing.T) {
+	sel := fakeSelect(t, []change{{"internal/engine/live_integration_test.go",
+		strings.Replace(baseTree["internal/engine/live_integration_test.go"], "func TestIntegration_Slow(t *testing.T) { _ = boot(t) }", "func TestIntegration_Slow(t *testing.T) { _ = boot(t); t.Log(1) }", 1)}}, nil, nil)
+	requireErrors(t, sel)
+	if got := evidenceNames(sel, pEngine); !reflect.DeepEqual(got, []string{"TestIntegration_Slow"}) {
+		t.Errorf("evidence = %v", got)
+	}
+	if d := sel.Integration[pEngine].Deferred; len(d) != 0 {
+		t.Errorf("a changed slow test was deferred: %v", d)
+	}
+	if got := sel.Integration[pEngine].run(); !reflect.DeepEqual(got, []string{"TestIntegration_Fast", "TestIntegration_Slow", "TestIntegration_Uses"}) {
+		t.Errorf("run = %v", got)
+	}
+}
+
+func TestSelect_AChangedHelperSelectsItsCallers(t *testing.T) {
+	sel := fakeSelect(t, []change{{"internal/engine/live_integration_test.go",
+		strings.Replace(baseTree["internal/engine/live_integration_test.go"], "func boot(t *testing.T) int { return Run() }", "func boot(t *testing.T) int { return Run() + 1 }", 1)}}, nil, nil)
+	requireErrors(t, sel)
+	if got := evidenceNames(sel, pEngine); !reflect.DeepEqual(got, []string{"TestIntegration_Fast", "TestIntegration_Slow"}) {
+		t.Errorf("evidence = %v", got)
+	}
+}
+
+func TestSelect_NamedSlowTestRunsAndAnchoredPatternsMatchWholeNames(t *testing.T) {
+	sel := fakeSelect(t, []change{engineChange}, []string{"internal/engine:TestIntegration_Slow", "internal/engine:TestIntegration_Fa"}, nil)
+	requireErrors(t, sel, `--tests "internal/engine:TestIntegration_Fa" matches no test declared in internal/engine`)
+	if got := evidenceNames(sel, pEngine); !reflect.DeepEqual(got, []string{"TestIntegration_Slow"}) {
+		t.Errorf("evidence = %v", got)
+	}
+}
+
+func TestSelect_SpecsAndUISource(t *testing.T) {
+	sel := fakeSelect(t, []change{{"ui/src/routes/page.svelte", "<p>bye</p>\n"}}, nil, nil)
+	requireErrors(t, sel, "ui/src changed (ui/src/routes/page.svelte) and no spec proves it")
+
+	sel = fakeSelect(t, []change{{"ui/src/routes/page.svelte", "<p>bye</p>\n"}}, nil, []string{"admin.spec.ts"})
+	requireErrors(t, sel)
+	if got := specFiles(sel); !reflect.DeepEqual(got, []string{"ui/e2e/admin.spec.ts"}) {
+		t.Errorf("specs = %v", got)
+	}
+	if !sel.Gates.UICheck || !sel.Gates.UIUnit {
+		t.Error("a UI change must run the UI type-check and unit suites")
+	}
+
+	sel = fakeSelect(t, nil, nil, []string{"ui/e2e/missing.spec.ts"})
+	requireErrors(t, sel, `--specs "ui/e2e/missing.spec.ts": no such file`)
+}
+
+func TestSelect_UILibraryChangeMayBeProvenByAUnitTest(t *testing.T) {
+	sel := fakeSelect(t, []change{{"ui/src/lib/flakes.ts", "export const x = 2;\n"}, {"ui/test/flakes.test.ts", "test('flakes', () => { x; });\n"}}, nil, nil)
+	requireErrors(t, sel)
+	if len(sel.Specs) != 0 {
+		t.Errorf("specs = %v", sel.Specs)
+	}
+}
+
+func TestSelect_HarnessChangeRunsEverySpec(t *testing.T) {
+	sel := fakeSelect(t, []change{{"ui/e2e/harness.ts", "export {};\n"}}, nil, nil)
+	requireErrors(t, sel)
+	if sel.AllSpecs == "" {
+		t.Error("a harness change must run every spec")
+	}
+}
+
+func TestSelect_SuiteWidePathsAndUnmappedPathsAreRefused(t *testing.T) {
+	sel := fakeSelect(t, []change{{"go.mod", "module x\n"}, {"Dockerfile", "FROM scratch\n"}}, nil, nil)
+	requireErrors(t, sel, "go.mod: this path changes how every suite runs; run make proof",
+		"Dockerfile: unmapped path; add a rule to scripts/proof-scope.tsv or run make proof")
+}
+
+func TestSelect_DocsOnlyRunsNothingButTheFastGates(t *testing.T) {
+	sel := fakeSelect(t, []change{{"docs/DSL.md", "# DSL, revised\n"}}, nil, nil)
+	requireErrors(t, sel)
+	if len(sel.Integration) != 0 || len(sel.Specs) != 0 || sel.Gates.UICheck || sel.Gates.Fixture {
+		t.Errorf("a docs change selected %+v", sel)
+	}
+}
+
+func TestSelect_ToolChangeFindsItsUsersBySearch(t *testing.T) {
+	sel := fakeSelect(t, []change{{"test/tools/cosign-sign/main.go", "package main\n\nfunc main() { println() }\n"}}, nil, nil)
+	requireErrors(t, sel)
+	if got := evidenceNames(sel, pOrkctl); !reflect.DeepEqual(got, []string{"TestIntegration_Signs"}) {
+		t.Errorf("orkctl evidence = %v", got)
+	}
+	if got := specFiles(sel); !reflect.DeepEqual(got, []string{"ui/e2e/signing.spec.ts"}) {
+		t.Errorf("specs = %v", got)
+	}
+
+	sel = fakeSelect(t, []change{{"test/tools/lonely/main.go", "package main\n\nfunc main() { println() }\n"}}, nil, nil)
+	requireErrors(t, sel, "test/tools/lonely changed, and no test or spec runs it")
+}
+
+func TestSelect_ExampleChangeRunsTheExampleTestsAndTheGallery(t *testing.T) {
+	sel := fakeSelect(t, []change{{"examples/hello.ork.yaml", "name: hello\nversion: 2\n"}}, nil, nil)
+	requireErrors(t, sel)
+	if got := evidenceNames(sel, pOrkctl); !reflect.DeepEqual(got, []string{"TestIntegration_Examples"}) {
+		t.Errorf("orkctl evidence = %v", got)
+	}
+	if got := specFiles(sel); !reflect.DeepEqual(got, []string{"ui/e2e/examples-gallery.spec.ts"}) {
+		t.Errorf("specs = %v", got)
+	}
+}
+
+func TestSelect_ImageChangeRunsTheFixtureAndTheOrkerRegression(t *testing.T) {
+	sel := fakeSelect(t, []change{{"images/activity-shell/entry.sh", "#!/bin/sh\nexit 0\n"}}, nil, nil)
+	requireErrors(t, sel)
+	if !sel.Gates.Fixture {
+		t.Error("an image change must run the activity contract fixture")
+	}
+	// Only orkctl reaches internal/orker (through cmd/orker).
+	if _, ok := sel.Integration[pOrkctl]; !ok {
+		t.Errorf("integration = %v", keys2(sel.Integration))
+	}
+	if _, ok := sel.Integration[pEngine]; ok {
+		t.Error("internal/engine does not link internal/orker in this tree")
+	}
+}
+
+func TestSelect_DeletedTestsAreListedAsRemoved(t *testing.T) {
+	sel := fakeSelect(t, []change{{"internal/engine/live_integration_test.go",
+		strings.Replace(baseTree["internal/engine/live_integration_test.go"], "func TestIntegration_Uses(t *testing.T) { _ = Run() }\n", "", 1)}}, nil, nil)
+	requireErrors(t, sel)
+	if !reflect.DeepEqual(sel.Removed, []string{pEngine + ".TestIntegration_Uses"}) {
+		t.Errorf("removed = %v", sel.Removed)
+	}
+}
+
+func keys2(m map[string]*pkgSelection) []string { return sortedKeys(m) }

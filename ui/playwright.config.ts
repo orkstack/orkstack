@@ -13,6 +13,20 @@ import path from 'node:path';
 // trace there: what a passing test proves is what its spec writes itself.
 const proofDir = process.env.ORK_PROOF_DIR;
 
+/**
+ * NETWORK_CHANGE_RETRY_CEILING is how many navigations the network-change
+ * guard (e2e/test.ts) may repeat in one run before the proof's ui-e2e gate
+ * fails with "network churn above ceiling; evidence taken on a noisy host"
+ * (test/tools/proofrun reads this line). Each repeat is a navigation Chromium
+ * aborted because the HOST's network interfaces changed — a container
+ * starting or stopping anywhere on the host — so a run above the ceiling was
+ * measured on a host too noisy to trust. The serial baseline is 1; while the
+ * browser shares the host's network namespace the ceiling is 3. Once the
+ * browser runs in a network namespace of its own the ceiling is 0, because
+ * then any repeat means the isolation broke.
+ */
+export const NETWORK_CHANGE_RETRY_CEILING = 3;
+
 export default defineConfig({
 	testDir: './e2e',
 	outputDir: proofDir ? path.join(proofDir, 'test-results') : 'test-results',
