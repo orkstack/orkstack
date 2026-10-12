@@ -259,7 +259,7 @@ test('3: Admin → Namespaces offers the signer select and shows the Signed by c
 });
 
 /**
- * outsideImage is activity-shell:dev in the shared registry, addressed as
+ * outsideImage is activity-shell (this run's tag) in the shared registry, addressed as
  * 127.0.0.1:<port> (a different registry string from the floor's
  * `localhost:<port>/orkstack/`) and pinned by the digest the registry serves
  * for the same Accept list the engine's resolver sends.

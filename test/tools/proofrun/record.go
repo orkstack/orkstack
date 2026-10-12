@@ -230,6 +230,16 @@ func cmdRecord(args []string) int {
 		ledgersOK["ui-e2e"] = len(ul.Problems) == 0
 		r.GuardRetries, r.GuardCeiling = &ul.GuardRetries, &ul.GuardRetryCeiling
 	}
+	// A gate that ran without leaving its ledger proved nothing about which
+	// tests ran.
+	for _, g := range r.Gates {
+		switch g.Gate {
+		case "unit", "integration", "ui-e2e":
+			if _, ok := ledgersOK[g.Gate]; !ok {
+				ledgersOK[g.Gate] = false
+			}
+		}
+	}
 	r.Ledgers = ledgers
 	if *imagesFile != "" {
 		if b, err := os.ReadFile(*imagesFile); err == nil {

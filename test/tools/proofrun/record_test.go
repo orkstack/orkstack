@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -245,5 +247,28 @@ func TestRetryCeilingIsDeclaredInThePlaywrightConfig(t *testing.T) {
 	}
 	if n < 0 || n > 3 {
 		t.Errorf("ceiling %d: 0 once the browser is isolated, at most 3 while it shares the host's network", n)
+	}
+}
+
+// A gate that ran without leaving its ledger fails the proof.
+func TestRecordRequiresTheLedgerOfEveryGateThatRan(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("unit\tpass\t3\tunit.log\tproofrun unit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prev := os.Stdout
+	devnull, _ := os.Open(os.DevNull)
+	os.Stdout = devnull
+	code := cmdRecord([]string{"-dir", dir, "-tier", "feature", "-tree-start", "t", "-tree-end", "t", "-clean-start", "-clean-end"})
+	os.Stdout = prev
+	if code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	var r proofRecord
+	if err := readJSON(filepath.Join(dir, "proof.json"), &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Result != "fail" || !strings.Contains(strings.Join(r.Ineligible, "\n"), "the unit ledger is incomplete") {
+		t.Errorf("record = %+v", r)
 	}
 }
