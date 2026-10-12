@@ -17,6 +17,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
@@ -1423,6 +1424,13 @@ func (s *Service) prepare(
 	// door that accepted the submission is the only thing that knows it, and
 	// workflow code may not ask.
 	plan.Origin = engine.OriginFromProto(origin)
+	// The run input and the definition each travel as one payload of the
+	// workflow start; refuse either over AGENTS.md §2.2's bound before
+	// anything is minted.
+	input := engine.ApplyInputDefaults(planned, msg.GetInput())
+	if err := checkRunStartPayloads(planned, input); err != nil {
+		return submission{}, err
+	}
 	// Callback tokens are minted LAST, after every refusal prepare makes, so
 	// a refused submission mints nothing. Only the salted digests ride the
 	// plan; the plaintexts stay in this submission until the one response
@@ -1437,16 +1445,69 @@ func (s *Service) prepare(
 	if err := s.mintChildren(planned, &plan); err != nil {
 		return submission{}, err
 	}
+	// The plan is the start's third payload. mintChildren measures it only
+	// when the run composes children; every plan is measured here, after the
+	// callback digests it carries have been minted.
+	if err := checkRunPlanSize(plan); err != nil {
+		return submission{}, err
+	}
 	return submission{
 		callbacks: callbacks,
 		binding:   binding,
 		wf:        planned,
-		input:     engine.ApplyInputDefaults(planned, msg.GetInput()),
+		input:     input,
 		plan:      plan,
 		namespace: ns.GetName(),
 		key:       msg.GetIdempotencyKey(),
 		origin:    origin,
 	}, nil
+}
+
+// checkRunStartPayloads refuses a run whose input or definition would be a
+// workflow-start payload over the 256 KiB AGENTS.md §2.2 allows, measured the
+// way task.CheckInputSize measures an activity input: as the bytes the data
+// converter hands Temporal. An oversized input is the caller's to fix
+// (INVALID_ARGUMENT, INPUT_TOO_LARGE); an oversized definition is the stored
+// Orkflow's (FAILED_PRECONDITION). Without this the start itself fails, or
+// worse, lands a history Temporal later refuses to grow.
+func checkRunStartPayloads(wf *orkstackv1.Orkflow, input *orkstackv1.Payload) error {
+	limit := int64(task.MaxActivityInputBytes)
+	size, err := task.PayloadSize(input)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the run input: %w", err))
+	}
+	if size > limit {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"%s: the run input serializes to %d bytes, over the %d KiB (%d bytes) a run's start may carry; "+
+				"pass a reference to large data (a URL or an object key), not the bytes",
+			task.ReasonInputTooLarge, size, limit/1024, limit))
+	}
+	size, err = task.PayloadSize(wf)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the orkflow definition: %w", err))
+	}
+	if size > limit {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"orkflow %s@%s serializes to %d bytes, over the %d KiB (%d bytes) a run's start may carry; "+
+				"split it into composed Orkflows or move large `with:` values into artifacts",
+			wf.GetName(), wf.GetVersion(), size, limit/1024, limit))
+	}
+	return nil
+}
+
+// checkRunPlanSize refuses a run whose plan encodes over engine.MaxPlanBytes,
+// with or without composed children.
+func checkRunPlanSize(plan engine.RunPlan) error {
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the run's plan: %w", err))
+	}
+	if len(encoded) > engine.MaxPlanBytes {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"the run's plan encodes to %d KiB, over the %d KiB a run may carry",
+			kib(len(encoded)), engine.MaxPlanBytes/1024))
+	}
+	return nil
 }
 
 const (
