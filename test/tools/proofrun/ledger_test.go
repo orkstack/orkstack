@@ -151,7 +151,7 @@ ok  	github.com/x/two	0.2s
 	for _, l := range lines {
 		got = append(got, l.Package+"."+l.Test)
 	}
-	if strings.Join(got, " ") != "github.com/x/one.TestA github.com/x/one.TestB github.com/x/two.TestC" {
+	if strings.Join(got, " ") != "github.com/x/one.TestA github.com/x/one.TestRecorder github.com/x/one.TestB github.com/x/two.TestC" {
 		t.Errorf("got %v", got)
 	}
 	var sb strings.Builder
@@ -161,5 +161,15 @@ ok  	github.com/x/two	0.2s
 	}
 	if !strings.Contains(sb.String(), "# source: proof/x (commit abc)") {
 		t.Errorf("slow list names no source:\n%s", sb.String())
+	}
+}
+
+func TestMakespan(t *testing.T) {
+	jobs := []job{{Cost: 300}, {Cost: 100}, {Cost: 100}, {Cost: 100}, {Cost: 50}}
+	if got := makespan(jobs, 2); got != 350 {
+		t.Errorf("makespan on 2 slots = %v, want 350", got)
+	}
+	if got := makespan(jobs, 1); got != 650 || totalCost(jobs) != 650 {
+		t.Errorf("makespan on 1 slot = %v, total %v, want 650", got, totalCost(jobs))
 	}
 }

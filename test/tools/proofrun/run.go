@@ -391,6 +391,7 @@ func cmdIntegration(args []string) int {
 	allowFile := fs.String("allow", "scripts/proof-allowed-skips.txt", "allowed skips")
 	selectFile := fs.String("select", "", "a feature selection (proofrun select): run only its integration tests")
 	only := fs.String("run", "", "run only the tests matching this regexp (by hand; never a proof)")
+	planOnly := fs.Bool("plan-only", false, "compile, list and plan, print the estimated duration, run nothing")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -515,7 +516,11 @@ func cmdIntegration(args []string) int {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "planned %d jobs on %d slots\n", len(planned), *jobs)
+	fmt.Fprintf(stdout, "planned %d jobs on %d slots; estimated %.0fs of work, %.0fs on %d slots (before contention)\n",
+		len(planned), *jobs, totalCost(planned), makespan(planned, *jobs), *jobs)
+	if *planOnly {
+		return 0
+	}
 
 	events, err := os.Create(filepath.Join(*out, "integration.events.jsonl"))
 	if err != nil {

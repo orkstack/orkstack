@@ -168,11 +168,13 @@ type costLine struct {
 	Seconds float64
 }
 
-// costsFromLedger reads a full proof's integration ledger.
+// costsFromLedger reads a full proof's integration ledger. A skipped test is
+// measured too (it takes no time), so it is batched rather than given a
+// process of its own as an unknown would be.
 func costsFromLedger(l ledger) []costLine {
 	var out []costLine
 	for _, e := range l.Tests {
-		if e.Outcome == outcomePass || e.Outcome == outcomeFail {
+		if e.Outcome == outcomePass || e.Outcome == outcomeFail || e.Outcome == outcomeSkip {
 			out = append(out, costLine{e.Package, e.Test, e.Seconds})
 		}
 	}
@@ -196,9 +198,6 @@ func costsFromGoTestLog(r io.Reader) ([]costLine, error) {
 	for sc.Scan() {
 		line := sc.Text()
 		if m := goTestTop.FindStringSubmatch(line); m != nil {
-			if m[1] == "SKIP" {
-				continue
-			}
 			s, _ := strconv.ParseFloat(m[3], 64)
 			pending = append(pending, costLine{Test: m[2], Seconds: s})
 			continue
@@ -288,4 +287,36 @@ func readSlowList(file string) (map[testKey]slowEntry, string, error) {
 		out[testKey{fields[0], fields[1]}] = slowEntry{s, n}
 	}
 	return out, source, sc.Err()
+}
+
+// totalCost is the estimated work of a plan.
+func totalCost(jobs []job) float64 {
+	var t float64
+	for _, j := range jobs {
+		t += j.Cost
+	}
+	return t
+}
+
+// makespan simulates the plan on slots: each job, in plan order, takes the
+// slot that frees first. It is the estimate the phase is measured against.
+func makespan(jobs []job, slots int) float64 {
+	if slots < 1 {
+		slots = 1
+	}
+	free := make([]float64, slots)
+	var end float64
+	for _, j := range jobs {
+		k := 0
+		for i := range free {
+			if free[i] < free[k] {
+				k = i
+			}
+		}
+		free[k] += j.Cost
+		if free[k] > end {
+			end = free[k]
+		}
+	}
+	return end
 }

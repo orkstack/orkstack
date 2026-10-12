@@ -2037,6 +2037,12 @@ github.com/orkstack/orkstack/internal/engine	TestIntegration_PinnedRunFinishesOn
 github.com/orkstack/orkstack/internal/engine	TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity	181.93
 github.com/orkstack/orkstack/internal/engine	TestIntegration_PoolUseSeesWaitingWorkWithNoPoller	11.90
 github.com/orkstack/orkstack/internal/engine	TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry	5.14
+github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordAwaitedRunHistories	0.00
+github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordCachedRunHistory	0.00
+github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordComposedRunHistory	0.00
+github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordEachRunHistory	0.00
+github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordGoldenRunHistory	0.00
+github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordJoinRunHistory	0.00
 github.com/orkstack/orkstack/internal/engine	TestIntegration_RedeliverPostsOnceSignedAndRecordsANewDelivery	1.94
 github.com/orkstack/orkstack/internal/engine	TestIntegration_ReleaseRunsCountsARunExecutingOnIt	4.58
 github.com/orkstack/orkstack/internal/engine	TestIntegration_ResolutionDeliveredWithNoEngineWorkerIsAppliedAfterRestart	0.90
@@ -2053,6 +2059,7 @@ github.com/orkstack/orkstack/internal/engine	TestIntegration_ScopedWebhookReceiv
 github.com/orkstack/orkstack/internal/engine	TestIntegration_ScopedWebhookRegisteredOnOneReplicaMatchesOnAnother	1.59
 github.com/orkstack/orkstack/internal/engine	TestIntegration_SetNamespaceRetentionReachesTheRealCluster	1.03
 github.com/orkstack/orkstack/internal/engine	TestIntegration_SetRoutingIsConfirmedOnTheEngineChannel	6.92
+github.com/orkstack/orkstack/internal/engine	TestIntegration_SnapshotExternalizationHistoryGrowth	0.00
 github.com/orkstack/orkstack/internal/engine	TestIntegration_StartRunRefusesARunIDTheClusterAlreadyHolds	0.05
 github.com/orkstack/orkstack/internal/engine	TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses	0.06
 github.com/orkstack/orkstack/internal/engine	TestIntegration_TaskOutcomeWebhookFiresWhenTheTaskCommits	1.25
@@ -2243,6 +2250,7 @@ github.com/orkstack/orkstack/internal/engine	TestRunIDGenerator_KeepsTheDocument
 github.com/orkstack/orkstack/internal/engine	TestRunIDGenerator_SequenceDoesNotRestartPerProcess	0.00
 github.com/orkstack/orkstack/internal/engine	TestRunIDGenerator_SequenceIsMonotonicWithinAReplica	0.00
 github.com/orkstack/orkstack/internal/engine	TestRunIDGenerator_TwoReplicasSharingAClockIssueDifferentIDs	0.00
+github.com/orkstack/orkstack/internal/engine	TestRunIDHelperProcess	0.00
 github.com/orkstack/orkstack/internal/engine	TestRunListPlan_PushesOnlySingleEqualities	0.00
 github.com/orkstack/orkstack/internal/engine	TestRunObjectIDs_IncludesItemReferences	0.00
 github.com/orkstack/orkstack/internal/engine	TestRunOrigin_ProtoIsNilSafeAndTolerant	0.00
