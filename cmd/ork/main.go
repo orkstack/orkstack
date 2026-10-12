@@ -77,6 +77,10 @@ type config struct {
 	// eachMaxItems is ORK_EACH_MAX_ITEMS: 1 … dsl.MaxEachItems, refused at
 	// boot outside that range (docs/DEPLOY.md §1).
 	eachMaxItems int32
+	// orkflowMaxTasks is ORK_ORKFLOW_MAX_TASKS: the most tasks one Orkflow
+	// may declare, any whole number 1 or more; refused at boot otherwise
+	// (docs/DEPLOY.md §1).
+	orkflowMaxTasks int32
 	// composeMaxDepth is ORK_COMPOSE_MAX_DEPTH: 1 … engine.MaxComposeDepth,
 	// refused at boot outside that range (docs/DEPLOY.md §1).
 	composeMaxDepth int32
@@ -115,6 +119,7 @@ func loadConfig() config {
 	transferBudgetSeconds, transferErr := envInt32AllowZero("ORK_TRANSFER_BUDGET_SECONDS", 0)
 	floorThroughput, throughputErr := envInt64AllowZero("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond)
 	eachMaxItems, eachErr := eachMaxItemsFromEnv()
+	orkflowMaxTasks, tasksErr := envInt32("ORK_ORKFLOW_MAX_TASKS", engine.DefaultOrkflowMaxTasks)
 	composeMaxDepth, composeErr := composeMaxDepthFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
 
@@ -133,10 +138,11 @@ func loadConfig() config {
 		transferBudgetSeconds:         transferBudgetSeconds,
 		floorThroughputBytesPerSecond: floorThroughput,
 		eachMaxItems:                  eachMaxItems,
+		orkflowMaxTasks:               orkflowMaxTasks,
 		composeMaxDepth:               composeMaxDepth,
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
-			logErr, commitErr, transferErr, throughputErr, eachErr, composeErr, cacheErr),
+			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1212,6 +1218,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Artifacts:                     archiveConfig,
 		Limits:                        cfg.contractLimits,
 		EachMaxItems:                  cfg.eachMaxItems,
+		OrkflowMaxTasks:               cfg.orkflowMaxTasks,
 		ComposeMaxDepth:               cfg.composeMaxDepth,
 		CacheMaxTTL:                   cfg.cacheMaxTTL,
 		Memos:                         memoStore,

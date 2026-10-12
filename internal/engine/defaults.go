@@ -16,6 +16,15 @@ import (
 // deployment may lower and never raise (docs/DSL.md "Fan-out").
 const DefaultEachMaxItems = dsl.MaxEachItems
 
+// DefaultOrkflowMaxTasks is ORK_ORKFLOW_MAX_TASKS' default: the most tasks
+// one Orkflow may declare (docs/DSL.md "Tasks", docs/DEPLOY.md §1). A
+// deployment may lower or raise it. Every task is at least one activity and
+// its lifecycle events in the run's ONE history, which the cluster bounds and
+// a run cannot yet continue-as-new past; 1000 keeps a run of plain tasks
+// well inside the cluster's default history bound beside the 1000 fan-out
+// items DefaultEachMaxItems already allows.
+const DefaultOrkflowMaxTasks int32 = 1000
+
 // DefaultComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH's default: the built-in
 // ceiling on how many levels of child runs one run may start, which a
 // deployment may lower and never raise (docs/DSL.md "Composition").

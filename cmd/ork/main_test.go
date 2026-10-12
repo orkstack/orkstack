@@ -766,6 +766,34 @@ func TestLoadConfig_EachMaxItemsBounds(t *testing.T) {
 	}
 }
 
+// ORK_ORKFLOW_MAX_TASKS is a deployment-configurable default: unset is 1000,
+// any whole number of tasks, 1 or more, lowers or raises it, and anything
+// else refuses boot naming the variable rather than falling back.
+func TestLoadConfig_OrkflowMaxTasks(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		want    int32
+		refused bool
+	}{
+		{"", 1000, false}, {"1", 1, false}, {"200", 200, false}, {"5000", 5000, false},
+		{"0", 0, true}, {"-3", 0, true}, {"many", 0, true}, {"1.5", 0, true},
+	} {
+		t.Run("ORK_ORKFLOW_MAX_TASKS="+tc.raw, func(t *testing.T) {
+			t.Setenv("ORK_ORKFLOW_MAX_TASKS", tc.raw)
+			cfg := loadConfig()
+			if refused := cfg.limitsErr != nil; refused != tc.refused {
+				t.Fatalf("refused = %v (%v), want %v", refused, cfg.limitsErr, tc.refused)
+			}
+			if tc.refused && !strings.Contains(cfg.limitsErr.Error(), "ORK_ORKFLOW_MAX_TASKS") {
+				t.Fatalf("refusal %v does not name the variable", cfg.limitsErr)
+			}
+			if !tc.refused && cfg.orkflowMaxTasks != tc.want {
+				t.Fatalf("orkflowMaxTasks = %d, want %d", cfg.orkflowMaxTasks, tc.want)
+			}
+		})
+	}
+}
+
 // ORK_COMPOSE_MAX_DEPTH lowers the built-in composition ceiling and never
 // raises it: 0 and 5 refuse boot, 1 and 4 are accepted, unset is the ceiling.
 func TestLoadConfig_ComposeMaxDepthBounds(t *testing.T) {
