@@ -233,6 +233,26 @@ func analyzeDir(cfg, dir string, oldFiles, newFiles map[string]srcFile, newAll [
 		return out
 	}
 	oldP, newP := parseSide(oldFiles), parseSide(newFiles)
+	// A file that does not parse on either side cannot be mapped onto its
+	// declarations: it is a change to the package as a whole (and the
+	// build gate fails on it anyway).
+	for name := range oldFiles {
+		op, inOld := oldP[name]
+		np, inNew := newP[name]
+		if (inOld && !op.OK) || (inNew && !np.OK) {
+			ch.Production = true
+			ch.ProductionWhy = append(ch.ProductionWhy, name+" does not parse")
+			delete(oldP, name)
+			delete(newP, name)
+		}
+	}
+	for name := range newFiles {
+		if np, inNew := newP[name]; inNew && !np.OK {
+			ch.Production = true
+			ch.ProductionWhy = append(ch.ProductionWhy, name+" does not parse")
+			delete(newP, name)
+		}
+	}
 
 	// Declarations by key on each side, across the changed files, so code
 	// moved between two changed files is not a change.

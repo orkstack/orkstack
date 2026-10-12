@@ -179,6 +179,13 @@ func TestAnalyzeDir(t *testing.T) {
 			new:  files("run.go", strings.Replace(prod, "// Run runs.", "// Run runs, quickly.", 1)),
 		},
 		{
+			name:       "a file that no longer parses is a change to the package, not a list of removed tests",
+			cfg:        cfgIntegration,
+			old:        files("live_integration_test.go", integrationHelpers),
+			new:        files("live_integration_test.go", integrationHelpers+"\nfunc broken( {\n"),
+			production: true,
+		},
+		{
 			name:  "unit helpers select unit tests in the unit configuration",
 			cfg:   cfgUnit,
 			old:   files("u_test.go", unitFile),

@@ -157,6 +157,9 @@ func featureReport(w io.Writer, sel *selection, o outcomes, specs map[string]str
 	}
 
 	fmt.Fprintf(w, "\n### Integration packages\n\n")
+	if len(sel.Integration) == 0 {
+		fmt.Fprintf(w, "None ran: no integration package's test binary depends on what changed.\n")
+	}
 	for _, p := range sortedKeys(sel.Integration) {
 		ps := sel.Integration[p]
 		if ps.Whole != "" {

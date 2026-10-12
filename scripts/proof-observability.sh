@@ -6,15 +6,21 @@
 #
 # scripts/proof.sh invokes this with ORK_PROOF_DIR already set and its own
 # prerequisites already probed (docker, Temporal, MinIO, the local registry
-# and its images, the observability profile's own four services, and no
-# stray bin/ork or bin/orker) — this script does not re-check any of that; it
-# only assumes ORK_PROOF_DIR is set and writable, per §11.2 ("prerequisites
-# probed BEFORE any output file is opened").
+# and its images, the observability profile's own four services) — this
+# script does not re-check any of that; it only assumes ORK_PROOF_DIR is set
+# and writable, per §11.2 ("prerequisites probed BEFORE any output file is
+# opened"). It uses the proof's Temporal (ORK_TEMPORAL_ADDRESS), the proof's
+# binaries (ORK_TEST_BIN_DIR) and the proof's activity image tag
+# (ORK_TEST_IMAGE_TAG) when the proof supplies them.
 #
 # ork and orker are started DIRECTLY here, not through scripts/stack.sh,
 # because each needs its OWN ORK_ADMIN_ADDR (:9464 / :9465) — something
 # stack.sh does not currently let `make up` give them (see
-# deploy/observability/README.md).
+# deploy/observability/README.md). Those two ports are the targets
+# deploy/observability/prometheus.yml scrapes, so they are fixed, and that
+# makes this gate the one place in the proofs that cannot run twice at once
+# on a host: it holds a host-wide lock for its whole run (AGENTS.md §11.1).
+# The engine's API listens on a free port.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -23,17 +29,32 @@ REPO="$PWD"
 OUT="${ORK_PROOF_DIR:?ORK_PROOF_DIR must be set (run this through scripts/proof.sh)}/observability"
 mkdir -p "$OUT"
 
+# The host-wide lock: one observability gate at a time, because its admin
+# ports are fixed. Waits for a holder rather than failing at once.
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/orkstack-observability.lock"
+exec 9>"$LOCK"
+if ! flock -w 3600 9; then
+	printf 'FAIL: another observability gate held %s for an hour\n' "$LOCK"
+	exit 1
+fi
+
 # Namespaces are constrained to ^[a-z][a-z0-9-]*$ (no uppercase, no ':'),
 # so the stamp used for both the namespace and the orkflow version is
 # digits-only — %Y%m%dT%H%M%SZ's 'T'/'Z' would otherwise be refused.
 STAMP="$(date -u +%Y%m%d%H%M%S)"
 NS="proof-$STAMP"
-ENGINE_URL="http://127.0.0.1:8080"
+ENGINE_PORT="$(go run ./test/tools/proofrun free-port)" || {
+	printf 'FAIL: no free port for the engine API\n'
+	exit 1
+}
+ENGINE_URL="http://127.0.0.1:$ENGINE_PORT"
 COLLECTOR="http://127.0.0.1:4318"
 LOKI="http://127.0.0.1:3100"
 TEMPO="http://127.0.0.1:3200"
 PROM="http://127.0.0.1:9090"
-ORKCTL=("$REPO/bin/orkctl" --server "$ENGINE_URL")
+BIN="${ORK_TEST_BIN_DIR:-$OUT/bin}"
+IMAGE_TAG="${ORK_TEST_IMAGE_TAG:-dev}"
+ORKCTL=("$BIN/orkctl" --server "$ENGINE_URL")
 
 say() { printf '%s\n' "$*"; }
 fail() { say "FAIL: $*"; exit 1; }
@@ -73,11 +94,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-say "== build =="
-make build >"$OUT/build.log" 2>&1 || fail "make build: see $OUT/build.log"
+say "== binaries =="
+# The proof's own, or built here into this gate's directory: never bin/,
+# which every worktree's dev stack shares.
+for cmd in ork orker orkctl; do
+	if [ ! -x "$BIN/$cmd" ]; then
+		mkdir -p "$BIN"
+		go build -o "$BIN/$cmd" "./cmd/$cmd" >>"$OUT/build.log" 2>&1 || fail "go build ./cmd/$cmd: see $OUT/build.log"
+	fi
+done
 
-WORK_DIR="$REPO/.data/work"
-mkdir -p "$WORK_DIR"
+# A work root of this gate's own: an Orker reaps everything under its root at
+# boot, and its default identity is derived from that root.
+mkdir -p "$REPO/.data/work"
+WORK_DIR="$(mktemp -d "$REPO/.data/work/observability-XXXXXX")"
 
 # local_activity_catalog mirrors scripts/stack.sh's function of the same
 # name. Not sourced: stack.sh's own trailing `case "${1:-}"` would run (and
@@ -86,8 +116,8 @@ local_activity_catalog() {
 	local registry="${ORK_LOCAL_REGISTRY:-localhost:5001}" name doc=""
 	for name in $(make -s -C "$REPO/images" print-activities); do
 		curl -sfo /dev/null -H 'Accept: application/vnd.oci.image.index.v1+json' \
-			"http://$registry/v2/orkstack/activity-$name/manifests/dev" || return 0
-		doc="$doc  $name: $registry/orkstack/activity-$name:dev
+			"http://$registry/v2/orkstack/activity-$name/manifests/$IMAGE_TAG" || return 0
+		doc="$doc  $name: $registry/orkstack/activity-$name:$IMAGE_TAG
 "
 	done
 	printf 'activities:\n%s' "$doc"
@@ -122,15 +152,15 @@ say "== starting orker (admin 127.0.0.1:9465, OTLP -> $COLLECTOR, --config $CONF
 env \
 	ORK_ARTIFACT_BACKEND=s3 \
 	ORK_ORKER_WORKDIR="$WORK_DIR" \
-	"$REPO/bin/orker" --config "$CONFIG_FILE" >"$OUT/orker.log" 2>&1 &
+	"$BIN/orker" --config "$CONFIG_FILE" >"$OUT/orker.log" 2>&1 &
 ORKER_PID=$!
 
 say "== starting ork (admin 127.0.0.1:9464, OTLP -> $COLLECTOR, --config $CONFIG_FILE) =="
 env \
 	ORK_ARTIFACT_BACKEND=s3 \
-	ORK_HTTP_ADDR=:8080 \
+	ORK_HTTP_ADDR="127.0.0.1:$ENGINE_PORT" \
 	ORK_ACTIVITY_CATALOG="$CATALOG" \
-	"$REPO/bin/ork" --config "$CONFIG_FILE" >"$OUT/ork.log" 2>&1 &
+	"$BIN/ork" --config "$CONFIG_FILE" >"$OUT/ork.log" 2>&1 &
 ORK_PID=$!
 
 # wait_ready NAME PORT PID — poll /readyz for up to 60s, failing fast if the
@@ -338,10 +368,10 @@ ORKER_PID=""
 trap cleanup EXIT
 
 env ORK_ARTIFACT_BACKEND=s3 ORK_ORKER_WORKDIR="$WORK_DIR" \
-	"$REPO/bin/orker" >"$OUT/orker-plain.log" 2>&1 &
+	"$BIN/orker" >"$OUT/orker-plain.log" 2>&1 &
 ORKER_PID=$!
-env ORK_ARTIFACT_BACKEND=s3 ORK_HTTP_ADDR=:8080 ORK_ACTIVITY_CATALOG="$CATALOG" \
-	"$REPO/bin/ork" >"$OUT/ork-plain.log" 2>&1 &
+env ORK_ARTIFACT_BACKEND=s3 ORK_HTTP_ADDR="127.0.0.1:$ENGINE_PORT" ORK_ACTIVITY_CATALOG="$CATALOG" \
+	"$BIN/ork" >"$OUT/ork-plain.log" 2>&1 &
 ORK_PID=$!
 
 ready=1

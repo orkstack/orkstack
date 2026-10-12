@@ -13,6 +13,9 @@
 //	proofrun verify       refuse a merge whose proof does not cover HEAD's tree
 //	proofrun temporal-args  the temporal service's image and arguments
 //	proofrun costs        regenerate the cost ledger and the slow list
+//	proofrun touches      whether a change touches paths of one scope action
+//	proofrun gates        the gates and specs a feature selection runs
+//	proofrun free-port    a port nothing listens on
 //
 // Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation.
 package main
@@ -37,6 +40,9 @@ func main() {
 		"verify":         cmdVerify,
 		"temporal-args":  cmdTemporalArgs,
 		"costs":          cmdCosts,
+		"free-port":      cmdFreePort,
+		"touches":        cmdTouches,
+		"gates":          cmdGates,
 	}
 	cmd, ok := commands[os.Args[1]]
 	if !ok {
@@ -47,5 +53,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: proofrun unit|integration|select|feature-report|ui-ledger|record|verify|temporal-args|costs [flags]")
+	fmt.Fprintln(os.Stderr, "usage: proofrun unit|integration|select|feature-report|ui-ledger|record|verify|temporal-args|costs|touches|gates|free-port [flags]")
 }

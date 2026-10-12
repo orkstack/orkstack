@@ -751,9 +751,10 @@ func selectInto(sel *selection, in selectInput) error {
 		}
 		sel.Integration[ip.ImportPath] = ps
 		// A slow-list entry naming a test that is no longer declared is stale.
+		unitDecl, _ := declared(dir)
 		for k := range in.slow {
-			if k.Package == ip.ImportPath && !integDecl[k.Test] {
-				sel.Notes = append(sel.Notes, fmt.Sprintf("the slow list names %s.%s, which is no longer declared in an integration file: regenerate it with make proof-slow-list", relDir(k.Package), k.Test))
+			if k.Package == ip.ImportPath && !integDecl[k.Test] && !unitDecl[k.Test] {
+				sel.Notes = append(sel.Notes, fmt.Sprintf("the slow list names %s.%s, which is no longer declared: regenerate it with make proof-slow-list", relDir(k.Package), k.Test))
 			}
 		}
 	}
