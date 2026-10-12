@@ -335,12 +335,35 @@ func (s *scheduleStack) run(t *testing.T, replica *managedEngine, runID string) 
 	return response.Run
 }
 
+// awaitRunStatus polls `run get` until the run reaches one of statuses.
+//
+// A fire names its run before the run exists: the fire workflow records the
+// run id in its memo and only then starts the run as a child
+// (internal/engine/schedule_fire.go, step 4), so a run id read from a
+// schedule's recent fires can answer not_found for that pending window. Only
+// not_found is waited through; any other failure fails at once.
 func (s *scheduleStack) awaitRunStatus(t *testing.T, runID string, within time.Duration, statuses ...string) runRow {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	var last runRow
 	for time.Now().Before(deadline) {
-		last = s.run(t, s.a, runID)
+		out, errOut, code := s.cliRaw(t, s.a, "--json", "run", "get", runID)
+		if code != exitOK && strings.Contains(errOut, "not_found") {
+			last = runRow{Status: "not_found"}
+			time.Sleep(time.Second)
+			continue
+		}
+		if code != exitOK {
+			t.Fatalf("orkctl run get %s via %s exited %d, want %d\nstdout:\n%s\nstderr:\n%s",
+				runID, s.a.name, code, exitOK, out, errOut)
+		}
+		var response struct {
+			Run runRow `json:"run"`
+		}
+		if err := json.Unmarshal([]byte(out), &response); err != nil {
+			t.Fatalf("decode run get: %v (%s)", err, out)
+		}
+		last = response.Run
 		for _, want := range statuses {
 			if last.Status == want {
 				return last
