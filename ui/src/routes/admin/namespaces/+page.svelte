@@ -23,8 +23,9 @@
 	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
 	import { createdNamespaceHref, namespacesEmptyState } from '$lib/namespaceList';
 	import type { FieldFilter } from '$lib/listFilter';
-	import { ListNamespacesRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { ListNamespacesRequestSchema } from '$lib/gen/orkstack/v1/namespace_service_pb';
+	import { errorMessage } from '$lib/client';
+	import { namespaceClient } from '$lib/clients/namespaces';
 	import { create } from '@bufbuild/protobuf';
 	import { NamespaceHoldSchema, type Budget, type Namespace, type NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
 	import { TaskLogExport } from '$lib/gen/orkstack/v1/telemetry_pb';
@@ -363,7 +364,7 @@
 
 		createBusy = true;
 		try {
-			const res = await orkstack(fetch).namespaces.createNamespace({
+			const res = await namespaceClient(fetch).createNamespace({
 				namespace: {
 					name: createName.trim(),
 					description: createDescription.trim(),
@@ -528,7 +529,7 @@
 
 		editBusy = true;
 		try {
-			await orkstack(fetch).namespaces.updateNamespace({
+			await namespaceClient(fetch).updateNamespace({
 				namespace: {
 					name: editingName,
 					description: editDescription.trim(),
@@ -606,7 +607,7 @@
 		editBusy = true;
 		editServerError = '';
 		try {
-			const res = await orkstack(fetch).namespaces.getNamespace({ name: editingName });
+			const res = await namespaceClient(fetch).getNamespace({ name: editingName });
 			editEtag = res.namespace?.etag ?? '';
 			editLabels = { ...res.namespace?.labels };
 			editConflict = false;
@@ -658,11 +659,10 @@
 		admissionBusy = true;
 		admissionError = '';
 		try {
-			const client = orkstack(fetch);
-			const res = await client.namespaces.getNamespace({ name });
+			const res = await namespaceClient(fetch).getNamespace({ name });
 			const current = res.namespace;
 			if (!current) throw new Error(`namespace ${name} came back empty`);
-			await client.namespaces.updateNamespace({
+			await namespaceClient(fetch).updateNamespace({
 				namespace: { ...current, hold: hold ? create(NamespaceHoldSchema, hold) : undefined }
 			});
 			closeAdmission();
@@ -700,7 +700,7 @@
 		deleteError = '';
 		const deletedName = pendingDelete;
 		try {
-			await orkstack(fetch).namespaces.deleteNamespace({ name: deletedName });
+			await namespaceClient(fetch).deleteNamespace({ name: deletedName });
 			pendingDelete = '';
 			// The namespace this page/app is currently SCOPED TO no longer
 			// exists. Leaving `?ns=` pointed at it would carry a coordinate the

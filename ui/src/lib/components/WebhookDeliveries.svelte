@@ -24,7 +24,8 @@
 	import ListFilter from '$lib/components/ListFilter.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 	import { readPageStack, writePageStack } from '$lib/browsing';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { webhookClient } from '$lib/clients/webhooks';
 	import {
 		DELIVERIES_CAPTION,
 		deliveriesCliCommand,
@@ -42,7 +43,7 @@
 	} from '$lib/deliveries';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { EventType } from '$lib/gen/orkstack/v1/run_pb';
-	import { ListDeliveriesRequestSchema, type Delivery, type ListDeliveriesResponse, type Webhook } from '$lib/gen/orkstack/v1/service_pb';
+	import { ListDeliveriesRequestSchema, type Delivery, type ListDeliveriesResponse, type Webhook } from '$lib/gen/orkstack/v1/webhook_service_pb';
 	import type { FieldFilter } from '$lib/listFilter';
 	import { fmtTimestamp, statusClasses } from '$lib/status';
 
@@ -112,7 +113,7 @@
 		redelivering = true;
 		redeliverError = '';
 		try {
-			const out = await orkstack(fetch).webhooks.redeliverWebhook({ id: original.id });
+			const out = await webhookClient(fetch).redeliverWebhook({ id: original.id });
 			const rec = out.delivery;
 			if (rec) results = { ...results, [original.id]: { text: redeliveryResult(rec), delivered: rec.delivered } };
 			confirming = null;

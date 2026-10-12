@@ -2,16 +2,17 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import ListFilter from '$lib/components/ListFilter.svelte';
 	import type { FieldFilter } from '$lib/listFilter';
-	import { ListWebhooksRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
+	import { ListWebhooksRequestSchema } from '$lib/gen/orkstack/v1/webhook_service_pb';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import Dialog from '$lib/components/Dialog.svelte';
 	import { webhookUpdateCli } from '$lib/automation';
-	import type { Webhook } from '$lib/gen/orkstack/v1/service_pb';
+	import type { Webhook } from '$lib/gen/orkstack/v1/webhook_service_pb';
 	import WebhookDeliveries from '$lib/components/WebhookDeliveries.svelte';
 	import { deliveriesHref, webhookDeliveriesFilters } from '$lib/deliveries';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { webhookClient } from '$lib/clients/webhooks';
 	import { EventType } from '$lib/gen/orkstack/v1/run_pb';
 	import { fmtTimestamp } from '$lib/status';
 	import { RUN_EVENTS, SCOPE_SLUG_PATTERN, TASK_EVENTS, webhookScope } from '$lib/webhooks';
@@ -39,11 +40,11 @@
 	let editing = $state<Webhook | null>(null); let editName = $state(''); let editUrl = $state(''); let editEvents = $state<EventType[]>([]); let editNamespace = $state(''); let editOrkflow = $state(''); let editTask = $state(''); let editError = $state(''); let saving = $state(false);
 	function startEdit(hook: Webhook) { editing = hook; editName = hook.name; editUrl = hook.url; editEvents = [...hook.events]; editNamespace = hook.namespace; editOrkflow = hook.orkflowName; editTask = hook.taskId; editError = ''; }
 	function toggleEdit(event: EventType, checked: boolean) { editEvents = checked ? [...editEvents, event] : editEvents.filter((value) => value !== event); }
-	async function saveEdit() { if (!editing) return; saving = true; editError = ''; try { await orkstack(fetch).webhooks.updateWebhook({ id: editing.id, name: editName.trim(), url: editUrl.trim(), events: editEvents, namespace: editNamespace.trim(), orkflowName: editOrkflow.trim(), taskId: editTask.trim() }); editing = null; await invalidateAll(); } catch (err) { editError = errorMessage(err); } finally { saving = false; } }
+	async function saveEdit() { if (!editing) return; saving = true; editError = ''; try { await webhookClient(fetch).updateWebhook({ id: editing.id, name: editName.trim(), url: editUrl.trim(), events: editEvents, namespace: editNamespace.trim(), orkflowName: editOrkflow.trim(), taskId: editTask.trim() }); editing = null; await invalidateAll(); } catch (err) { editError = errorMessage(err); } finally { saving = false; } }
 	const label = (event: EventType) => EventType[event];
 	function toggle(event: EventType, checked: boolean) { selected = checked ? [...selected, event] : selected.filter((value) => value !== event); }
-	async function register() { busy = true; formError = ''; shownSecret = ''; try { const response = await orkstack(fetch).webhooks.registerWebhook({ url, events: selected, secret, namespace: namespace.trim(), orkflowName: orkflowName.trim(), taskId: taskId.trim(), name: namespace.trim() ? hookName.trim() : '' }); shownSecret = response.secret; url = ''; secret = ''; selected = []; namespace = ''; orkflowName = ''; taskId = ''; hookName = ''; await invalidateAll(); } catch (err) { formError = errorMessage(err); } finally { busy = false; } }
-	async function remove() { if (!deleting) return; busy = true; deleteError = ''; try { await orkstack(fetch).webhooks.deleteWebhook({ id: deleting }); deleting = ''; await invalidateAll(); } catch (err) { deleteError = errorMessage(err); } finally { busy = false; } }
+	async function register() { busy = true; formError = ''; shownSecret = ''; try { const response = await webhookClient(fetch).registerWebhook({ url, events: selected, secret, namespace: namespace.trim(), orkflowName: orkflowName.trim(), taskId: taskId.trim(), name: namespace.trim() ? hookName.trim() : '' }); shownSecret = response.secret; url = ''; secret = ''; selected = []; namespace = ''; orkflowName = ''; taskId = ''; hookName = ''; await invalidateAll(); } catch (err) { formError = errorMessage(err); } finally { busy = false; } }
+	async function remove() { if (!deleting) return; busy = true; deleteError = ''; try { await webhookClient(fetch).deleteWebhook({ id: deleting }); deleting = ''; await invalidateAll(); } catch (err) { deleteError = errorMessage(err); } finally { busy = false; } }
 	// The list read's own Retry: it re-runs the loaders in place, as every
 	// sibling admin page's does, so a transient failure is never a dead end.
 	let retrying = $state(false);

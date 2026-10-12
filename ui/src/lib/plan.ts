@@ -5,7 +5,7 @@
 // orders and words it, each mirroring cmd/orkctl/run_plan.go so the dialog and
 // `orkctl run plan` print the same rows and the same sentences.
 import type { JsonObject } from '@bufbuild/protobuf';
-import { PlanOutcome, type PlanRunResponse, type PlanTask } from './gen/orkstack/v1/service_pb';
+import { PlanOutcome, type PlanRunResponse, type PlanTask } from './gen/orkstack/v1/orkflow_service_pb';
 import { eachPlanDetail } from './each';
 import { cachePlanDetail } from './cache';
 import { isFailureHandler, joinWord } from './join';

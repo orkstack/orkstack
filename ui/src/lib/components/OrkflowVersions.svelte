@@ -13,7 +13,9 @@
 	import DiffView from '$lib/components/DiffView.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import InterfaceFindings from '$lib/components/InterfaceFindings.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { orkflowClient } from '$lib/clients/orkflows';
+	import { runClient } from '$lib/clients/runs';
 	import {
 		breakingCount,
 		callerLabel,
@@ -37,7 +39,7 @@
 		type CompareInterfacesResponse,
 		type OrkflowCaller,
 		type OrkflowVersion
-	} from '$lib/gen/orkstack/v1/service_pb';
+} from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
 
@@ -108,7 +110,7 @@
 		promoteCompareError = '';
 		promoteCallers = null;
 		promoteCallersError = '';
-		const client = orkstack(fetch).orkflows;
+		const client = orkflowClient(fetch);
 		const comparison = client
 			.compareInterfaces({ name, namespace, fromVersion: '', toVersion: version })
 			.then(
@@ -147,7 +149,7 @@
 		promoting = true;
 		promoteError = '';
 		try {
-			await orkstack(fetch).orkflows.setCurrentOrkflowVersion({
+			await orkflowClient(fetch).setCurrentOrkflowVersion({
 				name,
 				version: pendingPromotion,
 				namespace,
@@ -205,9 +207,9 @@
 			// and say why; the server repeats the active-and-recent check
 			// exhaustively at deletion time and is the authority that refuses.
 			const [running, pending, recentPage] = await Promise.all([
-				orkstack(fetch).runs.listRuns({ namespace, filters: runWindowFilters(name, 'RUNNING', '', ''), pageSize: 1 }),
-				orkstack(fetch).runs.listRuns({ namespace, filters: runWindowFilters(name, 'PENDING', '', ''), pageSize: 1 }),
-				orkstack(fetch).runs.listRuns({ namespace, filters: runWindowFilters(name, '', '', ''), pageSize: 200 })
+				runClient(fetch).listRuns({ namespace, filters: runWindowFilters(name, 'RUNNING', '', ''), pageSize: 1 }),
+				runClient(fetch).listRuns({ namespace, filters: runWindowFilters(name, 'PENDING', '', ''), pageSize: 1 }),
+				runClient(fetch).listRuns({ namespace, filters: runWindowFilters(name, '', '', ''), pageSize: 200 })
 			]);
 			if (sequence !== deleteCheckSequence) return;
 			const cutoff = Date.now() - deletionRunWindowMs;
@@ -249,7 +251,7 @@
 		deleting = true;
 		deleteError = '';
 		try {
-			await orkstack(fetch).orkflows.deleteOrkflow({ name, namespace });
+			await orkflowClient(fetch).deleteOrkflow({ name, namespace });
 			await goto(withNamespace('/orkflows', namespace), { invalidateAll: true });
 		} catch (err) {
 			// Keep the engine's refusal sentence intact in ConfirmDialog's error slot.
@@ -294,7 +296,7 @@
 		compatError = '';
 		compatResult = null;
 		try {
-			compatResult = await orkstack(fetch).orkflows.compareInterfaces({
+			compatResult = await orkflowClient(fetch).compareInterfaces({
 				name,
 				namespace,
 				fromVersion: diffFrom,
@@ -316,7 +318,7 @@
 		diffError = '';
 		diffText = null;
 		try {
-			const res = await orkstack(fetch).orkflows.diffOrkflowVersions({
+			const res = await orkflowClient(fetch).diffOrkflowVersions({
 				name,
 				fromVersion: diffFrom,
 				toVersion: diffTo,

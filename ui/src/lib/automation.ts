@@ -6,9 +6,13 @@ import {
 	type AutomationStep,
 	type PlanAutomationResponse
 } from './gen/orkstack/v1/automation_pb';
-import { RegisterWebhookRequestSchema, ValidationSeverity } from './gen/orkstack/v1/service_pb';
+import { ValidationSeverity } from './gen/orkstack/v1/orkflow_service_pb';
+import { RegisterWebhookRequestSchema } from './gen/orkstack/v1/webhook_service_pb';
 import { EventType } from './gen/orkstack/v1/run_pb';
-import type { orkstack } from './client';
+import type { NamespaceClient } from './clients/namespaces';
+import type { ScheduleClient } from './clients/schedules';
+import type { TriggerClient } from './clients/triggers';
+import type { WebhookClient } from './clients/webhooks';
 import { shellQuote } from './runDetail';
 
 // The Admin → Automation page's pure rules and its executor, kept here so they
@@ -124,10 +128,12 @@ export interface StepExecution {
 }
 
 /** The services a step can name. */
-export type AutomationWriters = Pick<
-	ReturnType<typeof orkstack>,
-	'namespaces' | 'schedules' | 'triggers' | 'webhooks'
->;
+export interface AutomationWriters {
+	namespaces: NamespaceClient;
+	schedules: ScheduleClient;
+	triggers: TriggerClient;
+	webhooks: WebhookClient;
+}
 
 /**
  * executeStep sends one step's carried request to the RPC it names — the TS

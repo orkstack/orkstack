@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { create, toJson } from '@bufbuild/protobuf';
-import { TaskLogChunkSchema } from '../src/lib/gen/orkstack/v1/service_pb';
+import { TaskLogChunkSchema } from '../src/lib/gen/orkstack/v1/run_service_pb';
 import { followTaskLogs, type LogDelivery, type LogSocketState } from '../src/lib/taskLogs';
 
 // The client half of "a task that retries is still followed".

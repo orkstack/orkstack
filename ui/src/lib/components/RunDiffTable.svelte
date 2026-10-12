@@ -7,7 +7,7 @@
 	// same rule `orkctl run diff` prints by. Only the two value cells of a
 	// differing pair are tinted, never the row: a diff row is a difference, not
 	// an outcome.
-	import type { RunFieldDiff } from '$lib/gen/orkstack/v1/service_pb';
+	import type { RunFieldDiff } from '$lib/gen/orkstack/v1/run_service_pb';
 	import { reasonText, renderDiffValue } from '$lib/runDiff';
 	import { itemLabel } from '$lib/each';
 

@@ -1,4 +1,5 @@
-import { errorMessage, orkstack } from "$lib/client";
+import { errorMessage } from "$lib/client";
+import { namespaceClient } from "$lib/clients/namespaces";
 import type { Budget, NamespaceHold } from "$lib/gen/orkstack/v1/namespace_pb";
 import { namespaceFrom, namespaceLabel } from "$lib/namespace";
 import type { LayoutLoad } from "./$types";
@@ -10,7 +11,7 @@ import type { LayoutLoad } from "./$types";
 export const load: LayoutLoad = async ({ fetch, url }) => {
   const namespace = namespaceFrom(url);
   try {
-    const res = await orkstack(fetch).namespaces.listNamespaces({});
+    const res = await namespaceClient(fetch).listNamespaces({});
     // The hold of the namespace this page is in, from the same read — no
     // extra RPC. It is a snapshot as of this navigation, the picker's own
     // contract; the server is the gate, and the submit panel reads fresh.

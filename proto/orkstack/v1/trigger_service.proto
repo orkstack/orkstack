@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/filter.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// TriggerService manages inbound run starters. A trigger is bound to ONE
+// orkflow in one namespace, and an external caller presents that trigger's
+// bearer token over plain HTTP to start a run of it.
+//
+// It is the mirror image of WebhookService, not a variant of it. A webhook is
+// OUTBOUND and deployment-wide unless it names a scope: OrkStack calls the
+// subscriber when a run it covers changes state. A trigger is INBOUND and orkflow-scoped: the caller calls
+// OrkStack, authenticating as the trigger. The orkflow coordinates come from
+// the stored record and never from the request, so whoever holds a token can
+// only start the orkflow the trigger was created for.
+//
+// The secret is handed back exactly once, at creation, on the same terms as
+// RegisterWebhookResponse.secret: a listing never carries it again.
+//
+// A trigger may carry a name, which is how an automation document addresses
+// it (docs/AUTOMATION.md); UpdateTrigger renames and re-pins in place.
+service TriggerService {
+  rpc CreateTrigger(CreateTriggerRequest) returns (CreateTriggerResponse);
+  rpc ListTriggers(ListTriggersRequest) returns (ListTriggersResponse);
+  // UpdateTrigger REPLACES a trigger's mutable fields — name, pinned version,
+  // description — in place. Its id, namespace, orkflow and bearer token never
+  // change: an update never re-issues a token, and the URL an external caller
+  // holds keeps working. Binding a trigger to another orkflow is delete then
+  // create. Last writer wins, and an update never brings back a trigger that
+  // was deleted meanwhile: that is NotFound.
+  rpc UpdateTrigger(UpdateTriggerRequest) returns (UpdateTriggerResponse);
+  rpc DeleteTrigger(DeleteTriggerRequest) returns (DeleteTriggerResponse);
+}
+
+message Trigger {
+  string id = 1;
+  string namespace = 2;
+  string orkflow_name = 3;
+  string orkflow_version = 4;              // empty = current pointer, resolved at invoke time
+  string description = 5;                  // optional operator label
+  google.protobuf.Timestamp created_at = 6;
+
+  // name is the operator's handle for this trigger: a slug
+  // (^[a-z][a-z0-9-]*$, at most 200 bytes), unique among the named triggers
+  // of its namespace. Empty means unnamed, which every trigger created before
+  // this field existed is; an unnamed trigger is outside every automation
+  // document. The name is not part of the invoke URL and never selects what
+  // a run starts: the stored namespace and orkflow do, as before.
+  string name = 7;
+}
+
+message CreateTriggerRequest {
+  string namespace = 1;
+  string orkflow_name = 2;
+  string orkflow_version = 3;
+  string description = 4;
+  string name = 5;                         // optional; see Trigger.name
+}
+
+message CreateTriggerResponse {
+  Trigger trigger = 1;
+  string secret = 2;                       // shown exactly once, like RegisterWebhookResponse.secret
+}
+
+message ListTriggersRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Trigger"
+    fields: [
+      {
+        path: "id"
+        label: "Id"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "orkflow_name"
+        label: "Orkflow"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "orkflow_version"
+        label: "Pinned version"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "description"
+        label: "Description"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "created_at"
+        label: "Created"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  reserved 2;
+  reserved "orkflow_name";
+  string namespace = 1;                    // the tenant; empty = the default namespace
+  repeated FieldFilter filters = 3;
+}
+
+message ListTriggersResponse { repeated Trigger triggers = 1; }
+
+message DeleteTriggerRequest { string id = 1; string namespace = 2; }
+
+message DeleteTriggerResponse {}
+
+// UpdateTriggerRequest replaces every mutable field with the value here: an
+// empty name makes the trigger unnamed, an empty orkflow_version follows the
+// current pointer, an empty description clears it. A client that changes one
+// field reads the trigger and sends the rest back, which is what
+// `orkctl trigger update` does. orkflow_name is deliberately absent: a
+// trigger's orkflow cannot change.
+message UpdateTriggerRequest {
+  string id = 1;
+  string namespace = 2;                    // addresses the trigger; another namespace's is NotFound
+  string name = 3;
+  string orkflow_version = 4;
+  string description = 5;
+}
+
+message UpdateTriggerResponse { Trigger trigger = 1; }

@@ -4,12 +4,13 @@ import { hasOption, type DescMessage } from '@bufbuild/protobuf';
 import { filterable, FilterOperator, FilterValueRule } from '../src/lib/gen/orkstack/v1/filter_pb';
 import { file_orkstack_v1_audit } from '../src/lib/gen/orkstack/v1/audit_pb';
 import { file_orkstack_v1_schedule } from '../src/lib/gen/orkstack/v1/schedule_pb';
-import {
-	ListNamespacesRequestSchema,
-	ListOrkersRequestSchema,
-	ListReleasesRequestSchema,
-	file_orkstack_v1_service
-} from '../src/lib/gen/orkstack/v1/service_pb';
+import { ListOrkersRequestSchema, file_orkstack_v1_activity_service } from '../src/lib/gen/orkstack/v1/activity_service_pb';
+import { ListNamespacesRequestSchema, file_orkstack_v1_namespace_service } from '../src/lib/gen/orkstack/v1/namespace_service_pb';
+import { file_orkstack_v1_orkflow_service } from '../src/lib/gen/orkstack/v1/orkflow_service_pb';
+import { file_orkstack_v1_run_service } from '../src/lib/gen/orkstack/v1/run_service_pb';
+import { ListReleasesRequestSchema, file_orkstack_v1_system_service } from '../src/lib/gen/orkstack/v1/system_service_pb';
+import { file_orkstack_v1_trigger_service } from '../src/lib/gen/orkstack/v1/trigger_service_pb';
+import { file_orkstack_v1_webhook_service } from '../src/lib/gen/orkstack/v1/webhook_service_pb';
 import {
 	OPERATOR_LABELS,
 	canonicalTexts,
@@ -66,7 +67,16 @@ test('formatFilter writes every shared vector as the engine does, and round-trip
 // the browser: its fields name real fields of the listed message.
 test('specFor resolves every filterable request', () => {
 	const requests: DescMessage[] = [];
-	for (const file of [file_orkstack_v1_service, file_orkstack_v1_schedule, file_orkstack_v1_audit]) {
+	const serviceFiles = [
+		file_orkstack_v1_orkflow_service,
+		file_orkstack_v1_run_service,
+		file_orkstack_v1_webhook_service,
+		file_orkstack_v1_trigger_service,
+		file_orkstack_v1_namespace_service,
+		file_orkstack_v1_activity_service,
+		file_orkstack_v1_system_service
+	];
+	for (const file of [...serviceFiles, file_orkstack_v1_schedule, file_orkstack_v1_audit]) {
 		for (const service of file.services) for (const method of service.methods) {
 			if (method.name.startsWith('List') && hasOption(method.input, filterable)) requests.push(method.input);
 		}

@@ -17,7 +17,10 @@
 	import { page } from '$app/state';
 	import { create } from '@bufbuild/protobuf';
 	import type { JsonObject } from '@bufbuild/protobuf';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { namespaceClient } from '$lib/clients/namespaces';
+	import { orkflowClient } from '$lib/clients/orkflows';
+	import { runClient } from '$lib/clients/runs';
 	import { defaultsForInputs, inputSpecs, parseInputObject, planCli, submitCli } from '$lib/authoring';
 	import { parseAssumeFailed, parseAssumedOutputs } from '$lib/plan';
 	import AwaitCallbacks from './AwaitCallbacks.svelte';
@@ -31,7 +34,8 @@
 	import type { NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
 	import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import { namespaceLabel } from '$lib/namespace';
-	import type { AwaitCallback, OrkflowVersion, PlanRunResponse } from '$lib/gen/orkstack/v1/service_pb';
+	import type { OrkflowVersion, PlanRunResponse } from '$lib/gen/orkstack/v1/orkflow_service_pb';
+import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 	import type { Payload } from '$lib/gen/orkstack/v1/common_pb';
 
 	interface Props {
@@ -118,17 +122,16 @@
 		selectionError = '';
 		selectedOrkflow = null;
 		try {
-			const client = orkstack(fetch);
 			const [catalog, detail, namespaceDoc] = await Promise.all([
-				client.orkflows.listOrkflowVersions({ name, namespace: requested }),
-				client.orkflows.getOrkflow({
+				orkflowClient(fetch).listOrkflowVersions({ name, namespace: requested }),
+				orkflowClient(fetch).getOrkflow({
 					name,
 					version: version === CURRENT ? '' : version,
 					namespace: requested
 				}),
 				// A namespace read that fails does not block the draft: the
 				// server is the gate, and it refuses a held submit either way.
-				client.namespaces.getNamespace({ name: requested }).catch(() => null)
+				namespaceClient(fetch).getNamespace({ name: requested }).catch(() => null)
 			]);
 			// A slower earlier request must not overwrite a newer selection —
 			// the version dropdown is the control an operator changes twice in
@@ -314,7 +317,7 @@
 		const request = ++planRequest;
 		planning = true;
 		try {
-			const res = await orkstack(fetch).orkflows.planRun({
+			const res = await orkflowClient(fetch).planRun({
 				orkflowName: selectedOrkflow.name,
 				orkflowVersion: chosenVersion,
 				namespace,
@@ -349,7 +352,7 @@
 		submitting = true;
 		let runId: string;
 		try {
-			const res = await orkstack(fetch).runs.submitRun({
+			const res = await runClient(fetch).submitRun({
 				orkflowName: selectedOrkflow.name,
 				orkflowVersion: chosenVersion,
 				namespace,

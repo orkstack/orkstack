@@ -1,7 +1,8 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { runClient } from '$lib/clients/runs';
 import { namespaceFrom } from '$lib/namespace';
 import { parseOnly } from '$lib/runDiff';
-import type { DiffRunsResponse } from '$lib/gen/orkstack/v1/service_pb';
+import type { DiffRunsResponse } from '$lib/gen/orkstack/v1/run_service_pb';
 import type { PageLoad } from './$types';
 
 // The comparison is one read, computed by the engine on every call: the page
@@ -17,7 +18,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 		return { ...base, diff: null as DiffRunsResponse | null, error: null as string | null };
 	}
 	try {
-		const diff = await orkstack(fetch).runs.diffRuns({
+		const diff = await runClient(fetch).diffRuns({
 			fromRunId: params.id,
 			toRunId: to,
 			namespace,

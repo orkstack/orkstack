@@ -6,7 +6,7 @@ import {
 	PlanRunResponseSchema,
 	PlanTaskSchema,
 	type PlanRunResponse
-} from '../src/lib/gen/orkstack/v1/service_pb';
+} from '../src/lib/gen/orkstack/v1/orkflow_service_pb';
 import { planCli } from '../src/lib/authoring';
 import {
 	PLAN_IGNORED_ASSUMPTIONS,

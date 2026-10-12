@@ -8,7 +8,7 @@
 // run_diff.go so the page and the terminal say the same thing.
 import { Status } from './gen/orkstack/v1/common_pb';
 import type { Run } from './gen/orkstack/v1/run_pb';
-import type { DiffRunsResponse, RunFieldDiff } from './gen/orkstack/v1/service_pb';
+import type { DiffRunsResponse, RunFieldDiff } from './gen/orkstack/v1/run_service_pb';
 
 /** The DiffRuns vocabulary, in canonical order. */
 export const DIFF_FIELDS = [

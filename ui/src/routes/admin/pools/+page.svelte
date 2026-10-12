@@ -14,7 +14,7 @@
 	import { listHref } from '$lib/browsing';
 	import type { FieldFilter } from '$lib/listFilter';
 	import { shellQuote } from '$lib/runDetail';
-	import { ListPoolsRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
+	import { ListPoolsRequestSchema } from '$lib/gen/orkstack/v1/namespace_service_pb';
 	import PoolOrkers from '$lib/components/PoolOrkers.svelte';
 	import type { Pool } from '$lib/gen/orkstack/v1/namespace_pb';
 	import { namespaceLabel } from '$lib/namespace';

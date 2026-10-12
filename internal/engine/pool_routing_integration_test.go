@@ -404,7 +404,7 @@ tasks:
 	runID := submitted.Msg.GetRun().GetId()
 
 	// The namespace travels with the run id: a run is addressed INSIDE one
-	// (proto/orkstack/v1/service.proto, GetRunRequest), so a stream that names
+	// (proto/orkstack/v1/run_service.proto, GetRunRequest), so a stream that names
 	// none asks `default` about a run this namespace owns.
 	stream, err := runClient.StreamEvents(ctx, connect.NewRequest(
 		&orkstackv1.StreamEventsRequest{RunId: runID, Namespace: nsName}))

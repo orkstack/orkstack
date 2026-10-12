@@ -11,7 +11,7 @@
 	// chose.
 	import type { EachSpec } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import type { TaskAttempt, TaskEach } from '$lib/gen/orkstack/v1/run_pb';
-	import type { LiveAttempt, RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
+	import type { LiveAttempt, RunArtifact } from '$lib/gen/orkstack/v1/run_service_pb';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { eachSummary, isCachedItem, itemAriaLabel, itemCli, itemLabel, itemStatusText, type ItemView } from '$lib/each';
 	import CacheBadge from './CacheBadge.svelte';

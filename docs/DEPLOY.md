@@ -337,7 +337,7 @@ then the variable it becomes.
 | `orker.log.flush_interval` | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
 | `orker.heartbeat_interval` | `ORK_ORKER_HEARTBEAT_INTERVAL` | `5s` | `orker` | how often a running task's heartbeat actually reaches Temporal. Two consequences, both real: it is the longest a **cancellation** waits before the Orker acts on it — Temporal delivers cancellation only in a heartbeat's response, so a failing run's still-running siblings keep burning resources for up to this long — and it is the longest **Temporal frontend outage** a running container survives, since the SDK gives up on an activity whose heartbeat RPC keeps failing for a whole interval. Must be between `1s` and `10s` (a third of the 30 s heartbeat timeout); anything else is refused at boot rather than clamped. Lower it towards `2s` where Temporal is local or highly available; raise it where the frontend is flaky |
-| `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `1000` | `orker` | how many tasks this Orker runs at once — the size of its task worker's activity slots, and the **Max concurrent** Admin → Activities reports. A whole number, 1 or more; anything else is refused at boot. The default is the Temporal SDK's own and caps nothing a real host could run, so size it — see "Sizing an Orker's task ceiling" below |
+| `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | `orker` | how many tasks this Orker runs at once — the size of its task worker's activity slots, and the **Max concurrent** Admin → Activities reports. A whole number, 1 or more; anything else is refused at boot. The default fits a 16-CPU, 64 GiB host running default-sized tasks; size it to the host — see "Sizing an Orker's task ceiling" below |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no extra pollers; above zero makes this Orker a pin host. Pool-wide — see below |
 | `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
@@ -345,6 +345,7 @@ then the variable it becomes.
 | `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` |
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
 | `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Lowers the built-in ceiling of 1000, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
+| `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `1000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, apply and plan, and again at submit, so lowering it refuses new runs of an Orkflow applied above the new value. It may be raised, but every task's activity and lifecycle events land in the run's one history, which the Temporal cluster bounds (51,200 events and 50 MiB by default) and which a run cannot yet continue past: raise it only on a cluster whose history limits were raised to match, or a large run is terminated by the cluster mid-flight |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
@@ -406,13 +407,18 @@ or another to free a slot, which is the right place for them to wait — a
 container the host cannot afford to run is a task that fails `OOMKilled` or
 crawls, not one that runs sooner.
 
-The default, `1000`, is the Temporal SDK's own and is not a sizing decision.
-Size it from the host and the task defaults: a task that requests nothing is
-given `orker.resources.default_cpu` (`1`) and `orker.resources.default_memory`
-(`1Gi`), so a host with 16 CPUs and 64 GiB that runs mostly default-sized tasks
-is bounded by `min(16 ÷ 1, 64 ÷ 1) = 16`. Leave headroom for the Orker itself
+The default is `16`. Size it from the host and the task defaults: a task that
+requests nothing is given `orker.resources.default_cpu` (`1`) and
+`orker.resources.default_memory` (`1Gi`), so a host with 16 CPUs and 64 GiB
+that runs mostly default-sized tasks is bounded by `min(16 ÷ 1, 64 ÷ 1) = 16`
+— the host the default is sized for. A smaller host should lower it, a larger
+one raise it explicitly: the ceiling is never derived from the host, because
+the Orker cannot know what else shares it. Leave headroom for the Orker itself
 and the container daemon, and size by the larger requests where a pool runs
-them. A fan-out (`each:`) without `max_parallel` is the case this bounds:
+them. (Before 2026-10 the default was the Temporal SDK's own `1000`, which
+capped nothing a real host could run; an Orker that relied on it now takes at
+most 16 tasks at once, and the rest wait in the pool — set the key to keep
+the old behaviour.) A fan-out (`each:`) without `max_parallel` is the case this bounds:
 every item is dispatched at once, and only this ceiling decides how many of
 them one Orker takes. The value is logged at boot (`max_concurrent`) and
 reported by Admin → Activities.

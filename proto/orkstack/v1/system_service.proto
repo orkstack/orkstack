@@ -1,0 +1,423 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
+import "orkstack/v1/filter.proto";
+import "orkstack/v1/image_policy.proto";
+import "orkstack/v1/retention.proto";
+import "orkstack/v1/run.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// SystemService reports what this deployment is made of.
+service SystemService {
+  // GetSystemInfo describes THE REPLICA THAT ANSWERED. Every field is
+  // configuration- or build-derived — read from the process's own
+  // configuration, not observed from the cluster — except server_time.
+  // Replicas of one release answer identically by construction; mid-rollout,
+  // build_id is exactly the field that differs, which is the point of it.
+  //
+  // It is the one admin read that does not leave the process, and it is the
+  // one question only the process can answer: everything else an operator
+  // asks — which namespaces exist, which pools have Orkers, what those
+  // Orkers run — comes from the store or the cluster, so any replica gives
+  // the same reply. This one describes the replica in front of you, on
+  // purpose, because that is what an operator behind a load balancer needs
+  rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse);
+
+  // GetRetentionPolicy reads the deployment's maximum run retention: the
+  // ceiling on every namespace's run_retention, and what a namespace that
+  // sets none inherits. Read from the store, so any replica answers it.
+  //
+  // It is deployment-wide on purpose. Per-namespace retention is a field of
+  // orkstack.v1.Namespace (NamespaceService); this is the bound on all of
+  // them.
+  rpc GetRetentionPolicy(GetRetentionPolicyRequest) returns (GetRetentionPolicyResponse);
+
+  // UpdateRetentionPolicy changes the maximum. A non-positive or malformed
+  // duration is INVALID_ARGUMENT before anything is written. Lowering it
+  // below a namespace's explicit run_retention is FAILED_PRECONDITION naming
+  // that namespace — lower the namespace first. Namespaces that set nothing
+  // follow the new maximum immediately: finished runs already older than it
+  // are retired on the next cleanup pass.
+  rpc UpdateRetentionPolicy(UpdateRetentionPolicyRequest) returns (UpdateRetentionPolicyResponse);
+
+  // ListTelemetrySinks names the telemetry sinks this deployment declared
+  // (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
+  // only: endpoints and headers are the operator's and never leave the
+  // process. CONFIGURATION-DERIVED; "default" is always present.
+  rpc ListTelemetrySinks(ListTelemetrySinksRequest) returns (ListTelemetrySinksResponse);
+
+  // GetImagePolicy reads the deployment's image supply-chain floor: whether
+  // a `uses:` may be a mutable tag, which registries images may come from,
+  // and which signing keys a namespace may require by name. Read from the
+  // store, so any replica answers it. A deployment that never wrote one
+  // answers the EMPTY policy with updated_at unset — that is a real answer
+  // (everything is permitted), not a missing document.
+  //
+  // Deployment-wide on purpose. The per-namespace tightening is a field of
+  // orkstack.v1.Namespace (require_signed_by); this is the floor under all
+  // of them.
+  rpc GetImagePolicy(GetImagePolicyRequest) returns (GetImagePolicyResponse);
+
+  // UpdateImagePolicy replaces the floor. Every entry and key is validated
+  // before anything is written (INVALID_ARGUMENT naming the entry). An
+  // allowed_registries list that excludes an activity of this engine's
+  // catalog is FAILED_PRECONDITION naming the activities — widen the list
+  // or change ORK_ACTIVITY_CATALOG first, because a floor that silently
+  // refuses every `uses: shell` is not a floor an operator meant. Removing
+  // a signing key a namespace still names is FAILED_PRECONDITION naming the
+  // namespace — clear the namespace first. Definitions already stored are
+  // untouched; they are re-checked at their next submit.
+  rpc UpdateImagePolicy(UpdateImagePolicyRequest) returns (UpdateImagePolicyResponse);
+  // ListReleases is the deployment's releases as the cluster routes them:
+  // which one takes new runs, which one is ramping and by how much, which
+  // ones are still finishing runs, and — for every release that does not
+  // take new runs — every reason it may not start to (Release.blockers).
+  // DERIVED on read from the cluster and from the Orker inventory
+  // (ActivityService.ListOrkers); nothing is stored, so any replica answers
+  // identically, including a replica of another release. A deployment no
+  // release of which has registered with the cluster answers versioned =
+  // false and no releases: an answer, not an error.
+  //
+  // Filters select release rows only; every other response field is the
+  // deployment's, unfiltered, and blockers are still judged against the
+  // whole deployment. A build_id EQUALS filter counts only that release; an
+  // id the cluster does not know is an EMPTY list, never NOT_FOUND: `orkctl
+  // release wait` relies on it to tell "forgotten after draining" from an
+  // error.
+  rpc ListReleases(ListReleasesRequest) returns (ListReleasesResponse);
+
+  // RampRelease sends `percent` of new runs to one release that is not
+  // current, and the rest to the current release. percent 0 stops the ramp
+  // of the release that is ramping. A ramp above 0 is FAILED_PRECONDITION,
+  // naming every blocker, whenever ListReleases reports one for that
+  // release, and nothing is written. Runs already executing are never moved.
+  rpc RampRelease(RampReleaseRequest) returns (RampReleaseResponse);
+
+  // PromoteRelease makes one release take every new run. FAILED_PRECONDITION,
+  // naming every blocker, whenever ListReleases reports one for it, and
+  // nothing is written. Promoting the current release is a no-op success.
+  // Runs already executing on the previous release finish there and are
+  // never moved. `orkctl release rollback` is this RPC aimed at a release
+  // that was current before.
+  rpc PromoteRelease(PromoteReleaseRequest) returns (PromoteReleaseResponse);
+}
+
+message GetSystemInfoRequest {}
+
+message GetSystemInfoResponse {
+  // engine_version is the release this binary was built as: the value
+  // -ldflags stamped in, falling back to the module's own build version and
+  // then to the source revision the build was stamped with, and finally to
+  // "dev" for a plain `go build`. BUILD-DERIVED.
+  string engine_version = 1;
+  // go_version is the toolchain the binary was compiled with. BUILD-DERIVED.
+  string go_version = 2;
+  // deployment_name is the Worker Deployment both binaries of a release join.
+  // CONFIGURATION-DERIVED.
+  string deployment_name = 3;
+  // build_id names this release inside that deployment; empty means the
+  // deployment is unversioned. CONFIGURATION-DERIVED, and the field that
+  // differs between two replicas mid-rollout.
+  string build_id = 4;
+  // versioning_active reports whether Worker Deployment Versioning is on for
+  // this process, which is exactly "both of the two fields above are set".
+  // DERIVED from configuration, not asked of the cluster: it says what this
+  // replica registered as, not what the cluster currently routes.
+  bool versioning_active = 5;
+  // artifact_backend is where artifacts, run archives and task logs live:
+  // "local" or "s3". CONFIGURATION-DERIVED.
+  string artifact_backend = 6;
+  // artifact_location is the bucket or directory that backend addresses,
+  // never a credential. CONFIGURATION-DERIVED.
+  string artifact_location = 7;
+  // temporal_address is the cluster endpoint this replica dials.
+  // CONFIGURATION-DERIVED — that the address is configured is not a claim
+  // that it answers; pool health is the read that proves the cluster is
+  // reachable, and a connectivity flag here would be stale the moment it was
+  // sent.
+  string temporal_address = 8;
+  // server_time is the answering replica's own clock, and is the ONLY
+  // observed field in this message. A client comparing it with its own clock
+  // is comparing two clocks, which is what makes a skewed replica visible.
+  google.protobuf.Timestamp server_time = 9;
+}
+
+message GetRetentionPolicyRequest {}
+
+message GetRetentionPolicyResponse {
+  RetentionPolicy policy = 1;
+  // namespace_retention_enforced reports whether this deployment runs the
+  // worker that retires runs at their namespace's retention
+  // (ORK_CLEANUP_ENABLED). When false, every run is kept for the maximum
+  // plus the operator's enforcement margin and a tighter namespace value has
+  // no effect yet. CONFIGURATION-DERIVED, like GetSystemInfo's fields.
+  bool namespace_retention_enforced = 2;
+}
+
+message UpdateRetentionPolicyRequest {
+  // max_run_retention is the new deployment maximum. A non-positive or
+  // malformed value is rejected with INVALID_ARGUMENT before any call leaves
+  // this process.
+  google.protobuf.Duration max_run_retention = 1;
+}
+
+message UpdateRetentionPolicyResponse {
+  RetentionPolicy policy = 1;
+  bool namespace_retention_enforced = 2;
+}
+
+message ListTelemetrySinksRequest {}
+
+message ListTelemetrySinksResponse {
+  // names is every sink this deployment declared, sorted
+  // (telemetry.SinkTable.Names). "default" is always present, whether or not
+  // ORK_TELEMETRY_SINKS names one explicitly, because it is what an unset
+  // TelemetryPolicy.sink resolves to.
+  repeated string names = 1;
+}
+
+message GetImagePolicyRequest {}
+
+message GetImagePolicyResponse {
+  // policy is the stored document, or the empty policy with updated_at
+  // unset when none was ever written. signing_keys carries PEM; clients
+  // render the fingerprint (task.SigningKeyFingerprint) and never the block.
+  ImagePolicy policy = 1;
+}
+
+message UpdateImagePolicyRequest {
+  // policy is the new floor, whole: require_digest, allowed_registries and
+  // signing_keys. updated_at is ignored; the store stamps it. There is no
+  // etag, on the same terms as UpdateRetentionPolicy: the audit trail
+  // records every write, and an operator who read a stale policy sees their
+  // own write in `admin image-policy get`.
+  ImagePolicy policy = 1;
+}
+
+message UpdateImagePolicyResponse { ImagePolicy policy = 1; }
+
+// ReleaseRole is what a release does with NEW runs. It never describes runs
+// already executing: those finish on the release that started them.
+enum ReleaseRole {
+  RELEASE_ROLE_UNSPECIFIED = 0;
+  // CURRENT takes every new run that is not sent to a ramping release.
+  RELEASE_ROLE_CURRENT = 1;
+  // RAMPING takes ramp_percent of new runs.
+  RELEASE_ROLE_RAMPING = 2;
+  // PREVIOUS took new runs once and takes none now. It may still be
+  // finishing some; drain_state says whether it is.
+  RELEASE_ROLE_PREVIOUS = 3;
+  // CANDIDATE has registered — at least one of its processes polled with
+  // ORK_BUILD_ID set — and has never taken new runs.
+  RELEASE_ROLE_CANDIDATE = 4;
+}
+
+// ReleaseDrainState is the cluster's own verdict on a PREVIOUS release.
+enum ReleaseDrainState {
+  // UNSPECIFIED: not applicable — the release is current, ramping, or a
+  // candidate, and the cluster keeps no drain state for it.
+  RELEASE_DRAIN_STATE_UNSPECIFIED = 0;
+  // DRAINING: runs that started on this release are still executing.
+  RELEASE_DRAIN_STATE_DRAINING = 1;
+  // DRAINED: none are. The cluster refreshes this on a delay of minutes;
+  // drain_checked_at says when it last looked.
+  RELEASE_DRAIN_STATE_DRAINED = 2;
+}
+
+// ReleaseBlockerKind names why a release may not take new runs right now.
+enum ReleaseBlockerKind {
+  RELEASE_BLOCKER_KIND_UNSPECIFIED = 0;
+  // NO_ENGINE: no engine process of the release is running, so a run sent to
+  // it would never start.
+  RELEASE_BLOCKER_KIND_NO_ENGINE = 1;
+  // POOL_NOT_SERVED: `pool` is in use and no uncordoned Orker of the release
+  // serves it.
+  RELEASE_BLOCKER_KIND_POOL_NOT_SERVED = 2;
+  // PINS_NOT_HOSTED: `pool` has a pin host of another release and no
+  // uncordoned Orker of this release in it hosts pins.
+  RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED = 3;
+  // UNVERSIONED_RUNS: no release is current yet and runs started before any
+  // was are still executing; making this release take new runs would move
+  // them onto it mid-run.
+  RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS = 4;
+  // UNVERIFIED: part of the evidence could not be read, so the release
+  // cannot be shown to pass. Never treated as passing.
+  RELEASE_BLOCKER_KIND_UNVERIFIED = 5;
+}
+
+message ReleaseBlocker {
+  ReleaseBlockerKind kind = 1;
+  // pool is set for POOL_NOT_SERVED and PINS_NOT_HOSTED, and empty otherwise.
+  string pool = 2;
+  // message is one complete sentence in OrkStack's words: what is wrong and
+  // what to start. It never names a channel, a session, or the cluster's own
+  // objects (AGENTS.md §7.1).
+  string message = 3;
+}
+
+// Release is one build of OrkStack — `ork` and `orker` released together
+// (AGENTS.md §7.2) — as the cluster routes it. No field names a Temporal
+// worker deployment, a version's routing internals, or a task queue, on the
+// rule that keeps "queue" out of Pool and "session" out of Pin (§7.1).
+message Release {
+  // build_id is the release's identity: the ORK_BUILD_ID its binaries run
+  // with. It is the value Orker.build_id and TaskAttempt.build_id carry.
+  string build_id = 1;
+  ReleaseRole role = 2;
+  // ramp_percent is the share of new runs a RAMPING release takes, 0–100, as
+  // the cluster holds it (a value set outside OrkStack may be fractional).
+  // 0 for every other role.
+  float ramp_percent = 3;
+  // role_since is when the release became CURRENT or started RAMPING; unset
+  // for PREVIOUS and CANDIDATE.
+  google.protobuf.Timestamp role_since = 4;
+  // first_seen_at is when the cluster first saw a process of this release.
+  google.protobuf.Timestamp first_seen_at = 5;
+  // engine_replicas is how many engine processes of this release are live
+  // now: distinct processes polling for runs within the freshness window.
+  // Always measured — a cluster that cannot answer fails the whole read.
+  int32 engine_replicas = 6;
+  // orkers are the Orker inventory's rows whose build_id is this release,
+  // exactly as ActivityService.ListOrkers returns them (pool, cordon, load,
+  // open pins), in that RPC's order. An Orker that did not answer has no
+  // build_id and is in ListReleasesResponse.unattributed_orkers instead.
+  repeated Orker orkers = 7;
+  // pools_served is every pool with at least one ANSWERED, UNCORDONED Orker
+  // of this release, sorted. A cordoned Orker takes no new task and serves
+  // nothing.
+  repeated string pools_served = 8;
+  // runs_in_flight is how many runs are executing on this release now,
+  // counted by the cluster's run index. Meaningful only when
+  // runs_unavailable_reason is empty; otherwise it is 0 and MUST be rendered
+  // as unknown, never as zero.
+  int32 runs_in_flight = 9;
+  // runs_unavailable_reason says the run index could not be asked, in
+  // OrkStack's words. The cluster's own text is logged, never forwarded.
+  string runs_unavailable_reason = 10;
+  // runs are up to ten of those runs, newest first, as shallow projections —
+  // the fields ListRuns fills from the index (id, namespace, orkflow_name,
+  // orkflow_version, status, created_at). Deployment-wide: runs of every
+  // namespace, each carrying its own.
+  repeated Run runs = 11;
+  ReleaseDrainState drain_state = 12;
+  // drain_checked_at is when the cluster last evaluated drain_state; unset
+  // when it has not, or drain_state is UNSPECIFIED.
+  google.protobuf.Timestamp drain_checked_at = 13;
+  // drained is the one condition under which this release's processes may be
+  // stopped: PREVIOUS with drain_state DRAINED (or a CANDIDATE with no runs),
+  // no run counted in flight, no open pin on any of its Orkers, and an Orker
+  // inventory in which every Orker answered. `orkctl release wait` exits 0 on
+  // it and on nothing else.
+  bool drained = 14;
+  // blockers are every reason this release may not take new runs now, in a
+  // stable order. Always empty for CURRENT. Empty for any other role means
+  // RampRelease and PromoteRelease would pass their check at the moment of
+  // this read.
+  repeated ReleaseBlocker blockers = 15;
+}
+
+message ListReleasesRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Release"
+    fields: [
+      {
+        path: "build_id"
+        label: "Release"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "role"
+        label: "Role"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "drained"
+        label: "Drained"
+        operators: [FILTER_OPERATOR_EQUALS]
+      }
+    ]
+  };
+  reserved 1;
+  reserved "build_id";
+  repeated FieldFilter filters = 2;
+}
+
+message ListReleasesResponse {
+  // deployment_name is ORK_DEPLOYMENT_NAME: the name every release of this
+  // OrkStack deployment shares (GetSystemInfoResponse.deployment_name).
+  string deployment_name = 1;
+  // versioned is false when no release of this deployment has ever
+  // registered with the cluster: every process runs without ORK_BUILD_ID,
+  // releases is empty, and ramp/promote are FAILED_PRECONDITION.
+  bool versioned = 2;
+  // releases: CURRENT, then RAMPING, then CANDIDATEs newest first, then
+  // PREVIOUS newest first (by first_seen_at, then build_id). A stable order
+  // is part of the contract: the Admin page renders it.
+  repeated Release releases = 3;
+  // unversioned_engine_replicas counts live engine processes started without
+  // ORK_BUILD_ID. While no release is current, they are what starts new runs.
+  int32 unversioned_engine_replicas = 4;
+  // unattributed_orkers are inventory rows that belong to no release: Orkers
+  // started without ORK_BUILD_ID, and Orkers that did not answer (they carry
+  // unavailable_reason and no build_id).
+  repeated Orker unattributed_orkers = 5;
+  // orkers_unavailable_reason is set when the Orker inventory itself could
+  // not be read. Every release's orkers and pools_served are then empty and
+  // every non-current release carries an UNVERIFIED blocker.
+  string orkers_unavailable_reason = 6;
+  // revision identifies the routing this answer saw (current release,
+  // ramping release, ramp percent). OPAQUE: echo it as expected_revision to
+  // refuse a write if the routing changed since; never parse it.
+  string revision = 7;
+  // observed_at is the answering replica's clock at the read.
+  google.protobuf.Timestamp observed_at = 8;
+}
+
+message RampReleaseRequest {
+  string build_id = 1;
+  // percent is 1–100 to ramp build_id, or 0 to stop the ramp of build_id,
+  // which must then be the ramping release. Outside 0–100 is
+  // INVALID_ARGUMENT.
+  int32 percent = 2;
+  // expected_revision, when set, refuses the write with FAILED_PRECONDITION
+  // unless the routing is still what ListReleasesResponse.revision said.
+  string expected_revision = 3;
+}
+
+message RampReleaseResponse {
+  // changed is false when build_id was already ramping at exactly percent
+  // (or percent was 0 and it was not ramping — that case is refused, see
+  // RampRelease); nothing was written then.
+  bool changed = 1;
+  // previous_build_id and previous_percent are the ramping release and its
+  // percent before this call; empty and 0 when none was ramping.
+  string previous_build_id = 2;
+  float previous_percent = 3;
+  // routing_confirmed is true when the engine's own channel reported the new
+  // routing before the reply. False means the change is RECORDED and the
+  // cluster had not yet applied it to dispatch within 10 s.
+  bool routing_confirmed = 4;
+  // revision is the routing after the change.
+  string revision = 5;
+}
+
+message PromoteReleaseRequest {
+  string build_id = 1;
+  // expected_revision: as on RampReleaseRequest.
+  string expected_revision = 2;
+}
+
+message PromoteReleaseResponse {
+  // changed is false when build_id was already current; nothing was written.
+  bool changed = 1;
+  // previous_build_id is the release that was current before; empty when no
+  // release was (the deployment's first promotion).
+  string previous_build_id = 2;
+  bool routing_confirmed = 3;
+  string revision = 4;
+}

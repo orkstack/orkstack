@@ -1,10 +1,11 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { webhookClient } from '$lib/clients/webhooks';
 import { pageNumber } from '$lib/browsing';
 import { DEFAULT_DELIVERY_LIMIT, DELIVERY_FILTER_PARAM, deliveryLimit, type DeliveryCoordinates } from '$lib/deliveries';
-import type { ListDeliveriesResponse } from '$lib/gen/orkstack/v1/service_pb';
+import type { ListDeliveriesResponse } from '$lib/gen/orkstack/v1/webhook_service_pb';
 import { namespaceFrom, namespaceLabel } from '$lib/namespace';
 import { filtersFromUrl } from '$lib/listFilter';
-import type { Webhook } from '$lib/gen/orkstack/v1/service_pb';
+import type { Webhook } from '$lib/gen/orkstack/v1/webhook_service_pb';
 import type { PageLoad } from './$types';
 
 // Two independent reads: the subscriptions and what their deliveries did.
@@ -34,11 +35,10 @@ export const load: PageLoad = async ({ fetch, url }) => {
 		page: cursor ? pageNumber(params.get('page') ?? '') : 1,
 		subscriptionFilters: applied
 	};
-	const client = orkstack(fetch);
 
 	const webhooksRead = subscriptionFilterError
 		? Promise.resolve({ webhooks: [] as Webhook[], error: subscriptionFilterError as string | null })
-		: client.webhooks.listWebhooks({ filters: applied }).then(
+		: webhookClient(fetch).listWebhooks({ filters: applied }).then(
 				(response) => ({ webhooks: response.webhooks, error: null as string | null }),
 				(err) => ({ webhooks: [] as Webhook[], error: errorMessage(err) as string | null })
 			);
@@ -47,7 +47,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const panelRead =
 		applied.length === 0 && !subscriptionFilterError
 			? webhooksRead.then((read) => read.webhooks)
-			: client.webhooks.listWebhooks({}).then(
+			: webhookClient(fetch).listWebhooks({}).then(
 					(response) => response.webhooks,
 					() => [] as Webhook[]
 				);
@@ -56,7 +56,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 				deliveries: null as ListDeliveriesResponse | null,
 				deliveriesError: deliveryFilterError as string | null
 			})
-		: client.webhooks
+		: webhookClient(fetch)
 				.listDeliveries({
 					filters: deliveryApplied,
 					pageSize: coordinates.limit === DEFAULT_DELIVERY_LIMIT ? 0 : coordinates.limit,

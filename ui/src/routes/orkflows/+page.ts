@@ -1,4 +1,5 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { orkflowClient } from '$lib/clients/orkflows';
 import { namespaceFrom } from '$lib/namespace';
 import { pageNumber, pageSize } from '$lib/browsing';
 import { filtersFromUrl } from '$lib/listFilter';
@@ -16,7 +17,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const { filters: applied, error: filterError } = filtersFromUrl(url);
 	if (filterError) return { orkflows: [], nextPageToken: '', size, cursor, page, namespace, applied, error: filterError as string | null };
 	try {
-		const res = await orkstack(fetch).orkflows.listOrkflows({ namespace, pageSize: size, pageToken: cursor, filters: applied });
+		const res = await orkflowClient(fetch).listOrkflows({ namespace, pageSize: size, pageToken: cursor, filters: applied });
 		return { orkflows: res.orkflows, nextPageToken: res.nextPageToken, size, cursor, page, namespace, applied, error: null as string | null };
 	} catch (err) {
 		return { orkflows: [], nextPageToken: '', size, cursor, page, namespace, applied, error: errorMessage(err) };

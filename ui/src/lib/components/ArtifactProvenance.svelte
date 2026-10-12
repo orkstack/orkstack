@@ -8,8 +8,9 @@
 	// wants a fresh answer, not the one from before it. The panel renders the
 	// same fields in the same words as `orkctl run artifact provenance`, and a
 	// failed read is an error, never an empty list.
-	import { errorMessage, orkstack } from '$lib/client';
-	import { ArtifactKind, type GetArtifactProvenanceResponse } from '$lib/gen/orkstack/v1/service_pb';
+	import { errorMessage } from '$lib/client';
+	import { runClient } from '$lib/clients/runs';
+	import { ArtifactKind, type GetArtifactProvenanceResponse } from '$lib/gen/orkstack/v1/run_service_pb';
 	import { withNamespace } from '$lib/namespace';
 	import {
 		BYTES_MISSING,
@@ -54,7 +55,7 @@
 		error = '';
 		answer = undefined;
 		try {
-			const res = await orkstack(fetch).runs.getArtifactProvenance({ runId, namespace, taskId, kind, name, item });
+			const res = await runClient(fetch).getArtifactProvenance({ runId, namespace, taskId, kind, name, item });
 			if (mine === request) answer = res;
 		} catch (err) {
 			if (mine === request) error = errorMessage(err);

@@ -8,7 +8,7 @@ import {
 	originReferenceURL
 } from '../src/lib/origin';
 import { FilterOperator, specFor } from '../src/lib/listFilter';
-import { ListRunsRequestSchema } from '../src/lib/gen/orkstack/v1/service_pb';
+import { ListRunsRequestSchema } from '../src/lib/gen/orkstack/v1/run_service_pb';
 import { RunOriginKind, RunOriginKindSchema, RunOriginSchema } from '../src/lib/gen/orkstack/v1/run_pb';
 
 // The descriptor walk: a kind added to the proto without a slug fails here,

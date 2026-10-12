@@ -16,7 +16,7 @@ import {
 	webhookDeliveriesFilters,
 	type DeliveryCoordinates
 } from '../src/lib/deliveries';
-import { DeliveryAttemptSchema, ListDeliveriesRequestSchema } from '../src/lib/gen/orkstack/v1/service_pb';
+import { DeliveryAttemptSchema, ListDeliveriesRequestSchema } from '../src/lib/gen/orkstack/v1/webhook_service_pb';
 import { parseFilter, specFor, type FieldFilter } from '../src/lib/listFilter';
 
 const base: DeliveryCoordinates = {

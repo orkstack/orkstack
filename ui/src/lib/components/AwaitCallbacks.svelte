@@ -9,7 +9,7 @@
 	// cannot lose the token by a navigation they did not choose.
 	import CliEquivalent from './CliEquivalent.svelte';
 	import { awaitCallbackUrl, awaitCurl } from '$lib/awaits';
-	import type { AwaitCallback } from '$lib/gen/orkstack/v1/service_pb';
+	import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 
 	interface Props {
 		runId: string;

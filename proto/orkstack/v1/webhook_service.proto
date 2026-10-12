@@ -1,0 +1,320 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/common.proto";
+import "orkstack/v1/filter.proto";
+import "orkstack/v1/run.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// WebhookService manages run-event subscriptions. A subscription is
+// deployment-wide unless it names a scope: a namespace, an orkflow, a task,
+// each an exact match and each empty meaning "every". Delivery is
+// deliberately outside this management contract; callers never receive the
+// stored signing secret after registration.
+//
+// What a delivery DID is a record, not a queue: one immutable object per
+// settled delivery (metadata/deliveries/…), written after the dispatcher
+// returned and read by nothing that decides what to send. ListDeliveries and
+// GetDelivery read it; RedeliverWebhook is one operator-initiated synchronous
+// POST, recorded as a new delivery. Nothing here retries on its own.
+//
+// A subscription scoped to a namespace may carry a name; UpdateWebhook
+// changes it in place.
+service WebhookService {
+  rpc RegisterWebhook(RegisterWebhookRequest) returns (RegisterWebhookResponse);
+  rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse);
+  // UpdateWebhook REPLACES a subscription's mutable fields — name, url,
+  // events and scope — in place. Its id and signing secret never change, so
+  // a receiver keeps verifying and a delivery record's webhook_id keeps
+  // naming the same subscription. Last writer wins; an update never brings
+  // back a subscription deleted meanwhile (NotFound). The secret is never in
+  // the request or the response.
+  rpc UpdateWebhook(UpdateWebhookRequest) returns (UpdateWebhookResponse);
+  rpc DeleteWebhook(DeleteWebhookRequest) returns (DeleteWebhookResponse);
+  // ListDeliveries lists delivery records newest first, bounded and
+  // paginated. A scan that would examine more keys than the engine's budget
+  // allows before filling a page is REFUSED (RESOURCE_EXHAUSTED) naming the
+  // budget, never answered from the subset it managed to read.
+  rpc ListDeliveries(ListDeliveriesRequest) returns (ListDeliveriesResponse);
+  // GetDelivery returns one record by id.
+  rpc GetDelivery(GetDeliveryRequest) returns (GetDeliveryResponse);
+  // RedeliverWebhook POSTs one delivery again — once, now, synchronously,
+  // signed with the subscription's current secret, embedding the run as it
+  // reads today — and returns the NEW record. The operator is the retry
+  // policy: this RPC never queues, never retries, and never runs unattended.
+  rpc RedeliverWebhook(RedeliverWebhookRequest) returns (RedeliverWebhookResponse);
+}
+
+message Webhook {
+  string id = 1;
+  string url = 2;
+  // events selects the transitions this subscription wants. Empty means
+  // every RUN transition — and only those: a task outcome event
+  // (TASK_SCHEDULED, TASK_STARTED, TASK_SUCCEEDED, TASK_FAILED) is delivered
+  // only to a subscription that names it. TASK_LOG is never accepted.
+  repeated EventType events = 3;
+  google.protobuf.Timestamp created_at = 4;
+  // namespace narrows this subscription to runs of one namespace. Empty
+  // means every namespace, which is what every subscription registered
+  // before this field existed is. A run that names no namespace is in
+  // "default", so a subscription written as "default" matches it.
+  string namespace = 5;
+  // orkflow_name narrows to runs of one orkflow, by the name the author
+  // wrote. Empty means every orkflow. It composes with namespace by
+  // conjunction and does not require it: a name alone matches that name in
+  // every namespace.
+  string orkflow_name = 6;
+  // task_id narrows the task outcome events to one task. Empty means every
+  // task. It is consulted only for TASK_* events: a RUN_* event has no task
+  // and passes this filter unconditionally, so one subscription can want
+  // TASK_SUCCEEDED of `extract` and RUN_FAILED of the whole run. Registration
+  // refuses a task_id when events names no TASK_* event, because the filter
+  // could then never be consulted.
+  string task_id = 7;
+
+  // name is the operator's handle: a slug, at most 200 bytes, unique among
+  // the named subscriptions of its namespace scope. It REQUIRES namespace:
+  // a name is unique within one namespace, and a deployment-wide
+  // subscription belongs to none. Empty means unnamed — every subscription
+  // registered before this field existed — and an unnamed subscription is
+  // outside every automation document. It plays no part in delivery.
+  string name = 8;
+}
+
+message RegisterWebhookRequest {
+  string url = 1;
+  repeated EventType events = 2;
+  string secret = 3;
+  // The scope, on exactly the terms Webhook states them.
+  string namespace = 4;
+  string orkflow_name = 5;
+  string task_id = 6;
+  string name = 7;                         // optional; see Webhook.name
+}
+
+message RegisterWebhookResponse {
+  Webhook webhook = 1;
+  string secret = 2;
+}
+
+// UpdateWebhookRequest replaces every mutable field, on the terms
+// RegisterWebhookRequest states them: empty events means every run
+// transition; each scope field empty means every. It carries no secret.
+message UpdateWebhookRequest {
+  string id = 1;
+  string name = 2;
+  string url = 3;
+  repeated EventType events = 4;
+  string namespace = 5;
+  string orkflow_name = 6;
+  string task_id = 7;
+}
+
+message UpdateWebhookResponse { Webhook webhook = 1; }
+
+message ListWebhooksRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Webhook"
+    fields: [
+      {
+        path: "id"
+        label: "Id"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "url"
+        label: "URL"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "namespace"
+        label: "Namespace scope"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "orkflow_name"
+        label: "Orkflow scope"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "task_id"
+        label: "Task scope"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "created_at"
+        label: "Created"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  repeated FieldFilter filters = 1;
+}
+
+message ListWebhooksResponse { repeated Webhook webhooks = 1; }
+
+message DeleteWebhookRequest { string id = 1; }
+
+message DeleteWebhookResponse {}
+
+// DeliveryAttempt is one POST of one delivery, as pkg/webhooks.Attempt
+// recorded it.
+message DeliveryAttempt {
+  int32 number = 1;                        // counts from 1
+  int32 status_code = 2;                   // 0 when the request never completed
+  string error = 3;                        // transport failure or "receiver answered N"; bounded
+  google.protobuf.Duration backoff = 4;    // pause taken before this attempt
+  google.protobuf.Duration duration = 5;   // how long the request itself took
+  google.protobuf.Timestamp at = 6;        // when the request was started
+}
+
+// Delivery is one settled webhook delivery: what OrkStack sent, what the
+// receiver answered, and nothing about what the receiver did with it.
+message Delivery {
+  // schema_version is 1. A reader skips a record whose version it does not
+  // know rather than guessing at its fields.
+  int32 schema_version = 1;
+  // id is the value the receiver saw in X-Ork-Delivery, shaped
+  // "dlv-{stamp}-{16 hex}" where stamp is the store's sortable UTC layout at
+  // the instant the delivery was queued (created_at) and the hex is 8 bytes
+  // from crypto/rand. The stamp is the store's coordinate for the record's
+  // key; no client parses it — created_at is the time.
+  string id = 2;
+  string webhook_id = 3;
+  EventType event = 4;
+  string run_id = 5;
+  // namespace is the run's resolved namespace ("default" spelled out).
+  string namespace = 6;
+  string orkflow_name = 7;
+  // task_id and attempt are set for a task outcome delivery
+  // (docs/UI_CLI_PARITY.md "Scoped subscriptions and task outcome events")
+  // and empty/zero for a run transition.
+  string task_id = 8;
+  int32 attempt = 9;
+  // status is the transition's status as the body's "status" carried it.
+  Status status = 10;
+  // url is the subscription's URL as it was POSTed to.
+  string url = 11;
+  bool delivered = 12;
+  // signature is the X-Ork-Signature value sent ("sha256=…"), or empty when
+  // the delivery was unsigned. It is what the record proves was sent; the
+  // secret itself is never here.
+  string signature = 13;
+  // body_sha256 is the lowercase hex SHA-256 of the exact bytes POSTed, and
+  // body_bytes their length. The body is not stored: the run is readable at
+  // GetRun, and a second copy would be a second version of the truth.
+  string body_sha256 = 14;
+  int64 body_bytes = 15;
+  repeated DeliveryAttempt attempts = 16;
+  // event_at is the transition's own timestamp (X-Ork-Timestamp, the body's
+  // "timestamp"); created_at is when the notifier queued the delivery;
+  // settled_at is when the dispatcher returned.
+  google.protobuf.Timestamp event_at = 17;
+  google.protobuf.Timestamp created_at = 18;
+  google.protobuf.Timestamp settled_at = 19;
+  // redelivery_of names the delivery this one repeats, when an operator
+  // asked for it through RedeliverWebhook. Empty for a delivery the engine
+  // made on its own.
+  string redelivery_of = 20;
+}
+
+// ListDeliveriesRequest lists the deployment's delivery records. It is a
+// deployment-wide listing: a `namespace` filter narrows it to one run
+// namespace like any other property of a record. Every filterable field is
+// in the record's key, so a body is read only for a record that matches
+// (docs/UI_CLI_PARITY.md "Filtering lists", "Webhook deliveries").
+//
+// The window is the created_at interval the filters bound: created_at < T
+// ends it (default: the moment the answer is computed) and created_at >= T
+// starts it (default: the run's created_at when exactly one run_id equals
+// filter names a run the engine can read, otherwise seven days before the
+// end). A window whose end is not after its start is INVALID_ARGUMENT.
+message ListDeliveriesRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.Delivery"
+    fields: [
+      {
+        path: "created_at"
+        label: "Queued"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      },
+      {
+        path: "namespace"
+        label: "Namespace"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "run_id"
+        label: "Run"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "webhook_id"
+        label: "Webhook"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "event"
+        label: "Event"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+        allowed_values: ["RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED", "TASK_SCHEDULED", "TASK_STARTED", "TASK_AWAITING", "TASK_RESOLVED", "TASK_SUCCEEDED", "TASK_FAILED"]
+      },
+      {
+        path: "delivered"
+        label: "Delivered"
+        operators: [FILTER_OPERATOR_EQUALS]
+      }
+    ]
+  };
+  reserved 1 to 7;
+  reserved "webhook_id", "run_id", "event", "outcome", "namespace", "since", "until";
+  // page_size caps the records returned; 0 means the default (50); above
+  // the maximum (200) is INVALID_ARGUMENT, not clamped.
+  int32 page_size = 8;
+  // page_token continues a listing. It is opaque and versioned and binds the
+  // canonical filter set and the resolved window; a token presented with
+  // other filters is INVALID_ARGUMENT.
+  string page_token = 9;
+  repeated FieldFilter filters = 10;
+}
+
+message ListDeliveriesResponse {
+  repeated Delivery deliveries = 1;        // newest first
+  string next_page_token = 2;              // empty when the window is exhausted
+  // since and until are the window the answer covers, resolved, so a client
+  // prints what "the last week" or "since the run started" meant.
+  google.protobuf.Timestamp since = 3;
+  google.protobuf.Timestamp until = 4;
+  // since_is_run_start is true when since is the created_at of the run one
+  // run_id equality filter names, because no created_at lower bound was
+  // given and the engine could read the run. The engine says so rather than
+  // leaving a client to infer it from the window's width. A page token
+  // carries it, so every page of a listing answers the same.
+  bool since_is_run_start = 5;
+}
+
+message GetDeliveryRequest { string id = 1; }
+
+message GetDeliveryResponse { Delivery delivery = 1; }
+
+message RedeliverWebhookRequest { string id = 1; }   // the delivery to repeat
+
+message RedeliverWebhookResponse {
+  // delivery is the NEW record: its own id, its one attempt, its own
+  // signature and body digest, and redelivery_of naming the request's id.
+  Delivery delivery = 1;
+}

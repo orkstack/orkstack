@@ -13,7 +13,8 @@
 	import { navigating, page } from '$app/state';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { systemClient } from '$lib/clients/system';
 	import {
 		confirmMatches,
 		hoursToMs,
@@ -87,7 +88,7 @@
 	async function applySet(next: number) {
 		setBusy = true;
 		try {
-			const res = await orkstack(fetch).system.updateRetentionPolicy({
+			const res = await systemClient(fetch).updateRetentionPolicy({
 				maxRunRetention: durationFromMs(hoursToMs(next))
 			});
 			setSuccess = `Maximum run retention is now ${fmtDuration(res.policy?.maxRunRetention)}.`;

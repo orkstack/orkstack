@@ -352,6 +352,37 @@ Orkers is refused at submit rather than left waiting for one
 (`orkctl run submit --allow-empty-pool` overrides that), and a namespace's
 `allowed_pools` bounds which pools its tasks may name.
 
+### How many tasks an Orkflow may declare
+
+An Orkflow declares at most **1000 tasks** — a deployment default an operator
+may lower or raise (`engine.orkflow_max_tasks`, `ORK_ORKFLOW_MAX_TASKS`,
+`docs/DEPLOY.md` §1). A document over it is refused `invalid_argument` at
+validate, apply and `orkctl run plan --file`, anchored at the first task past
+the ceiling, with a message naming the count, the limit and the setting:
+
+```
+tasks[1000]: orkflow declares 1001 tasks; this deployment allows at most 1000
+(engine.orkflow_max_tasks, ORK_ORKFLOW_MAX_TASKS). Split it into Orkflows
+composed with uses: orkflow:, or move a repeated task into a fan-out (each:)
+```
+
+A stored version above a ceiling that was lowered after it was applied is
+refused at submit, `failed_precondition`, before any run id is minted.
+
+What counts is every entry of `tasks:`, whatever its kind — container,
+awaited, composed, fan-out, failure handler — because every one is at least
+one activity or child start, and its lifecycle events, in the run's single
+history, which the cluster bounds and a run cannot yet continue past:
+
+- **A fan-out counts once**, however large its `max_items`. Its items are
+  bounded on their own — the sum of `max_items` over every fan-out is at most
+  `ORK_EACH_MAX_ITEMS` (see "Fan-out") — and counting them twice would refuse
+  a document both bounds were written to admit.
+- **A composed task counts once**, however many tasks its child declares.
+  The child is a separate run with its own history, and its own definition
+  met this ceiling when it was applied; the whole composition tree is further
+  bounded by its 256 KiB plan (rule 31).
+
 ## Joins and failure handlers (`join:`)
 
 A task's optional `join:` says when it may start, decided from how its
@@ -1375,6 +1406,11 @@ How each node reads:
 42. A failure handler that runs a container names at most 32 needs
     (`tasks[i].needs`): its input records how every need ended, and that
     record is bounded. An awaited or composed failure handler is not limited.
+43. An Orkflow declares at most `ORK_ORKFLOW_MAX_TASKS` tasks (default
+    1000; field `tasks[<limit>]`, the first task past it). A fan-out and a
+    composed task each count once ("How many tasks an Orkflow may declare").
+    Enforced by `internal/api` at validate, apply and plan, and again at
+    submit — the compiler has no deployment configuration to read.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

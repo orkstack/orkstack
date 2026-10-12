@@ -259,6 +259,12 @@ type Config struct {
 	// never raise it. Checked at validate/apply and again at submit.
 	EachMaxItems int32
 
+	// OrkflowMaxTasks is ORK_ORKFLOW_MAX_TASKS (engine.orkflow_max_tasks):
+	// the most tasks one Orkflow may declare. Zero means the default,
+	// engine.DefaultOrkflowMaxTasks; a deployment may lower or raise it.
+	// Checked at validate/apply/plan and again at submit.
+	OrkflowMaxTasks int32
+
 	// ComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH: how many levels of child runs
 	// one run may start (a run is level 0). Zero means the built-in ceiling,
 	// engine.DefaultComposeMaxDepth; it may lower that ceiling and never
@@ -433,6 +439,8 @@ type Service struct {
 	limits         engine.WorkspaceLimits
 	// eachMaxItems is Config.EachMaxItems, defaulted.
 	eachMaxItems int32
+	// orkflowMaxTasks is Config.OrkflowMaxTasks, defaulted.
+	orkflowMaxTasks int32
 	// composeMaxDepth is Config.ComposeMaxDepth, defaulted.
 	composeMaxDepth int
 	// cacheMaxTTL is Config.CacheMaxTTL, defaulted; memos is Config.Memos.
@@ -489,6 +497,7 @@ func NewService(cfg Config) *Service {
 		artifacts:         cfg.Artifacts,
 		limits:            cfg.Limits,
 		eachMaxItems:      eachMaxItemsOf(cfg.EachMaxItems),
+		orkflowMaxTasks:   orkflowMaxTasksOf(cfg.OrkflowMaxTasks),
 		composeMaxDepth:   composeMaxDepthOf(cfg.ComposeMaxDepth),
 		cacheMaxTTL:       cacheMaxTTLOf(cfg.CacheMaxTTL),
 		memos:             cfg.Memos,
@@ -853,6 +862,12 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	pinsVersion, err := dsl.DocumentPinsVersion(source)
 	if err != nil {
 		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	// The deployment's task ceiling (ORK_ORKFLOW_MAX_TASKS), before anything
+	// is looked up or resolved: a document over it is refused without one
+	// registry request per task.
+	if err := s.checkTaskCeiling(wf); err != nil {
+		return nil, nil, nil, err
 	}
 	selected, err := applyNamespace(requestedNamespace, wf.GetNamespace())
 	if err != nil {
@@ -1366,6 +1381,11 @@ func (s *Service) prepare(
 	// definition applied before ORK_EACH_MAX_ITEMS was lowered is refused
 	// before any id is minted.
 	if err := s.checkEachCapAtSubmit(stored); err != nil {
+		return submission{}, err
+	}
+	// The task ceiling likewise: lowering ORK_ORKFLOW_MAX_TASKS refuses new
+	// runs of a version applied above the new value.
+	if err := s.checkTaskCeilingAtSubmit(stored); err != nil {
 		return submission{}, err
 	}
 	binding, err := s.binding(ns.GetName())

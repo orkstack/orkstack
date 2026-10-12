@@ -4,7 +4,7 @@ import { timestampFromMs } from '@bufbuild/protobuf/wkt';
 import { Status } from '../src/lib/gen/orkstack/v1/common_pb';
 import { EventSchema, EventType, TaskAttemptSchema, TaskRunSchema, TaskEachSchema } from '../src/lib/gen/orkstack/v1/run_pb';
 import { EachSpecSchema } from '../src/lib/gen/orkstack/v1/orkflow_pb';
-import { PlanOutcome, PlanRunResponseSchema, PlanTaskSchema } from '../src/lib/gen/orkstack/v1/service_pb';
+import { PlanOutcome, PlanRunResponseSchema, PlanTaskSchema } from '../src/lib/gen/orkstack/v1/orkflow_service_pb';
 import {
 	applyItemEvent,
 	eachPlanDetail,

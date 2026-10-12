@@ -13,7 +13,8 @@
 	// server caches for minutes (ORK_USAGE_CACHE_TTL).
 	import { pollWhileVisible } from '$lib/visibility';
 	import { durationFromMs, timestampFromDate, type Duration } from '@bufbuild/protobuf/wkt';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { statsClient } from '$lib/clients/stats';
 	import type { Budget } from '$lib/gen/orkstack/v1/namespace_pb';
 	import type { GetUsageResponse } from '$lib/gen/orkstack/v1/stats_pb';
 	import { namespaceLabel } from '$lib/namespace';
@@ -72,7 +73,7 @@
 		const mine = ++generation;
 		loading = true;
 		try {
-			const resp = await orkstack(fetch).stats.getUsage({ namespace, ...windowFields(), groupBy });
+			const resp = await statsClient(fetch).getUsage({ namespace, ...windowFields(), groupBy });
 			if (mine !== generation) return;
 			result = resp;
 			error = null;

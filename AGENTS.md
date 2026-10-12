@@ -345,6 +345,17 @@ A definition limit such as 256 KiB is a proposal, not a current hard invariant.
 Do not turn that proposal into a hard limit without a separate accepted
 contract.
 
+One definition limit is accepted (2026-10-11): an Orkflow declares at most
+**1000 tasks**. It is a deployment-configurable default, not a fixed
+invariant — `engine.orkflow_max_tasks` (`ORK_ORKFLOW_MAX_TASKS`) lowers or
+raises it — refused `INVALID_ARGUMENT` at validate, apply and plan, naming the
+count, the limit and the setting, and re-checked at submit
+(`FAILED_PRECONDITION`). Every entry of `tasks:` counts once; a fan-out's
+items (bounded by `max_items`) and a composed child's tasks (a separate run)
+do not. It exists because a run's
+tasks share one Temporal history; it may be raised once runs can
+continue-as-new (`docs/DSL.md`, "How many tasks an Orkflow may declare").
+
 Tasks form a DAG whose only edges are explicit `needs`. Declaration order
 never sequences anything: a task becomes ready once every need has ended and
 its join policy admits it, and a task with no `needs` (absent or `[]`) is
@@ -845,7 +856,13 @@ or `ork --defaults` / `orker --defaults`) is the complete reference for every
 key's default.
 
 Proto is the single source of truth for cross-process types. Never hand-edit
-generated files. Regenerate Go and UI clients when the proto changes.
+generated files. Regenerate Go and UI clients when the proto changes. Each
+service has its own file (`proto/orkstack/v1/<name>_service.proto`, or the
+domain file that already holds it, such as `stats.proto`), holding the service
+and the messages only it uses; a message two services share belongs in a
+domain file both import. The UI builds one client per service, one module each
+under `ui/src/lib/clients/`, each importing only its own generated file, so a
+route loads only the schemas of the services it calls.
 
 Agent ownership is split as follows:
 

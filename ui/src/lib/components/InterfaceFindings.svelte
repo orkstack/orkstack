@@ -4,7 +4,7 @@
 	// per finding. Every word of a finding is the engine's; a row that is not
 	// compatible carries its message beneath it, verbatim.
 	import { changeWord, verdictChipClass, verdictLine, verdictWord } from '$lib/compat';
-	import { InterfaceVerdict, type CompareInterfacesResponse } from '$lib/gen/orkstack/v1/service_pb';
+	import { InterfaceVerdict, type CompareInterfacesResponse } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 
 	interface Props {
 		name: string;

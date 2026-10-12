@@ -1,4 +1,5 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { namespaceClient } from '$lib/clients/namespaces';
 import type { Pool } from '$lib/gen/orkstack/v1/namespace_pb';
 import { namespaceFrom } from '$lib/namespace';
 import { filtersFromUrl } from '$lib/listFilter';
@@ -13,7 +14,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const { filters: applied, error: filterError } = filtersFromUrl(url);
 	if (filterError) return { namespace, applied, pools: [] as Pool[], defaultPool: '', poolsError: filterError as string | null };
 	try {
-		const res = await orkstack(fetch).namespaces.listPools({ namespace, filters: applied });
+		const res = await namespaceClient(fetch).listPools({ namespace, filters: applied });
 		return {
 			namespace,
 			applied,

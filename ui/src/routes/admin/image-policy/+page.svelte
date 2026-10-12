@@ -14,7 +14,8 @@
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { systemClient } from '$lib/clients/system';
 	import {
 		fingerprint,
 		parseRegistryLines,
@@ -121,7 +122,7 @@
 		}
 		setBusy = true;
 		try {
-			const res = await orkstack(fetch).system.updateImagePolicy({
+			const res = await systemClient(fetch).updateImagePolicy({
 				policy: { requireDigest, allowedRegistries: registries, signingKeys: formKeys }
 			});
 			const stored = res.policy;

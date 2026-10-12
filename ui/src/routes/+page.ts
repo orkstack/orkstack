@@ -1,4 +1,5 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { statsClient } from '$lib/clients/stats';
 import { namespaceFrom } from '$lib/namespace';
 import { durationFromMs, timestampFromDate } from '@bufbuild/protobuf/wkt';
 import { statsWindowError } from '$lib/browsing';
@@ -23,7 +24,7 @@ export const load: PageLoad = async ({ fetch, url, depends }) => {
 	const windowError = statsWindowError(window, sinceParam);
 	if (windowError) return { stats: null, namespace, window, sinceParam, error: windowError };
 	try {
-		const stats = await orkstack(fetch).stats.getStats({ namespace, ...(since ? { since } : { lookback: durationFromMs(presetMs[window] ?? presetMs['24h']) }) });
+		const stats = await statsClient(fetch).getStats({ namespace, ...(since ? { since } : { lookback: durationFromMs(presetMs[window] ?? presetMs['24h']) }) });
 		return { stats, namespace, window: since ? 'custom' : (presetMs[window] ? window : '24h'), sinceParam, error: null as string | null };
 	} catch (err) {
 		return { stats: null, namespace, window: '24h', sinceParam, error: errorMessage(err) };

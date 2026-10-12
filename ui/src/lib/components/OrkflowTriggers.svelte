@@ -20,8 +20,10 @@
 	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
-	import type { OrkflowVersion, Trigger } from '$lib/gen/orkstack/v1/service_pb';
+	import { errorMessage } from '$lib/client';
+	import { triggerClient } from '$lib/clients/triggers';
+	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/orkflow_service_pb';
+import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 	import { namespaceLabel } from '$lib/namespace';
 	import { shellQuote } from '$lib/runDetail';
 	import { fmtTimestamp } from '$lib/status';
@@ -132,7 +134,7 @@
 		shownSecret = '';
 		shownTrigger = null;
 		try {
-			const response = await orkstack(fetch).triggers.createTrigger({
+			const response = await triggerClient(fetch).createTrigger({
 				namespace,
 				orkflowName: name,
 				orkflowVersion: chosenVersion,
@@ -160,7 +162,7 @@
 		deleteError = '';
 		const removed = deleting;
 		try {
-			await orkstack(fetch).triggers.deleteTrigger({ id: removed, namespace });
+			await triggerClient(fetch).deleteTrigger({ id: removed, namespace });
 			// A deleted trigger's token authenticates nothing, so a secret panel
 			// still offering that id would be an invitation to run a command that
 			// now answers 404.
@@ -192,7 +194,7 @@
 		saving = true;
 		editError = '';
 		try {
-			await orkstack(fetch).triggers.updateTrigger({
+			await triggerClient(fetch).updateTrigger({
 				id: editing.id,
 				namespace,
 				name: editName.trim(),

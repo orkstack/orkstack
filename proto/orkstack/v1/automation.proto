@@ -3,7 +3,10 @@ syntax = "proto3";
 package orkstack.v1;
 
 import "orkstack/v1/schedule.proto";
-import "orkstack/v1/service.proto";
+import "orkstack/v1/namespace_service.proto";
+import "orkstack/v1/orkflow_service.proto";
+import "orkstack/v1/trigger_service.proto";
+import "orkstack/v1/webhook_service.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 

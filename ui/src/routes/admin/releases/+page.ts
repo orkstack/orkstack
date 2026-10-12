@@ -1,5 +1,6 @@
-import { errorMessage, orkstack } from '$lib/client';
-import type { ListReleasesResponse } from '$lib/gen/orkstack/v1/service_pb';
+import { errorMessage } from '$lib/client';
+import { systemClient } from '$lib/clients/system';
+import type { ListReleasesResponse } from '$lib/gen/orkstack/v1/system_service_pb';
 import { filtersFromUrl } from '$lib/listFilter';
 import type { PageLoad } from './$types';
 
@@ -15,7 +16,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const { filters: applied, error: filterError } = filtersFromUrl(url);
 	if (filterError) return { applied, releases: null as ListReleasesResponse | null, releasesError: filterError as string | null };
 	try {
-		const res = await orkstack(fetch).system.listReleases({ filters: applied });
+		const res = await systemClient(fetch).listReleases({ filters: applied });
 		return { applied, releases: res, releasesError: null as string | null };
 	} catch (err) {
 		return { applied, releases: null as ListReleasesResponse | null, releasesError: errorMessage(err) };

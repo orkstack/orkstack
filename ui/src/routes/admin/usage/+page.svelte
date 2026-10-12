@@ -12,10 +12,11 @@
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import ListFilter from '$lib/components/ListFilter.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { statsClient } from '$lib/clients/stats';
 	import { measureUsage, type UsageRow } from '$lib/adminUsage';
 	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
-	import { ListNamespacesRequestSchema } from '$lib/gen/orkstack/v1/service_pb';
+	import { ListNamespacesRequestSchema } from '$lib/gen/orkstack/v1/namespace_service_pb';
 	import type { GetUsageResponse } from '$lib/gen/orkstack/v1/stats_pb';
 	import type { FieldFilter } from '$lib/listFilter';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
@@ -35,7 +36,7 @@
 		await measureUsage(
 			names,
 			window,
-			(req) => orkstack(fetch).stats.getUsage(req),
+			(req) => statsClient(fetch).getUsage(req),
 			(name, row) => (rows[name] = row),
 			errorMessage,
 			() => mine === generation

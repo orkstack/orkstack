@@ -19,7 +19,7 @@ import (
 var update = flag.Bool("update", false, "rewrite testdata goldens")
 
 func findMessage(name string) (protoreflect.MessageDescriptor, error) {
-	_ = orkstackv1.File_orkstack_v1_service_proto
+	_ = orkstackv1.File_orkstack_v1_run_service_proto
 	d, err := protoregistry.GlobalFiles.FindDescriptorByName(protoreflect.FullName(name))
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func findMessage(name string) (protoreflect.MessageDescriptor, error) {
 // with List, by method name.
 func listMethods(t *testing.T) map[string]protoreflect.MethodDescriptor {
 	t.Helper()
-	_ = orkstackv1.File_orkstack_v1_service_proto
+	_ = orkstackv1.File_orkstack_v1_run_service_proto
 	out := map[string]protoreflect.MethodDescriptor{}
 	protoregistry.GlobalFiles.RangeFilesByPackage("orkstack.v1", func(fd protoreflect.FileDescriptor) bool {
 		for i := 0; i < fd.Services().Len(); i++ {

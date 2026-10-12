@@ -9,7 +9,8 @@
 	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import { errorMessage, orkstack } from '$lib/client';
+	import { errorMessage } from '$lib/client';
+	import { cacheClient } from '$lib/clients/cache';
 	import {
 		CACHE_WINDOWS,
 		cacheStatsCli,
@@ -94,7 +95,7 @@
 		try {
 			const olderThanSeconds = purgeOlderThan ? parseGoDuration(purgeOlderThan) : null;
 			for (;;) {
-				const resp = await orkstack(fetch).cache.purgeCache({
+				const resp = await cacheClient(fetch).purgeCache({
 					namespace: data.namespace,
 					orkflowName: purge.orkflow ?? '',
 					namespaceScoped: purge.namespaceScoped ?? false,

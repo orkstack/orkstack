@@ -8,7 +8,7 @@ import {
 	AutomationStepSchema,
 	PlanAutomationResponseSchema
 } from '../src/lib/gen/orkstack/v1/automation_pb';
-import { ValidationIssueSchema, ValidationSeverity } from '../src/lib/gen/orkstack/v1/service_pb';
+import { ValidationIssueSchema, ValidationSeverity } from '../src/lib/gen/orkstack/v1/orkflow_service_pb';
 import { EventType } from '../src/lib/gen/orkstack/v1/run_pb';
 import {
 	automationActionSymbol,

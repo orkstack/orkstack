@@ -1,4 +1,5 @@
-import { errorMessage, orkstack } from '$lib/client';
+import { errorMessage } from '$lib/client';
+import { namespaceClient } from '$lib/clients/namespaces';
 import type { Namespace } from '$lib/gen/orkstack/v1/namespace_pb';
 import { pageNumber } from '$lib/browsing';
 import { usagePageSize } from '$lib/adminUsage';
@@ -27,7 +28,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 		return { ...base, namespacesList: [] as Namespace[], nextPageToken: '', namespacesError: filterError as string | null };
 	}
 	try {
-		const res = await orkstack(fetch).namespaces.listNamespaces({ pageSize: size, pageToken: cursor, filters: applied });
+		const res = await namespaceClient(fetch).listNamespaces({ pageSize: size, pageToken: cursor, filters: applied });
 		return { ...base, namespacesList: res.namespaces, nextPageToken: res.nextPageToken, namespacesError: null as string | null };
 	} catch (err) {
 		return { ...base, namespacesList: [] as Namespace[], nextPageToken: '', namespacesError: errorMessage(err) };
