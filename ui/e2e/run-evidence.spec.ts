@@ -55,7 +55,9 @@ const TRANSCRIPT = 'run-evidence-session.txt';
 
 const outPath = proofOut(PROOF_DIR);
 const note = noteTo(path.join(PROOF_DIR, TRANSCRIPT));
-const ORKCTL = bin('orkctl');
+// Resolved when a test runs, not when the file is loaded: listing the suite
+// (`playwright test --list`) runs no global setup, so no binaries exist then.
+const orkctl = () => bin('orkctl');
 
 function shot(page: Page, name: string) {
 	return page.screenshot({ path: outPath(name), fullPage: true });
@@ -238,7 +240,7 @@ test('P1 the Evidence dialog shows the manifest before the bytes', async ({ page
 	const shown = JSON.parse(text) as { members: { path: string }[]; counts: { present: number } };
 	expect(shown.counts.present).toBe(presentCount(summary));
 	const cli = execFileSync(
-		ORKCTL,
+		orkctl(),
 		['--server', ENGINE, '--json', 'run', 'evidence', 'export', completedRun],
 		{ encoding: 'utf8' }
 	);
@@ -251,7 +253,7 @@ test('P2 toggles change the manifest and the command', async ({ page }) => {
 	await openFinished(page);
 	const before = presentCount(await openDialog(page));
 	const manifest = JSON.parse(
-		execFileSync(ORKCTL, ['--server', ENGINE, '--json', 'run', 'evidence', 'export', completedRun], {
+		execFileSync(orkctl(), ['--server', ENGINE, '--json', 'run', 'evidence', 'export', completedRun], {
 			encoding: 'utf8'
 		})
 	) as { members: { kind: string }[] };
@@ -283,7 +285,7 @@ test('P3 the download completes only on last and the CLI verifies it', async ({ 
 	await expect(page.getByTestId('run-evidence-error')).toHaveCount(0);
 
 	// The CLI's offline verifier over the file the browser saved: no server.
-	const verified = execFileSync(ORKCTL, ['run', 'evidence', 'verify', file], { encoding: 'utf8' });
+	const verified = execFileSync(orkctl(), ['run', 'evidence', 'verify', file], { encoding: 'utf8' });
 	const line = verified.split('\n')[0];
 	expect(line).toMatch(/^verified \d+ present members against MANIFEST\.json$/);
 	note(`P3 ${line}`);
