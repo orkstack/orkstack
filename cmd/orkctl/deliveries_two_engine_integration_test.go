@@ -21,6 +21,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -47,10 +48,8 @@ func TestDeliveries_TwoEngines_FilteredListingAndItsNextPage(t *testing.T) {
 	t.Logf("temporal namespace %s", namespace)
 	temporalClient := dialIsolatedNamespace(ctx, t, address, namespace)
 
-	root := repoRoot(t)
-	binDir := t.TempDir()
-	enginePath := buildBinary(t, root, binDir, "ork")
-	orkerPath := buildBinary(t, root, binDir, "orker")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 	queue := idempotencyTaskQueue()
 	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, namespace, queue)
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, namespace, queue)

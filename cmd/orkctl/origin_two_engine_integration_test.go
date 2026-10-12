@@ -20,6 +20,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -47,10 +48,8 @@ func newOriginStack(ctx context.Context, t *testing.T, label string) *originStac
 	partition := fmt.Sprintf("ork-origin-%s-%d-%d", label, os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	temporalClient := dialIsolatedNamespace(ctx, t, address, partition)
 
-	root := repoRoot(t)
-	binDir := t.TempDir()
-	enginePath := buildBinary(t, root, binDir, "ork")
-	orkerPath := buildBinary(t, root, binDir, "orker")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	channel := idempotencyTaskQueue()
 	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, partition, channel)

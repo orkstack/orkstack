@@ -18,14 +18,19 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
+
+// cordonOrkerID is this process's identity for the cordon tests: identities
+// are host-wide, and tests run as concurrent processes (AGENTS.md §11.1).
+var cordonOrkerID = proof.OrkerID("orker-test")
 
 // newCordonActivities is an Activities with no store and no runtime:
 // everything the cordon touches is process memory and the work root.
 func newCordonActivities(t *testing.T, workRoot string) *Activities {
 	t.Helper()
 	return NewActivitiesWithOptions(nil, Options{
-		OrkerID:  "orker-test",
+		OrkerID:  cordonOrkerID,
 		Pool:     "build",
 		MaxPins:  2,
 		WorkRoot: workRoot,
@@ -239,7 +244,7 @@ func TestCordonInterceptor_RefusesSessionCreationWhileCordoned(t *testing.T) {
 	if appErr.Type() != ReasonOrkerCordoned || appErr.NonRetryable() {
 		t.Fatalf("refusal type=%q nonRetryable=%v; want retryable %s", appErr.Type(), appErr.NonRetryable(), ReasonOrkerCordoned)
 	}
-	if !strings.Contains(appErr.Error(), "cve") || !strings.Contains(appErr.Error(), "orker-test") {
+	if !strings.Contains(appErr.Error(), "cve") || !strings.Contains(appErr.Error(), cordonOrkerID) {
 		t.Fatalf("refusal %q names neither the Orker nor the reason", appErr.Error())
 	}
 	if ran != 0 {
@@ -317,7 +322,7 @@ func TestDescribeOrker_ReportsCordonAndLoad(t *testing.T) {
 	if !after.GetCordoned() || after.GetCordonReason() != "cve" || after.GetCordonedAt() == nil {
 		t.Fatalf("after cordon: cordoned=%v reason=%q at=%v", after.GetCordoned(), after.GetCordonReason(), after.GetCordonedAt())
 	}
-	if after.GetOrkerId() != "orker-test" || after.GetPool() != "build" || after.GetMaxConcurrentPins() != 2 {
+	if after.GetOrkerId() != cordonOrkerID || after.GetPool() != "build" || after.GetMaxConcurrentPins() != 2 {
 		t.Fatalf("the post-state lost the identity: %v", after)
 	}
 	if after.GetRunningTasks() != 0 || after.GetOpenPins() != 0 {
@@ -445,7 +450,7 @@ func TestWorkerTuner_ActivitySlotsAreTheConfiguredCeiling(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := NewActivitiesWithOptions(nil, Options{
-				OrkerID:       "orker-test",
+				OrkerID:       cordonOrkerID,
 				WorkRoot:      t.TempDir(),
 				MaxConcurrent: tc.configured,
 				Runtime:       &reapRecorder{labelled: map[string]int{}},

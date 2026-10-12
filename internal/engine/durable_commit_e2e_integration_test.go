@@ -37,6 +37,7 @@ import (
 	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -89,7 +90,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	// (c) A replacement attempt ADOPTS that commit instead of re-running the
 	//     container. This is the invariant the empty URI silently disabled:
 	//     "a durably committed activity result cannot become pending again".
-	before := runningContainerCountForCommitE2E(t)
+	before := runningContainerCountForCommitE2E(t, e.orkerID)
 	adopted, err := activities.ExecuteTask(ctx, in)
 	if err != nil {
 		t.Fatalf("replacement attempt: %v", err)
@@ -100,7 +101,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	if adopted.GetCommit().GetUri() != wantURI {
 		t.Errorf("adopted commit uri = %q, want %q", adopted.GetCommit().GetUri(), wantURI)
 	}
-	if after := runningContainerCountForCommitE2E(t); after != before {
+	if after := runningContainerCountForCommitE2E(t, e.orkerID); after != before {
 		t.Errorf("running containers went %d -> %d across an adopted attempt; adoption must start none",
 			before, after)
 	}
@@ -169,7 +170,7 @@ func TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly(t *testing.T) {
 		}
 		return e.activities.ExecuteTask(actx, in)
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	before := runningContainerCountForCommitE2E(t)
+	before := runningContainerCountForCommitE2E(t, e.orkerID)
 	env.ExecuteWorkflow(evidenceAdoptionProbeWorkflow, e.in)
 	if !env.IsWorkflowCompleted() || env.GetWorkflowError() != nil {
 		t.Fatalf("replacement attempt: completed=%t err=%v", env.IsWorkflowCompleted(), env.GetWorkflowError())
@@ -178,7 +179,7 @@ func TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly(t *testing.T) {
 	if err := env.GetWorkflowResult(&adopted); err != nil {
 		t.Fatalf("replacement attempt result: %v", err)
 	}
-	if after := runningContainerCountForCommitE2E(t); after != before {
+	if after := runningContainerCountForCommitE2E(t, e.orkerID); after != before {
 		t.Fatalf("running containers %d -> %d across the replacement attempt; adoption starts none", before, after)
 	}
 	if !adopted.GetCommitAdopted() || adopted.GetAttempt() != taskRun.GetAttempt() {
@@ -349,13 +350,14 @@ func startCommitE2E(t *testing.T) *commitE2E {
 	attempts := &tappedAttemptStore{AttemptStore: attemptStore}
 
 	// The real Orker: real Docker runtime, real commit store, real bucket.
+	orkerID := proof.OrkerID("commit-e2e-" + token)
 	activities := orker.NewActivitiesWithOptions(store, orker.Options{
 		Logs:     logStore,
 		Commits:  commitStore,
 		Attempts: attempts,
 		Refs:     refs,
 		Pool:     task.DefaultPool,
-		OrkerID:  "commit-e2e-" + token,
+		OrkerID:  orkerID,
 		// ORK_ORKER_WORKDIR must be bind-mountable by the daemon; on macOS
 		// /var/folders is not shared with a VM daemon (§3.1).
 		WorkRoot: bindableWorkRootForCommitE2E(t),
@@ -513,11 +515,14 @@ func startCommitE2E(t *testing.T) *commitE2E {
 		bus: bus, runs: runs, runClient: runClient,
 		runID: runID, run: run, in: in, key: key,
 		wantURI: "s3://" + cfg.S3Bucket + "/" + key,
+		orkerID: orkerID,
 	}
 }
 
 // commitE2E is what startCommitE2E leaves running and what it observed.
 type commitE2E struct {
+	// orkerID labels every container this test's Orker starts (ork.orker).
+	orkerID      string
 	ctx          context.Context
 	cfg          artifacts.Config
 	orkflows     *artifacts.S3OrkflowStore
@@ -652,26 +657,74 @@ func pinnedAlpineForCommitE2E(t *testing.T) string {
 	return tag + "@" + strings.TrimSpace(string(id))
 }
 
-// bindableWorkRootForCommitE2E returns a directory the daemon can bind-mount.
-// t.TempDir() is /var/folders on macOS, which a VM daemon does not share.
+// bindableWorkRootForCommitE2E returns this test's own Orker work root: a
+// fresh directory under ORK_ORKER_WORKDIR, or under the repository's
+// .data/work, that the daemon can bind-mount (t.TempDir() is /var/folders on
+// macOS, which a VM daemon does not share).
+//
+// Never that directory itself. An Orker's Boot reaps every pin, spool and
+// stage directory under its root, so two Orkers on one root — two tests run
+// concurrently, or a test and the dev stack, which uses .data/work — delete
+// each other's in-flight work (AGENTS.md §11.1). One test gets one root, so a
+// test that boots its Orker twice still finds its own predecessor's state.
 func bindableWorkRootForCommitE2E(t *testing.T) string {
 	t.Helper()
-	if root := os.Getenv(orker.WorkRootVar); root != "" {
+	commitE2ERootsMu.Lock()
+	defer commitE2ERootsMu.Unlock()
+	if root, ok := commitE2ERoots[t.Name()]; ok {
 		return root
 	}
-	root, err := filepath.Abs(filepath.Join("..", "..", ".data", "work"))
+	parent := os.Getenv(orker.WorkRootVar)
+	if parent == "" {
+		abs, err := filepath.Abs(filepath.Join("..", "..", ".data", "work"))
+		if err != nil {
+			t.Fatalf("resolve work root: %v", err)
+		}
+		parent = abs
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatalf("create work root parent %s: %v", parent, err)
+	}
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			return r
+		default:
+			return '-'
+		}
+	}, t.Name())
+	if len(safe) > 80 {
+		safe = safe[:80]
+	}
+	root, err := os.MkdirTemp(parent, safe+"-")
 	if err != nil {
-		t.Fatalf("resolve work root: %v", err)
+		t.Fatalf("create work root under %s: %v", parent, err)
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("create work root %s: %v", root, err)
-	}
+	commitE2ERoots[t.Name()] = root
+	name := t.Name()
+	t.Cleanup(func() {
+		commitE2ERootsMu.Lock()
+		delete(commitE2ERoots, name)
+		commitE2ERootsMu.Unlock()
+		// Best effort: a container may leave files the test user cannot
+		// remove; scripts/proof-clean.sh lists what is left.
+		_ = os.RemoveAll(root)
+	})
 	return root
 }
 
-func runningContainerCountForCommitE2E(t *testing.T) int {
+var (
+	commitE2ERootsMu sync.Mutex
+	commitE2ERoots   = map[string]string{}
+)
+
+// runningContainerCountForCommitE2E counts the running containers THIS test's
+// Orker started — by its ork.orker label, never host-wide: other tests and
+// other proofs start and stop containers on the same daemon concurrently
+// (AGENTS.md §11.1).
+func runningContainerCountForCommitE2E(t *testing.T, orkerID string) int {
 	t.Helper()
-	out, err := exec.Command("docker", "ps", "--quiet").Output()
+	out, err := exec.Command("docker", "ps", "--quiet", "--filter", "label=ork.orker="+orkerID).Output()
 	if err != nil {
 		t.Fatalf("docker ps: %v", err)
 	}

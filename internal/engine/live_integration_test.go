@@ -130,7 +130,7 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 		Commits:           commitStore,
 		Refs:              refs,
 		Pool:              task.DefaultPool,
-		OrkerID:           "live-reads-" + token,
+		OrkerID:           proof.OrkerID("live-reads-" + token),
 		WorkRoot:          bindableWorkRootForCommitE2E(t),
 		HeartbeatInterval: tick,
 	})

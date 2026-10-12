@@ -142,7 +142,7 @@ func loadDeps(root string) (depIndex, []string, error) {
 		if cfg == cfgIntegration {
 			tags = "integration"
 		}
-		lines, err := goList(tags, format, "-test", "./...")
+		lines, err := goListIn(root, tags, format, "-test", "./...")
 		if err != nil {
 			return d, nil, err
 		}
@@ -169,7 +169,7 @@ func loadDeps(root string) (depIndex, []string, error) {
 	}
 
 	// Binary edges, from every package's test sources.
-	dirs, err := goList("integration", `{{.ImportPath}}{{"\t"}}{{.Dir}}`, "./...")
+	dirs, err := goListIn(root, "integration", `{{.ImportPath}}{{"\t"}}{{.Dir}}`, "./...")
 	if err != nil {
 		return d, nil, err
 	}
@@ -204,7 +204,7 @@ func loadDeps(root string) (depIndex, []string, error) {
 			list = append(list, m)
 		}
 		sort.Strings(list)
-		lines, err := goList("", `{{.ImportPath}}{{"\t"}}{{range .Deps}}{{.}}|{{end}}`, list...)
+		lines, err := goListIn(root, "", `{{.ImportPath}}{{"\t"}}{{range .Deps}}{{.}}|{{end}}`, list...)
 		if err != nil {
 			return d, nil, err
 		}

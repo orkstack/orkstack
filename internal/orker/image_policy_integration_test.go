@@ -27,20 +27,21 @@ const shellRepo = "orkstack/activity-shell"
 
 // privateShell starts a registry private to this test (deletion enabled, so a
 // signature can be removed without touching the shared registry), copies the
-// local activity-shell:dev into it preserving its digest, and returns the
+// local activity-shell (under localcatalog.Tag) into it preserving its
+// digest, and returns the
 // registry and the ImageRef the engine would pin for it.
 func privateShell(t *testing.T) (*cosigntest.PrivateRegistry, *orkstackv1.ImageRef) {
 	t.Helper()
 	registry := cosigntest.StartRegistry(t, func(format string, args ...any) { infraAbsent(t, format, args...) })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	digest, err := (&cosigntest.Client{}).CopyImage(ctx, localcatalog.Registry(), registry.Host, shellRepo, "dev")
+	digest, err := (&cosigntest.Client{}).CopyImage(ctx, localcatalog.Registry(), registry.Host, shellRepo, localcatalog.Tag())
 	if err != nil {
-		infraAbsent(t, "copy %s/%s:dev into the private registry: %v (run `make -C images push`)",
-			localcatalog.Registry(), shellRepo, err)
+		infraAbsent(t, "copy %s/%s:%s into the private registry: %v (run `make -C images push`)",
+			localcatalog.Registry(), shellRepo, localcatalog.Tag(), err)
 	}
 	return registry, &orkstackv1.ImageRef{
-		Reference:   registry.Host + "/" + shellRepo + ":dev",
+		Reference:   registry.Host + "/" + shellRepo + ":" + localcatalog.Tag(),
 		Registry:    registry.Host,
 		Repository:  shellRepo,
 		IndexDigest: digest,

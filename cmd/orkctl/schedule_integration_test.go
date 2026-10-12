@@ -26,6 +26,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -122,16 +123,14 @@ func newScheduleStack(ctx context.Context, t *testing.T, label string, replicas 
 	partition := fmt.Sprintf("%s-sch-%s-%d-%d", base, label, os.Getpid(), stamp)
 	temporalClient := dialIsolatedNamespace(ctx, t, address, partition)
 
-	root := repoRoot(t)
-	binDir := t.TempDir()
 	s := &scheduleStack{
 		temporal:    temporalClient,
 		artifactCfg: artifactCfg,
 		address:     address,
 		partition:   partition,
 		channel:     idempotencyTaskQueue(),
-		enginePath:  buildBinary(t, root, binDir, "ork"),
-		orkerPath:   buildBinary(t, root, binDir, "orker"),
+		enginePath:  testbin.Path(t, "./cmd/ork"),
+		orkerPath:   testbin.Path(t, "./cmd/orker"),
 		namespace:   fmt.Sprintf("sch-%s-%d", label, stamp),
 	}
 	startIdempotencyOrker(ctx, t, temporalClient, s.orkerPath, address, partition, s.channel)
@@ -654,8 +653,14 @@ func TestIntegration_ScheduleIntervalFiresOnItsOwn(t *testing.T) {
 }
 
 // TestIntegration_ScheduleOverlapSkip: a 40s run and a 5s interval under skip
-// start exactly one run while it executes (observed for 20s after it
-// started), and the cluster counts the skipped fires.
+// start exactly one run while it executes, and the cluster counts the skipped
+// fires.
+//
+// "Exactly one run" is a negative claim, so the window it is observed over
+// carries its own positive control: it ends when the cluster has counted two
+// skipped fires, never after a fixed sleep. A host too slow to fire at all
+// cannot make it pass, because then the window never closes and the test
+// fails at its deadline.
 func TestIntegration_ScheduleOverlapSkip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
@@ -663,15 +668,15 @@ func TestIntegration_ScheduleOverlapSkip(t *testing.T) {
 	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 40, ""))
 	id := s.create(t, "every5", "--orkflow", "slow", "--interval", "5s", "--overlap", "skip")
 	first := s.awaitRuns(t, id, 60*time.Second, func(r []runRow) bool { return len(r) >= 1 })[0]
-	time.Sleep(20 * time.Second)
+	s.awaitSchedule(t, "every5", 60*time.Second, func(g scheduleJSON) bool { return g.Schedule.FiresSkippedOverlap >= 2 })
 	runs := s.runsOf(t, id)
 	got := s.get(t, s.a, "every5")
 	s.cli(t, s.a, exitOK, "schedule", "delete", "every5")
 	if len(runs) != 1 || runs[0].ID != first.ID || (runs[0].Status != "RUNNING" && runs[0].Status != "SUCCEEDED") {
-		t.Fatalf("runs 20s into the first run under skip = %+v, want exactly %s", runs, first.ID)
+		t.Fatalf("runs after two skipped fires under skip = %+v, want exactly %s", runs, first.ID)
 	}
-	if got.Schedule.FiresSkippedOverlap < 1 {
-		t.Fatalf("fires_skipped_overlap = %d, want at least 1", got.Schedule.FiresSkippedOverlap)
+	if got.Schedule.FiresSkippedOverlap < 2 {
+		t.Fatalf("fires_skipped_overlap = %d, want at least 2", got.Schedule.FiresSkippedOverlap)
 	}
 	t.Logf("EVIDENCE overlap_skip runs=%d fires_skipped_overlap=%d", len(runs), got.Schedule.FiresSkippedOverlap)
 	s.writeProof(t, "schedule-overlap-skip.txt")
@@ -726,9 +731,18 @@ func TestIntegration_ScheduleOverlapBufferOne(t *testing.T) {
 		t.Fatalf("the buffered run was created before the first: %+v", runs)
 	}
 	// No third: the second buffered fire was not queued behind the first.
+	// The positive control comes first: the cluster has TAKEN the buffered
+	// fire (fires_taken reached 2), which it does the moment the run ahead
+	// of it ends — so the scheduler demonstrably acts on its buffer within
+	// this window, and a third buffered fire would have been taken when the
+	// second run ended, which happened before the window began.
+	s.awaitSchedule(t, "nightly", 60*time.Second, func(g scheduleJSON) bool { return g.Schedule.FiresTaken >= 2 })
 	time.Sleep(5 * time.Second)
 	if runs := s.runsOf(t, id); len(runs) != 2 {
 		t.Fatalf("buffer-one queued more than one fire: %+v", runs)
+	}
+	if taken := s.get(t, s.a, "nightly").Schedule.FiresTaken; taken != 2 {
+		t.Fatalf("fires_taken = %d after the second run ended, want 2: buffer-one queued more than one fire", taken)
 	}
 	t.Logf("EVIDENCE overlap_buffer_one first=%s second=%s runs=2", first.ID, second.ID)
 	s.writeProof(t, "schedule-overlap-buffer-one.txt")

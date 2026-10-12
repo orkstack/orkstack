@@ -19,6 +19,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -137,12 +138,10 @@ func startPlanCluster(ctx context.Context, t *testing.T, withOrker bool) *planCl
 	t.Logf("namespace %s", namespace)
 	temporalClient := dialIsolatedNamespace(ctx, t, address, namespace)
 
-	root := repoRoot(t)
-	binDir := t.TempDir()
-	enginePath := buildBinary(t, root, binDir, "ork")
+	enginePath := testbin.Path(t, "./cmd/ork")
 	queue := idempotencyTaskQueue()
 	if withOrker {
-		orkerPath := buildBinary(t, root, binDir, "orker")
+		orkerPath := testbin.Path(t, "./cmd/orker")
 		startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, namespace, queue)
 	}
 	a := startReplica(ctx, t, "ork-A", enginePath, address, namespace, queue)

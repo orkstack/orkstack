@@ -21,6 +21,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 // `orkctl release`'s CLI acceptance (docs/DEPLOY.md §3) on the real binaries: `ork` and `orker`
@@ -31,48 +32,11 @@ import (
 // own /orkstack/tmp, which is how the test holds a run in flight and lets it
 // go.
 
-var releaseBins struct {
-	once               sync.Once
-	dir                string
-	orkctl, ork, orker string
-	err                error
-}
-
-// removeReleaseBinaries deletes the directory releaseBinaries built into, once
-// every test of the process has finished (TestMain).
-func removeReleaseBinaries() {
-	if releaseBins.dir != "" {
-		_ = os.RemoveAll(releaseBins.dir)
-	}
-}
-
-// releaseBinaries builds orkctl, ork and orker once per test process.
+// releaseBinaries returns orkctl, ork and orker (internal/testsupport/testbin:
+// the proof's, or built once per test process).
 func releaseBinaries(t *testing.T) (string, string, string) {
 	t.Helper()
-	releaseBins.once.Do(func() {
-		dir, err := os.MkdirTemp("", "ork-release-bins-")
-		if err != nil {
-			releaseBins.err = err
-			return
-		}
-		releaseBins.dir = dir
-		root := repoRoot(t)
-		for _, name := range []string{"orkctl", "ork", "orker"} {
-			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name), "./cmd/"+name)
-			cmd.Dir = root
-			if out, err := cmd.CombinedOutput(); err != nil {
-				releaseBins.err = fmt.Errorf("go build ./cmd/%s: %v\n%s", name, err, out)
-				return
-			}
-		}
-		releaseBins.orkctl = filepath.Join(dir, "orkctl")
-		releaseBins.ork = filepath.Join(dir, "ork")
-		releaseBins.orker = filepath.Join(dir, "orker")
-	})
-	if releaseBins.err != nil {
-		t.Fatal(releaseBins.err)
-	}
-	return releaseBins.orkctl, releaseBins.ork, releaseBins.orker
+	return testbin.Path(t, "./cmd/orkctl"), testbin.Path(t, "./cmd/ork"), testbin.Path(t, "./cmd/orker")
 }
 
 // relProc is one process this test started, stoppable by its own PID.

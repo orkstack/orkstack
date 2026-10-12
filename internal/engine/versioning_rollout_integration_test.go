@@ -31,11 +31,16 @@ import (
 // versioningNamespace isolates this suite. AGENTS.md §11.1: a namespace is a hard
 // partition, and this test sets a deployment's CURRENT version — a
 // namespace-wide routing change no other agent's runs may see.
+//
+// ORK_TEMPORAL_NAMESPACE, when set, is the prefix this process extends: test
+// processes run concurrently (AGENTS.md §11.1), and the one namespace a slot
+// or an operator names is shared by every process started under it.
 func versioningNamespace() string {
-	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
-		return ns
+	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
+	if base == "" {
+		base = "ork"
 	}
-	return "ork-worker-versioning"
+	return fmt.Sprintf("%s-worker-versioning-%d", base, os.Getpid())
 }
 
 // dialVersioningCluster connects to a real Temporal, provisioning the isolated

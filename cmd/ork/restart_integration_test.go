@@ -21,7 +21,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +31,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -231,16 +231,10 @@ func requireMinIO(t *testing.T) artifacts.Config {
 	return cfg
 }
 
-// buildOrk compiles the engine under test into a temp dir.
+// buildOrk returns the engine under test (internal/testsupport/testbin).
 func buildOrk(t *testing.T) string {
 	t.Helper()
-	binary := filepath.Join(t.TempDir(), "ork")
-	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build ork: %v\n%s", err, out)
-	}
-	return binary
+	return testbin.Path(t, "./cmd/ork")
 }
 
 // running engines, so a failing test still stops what it started.

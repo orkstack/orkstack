@@ -450,7 +450,7 @@ func TestIntegration_RunDiffReadsTheAdopterWhenTheCommittingRecordIsGone(t *test
 	}
 	activities := orker.NewActivitiesWithOptions(store, orker.Options{
 		Logs: logs, Commits: commits, Attempts: attemptStore, Refs: refs,
-		Pool: task.DefaultPool, OrkerID: "run-diff-adopter", WorkRoot: bindableOrkerWorkRoot(t),
+		Pool: task.DefaultPool, OrkerID: proof.OrkerID("run-diff-adopter"), WorkRoot: bindableOrkerWorkRoot(t),
 	})
 	in := scheduledInput(t, s, run1, "work")
 

@@ -16,6 +16,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -55,10 +56,9 @@ func newOrkerStack(t *testing.T, replicas int) *orkerStack {
 	s.queue = fmt.Sprintf("ork-drain-cli-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 	s.orkerID = fmt.Sprintf("orker-cli-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 
-	binDir := t.TempDir()
-	s.orkctl = buildBinary(t, s.root, binDir, "orkctl")
-	enginePath := buildBinary(t, s.root, binDir, "ork")
-	orkerPath := buildBinary(t, s.root, binDir, "orker")
+	s.orkctl = testbin.Path(t, "./cmd/orkctl")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 	for i := 0; i < replicas; i++ {
 		replica := startReplica(ctx, t, fmt.Sprintf("ork-%c", 'A'+i), enginePath, address, s.namespace, s.queue)
 		replica.awaitReady(ctx, t)

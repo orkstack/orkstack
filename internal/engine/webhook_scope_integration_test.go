@@ -401,7 +401,7 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 			}
 			activities := orker.NewActivitiesWithOptions(store, orker.Options{
 				Logs: logStore, Commits: commitStore, Refs: refs, Pool: task.DefaultPool,
-				OrkerID: "webhook-cancel-" + token, WorkRoot: bindableWorkRootForCommitE2E(t),
+				OrkerID: proof.OrkerID("webhook-cancel-" + token), WorkRoot: bindableWorkRootForCommitE2E(t),
 				HeartbeatInterval: orker.DefaultHeartbeatInterval,
 			})
 			if err := activities.Boot(ctx); err != nil {

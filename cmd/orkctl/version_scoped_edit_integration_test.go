@@ -13,6 +13,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 // TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI is the
@@ -53,10 +54,9 @@ func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *test
 		t.Fatalf("map test pool: %v", err)
 	}
 	root := repoRoot(t)
-	binDir := t.TempDir()
-	orkctlPath := buildBinary(t, root, binDir, "orkctl")
-	enginePath := buildBinary(t, root, binDir, "ork")
-	orkerPath := buildBinary(t, root, binDir, "orker")
+	orkctlPath := testbin.Path(t, "./cmd/orkctl")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	startProcess(ctx, t, "orker", orkerPath,
 		"ORK_TEMPORAL_ADDRESS="+address,

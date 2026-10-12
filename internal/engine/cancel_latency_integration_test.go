@@ -100,7 +100,7 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 		Commits:  commitStore,
 		Refs:     refs,
 		Pool:     task.DefaultPool,
-		OrkerID:  "cancel-latency-" + token,
+		OrkerID:  proof.OrkerID("cancel-latency-" + token),
 		WorkRoot: bindableWorkRootForCommitE2E(t),
 		// HALF ONE of the pairing: how often the loop beats.
 		HeartbeatInterval: tick,

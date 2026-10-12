@@ -27,6 +27,11 @@ type pkgInfo struct {
 
 // goList runs `go list` with format and returns its non-empty lines.
 func goList(tags string, format string, patterns ...string) ([]string, error) {
+	return goListIn("", tags, format, patterns...)
+}
+
+// goListIn runs `go list` in dir ("" is the working directory).
+func goListIn(dir, tags string, format string, patterns ...string) ([]string, error) {
 	args := []string{"list"}
 	if tags != "" {
 		args = append(args, "-tags="+tags)
@@ -34,6 +39,7 @@ func goList(tags string, format string, patterns ...string) ([]string, error) {
 	args = append(args, "-f", format)
 	args = append(args, patterns...)
 	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

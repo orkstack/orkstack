@@ -24,6 +24,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -68,10 +69,9 @@ func newTimingStack(ctx context.Context, t *testing.T, replicas int) *timingStac
 	}
 	t.Logf("temporal namespace %s, orker channel %s", s.namespace, s.queue)
 	s.temporal = dialIsolatedNamespace(ctx, t, address, s.namespace)
-	binDir := t.TempDir()
-	s.orkctlPath = buildBinary(t, s.root, binDir, "orkctl")
-	enginePath := buildBinary(t, s.root, binDir, "ork")
-	s.orkerPath = buildBinary(t, s.root, binDir, "orker")
+	s.orkctlPath = testbin.Path(t, "./cmd/orkctl")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	s.orkerPath = testbin.Path(t, "./cmd/orker")
 	for i := 0; i < replicas; i++ {
 		replica := startReplica(ctx, t, fmt.Sprintf("ork-%c", 'A'+i), enginePath, address, s.namespace, s.queue)
 		replica.awaitReady(ctx, t)

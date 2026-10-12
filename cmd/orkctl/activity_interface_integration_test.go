@@ -12,10 +12,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -25,34 +23,28 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 // Activity interface manifests (docs/ACTIVITY_IMAGES.md "Declaring the interface"), against
 // the real local registry holding the first-party images this tree labels,
 // a real `ork`, and — for the run — a real Orker and Temporal.
 
-// labelledImagesOnce pushes THIS tree's first-party images, which carry the
-// org.orkstack.activity.interface label, to the local registry. The registry
-// and its `:dev` tags are shared with every other checkout on the host, so
-// what is there may have been pushed by a tree that predates the label; the
-// suite pushes its own rather than trusting whoever pushed last.
-var (
-	labelledImagesOnce sync.Once
-	labelledImagesErr  error
-	labelledImagesLog  []byte
-)
-
+// requireLabelledImages requires this tree's first-party images, which carry
+// the org.orkstack.activity.interface label, in the local registry under
+// localcatalog.Tag(). A proof pushes them once, from the tree it proves,
+// under a tag of its own; tests only resolve that tag and never push a
+// first-party image, because a push from one test process would move a tag
+// every other process on the host resolves (AGENTS.md §11.1). Outside a
+// proof the tag is `dev`, shared with every checkout on the host: push this
+// tree's images first (`make -C images push`).
 func requireLabelledImages(t *testing.T) {
 	t.Helper()
 	requireRegistry(t, testRegistry())
-	labelledImagesOnce.Do(func() {
-		cmd := exec.Command("make", "-C", "images", "push", "REGISTRY="+testRegistry())
-		cmd.Dir = repoRoot(t)
-		labelledImagesLog, labelledImagesErr = cmd.CombinedOutput()
-	})
-	if labelledImagesErr != nil {
-		t.Fatalf("make -C images push: %v\n%s", labelledImagesErr, labelledImagesLog)
+	if _, err := localcatalog.CatalogEnv(); err != nil {
+		infraAbsent(t, "this tree's activity images: %v", err)
 	}
 }
 
@@ -80,11 +72,10 @@ func startInterfaceStack(ctx context.Context, t *testing.T, engines int, withOrk
 		t.Fatalf("map test pool: %v", err)
 	}
 	root := repoRoot(t)
-	binDir := t.TempDir()
-	orkctlPath := buildBinary(t, root, binDir, "orkctl")
-	enginePath := buildBinary(t, root, binDir, "ork")
+	orkctlPath := testbin.Path(t, "./cmd/orkctl")
+	enginePath := testbin.Path(t, "./cmd/ork")
 	if withOrker {
-		orkerPath := buildBinary(t, root, binDir, "orker")
+		orkerPath := testbin.Path(t, "./cmd/orker")
 		startProcess(ctx, t, "orker", orkerPath,
 			"ORK_TEMPORAL_ADDRESS="+address,
 			"ORK_TEMPORAL_NAMESPACE="+namespace,

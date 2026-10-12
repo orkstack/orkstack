@@ -109,7 +109,7 @@ func startEngine(
 					ValuesJson: valuesJSON(map[string]any{"echoed_task": in.TaskId}),
 					Artifacts: []*orkstackv1.ArtifactRef{{
 						Name: "echo",
-						Uri: fmt.Sprintf("s3://orkstack-artifacts/orkflows/%s/%s/%s/echo",
+						Uri: fmt.Sprintf("s3://%s/orkflows/%s/%s/%s/echo", artifacts.ConfigFromEnv().S3Bucket,
 							in.OrkflowName, in.TaskId, in.RunId),
 					}},
 				}, nil

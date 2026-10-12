@@ -3,6 +3,7 @@ package proof_test
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
@@ -34,4 +35,16 @@ func TestWrite_WithoutADirectoryOnlyLogs(t *testing.T) {
 	}
 	// Must not panic, fail, or write anywhere.
 	proof.Write(t, "engine", "transcript.txt", []byte("observed\n"))
+}
+
+func TestOrkerIDIsUniqueToTheProcessAndNamesTheProof(t *testing.T) {
+	t.Setenv(proof.EnvID, "")
+	pid := strconv.Itoa(os.Getpid())
+	if got := proof.OrkerID("orker-test"); got != "orker-test-"+pid {
+		t.Errorf("OrkerID = %q", got)
+	}
+	t.Setenv(proof.EnvID, "pr-0123456789ab")
+	if got := proof.OrkerID("orker-test"); got != "orker-test-pr-0123456789ab-"+pid {
+		t.Errorf("OrkerID under a proof = %q", got)
+	}
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -69,10 +70,9 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	}
 
 	repoRoot := repoRoot(t)
-	binDir := t.TempDir()
-	orkctlPath := buildBinary(t, repoRoot, binDir, "orkctl")
-	enginePath := buildBinary(t, repoRoot, binDir, "ork")
-	orkerPath := buildBinary(t, repoRoot, binDir, "orker")
+	orkctlPath := testbin.Path(t, "./cmd/orkctl")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	startNamespacedOrker(ctx, t, orkerPath, address, temporalNamespace, taskQueue)
 	engineAddr := startNamespacedEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue)

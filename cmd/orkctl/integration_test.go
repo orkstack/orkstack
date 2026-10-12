@@ -24,6 +24,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 const (
@@ -96,10 +97,9 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 		t.Fatalf("map test pool: %v", err)
 	}
 	repoRoot := repoRoot(t)
-	binDir := t.TempDir()
-	orkctlPath := buildBinary(t, repoRoot, binDir, "orkctl")
-	enginePath := buildBinary(t, repoRoot, binDir, "ork")
-	orkerPath := buildBinary(t, repoRoot, binDir, "orker")
+	orkctlPath := testbin.Path(t, "./cmd/orkctl")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	temporalNamespace := privateTemporalNamespace()
 	startOrker(ctx, t, orkerPath, address, temporalNamespace, taskQueue)
@@ -464,18 +464,6 @@ func waitForPoolLive(t *testing.T, cli func(args ...string) (string, string, int
 		time.Sleep(250 * time.Millisecond)
 	}
 	t.Fatalf("pool %q in namespace %q reported no live Orker within 60s; last listing:\n%s", pool, namespace, last)
-}
-
-// buildBinary compiles one command into dir and returns its path.
-func buildBinary(t *testing.T, repoRoot, dir, name string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	cmd := exec.Command("go", "build", "-o", path, "./cmd/"+name)
-	cmd.Dir = repoRoot
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build ./cmd/%s: %v\n%s", name, err, output)
-	}
-	return path
 }
 
 // runBinary executes a built binary and returns stdout, stderr, and its exit

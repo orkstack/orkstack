@@ -18,6 +18,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -95,10 +96,9 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 		t.Fatalf("map aux test pool: %v", err)
 	}
 	root := repoRoot(t)
-	binDir := t.TempDir()
-	orkctlPath := buildBinary(t, root, binDir, "orkctl")
-	enginePath := buildBinary(t, root, binDir, "ork")
-	orkerPath := buildBinary(t, root, binDir, "orker")
+	orkctlPath := testbin.Path(t, "./cmd/orkctl")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	// TWO Orkers on this run's default pool, and one on the aux pool. Two is
 	// the point: a pool is a set of Orkers, and an admin read that works only

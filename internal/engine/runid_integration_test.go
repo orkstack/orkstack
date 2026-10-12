@@ -24,11 +24,16 @@ import (
 // runIDNamespace is the Temporal namespace these tests use. AGENTS.md §11.1: a
 // namespace is a hard partition, and these tests deliberately collide workflow
 // ids, so they must not share one with another agent's runs.
+//
+// ORK_TEMPORAL_NAMESPACE, when set, is the prefix this process extends: test
+// processes run concurrently (AGENTS.md §11.1), and the one namespace a slot
+// or an operator names is shared by every process started under it.
 func runIDNamespace() string {
-	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
-		return ns
+	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
+	if base == "" {
+		base = "ork"
 	}
-	return "ork-run-identity"
+	return fmt.Sprintf("%s-run-identity-%d", base, os.Getpid())
 }
 
 // runIDQueue names a queue no worker polls. Nothing here needs a run to

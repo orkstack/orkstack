@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -24,12 +25,13 @@ import (
 // leftovers, which made each boot cost time proportional to the bucket's
 // history and pushed this package toward its `go test -timeout`.
 //
-// It also removes the release binaries releaseBinaries built, which live
-// outside any t.TempDir because every release test shares them: left behind,
-// each run of this package kept 167 MB in the temp directory.
+// It also removes the binaries internal/testsupport/testbin built for this
+// process, which live outside any t.TempDir because every test of the
+// process shares them: left behind, each run of this package kept 167 MB in
+// the temp directory.
 func TestMain(m *testing.M) {
 	code := s3bucket.Main(m, "orkctl")
-	removeReleaseBinaries()
+	testbin.Cleanup()
 	os.Exit(code)
 }
 

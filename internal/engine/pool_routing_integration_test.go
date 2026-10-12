@@ -31,11 +31,16 @@ import (
 // AGENTS.md §11.1: it starts Orkers on well-known pool channels
 // (ork-pool-alpha and friends), and a parallel agent's run must never be
 // picked up by them.
+//
+// ORK_TEMPORAL_NAMESPACE, when set, is the prefix this process extends: test
+// processes run concurrently (AGENTS.md §11.1), and the one namespace a slot
+// or an operator names is shared by every process started under it.
 func poolRoutingNamespace() string {
-	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
-		return ns
+	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
+	if base == "" {
+		base = "ork"
 	}
-	return fmt.Sprintf("ork-pool-routing-%d", os.Getpid())
+	return fmt.Sprintf("%s-pool-routing-%d", base, os.Getpid())
 }
 
 // The engine under test is wired to the REAL namespace registry

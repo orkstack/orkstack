@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -81,7 +82,7 @@ func TestBoot_ReapsTheSpoolDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := NewActivitiesWithOptions(nil, Options{
-		OrkerID: "orker-spool-reap", WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
+		OrkerID: proof.OrkerID("orker-spool-reap"), WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
 	})
 	t.Cleanup(a.Close)
 	if err := a.Boot(context.Background()); err != nil {

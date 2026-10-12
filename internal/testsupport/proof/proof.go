@@ -13,6 +13,7 @@ package proof
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,6 +21,26 @@ import (
 
 // EnvDir names the directory evidence is written under.
 const EnvDir = "ORK_PROOF_DIR"
+
+// EnvID names the proof this process runs under. scripts/proof.sh sets it
+// (`pr-<hex>`), and it is what scripts/proof-stop.sh finds a stopped proof's
+// leftovers by.
+const EnvID = "ORK_PROOF_ID"
+
+// OrkerID returns an Orker identity for base that is unique to this process:
+// base, the proof's id when a proof runs it, and the pid.
+//
+// An Orker identity is HOST-wide, not process-wide: Boot takes an exclusive
+// lock on it in the host's temp directory and reaps every container labelled
+// with it. Tests run as concurrent processes (AGENTS.md §11.1), so a literal
+// identity would make a second process's Orker refuse to boot — or, without
+// the lock, reap the first one's containers.
+func OrkerID(base string) string {
+	if id := os.Getenv(EnvID); id != "" {
+		return fmt.Sprintf("%s-%s-%d", base, id, os.Getpid())
+	}
+	return fmt.Sprintf("%s-%d", base, os.Getpid())
+}
 
 // Dir reports the evidence directory, or "" when no run asked for one.
 func Dir() string {
