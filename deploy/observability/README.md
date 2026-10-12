@@ -112,4 +112,9 @@ deployment a named sink is a genuinely different destination. See
 `make proof-observability` (with this profile up) starts `ork` and `orker`
 with telemetry on, runs `examples/hello.ork.yaml`, and queries Loki, Tempo
 and Prometheus back to assert the run's signals arrived
-(`scripts/proof-observability.sh`).
+(`scripts/proof-observability.sh`). The full proof runs the same gate whenever
+the tree changes a telemetry path, and a feature proof runs it when the change
+does (AGENTS.md §11.2). The engine's API listens on a free port, but the two
+admin ports are the fixed targets `prometheus.yml` scrapes (9464, 9465), so
+the gate holds a host-wide lock (`$XDG_RUNTIME_DIR/orkstack-observability.lock`)
+and two proofs never run it at once.

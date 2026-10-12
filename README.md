@@ -159,9 +159,12 @@ customized `docker0` uses its own gateway address.
 
 Read [AGENTS.md](./AGENTS.md) (the engineering contract, including the
 repository layout in §12) and [CONTRIBUTING.md](./CONTRIBUTING.md). Every
-change ships with behavior tests and with evidence: `make proof` runs every
-gate against the real stack and keeps the output under `proof/<name>/`, which
-is gitignored; the commit or pull request quotes it. No proof, no done.
+change ships with behavior tests and with evidence, in two tiers (AGENTS.md
+§11.2): on a branch, `make proof-feature TESTS=… SPECS=…` runs the fast gates
+plus the tests and specs that prove the change; to merge, `make proof` runs
+every gate, every test and every spec against the real stack on the merged
+tree (§11.3). Both keep their output under `proof/<name>/`, which is
+gitignored; the commit or pull request quotes it. No proof, no done.
 
 ## Docs
 
