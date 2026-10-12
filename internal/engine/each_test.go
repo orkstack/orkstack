@@ -816,7 +816,31 @@ func TestRunWorkflow_EachRefusedRefillStillEmitsTheSettledItem(t *testing.T) {
 		t.Fatalf("calibration: item 9's input is %d bytes", size9)
 	}
 
-	h := newEachHarness(t, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	// The first max_parallel (10) items are dispatched together; item 10's
+	// refill is refused when the first of them settles, and fail-fast then
+	// cancels the rest. An item cancelled before its activity goroutine ran
+	// would never reach this mock, so no item settles until all ten have
+	// arrived: the count below then measures dispatch, not goroutine
+	// scheduling. The deadline only stops a regression from hanging the test;
+	// it then fails on the count.
+	var (
+		arrivedMu sync.Mutex
+		arrived   int
+	)
+	allArrived := make(chan struct{})
+	h := newEachHarness(t, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		arrivedMu.Lock()
+		arrived++
+		if arrived == 10 {
+			close(allArrived)
+		}
+		arrivedMu.Unlock()
+		select {
+		case <-allArrived:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
 		return itemResult(in), nil
 	})
 	run := h.run(t, runID, document(probe+int(limit-size9)), map[string]any{"regions": regions})
