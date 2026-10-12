@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { execFileSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -19,7 +19,10 @@ import {
 	repoRoot,
 	waitFor,
 	waitForEngine,
-	openNamespaceEdit
+	openNamespaceEdit,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 import { OP, addListFilter, adminNamespaceUrl, expectNamespace, selectNamespace } from './uiHelpers';
 
@@ -229,7 +232,7 @@ test.beforeAll(async () => {
 		].join('\n')
 	);
 
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18085, 14177]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
@@ -250,15 +253,6 @@ test.beforeAll(async () => {
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/deaf-poller', './test/tools/deaf-poller'], {
-		cwd: repoRoot
-	});
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
-	}
 
 	// This run's own bucket (see the topology note at the top of this file):
 	// idempotent, so a re-run against the same stamp is a no-op, and it is
@@ -272,7 +266,7 @@ test.beforeAll(async () => {
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	const store = { ...s3Env, ORK_S3_BUCKET: BUCKET };
 
-	spawnLogged(outPath('engine.log'), './bin/ork', [], {
+	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...store,
@@ -283,7 +277,7 @@ test.beforeAll(async () => {
 	// THIS process alone, not the `gpu` one, and not through killStarted's
 	// shared list (which still cleans it up harmlessly in afterAll: killing
 	// an already-dead child is a no-op there).
-	mainOrkerProc = spawnLogged(outPath('orker-main.log'), './bin/orker', [], {
+	mainOrkerProc = spawnLogged(outPath('orker-main.log'), bin('orker'), [], {
 		...cluster,
 		...store,
 		...orkerEnv('admin-main')
@@ -295,7 +289,7 @@ test.beforeAll(async () => {
 	// is "the DEFAULT pool did not answer" and not "this deployment is dead".
 	//
 	// Its own work root, because that is what the identity lock is keyed on.
-	spawnLogged(outPath('orker-gpu.log'), './bin/orker', [], {
+	spawnLogged(outPath('orker-gpu.log'), bin('orker'), [], {
 		...cluster,
 		...store,
 		...orkerEnv('admin-gpu'),
@@ -317,7 +311,7 @@ test.beforeAll(async () => {
 	// this namespace on purpose, so the first run after a completed run is
 	// exactly the one that finds it absent — which is why this raced rarely
 	// enough to survive until now, and why it is ordered rather than retried.
-	spawnLogged(outPath('deaf-poller.log'), './bin/deaf-poller', [], {
+	spawnLogged(outPath('deaf-poller.log'), bin('deaf-poller'), [], {
 		...cluster,
 		ORK_DEAF_QUEUE: 'ork-pool-deaf'
 	});
@@ -410,7 +404,10 @@ test('Admin is reachable from the nav, deep-linkable, and shows this replica\'s 
 
 	// Configuration-derived fields, verbatim from the injected SystemInfo
 	// (cmd/ork/main.go) — the same reply `orkctl admin info` renders.
-	await expect(page.getByTestId('system-temporal-address')).toHaveText('127.0.0.1:7233');
+	// The address the harness gave the engine: the proof's own Temporal, or
+	// `make infra-up`'s. The behaviour under test is unchanged — the system
+	// page shows exactly the engine's configured address.
+	await expect(page.getByTestId('system-temporal-address')).toHaveText(temporalAddress());
 	await expect(page.getByTestId('system-artifact-backend')).toContainText(BUCKET);
 	await expect(page.getByTestId('system-artifact-backend')).toContainText('s3');
 	await expect(page.getByTestId('system-versioning')).toHaveText('off');
@@ -1268,7 +1265,7 @@ test('maximum run retention is read from the store and a change through the UI r
 			'--namespace',
 			TEMPORAL_NAMESPACE,
 			'--address',
-			'127.0.0.1:7233'
+			temporalAddress()
 		],
 		{ stdio: 'pipe' }
 	).toString();
@@ -1332,7 +1329,7 @@ test('a pool health read that cannot reach the cluster reports every pool as unk
 			'--namespace',
 			TEMPORAL_NAMESPACE,
 			'--address',
-			'127.0.0.1:7233',
+			temporalAddress(),
 			'--yes'
 		],
 		{ stdio: 'pipe' }

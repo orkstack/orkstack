@@ -1,6 +1,5 @@
 import { expect, test } from "./test";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import {
   catalogEnv,
@@ -12,9 +11,11 @@ import {
   spawnLogged,
   tcpOpen,
   uiDir,
-  repoRoot,
   waitFor,
   waitForEngine,
+  bin,
+  temporalAddress,
+  temporalReachable,
 } from "./harness";
 
 // Orkflow deletion through the real built UI and engine. The UI-only safety
@@ -56,8 +57,7 @@ test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
   mkdirSync(PROOF_DIR, { recursive: true });
-  if (!(await tcpOpen(7233)))
-    throw new Error("Temporal is not reachable on 127.0.0.1:7233");
+  if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
   if (!(await tcpOpen(9000)))
     throw new Error("MinIO is not reachable on 127.0.0.1:9000");
   for (const port of [18089, 14182]) {
@@ -65,15 +65,7 @@ test.beforeAll(async () => {
       throw new Error(`port ${port} already in use (stray process?)`);
   }
 
-  execFileSync("go", ["build", "-o", "bin/ork", "./cmd/ork"], {
-    cwd: repoRoot,
-  });
-  execFileSync("bun", ["run", "build"], { cwd: uiDir, stdio: "inherit" });
-  if (!existsSync(path.join(uiDir, "build", "index.js"))) {
-    throw new Error("UI build output missing: ui/build/index.js");
-  }
-
-  spawnLogged(outPath("engine.log"), "./bin/ork", [], {
+  spawnLogged(outPath("engine.log"), bin("ork"), [], {
     ...catalogEnv,
     ...clusterEnv(TEMPORAL_NAMESPACE),
     ...s3Env,

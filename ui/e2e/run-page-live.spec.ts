@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	catalogEnv,
@@ -17,7 +17,10 @@ import {
 	uiDir,
 	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // Live attempt introspection on the run detail page, in a browser, against
@@ -69,7 +72,7 @@ let orkerStarted = false;
 function startOrker() {
 	if (orkerStarted) return;
 	orkerStarted = true;
-	spawnLogged(outPath('orker.log'), './bin/orker', [], {
+	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...s3Env,
 		...orkerEnv('run-page-live'),
@@ -133,23 +136,16 @@ test.beforeAll(async () => {
 	);
 
 	// Prerequisites are failures, never skips (AGENTS.md §11.1).
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18311, 14311]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orkctl', './cmd/orkctl'], { cwd: repoRoot });
-	orkctl = path.join(repoRoot, 'bin', 'orkctl');
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
-	}
+	orkctl = bin('orkctl');
 
-	spawnLogged(outPath('engine.log'), './bin/ork', [], {
+	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...s3Env,

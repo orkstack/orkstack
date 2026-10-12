@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { execFileSync, execSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, createWriteStream, mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -188,8 +188,38 @@ export const s3Env = {
 	ORK_S3_PATH_STYLE: 'true'
 };
 
+/**
+ * temporalAddress is the Temporal every engine and Orker in this directory
+ * talks to: the proof's own (scripts/proof.sh runs a Temporal of its own on a
+ * free port and exports ORK_TEMPORAL_ADDRESS), or `make infra-up`'s.
+ */
+export function temporalAddress(): string {
+	return process.env.ORK_TEMPORAL_ADDRESS || '127.0.0.1:7233';
+}
+
+/** temporalReachable probes temporalAddress(). */
+export function temporalReachable(): Promise<boolean> {
+	const address = temporalAddress();
+	const colon = address.lastIndexOf(':');
+	return tcpOpen(Number(address.slice(colon + 1)), address.slice(0, colon) || '127.0.0.1');
+}
+
 export function clusterEnv(namespace: string) {
-	return { ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233', ORK_TEMPORAL_NAMESPACE: namespace };
+	return { ORK_TEMPORAL_ADDRESS: temporalAddress(), ORK_TEMPORAL_NAMESPACE: namespace };
+}
+
+/**
+ * bin is the path of one binary this suite runs: `ork`, `orker`, `orkctl`,
+ * `cosign-sign`, `deaf-poller`. They are built ONCE per run, from this tree,
+ * by e2e/global-setup.ts — into the proof's own directory under a proof
+ * (ORK_TEST_BIN_DIR), into a temporary one otherwise — and never into the
+ * repository's bin/, which every worktree's dev stack and every concurrent
+ * proof would share (AGENTS.md §11.1).
+ */
+export function bin(name: string): string {
+	const dir = process.env.ORK_TEST_BIN_DIR;
+	if (!dir) throw new Error('ORK_TEST_BIN_DIR is unset: e2e/global-setup.ts builds the binaries this suite runs');
+	return path.join(dir, name);
 }
 
 /**
@@ -263,15 +293,39 @@ export const catalogEnv = {
 `
 };
 
+/** The first-party activity images, as images/Makefile's ACTIVITIES names them. */
+export const activityNames = ['shell', 'http', 'file', 'json', 'git', 'template'];
+
 /**
- * ensureActivityImages builds and pushes every first-party image.
+ * ensureActivityImages requires every first-party image in the registry
+ * under this run's tag, and fails naming the one that is not there.
  *
- * Pushed, not merely built: a never-pushed tag has no registry manifest
- * digest, so apply-time resolution cannot pin it and `uses: shell` fails
- * (§4.6). Idempotent, so a spec that runs after another is a no-op.
+ * It never pushes. A proof pushes this tree's images ONCE, under a tag of its
+ * own (ORK_TEST_IMAGE_TAG), before any spec runs; a push from a spec would
+ * move a tag every other process on the host resolves (AGENTS.md §11.1).
+ * Outside a proof the tag is `dev`: push this tree's images first with
+ * `make -C images push`. Pushed, not merely built: a never-pushed tag has no
+ * registry manifest digest, so apply-time resolution cannot pin it (§4.6).
  */
 export function ensureActivityImages(): void {
-	execSync('make -C images push', { cwd: repoRoot, stdio: 'ignore', timeout: 600_000 });
+	const accept = [
+		'application/vnd.oci.image.index.v1+json',
+		'application/vnd.oci.image.manifest.v1+json',
+		'application/vnd.docker.distribution.manifest.list.v2+json',
+		'application/vnd.docker.distribution.manifest.v2+json'
+	].join(', ');
+	for (const name of activityNames) {
+		const url = `http://${testRegistry}/v2/${imageNamespace}/activity-${name}/manifests/${imageTag}`;
+		try {
+			execFileSync('curl', ['-sf', '-o', '/dev/null', '-H', `Accept: ${accept}`, url], { stdio: 'ignore', timeout: 30_000 });
+		} catch {
+			throw new Error(
+				`${activityRef(name)} is not in the registry: push this tree's images first (make -C images push${
+					imageTag === 'dev' ? '' : ` TAG=${imageTag}`
+				})`
+			);
+		}
+	}
 }
 
 /**
@@ -291,17 +345,15 @@ export function ensureActivityImages(): void {
 export const containerHost = process.env.ORK_TEST_CONTAINER_HOST ?? 'host.docker.internal';
 
 /**
- * cosignSign runs test/tools/cosign-sign (built into bin/ on each call) — the test
- * tool that writes cosign key-based signatures in exactly the layout `cosign
- * sign --key` writes and the engine and Orker verify. `keygen DIR` writes
- * DIR/cosign.key and DIR/cosign.pub; `sign --key KEY REF` signs REF's digest
- * in its (plain-HTTP, loopback) registry. Test tooling only: it holds a
- * private key, which nothing OrkStack ships ever does.
+ * cosignSign runs test/tools/cosign-sign — the test tool that writes cosign
+ * key-based signatures in exactly the layout `cosign sign --key` writes and
+ * the engine and Orker verify. `keygen DIR` writes DIR/cosign.key and
+ * DIR/cosign.pub; `sign --key KEY REF` signs REF's digest in its (plain-HTTP,
+ * loopback) registry. Test tooling only: it holds a private key, which
+ * nothing OrkStack ships ever does. The binary is this run's own, built from
+ * this tree by e2e/global-setup.ts, so one left by another branch's tree can
+ * never be the one that writes this run's signatures.
  */
 export function cosignSign(args: string[]): string {
-	// Rebuilt every call: a binary left by another branch's tree must never
-	// be the one that writes this run's signatures.
-	const bin = path.join(repoRoot, 'bin', 'cosign-sign');
-	execFileSync('go', ['build', '-o', 'bin/cosign-sign', './test/tools/cosign-sign'], { cwd: repoRoot });
-	return execFileSync(bin, args, { cwd: repoRoot, encoding: 'utf8' });
+	return execFileSync(bin('cosign-sign'), args, { cwd: repoRoot, encoding: 'utf8' });
 }

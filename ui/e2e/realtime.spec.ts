@@ -1,11 +1,11 @@
 import { expect, test } from './test';
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createWriteStream, mkdirSync, readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { catalogEnv, containerHost, ensureActivityImages, orkerEnv, s3Env, killStarted, trackChild } from './harness';
+import { catalogEnv, containerHost, ensureActivityImages, orkerEnv, s3Env, killStarted, trackChild, bin, temporalAddress, temporalReachable } from './harness';
 
 // Realtime proof: real engine + real Orker + built UI, driven by a browser.
 // The spec submits hello-ork through the UI form and asserts the run page
@@ -18,6 +18,11 @@ const repoRoot = path.resolve(uiDir, '..');
 const ENGINE_HTTP = 'http://127.0.0.1:18080';
 const ENGINE_WS = 'ws://127.0.0.1:18080';
 const UI_ORIGIN = 'http://127.0.0.1:14173';
+
+// The Temporal namespace this spec's engine and Orker share: its own, so no
+// other engine on the cluster can take its workflow or activity tasks
+// (AGENTS.md §11.1).
+const TEMPORAL_NAMESPACE = `ork-ui-realtime-${Date.now().toString(36)}`;
 
 // The namespace this spec applies hello-ork into and runs it in: its own,
 // fresh on every run. The shared development bucket's `default` namespace
@@ -97,7 +102,7 @@ test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 
 	// Infra preconditions: Temporal + MinIO must be live (make infra-up).
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	if (await tcpOpen(18080)) throw new Error('port 18080 already in use (stray engine?)');
 	if (await tcpOpen(14173)) throw new Error('port 14173 already in use (stray UI?)');
@@ -107,12 +112,6 @@ test.beforeAll(async () => {
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
-	}
 
 	// Hermetic target for the hello-ork fetch task (no external network).
 	//
@@ -137,10 +136,11 @@ test.beforeAll(async () => {
 	// local backend beside an S3 Orker pins a `file://` root that the Orker's
 	// S3 commit store cannot parse, and every task fails COMMIT_READ_FAILED
 	// before it runs.
-	spawnLogged('engine.log', './bin/ork', [], {
+	spawnLogged('engine.log', bin('ork'), [], {
 		...catalogEnv,
 		...s3Env,
-		ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233',
+		ORK_TEMPORAL_ADDRESS: temporalAddress(),
+		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE,
 		ORK_HTTP_ADDR: '127.0.0.1:18080',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
@@ -154,9 +154,10 @@ test.beforeAll(async () => {
 	});
 
 	// Orker: the generic worker that runs any activity image, against MinIO.
-	spawnLogged('orker.log', './bin/orker', [], {
+	spawnLogged('orker.log', bin('orker'), [], {
 		...s3Env,
-		ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233',
+		ORK_TEMPORAL_ADDRESS: temporalAddress(),
+		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE,
 		...orkerEnv('realtime')
 	});
 

@@ -1,20 +1,22 @@
 import { expect, test, type Page } from './test';
-import { execFileSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { type ChildProcess } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	clusterEnv,
 	noteTo,
 	orkerEnv,
 	proofOut,
-	repoRoot,
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
 	tcpOpen,
 	uiDir,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // Admin → Pools → Show Orkers, against a real engine, two real Orkers on
@@ -72,7 +74,7 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
 }
 
 function startOrker(id: string, root: string): ChildProcess {
-	const child = spawnLogged(outPath(`${id}.log`), './bin/orker', [], {
+	const child = spawnLogged(outPath(`${id}.log`), bin('orker'), [], {
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...s3Env,
 		...orkerEnv(root),
@@ -116,18 +118,14 @@ test.beforeAll(async () => {
 			''
 		].join('\n')
 	);
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [Number(ENGINE_PORT), Number(UI_PORT)]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) throw new Error('UI build output missing: ui/build/index.js');
 
 	mine.push(
-		spawnLogged(outPath('engine.log'), './bin/ork', [], {
+		spawnLogged(outPath('engine.log'), bin('ork'), [], {
 			...clusterEnv(TEMPORAL_NAMESPACE),
 			...s3Env,
 			ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`,

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from './test';
-import { execFileSync, type ChildProcess } from 'node:child_process';
+import { type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -9,14 +9,16 @@ import {
 	noteTo,
 	orkerEnv,
 	proofOut,
-	repoRoot,
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
 	tcpOpen,
 	uiDir,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // Admin → Releases (docs/DEPLOY.md §3), against real engines and Orkers
@@ -85,7 +87,7 @@ const deploymentEnv = (build: string) => ({
 
 async function startEngine(name: string, port: number, build: string): Promise<void> {
 	mine.push(
-		spawnLogged(outPath(`${name}.log`), './bin/ork', [], {
+		spawnLogged(outPath(`${name}.log`), bin('ork'), [], {
 			...deploymentEnv(build),
 			...catalogEnv,
 			ORK_HTTP_ADDR: `127.0.0.1:${port}`,
@@ -100,7 +102,7 @@ const workRoot = (id: string) => orkerEnv(id).ORK_ORKER_WORKDIR;
 
 function startOrker(id: string, build: string): void {
 	mine.push(
-		spawnLogged(outPath(`${id}.log`), './bin/orker', [], {
+		spawnLogged(outPath(`${id}.log`), bin('orker'), [], {
 			...deploymentEnv(build),
 			...orkerEnv(id),
 			ORK_ORKER_ID: id
@@ -192,16 +194,12 @@ test.beforeAll(async () => {
 			''
 		].join('\n')
 	);
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [PORT_UI_ENGINE, PORT_V1, PORT_V2, UI_PORT]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) throw new Error('UI build output missing: ui/build/index.js');
 
 	await startEngine('engine-unversioned', PORT_UI_ENGINE, '');
 	mine.push(

@@ -1,9 +1,18 @@
 import { defineConfig } from '@playwright/test';
 import path from 'node:path';
 
-// The realtime e2e drives the BUILT UI (adapter-node) against a real engine +
-// Orker on live local infra (Temporal :7233, MinIO :9000). Processes are
-// started and always killed by the spec itself; see e2e/realtime.spec.ts.
+// The e2e specs drive the BUILT UI (adapter-node) against a real engine +
+// Orker on live local infra: Temporal (the proof's own, at
+// ORK_TEMPORAL_ADDRESS, or `make infra-up`'s :7233) and MinIO :9000.
+// Processes are started and always killed by each spec itself.
+//
+// Spec files run one at a time (`workers: 1`; scripts/proof.sh passes
+// PROOF_UI_WORKERS, which stays 1) until the browser runs in a network
+// namespace of its own: every container started or stopped on the host
+// changes the host's interfaces, and a Chromium that shares the host's
+// network namespace aborts its loads with net::ERR_NETWORK_CHANGED
+// (e2e/test.ts). More workers means more of that churn inside the UI phase
+// itself.
 //
 // Under a proof (ORK_PROOF_DIR set by scripts/proof.sh) Playwright's own
 // output — each failing test's trace, screenshot and error context — is kept
@@ -29,6 +38,9 @@ export const NETWORK_CHANGE_RETRY_CEILING = 3;
 
 export default defineConfig({
 	testDir: './e2e',
+	// The binaries and the UI build every spec uses, built once per run.
+	globalSetup: './e2e/global-setup.ts',
+	globalTeardown: './e2e/global-teardown.ts',
 	outputDir: proofDir ? path.join(proofDir, 'test-results') : 'test-results',
 	timeout: 180_000,
 	expect: { timeout: 15_000 },

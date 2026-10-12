@@ -1,6 +1,5 @@
 import { expect, test, type Page } from './test';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import {
@@ -18,9 +17,11 @@ import {
 	spawnLogged,
 	tcpOpen,
 	uiDir,
-	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // The run detail page, in a browser, against the real stack.
@@ -42,8 +43,6 @@ import {
 // AGENTS.md §11.1 — a Temporal namespace of this spec's own, so a parallel
 // agent cannot steal these activities, and stamped orkflow names so two runs
 // of this spec cannot collide in the default ork namespace.
-
-
 
 // Ports of this spec's own, so the whole e2e directory can run in one go.
 const ENGINE = 'http://127.0.0.1:18084';
@@ -405,7 +404,7 @@ test.beforeAll(async () => {
 	// expected to probe every one of them BEFORE it runs this spec, so an
 	// absence never reaches here and a failure here is never an absence
 	// (AGENTS.md §11.1).
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18084, 14176]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
@@ -430,23 +429,17 @@ test.beforeAll(async () => {
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
-	}
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 
-	spawnLogged(outPath('engine.log'), './bin/ork', [], {
+	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18084',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged(outPath('orker.log'), './bin/orker', [], {
+	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
 		...s3Env,
 		...orkerEnv('run-page')

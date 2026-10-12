@@ -1,10 +1,23 @@
 import { expect, test, type Page } from './test';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-	catalogEnv, clusterEnv, ensureActivityImages, killStarted, orkerEnv, proofOut,
-	rpc as callEngine, s3Env, spawnLogged, tcpOpen, uiDir, repoRoot, waitFor, waitForEngine
+	catalogEnv,
+	clusterEnv,
+	ensureActivityImages,
+	killStarted,
+	orkerEnv,
+	proofOut,
+	rpc as callEngine,
+	s3Env,
+	spawnLogged,
+	tcpOpen,
+	uiDir,
+	waitFor,
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 import { OP, addListFilter, selectOption } from './uiHelpers';
 
@@ -71,17 +84,13 @@ function equals(field: string, value: string) {
 test.beforeAll(async () => {
 	mkdirSync(DIR, { recursive: true });
 	writeFileSync(out('session.txt'), `browsing operations\nnamespace=${NS}\nflow=${FLOW}\n`);
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18090, 14184]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) throw new Error('UI build output missing');
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
-	spawnLogged(out('engine.log'), './bin/ork', [], { ...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18090', ORK_WS_ALLOWED_ORIGINS: UI });
-	spawnLogged(out('orker.log'), './bin/orker', [], { ...cluster, ...s3Env, ...orkerEnv('browsing-operations') });
+	spawnLogged(out('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18090', ORK_WS_ALLOWED_ORIGINS: UI });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('browsing-operations') });
 	await waitForEngine(ENGINE);
 	spawnLogged(out('ui.log'), 'node', ['build'], { HOST: '127.0.0.1', PORT: '14184', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: 'ws://127.0.0.1:18090' }, uiDir);
 	await waitFor('UI', async () => (await fetch(`${UI}/runs?ns=${NS}`)).ok);

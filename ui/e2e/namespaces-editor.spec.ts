@@ -1,10 +1,10 @@
 import { expect, test, type Page } from './test';
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createWriteStream, mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { catalogEnv, ensureActivityImages, killStarted, trackChild } from './harness';
+import { catalogEnv, ensureActivityImages, killStarted, trackChild, bin, temporalAddress, temporalReachable } from './harness';
 import { expectNamespace, selectNamespace } from './uiHelpers';
 
 // The UI is namespace-aware, and an orkflow can be edited,
@@ -198,7 +198,7 @@ const openVersions = (page: Page) =>
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	if (await tcpOpen(18081)) throw new Error('port 18081 already in use (stray engine?)');
 	if (await tcpOpen(14174)) throw new Error('port 14174 already in use (stray UI?)');
@@ -207,18 +207,13 @@ test.beforeAll(async () => {
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
-	}
 
 	// The engine stores orkflows, versions and the namespace registry in the
 	// real bucket: the version list, the current pointer and the CAS this spec
 	// exercises are MinIO objects, not process memory.
-	spawnLogged('engine.log', './bin/ork', [], {
+	spawnLogged('engine.log', bin('ork'), [], {
 		...catalogEnv,
-		ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233',
+		ORK_TEMPORAL_ADDRESS: temporalAddress(),
 		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE,
 		ORK_HTTP_ADDR: '127.0.0.1:18081',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,

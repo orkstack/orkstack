@@ -1,7 +1,7 @@
 import { expect, test, type Page } from './test';
-import { execFileSync, type ChildProcess } from 'node:child_process';
+import { type ChildProcess } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
@@ -18,9 +18,11 @@ import {
 	spawnLogged,
 	tcpOpen,
 	uiDir,
-	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // Admin → Webhooks → Deliveries, in a browser, against the real engine, Orker,
@@ -113,7 +115,7 @@ let failedId = '';
 
 const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 function startEngine(): ChildProcess {
-	const child = spawnLogged(out(`engine-${mine.length}.log`), './bin/ork', [], {
+	const child = spawnLogged(out(`engine-${mine.length}.log`), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...s3Env,
@@ -203,7 +205,7 @@ test.use({ timezoneId: 'UTC' });
 
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [ENGINE_PORT, UI_PORT]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
 
@@ -220,13 +222,9 @@ test.beforeAll(async () => {
 	receiverURL = `http://127.0.0.1:${(receiver.address() as AddressInfo).port}/hooks`;
 
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) throw new Error('UI build output missing');
 
 	engine = startEngine();
-	mine.push(spawnLogged(out('orker.log'), './bin/orker', [], { ...cluster, ...s3Env, ...orkerEnv('admin-deliveries') }));
+	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('admin-deliveries') }));
 	mine.push(
 		spawnLogged(out('ui.log'), 'node', ['build'], {
 			HOST: '127.0.0.1', PORT: String(UI_PORT), ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
