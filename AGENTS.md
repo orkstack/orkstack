@@ -826,9 +826,13 @@ Stop only what you started, by its PID. Never kill by name or pattern:
 running proof on the host. A proof runs in its own session and process group,
 with its own binaries under `proof/<name>/bin/` and its own Temporal container;
 `scripts/proof-stop.sh proof/<name>` (`make proof-stop PROOF=proof/<name>`)
-stops exactly those. `make down` stops this worktree's dev stack. What failed
+stops exactly those. `make down` stops this worktree's dev stack: the process
+groups `make up` recorded, and any process whose executable is this
+worktree's `bin/ork` or `bin/orker`, identified by `/proc/<pid>/exe`, never by
+its name. What failed
 tests keep for their post-mortem (buckets, work roots) is listed, and removed
-on request, by `scripts/proof-clean.sh`.
+on request, by `scripts/proof-clean.sh`, which removes one only once the
+process its name records is gone.
 
 ### 11.2 Evidence
 

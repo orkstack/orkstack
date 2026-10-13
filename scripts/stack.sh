@@ -6,9 +6,13 @@
 #   scripts/stack.sh status  what is running, and where
 #
 # Everything it starts is recorded in .run/: one pidfile and one log per
-# process. down kills exactly those pids, then sweeps by name for anything
-# started by hand, because a stray Orker steals activities from every later
-# run and looks like a code bug (AGENTS.md §11.1).
+# process, each the leader of a process group of its own. down stops exactly
+# those groups, then stops any other process whose executable IS this
+# worktree's bin/ork or bin/orker (read from /proc/<pid>/exe, never matched by
+# name or pattern), because a stray Orker started by hand steals activities
+# from every later run and looks like a code bug. Nothing else on the host —
+# another worktree's stack, a proof, a test's binaries — is touched
+# (AGENTS.md §11.1).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -42,6 +46,31 @@ die() { printf '%s\n' "$*" >&2; exit 1; }
 pidfile() { echo "$RUN_DIR/$1.pid"; }
 logfile() { echo "$RUN_DIR/$1.log"; }
 
+# worktree_binary_pids — the pids whose executable is this worktree's
+# bin/ork or bin/orker, by identity: /proc/<pid>/exe resolved and compared
+# exactly, so bin/orkctl, another worktree's binaries and a proof's
+# proof/<name>/bin never match.
+# Without /proc (macOS), ps's comm column is the executable's full path for a
+# process started by its absolute path, and is compared just as exactly.
+worktree_binary_pids() {
+	local p exe pid
+	if [ -e /proc/self/exe ]; then
+		for p in /proc/[0-9]*; do
+			exe="$(readlink "$p/exe" 2>/dev/null)" || continue
+			exe="${exe% (deleted)}"
+			case "$exe" in
+			"$REPO/bin/ork" | "$REPO/bin/orker") echo "${p#/proc/}" ;;
+			esac
+		done
+		return 0
+	fi
+	ps -axo pid=,comm= 2>/dev/null | while read -r pid exe; do
+		case "$exe" in
+		"$REPO/bin/ork" | "$REPO/bin/orker") echo "$pid" ;;
+		esac
+	done
+}
+
 # alive NAME — true when the recorded pid is still running.
 alive() {
 	local pf
@@ -65,7 +94,16 @@ start() {
 	mkdir -p "$RUN_DIR"
 	local attempt pid
 	for attempt in 1 2 3; do
-		"$@" >"$(logfile "$name")" 2>&1 &
+		# Its own session and process group, so stop reaches what it spawns
+		# (bun's vite) and nothing else. A background job of this
+		# non-interactive shell is never a group leader, so setsid does not
+		# fork and $! is the new group's leader. Without setsid (macOS) the
+		# process shares this shell's group and stop signals its pid alone.
+		if command -v setsid >/dev/null 2>&1; then
+			setsid "$@" >"$(logfile "$name")" 2>&1 &
+		else
+			"$@" >"$(logfile "$name")" 2>&1 &
+		fi
 		pid=$!
 		echo "$pid" >"$(pidfile "$name")"
 		sleep 2
@@ -80,19 +118,25 @@ start() {
 	die "$name would not stay up; full log at $(logfile "$name")"
 }
 
-# stop NAME — terminate politely, then firmly.
+# stop NAME — terminate the recorded process group politely, then firmly. A
+# pidfile written before the stack started each process in its own group
+# names a plain pid; that pid alone is signalled.
 stop() {
-	local name="$1" pf pid
+	local name="$1" pf pid target
 	pf="$(pidfile "$name")"
 	[ -f "$pf" ] || return 0
 	pid="$(cat "$pf")"
-	if kill -0 "$pid" 2>/dev/null; then
-		kill "$pid" 2>/dev/null || true
+	target="$pid"
+	if [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ]; then
+		target="-$pid"
+	fi
+	if kill -0 -- "$target" 2>/dev/null; then
+		kill -TERM -- "$target" 2>/dev/null || true
 		for _ in $(seq 1 40); do
-			kill -0 "$pid" 2>/dev/null || break
+			kill -0 -- "$target" 2>/dev/null || break
 			sleep 0.25
 		done
-		kill -9 "$pid" 2>/dev/null || true
+		kill -KILL -- "$target" 2>/dev/null || true
 		say "  $name stopped (pid $pid)"
 	fi
 	rm -f "$pf"
@@ -319,19 +363,24 @@ cmd_down() {
 	stop ui
 	stop ork
 	stop orker
-	# A worker started by hand outlives its pidfile and steals activities from
-	# every later run, so sweep by name too (AGENTS.md §11.1).
-	pkill -f "$REPO/bin/orker" 2>/dev/null || true
-	pkill -f "$REPO/bin/ork$" 2>/dev/null || true
-	pkill -f "vite dev --port $UI_PORT" 2>/dev/null || true
-	sleep 1
+	# A worker started by hand from this worktree's bin/ outlives any pidfile
+	# and steals activities from every later run. It is found by the identity
+	# of its executable, never by name or pattern (AGENTS.md §11.1).
+	local pid stray
+	for pid in $(worktree_binary_pids); do
+		say "  stopping pid $pid: it runs this worktree's bin/ork or bin/orker, and make up did not start it"
+		kill -TERM "$pid" 2>/dev/null || true
+	done
+	for _ in $(seq 1 40); do
+		[ -n "$(worktree_binary_pids)" ] || break
+		sleep 0.25
+	done
 
 	say "== stopping infrastructure =="
 	"${COMPOSE[@]}" down
 
-	local stray
-	stray="$(pgrep -fl "$REPO/bin/ork" 2>/dev/null || true)"
-	[ -z "$stray" ] || die "processes survived: $stray"
+	stray="$(worktree_binary_pids | tr '\n' ' ')"
+	[ -z "$stray" ] || die "processes running this worktree's bin/ork or bin/orker survived: pids $stray"
 	say "OrkStack is down. Data is kept; make reset wipes it."
 }
 
