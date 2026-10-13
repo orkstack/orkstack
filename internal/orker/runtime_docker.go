@@ -502,6 +502,9 @@ func (d *DockerRuntime) awaitLeftCreated(
 	for {
 		started, err := d.leftCreated(ctx, id)
 		if err != nil {
+			if ctx.Err() != nil {
+				return d.startedDespiteCancel(ctx, id)
+			}
 			return err
 		}
 		if started {
@@ -522,7 +525,7 @@ func (d *DockerRuntime) awaitLeftCreated(
 			return fmt.Errorf("start container %s: the runtime exited without running it: %v: %s",
 				id, attach.err, strings.TrimSpace(diagnostics.String()))
 		case <-ctx.Done():
-			return ctx.Err()
+			return d.startedDespiteCancel(ctx, id)
 		case <-time.After(poll):
 		}
 		// Back off: a container that starts at once is seen on the first or
@@ -537,6 +540,25 @@ func (d *DockerRuntime) awaitLeftCreated(
 				id, startStateTimeout, strings.TrimSpace(diagnostics.String()))
 		}
 	}
+}
+
+// startedDespiteCancel decides what a cancellation that arrives while Start is
+// still observing the container means. The workload may already be running —
+// the daemon starts it before this loop's next observation — and a running
+// workload is owed the cancellation sequence (SIGTERM, the grace period, then
+// SIGKILL: AGENTS.md §3.3), which only the caller's cancellation path
+// delivers. Returning the cancellation as a start failure instead sent the
+// caller to its deferred force-remove, which killed a running container with
+// no SIGTERM and no grace. So the state is observed once more, on a context
+// that survives the cancellation: a container that has left created is
+// reported started, and only one that never did is a cancelled start.
+func (d *DockerRuntime) startedDespiteCancel(ctx context.Context, id ContainerID) error {
+	observeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
+	defer cancel()
+	if started, err := d.leftCreated(observeCtx, id); err == nil && started {
+		return nil
+	}
+	return ctx.Err()
 }
 
 // leftCreated reports whether the daemon has moved the container out of the

@@ -3,6 +3,7 @@ package orker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -372,5 +373,109 @@ func TestDockerRuntime_WaitDrainsTheAttachBeforeReporting(t *testing.T) {
 	if stdout.String() != wantOutput {
 		t.Errorf("stdout = %q, want %q (the durable log would be silently truncated)",
 			stdout.String(), wantOutput)
+	}
+}
+
+// TestDockerRuntime_StartCancelledWhileTheContainerRunsReportsItStarted is the
+// regression test for a cancellation that skipped SIGTERM and the grace
+// period. Start polls the daemon until the container leaves created; a
+// cancellation that arrived between two observations returned as a start
+// failure even when the workload was already running, and the dispatcher then
+// force-removed the running container instead of signalling it (found by
+// TestIntegration_CancellationSignalsThenKills once it cancelled as soon as
+// the workload ran: the container died 751ms after cancellation, inside its 2s
+// grace period). Here the fake daemon reports created until the test marks the
+// container running, and the test cancels right after marking it: Start must
+// report the container started, so the caller's cancellation path runs.
+func TestDockerRuntime_StartCancelledWhileTheContainerRunsReportsItStarted(t *testing.T) {
+	dir := t.TempDir()
+	running := filepath.Join(dir, "running")
+	observed := filepath.Join(dir, "observed-created")
+	script := "#!/bin/sh\nset -eu\ncase \"$1\" in\n" +
+		"  inspect) if [ -e " + shellQuote(running) + " ]; then echo running; else touch " + shellQuote(observed) + "; echo created; fi ;;\n" +
+		"  start) sleep 2 ;;\n" +
+		"  *) exit 1 ;;\n" +
+		"esac\n"
+	bin := filepath.Join(dir, "docker")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake docker binary: %v", err)
+	}
+	runtime := &DockerRuntime{Bin: bin}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		result <- runtime.Start(ctx, "fake-container", &stdout, &stderr)
+	}()
+	// Let Start observe "created" at least once, so the cancellation lands in
+	// its polling loop rather than before it.
+	awaitFile(t, observed, 30*time.Second)
+	if err := os.WriteFile(running, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("Start = %v for a container the daemon reports running; a cancellation "+
+				"while observing it must leave it to the caller's SIGTERM-then-grace path, "+
+				"not fail the start and force-remove it", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Start did not return after the cancellation")
+	}
+}
+
+// TestDockerRuntime_StartCancelledBeforeTheContainerRunsIsACancelledStart:
+// the other half — a container still in created when the cancellation lands
+// was never started, and Start reports the cancellation.
+func TestDockerRuntime_StartCancelledBeforeTheContainerRunsIsACancelledStart(t *testing.T) {
+	dir := t.TempDir()
+	observed := filepath.Join(dir, "observed-created")
+	script := "#!/bin/sh\nset -eu\ncase \"$1\" in\n" +
+		"  inspect) touch " + shellQuote(observed) + "; echo created ;;\n" +
+		"  start) sleep 2 ;;\n" +
+		"  *) exit 1 ;;\n" +
+		"esac\n"
+	bin := filepath.Join(dir, "docker")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake docker binary: %v", err)
+	}
+	runtime := &DockerRuntime{Bin: bin}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		result <- runtime.Start(ctx, "fake-container", &stdout, &stderr)
+	}()
+	awaitFile(t, observed, 30*time.Second)
+	cancel()
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start = %v, want the cancellation for a container that never left created", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Start did not return after the cancellation")
+	}
+}
+
+// awaitFile waits, against a deadline, for path to exist.
+func awaitFile(t *testing.T, path string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s did not appear within %s", path, within)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
