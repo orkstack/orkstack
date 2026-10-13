@@ -51,7 +51,7 @@ func TestRunWorkflow_ScheduledEventNamesThePoolNotTheQueue(t *testing.T) {
 	const rawQueue = "ork-tasks-private-agent"
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-message",
-		compile(t, poolDocument), payload(t, nil), rawPlan(rawQueue, "gpu"))
+		compile(t, poolDocument), payload(t, nil), rawPlan(rawQueue, "gpu"), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestRunWorkflow_TaskRunRecordsThePoolItRanOn(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-projection",
-		compile(t, poolDocument), payload(t, nil), defaultPlan("gpu"))
+		compile(t, poolDocument), payload(t, nil), defaultPlan("gpu"), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -140,7 +140,7 @@ tasks:
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-input",
-		compile(t, document), payload(t, nil), defaultPlan("gpu"))
+		compile(t, document), payload(t, nil), defaultPlan("gpu"), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -218,7 +218,7 @@ tasks:
 			// the pool it resolved to and binds the route table beside it.
 			planned, plan := planFor(t, compile(t, document), channel.bound)
 			h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-agreement",
-				planned, payload(t, nil), plan)
+				planned, payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 			if err := h.env.GetWorkflowError(); err != nil {
 				t.Fatalf("workflow error: %v", err)
 			}

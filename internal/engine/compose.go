@@ -612,6 +612,12 @@ func childFailure(err error) (status orkstackv1.Status, code string, category or
 			// The child stopped before its history limit: a fact about the
 			// platform, not the workload.
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+		case RunStateUnavailableCode:
+			// The child's saved state could not be read in time: the
+			// platform's, like the history limit.
+			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+		case RunStateCorruptCode, RunStateUnsupportedCode:
+			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
 		case AwaitTimedOutCode:
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
 		case AwaitRejectedCode:

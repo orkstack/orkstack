@@ -53,7 +53,7 @@ func TestRunWorkflow_BuildsTheActivityInputFromTheResolvedTask(t *testing.T) {
 	plan.Limits = engine.DefaultLimits()
 	plan.TransferBudgetSeconds = 300
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-1", wf, payload(t, nil), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-1", wf, payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestRunWorkflow_CommitURIIsStableAcrossReplayEquivalentExecutions(t *testin
 		})
 		plan := defaultPlan()
 		plan.CommitRoot = "s3://orkstack-artifacts/"
-		h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-stable-uri", compile(t, dispatchDocument), payload(t, nil), plan)
+		h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-stable-uri", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 		if err := h.env.GetWorkflowError(); err != nil {
 			t.Fatalf("workflow error: %v", err)
 		}
@@ -158,7 +158,7 @@ func TestRunWorkflow_UsesThePlansInputLimitBeforeScheduling(t *testing.T) {
 	plan.Limits = engine.DefaultLimits()
 	plan.Limits.ValuesMaxBytes = 1
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-plan-limit", compile(t, dispatchDocument), payload(t, nil), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-plan-limit", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	err := h.env.GetWorkflowError()
 	if err == nil || !strings.Contains(err.Error(), task.ReasonInputTooLarge) {
 		t.Fatalf("workflow error = %v, want %s from the plan's one-byte limit", err, task.ReasonInputTooLarge)
@@ -190,7 +190,7 @@ func TestRunWorkflow_RecordsTheCommitAndExitCodeOnTheTaskRun(t *testing.T) {
 	plan := defaultPlan()
 	plan.CommitRoot = "s3://orkstack-artifacts"
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-2", compile(t, dispatchDocument), payload(t, nil), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-2", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestRunWorkflow_ReadsTheOrkersFailureAsDataNotAsAString(t *testing.T) {
 			task.CategoryContractViolation, nil, detail)
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-3", compile(t, dispatchDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-3", compile(t, dispatchDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err == nil {
 		t.Fatal("the run succeeded despite its only task failing")
 	}
@@ -355,7 +355,7 @@ func TestRunWorkflow_SetsTheHeartbeatAndCancellationOptions(t *testing.T) {
 	plan := defaultPlan()
 	plan.TransferBudgetSeconds = 600
 
-	env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-4", compile(t, dispatchDocument), payload(t, nil), plan)
+	env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-4", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	if err := env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}

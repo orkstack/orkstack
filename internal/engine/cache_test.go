@@ -61,7 +61,7 @@ tasks:
 func runCached(t *testing.T, h *eachHarness, runID, document string, plan engine.RunPlan) *orkstackv1.Run {
 	t.Helper()
 	plan.CommitRoot = "mem://commits"
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, document), payload(t, nil), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, document), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}

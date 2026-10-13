@@ -95,7 +95,7 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 
-	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan)
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan, (*orkstackv1.RunContinuation)(nil))
 
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the fixture's own input did not complete the workflow")
@@ -196,7 +196,7 @@ func TestGoldenHistory_ReplayedSnapshotProjectsSchedulingAndLeavesStartUnset(t *
 		func(context.Context, *orkstackv1.Event, string, string) error { return nil },
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
-	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan)
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan, (*orkstackv1.RunContinuation)(nil))
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the fixture's own input did not complete the workflow")
 	}

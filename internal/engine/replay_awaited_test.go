@@ -204,7 +204,7 @@ func TestAwaitedHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) 
 			env.SignalWorkflow(engine.ResolveAwaitSignal, sig)
 		}, offsets[i])
 	}
-	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan)
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan, (*orkstackv1.RunContinuation)(nil))
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the resolved fixture did not complete the workflow")
 	}

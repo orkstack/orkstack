@@ -332,7 +332,7 @@ func TestRunWorkflow_RejectsAnOrkflowWithNoTasks(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-1-1",
-		&orkstackv1.Orkflow{Name: "empty", Version: "0.1.0"}, payload(t, nil), defaultPlan())
+		&orkstackv1.Orkflow{Name: "empty", Version: "0.1.0"}, payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -355,7 +355,7 @@ func TestRunWorkflow_ExecutesLinearNeedsInOrder(t *testing.T) {
 		}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-linear", compile(t, linearDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-linear", compile(t, linearDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -459,7 +459,7 @@ func TestRunWorkflow_FansOutIndependentTasks(t *testing.T) {
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId})}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fanout", compile(t, fanOutDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fanout", compile(t, fanOutDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -513,7 +513,7 @@ func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
 		}
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-upstream", compile(t, upstreamDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-upstream", compile(t, upstreamDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -599,7 +599,7 @@ func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition",
-		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}), defaultPlan())
+		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -655,7 +655,7 @@ func TestRunWorkflow_RunsTaskWithMetCondition(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition-true",
-		compile(t, conditionDocument), payload(t, map[string]any{"enabled": true}), defaultPlan())
+		compile(t, conditionDocument), payload(t, map[string]any{"enabled": true}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -700,7 +700,7 @@ func TestRunWorkflow_RetriesPerPolicyThenFailsRun(t *testing.T) {
 			return &orkstackv1.ExecuteTaskResult{}, errors.New("workload exited 1")
 		}).Times(3)
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry", compile(t, retryDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry", compile(t, retryDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -791,7 +791,7 @@ tasks:
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
 
-	env.ExecuteWorkflow(engine.RunWorkflow, "run-cause-kept", compile(t, document), payload(t, nil), defaultPlan())
+	env.ExecuteWorkflow(engine.RunWorkflow, "run-cause-kept", compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -828,7 +828,7 @@ tasks:
 		return &orkstackv1.ExecuteTaskResult{}, errors.New("boom")
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-retry", compile(t, document), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-retry", compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if h.env.GetWorkflowError() == nil {
 		t.Fatal("workflow error = nil, want failure")
@@ -858,7 +858,7 @@ tasks:
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-default-input", compile(t, document), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-default-input", compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -902,7 +902,7 @@ tasks:
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-readiness", compile(t, document), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-readiness", compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -958,7 +958,7 @@ func TestRunWorkflow_CarriesThePlanTelemetryOntoTheInputAndTheSnapshot(t *testin
 		Attributes: map[string]string{"ork.ns.team": "payments"},
 	}
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-telemetry-set", compile(t, dispatchDocument), payload(t, nil), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-telemetry-set", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -995,7 +995,7 @@ func TestRunWorkflow_LeavesTelemetryUnsetWithNoPlanSelection(t *testing.T) {
 	plan := defaultPlan()
 	plan.Telemetry = nil
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-telemetry-unset", compile(t, dispatchDocument), payload(t, nil), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-telemetry-unset", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -1055,7 +1055,7 @@ func TestRunWorkflow_CancelsSiblingsAndSkipsUnstartedTasksWhenATaskFails(t *test
 		activity.RegisterOptions{Name: task.ActivityExecuteTask})
 
 	started := time.Now()
-	env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-siblings", compile(t, cancelSiblingsDocument), payload(t, nil), defaultPlan())
+	env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-siblings", compile(t, cancelSiblingsDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -1196,7 +1196,7 @@ func TestRunWorkflow_NeverAnnouncesACanceledSiblingAsATaskOutcome(t *testing.T) 
 		activity.RegisterOptions{Name: task.ActivityExecuteTask})
 
 	const runID = "run-cancel-siblings-announce"
-	env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, cancelSiblingsDocument), payload(t, nil), defaultPlan())
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, cancelSiblingsDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -1308,7 +1308,7 @@ func TestRunWorkflow_SchedulesEveryPinnedTaskOnOnePinSessionAndReleasesIt(t *tes
 	}, nil)
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pinned",
-		compile(t, pinnedDocument), payload(t, nil), defaultPlan())
+		compile(t, pinnedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -1441,7 +1441,7 @@ tasks:
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pinned-skipped",
-		compile(t, document), payload(t, map[string]any{"enabled": false}), defaultPlan())
+		compile(t, document), payload(t, map[string]any{"enabled": false}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -1526,7 +1526,7 @@ tasks:
 		})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pinned-held",
-		compile(t, document), payload(t, nil), defaultPlan())
+		compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -1583,7 +1583,7 @@ tasks:
 	}, nil)
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pinned-concurrent",
-		compile(t, document), payload(t, nil), defaultPlan())
+		compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -1634,7 +1634,7 @@ func TestRunWorkflow_ClassifiesALostPinHostAsPinHostLost(t *testing.T) {
 		"pin host stopped heartbeating", task.CategoryInfrastructureError, nil))
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-lost",
-		compile(t, pinnedDocument), payload(t, nil), defaultPlan())
+		compile(t, pinnedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -1756,7 +1756,7 @@ func TestRunWorkflow_BackfillsALostPinMembersOrkerIDFromItsSibling(t *testing.T)
 		"pin host stopped heartbeating", task.CategoryInfrastructureError, nil))
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-lost-backfill",
-		compile(t, pinnedDocument), payload(t, nil), defaultPlan())
+		compile(t, pinnedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -1879,7 +1879,7 @@ tasks:
 		})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-expired",
-		compile(t, document), payload(t, nil), defaultPlan())
+		compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -1931,7 +1931,7 @@ func TestRunWorkflow_FailsTheTriggeringTaskWhenNoPinHostHasAFreeSlot(t *testing.
 			"too many outstanding sessions", task.CategoryInfrastructureError, nil))
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-unavailable",
-		compile(t, pinnedDocument), payload(t, nil), defaultPlan())
+		compile(t, pinnedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -2013,7 +2013,7 @@ func TestRunWorkflow_ClosesAPinAsSoonAsItsOwnMembersAreDone(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-closes-early",
-		compile(t, pinnedDocument), payload(t, nil), defaultPlan())
+		compile(t, pinnedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -2049,7 +2049,7 @@ func TestRunWorkflow_DoesNotReturnBeforeItsPinHasFinishedClosing(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-close-awaited",
-		compile(t, pinnedDocument), payload(t, nil), defaultPlan())
+		compile(t, pinnedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	returned := time.Now()
 
 	if err := h.env.GetWorkflowError(); err != nil {
@@ -2097,7 +2097,7 @@ func TestRunWorkflow_LeavesAPinnedTaskThatFailedOnItsOwnToTheOrdinaryPath(t *tes
 	}, nil)
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-own-failure",
-		compile(t, pinnedDocument), payload(t, nil), defaultPlan())
+		compile(t, pinnedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if h.env.GetWorkflowError() == nil {
 		t.Fatal("workflow error = nil, want the member's own failure to fail the run")
@@ -2158,7 +2158,7 @@ tasks:
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-unpinned-orker-id",
-		compile(t, document), payload(t, nil), defaultPlan())
+		compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
 	if h.env.GetWorkflowError() == nil {
 		t.Fatal("workflow error = nil, want the task failure")

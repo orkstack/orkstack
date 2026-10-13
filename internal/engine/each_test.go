@@ -120,7 +120,7 @@ func (h *eachHarness) run(t *testing.T, runID, document string, input map[string
 	t.Helper()
 	plan := defaultPlan()
 	plan.CommitRoot = "mem://commits"
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, document), payload(t, input), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, document), payload(t, input), plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -1022,7 +1022,7 @@ func TestRunWorkflow_EachOnAHandBuiltPinnedTaskIsInvalidEach(t *testing.T) {
 	wf.Pins = []*orkstackv1.Pin{{Name: "b"}}
 	wf.Tasks[0].Pin = "b"
 	plan := defaultPlan()
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-each-pin", wf, payload(t, map[string]any{"regions": []any{"eu"}}), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-each-pin", wf, payload(t, map[string]any{"regions": []any{"eu"}}), plan, (*orkstackv1.RunContinuation)(nil))
 	run, _ := h.store.Get("run-each-pin")
 	node := taskRunOf(t, run, "convert")
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || node.GetError().GetCode() != engine.InvalidEachCode {

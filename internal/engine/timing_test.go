@@ -49,7 +49,7 @@ func TestRunWorkflow_ScheduledAtIsTheTaskScheduledEventsTimestamp(t *testing.T) 
 	h.env.SetStartTime(timingStart)
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-scheduled-at",
-		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}), defaultPlan())
+		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -113,7 +113,7 @@ tasks:
   - id: only
     uses: shell
     with: {command: "echo only"}
-`), payload(t, nil), defaultPlan())
+`), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -159,7 +159,7 @@ tasks:
   - id: doomed
     uses: shell
     with: {command: "exit 4"}
-`), payload(t, nil), defaultPlan())
+`), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if h.env.GetWorkflowError() == nil {
 		t.Fatal("workflow error = nil, want the failure")
 	}
@@ -209,7 +209,7 @@ tasks:
   - id: lost
     uses: shell
     with: {command: "sleep 1"}
-`), payload(t, nil), defaultPlan())
+`), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 			if h.env.GetWorkflowError() == nil {
 				t.Fatal("workflow error = nil, want the failure")
 			}
@@ -262,7 +262,7 @@ tasks:
     uses: shell
     retry: {maximum_attempts: 2}
     with: {command: "echo ok"}
-`), payload(t, nil), defaultPlan())
+`), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}

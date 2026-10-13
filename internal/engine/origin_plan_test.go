@@ -105,7 +105,7 @@ func snapshotsFor(t *testing.T, runID string, plan engine.RunPlan) []*orkstackv1
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
-	env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, linearDocument), payload(t, nil), plan)
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, linearDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	if err := env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}

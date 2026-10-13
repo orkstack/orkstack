@@ -172,7 +172,7 @@ func TestHistoryLimitHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		pub[strconv.FormatInt(event.GetSequence(), 10)] = canonicalPayload(t, event)
 		return nil
 	}, activity.RegisterOptions{Name: engine.ActivityPublishEvent})
-	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan)
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan, (*orkstackv1.RunContinuation)(nil))
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the fixture's own input did not complete")
 	}

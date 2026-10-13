@@ -208,7 +208,7 @@ func failingRun(t *testing.T, runID, doc string) (*orkstackv1.Run, *harness) {
 	var suite testsuite.WorkflowTestSuite
 	smokeCanceled := make(chan struct{})
 	h := newHarnessCtx(t, &suite, joinFailBehavior(smokeCanceled))
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatalf("%s: workflow did not complete", runID)
 	}
@@ -268,7 +268,7 @@ func TestRunWorkflow_NoneFailedRejoinsAfterTheBranchThatRan(t *testing.T) {
 			})
 			runID := "run-rejoin-" + route
 			h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, rejoinDocument),
-				payload(t, map[string]any{"route": route}), defaultPlan())
+				payload(t, map[string]any{"route": route}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 			if err := h.env.GetWorkflowError(); err != nil {
 				t.Fatalf("workflow error: %v", err)
 			}
@@ -315,7 +315,7 @@ func TestRunWorkflow_NoneFailedIsSkippedWhenEveryNeedWasSkipped(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	h := newHarness(t, &suite, okTask)
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-rejoin-none", compile(t, rejoinDocument),
-		payload(t, map[string]any{"route": "none"}), defaultPlan())
+		payload(t, map[string]any{"route": "none"}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestRunWorkflow_AnyFailedIsSkippedInARunThatDoesNotFail(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	h := newHarness(t, &suite, okTask)
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-any-failed-skipped", compile(t, anyFailedSkippedDocument),
-		payload(t, nil), defaultPlan())
+		payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -517,7 +517,7 @@ func TestRunWorkflow_AllDoneHandlerRunningWhenAnotherTaskFailsIsNotCanceled(t *t
 		}
 	})
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-all-done-running", compile(t, allDoneRunningDocument),
-		payload(t, nil), defaultPlan())
+		payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-all-done-running")
 	if watcherCanceled {
 		t.Fatal("the all_done handler was cancelled by fail-fast")
@@ -560,7 +560,7 @@ func TestRunWorkflow_AFailingHandlerStopsNothingAndLeavesTheRunError(t *testing.
 			return okTask(in)
 		}
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-two-handlers", compile(t, twoHandlersDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-two-handlers", compile(t, twoHandlersDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-two-handlers")
 	if statusOf(run, "page") != orkstackv1.Status_STATUS_FAILED || statusOf(run, "rollback") != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("page = %v, rollback = %v", statusOf(run, "page"), statusOf(run, "rollback"))
@@ -600,7 +600,7 @@ func TestRunWorkflow_AnyFailedOnAHandlerEscalates(t *testing.T) {
 				return okTask(in)
 			})
 			runID := fmt.Sprintf("run-escalate-%v", rollbackFails)
-			h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, escalateDocument), payload(t, nil), defaultPlan())
+			h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, escalateDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 			run := runOf(t, h, runID)
 			if rollbackFails {
 				if statusOf(run, "escalate") != orkstackv1.Status_STATUS_SUCCEEDED {
@@ -686,7 +686,7 @@ func TestRunWorkflow_OperatorCancelStartsNoHandlerAndStopsRunningOnes(t *testing
 			return okTask(in)
 		}
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-operator-cancel", compile(t, operatorCancelDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-operator-cancel", compile(t, operatorCancelDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -749,7 +749,7 @@ func TestRunWorkflow_OperatorCancelDuringFailureHandlersKeepsTheRunFailed(t *tes
 			return okTask(in)
 		}
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-handler-cancel", compile(t, handlerCancelDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-handler-cancel", compile(t, handlerCancelDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -795,7 +795,7 @@ func TestRunWorkflow_SnapshotsAreRunningWithTheErrorWhileHandlersRun(t *testing.
 		mu.Unlock()
 		return nil
 	}
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-failing-shape", compile(t, escalateDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-failing-shape", compile(t, escalateDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	mu.Lock()
 	defer mu.Unlock()
 	failingSeen := false
@@ -828,7 +828,7 @@ func TestRunWorkflow_EmitsOneFailingNoteNamingTheOutstandingHandlers(t *testing.
 		}
 		return okTask(in)
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-failing-note", compile(t, escalateDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-failing-note", compile(t, escalateDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	var notes []*orkstackv1.Event
 	for _, e := range eventsOf(h, "run-failing-note") {
 		if e.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_LOG && e.GetTaskId() == "" {
@@ -874,7 +874,7 @@ tasks:
     needs: [h]
     join: all_done
     with: {op: exec}
-`), payload(t, nil), defaultPlan())
+`), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	for _, e := range eventsOf(h2, "run-no-note") {
 		if e.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_LOG && e.GetTaskId() == "" {
 			t.Fatalf("a failing note was emitted with no handler outstanding: %v", e)
@@ -913,7 +913,7 @@ func TestRunWorkflow_AConditionThatCannotBeEvaluatedFailsItsTask(t *testing.T) {
     with: {op: exec}
 `
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition-failed", compile(t, doc),
-		payload(t, map[string]any{"a": "x", "b": 1}), defaultPlan())
+		payload(t, map[string]any{"a": "x", "b": 1}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-condition-failed")
 	broken := taskRunOf(t, run, "broken")
 	if broken.GetStatus() != orkstackv1.Status_STATUS_FAILED || broken.GetError().GetCode() != "CONDITION_FAILED" ||
@@ -947,7 +947,7 @@ func TestRunWorkflow_ConditionErrorWithoutAHandlerKeepsTodaysRecord(t *testing.T
 		var suite testsuite.WorkflowTestSuite
 		h := newHarness(t, &suite, okTask)
 		h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc),
-			payload(t, map[string]any{"a": "x", "b": 1}), defaultPlan())
+			payload(t, map[string]any{"a": "x", "b": 1}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 		return runOf(t, h, runID), h
 	}
 	// A none_failed join is present: the gate is failure handlers, not joins.
@@ -1022,7 +1022,7 @@ tasks:
     needs: [big]
     join: any_failed
     with: {op: exec}
-`), payload(t, nil), plan)
+`), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-refused-cause")
 	big := taskRunOf(t, run, "big")
 	if big.GetStatus() != orkstackv1.Status_STATUS_FAILED || !strings.Contains(big.GetError().GetMessage(), task.ReasonInputTooLarge) {
@@ -1122,7 +1122,7 @@ tasks:
 			plan := defaultPlan()
 			plan.Limits = engine.WorkspaceLimits{ValuesMaxBytes: tc.limit}
 			runID := fmt.Sprintf("run-pin-release-%d", i)
-			h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, tc.doc), payload(t, tc.input), plan)
+			h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, tc.doc), payload(t, tc.input), plan, (*orkstackv1.RunContinuation)(nil))
 			if !released {
 				t.Fatal("the pin was not released while the failure handler ran")
 			}
@@ -1189,7 +1189,7 @@ func TestRunWorkflow_AFailureHandlerRetriesPerItsOwnPolicy(t *testing.T) {
 			})
 			runID := fmt.Sprintf("run-handler-retry-%d", i)
 			h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, fmt.Sprintf(handlerRetryDocument, tc.retry)),
-				payload(t, nil), defaultPlan())
+				payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 			run := runOf(t, h, runID)
 			mu.Lock()
 			calls := rollbackCalls
@@ -1221,7 +1221,7 @@ func TestRunWorkflow_ACancelDuringTheDrainStartsNoHandlerAndEndsFailed(t *testin
 		}
 		return nil
 	}
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-drain", compile(t, joinFailDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-drain", compile(t, joinFailDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -1278,7 +1278,7 @@ func TestRunWorkflow_ACancelThatLandsMidDispatchRecordsTheHandlerCanceled(t *tes
 		}
 		return nil
 	}
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-dispatch", compile(t, anyFailedSkippedDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-dispatch", compile(t, anyFailedSkippedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-cancel-dispatch")
 	rollback := taskRunOf(t, run, "rollback")
 	if rollback.GetStatus() != orkstackv1.Status_STATUS_CANCELED || rollback.GetScheduledAt() != nil {
@@ -1345,7 +1345,7 @@ func composedHandlerRun(t *testing.T, runID string, onSnapshot func(*harness) fu
 	}
 	plan := defaultPlan()
 	childPlanFor(t, &plan, "compensate", compile(t, composedChildDocument))
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, payload(t, nil), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -1400,7 +1400,7 @@ func TestRunWorkflow_AwaitedHandlerOpensInAFailingRunAndResolves(t *testing.T) {
 		return okTask(in)
 	})
 	h.signalAt(time.Minute, completion("approve", `{"ok":true}`, "alice"))
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-awaited-handler", compile(t, awaitedHandlerDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-awaited-handler", compile(t, awaitedHandlerDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-awaited-handler")
 	approve := taskRunOf(t, run, "approve")
 	if approve.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || approve.GetAwait().GetResolvedBy() != "alice" {
@@ -1443,7 +1443,7 @@ tasks:
     needs: [gate]
     join: any_failed
     with: {op: exec}
-`), payload(t, nil), defaultPlan())
+`), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-rejected-gate")
 	if statusOf(run, "gate") != orkstackv1.Status_STATUS_FAILED || taskRunOf(t, run, "gate").GetError().GetCode() != engine.AwaitRejectedCode {
 		t.Fatalf("gate = %v", taskRunOf(t, run, "gate"))
@@ -1482,7 +1482,7 @@ tasks:
     needs: [convert]
     join: any_failed
     with: {op: exec}
-`), payload(t, map[string]any{"regions": []any{"eu", "us", "ap"}}), defaultPlan())
+`), payload(t, map[string]any{"regions": []any{"eu", "us", "ap"}}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-item-handler")
 	if statusOf(run, "report") != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("report = %v", statusOf(run, "report"))
@@ -1512,7 +1512,7 @@ func TestRunWorkflow_ALostPinMemberStartsAnUnpinnedHandler(t *testing.T) {
     needs: [prep]
     join: any_failed
     with: {command: "echo recover"}
-`), payload(t, nil), defaultPlan())
+`), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-pin-lost-handler")
 	if got := taskRunOf(t, run, "prep").GetError().GetCode(); got != "PIN_HOST_LOST" {
 		t.Fatalf("prep = %v", taskRunOf(t, run, "prep"))
@@ -1551,7 +1551,7 @@ tasks:
     join: none_failed
     each: {over: "{{ .tasks.list.output.parts }}", max_items: 5}
     with: {op: exec}
-`), payload(t, nil), plan)
+`), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	run := runOf(t, h, "run-each-over-missing")
 	convert := taskRunOf(t, run, "convert")
 	want := `each.over {{ .tasks.list.output.parts }}: task "list" is SKIPPED, so its values do not exist — a fan-out ` +
@@ -1584,7 +1584,7 @@ tasks:
     needs: [deploy]
     join: all_done
     with: {op: exec}
-`), payload(t, nil), defaultPlan())
+`), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	run := mustFinalRun(t, h.store, "run-handler-leaves")
 	fields := run.GetOutput().GetData().GetFields()
 	if _, ok := fields["deploy"]; !ok {
@@ -1612,7 +1612,7 @@ func TestRunWorkflow_EveryTaskIsTerminalWhenAFailingRunEnds(t *testing.T) {
 		var suite testsuite.WorkflowTestSuite
 		h := newHarness(t, &suite, failDeploy)
 		runID := fmt.Sprintf("run-terminal-%d", i)
-		h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc), payload(t, nil), defaultPlan())
+		h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 		run := runOf(t, h, runID)
 		for _, tr := range run.GetTaskRuns() {
 			switch tr.GetStatus() {
@@ -1649,7 +1649,7 @@ func TestRunWorkflow_ADefinitionWithoutJoinSendsTheInputsItAlwaysSent(t *testing
 	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.TaskId, map[string]any{"value": "canary"}), nil
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-join", wf, payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-join", wf, payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if len(h.invocations()) == 0 {
 		t.Fatal("nothing was dispatched")
 	}
@@ -1732,7 +1732,7 @@ tasks:
     needs: [deploy]
     join: any_failed
     with: {op: exec, blob: "`+with+`"}
-`), payload(t, nil), plan)
+`), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 		return outcome{runOf(t, h, runID), h}
 	}
 	cases := []struct {
