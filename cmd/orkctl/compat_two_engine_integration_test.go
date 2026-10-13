@@ -18,6 +18,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -45,8 +46,7 @@ func startCompatStack(ctx context.Context, t *testing.T) *compatStack {
 	namespace := isolatedNamespace()
 	t.Logf("namespace %s", namespace)
 	dialIsolatedNamespace(ctx, t, address, namespace)
-	root := repoRoot(t)
-	enginePath := buildBinary(t, root, t.TempDir(), "ork")
+	enginePath := testbin.Path(t, "./cmd/ork")
 	queue := idempotencyTaskQueue()
 	s := &compatStack{
 		a: startReplica(ctx, t, "ork-A", enginePath, address, namespace, queue),

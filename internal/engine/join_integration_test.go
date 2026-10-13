@@ -1280,7 +1280,7 @@ func newRecorderOrker(t *testing.T, j *joinE2E, refs artifacts.RefPredictor) *or
 	t.Helper()
 	activities := orker.NewActivitiesWithOptions(j.store, orker.Options{
 		Logs: j.logs, Commits: j.commits, Attempts: j.attempts, Refs: refs, Memos: j.memos,
-		Pool: task.DefaultPool, OrkerID: "join-fixture", WorkRoot: j.workRoot,
+		Pool: task.DefaultPool, OrkerID: proof.OrkerID("join-fixture"), WorkRoot: j.workRoot,
 	})
 	if err := activities.Boot(j.ctx); err != nil {
 		infraAbsent(t, "orker boot checks failed: %v", err)

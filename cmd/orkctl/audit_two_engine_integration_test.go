@@ -20,6 +20,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -51,9 +52,7 @@ func TestAudit_TwoReplicas_WriteOnOneListedOnOther(t *testing.T) {
 	t.Logf("temporal namespace %s", partition)
 	dialIsolatedNamespace(ctx, t, address, partition)
 
-	root := repoRoot(t)
-	binDir := t.TempDir()
-	enginePath := buildBinary(t, root, binDir, "ork")
+	enginePath := testbin.Path(t, "./cmd/ork")
 	queue := idempotencyTaskQueue()
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, partition, queue)
 	replicaB := startReplica(ctx, t, "ork-B", enginePath, address, partition, queue)
@@ -154,7 +153,7 @@ func TestAudit_RefusedWriteIsRecorded(t *testing.T) {
 	defer cancel()
 	partition := isolatedNamespace()
 	dialIsolatedNamespace(ctx, t, address, partition)
-	enginePath := buildBinary(t, repoRoot(t), t.TempDir(), "ork")
+	enginePath := testbin.Path(t, "./cmd/ork")
 	replica := startReplica(ctx, t, "ork-refusal", enginePath, address, partition, idempotencyTaskQueue())
 	replica.awaitReady(ctx, t)
 
@@ -179,7 +178,7 @@ func TestAudit_TwoEngines_DeploymentWideRecordsByEmptyNamespace(t *testing.T) {
 	defer cancel()
 	partition := isolatedNamespace()
 	dialIsolatedNamespace(ctx, t, address, partition)
-	enginePath := buildBinary(t, repoRoot(t), t.TempDir(), "ork")
+	enginePath := testbin.Path(t, "./cmd/ork")
 	queue := idempotencyTaskQueue()
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, partition, queue)
 	replicaB := startReplica(ctx, t, "ork-B", enginePath, address, partition, queue)

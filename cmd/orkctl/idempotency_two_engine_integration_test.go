@@ -27,6 +27,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -99,10 +100,8 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 			claimWorkflowIDFor(submittedInto, idempotencyKey), "", "integration test cleanup")
 	})
 
-	root := repoRoot(t)
-	binDir := t.TempDir()
-	enginePath := buildBinary(t, root, binDir, "ork")
-	orkerPath := buildBinary(t, root, binDir, "orker")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	queue := idempotencyTaskQueue()
 	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, namespace, queue)

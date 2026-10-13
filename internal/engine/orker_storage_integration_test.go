@@ -32,7 +32,7 @@ func TestIntegration_OrkerMaxConcurrentBoundsAFanOut(t *testing.T) {
 	refs, _ := e.store.(artifacts.RefPredictor)
 	activities := orker.NewActivitiesWithOptions(e.store, orker.Options{
 		Logs: e.logs, Commits: e.commits, Attempts: e.attempts, Refs: refs,
-		Pool: task.DefaultPool, OrkerID: "ceiling-1", WorkRoot: e.workRoot,
+		Pool: task.DefaultPool, OrkerID: proof.OrkerID("ceiling-1"), WorkRoot: e.workRoot,
 		MaxConcurrent: 2,
 	})
 	if err := activities.Boot(e.ctx); err != nil {
@@ -119,7 +119,7 @@ func TestIntegration_FanOutDownloadsASharedInputOncePerOrker(t *testing.T) {
 	refs, _ := e.store.(artifacts.RefPredictor)
 	activities := orker.NewActivitiesWithOptions(counting, orker.Options{
 		Logs: e.logs, Commits: e.commits, Attempts: e.attempts, Refs: refs,
-		Pool: task.DefaultPool, OrkerID: "stage-share-1", WorkRoot: e.workRoot,
+		Pool: task.DefaultPool, OrkerID: proof.OrkerID("stage-share-1"), WorkRoot: e.workRoot,
 	})
 	if err := activities.Boot(e.ctx); err != nil {
 		infraAbsent(t, "orker boot checks failed: %v", err)

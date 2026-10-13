@@ -6,15 +6,31 @@
 #
 # scripts/proof.sh invokes this with ORK_PROOF_DIR already set and its own
 # prerequisites already probed (docker, Temporal, MinIO, the local registry
-# and its images, the observability profile's own four services, and no
-# stray bin/ork or bin/orker) — this script does not re-check any of that; it
-# only assumes ORK_PROOF_DIR is set and writable, per §11.2 ("prerequisites
-# probed BEFORE any output file is opened").
+# and its images, the observability profile's own four services) — this
+# script does not re-check any of that; it only assumes ORK_PROOF_DIR is set
+# and writable, per §11.2 ("prerequisites probed BEFORE any output file is
+# opened"). It uses the proof's Temporal (ORK_TEMPORAL_ADDRESS), the proof's
+# binaries (ORK_TEST_BIN_DIR) and the proof's activity image tag
+# (ORK_TEST_IMAGE_TAG) when the proof supplies them.
 #
 # ork and orker are started DIRECTLY here, not through scripts/stack.sh,
 # because each needs its OWN ORK_ADMIN_ADDR (:9464 / :9465) — something
 # stack.sh does not currently let `make up` give them (see
-# deploy/observability/README.md).
+# deploy/observability/README.md). Those two ports are the targets
+# deploy/observability/prometheus.yml scrapes, so they are fixed, and that
+# makes this gate the one place in the proofs that cannot run twice at once
+# on a host: it holds a host-wide lock for its whole run (AGENTS.md §11.1).
+# The engine's API listens on a free port.
+#
+# Prometheus runs in a container on the compose network and scrapes
+# host.docker.internal, which compose maps to Docker's default-bridge gateway.
+# On Linux a host listener on 127.0.0.1 cannot be reached from a container,
+# and a host firewall commonly admits container traffic only from the default
+# bridge (README, "Linux hosts"). So, for this gate only, the admin listeners
+# bind the default bridge's gateway address, and the Prometheus container is
+# attached to the default bridge for the gate's lifetime. Only an attachment
+# this gate made is undone. Nothing in deploy/ changes. On a host where the
+# gateway is not a local address (Docker Desktop), 127.0.0.1 is kept.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -23,17 +39,43 @@ REPO="$PWD"
 OUT="${ORK_PROOF_DIR:?ORK_PROOF_DIR must be set (run this through scripts/proof.sh)}/observability"
 mkdir -p "$OUT"
 
+# The host-wide lock: one observability gate at a time, because its admin
+# ports are fixed. Waits for a holder rather than failing at once.
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/orkstack-observability.lock"
+exec 9>"$LOCK"
+if ! flock -w 3600 9; then
+	printf 'FAIL: another observability gate held %s for an hour\n' "$LOCK"
+	exit 1
+fi
+
+# The address the admin listeners bind, and Prometheus's route to it (see the
+# header). ADMIN_HOST is the default bridge's gateway when that is an address
+# of this host, else 127.0.0.1.
+ADMIN_HOST=127.0.0.1
+BRIDGE_GW="$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)"
+if [ -n "$BRIDGE_GW" ] && ip -4 addr 2>/dev/null | grep -qw "inet $BRIDGE_GW"; then
+	ADMIN_HOST="$BRIDGE_GW"
+fi
+PROM_CONTAINER=""
+PROM_ATTACHED_HERE=0
+
 # Namespaces are constrained to ^[a-z][a-z0-9-]*$ (no uppercase, no ':'),
 # so the stamp used for both the namespace and the orkflow version is
 # digits-only — %Y%m%dT%H%M%SZ's 'T'/'Z' would otherwise be refused.
 STAMP="$(date -u +%Y%m%d%H%M%S)"
 NS="proof-$STAMP"
-ENGINE_URL="http://127.0.0.1:8080"
+ENGINE_PORT="$(go run ./test/tools/proofrun free-port)" || {
+	printf 'FAIL: no free port for the engine API\n'
+	exit 1
+}
+ENGINE_URL="http://127.0.0.1:$ENGINE_PORT"
 COLLECTOR="http://127.0.0.1:4318"
 LOKI="http://127.0.0.1:3100"
 TEMPO="http://127.0.0.1:3200"
 PROM="http://127.0.0.1:9090"
-ORKCTL=("$REPO/bin/orkctl" --server "$ENGINE_URL")
+BIN="${ORK_TEST_BIN_DIR:-$OUT/bin}"
+IMAGE_TAG="${ORK_TEST_IMAGE_TAG:-dev}"
+ORKCTL=("$BIN/orkctl" --server "$ENGINE_URL")
 
 say() { printf '%s\n' "$*"; }
 fail() { say "FAIL: $*"; exit 1; }
@@ -71,13 +113,52 @@ cleanup() {
 	[ -n "$ORK_PID" ] && kill -9 "$ORK_PID" 2>/dev/null
 	[ -n "$ORKER_PID" ] && kill -9 "$ORKER_PID" 2>/dev/null
 }
-trap cleanup EXIT
+# detach_prometheus undoes only an attachment this gate made.
+detach_prometheus() {
+	if [ "$PROM_ATTACHED_HERE" = 1 ] && [ -n "$PROM_CONTAINER" ]; then
+		docker network disconnect bridge "$PROM_CONTAINER" >/dev/null 2>&1
+	fi
+}
+on_exit() {
+	cleanup
+	detach_prometheus
+}
+trap on_exit EXIT
 
-say "== build =="
-make build >"$OUT/build.log" 2>&1 || fail "make build: see $OUT/build.log"
+# ---- Prometheus on the default bridge (Linux only) --------------------------
+if [ "$ADMIN_HOST" != 127.0.0.1 ]; then
+	PROM_CONTAINER="$(docker ps -q --filter label=com.docker.compose.service=prometheus --filter publish=9090)"
+	[ "$(printf '%s\n' "$PROM_CONTAINER" | grep -c .)" = 1 ] \
+		|| fail "want exactly one Prometheus container publishing :9090, found: '$PROM_CONTAINER'"
+	on_bridge() { docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$PROM_CONTAINER" | grep -qw bridge; }
+	if on_bridge; then
+		echo "- prometheus: already on the default bridge" >>"$SUMMARY"
+	elif docker network connect bridge "$PROM_CONTAINER" >"$OUT/prom-bridge.log" 2>&1; then
+		PROM_ATTACHED_HERE=1
+		echo "- prometheus: attached to the default bridge for this gate" >>"$SUMMARY"
+	else
+		on_bridge || fail "could not attach Prometheus to the default bridge; see $OUT/prom-bridge.log"
+		echo "- prometheus: already on the default bridge" >>"$SUMMARY"
+	fi
+fi
+echo "- admin listeners: $ADMIN_HOST:9464 (ork), $ADMIN_HOST:9465 (orker)" >>"$SUMMARY"
 
-WORK_DIR="$REPO/.data/work"
-mkdir -p "$WORK_DIR"
+say "== binaries =="
+# The proof's own, or built here into this gate's directory: never bin/,
+# which every worktree's dev stack shares.
+for cmd in ork orker orkctl; do
+	if [ ! -x "$BIN/$cmd" ]; then
+		mkdir -p "$BIN"
+		go build -o "$BIN/$cmd" "./cmd/$cmd" >>"$OUT/build.log" 2>&1 || fail "go build ./cmd/$cmd: see $OUT/build.log"
+	fi
+done
+
+# A work root of this gate's own: an Orker reaps everything under its root at
+# boot, and its default identity is derived from that root. Its name records
+# this script's pid, so scripts/proof-clean.sh removes it only once the gate
+# is gone.
+mkdir -p "$REPO/.data/work"
+WORK_DIR="$(mktemp -d "$REPO/.data/work/observability-p$$-XXXXXX")"
 
 # local_activity_catalog mirrors scripts/stack.sh's function of the same
 # name. Not sourced: stack.sh's own trailing `case "${1:-}"` would run (and
@@ -86,8 +167,8 @@ local_activity_catalog() {
 	local registry="${ORK_LOCAL_REGISTRY:-localhost:5001}" name doc=""
 	for name in $(make -s -C "$REPO/images" print-activities); do
 		curl -sfo /dev/null -H 'Accept: application/vnd.oci.image.index.v1+json' \
-			"http://$registry/v2/orkstack/activity-$name/manifests/dev" || return 0
-		doc="$doc  $name: $registry/orkstack/activity-$name:dev
+			"http://$registry/v2/orkstack/activity-$name/manifests/$IMAGE_TAG" || return 0
+		doc="$doc  $name: $registry/orkstack/activity-$name:$IMAGE_TAG
 "
 	done
 	printf 'activities:\n%s' "$doc"
@@ -105,7 +186,7 @@ CONFIG_FILE="$OUT/orkstack.yaml"
 cat >"$CONFIG_FILE" <<EOF
 telemetry:
   log_format: json
-  admin_addr: {ork: "127.0.0.1:9464", orker: "127.0.0.1:9465"}
+  admin_addr: {ork: "$ADMIN_HOST:9464", orker: "$ADMIN_HOST:9465"}
   exporters:
     logs: otlp
     metrics: [prometheus, otlp]
@@ -118,19 +199,19 @@ orker:
   task_log_export: true
 EOF
 
-say "== starting orker (admin 127.0.0.1:9465, OTLP -> $COLLECTOR, --config $CONFIG_FILE) =="
+say "== starting orker (admin $ADMIN_HOST:9465, OTLP -> $COLLECTOR, --config $CONFIG_FILE) =="
 env \
 	ORK_ARTIFACT_BACKEND=s3 \
 	ORK_ORKER_WORKDIR="$WORK_DIR" \
-	"$REPO/bin/orker" --config "$CONFIG_FILE" >"$OUT/orker.log" 2>&1 &
+	"$BIN/orker" --config "$CONFIG_FILE" >"$OUT/orker.log" 2>&1 &
 ORKER_PID=$!
 
-say "== starting ork (admin 127.0.0.1:9464, OTLP -> $COLLECTOR, --config $CONFIG_FILE) =="
+say "== starting ork (admin $ADMIN_HOST:9464, OTLP -> $COLLECTOR, --config $CONFIG_FILE) =="
 env \
 	ORK_ARTIFACT_BACKEND=s3 \
-	ORK_HTTP_ADDR=:8080 \
+	ORK_HTTP_ADDR="127.0.0.1:$ENGINE_PORT" \
 	ORK_ACTIVITY_CATALOG="$CATALOG" \
-	"$REPO/bin/ork" --config "$CONFIG_FILE" >"$OUT/ork.log" 2>&1 &
+	"$BIN/ork" --config "$CONFIG_FILE" >"$OUT/ork.log" 2>&1 &
 ORK_PID=$!
 
 # wait_ready NAME PORT PID — poll /readyz for up to 60s, failing fast if the
@@ -140,7 +221,7 @@ wait_ready() {
 	local i
 	for i in $(seq 1 120); do
 		kill -0 "$pid" 2>/dev/null || fail "$name exited during startup; see $OUT/$name.log"
-		code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/readyz" 2>/dev/null)"
+		code="$(curl -s -o /dev/null -w '%{http_code}' "http://$ADMIN_HOST:$port/readyz" 2>/dev/null)"
 		if [ "$code" = "200" ]; then
 			say "  $name ready"
 			return 0
@@ -158,9 +239,9 @@ wait_ready ork 9464 "$ORK_PID"
 		name="${pair%%:*}"
 		port="${pair##*:}"
 		echo "== $name (:$port) =="
-		echo "healthz: $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/healthz")"
-		echo "readyz:  $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/readyz")"
-		echo "pprof:   $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/debug/pprof/")"
+		echo "healthz: $(curl -s -o /dev/null -w '%{http_code}' "http://$ADMIN_HOST:$port/healthz")"
+		echo "readyz:  $(curl -s -o /dev/null -w '%{http_code}' "http://$ADMIN_HOST:$port/readyz")"
+		echo "pprof:   $(curl -s -o /dev/null -w '%{http_code}' "http://$ADMIN_HOST:$port/debug/pprof/")"
 	done
 } >"$OUT/admin.txt"
 assert "ork /healthz and /readyz answer 200, /debug/pprof/ answers 404 (ORK_PPROF_ENABLED unset)" \
@@ -203,13 +284,13 @@ say "  run $RUN_ID: SUCCEEDED"
 
 # (a) Metrics — the direct-scrape path (ORK_ADMIN_ADDR's own /metrics).
 say "== metrics =="
-curl -s "http://127.0.0.1:9465/metrics" >"$OUT/orker-metrics.txt"
+curl -s "http://$ADMIN_HOST:9465/metrics" >"$OUT/orker-metrics.txt"
 assert "orker /metrics: ork_orker_tasks_total{...,outcome=\"succeeded\",...}" \
 	grep -qE 'ork_orker_tasks_total\{[^}]*outcome="succeeded"[^}]*\}' "$OUT/orker-metrics.txt"
 assert "orker /metrics: ork_orker_task_log_records_total" \
 	grep -q '^ork_orker_task_log_records_total' "$OUT/orker-metrics.txt"
 
-curl -s "http://127.0.0.1:9464/metrics" >"$OUT/ork-metrics.txt"
+curl -s "http://$ADMIN_HOST:9464/metrics" >"$OUT/ork-metrics.txt"
 assert "ork /metrics: ork_build_info" \
 	grep -q '^ork_build_info' "$OUT/ork-metrics.txt"
 
@@ -313,9 +394,14 @@ poll_prom 'temporal_activity_execution_latency_seconds_count' "$OUT/prom-tempora
 assert "Prometheus: temporal_activity_execution_latency_seconds_count exists (OTLP path)" \
 	bash -c "[ \"\$(jq -r '(.data.result | length) // 0' '$OUT/prom-temporal-latency.json')\" -ge 1 ]"
 
-curl -s "$PROM/api/v1/targets" >"$OUT/prom-targets.json"
-assert "Prometheus: the ork (9464) and orker (9465) scrape targets are up" \
-	bash -c "jq -e '[.data.activeTargets[]? | select(.scrapePool==\"ork\" or .scrapePool==\"orker\") | select(.health==\"up\")] | length >= 2' '$OUT/prom-targets.json' >/dev/null"
+# Target health only changes on the next scrape (every 15s), so poll.
+targets_up() { jq -e '[.data.activeTargets[]? | select(.scrapePool=="ork" or .scrapePool=="orker") | select(.health=="up")] | length >= 2' "$OUT/prom-targets.json" >/dev/null 2>&1; }
+for i in $(seq 1 120); do
+	curl -s "$PROM/api/v1/targets" >"$OUT/prom-targets.json"
+	targets_up && break
+	sleep 0.5
+done
+assert "Prometheus: the ork (9464) and orker (9465) scrape targets are up" targets_up
 
 GRAFANA_URL="http://localhost:3000/explore?left=%7B%22datasource%22:%22Tempo%22,%22queries%22:%5B%7B%22query%22:%22$TRACE_ID%22,%22queryType%22:%22traceql%22%7D%5D,%22range%22:%7B%22from%22:%22now-1h%22,%22to%22:%22now%22%7D%7D"
 {
@@ -332,16 +418,14 @@ GRAFANA_URL="http://localhost:3000/explore?left=%7B%22datasource%22:%22Tempo%22,
 # processes down and starting the zero-config pair in their place.
 say "== zero-config control =="
 cleanup
-trap - EXIT
 ORK_PID=""
 ORKER_PID=""
-trap cleanup EXIT
 
 env ORK_ARTIFACT_BACKEND=s3 ORK_ORKER_WORKDIR="$WORK_DIR" \
-	"$REPO/bin/orker" >"$OUT/orker-plain.log" 2>&1 &
+	"$BIN/orker" >"$OUT/orker-plain.log" 2>&1 &
 ORKER_PID=$!
-env ORK_ARTIFACT_BACKEND=s3 ORK_HTTP_ADDR=:8080 ORK_ACTIVITY_CATALOG="$CATALOG" \
-	"$REPO/bin/ork" >"$OUT/ork-plain.log" 2>&1 &
+env ORK_ARTIFACT_BACKEND=s3 ORK_HTTP_ADDR="127.0.0.1:$ENGINE_PORT" ORK_ACTIVITY_CATALOG="$CATALOG" \
+	"$BIN/ork" >"$OUT/ork-plain.log" 2>&1 &
 ORK_PID=$!
 
 ready=1
@@ -360,6 +444,12 @@ assert "zero-config: nothing listens on 127.0.0.1:9464" \
 	bash -c "! curl -s -o /dev/null --max-time 1 http://127.0.0.1:9464/healthz"
 assert "zero-config: nothing listens on 127.0.0.1:9465" \
 	bash -c "! curl -s -o /dev/null --max-time 1 http://127.0.0.1:9465/healthz"
+if [ "$ADMIN_HOST" != 127.0.0.1 ]; then
+	assert "zero-config: nothing listens on $ADMIN_HOST:9464" \
+		bash -c "! curl -s -o /dev/null --max-time 1 http://$ADMIN_HOST:9464/healthz"
+	assert "zero-config: nothing listens on $ADMIN_HOST:9465" \
+		bash -c "! curl -s -o /dev/null --max-time 1 http://$ADMIN_HOST:9465/healthz"
+fi
 assert "zero-config: ork.log's first line is text (time=...), not JSON" \
 	bash -c "head -n1 '$OUT/ork-plain.log' | grep -qE '^time='"
 

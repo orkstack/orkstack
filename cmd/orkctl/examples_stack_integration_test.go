@@ -567,6 +567,9 @@ const examplesRegistryPrefix = "localhost:5001/orkstack-examples/"
 // shipped bytes.
 func withRegistry(t *testing.T, src []byte, registry string) []byte {
 	t.Helper()
+	if registry+"/orkstack-examples/" == examplesRegistryPrefix {
+		return src
+	}
 	prefix := registry + "/orkstack-examples/"
 	out := bytes.ReplaceAll(src, []byte(examplesRegistryPrefix), []byte(prefix))
 	if back := bytes.ReplaceAll(out, []byte(prefix), []byte(examplesRegistryPrefix)); !bytes.Equal(back, src) {
@@ -609,6 +612,15 @@ var (
 	exampleImagesLog  string
 )
 
+// exampleImageTag is the tag this process pushes the example images under:
+// the proof's image tag (or `dev`), this process and a stamp. It is unique to
+// the process because `orkctl activity build` — the command under test —
+// pushes, and two concurrent processes pushing one tag would move it under
+// each other (AGENTS.md §11.1).
+var exampleImageTag = sync.OnceValue(func() string {
+	return fmt.Sprintf("%s-p%d-%d", localcatalog.Tag(), os.Getpid(), time.Now().UnixNano()%1_000_000_000)
+})
+
 // ensureExampleImages builds and pushes both custom images with the built
 // orkctl's `activity build`, once per process, and returns each tag's pinned
 // reference.
@@ -620,7 +632,7 @@ func ensureExampleImages(ctx context.Context, t *testing.T, orkctlPath, root str
 		pinned := regexp.MustCompile(`(?m)^  uses: (\S+@sha256:[0-9a-f]{64})$`)
 		var log strings.Builder
 		for _, dir := range []string{"custom-image", "custom-image-shell"} {
-			tag := fmt.Sprintf("%s/orkstack-examples/%s:dev", localcatalog.Registry(), dir)
+			tag := fmt.Sprintf("%s/orkstack-examples/%s:%s", localcatalog.Registry(), dir, exampleImageTag())
 			cmd := exec.CommandContext(ctx, orkctlPath, "activity", "build", "examples/"+dir, "--tag", tag)
 			cmd.Dir = root
 			out, err := cmd.CombinedOutput()
@@ -652,10 +664,22 @@ func customImageDocument(t *testing.T, root string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if localcatalog.Registry() == "localhost:5001" {
-		return src
+	return withExampleTag(t, withRegistry(t, src, localcatalog.Registry()), localcatalog.Registry())
+}
+
+// withExampleTag points the example's `:dev` image references at the tag
+// this process pushed (exampleImageTag); undoing it gives back its input.
+func withExampleTag(t *testing.T, src []byte, registry string) []byte {
+	t.Helper()
+	ref := regexp.MustCompile(regexp.QuoteMeta(registry+"/orkstack-examples/") + `([a-z0-9-]+):dev\b`)
+	tag := exampleImageTag()
+	out := ref.ReplaceAll(src, []byte(registry+"/orkstack-examples/${1}:"+tag))
+	back := regexp.MustCompile(regexp.QuoteMeta(registry+"/orkstack-examples/")+`([a-z0-9-]+):`+regexp.QuoteMeta(tag)).
+		ReplaceAll(out, []byte(registry+"/orkstack-examples/${1}:dev"))
+	if !bytes.Equal(back, src) || bytes.Equal(out, src) {
+		t.Fatal("the example-tag variant does not undo to the shipped document, or changed nothing")
 	}
-	return withRegistry(t, src, localcatalog.Registry())
+	return out
 }
 
 // exampleFiles is every examples/*.ork.yaml, sorted, relative to the root.

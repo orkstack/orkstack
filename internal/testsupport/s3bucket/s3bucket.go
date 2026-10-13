@@ -20,6 +20,7 @@ package s3bucket
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"regexp"
@@ -38,6 +39,11 @@ import (
 // EnvBucket is the variable every OrkStack binary and artifacts.ConfigFromEnv
 // read the bucket name from.
 const EnvBucket = "ORK_S3_BUCKET"
+
+// envOwned names the bucket a test process created for itself. A helper
+// process it starts from its own binary inherits both variables, and runs in
+// the parent's bucket instead of creating one it could never remove.
+const envOwned = "ORK_TEST_OWNED_BUCKET"
 
 // envRequireInfra is the integration suites' "absence is a failure" switch
 // (AGENTS.md §11.1).
@@ -69,6 +75,20 @@ func Name(label string, pid int, suffix int64) string {
 // that needs object storage probes it itself and skips — unless
 // ORK_REQUIRE_INFRA is set, where the absence is the failure.
 func Main(m *testing.M, label string) int {
+	// A listing (`-test.list`, which test/tools/proofrun runs before it
+	// plans) runs no test: it needs no bucket, and must not need MinIO.
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+	if f := flag.Lookup("test.list"); f != nil && f.Value.String() != "" {
+		return m.Run()
+	}
+	// A test binary a test re-executes as its own helper process inherits
+	// its parent's bucket: it runs inside it, and neither creates a bucket
+	// of its own nor removes the parent's.
+	if inherited := os.Getenv(envOwned); inherited != "" && inherited == os.Getenv(EnvBucket) {
+		return m.Run()
+	}
 	cfg := artifacts.ConfigFromEnv()
 	bucket := Name(label, os.Getpid(), time.Now().UnixNano())
 
@@ -85,6 +105,10 @@ func Main(m *testing.M, label string) int {
 	}
 	if err := os.Setenv(EnvBucket, bucket); err != nil {
 		fmt.Fprintf(os.Stderr, "s3bucket: set %s: %v\n", EnvBucket, err)
+		return 1
+	}
+	if err := os.Setenv(envOwned, bucket); err != nil {
+		fmt.Fprintf(os.Stderr, "s3bucket: set %s: %v\n", envOwned, err)
 		return 1
 	}
 	fmt.Fprintf(os.Stderr, "s3bucket: this test binary's object store is s3://%s (%s)\n", bucket, cfg.S3Endpoint)

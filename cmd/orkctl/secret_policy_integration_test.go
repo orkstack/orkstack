@@ -26,6 +26,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -69,10 +70,8 @@ func newSecretStack(ctx context.Context, t *testing.T, label string) *secretStac
 	t.Logf("partition %s", partition)
 	temporalClient := dialIsolatedNamespace(ctx, t, address, partition)
 
-	root := repoRoot(t)
-	binDir := t.TempDir()
-	enginePath := buildBinary(t, root, binDir, "ork")
-	orkerPath := buildBinary(t, root, binDir, "orker")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	s := &secretStack{
 		cfg:        cfg,
@@ -554,7 +553,7 @@ func TestIntegration_AMalformedFloorStopsTheOrkerAtBoot(t *testing.T) {
 	defer cancel()
 	partition := fmt.Sprintf("ork-secrets-boot-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	dialIsolatedNamespace(ctx, t, address, partition)
-	orkerPath := buildBinary(t, repoRoot(t), t.TempDir(), "orker")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	var transcript strings.Builder
 	fmt.Fprintf(&transcript, "# the Orker refuses a malformed secret floor at boot (%s)\n\n", time.Now().UTC().Format(time.RFC3339))

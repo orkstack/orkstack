@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -20,7 +20,10 @@ import {
 	repoRoot,
 	waitFor,
 	waitForEngine,
-	openNamespaceEdit
+	openNamespaceEdit,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 import { adminNamespaceUrl } from './uiHelpers';
 
@@ -84,7 +87,7 @@ function bucketEnv(action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
 }
 
 function orkctl(...args: string[]): string {
-	return execFileSync(path.join(repoRoot, 'bin', 'orkctl'), [...args, '--server', ENGINE], {
+	return execFileSync(bin('orkctl'), [...args, '--server', ENGINE], {
 		cwd: repoRoot,
 		encoding: 'utf8'
 	});
@@ -110,7 +113,7 @@ test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	if (!(await tcpOpen(5001))) throw new Error('the local registry is not reachable on 127.0.0.1:5001');
 	for (const port of [18337, 14337]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
@@ -122,23 +125,18 @@ test.beforeAll(async () => {
 	note(cosignSign(['keygen', OTHER_KEYS]).trim());
 	note(cosignSign(['sign', '--key', path.join(KEYS, 'cosign.key'), activityRef('shell')]).trim());
 
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orkctl', './cmd/orkctl'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) throw new Error('UI build output missing');
 	execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('ensure') });
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	const store = { ...s3Env, ORK_S3_BUCKET: BUCKET };
-	spawnLogged(out('engine.log'), './bin/ork', [], {
+	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...store,
 		ORK_HTTP_ADDR: '127.0.0.1:18337',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged(out('orker.log'), './bin/orker', [], { ...cluster, ...store, ...orkerEnv('image-policy') });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...store, ...orkerEnv('image-policy') });
 	spawnLogged(
 		out('ui.log'),
 		'node',
@@ -261,7 +259,7 @@ test('3: Admin → Namespaces offers the signer select and shows the Signed by c
 });
 
 /**
- * outsideImage is activity-shell:dev in the shared registry, addressed as
+ * outsideImage is activity-shell (this run's tag) in the shared registry, addressed as
  * 127.0.0.1:<port> (a different registry string from the floor's
  * `localhost:<port>/orkstack/`) and pinned by the digest the registry serves
  * for the same Accept list the engine's resolver sends.

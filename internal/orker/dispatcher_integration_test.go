@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -107,7 +109,7 @@ func bindableWorkRoot(t *testing.T) string {
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
 		}
-		root, err := os.MkdirTemp(candidate, "ork-dispatch-*")
+		root, err := os.MkdirTemp(candidate, proof.WorkRootPattern("ork-dispatch"))
 		if err != nil {
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
@@ -136,7 +138,7 @@ func newDispatcher(t *testing.T) (*orker.OCIDispatcher, *artifacts.MemoryCommitS
 		Refs:     artifacts.MemoryRefPredictor{},
 		Policy:   orker.DefaultSecurityPolicy(),
 		WorkRoot: bindableWorkRoot(t),
-		OrkerID:  "orker-dispatch-test",
+		OrkerID:  proof.OrkerID("orker-dispatch-test"),
 		BuildID:  "test",
 	}, commits
 }
@@ -508,7 +510,7 @@ func TestIntegration_CancellationSignalsThenKills(t *testing.T) {
 	// trap '' TERM makes the shell IGNORE SIGTERM, so only the SIGKILL after
 	// the grace period can end it.
 	in := baseInput(t, "deaf", "/bin/sh", "-c",
-		`trap '' TERM; echo ready; while true; do sleep 1; done`)
+		`trap '' TERM; touch /orkstack/tmp/`+trapInstalled+`; echo ready; while true; do sleep 1; done`)
 	in.CancellationGracePeriodSeconds = 2
 	in.TimeoutSeconds = 300
 
@@ -520,8 +522,12 @@ func TestIntegration_CancellationSignalsThenKills(t *testing.T) {
 		_, execErr = dispatcher.Execute(ctx, in)
 	}()
 
-	// Give the container time to start and install its trap, then cancel.
-	time.Sleep(6 * time.Second)
+	// Cancel once the workload has installed its trap: it says so with a
+	// marker in its /orkstack/tmp scratch bind, which lives under the
+	// dispatcher's work root on this host. Never a fixed sleep (AGENTS.md
+	// §11.1): on a loaded host the container can take longer than any sleep
+	// to start, and a cancel before the trap would prove nothing.
+	awaitWorkspaceMarker(t, dispatcher.WorkRoot, trapInstalled, 2*time.Minute)
 	started := time.Now()
 	cancel()
 
@@ -548,6 +554,34 @@ func TestIntegration_CancellationSignalsThenKills(t *testing.T) {
 	grace := time.Duration(in.GetCancellationGracePeriodSeconds()) * time.Second
 	if elapsed < grace {
 		t.Errorf("the container died after %s, before its %s grace period elapsed", elapsed, grace)
+	}
+}
+
+// trapInstalled is the marker the SIGTERM-ignoring workload writes once its
+// trap is in place.
+const trapInstalled = "trap-installed"
+
+// awaitWorkspaceMarker waits, against a deadline, for a file named name to
+// appear anywhere under root.
+func awaitWorkspaceMarker(t *testing.T, root, name string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		found := false
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && d.Name() == name {
+				found = true
+				return fs.SkipAll
+			}
+			return nil
+		})
+		if found {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the workload never wrote %s under %s within %s", name, root, within)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

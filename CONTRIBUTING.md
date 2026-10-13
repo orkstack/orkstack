@@ -18,18 +18,29 @@ contract. This file is the quick checklist.
    (AGENTS.md §11.1).
 3. Write a behavior test first (AGENTS.md §11.1).
 4. Implement until green.
-5. `make lint test` must pass; run `make test-integration` (against
-   `make infra-up`) when Temporal or storage is involved; for the UI,
+5. `make lint test` must pass; run the affected integration tests against
+   `make infra-up` when Temporal or storage is involved
+   (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
+   `make test-integration` for all of them); for the UI,
    `cd ui && bun run check && bun run test:unit`.
-6. Produce the evidence: `make proof` (or `make proof-ui` for a UI change)
-   writes it under `proof/<name>/`, gitignored (AGENTS.md §11.2).
-7. Conventional Commit that quotes the proof; keep `main` buildable. Before
-   merging, run `make merge-check` on the merged tree.
+6. Produce the change's evidence with a feature proof that names the tests and
+   specs proving it:
+   `make proof-feature TESTS='internal/engine:TestIntegration_X' SPECS='ui/e2e/x.spec.ts'`.
+   It writes `proof/<name>-feature/`, gitignored, and refuses (exit 2) a
+   change it cannot account for: a path `scripts/proof-scope.tsv` does not
+   map, or a changed package no evidence test depends on (AGENTS.md §11.2).
+7. Conventional Commit that quotes the feature proof; keep `main` buildable.
+8. Merge through AGENTS.md §11.3: on a candidate branched from `main`'s tip,
+   `make merge-check`, then `make proof` (the full proof), amend the merge
+   commit to quote it, `make merge-check PROOF=proof/<name>`, and
+   `git merge --ff-only`.
 
 ## Definition of DONE
-Behavior tests pass **and** `make proof` is green for the gates the change
-touches, with the commit or pull request quoting the lines of that evidence
-that support each claim. The evidence itself is never committed. No proof, not
+A change is done when it is on `main` and a full proof (`make proof`) passed
+on the exact tree `main` then points at, with the commit quoting the lines of
+that evidence that support each claim. A feature proof
+(`SCOPED FEATURE PROOF — NOT MERGE EVIDENCE`) means "ready for the merge
+proof", never "done". The evidence itself is never committed. No proof, not
 done.
 
 ## Style

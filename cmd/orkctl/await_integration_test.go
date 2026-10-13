@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 // awaitCLI is one test's real binaries: the CLI, one or two engines, and an
@@ -49,16 +50,15 @@ func newAwaitCLI(t *testing.T, engines int, withOrker bool) *awaitCLI {
 		t.Fatalf("map test pool: %v", err)
 	}
 	root := repoRoot(t)
-	binDir := t.TempDir()
 	c := &awaitCLI{
 		t: t, ctx: ctx, repoRoot: root,
-		orkctl:  buildBinary(t, root, binDir, "orkctl"),
+		orkctl:  testbin.Path(t, "./cmd/orkctl"),
 		session: &sessionRecorder{},
 	}
-	enginePath := buildBinary(t, root, binDir, "ork")
+	enginePath := testbin.Path(t, "./cmd/ork")
 	temporalNamespace := privateTemporalNamespace()
 	if withOrker {
-		startOrker(ctx, t, buildBinary(t, root, binDir, "orker"), address, temporalNamespace, taskQueue)
+		startOrker(ctx, t, testbin.Path(t, "./cmd/orker"), address, temporalNamespace, taskQueue)
 	}
 	for i := 0; i < engines; i++ {
 		c.engines = append(c.engines, "http://"+startEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue))

@@ -6,8 +6,9 @@
 //		go run ./test/tools/bucket-ensure
 //
 // ORK_BUCKET_ACTION selects the mode: "ensure" (the default — create if
-// absent, idempotently) or "cleanup" (empty the bucket and delete it,
-// idempotently against a bucket that is already gone).
+// absent, idempotently), "cleanup" (empty the bucket and delete it,
+// idempotently against a bucket that is already gone) or "list" (print every
+// bucket's name; ORK_S3_BUCKET is not needed).
 //
 // WHY THIS EXISTS. `deploy/docker-compose.yml`'s `minio-setup` container makes
 // exactly one bucket, `orkstack-artifacts`, once, and every e2e spec in this
@@ -59,8 +60,10 @@ func main() {
 		err = ensure()
 	case "cleanup":
 		err = cleanup()
+	case "list":
+		err = list()
 	default:
-		err = fmt.Errorf("unknown ORK_BUCKET_ACTION %q: want \"ensure\" or \"cleanup\"", action)
+		err = fmt.Errorf("unknown ORK_BUCKET_ACTION %q: want \"ensure\", \"cleanup\" or \"list\"", action)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bucket-ensure: %v\n", err)
@@ -84,6 +87,12 @@ func newClient(ctx context.Context) (client *s3.Client, bucket, endpoint string,
 	if bucket == "" {
 		return nil, "", "", errors.New("ORK_S3_BUCKET is required: this tool never guesses a bucket")
 	}
+	client, endpoint, err = newBareClient(ctx)
+	return client, bucket, endpoint, err
+}
+
+// newBareClient is the client without a bucket, for list.
+func newBareClient(ctx context.Context) (client *s3.Client, endpoint string, err error) {
 	region := envOr("ORK_S3_REGION", "us-east-1")
 	endpoint = os.Getenv("ORK_S3_ENDPOINT")
 	accessKey := os.Getenv("ORK_S3_ACCESS_KEY")
@@ -101,7 +110,7 @@ func newClient(ctx context.Context) (client *s3.Client, bucket, endpoint string,
 	}
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("load aws config: %w", err)
+		return nil, "", fmt.Errorf("load aws config: %w", err)
 	}
 	client = s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		if endpoint != "" {
@@ -109,7 +118,26 @@ func newClient(ctx context.Context) (client *s3.Client, bucket, endpoint string,
 		}
 		o.UsePathStyle = true
 	})
-	return client, bucket, endpoint, nil
+	return client, endpoint, nil
+}
+
+// list prints every bucket's name, one per line: what scripts/proof-clean.sh
+// reads to find the buckets failed test processes kept for their post-mortem.
+func list() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client, endpoint, err := newBareClient(ctx)
+	if err != nil {
+		return err
+	}
+	out, err := client.ListBuckets(ctx, &s3.ListBucketsInput{})
+	if err != nil {
+		return fmt.Errorf("list buckets at %s: %w", endpoint, err)
+	}
+	for _, b := range out.Buckets {
+		fmt.Println(aws.ToString(b.Name))
+	}
+	return nil
 }
 
 func ensure() error {

@@ -58,3 +58,17 @@ func TestNames_AreEveryFirstPartyImage(t *testing.T) {
 		}
 	}
 }
+
+// TestTag_IsTheProofsOwn: a proof pushes the first-party images under a tag of
+// its own and every suite resolves that tag, never the shared `dev`.
+func TestTag_IsTheProofsOwn(t *testing.T) {
+	t.Setenv(localcatalog.TagVar, "")
+	t.Setenv(localcatalog.EnvVar, "")
+	if got := localcatalog.Reference("shell"); got != "localhost:5001/orkstack/activity-shell:dev" {
+		t.Errorf("outside a proof: %s", got)
+	}
+	t.Setenv(localcatalog.TagVar, "pr-0123456789ab")
+	if got := localcatalog.Reference("shell"); got != "localhost:5001/orkstack/activity-shell:pr-0123456789ab" {
+		t.Errorf("under a proof: %s", got)
+	}
+}

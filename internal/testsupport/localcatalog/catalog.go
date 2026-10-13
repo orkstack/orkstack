@@ -12,7 +12,8 @@
 // rather than the default weakening to a laptop-only one. §4.6 prescribes
 // exactly this shape for local development: `make -C images push` pushes each activity
 // to `localhost:5001/orkstack/activity-<name>:dev` and the local stack points
-// ORK_ACTIVITY_CATALOG at that registry.
+// ORK_ACTIVITY_CATALOG at that registry. A proof pushes under its own tag
+// instead, and ORK_TEST_IMAGE_TAG names it (Tag).
 //
 // It is a package rather than a test helper because two commands' integration
 // suites (cmd/ork and cmd/orkctl) start engines and both need it; one copy is
@@ -33,6 +34,15 @@ const EnvVar = "ORK_TEST_REGISTRY"
 // DefaultRegistry is the registry deploy/docker-compose.yml publishes.
 const DefaultRegistry = "localhost:5001"
 
+// TagVar names the tag the first-party activity images were pushed under. A
+// proof pushes them ONCE, from the tree it proves, under a tag of its own
+// (`pr-<hex>`, scripts/proof.sh), so two proofs never move each other's
+// images and the images under test are this tree's; tests only resolve it.
+const TagVar = "ORK_TEST_IMAGE_TAG"
+
+// DefaultTag is what `make -C images push` pushes outside a proof.
+const DefaultTag = "dev"
+
 // Names is the built-in catalog's key set (§4.2).
 var Names = []string{"shell", "http", "file", "json", "git", "template"}
 
@@ -42,6 +52,19 @@ func Registry() string {
 		return r
 	}
 	return DefaultRegistry
+}
+
+// Tag is the tag these tests resolve the first-party images under.
+func Tag() string {
+	if tag := os.Getenv(TagVar); tag != "" {
+		return tag
+	}
+	return DefaultTag
+}
+
+// Reference spells one first-party image in the local registry.
+func Reference(name string) string {
+	return fmt.Sprintf("%s/orkstack/activity-%s:%s", Registry(), name, Tag())
 }
 
 var manifestAccept = strings.Join([]string{
@@ -59,12 +82,12 @@ var manifestAccept = strings.Join([]string{
 // running under ORK_REQUIRE_INFRA fails. It never returns a catalog naming an
 // image it did not see.
 func CatalogEnv() (string, error) {
-	registry := Registry()
+	registry, tag := Registry(), Tag()
 	client := &http.Client{Timeout: 5 * time.Second}
 	lines := make([]string, 0, len(Names))
 	for _, name := range Names {
-		reference := fmt.Sprintf("%s/orkstack/activity-%s:dev", registry, name)
-		url := fmt.Sprintf("http://%s/v2/orkstack/activity-%s/manifests/dev", registry, name)
+		reference := fmt.Sprintf("%s/orkstack/activity-%s:%s", registry, name, tag)
+		url := fmt.Sprintf("http://%s/v2/orkstack/activity-%s/manifests/%s", registry, name, tag)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return "", fmt.Errorf("build manifest request for %s: %w", reference, err)

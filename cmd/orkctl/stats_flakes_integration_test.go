@@ -19,6 +19,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -81,10 +82,8 @@ func seedFlakeCorpus(ctx context.Context, t *testing.T, replicas int) *flakeCorp
 	t.Logf("partition %s", partition)
 	temporalClient := dialIsolatedNamespace(ctx, t, address, partition)
 
-	root := repoRoot(t)
-	binDir := t.TempDir()
-	enginePath := buildBinary(t, root, binDir, "ork")
-	orkerPath := buildBinary(t, root, binDir, "orker")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 	queue := idempotencyTaskQueue()
 	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, partition, queue)
 

@@ -1,7 +1,7 @@
 import { expect, test } from './test';
-import { execFileSync, type ChildProcess } from 'node:child_process';
+import { type ChildProcess } from 'node:child_process';
 import { createHmac } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
@@ -16,9 +16,11 @@ import {
 	spawnLogged,
 	tcpOpen,
 	uiDir,
-	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // Admin → Automation, the Triggers tab's edit and the Webhooks page's edit, in
@@ -135,7 +137,7 @@ test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18101, 14201]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
 
@@ -151,14 +153,10 @@ test.beforeAll(async () => {
 	receiverURL = `http://127.0.0.1:${(receiver.address() as AddressInfo).port}`;
 
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) throw new Error('UI build output missing');
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	mine.push(
-		spawnLogged(out('engine.log'), './bin/ork', [], {
+		spawnLogged(out('engine.log'), bin('ork'), [], {
 			...catalogEnv,
 			...cluster,
 			...s3Env,
@@ -166,7 +164,7 @@ test.beforeAll(async () => {
 			ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 		})
 	);
-	mine.push(spawnLogged(out('orker.log'), './bin/orker', [], { ...cluster, ...s3Env, ...orkerEnv('admin-automation') }));
+	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('admin-automation') }));
 	mine.push(
 		spawnLogged(
 			out('ui.log'),

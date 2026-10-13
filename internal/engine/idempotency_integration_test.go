@@ -22,11 +22,16 @@ import (
 // claimNamespace is the Temporal namespace these tests use. AGENTS.md §11.1: a
 // namespace is a hard partition, and these tests count executions inside it,
 // so they must not share one with another agent's runs.
+//
+// ORK_TEMPORAL_NAMESPACE, when set, is the prefix this process extends: test
+// processes run concurrently (AGENTS.md §11.1), and the one namespace a slot
+// or an operator names is shared by every process started under it.
 func claimNamespace() string {
-	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
-		return ns
+	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
+	if base == "" {
+		base = "ork"
 	}
-	return "ork-idempotency"
+	return fmt.Sprintf("%s-idempotency-%d", base, os.Getpid())
 }
 
 // claimQueue names a queue only this test's worker polls, so no other engine

@@ -21,6 +21,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 // `orkctl release`'s CLI acceptance (docs/DEPLOY.md §3) on the real binaries: `ork` and `orker`
@@ -31,48 +32,11 @@ import (
 // own /orkstack/tmp, which is how the test holds a run in flight and lets it
 // go.
 
-var releaseBins struct {
-	once               sync.Once
-	dir                string
-	orkctl, ork, orker string
-	err                error
-}
-
-// removeReleaseBinaries deletes the directory releaseBinaries built into, once
-// every test of the process has finished (TestMain).
-func removeReleaseBinaries() {
-	if releaseBins.dir != "" {
-		_ = os.RemoveAll(releaseBins.dir)
-	}
-}
-
-// releaseBinaries builds orkctl, ork and orker once per test process.
+// releaseBinaries returns orkctl, ork and orker (internal/testsupport/testbin:
+// the proof's, or built once per test process).
 func releaseBinaries(t *testing.T) (string, string, string) {
 	t.Helper()
-	releaseBins.once.Do(func() {
-		dir, err := os.MkdirTemp("", "ork-release-bins-")
-		if err != nil {
-			releaseBins.err = err
-			return
-		}
-		releaseBins.dir = dir
-		root := repoRoot(t)
-		for _, name := range []string{"orkctl", "ork", "orker"} {
-			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name), "./cmd/"+name)
-			cmd.Dir = root
-			if out, err := cmd.CombinedOutput(); err != nil {
-				releaseBins.err = fmt.Errorf("go build ./cmd/%s: %v\n%s", name, err, out)
-				return
-			}
-		}
-		releaseBins.orkctl = filepath.Join(dir, "orkctl")
-		releaseBins.ork = filepath.Join(dir, "ork")
-		releaseBins.orker = filepath.Join(dir, "orker")
-	})
-	if releaseBins.err != nil {
-		t.Fatal(releaseBins.err)
-	}
-	return releaseBins.orkctl, releaseBins.ork, releaseBins.orker
+	return testbin.Path(t, "./cmd/orkctl"), testbin.Path(t, "./cmd/ork"), testbin.Path(t, "./cmd/orker")
 }
 
 // relProc is one process this test started, stoppable by its own PID.
@@ -125,6 +89,8 @@ type relStack struct {
 	mu          sync.Mutex
 	log         strings.Builder
 	name        string
+	// token makes this stack's Orker identities its own (oid).
+	token string
 }
 
 func newRelStack(t *testing.T, name string, timeout time.Duration) *relStack {
@@ -139,6 +105,7 @@ func newRelStack(t *testing.T, name string, timeout time.Duration) *relStack {
 		address:     address,
 		namespace:   isolatedNamespace() + "-rel",
 		deployment:  fmt.Sprintf("ork-rel-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000),
+		token:       fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000),
 		workRoot:    bindableOrkerWorkRoot(t),
 		artifactDir: sharedLocalArtifactDir(t),
 		engines:     map[string]string{},
@@ -243,19 +210,29 @@ func (s *relStack) startEngine(name, build string) {
 	s.note("engine %s up (release %q)", name, build)
 }
 
-// startOrker starts one `orker` of release build with id and pin capacity.
-func (s *relStack) startOrker(id, build string, pins int) {
+// oid is the Orker identity the logical name stands for in this stack. An
+// identity is host-wide — an Orker locks it at boot, and refuses one another
+// live Orker holds — so test processes running beside each other must never
+// share one: each stack suffixes its own token. Processes stay keyed by the
+// logical name (start, stopProc); everything the engine reports or the CLI
+// is given uses oid.
+func (s *relStack) oid(name string) string { return name + "-" + s.token }
+
+// startOrker starts one `orker` of release build, named name (its identity is
+// s.oid(name)), with pin capacity.
+func (s *relStack) startOrker(name, build string, pins int) {
 	s.t.Helper()
+	id := s.oid(name)
 	work := filepath.Join(s.workRoot, id)
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		s.t.Fatal(err)
 	}
-	s.start(id, s.orker, append(s.common(build),
+	s.start(name, s.orker, append(s.common(build),
 		"ORK_ORKER_ID="+id,
 		"ORK_ORKER_WORKDIR="+work,
 		"ORK_ORKER_MAX_PINS="+strconv.Itoa(pins),
 	)...)
-	s.awaitOrker(id, func(o *orkstackv1.Orker) bool { return o != nil && o.GetUnavailableReason() == "" })
+	s.awaitOrker(name, func(o *orkstackv1.Orker) bool { return o != nil && o.GetUnavailableReason() == "" })
 	s.note("orker %s up (release %q, max pins %d)", id, build, pins)
 }
 
@@ -359,8 +336,10 @@ func (s *relStack) orkerRow(id string) *orkstackv1.Orker {
 	return resp.GetOrkers()[0]
 }
 
-func (s *relStack) awaitOrker(id string, want func(*orkstackv1.Orker) bool) *orkstackv1.Orker {
+// awaitOrker polls the Orker named name (identity s.oid(name)) until want holds.
+func (s *relStack) awaitOrker(name string, want func(*orkstackv1.Orker) bool) *orkstackv1.Orker {
 	s.t.Helper()
+	id := s.oid(name)
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		row := s.orkerRow(id)
@@ -564,7 +543,7 @@ func TestIntegration_ReleaseRolloutThroughOrkctl(t *testing.T) {
 	s.note("run %s is in flight on orker-v1 (its gate task is running)", gated)
 
 	s.startEngine("ork-v2", "v2")
-	refusal := `pool "main" is in use (orker-v1 of release v1 serves it) and no Orker of release v2 serves it`
+	refusal := `pool "main" is in use (` + s.oid("orker-v1") + ` of release v1 serves it) and no Orker of release v2 serves it`
 	s.awaitStatus("v2 not ready: pool main has no Orker of v2", func(r *orkstackv1.ListReleasesResponse) bool {
 		v2 := releaseNamed(r, "v2")
 		if v2 == nil || v2.GetEngineReplicas() < 1 {
@@ -610,12 +589,12 @@ func TestIntegration_ReleaseRolloutThroughOrkctl(t *testing.T) {
 	s.applyQuick("rel-quick")
 	fresh := s.submit("rel-quick")
 	freshRun := s.awaitRun(fresh, 3*time.Minute)
-	requireAllOn(t, freshRun, "orker-v2")
+	requireAllOn(t, freshRun, s.oid("orker-v2"))
 	s.note("EVIDENCE run %s, submitted after the promotion, ran on %v", fresh, taskOrkers(freshRun))
 
 	s.openGates()
 	gatedRun := s.awaitRun(gated, 3*time.Minute)
-	requireAllOn(t, gatedRun, "orker-v1")
+	requireAllOn(t, gatedRun, s.oid("orker-v1"))
 	s.note("EVIDENCE run %s, started on v1, finished there: %v", gated, taskOrkers(gatedRun))
 
 	began := time.Now()
@@ -647,7 +626,7 @@ func TestIntegration_ReleaseRampSplitsNewRuns(t *testing.T) {
 		}
 	}
 	s.note("EVIDENCE 20 runs at a 50%% ramp ran on %v", ran)
-	if ran["orker-v1"] == 0 || ran["orker-v2"] == 0 {
+	if ran[s.oid("orker-v1")] == 0 || ran[s.oid("orker-v2")] == 0 {
 		t.Fatalf("a 50%% ramp sent every run to one release: %v", ran)
 	}
 
@@ -666,7 +645,7 @@ func TestIntegration_ReleaseRampSplitsNewRuns(t *testing.T) {
 		}
 	}
 	s.note("EVIDENCE 10 runs after the ramp stopped ran on %v", after)
-	if after["orker-v2"] != 0 || after["orker-v1"] != 10 {
+	if after[s.oid("orker-v2")] != 0 || after[s.oid("orker-v1")] != 10 {
 		t.Fatalf("runs after the ramp stopped: %v", after)
 	}
 	s.awaitStatus("v2 previous", func(r *orkstackv1.ListReleasesResponse) bool {
@@ -693,12 +672,12 @@ func TestIntegration_ReleaseRollbackKeepsTheRolledBackReleasesRunsWhereTheyAre(t
 	}
 	s.applyQuick("rel-quick")
 	quick := s.awaitRun(s.submit("rel-quick"), 3*time.Minute)
-	requireAllOn(t, quick, "orker-v1")
+	requireAllOn(t, quick, s.oid("orker-v1"))
 	s.note("EVIDENCE a run submitted after the rollback ran on %v", taskOrkers(quick))
 
 	s.openGates()
 	gatedRun := s.awaitRun(gated, 3*time.Minute)
-	requireAllOn(t, gatedRun, "orker-v2")
+	requireAllOn(t, gatedRun, s.oid("orker-v2"))
 	s.note("EVIDENCE run %s, started on v2, finished there after the rollback: %v", gated, taskOrkers(gatedRun))
 
 	s.startEngine("ork-v3", "v3")
@@ -727,8 +706,8 @@ func TestIntegration_ACordonedOrkerDoesNotServeARelease(t *testing.T) {
 	s := newRelStack(t, "cordon", 10*time.Minute)
 	s.versionedPair(0, 0)
 	s.awaitStatus("v2 passes", noBlockers("v2"))
-	s.mustCLI("orker", "cordon", "orker-v2", "--reason", "kernel upgrade")
-	want := `no uncordoned Orker of release v2 serves it (orker-v2 of release v2 is cordoned: "kernel upgrade")`
+	s.mustCLI("orker", "cordon", s.oid("orker-v2"), "--reason", "kernel upgrade")
+	want := `no uncordoned Orker of release v2 serves it (` + s.oid("orker-v2") + ` of release v2 is cordoned: "kernel upgrade")`
 	s.awaitStatus("v2 blocked by its cordon", func(r *orkstackv1.ListReleasesResponse) bool {
 		for _, b := range releaseNamed(r, "v2").GetBlockers() {
 			if strings.Contains(b.GetMessage(), want) {
@@ -741,7 +720,7 @@ func TestIntegration_ACordonedOrkerDoesNotServeARelease(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, want) {
 		t.Fatalf("promote with v2's only Orker cordoned: exit %d\n%s", code, stderr)
 	}
-	s.mustCLI("orker", "uncordon", "orker-v2")
+	s.mustCLI("orker", "uncordon", s.oid("orker-v2"))
 	s.awaitStatus("v2 passes again", noBlockers("v2"))
 	out := s.mustCLI("release", "promote", "v2", "--yes")
 	if !strings.Contains(out, "release v2 is current (was v1).") {
@@ -752,7 +731,7 @@ func TestIntegration_ACordonedOrkerDoesNotServeARelease(t *testing.T) {
 func TestIntegration_APinHostIsRequiredWherePinsAreHosted(t *testing.T) {
 	s := newRelStack(t, "pin-host", 10*time.Minute)
 	s.versionedPair(1, 0)
-	want := `pool "main" hosts pins (orker-v1 of release v1 is a pin host) and no Orker of release v2 in it hosts pins`
+	want := `pool "main" hosts pins (` + s.oid("orker-v1") + ` of release v1 is a pin host) and no Orker of release v2 in it hosts pins`
 	s.awaitStatus("v2 blocked: no pin host", func(r *orkstackv1.ListReleasesResponse) bool {
 		for _, b := range releaseNamed(r, "v2").GetBlockers() {
 			if b.GetKind() == orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED && strings.Contains(b.GetMessage(), want) {
@@ -790,7 +769,7 @@ func TestIntegration_ReleaseStatusNamesAnOpenPinAndItsHost(t *testing.T) {
 	s.awaitStatus("v2 passes", noBlockers("v2"))
 	s.mustCLI("release", "promote", "v2", "--yes")
 
-	pinLine := `pin "build" of run ` + pinned + ` on orker-v1`
+	pinLine := `pin "build" of run ` + pinned + ` on ` + s.oid("orker-v1")
 	s.awaitStatus("v1 previous holding the pin", func(r *orkstackv1.ListReleasesResponse) bool {
 		v1 := releaseNamed(r, "v1")
 		return v1.GetRole() == orkstackv1.ReleaseRole_RELEASE_ROLE_PREVIOUS && len(v1.GetOrkers()) == 1 &&
@@ -802,14 +781,14 @@ func TestIntegration_ReleaseStatusNamesAnOpenPinAndItsHost(t *testing.T) {
 	}
 	stdout, _, code := s.cli("release", "wait", "v1", "--timeout", "20s")
 	if code != exitDrainTimedOut || !strings.Contains(stdout, pinLine) ||
-		!strings.Contains(stdout, "stopping orker-v1 fails it with PIN_HOST_LOST.") {
+		!strings.Contains(stdout, "stopping "+s.oid("orker-v1")+" fails it with PIN_HOST_LOST.") {
 		t.Fatalf("wait --timeout 20s: exit %d\n%s", code, stdout)
 	}
 	s.note("EVIDENCE release wait v1 --timeout 20s exited 4 naming the pin and orker-v1")
 
 	s.openGates()
 	run := s.awaitRun(pinned, 3*time.Minute)
-	requireAllOn(t, run, "orker-v1")
+	requireAllOn(t, run, s.oid("orker-v1"))
 	began := time.Now()
 	if _, stderr, code := s.cli("release", "wait", "v1", "--timeout", "10m"); code != 0 {
 		t.Fatalf("release wait v1 after the pin closed: exit %d\n%s", code, stderr)
@@ -845,7 +824,7 @@ func TestIntegration_FirstPromotionWaitsForRunsStartedBeforeVersioning(t *testin
 	}
 	s.openGates()
 	run := s.awaitRun(gated, 3*time.Minute)
-	requireAllOn(t, run, "orker-u")
+	requireAllOn(t, run, s.oid("orker-u"))
 	s.awaitStatus("the unversioned run is no longer counted", noBlockers("v1"))
 	out := s.mustCLI("release", "promote", "v1", "--yes")
 	if !strings.Contains(out, "release v1 is current.") {

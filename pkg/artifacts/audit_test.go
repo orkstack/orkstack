@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -237,6 +238,33 @@ func putAll(t *testing.T, store artifacts.AuditStore, records ...*orkstackv1.Aud
 	}
 }
 
+// putConcurrently stores records, at most width at a time. Seeding thousands
+// of records one after another spends minutes in the local backend's
+// per-record fsync; the order they are written in is not what any test
+// observes, since every record carries its own time.
+func putConcurrently(t *testing.T, store artifacts.AuditStore, width int, records ...*orkstackv1.AuditRecord) {
+	t.Helper()
+	sem := make(chan struct{}, width)
+	errs := make(chan error, len(records))
+	var wg sync.WaitGroup
+	for _, rec := range records {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(rec *orkstackv1.AuditRecord) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := store.PutAuditRecord(context.Background(), rec); err != nil {
+				errs <- fmt.Errorf("PutAuditRecord(%s): %w", rec.GetId(), err)
+			}
+		}(rec)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
 func ids(records []*orkstackv1.AuditRecord) []string {
 	out := make([]string, 0, len(records))
 	for _, rec := range records {
@@ -377,9 +405,11 @@ func TestAuditStore_ScanBudgetRefuses(t *testing.T) {
 	base := time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC)
 	for name, store := range newAuditStores(t) {
 		t.Run(name, func(t *testing.T) {
+			records := make([]*orkstackv1.AuditRecord, 0, artifacts.AuditScanMaxObjects+1000)
 			for i := range artifacts.AuditScanMaxObjects + 1000 {
-				putAll(t, store, auditRecord(base.Add(time.Duration(i)*time.Second), "ns", "namespace.update", ""))
+				records = append(records, auditRecord(base.Add(time.Duration(i)*time.Second), "ns", "namespace.update", ""))
 			}
+			putConcurrently(t, store, 32, records...)
 			q := artifacts.AuditQuery{
 				Since: base, Until: base.Add(24 * time.Hour), Limit: 50,
 				Keep: func(rec *orkstackv1.AuditRecord) bool { return rec.GetPrincipal() == "nobody-matches" },

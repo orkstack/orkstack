@@ -408,7 +408,7 @@ func TestIntegration_EachItemCommittedThenOrkerDiesIsAdopted(t *testing.T) {
 	refs, _ := e.store.(artifacts.RefPredictor)
 	activities := orker.NewActivitiesWithOptions(e.store, orker.Options{
 		Logs: e.logs, Commits: e.commits, Attempts: e.attempts, Refs: refs,
-		Pool: task.DefaultPool, OrkerID: "each-i4-a", WorkRoot: e.workRoot,
+		Pool: task.DefaultPool, OrkerID: proof.OrkerID("each-i4-a"), WorkRoot: e.workRoot,
 	})
 	if err := activities.Boot(e.ctx); err != nil {
 		infraAbsent(t, "orker boot: %v", err)

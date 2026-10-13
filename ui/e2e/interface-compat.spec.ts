@@ -1,6 +1,5 @@
 import { expect, test, type Page } from './test';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	catalogEnv,
@@ -14,9 +13,11 @@ import {
 	spawnLogged,
 	tcpOpen,
 	uiDir,
-	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // The interface compatibility gate in the browser
@@ -170,21 +171,16 @@ test.beforeAll(async () => {
 		].join('\n')
 	);
 
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18307, 14307]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
-	}
 
 	// No Orker: nothing here submits a run, and the schedule is created paused.
-	spawnLogged(outPath('engine.log'), './bin/ork', [], {
+	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...s3Env,

@@ -1396,16 +1396,16 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   `from_sequence`. Under versioning the constraint is the *version*, not the
   replica — do not take the **last** replica of a version down until that
   version reports `Drained` (§3 step 5).
-- **Process hygiene.** Before any manual end-to-end, kill stray workers:
-
-  ```bash
-  pkill -f '/bin/orker$'; pkill -f '/bin/ork$'; sleep 2
-  ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep   # must be empty
-  ```
-
-  Anchor both patterns with `/` and `$`, as `AGENTS.md` §11.1 does. Unanchored,
-  `bin/ork` also matches `bin/orkctl` — the cleanup then kills the CLI you are
-  about to drive the deploy with.
+- **Process hygiene.** Before any manual end-to-end, make sure no stray
+  Orker of yours is still polling the namespace: a forgotten worker steals
+  activities from every later run and looks like a code bug. Stop only what
+  you started, by its PID — never by name or pattern (`AGENTS.md` §11.1). A
+  pattern such as `/bin/orker$` matches every worktree's dev stack and every
+  proof running on the host, and an unanchored `bin/ork` also matches the
+  `orkctl` you are about to drive the deploy with. `make down` stops this
+  worktree's dev stack, including any process whose executable is this
+  worktree's `bin/ork` or `bin/orker`, and `scripts/proof-stop.sh
+  proof/<name>` stops a proof you started.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 

@@ -25,6 +25,7 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/cosigntest"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -74,9 +75,9 @@ func newPolicyStack(ctx context.Context, t *testing.T, label string) *policyStac
 	s.registry = cosigntest.StartRegistry(t, func(format string, args ...any) { infraAbsent(t, format, args...) })
 	copier := &cosigntest.Client{}
 	for _, name := range localcatalog.Names {
-		if _, err := copier.CopyImage(ctx, shared, s.registry.Host, "orkstack/activity-"+name, "dev"); err != nil {
-			infraAbsent(t, "copy %s/orkstack/activity-%s:dev into the private registry: %v (run `make -C images push`)",
-				shared, name, err)
+		if _, err := copier.CopyImage(ctx, shared, s.registry.Host, "orkstack/activity-"+name, localcatalog.Tag()); err != nil {
+			infraAbsent(t, "copy %s/orkstack/activity-%s:%s into the private registry: %v (run `make -C images push`)",
+				shared, name, localcatalog.Tag(), err)
 		}
 	}
 	// Every process this test starts inherits these: the engines' catalog
@@ -93,23 +94,16 @@ func newPolicyStack(ctx context.Context, t *testing.T, label string) *policyStac
 	s.cfg = cfg
 
 	s.temporal = dialIsolatedNamespace(ctx, t, address, s.partition)
-	root := repoRoot(t)
-	binDir := t.TempDir()
-	enginePath := buildBinary(t, root, binDir, "ork")
-	orkerPath := buildBinary(t, root, binDir, "orker")
-	s.signTool = filepath.Join(binDir, "cosign-sign")
-	build := exec.Command("go", "build", "-o", s.signTool, "./test/tools/cosign-sign")
-	build.Dir = root
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build test/tools/cosign-sign: %v\n%s", err, out)
-	}
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
+	s.signTool = testbin.Path(t, "./test/tools/cosign-sign")
 	s.keys = t.TempDir()
 	if dir := os.Getenv(proof.EnvDir); dir != "" {
 		s.keys = filepath.Join(dir, "orkctl", "image-policy-keys-"+label)
 	}
 	s.tool(t, "keygen", filepath.Join(s.keys, "release"))
 	s.tool(t, "keygen", filepath.Join(s.keys, "other"))
-	s.tool(t, "sign", "--key", filepath.Join(s.keys, "release", "cosign.key"), s.image("shell")+":dev")
+	s.tool(t, "sign", "--key", filepath.Join(s.keys, "release", "cosign.key"), s.image("shell")+":"+localcatalog.Tag())
 
 	channel := idempotencyTaskQueue()
 	startOrkerWithEnv(ctx, t, s.temporal, orkerPath, address, s.partition, channel)
@@ -134,7 +128,7 @@ func (s *policyStack) image(name string) string {
 // digest resolves one private image's tag through the engine's resolver.
 func (s *policyStack) digest(ctx context.Context, t *testing.T, name string) string {
 	t.Helper()
-	ref, err := dsl.NewResolver("").Resolve(ctx, s.image(name)+":dev", s.image(name)+":dev")
+	ref, err := dsl.NewResolver("").Resolve(ctx, s.image(name)+":"+localcatalog.Tag(), s.image(name)+":"+localcatalog.Tag())
 	if err != nil {
 		t.Fatalf("resolve %s: %v", s.image(name), err)
 	}
@@ -415,7 +409,7 @@ func TestIntegration_ThePolicyRefusesValidateAndApplyWithTheFieldPath(t *testing
 	// The image outside the floor is the SHARED registry's copy of the same
 	// shell image: a real, resolvable reference that is simply not under the
 	// allowed prefix (no public-registry round trip in the proof).
-	outside := s.shared + "/orkstack/activity-shell:dev"
+	outside := s.shared + "/orkstack/activity-shell:" + localcatalog.Tag()
 
 	s.cli(t, s.a, exitOK, "admin", "image-policy", "set", "--allowed-registry", private)
 	path := s.document(t, policyOrkflowYAML("deploy", outside, "echo outside"))
@@ -437,7 +431,7 @@ func TestIntegration_ThePolicyRefusesValidateAndApplyWithTheFieldPath(t *testing
 	}
 
 	s.cli(t, s.a, exitOK, "admin", "image-policy", "set", "--require-digest")
-	tagged := s.image("shell") + ":dev"
+	tagged := s.image("shell") + ":" + localcatalog.Tag()
 	_, stderr = s.cli(t, s.b, -1, "apply", s.document(t, policyOrkflowYAML("tagged", tagged, "echo tagged")))
 	if !strings.Contains(stderr, "is a mutable tag, and this deployment requires a digest") {
 		t.Fatalf("tag refusal: %s", stderr)
@@ -451,7 +445,7 @@ func TestIntegration_AFloorTightenedOnOneReplicaRefusesASubmitOnTheOther(t *test
 	defer cancel()
 	s := newPolicyStack(ctx, t, "floor")
 	defer s.writeTranscript(t, "image-policy-floor-two-replicas.txt")
-	outside := s.shared + "/orkstack/activity-shell:dev"
+	outside := s.shared + "/orkstack/activity-shell:" + localcatalog.Tag()
 	since := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 
 	s.cli(t, s.a, exitOK, "apply", s.document(t, policyOrkflowYAML("deploy", outside, "echo deployed")))
@@ -561,9 +555,9 @@ func TestIntegration_ASignatureRemovedAfterSubmitFailsTheTaskAtTheOrker(t *testi
 		time.Sleep(250 * time.Millisecond)
 	}
 	s.note("task one of %s is running its container; removing the signature now", runID)
-	s.tool(t, "unsign", s.image("shell")+":dev")
+	s.tool(t, "unsign", s.image("shell")+":"+localcatalog.Tag())
 	t.Cleanup(func() {
-		_, _ = exec.Command(s.signTool, "sign", "--key", filepath.Join(s.keys, "release", "cosign.key"), s.image("shell")+":dev").CombinedOutput()
+		_, _ = exec.Command(s.signTool, "sign", "--key", filepath.Join(s.keys, "release", "cosign.key"), s.image("shell")+":"+localcatalog.Tag()).CombinedOutput()
 	})
 
 	run := s.awaitStatus(ctx, t, s.b, runID, prod, orkstackv1.Status_STATUS_FAILED)
@@ -601,7 +595,7 @@ func TestIntegration_ATightenedPolicyNeverTouchesARunAlreadyAccepted(t *testing.
 	s := newPolicyStack(ctx, t, "accepted")
 	defer s.writeTranscript(t, "image-policy-accepted-run.txt")
 	// Tag-spelled (not the catalog name), so require_digest refuses it.
-	tagged := s.image("shell") + ":dev"
+	tagged := s.image("shell") + ":" + localcatalog.Tag()
 	s.cli(t, s.a, exitOK, "apply", s.document(t, twoStepYAML("slow", tagged, 15)))
 	runID := s.submitID(t, s.a, "slow", "")
 	s.cli(t, s.b, exitOK, "admin", "image-policy", "set", "--require-digest",

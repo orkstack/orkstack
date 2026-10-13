@@ -42,10 +42,10 @@ if [ "$force" -ne 1 ]; then
 fi
 
 say "== stopping everything =="
+# stack.sh down stops what make up started, and any process whose executable
+# is this worktree's bin/ork or bin/orker — by identity, never by name or
+# pattern (AGENTS.md §11.1). Its own verdict is checked again below.
 "$REPO/scripts/stack.sh" down >/dev/null 2>&1 || true
-pkill -f "$REPO/bin/orker" 2>/dev/null || true
-pkill -f "$REPO/bin/ork$" 2>/dev/null || true
-sleep 1
 
 say "== removing containers and their volumes =="
 "${COMPOSE[@]}" down --volumes --remove-orphans
@@ -62,8 +62,16 @@ rm -rf "$REPO/bin" "$REPO/.run" "$REPO/ui/build" "$REPO/ui/.svelte-kit" "$REPO/u
 rm -rf "$REPO/${ORK_ARTIFACT_DIR:-.data/artifacts}" "$REPO/.data"
 
 say "== verifying =="
-stray="$(pgrep -fl "$REPO/bin/ork" 2>/dev/null || true)"
-[ -z "$stray" ] || { say "processes survived: $stray"; exit 1; }
+# bin/ is gone by now, so a survivor's /proc/<pid>/exe reads
+# "<path> (deleted)"; it is compared to the path all the same.
+stray=""
+for p in /proc/[0-9]*; do
+	exe="$(readlink "$p/exe" 2>/dev/null)" || continue
+	case "${exe% (deleted)}" in
+	"$REPO/bin/ork" | "$REPO/bin/orker") stray="$stray ${p#/proc/}" ;;
+	esac
+done
+[ -z "$stray" ] || { say "processes running this worktree's bin/ork or bin/orker survived: pids$stray"; exit 1; }
 volumes="$(docker volume ls -q --filter label=com.docker.compose.project=orkstack 2>/dev/null || true)"
 [ -z "$volumes" ] || { say "volumes survived: $volumes"; exit 1; }
 # Every place a run or an orkflow can persist, checked by looking rather than

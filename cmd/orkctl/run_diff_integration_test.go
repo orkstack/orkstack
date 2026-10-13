@@ -399,9 +399,13 @@ func scheduledInput(t *testing.T, s *timingStack, runID, taskID string) *orkstac
 	return nil
 }
 
-func runningContainers(t *testing.T) int {
+// containersOf counts the containers — running or exited — that the Orker
+// orkerID created, by its ork.orker label, never host-wide: other tests and
+// other proofs start and stop containers on the same daemon concurrently
+// (AGENTS.md §11.1), so a host-wide count moves under a test that starts none.
+func containersOf(t *testing.T, orkerID string) int {
 	t.Helper()
-	out, err := exec.Command("docker", "ps", "--quiet").Output()
+	out, err := exec.Command("docker", "ps", "--all", "--quiet", "--filter", "label=ork.orker="+orkerID).Output()
 	if err != nil {
 		t.Fatalf("docker ps: %v", err)
 	}
@@ -448,9 +452,10 @@ func TestIntegration_RunDiffReadsTheAdopterWhenTheCommittingRecordIsGone(t *test
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict references", store)
 	}
+	adopterID := proof.OrkerID("run-diff-adopter")
 	activities := orker.NewActivitiesWithOptions(store, orker.Options{
 		Logs: logs, Commits: commits, Attempts: attemptStore, Refs: refs,
-		Pool: task.DefaultPool, OrkerID: "run-diff-adopter", WorkRoot: bindableOrkerWorkRoot(t),
+		Pool: task.DefaultPool, OrkerID: adopterID, WorkRoot: bindableOrkerWorkRoot(t),
 	})
 	in := scheduledInput(t, s, run1, "work")
 
@@ -464,7 +469,7 @@ func TestIntegration_RunDiffReadsTheAdopterWhenTheCommittingRecordIsGone(t *test
 		}
 		return activities.ExecuteTask(ctx, in)
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	containersBefore := runningContainers(t)
+	containersBefore := containersOf(t, adopterID)
 	env.ExecuteWorkflow(adoptionProbeWorkflow, in)
 	if !env.IsWorkflowCompleted() || env.GetWorkflowError() != nil {
 		t.Fatalf("replacement attempt: completed=%t err=%v", env.IsWorkflowCompleted(), env.GetWorkflowError())
@@ -473,9 +478,9 @@ func TestIntegration_RunDiffReadsTheAdopterWhenTheCommittingRecordIsGone(t *test
 	if err := env.GetWorkflowResult(&adopted); err != nil {
 		t.Fatalf("result: %v", err)
 	}
-	containersAfter := runningContainers(t)
+	containersAfter := containersOf(t, adopterID)
 	if containersAfter != containersBefore {
-		t.Fatalf("running containers %d -> %d across the replacement attempt; adoption starts none", containersBefore, containersAfter)
+		t.Fatalf("the adopter's containers %d -> %d across the replacement attempt; adoption starts none", containersBefore, containersAfter)
 	}
 	if !adopted.GetCommitAdopted() || adopted.GetAttempt() != 1 {
 		t.Fatalf("the replacement attempt did not adopt attempt 1's commit: adopted=%t attempt=%d", adopted.GetCommitAdopted(), adopted.GetAttempt())
@@ -491,7 +496,7 @@ func TestIntegration_RunDiffReadsTheAdopterWhenTheCommittingRecordIsGone(t *test
 		t.Fatalf("the adopter's record = attempt %d adopted=%t outcome=%s image=%v; want 2, true, SUCCEEDED and record 1's image %v",
 			record.GetAttempt(), record.GetCommitAdopted(), record.GetOutcome(), record.GetImage(), kept)
 	}
-	fmt.Fprintf(&s.transcript, "replacement attempt through the real OCIDispatcher: store holds one record, attempt=%d commit_adopted=%t outcome=%s platform_digest=%s (record 1's was %s); running containers %d -> %d\n\n",
+	fmt.Fprintf(&s.transcript, "replacement attempt through the real OCIDispatcher: store holds one record, attempt=%d commit_adopted=%t outcome=%s platform_digest=%s (record 1's was %s); the adopter's containers %d -> %d\n\n",
 		record.GetAttempt(), record.GetCommitAdopted(), record.GetOutcome(), record.GetImage().GetPlatformDigest(), kept.GetPlatformDigest(), containersBefore, containersAfter)
 	t.Logf("EVIDENCE I4 single record attempt=%d commit_adopted=%t outcome=%s", record.GetAttempt(), record.GetCommitAdopted(), record.GetOutcome())
 

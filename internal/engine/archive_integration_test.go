@@ -109,7 +109,7 @@ func startEngine(
 					ValuesJson: valuesJSON(map[string]any{"echoed_task": in.TaskId}),
 					Artifacts: []*orkstackv1.ArtifactRef{{
 						Name: "echo",
-						Uri: fmt.Sprintf("s3://orkstack-artifacts/orkflows/%s/%s/%s/echo",
+						Uri: fmt.Sprintf("s3://%s/orkflows/%s/%s/%s/echo", artifacts.ConfigFromEnv().S3Bucket,
 							in.OrkflowName, in.TaskId, in.RunId),
 					}},
 				}, nil
@@ -270,6 +270,11 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	}
 
 	body := awaitArchivedBody(t, ctx, store, runID)
+	// The body is the FIRST record PutRun writes and the run-index row the
+	// last; stopping this engine between them cancels the archive activity
+	// before the index exists, and `run list` below then has nothing to read.
+	// Await the row too, so the archive is complete before the engine dies.
+	awaitArchivedIndexRow(t, ctx, store, runID)
 	archivedRun, archivedEvents, err := engine.UnmarshalRunArchive(body)
 	if err != nil {
 		first.stop()
@@ -375,6 +380,36 @@ func awaitArchivedBody(
 		select {
 		case <-ctx.Done():
 			t.Fatalf("run %s was never archived: %v", runID, ctx.Err())
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// awaitArchivedIndexRow waits for runID's row in the run index, which PutRun
+// publishes after every other record of the run.
+func awaitArchivedIndexRow(
+	t *testing.T,
+	ctx context.Context,
+	store *artifacts.S3RunArchive,
+	runID string,
+) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		entries, err := store.ListRuns(ctx, artifacts.RunQuery{Namespace: "default", Orkflow: "hello-ork"})
+		if err == nil {
+			for _, entry := range entries {
+				if entry.RunID == runID {
+					return
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %s has an archive body but never got its index row (last error %v)", runID, err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("run %s never got its index row: %v", runID, ctx.Err())
 		case <-time.After(200 * time.Millisecond):
 		}
 	}

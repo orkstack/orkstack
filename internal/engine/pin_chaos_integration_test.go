@@ -57,11 +57,16 @@ import (
 // pinChaosNamespace isolates this suite's Temporal namespace. AGENTS.md §11.1:
 // this suite terminates workflow executions and stops workers, so no other
 // agent's runs may share the namespace it does that in.
+//
+// ORK_TEMPORAL_NAMESPACE, when set, is the prefix this process extends: test
+// processes run concurrently (AGENTS.md §11.1), and the one namespace a slot
+// or an operator names is shared by every process started under it.
 func pinChaosNamespace() string {
-	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
-		return ns
+	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
+	if base == "" {
+		base = "ork"
 	}
-	return fmt.Sprintf("ork-pin-chaos-%d", os.Getpid())
+	return fmt.Sprintf("%s-pin-chaos-%d", base, os.Getpid())
 }
 
 // pinChaosCluster is one deployment: a real engine, a real pin-hosting Orker on
@@ -1257,9 +1262,12 @@ func pinChaosWorkRoot(t *testing.T, token string) string {
 		}
 		base = abs
 	}
-	root := filepath.Join(base, "pin-chaos-"+token)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("create the work root %s: %v", root, err)
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatalf("create the work root parent %s: %v", base, err)
+	}
+	root, err := os.MkdirTemp(base, proof.WorkRootPattern("pin-chaos-"+token))
+	if err != nil {
+		t.Fatalf("create the work root under %s: %v", base, err)
 	}
 	t.Cleanup(func() {
 		if _, err := orker.ReapPinDirectories(root); err != nil {

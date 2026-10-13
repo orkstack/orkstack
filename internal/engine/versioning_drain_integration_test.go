@@ -102,6 +102,12 @@ func TestIntegration_APinnedRunStrandsWhenItsVersionsOrkerStopsBeforeDrained(t *
 	assertRunVersion(t, ctx, c, transcript, runID, v1)
 
 	// --- 1 and 2: no progress, and no progress ON V2 ----------------------
+	// The window opens only once the stranded state really exists: the run
+	// has an ExecuteTask scheduled and waiting for an Orker. Without that
+	// positive control a host slow enough not to have scheduled anything yet
+	// would pass "no task ran" for the wrong reason.
+	awaitTaskScheduled(t, ctx, c, runID, 2*time.Minute)
+	transcript.step("the run has a task scheduled and waiting; the stranded window opens")
 	deadline := time.Now().Add(strandedWindow)
 	for time.Now().Before(deadline) {
 		assertNoTaskOfRunRan(t, second, runID, "v2",
@@ -218,6 +224,25 @@ func executionStatus(
 		t.Fatalf("describe %s: %v", runID, err)
 	}
 	return described.GetWorkflowExecutionInfo().GetStatus()
+}
+
+// awaitTaskScheduled waits, against a deadline, until runID's history holds
+// a scheduled ExecuteTask activity.
+func awaitTaskScheduled(t *testing.T, ctx context.Context, c client.Client, runID string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		for _, event := range runHistory(t, ctx, c, runID) {
+			if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil &&
+				attrs.GetActivityType().GetName() == task.ActivityExecuteTask {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %s scheduled no task activity within %s; the stranded window never opened", runID, within)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // assertTaskScheduledAndNeverStarted reads the stranded run's own history: the

@@ -3,6 +3,8 @@ package proof_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
@@ -34,4 +36,29 @@ func TestWrite_WithoutADirectoryOnlyLogs(t *testing.T) {
 	}
 	// Must not panic, fail, or write anywhere.
 	proof.Write(t, "engine", "transcript.txt", []byte("observed\n"))
+}
+
+func TestOrkerIDIsUniqueToTheProcessAndNamesTheProof(t *testing.T) {
+	t.Setenv(proof.EnvID, "")
+	pid := strconv.Itoa(os.Getpid())
+	if got := proof.OrkerID("orker-test"); got != "orker-test-"+pid {
+		t.Errorf("OrkerID = %q", got)
+	}
+	t.Setenv(proof.EnvID, "pr-0123456789ab")
+	if got := proof.OrkerID("orker-test"); got != "orker-test-pr-0123456789ab-"+pid {
+		t.Errorf("OrkerID under a proof = %q", got)
+	}
+}
+
+// scripts/proof-clean.sh reads the owning pid out of a work root's name with
+// -p([0-9]+)-[0-9]+$; a root it cannot read that way it never removes.
+func TestWorkRootPatternNamesTheOwningProcess(t *testing.T) {
+	root, err := os.MkdirTemp(t.TempDir(), proof.WorkRootPattern("orkctl-TestIntegration_X-sub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := regexp.MustCompile(`^orkctl-TestIntegration_X-sub-p` + strconv.Itoa(os.Getpid()) + `-[0-9]+$`)
+	if base := filepath.Base(root); !want.MatchString(base) {
+		t.Errorf("work root %q does not match %s", base, want)
+	}
 }

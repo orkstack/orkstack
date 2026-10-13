@@ -29,6 +29,7 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -649,10 +650,9 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := repoRoot(t)
-	binDir := t.TempDir()
-	orkctlPath := buildBinary(t, root, binDir, "orkctl")
-	enginePath := buildBinary(t, root, binDir, "ork")
-	orkerPath := buildBinary(t, root, binDir, "orker")
+	orkctlPath := testbin.Path(t, "./cmd/orkctl")
+	enginePath := testbin.Path(t, "./cmd/ork")
+	orkerPath := testbin.Path(t, "./cmd/orker")
 	namespace := isolatedNamespace()
 	_ = dialIsolatedNamespace(ctx, t, address, namespace)
 	startOrker(ctx, t, orkerPath, address, namespace, queue)

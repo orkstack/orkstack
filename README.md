@@ -155,13 +155,48 @@ docker run --rm alpine:3.20 getent hosts host.docker.internal
 `172.17.0.1` is the gateway of Docker's default bridge; a host with a
 customized `docker0` uses its own gateway address.
 
+The same applies to the observability stack (`make infra-up-observability`).
+Its Prometheus container scrapes `ork` and `orker` at
+`host.docker.internal:9464` and `:9465`, but it sits on the compose network,
+and on Linux a listener on `127.0.0.1` cannot be reached from a container. To
+scrape a stack you run by hand:
+
+1. Bind each process's admin listener to the gateway: `ORK_ADMIN_ADDR=172.17.0.1:9464`
+   for `ork`, `172.17.0.1:9465` for `orker`.
+2. Enable the `prometheus` metrics exporter (`OTEL_METRICS_EXPORTER=prometheus`;
+   see `docs/DEPLOY.md` §1).
+3. Attach Prometheus to the default bridge:
+
+```bash
+docker network connect bridge "$(docker ps -q --filter label=com.docker.compose.service=prometheus)"
+```
+
+The observability proof gate (`scripts/proof-observability.sh`) does the same
+for its own run, and detaches Prometheus afterwards only if it attached it.
+
+This is development and proof setup only: never bind a deployment's admin
+listeners to the bridge gateway, and nothing in `deploy/` does. While a
+listener is bound there, every container on Docker's default bridge can reach
+it, and that includes the activity containers an Orker starts with network
+`default`. What they can reach is the admin surface of that `ork` or
+`orker`: `/metrics`, `/healthz`, `/readyz`, and, under
+`ORK_PPROF_ENABLED=true`, `/debug/pprof/` (profiles, goroutine stacks and the
+process's command line). It is not the Connect API,
+not Temporal and not object storage, but an activity needs none of it
+(AGENTS.md §15), so unbind it (unset `ORK_ADMIN_ADDR`, or set it back to
+`127.0.0.1:…`) when you are done. The proof gate binds there only for its own
+run, with its own `ork` and `orker`, and stops them when it ends.
+
 ## Contributing
 
 Read [AGENTS.md](./AGENTS.md) (the engineering contract, including the
 repository layout in §12) and [CONTRIBUTING.md](./CONTRIBUTING.md). Every
-change ships with behavior tests and with evidence: `make proof` runs every
-gate against the real stack and keeps the output under `proof/<name>/`, which
-is gitignored; the commit or pull request quotes it. No proof, no done.
+change ships with behavior tests and with evidence, in two tiers (AGENTS.md
+§11.2): on a branch, `make proof-feature TESTS=… SPECS=…` runs the fast gates
+plus the tests and specs that prove the change; to merge, `make proof` runs
+every gate, every test and every spec against the real stack on the merged
+tree (§11.3). Both keep their output under `proof/<name>/`, which is
+gitignored; the commit or pull request quotes it. No proof, no done.
 
 ## Docs
 

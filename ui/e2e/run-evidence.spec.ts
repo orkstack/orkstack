@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -16,9 +16,11 @@ import {
 	spawnLogged,
 	tcpOpen,
 	uiDir,
-	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // The Evidence dialog on the run page, in a browser, against the real stack
@@ -53,7 +55,9 @@ const TRANSCRIPT = 'run-evidence-session.txt';
 
 const outPath = proofOut(PROOF_DIR);
 const note = noteTo(path.join(PROOF_DIR, TRANSCRIPT));
-const ORKCTL = path.join(repoRoot, 'bin', 'orkctl');
+// Resolved when a test runs, not when the file is loaded: listing the suite
+// (`playwright test --list`) runs no global setup, so no binaries exist then.
+const orkctl = () => bin('orkctl');
 
 function shot(page: Page, name: string) {
 	return page.screenshot({ path: outPath(name), fullPage: true });
@@ -125,30 +129,23 @@ test.beforeAll(async () => {
 	);
 
 	// Prerequisites are failures, not skips (AGENTS.md §11.1).
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18537, 14537]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orkctl', './cmd/orkctl'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
-	}
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
-	spawnLogged(outPath('engine.log'), './bin/ork', [], {
+	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18537',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged(outPath('orker.log'), './bin/orker', [], {
+	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
 		...s3Env,
 		...orkerEnv('run-evidence')
@@ -243,7 +240,7 @@ test('P1 the Evidence dialog shows the manifest before the bytes', async ({ page
 	const shown = JSON.parse(text) as { members: { path: string }[]; counts: { present: number } };
 	expect(shown.counts.present).toBe(presentCount(summary));
 	const cli = execFileSync(
-		ORKCTL,
+		orkctl(),
 		['--server', ENGINE, '--json', 'run', 'evidence', 'export', completedRun],
 		{ encoding: 'utf8' }
 	);
@@ -256,7 +253,7 @@ test('P2 toggles change the manifest and the command', async ({ page }) => {
 	await openFinished(page);
 	const before = presentCount(await openDialog(page));
 	const manifest = JSON.parse(
-		execFileSync(ORKCTL, ['--server', ENGINE, '--json', 'run', 'evidence', 'export', completedRun], {
+		execFileSync(orkctl(), ['--server', ENGINE, '--json', 'run', 'evidence', 'export', completedRun], {
 			encoding: 'utf8'
 		})
 	) as { members: { kind: string }[] };
@@ -288,7 +285,7 @@ test('P3 the download completes only on last and the CLI verifies it', async ({ 
 	await expect(page.getByTestId('run-evidence-error')).toHaveCount(0);
 
 	// The CLI's offline verifier over the file the browser saved: no server.
-	const verified = execFileSync(ORKCTL, ['run', 'evidence', 'verify', file], { encoding: 'utf8' });
+	const verified = execFileSync(orkctl(), ['run', 'evidence', 'verify', file], { encoding: 'utf8' });
 	const line = verified.split('\n')[0];
 	expect(line).toMatch(/^verified \d+ present members against MANIFEST\.json$/);
 	note(`P3 ${line}`);

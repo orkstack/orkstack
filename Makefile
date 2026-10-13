@@ -151,26 +151,47 @@ fmt: ## Format Go code
 	gofmt -w $$(find . -name '*.go' -not -path './gen/*')
 
 .PHONY: merge-check
-merge-check: build lint test ## Gate a merge: build + lint + unit tests + compile the integration suites
+merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree (AGENTS.md §11.3)
 	go vet -tags=integration ./...
-	@echo "merge-check OK: the merged tree builds, passes lint and unit tests, and its integration suites compile"
-	@echo "NOTE: COMPILE, not run. merge-check needs no infrastructure, so an"
-	@echo "      integration test can be red while this gate is green. Run"
-	@echo "      'make test-integration' with the stack up before releasing."
+	@echo "merge-check OK: the tree builds, passes lint and unit tests, and its integration suites compile"
+ifneq ($(strip $(PROOF)),)
+	go run ./test/tools/proofrun verify -proof $(PROOF)
+else
+	@echo "NOTE: COMPILE, not run. Without PROOF=proof/<name> this gate needs no"
+	@echo "      infrastructure, and an integration test can be red while it is green."
+	@echo "      A merge needs a full proof of the candidate: make proof, then"
+	@echo "      make merge-check PROOF=proof/<name> (AGENTS.md §11.3)."
+endif
 
 .PHONY: test-integration
-test-integration: ## Run the integration suites against live infra (needs: make infra-up && make -C images push)
-	ORK_REQUIRE_INFRA=1 go test -tags=integration -p 1 -timeout 120m -count=1 ./...
+test-integration: ## Run every integration suite as concurrent test processes, PROOF_JOBS at a time, with a ledger (needs: make infra-up && make -C images push)
+	@scripts/integration.sh
 
-## ---- evidence ----
+## ---- evidence (AGENTS.md §11.2) ----
 .PHONY: proof
-proof: ## Produce the evidence for a change under proof/<name>/ (gitignored): lint, build, unit, integration
+proof: ## The full proof, the merge gate: every gate, every test, every spec -> proof/<NAME>/ (gitignored)
 	@scripts/proof.sh $(NAME)
 
+.PHONY: proof-feature
+proof-feature: ## A feature proof of this branch, never merge evidence: TESTS='PKG:REGEX ...' SPECS='FILE ...' [BASE=main] -> proof/<NAME>-feature/
+	@scripts/proof.sh --tier feature $(if $(BASE),--base $(BASE)) $(foreach t,$(TESTS),--tests '$(t)') $(foreach s,$(SPECS),--specs '$(s)') $(NAME)
+
 .PHONY: proof-ui
-proof-ui: ## proof, plus the UI type-check, unit and Playwright suites with screenshots
-	@PROOF_GATES=unit,integration,ui scripts/proof.sh $(NAME)
+proof-ui: ## Alias of proof: the full proof already runs the UI type-check, unit and Playwright suites
+	@scripts/proof.sh $(NAME)
 
 .PHONY: proof-observability
-proof-observability: ## proof (unit) + the observability gate against the compose profile (needs: make infra-up-observability)
-	@PROOF_GATES=unit,observability scripts/proof.sh $(NAME)
+proof-observability: ## Only the observability gate, with what it needs (needs: make infra-up-observability); never merge-eligible
+	@PROOF_GATES=observability scripts/proof.sh $(NAME)
+
+.PHONY: proof-stop
+proof-stop: ## Stop one proof and everything it started: PROOF=proof/<name>
+	@scripts/proof-stop.sh $(PROOF)
+
+.PHONY: proof-clean
+proof-clean: ## List the buckets and work roots failed tests kept; REMOVE=1 removes them
+	@scripts/proof-clean.sh $(if $(REMOVE),--remove)
+
+.PHONY: proof-slow-list
+proof-slow-list: ## Regenerate scripts/proof-test-costs.tsv and scripts/proof-slow-tests.txt from a full proof: FROM=proof/<name>
+	go run ./test/tools/proofrun costs -from $(FROM)

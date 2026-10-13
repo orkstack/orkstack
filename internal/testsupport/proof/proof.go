@@ -13,6 +13,7 @@ package proof
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,6 +21,38 @@ import (
 
 // EnvDir names the directory evidence is written under.
 const EnvDir = "ORK_PROOF_DIR"
+
+// EnvID names the proof this process runs under. scripts/proof.sh sets it
+// (`pr-<hex>`), and it is what scripts/proof-stop.sh finds a stopped proof's
+// leftovers by.
+const EnvID = "ORK_PROOF_ID"
+
+// OrkerID returns an Orker identity for base that is unique to this process:
+// base, the proof's id when a proof runs it, and the pid.
+//
+// An Orker identity is HOST-wide, not process-wide: Boot takes an exclusive
+// lock on it in the host's temp directory and reaps every container labelled
+// with it. Tests run as concurrent processes (AGENTS.md §11.1), so a literal
+// identity would make a second process's Orker refuse to boot — or, without
+// the lock, reap the first one's containers.
+func OrkerID(base string) string {
+	if id := os.Getenv(EnvID); id != "" {
+		return fmt.Sprintf("%s-%s-%d", base, id, os.Getpid())
+	}
+	return fmt.Sprintf("%s-%d", base, os.Getpid())
+}
+
+// WorkRootPattern is the os.MkdirTemp pattern for a test's own Orker work
+// root under the shared parent (ORK_ORKER_WORKDIR or the repository's
+// .data/work): label, then this process's pid, then MkdirTemp's numeric
+// suffix — <label>-p<pid>-<digits>. Never the parent itself: an Orker's Boot
+// reaps every pin, spool and stage directory under its root, so two Orkers on
+// one root delete each other's in-flight work (AGENTS.md §11.1). The pid is
+// what lets scripts/proof-clean.sh tell a leftover root from one a running
+// test still uses; it removes only a root whose process is gone.
+func WorkRootPattern(label string) string {
+	return fmt.Sprintf("%s-p%d-*", label, os.Getpid())
+}
 
 // Dir reports the evidence directory, or "" when no run asked for one.
 func Dir() string {

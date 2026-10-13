@@ -1,10 +1,10 @@
 import { expect, test, type Page } from './test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { appendFileSync, createWriteStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, createWriteStream, mkdirSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { catalogEnv, ensureActivityImages, orkerEnv, killStarted, trackChild } from './harness';
+import { catalogEnv, ensureActivityImages, orkerEnv, killStarted, trackChild, bin, temporalAddress, temporalReachable } from './harness';
 import { selectNamespace } from './uiHelpers';
 
 // The whole logs-dashboard story, in one browser session against the real
@@ -332,7 +332,7 @@ test.beforeAll(async () => {
 		].join('\n')
 	);
 
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18082, 18083, 14175]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
@@ -342,12 +342,6 @@ test.beforeAll(async () => {
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
-	}
 
 	// Both replicas and both Orkers read and write the SAME bucket: orkflow
 	// definitions, the version pointer, the namespace registry, the run archive
@@ -363,17 +357,17 @@ test.beforeAll(async () => {
 		ORK_S3_PATH_STYLE: 'true'
 	};
 	const cluster = {
-		ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233',
+		ORK_TEMPORAL_ADDRESS: temporalAddress(),
 		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE
 	};
 
-	spawnLogged('engine-a.log', './bin/ork', [], {
+	spawnLogged('engine-a.log', bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...store,
 		ORK_HTTP_ADDR: '127.0.0.1:18082'
 	});
-	spawnLogged('engine-b.log', './bin/ork', [], {
+	spawnLogged('engine-b.log', bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...store,
@@ -384,12 +378,12 @@ test.beforeAll(async () => {
 	// activity workspace needs, and it is also what the Orker derives its
 	// identity from, so two Orkers on one host do not collide on the identity
 	// lock their startup reaper takes (see orkerEnv).
-	spawnLogged('orker-main.log', './bin/orker', [], {
+	spawnLogged('orker-main.log', bin('orker'), [], {
 		...cluster,
 		...store,
 		...orkerEnv('logs-main')
 	});
-	spawnLogged('orker-gpu.log', './bin/orker', [], {
+	spawnLogged('orker-gpu.log', bin('orker'), [], {
 		...cluster,
 		...store,
 		...orkerEnv('logs-gpu'),

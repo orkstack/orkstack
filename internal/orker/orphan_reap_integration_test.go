@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -20,7 +21,9 @@ func TestIntegration_ReplacementOrkerReapsLabelledOrphan(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	id := "phase2-reaper-" + strings.ReplaceAll(t.Name(), "/", "-")
+	// Unique to this process: an identity is host-wide, and a second process
+	// running this test would otherwise boot into the first one's lock.
+	id := proof.OrkerID("phase2-reaper-" + strings.ReplaceAll(t.Name(), "/", "-"))
 	cmd := exec.CommandContext(ctx, "docker", "run", "-d", "--label", "ork.orker="+id, "--label", "ork.run=phase2-orphan", "alpine:3.20", "sleep", "300")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -33,7 +36,7 @@ func TestIntegration_ReplacementOrkerReapsLabelledOrphan(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	workRoot, err := os.MkdirTemp("../../.data/work", "phase2-reap-")
+	workRoot, err := os.MkdirTemp("../../.data/work", proof.WorkRootPattern("phase2-reap"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +72,7 @@ func TestIntegration_ReplacementOrkerReapsUnderTheDefaultIdentity(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	workRoot, err := os.MkdirTemp("../../.data/work", "phase2-default-reap-")
+	workRoot, err := os.MkdirTemp("../../.data/work", proof.WorkRootPattern("phase2-default-reap"))
 	if err != nil {
 		t.Fatal(err)
 	}

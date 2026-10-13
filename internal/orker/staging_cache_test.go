@@ -17,6 +17,7 @@ import (
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -241,7 +242,7 @@ func TestBoot_ReapsTheStagingCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := NewActivitiesWithOptions(nil, Options{
-		OrkerID: "orker-stage-reap", WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
+		OrkerID: proof.OrkerID("orker-stage-reap"), WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
 	})
 	t.Cleanup(a.Close)
 	if err := a.Boot(context.Background()); err != nil {

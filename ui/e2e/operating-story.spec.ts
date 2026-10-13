@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -18,7 +18,10 @@ import {
 	uiDir,
 	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // The operating story, in one command against the real stack.
@@ -195,7 +198,7 @@ test.beforeAll(async () => {
 		].join('\n')
 	);
 
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18190, 18191, 14181]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
@@ -208,23 +211,16 @@ test.beforeAll(async () => {
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orkctl', './cmd/orkctl'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
-	}
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 
-	spawnLogged(outPath('engine-a.log'), './bin/ork', [], {
+	spawnLogged(outPath('engine-a.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18190'
 	});
-	spawnLogged(outPath('engine-b.log'), './bin/ork', [], {
+	spawnLogged(outPath('engine-b.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...s3Env,
@@ -233,12 +229,12 @@ test.beforeAll(async () => {
 	});
 	// Each Orker gets its own work root, which is both the bind-mountable
 	// workspace path and what its identity lock is keyed on (see orkerEnv).
-	mainOrkerProc = spawnLogged(outPath('orker-main.log'), './bin/orker', [], {
+	mainOrkerProc = spawnLogged(outPath('orker-main.log'), bin('orker'), [], {
 		...cluster,
 		...s3Env,
 		...orkerEnv('story-main')
 	});
-	batchOrkerProc = spawnLogged(outPath('orker-batch.log'), './bin/orker', [], {
+	batchOrkerProc = spawnLogged(outPath('orker-batch.log'), bin('orker'), [], {
 		...cluster,
 		...s3Env,
 		...orkerEnv('story-batch'),
@@ -292,7 +288,7 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 
 	// The CLI half: `orkctl run logs -f --server <engine B>`, timestamping as
 	// bytes arrive. orkctl is never invoked against A.
-	const orkctlPath = path.join(repoRoot, 'bin', 'orkctl');
+	const orkctlPath = bin('orkctl');
 	const follow = followTaskLogsCLI(orkctlPath, run, 'talk');
 
 	// THE CLI'S OWN LIVENESS CLAIM, captured WHILE the follow is still
@@ -533,7 +529,7 @@ test('a namespace and its pool policy are set in the Admin section, and pool hea
 	await shot(page, 'screenshot-admin-system-info.png');
 
 	// The same two reads, from the CLI, against engine B by name — never A.
-	const orkctlPath = path.join(repoRoot, 'bin', 'orkctl');
+	const orkctlPath = bin('orkctl');
 	const adminInfoOut = execFileSync(
 		orkctlPath,
 		['admin', 'info', '--server', ENGINE_B, '--json'],

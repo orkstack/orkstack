@@ -1,6 +1,5 @@
 import { expect, test, type Page } from './test';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	catalogEnv,
@@ -14,9 +13,11 @@ import {
 	spawnLogged,
 	tcpOpen,
 	uiDir,
-	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // Authoring is useful only if selecting a version, filling its declared input,
@@ -63,17 +64,13 @@ function shot(page: Page, name: string) { return page.screenshot({ path: proof(n
 
 test.beforeAll(async () => {
 	mkdirSync(proof('..'), { recursive: true });
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18089, 14182]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) throw new Error('UI build output missing');
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
-	spawnLogged(proof('engine.log'), './bin/ork', [], { ...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18089', ORK_WS_ALLOWED_ORIGINS: UI });
-	spawnLogged(proof('orker.log'), './bin/orker', [], { ...cluster, ...s3Env, ...orkerEnv('authoring-operations') });
+	spawnLogged(proof('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18089', ORK_WS_ALLOWED_ORIGINS: UI });
+	spawnLogged(proof('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('authoring-operations') });
 	await waitForEngine(ENGINE);
 	spawnLogged(proof('ui.log'), 'node', ['build'], { HOST: '127.0.0.1', PORT: '14182', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') }, uiDir);
 	// A readiness probe only: any always-present route answers it, and this one

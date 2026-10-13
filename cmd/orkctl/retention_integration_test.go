@@ -11,6 +11,8 @@ import (
 
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 // TestIntegration_CLISetsMaximumRunRetentionOnTheRealCluster is the
@@ -46,9 +48,8 @@ func TestIntegration_CLISetsMaximumRunRetentionOnTheRealCluster(t *testing.T) {
 	dialIsolatedNamespace(ctx, t, address, temporalNamespace)
 
 	root := repoRoot(t)
-	binDir := t.TempDir()
-	orkctlPath := buildBinary(t, root, binDir, "orkctl")
-	enginePath := buildBinary(t, root, binDir, "ork")
+	orkctlPath := testbin.Path(t, "./cmd/orkctl")
+	enginePath := testbin.Path(t, "./cmd/ork")
 
 	pool := privateTaskPool()
 	engineAddr := startNamespacedEngine(ctx, t, enginePath, address, temporalNamespace, pool)

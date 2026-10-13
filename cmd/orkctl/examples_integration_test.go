@@ -21,7 +21,6 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
-	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 )
 
 // The shipped-examples scenarios (examples/README.md): every example this repository ships runs end to end, as a reader
@@ -97,7 +96,9 @@ func TestIntegration_EveryExampleValidatesClean(t *testing.T) {
 			t.Fatalf("compile %s: %v", file, err)
 		}
 		path := file
-		if file == "examples/custom-image.ork.yaml" && localcatalog.Registry() != "localhost:5001" {
+		if file == "examples/custom-image.ork.yaml" {
+			// The shipped document names the `:dev` tags; this process
+			// pushed its own (exampleImageTag).
 			path = x.variantFile("custom-image.ork.yaml", customImageDocument(t, x.root))
 		}
 		out := x.in("orkflow", "validate", path)

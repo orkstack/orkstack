@@ -1,6 +1,5 @@
 import { expect, test, type Page } from './test';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	catalogEnv,
@@ -10,14 +9,16 @@ import {
 	noteTo,
 	orkerEnv,
 	proofOut,
-	repoRoot,
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
 	tcpOpen,
 	uiDir,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	bin,
+	temporalAddress,
+	temporalReachable
 } from './harness';
 
 // Awaited tasks against a real engine, Orker, Temporal and MinIO: the submit
@@ -80,21 +81,17 @@ tasks:
 
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
-	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18421, 14421]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
 
 	ensureActivityImages();
-	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
-	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) throw new Error('UI build output missing');
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
-	spawnLogged(out('engine.log'), './bin/ork', [], {
+	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18421', ORK_WS_ALLOWED_ORIGINS: UI
 	});
-	spawnLogged(out('orker.log'), './bin/orker', [], { ...cluster, ...s3Env, ...orkerEnv('awaited-tasks') });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('awaited-tasks') });
 	spawnLogged(out('ui.log'), 'node', ['build'], {
 		HOST: '127.0.0.1', PORT: '14421', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
 	}, uiDir);
