@@ -63,7 +63,7 @@ func (l *liveReader) Executions(context.Context, engine.StatsWindow) (engine.Exe
 	return engine.Executions{}, nil
 }
 
-func (l *liveReader) RunningCount(context.Context, string) (int64, error) { return 0, nil }
+func (l *liveReader) RunningCount(context.Context, string, int64) (int64, error) { return 0, nil }
 
 func (l *liveReader) RunStart(ctx context.Context, runID string) (*engine.RunStartRecord, error) {
 	run, err := l.GetRun(ctx, runID)

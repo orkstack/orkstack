@@ -64,7 +64,9 @@ type fakeReader struct {
 	listQueries []engine.RunQuery
 	// runningCounts records every namespace RunningCount was asked about, and
 	// runningCountErr makes that count unreadable.
-	runningCounts   []string
+	runningCounts []string
+	// runningCeilings is the ceiling each RunningCount call passed.
+	runningCeilings []int64
 	runningCountErr error
 	// starts is what each run was started with — its pinned definition and
 	// plan, as its start event holds them — and startErr makes that event
@@ -114,11 +116,12 @@ func (f *fakeReader) setStart(runID string, start *engine.RunStartRecord) {
 
 // RunningCount answers the admission question from the same executions map
 // the aggregate half reads, so a test seeds one map for both.
-func (f *fakeReader) RunningCount(_ context.Context, namespace string) (int64, error) {
+func (f *fakeReader) RunningCount(_ context.Context, namespace string, ceiling int64) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	namespace = artifacts.ResolveNamespace(namespace)
 	f.runningCounts = append(f.runningCounts, namespace)
+	f.runningCeilings = append(f.runningCeilings, ceiling)
 	if f.runningCountErr != nil {
 		return 0, f.runningCountErr
 	}

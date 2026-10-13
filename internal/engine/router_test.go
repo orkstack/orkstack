@@ -105,7 +105,7 @@ func (nopReader) Executions(context.Context, engine.StatsWindow) (engine.Executi
 	return engine.Executions{}, nil
 }
 
-func (nopReader) RunningCount(context.Context, string) (int64, error) { return 0, nil }
+func (nopReader) RunningCount(context.Context, string, int64) (int64, error) { return 0, nil }
 
 func (nopReader) RunStart(context.Context, string) (*engine.RunStartRecord, error) {
 	return nil, engine.ErrRunNotFound

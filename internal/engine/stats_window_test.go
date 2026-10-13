@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,20 @@ type statsIndex struct {
 	// endless always offers another page, so a walk that does not stop on its
 	// own budget never stops at all.
 	endless bool
+	// rejectIN answers a WorkflowId IN (…) query InvalidArgument, as a
+	// cluster without IN does.
+	rejectIN bool
+	// describes answers DescribeWorkflowExecution by workflow id; describeErr
+	// fails every describe.
+	describes   map[string]*workflowpb.WorkflowExecutionInfo
+	describeErr error
+	// calls is every call in order: "count", "list", "describe".
+	calls []string
+	// idRecords are visible only to a WorkflowId query: a successor the
+	// index had not yet shown to the walk that found its chain.
+	idRecords []indexedExecution
+	// pageLimit, when set, pages every listing at that many records.
+	pageLimit int
 }
 
 // indexedExecution is one visibility record and the namespace memo the cluster
@@ -66,6 +81,8 @@ type statsIndex struct {
 type indexedExecution struct {
 	info      *workflowpb.WorkflowExecutionInfo
 	namespace string
+	// version is the deployment version the record carries, "" for none.
+	version string
 }
 
 var (
@@ -74,7 +91,24 @@ var (
 	closeAtLeast  = regexp.MustCompile(`CloseTime >= "([^"]*)"`)
 	closeBefore   = regexp.MustCompile(`CloseTime < "([^"]*)"`)
 	statusEqualTo = regexp.MustCompile(`ExecutionStatus = "([^"]*)"`)
+	statusNotEqual = regexp.MustCompile(`ExecutionStatus != "([^"]*)"`)
+	statusNotIn    = regexp.MustCompile(`ExecutionStatus NOT IN \(([^)]*)\)`)
+	statusIn       = regexp.MustCompile(`ExecutionStatus IN \(([^)]*)\)`)
+	livePredicate  = regexp.MustCompile(`\(ExecutionStatus NOT IN \(([^)]*)\) OR \(ExecutionStatus = "ContinuedAsNew" AND CloseTime >= "([^"]*)"\)\)`)
+	workflowIDIn   = regexp.MustCompile(`WorkflowId IN \(([^)]*)\)`)
+	workflowIDIs   = regexp.MustCompile(`WorkflowId = "([^"]*)"`)
+	versionIs      = regexp.MustCompile(`TemporalWorkerDeploymentVersion = "([^"]*)"`)
+	quotedValue    = regexp.MustCompile(`"([^"]*)"`)
 )
+
+// quotedSet is the set of quoted values in a list.
+func quotedSet(list string) map[string]bool {
+	set := map[string]bool{}
+	for _, m := range quotedValue.FindAllStringSubmatch(list, -1) {
+		set[m[1]] = true
+	}
+	return set
+}
 
 func (s *statsIndex) GetWorkflowHistory(
 	context.Context, string, string, bool, enumspb.HistoryEventFilterType,
@@ -88,6 +122,10 @@ func (s *statsIndex) ListWorkflow(
 ) (*workflowservice.ListWorkflowExecutionsResponse, error) {
 	query := request.GetQuery()
 	s.queries = append(s.queries, query)
+	s.calls = append(s.calls, "list")
+	if s.rejectIN && strings.Contains(query, "WorkflowId IN") {
+		return nil, serviceerror.NewInvalidArgument("unsupported operator IN")
+	}
 	matching, err := s.match(query)
 	if err != nil {
 		return nil, err
@@ -96,15 +134,42 @@ func (s *statsIndex) ListWorkflow(
 	if s.endless {
 		response.NextPageToken = []byte("next")
 	}
+	if s.pageLimit > 0 {
+		offset, _ := strconv.Atoi(string(request.GetNextPageToken()))
+		end := min(offset+s.pageLimit, len(matching))
+		response.Executions = matching[min(offset, len(matching)):end]
+		if end < len(matching) {
+			response.NextPageToken = []byte(strconv.Itoa(end))
+		}
+	}
 	return response, nil
 }
 
-// DescribeWorkflowExecution is not a question this double answers: none of
-// its tests inspects a live run.
+// DescribeWorkflowExecution answers from describes; an id it does not hold
+// is NotFound.
 func (s *statsIndex) DescribeWorkflowExecution(
-	context.Context, string, string,
+	_ context.Context, id, _ string,
 ) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
-	return nil, serviceerror.NewNotFound("statsIndex: no execution to describe")
+	s.calls = append(s.calls, "describe")
+	if s.describeErr != nil {
+		return nil, s.describeErr
+	}
+	info, ok := s.describes[id]
+	if !ok {
+		return nil, serviceerror.NewNotFound("statsIndex: no execution to describe")
+	}
+	return &workflowservice.DescribeWorkflowExecutionResponse{WorkflowExecutionInfo: info}, nil
+}
+
+// count reports how many calls of one kind were made.
+func (s *statsIndex) count(kind string) int {
+	n := 0
+	for _, call := range s.calls {
+		if call == kind {
+			n++
+		}
+	}
+	return n
 }
 
 // CountWorkflow answers how many records the query selects, applying the
@@ -114,6 +179,7 @@ func (s *statsIndex) CountWorkflow(
 	request *workflowservice.CountWorkflowExecutionsRequest,
 ) (*workflowservice.CountWorkflowExecutionsResponse, error) {
 	s.counts = append(s.counts, request.GetQuery())
+	s.calls = append(s.calls, "count")
 	if s.countErr != nil {
 		return nil, s.countErr
 	}
@@ -144,17 +210,58 @@ func (s *statsIndex) match(query string) ([]*workflowpb.WorkflowExecutionInfo, e
 		}
 		return parsed, true
 	}
-	matching := make([]*workflowpb.WorkflowExecutionInfo, 0, len(s.records))
-	for _, record := range s.records {
+	// The live-run predicate is one OR clause: evaluated as a whole, and
+	// taken out of the query before the single predicates are read.
+	live := livePredicate.FindStringSubmatch(query)
+	var liveSince time.Time
+	if live != nil {
+		query = strings.Replace(query, live[0], "", 1)
+		parsed, err := time.Parse(statsTimeLayout, live[2])
+		if err != nil {
+			return nil, fmt.Errorf("visibility: bad CloseTime %q", live[2])
+		}
+		liveSince = parsed
+	}
+	records := s.records
+	if workflowIDIn.MatchString(query) || workflowIDIs.MatchString(query) {
+		records = append(append([]indexedExecution(nil), s.records...), s.idRecords...)
+	}
+	matching := make([]*workflowpb.WorkflowExecutionInfo, 0, len(records))
+	for _, record := range records {
 		info := record.info
+		status := info.GetStatus().String()
 		if wantNamespace != "" && record.namespace != wantNamespace {
 			continue
 		}
-		if want := statusEqualTo.FindStringSubmatch(query); want != nil {
-			running := info.GetStatus() == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING
-			if (want[1] == executionStatusRunning) != running {
+		if live != nil {
+			open := !quotedSet(live[1])[status]
+			recent := status == executionStatusContinuedAsNew && info.GetCloseTime() != nil &&
+				!info.GetCloseTime().AsTime().Before(liveSince)
+			if !open && !recent {
 				continue
 			}
+		}
+		if want := statusEqualTo.FindStringSubmatch(query); want != nil && status != want[1] {
+			continue
+		}
+		if want := statusNotEqual.FindStringSubmatch(query); want != nil && status == want[1] {
+			continue
+		}
+		if want := statusNotIn.FindStringSubmatch(query); want != nil && quotedSet(want[1])[status] {
+			continue
+		}
+		if want := statusIn.FindStringSubmatch(query); want != nil && !quotedSet(want[1])[status] {
+			continue
+		}
+		id := info.GetExecution().GetWorkflowId()
+		if want := workflowIDIn.FindStringSubmatch(query); want != nil && !quotedSet(want[1])[id] {
+			continue
+		}
+		if want := workflowIDIs.FindStringSubmatch(query); want != nil && want[1] != id {
+			continue
+		}
+		if want := versionIs.FindStringSubmatch(query); want != nil && want[1] != record.version {
+			continue
 		}
 		if at, ok := bound(startAtLeast); ok &&
 			info.GetStartTime().AsTime().Before(at) {

@@ -987,10 +987,12 @@ func TestTemporalRunReader_PushesTheStatusPredicateIntoVisibility(t *testing.T) 
 		want   string
 	}{
 		{
-			name:   "running is the complement of the terminal set",
+			// Plus a chain's ContinuedAsNew record closed within the
+			// switch-visibility window (liveRunPredicate).
+			name:   "running is the complement of the terminal set, with recent continuations",
 			status: orkstackv1.Status_STATUS_RUNNING,
-			want: `ExecutionStatus NOT IN ("Completed", "Failed", "TimedOut", ` +
-				`"Canceled", "Terminated")`,
+			want: `(ExecutionStatus NOT IN ("Completed", "Failed", "TimedOut", ` +
+				`"Canceled", "Terminated", "ContinuedAsNew") OR (ExecutionStatus = "ContinuedAsNew" AND CloseTime >= "`,
 		},
 		{
 			name:   "failed covers the timeout Temporal reports separately",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -396,6 +397,10 @@ type fakeReleaseIndex struct {
 
 func (f *fakeReleaseIndex) CountWorkflow(_ context.Context, in *workflowservice.CountWorkflowExecutionsRequest) (*workflowservice.CountWorkflowExecutionsResponse, error) {
 	f.counts = append(f.counts, in.GetQuery())
+	// No chain switched in the last hour: the recent-continuation count is 0.
+	if !strings.Contains(in.GetQuery(), "NOT IN") && strings.Contains(in.GetQuery(), `ExecutionStatus = "ContinuedAsNew"`) {
+		return &workflowservice.CountWorkflowExecutionsResponse{}, nil
+	}
 	return &workflowservice.CountWorkflowExecutionsResponse{Count: f.count}, nil
 }
 
@@ -412,7 +417,8 @@ func (f *fakeReleaseIndex) ListWorkflow(_ context.Context, in *workflowservice.L
 }
 
 func TestReleaseRunsQuery_IsTheIndexedVersion(t *testing.T) {
-	want := `WorkflowType = "RunWorkflow" AND ExecutionStatus = "Running" AND TemporalWorkerDeploymentVersion = "orkstack:v2"`
+	// No status term: the count and the listing add the live-run predicate.
+	want := `WorkflowType = "RunWorkflow" AND TemporalWorkerDeploymentVersion = "orkstack:v2"`
 	if got := releaseRunsQuery("orkstack:v2"); got != want {
 		t.Fatalf("query = %s\nwant    %s", got, want)
 	}
@@ -453,8 +459,9 @@ func TestReleaseRuns_CountsAndListsNewestShallowRuns(t *testing.T) {
 	if len(index.lists) != 1 || index.lists[0].GetPageSize() != 10 {
 		t.Fatalf("lists = %v", index.lists)
 	}
-	wantQuery := releaseRunsQuery("orkstack:v2")
-	if index.counts[0] != wantQuery || index.lists[0].GetQuery() != wantQuery {
+	base := releaseRunsQuery("orkstack:v2")
+	if index.counts[0] != base+" AND "+openExecutionsPredicate() ||
+		!strings.HasPrefix(index.lists[0].GetQuery(), base+" AND (ExecutionStatus NOT IN") {
 		t.Fatalf("queries = %q / %q", index.counts[0], index.lists[0].GetQuery())
 	}
 	first := runs[0]

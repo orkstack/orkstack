@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
@@ -54,6 +55,11 @@ const (
 	// the user-facing slug and the id; absent when the plan carries no origin.
 	MemoOriginKind = "orkflow_origin_kind"
 	MemoOriginID   = "orkflow_origin_id"
+	// MemoCreatedAt carries a run's created_at, an RFC 3339 nano UTC string,
+	// once the run has continued as new: a generation's own StartTime is not
+	// the run's. The first switch upserts it, so it merges into generation
+	// 0's record too, and every switch copies the memo onward.
+	MemoCreatedAt = "orkflow_created_at"
 	// DefaultRunPageSize bounds an unlimited ListRuns.
 	DefaultRunPageSize = 200
 
@@ -104,7 +110,12 @@ type RunQuery struct {
 	BeforeID      string
 	// Complete orders a bounded full visibility walk before applying Limit.
 	// Temporal's visibility order is not a contract for equal creation times,
-	// so API cursor pages set this to retain every created_at/ID tie.
+	// so API cursor pages set this to retain every created_at/ID tie. It is
+	// also what places a run that continued as new: visibility orders each
+	// of its executions by its own StartTime, and only a walk sorted on the
+	// memo created_at (RunIndexTime) puts the run where it belongs. Any
+	// user-facing caller must set it; every caller sets Complete or
+	// Exhaustive, so a chain's records are deduplicated over the whole walk.
 	Complete bool
 	// Limit caps the runs RETURNED, newest first. 0 means DefaultRunPageSize,
 	// except under Exhaustive, where 0 means every match.
@@ -212,6 +223,15 @@ type TemporalRunReader struct {
 	// predicate the cluster applies rather than a filter this reader applies
 	// afterwards. It is told, at boot, by the process that registered it.
 	namespaceIndexed bool
+
+	// now is the wall clock the switch-visibility window is measured from;
+	// nil means time.Now. A test sets it.
+	now func() time.Time
+
+	// chainINUnsupported records that this cluster refused a
+	// `WorkflowId IN (…)` listing, so resolveChains lists one id at a time
+	// for the rest of the process's life.
+	chainINUnsupported atomic.Bool
 
 	// originIndexed reports that this cluster has the OrkflowOriginKind and
 	// OrkflowOriginId search attributes (task.EnsureRunOriginSearchAttributes),
@@ -596,9 +616,17 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	exhaustive := q.Exhaustive || q.Complete || (q.Namespace != "" && !scoped) || originUnscoped
 
 	limit, batch, pages := runListBudget(q, exhaustive)
+	// A walk that goes to the end (Complete, Exhaustive) sees every record
+	// of a chain, so it deduplicates by workflow id over the whole walk,
+	// before every trim (dedupeChains); a RUNNING question also settles each
+	// id whose latest record is ContinuedAsNew (resolveChains). Every caller
+	// issues one of the two; the early return below is for any other.
+	whole := q.Complete || q.Exhaustive
+	running := q.Status == orkstackv1.Status_STATUS_RUNNING
+	page := &chainPage{reader: r, query: q, running: running, settled: map[string]chainSettlement{}}
 	out := make([]*orkstackv1.Run, 0, batch)
 	var token []byte
-	for page := 0; page < pages; page++ {
+	for read := 0; read < pages; read++ {
 		response, err := r.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
 			Query:         query,
 			PageSize:      int32(batch),
@@ -607,26 +635,41 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 		if err != nil {
 			return nil, fmt.Errorf("engine: list runs from temporal: %w", err)
 		}
-		for _, execution := range response.GetExecutions() {
-			run := r.listedRun(execution)
-			if !matchesRunQuery(run, q) {
-				continue
+		if whole {
+			page.records = append(page.records, response.GetExecutions()...)
+			if q.Complete && limit > 0 && len(page.records) > limit {
+				if err := page.trim(ctx, limit); err != nil {
+					return nil, err
+				}
 			}
-			out = append(out, run)
-			// A full quota is a COMPLETE answer to "give me up to N", so the
-			// walk can stop even when it was asked to be exhaustive. What it
-			// must never do is stop SHORT — that is the ambiguity the error
-			// below exists to prevent.
-			if limit > 0 && len(out) >= limit && !q.Complete {
-				return out, nil
+		} else {
+			for _, execution := range response.GetExecutions() {
+				run := r.listedRun(execution)
+				if !matchesRunQuery(run, q) {
+					continue
+				}
+				out = append(out, run)
+				// A full quota is a COMPLETE answer to "give me up to N", so
+				// the walk can stop. What it must never do is stop SHORT —
+				// that is the ambiguity the errors below exist to prevent.
+				if limit > 0 && len(out) >= limit {
+					return out, nil
+				}
 			}
-		}
-		if q.Complete && limit > 0 && len(out) > limit {
-			out = completeRunPage(out, RunQuery{Limit: limit, Complete: true})
 		}
 		token = response.GetNextPageToken()
 		if len(token) == 0 {
-			return completeRunPage(out, q), nil
+			if !whole {
+				return completeRunPage(out, q), nil
+			}
+			runs, err := page.runs(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if !q.Complete && limit > 0 && len(runs) > limit {
+				runs = runs[:limit]
+			}
+			return completeRunPage(runs, q), nil
 		}
 	}
 	if q.Namespace != "" && !scoped {
@@ -656,6 +699,85 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 			q.OrkflowName, q.Namespace, pages)
 	}
 	return completeRunPage(out, q), nil
+}
+
+// chainPage accumulates a whole walk's visibility records: deduplicated by
+// workflow id, settled for a RUNNING question, filtered and — for a Complete
+// walk — trimmed to the page in created_at order whenever it outgrows it.
+type chainPage struct {
+	reader  *TemporalRunReader
+	query   RunQuery
+	running bool
+	records []*workflowpb.WorkflowExecutionInfo
+	// settled remembers the ids already settled, so a trim never asks the
+	// cluster about one chain twice.
+	settled map[string]chainSettlement
+}
+
+// settle deduplicates the records and, for a RUNNING question, settles every
+// id whose latest record is ContinuedAsNew and was not settled before.
+func (p *chainPage) settle(ctx context.Context) error {
+	p.records = dedupeChains(p.records)
+	if !p.running {
+		return nil
+	}
+	var fresh, kept []*workflowpb.WorkflowExecutionInfo
+	for _, info := range p.records {
+		id := info.GetExecution().GetWorkflowId()
+		if outcome, done := p.settled[id]; done && isContinuedAsNew(info) {
+			if outcome != chainFinished {
+				kept = append(kept, info)
+			}
+			continue
+		}
+		fresh = append(fresh, info)
+	}
+	resolved, settled, err := p.reader.resolveChains(ctx, fresh)
+	if err != nil {
+		return err
+	}
+	for id, outcome := range settled {
+		p.settled[id] = outcome
+	}
+	p.records = append(kept, resolved...)
+	return nil
+}
+
+// runs settles the records and projects the ones the query matches.
+func (p *chainPage) runs(ctx context.Context) ([]*orkstackv1.Run, error) {
+	if err := p.settle(ctx); err != nil {
+		return nil, err
+	}
+	out := make([]*orkstackv1.Run, 0, len(p.records))
+	for _, info := range p.records {
+		if run := p.reader.listedRun(info); matchesRunQuery(run, p.query) {
+			out = append(out, run)
+		}
+	}
+	return out, nil
+}
+
+// trim keeps only the records of the newest limit matching runs, so a long
+// Complete walk holds one page, not the whole index. Records of one chain
+// carry one created_at, so a trim treats them alike.
+func (p *chainPage) trim(ctx context.Context, limit int) error {
+	if err := p.settle(ctx); err != nil {
+		return err
+	}
+	byID := make(map[string]*workflowpb.WorkflowExecutionInfo, len(p.records))
+	runs := make([]*orkstackv1.Run, 0, len(p.records))
+	for _, info := range p.records {
+		if run := p.reader.listedRun(info); matchesRunQuery(run, p.query) {
+			byID[run.GetId()] = info
+			runs = append(runs, run)
+		}
+	}
+	runs = completeRunPage(runs, RunQuery{Limit: limit, Complete: true})
+	p.records = p.records[:0]
+	for _, run := range runs {
+		p.records = append(p.records, byID[run.GetId()])
+	}
+	return nil
 }
 
 func completeRunPage(runs []*orkstackv1.Run, q RunQuery) []*orkstackv1.Run {
@@ -700,7 +822,7 @@ func (r *TemporalRunReader) listQuery(q RunQuery) (query string, scoped, originS
 		query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowNamespace,
 			artifacts.ResolveNamespace(q.Namespace))
 	}
-	if predicate, ok := executionStatusPredicate(q.Status); ok {
+	if predicate, ok := executionStatusPredicate(q.Status, r.clock()); ok {
 		query += " AND " + predicate
 	}
 	if slug, ok := artifacts.OriginKindSlug(q.OriginKind); ok && r.originIndexed {
@@ -760,13 +882,17 @@ var readerDecodableStatuses = func() map[orkstackv1.Status]bool {
 // record decodes to either: statusFromExecution cannot return them. Narrowing
 // on them would assert something about the index that is not true of it, and
 // they are answered by the archive half, which stores the status it was given.
-func executionStatusPredicate(want orkstackv1.Status) (string, bool) {
+//
+// RUNNING is the live-run predicate (liveRunPredicate): open executions, and
+// a chain's ContinuedAsNew record closed within the switch-visibility window,
+// because a chain caught between its two records may be visible only as that
+// one. ListRuns settles such a record before it lists it (resolveChains).
+func executionStatusPredicate(want orkstackv1.Status, now time.Time) (string, bool) {
 	if want == orkstackv1.Status_STATUS_UNSPECIFIED {
 		return "", false
 	}
 	if want == orkstackv1.Status_STATUS_RUNNING {
-		return "ExecutionStatus NOT IN (" +
-			quotedExecutionStatuses(terminalExecutionStatuses) + ")", true
+		return liveRunPredicate(now), true
 	}
 	var match []enumspb.WorkflowExecutionStatus
 	for _, status := range terminalExecutionStatuses {
@@ -1269,7 +1395,17 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 		Status:    statusFromExecution(info.GetStatus()),
 		CreatedAt: cloneTime(info.GetStartTime()),
 	}
-	if info.GetCloseTime() != nil {
+	// A run that continued as new has one record per execution, each with
+	// its own StartTime; the run's own created_at travels in the memo the
+	// first switch writes, so every record of one chain carries the same one
+	// and is ordered by it (completeRunPage).
+	if created, ok := r.memoTime(info.GetMemo(), MemoCreatedAt); ok {
+		run.CreatedAt = timestamppb.New(created)
+	}
+	// A ContinuedAsNew record is a generation that closed, not the run: it
+	// stands for its chain as RUNNING (statusFromExecution's default arm),
+	// which has not finished.
+	if info.GetCloseTime() != nil && !isContinuedAsNew(info) {
 		run.FinishedAt = cloneTime(info.GetCloseTime())
 	}
 	run.OrkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
@@ -1282,6 +1418,20 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 		run.Origin = &orkstackv1.RunOrigin{Kind: kind, Id: r.memoString(info.GetMemo(), MemoOriginID)}
 	}
 	return run
+}
+
+// memoTime reads one RFC 3339 memo field; absent or unparsable reads as not
+// present.
+func (r *TemporalRunReader) memoTime(memo *commonpb.Memo, key string) (time.Time, bool) {
+	raw := r.memoString(memo, key)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at.UTC(), true
 }
 
 // memoString reads one memo field; a field the memo does not carry reads as

@@ -47,7 +47,7 @@ func (s statsReader) RunStart(context.Context, string) (*engine.RunStartRecord, 
 	return nil, engine.ErrRunNotFound
 }
 
-func (s statsReader) RunningCount(_ context.Context, namespace string) (int64, error) {
+func (s statsReader) RunningCount(_ context.Context, namespace string, _ int64) (int64, error) {
 	return int64(len(s.executions[namespace].Running)), nil
 }
 

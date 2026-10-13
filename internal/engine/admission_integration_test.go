@@ -105,7 +105,7 @@ func TestIntegration_RunningCountMatchesTheExecutionIndexOnBothPaths(t *testing.
 			counts := map[string]int64{}
 			settled := got == want
 			for name, reader := range readers {
-				count, err := reader.RunningCount(ctx, namespace)
+				count, err := reader.RunningCount(ctx, namespace, 0)
 				if err != nil {
 					t.Fatalf("%s RunningCount(%s): %v", name, namespace, err)
 				}
