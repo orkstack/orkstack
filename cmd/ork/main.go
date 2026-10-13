@@ -81,6 +81,12 @@ type config struct {
 	// may declare, any whole number 1 or more; refused at boot otherwise
 	// (docs/DEPLOY.md §1).
 	orkflowMaxTasks int32
+	// historyMaxEvents and historyMaxBytes are ORK_HISTORY_MAX_EVENTS and
+	// ORK_HISTORY_MAX_BYTES: the cluster's per-execution history limits a
+	// run stops RUN_HISTORY_LIMIT before reaching. At least
+	// minHistoryMaxEvents and minHistoryMaxBytes, refused at boot otherwise
+	// (docs/DEPLOY.md §1).
+	historyMaxEvents, historyMaxBytes int64
 	// composeMaxDepth is ORK_COMPOSE_MAX_DEPTH: 1 … engine.MaxComposeDepth,
 	// refused at boot outside that range (docs/DEPLOY.md §1).
 	composeMaxDepth int32
@@ -121,6 +127,7 @@ func loadConfig() config {
 	eachMaxItems, eachErr := eachMaxItemsFromEnv()
 	orkflowMaxTasks, tasksErr := envInt32("ORK_ORKFLOW_MAX_TASKS", engine.DefaultOrkflowMaxTasks)
 	composeMaxDepth, composeErr := composeMaxDepthFromEnv()
+	historyMaxEvents, historyMaxBytes, historyErr := historyLimitFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
 
 	cfg := config{
@@ -139,10 +146,12 @@ func loadConfig() config {
 		floorThroughputBytesPerSecond: floorThroughput,
 		eachMaxItems:                  eachMaxItems,
 		orkflowMaxTasks:               orkflowMaxTasks,
+		historyMaxEvents:              historyMaxEvents,
+		historyMaxBytes:               historyMaxBytes,
 		composeMaxDepth:               composeMaxDepth,
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
-			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr),
+			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -266,6 +275,34 @@ func eachMaxItemsFromEnv() (int32, error) {
 			"ORK_EACH_MAX_ITEMS=%d is above the %d ceiling; it may only lower it", value, dsl.MaxEachItems)
 	}
 	return value, nil
+}
+
+// The smallest history limits historyLimitFromEnv accepts. Small values exist
+// for tests and fixture recording; below these a run's own failure path could
+// not fit at all.
+const (
+	minHistoryMaxEvents int64 = 100
+	minHistoryMaxBytes  int64 = 64 << 10
+)
+
+// historyLimitFromEnv reads ORK_HISTORY_MAX_EVENTS and ORK_HISTORY_MAX_BYTES:
+// the cluster's per-execution history limits, which every new run's plan
+// carries (the history guard, docs/DEPLOY.md §1). It always refuses a value
+// below minHistoryMaxEvents or minHistoryMaxBytes, naming the variable.
+func historyLimitFromEnv() (events, bytes int64, err error) {
+	events, eventsErr := envInt64("ORK_HISTORY_MAX_EVENTS", engine.DefaultHistoryMaxEvents)
+	if eventsErr == nil && events < minHistoryMaxEvents {
+		eventsErr = fmt.Errorf("ORK_HISTORY_MAX_EVENTS=%d is below the minimum %d: a run's own failure path "+
+			"needs that much history to end cleanly", events, minHistoryMaxEvents)
+		events = engine.DefaultHistoryMaxEvents
+	}
+	bytes, bytesErr := envInt64("ORK_HISTORY_MAX_BYTES", engine.DefaultHistoryMaxBytes)
+	if bytesErr == nil && bytes < minHistoryMaxBytes {
+		bytesErr = fmt.Errorf("ORK_HISTORY_MAX_BYTES=%d is below the minimum %d (64 KiB): a run's own failure "+
+			"path needs that much history to end cleanly", bytes, minHistoryMaxBytes)
+		bytes = engine.DefaultHistoryMaxBytes
+	}
+	return events, bytes, errors.Join(eventsErr, bytesErr)
 }
 
 // composeMaxDepthFromEnv reads ORK_COMPOSE_MAX_DEPTH: how many levels of
@@ -1219,6 +1256,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Limits:                        cfg.contractLimits,
 		EachMaxItems:                  cfg.eachMaxItems,
 		OrkflowMaxTasks:               cfg.orkflowMaxTasks,
+		HistoryMaxEvents:              cfg.historyMaxEvents,
+		HistoryMaxBytes:               cfg.historyMaxBytes,
 		ComposeMaxDepth:               cfg.composeMaxDepth,
 		CacheMaxTTL:                   cfg.cacheMaxTTL,
 		Memos:                         memoStore,

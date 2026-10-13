@@ -61,3 +61,12 @@ func RetainedRunsForTest(s *RunStore, b *EventBus) (runs, order, logs, seen int)
 func CompactRunResultForTest(run *orkstackv1.Run) *orkstackv1.Run {
 	return compactRunResult(run)
 }
+
+// DisableHistoryGuardForTest sets the test-only switch that makes the history
+// guard never check, and returns the function that clears it: the payload
+// half of the history-limit fixture re-executes its prefix with it, so the
+// guard never crosses in a test environment whose history length is static.
+func DisableHistoryGuardForTest() (restore func()) {
+	historyGuardDisabledForTest = true
+	return func() { historyGuardDisabledForTest = false }
+}

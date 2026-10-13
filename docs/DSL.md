@@ -387,6 +387,15 @@ history, which the cluster bounds and a run cannot yet continue past:
   met this ceiling when it was applied; the whole composition tree is further
   bounded by its 256 KiB plan (rule 31).
 
+A run that nonetheless grows near its cluster's history limit — many tasks
+running at once, long retries, an await parked for weeks — is never left to
+be terminated by the cluster. It stops first, `FAILED` with
+`RUN_HISTORY_LIMIT` (InfrastructureError, not retryable), keeping back the
+history its own failure path needs: the tasks still running are stopped and
+recorded, the ones never started are `CANCELED`, and failure handlers run
+(`docs/DEPLOY.md` §1, `engine.history.*`). The message says how much history
+was recorded and what was still running.
+
 ## Joins and failure handlers (`join:`)
 
 A task's optional `join:` says when it may start, decided from how its

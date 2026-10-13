@@ -101,6 +101,7 @@ func (s *runState) openAwait(ctx, runCtx workflow.Context, id string) error {
 	timeout := time.Duration(a.spec.GetTimeoutSeconds()) * time.Second
 
 	a.open = true
+	s.chargeAwaitOpen()
 	a.timeout = timeout
 	a.deadlineAt = now.Add(timeout)
 	startDeadline := func() {

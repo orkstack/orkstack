@@ -404,6 +404,7 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 	e.expanded = true
 	e.count = count
 	taskRun.Each = &orkstackv1.TaskEach{Expanded: true, Count: count}
+	s.chargeFanOutExpand()
 
 	if count == 0 {
 		taskRun.Status = orkstackv1.Status_STATUS_SUCCEEDED
@@ -513,6 +514,12 @@ func (s *runState) dispatchItems(ctx, runCtx workflow.Context, id string, inFlig
 			}
 			sent = 0
 		}
+		// The history guard, check point 3: before e.next moves, so an item
+		// the guard stops is never dispatched and never marked FAILED; the
+		// run, not the fan-out, owns the reason (fail).
+		if err := s.historyExhausted(ctx, inFlight); err != nil {
+			return err
+		}
 		index := e.next
 		if eachDispatchDescending {
 			index = e.count - 1 - e.next
@@ -593,6 +600,10 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 	}
 	if err := s.checkItemInput(id, index, input); err != nil {
 		return nil, err
+	}
+	if limit := s.historyLimit(); limit != nil {
+		s.noteCommand(runCtx, 1, s.itemInputLimit+limit.Reserve.CommandBytes)
+		s.chargeItemDispatch()
 	}
 	activityCtx := s.taskActivityContext(runCtx, t, queue)
 	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
