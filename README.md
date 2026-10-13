@@ -155,6 +155,25 @@ docker run --rm alpine:3.20 getent hosts host.docker.internal
 `172.17.0.1` is the gateway of Docker's default bridge; a host with a
 customized `docker0` uses its own gateway address.
 
+The same applies to the observability stack (`make infra-up-observability`).
+Its Prometheus container scrapes `ork` and `orker` at
+`host.docker.internal:9464` and `:9465`, but it sits on the compose network,
+and on Linux a listener on `127.0.0.1` cannot be reached from a container. To
+scrape a stack you run by hand:
+
+1. Bind each process's admin listener to the gateway: `ORK_ADMIN_ADDR=172.17.0.1:9464`
+   for `ork`, `172.17.0.1:9465` for `orker`.
+2. Enable the `prometheus` metrics exporter (`OTEL_METRICS_EXPORTER=prometheus`;
+   see `docs/DEPLOY.md` §1).
+3. Attach Prometheus to the default bridge:
+
+```bash
+docker network connect bridge "$(docker ps -q --filter label=com.docker.compose.service=prometheus)"
+```
+
+The observability proof gate (`scripts/proof-observability.sh`) does the same
+for its own run, and detaches Prometheus afterwards only if it attached it.
+
 ## Contributing
 
 Read [AGENTS.md](./AGENTS.md) (the engineering contract, including the
