@@ -52,6 +52,7 @@ One bucket, one key family per kind of record. The builders in
 | `metadata/index/run-objects/{run-id}.json` | the object ids the run references (`RunObjectListKey`) | with the archive body | cleanup |
 | `metadata/cleanup/runs/{run-id}.json` | the sidecar recording that the run was retired and cleaned (`RunCleanupKey`) | once, by cleanup | nothing |
 | `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind a projected event, kept out of Temporal history (`RunSnapshotKey`); a fan-out's item events between its stride snapshots carry none, and on a run that records the `lean-event-path` version (`docs/DEPLOY.md` §6) a plain or fan-out task's `TASK_STARTED` publishes with its `TASK_SCHEDULED`'s object, since nothing changes between them | by the workflow's snapshot local activity | cleanup |
+| `metadata/snapshots/{ns}/{run-id}/continuations/{generation}-{checkpoint\|events\|snapshot}-{sha256}.pb.gz` | what a run writes when it carries on into a fresh history (`RunContinuationKey`; the generation is six or more digits): its saved state at the switch (`checkpoint`, gzip members of `RunCheckpointPart`), the gzipped full `Run` at the switch (`snapshot`), or the gzipped `RunEventSegment` holding the events of the history that closed (`events`); content-addressed by the SHA-256 of the stored bytes, and verified against it by every reader | create-if-absent by the run's local activities at a switch; an object already at the key is accepted only when its bytes hash the same | cleanup, with the run's snapshot prefix. **Never expire it with a lifecycle rule**: a live run reads its segments for its whole life, and its archive is built from them |
 | `metadata/logs/{run-id}/{task-id}/[{item:05}/]{attempt}/{seq}` (and `.trunc`) | live task stdout/stderr chunks; order is the zero-padded key (`LogChunkKey`, `LogScopePrefix`) | by the Orker while the attempt runs | cleanup, or a bucket lifecycle rule |
 | `metadata/attempts/{run-id}/{task-id}/[{item:05}/]{attempt}.json` | one `TaskAttempt`: outcome, error, exit code, the phase it ended in and every phase it passed through (`docs/OCI_ACTIVITY_CONTRACT.md` §7.1), the image it ran, and the cpu and memory the Orker reserved (`AttemptKey`, `AttemptScopePrefix`); each item numbers its attempts from 1 | by the Orker at the end of every attempt, best-effort, plain put; read verbatim as `attempts/{n}.json` by `ExportRunEvidence` | cleanup, or a bucket lifecycle rule |
 | `metadata/commits/{ns}/{run-id}/{task-id}/[{item:05}/]commit.json` | the immutable activity completion record of a task, or of one fan-out item (`CommitKey`, `ItemCommitKey`); a dependent of a fan-out reads every item's to stage its files | conditional create-if-absent; read verbatim as `commit.json` by `ExportRunEvidence`, only at the `CommitRef.uri` the run snapshot recorded | cleanup |
@@ -93,6 +94,18 @@ pointers, so a pointer can never be read as a version.
   `expected_head_version` must be checked by the write itself. `applied_at`
   never goes backwards, so `orkctl orkflow versions` lists versions in apply
   order even when clocks disagree.
+- **A `{seq}.pb` snapshot key belongs to the emit that owns its sequence.**
+  It is written only by that emit, once per workflow-task attempt that runs
+  it, or by the one terminal snapshot written for a sequence no emit owns (a
+  run that could not carry on from its saved state). Nothing written when a
+  run carries on into a fresh history ever lands on a `{seq}.pb` key: those
+  objects are content-addressed under `continuations/`. The key is not "one
+  content per key": a retried workflow task runs its emit again at a later
+  workflow time and overwrites the key, and a failed attempt's write can land
+  after the retry's. Only the attempt whose workflow task completes publishes
+  the event, so every reader treats a `{seq}.pb` key as the snapshot of the
+  emit that owns that sequence, as of one of its attempts, and compares
+  decoded rows, never raw bytes.
 - **A fan-out item has its own commit, attempt and log keys**, one
   zero-padded segment below its task's; artifact objects stay
   content-addressed and are shared between items that wrote the same bytes.

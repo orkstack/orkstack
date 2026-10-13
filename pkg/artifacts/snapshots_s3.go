@@ -3,13 +3,18 @@ package artifacts
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // S3RunSnapshotStore keeps run snapshots in an S3-compatible bucket — the
@@ -131,8 +136,131 @@ func (s *S3RunSnapshotStore) parseURI(uri string) (string, error) {
 			uri, u.Host, s.bucket, ErrInvalidURI)
 	}
 	key := strings.TrimPrefix(u.Path, "/")
-	if !strings.HasPrefix(key, SnapshotPrefix+"/") || !strings.HasSuffix(key, snapshotSuffix) {
+	if !isSnapshotObjectKey(key) {
 		return "", fmt.Errorf("artifacts: s3 snapshot %q is not a snapshot key: %w", uri, ErrInvalidURI)
 	}
 	return key, nil
+}
+
+// WriteContinuation writes one continuation object create-if-absent
+// (If-None-Match: *) at its content-addressed key. When the backend refuses
+// because an object is already there, the existing bytes are read back and
+// the write is success only when they hash to the same SHA-256.
+func (s *S3RunSnapshotStore) WriteContinuation(
+	ctx context.Context,
+	namespace, runID string,
+	generation int64,
+	kind string,
+	data []byte,
+) (string, error) {
+	if len(data) == 0 {
+		return "", fmt.Errorf("artifacts: s3 continuation: empty object")
+	}
+	sum := ContinuationSHA256(data)
+	key, err := RunContinuationKey(namespace, runID, generation, kind, sum)
+	if err != nil {
+		return "", err
+	}
+	uri := s.uri(key)
+	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(data),
+		ContentLength: aws.Int64(int64(len(data))),
+		ContentType:   aws.String(ContinuationContentType),
+		IfNoneMatch:   aws.String("*"),
+	})
+	if err == nil {
+		return uri, nil
+	}
+	if !isPreconditionFailed(err) {
+		return "", fmt.Errorf("artifacts: put continuation %q: %w", uri, err)
+	}
+	existing, readErr := s.ReadSnapshot(ctx, uri)
+	if readErr != nil {
+		return "", fmt.Errorf("artifacts: put continuation %q: read existing object: %w", uri, readErr)
+	}
+	if ContinuationSHA256(existing) != sum {
+		return "", fmt.Errorf("artifacts: put continuation %q: an object with other bytes is already at the key", uri)
+	}
+	return uri, nil
+}
+
+// ReadContinuationRange reads length bytes at offset of the continuation
+// object at uri with one ranged GET; the object's total size comes from the
+// response's Content-Range and must be wantSize.
+func (s *S3RunSnapshotStore) ReadContinuationRange(
+	ctx context.Context,
+	uri string,
+	wantSize, offset, length int64,
+) ([]byte, error) {
+	key, err := s.parseURI(uri)
+	if err != nil {
+		return nil, err
+	}
+	if !isContinuationKey(key) {
+		return nil, fmt.Errorf("artifacts: s3 continuation %q is not a continuation key: %w", uri, ErrInvalidURI)
+	}
+	if err := checkContinuationRange(uri, wantSize, offset, length); err != nil {
+		return nil, err
+	}
+	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return nil, fmt.Errorf("artifacts: s3 continuation %q: %w", uri, ErrNotFound)
+		}
+		if isInvalidRange(err) {
+			// The range is inside wantSize (checked above), so the stored
+			// object is shorter than its reference says.
+			return nil, fmt.Errorf("artifacts: s3 continuation %q is shorter than the %d bytes its reference records: %w",
+				uri, wantSize, ErrContinuationSize)
+		}
+		return nil, fmt.Errorf("artifacts: s3 continuation %q: %w", uri, err)
+	}
+	defer object.Body.Close()
+	total, ok := contentRangeTotal(aws.ToString(object.ContentRange))
+	if !ok {
+		return nil, fmt.Errorf("artifacts: s3 continuation %q: unreadable Content-Range %q",
+			uri, aws.ToString(object.ContentRange))
+	}
+	if total != wantSize {
+		return nil, fmt.Errorf("artifacts: s3 continuation %q is %d bytes, its reference records %d: %w",
+			uri, total, wantSize, ErrContinuationSize)
+	}
+	data, err := io.ReadAll(io.LimitReader(object.Body, length+1))
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: s3 continuation %q: read body: %w", uri, err)
+	}
+	if int64(len(data)) != length {
+		return nil, fmt.Errorf("artifacts: s3 continuation %q: range [%d, %d) returned %d bytes",
+			uri, offset, offset+length, len(data))
+	}
+	return data, nil
+}
+
+// contentRangeTotal parses the complete length of "bytes a-b/total".
+func contentRangeTotal(header string) (int64, bool) {
+	slash := strings.LastIndexByte(header, '/')
+	if !strings.HasPrefix(header, "bytes ") || slash < 0 {
+		return 0, false
+	}
+	total, err := strconv.ParseInt(header[slash+1:], 10, 64)
+	if err != nil || total < 0 {
+		return 0, false
+	}
+	return total, true
+}
+
+// isInvalidRange reports the backend's 416 for a range past the object's end.
+func isInvalidRange(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidRange" {
+		return true
+	}
+	var respErr *smithyhttp.ResponseError
+	return errors.As(err, &respErr) && respErr.HTTPStatusCode() == http.StatusRequestedRangeNotSatisfiable
 }
