@@ -1,6 +1,10 @@
 package engine
 
-import "time"
+import (
+	"time"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+)
 
 // The interpreter's shared skip-reason helpers, exported to the external test
 // package so TestClassify_UsesTheSharedSkipReasons can compare RunWorkflow's
@@ -49,4 +53,20 @@ func RetainedRunsForTest(s *RunStore, b *EventBus) (runs, order, logs, seen int)
 	logs, seen = len(b.log), len(b.seen)
 	b.mu.Unlock()
 	return runs, order, logs, seen
+}
+
+// CompactRunResultForTest is compactRunResult: the projection of a recorded
+// top-level result onto what current code returns, which is what the replay
+// payload tests compare a re-executed result with.
+func CompactRunResultForTest(run *orkstackv1.Run) *orkstackv1.Run {
+	return compactRunResult(run)
+}
+
+// DisableHistoryGuardForTest sets the test-only switch that makes the history
+// guard never check, and returns the function that clears it: the payload
+// half of the history-limit fixture re-executes its prefix with it, so the
+// guard never crosses in a test environment whose history length is static.
+func DisableHistoryGuardForTest() (restore func()) {
+	historyGuardDisabledForTest = true
+	return func() { historyGuardDisabledForTest = false }
 }

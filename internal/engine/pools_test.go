@@ -124,6 +124,28 @@ func TestPoolResolver_ResolvesTaskPoolThenNamespaceDefaultThenMain(t *testing.T)
 	})
 }
 
+// TestPoolResolverPlan_ClearsSourceYAML: a run starts without its Orkflow's
+// source. The source is not what runs and the stored version keeps it, so
+// the start definition — one §2.2 payload — is measured without it; the
+// stored document is left untouched.
+func TestPoolResolverPlan_ClearsSourceYAML(t *testing.T) {
+	resolver := &engine.PoolResolver{Probe: everyPoolLive{}}
+	source := compile(t, twoPoolDocument)
+	if source.GetSourceYaml() == "" {
+		t.Fatal("the compiled definition carries no source; this test's premise does not hold")
+	}
+	planned, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "default"}, source, false)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if planned.GetSourceYaml() != "" {
+		t.Fatalf("the planned definition carries %d bytes of source YAML, want none", len(planned.GetSourceYaml()))
+	}
+	if source.GetSourceYaml() == "" {
+		t.Fatal("planning cleared the stored definition's source; the document is the user's")
+	}
+}
+
 // TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel keeps the
 // escape hatch working: an engine started with ORK_ORKER_QUEUE dispatches a
 // task that names no pool there, which is how a test harness isolates itself

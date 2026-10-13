@@ -341,9 +341,11 @@ bespoke Temporal source code for each Orkflow. The interpreter resolves
 dependencies, schedules activities, waits on Temporal timers and Signals,
 applies retry policies, handles cancellation, and records compact outputs.
 
-A definition limit such as 256 KiB is a proposal, not a current hard invariant.
-Do not turn that proposal into a hard limit without a separate accepted
-contract.
+A run's start payloads — its input, its planned definition and its plan — are
+each a §2.2 payload and are refused at submit above 256 KiB. That is a bound on
+a payload, not on an Orkflow: a limit on definition size beyond it is a
+proposal, not a current hard invariant, and is not to be turned into one
+without a separate accepted contract.
 
 One definition limit is accepted (2026-10-11): an Orkflow declares at most
 **1000 tasks**. It is a deployment-configurable default, not a fixed

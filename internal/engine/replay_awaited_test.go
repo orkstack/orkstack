@@ -232,7 +232,7 @@ func TestAwaitedHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) 
 	if err := env.GetWorkflowResult(&finished); err != nil {
 		t.Fatalf("decode the re-executed run: %v", err)
 	}
-	want := withoutAwaitClocks(recordedRun).(map[string]any)
+	want := withoutAwaitClocks(compactRecordedRun(t, recordedRun)).(map[string]any)
 	got := withoutAwaitClocks(canonicalPayload(t, finished)).(map[string]any)
 	if diff := payloadDiff(want, got); diff != "" {
 		t.Errorf("the Run this code returns for the resolved fixture differs from the recorded one:\n%s", diff)

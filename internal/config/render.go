@@ -47,6 +47,7 @@ var rawMachineOverride = map[string]string{
 	"ORK_ARTIFACT_MAX_BYTES":             strconv.FormatInt(engine.DefaultArtifactMaxBytes, 10),
 	"ORK_LOG_MAX_BYTES":                  strconv.FormatInt(engine.DefaultLogMaxBytes, 10),
 	"ORK_COMMIT_MAX_BYTES":               strconv.FormatInt(engine.DefaultCommitMaxBytes, 10),
+	"ORK_HISTORY_MAX_BYTES":              strconv.FormatInt(engine.DefaultHistoryMaxBytes, 10),
 	"ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC": strconv.FormatInt(api.DefaultFloorThroughputBytesPerSecond, 10),
 	"ORK_ORKER_LOG_FLUSH_BYTES":          strconv.Itoa(orker.DefaultLogFlushBytes),
 	"ORK_ORKER_LOG_MAX_BYTES":            strconv.Itoa(orker.DefaultLogMaxBytes),

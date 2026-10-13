@@ -129,6 +129,48 @@ type RunPlan struct {
 	// no_cache is a request field. omitempty, so a plan with none encodes
 	// exactly as before and the golden history fixture keeps matching.
 	Cache *CachePlan `json:"cache,omitempty"`
+
+	// History is the per-execution history ceiling this run must stop below,
+	// decided at submit (workflow code may not read config, AGENTS.md §2.1).
+	// Its Reserve — every count and byte charge the guard uses — is carried
+	// too, so a later release that re-measures one moves only NEW runs'
+	// crossing points, never a recorded one. A run-tree limit: set on the
+	// top-level plan only, copied into each child's start plan by
+	// startChild. Nil on every plan built before this field existed: no
+	// recorded history enters the guard (history_guard.go).
+	History *HistoryLimit `json:"history,omitempty"`
+}
+
+// HistoryLimit is the cluster's per-execution history limits, as the
+// deployment declared them (engine.history.max_events / max_bytes), and the
+// reserve a run keeps back below them so its own failure path can still be
+// recorded (history_guard.go, docs/DEPLOY.md §1).
+type HistoryLimit struct {
+	MaxEvents int64          `json:"max_events"` // the cluster's per-execution event limit
+	MaxBytes  int64          `json:"max_bytes"`  // the cluster's per-execution history-size limit
+	Reserve   HistoryReserve `json:"reserve"`
+}
+
+// HistoryReserve is an upper bound on what the run's own failure path
+// appends, plus the byte charges noteCommand applies to commands not yet
+// recorded. Every number is pinned per run (DefaultHistoryReserve at submit),
+// because each one decides where the guard crosses — a replay-visible
+// command.
+type HistoryReserve struct {
+	Fixed                  int64 `json:"fixed"`                     // drain, terminal emit, close, marker, uncounted per-task commands
+	PerInFlight            int64 `json:"per_in_flight"`             // cancel request, cancelled, task share, terminal emit (the dispatched task's own)
+	PerPending             int64 `json:"per_pending"`               // a PENDING (never dispatched) task's markCanceled emit
+	PerAwait               int64 `json:"per_await"`                 // an open await's resolution or cancel
+	PerOpenPin             int64 `json:"per_open_pin"`              // ReleasePin + CompleteSession + tasks
+	PerFanOut              int64 `json:"per_fan_out"`               // finishFanOutOnRunEnd's emit
+	PerHandler             int64 `json:"per_handler"`               // one failure handler (plain, await or composed)
+	BytesPerEvent          int64 `json:"bytes_per_event"`           // the bytes charged per reserved event
+	PerInFlightBytes       int64 `json:"per_in_flight_bytes"`       // one completion's result
+	CommandBytes           int64 `json:"command_bytes"`             // attributes around one scheduled input or chunk
+	PublishBytes           int64 `json:"publish_bytes"`             // one detached item publish
+	SessionBytes           int64 `json:"session_bytes"`             // one pin's session creation
+	ChildStartBytes        int64 `json:"child_start_bytes"`         // one child start, four payloads of ≤ 256 KiB
+	AwaitHandlerStartBytes int64 `json:"await_handler_start_bytes"` // one await failure handler's start
 }
 
 // CachePlan is the plan-side caching decision (docs/DSL.md "Caching"). Plain

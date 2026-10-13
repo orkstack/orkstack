@@ -189,10 +189,23 @@ func RunWorkflow(
 
 	inFlight := map[string]workflow.Future{}
 	for {
+		// The history guard, check point 1: a run whose history plus what its
+		// own failure path still needs reaches the cluster's limit stops here,
+		// RUN_HISTORY_LIMIT, before the cluster terminates it
+		// (history_guard.go). A no-op for a plan without a limit.
+		state.beginPass()
+		if err := state.historyExhausted(ctx, inFlight); err != nil {
+			return state.fail(ctx, cancelRun, inFlight, "", err)
+		}
 		// Schedule every task whose own dependencies are terminal. Re-scan after
 		// each completion so a fast branch can advance without waiting for an
 		// unrelated slow branch.
 		for _, id := range state.readyTasks() {
+			// Check point 2: before every dispatch decision of the pass. O(1)
+			// after the pass's first count.
+			if err := state.historyExhausted(ctx, inFlight); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, "", err)
+			}
 			run, err := state.classify(ctx, id)
 			if err != nil {
 				return state.fail(ctx, cancelRun, inFlight, id, err)
@@ -456,6 +469,20 @@ type runState struct {
 	lean                 bool
 	pendingItemPublishes []workflow.Future
 	publishCtx           workflow.Context
+
+	// The history guard (history_guard.go). versions holds every version
+	// decision this run asked, asked once each. hist counts the commands the
+	// current workflow task issued beyond the raw counters; passReserve and
+	// passCharge are the pass's reserve count and its dispatch charges;
+	// pendingHandlers is the failing phase's count of handlers still PENDING;
+	// handlerCount and handlerStartBytes feed the quick bound, set once in
+	// newRunState; guardOff is set when a history predates the guard.
+	versions                        map[string]workflow.Version
+	hist                            historyCount
+	passReserve, passCharge         reserveCount
+	pendingHandlers                 int64
+	handlerCount, handlerStartBytes int64
+	guardOff                        bool
 }
 
 // pinState is one pin's whole life inside this run: who belongs to it, and
@@ -532,6 +559,28 @@ func newRunState(
 	input *orkstackv1.Payload,
 	plan RunPlan,
 ) *runState {
+	state := buildRunState(runID, wf, input, plan)
+	// CreatedAt is the execution's own start time, taken from the
+	// WorkflowExecutionStarted history event rather than from a clock, so
+	// every replica that reads this run dates it identically and a replay
+	// reproduces it exactly. StartedAt stays unset until the run actually
+	// starts, one event later.
+	state.createdAt = timestamppb.New(workflow.GetInfo(ctx).WorkflowStartTime)
+	if len(state.awaits) > 0 {
+		state.resolutions = workflow.GetSignalChannel(ctx, ResolveAwaitSignal)
+	}
+	return state
+}
+
+// buildRunState is newRunState without the two things only a workflow
+// context has — the start time and the resolution channel — and so a pure
+// function of its arguments.
+func buildRunState(
+	runID string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+	plan RunPlan,
+) *runState {
 	mergedInput := ApplyInputDefaults(wf, input)
 	state := &runState{
 		runID:    runID,
@@ -545,15 +594,9 @@ func newRunState(
 		outputs:  map[string]map[string]any{},
 		closure:  map[string][]string{},
 		leaves:   map[string]struct{}{},
-		// CreatedAt is the execution's own start time, taken from the
-		// WorkflowExecutionStarted history event rather than from a clock, so
-		// every replica that reads this run dates it identically and a replay
-		// reproduces it exactly. StartedAt stays unset until the run actually
-		// starts, one event later.
-		createdAt: timestamppb.New(workflow.GetInfo(ctx).WorkflowStartTime),
-		status:    orkstackv1.Status_STATUS_PENDING,
-		pins:      map[string]*pinState{},
-		awaits:    map[string]*awaitState{},
+		status:   orkstackv1.Status_STATUS_PENDING,
+		pins:     map[string]*pinState{},
+		awaits:   map[string]*awaitState{},
 	}
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
@@ -608,9 +651,6 @@ func newRunState(
 	if len(state.eaches) > 0 {
 		state.eachShare, state.itemInputLimit, state.itemArtifactMax = eachBounds(wf, plan.Limits)
 	}
-	if len(state.awaits) > 0 {
-		state.resolutions = workflow.GetSignalChannel(ctx, ResolveAwaitSignal)
-	}
 	for _, t := range wf.GetTasks() {
 		// A failure handler's needs edges do not remove its needs from the
 		// leaves: adding a rollback to an Orkflow must not drop deploy's
@@ -645,6 +685,7 @@ func newRunState(
 		state.pinOrder = append(state.pinOrder, name)
 	}
 	sort.Strings(state.pinOrder)
+	state.countHandlers()
 	return state
 }
 
@@ -842,6 +883,7 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 	p.ready, p.readySettable = workflow.NewFuture(runCtx)
 	p.closed, p.closedSettable = workflow.NewFuture(runCtx)
 	p.done = workflow.NewBufferedChannel(runCtx, 1)
+	s.chargePinOpen()
 
 	// A coroutine, and it has to be one, for two reasons that each force it:
 	// CompleteSession must run in the coroutine that ran CreateSession, so
@@ -864,6 +906,9 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 // channel back to the loop is the two futures and the one signal.
 func (s *runState) hostPin(gctx workflow.Context, p *pinState, queue string) {
 	base := workflow.WithActivityOptions(gctx, workflow.ActivityOptions{TaskQueue: queue})
+	if limit := s.historyLimit(); limit != nil {
+		s.noteCommand(gctx, 1, limit.Reserve.SessionBytes)
+	}
 	sessionCtx, err := workflow.CreateSession(base, &workflow.SessionOptions{
 		ExecutionTimeout: p.timeout,
 		CreationTimeout:  pinCreationTimeout,
@@ -1489,6 +1534,12 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		return nil, temporal.NewNonRetryableApplicationError(
 			err.Error(), task.CategoryContractViolation, err)
 	}
+	// The history guard counts the command this workflow task issues, and
+	// charges what the dispatch adds to the run's failure path.
+	if limit := s.historyLimit(); limit != nil {
+		s.noteCommand(ctx, 1, s.valuesBound()+limit.Reserve.CommandBytes)
+		s.chargeTaskDispatch()
+	}
 	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
 }
 
@@ -2075,6 +2126,12 @@ func (s *runState) fail(
 	taskID string,
 	cause error,
 ) (*orkstackv1.Run, error) {
+	// The history guard's failure belongs to the run, never to the task or
+	// fan-out where it tripped: every caller reaches here with the id it was
+	// working on.
+	if isHistoryLimit(cause) {
+		taskID = ""
+	}
 	// A definition with a failure handler takes its own failure path
 	// (join.go, F1–F13); every other run takes this body, unchanged.
 	if s.hasHandlers {
@@ -2156,10 +2213,17 @@ const runEndedBeforeStart = "run ended before this task started"
 // substitutions. Shared by fail and failWithHandlers, so the two cannot
 // drift.
 func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
+	// The history guard's own reason: the run's, with what it still had
+	// going as the details.
+	if isHistoryLimit(cause) {
+		return historyLimitFailure(cause)
+	}
 	failure := &orkstackv1.Error{
 		Code:    "RUN_FAILED",
 		Message: cause.Error(),
-		Details: fmt.Sprintf("task %q", taskID),
+	}
+	if taskID != "" {
+		failure.Details = fmt.Sprintf("task %q", taskID)
 	}
 	// A fan-out's own failure carries the node's sentence as the
 	// ApplicationError's message, whichever way the array was counted or the
@@ -2231,11 +2295,12 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 		orkstackv1.Status_STATUS_SUCCEEDED, "run succeeded"); err != nil {
 		return nil, err
 	}
-	// The workflow's own result carries no items: nothing reads it (the
-	// reader rebuilds a run from its events and snapshots), and a result
-	// carrying 1000 items could pass the payload limit and fail the run's
-	// completion. Identical to the snapshot for a run with no fan-out. A
-	// child run returns only what its parent reads (compactChildResult).
+	// The workflow's own result is O(1) by construction: coordinates, status
+	// and timestamps, never a task row (compactRunResult), or for a child run
+	// only what its parent reads (compactChildResult). Nothing reads a
+	// top-level result — the reader rebuilds a run from its events and
+	// snapshots — so its size can never be what refuses the completion after
+	// RUN_SUCCEEDED was already published.
 	return s.result(), nil
 }
 

@@ -299,7 +299,7 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	}
 	var run *orkstackv1.Run
 	if err := h.env.GetWorkflowError(); err == nil {
-		run = mustWorkflowResult(t, h.env)
+		run = mustFinalRun(t, h.store, runID)
 	} else {
 		// A run whose own conditions fail it still dispatched what it
 		// dispatched; its last projected snapshot holds the same task runs.

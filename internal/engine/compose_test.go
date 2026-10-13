@@ -17,6 +17,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
@@ -715,7 +716,7 @@ func TestRunWorkflow_DeclaredOutputsBecomeRunOutput(t *testing.T) {
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
-	run := mustWorkflowResult(t, h.env)
+	run := mustFinalRun(t, h.store, "ork-outputs")
 	got := run.GetOutput().GetData().AsMap()
 	if len(got) != 3 || got["digest"] != "img@sign" || got["image"] != "img" || got["const"] != "fixed" {
 		t.Fatalf("output = %v", got)
@@ -773,7 +774,7 @@ func TestRunWorkflow_NoOutputsKeepsLeafAggregation(t *testing.T) {
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
-	run := mustWorkflowResult(t, h.env)
+	run := mustFinalRun(t, h.store, "ork-leaves")
 	got := run.GetOutput().GetData().AsMap()
 	leaf, _ := got["leaf"].(map[string]any)
 	if len(got) != 1 || leaf["value"] != "img@leaf" {
@@ -808,16 +809,76 @@ func TestRunWorkflow_ChildRunReturnsACompactResult(t *testing.T) {
 	}
 }
 
-func TestRunWorkflow_TopLevelResultIsUnchanged(t *testing.T) {
+func TestRunWorkflow_ChildResultCarriesOnlyDeclaredOutputs(t *testing.T) {
+	// The parent reads a child's Output only for declared outputs
+	// (collectChild); an undeclared leaf aggregation is unbounded and read by
+	// nobody, so a child without `outputs:` returns none.
+	noOutputs := strings.Replace(outputsDocument,
+		"outputs:\n  digest: '{{ .tasks.sign.output.value }}'\n  image: '{{ .inputs.image }}'\n  const: fixed\n", "", 1)
+	for _, c := range []struct {
+		name, doc  string
+		wantOutput bool
+	}{
+		{"declared", outputsDocument, true},
+		{"undeclared", noOutputs, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newComposeHarness(t, defaultBehavior)
+			plan := defaultPlan()
+			plan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_PARENT_RUN", ID: "ork-parent"}
+			h.run("ork-child", compile(t, c.doc), payload(t, nil), plan)
+			if err := h.env.GetWorkflowError(); err != nil {
+				t.Fatalf("workflow error: %v", err)
+			}
+			run := mustWorkflowResult(t, h.env)
+			if got := run.GetOutput() != nil; got != c.wantOutput {
+				t.Fatalf("child result output present = %v, want %v: %v", got, c.wantOutput, run.GetOutput())
+			}
+			if len(run.GetTaskRuns()) != 0 || run.GetInput() != nil {
+				t.Fatalf("a child result carried more than it should: %v", run)
+			}
+			// The snapshot is the whole run, its leaf aggregation included.
+			snapshot := mustFinalRun(t, h.store, "ork-child")
+			if snapshot.GetOutput() == nil {
+				t.Fatal("the child's snapshot lost its output")
+			}
+		})
+	}
+}
+
+func TestRunWorkflow_TopLevelResultIsCompact(t *testing.T) {
+	// 1,000 synthetic tasks: the result the run completes with must not grow
+	// with them (AGENTS.md §2.2; it used to be 1.5 KB per task).
+	var doc strings.Builder
+	doc.WriteString("name: wide\ntasks:\n")
+	for i := 0; i < 1000; i++ {
+		fmt.Fprintf(&doc, "  - id: t%04d\n    uses: shell\n    needs: []\n    with: { op: eval, command: [\"true\"] }\n", i)
+	}
 	h := newComposeHarness(t, defaultBehavior)
-	h.run("ork-top", compile(t, outputsDocument), payload(t, nil), defaultPlan())
+	h.run("ork-top", compile(t, doc.String()), payload(t, nil), defaultPlan())
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
 	run := mustWorkflowResult(t, h.env)
-	snapshot, _ := h.store.Get("ork-top")
-	if len(run.GetTaskRuns()) != 2 || run.GetCreatedAt() == nil || !proto.Equal(run, snapshot) {
-		t.Fatalf("the top-level result is not the snapshot:\n%v\n%v", run, snapshot)
+	payload, err := converter.GetDefaultDataConverter().ToPayload(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size := len(payload.GetData()); size >= 2048 {
+		t.Fatalf("the top-level result is %d bytes for 1,000 tasks, want under 2 KiB", size)
+	}
+	if len(run.GetTaskRuns()) != 0 || run.GetInput() != nil || run.GetOutput() != nil || run.GetError() != nil {
+		t.Fatalf("the top-level result carries more than its coordinates: %v", run)
+	}
+	snapshot := mustFinalRun(t, h.store, "ork-top")
+	if run.GetId() != "ork-top" || run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED ||
+		run.GetOrkflowName() != snapshot.GetOrkflowName() || run.GetOrkflowDefinitionDigest() != snapshot.GetOrkflowDefinitionDigest() ||
+		!proto.Equal(run.GetCreatedAt(), snapshot.GetCreatedAt()) || !proto.Equal(run.GetStartedAt(), snapshot.GetStartedAt()) ||
+		!proto.Equal(run.GetFinishedAt(), snapshot.GetFinishedAt()) {
+		t.Fatalf("the compact result is not the snapshot's coordinates:\n%v\n%v", run, snapshot)
+	}
+	if len(snapshot.GetTaskRuns()) != 1000 {
+		t.Fatalf("the snapshot carries %d task rows, want 1000", len(snapshot.GetTaskRuns()))
 	}
 }
 

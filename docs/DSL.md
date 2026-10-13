@@ -201,9 +201,13 @@ read it that way.
 
 Submit fills every omitted input that has a `default` and checks its size,
 nothing else: it does not refuse a missing required input or a value of
-another type. The run input, the stored definition and the run's plan each
+another type. The run input, the planned definition and the run's plan each
 travel as one payload of the run's start, and each is bounded by the same
-256 KiB as any payload (AGENTS.md §2.2): an input over it is refused at
+256 KiB as any payload (AGENTS.md §2.2). The planned definition is the stored
+version with every task's pool resolved and without its YAML source: the
+source is not what runs, and the stored version keeps it (`orkctl orkflow get`,
+the run's evidence bundle), so the source's size never counts against a run.
+An input over the bound is refused at
 submit (and at a schedule's fire) as `INVALID_ARGUMENT` with
 `INPUT_TOO_LARGE`; a definition or plan over it is refused as
 `FAILED_PRECONDITION` naming its size. Nothing starts. The bound is on the
@@ -382,6 +386,17 @@ history, which the cluster bounds and a run cannot yet continue past:
   The child is a separate run with its own history, and its own definition
   met this ceiling when it was applied; the whole composition tree is further
   bounded by its 256 KiB plan (rule 31).
+
+A run that nonetheless grows near its cluster's history limit — many tasks
+running at once, long retries, an await parked for weeks — is not left to
+be terminated by the cluster. It stops first, `FAILED` with
+`RUN_HISTORY_LIMIT` (InfrastructureError, not retryable), keeping back the
+history its own failure path needs: the tasks still running are stopped and
+recorded, the ones never started are `CANCELED`, and failure handlers run
+(`docs/DEPLOY.md` §1, `engine.history.*`). The message says how much history
+was recorded and what was still running. The one gap is history size: a
+failure path that lands many large task results at once can still reach the
+cluster's size limit first.
 
 ## Joins and failure handlers (`join:`)
 

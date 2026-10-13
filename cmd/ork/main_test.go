@@ -766,6 +766,55 @@ func TestLoadConfig_EachMaxItemsBounds(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_HistoryLimitRefusesTinyValues: ORK_HISTORY_MAX_EVENTS and
+// ORK_HISTORY_MAX_BYTES default to the cluster's own defaults, accept any
+// value at or above their minimum, and refuse boot naming the variable below
+// it or when malformed — never a silent fallback.
+func TestLoadConfig_HistoryLimitRefusesTinyValues(t *testing.T) {
+	cfg := loadConfig()
+	if cfg.limitsErr != nil || cfg.historyMaxEvents != engine.DefaultHistoryMaxEvents ||
+		cfg.historyMaxBytes != engine.DefaultHistoryMaxBytes {
+		t.Fatalf("defaults = %d events, %d bytes (%v); want %d and %d", cfg.historyMaxEvents,
+			cfg.historyMaxBytes, cfg.limitsErr, engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes)
+	}
+	for _, tc := range []struct {
+		key, raw string
+		want     int64
+		refused  bool
+	}{
+		{"ORK_HISTORY_MAX_EVENTS", "100", 100, false},
+		{"ORK_HISTORY_MAX_EVENTS", "200000", 200000, false},
+		{"ORK_HISTORY_MAX_EVENTS", "99", 0, true},
+		{"ORK_HISTORY_MAX_EVENTS", "0", 0, true},
+		{"ORK_HISTORY_MAX_EVENTS", "many", 0, true},
+		{"ORK_HISTORY_MAX_BYTES", "65536", 65536, false},
+		{"ORK_HISTORY_MAX_BYTES", "2097152", 2097152, false},
+		{"ORK_HISTORY_MAX_BYTES", "65535", 0, true},
+		{"ORK_HISTORY_MAX_BYTES", "-1", 0, true},
+	} {
+		t.Run(tc.key+"="+tc.raw, func(t *testing.T) {
+			t.Setenv(tc.key, tc.raw)
+			cfg := loadConfig()
+			if refused := cfg.limitsErr != nil; refused != tc.refused {
+				t.Fatalf("refused = %v (%v), want %v", refused, cfg.limitsErr, tc.refused)
+			}
+			if tc.refused {
+				if !strings.Contains(cfg.limitsErr.Error(), tc.key) {
+					t.Fatalf("refusal %v does not name %s", cfg.limitsErr, tc.key)
+				}
+				return
+			}
+			got := cfg.historyMaxEvents
+			if tc.key == "ORK_HISTORY_MAX_BYTES" {
+				got = cfg.historyMaxBytes
+			}
+			if got != tc.want {
+				t.Fatalf("%s = %d, want %d", tc.key, got, tc.want)
+			}
+		})
+	}
+}
+
 // ORK_ORKFLOW_MAX_TASKS is a deployment-configurable default: unset is 1000,
 // any whole number of tasks, 1 or more, lowers or raises it, and anything
 // else refuses boot naming the variable rather than falling back.

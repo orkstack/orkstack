@@ -14,6 +14,12 @@ tree to them in two halves per fixture:
   back the recorded results, and compares what today's code puts into every
   activity call (and, where listed, every event and the finished run) with
   what the recorded build put there.
+  The finished run is compared as current code returns it: a top-level run
+  returns only its coordinates, status and timestamps (`compactRunResult`),
+  so the recorded result — every task row included, from the builds that
+  returned the whole run — is projected onto that shape first
+  (`CompactRunResultForTest`). The projection is a strict subset of what was
+  recorded, so no fixture is re-recorded for it.
 
 Each fixture also has a **negative test**: a deliberately altered body or
 stream that the guard must catch, so the fixture is known to see the kind of
@@ -166,3 +172,35 @@ rather than a re-recording of the v1 ones, which stay on `DefaultVersion`.
   `ORK_REQUIRE_LEAN_FIXTURES`. Recorded once, against a real cluster, by the
   build that introduced `lean-event-path`; like the v1 fixtures they are meant
   to age, not to be refreshed.
+
+### `run-history-limit-v1.json` — the history guard
+
+A 30-item fan-out followed by a 40-task chain, under a plan whose history
+limit is 600 events (`RunPlan.History`, the default reserve). The reserve the
+pending chain keeps back brings the line forward, so the guard crosses inside
+the fan-out's second dispatch batch, after a yield: the per-command count of a
+workflow task decides the exact item. Pins the lazy `run-history-guard`
+version marker at the crossing, the cancellation of the items in flight,
+every never-started task `CANCELED`, and `RUN_FAILED` owned by no task, with
+the workflow failure typed `RUN_HISTORY_LIMIT`. Every earlier fixture's plan
+has no `history`, so none of them enters the guard
+(`TestCommittedFixtures_DeclareNoNewPlanFields`).
+
+- command: `TestRunWorkflow_ReplaysCommittedHistoryLimitHistory`. The replayer
+  sets the history length and size from every recorded `WorkflowTaskStarted`,
+  as live execution does, so this is the exact check of the crossing point
+- payload: `TestHistoryLimitHistory_PayloadsMatchWhatCurrentCodeSends`. A test
+  environment holds one static history length, so it checks the prefix
+  (re-executed with the guard off, every input and event before the marker)
+  and the terminal sentence's counts, not the crossing
+- negatives: `TestHistoryLimitHistory_CatchesAGuardRemoved` (a body without the
+  guard); `TestCommittedHistory_HistoryGuardWithoutItsGateIsCaught`
+  (`run-succeeded-v2.json` handed a tiny limit replays clean behind the gate,
+  and must fail with the version taken without asking)
+- recorder: `TestIntegration_RecordHistoryLimitRunHistory`
+  (`history_guard_integration_test.go`); `ORK_REQUIRE_HISTORY_LIMIT_FIXTURE`.
+  Unlike the other recorders it never skips: without
+  `ORK_RECORD_GOLDEN_HISTORY` it records the same run into the proof
+  directory (`history-limit/recorded-history.json`) and replays that fresh
+  history against current code, leaving this fixture untouched; with it, it
+  also rewrites this file

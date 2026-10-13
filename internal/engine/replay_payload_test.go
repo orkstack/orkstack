@@ -18,6 +18,7 @@ import (
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -125,7 +126,7 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	if err := env.GetWorkflowResult(&finished); err != nil {
 		t.Fatalf("decode the re-executed run: %v", err)
 	}
-	if diff := payloadDiff(recordedRun, canonicalPayload(t, finished)); diff != "" {
+	if diff := payloadDiff(compactRecordedRun(t, recordedRun), canonicalPayload(t, finished)); diff != "" {
 		t.Errorf("the Run this code returns no longer matches the one the recorded build "+
 			"returned for the same input:\n%s\n\n"+
 			"A replica of another build reads that projection. Either restore the shape, or "+
@@ -434,6 +435,25 @@ func goldenActivityPayloads(t *testing.T, recorded *historypb.History) (
 			len(taskInputs), len(events), run != nil)
 	}
 	return taskInputs, events, results, run
+}
+
+// compactRecordedRun is the recorded build's top-level result projected onto
+// what current code returns (compactRunResult): a recorded result is a
+// superset of the compact one, so the fixtures are not re-recorded. The
+// recorded JSON is decoded with unknown fields discarded, projected, and
+// re-encoded through the data converter, so a field current code still
+// returns is compared exactly as the recorded build wrote it.
+func compactRecordedRun(t *testing.T, recorded map[string]any) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(recorded)
+	if err != nil {
+		t.Fatalf("encode the recorded run: %v", err)
+	}
+	run := &orkstackv1.Run{}
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, run); err != nil {
+		t.Fatalf("decode the recorded run: %v", err)
+	}
+	return canonicalPayload(t, engine.CompactRunResultForTest(run))
 }
 
 // recordedPayload reads one recorded payload as the JSON the recorded build

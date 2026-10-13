@@ -142,6 +142,12 @@ var Schema = []Var{
 	// most tasks one Orkflow may declare, a default a deployment may lower or
 	// raise.
 	{Path: "engine.orkflow_max_tasks", Env: "ORK_ORKFLOW_MAX_TASKS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultOrkflowMaxTasks))},
+	// ORK_HISTORY_MAX_EVENTS and ORK_HISTORY_MAX_BYTES fall back to
+	// engine.DefaultHistoryMaxEvents and DefaultHistoryMaxBytes: the Temporal
+	// server's own per-execution limits, which a run stops RUN_HISTORY_LIMIT
+	// before reaching.
+	{Path: "engine.history.max_events", Env: "ORK_HISTORY_MAX_EVENTS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(engine.DefaultHistoryMaxEvents)},
+	{Path: "engine.history.max_bytes", Env: "ORK_HISTORY_MAX_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultHistoryMaxBytes)},
 	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the
 	// built-in ceiling (engine.MaxComposeDepth) it may lower and never raise.
 	{Path: "engine.compose_max_depth", Env: "ORK_COMPOSE_MAX_DEPTH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultComposeMaxDepth))},

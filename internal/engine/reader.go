@@ -1208,10 +1208,17 @@ func closedExecution(
 		return orkstackv1.Status_STATUS_SUCCEEDED, nil, true
 	case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_FAILED:
 		attrs := historyEvent.GetWorkflowExecutionFailedEventAttributes()
-		return orkstackv1.Status_STATUS_FAILED, &orkstackv1.Error{
+		failure := &orkstackv1.Error{
 			Code:    "RUN_FAILED",
 			Message: attrs.GetFailure().GetMessage(),
-		}, true
+		}
+		// A run-level failure type is the run's own code: what the run's
+		// terminal snapshot would have said, had its terminal emit landed.
+		if failureType := attrs.GetFailure().GetApplicationFailureInfo().GetType(); isRunLevelFailureType(failureType) {
+			failure.Code = failureType
+			failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+		}
+		return orkstackv1.Status_STATUS_FAILED, failure, true
 	case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED:
 		return orkstackv1.Status_STATUS_CANCELED, &orkstackv1.Error{
 			Code:    "RUN_CANCELED",
@@ -1235,6 +1242,12 @@ func closedExecution(
 	default:
 		return orkstackv1.Status_STATUS_UNSPECIFIED, nil, false
 	}
+}
+
+// isRunLevelFailureType reports whether a workflow failure's ApplicationError
+// type is a code the run itself owns, rather than the cause's category.
+func isRunLevelFailureType(failureType string) bool {
+	return failureType == RunHistoryLimitCode
 }
 
 // statusFromExecution maps a visibility status onto a run status.

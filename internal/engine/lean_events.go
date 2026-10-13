@@ -87,6 +87,10 @@ func (s *runState) publishItemDetached(ctx workflow.Context, args ...any) {
 		s.awaitItemPublish(ctx, oldest)
 	}
 	activityCtx := workflow.WithActivityOptions(s.itemPublishContext(ctx), eventActivityOptions())
+	if limit := s.historyLimit(); limit != nil {
+		s.noteCommand(ctx, 1, limit.Reserve.PublishBytes)
+		s.chargeDetachedPublish()
+	}
 	s.pendingItemPublishes = append(s.pendingItemPublishes,
 		workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, args...))
 }

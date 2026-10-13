@@ -107,7 +107,7 @@ func TestRunWorkflow_TaskRunRecordsThePoolItRanOn(t *testing.T) {
 		t.Fatalf("workflow error: %v", err)
 	}
 
-	run := mustWorkflowResult(t, h.env)
+	run := mustFinalRun(t, h.store, "run-pool-projection")
 	pools := map[string]string{}
 	for _, tr := range run.GetTaskRuns() {
 		pools[tr.GetTaskId()] = tr.GetPool()
@@ -226,7 +226,7 @@ tasks:
 			// The pool each task was reported on, from the projection a
 			// client reads.
 			reported := map[string]string{}
-			for _, tr := range mustWorkflowResult(t, h.env).GetTaskRuns() {
+			for _, tr := range mustFinalRun(t, h.store, "run-pool-agreement").GetTaskRuns() {
 				reported[tr.GetTaskId()] = tr.GetPool()
 			}
 			// The queue each task's activity arrived on, from Temporal.

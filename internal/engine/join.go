@@ -114,8 +114,12 @@ func skipReasonNoNeedFailed(needs []string) string {
 }
 
 // cancelReasonNotAHandler is what fail-fast records on a never-started task
-// that is not a failure handler, in a run with failure handlers.
+// that is not a failure handler, in a run with failure handlers. An empty
+// cause is the run's own failure — the history guard's — which no task owns.
 func cancelReasonNotAHandler(cause string) string {
+	if cause == "" {
+		return "the run is failing (it reached its history limit) and this task is not a failure handler"
+	}
 	return fmt.Sprintf("the run is failing (task %q failed) and this task is not a failure handler", cause)
 }
 
@@ -136,6 +140,10 @@ const (
 // failingMessage is the failing note: the one TASK_LOG, with no task id, a
 // run with failure handlers emits when it starts failing.
 func failingMessage(cause string, handlers []string) string {
+	if cause == "" {
+		return "run failing: it reached its history limit; waiting for its failure handlers: " +
+			strings.Join(handlers, ", ")
+	}
 	return fmt.Sprintf("run failing after task %q failed; waiting for its failure handlers: %s",
 		cause, strings.Join(handlers, ", "))
 }
@@ -394,7 +402,8 @@ func (s *runState) failWithHandlers(
 	// F4: a cause that is not terminal — a dispatch the engine refused after
 	// schedule marked it RUNNING, or an emit that failed after it did — is
 	// recorded, so its handlers see it FAILED.
-	if !isTerminal(s.taskRuns[taskID].GetStatus()) {
+	// A run-level cause (the history guard's) has no task to record.
+	if taskID != "" && !isTerminal(s.taskRuns[taskID].GetStatus()) {
 		s.recordRefusedDispatch(s.eventContext(ctx), taskID, cause)
 	}
 
@@ -526,12 +535,26 @@ func (s *runState) cancelWithHandlers(
 // every outcome is recorded and none stops anything else. It returns when
 // nothing is in flight, no await is open and nothing is ready.
 func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]workflow.Future) {
+	// Check point 4's count: every handler still PENDING (only handlers can
+	// be, after F6), once, then decremented as each one leaves PENDING.
+	s.pendingHandlers = 0
+	for _, id := range s.order {
+		if s.taskRuns[id].GetStatus() == orkstackv1.Status_STATUS_PENDING {
+			s.pendingHandlers++
+		}
+	}
 	for {
+		s.beginPass()
 		ectx := s.eventContext(ctx)
 		stopping := ctx.Err() != nil
 		// Only failure handlers can be PENDING here (F6). Declaration order.
 		for _, id := range s.readyTasks() {
+			if s.taskRuns[id].GetStatus() != orkstackv1.Status_STATUS_PENDING {
+				// Cancelled at the history limit earlier in this scan.
+				continue
+			}
 			if stopping {
+				s.pendingHandlers--
 				if err := s.markCanceled(ectx, id, cancelReasonHandlerStopped); err != nil {
 					workflow.GetLogger(ctx).Error("mark canceled failed",
 						"run_id", s.runID, "task_id", id, "error", err)
@@ -540,8 +563,17 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 			}
 			run, err := s.classify(ectx, id) // a condition error records CONDITION_FAILED itself
 			if err != nil || !run {
+				s.pendingHandlers--
 				continue
 			}
+			// Check point 4: a handler starts only while the run's history
+			// still holds its terminal path; past that line every handler
+			// still PENDING is CANCELED, and those in flight finish.
+			if s.handlerWouldExhaustHistory(ectx, inFlight, id) {
+				s.cancelHandlersAtHistoryLimit(ectx)
+				continue
+			}
+			s.pendingHandlers--
 			switch {
 			case s.awaits[id] != nil:
 				// openAwait starts the deadline timer BEFORE its emit, so on an

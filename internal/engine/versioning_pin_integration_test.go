@@ -149,6 +149,7 @@ func newPinVersionReplica(
 	runQueue, orkerQueue string,
 	release <-chan struct{},
 	snapshots engine.SnapshotStore,
+	runs *engine.RunStore,
 ) *pinVersionReplica {
 	t.Helper()
 	r := &pinVersionReplica{
@@ -178,7 +179,7 @@ func newPinVersionReplica(
 		DisableWorkflowWorker:       true,
 	})
 	r.events.RegisterActivityWithOptions(
-		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).
+		engine.NewEventActivities(engine.NewEventBus(), runs).
 			WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
@@ -339,13 +340,17 @@ func TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout(t *testing.T) 
 	releaseGate := func() { releaseOnce.Do(func() { close(release) }) }
 	defer releaseGate()
 	snapshots := newTestSnapshotStore()
+	// One read model for both replicas: either one's projection worker may
+	// publish the run's events, and the run's last snapshot is where its task
+	// rows are read (the workflow's own result is compact).
+	runs := engine.NewRunStore()
 
 	transcript := newRolloutTranscript(t, namespace, deploymentName, runQueue, orkerQueue)
 	transcript.result("pin hosts: EnableSessionWorker=true MaxConcurrentSessionExecutionSize=" +
 		fmt.Sprint(pinVersionMaxPins) + " (through task.Deployment.Apply, as cmd/orker does)")
 
 	// --- v1 is the whole world, and it is a pin host ----------------------
-	first := newPinVersionReplica(t, c, v1, runQueue, orkerQueue, release, snapshots)
+	first := newPinVersionReplica(t, c, v1, runQueue, orkerQueue, release, snapshots, runs)
 	// The creation queue is included deliberately: setCurrentVersion waits until
 	// the server reports this version polling every queue named, so this is also
 	// the assertion that a VERSIONED worker really does poll the session creation
@@ -372,7 +377,7 @@ func TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout(t *testing.T) 
 	transcript.step("run " + pinnedRun + " has an OPEN pin: its member " + pinVersionGate + " is executing on v1")
 
 	// --- v2 arrives, is a pin host too, and takes over --------------------
-	second := newPinVersionReplica(t, c, v2, runQueue, orkerQueue, release, snapshots)
+	second := newPinVersionReplica(t, c, v2, runQueue, orkerQueue, release, snapshots, runs)
 	setCurrentVersion(t, ctx, c, v2, runQueue, orkerQueue, creationQueue)
 	switchedAt := time.Now()
 	transcript.step("v2 pin host up; current version = v2, while " + pinnedRun + "'s pin is still open")
@@ -393,10 +398,12 @@ func TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout(t *testing.T) 
 	releaseGate()
 	transcript.step("released the gate member, so " + pinVersionAfter + " is scheduled with v2 current")
 
-	var pinnedResult *orkstackv1.Run
-	if err := c.GetWorkflow(ctx, pinnedRun, "").Get(ctx, &pinnedResult); err != nil {
+	if err := c.GetWorkflow(ctx, pinnedRun, "").Get(ctx, nil); err != nil {
 		t.Fatalf("the run with the open pin (%s) did not complete on v1: %v", pinnedRun, err)
 	}
+	// The run's last published snapshot: the workflow's result carries no
+	// task rows. The terminal event is published before the run completes.
+	pinnedResult, _ := runs.Get(pinnedRun)
 	transcript.step("run " + pinnedRun + " completed")
 
 	// --- 1 and 3. the server's own routing verdict ------------------------

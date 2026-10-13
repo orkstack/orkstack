@@ -195,10 +195,7 @@ func TestRunWorkflow_RecordsTheCommitAndExitCodeOnTheTaskRun(t *testing.T) {
 		t.Fatalf("workflow error: %v", err)
 	}
 
-	var run *orkstackv1.Run
-	if err := h.env.GetWorkflowResult(&run); err != nil {
-		t.Fatalf("decode the run: %v", err)
-	}
+	run := mustFinalRun(t, h.store, "ork-dispatch-2")
 	taskRun := run.GetTaskRuns()[0]
 
 	if taskRun.GetCommit().GetSha256() != strings.Repeat("c", 64) {

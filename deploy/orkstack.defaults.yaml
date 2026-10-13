@@ -51,6 +51,9 @@ engine:
   stats_cache_ttl: 5s  # ork
   each_max_items: 1000  # ork
   orkflow_max_tasks: 1000  # ork
+  history:
+    max_events: 51200  # ork
+    max_bytes: 52428800  # 50 MiB; ork
   compose_max_depth: 4  # ork
   cache_max_ttl: 168h  # ork
   usage_cache_ttl: 5m  # ork

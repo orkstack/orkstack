@@ -265,6 +265,14 @@ type Config struct {
 	// Checked at validate/apply/plan and again at submit.
 	OrkflowMaxTasks int32
 
+	// HistoryMaxEvents and HistoryMaxBytes are engine.history.max_events and
+	// max_bytes: the cluster's per-execution history limits, which a run
+	// stops RUN_HISTORY_LIMIT before reaching. Zero means the defaults,
+	// engine.DefaultHistoryMaxEvents and DefaultHistoryMaxBytes. Pinned into
+	// each top-level plan at submit (pinRunTreeLimits).
+	HistoryMaxEvents int64
+	HistoryMaxBytes  int64
+
 	// ComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH: how many levels of child runs
 	// one run may start (a run is level 0). Zero means the built-in ceiling,
 	// engine.DefaultComposeMaxDepth; it may lower that ceiling and never
@@ -441,6 +449,9 @@ type Service struct {
 	eachMaxItems int32
 	// orkflowMaxTasks is Config.OrkflowMaxTasks, defaulted.
 	orkflowMaxTasks int32
+	// historyMaxEvents and historyMaxBytes are Config.HistoryMaxEvents and
+	// HistoryMaxBytes, defaulted.
+	historyMaxEvents, historyMaxBytes int64
 	// composeMaxDepth is Config.ComposeMaxDepth, defaulted.
 	composeMaxDepth int
 	// cacheMaxTTL is Config.CacheMaxTTL, defaulted; memos is Config.Memos.
@@ -498,6 +509,8 @@ func NewService(cfg Config) *Service {
 		limits:            cfg.Limits,
 		eachMaxItems:      eachMaxItemsOf(cfg.EachMaxItems),
 		orkflowMaxTasks:   orkflowMaxTasksOf(cfg.OrkflowMaxTasks),
+		historyMaxEvents:  positiveOr(cfg.HistoryMaxEvents, engine.DefaultHistoryMaxEvents),
+		historyMaxBytes:   positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:   composeMaxDepthOf(cfg.ComposeMaxDepth),
 		cacheMaxTTL:       cacheMaxTTLOf(cfg.CacheMaxTTL),
 		memos:             cfg.Memos,
@@ -1426,6 +1439,11 @@ func (s *Service) prepare(
 		return submission{}, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("resolve durable activity configuration: %w", err))
 	}
+	// The run-tree limits, once per tree: on the top-level plan only, and
+	// never per child (planChildren pins only the durability plan per child);
+	// the child's start copies them (startChild). Its own step, so
+	// pinDurabilityPlan's transfer-budget early return can never skip it.
+	s.pinRunTreeLimits(&plan)
 	// The caching plan: nil for an Orkflow with no cached task, so no_cache
 	// on such a run changes nothing — not even the plan's bytes.
 	plan.Cache = s.cachePlanFor(planned, msg.GetNoCache())
@@ -1575,6 +1593,30 @@ func (s *Service) pinDurabilityPlan(plan *engine.RunPlan) error {
 	}
 	plan.TransferBudgetSeconds = int32(seconds)
 	return nil
+}
+
+// pinRunTreeLimits sets the run-tree limits on a top-level plan: the
+// deployment's history ceiling and the reserve the guard keeps back below it
+// (internal/engine/history_guard.go). Decided at submit, because workflow
+// code may not read configuration (AGENTS.md §2.1), and carried so a later
+// release that re-measures the reserve moves only new runs. Set once per run
+// tree: every ChildRunPlan embeds a full plan inside its parent's, which is
+// bounded at 256 KiB, so per-child limits would cost every composed task its
+// bytes and refuse composed Orkflows that fit today.
+func (s *Service) pinRunTreeLimits(plan *engine.RunPlan) {
+	plan.History = &engine.HistoryLimit{
+		MaxEvents: s.historyMaxEvents,
+		MaxBytes:  s.historyMaxBytes,
+		Reserve:   engine.DefaultHistoryReserve,
+	}
+}
+
+// positiveOr is value, or fallback when value is not positive.
+func positiveOr(value, fallback int64) int64 {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 // poolPlanError maps a routing refusal onto a Connect code.

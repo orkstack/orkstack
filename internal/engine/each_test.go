@@ -938,9 +938,14 @@ func TestRunWorkflow_EachResultCarriesNoItems(t *testing.T) {
 		return itemResult(in), nil
 	})
 	stored := h.run(t, "run-each-result", fmt.Sprintf(eachInputDocument, 10, "", ""), map[string]any{"regions": []any{"eu", "us"}})
+	// The workflow's result carries no task row at all (compactRunResult), so
+	// no item can reach it however many a fan-out declares.
 	result := mustWorkflowResult(t, h.env)
-	if got := taskRunOf(t, result, "convert"); len(got.GetItems()) != 0 || got.GetEach().GetCount() != 2 {
-		t.Fatalf("the workflow result's node row = %v", got)
+	if len(result.GetTaskRuns()) != 0 {
+		t.Fatalf("the workflow result carries task rows: %v", result.GetTaskRuns())
+	}
+	if got := taskRunOf(t, stored, "convert"); got.GetEach().GetCount() != 2 {
+		t.Fatalf("the last snapshot's node row = %v", got)
 	}
 	if len(taskRunOf(t, stored, "convert").GetItems()) != 2 {
 		t.Fatal("the last snapshot lost its items")

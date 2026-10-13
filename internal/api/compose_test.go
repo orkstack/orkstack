@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -463,6 +464,44 @@ func TestSubmitRun_PlansEveryChildAndMintsIdsLast(t *testing.T) {
 		if fmt.Sprint(cp.Plan.ImagePolicy) != fmt.Sprint(plans[0].ImagePolicy) {
 			t.Fatalf("a child has its own image policy selection")
 		}
+	}
+}
+
+// TestPrepare_SetsRunTreeLimitsOnTheTopLevelPlanOnly: the history limit is
+// pinned once per run tree — on the top-level plan, even when a transfer
+// budget is configured (pinDurabilityPlan's early return cannot skip it), at
+// the deployment's values — and on no nested child plan: the child's start
+// copies it (startChild).
+func TestPrepare_SetsRunTreeLimitsOnTheTopLevelPlanOnly(t *testing.T) {
+	starter := &fakeStarter{}
+	f := newComposeFixture(t, func(cfg *api.Config) {
+		cfg.Starter = indexingStarter{starter}
+		cfg.TransferBudgetSeconds = 900
+		cfg.HistoryMaxEvents = 40_000
+		cfg.HistoryMaxBytes = 30 << 20
+	})
+	f.starter = starter
+	f.mustApply(t, notarizeYAML)
+	f.mustApply(t, strings.Replace(composeChildYAML, "tasks:\n", "tasks:\n  - id: notarize\n    uses: orkflow:notarize@1.0\n", 1))
+	f.mustApply(t, composeParentYAML)
+	if _, err := f.submit("deploy"); err != nil {
+		t.Fatalf("SubmitRun: %v", err)
+	}
+	plan := f.plans()[0]
+	want := engine.HistoryLimit{MaxEvents: 40_000, MaxBytes: 30 << 20, Reserve: engine.DefaultHistoryReserve}
+	if plan.TransferBudgetSeconds != 900 || plan.History == nil || *plan.History != want {
+		t.Fatalf("top-level plan: transfer %d, History %+v; want 900 and %+v", plan.TransferBudgetSeconds, plan.History, want)
+	}
+	release := plan.Children["release"]
+	if release.Plan.History != nil || release.Plan.Children["notarize"].Plan.History != nil {
+		t.Fatal("a nested child plan carries the run-tree limits")
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(encoded), `"history"`); n != 1 {
+		t.Fatalf("the encoded plan carries %d history entries, want exactly one for the tree", n)
 	}
 }
 
