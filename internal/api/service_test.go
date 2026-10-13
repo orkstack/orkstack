@@ -323,6 +323,39 @@ func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 	}
 }
 
+// TestSubmitRun_StartsWithoutSourceYAML: the definition a run starts with is
+// the planned one, without the Orkflow's source. The source is not what runs,
+// and the stored version keeps it — a GetOrkflow still returns it.
+func TestSubmitRun_StartsWithoutSourceYAML(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx,
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := f.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+		OrkflowName: "hello-ork",
+	})); err != nil {
+		t.Fatalf("SubmitRun: %v", err)
+	}
+	f.starter.mu.Lock()
+	started := append([]*orkstackv1.Orkflow(nil), f.starter.orkflows...)
+	f.starter.mu.Unlock()
+	if len(started) != 1 {
+		t.Fatalf("started %d runs, want 1", len(started))
+	}
+	if n := len(started[0].GetSourceYaml()); n != 0 {
+		t.Fatalf("the run started with %d bytes of source YAML, want none", n)
+	}
+	stored, err := f.orkflowClient().GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: "hello-ork"}))
+	if err != nil {
+		t.Fatalf("GetOrkflow: %v", err)
+	}
+	if stored.Msg.GetOrkflow().GetSourceYaml() == "" {
+		t.Fatal("the stored version lost its source")
+	}
+}
+
 // TestSubmitRun_DefaultRunIDUsesOrkPrefix proves the built-in run id generator
 // names runs ork-{timestamp}-{sequence} (e.g. ork-1786747447102328000-1): the
 // id becomes the Temporal workflow id and the handle CLI users see.

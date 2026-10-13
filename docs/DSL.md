@@ -201,9 +201,13 @@ read it that way.
 
 Submit fills every omitted input that has a `default` and checks its size,
 nothing else: it does not refuse a missing required input or a value of
-another type. The run input, the stored definition and the run's plan each
+another type. The run input, the planned definition and the run's plan each
 travel as one payload of the run's start, and each is bounded by the same
-256 KiB as any payload (AGENTS.md §2.2): an input over it is refused at
+256 KiB as any payload (AGENTS.md §2.2). The planned definition is the stored
+version with every task's pool resolved and without its YAML source: the
+source is not what runs, and the stored version keeps it (`orkctl orkflow get`,
+the run's evidence bundle), so the source's size never counts against a run.
+An input over the bound is refused at
 submit (and at a schedule's fire) as `INVALID_ARGUMENT` with
 `INPUT_TOO_LARGE`; a definition or plan over it is refused as
 `FAILED_PRECONDITION` naming its size. Nothing starts. The bound is on the

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
@@ -631,13 +632,20 @@ func TestSubmitRun_ExecutesTheCurrentVersion(t *testing.T) {
 	if len(starter.orkflows) != 2 {
 		t.Fatalf("the starter received %d orkflows, want 2", len(starter.orkflows))
 	}
-	if !strings.Contains(starter.orkflows[0].GetSourceYaml(), "echo one") {
-		t.Errorf("the unpinned run carried the wrong definition:\n%s",
-			starter.orkflows[0].GetSourceYaml())
-	}
-	if !strings.Contains(starter.orkflows[1].GetSourceYaml(), "echo two") {
-		t.Errorf("the pinned run carried the wrong definition:\n%s",
-			starter.orkflows[1].GetSourceYaml())
+	// Read from the tasks, never the source: a run starts without its
+	// Orkflow's source (PoolResolver.Plan clears it; the stored version keeps
+	// it).
+	for i, want := range []string{"echo one", "echo two"} {
+		encoded, err := protojson.Marshal(&orkstackv1.Orkflow{Tasks: starter.orkflows[i].GetTasks()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(encoded), want) {
+			t.Errorf("run %d carried the wrong definition, want %q in its tasks:\n%s", i, want, encoded)
+		}
+		if starter.orkflows[i].GetSourceYaml() != "" {
+			t.Errorf("run %d started with its Orkflow's source", i)
+		}
 	}
 }
 

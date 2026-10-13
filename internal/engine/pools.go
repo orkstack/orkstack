@@ -575,6 +575,11 @@ func (r *PoolResolver) Plan(
 	permitted := permittedPools(ns)
 
 	planned := proto.Clone(wf).(*orkstackv1.Orkflow)
+	// The source is not what runs; the stored version keeps it
+	// (NewChildRunPlan precedent). Every start — SubmitRun, the claim path
+	// and a schedule's fire — begins from `planned`, so none carries the
+	// YAML, and the start definition is measured without it.
+	planned.SourceYaml = ""
 	routes := map[string]string{}
 	// Ordered, so the error a submit reports is the same one every time.
 	var order []string
