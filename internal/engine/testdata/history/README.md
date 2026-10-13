@@ -198,4 +198,9 @@ has no `history`, so none of them enters the guard
   (`run-succeeded-v2.json` handed a tiny limit replays clean behind the gate,
   and must fail with the version taken without asking)
 - recorder: `TestIntegration_RecordHistoryLimitRunHistory`
-  (`history_guard_integration_test.go`); `ORK_REQUIRE_HISTORY_LIMIT_FIXTURE`
+  (`history_guard_integration_test.go`); `ORK_REQUIRE_HISTORY_LIMIT_FIXTURE`.
+  Unlike the other recorders it never skips: without
+  `ORK_RECORD_GOLDEN_HISTORY` it records the same run into the proof
+  directory (`history-limit/recorded-history.json`) and replays that fresh
+  history against current code, leaving this fixture untouched; with it, it
+  also rewrites this file

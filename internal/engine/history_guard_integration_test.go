@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -658,7 +659,8 @@ func TestIntegration_LargeRunResultIsCompact(t *testing.T) {
 }
 
 // historyLimitFixture is the guard's replay fixture. Only
-// TestIntegration_RecordHistoryLimitRunHistory writes it.
+// TestIntegration_RecordHistoryLimitRunHistory writes it, and only when asked
+// (ORK_RECORD_GOLDEN_HISTORY=1).
 const historyLimitFixture = "testdata/history/run-history-limit-v1.json"
 
 // historyLimitFixtureDocument is the recorded shape: a 30-item fan-out
@@ -673,16 +675,17 @@ func historyLimitFixtureDocument() string {
 		guardChain("c", 40, "spread")
 }
 
-// TestIntegration_RecordHistoryLimitRunHistory records run-history-limit-v1.json
+// TestIntegration_RecordHistoryLimitRunHistory records the guard's history
 // from a REAL run on a real cluster, by a versioned worker, as the golden
-// recorder does. Opt-in (ORK_RECORD_GOLDEN_HISTORY=1); the fixture is meant to
-// age, not to be refreshed. The recording FAILS, never skips, unless the run
-// ended RUN_HISTORY_LIMIT and Temporal recorded it Failed below its limit.
+// recorder does, and replays what it recorded against current code. It never
+// skips: by default the recording lands under ORK_PROOF_DIR
+// (history-limit/recorded-history.json) and the committed fixture is left
+// alone, so every proof shows that today's code still records and replays the
+// crossing on the cluster. Only ORK_RECORD_GOLDEN_HISTORY=1 also writes
+// run-history-limit-v1.json; that fixture is meant to age, not to be
+// refreshed. It FAILS unless the run ended RUN_HISTORY_LIMIT, Temporal
+// recorded it Failed below its limit, and the recording replays.
 func TestIntegration_RecordHistoryLimitRunHistory(t *testing.T) {
-	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") == "" {
-		t.Skip("set ORK_RECORD_GOLDEN_HISTORY=1 to re-record " + historyLimitFixture +
-			" — the committed fixture is meant to age, not to be refreshed")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	namespace := versioningNamespace()
@@ -746,9 +749,24 @@ func TestIntegration_RecordHistoryLimitRunHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode history: %v", err)
 	}
-	if err := os.WriteFile(historyLimitFixture, append(encoded, '\n'), 0o644); err != nil {
-		t.Fatalf("write %s: %v", historyLimitFixture, err)
+	encoded = append(encoded, '\n')
+	proof.Write(t, "history-limit", "recorded-history.json", encoded)
+	recording := filepath.Join(t.TempDir(), "recorded-history.json")
+	if err := os.WriteFile(recording, encoded, 0o644); err != nil {
+		t.Fatalf("write %s: %v", recording, err)
 	}
-	t.Logf("recorded %d history events for run %s into %s (deployment version %s); crossing %+v; blockers %q",
-		len(recorded.Events), runID, historyLimitFixture, deployment, closedRun.Crossing, closedRun.Blockers)
+	replayer := worker.NewWorkflowReplayer()
+	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
+	if err := replayer.ReplayWorkflowHistoryFromJSONFile(nil, recording); err != nil {
+		t.Fatalf("the history just recorded does not replay against current code: %v", err)
+	}
+	written := "the proof directory only (ORK_RECORD_GOLDEN_HISTORY unset)"
+	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") != "" {
+		if err := os.WriteFile(historyLimitFixture, encoded, 0o644); err != nil {
+			t.Fatalf("write %s: %v", historyLimitFixture, err)
+		}
+		written = historyLimitFixture
+	}
+	t.Logf("recorded %d history events for run %s into %s (deployment version %s), replayed clean; crossing %+v; blockers %q",
+		len(recorded.Events), runID, written, deployment, closedRun.Crossing, closedRun.Blockers)
 }
