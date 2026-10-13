@@ -696,7 +696,7 @@ func bindableWorkRootForCommitE2E(t *testing.T) string {
 	if len(safe) > 80 {
 		safe = safe[:80]
 	}
-	root, err := os.MkdirTemp(parent, safe+"-")
+	root, err := os.MkdirTemp(parent, proof.WorkRootPattern(safe))
 	if err != nil {
 		t.Fatalf("create work root under %s: %v", parent, err)
 	}

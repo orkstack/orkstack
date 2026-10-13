@@ -7,13 +7,21 @@
 #
 #   - object-storage buckets named orkstack-<label>-<pid>-<suffix>
 #     (internal/testsupport/s3bucket keeps a failed process's bucket);
-#   - Orker work roots under .data/work that tests and specs create per test
-#     (a test removes its own unless a container left files it cannot);
+#   - Orker work roots under .data/work that tests create per test, named
+#     <label>-p<pid>-<suffix> (internal/testsupport/proof.WorkRootPattern, and
+#     the observability gate's own; a test removes its own unless a container
+#     left files it cannot);
 #   - proof Temporal containers whose proof is gone (the next proof stops
 #     them anyway).
 #
-# The shared development bucket, orkstack-artifacts, and the dev stack's own
-# work root are never touched. Nothing is removed without --remove.
+# Stop only what you started (AGENTS.md §11.1): a bucket or work root is
+# removed only when the process its name records is gone, so this is safe to
+# run beside a running proof or test — what a live process still uses is
+# listed as in use and left alone. A work root whose name records no pid (a
+# Playwright spec's .data/work/e2e/, or one left by an older tree) is listed
+# and never removed here. The shared development bucket, orkstack-artifacts,
+# and the dev stack's own work root are never touched. Nothing is removed
+# without --remove.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -27,6 +35,10 @@ case "${1:-}" in
 	;;
 esac
 
+# alive PID — true while a process with that pid exists, whoever owns it. A
+# reused pid keeps a leftover a little longer; it never removes a live one.
+alive() { ps -p "$1" >/dev/null 2>&1; }
+
 s3env=(
 	ORK_S3_ENDPOINT="${ORK_S3_ENDPOINT:-http://127.0.0.1:9000}"
 	ORK_S3_ACCESS_KEY="${ORK_S3_ACCESS_KEY:-orkstack}"
@@ -35,6 +47,12 @@ s3env=(
 echo "== buckets kept by test processes"
 if buckets="$(env "${s3env[@]}" ORK_BUCKET_ACTION=list go run ./test/tools/bucket-ensure 2>/dev/null)"; then
 	for b in $(printf '%s\n' "$buckets" | grep -E '^orkstack-[a-z][a-z0-9-]*-[0-9]+-[0-9]+$'); do
+		pid="${b%-*}"
+		pid="${pid##*-}"
+		if alive "$pid"; then
+			echo "  $b  (in use: pid $pid is alive; left alone)"
+			continue
+		fi
 		echo "  $b"
 		if [ -n "$remove" ]; then
 			env "${s3env[@]}" ORK_BUCKET_ACTION=cleanup ORK_S3_BUCKET="$b" go run ./test/tools/bucket-ensure
@@ -51,6 +69,16 @@ if [ -d .data/work ]; then
 		case "$(basename "$d")" in
 		ork-pin-* | ork-spool | ork-stage | .*) continue ;; # the dev stack's own Orker state
 		esac
+		if [[ "$(basename "$d")" =~ -p([0-9]+)-[A-Za-z0-9]+$ ]]; then
+			pid="${BASH_REMATCH[1]}"
+		else
+			echo "  $d  (its name records no owning pid; not removed here — remove it by hand once nothing on this host runs tests)"
+			continue
+		fi
+		if alive "$pid"; then
+			echo "  $d  (in use: pid $pid is alive; left alone)"
+			continue
+		fi
 		echo "  $d"
 		if [ -n "$remove" ]; then rm -rf "$d" 2>/dev/null || echo "    (some files are not ours to remove: try a container, or sudo)"; fi
 	done

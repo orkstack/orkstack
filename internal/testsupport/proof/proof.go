@@ -42,6 +42,18 @@ func OrkerID(base string) string {
 	return fmt.Sprintf("%s-%d", base, os.Getpid())
 }
 
+// WorkRootPattern is the os.MkdirTemp pattern for a test's own Orker work
+// root under the shared parent (ORK_ORKER_WORKDIR or the repository's
+// .data/work): label, then this process's pid, then MkdirTemp's numeric
+// suffix — <label>-p<pid>-<digits>. Never the parent itself: an Orker's Boot
+// reaps every pin, spool and stage directory under its root, so two Orkers on
+// one root delete each other's in-flight work (AGENTS.md §11.1). The pid is
+// what lets scripts/proof-clean.sh tell a leftover root from one a running
+// test still uses; it removes only a root whose process is gone.
+func WorkRootPattern(label string) string {
+	return fmt.Sprintf("%s-p%d-*", label, os.Getpid())
+}
+
 // Dir reports the evidence directory, or "" when no run asked for one.
 func Dir() string {
 	return os.Getenv(EnvDir)

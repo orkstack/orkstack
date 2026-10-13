@@ -1153,7 +1153,7 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 	if workRoot == "" {
 		root := pinAffinityWorkRootParent(t)
 		var err error
-		workRoot, err = os.MkdirTemp(root, "pin-affinity-")
+		workRoot, err = os.MkdirTemp(root, proof.WorkRootPattern("pin-affinity"))
 		if err != nil {
 			t.Fatalf("create a work root under %s: %v", root, err)
 		}

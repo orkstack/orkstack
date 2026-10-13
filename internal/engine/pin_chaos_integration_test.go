@@ -1262,9 +1262,12 @@ func pinChaosWorkRoot(t *testing.T, token string) string {
 		}
 		base = abs
 	}
-	root := filepath.Join(base, "pin-chaos-"+token)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("create the work root %s: %v", root, err)
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatalf("create the work root parent %s: %v", base, err)
+	}
+	root, err := os.MkdirTemp(base, proof.WorkRootPattern("pin-chaos-"+token))
+	if err != nil {
+		t.Fatalf("create the work root under %s: %v", base, err)
 	}
 	t.Cleanup(func() {
 		if _, err := orker.ReapPinDirectories(root); err != nil {

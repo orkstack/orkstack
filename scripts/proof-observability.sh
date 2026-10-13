@@ -154,9 +154,11 @@ for cmd in ork orker orkctl; do
 done
 
 # A work root of this gate's own: an Orker reaps everything under its root at
-# boot, and its default identity is derived from that root.
+# boot, and its default identity is derived from that root. Its name records
+# this script's pid, so scripts/proof-clean.sh removes it only once the gate
+# is gone.
 mkdir -p "$REPO/.data/work"
-WORK_DIR="$(mktemp -d "$REPO/.data/work/observability-XXXXXX")"
+WORK_DIR="$(mktemp -d "$REPO/.data/work/observability-p$$-XXXXXX")"
 
 # local_activity_catalog mirrors scripts/stack.sh's function of the same
 # name. Not sourced: stack.sh's own trailing `case "${1:-}"` would run (and

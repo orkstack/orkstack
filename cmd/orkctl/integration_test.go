@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -321,19 +322,39 @@ func privateTemporalNamespace() string {
 	return fmt.Sprintf("orkctl-%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
-// bindableOrkerWorkRoot returns a work root the container runtime can bind.
+// bindableOrkerWorkRoot returns this test's own Orker work root, one the
+// container runtime can bind.
 //
 // Every task is a container under the OCI Activity Contract, and the macOS
 // Docker VM cannot bind the system TMPDIR under /var/folders, so t.TempDir()
 // makes an Orker fail its boot probe with WORKDIR_NOT_BINDABLE. The repository
 // lives under the shared home directory, which is what scripts/stack.sh and
 // the OCI proofs already use.
+//
+// It is a fresh directory under ORK_TEST_CONTAINER_TMPDIR, ORK_ORKER_WORKDIR
+// or the repository's .data/work, never that directory itself, and never a
+// name another process could compute: two processes running the same test (a
+// feature proof beside a full proof) would otherwise share one root, one
+// default Orker identity, and each other's cleanup (AGENTS.md §11.1). Within
+// one test it is memoized, so every process the test starts — and an Orker it
+// boots twice — shares the one root.
 func bindableOrkerWorkRoot(t *testing.T) string {
 	t.Helper()
-	if root := os.Getenv("ORK_TEST_CONTAINER_TMPDIR"); root != "" {
+	orkerWorkRootsMu.Lock()
+	defer orkerWorkRootsMu.Unlock()
+	if root, ok := orkerWorkRoots[t.Name()]; ok {
 		return root
 	}
-	// Deterministic per test, so every process one test starts shares one root.
+	parent := os.Getenv("ORK_TEST_CONTAINER_TMPDIR")
+	if parent == "" {
+		parent = os.Getenv("ORK_ORKER_WORKDIR")
+	}
+	if parent == "" {
+		parent = filepath.Join(repoRoot(t), ".data", "work")
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatalf("create work root parent %s: %v", parent, err)
+	}
 	safe := strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
@@ -342,13 +363,30 @@ func bindableOrkerWorkRoot(t *testing.T) string {
 			return '-'
 		}
 	}, t.Name())
-	root := filepath.Join(repoRoot(t), ".data", "work", "orkctl-integration-"+safe)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("create bindable work root: %v", err)
+	if len(safe) > 80 {
+		safe = safe[:80]
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root, err := os.MkdirTemp(parent, proof.WorkRootPattern("orkctl-"+safe))
+	if err != nil {
+		t.Fatalf("create bindable work root under %s: %v", parent, err)
+	}
+	orkerWorkRoots[t.Name()] = root
+	name := t.Name()
+	t.Cleanup(func() {
+		orkerWorkRootsMu.Lock()
+		delete(orkerWorkRoots, name)
+		orkerWorkRootsMu.Unlock()
+		// Best effort: a container may leave files the test user cannot
+		// remove; scripts/proof-clean.sh lists what is left.
+		_ = os.RemoveAll(root)
+	})
 	return root
 }
+
+var (
+	orkerWorkRootsMu sync.Mutex
+	orkerWorkRoots   = map[string]string{}
+)
 
 // sharedLocalArtifactDir is one artifact root for every process in a test.
 //

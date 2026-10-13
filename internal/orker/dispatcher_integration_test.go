@@ -109,7 +109,7 @@ func bindableWorkRoot(t *testing.T) string {
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
 		}
-		root, err := os.MkdirTemp(candidate, "ork-dispatch-*")
+		root, err := os.MkdirTemp(candidate, proof.WorkRootPattern("ork-dispatch"))
 		if err != nil {
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue

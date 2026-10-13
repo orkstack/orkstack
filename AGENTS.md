@@ -780,8 +780,9 @@ resources and never shares them: its Temporal namespace
 its object-storage bucket (`internal/testsupport/s3bucket` in every Go
 integration package), so a bucket-wide setting such as a lifecycle rule is its
 own; its listening ports (allocated free at run time, never fixed); its Orker
-work root (a fresh directory under `ORK_ORKER_WORKDIR` or `.data/work`, never
-that directory itself) and its Orker identity
+work root (a fresh directory under `ORK_ORKER_WORKDIR` or `.data/work`,
+named with its pid by `internal/testsupport/proof.WorkRootPattern`, never that
+directory itself) and its Orker identity
 (`internal/testsupport/proof.OrkerID`, or the default one derived from its own
 work root, because an identity is host-wide: Boot locks it and reaps by it);
 the binaries it runs (`internal/testsupport/testbin`: `ORK_TEST_BIN_DIR`, or a
