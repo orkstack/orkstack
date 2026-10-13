@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -1974,30 +1975,84 @@ func (s *Service) archiveRun(ctx context.Context, runID string) {
 // ArchivedEvents returns the events archived for a run, after fromSequence. It
 // is the read path for a run this process never executed, and it reports the
 // same Connect errors the live path would: NotFound when nothing was archived
-// under that id, Internal when the archive itself is unreachable.
+// under that id, Internal when the archive itself is unreachable. When the
+// requested range overlaps events lost from object storage before the run was
+// archived, it is DataLoss, naming the range.
 func (s *Service) ArchivedEvents(
 	ctx context.Context,
 	runID string,
 	fromSequence int64,
 ) ([]*orkstackv1.Event, error) {
+	events, lost, err := s.archivedEventsBeforeLoss(ctx, runID, fromSequence)
+	if err != nil {
+		return nil, err
+	}
+	if lost != nil {
+		return nil, lost
+	}
+	return events, nil
+}
+
+// archivedEventsBeforeLoss is ArchivedEvents' body: the archived events after
+// fromSequence, and — when the requested range overlaps a gap the archive
+// records (events lost from object storage before the run was archived) —
+// only the events below the first overlapping gap, with a CodeDataLoss error
+// naming every overlapping range. A gap entirely at or below fromSequence is
+// not part of the request and costs nothing.
+func (s *Service) archivedEventsBeforeLoss(
+	ctx context.Context,
+	runID string,
+	fromSequence int64,
+) ([]*orkstackv1.Event, *connect.Error, error) {
 	if s.archive == nil {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
+		return nil, nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
 	}
 	events, err := s.archive.LoadRunEvents(ctx, runID)
+	var lost *engine.ArchivedEventsLostError
 	switch {
+	case errors.As(err, &lost):
 	case errors.Is(err, artifacts.ErrNotFound):
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
+		return nil, nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
 	case err != nil:
-		return nil, connect.NewError(connect.CodeInternal,
+		return nil, nil, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("read run %q from archive: %w", runID, err))
+	}
+	var overlapping []engine.EventGap
+	if lost != nil {
+		for _, gap := range lost.Gaps {
+			if gap.Last > fromSequence {
+				overlapping = append(overlapping, gap)
+			}
+		}
+	}
+	firstLost := int64(math.MaxInt64)
+	for _, gap := range overlapping {
+		firstLost = min(firstLost, max(gap.First, fromSequence+1))
 	}
 	after := make([]*orkstackv1.Event, 0, len(events))
 	for _, event := range events {
-		if event.GetSequence() > fromSequence {
+		if event.GetSequence() > fromSequence && event.GetSequence() < firstLost {
 			after = append(after, event)
 		}
 	}
-	return after, nil
+	if len(overlapping) == 0 {
+		return after, nil, nil
+	}
+	return after, connect.NewError(connect.CodeDataLoss, archivedLossError(runID, overlapping)), nil
+}
+
+// archivedLossError is the sentence a read over a lost range receives: run
+// vocabulary only.
+func archivedLossError(runID string, gaps []engine.EventGap) error {
+	ranges := make([]string, 0, len(gaps))
+	reasons := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		ranges = append(ranges, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+		reasons = append(reasons, gap.Reason)
+	}
+	return fmt.Errorf("events %s of run %s were lost from object storage before the run was archived (%s); "+
+		"the run's outcome and its other events are intact",
+		strings.Join(ranges, ", "), runID, strings.Join(reasons, "; "))
 }
 
 // LookupRun resolves a run through the read model, in the order the system of
@@ -2554,14 +2609,19 @@ func (s *Service) replayArchivedEvents(
 	fromSequence int64,
 	send func(*orkstackv1.Event) error,
 ) error {
-	archived, err := s.ArchivedEvents(ctx, runID, fromSequence)
+	archived, lost, err := s.archivedEventsBeforeLoss(ctx, runID, fromSequence)
 	if err != nil {
 		return err
 	}
+	// Every event below the first lost range is sent, then the loss is the
+	// stream's error: a reader never mistakes a gapped stream for a whole one.
 	for _, event := range archived {
 		if err := send(event); err != nil {
 			return err
 		}
+	}
+	if lost != nil {
+		return lost
 	}
 	return nil
 }

@@ -40,6 +40,10 @@ type Report struct {
 	Unrecorded []Member  `json:"unrecorded"` // listed unrecorded; absent from the file
 	Rejected   []Member  `json:"rejected"`   // listed rejected; absent from the file
 	Failures   []Failure `json:"failures"`   // anything else
+	// EventGaps are the ranges of the run's event stream lost before it was
+	// archived, as the manifest names them. A notice, never a failure: the
+	// bundle is exactly what the archive holds.
+	EventGaps []EventGap `json:"event_gaps,omitempty"`
 }
 
 // OK reports whether the bundle matched its manifest in every respect.
@@ -86,6 +90,7 @@ func Verify(r io.Reader) (*Report, error) {
 		return nil, err
 	}
 	report.Manifest = manifest
+	report.EventGaps = manifest.EventGaps
 
 	type slot struct {
 		index  int

@@ -145,12 +145,29 @@ func (e *evidenceExport) build(
 		return nil, connect.NewError(connect.CodeDataLoss,
 			fmt.Errorf("archive body of run %q does not decode as that run", run.GetId()))
 	}
+	// A run that lost part of its event stream before it was archived says
+	// so in the manifest too, not only in run.jsonl's gap lines: a verifier
+	// that reads only the manifest still sees every lost range.
+	gaps, err := engine.UnmarshalRunArchiveGaps(body)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeDataLoss,
+			fmt.Errorf("archive body of run %q records an unreadable gap: %w", run.GetId(), err))
+	}
 	runKey, err := artifacts.RunArchiveKey(run.GetId())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	schema := evidence.SchemaVersion
+	var eventGaps []evidence.EventGap
+	for _, gap := range gaps {
+		eventGaps = append(eventGaps, evidence.EventGap{First: gap.First, Last: gap.Last, Reason: gap.Reason})
+	}
+	if len(eventGaps) > 0 {
+		schema = evidence.SchemaVersionEventGaps
+	}
 	m := &evidence.Manifest{
-		SchemaVersion:    evidence.SchemaVersion,
+		SchemaVersion:    schema,
+		EventGaps:        eventGaps,
 		RunID:            archived.GetId(),
 		Namespace:        namespace,
 		OrkflowName:      archived.GetOrkflowName(),

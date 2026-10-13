@@ -289,8 +289,8 @@ func TestListRuns_DeduplicatesAChainByLatestStart(t *testing.T) {
 	created := visibilityNow.Add(-2 * time.Hour)
 	index := indexOf(t,
 		record{id: "ork-chain", status: running, start: created, created: created}, // generation 0, not yet updated
-		switched("ork-chain", created, 1),                                         // the same generation, updated
-		successor("ork-chain", created, running),                                  // generation 1
+		switched("ork-chain", created, 1),                                          // the same generation, updated
+		successor("ork-chain", created, running),                                   // generation 1
 	)
 	runs, err := readerOverIndex(index).ListRuns(context.Background(), RunQuery{Complete: true, Limit: 10})
 	if err != nil || len(runs) != 1 {

@@ -86,11 +86,11 @@ type indexedExecution struct {
 }
 
 var (
-	startAtLeast  = regexp.MustCompile(`StartTime >= "([^"]*)"`)
-	startBefore   = regexp.MustCompile(`StartTime < "([^"]*)"`)
-	closeAtLeast  = regexp.MustCompile(`CloseTime >= "([^"]*)"`)
-	closeBefore   = regexp.MustCompile(`CloseTime < "([^"]*)"`)
-	statusEqualTo = regexp.MustCompile(`ExecutionStatus = "([^"]*)"`)
+	startAtLeast   = regexp.MustCompile(`StartTime >= "([^"]*)"`)
+	startBefore    = regexp.MustCompile(`StartTime < "([^"]*)"`)
+	closeAtLeast   = regexp.MustCompile(`CloseTime >= "([^"]*)"`)
+	closeBefore    = regexp.MustCompile(`CloseTime < "([^"]*)"`)
+	statusEqualTo  = regexp.MustCompile(`ExecutionStatus = "([^"]*)"`)
 	statusNotEqual = regexp.MustCompile(`ExecutionStatus != "([^"]*)"`)
 	statusNotIn    = regexp.MustCompile(`ExecutionStatus NOT IN \(([^)]*)\)`)
 	statusIn       = regexp.MustCompile(`ExecutionStatus IN \(([^)]*)\)`)
