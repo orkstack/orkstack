@@ -174,6 +174,19 @@ docker network connect bridge "$(docker ps -q --filter label=com.docker.compose.
 The observability proof gate (`scripts/proof-observability.sh`) does the same
 for its own run, and detaches Prometheus afterwards only if it attached it.
 
+This is development and proof setup only: never bind a deployment's admin
+listeners to the bridge gateway, and nothing in `deploy/` does. While a
+listener is bound there, every container on Docker's default bridge can reach
+it, and that includes the activity containers an Orker starts with network
+`default`. What they can reach is the admin surface of that `ork` or
+`orker`: `/metrics`, `/healthz`, `/readyz`, and, under
+`ORK_PPROF_ENABLED=true`, `/debug/pprof/` (profiles, goroutine stacks and the
+process's command line). It is not the Connect API,
+not Temporal and not object storage, but an activity needs none of it
+(AGENTS.md §15), so unbind it (unset `ORK_ADMIN_ADDR`, or set it back to
+`127.0.0.1:…`) when you are done. The proof gate binds there only for its own
+run, with its own `ork` and `orker`, and stops them when it ends.
+
 ## Contributing
 
 Read [AGENTS.md](./AGENTS.md) (the engineering contract, including the

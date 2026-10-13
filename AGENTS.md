@@ -762,6 +762,17 @@ sleeps for synchronization; use deadlines or test helpers. A skip is never a
 pass: a harness must probe its prerequisites itself and fail, not skip, once
 they are present.
 
+Some suites have an activity container call a stub on the host at
+`host.docker.internal`; a Linux host with plain Docker Engine needs one-time
+host setup for that name (README, "Linux hosts"). It is host setup, never
+Orker behavior: the Orker must not add `--add-host` or any host-network
+configuration to activity containers (§6). The observability gate's
+Prometheus reaches the admin listeners over that same default bridge:
+`scripts/proof-observability.sh` attaches its own Prometheus container to the
+bridge and binds that run's admin listeners to the bridge's gateway, for the
+gate only. That is proof and development setup, never a `deploy/` default or a
+production listener (README, "Linux hosts", says what it exposes).
+
 Integration tests run concurrently: as separate processes within a proof, and
 beside other agents' proofs on the same host. Each integration test owns these
 resources and never shares them: its Temporal namespace
@@ -907,8 +918,11 @@ passed, the ledgers are complete, the tree was clean and unchanged from start
 to end, the proof ran its own Temporal, the activity image tag was its own,
 and the network-change guard stayed within its ceiling. `PROOF_GATES`,
 `PROOF_TEMPORAL=shared` and an externally set `ORK_TEST_IMAGE_TAG` each make
-it ineligible. `PROOF_JOBS` and `PROOF_UI_WORKERS` do not, because the ledgers
-prove that the same tests ran. The full tier's result lines stay
+it ineligible. `PROOF_JOBS` and `PROOF_UI_WORKERS` do not: whatever the
+concurrency, the ledgers show that every listed test ran and passed, and more
+concurrency can only add load, which fails a test explicitly rather than
+passing one falsely, because each negative window carries its positive
+control. The full tier's result lines stay
 `Result: **PASS**` and `Result: **FAIL**`; scripts read `proof.json`.
 
 Both tiers exit 0 on pass, 1 when a gate failed, 2 on an invalid invocation
