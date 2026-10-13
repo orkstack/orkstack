@@ -272,6 +272,7 @@ if runs ui-check || runs ui-unit || runs ui-e2e; then
 	need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"
 fi
 if runs ui-e2e; then
+	need "flock on PATH (the Playwright gate's host lock)" command -v flock
 	need "the temporal CLI on PATH (ui/e2e/admin.spec.ts induces a real cluster failure with it)" command -v temporal
 fi
 if runs observability; then
@@ -332,11 +333,21 @@ say "proof: $TIER proof -> $DIR (id $PROOF_ID, tree $TREE_START$([ "$CLEAN_START
 TEMPORAL_NAME="orkstack-proof-$PROOF_ID-temporal"
 TEMPORAL_STARTED=""
 SAMPLER=""
+IMAGES_BUILT=""
 on_exit() {
 	local code=$?
 	trap '' TERM INT HUP
 	if [ -n "$SAMPLER" ]; then kill "$SAMPLER" 2>/dev/null; fi
 	if [ -n "$TEMPORAL_STARTED" ]; then docker stop "$TEMPORAL_NAME" >/dev/null 2>&1; fi
+	# The daemon's copies of this proof's own activity-image tags. They are
+	# this proof's alone (pr-<hash of its directory>), and the registry keeps
+	# the pushed images, so a re-run against the tag still resolves them.
+	if [ -n "$IMAGES_BUILT" ]; then
+		local a
+		for a in $(make -s -C "$REPO/images" print-activities 2>/dev/null); do
+			docker image rm "$REGISTRY/orkstack/activity-$a:$IMAGE_TAG" >/dev/null 2>&1
+		done
+	fi
 	# Anything still running in this proof's own process group: ours by
 	# construction, and nothing else's.
 	kill -TERM -- -$$ 2>/dev/null
@@ -471,6 +482,7 @@ build_binaries() {
 
 if runs temporal; then run temporal temporal.log start_temporal; fi
 if runs images; then
+	IMAGES_BUILT=1
 	run images images.log push_images
 elif [ -z "$IMAGE_TAG_OWN" ] && { runs temporal || runs activity-fixture; }; then
 	record_images >"$DIR/images.log" 2>&1
@@ -513,7 +525,23 @@ fi
 wait_bg
 
 # ---- P4: Playwright ------------------------------------------------------------------
+# Spec files still listen on fixed ports, share the development bucket's
+# deployment-wide documents, and drive a browser in the host's network
+# namespace (AGENTS.md §11.1), so two proofs' specs must never overlap. A
+# host-wide lock enforces it: a second proof waits here, rather than running
+# beside the first and failing on a port, a document or a network change.
+UI_LOCK="${XDG_RUNTIME_DIR:-/tmp}/orkstack-ui-e2e.lock"
 ui_e2e() {
+	{
+		if ! flock -w 7200 9; then
+			say "another proof's Playwright specs held $UI_LOCK for two hours"
+			return 1
+		fi
+		say "holding $UI_LOCK: one proof's Playwright specs at a time on this host"
+		ui_e2e_locked
+	} 9>"$UI_LOCK"
+}
+ui_e2e_locked() {
 	local pw="$REPO/ui/node_modules/.bin/playwright" code=0
 	if ! (cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
 		"$pw" test --list --reporter=json "${SPEC_ARGS[@]}" >"$DIR/ui-e2e-list.json"); then

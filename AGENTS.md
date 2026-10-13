@@ -804,10 +804,13 @@ uses the development bucket, whose deployment-wide documents (retention, image
 policy, audit) every such spec shares. Chromium shares the host's network
 namespace, so a container started or stopped anywhere on the host aborts its
 loads (`ui/e2e/test.ts`). Until each spec allocates its own ports and bucket
-and the browser runs in a network namespace of its own, run at most one proof
-that runs Playwright specs on a host at a time. The observability gate is the
-other exception: its Prometheus scrape targets are fixed ports, so it runs
-under a host-wide lock. A test that proves something did NOT happen within a
+and the browser runs in a network namespace of its own, at most one proof runs
+Playwright specs on a host at a time: the Playwright gate takes a host-wide
+lock, so a feature proof's specs wait for a full proof's, and never run beside
+them. Specs run by hand (`cd ui && bun run test`) take no lock; do not run them
+while a proof's Playwright gate runs. The observability gate is the other
+exception: its Prometheus scrape targets are fixed ports, so it runs under a
+host-wide lock of its own. A test that proves something did NOT happen within a
 window also observes, in that window, that the system was making progress, so
 a slow host cannot make it pass.
 
