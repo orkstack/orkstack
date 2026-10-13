@@ -4,6 +4,7 @@ package engine_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -118,19 +119,19 @@ func startGuardStack(t *testing.T, ctx context.Context, behavior guardBehavior) 
 }
 
 // plan is the stack's routing plan with the given history limit.
-func (s *guardStack) plan(maxEvents, maxBytes int64) engine.RunPlan {
+func (s *guardStack) limitedPlan(maxEvents, maxBytes int64) engine.RunPlan {
 	plan := rawPlan(s.orkerQueue)
 	plan.History = &engine.HistoryLimit{MaxEvents: maxEvents, MaxBytes: maxBytes, Reserve: engine.DefaultHistoryReserve}
 	return plan
 }
 
 // run starts one run and waits for it to close, returning its workflow error.
-func (s *guardStack) run(runID, document string, input *orkstackv1.Payload, plan engine.RunPlan) error {
+func (s *guardStack) startAndWait(runID, document string, input *orkstackv1.Payload, plan engine.RunPlan) error {
 	s.t.Helper()
-	return s.runDefinition(runID, compile(s.t, document), input, plan)
+	return s.startDefinitionAndWait(runID, compile(s.t, document), input, plan)
 }
 
-func (s *guardStack) runDefinition(runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, plan engine.RunPlan) error {
+func (s *guardStack) startDefinitionAndWait(runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, plan engine.RunPlan) error {
 	s.t.Helper()
 	if err := s.starter.StartRun(s.ctx, runID, wf, input, plan); err != nil {
 		s.t.Fatalf("StartRun %s: %v", runID, err)
@@ -141,7 +142,7 @@ func (s *guardStack) runDefinition(runID string, wf *orkstackv1.Orkflow, input *
 // closed is what the cluster says about a closed run: its status, its
 // history's length and size, and — for a run the guard stopped — the
 // failure's type and the guard's own accounting at the crossing.
-type closed struct {
+type closedRun struct {
 	Status      string                       `json:"temporal_status"`
 	Length      int64                        `json:"history_length"`
 	SizeBytes   int64                        `json:"history_size_bytes"`
@@ -151,19 +152,19 @@ type closed struct {
 	MarkerEvent int64                        `json:"guard_marker_event_id,omitempty"`
 }
 
-func (s *guardStack) closed(runID string) closed {
+func (s *guardStack) describeClosed(runID string) closedRun {
 	s.t.Helper()
 	described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
 	if err != nil {
 		s.t.Fatalf("describe %s: %v", runID, err)
 	}
 	info := described.GetWorkflowExecutionInfo()
-	out := closed{
+	out := closedRun{
 		Status:    info.GetStatus().String(),
 		Length:    info.GetHistoryLength(),
 		SizeBytes: info.GetHistorySizeBytes(),
 	}
-	for _, event := range s.history(runID).GetEvents() {
+	for _, event := range s.fullHistory(runID).GetEvents() {
 		if attrs := event.GetMarkerRecordedEventAttributes(); attrs != nil && attrs.GetMarkerName() == "Version" {
 			var change string
 			if payload := attrs.GetDetails()["change-id"]; payload != nil {
@@ -188,7 +189,7 @@ func (s *guardStack) closed(runID string) closed {
 	return out
 }
 
-func (s *guardStack) history(runID string) *historypb.History {
+func (s *guardStack) fullHistory(runID string) *historypb.History {
 	s.t.Helper()
 	recorded := &historypb.History{}
 	iter := s.client.GetWorkflowHistory(s.ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
@@ -205,9 +206,9 @@ func (s *guardStack) history(runID string) *historypb.History {
 // requireStoppedByTheGuard asserts the run the guard stopped: Temporal Failed
 // with RUN_HISTORY_LIMIT, never terminated; its history below both limits;
 // and what its failure path appended within the reserve the guard kept back.
-func (s *guardStack) requireStoppedByTheGuard(runID string, limit *engine.HistoryLimit) closed {
+func (s *guardStack) requireStoppedByTheGuard(runID string, limit *engine.HistoryLimit) closedRun {
 	s.t.Helper()
-	c := s.closed(runID)
+	c := s.describeClosed(runID)
 	if c.Status != enums.WORKFLOW_EXECUTION_STATUS_FAILED.String() || c.FailureType != engine.RunHistoryLimitCode {
 		s.t.Fatalf("run %s closed %s with failure type %q, want Failed with %s", runID, c.Status, c.FailureType,
 			engine.RunHistoryLimitCode)
@@ -265,7 +266,7 @@ func guardBehaviorByPrefix(ctx context.Context, c client.Client, in *orkstackv1.
 }
 
 // chain is n plain tasks, each needing the one before.
-func chain(prefix string, n int, first string) string {
+func guardChain(prefix string, n int, first string) string {
 	var b strings.Builder
 	for i := 0; i < n; i++ {
 		needs := first
@@ -286,8 +287,8 @@ func TestIntegration_RunHistoryLimitFailsExplicitly(t *testing.T) {
 	defer cancel()
 	s := startGuardStack(t, ctx, guardBehaviorByPrefix)
 	runID := fmt.Sprintf("ork-history-limit-%d", time.Now().UnixNano())
-	plan := s.plan(600, engine.DefaultHistoryMaxBytes)
-	err := s.run(runID, "name: long-chain\ntasks:\n"+chain("c", 60, ""), nil, plan)
+	plan := s.limitedPlan(600, engine.DefaultHistoryMaxBytes)
+	err := s.startAndWait(runID, "name: long-chain\ntasks:\n"+guardChain("c", 60, ""), nil, plan)
 	if err == nil {
 		t.Fatal("a 60-task chain finished under a 600-event history limit")
 	}
@@ -322,7 +323,7 @@ func TestIntegration_RunHistoryLimitFailsExplicitly(t *testing.T) {
 	}
 	proof.WriteJSON(t, "history-limit", "run.json", map[string]any{
 		"run_id":          runID,
-		"run":             rawJSON(encoded),
+		"run":             json.RawMessage(encoded),
 		"temporal_status": "Failed",
 		"closed":          c,
 		"archive_last":    last.GetType().String(),
@@ -330,11 +331,6 @@ func TestIntegration_RunHistoryLimitFailsExplicitly(t *testing.T) {
 	t.Logf("E0 history limit: run %s FAILED %s; Temporal %s; %d events (limit %d); crossing at %d events with %d kept back",
 		runID, run.GetError().GetCode(), c.Status, c.Length, plan.History.MaxEvents, c.Crossing.Events, c.Crossing.ReserveEvents)
 }
-
-// rawJSON embeds already-encoded JSON in a proof document.
-type rawJSON []byte
-
-func (r rawJSON) MarshalJSON() ([]byte, error) { return r, nil }
 
 // guardShape is one shape of TestIntegration_HistoryGuardHoldsAcrossShapes.
 type guardShape struct {
@@ -347,7 +343,7 @@ type guardShape struct {
 	// guarded is the run the guard must stop: the run itself, or its child.
 	guarded func(plan engine.RunPlan, runID string) string
 	// landed fails the test when the shape did not land as designed.
-	landed func(t *testing.T, s *guardStack, runID string, c closed)
+	landed func(t *testing.T, s *guardStack, runID string, c closedRun)
 }
 
 const guardShapeChildDocument = `
@@ -409,9 +405,9 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 	shapes := []guardShape{
 		{
 			name:      "64 tasks in flight",
-			document:  "name: shape-in-flight\ntasks:\n" + blockers64.String() + chain("q", 60, ""),
+			document:  "name: shape-in-flight\ntasks:\n" + blockers64.String() + guardChain("q", 60, ""),
 			maxEvents: 3000, maxBytes: engine.DefaultHistoryMaxBytes,
-			landed: func(t *testing.T, _ *guardStack, _ string, c closed) {
+			landed: func(t *testing.T, _ *guardStack, _ string, c closedRun) {
 				if c.Crossing.InFlight != 64 {
 					t.Fatalf("the guard crossed with %d in flight, want all 64 blockers", c.Crossing.InFlight)
 				}
@@ -423,9 +419,9 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 				"  - id: p1\n    uses: shell\n    pin: build\n    run_as_orker_user: true\n    needs: []\n    with: {op: exec}\n" +
 				"  - id: p2\n    uses: shell\n    pin: build\n    run_as_orker_user: true\n    needs: [p1]\n    with: {op: exec}\n" +
 				"  - id: p3\n    uses: shell\n    pin: build\n    run_as_orker_user: true\n    needs: [p2]\n    with: {op: exec}\n" +
-				chain("q", 60, ""),
+				guardChain("q", 60, ""),
 			maxEvents: 1000, maxBytes: engine.DefaultHistoryMaxBytes,
-			landed: func(t *testing.T, _ *guardStack, _ string, c closed) {
+			landed: func(t *testing.T, _ *guardStack, _ string, c closedRun) {
 				if !strings.Contains(c.Blockers, "pins open: build") {
 					t.Fatalf("the guard crossed with %q, want pin build open", c.Blockers)
 				}
@@ -435,9 +431,9 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 			name: "a 200-item fan-out without max_parallel",
 			document: "name: shape-fan\ninputs:\n  parts: {type: array}\ntasks:\n" +
 				"  - id: spread\n    uses: shell\n    each: {over: \"{{ .inputs.parts }}\", max_items: 200}\n    with: {op: exec, part: \"{{ .each.item }}\"}\n",
-			input:     payload(t, map[string]any{"parts": regions(200)}),
+			input:     payload(t, map[string]any{"parts": guardItems(200)}),
 			maxEvents: 2000, maxBytes: engine.DefaultHistoryMaxBytes,
-			landed: func(t *testing.T, s *guardStack, runID string, c closed) {
+			landed: func(t *testing.T, s *guardStack, runID string, c closedRun) {
 				run, _ := s.runs.Get(runID)
 				node := taskRunOfRun(run, "spread")
 				dispatched := 0
@@ -453,13 +449,13 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 		},
 		{
 			name: "three failure handlers: plain, composed and an await",
-			document: "name: shape-handlers\ntasks:\n" + chain("q", 60, "") +
+			document: "name: shape-handlers\ntasks:\n" + guardChain("q", 60, "") +
 				"  - id: hp\n    uses: shell\n    needs: [q59]\n    join: all_done\n    with: {op: exec}\n" +
 				"  - id: hc\n    uses: orkflow:shape-child@1.0.0\n    needs: [q59]\n    join: all_done\n" +
 				"  - id: ha\n    await: {timeout_seconds: 2}\n    needs: [q59]\n    join: all_done\n",
 			maxEvents: 1500, maxBytes: engine.DefaultHistoryMaxBytes,
 			children: func(t *testing.T, plan *engine.RunPlan) { composeChild(t, s, plan, "hc", guardShapeChildDocument) },
-			landed: func(t *testing.T, s *guardStack, runID string, _ closed) {
+			landed: func(t *testing.T, s *guardStack, runID string, _ closedRun) {
 				run, _ := s.runs.Get(runID)
 				for _, id := range []string{"hp", "hc", "ha"} {
 					tr := taskRunOfRun(run, id)
@@ -473,9 +469,9 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 			name: "an await resolved at the crossing",
 			document: "name: shape-await\ntasks:\n" +
 				"  - id: approve\n    await: {timeout_seconds: 3600}\n" +
-				"  - id: hold\n    uses: shell\n    needs: []\n    with: {op: exec}\n" + chain("q", 60, ""),
+				"  - id: hold\n    uses: shell\n    needs: []\n    with: {op: exec}\n" + guardChain("q", 60, ""),
 			maxEvents: 1000, maxBytes: engine.DefaultHistoryMaxBytes,
-			landed: func(t *testing.T, s *guardStack, runID string, c closed) {
+			landed: func(t *testing.T, s *guardStack, runID string, c closedRun) {
 				if !strings.Contains(c.Blockers, "awaiting: approve") {
 					t.Fatalf("the guard crossed with %q, want the await open", c.Blockers)
 				}
@@ -492,10 +488,10 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 				"  - id: release\n    uses: orkflow:shape-child@1.0.0\n    needs: [build]\n",
 			maxEvents: 600, maxBytes: engine.DefaultHistoryMaxBytes,
 			children: func(t *testing.T, plan *engine.RunPlan) {
-				composeChild(t, s, plan, "release", "name: shape-child\nversion: \"1.0.0\"\ntasks:\n"+chain("c", 40, ""))
+				composeChild(t, s, plan, "release", "name: shape-child\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 40, ""))
 			},
 			guarded: func(plan engine.RunPlan, _ string) string { return plan.Children["release"].RunID },
-			landed: func(t *testing.T, s *guardStack, runID string, _ closed) {
+			landed: func(t *testing.T, s *guardStack, runID string, _ closedRun) {
 				parent, _ := s.runs.Get(runID)
 				release := taskRunOfRun(parent, "release")
 				if release.GetError().GetCode() != engine.ChildRunFailedCode ||
@@ -509,7 +505,7 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 			document:  "name: shape-bytes\ninputs:\n  blob: {type: string}\ntasks:\n" + flat24.String(),
 			input:     bigInput,
 			maxEvents: engine.DefaultHistoryMaxEvents, maxBytes: 2 << 20,
-			landed: func(t *testing.T, _ *guardStack, _ string, c closed) {
+			landed: func(t *testing.T, _ *guardStack, _ string, c closedRun) {
 				if c.Crossing.Events+c.Crossing.ReserveEvents >= c.Crossing.MaxEvents ||
 					c.Crossing.Bytes+c.Crossing.ReserveBytes < c.Crossing.MaxBytes {
 					t.Fatalf("the crossing %+v was not the bytes dimension's", c.Crossing)
@@ -525,7 +521,7 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 			runID := fmt.Sprintf("ork-shape-%d-%d", i, time.Now().UnixNano())
 			wf := compile(t, shape.document)
 			pinDigest(wf)
-			plan := s.plan(shape.maxEvents, shape.maxBytes)
+			plan := s.limitedPlan(shape.maxEvents, shape.maxBytes)
 			if shape.children != nil {
 				shape.children(t, &plan)
 			}
@@ -533,7 +529,7 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 			if input == nil {
 				input = &orkstackv1.Payload{}
 			}
-			if err := s.runDefinition(runID, wf, input, plan); err == nil {
+			if err := s.startDefinitionAndWait(runID, wf, input, plan); err == nil {
 				t.Fatalf("shape %q finished; it was meant to reach its history limit", shape.name)
 			}
 			guarded := runID
@@ -637,11 +633,11 @@ func TestIntegration_LargeRunResultIsCompact(t *testing.T) {
 		fmt.Fprintf(&doc, "  - id: t%03d\n    uses: shell\n    needs: []\n    with: {op: exec}\n", i)
 	}
 	runID := fmt.Sprintf("ork-compact-%d", time.Now().UnixNano())
-	if err := s.run(runID, doc.String(), nil, s.plan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes)); err != nil {
+	if err := s.startAndWait(runID, doc.String(), nil, s.limitedPlan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes)); err != nil {
 		t.Fatalf("the 200-task run failed: %v", err)
 	}
 	var resultBytes int
-	for _, event := range s.history(runID).GetEvents() {
+	for _, event := range s.fullHistory(runID).GetEvents() {
 		if attrs := event.GetWorkflowExecutionCompletedEventAttributes(); attrs != nil {
 			for _, p := range attrs.GetResult().GetPayloads() {
 				resultBytes += len(p.GetData())
@@ -674,7 +670,7 @@ func historyLimitFixtureDocument() string {
 	return "name: history-limit\nversion: \"1.0.0\"\ninputs:\n  parts: {type: array}\ntasks:\n" +
 		"  - id: spread\n    uses: shell\n    each: {over: \"{{ .inputs.parts }}\", max_items: 30}\n" +
 		"    with: {op: exec, part: \"{{ .each.item }}\"}\n" +
-		chain("c", 40, "spread")
+		guardChain("c", 40, "spread")
 }
 
 // TestIntegration_RecordHistoryLimitRunHistory records run-history-limit-v1.json
@@ -733,7 +729,7 @@ func TestIntegration_RecordHistoryLimitRunHistory(t *testing.T) {
 	plan.History = &engine.HistoryLimit{MaxEvents: 600, MaxBytes: engine.DefaultHistoryMaxBytes, Reserve: engine.DefaultHistoryReserve}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
 	if err := starter.StartRun(ctx, runID, compile(t, historyLimitFixtureDocument()),
-		payload(t, map[string]any{"parts": regions(30)}), plan); err != nil {
+		payload(t, map[string]any{"parts": guardItems(30)}), plan); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	if err := c.GetWorkflow(ctx, runID, "").Get(ctx, nil); err == nil {
@@ -745,7 +741,7 @@ func TestIntegration_RecordHistoryLimitRunHistory(t *testing.T) {
 		t.Fatal("the recorded history holds no run-history-guard marker")
 	}
 
-	recorded := s.history(runID)
+	recorded := s.fullHistory(runID)
 	encoded, err := temporalproto.CustomJSONMarshalOptions{Indent: "  "}.Marshal(recorded)
 	if err != nil {
 		t.Fatalf("encode history: %v", err)

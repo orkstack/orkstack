@@ -25,13 +25,6 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// fakeFuture stands in for an in-flight activity's or a pin's future where
-// only its presence, or whether it is ready, matters.
-type fakeFuture struct{ ready bool }
-
-func (f *fakeFuture) Get(workflow.Context, interface{}) error { return nil }
-func (f *fakeFuture) IsReady() bool                           { return f.ready }
-
 func guardCompile(t *testing.T, document string) *orkstackv1.Orkflow {
 	t.Helper()
 	wf, err := dsl.Compile([]byte(document))
@@ -302,6 +295,15 @@ func bareGuardState(t *testing.T) *runState {
 // in failReserve, in events — a running task counts PerInFlight only, never
 // PerPending as well. The quick bound is never below the exact one.
 func TestFailReserve(t *testing.T) {
+	runGuardWorkflow(t, nil, func(ctx workflow.Context) error {
+		failReserveSteps(t, ctx)
+		return nil
+	})
+}
+
+// failReserveSteps runs inside a workflow, which is where a pin's futures
+// come from.
+func failReserveSteps(t *testing.T, ctx workflow.Context) {
 	r := DefaultHistoryReserve
 	s := bareGuardState(t)
 	inFlight := map[string]workflow.Future{}
@@ -311,11 +313,13 @@ func TestFailReserve(t *testing.T) {
 	tasks := int64(len(s.order))
 	events, bytes := count()
 	if want := r.Fixed + r.PerPending*tasks + r.PerHandler; events != want {
-		t.Fatalf("all pending: %d events, want Fixed + %d pending + one handler = %d", events, tasks, want)
+		t.Errorf("all pending: %d events, want Fixed + %d pending + one handler = %d", events, tasks, want)
 	}
 	if want := int64(task.MaxActivityInputBytes); bytes != want {
 		t.Fatalf("all pending: %d bytes, want the pending handler's start (%d)", bytes, want)
+		return
 	}
+	closed, settleClosed := workflow.NewFuture(ctx)
 
 	steps := []struct {
 		name         string
@@ -325,7 +329,7 @@ func TestFailReserve(t *testing.T) {
 	}{
 		{"schedule a", func() {
 			s.taskRuns["a"].Status = orkstackv1.Status_STATUS_RUNNING
-			inFlight["a"] = &fakeFuture{}
+			inFlight["a"] = nil
 		}, r.PerInFlight - r.PerPending, r.PerInFlightBytes},
 		{"open await approve", func() {
 			s.taskRuns["approve"].Status = orkstackv1.Status_STATUS_AWAITING
@@ -334,23 +338,23 @@ func TestFailReserve(t *testing.T) {
 		{"open pin build", func() {
 			p := s.pins["build"]
 			p.opened = true
-			p.closed = &fakeFuture{}
+			p.closed = closed
 		}, r.PerOpenPin, 0},
 		{"expand fan", func() { expandForTest(s, "fan", 3) }, r.PerFanOut - r.PerPending, 0},
 		{"dispatch item fan[0]", func() {
 			s.taskRuns["fan"].Items[0].Status = orkstackv1.Status_STATUS_RUNNING
-			inFlight[itemFlightKey("fan", 0)] = &fakeFuture{}
+			inFlight[itemFlightKey("fan", 0)] = nil
 		}, r.PerInFlight, r.PerInFlightBytes},
 		{"publish an item event detached", func() {
-			s.pendingItemPublishes = append(s.pendingItemPublishes, &fakeFuture{})
+			s.pendingItemPublishes = append(s.pendingItemPublishes, nil)
 		}, r.PerInFlight, 0},
 		{"schedule pin member m1", func() {
 			s.taskRuns["m1"].Status = orkstackv1.Status_STATUS_RUNNING
-			inFlight["m1"] = &fakeFuture{}
+			inFlight["m1"] = nil
 		}, r.PerInFlight - r.PerPending, r.PerInFlightBytes},
 		{"schedule handler rollback", func() {
 			s.taskRuns["rollback"].Status = orkstackv1.Status_STATUS_RUNNING
-			inFlight["rollback"] = &fakeFuture{}
+			inFlight["rollback"] = nil
 		}, r.PerInFlight - r.PerPending, r.PerInFlightBytes},
 	}
 	for _, step := range steps {
@@ -371,7 +375,7 @@ func TestFailReserve(t *testing.T) {
 	}
 	// A pin that closed, a resolved await and a finished task each lower it.
 	beforeEvents, _ := count()
-	s.pins["build"].closed = &fakeFuture{ready: true}
+	settleClosed.Set(nil, nil)
 	s.awaits["approve"].open = false
 	s.taskRuns["approve"].Status = orkstackv1.Status_STATUS_SUCCEEDED
 	delete(inFlight, "a")
@@ -389,11 +393,21 @@ func TestFailReserve(t *testing.T) {
 // that reserveNow ≥ failReserve, equality right after beginPass, and that a
 // pass counts failReserve once.
 func TestReserveNow_IsAnUpperBoundAcrossAPass(t *testing.T) {
+	runGuardWorkflow(t, nil, func(ctx workflow.Context) error {
+		reserveWalks(t, ctx)
+		return nil
+	})
+}
+
+// reserveWalks runs inside a workflow, which is where a pin's futures come
+// from.
+func reserveWalks(t *testing.T, ctx workflow.Context) {
 	r := DefaultHistoryReserve
 	for seed := int64(1); seed <= 200; seed++ {
 		rng := rand.New(rand.NewSource(seed))
 		s := bareGuardState(t)
 		inFlight := map[string]workflow.Future{}
+		pinClosed, settlePin := workflow.NewFuture(ctx)
 		exact := func() (int64, int64) {
 			e, b := s.failReserve(inFlight, r)
 			return e, e*r.BytesPerEvent + b
@@ -416,7 +430,7 @@ func TestReserveNow_IsAnUpperBoundAcrossAPass(t *testing.T) {
 				}
 				id := ids[rng.Intn(len(ids))]
 				s.taskRuns[id].Status = orkstackv1.Status_STATUS_RUNNING
-				inFlight[id] = &fakeFuture{}
+				inFlight[id] = nil
 				s.chargeTaskDispatch()
 				return "schedule " + id
 			},
@@ -462,16 +476,16 @@ func TestReserveNow_IsAnUpperBoundAcrossAPass(t *testing.T) {
 					return ""
 				}
 				p.opened = true
-				p.closed = &fakeFuture{}
+				p.closed = pinClosed
 				s.chargePinOpen()
 				return "open pin"
 			},
 			func() string { // pin close
 				p := s.pins["build"]
-				if !p.opened {
+				if !p.opened || pinClosed.IsReady() {
 					return ""
 				}
-				p.closed = &fakeFuture{ready: true}
+				settlePin.Set(nil, nil)
 				return "close pin"
 			},
 			func() string { // fan-out expand
@@ -502,7 +516,7 @@ func TestReserveNow_IsAnUpperBoundAcrossAPass(t *testing.T) {
 				e.next++
 				e.inFlight++
 				s.taskRuns["fan"].Items[index].Status = orkstackv1.Status_STATUS_RUNNING
-				inFlight[itemFlightKey("fan", index)] = &fakeFuture{}
+				inFlight[itemFlightKey("fan", index)] = nil
 				s.chargeItemDispatch()
 				return "dispatch item"
 			},
@@ -511,7 +525,7 @@ func TestReserveNow_IsAnUpperBoundAcrossAPass(t *testing.T) {
 					s.pendingItemPublishes = s.pendingItemPublishes[1:]
 					return "drain publish"
 				}
-				s.pendingItemPublishes = append(s.pendingItemPublishes, &fakeFuture{})
+				s.pendingItemPublishes = append(s.pendingItemPublishes, nil)
 				s.chargeDetachedPublish()
 				return "publish"
 			},
@@ -523,15 +537,17 @@ func TestReserveNow_IsAnUpperBoundAcrossAPass(t *testing.T) {
 				re, rb := s.reserveNow(inFlight)
 				ee, eb := exact()
 				if re != ee || rb != eb {
-					t.Fatalf("seed %d step %d: right after beginPass reserveNow = (%d, %d), failReserve = (%d, %d)",
+					t.Errorf("seed %d step %d: right after beginPass reserveNow = (%d, %d), failReserve = (%d, %d)",
 						seed, step, re, rb, ee, eb)
+					return
 				}
 				// A pass counts once: growth that was never charged is not
 				// seen until the next pass (which is why every growth path
 				// charges).
-				s.pendingItemPublishes = append(s.pendingItemPublishes, &fakeFuture{})
+				s.pendingItemPublishes = append(s.pendingItemPublishes, nil)
 				if again, _ := s.reserveNow(inFlight); again != re {
-					t.Fatalf("seed %d step %d: reserveNow counted failReserve twice in one pass", seed, step)
+					t.Errorf("seed %d step %d: reserveNow counted failReserve twice in one pass", seed, step)
+					return
 				}
 				s.pendingItemPublishes = s.pendingItemPublishes[:len(s.pendingItemPublishes)-1]
 				continue
@@ -543,8 +559,9 @@ func TestReserveNow_IsAnUpperBoundAcrossAPass(t *testing.T) {
 			re, rb := s.reserveNow(inFlight)
 			ee, eb := exact()
 			if re < ee || rb < eb {
-				t.Fatalf("seed %d step %d (%s): reserveNow = (%d, %d) < failReserve = (%d, %d)",
+				t.Errorf("seed %d step %d (%s): reserveNow = (%d, %d) < failReserve = (%d, %d)",
 					seed, step, name, re, rb, ee, eb)
+				return
 			}
 		}
 	}
@@ -596,7 +613,7 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 						s.taskRuns[id].Status = orkstackv1.Status_STATUS_SUCCEEDED
 					case i < state.done+state.inFlight:
 						s.taskRuns[id].Status = orkstackv1.Status_STATUS_RUNNING
-						inFlight[id] = &fakeFuture{ready: true}
+						inFlight[id] = nil
 					}
 				}
 				events, _ := s.historyNow(ctx)
@@ -687,7 +704,7 @@ func TestHistoryLimitMessage_Format(t *testing.T) {
 	s := buildRunState("ork-1", wf, nil, guardPlan(t, 100, 1<<20))
 	inFlight := map[string]workflow.Future{}
 	for _, id := range s.order {
-		inFlight[id] = &fakeFuture{}
+		inFlight[id] = nil
 	}
 	if got, want := s.historyBlockers(inFlight), "still running: t0000, t0001, t0002, t0003, t0004, …"; got != want {
 		t.Fatalf("blockers = %q, want %q", got, want)
@@ -696,7 +713,7 @@ func TestHistoryLimitMessage_Format(t *testing.T) {
 	fan := buildRunState("ork-1", guardCompile(t, guardFanOutDocument),
 		guardInput(t, map[string]any{"regions": itemsArray(20)}), guardPlan(t, 100, 1<<20))
 	expandForTest(fan, "convert", 20)
-	if got, want := fan.historyBlockers(map[string]workflow.Future{itemFlightKey("convert", 17): &fakeFuture{}}),
+	if got, want := fan.historyBlockers(map[string]workflow.Future{itemFlightKey("convert", 17): nil}),
 		"still running: convert[17]"; got != want {
 		t.Fatalf("item blockers = %q, want %q", got, want)
 	}

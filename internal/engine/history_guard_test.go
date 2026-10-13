@@ -187,7 +187,7 @@ tasks:
     with: {op: exec, r: "{{ .each.item }}"}
 `
 
-func regions(n int) []any {
+func guardItems(n int) []any {
 	out := make([]any, n)
 	for i := range out {
 		out[i] = fmt.Sprintf("r%d", i)
@@ -204,7 +204,7 @@ func runGuardedFanOut(t *testing.T, runID, maxParallel string, length int, maxEv
 	h.env.SetCurrentHistoryLength(length)
 	doc := fmt.Sprintf(guardBatchDocument, maxParallel)
 	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc),
-		payload(t, map[string]any{"regions": regions(125)}), guardedPlan(maxEvents, engine.DefaultHistoryMaxBytes))
+		payload(t, map[string]any{"regions": guardItems(125)}), guardedPlan(maxEvents, engine.DefaultHistoryMaxBytes))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the run did not end")
 	}
