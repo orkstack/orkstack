@@ -155,7 +155,7 @@ merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integra
 	go vet -tags=integration ./...
 	@echo "merge-check OK: the tree builds, passes lint and unit tests, and its integration suites compile"
 ifneq ($(strip $(PROOF)),)
-	go run ./test/tools/proofrun verify -proof $(PROOF) -main $(or $(MAIN),main)
+	go run ./test/tools/proofrun verify -proof $(PROOF)
 else
 	@echo "NOTE: COMPILE, not run. Without PROOF=proof/<name> this gate needs no"
 	@echo "      infrastructure, and an integration test can be red while it is green."

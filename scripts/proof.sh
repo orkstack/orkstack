@@ -11,7 +11,7 @@
 # proof's own, every test of every integration package (as separate processes,
 # PROOF_JOBS at a time), the activity contract fixture on those images, the UI
 # type-check, unit and Playwright suites, and the observability gate whenever
-# the tree differs from its base in a telemetry path.
+# the tree differs from main (the branch it merges into) in a telemetry path.
 #
 # The FEATURE proof is a branch's evidence, never merge evidence: the fast
 # gates, the change's evidence (the tests and specs that prove it) and its
@@ -76,6 +76,7 @@ usage() { sed -n '2,39p' "$SELF" | sed 's/^# \{0,1\}//'; }
 # ---- arguments (exit 2) -------------------------------------------------------
 TIER=full
 BASE=main
+BASE_GIVEN=""
 TESTS=()
 SPECS=()
 NAME=""
@@ -83,8 +84,8 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	--tier) [ $# -ge 2 ] || invalid "--tier needs a value"; TIER="$2"; shift 2 ;;
 	--tier=*) TIER="${1#*=}"; shift ;;
-	--base) [ $# -ge 2 ] || invalid "--base needs a value"; BASE="$2"; shift 2 ;;
-	--base=*) BASE="${1#*=}"; shift ;;
+	--base) [ $# -ge 2 ] || invalid "--base needs a value"; BASE="$2"; BASE_GIVEN=1; shift 2 ;;
+	--base=*) BASE="${1#*=}"; BASE_GIVEN=1; shift ;;
 	--tests) [ $# -ge 2 ] || invalid "--tests needs PKG:REGEX"; TESTS+=("$2"); shift 2 ;;
 	--tests=*) TESTS+=("${1#*=}"); shift ;;
 	--specs) [ $# -ge 2 ] || invalid "--specs needs a file"; SPECS+=("$2"); shift 2 ;;
@@ -104,6 +105,12 @@ full | feature) ;;
 esac
 if [ "$TIER" = full ] && { [ ${#TESTS[@]} -gt 0 ] || [ ${#SPECS[@]} -gt 0 ]; }; then
 	invalid "--tests and --specs name a feature proof's evidence; the full proof runs everything"
+fi
+# The full proof diffs against main, the branch a candidate fast-forwards:
+# that diff decides whether the observability gate is due, so a base of the
+# caller's choosing (HEAD, say) could leave it out of a merge-eligible proof.
+if [ "$TIER" = full ] && [ -n "$BASE_GIVEN" ]; then
+	invalid "--base chooses a feature proof's change set; the full proof always diffs against main, the branch it merges into"
 fi
 for tool in git go; do
 	if ! command -v "$tool" >/dev/null 2>&1; then

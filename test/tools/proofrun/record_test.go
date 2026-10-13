@@ -92,7 +92,7 @@ func TestComposeTemporal(t *testing.T) {
 }
 
 func passingFull() proofRecord {
-	r := proofRecord{Tier: "full", Tree: "t1", TreeEnd: "t1", CleanStart: true, CleanEnd: true, ImageTag: "pr-abc", ImageTagOwn: true}
+	r := proofRecord{Tier: "full", Tree: "t1", TreeEnd: "t1", CleanStart: true, CleanEnd: true, ImageTag: "pr-abc", ImageTagOwn: true, BaseRef: "main", BaseCommit: "m1"}
 	r.Temporal.Mode = "own"
 	for _, g := range fullGates {
 		r.Gates = append(r.Gates, gateRecord{Gate: g, Result: "pass"})
@@ -122,6 +122,8 @@ func TestVerdict(t *testing.T) {
 		{name: "shared Temporal", mutate: func(r *proofRecord) { r.Temporal.Mode = "shared" }, result: "pass", reason: "PROOF_TEMPORAL=shared"},
 		{name: "an outside image tag", mutate: func(r *proofRecord) { r.ImageTagOwn = false }, result: "pass", reason: "ORK_TEST_IMAGE_TAG was supplied from outside"},
 		{name: "network churn", mutate: func(r *proofRecord) { n, c := 4, 3; r.GuardRetries, r.GuardCeiling = &n, &c }, result: "pass", reason: "network-change retries above the ceiling"},
+		{name: "a base other than main", mutate: func(r *proofRecord) { r.BaseRef = "HEAD" }, result: "pass", reason: "the full proof diffed against HEAD, not main"},
+		{name: "no base recorded", mutate: func(r *proofRecord) { r.BaseRef = "" }, result: "pass", reason: "the full proof diffed against -, not main"},
 		{name: "an incomplete ledger", ledgers: map[string]bool{"integration": false}, result: "fail", reason: "the integration ledger is incomplete"},
 		{name: "a feature proof", mutate: func(r *proofRecord) { r.Tier = "feature" }, result: "pass", reason: "a feature proof is never merge evidence"},
 		{name: "failed evidence", mutate: func(r *proofRecord) { r.Tier = "feature"; r.EvidenceFailed = []string{"x"} }, result: "fail", reason: "the proof did not pass"},
@@ -163,6 +165,11 @@ func TestWriteVerdictKeepsTheFullTierResultLines(t *testing.T) {
 	}
 }
 
+func withBase(r proofRecord, commit string) proofRecord {
+	r.BaseCommit = commit
+	return r
+}
+
 func TestVerifyProblems(t *testing.T) {
 	good := passingFull()
 	verdict(&good, 0, false, nil)
@@ -182,6 +189,10 @@ func TestVerifyProblems(t *testing.T) {
 		{"no parent", good, "t1", "", "m1", "", "is not main's current tip"},
 		{"dirty", good, "t1", "m1", "m1", "?? x\n", "the worktree is not clean"},
 		{"a feature proof", feature, "t1", "m1", "m1", "", "only a full proof gates a merge"},
+		// --base HEAD made the observability gate "not due": the record's base
+		// is the candidate itself, never main's tip.
+		{"another base", withBase(good, "c1"), "t1", "m1", "m1", "", "it diffed against c1, not main's current tip (m1)"},
+		{"no base", withBase(good, ""), "t1", "m1", "m1", "", "it diffed against -, not main's current tip"},
 	}
 	for _, c := range cases {
 		p := strings.Join(verifyProblems(c.r, c.tree, c.parent, c.mainTip, c.dirty, "main"), "\n")

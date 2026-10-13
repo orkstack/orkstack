@@ -59,6 +59,10 @@ type proofRecord struct {
 	EvidenceFailed []string `json:"evidence_without_a_pass,omitempty"`
 }
 
+// mainBranch is the branch a merge candidate fast-forwards, and the only base
+// a full proof diffs against (AGENTS.md §11.3).
+const mainBranch = "main"
+
 // fullGates is every gate the merge gate runs; observability joins it when
 // the tree changed a telemetry path.
 var fullGates = []string{"lint", "build", "unit", "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "ui-e2e"}
@@ -128,6 +132,11 @@ func verdict(r *proofRecord, status int, observabilityRequired bool, ledgersOK m
 	}
 	if r.GatesOverride != "" {
 		r.Ineligible = append(r.Ineligible, "PROOF_GATES="+r.GatesOverride+" chose the gates")
+	}
+	// The full tier decides whether the observability gate is due from its
+	// diff against main; any other base could have left that gate out.
+	if r.Tier == "full" && r.BaseRef != mainBranch {
+		r.Ineligible = append(r.Ineligible, "the full proof diffed against "+orDash(r.BaseRef)+", not "+mainBranch+", so it may have left out the observability gate")
 	}
 	if !r.CleanStart {
 		r.Ineligible = append(r.Ineligible, "the working tree was not clean when the proof started")
@@ -307,14 +316,13 @@ func writeVerdict(w io.Writer, r *proofRecord) {
 
 // cmdVerify is `proofrun verify`, behind `make merge-check PROOF=`: it
 // refuses unless the proof is a full, passing, merge-eligible proof of
-// exactly HEAD's tree, the worktree is clean, and HEAD's first parent is the
-// main branch's current tip.
+// exactly HEAD's tree, the worktree is clean, HEAD's first parent is the main
+// branch's current tip, and the proof's own base was that same tip.
 func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	dir := fs.String("proof", "", "the proof directory")
-	mainRef := fs.String("main", "main", "the branch the candidate fast-forwards")
-	if err := fs.Parse(args); err != nil || *dir == "" {
-		fmt.Fprintln(os.Stderr, "proofrun verify -proof proof/<name> [-main main]")
+	if err := fs.Parse(args); err != nil || *dir == "" || fs.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "proofrun verify -proof proof/<name>")
 		return 2
 	}
 	var r proofRecord
@@ -324,9 +332,11 @@ func cmdVerify(args []string) int {
 	}
 	head := strings.TrimSpace(mustGit("rev-parse", "HEAD^{tree}"))
 	parent := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", "HEAD^1"))
-	mainTip := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", *mainRef+"^{commit}"))
+	// The branch is not a choice: a candidate fast-forwards main, and naming
+	// an older commit instead would let a proof outlive the tip it was taken on.
+	mainTip := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", mainBranch+"^{commit}"))
 	status := mustGit("status", "--porcelain", "--untracked-files=all")
-	problems := verifyProblems(r, head, parent, mainTip, status, *mainRef)
+	problems := verifyProblems(r, head, parent, mainTip, status, mainBranch)
 	if len(problems) > 0 {
 		fmt.Printf("merge-check: %s is not merge evidence for HEAD:\n", *dir)
 		for _, p := range problems {
@@ -334,7 +344,7 @@ func cmdVerify(args []string) int {
 		}
 		return 1
 	}
-	fmt.Printf("merge-check: %s is a full, passing, merge-eligible proof of tree %s; HEAD^1 is %s's tip. Fast-forward with git merge --ff-only.\n", *dir, head, *mainRef)
+	fmt.Printf("merge-check: %s is a full, passing, merge-eligible proof of tree %s; HEAD^1 is %s's tip. Fast-forward with git merge --ff-only.\n", *dir, head, mainBranch)
 	return 0
 }
 
@@ -354,6 +364,9 @@ func verifyProblems(r proofRecord, headTree, parent, mainTip, status, mainRef st
 	}
 	if strings.TrimSpace(status) != "" {
 		p = append(p, "the worktree is not clean")
+	}
+	if r.BaseCommit == "" || r.BaseCommit != mainTip {
+		p = append(p, fmt.Sprintf("it diffed against %s, not %s's current tip (%s), so whether the observability gate was due was decided against another base: prove the candidate again", orDash(short(r.BaseCommit)), mainRef, orDash(short(mainTip))))
 	}
 	if parent == "" || parent != mainTip {
 		p = append(p, fmt.Sprintf("HEAD^1 (%s) is not %s's current tip (%s): rebuild the candidate on it and prove it again", orDash(short(parent)), mainRef, orDash(short(mainTip))))

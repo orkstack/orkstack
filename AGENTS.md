@@ -899,16 +899,19 @@ the proof's own (`ORK_TEST_IMAGE_TAG`); every test of every package whose
 integration build differs from its unit build, against real Temporal and
 MinIO with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run on those
 images; the UI type-check and unit suites; every Playwright spec; and the
-observability gate, whenever the tree differs from its base (`--base`,
-default `main`) in a telemetry path. That diff-conditioned observability gate
-is the only diff-conditioned part of the full proof. Concurrency is how the
-full proof is fast, never a reason to run less: integration tests run as
-separate processes, `PROOF_JOBS` at a time (default 4), beside the fixture
-and the UI type-check and unit suites, and Playwright spec files run on
-`PROOF_UI_WORKERS` workers (default and today's only safe value: 1). The unit
-and integration ledgers, and the Playwright ledger, list every test that
-`go test -list` and `playwright test --list` report, with the job that ran it,
-its outcome and its duration. A listed test without an outcome fails the gate.
+observability gate, whenever the tree differs from `main` in a telemetry
+path. That diff-conditioned observability gate is the only diff-conditioned
+part of the full proof, and its base is not a choice: the full tier refuses
+`--base`, a full proof whose recorded base is not `main` is not
+merge-eligible, and `merge-check PROOF=` requires that base to be `main`'s
+current tip. Concurrency is how the full proof is fast, never a reason to
+run less: integration tests run as separate processes, `PROOF_JOBS` at a
+time (default 4), beside the fixture and the UI type-check and unit suites,
+and Playwright spec files run on `PROOF_UI_WORKERS` workers (default and
+today's only safe value: 1). The unit and integration ledgers, and the
+Playwright ledger, list every test that `go test -list` and
+`playwright test --list` report, with the job that ran it, its outcome and its
+duration. A listed test without an outcome fails the gate.
 A skip also fails it, unless `scripts/proof-allowed-skips.txt` names the test
 and the reason (an opt-in recorder, a helper subprocess); an allowed-skip
 entry that names no listed test fails it too. A test whose binary crashed
@@ -969,7 +972,8 @@ leaves the tree, which the proof is bound to, unchanged. Then run
 `make merge-check PROOF=proof/<name>` and fast-forward `main` with
 `git merge --ff-only`. `merge-check PROOF=` refuses unless the proof is a full,
 passing, merge-eligible proof of exactly the candidate's tree, the worktree is
-clean, and the candidate's first parent is `main`'s current tip. If `main`
+clean, and both the candidate's first parent and the base the proof diffed
+against are `main`'s current tip. If `main`
 moved during the proof, rebuild the candidate on the new tip and prove it
 again. Run one full proof at a time on a host until two concurrent full
 proofs have both passed there. Pushing is a separate step, taken only when the
