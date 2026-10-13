@@ -778,10 +778,8 @@ directory it built into itself, never `bin/`); and the image tags it pushes
 (only tags carrying its own process token). A test builds a binary only
 through `testbin.Path` with a literal package path, which is how a feature
 proof knows which packages a suite exercises. The first-party activity images
-are pushed once per proof under `ORK_TEST_IMAGE_TAG`, and pulled into the
-host's daemon by digest before anything runs concurrently (a large image
-unpacked mid-run stalls the daemon past an Orker's boot probe); tests and specs
-only resolve that tag. A test never asserts on host-wide state: it counts
+are pushed once per proof under `ORK_TEST_IMAGE_TAG`; tests and specs only
+resolve that tag. A test never asserts on host-wide state: it counts
 containers by `label=ork.orker=` or `label=ork.run=`, never with an unfiltered
 `docker ps`. What cannot be owned is shared, and every test must tolerate it:
 the Docker daemon, CPU and memory, the MinIO and registry servers (isolated by
