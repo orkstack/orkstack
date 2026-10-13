@@ -71,13 +71,24 @@ type fakeReadClient struct {
 	describes   map[string]*workflowservice.DescribeWorkflowExecutionResponse
 	describeErr error
 	calls       []string
+
+	// generations serves a run that continued as new: its executions'
+	// histories keyed by workflow id then execution id, with current naming
+	// the execution an empty execution id selects. A workflow in generations
+	// is never looked up in history. historyExecutions records the execution
+	// id each history call passed, describeExecutions each describe's.
+	generations        map[string]map[string]*fakeHistory
+	current            map[string]string
+	historyExecutions  []string
+	describeExecutions []string
 }
 
 func (f *fakeReadClient) DescribeWorkflowExecution(
 	_ context.Context,
-	workflowID, _ string,
+	workflowID, execution string,
 ) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
 	f.calls = append(f.calls, "describe")
+	f.describeExecutions = append(f.describeExecutions, execution)
 	if f.describeErr != nil {
 		return nil, f.describeErr
 	}
@@ -101,12 +112,23 @@ func (f *fakeReadClient) count(kind string) int {
 
 func (f *fakeReadClient) GetWorkflowHistory(
 	_ context.Context,
-	workflowID, _ string,
+	workflowID, execution string,
 	isLongPoll bool,
 	_ enumspb.HistoryEventFilterType,
 ) client.HistoryEventIterator {
 	f.longPolled = isLongPoll
 	f.calls = append(f.calls, "history")
+	f.historyExecutions = append(f.historyExecutions, execution)
+	if chain, ok := f.generations[workflowID]; ok {
+		if execution == "" {
+			execution = f.current[workflowID]
+		}
+		history, ok := chain[execution]
+		if !ok {
+			return &fakeHistory{err: serviceerror.NewNotFound("workflow execution not found")}
+		}
+		return &fakeHistory{events: history.events, err: history.err}
+	}
 	history, ok := f.history[workflowID]
 	if !ok {
 		return &fakeHistory{err: serviceerror.NewNotFound("workflow execution not found")}

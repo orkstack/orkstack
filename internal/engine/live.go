@@ -68,8 +68,11 @@ func (r *TemporalRunReader) LiveAttempts(ctx context.Context, runID string, now 
 	if r == nil || r.client == nil {
 		return LiveRun{}, ErrNoLiveReader
 	}
-	// A run id is a single-use workflow id (AGENTS.md §7), so the empty
-	// Temporal run id selects the only execution.
+	// A run id is a single-use workflow id (AGENTS.md §7); the empty Temporal
+	// run id selects its CURRENT execution — the newest generation of a run
+	// that has continued as new. The history read below names the execution
+	// this describe answered for, so a switch between the two reads cannot
+	// pair one generation's pending activities with another's history.
 	resp, err := r.client.DescribeWorkflowExecution(ctx, runID, "")
 	if err != nil {
 		var notFound *serviceerror.NotFound
@@ -98,7 +101,8 @@ func (r *TemporalRunReader) LiveAttempts(ctx context.Context, runID string, now 
 		return LiveRun{}, nil
 	}
 
-	scheduled, err := r.scheduledTasks(ctx, runID, ids)
+	execution := resp.GetWorkflowExecutionInfo().GetExecution().GetRunId()
+	scheduled, err := r.scheduledTasks(ctx, runID, execution, ids)
 	if err != nil {
 		return LiveRun{}, err
 	}
@@ -123,10 +127,10 @@ func (r *TemporalRunReader) LiveAttempts(ctx context.Context, runID string, now 
 // every run read, for fields only InspectRun uses, is the wrong trade.
 func (r *TemporalRunReader) scheduledTasks(
 	ctx context.Context,
-	runID string,
+	runID, execution string,
 	ids map[string]struct{},
 ) (map[string]scheduledTask, error) {
-	iter := r.client.GetWorkflowHistory(ctx, runID, "", false,
+	iter := r.client.GetWorkflowHistory(ctx, runID, execution, false,
 		enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	found := make(map[string]scheduledTask, len(ids))
 	read := 0

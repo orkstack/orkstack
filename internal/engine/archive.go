@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,11 +32,20 @@ import (
 // line is enough to answer `run get`; reading the rest replays the run's whole
 // history. Each line is canonical protojson compacted to a single line, so the
 // body round-trips exactly and stays greppable.
+//
+// A run whose stream lost part of itself before it was archived — an earlier
+// generation's event segment missing from object storage, or altered — has
+// one gap line per lost range, in sequence order among the events, so the
+// archive records the loss explicitly rather than dropping the run:
+//
+//	{"kind":"gap","gap":{"first":1201,"last":2400,"reason":"segment object missing"}}
 const (
 	// ArchiveKindRun marks the snapshot line.
 	ArchiveKindRun = "run"
 	// ArchiveKindEvent marks an event line.
 	ArchiveKindEvent = "event"
+	// ArchiveKindGap marks a line recording events lost before archiving.
+	ArchiveKindGap = "gap"
 	// DefaultArchivePageSize bounds an unlimited archive query, so a list never
 	// fetches an unbounded number of bodies.
 	DefaultArchivePageSize = 200
@@ -48,10 +59,43 @@ type archiveLine struct {
 	Kind  string          `json:"kind"`
 	Run   json.RawMessage `json:"run,omitempty"`
 	Event json.RawMessage `json:"event,omitempty"`
+	Gap   *EventGap       `json:"gap,omitempty"`
 }
 
-// MarshalRunArchive renders a run and its events as the archive body.
-func MarshalRunArchive(run *orkstackv1.Run, events []*orkstackv1.Event) ([]byte, error) {
+// EventGap is a range of a run's event sequence that was lost from object
+// storage before the run was archived: an earlier generation's event segment
+// that was missing or failed verification. First and Last are inclusive.
+type EventGap struct {
+	First  int64  `json:"first"`
+	Last   int64  `json:"last"`
+	Reason string `json:"reason"`
+}
+
+// ErrArchivedEventsLost reports an archived run whose stream records a gap.
+// The run's outcome and its other events are intact.
+var ErrArchivedEventsLost = errors.New("events of the run were lost from object storage before it was archived")
+
+// ArchivedEventsLostError names every range an archived run lost. It wraps
+// ErrArchivedEventsLost.
+type ArchivedEventsLostError struct {
+	RunID string
+	Gaps  []EventGap
+}
+
+func (e *ArchivedEventsLostError) Error() string {
+	ranges := make([]string, 0, len(e.Gaps))
+	for _, gap := range e.Gaps {
+		ranges = append(ranges, fmt.Sprintf("%d–%d (%s)", gap.First, gap.Last, gap.Reason))
+	}
+	return fmt.Sprintf("events %s of run %s were lost from object storage before the run was archived",
+		strings.Join(ranges, ", "), e.RunID)
+}
+
+func (e *ArchivedEventsLostError) Unwrap() error { return ErrArchivedEventsLost }
+
+// MarshalRunArchive renders a run and its events as the archive body, with
+// one gap line per lost range, placed after the events that precede it.
+func MarshalRunArchive(run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...EventGap) ([]byte, error) {
 	if run.GetId() == "" {
 		return nil, fmt.Errorf("engine: archive run: run id is required")
 	}
@@ -63,7 +107,22 @@ func MarshalRunArchive(run *orkstackv1.Run, events []*orkstackv1.Event) ([]byte,
 	if err := appendArchiveLine(&body, archiveLine{Kind: ArchiveKindRun, Run: runJSON}); err != nil {
 		return nil, fmt.Errorf("engine: archive run %q: %w", run.GetId(), err)
 	}
+	pending := append([]EventGap(nil), gaps...)
+	sort.SliceStable(pending, func(i, j int) bool { return pending[i].First < pending[j].First })
+	writeGapsBefore := func(sequence int64) error {
+		for len(pending) > 0 && pending[0].First < sequence {
+			gap := pending[0]
+			pending = pending[1:]
+			if err := appendArchiveLine(&body, archiveLine{Kind: ArchiveKindGap, Gap: &gap}); err != nil {
+				return fmt.Errorf("engine: archive run %q: gap %d–%d: %w", run.GetId(), gap.First, gap.Last, err)
+			}
+		}
+		return nil
+	}
 	for _, event := range events {
+		if err := writeGapsBefore(event.GetSequence()); err != nil {
+			return nil, err
+		}
 		eventJSON, err := marshalArchiveMessage(event)
 		if err != nil {
 			return nil, fmt.Errorf("engine: archive run %q: event %d: %w",
@@ -74,7 +133,34 @@ func MarshalRunArchive(run *orkstackv1.Run, events []*orkstackv1.Event) ([]byte,
 				run.GetId(), event.GetSequence(), err)
 		}
 	}
+	if err := writeGapsBefore(math.MaxInt64); err != nil {
+		return nil, err
+	}
 	return body.Bytes(), nil
+}
+
+// UnmarshalRunArchiveGaps returns the gap lines of an archive body, in the
+// order they were written; nil for a body that lost nothing.
+func UnmarshalRunArchiveGaps(body []byte) ([]EventGap, error) {
+	var gaps []EventGap
+	for number, raw := range bytes.Split(body, []byte("\n")) {
+		line := bytes.TrimSpace(raw)
+		if len(line) == 0 {
+			continue
+		}
+		var record archiveLine
+		if err := json.Unmarshal(line, &record); err != nil {
+			return nil, fmt.Errorf("engine: read archive line %d: %w", number+1, err)
+		}
+		if record.Kind != ArchiveKindGap {
+			continue
+		}
+		if record.Gap == nil || record.Gap.First < 1 || record.Gap.Last < record.Gap.First {
+			return nil, fmt.Errorf("engine: read archive line %d: malformed gap", number+1)
+		}
+		gaps = append(gaps, *record.Gap)
+	}
+	return gaps, nil
 }
 
 // UnmarshalRunArchive reverses MarshalRunArchive. A body with no run line is
@@ -107,6 +193,9 @@ func UnmarshalRunArchive(body []byte) (*orkstackv1.Run, []*orkstackv1.Event, err
 				return nil, nil, fmt.Errorf("engine: read archive line %d: event: %w", number+1, err)
 			}
 			events = append(events, decoded)
+		case ArchiveKindGap:
+			// Read by UnmarshalRunArchiveGaps; the run and its events are
+			// whole without it.
 		default:
 			return nil, nil, fmt.Errorf("engine: read archive line %d: unknown kind %q", number+1, record.Kind)
 		}
@@ -150,7 +239,7 @@ func UnmarshalRunLine(body []byte) (*orkstackv1.Run, error) {
 				return nil, fmt.Errorf("engine: read archive line %d: run: %w", number, err)
 			}
 			return decoded, nil
-		case ArchiveKindEvent:
+		case ArchiveKindEvent, ArchiveKindGap:
 		default:
 			return nil, fmt.Errorf("engine: read archive line %d: unknown kind %q", number, kind.Kind)
 		}
@@ -233,14 +322,17 @@ func NewRunArchiver(archive artifacts.RunArchive) *RunArchiver {
 //
 // The index time comes from the run itself (created, else started, else
 // finished), never from the clock, so repeated calls address the same keys.
-func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event) error {
+//
+// gaps are the ranges of the stream lost before archiving (EventsForArchive);
+// each becomes a gap line, so the archive says what it is missing.
+func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...EventGap) error {
 	if a == nil {
 		return nil
 	}
 	if run.GetOrkflowName() == "" {
 		return fmt.Errorf("engine: archive run %q: orkflow name is required", run.GetId())
 	}
-	body, err := MarshalRunArchive(run, events)
+	body, err := MarshalRunArchive(run, events, gaps...)
 	if err != nil {
 		return err
 	}
@@ -367,10 +459,27 @@ func (a *RunArchiver) LoadRun(ctx context.Context, runID string) (*orkstackv1.Ru
 	return run, nil
 }
 
-// LoadRunEvents returns just the archived event log, in sequence order.
+// LoadRunEvents returns just the archived event log, in sequence order. When
+// the body records gaps it returns the events it holds AND an
+// *ArchivedEventsLostError (matching ErrArchivedEventsLost) naming every
+// range, so no caller can mistake a gapped stream for a whole one.
 func (a *RunArchiver) LoadRunEvents(ctx context.Context, runID string) ([]*orkstackv1.Event, error) {
-	_, events, err := a.Load(ctx, runID)
-	return events, err
+	body, err := a.LoadRunBody(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	_, events, err := UnmarshalRunArchive(body)
+	if err != nil {
+		return nil, fmt.Errorf("engine: load run %q: %w", runID, err)
+	}
+	gaps, err := UnmarshalRunArchiveGaps(body)
+	if err != nil {
+		return nil, fmt.Errorf("engine: load run %q: %w", runID, err)
+	}
+	if len(gaps) > 0 {
+		return events, &ArchivedEventsLostError{RunID: runID, Gaps: gaps}
+	}
+	return events, nil
 }
 
 // ListRuns answers a query: one scan over index keys, then one body read per

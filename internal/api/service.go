@@ -38,12 +38,15 @@ type RunStarter = engine.RunStarter
 // the only record left once history ages out of retention. Tests substitute a
 // fake.
 type RunArchive interface {
-	// Archive writes a finished run and its events.
-	Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event) error
+	// Archive writes a finished run and its events, with one gap record per
+	// range of the stream lost before archiving.
+	Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...engine.EventGap) error
 	// LoadRun returns an archived run, or an error matching
 	// artifacts.ErrNotFound when the run was never archived.
 	LoadRun(ctx context.Context, runID string) (*orkstackv1.Run, error)
-	// LoadRunEvents returns an archived run's events, in sequence order.
+	// LoadRunEvents returns an archived run's events, in sequence order. A
+	// body that records gaps returns the events it holds and an
+	// *engine.ArchivedEventsLostError naming every range.
 	LoadRunEvents(ctx context.Context, runID string) ([]*orkstackv1.Event, error)
 	// ListRuns returns archived runs matching q, newest first.
 	ListRuns(ctx context.Context, q engine.ArchiveQuery) ([]*orkstackv1.Run, error)

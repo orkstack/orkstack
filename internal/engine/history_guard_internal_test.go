@@ -771,7 +771,7 @@ func TestClosedExecution_MapsRunLevelFailureTypes(t *testing.T) {
 				},
 			},
 		}
-		status, failure, ok := closedExecution(event)
+		status, failure, ok := closedExecution(event, false)
 		if !ok || status != orkstackv1.Status_STATUS_FAILED || failure.GetCode() != c.wantCode ||
 			failure.GetCategory() != c.wantCategory || failure.GetMessage() != "the run's sentence" {
 			t.Errorf("type %q: closedExecution = %v %v %v", c.failureType, status, failure, ok)

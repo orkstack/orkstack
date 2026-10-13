@@ -3,10 +3,15 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/sdk/converter"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
 func TestLookupWorkflow_ReportsAFoundRunningExecution(t *testing.T) {
@@ -91,9 +96,23 @@ func TestLookupWorkflow_WithNoClientReportsItsOwnMisconfiguration(t *testing.T) 
 	}
 }
 
+// deletionReader is a reader whose cluster holds run-1 as one closed
+// execution, exec-0, started with no carry.
+func deletionReader(t *testing.T, fake *fakeWorkflowServiceAdmin) *TemporalRunReader {
+	t.Helper()
+	fake.describeExecutionFound = true
+	fake.describeExecutionRunID = "exec-0"
+	reader := readerWithRetention(fake)
+	reader.client = &fakeReadClient{history: map[string]*fakeHistory{
+		"run-1": {events: []*historypb.HistoryEvent{startedEvent(t, "run-1", &orkstackv1.Orkflow{Name: "x"})}},
+	}}
+	reader.converter = converter.GetDefaultDataConverter()
+	return reader
+}
+
 func TestDeleteWorkflow_CallsDeleteWorkflowExecutionForTheGivenNamespaceAndWorkflow(t *testing.T) {
 	fake := &fakeWorkflowServiceAdmin{}
-	reader := readerWithRetention(fake)
+	reader := deletionReader(t, fake)
 
 	if err := reader.DeleteWorkflow(context.Background(), "ork-main", "run-1"); err != nil {
 		t.Fatalf("DeleteWorkflow: %v", err)
@@ -105,16 +124,19 @@ func TestDeleteWorkflow_CallsDeleteWorkflowExecutionForTheGivenNamespaceAndWorkf
 	if call.GetNamespace() != "ork-main" {
 		t.Errorf("namespace = %q, want ork-main", call.GetNamespace())
 	}
-	if call.GetWorkflowExecution().GetWorkflowId() != "run-1" {
-		t.Errorf("workflow id = %q, want run-1", call.GetWorkflowExecution().GetWorkflowId())
+	if call.GetWorkflowExecution().GetWorkflowId() != "run-1" || call.GetWorkflowExecution().GetRunId() != "exec-0" {
+		t.Errorf("deleted %v, want run-1 by its own execution id exec-0", call.GetWorkflowExecution())
 	}
 }
 
 func TestDeleteWorkflow_ReportsAnAlreadyAbsentExecutionAsSuccess(t *testing.T) {
-	reader := readerWithRetention(&fakeWorkflowServiceAdmin{
-		deleteExecutionErr: serviceerror.NewNotFound("gone"),
-	})
-
+	// Gone before the describe: nothing to delete.
+	reader := readerWithRetention(&fakeWorkflowServiceAdmin{describeExecutionFound: false})
+	if err := reader.DeleteWorkflow(context.Background(), "ork-main", "run-1"); err != nil {
+		t.Fatalf("DeleteWorkflow on an absent run = %v, want nil", err)
+	}
+	// Gone between the describe and the delete.
+	reader = deletionReader(t, &fakeWorkflowServiceAdmin{deleteExecutionErr: serviceerror.NewNotFound("gone")})
 	if err := reader.DeleteWorkflow(context.Background(), "ork-main", "run-1"); err != nil {
 		t.Fatalf("DeleteWorkflow on an already-absent execution = %v, want nil (the outcome asked for is the outcome)", err)
 	}
@@ -122,10 +144,58 @@ func TestDeleteWorkflow_ReportsAnAlreadyAbsentExecutionAsSuccess(t *testing.T) {
 
 func TestDeleteWorkflow_ReportsAnyOtherFailureUntouched(t *testing.T) {
 	boom := errors.New("temporal unavailable")
-	reader := readerWithRetention(&fakeWorkflowServiceAdmin{deleteExecutionErr: boom})
-
+	reader := deletionReader(t, &fakeWorkflowServiceAdmin{deleteExecutionErr: boom})
 	if err := reader.DeleteWorkflow(context.Background(), "ork-main", "run-1"); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap %v", err, boom)
+	}
+	reader = readerWithRetention(&fakeWorkflowServiceAdmin{describeExecutionErr: boom})
+	if err := reader.DeleteWorkflow(context.Background(), "ork-main", "run-1"); !errors.Is(err, boom) {
+		t.Fatalf("describe failure: err = %v, want it to wrap %v", err, boom)
+	}
+}
+
+// chainDeletion is a closed three-generation chain: exec-0 and exec-1 are
+// named by the current generation's carry, exec-2 is current.
+func chainDeletion(t *testing.T, fake *fakeWorkflowServiceAdmin) (*TemporalRunReader, *chainFixture) {
+	t.Helper()
+	f := newChain(t, chainSpec{closed: []int{5, 4}, current: 2, finish: true})
+	fake.describeExecutionFound = true
+	fake.describeExecutionRunID = f.current
+	reader := readerWithRetention(fake)
+	reader.client = f.client
+	reader.converter = converter.GetDefaultDataConverter()
+	return reader, f
+}
+
+func TestDeleteWorkflow_DeletesEveryGenerationOldestFirst(t *testing.T) {
+	fake := &fakeWorkflowServiceAdmin{}
+	reader, f := chainDeletion(t, fake)
+	if err := reader.DeleteWorkflow(context.Background(), "ork-main", f.runID); err != nil {
+		t.Fatalf("DeleteWorkflow: %v", err)
+	}
+	var got []string
+	for _, call := range fake.deleteExecutionCalls {
+		if call.GetWorkflowExecution().GetWorkflowId() != f.runID {
+			t.Fatalf("deleted another workflow: %v", call.GetWorkflowExecution())
+		}
+		got = append(got, call.GetWorkflowExecution().GetRunId())
+	}
+	if want := []string{"exec-0", "exec-1", "exec-2"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("deleted %v, want %v: every generation, oldest first, the current one by its own id", got, want)
+	}
+	if got := f.client.historyExecutions; len(got) != 1 || got[0] != f.current {
+		t.Fatalf("history reads = %v, want the current generation's start only", got)
+	}
+}
+
+func TestDeleteWorkflow_ToleratesAlreadyExpiredGenerations(t *testing.T) {
+	fake := &fakeWorkflowServiceAdmin{deleteGone: map[string]bool{"exec-0": true}}
+	reader, f := chainDeletion(t, fake)
+	if err := reader.DeleteWorkflow(context.Background(), "ork-main", f.runID); err != nil {
+		t.Fatalf("DeleteWorkflow with an expired generation = %v, want nil", err)
+	}
+	if len(fake.deleteExecutionCalls) != 3 {
+		t.Fatalf("delete calls = %d, want 3", len(fake.deleteExecutionCalls))
 	}
 }
 
