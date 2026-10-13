@@ -385,7 +385,7 @@ func cmdIntegration(args []string) int {
 	fs := flag.NewFlagSet("integration", flag.ContinueOnError)
 	out := fs.String("out", "", "directory for the ledger, plan, events and per-job logs (required)")
 	binDir := fs.String("bin", "", "directory to compile test binaries into (default <out>/bin/test)")
-	jobs := fs.Int("jobs", envInt("PROOF_JOBS", 6), "test processes at a time (PROOF_JOBS)")
+	jobs := fs.Int("jobs", envInt("PROOF_JOBS", 4), "test processes at a time (PROOF_JOBS)")
 	nsPrefix := fs.String("namespace-prefix", "", "each slot k runs with ORK_TEMPORAL_NAMESPACE=<prefix>-w<k>")
 	costsFile := fs.String("costs", "scripts/proof-test-costs.tsv", "measured per-test durations")
 	allowFile := fs.String("allow", "scripts/proof-allowed-skips.txt", "allowed skips")

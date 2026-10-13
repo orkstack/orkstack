@@ -892,7 +892,7 @@ observability gate, whenever the tree differs from its base (`--base`,
 default `main`) in a telemetry path. That diff-conditioned observability gate
 is the only diff-conditioned part of the full proof. Concurrency is how the
 full proof is fast, never a reason to run less: integration tests run as
-separate processes, `PROOF_JOBS` at a time (default 6), beside the fixture
+separate processes, `PROOF_JOBS` at a time (default 4), beside the fixture
 and the UI type-check and unit suites, and Playwright spec files run on
 `PROOF_UI_WORKERS` workers (default and today's only safe value: 1). The unit
 and integration ledgers, and the Playwright ledger, list every test that

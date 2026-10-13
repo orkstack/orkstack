@@ -29,7 +29,7 @@
 # proof/NAME stops exactly those. Nothing here kills by name or pattern.
 #
 # Environment:
-#   PROOF_JOBS=6        integration test processes at a time (1 = one after another)
+#   PROOF_JOBS=4        integration test processes at a time (1 = one after another)
 #   PROOF_UI_WORKERS=1  Playwright workers; stays 1 until the browser runs in
 #                       a network namespace of its own
 #   PROOF_GATES=a,b     run only these gates — debugging only, never merge-eligible
@@ -127,7 +127,7 @@ fi
 DIR="$REPO/proof/$NAME"
 [ -e "$DIR" ] && invalid "proof/$NAME already exists: a proof never reuses a directory, so yesterday's output can never be mistaken for today's"
 
-PROOF_JOBS="${PROOF_JOBS:-6}"
+PROOF_JOBS="${PROOF_JOBS:-4}"
 PROOF_UI_WORKERS="${PROOF_UI_WORKERS:-1}"
 PROOF_TEMPORAL="${PROOF_TEMPORAL:-own}"
 [[ "$PROOF_JOBS" =~ ^[1-9][0-9]*$ ]] || invalid "PROOF_JOBS must be a positive integer"

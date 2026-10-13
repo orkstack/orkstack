@@ -34,7 +34,7 @@ out="$PWD/.data/integration/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$out"
 ns="${ORK_TEMPORAL_NAMESPACE:-ork}-$(date +%s)"
 ORK_REQUIRE_INFRA="${ORK_REQUIRE_INFRA:-1}" go run ./test/tools/proofrun integration \
-	-out "$out" -jobs "${PROOF_JOBS:-6}" -namespace-prefix "$ns" "${run[@]}" "${pkgs[@]}"
+	-out "$out" -jobs "${PROOF_JOBS:-4}" -namespace-prefix "$ns" "${run[@]}" "${pkgs[@]}"
 status=$?
 echo "integration.sh: ledger, plan and per-job logs in $out"
 exit "$status"
