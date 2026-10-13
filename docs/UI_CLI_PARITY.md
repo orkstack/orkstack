@@ -872,9 +872,9 @@ rules: `item` without `task_id`, a negative item, or an item of a task that is
 not a fan-out is `InvalidArgument`; an item of a fan-out not yet expanded, or
 past its count, is NotFound; a read of ONE stream or object of a fan-out
 without `item` is `InvalidArgument` naming `--item N`, while a list without
-`item` returns every item's rows. `ListRuns`, the webhook body and the
-workflow result carry a fan-out's node row without `items`, so a list stays
-bounded whatever a run expanded into. A human rendering spells an item
+`item` returns every item's rows. `ListRuns` and the webhook body
+carry a fan-out's node row without `items`, so a list stays bounded whatever
+a run expanded into; the workflow's own result carries no task row at all. A human rendering spells an item
 `convert[97]` (0-based); that spelling is never sent or parsed — the wire
 field is the integer.
 

@@ -2231,11 +2231,12 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 		orkstackv1.Status_STATUS_SUCCEEDED, "run succeeded"); err != nil {
 		return nil, err
 	}
-	// The workflow's own result carries no items: nothing reads it (the
-	// reader rebuilds a run from its events and snapshots), and a result
-	// carrying 1000 items could pass the payload limit and fail the run's
-	// completion. Identical to the snapshot for a run with no fan-out. A
-	// child run returns only what its parent reads (compactChildResult).
+	// The workflow's own result is O(1) by construction: coordinates, status
+	// and timestamps, never a task row (compactRunResult), or for a child run
+	// only what its parent reads (compactChildResult). Nothing reads a
+	// top-level result — the reader rebuilds a run from its events and
+	// snapshots — so its size can never be what refuses the completion after
+	// RUN_SUCCEEDED was already published.
 	return s.result(), nil
 }
 

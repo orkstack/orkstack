@@ -155,7 +155,7 @@ func TestCachedHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		t.Errorf("the ExecuteTask input is not the one the recorded build sent: %s", diff)
 	}
 	compareEventPayloads(t, recordedEvents, events)
-	if diff := payloadDiff(recordedRun, run); diff != "" {
+	if diff := payloadDiff(compactRecordedRun(t, recordedRun), run); diff != "" {
 		t.Errorf("the Run this code returns no longer matches the recorded one:\n%s", diff)
 	}
 }

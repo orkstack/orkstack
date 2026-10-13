@@ -14,6 +14,12 @@ tree to them in two halves per fixture:
   back the recorded results, and compares what today's code puts into every
   activity call (and, where listed, every event and the finished run) with
   what the recorded build put there.
+  The finished run is compared as current code returns it: a top-level run
+  returns only its coordinates, status and timestamps (`compactRunResult`),
+  so the recorded result — every task row included, from the builds that
+  returned the whole run — is projected onto that shape first
+  (`CompactRunResultForTest`). The projection is a strict subset of what was
+  recorded, so no fixture is re-recorded for it.
 
 Each fixture also has a **negative test**: a deliberately altered body or
 stream that the guard must catch, so the fixture is known to see the kind of

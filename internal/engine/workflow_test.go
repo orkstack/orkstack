@@ -370,16 +370,13 @@ func TestRunWorkflow_ExecutesLinearNeedsInOrder(t *testing.T) {
 		t.Fatalf("execution order = %v, want %v", got, want)
 	}
 
-	var run orkstackv1.Run
-	if err := h.env.GetWorkflowResult(&run); err != nil {
-		t.Fatalf("workflow result: %v", err)
-	}
+	run := mustFinalRun(t, h.store, "run-linear")
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Errorf("run status = %v, want SUCCEEDED", run.GetStatus())
 	}
 	for _, id := range want {
-		if statusOf(&run, id) != orkstackv1.Status_STATUS_SUCCEEDED {
-			t.Errorf("task %q status = %v, want SUCCEEDED", id, statusOf(&run, id))
+		if statusOf(run, id) != orkstackv1.Status_STATUS_SUCCEEDED {
+			t.Errorf("task %q status = %v, want SUCCEEDED", id, statusOf(run, id))
 		}
 	}
 
@@ -564,10 +561,7 @@ func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
 		t.Errorf("save upstream = %v, want the direct transform entry", save.GetUpstream())
 	}
 
-	var run orkstackv1.Run
-	if err := h.env.GetWorkflowResult(&run); err != nil {
-		t.Fatalf("workflow result: %v", err)
-	}
+	run := mustFinalRun(t, h.store, "run-upstream")
 	for _, tr := range run.GetTaskRuns() {
 		if tr.GetTaskId() != "fetch" {
 			continue
@@ -614,14 +608,11 @@ func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 		t.Fatalf("executed tasks = %v, want only [always]", order)
 	}
 
-	var run orkstackv1.Run
-	if err := h.env.GetWorkflowResult(&run); err != nil {
-		t.Fatalf("workflow result: %v", err)
-	}
-	if got := statusOf(&run, "maybe"); got != orkstackv1.Status_STATUS_SKIPPED {
+	run := mustFinalRun(t, h.store, "run-condition")
+	if got := statusOf(run, "maybe"); got != orkstackv1.Status_STATUS_SKIPPED {
 		t.Errorf("maybe status = %v, want SKIPPED", got)
 	}
-	if got := statusOf(&run, "after"); got != orkstackv1.Status_STATUS_SKIPPED {
+	if got := statusOf(run, "after"); got != orkstackv1.Status_STATUS_SKIPPED {
 		t.Errorf("after status = %v, want SKIPPED (skip propagates downstream)", got)
 	}
 	// A skipped task NEVER reached an Orker, so it has no start. Stamping one
@@ -629,7 +620,7 @@ func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 	// believe a zero-length execution happened. finished_at stays: the run did
 	// resolve these tasks, at that moment.
 	for _, id := range []string{"maybe", "after"} {
-		tr := taskRunOf(t, &run, id)
+		tr := taskRunOf(t, run, id)
 		if tr.GetScheduledAt() != nil {
 			t.Errorf("%s scheduled_at = %v, want unset: a skipped task was never scheduled",
 				id, tr.GetScheduledAt().AsTime())
@@ -919,11 +910,13 @@ tasks:
 	if _, ok := h.inputFor("child"); !ok {
 		t.Fatal("child was not scheduled after fast completed")
 	}
-	if got := statusOf(mustWorkflowResult(t, h.env), "slow"); got != orkstackv1.Status_STATUS_SUCCEEDED {
+	if got := statusOf(mustFinalRun(t, h.store, "run-readiness"), "slow"); got != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Errorf("slow status = %v, want SUCCEEDED", got)
 	}
 }
 
+// mustWorkflowResult is the workflow's own return value, for the tests about
+// that value itself; every other test reads the run with mustFinalRun.
 func mustWorkflowResult(t *testing.T, env *testsuite.TestWorkflowEnvironment) *orkstackv1.Run {
 	t.Helper()
 	var run orkstackv1.Run
@@ -931,6 +924,19 @@ func mustWorkflowResult(t *testing.T, env *testsuite.TestWorkflowEnvironment) *o
 		t.Fatalf("workflow result: %v", err)
 	}
 	return &run
+}
+
+// mustFinalRun is a run's last published snapshot: the whole run, every task
+// row included. The workflow's own result is compact by construction
+// (compactRunResult) and carries no task rows, so a test that reads rows
+// reads them here, where every reader does.
+func mustFinalRun(t *testing.T, store *engine.RunStore, runID string) *orkstackv1.Run {
+	t.Helper()
+	run, ok := store.Get(runID)
+	if !ok {
+		t.Fatalf("run %s was never published", runID)
+	}
+	return run
 }
 
 // TestRunWorkflow_CarriesThePlanTelemetryOntoTheInputAndTheSnapshot is the
@@ -967,7 +973,7 @@ func TestRunWorkflow_CarriesThePlanTelemetryOntoTheInputAndTheSnapshot(t *testin
 		t.Errorf("ExecuteTaskInput.telemetry = %v, want the plan's selection", got)
 	}
 
-	run := mustWorkflowResult(t, h.env)
+	run := mustFinalRun(t, h.store, "run-telemetry-set")
 	if got := run.GetTelemetry(); got.GetSink() != "otel-prod" ||
 		got.GetTaskLogs() != orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED ||
 		got.GetAttributes()["ork.ns.team"] != "payments" {
@@ -1002,7 +1008,7 @@ func TestRunWorkflow_LeavesTelemetryUnsetWithNoPlanSelection(t *testing.T) {
 		t.Errorf("ExecuteTaskInput.telemetry = %v, want nil", in.GetTelemetry())
 	}
 
-	run := mustWorkflowResult(t, h.env)
+	run := mustFinalRun(t, h.store, "run-telemetry-unset")
 	if run.GetTelemetry() != nil {
 		t.Errorf("Run.telemetry = %v, want nil", run.GetTelemetry())
 	}
@@ -1347,7 +1353,7 @@ func TestRunWorkflow_SchedulesEveryPinnedTaskOnOnePinSessionAndReleasesIt(t *tes
 		t.Errorf("unpinned task carries pin = %v, want nil", publish.GetPin())
 	}
 
-	run := mustWorkflowResult(t, h.env)
+	run := mustFinalRun(t, h.store, "run-pinned")
 	for _, id := range []string{"prep", "compile"} {
 		if got := taskRunOf(t, run, id).GetPin(); got != "build" {
 			t.Errorf("%s TaskRun.pin = %q, want build", id, got)
@@ -1444,7 +1450,7 @@ tasks:
 		t.Errorf("a session was created for a pin whose every task was skipped: %v",
 			h.startedActivities())
 	}
-	run := mustWorkflowResult(t, h.env)
+	run := mustFinalRun(t, h.store, "run-pinned-skipped")
 	for _, id := range []string{"prep", "compile"} {
 		if got := statusOf(run, id); got != orkstackv1.Status_STATUS_SKIPPED {
 			t.Errorf("%s status = %v, want SKIPPED", id, got)
@@ -1531,7 +1537,7 @@ tasks:
 	if got := h.taskOrder(); len(got) != 2 || got[0] != "elsewhere" {
 		t.Fatalf("dispatch order = %v, want the unpinned sibling first, while the pin opened", got)
 	}
-	run := mustWorkflowResult(t, h.env)
+	run := mustFinalRun(t, h.store, "run-pinned-held")
 	if got := statusOf(run, "prep"); got != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Errorf("prep status = %v, want SUCCEEDED once its session opened", got)
 	}

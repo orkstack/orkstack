@@ -739,13 +739,45 @@ func (s *runState) isChildRun() bool {
 	return s.plan.Origin != nil && s.plan.Origin.Kind == RunOriginKindParentRun
 }
 
-// result is the workflow's own return value: a top-level run's snapshot
-// without items, or, for a child run, the compact result its parent reads.
+// result is the workflow's own return value, and it is O(1) by construction:
+// a top-level run returns its coordinates, status and timestamps only
+// (compactRunResult), and a child run the compact result its parent reads
+// (compactChildResult). Nothing reads a top-level result — the reader
+// rebuilds a run from its events and snapshots, and a schedule fire waits on
+// the future with a nil target — so returning every task row only put the
+// run's completion at risk: past AGENTS.md §2.2's 256 KiB at about 170
+// tasks, and refused outright at Temporal's blob limit, after RUN_SUCCEEDED
+// had already been published.
 func (s *runState) result() *orkstackv1.Run {
 	if s.isChildRun() {
-		return compactChildResult(s.snapshot())
+		child := compactChildResult(s.snapshot())
+		// The parent reads Output only for declared outputs (collectChild); an
+		// undeclared leaf aggregation is unbounded and read by nobody.
+		if len(s.wf.GetOutputs()) == 0 {
+			child.Output = nil
+		}
+		return child
 	}
-	return WithoutItems(s.snapshot())
+	return compactRunResult(s.snapshot())
+}
+
+// compactRunResult is what a top-level run returns: its coordinates, status,
+// origin and timestamps, with no Input, Output, TaskRuns or Error. Every one
+// of those is on the run's snapshots, which is where every reader takes them
+// from. Pure.
+func compactRunResult(run *orkstackv1.Run) *orkstackv1.Run {
+	return &orkstackv1.Run{
+		Id:                      run.GetId(),
+		Namespace:               run.GetNamespace(),
+		OrkflowName:             run.GetOrkflowName(),
+		OrkflowVersion:          run.GetOrkflowVersion(),
+		OrkflowDefinitionDigest: run.GetOrkflowDefinitionDigest(),
+		Status:                  run.GetStatus(),
+		Origin:                  run.GetOrigin(),
+		CreatedAt:               run.GetCreatedAt(),
+		StartedAt:               run.GetStartedAt(),
+		FinishedAt:              run.GetFinishedAt(),
+	}
 }
 
 // compactChildResult is what a child run returns: only the coordinates, the

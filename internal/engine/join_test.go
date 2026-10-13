@@ -1585,7 +1585,7 @@ tasks:
     join: all_done
     with: {op: exec}
 `), payload(t, nil), defaultPlan())
-	run := mustWorkflowResult(t, h.env)
+	run := mustFinalRun(t, h.store, "run-handler-leaves")
 	fields := run.GetOutput().GetData().GetFields()
 	if _, ok := fields["deploy"]; !ok {
 		t.Errorf("output %v lacks deploy: a handler's needs edge removed it from the leaves", fields)
