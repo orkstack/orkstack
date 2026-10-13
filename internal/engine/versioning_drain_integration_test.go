@@ -226,9 +226,6 @@ func executionStatus(
 	return described.GetWorkflowExecutionInfo().GetStatus()
 }
 
-// assertTaskScheduledAndNeverStarted reads the stranded run's own history: the
-// activity is on the queue, and no worker of any version has taken it. It
-// returns how many are waiting.
 // awaitTaskScheduled waits, against a deadline, until runID's history holds
 // a scheduled ExecuteTask activity.
 func awaitTaskScheduled(t *testing.T, ctx context.Context, c client.Client, runID string, within time.Duration) {
@@ -248,6 +245,9 @@ func awaitTaskScheduled(t *testing.T, ctx context.Context, c client.Client, runI
 	}
 }
 
+// assertTaskScheduledAndNeverStarted reads the stranded run's own history: the
+// activity is on the queue, and no worker of any version has taken it. It
+// returns how many are waiting.
 func assertTaskScheduledAndNeverStarted(
 	t *testing.T,
 	ctx context.Context,
