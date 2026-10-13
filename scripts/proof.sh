@@ -450,9 +450,28 @@ record_images() {
 		printf '%s\t%s\t%s\n' "$a" "$REGISTRY/orkstack/activity-$a:$IMAGE_TAG" "$digest" | tee -a "$DIR/images.tsv"
 	done
 }
+# warm_images pulls every image of images.tsv into this host's daemon BY THE
+# DIGEST an Orker resolves it to, before anything runs beside anything else.
+# Without it the first task to use each image pulls it in the middle of the
+# integration phase, and unpacking a large one (activity-template) stalls the
+# daemon for tens of seconds: an Orker booting in that window fails its 30 s
+# workdir bind probe (WORKDIR_NOT_BINDABLE), as proof-tiers-full-r2 and -r3
+# did. An Orker pulls only an image it does not have, so after this its pulls
+# are no-ops.
+warm_images() {
+	local a ref digest
+	while IFS=$'\t' read -r a ref digest; do
+		docker pull --quiet "${ref%:*}@$digest" >/dev/null || {
+			say "pull ${ref%:*}@$digest failed"
+			return 1
+		}
+		say "warmed activity-$a: ${ref%:*}@$digest"
+	done <"$DIR/images.tsv"
+}
 push_images() {
 	make -C images push TAG="$IMAGE_TAG" REGISTRY="$REGISTRY" || return 1
-	record_images
+	record_images || return 1
+	warm_images
 }
 build_binaries() {
 	local pkg
@@ -466,7 +485,7 @@ if runs temporal; then run temporal temporal.log start_temporal; fi
 if runs images; then
 	run images images.log push_images
 elif [ -z "$IMAGE_TAG_OWN" ] && { runs temporal || runs activity-fixture; }; then
-	record_images >"$DIR/images.log" 2>&1
+	{ record_images && warm_images; } >"$DIR/images.log" 2>&1
 fi
 if runs binaries; then run binaries binaries.log build_binaries; fi
 
