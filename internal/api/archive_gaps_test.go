@@ -96,7 +96,7 @@ func TestEvidenceExport_GappedArchiveIsSchemaTwoWithEventGaps(t *testing.T) {
 	f := newEvidenceFixture(t)
 	run := &orkstackv1.Run{Id: "ork-ev-gap", OrkflowName: "evidence", OrkflowVersion: "0.1.0",
 		OrkflowDefinitionDigest: f.digest, Status: orkstackv1.Status_STATUS_SUCCEEDED,
-		CreatedAt: timestamppb.New(evidenceNow.Add(-time.Hour)), FinishedAt: timestamppb.New(evidenceNow.Add(-30*time.Minute))}
+		CreatedAt: timestamppb.New(evidenceNow.Add(-time.Hour)), FinishedAt: timestamppb.New(evidenceNow.Add(-30 * time.Minute))}
 	f.reader.setRun(run)
 	if err := f.archiver.Archive(context.Background(), run, []*orkstackv1.Event{
 		{RunId: "ork-ev-gap", Sequence: 1, Type: orkstackv1.EventType_EVENT_TYPE_RUN_CREATED},
