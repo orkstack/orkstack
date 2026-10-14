@@ -95,7 +95,9 @@ func generationsOK(t *testing.T, g *generations, atLeast int) *orkstackv1.Run {
 	return run
 }
 
-func pinSetup(h *harness, _ int) { enablePins(h, worker.Options{DeadlockDetectionTimeout: time.Second}) }
+func pinSetup(h *harness, _ int) {
+	enablePins(h, worker.Options{DeadlockDetectionTimeout: time.Second})
+}
 
 const pinOpenDocument = `
 name: pin-open

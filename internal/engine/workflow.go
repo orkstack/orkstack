@@ -226,10 +226,14 @@ func RunWorkflow(
 		}
 		state.logInfo(ctx, inFlight, "run restored its saved state",
 			"state_bytes", carry.GetCheckpoint().GetSizeBytes(), "generation", state.generation)
+		state.observeDecisionState("restore")
 	}
 	state.markGenerationBase(ctx)
 
 	for {
+		if readyLoopProbeForTest != nil && readyLoopProbeForTest.pass != nil {
+			readyLoopProbeForTest.pass()
+		}
 		// The reserve is counted at most once per pass.
 		state.beginPass()
 		// (A) The history guard, check point 1: a run whose history plus what
@@ -448,6 +452,9 @@ func RunWorkflow(
 					selector.AddFuture(a.deadline, func(workflow.Future) { expired = awaitID })
 				}
 			}
+		}
+		if readyLoopProbeForTest != nil && readyLoopProbeForTest.selector != nil {
+			readyLoopProbeForTest.selector()
 		}
 		selector.Select(ctx)
 		// A pin's readiness is NOT a task outcome: nothing is collected, and
@@ -1467,6 +1474,9 @@ func hintPinSessionHost(p *pinState, failure *orkstackv1.Error) {
 // is today's loop verbatim; every other policy is joinAdmits, the function
 // the plan shares.
 func (s *runState) classify(ctx workflow.Context, id string) (bool, error) {
+	if readyLoopProbeForTest != nil {
+		readyLoopProbeForTest.classify++
+	}
 	t := s.tasks[id]
 	if t.GetJoin() == orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
 		for _, need := range t.GetNeeds() {
@@ -1478,6 +1488,9 @@ func (s *runState) classify(ctx workflow.Context, id string) (bool, error) {
 		return false, s.markSkipped(ctx, id, reason)
 	}
 
+	if readyLoopProbeForTest != nil {
+		readyLoopProbeForTest.conditions++
+	}
 	shouldRun, err := evaluateCondition(s.tasks[id].GetCondition(), s.inputs, s.upstreamOutputs(id))
 	if err != nil {
 		return false, s.failCondition(ctx, id, err)

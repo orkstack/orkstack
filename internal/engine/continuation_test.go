@@ -81,10 +81,11 @@ func runGenerationsIn(
 ) *generations {
 	t.Helper()
 	store := newTestSnapshotStore()
+	values := &memValues{objects: map[string][]byte{}}
 	out := &generations{runID: runID}
 	args := []any{runID, wf, input, plan, (*orkstackv1.RunContinuation)(nil)}
-	for generation := 0; generation < 32; generation++ {
-		h := newHarnessOver(t, suite, store, behavior)
+	for generation := 0; generation < 300; generation++ {
+		h := newHarnessShared(t, suite, store, values, behavior)
 		h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: runID})
 		if setup != nil {
 			setup(h, generation)
@@ -118,7 +119,7 @@ func runGenerationsIn(
 		out.plans = append(out.plans, nextPlan)
 		args = []any{nextID, nextWf, nextInput, nextPlan, carry}
 	}
-	t.Fatal("the run did not end within 32 generations")
+	t.Fatal("the run did not end within 300 generations")
 	return nil
 }
 
@@ -473,7 +474,7 @@ func TestContinuation_HoldHasNoClock(t *testing.T) {
 				return
 			}
 			raiseHistoryAt(h, 2, 650)
-			h.env.OnActivity(task.ActivityExecuteTask, mock.Anything, mock.Anything).After(3*time.Hour).
+			h.env.OnActivity(task.ActivityExecuteTask, mock.Anything, mock.Anything).After(3 * time.Hour).
 				Return(func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 					calls.Add(1)
 					return itemBehavior(ctx, in)

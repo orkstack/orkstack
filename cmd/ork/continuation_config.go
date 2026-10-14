@@ -72,6 +72,7 @@ func continuationFromEnv(historyMaxEvents, historyMaxBytes int64) (continuationC
 	if !cfg.enabled {
 		return cfg, nil
 	}
+	errs = nil
 	if events < minContinuationEvents || events > historyMaxEvents/4 {
 		errs = append(errs, fmt.Errorf("ORK_CONTINUATION_EVENTS=%d must be between %d and a quarter of "+
 			"ORK_HISTORY_MAX_EVENTS (%d)", events, minContinuationEvents, historyMaxEvents/4))

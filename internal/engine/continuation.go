@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -191,6 +192,10 @@ func (a *SnapshotActivities) WriteFailedRunSnapshot(
 	uri, err := a.store.WriteSnapshot(ctx, namespace, runID, sequence, data)
 	if err != nil {
 		return "", fmt.Errorf("engine: persist failed run snapshot for run %s: %w", runID, err)
+	}
+	// A restore that failed is counted once, by its code (ork.run.continuations).
+	if code := header.GetError().GetCode(); isRunStateCode(code) {
+		a.observeRestore(ctx, ContinuationRestoreObservation{Namespace: namespace, Outcome: code})
 	}
 	return uri, nil
 }
@@ -600,6 +605,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	// argument is the original, which RunStart and the await doors read.
 	s.logInfo(ctx, inFlight, "run carried on into a fresh history",
 		"hold_seconds", obs.HoldSeconds, "state_bytes", checkpoint.GetSizeBytes(), "generation", s.generation+1)
+	s.observeDecisionState("switch")
 	return workflow.NewContinueAsNewError(ctx, RunWorkflowType, "", s.wfArg, s.inputArg, s.plan, carry), "", nil
 }
 
@@ -676,4 +682,135 @@ func ceilDiv(a, b int64) int64 {
 		return 0
 	}
 	return (a + b - 1) / b
+}
+
+// continuationStateHookForTest is a TEST-ONLY hook, the precedent of
+// eachDispatchDescending: when set, it sees the run's decision state at each
+// switch (phase "switch", just before the continue-as-new) and after each
+// restore (phase "restore"), so a test can prove the two equal. Never set in
+// production code.
+var continuationStateHookForTest func(phase string, state DecisionState)
+
+// DecisionState is every field a generation decides with that a switch must
+// carry exactly: each task's row, the projection of each result workflow code
+// reads back, each output's presence and value, each fan-out's counters,
+// each await's deadline (and whether its timer can be cancelled), the event
+// sequence, created_at and the version decisions. Test-only: it is built
+// only for continuationStateHookForTest.
+type DecisionState struct {
+	TaskRuns  map[string]string
+	Results   map[string]string
+	Outputs   map[string]string
+	Eaches    map[string][7]int32
+	Awaits    map[string]string
+	EventSeq  int
+	CreatedAt string
+	Versions  map[string]int
+}
+
+func (s *runState) observeDecisionState(phase string) {
+	if continuationStateHookForTest == nil {
+		return
+	}
+	state := DecisionState{
+		TaskRuns: map[string]string{}, Results: map[string]string{}, Outputs: map[string]string{},
+		Eaches: map[string][7]int32{}, Awaits: map[string]string{}, Versions: map[string]int{},
+		EventSeq: s.eventSeq, CreatedAt: s.createdAt.AsTime().UTC().Format(time.RFC3339Nano),
+	}
+	marshal := proto.MarshalOptions{Deterministic: true}
+	for _, id := range s.order {
+		row, _ := marshal.Marshal(s.taskRuns[id])
+		state.TaskRuns[id] = string(row)
+		if r, ok := s.results[id]; ok {
+			projected, _ := marshal.Marshal(&orkstackv1.ExecuteTaskResult{TaskId: r.GetTaskId(), ValuesRef: r.GetValuesRef(),
+				Commit: r.GetCommit(), Artifacts: r.GetArtifacts()})
+			state.Results[id] = string(projected)
+		}
+		if values, ok := s.outputs[id]; ok {
+			encoded, _ := json.Marshal(values)
+			state.Outputs[id] = string(encoded)
+		}
+		if e := s.eaches[id]; e != nil {
+			expanded := int32(0)
+			if e.expanded {
+				expanded = 1
+			}
+			state.Eaches[id] = [7]int32{expanded, e.count, e.next, e.settled, e.inFlight, e.limit, e.stride}
+		}
+		if a := s.awaits[id]; a != nil && a.open {
+			state.Awaits[id] = fmt.Sprintf("deadline=%s timeout=%s cancel=%t", a.deadlineAt.UTC().Format(time.RFC3339Nano),
+				a.timeout, a.cancelDeadline != nil)
+		}
+	}
+	for change, v := range s.versions {
+		state.Versions[change] = int(v)
+	}
+	continuationStateHookForTest(phase, state)
+}
+
+// fieldClass is what a switch does with one field of the run's state.
+type fieldClass int
+
+const (
+	// fieldDerived is rebuilt by newRunState from RunWorkflow's arguments.
+	fieldDerived fieldClass = iota + 1
+	// fieldRestored crosses the switch, in the carry or the checkpoint
+	// (restore).
+	fieldRestored
+	// fieldEphemeral is zero or fresh at a switch — guaranteed by the switch
+	// condition (nothing in flight, never in the failing phase) or rebuilt
+	// without a command.
+	fieldEphemeral
+)
+
+// runStateFieldClass classifies every field of the state a generation holds
+// (TestRunState_EveryFieldIsClassified reflects over the structs and fails
+// on any field missing here), so a field added later cannot be silently
+// dropped at a switch — which matters because on an unversioned fleet the
+// next generation may run a newer build.
+var runStateFieldClass = map[string]fieldClass{
+	// Derived: structure and spec, rebuilt from the arguments.
+	"runState.runID": fieldDerived, "runState.wf": fieldDerived, "runState.plan": fieldDerived,
+	"runState.input": fieldDerived, "runState.inputs": fieldDerived, "runState.order": fieldDerived,
+	"runState.tasks": fieldDerived, "runState.closure": fieldDerived, "runState.leaves": fieldDerived,
+	"runState.pins": fieldDerived, "runState.pinOrder": fieldDerived, "runState.awaits": fieldDerived,
+	"runState.resolutions": fieldDerived, "runState.eaches": fieldDerived, "runState.eachShare": fieldDerived,
+	"runState.itemInputLimit": fieldDerived, "runState.itemArtifactMax": fieldDerived,
+	"runState.children": fieldDerived, "runState.hasHandlers": fieldDerived,
+	"runState.handlerCount": fieldDerived, "runState.handlerStartBytes": fieldDerived,
+	"eachState.spec": fieldDerived, "awaitState.spec": fieldDerived,
+	"pinState.name": fieldDerived, "pinState.pin": fieldDerived, "pinState.tasks": fieldDerived,
+
+	// Restored: from the carry or the checkpoint.
+	"runState.taskRuns": fieldRestored, "runState.results": fieldRestored, "runState.outputs": fieldRestored,
+	"runState.createdAt": fieldRestored, "runState.startedAt": fieldRestored, "runState.status": fieldRestored,
+	"runState.eventSeq": fieldRestored, "runState.leanDecided": fieldRestored, "runState.lean": fieldRestored,
+	"runState.versions": fieldRestored, "runState.generation": fieldRestored, "runState.segments": fieldRestored,
+	"runState.heldFanOuts": fieldRestored, "runState.wfArg": fieldRestored, "runState.inputArg": fieldRestored,
+	"runState.genFirstSeq": fieldRestored,
+	"eachState.expanded":   fieldRestored, "eachState.count": fieldRestored, "eachState.next": fieldRestored,
+	"eachState.settled": fieldRestored, "eachState.limit": fieldRestored, "eachState.stride": fieldRestored,
+	"awaitState.open": fieldRestored, "awaitState.timeout": fieldRestored, "awaitState.deadlineAt": fieldRestored,
+	"awaitState.deadline": fieldRestored, "awaitState.cancelDeadline": fieldRestored,
+
+	// Ephemeral: zero or fresh at a switch.
+	"runState.runError": fieldEphemeral, "runState.finished": fieldEphemeral, "runState.output": fieldEphemeral,
+	"runState.pendingItemPublishes": fieldEphemeral, "runState.publishCtx": fieldEphemeral,
+	"runState.runCtx": fieldEphemeral, "runState.handlerCtx": fieldEphemeral, "runState.cancelHandlers": fieldEphemeral,
+	"runState.detached": fieldEphemeral, "runState.cancelDetached": fieldEphemeral,
+	"runState.switchDue": fieldEphemeral, "runState.quiescing": fieldEphemeral, "runState.holdStartedAt": fieldEphemeral,
+	"runState.switchRetryAt": fieldEphemeral, "runState.quiesceRetryAt": fieldEphemeral, "runState.noSwitch": fieldEphemeral,
+	"runState.baseEvents": fieldEphemeral, "runState.baseBytes": fieldEphemeral, "runState.genEvents": fieldEphemeral,
+	"runState.capLogged": fieldEphemeral, "runState.admitted": fieldEphemeral, "runState.pinClosure": fieldEphemeral,
+	"runState.pinClosureFresh": fieldEphemeral, "runState.gaveUp": fieldEphemeral, "runState.restoreErr": fieldEphemeral,
+	"runState.passReserve": fieldEphemeral, "runState.passCharge": fieldEphemeral, "runState.pendingHandlers": fieldEphemeral,
+	"runState.hist": fieldEphemeral, "runState.guardOff": fieldEphemeral,
+	"eachState.inFlight": fieldEphemeral,
+	// A pin's runtime: no pin is opening, open or closing at a switch, and
+	// every pin starts unopened in the next generation.
+	"pinState.opened": fieldEphemeral, "pinState.triggeredBy": fieldEphemeral, "pinState.openedAt": fieldEphemeral,
+	"pinState.timeout": fieldEphemeral, "pinState.ready": fieldEphemeral, "pinState.readySettable": fieldEphemeral,
+	"pinState.readyConsumed": fieldEphemeral, "pinState.ctx": fieldEphemeral, "pinState.openErr": fieldEphemeral,
+	"pinState.done": fieldEphemeral, "pinState.doneSent": fieldEphemeral, "pinState.closed": fieldEphemeral,
+	"pinState.closedSettable": fieldEphemeral, "pinState.lost": fieldEphemeral,
 }

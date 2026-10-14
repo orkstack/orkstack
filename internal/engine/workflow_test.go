@@ -70,6 +70,22 @@ type harness struct {
 	// continuations counts the continuation local activities that ran, by
 	// kind.
 	continuations map[string]int
+	// countItems, when set, answers CountEachItems instead of the store.
+	countItems func(ref *orkstackv1.ArtifactRef) (int32, error)
+}
+
+// eachCounter is the harness's CountEachItems: the test's answer when it set
+// one, the real count over the harness's store otherwise.
+type eachCounter struct {
+	h    *harness
+	real *engine.EachActivities
+}
+
+func (c *eachCounter) CountEachItems(ctx context.Context, ref *orkstackv1.ArtifactRef, path []string, over string, maxBytes int64) (int32, error) {
+	if c.h.countItems != nil {
+		return c.h.countItems(ref)
+	}
+	return c.real.CountEachItems(ctx, ref, path, over, maxBytes)
 }
 
 func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
@@ -91,17 +107,25 @@ func newHarnessCtx(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior fu
 // predecessor's switch wrote.
 func newHarnessOver(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshots *testSnapshotStore, behavior func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
 	t.Helper()
+	return newHarnessShared(t, suite, snapshots, &memValues{objects: map[string][]byte{}}, behavior)
+}
+
+// newHarnessShared is newHarnessOver sharing a values store as well: every
+// generation of one run reads the values its earlier generations' tasks
+// committed, as they all read one bucket.
+func newHarnessShared(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshots *testSnapshotStore, values *memValues, behavior func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
+	t.Helper()
 	h := &harness{
 		env:           suite.NewTestWorkflowEnvironment(),
 		bus:           engine.NewEventBus(),
 		store:         engine.NewRunStore(),
 		queues:        map[string]string{},
-		values:        &memValues{objects: map[string][]byte{}},
+		values:        values,
 		snapshots:     snapshots,
 		continuations: map[string]int{},
 	}
 	h.env.SetTestTimeout(60 * time.Second)
-	h.env.RegisterActivityWithOptions(engine.NewEachActivities(h.values).CountEachItems,
+	h.env.RegisterActivityWithOptions((&eachCounter{h: h, real: engine.NewEachActivities(h.values)}).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems})
 	// The two compose activities, over the same in-memory store, so a run
 	// that composes another Orkflow or declares outputs runs here too.

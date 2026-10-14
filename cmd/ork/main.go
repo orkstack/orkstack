@@ -1109,12 +1109,22 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		snapshotActivities.WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
-	// The terminal snapshot of a run that cannot carry on from the saved state
-	// a newer release handed it (engine.RunWorkflow's carry refusal).
+	// The terminal snapshot of a run that cannot carry on from its saved
+	// state (engine.RunWorkflow's restore refusals).
 	runWorker.RegisterActivityWithOptions(
 		snapshotActivities.WriteFailedRunSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteFailedRunSnapshot},
 	)
+	// A switch's three writes and a bootstrap's chunk read: the run's
+	// continuation into a fresh history (internal/engine/continuation.go).
+	runWorker.RegisterActivityWithOptions(snapshotActivities.WriteEventSegment,
+		activity.RegisterOptions{Name: engine.ActivityWriteEventSegment})
+	runWorker.RegisterActivityWithOptions(snapshotActivities.WriteSwitchSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSwitchSnapshot})
+	runWorker.RegisterActivityWithOptions(snapshotActivities.WriteCheckpoint,
+		activity.RegisterOptions{Name: engine.ActivityWriteCheckpoint})
+	runWorker.RegisterActivityWithOptions(snapshotActivities.ReadContinuationChunk,
+		activity.RegisterOptions{Name: engine.ActivityReadContinuationChunk})
 	// The local activity that counts a fan-out's task-sourced array, over the
 	// same store internal/api reads artifacts with.
 	runWorker.RegisterActivityWithOptions(
@@ -1146,6 +1156,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if wireEventObserver(tcfg) {
 		eventObserver = observer
 		admissionObserver = observer
+		// The continuation metrics, measured by the run worker's own local
+		// activities (registered above, on this same instance).
+		snapshotActivities.WithContinuationObserver(continuationObserver{observer})
 	}
 	// The audit counter: ork.audit.records on the default providers, a no-op
 	// when telemetry is off.

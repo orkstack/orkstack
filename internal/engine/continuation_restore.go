@@ -136,42 +136,9 @@ func (s *runState) readCheckpoint(
 	obs := ContinuationObservationInput{Namespace: s.wf.GetNamespace(), Generation: s.generation, RestoreStartedAt: started}
 
 	readChunk := func(off, length int64) ([]byte, string) {
-		if ctx.Err() != nil {
-			return nil, restoreCanceled
-		}
-		remaining := deadline.Sub(workflow.Now(ctx))
-		if remaining <= 0 {
-			return nil, RunStateUnavailableCode // the deadline passed between chunks
-		}
-		lao := workflow.LocalActivityOptions{
-			ScheduleToCloseTimeout: remaining, // Temporal stops retrying at the deadline
-			StartToCloseTimeout:    min(time.Duration(budget.Restore.AttemptSeconds)*time.Second, remaining),
-			RetryPolicy: &temporal.RetryPolicy{
-				InitialInterval:        time.Duration(budget.Restore.BackoffInitialMillis) * time.Millisecond,
-				BackoffCoefficient:     2,
-				MaximumInterval:        time.Duration(budget.Restore.BackoffMaxSeconds) * time.Second,
-				NonRetryableErrorTypes: []string{RunStateCorruptCode},
-			},
-		}
 		chunkObs := obs
 		chunkObs.Final = off+length >= size
-		var data []byte
-		err := workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, lao),
-			ActivityReadContinuationChunk, loc, size, off, length, chunkObs).Get(ctx, &data)
-		s.noteCommand(ctx, 1, int64(len(data))+limit.Reserve.CommandBytes)
-		var applicationErr *temporal.ApplicationError
-		switch {
-		case ctx.Err() != nil:
-			return nil, restoreCanceled // the cancel cancelled the read, whatever err says
-		case err == nil:
-			return data, ""
-		case errors.As(err, &applicationErr) && applicationErr.Type() == RunStateCorruptCode:
-			s.restoreErr = err
-			return nil, RunStateCorruptCode
-		default:
-			s.restoreErr = err // Temporal retried until the deadline
-			return nil, RunStateUnavailableCode
-		}
+		return s.readChunkBefore(ctx, deadline, budget, limit, loc, size, off, length, chunkObs)
 	}
 	fail := func(code string) ([]*orkstackv1.RunCheckpointPart, string, string) {
 		switch code {
@@ -224,6 +191,59 @@ func (s *runState) readCheckpoint(
 		return nil, RunStateCorruptCode, corruptStateMessage("its parts decode to another size than its reference records")
 	}
 	return decoder.decoded, "", ""
+}
+
+// readChunkBefore reads one chunk of the saved state as ONE local activity,
+// retried by Temporal's local-activity retry policy (the plan's restore
+// policy) until deadline. The only arithmetic here is that deterministic
+// deadline, handed to Temporal as ScheduleToClose: a deadline already passed
+// issues no read at all. ctx.Err() after the read maps any outcome to
+// restoreCanceled — a cancel is never mistaken for RUN_STATE_*.
+func (s *runState) readChunkBefore(
+	ctx workflow.Context,
+	deadline time.Time,
+	budget ContinuationBudget,
+	limit HistoryLimit,
+	loc ContinuationLocator,
+	size, off, length int64,
+	obs ContinuationObservationInput,
+) ([]byte, string) {
+	if ctx.Err() != nil {
+		return nil, restoreCanceled
+	}
+	remaining := deadline.Sub(workflow.Now(ctx))
+	if remaining <= 0 {
+		return nil, RunStateUnavailableCode // the deadline passed between chunks
+	}
+	lao := workflow.LocalActivityOptions{
+		ScheduleToCloseTimeout: remaining, // Temporal stops retrying at the deadline
+		StartToCloseTimeout:    min(time.Duration(budget.Restore.AttemptSeconds)*time.Second, remaining),
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:        time.Duration(budget.Restore.BackoffInitialMillis) * time.Millisecond,
+			BackoffCoefficient:     2,
+			MaximumInterval:        time.Duration(budget.Restore.BackoffMaxSeconds) * time.Second,
+			NonRetryableErrorTypes: []string{RunStateCorruptCode},
+		},
+	}
+	var data []byte
+	err := workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, lao),
+		ActivityReadContinuationChunk, loc, size, off, length, obs).Get(ctx, &data)
+	// The chunk's marker is part of this workflow task's commands, success
+	// or failure: counted so the guard and the hold line see it.
+	s.noteCommand(ctx, 1, int64(len(data))+limit.Reserve.CommandBytes)
+	var applicationErr *temporal.ApplicationError
+	switch {
+	case ctx.Err() != nil:
+		return nil, restoreCanceled // the cancel cancelled the read, whatever err says
+	case err == nil:
+		return data, ""
+	case errors.As(err, &applicationErr) && applicationErr.Type() == RunStateCorruptCode:
+		s.restoreErr = err
+		return nil, RunStateCorruptCode
+	default:
+		s.restoreErr = err // Temporal retried until the deadline
+		return nil, RunStateUnavailableCode
+	}
 }
 
 func errorText(err error) string {

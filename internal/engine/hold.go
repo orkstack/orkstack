@@ -114,6 +114,9 @@ func (s *runState) openedUnclosedPins() int {
 // let these through would deadlock the pin. The set is rebuilt at most once
 // per pass, while any pin is opened and not done; empty otherwise.
 func (s *runState) pinClosureAllows(id string) bool {
+	if len(s.pinOrder) == 0 {
+		return false // a run with no pin has no closure to exempt
+	}
 	if !s.pinClosureFresh {
 		s.rebuildPinClosure()
 	}
@@ -123,6 +126,9 @@ func (s *runState) pinClosureAllows(id string) bool {
 // rebuildPinClosure builds pinClosureAllows' set: O(the size of the open
 // pins' closures).
 func (s *runState) rebuildPinClosure() {
+	if readyLoopProbeForTest != nil {
+		readyLoopProbeForTest.closureRebuilds++
+	}
 	s.pinClosureFresh = true
 	s.pinClosure = nil
 	for _, name := range s.pinOrder {
@@ -248,4 +254,16 @@ func (s *runState) admit(id string) {
 		s.admitted = map[string]bool{}
 	}
 	s.admitted[id] = true
+}
+
+// readyLoopProbeForTest is a TEST-ONLY probe, the precedent of
+// eachDispatchDescending: when set, it counts classify calls, condition
+// evaluations and pin-closure rebuilds, and sees the top of every main-loop
+// pass, so TestReadyLoop_HeldTasksCostConstantPerPass can prove a held task
+// costs O(1) per pass. Never set in production code.
+var readyLoopProbeForTest *readyLoopProbe
+
+type readyLoopProbe struct {
+	classify, conditions, closureRebuilds int
+	pass, selector                        func()
 }
