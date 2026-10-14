@@ -66,7 +66,12 @@ use Temporal Signals, including approval, external completion, resume, and abort
 Temporal history and payloads contain only small structured metadata and
 references. The hard maximum serialized payload size is **256 KiB**. Anything
 larger must be an Artifact. Never put large bytes in Temporal payloads or the
-event stream.
+event stream. The one exception is a run's own saved state copied into a new
+generation's history (§7.3): chunks of at most 128 KiB, at most the plan's
+checkpoint bound (8 MiB by default) per generation, verified by SHA-256 and
+counted in that generation's history. It exists because a generation's
+decisions must come from recorded bytes; it is never an artifact's bytes, and
+nothing else may use it.
 
 Object storage holds artifacts, logs, immutable Orkflow-definition snapshots,
 and immutable activity completion and per-attempt records. Object-store data is
@@ -604,7 +609,13 @@ built it. Versioning is off unless `ORK_BUILD_ID` is set; leave
 `DefaultVersioningBehavior` unset when it is off. `orkctl release` (status,
 ramp, promote, rollback, wait) is the supported rollout path, and it refuses a
 ramp or promotion the target release's engines and Orkers could not carry. A
-version must drain before its workers are decommissioned. A pinned workflow
+version must drain before its workers are decommissioned. A run that continues
+as new keeps its pinned build, so a version drains only after its last open
+chain ends. A generation never re-asks a version decision an earlier
+generation made; on an unversioned fleet a later generation may run a newer
+build, so a change whose mid-run adoption would alter a run's observable
+behaviour must be decided where every run first meets it, not where a later
+generation might. A pinned workflow
 uses its own activity-worker version only while that version has workers
 polling its activity channel; otherwise Temporal falls through to that
 channel's current version. A task pin (§7.1) is the one exception to that
@@ -618,15 +629,64 @@ through to the current version
 Old histories must replay against new code; `internal/engine/replay_test.go`
 and the recorded histories in `internal/engine/testdata/history/` protect this
 contract. A new interpreter path must be entered only by a definition that
-declares the new feature, which no older history holds, so every recorded
-history replays unchanged without a version marker; each new command path gets
-its own recorded history fixture. Because the activity channel can fall
+declares the new feature — which no older history holds, so every recorded
+history replays unchanged without a version marker — or by a plan field the
+submitting engine sets together with a `workflow.GetVersion` gate asked lazily
+where the path first diverges (`lean-event-path`, `run-history-guard`,
+`continue-as-new`, `run-in-flight-cap`), so a history recorded before the gate
+replays its `DefaultVersion` branch; each new command path gets its own
+recorded history fixture. Every tunable number that decides whether, which,
+how many or where workflow code issues a command — a history ceiling or
+reserve, a continuation budget, a hold line, a chunk or batch size, an
+in-flight cap, a retry spacing — is pinned per run, in the plan the submitting
+engine builds or in the carry a generation hands the next, never read from a
+code constant at decision time, so a release that changes a default moves only
+new runs. A code constant may decide a command only when this file fixes it
+(the 256 KiB payload bound, the 128 KiB chunk bound) or it predates this rule
+and a recorded history protects it; changing such a constant is a new command
+path with its own gate. Because the activity channel can fall
 through to another release, an activity-input field an older Orker would
 reject or ignore (cache, join, fan-out items) is advertised as a capability on
 `DescribeOrker`. Submit asks one Orker of each pool such a task would run on
 and refuses with `FailedPrecondition`, naming the Orker and its build, when it
 lacks the capability; a pool that does not answer the probe is logged, not
 refused, so every Orker of one pool must run one release.
+
+### 7.3 Generations
+
+A run whose plan carries a continuation budget continues as new into a new
+generation once its history has grown past that budget, at its next moment
+with nothing of it in flight: no activity, child run, pin (opening, open or
+closing) or event publish. Open awaits may cross; their deadlines are absolute
+instants. The run id, the event sequence counter, `created_at`, `started_at`, a
+reference to an immutable full snapshot of its state at the switch and every
+version decision cross in the carry (`orkstack.v1.RunContinuation`, at most
+256 KiB), and no event is emitted for the crossing. A continuation is not a
+start: it keeps the run id, which every generation after the first reads from
+its workflow id — its run-id argument is empty, so a release that predates
+generations refuses it rather than running the run again — and it is not
+refused by the single-use rule. The run's state crosses as an immutable
+checkpoint, and each closed generation's events as an immutable event segment;
+both are SHA-256 addressed, live under the run's snapshot prefix and are
+reclaimed with it. The next generation reads its checkpoint into its own
+history in chunks of at most the plan's chunk size (128 KiB), a bounded batch
+per workflow task, each read retried by Temporal's own local-activity retry
+policy until the plan's restore timeout; it verifies every part before
+adopting any and emits nothing for it. A checkpoint larger than the plan's
+bound is never written as a switch, and the run carries on in its current
+history instead. A run holds NEW dispatch, never running work, only when its
+history plus what its failure path still needs reaches the plan's hold line
+(60% of the cluster's limit by default), and then for as long as the running
+work takes — bounded by that work's own timeouts, never by a clock of its own —
+giving the hold up only when an open pin's remaining work waits on an await.
+Every run keeps at most its in-flight cap of activities, child runs and pins
+pending; more wait PENDING as on a saturated pool, and the cap never holds
+while nothing is in flight. A run that cannot carry on fails
+`RUN_HISTORY_LIMIT` before the cluster's own limit and is never left to be
+terminated. A generation that cannot load or verify its state fails
+`RUN_STATE_*` explicitly and still publishes its terminal event; an
+operator's cancel during that load cancels the read and ends the run
+canceled.
 
 ## 8. Workflow-native primitives
 

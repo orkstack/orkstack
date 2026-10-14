@@ -260,10 +260,37 @@ type EngineInstruments struct {
 	// ork.namespace and ork.refusal.reason. A refused submission is not a
 	// run and is never also counted on Runs.
 	RunsRefused metric.Int64Counter
+	// Continuations counts a run's continuations, labelled ork.namespace and
+	// outcome=written|write_failed|over_cap|restored, or a failed restore's
+	// RUN_STATE_* code. Recorded by the run's own local activities, never by
+	// workflow code.
+	Continuations metric.Int64Counter
+	// ContinuationStateBytes records the stored size of what a switch wrote,
+	// labelled ork.namespace and kind=checkpoint|events|snapshot.
+	ContinuationStateBytes metric.Int64Histogram
+	// ContinuationDuration records the seconds a switch's write or a
+	// bootstrap's whole restore took, labelled ork.namespace and
+	// phase=write|restore.
+	ContinuationDuration metric.Float64Histogram
+	// ContinuationHoldDuration records how long a run held new dispatch
+	// before it switched (0 for a natural idle point), labelled
+	// ork.namespace.
+	ContinuationHoldDuration metric.Float64Histogram
+	// ContinuationReadAttempts records the attempt each successful bootstrap
+	// read succeeded on, labelled ork.namespace.
+	ContinuationReadAttempts metric.Int64Histogram
 	// Cardinality is the label policy EngineObserver applies through
 	// RunAttrs above.
 	Cardinality Cardinality
 }
+
+// AttrContinuationKind and AttrContinuationPhase label the continuation
+// instruments: which object a switch wrote, and whether a duration is a
+// write's or a restore's.
+const (
+	AttrContinuationKind  = "kind"
+	AttrContinuationPhase = "phase"
+)
 
 // NewEngineInstruments creates the engine's instruments from p's meter
 // provider. It works, as a no-op, on disabled Providers: the returned
@@ -315,13 +342,48 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	continuations, err := meter.Int64Counter("ork.run.continuations",
+		metric.WithDescription("Run continuations into a fresh history, by namespace and outcome."),
+		metric.WithUnit("{switch}"))
+	if err != nil {
+		return nil, err
+	}
+	stateBytes, err := meter.Int64Histogram("ork.run.continuation.state.bytes",
+		metric.WithDescription("Stored size of what a run's continuation wrote, by namespace and kind."),
+		metric.WithUnit("By"))
+	if err != nil {
+		return nil, err
+	}
+	continuationDuration, err := meter.Float64Histogram("ork.run.continuation.duration",
+		metric.WithDescription("Seconds a continuation's write or a restore took, by namespace and phase."),
+		metric.WithUnit("s"))
+	if err != nil {
+		return nil, err
+	}
+	holdDuration, err := meter.Float64Histogram("ork.run.continuation.hold.duration",
+		metric.WithDescription("Seconds a run held new dispatch before it continued, by namespace."),
+		metric.WithUnit("s"))
+	if err != nil {
+		return nil, err
+	}
+	readAttempts, err := meter.Int64Histogram("ork.run.continuation.read.attempts",
+		metric.WithDescription("Attempt a restore's successful read succeeded on, by namespace."),
+		metric.WithUnit("{attempt}"))
+	if err != nil {
+		return nil, err
+	}
 	return &EngineInstruments{
-		Runs:         runs,
-		RunDuration:  runDuration,
-		Tasks:        tasks,
-		TaskDuration: taskDuration,
-		TaskAttempts: taskAttempts,
-		RunsRefused:  runsRefused,
-		Cardinality:  highCard,
+		Continuations:            continuations,
+		ContinuationStateBytes:   stateBytes,
+		ContinuationDuration:     continuationDuration,
+		ContinuationHoldDuration: holdDuration,
+		ContinuationReadAttempts: readAttempts,
+		Runs:                     runs,
+		RunDuration:              runDuration,
+		Tasks:                    tasks,
+		TaskDuration:             taskDuration,
+		TaskAttempts:             taskAttempts,
+		RunsRefused:              runsRefused,
+		Cardinality:              highCard,
 	}, nil
 }

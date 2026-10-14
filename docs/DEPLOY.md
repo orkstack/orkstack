@@ -348,6 +348,11 @@ then the variable it becomes.
 | `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `1000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, apply and plan, and again at submit, so lowering it refuses new runs of an Orkflow applied above the new value. It may be raised, but every task's activity and lifecycle events land in the run's one history, which the Temporal cluster bounds (51,200 events and 50 MiB by default) and which a run cannot yet continue past: raise it only on a cluster whose history limits were raised to match (and set `engine.history.*` to them), or a large run stops `RUN_HISTORY_LIMIT` part-way |
 | `engine.history.max_events` | `ORK_HISTORY_MAX_EVENTS` | `51200` | `ork` | the cluster's per-execution history event limit. A run stops `RUN_HISTORY_LIMIT` before reaching it, counting what its own failure path still needs, instead of being terminated by the cluster with no reason. **Set it to the cluster's real limit if an operator changed it:** a value above the real limit defeats the guard, and one below stops runs early. Even at the default, a run that would finish just under the limit with much work still pending now stops `RUN_HISTORY_LIMIT`, because its failure path's reserve is kept back: 16 events per running task, 8 per pending task, 24 per open await, 12 per open pin, 48 per failure handler, plus 96 — about 8,100 for a 1,000-task flat stage. At least 100; anything else is refused at boot. Read at submit, so a change applies to new runs |
 | `engine.history.max_bytes` | `ORK_HISTORY_MAX_BYTES` | `50 MiB` | `ork` | the same, for history size. The reserve assumes completion results of ≤ 8 KiB each; a run whose failure path lands many larger results at once can still reach the cluster's size limit and be terminated by the cluster; this is the guard's one known gap, and such a run is still reported `RUN_HISTORY_LIMIT` (the reader maps the cluster's history-limit termination, "Workflow history count/size exceeds limit.", to it), never `RUN_TERMINATED`. At least 64 KiB; anything else is refused at boot. Read at submit, so a change applies to new runs. Both limits are carried once per run tree, on the top-level run's plan (about 0.4 KB), so a run whose plan is already within that much of its 256 KiB bound is refused at submit (`FAILED_PRECONDITION`, naming the size) |
+| `engine.continuation.enabled` | `ORK_CONTINUATION_ENABLED` | `false` | `ork` | runs carry on into a fresh history once theirs has grown past the budget below, at their next moment with nothing running, so a large or long-lived run is bounded per history rather than stopped `RUN_HISTORY_LIMIT` (see §5, "A run that pauses new tasks", and §2, "Runs that span several executions"). Off by default in this release. The three keys below are validated only when this is true. Read at submit, so a change applies to new runs |
+| `engine.continuation.events` | `ORK_CONTINUATION_EVENTS` | `8192` | `ork` | history growth (events) after which a run carries on at its next moment with nothing running. A run with no such moment pauses new tasks once its history plus what its failure path still needs reaches 60% of the limit, and carries on once what was running finishes. At least 50, at most a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled. Read at submit, so a change applies to new runs |
+| `engine.continuation.bytes` | `ORK_CONTINUATION_BYTES` | `8 MiB` | `ork` | the same, for history bytes; also the largest saved state a run carries forward (the one bounded copy AGENTS.md §2.2 allows into history). A run whose saved state is larger carries on in its current history instead, and may stop `RUN_HISTORY_LIMIT` naming the size. At least 16 KiB, at most a fifth of `engine.history.max_bytes`; anything else is refused at boot when continuation is enabled |
+| `engine.continuation.restore_timeout` | `ORK_CONTINUATION_RESTORE_TIMEOUT` | `1h` | `ork` | how long a run that carried on waits for object storage to return its saved state before it fails `RUN_STATE_UNAVAILABLE`, explicitly. 1m to 8h, and its worst-case history — about `128 + 3 per 8 s` events at the default bytes (1,478 at 1h, 10,928 at 8h)— must fit in a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled, naming this key, `engine.continuation.bytes` and `engine.history.max_events`. Each await still open when a run carries on adds one more event to that restore (its deadline timer, recreated), which the run's history guard counts like any other |
+| `engine.run_max_in_flight` | `ORK_RUN_MAX_IN_FLIGHT` | `1000` | `ork` | the most activities, child runs and pins one run keeps pending at once; more wait `PENDING`, exactly as on a saturated pool, and dispatch resumes as running work finishes. An open pin's needs are exempt, below an absolute stop at 1,900. 16 to 1,800; anything else is refused at boot. Without it, a run above the cluster's 2,000 pending activities would stall. Read at submit, so a change applies to new runs |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
@@ -1291,6 +1296,15 @@ composition, `outputs:`, join policies, caching, schedules) needs the
 preparation in §3, "Releases that add Orkflow constructs" — for join policies
 it is a hold, because the silent outcome is destructive.
 
+**A release that lets runs carry on into a fresh history** ships after the
+release that reads them (below), and the default turns on only in a release
+after one that already contained the writer. Rolling back below the writer,
+but not below the reader, while runs are carrying on fails those runs
+explicitly, `RUN_STATE_UNSUPPORTED` with a terminal event: an older release
+refuses a saved-state format it does not know. Turn
+`engine.continuation.enabled` off first and let runs that carry on finish
+(the check below lists them).
+
 **Never roll back below the first release that reads runs carried on into a
 fresh history.** That release (the read side of continue-as-new) must ship
 before any release that lets a run carry on, and stays the floor:
@@ -2074,6 +2088,41 @@ that is the audit read, and nothing new is written for it.
 
 ---
 
+### A run that pauses new tasks
+
+Two things make a run hold NEW tasks — never running ones — exactly as a
+saturated pool would:
+
+- **The in-flight cap** (`engine.run_max_in_flight`, 1,000 by default): a run
+  keeps at most that many activities, fan-out items, child runs and pins
+  pending, and starts more as they finish. It never holds while nothing is in
+  flight, and an open pin's own needs are exempt below an absolute 1,900, so it
+  can never stall a run. Without it, a run above the cluster's 2,000 pending
+  activities per execution would fail every workflow task — stuck. A run that
+  keeps more than 1,000 activities pending at once now waits at 1,000.
+- **Carrying on into a fresh history** (`engine.continuation.*`, off by
+  default in this release). Past its budget (8,192 events or 8 MiB of growth)
+  a run carries on at its next moment with nothing running — the usual case
+  for chains, staged DAGs and runs parked on awaits, which never pause. A run
+  with no such moment (a fan-out that keeps refilling) holds new tasks once its
+  history plus what its failure path would still need reaches 60% of the
+  cluster's limit, for as long as the running work takes — bounded by that
+  work's own timeouts, never by a clock of its own — then carries on. An open
+  pin whose remaining work waits on an await makes the hold give up (the run
+  tries again after more growth). A run that can never reach such a moment
+  stops `RUN_HISTORY_LIMIT` before the cluster's limit, its message naming the
+  pin and the await or the size of its saved state.
+
+How to read it: the engine logs `run reached its in-flight cap`, `run will
+carry on into a fresh history at its next idle point`, `run pausing new tasks
+so it can carry on into a fresh history`, `run resumed new tasks: it cannot
+reach a moment with nothing running`, `run carried on into a fresh history`
+(with `hold_seconds`) and `run restored its saved state`, each once per
+decision with `run_id`, `history_events`, `history_bytes` and `in_flight`;
+the `ork.run.continuation*` metrics (§7); and `orkctl run inspect`, which
+shows a held task with no attempt. A composed child that awaits for days holds
+its parent's new tasks for that long if the parent pauses meanwhile.
+
 ## 6. Replay safety across versions
 
 A pinned run finishing on an old build is Temporal replaying an old history
@@ -2121,6 +2170,22 @@ the stream a reader sees are the same on both paths.
 The replayer never looks inside a payload: adding a field to
 `task.ExecuteTaskInput` replays perfectly clean, and an Orker of the recorded
 build would silently drop it. That is why the third guard exists.
+
+**Continuing as new and the in-flight cap are versioned changes too.** A run
+that crosses its continuation budget records the `continue-as-new` version
+there, and a run the in-flight cap first holds records `run-in-flight-cap`;
+both are asked lazily, so a history recorded before them replays their
+`DefaultVersion` branch, and a later generation never asks a decision its
+carry already holds. Every number that decides one of these commands — the
+budget, the hold line, the chunk and batch sizes of the next history's read,
+the restore policy, the cap — is pinned in the run's plan at submit, never
+read from a code constant, so a release that changes a default moves only new
+runs. The fixtures `run-continued-g0-v1.json` and `run-continued-g1-v1.json`
+(one run recorded across a switch, with the three objects it wrote) and
+`run-in-flight-cap-v1.json` guard them, each with its command, payload and
+negative tests (`internal/engine/testdata/history/README.md`); a carried
+generation is replayed as the execution of the run's own workflow id, which
+is where it reads its run id from.
 
 If any of them fails, current code no longer produces what the recorded build
 did. Either restore it (`workflow.GetVersion` for a deliberate command-stream
@@ -2348,6 +2413,11 @@ policy names one — they can land on a different sink than the process default
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
 | `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | engine, once per submission the namespace's hold, `max_running` or enforced budget refused (`namespace_held`, `max_running_reached`, `budget_exceeded`, `budget_unmeasurable`); not a run, not counted on `ork.runs` |
+| `ork.run.continuations` | `ork.namespace`, `outcome` | engine, once per run carried on into a fresh history: `written` (its saved state written), `write_failed` (object storage refused it; the run tries again after more growth), `over_cap` (its saved state is over `engine.continuation.bytes`; it never carries on), `restored` (the next history read it back), or a `RUN_STATE_*` code (the next history could not) |
+| `ork.run.continuation.state.bytes` | `ork.namespace`, `kind` | engine, the stored size of what a switch wrote: `checkpoint` (the saved state), `events` (the earlier history's events), `snapshot` (the full state at the switch) |
+| `ork.run.continuation.duration` | `ork.namespace`, `phase` | engine, seconds a switch's write (`write`) or a whole restore (`restore`) took |
+| `ork.run.continuation.hold.duration` | `ork.namespace` | engine, seconds a run held new tasks before it carried on (0 when it found a moment with nothing running on its own) |
+| `ork.run.continuation.read.attempts` | `ork.namespace` | engine, the attempt each successful read of a saved state succeeded on |
 
 (The rows above omit `ork.namespace` even though every run and task metric
 carries it; `ork.runs.refused` names it explicitly. `ork.cache.outcome` —

@@ -23,6 +23,12 @@ const ActivityWriteSnapshot = "WriteSnapshot"
 type SnapshotStore interface {
 	WriteSnapshot(ctx context.Context, namespace, runID string, sequence int64, data []byte) (string, error)
 	ReadSnapshot(ctx context.Context, uri string) ([]byte, error)
+	// WriteContinuation and ReadContinuationRange are a run's continuation
+	// objects (artifacts.RunSnapshotStore): written create-if-absent under a
+	// content-addressed key at a switch, and read in ranges by the next
+	// generation's bootstrap.
+	WriteContinuation(ctx context.Context, namespace, runID string, generation int64, kind string, data []byte) (string, error)
+	ReadContinuationRange(ctx context.Context, uri string, wantSize, offset, length int64) ([]byte, error)
 }
 
 // compile-time checks: the artifacts platform-record stores are what
@@ -32,10 +38,21 @@ var (
 	_ SnapshotStore = (*artifacts.S3RunSnapshotStore)(nil)
 )
 
-// SnapshotActivities owns the local activity that durably externalizes a run
-// snapshot. Its result is only a URI, so the local-activity marker stays small.
+// SnapshotActivities owns the local activities that durably externalize a
+// run's snapshots and its continuation objects. Each result is a URI or an
+// object reference, so its local-activity marker stays small — except a
+// bootstrap read's, whose chunk is the one bounded copy of saved state
+// AGENTS.md §2.2 allows into history.
+//
+// beforeContinuationWrite and beforeContinuationRead are TEST-ONLY hooks of
+// this one instance (WithContinuationHooksForTest), so two in-process
+// replicas in one test never share them; never set in production.
 type SnapshotActivities struct {
-	store SnapshotStore
+	store    SnapshotStore
+	observer ContinuationObserver
+
+	beforeContinuationWrite func(ctx context.Context, kind string) error
+	beforeContinuationRead  func(ctx context.Context, offset int64) error
 }
 
 // NewSnapshotActivities returns snapshot activities backed by store.

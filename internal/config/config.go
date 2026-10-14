@@ -148,6 +148,17 @@ var Schema = []Var{
 	// before reaching.
 	{Path: "engine.history.max_events", Env: "ORK_HISTORY_MAX_EVENTS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(engine.DefaultHistoryMaxEvents)},
 	{Path: "engine.history.max_bytes", Env: "ORK_HISTORY_MAX_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultHistoryMaxBytes)},
+	// ORK_CONTINUATION_* fall back to engine.DefaultContinuation*: whether a
+	// run carries on into a fresh history past its budget (events or bytes),
+	// and how long its next history waits for its saved state. Pinned into
+	// each top-level plan at submit; validated only when enabled.
+	{Path: "engine.continuation.enabled", Env: "ORK_CONTINUATION_ENABLED", Binaries: usesOrk, Kind: KindBool, Default: formatBool(engine.DefaultContinuationEnabled)},
+	{Path: "engine.continuation.events", Env: "ORK_CONTINUATION_EVENTS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(engine.DefaultContinuationEvents)},
+	{Path: "engine.continuation.bytes", Env: "ORK_CONTINUATION_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultContinuationBytes)},
+	{Path: "engine.continuation.restore_timeout", Env: "ORK_CONTINUATION_RESTORE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultContinuationRestoreTimeout)},
+	// ORK_RUN_MAX_IN_FLIGHT's fallback is engine.DefaultRunMaxInFlight: the
+	// most activities, child runs and pins one run keeps pending.
+	{Path: "engine.run_max_in_flight", Env: "ORK_RUN_MAX_IN_FLIGHT", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultRunMaxInFlight))},
 	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the
 	// built-in ceiling (engine.MaxComposeDepth) it may lower and never raise.
 	{Path: "engine.compose_max_depth", Env: "ORK_COMPOSE_MAX_DEPTH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultComposeMaxDepth))},

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -75,3 +76,49 @@ func DisableHistoryGuardForTest() (restore func()) {
 // termination reason is the cluster's own at its history limit, the text the
 // reader's backstop matches (TestIntegration_ContinueAsNewServerContract, h).
 func IsHistoryLimitTerminationForTest(reason string) bool { return isHistoryLimitTermination(reason) }
+
+// ObserveDecisionStatesForTest sets the test-only hook that sees a run's
+// decision state at each switch and after each restore, and returns the
+// function that clears it.
+func ObserveDecisionStatesForTest(fn func(phase string, state DecisionState)) (restore func()) {
+	continuationStateHookForTest = fn
+	return func() { continuationStateHookForTest = nil }
+}
+
+// ContinueAtEveryIdleForTest sets the test-only switch that makes every
+// natural idle point after a generation's first command due, and returns the
+// function that clears it.
+func ContinueAtEveryIdleForTest() (restore func()) {
+	continuationAtEveryIdleForTest = true
+	return func() { continuationAtEveryIdleForTest = false }
+}
+
+// WithContinuationHooksForTest sets this instance's test-only hooks, run at
+// the start of every continuation write (kind "events", "snapshot" or
+// "checkpoint") and every saved-state read, in the local activity's own
+// goroutine. A hook blocks on a channel its test owns and never returns
+// because of its context.
+func (a *SnapshotActivities) WithContinuationHooksForTest(
+	beforeWrite func(ctx context.Context, kind string) error,
+	beforeRead func(ctx context.Context, offset int64) error,
+) *SnapshotActivities {
+	a.beforeContinuationWrite = beforeWrite
+	a.beforeContinuationRead = beforeRead
+	return a
+}
+
+// ForceContinuationForTest makes every run decide with budget and limit
+// instead of its plan's, and take the continue-as-new version WITHOUT
+// asking workflow.GetVersion, and returns the function that clears it: a
+// negative replay test proves a committed history replays only because of
+// the gate.
+func ForceContinuationForTest(budget ContinuationBudget, limit HistoryLimit) (restore func()) {
+	continuationPlanForTest = &budget
+	historyGuardPlanForTest = &limit
+	continueAsNewForcedForTest = true
+	return func() {
+		continuationPlanForTest = nil
+		historyGuardPlanForTest = nil
+		continueAsNewForcedForTest = false
+	}
+}

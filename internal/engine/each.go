@@ -414,14 +414,7 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 	}
 
 	pool := s.poolForTask(t)
-	e.limit = count
-	if mp := spec.GetMaxParallel(); mp > 0 && mp < count {
-		e.limit = mp
-	}
-	e.stride = (count + eachSnapshotsPerFanOut - 1) / eachSnapshotsPerFanOut
-	if e.stride < 1 {
-		e.stride = 1
-	}
+	e.limit, e.stride = eachPacing(spec, count)
 	taskRun.Status = orkstackv1.Status_STATUS_RUNNING
 	taskRun.ScheduledAt = now
 	taskRun.Pool = pool
@@ -519,6 +512,14 @@ func (s *runState) dispatchItems(ctx, runCtx workflow.Context, id string, inFlig
 		// run, not the fan-out, owns the reason (fail).
 		if err := s.historyExhausted(ctx, inFlight); err != nil {
 			return err
+		}
+		// A quiesce or the in-flight cap holds the item: e.next is unchanged,
+		// and the fan-out is resumed from the main loop's top
+		// (resumeHeldFanOuts).
+		s.updateContinuation(ctx, inFlight)
+		if s.holdDispatch(ctx, id, inFlight) {
+			s.heldFanOuts = true
+			break
 		}
 		index := e.next
 		if eachDispatchDescending {
@@ -893,6 +894,7 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 		// scheduled in history, numbered from the same counter, so a reader
 		// sees exactly the stream it always has. drainItemPublishes awaits
 		// every one before the run's terminal event.
+		s.recordEvent(event)
 		s.publishItemDetached(ctx, event, "", dedupeKey)
 		return nil
 	}
@@ -917,6 +919,7 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 		base = s.itemPublishContext(ctx)
 	}
 	activityCtx := workflow.WithActivityOptions(base, eventActivityOptions())
+	s.recordEvent(event)
 	if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey).
 		Get(ctx, nil); err != nil {
 		workflow.GetLogger(ctx).Error("publish item event failed",

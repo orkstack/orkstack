@@ -58,6 +58,39 @@ type harness struct {
 	// itself rather than by a sleep. A non-nil error fails that write (every
 	// attempt of it the hook fails).
 	onSnapshot func(run *orkstackv1.Run, sequence int64) error
+	// snapshots is the in-memory store every snapshot and continuation
+	// object of the run lands in. A later generation's harness shares its
+	// predecessor's (newHarnessOver), so it reads what the switch wrote.
+	snapshots *testSnapshotStore
+	// onContinuation, when set, is called at the start of every
+	// continuation write (kind "events", "snapshot" or "checkpoint") and
+	// every saved-state read (kind "read"), from the local activity's
+	// goroutine; a non-nil error fails that attempt.
+	onContinuation func(kind string, offset int64) error
+	// onContinuationRun, when set, is called with the run the switch
+	// snapshot or checkpoint write (kind "snapshot" or "checkpoint") is
+	// about to encode, after onContinuation, from the local activity's
+	// goroutine.
+	onContinuationRun func(kind string, run *orkstackv1.Run)
+	// continuations counts the continuation local activities that ran, by
+	// kind.
+	continuations map[string]int
+	// countItems, when set, answers CountEachItems instead of the store.
+	countItems func(ref *orkstackv1.ArtifactRef) (int32, error)
+}
+
+// eachCounter is the harness's CountEachItems: the test's answer when it set
+// one, the real count over the harness's store otherwise.
+type eachCounter struct {
+	h    *harness
+	real *engine.EachActivities
+}
+
+func (c *eachCounter) CountEachItems(ctx context.Context, ref *orkstackv1.ArtifactRef, path []string, over string, maxBytes int64) (int32, error) {
+	if c.h.countItems != nil {
+		return c.h.countItems(ref)
+	}
+	return c.real.CountEachItems(ctx, ref, path, over, maxBytes)
 }
 
 func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
@@ -71,15 +104,33 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 // context: to heartbeat, and to observe a cancellation.
 func newHarnessCtx(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
 	t.Helper()
+	return newHarnessOver(t, suite, newTestSnapshotStore(), behavior)
+}
+
+// newHarnessOver is newHarnessCtx over an existing snapshot store: the
+// harness a later generation of a run starts in, reading what its
+// predecessor's switch wrote.
+func newHarnessOver(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshots *testSnapshotStore, behavior func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
+	t.Helper()
+	return newHarnessShared(t, suite, snapshots, &memValues{objects: map[string][]byte{}}, behavior)
+}
+
+// newHarnessShared is newHarnessOver sharing a values store as well: every
+// generation of one run reads the values its earlier generations' tasks
+// committed, as they all read one bucket.
+func newHarnessShared(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshots *testSnapshotStore, values *memValues, behavior func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
+	t.Helper()
 	h := &harness{
-		env:    suite.NewTestWorkflowEnvironment(),
-		bus:    engine.NewEventBus(),
-		store:  engine.NewRunStore(),
-		queues: map[string]string{},
-		values: &memValues{objects: map[string][]byte{}},
+		env:           suite.NewTestWorkflowEnvironment(),
+		bus:           engine.NewEventBus(),
+		store:         engine.NewRunStore(),
+		queues:        map[string]string{},
+		values:        values,
+		snapshots:     snapshots,
+		continuations: map[string]int{},
 	}
 	h.env.SetTestTimeout(60 * time.Second)
-	h.env.RegisterActivityWithOptions(engine.NewEachActivities(h.values).CountEachItems,
+	h.env.RegisterActivityWithOptions((&eachCounter{h: h, real: engine.NewEachActivities(h.values)}).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems})
 	// The two compose activities, over the same in-memory store, so a run
 	// that composes another Orkflow or declares outputs runs here too.
@@ -89,8 +140,8 @@ func newHarnessCtx(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior fu
 	h.env.RegisterActivityWithOptions(compose.StoreComposedValues,
 		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
 	h.env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
-	snapshots := newTestSnapshotStore()
-	write := engine.NewSnapshotActivities(snapshots).WriteSnapshot
+	snapshotActivities := engine.NewSnapshotActivities(snapshots)
+	write := snapshotActivities.WriteSnapshot
 	h.env.RegisterActivityWithOptions(
 		func(ctx context.Context, run *orkstackv1.Run, sequence int64) (string, error) {
 			h.mu.Lock()
@@ -105,6 +156,7 @@ func newHarnessCtx(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior fu
 		},
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
+	h.registerContinuationActivities(snapshotActivities)
 	h.env.RegisterActivityWithOptions(
 		engine.NewEventActivities(h.bus, h.store).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
@@ -121,6 +173,85 @@ func newHarnessCtx(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior fu
 	)
 	t.Cleanup(func() { h.env.AssertExpectations(t) })
 	return h
+}
+
+// registerContinuationActivities registers the switch's writes, the
+// bootstrap's read and the failed-start snapshot, each behind
+// onContinuation and counted, as cmd/ork registers them on the run worker.
+// Method values, never closures: the test environment resolves a local
+// activity by its function's name, and closures share short names.
+func (h *harness) registerContinuationActivities(a *engine.SnapshotActivities) {
+	c := &continuationHooks{h: h, a: a}
+	h.env.RegisterActivityWithOptions(c.WriteEventSegment, activity.RegisterOptions{Name: engine.ActivityWriteEventSegment})
+	h.env.RegisterActivityWithOptions(c.WriteSwitchSnapshot, activity.RegisterOptions{Name: engine.ActivityWriteSwitchSnapshot})
+	h.env.RegisterActivityWithOptions(c.WriteCheckpoint, activity.RegisterOptions{Name: engine.ActivityWriteCheckpoint})
+	h.env.RegisterActivityWithOptions(c.ReadContinuationChunk, activity.RegisterOptions{Name: engine.ActivityReadContinuationChunk})
+	h.env.RegisterActivityWithOptions(a.WriteFailedRunSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteFailedRunSnapshot})
+}
+
+// continuationHooks wraps the continuation activities with the harness's
+// onContinuation hook and counter.
+type continuationHooks struct {
+	h *harness
+	a *engine.SnapshotActivities
+}
+
+func (c *continuationHooks) hook(kind string, offset int64) error {
+	c.h.mu.Lock()
+	c.h.continuations[kind]++
+	fn := c.h.onContinuation
+	c.h.mu.Unlock()
+	if fn != nil {
+		return fn(kind, offset)
+	}
+	return nil
+}
+
+func (c *continuationHooks) runHook(kind string, run *orkstackv1.Run) {
+	c.h.mu.Lock()
+	fn := c.h.onContinuationRun
+	c.h.mu.Unlock()
+	if fn != nil {
+		fn(kind, run)
+	}
+}
+
+func (c *continuationHooks) WriteEventSegment(ctx context.Context, segment *orkstackv1.RunEventSegment, namespace string, obs engine.ContinuationObservationInput) (*orkstackv1.ContinuationObject, error) {
+	if err := c.hook("events", 0); err != nil {
+		return nil, err
+	}
+	return c.a.WriteEventSegment(ctx, segment, namespace, obs)
+}
+
+func (c *continuationHooks) WriteSwitchSnapshot(ctx context.Context, run *orkstackv1.Run, namespace string, generation int64, obs engine.ContinuationObservationInput) (*orkstackv1.ContinuationObject, error) {
+	if err := c.hook("snapshot", 0); err != nil {
+		return nil, err
+	}
+	c.runHook("snapshot", run)
+	return c.a.WriteSwitchSnapshot(ctx, run, namespace, generation, obs)
+}
+
+func (c *continuationHooks) WriteCheckpoint(ctx context.Context, run *orkstackv1.Run, generation, capBytes int64, obs engine.ContinuationObservationInput) (*orkstackv1.ContinuationObject, error) {
+	if err := c.hook("checkpoint", 0); err != nil {
+		return nil, err
+	}
+	c.runHook("checkpoint", run)
+	return c.a.WriteCheckpoint(ctx, run, generation, capBytes, obs)
+}
+
+func (c *continuationHooks) ReadContinuationChunk(ctx context.Context, loc engine.ContinuationLocator, size, offset, length int64, obs engine.ContinuationObservationInput) ([]byte, error) {
+	if err := c.hook("read", offset); err != nil {
+		return nil, err
+	}
+	return c.a.ReadContinuationChunk(ctx, loc, size, offset, length, obs)
+}
+
+// continuationCount is how many continuation local activities of kind ran.
+func (h *harness) continuationCount(kind string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.continuations[kind]
 }
 
 // sessionCreationActivityName and sessionCompletionActivityName are Temporal's

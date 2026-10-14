@@ -277,6 +277,21 @@ type Config struct {
 	HistoryMaxEvents int64
 	HistoryMaxBytes  int64
 
+	// ContinuationEnabled, ContinuationEvents, ContinuationBytes and
+	// ContinuationRestoreTimeout are engine.continuation.*: whether a run
+	// carries on into a fresh history past its budget, and the budget. Zero
+	// numbers mean the engine defaults. Pinned into each top-level plan at
+	// submit (pinRunTreeLimits), only when enabled.
+	ContinuationEnabled        bool
+	ContinuationEvents         int64
+	ContinuationBytes          int64
+	ContinuationRestoreTimeout time.Duration
+
+	// RunMaxInFlight is engine.run_max_in_flight: the most activities, child
+	// runs and pins one run keeps pending. Zero means
+	// engine.DefaultRunMaxInFlight. Pinned into every top-level plan.
+	RunMaxInFlight int32
+
 	// ComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH: how many levels of child runs
 	// one run may start (a run is level 0). Zero means the built-in ceiling,
 	// engine.DefaultComposeMaxDepth; it may lower that ceiling and never
@@ -456,6 +471,11 @@ type Service struct {
 	// historyMaxEvents and historyMaxBytes are Config.HistoryMaxEvents and
 	// HistoryMaxBytes, defaulted.
 	historyMaxEvents, historyMaxBytes int64
+	// continuation is the budget pinRunTreeLimits pins, nil when
+	// continuation is off; runMaxInFlight is Config.RunMaxInFlight,
+	// defaulted.
+	continuation   *engine.ContinuationBudget
+	runMaxInFlight int32
 	// composeMaxDepth is Config.ComposeMaxDepth, defaulted.
 	composeMaxDepth int
 	// cacheMaxTTL is Config.CacheMaxTTL, defaulted; memos is Config.Memos.
@@ -514,6 +534,8 @@ func NewService(cfg Config) *Service {
 		eachMaxItems:      eachMaxItemsOf(cfg.EachMaxItems),
 		orkflowMaxTasks:   orkflowMaxTasksOf(cfg.OrkflowMaxTasks),
 		historyMaxEvents:  positiveOr(cfg.HistoryMaxEvents, engine.DefaultHistoryMaxEvents),
+		continuation:      continuationBudgetFor(cfg),
+		runMaxInFlight:    int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
 		historyMaxBytes:   positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:   composeMaxDepthOf(cfg.ComposeMaxDepth),
 		cacheMaxTTL:       cacheMaxTTLOf(cfg.CacheMaxTTL),
@@ -1607,12 +1629,40 @@ func (s *Service) pinDurabilityPlan(plan *engine.RunPlan) error {
 // tree: every ChildRunPlan embeds a full plan inside its parent's, which is
 // bounded at 256 KiB, so per-child limits would cost every composed task its
 // bytes and refuse composed Orkflows that fit today.
+//
+// The continuation budget (when continuation is enabled) and the in-flight
+// cap (always) travel the same way: every number the writer, the hold and
+// the bootstrap decide with is carried, so a release that changes a default
+// moves only new runs.
 func (s *Service) pinRunTreeLimits(plan *engine.RunPlan) {
 	plan.History = &engine.HistoryLimit{
 		MaxEvents: s.historyMaxEvents,
 		MaxBytes:  s.historyMaxBytes,
 		Reserve:   engine.DefaultHistoryReserve,
 	}
+	if s.continuation != nil {
+		budget := *s.continuation
+		plan.Continuation = &budget
+	}
+	limit := engine.DefaultInFlightLimit(s.runMaxInFlight)
+	plan.InFlight = &limit
+}
+
+// continuationBudgetFor is the budget every new top-level plan carries, or
+// nil when continuation is off.
+func continuationBudgetFor(cfg Config) *engine.ContinuationBudget {
+	if !cfg.ContinuationEnabled {
+		return nil
+	}
+	timeout := cfg.ContinuationRestoreTimeout
+	if timeout <= 0 {
+		timeout = engine.DefaultContinuationRestoreTimeout
+	}
+	budget := engine.DefaultContinuationBudget(
+		positiveOr(cfg.ContinuationEvents, engine.DefaultContinuationEvents),
+		positiveOr(cfg.ContinuationBytes, engine.DefaultContinuationBytes),
+		timeout)
+	return &budget
 }
 
 // positiveOr is value, or fallback when value is not positive.

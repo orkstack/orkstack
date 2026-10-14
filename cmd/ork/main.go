@@ -87,6 +87,11 @@ type config struct {
 	// minHistoryMaxEvents and minHistoryMaxBytes, refused at boot otherwise
 	// (docs/DEPLOY.md §1).
 	historyMaxEvents, historyMaxBytes int64
+	// continuation is engine.continuation.* (continuationFromEnv), and
+	// runMaxInFlight ORK_RUN_MAX_IN_FLIGHT (inFlightCapFromEnv): both refused
+	// at boot outside their bounds (docs/DEPLOY.md §1).
+	continuation   continuationConfig
+	runMaxInFlight int32
 	// composeMaxDepth is ORK_COMPOSE_MAX_DEPTH: 1 … engine.MaxComposeDepth,
 	// refused at boot outside that range (docs/DEPLOY.md §1).
 	composeMaxDepth int32
@@ -128,6 +133,8 @@ func loadConfig() config {
 	orkflowMaxTasks, tasksErr := envInt32("ORK_ORKFLOW_MAX_TASKS", engine.DefaultOrkflowMaxTasks)
 	composeMaxDepth, composeErr := composeMaxDepthFromEnv()
 	historyMaxEvents, historyMaxBytes, historyErr := historyLimitFromEnv()
+	continuation, continuationErr := continuationFromEnv(historyMaxEvents, historyMaxBytes)
+	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
 
 	cfg := config{
@@ -148,10 +155,13 @@ func loadConfig() config {
 		orkflowMaxTasks:               orkflowMaxTasks,
 		historyMaxEvents:              historyMaxEvents,
 		historyMaxBytes:               historyMaxBytes,
+		continuation:                  continuation,
+		runMaxInFlight:                runMaxInFlight,
 		composeMaxDepth:               composeMaxDepth,
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
-			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr),
+			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
+			continuationErr, inFlightErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1099,12 +1109,22 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		snapshotActivities.WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
-	// The terminal snapshot of a run that cannot carry on from the saved state
-	// a newer release handed it (engine.RunWorkflow's carry refusal).
+	// The terminal snapshot of a run that cannot carry on from its saved
+	// state (engine.RunWorkflow's restore refusals).
 	runWorker.RegisterActivityWithOptions(
 		snapshotActivities.WriteFailedRunSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteFailedRunSnapshot},
 	)
+	// A switch's three writes and a bootstrap's chunk read: the run's
+	// continuation into a fresh history (internal/engine/continuation.go).
+	runWorker.RegisterActivityWithOptions(snapshotActivities.WriteEventSegment,
+		activity.RegisterOptions{Name: engine.ActivityWriteEventSegment})
+	runWorker.RegisterActivityWithOptions(snapshotActivities.WriteSwitchSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSwitchSnapshot})
+	runWorker.RegisterActivityWithOptions(snapshotActivities.WriteCheckpoint,
+		activity.RegisterOptions{Name: engine.ActivityWriteCheckpoint})
+	runWorker.RegisterActivityWithOptions(snapshotActivities.ReadContinuationChunk,
+		activity.RegisterOptions{Name: engine.ActivityReadContinuationChunk})
 	// The local activity that counts a fan-out's task-sourced array, over the
 	// same store internal/api reads artifacts with.
 	runWorker.RegisterActivityWithOptions(
@@ -1136,6 +1156,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if wireEventObserver(tcfg) {
 		eventObserver = observer
 		admissionObserver = observer
+		// The continuation metrics, measured by the run worker's own local
+		// activities (registered above, on this same instance).
+		snapshotActivities.WithContinuationObserver(continuationObserver{observer})
 	}
 	// The audit counter: ork.audit.records on the default providers, a no-op
 	// when telemetry is off.
@@ -1265,6 +1288,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		OrkflowMaxTasks:               cfg.orkflowMaxTasks,
 		HistoryMaxEvents:              cfg.historyMaxEvents,
 		HistoryMaxBytes:               cfg.historyMaxBytes,
+		ContinuationEnabled:           cfg.continuation.enabled,
+		ContinuationEvents:            cfg.continuation.events,
+		ContinuationBytes:             cfg.continuation.bytes,
+		ContinuationRestoreTimeout:    cfg.continuation.restoreTimeout,
+		RunMaxInFlight:                cfg.runMaxInFlight,
 		ComposeMaxDepth:               cfg.composeMaxDepth,
 		CacheMaxTTL:                   cfg.cacheMaxTTL,
 		Memos:                         memoStore,

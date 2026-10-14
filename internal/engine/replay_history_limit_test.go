@@ -277,12 +277,14 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 // fixture's run start — and every child start it recorded — passed exactly
 // four arguments, so RunWorkflow's fifth parameter (the carry of a run that
 // continued as new) decodes as nil for each of them and none can enter the
-// carried path; the command-half replay tests then prove every one replays
-// against the five-parameter RunWorkflow.
+// carried path — except the one carried generation Stage 2 recorded
+// (run-continued-g1-v1.json), which a continue-as-new started with five; the
+// command-half replay tests then prove every one replays against the
+// five-parameter RunWorkflow.
 func TestCommittedFixtures_StartWithFourArgumentsAndNoCarry(t *testing.T) {
 	paths, err := filepath.Glob("testdata/history/*.json")
 	if err != nil || len(paths) < 11 {
-		t.Fatalf("committed fixtures = %v, %v; want all 11", paths, err)
+		t.Fatalf("committed fixtures = %v, %v; want at least 11", paths, err)
 	}
 	for _, path := range paths {
 		recorded := loadHistoryFile(t, path)
@@ -296,8 +298,14 @@ func TestCommittedFixtures_StartWithFourArgumentsAndNoCarry(t *testing.T) {
 				continue
 			}
 			starts++
-			if n := len(input.GetPayloads()); n != 4 {
-				t.Errorf("%s: event %d starts RunWorkflow with %d arguments, want 4", path, event.GetEventId(), n)
+			want := 4
+			if filepath.Base(path) == "run-continued-g1-v1.json" && event.GetEventId() == 1 {
+				// The one carried generation: its continue-as-new handed
+				// it a fifth argument, and its run-id argument is empty.
+				want = 5
+			}
+			if n := len(input.GetPayloads()); n != want {
+				t.Errorf("%s: event %d starts RunWorkflow with %d arguments, want %d", path, event.GetEventId(), n, want)
 			}
 		}
 		if starts == 0 {
