@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
@@ -10,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -21,9 +23,14 @@ import (
 // the run's "saved state", and of a run that "carries on" or is "carried
 // forward".
 //
-// This release reads chains but cannot continue one: a carried start ends
-// explicitly, with a published terminal event (endUnrestorable), so a chain
-// some newer release created never silently re-runs here.
+// A run whose plan carries a continuation budget (RunPlan.Continuation)
+// continues as new once its history has grown past it, at its next moment
+// with nothing of it in flight (continueAsNew, the one switch site), and its
+// next generation starts from the saved state the switch wrote (restore,
+// continuation_restore.go). A carried start this release cannot continue —
+// an unknown carry format, a malformed carry or plan, saved state that fails
+// verification or cannot be read — ends explicitly, with a published
+// terminal event (endUnrestorable), so a chain never silently re-runs.
 
 // ContinuationCarryVersion is the only carry format this release knows.
 const ContinuationCarryVersion int32 = 1
@@ -217,4 +224,456 @@ func cancelUnfinishedRows(rows []*orkstackv1.TaskRun, finished *timestamppb.Time
 		cancelRow(row)
 	}
 	return rows
+}
+
+// ContinueAsNewChange is the workflow.GetVersion change id of the writer. It
+// is asked LAZILY, the first time a generation 0 grows past its budget: a run
+// that never does records no marker, and a history recorded before the writer
+// replays the crossing with DefaultVersion and never switches. A carried
+// generation holds the decision in its carry and never asks it again.
+const ContinueAsNewChange = "continue-as-new"
+
+// continuationReadYield is the timer that ends a bootstrap batch's workflow
+// task when more of the saved state is to be read: the eachDispatchYield
+// precedent. Only whether it exists is replay-visible (the replayer matches a
+// timer by its id), and ChunksPerTask decides that.
+const continuationReadYield = time.Millisecond
+
+// checkpointPartRawBytes is the decoded size a checkpoint part closes below
+// (a row larger than it goes alone). A local activity's output layout, which
+// its recorded result fixes: never a command-stream number.
+const checkpointPartRawBytes = 1 << 20
+
+// The local activities of a switch's writes and of a bootstrap's reads.
+// Internal: no user-facing surface names them.
+const (
+	ActivityWriteEventSegment     = "WriteEventSegment"
+	ActivityWriteSwitchSnapshot   = "WriteSwitchSnapshot"
+	ActivityWriteCheckpoint       = "WriteCheckpoint"
+	ActivityReadContinuationChunk = "ReadContinuationChunk"
+)
+
+// A switch's write budget: 30 s per attempt, three attempts, two minutes end
+// to end. A failed write never switches; the run tries again after more
+// growth (failedAttempt).
+const (
+	continuationWriteAttemptTimeout = 30 * time.Second
+	continuationWriteTimeout        = 120 * time.Second
+)
+
+// TEST-ONLY switches, the precedent of eachDispatchDescending. Never set in
+// production code.
+//
+//   - continuationPlanForTest: the budget every run uses instead of its
+//     plan's, so a negative replay test can hand a committed history one.
+//   - continueAsNewForcedForTest: the writer takes version 1 WITHOUT asking
+//     workflow.GetVersion, so a negative replay test proves the committed
+//     fixtures can only replay because of the gate.
+//   - continuationAtEveryIdleForTest: every natural idle point is due, so a
+//     test can switch (and restore) at each one.
+var (
+	continuationPlanForTest        *ContinuationBudget
+	continueAsNewForcedForTest     = false
+	continuationAtEveryIdleForTest = false
+)
+
+// continuationBudget is the budget this run decides with: its plan's, or nil.
+func (s *runState) continuationBudget() *ContinuationBudget {
+	if continuationPlanForTest != nil {
+		return continuationPlanForTest
+	}
+	return s.plan.Continuation
+}
+
+// reached reports whether history has grown to at in EITHER dimension
+// (events >= at[0] OR bytes >= at[1]). The zero value is always reached.
+func reached(events, bytes int64, at [2]int64) bool { return events >= at[0] || bytes >= at[1] }
+
+// recordEvent keeps one event this generation published, for the segment
+// its switch writes. Called where PublishEvent is scheduled, and only for a
+// run that can continue: an event whose snapshot write failed is never
+// published and never recorded, so the segment holds exactly what Temporal
+// recorded in this generation.
+func (s *runState) recordEvent(event *orkstackv1.Event) {
+	if s.continuationBudget() == nil {
+		return
+	}
+	s.genEvents = append(s.genEvents, event)
+}
+
+// markGenerationBase records the history this generation starts its growth
+// from: after the bootstrap for a carried generation, so the saved state's
+// chunk markers are part of the base, never the growth. The copy itself is
+// bounded by its cap and always counted by the guard and the hold line.
+func (s *runState) markGenerationBase(ctx workflow.Context) {
+	s.baseEvents, s.baseBytes = s.historyNow(ctx)
+}
+
+// logFields is the replay-safe log line's fields: the run, its history now,
+// what it has in flight, and extra.
+func (s *runState) logFields(ctx workflow.Context, inFlight map[string]workflow.Future, extra ...any) []any {
+	e, b := s.historyNow(ctx)
+	fields := []any{"run_id", s.runID, "history_events", e, "history_bytes", b, "in_flight", len(inFlight)}
+	return append(fields, extra...)
+}
+
+// logInfo writes one replay-aware Info line: the SDK suppresses it while
+// replaying, so it is written once per decision. Operator-only (AGENTS.md
+// §7): it may name what no user-facing surface does.
+func (s *runState) logInfo(ctx workflow.Context, inFlight map[string]workflow.Future, message string, extra ...any) {
+	workflow.GetLogger(ctx).Info(message, s.logFields(ctx, inFlight, extra...)...)
+}
+
+// updateContinuation decides, from history this workflow task will have
+// recorded, whether the generation's switch is due and whether to hold new
+// dispatch to reach an idle point. O(1) after the first call of a pass: the
+// hold line reads reserveNow.
+//
+// Past its budget a run switches at its NEXT natural idle point and never
+// pauses work to make one. It holds new dispatch only once its history plus
+// its failure path's reserve reaches HoldPercent of the cluster's limit, in
+// events or in bytes — a wide run, whose reserve is large, reaches that line
+// earlier, automatically.
+func (s *runState) updateContinuation(ctx workflow.Context, inFlight map[string]workflow.Future) {
+	budget, limit := s.continuationBudget(), s.historyLimit()
+	if budget == nil || limit == nil || s.noSwitch != "" {
+		return // a hand-built plan with a budget but no ceiling never continues
+	}
+	if !budget.valid() {
+		s.noSwitch = "its plan's continuation budget is malformed" // no command: a hand-built plan only
+		return
+	}
+	e, b := s.historyNow(ctx)
+	grown := e-s.baseEvents >= budget.Events || b-s.baseBytes >= budget.Bytes
+	if continuationAtEveryIdleForTest {
+		// Every idle point after the generation's first command is due.
+		grown = e > s.baseEvents
+	}
+	if !grown {
+		return
+	}
+	if !s.switchDue {
+		if !s.writerAdopted(ctx) {
+			s.noSwitch = "recorded by a build without continuation"
+			return
+		}
+		s.switchDue = true // switches at the next natural idle point (canSwitchNow)
+		s.logInfo(ctx, inFlight, "run will carry on into a fresh history at its next idle point",
+			"budget_events", budget.Events, "budget_bytes", budget.Bytes)
+	}
+	if s.generation+1 >= budget.MaxGenerations {
+		s.setNoSwitch(ctx, inFlight, fmt.Sprintf("it has already carried forward %d times", s.generation))
+		return
+	}
+	if s.quiescing || !reached(e, b, s.quiesceRetryAt) || !reached(e, b, s.switchRetryAt) {
+		return
+	}
+	if s.nearHistoryLimit(ctx, inFlight, budget.HoldPercent) {
+		s.quiescing = true
+		s.holdStartedAt = workflow.Now(ctx)
+		reserveEvents, _ := s.reserveNow(inFlight)
+		s.logInfo(ctx, inFlight, "run pausing new tasks so it can carry on into a fresh history",
+			"reserve_events", reserveEvents, "held", len(s.readyTasks()))
+	}
+}
+
+// writerAdopted asks the writer's version once a generation 0 crosses its
+// budget; a carried generation answers from its carry.
+func (s *runState) writerAdopted(ctx workflow.Context) bool {
+	if continueAsNewForcedForTest {
+		if s.versions == nil {
+			s.versions = map[string]workflow.Version{}
+		}
+		s.versions[ContinueAsNewChange] = 1
+		return true
+	}
+	return s.version(ctx, ContinueAsNewChange, 1) >= 1
+}
+
+// setNoSwitch stops this generation from ever switching, and says why. It
+// clears quiescing: a hold that can no longer end in a switch must not hold.
+func (s *runState) setNoSwitch(ctx workflow.Context, inFlight map[string]workflow.Future, reason string) {
+	s.noSwitch = reason
+	s.quiescing = false
+	workflow.GetLogger(ctx).Warn("run will not carry on into a fresh history",
+		s.logFields(ctx, inFlight, "reason", reason)...)
+}
+
+// failedAttempt records a switch whose writes failed (object storage
+// unavailable): the hold ends, and no switch is tried again until the run
+// has grown by its retry spacing. If the store stays down, the next emit's
+// snapshot write fails the run exactly as it always has — never a silent
+// success.
+func (s *runState) failedAttempt(ctx workflow.Context, inFlight map[string]workflow.Future, err error) {
+	budget := s.continuationBudget()
+	e, b := s.historyNow(ctx)
+	s.quiescing = false
+	s.switchRetryAt = [2]int64{e + budget.RetryEvents, b + budget.RetryBytes}
+	workflow.GetLogger(ctx).Warn("run could not save its state to carry on; retrying after more growth",
+		s.logFields(ctx, inFlight, "error", err)...)
+}
+
+// hasUnfinishedTasks reports whether any task is not terminal.
+func (s *runState) hasUnfinishedTasks() bool {
+	for _, id := range s.order {
+		if !isTerminal(s.taskRuns[id].GetStatus()) {
+			return true
+		}
+	}
+	return false
+}
+
+// canSwitchNow is the switch condition: the switch is due and allowed, and
+// nothing of the run is in flight — no activity, item or child run, and no
+// pin opening, open or closing — while work remains and the run is not being
+// canceled. Open awaits may cross: their deadlines are absolute instants.
+func (s *runState) canSwitchNow(ctx workflow.Context, inFlight map[string]workflow.Future) bool {
+	if !s.switchDue || s.noSwitch != "" || len(inFlight) != 0 || ctx.Err() != nil {
+		return false
+	}
+	e, b := s.historyNow(ctx)
+	return reached(e, b, s.switchRetryAt) && s.openingPins() == 0 && s.closingPins() == 0 &&
+		s.openedUnclosedPins() == 0 && s.hasUnfinishedTasks()
+}
+
+// applyQueuedResolutions applies every resolution already delivered to the
+// run — real resolutions, unlike drainResolutions' — so none is left
+// unread in a generation that ends. applied says state changed; a resolve
+// error is the task's.
+func (s *runState) applyQueuedResolutions(ctx workflow.Context) (applied bool, taskID string, err error) {
+	if s.resolutions == nil {
+		return false, "", nil
+	}
+	for {
+		var sig *orkstackv1.AwaitSignal
+		if !s.resolutions.ReceiveAsync(&sig) {
+			return applied, "", nil
+		}
+		applied = true
+		if err := s.resolve(ctx, sig); err != nil {
+			return true, sig.GetTaskId(), err
+		}
+	}
+}
+
+// ContinuationObservationInput is what a switch's or a bootstrap's local
+// activity is told so it can measure itself (ContinuationObserver). A local
+// activity's input is never recorded in history, so it costs nothing.
+type ContinuationObservationInput struct {
+	Namespace        string    `json:"namespace"`
+	Generation       int64     `json:"generation"`
+	HoldSeconds      float64   `json:"hold_seconds,omitempty"`
+	RestoreStartedAt time.Time `json:"restore_started_at,omitempty"`
+	Final            bool      `json:"final,omitempty"`
+}
+
+// continuationWriteContext is the local-activity options of a switch's
+// writes.
+func continuationWriteContext(ctx workflow.Context) workflow.Context {
+	return workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
+		StartToCloseTimeout:    continuationWriteAttemptTimeout,
+		ScheduleToCloseTimeout: continuationWriteTimeout,
+		RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
+	})
+}
+
+// continueAsNew is the one switch site. It writes the generation's event
+// segment, a full snapshot of its exact state and its checkpoint, each
+// content-addressed and create-if-absent, then hands the next generation a
+// small carry. canErr is the continue-as-new to return; fatal is a
+// resolution's failure the run must take; all nil means the attempt changed
+// state or was given up, and the loop goes on. No step after the last
+// resolution check blocks, so that check and the continue-as-new command
+// share one workflow task, and a signal recorded after that task started
+// makes the server reject the command, so the retried task sees it.
+func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workflow.Future) (canErr error, fatalTask string, fatal error) {
+	budget := s.continuationBudget()
+	// 1. Every detached publish, so nothing of the run is in flight.
+	if len(s.pendingItemPublishes) > 0 {
+		s.drainItemPublishes(ctx)
+	}
+	// 2. Every resolution already delivered: applied, so the switch carries
+	// the state it made.
+	if applied, id, err := s.applyQueuedResolutions(ctx); err != nil {
+		return nil, id, err
+	} else if applied {
+		return nil, "", nil
+	}
+
+	namespace := s.wf.GetNamespace()
+	obs := ContinuationObservationInput{Namespace: namespace, Generation: s.generation}
+	if s.quiescing {
+		obs.HoldSeconds = workflow.Now(ctx).Sub(s.holdStartedAt).Seconds()
+	}
+	writeCtx := continuationWriteContext(ctx)
+
+	// 3. The event segment: exactly what this generation published.
+	segment := &orkstackv1.RunEventSegment{
+		RunId:         s.runID,
+		Generation:    s.generation,
+		FirstSequence: s.genFirstSeq,
+		LastSequence:  int64(s.eventSeq),
+		Events:        s.genEvents,
+	}
+	var segmentObj *orkstackv1.ContinuationObject
+	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteEventSegment, segment, namespace, obs).
+		Get(writeCtx, &segmentObj); err != nil {
+		s.failedAttempt(ctx, inFlight, err)
+		return nil, "", nil
+	}
+
+	// 4. The switch snapshot: a full snapshot of the exact state, items
+	// included, under a content-addressed key — never a {seq}.pb key, which
+	// the next generation's own emits own.
+	run := s.snapshot()
+	var switchSnapshot *orkstackv1.ContinuationObject
+	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteSwitchSnapshot, run, namespace, s.generation, obs).
+		Get(writeCtx, &switchSnapshot); err != nil {
+		s.failedAttempt(ctx, inFlight, err)
+		return nil, "", nil
+	}
+
+	// 5. The checkpoint, refused over its cap.
+	var checkpoint *orkstackv1.ContinuationObject
+	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
+		budget.CheckpointMaxBytes, obs).Get(writeCtx, &checkpoint); err != nil {
+		s.failedAttempt(ctx, inFlight, err)
+		return nil, "", nil
+	}
+	if checkpoint.GetSizeBytes() > budget.CheckpointMaxBytes {
+		s.setNoSwitch(ctx, inFlight, fmt.Sprintf("its saved state is %s MiB, more than the %s MiB a run carries forward",
+			mebibytes(checkpoint.GetSizeBytes()), mebibytes(budget.CheckpointMaxBytes)))
+		return nil, "", nil
+	}
+
+	// 6. Re-check: a resolution delivered while the writes blocked, or a
+	// cancel, turns the switch back; the written objects are orphans,
+	// reclaimed with the run's prefix.
+	if applied, id, err := s.applyQueuedResolutions(ctx); err != nil {
+		return nil, id, err
+	} else if applied || ctx.Err() != nil {
+		return nil, "", nil
+	}
+
+	// 7. The carry, refused over AGENTS.md §2.2's bound before any command.
+	decisions := make(map[string]int32, len(s.versions))
+	for change, v := range s.versions {
+		decisions[change] = int32(v)
+	}
+	carry := &orkstackv1.RunContinuation{
+		Version:       ContinuationCarryVersion,
+		Generation:    s.generation + 1,
+		EventSequence: int64(s.eventSeq),
+		CreatedAt:     s.createdAt,
+		StartedAt:     s.startedAt,
+		Checkpoint:    checkpoint,
+		Segments: append(append([]*orkstackv1.EventSegmentRef(nil), s.segments...), &orkstackv1.EventSegmentRef{
+			Generation:    s.generation,
+			ExecutionId:   workflow.GetInfo(ctx).WorkflowExecution.RunID,
+			FirstSequence: s.genFirstSeq,
+			LastSequence:  int64(s.eventSeq),
+			EventCount:    int64(len(s.genEvents)),
+			Object:        segmentObj,
+		}),
+		VersionDecisions: decisions,
+		Snapshot:         switchSnapshot,
+	}
+	if size, err := task.PayloadSize(carry); err != nil || size > task.MaxActivityInputBytes {
+		s.setNoSwitch(ctx, inFlight, "its carried bookkeeping is larger than 256 KiB")
+		return nil, "", nil
+	}
+
+	// 8. Generation 0 only: the run's created_at, for every list that orders
+	// a chain by it (MemoCreatedAt). Non-blocking, after the carry's check,
+	// so a refused carry never leaves a stray memo upsert.
+	if s.generation == 0 {
+		if err := workflow.UpsertMemo(ctx, map[string]any{
+			MemoCreatedAt: s.createdAt.AsTime().UTC().Format(time.RFC3339Nano),
+		}); err != nil {
+			s.setNoSwitch(ctx, inFlight, "its creation time could not be recorded")
+			return nil, "", nil
+		}
+	}
+
+	// 9. The switch. The run-id argument is empty, so a release older than
+	// generations fails loudly rather than run the run again; every other
+	// argument is the original, which RunStart and the await doors read.
+	s.logInfo(ctx, inFlight, "run carried on into a fresh history",
+		"hold_seconds", obs.HoldSeconds, "state_bytes", checkpoint.GetSizeBytes(), "generation", s.generation+1)
+	return workflow.NewContinueAsNewError(ctx, RunWorkflowType, "", s.wfArg, s.inputArg, s.plan, carry), "", nil
+}
+
+// carryReason is what a RUN_HISTORY_LIMIT message appends when the run could
+// not carry on past that point, in run vocabulary; empty when it never had
+// to.
+func (s *runState) carryReason() string {
+	if s.continuationBudget() == nil || !s.switchDue {
+		return ""
+	}
+	switch {
+	case s.noSwitch != "" && s.noSwitch != "recorded by a build without continuation":
+		return "it cannot carry on into a fresh history: " + s.noSwitch
+	case s.gaveUp != "":
+		return "it could not reach a moment with nothing running, which a run needs to carry on into a " +
+			"fresh history, because " + s.gaveUp
+	}
+	return ""
+}
+
+// RestoreHistoryBound is the most history events one generation's bootstrap
+// appends, from its budget alone:
+//   - one marker per chunk of its largest copy: ceil(CheckpointMaxBytes / ChunkBytes);
+//   - five events per batch yield (TimerStarted, TimerFired, and the
+//     WorkflowTaskCompleted/Scheduled/Started around it);
+//   - 24 for its first and last workflow tasks and an endUnrestorable;
+//   - while reads fail, at most failRate events per second for the whole
+//     restore timeout, where failRate = max(3/8, 6/minServerBackoff):
+//   - a workflow-task heartbeat (WorkflowTaskCompleted/Scheduled/Started)
+//     every 8 s while an attempt or an in-process retry runs (80% of the
+//     cluster's default 10 s workflow-task timeout);
+//   - one server-timer retry cycle (failure marker, WorkflowTaskCompleted,
+//     TimerStarted, TimerFired, WorkflowTaskScheduled, WorkflowTaskStarted)
+//     per backoff, and only a backoff above the 10 s workflow-task timeout
+//     takes a server timer — minServerBackoff is the first
+//     BackoffInitial·2^k above 10 s (16 s with the defaults), at most
+//     BackoffMax.
+//     The two regimes never overlap in time: the task is open in the first
+//     and closed in the second.
+//
+// It assumes the cluster's default 10 s workflow-task timeout: StartRun sets
+// none. The recreated deadline timer of each await open at the switch adds
+// one more event per await to the bootstrap's history, outside this bound;
+// those are counted (noteCommand) into the generation's base, and each await
+// is in the guard's reserve.
+func RestoreHistoryBound(b ContinuationBudget) int64 {
+	if b.ChunkBytes <= 0 || b.ChunksPerTask <= 0 {
+		return 0
+	}
+	chunks := ceilDiv(b.CheckpointMaxBytes, b.ChunkBytes)
+	yields := ceilDiv(chunks, b.ChunksPerTask)
+	events := chunks + 5*yields + 24
+	timeout := b.Restore.TimeoutSeconds
+	// The heartbeat regime: 3 events per 8 s.
+	failEvents := ceilDiv(timeout*3, 8)
+	// The server-timer regime: 6 events per minServerBackoff.
+	const workflowTaskTimeoutMillis = 10_000
+	backoff := b.Restore.BackoffInitialMillis
+	maxBackoff := b.Restore.BackoffMaxSeconds * 1000
+	for backoff > 0 && backoff <= workflowTaskTimeoutMillis && backoff < maxBackoff {
+		backoff *= 2
+	}
+	backoff = min(backoff, maxBackoff)
+	if backoff > workflowTaskTimeoutMillis {
+		if timer := ceilDiv(timeout*6000, backoff); timer > failEvents {
+			failEvents = timer
+		}
+	}
+	return events + failEvents
+}
+
+func ceilDiv(a, b int64) int64 {
+	if b <= 0 {
+		return 0
+	}
+	return (a + b - 1) / b
 }

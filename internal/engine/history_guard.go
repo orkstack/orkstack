@@ -88,9 +88,17 @@ func (s *runState) historyLimit() *HistoryLimit {
 	return s.plan.History
 }
 
-// version is workflow.GetVersion, asked once per change and kept: the SDK
-// would answer a second call identically, and asking once keeps the marker's
-// position where the first use is.
+// cancelSiblingsChange is the workflow.GetVersion change id of fail()'s
+// cancellation of the run's other tasks (fail, failWithHandlers).
+const cancelSiblingsChange = "cancel-siblings-on-run-end"
+
+// version is workflow.GetVersion with the run's memory: a decision carried
+// from an earlier generation (restore) is returned as-is and NEVER asked
+// again — asking on a fresh history would record the build's newest version,
+// which on an unversioned fleet can differ from what generation 0 decided. A
+// decision not yet made is asked once and remembered, so the next carry holds
+// it; the SDK would answer a second call identically, and asking once keeps
+// the marker's position where the first use is.
 func (s *runState) version(ctx workflow.Context, change string, max workflow.Version) workflow.Version {
 	if v, ok := s.versions[change]; ok {
 		return v
@@ -144,6 +152,7 @@ func (s *runState) noteCommand(ctx workflow.Context, events, bytes int64) {
 func (s *runState) beginPass() {
 	s.passReserve = reserveCount{}
 	s.passCharge = reserveCount{}
+	s.pinClosureFresh = false // pinClosureAllows' set is rebuilt at most once per pass
 }
 
 // chargeReserve adds what one dispatch can add to failReserve. Before the
@@ -359,7 +368,8 @@ func (s *runState) crossing(ctx workflow.Context, inFlight map[string]workflow.F
 // path would still append reaches percent% of the plan's ceiling, in events or
 // bytes. A quick O(1) bound first (it counts every task, so it is loose for a
 // large run and only spares small and young runs any count); then reserveNow.
-// Shared by the guard (percent = 100) and the hold (a later stage).
+// Shared by the guard (percent = 100) and the hold (updateContinuation,
+// percent = the budget's HoldPercent).
 func (s *runState) nearHistoryLimit(ctx workflow.Context, inFlight map[string]workflow.Future, percent int64) bool {
 	c, ok := s.crossing(ctx, inFlight, percent)
 	return ok && c.crossed()
@@ -383,7 +393,7 @@ func (s *runState) historyExhausted(ctx workflow.Context, inFlight map[string]wo
 	}
 	blockers := s.historyBlockers(inFlight)
 	message := historyLimitMessage(s.runID, c.events, c.maxEvents, c.bytes, c.maxBytes,
-		c.reserveEvents, blockers, "")
+		c.reserveEvents, blockers, s.carryReason())
 	detail := HistoryCrossingDetail{
 		RawEvents: int64(s.hist.seenLength), RawBytes: c.bytes - s.hist.pendingBytes,
 		Events: c.events, Bytes: c.bytes,

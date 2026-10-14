@@ -291,6 +291,23 @@ func (s *countingSnapshotStore) ReadSnapshot(_ context.Context, uri string) ([]b
 	return data, nil
 }
 
+func (s *countingSnapshotStore) WriteContinuation(context.Context, string, string, int64, string, []byte) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
+// ReadContinuationRange counts as a read, as ReadSnapshot does.
+func (s *countingSnapshotStore) ReadContinuationRange(_ context.Context, uri string, wantSize, offset, length int64) ([]byte, error) {
+	s.reads++
+	data, ok := s.objects[uri]
+	if !ok {
+		return nil, artifacts.ErrNotFound
+	}
+	if int64(len(data)) != wantSize {
+		return nil, artifacts.ErrContinuationSize
+	}
+	return data[offset : offset+length], nil
+}
+
 func publishEventWithURI(t *testing.T, eventID int64, event *orkstackv1.Event, uri string) *historypb.HistoryEvent {
 	t.Helper()
 	return &historypb.HistoryEvent{
@@ -1172,6 +1189,14 @@ func (s *failingSnapshotStore) WriteSnapshot(context.Context, string, string, in
 }
 
 func (s *failingSnapshotStore) ReadSnapshot(context.Context, string) ([]byte, error) {
+	return nil, s.err
+}
+
+func (s *failingSnapshotStore) WriteContinuation(context.Context, string, string, int64, string, []byte) (string, error) {
+	return "", s.err
+}
+
+func (s *failingSnapshotStore) ReadContinuationRange(context.Context, string, int64, int64, int64) ([]byte, error) {
 	return nil, s.err
 }
 

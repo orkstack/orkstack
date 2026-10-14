@@ -1081,3 +1081,10 @@ func (c *countingSnapshots) ReadSnapshot(ctx context.Context, uri string) ([]byt
 	c.reads++
 	return c.testSnapshotStore.ReadSnapshot(ctx, uri)
 }
+
+// ReadContinuationRange counts as a read too, so "the store was not read"
+// covers range reads.
+func (c *countingSnapshots) ReadContinuationRange(ctx context.Context, uri string, wantSize, offset, length int64) ([]byte, error) {
+	c.reads++
+	return c.testSnapshotStore.ReadContinuationRange(ctx, uri, wantSize, offset, length)
+}

@@ -143,15 +143,16 @@ const eventActivityTimeout = 10 * time.Second
 // redirecting its tasks onto its own defaults.
 //
 // carry is what an earlier generation of this run handed it when it
-// continued as new (continuation.go): nil for generation 0, which is every
-// start this release makes — StartRun, startChild and the schedule fire all
-// pass four arguments, and the missing fifth decodes as nil. A carried
-// generation's run-id argument is empty: its run id IS its workflow id
-// (AGENTS.md §7), read from there, so a release older than this one, which
-// drops the fifth payload, ends it INVALID_RUN before any side effect instead
-// of running the run again from event 1. This release cannot continue a
-// chain, so a carried start ends explicitly, RUN_STATE_UNSUPPORTED, with a
-// terminal event published after the carried sequence.
+// continued as new (continuation.go): nil for generation 0 — StartRun,
+// startChild and the schedule fire all pass four arguments, and the missing
+// fifth decodes as nil — and set only by this function's own continue-as-new.
+// A carried generation's run-id argument is empty: its run id IS its
+// workflow id (AGENTS.md §7), read from there, so a release older than
+// generations, which drops the fifth payload, ends it INVALID_RUN before any
+// side effect instead of running the run again from event 1. A carried
+// generation restores its state from the saved state the carry names; one it
+// cannot adopt ends explicitly, RUN_STATE_*, with a terminal event published
+// after the carried sequence.
 func RunWorkflow(
 	ctx workflow.Context,
 	runID string,
@@ -161,14 +162,11 @@ func RunWorkflow(
 	carry *orkstackv1.RunContinuation,
 ) (*orkstackv1.Run, error) {
 	if carry != nil {
+		// The run id IS the workflow id (AGENTS.md §7). A carried
+		// generation's argument is empty, so a release older than
+		// generations ends it INVALID_RUN before any side effect.
 		runID = workflow.GetInfo(ctx).WorkflowExecution.ID
-		// Before anything else: nothing below may read a plan pointer or the
-		// definition of a run this release cannot carry on.
-		state := &runState{runID: runID, wf: wf, input: input, plan: plan}
-		return state.endUnrestorable(ctx, carry, RunStateUnsupportedCode,
-			unsupportedCarryMessage(carry.GetVersion()))
-	}
-	if runID == "" {
+	} else if runID == "" {
 		return nil, temporal.NewNonRetryableApplicationError("run id is required", "INVALID_RUN", nil)
 	}
 	if wf == nil || len(wf.GetTasks()) == 0 {
@@ -176,6 +174,8 @@ func RunWorkflow(
 	}
 
 	state := newRunState(ctx, runID, wf, input, plan)
+	// The arguments as passed, handed on unchanged at a switch.
+	state.wfArg, state.inputArg = wf, input
 	// Every task activity is scheduled on runCtx, never on ctx directly, so the
 	// run has one handle that ends all of them at once. Temporal does NOT
 	// cancel activities a workflow function abandons by returning: only an
@@ -191,55 +191,112 @@ func RunWorkflow(
 		// handlers"). Creating a context issues no command.
 		state.handlerCtx, state.cancelHandlers = workflow.WithCancel(ctx)
 	}
-	// RUN_CREATED is emitted here, by the run itself, and not by whichever API
-	// process accepted the submission. It is event 1 of every run that reaches
-	// Temporal, so a replica rebuilding the stream from history starts at 1 with
-	// no gap — which the API-published version could never give it, because that
-	// copy only ever existed in one process's memory.
-	if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, "",
-		orkstackv1.Status_STATUS_PENDING,
-		fmt.Sprintf("run created for orkflow %s@%s", wf.GetName(), wf.GetVersion())); err != nil {
-		return nil, err
-	}
-	state.start(ctx)
-	if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, "",
-		orkstackv1.Status_STATUS_RUNNING, "run started"); err != nil {
-		return nil, err
-	}
-
 	inFlight := map[string]workflow.Future{}
+	if carry == nil {
+		// RUN_CREATED is emitted here, by the run itself, and not by whichever
+		// API process accepted the submission. It is event 1 of every run that
+		// reaches Temporal, so a replica rebuilding the stream from history
+		// starts at 1 with no gap — which the API-published version could never
+		// give it, because that copy only ever existed in one process's memory.
+		if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, "",
+			orkstackv1.Status_STATUS_PENDING,
+			fmt.Sprintf("run created for orkflow %s@%s", wf.GetName(), wf.GetVersion())); err != nil {
+			return nil, err
+		}
+		state.start(ctx)
+		if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, "",
+			orkstackv1.Status_STATUS_RUNNING, "run started"); err != nil {
+			return nil, err
+		}
+	} else {
+		// A carried generation rebuilds the run's state from the saved
+		// state its predecessor wrote, emitting nothing for the crossing
+		// (continuation_restore.go). Anything it cannot adopt ends the run
+		// explicitly, with a terminal event.
+		code, message := state.restore(ctx, runCtx, carry)
+		switch {
+		case code == restoreCanceled:
+			// The operator's cancel reached this generation during the read.
+			return state.endUnrestorable(ctx, carry, "RUN_CANCELED", "run canceled")
+		case code != "":
+			return state.endUnrestorable(ctx, carry, code, message)
+		case ctx.Err() != nil:
+			// Restored, and the cancel arrived meanwhile: the rows are exact.
+			return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+		}
+		state.logInfo(ctx, inFlight, "run restored its saved state",
+			"state_bytes", carry.GetCheckpoint().GetSizeBytes(), "generation", state.generation)
+	}
+	state.markGenerationBase(ctx)
+
 	for {
-		// The history guard, check point 1: a run whose history plus what its
-		// own failure path still needs reaches the cluster's limit stops here,
-		// RUN_HISTORY_LIMIT, before the cluster terminates it
-		// (history_guard.go). A no-op for a plan without a limit.
+		// The reserve is counted at most once per pass.
 		state.beginPass()
+		// (A) The history guard, check point 1: a run whose history plus what
+		// its own failure path still needs reaches the cluster's limit stops
+		// here, RUN_HISTORY_LIMIT, before the cluster terminates it
+		// (history_guard.go). A no-op for a plan without a limit.
 		if err := state.historyExhausted(ctx, inFlight); err != nil {
 			return state.fail(ctx, cancelRun, inFlight, "", err)
 		}
-		// Schedule every task whose own dependencies are terminal. Re-scan after
-		// each completion so a fast branch can advance without waiting for an
-		// unrelated slow branch.
+		// (B) The ONE switch site (continuation.go). A natural idle point is
+		// here, right after a completion emptied the in-flight set and before
+		// newly ready tasks dispatch; a quiesce reaches the same site through
+		// the idle block below.
+		state.updateContinuation(ctx, inFlight)
+		if state.canSwitchNow(ctx, inFlight) {
+			canErr, fatalTask, fatal := state.continueAsNew(ctx, inFlight)
+			if fatal != nil {
+				return state.fail(ctx, cancelRun, inFlight, fatalTask, fatal)
+			}
+			if canErr != nil {
+				return nil, canErr
+			}
+			continue // state changed, or the attempt was given up
+		}
+		// (C) Fan-out items a hold kept back (hold.go).
+		if state.heldFanOuts {
+			if id, err := state.resumeHeldFanOuts(ctx, runCtx, inFlight); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, id, err)
+			}
+		}
+		// (D) Schedule every task whose own dependencies are terminal.
+		// Re-scan after each completion so a fast branch can advance without
+		// waiting for an unrelated slow branch.
 		for _, id := range state.readyTasks() {
 			// Check point 2: before every dispatch decision of the pass. O(1)
 			// after the pass's first count.
 			if err := state.historyExhausted(ctx, inFlight); err != nil {
 				return state.fail(ctx, cancelRun, inFlight, "", err)
 			}
-			run, err := state.classify(ctx, id)
-			if err != nil {
-				return state.fail(ctx, cancelRun, inFlight, id, err)
-			}
-			if !run {
-				continue
+			state.updateContinuation(ctx, inFlight)
+			// classify is pure for a task that runs — it reads only terminal
+			// rows, the run's inputs and their outputs, and emits nothing — so
+			// its answer is remembered, and a task a hold keeps back costs a
+			// map lookup per pass, not a condition evaluation.
+			if !state.admitted[id] {
+				run, err := state.classify(ctx, id)
+				if err != nil {
+					return state.fail(ctx, cancelRun, inFlight, id, err)
+				}
+				if !run {
+					continue
+				}
+				state.admit(id)
 			}
 			// An awaited task starts no activity: it opens its deadline and
 			// waits for a resolution. Before openPin, which it can never reach
-			// (docs/DSL.md rule 15 refuses `pin:` on an await).
+			// (docs/DSL.md rule 15 refuses `pin:` on an await). Never held: it
+			// starts nothing, and its deadline crosses a switch.
 			if state.awaits[id] != nil {
 				if err := state.openAwait(ctx, state.dispatchContext(runCtx, id), id); err != nil {
 					return state.fail(ctx, cancelRun, inFlight, id, err)
 				}
+				continue
+			}
+			// A quiesce or the in-flight cap holds new dispatch: the task
+			// stays PENDING and nothing is emitted (hold.go).
+			if state.holdDispatch(ctx, id, inFlight) {
 				continue
 			}
 			// A fan-out counts its array once and dispatches its items; it
@@ -282,26 +339,48 @@ func RunWorkflow(
 			inFlight[id] = future
 		}
 
-		// A pin that is opening is work in progress exactly as an in-flight
-		// activity is: its members are held, so readyTasks is empty for them,
-		// and a run with nothing else to do must wait for its readiness rather
-		// than conclude there is nothing left.
-		if len(inFlight) == 0 && state.openingPins() == 0 && state.openAwaits() == 0 {
-			if len(state.readyTasks()) == 0 {
-				break
+		// (E) The idle block. A pin that is opening is work in progress
+		// exactly as an in-flight activity is: its members are held, so
+		// readyTasks is empty for them, and a run with nothing else to do must
+		// wait for its readiness rather than conclude there is nothing left.
+		// With no budget and no hold every new branch below is skipped, and
+		// this is the loop's original idle check.
+		if len(inFlight) == 0 && state.openingPins() == 0 {
+			if (state.quiescing || state.heldFanOuts) && ctx.Err() != nil {
+				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			}
-			// The prior scan only propagated skips; scan again for their newly
-			// ready dependants without waiting for an activity.
-			continue
+			if state.canSwitchNow(ctx, inFlight) {
+				continue // idle: (B) takes it, open awaits included
+			}
+			if state.quiescing && state.closingPins() == 0 && state.openedUnclosedPins() > 0 {
+				if state.closureHasReadyWork() {
+					// The pass only propagated skips: re-scan before judging.
+					continue
+				}
+				// The one structural give-up: the open pin's remaining work
+				// waits on an await.
+				state.abandonQuiesce(ctx, inFlight, state.pinBlockedReason())
+				continue
+			}
+			if state.openAwaits() == 0 && !(state.quiescing && state.closingPins() > 0) {
+				if len(state.readyTasks()) == 0 && !state.heldFanOuts {
+					break
+				}
+				// The prior scan only propagated skips (or a hold just
+				// lifted); scan again without waiting for an activity.
+				continue
+			}
 		}
 
-		// Register futures in declaration order. Future readiness comes from
-		// recorded Temporal history, while fixed registration order stabilizes
-		// the case where several futures are ready in one workflow task.
+		// (F) Register futures in declaration order. Future readiness comes
+		// from recorded Temporal history, while fixed registration order
+		// stabilizes the case where several futures are ready in one workflow
+		// task.
 		selector := workflow.NewSelector(ctx)
 		selectedID := ""
 		selectedItem := int32(-1)
 		selectedPin := ""
+		selectedClosed := false
 		for _, id := range state.order {
 			if future, ok := inFlight[id]; ok {
 				taskID := id
@@ -340,6 +419,16 @@ func RunWorkflow(
 				selectedPin = pinName
 			})
 		}
+		// While quiescing ONLY, every closing pin's close, in pin-name order:
+		// a quiescing run with nothing else in flight waits for its pins to
+		// close, so it can switch.
+		if state.quiescing {
+			for _, name := range state.pinOrder {
+				if p := state.pins[name]; p.doneSent && p.closed != nil && !p.closed.IsReady() {
+					selector.AddFuture(p.closed, func(workflow.Future) { selectedClosed = true })
+				}
+			}
+		}
 		// Then the resolution channel, and then every open await's deadline in
 		// declaration order — fixed positions, AFTER task futures and pin
 		// readiness, so which of several ready cases the loop takes first is a
@@ -370,6 +459,9 @@ func RunWorkflow(
 					state.pins[selectedPin].triggeredBy, err)
 			}
 			continue
+		}
+		if selectedClosed {
+			continue // a pin closed: the switch may now be possible
 		}
 		if resolved {
 			if err := state.resolve(ctx, resolution); err != nil {
@@ -503,6 +595,45 @@ type runState struct {
 	pendingHandlers                 int64
 	handlerCount, handlerStartBytes int64
 	guardOff                        bool
+
+	// The writer, the holds and the bootstrap (continuation.go, hold.go,
+	// continuation_restore.go). generation is this execution's place in
+	// the run's chain (0, or the carry's). wfArg and inputArg are
+	// RunWorkflow's own arguments, passed again unchanged at a switch.
+	// switchDue says the generation has grown past its budget and switches
+	// at its next idle point; quiescing that new dispatch is held so one
+	// comes. switchRetryAt and quiesceRetryAt are the history (events,
+	// bytes) below which no switch, or no new quiesce, is tried after a
+	// failed write or a given-up hold; noSwitch, when set, says why this
+	// generation never switches. baseEvents and baseBytes are the history it
+	// started its growth from; genFirstSeq, genEvents and segments are the
+	// events it published and the earlier generations' segments.
+	// heldFanOuts says some expanded fan-out has items held back; capLogged
+	// that the in-flight cap's log line was written; admitted remembers
+	// every task classify said runs; pinClosure is pinClosureAllows' set,
+	// rebuilt (lazily) once per pass; gaveUp is the last structural
+	// give-up's reason; restoreErr is the last error a bootstrap read
+	// returned.
+	generation            int64
+	wfArg                 *orkstackv1.Orkflow
+	inputArg              *orkstackv1.Payload
+	switchDue             bool
+	quiescing             bool
+	holdStartedAt         time.Time
+	switchRetryAt         [2]int64
+	quiesceRetryAt        [2]int64
+	noSwitch              string
+	baseEvents, baseBytes int64
+	genFirstSeq           int64
+	genEvents             []*orkstackv1.Event
+	segments              []*orkstackv1.EventSegmentRef
+	heldFanOuts           bool
+	capLogged             bool
+	admitted              map[string]bool
+	pinClosure            map[string]bool
+	pinClosureFresh       bool
+	gaveUp                string
+	restoreErr            error
 }
 
 // pinState is one pin's whole life inside this run: who belongs to it, and
@@ -617,6 +748,9 @@ func buildRunState(
 		status:   orkstackv1.Status_STATUS_PENDING,
 		pins:     map[string]*pinState{},
 		awaits:   map[string]*awaitState{},
+		// Generation 0 publishes from the run's first event; a carried
+		// generation from the one after its carry's (restore).
+		genFirstSeq: 1,
 	}
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
@@ -2190,7 +2324,7 @@ func (s *runState) fail(
 	// replayed against brand-new RequestCancelActivity commands and awaits at
 	// a point where the old code simply returned — a determinism break for
 	// that in-flight run (see replay_test.go, testdata/history/README.md).
-	if v := workflow.GetVersion(ctx, "cancel-siblings-on-run-end", workflow.DefaultVersion, 1); v >= 1 {
+	if v := s.version(ctx, cancelSiblingsChange, 1); v >= 1 {
 		cancelRun()
 		// eventCtx, not ctx: when the operator canceled the whole run, ctx is
 		// already done and eventCtx is the disconnected substitution chosen
@@ -2443,6 +2577,7 @@ func (s *runState) emitWithSnapshot(
 	}
 
 	activityCtx := workflow.WithActivityOptions(ctx, eventActivityOptions())
+	s.recordEvent(event)
 	future := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey)
 	if err := future.Get(ctx, nil); err != nil {
 		// Projection is observability, not orchestration: a failed publish is

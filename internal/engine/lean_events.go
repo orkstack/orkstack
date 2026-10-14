@@ -55,9 +55,15 @@ func (s *runState) leanEvents(ctx workflow.Context) bool {
 	s.leanDecided = true
 	if leanEventPathForTest == leanEventPathForcedForTest {
 		s.lean = true
+		if s.versions == nil {
+			s.versions = map[string]workflow.Version{}
+		}
+		s.versions[leanEventPathChange] = 1
 		return s.lean
 	}
-	s.lean = workflow.GetVersion(ctx, leanEventPathChange, workflow.DefaultVersion, 1) >= 1
+	// Through the run's own memory of its decisions, so a carried generation
+	// never asks again (continuation.go).
+	s.lean = s.version(ctx, leanEventPathChange, 1) >= 1
 	return s.lean
 }
 

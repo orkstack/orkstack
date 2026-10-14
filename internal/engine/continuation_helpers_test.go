@@ -161,6 +161,44 @@ func (s *memSnapshotStore) ReadSnapshot(_ context.Context, uri string) ([]byte, 
 	return bytes.Clone(data), nil
 }
 
+// WriteContinuation stores data create-if-absent at its content-addressed
+// key, as the real stores do.
+func (s *memSnapshotStore) WriteContinuation(_ context.Context, namespace, runID string, generation int64, kind string, data []byte) (string, error) {
+	key, err := artifacts.RunContinuationKey(namespace, runID, generation, kind, artifacts.ContinuationSHA256(data))
+	if err != nil {
+		return "", err
+	}
+	uri := "s3://test/" + key
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.objects[uri]; ok && !bytes.Equal(existing, data) {
+		return "", fmt.Errorf("mem continuation %q exists with other bytes", uri)
+	}
+	s.objects[uri] = bytes.Clone(data)
+	return uri, nil
+}
+
+// ReadContinuationRange reads a range of a stored object, recorded as a read.
+func (s *memSnapshotStore) ReadContinuationRange(_ context.Context, uri string, wantSize, offset, length int64) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads = append(s.reads, uri)
+	if err := s.fail[uri]; err != nil {
+		return nil, err
+	}
+	data, ok := s.objects[uri]
+	if !ok {
+		return nil, fmt.Errorf("mem continuation %q: %w", uri, artifacts.ErrNotFound)
+	}
+	if int64(len(data)) != wantSize {
+		return nil, fmt.Errorf("mem continuation %q is %d bytes, want %d: %w", uri, len(data), wantSize, artifacts.ErrContinuationSize)
+	}
+	if offset < 0 || length < 0 || offset+length > int64(len(data)) {
+		return nil, fmt.Errorf("mem continuation %q: range %d+%d outside %d bytes", uri, offset, length, len(data))
+	}
+	return bytes.Clone(data[offset : offset+length]), nil
+}
+
 func (s *memSnapshotStore) put(uri string, data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -409,7 +409,7 @@ func (s *runState) failWithHandlers(
 
 	// F5: the version marker exactly where today's fail takes it — it is 1
 	// for every run that can reach this path — then fail-fast.
-	if v := workflow.GetVersion(ctx, "cancel-siblings-on-run-end", workflow.DefaultVersion, 1); v >= 1 {
+	if v := s.version(ctx, cancelSiblingsChange, 1); v >= 1 {
 		cancelRun()
 	}
 
@@ -507,7 +507,7 @@ func (s *runState) cancelWithHandlers(
 		taskRun.GetStatus() != orkstackv1.Status_STATUS_AWAITING {
 		taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 	}
-	if v := workflow.GetVersion(ctx, "cancel-siblings-on-run-end", workflow.DefaultVersion, 1); v >= 1 {
+	if v := s.version(ctx, cancelSiblingsChange, 1); v >= 1 {
 		cancelRun()
 		// A no-op when the operator's cancel already reached handlerCtx
 		// through ctx; required when the cause is a cancellation that did not

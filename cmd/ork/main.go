@@ -87,6 +87,11 @@ type config struct {
 	// minHistoryMaxEvents and minHistoryMaxBytes, refused at boot otherwise
 	// (docs/DEPLOY.md §1).
 	historyMaxEvents, historyMaxBytes int64
+	// continuation is engine.continuation.* (continuationFromEnv), and
+	// runMaxInFlight ORK_RUN_MAX_IN_FLIGHT (inFlightCapFromEnv): both refused
+	// at boot outside their bounds (docs/DEPLOY.md §1).
+	continuation   continuationConfig
+	runMaxInFlight int32
 	// composeMaxDepth is ORK_COMPOSE_MAX_DEPTH: 1 … engine.MaxComposeDepth,
 	// refused at boot outside that range (docs/DEPLOY.md §1).
 	composeMaxDepth int32
@@ -128,6 +133,8 @@ func loadConfig() config {
 	orkflowMaxTasks, tasksErr := envInt32("ORK_ORKFLOW_MAX_TASKS", engine.DefaultOrkflowMaxTasks)
 	composeMaxDepth, composeErr := composeMaxDepthFromEnv()
 	historyMaxEvents, historyMaxBytes, historyErr := historyLimitFromEnv()
+	continuation, continuationErr := continuationFromEnv(historyMaxEvents, historyMaxBytes)
+	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
 
 	cfg := config{
@@ -148,10 +155,13 @@ func loadConfig() config {
 		orkflowMaxTasks:               orkflowMaxTasks,
 		historyMaxEvents:              historyMaxEvents,
 		historyMaxBytes:               historyMaxBytes,
+		continuation:                  continuation,
+		runMaxInFlight:                runMaxInFlight,
 		composeMaxDepth:               composeMaxDepth,
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
-			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr),
+			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
+			continuationErr, inFlightErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1265,6 +1275,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		OrkflowMaxTasks:               cfg.orkflowMaxTasks,
 		HistoryMaxEvents:              cfg.historyMaxEvents,
 		HistoryMaxBytes:               cfg.historyMaxBytes,
+		ContinuationEnabled:           cfg.continuation.enabled,
+		ContinuationEvents:            cfg.continuation.events,
+		ContinuationBytes:             cfg.continuation.bytes,
+		ContinuationRestoreTimeout:    cfg.continuation.restoreTimeout,
+		RunMaxInFlight:                cfg.runMaxInFlight,
 		ComposeMaxDepth:               cfg.composeMaxDepth,
 		CacheMaxTTL:                   cfg.cacheMaxTTL,
 		Memos:                         memoStore,

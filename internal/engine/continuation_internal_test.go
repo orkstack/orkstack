@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -50,6 +51,20 @@ func newRefusalHarness(t *testing.T) *refusalHarness {
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: refusalWorkflowID})
 	return h
 }
+
+// refusalPlan is a plan pinRunTreeLimits would build with continuation on:
+// a history limit and a valid budget, so a carry reaches its version check.
+func refusalPlan() RunPlan {
+	budget := DefaultContinuationBudget(DefaultContinuationEvents, DefaultContinuationBytes, DefaultContinuationRestoreTimeout)
+	return RunPlan{
+		Namespace:    "team-a",
+		History:      &HistoryLimit{MaxEvents: DefaultHistoryMaxEvents, MaxBytes: DefaultHistoryMaxBytes, Reserve: DefaultHistoryReserve},
+		Continuation: &budget,
+	}
+}
+
+// unknownCarryVersion is a carry format a newer release would write.
+const unknownCarryVersion = ContinuationCarryVersion + 1
 
 // refusalOrkflow is a definition a newer release would have planned.
 func refusalOrkflow() *orkstackv1.Orkflow {
@@ -115,8 +130,8 @@ func requireRunStateError(t *testing.T, err error, code string) {
 
 func TestRunWorkflow_RefusesACarryItCannotContinue(t *testing.T) {
 	h := newRefusalHarness(t)
-	carry := h.carryFor(t, 1, switchSnapshotRun(), "team-a", refusalWorkflowID)
-	h.env.ExecuteWorkflow(RunWorkflowType, "", refusalOrkflow(), (*orkstackv1.Payload)(nil), RunPlan{Namespace: "team-a"}, carry)
+	carry := h.carryFor(t, unknownCarryVersion, switchSnapshotRun(), "team-a", refusalWorkflowID)
+	h.env.ExecuteWorkflow(RunWorkflowType, "", refusalOrkflow(), (*orkstackv1.Payload)(nil), refusalPlan(), carry)
 	requireRunStateError(t, h.env.GetWorkflowError(), RunStateUnsupportedCode)
 
 	event, run := h.terminal(t)
@@ -124,7 +139,7 @@ func TestRunWorkflow_RefusesACarryItCannotContinue(t *testing.T) {
 		event.GetRunId() != refusalWorkflowID || event.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 		t.Fatalf("terminal event = %v, want RUN_FAILED at sequence 42 of %s", event, refusalWorkflowID)
 	}
-	if !strings.Contains(event.GetMessage(), "saved-state format 1") || !strings.Contains(event.GetMessage(), "roll the engines forward") {
+	if !strings.Contains(event.GetMessage(), fmt.Sprintf("saved-state format %d", unknownCarryVersion)) || !strings.Contains(event.GetMessage(), "roll the engines forward") {
 		t.Fatalf("terminal message %q does not explain the refusal", event.GetMessage())
 	}
 	for _, word := range []string{"generation", "Temporal", "execution", "continue as new", "checkpoint", "segment"} {
@@ -164,8 +179,8 @@ func TestRunWorkflow_RefusesACarryItCannotContinue(t *testing.T) {
 
 func TestEndUnrestorable_KeepsRowsThatWereTerminalAtTheSwitch(t *testing.T) {
 	h := newRefusalHarness(t)
-	h.env.ExecuteWorkflow(RunWorkflowType, "", refusalOrkflow(), (*orkstackv1.Payload)(nil), RunPlan{Namespace: "team-a"},
-		h.carryFor(t, 1, switchSnapshotRun(), "team-a", refusalWorkflowID))
+	h.env.ExecuteWorkflow(RunWorkflowType, "", refusalOrkflow(), (*orkstackv1.Payload)(nil), refusalPlan(),
+		h.carryFor(t, unknownCarryVersion, switchSnapshotRun(), "team-a", refusalWorkflowID))
 	requireRunStateError(t, h.env.GetWorkflowError(), RunStateUnsupportedCode)
 	_, run := h.terminal(t)
 	var items []*orkstackv1.TaskRun
@@ -192,11 +207,10 @@ func TestEndUnrestorable_KeepsRowsThatWereTerminalAtTheSwitch(t *testing.T) {
 func TestEndUnrestorable_NeverReadsAPlanPointer(t *testing.T) {
 	h := newRefusalHarness(t)
 	// No checkpoint, no snapshot, no timestamps, a negative sequence; the
-	// plan has no History, no Continuation, no Telemetry, no Origin; the
-	// definition is nil.
+	// plan has no History, no Continuation, no Telemetry, no Origin.
 	carry := &orkstackv1.RunContinuation{Version: 1, EventSequence: -7}
-	h.env.ExecuteWorkflow(RunWorkflowType, "", (*orkstackv1.Orkflow)(nil), (*orkstackv1.Payload)(nil), RunPlan{}, carry)
-	requireRunStateError(t, h.env.GetWorkflowError(), RunStateUnsupportedCode)
+	h.env.ExecuteWorkflow(RunWorkflowType, "", refusalOrkflow(), (*orkstackv1.Payload)(nil), RunPlan{}, carry)
+	requireRunStateError(t, h.env.GetWorkflowError(), RunStateCorruptCode)
 	event, run := h.terminal(t)
 	if event.GetSequence() != 1 || event.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED {
 		t.Fatalf("terminal event = %v, want RUN_FAILED at sequence 1", event)
@@ -210,7 +224,7 @@ func TestRunWorkflow_CarriedGenerationTakesItsRunIDFromTheWorkflowID(t *testing.
 	h := newRefusalHarness(t)
 	// Even a non-empty argument is ignored once a carry is present.
 	h.env.ExecuteWorkflow(RunWorkflowType, "ork-not-this-one", refusalOrkflow(), (*orkstackv1.Payload)(nil),
-		RunPlan{Namespace: "team-a"}, h.carryFor(t, 1, nil, "", ""))
+		refusalPlan(), h.carryFor(t, unknownCarryVersion, nil, "", ""))
 	requireRunStateError(t, h.env.GetWorkflowError(), RunStateUnsupportedCode)
 	event, run := h.terminal(t)
 	if event.GetRunId() != refusalWorkflowID || run.GetId() != refusalWorkflowID {
@@ -235,16 +249,16 @@ func TestRunWorkflow_EmptyRunIDWithoutACarryIsStillInvalidRun(t *testing.T) {
 func TestEndUnrestorable_IgnoresASwitchSnapshotOfAnotherRun(t *testing.T) {
 	for name, carry := range map[string]func(h *refusalHarness) *orkstackv1.RunContinuation{
 		"another run": func(h *refusalHarness) *orkstackv1.RunContinuation {
-			return h.carryFor(t, 1, switchSnapshotRun(), "team-a", "ork-1700000000-43")
+			return h.carryFor(t, unknownCarryVersion, switchSnapshotRun(), "team-a", "ork-1700000000-43")
 		},
 		"another namespace": func(h *refusalHarness) *orkstackv1.RunContinuation {
-			return h.carryFor(t, 1, switchSnapshotRun(), "team-b", refusalWorkflowID)
+			return h.carryFor(t, unknownCarryVersion, switchSnapshotRun(), "team-b", refusalWorkflowID)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newRefusalHarness(t)
 			c := carry(h)
-			h.env.ExecuteWorkflow(RunWorkflowType, "", refusalOrkflow(), (*orkstackv1.Payload)(nil), RunPlan{Namespace: "team-a"}, c)
+			h.env.ExecuteWorkflow(RunWorkflowType, "", refusalOrkflow(), (*orkstackv1.Payload)(nil), refusalPlan(), c)
 			requireRunStateError(t, h.env.GetWorkflowError(), RunStateUnsupportedCode)
 			_, run := h.terminal(t)
 			if len(run.GetTaskRuns()) != 0 {
@@ -261,13 +275,13 @@ func TestEndUnrestorable_IgnoresASwitchSnapshotOfAnotherRun(t *testing.T) {
 
 func TestEndUnrestorable_IgnoresASwitchSnapshotThatFailsVerification(t *testing.T) {
 	h := newRefusalHarness(t)
-	carry := h.carryFor(t, 1, switchSnapshotRun(), "team-a", refusalWorkflowID)
+	carry := h.carryFor(t, unknownCarryVersion, switchSnapshotRun(), "team-a", refusalWorkflowID)
 	// The object at the key was altered after it was written.
 	data, _ := h.store.get(carry.GetSnapshot().GetUri())
 	altered := append([]byte(nil), data...)
 	altered[len(altered)-1] ^= 0xff
 	h.store.put(carry.GetSnapshot().GetUri(), altered)
-	h.env.ExecuteWorkflow(RunWorkflowType, "", refusalOrkflow(), (*orkstackv1.Payload)(nil), RunPlan{Namespace: "team-a"}, carry)
+	h.env.ExecuteWorkflow(RunWorkflowType, "", refusalOrkflow(), (*orkstackv1.Payload)(nil), refusalPlan(), carry)
 	requireRunStateError(t, h.env.GetWorkflowError(), RunStateUnsupportedCode)
 	_, run := h.terminal(t)
 	if len(run.GetTaskRuns()) != 0 {

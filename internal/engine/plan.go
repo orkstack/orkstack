@@ -139,6 +139,82 @@ type RunPlan struct {
 	// startChild. Nil on every plan built before this field existed: no
 	// recorded history enters the guard (history_guard.go).
 	History *HistoryLimit `json:"history,omitempty"`
+
+	// Continuation is this run's per-generation budget and every number the
+	// writer, the hold and the bootstrap decide with (continuation.go), set
+	// at submit when engine.continuation.enabled. A run-tree limit, like
+	// History: set on the top-level plan by pinRunTreeLimits, copied into
+	// each child's start plan by startChild. Nil: the run never continues as
+	// new (every plan built before this field, and every plan of a
+	// deployment that leaves it off). Set only together with History; a
+	// plan carrying a Continuation without a History never continues.
+	Continuation *ContinuationBudget `json:"continuation,omitempty"`
+
+	// InFlight caps what this run keeps pending (holdDispatch,
+	// continuation.go). A run-tree limit. Nil: no cap (every plan built
+	// before this field).
+	InFlight *InFlightLimit `json:"in_flight,omitempty"`
+}
+
+// ContinuationBudget is a run's per-generation budget: how much a generation
+// grows before it continues as new at its next moment with nothing in
+// flight, and every number the hold and the next generation's bootstrap
+// decide with. Every field is pinned per run (DefaultContinuation* at
+// submit), because each one decides whether, which, how many or where
+// workflow code issues a command.
+type ContinuationBudget struct {
+	Events             int64         `json:"events"`               // growth per generation, in history events
+	Bytes              int64         `json:"bytes"`                // growth per generation, in history bytes
+	CheckpointMaxBytes int64         `json:"checkpoint_max_bytes"` // = Bytes: the largest saved state a generation reads (AGENTS.md §2.2)
+	RetryEvents        int64         `json:"retry_events"`         // Events/4: growth before a failed switch or a given-up hold is retried
+	RetryBytes         int64         `json:"retry_bytes"`          // Bytes/4
+	HoldPercent        int64         `json:"hold_percent"`         // the hold line, % of the cluster limit
+	MaxGenerations     int64         `json:"max_generations"`      // no switch into a generation at or past it
+	ChunkBytes         int64         `json:"chunk_bytes"`          // one bootstrap read
+	ChunksPerTask      int64         `json:"chunks_per_task"`      // reads per workflow task before a yield
+	Restore            RestorePolicy `json:"restore"`
+}
+
+// RestorePolicy is the bootstrap's read deadline and the Temporal retry
+// policy of each read. Pinned so that the history bound validated for this
+// run (RestoreHistoryBound) holds for its whole life.
+type RestorePolicy struct {
+	TimeoutSeconds       int64 `json:"timeout_seconds"`        // engine.continuation.restore_timeout
+	AttemptSeconds       int64 `json:"attempt_seconds"`        // one read attempt
+	BackoffInitialMillis int64 `json:"backoff_initial_millis"` // the first retry's backoff
+	BackoffMaxSeconds    int64 `json:"backoff_max_seconds"`    // the largest retry backoff
+}
+
+// InFlightLimit caps the activities, child runs and pins one run keeps
+// pending. Max is engine.run_max_in_flight; HardStop is absolute, an open
+// pin's closure included.
+type InFlightLimit struct {
+	Max      int32 `json:"max"`
+	HardStop int32 `json:"hard_stop"`
+}
+
+// continuationChunkCeiling is the largest chunk a bootstrap may read: the
+// 128 KiB that AGENTS.md §2.2's saved-state exception states. A contract
+// constant fixed by AGENTS.md, not a tunable default.
+const continuationChunkCeiling = 128 << 10
+
+// valid is the structural check every reader of a budget makes first. It
+// reads no tunable constant: only positivity, 100%, and
+// continuationChunkCeiling. A budget pinRunTreeLimits built always passes; a
+// hand-built or forged one that fails never continues and is never
+// restored.
+func (b *ContinuationBudget) valid() bool {
+	if b == nil {
+		return false
+	}
+	r := b.Restore
+	return b.Events > 0 && b.Bytes > 0 && b.CheckpointMaxBytes > 0 &&
+		b.RetryEvents > 0 && b.RetryBytes > 0 &&
+		b.HoldPercent > 0 && b.HoldPercent <= 100 &&
+		b.MaxGenerations >= 1 &&
+		b.ChunkBytes > 0 && b.ChunkBytes <= continuationChunkCeiling &&
+		b.ChunksPerTask >= 1 &&
+		r.TimeoutSeconds > 0 && r.AttemptSeconds > 0 && r.BackoffInitialMillis > 0 && r.BackoffMaxSeconds > 0
 }
 
 // HistoryLimit is the cluster's per-execution history limits, as the

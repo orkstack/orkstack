@@ -441,6 +441,8 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 	// copy. Never on the nested plan the parent carries: that would cost
 	// every composed task its bytes inside the 256 KiB plan.
 	childPlan.History = s.plan.History
+	childPlan.Continuation = s.plan.Continuation
+	childPlan.InFlight = s.plan.InFlight
 
 	// 5. Start it, and wait for the start to be confirmed.
 	options := childWorkflowOptions(workflow.GetInfo(ctx).TaskQueueName, c.plan, c.wf, childPlan)
