@@ -570,6 +570,7 @@ func TestContinuation_HoldNeverSpins(t *testing.T) {
 			})
 		generationsOK(t, g, 1)
 	})
+	t.Run("after cancel", holdNeverSpinsAfterCancel)
 	t.Run("with an opening and a closing pin", func(t *testing.T) {
 		g := runGenerations(t, "ork-spin-pins", compile(t, pinOpenDocument), payload(t, nil), holdPlan(), okBehavior,
 			func(h *harness, generation int) {

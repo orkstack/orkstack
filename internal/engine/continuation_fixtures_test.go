@@ -1,7 +1,6 @@
 package engine_test
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/worker"
-	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -72,29 +70,7 @@ func TestContinuation_RestoreEqualsLiveStateAtEveryIdlePoint(t *testing.T) {
 			})()
 
 			var current *harness
-			behavior := func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-				result, ok := results[scheduleKey(in)]
-				if !ok {
-					// A child run's task: the recording holds only the
-					// parent's.
-					fallback := succeeded(in.GetTaskId(), map[string]any{"value": "v"})
-					fallback.ValuesRef.Uri = "mem://values/" + in.GetRunId() + "/" + scheduleKey(in)
-					result = fallback
-				}
-				// The recorded values — or a stand-in where the recording
-				// kept none inline — in the harness's store, under a
-				// reference to exactly those bytes, so a render reads them.
-				result = proto.Clone(result).(*orkstackv1.ExecuteTaskResult)
-				values := result.GetValuesJson()
-				if len(values) == 0 {
-					values = []byte(`{"value":"v"}`)
-				}
-				if result.GetValuesRef() != nil {
-					result.ValuesRef = current.values.put(result.GetValuesRef().GetUri(), values)
-					result.ValuesJson, result.ValuesInlined = values, true
-				}
-				return result, nil
-			}
+			behavior := fixtureBehavior(results, &current)
 			g := runGenerations(t, runID, wf, input, plan, behavior, func(h *harness, _ int) {
 				current = h
 				enablePins(h, worker.Options{})

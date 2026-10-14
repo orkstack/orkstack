@@ -349,63 +349,65 @@ tasks:
 
 // TestInFlightCap_PinClosureIsExemptBelowTheHardStop: at the cap, an open
 // pin's needs-closure still dispatches, so the pin closes while unpinned
-// work waits; at the plan's hard stop even the pin's closure waits
-// (HardStopHoldsEvenThePin), and the run still completes.
+// work waits, and the run completes.
 func TestInFlightCap_PinClosureIsExemptBelowTheHardStop(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		cap      int32
-		hardStop int32
-	}{{"below the hard stop", 4, 1900}, {"HardStopHoldsEvenThePin", 100, 4}} {
-		t.Run(tc.name, func(t *testing.T) {
-			var suite testsuite.WorkflowTestSuite
-			var mu sync.Mutex
-			var order []string
-			h := newHarnessCtx(t, &suite, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-				mu.Lock()
-				if in.GetEach() == nil {
-					order = append(order, in.GetTaskId())
-				}
-				mu.Unlock()
-				return itemBehavior(ctx, in)
-			})
-			enablePins(h, worker.Options{DeadlockDetectionTimeout: time.Second})
-			peak := &runningPeak{}
-			h.onSnapshot = peak.observe
-			h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-cap-pin", compile(t, pinnedOverCapDocument),
-				spreadInput(t, 30), cappedPlan(tc.cap, tc.hardStop), (*orkstackv1.RunContinuation)(nil))
-			if err := h.env.GetWorkflowError(); err != nil {
-				t.Fatalf("the run failed: %v", err)
+	pinClosureUnderTheCap(t, 4, 1900)
+}
+
+// TestInFlightCap_HardStopHoldsEvenThePin: at the plan's hard stop even an
+// open pin's closure waits, so pending work stays below it, and the run
+// still completes.
+func TestInFlightCap_HardStopHoldsEvenThePin(t *testing.T) {
+	pinClosureUnderTheCap(t, 100, 4)
+}
+
+func pinClosureUnderTheCap(t *testing.T, maxInFlight, hardStop int32) {
+	var suite testsuite.WorkflowTestSuite
+	var mu sync.Mutex
+	var order []string
+	h := newHarnessCtx(t, &suite, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		mu.Lock()
+		if in.GetEach() == nil {
+			order = append(order, in.GetTaskId())
+		}
+		mu.Unlock()
+		return itemBehavior(ctx, in)
+	})
+	enablePins(h, worker.Options{DeadlockDetectionTimeout: time.Second})
+	peak := &runningPeak{}
+	h.onSnapshot = peak.observe
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-cap-pin", compile(t, pinnedOverCapDocument),
+		spreadInput(t, 30), cappedPlan(maxInFlight, hardStop), (*orkstackv1.RunContinuation)(nil))
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("the run failed: %v", err)
+	}
+	if run := mustFinalRun(t, h.store, "ork-cap-pin"); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("status = %v", run.GetStatus())
+	}
+	if len(order) != 3 {
+		t.Fatalf("ran %v, want prep, fetch and compile", order)
+	}
+	if peak.value() >= int(hardStop) {
+		// The hard stop counts the one publish an emit may have
+		// outstanding too, so the rows pending stay below it.
+		t.Fatalf("peak pending %d reached the hard stop %d", peak.value(), hardStop)
+	}
+	if hardStop == 1900 {
+		// The pin's closure was dispatched while the capped fan-out
+		// still had items waiting: it was exempt, not merely lucky.
+		calls := h.invocations()
+		compileAt, lastItem := -1, -1
+		for i, in := range calls {
+			switch {
+			case in.GetTaskId() == "compile":
+				compileAt = i
+			case in.GetEach() != nil:
+				lastItem = i
 			}
-			if run := mustFinalRun(t, h.store, "ork-cap-pin"); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
-				t.Fatalf("status = %v", run.GetStatus())
-			}
-			if len(order) != 3 {
-				t.Fatalf("ran %v, want prep, fetch and compile", order)
-			}
-			if peak.value() >= int(tc.hardStop) {
-				// The hard stop counts the one publish an emit may have
-				// outstanding too, so the rows pending stay below it.
-				t.Fatalf("peak pending %d reached the hard stop %d", peak.value(), tc.hardStop)
-			}
-			if tc.hardStop == 1900 {
-				// The pin's closure was dispatched while the capped fan-out
-				// still had items waiting: it was exempt, not merely lucky.
-				calls := h.invocations()
-				compileAt, lastItem := -1, -1
-				for i, in := range calls {
-					switch {
-					case in.GetTaskId() == "compile":
-						compileAt = i
-					case in.GetEach() != nil:
-						lastItem = i
-					}
-				}
-				if compileAt < 0 || compileAt > lastItem {
-					t.Fatalf("compile ran at %d, after the fan-out's last item at %d: the pin waited on the cap", compileAt, lastItem)
-				}
-			}
-		})
+		}
+		if compileAt < 0 || compileAt > lastItem {
+			t.Fatalf("compile ran at %d, after the fan-out's last item at %d: the pin waited on the cap", compileAt, lastItem)
+		}
 	}
 }
 
