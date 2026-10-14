@@ -38,7 +38,9 @@ import {
 // generation (AGENTS.md §7).
 //
 // Topology: one engine, one Orker, the production UI build, in a Temporal
-// namespace of this spec's own, with continuation on: a 600-event history
+// namespace of this spec's own, with continuation on by default — nothing
+// sets engine.continuation.enabled, and an inherited value is dropped — and
+// tuned for a short run: a 600-event history
 // limit (its hold line 360 events of history and reserve), a 120-event
 // budget, and a 4-minute restore timeout, whose worst-case history (127
 // events) fits the quarter of the limit the engine's boot check requires. A
@@ -188,7 +190,8 @@ test.beforeAll(async () => {
 		ORK_HTTP_ADDR: '127.0.0.1:18663',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
 		ORK_HISTORY_MAX_EVENTS: '600',
-		ORK_CONTINUATION_ENABLED: 'true',
+		// The default (on) decides, never the environment the spec runs in.
+		ORK_CONTINUATION_ENABLED: undefined,
 		ORK_CONTINUATION_EVENTS: '120',
 		ORK_CONTINUATION_BYTES: '1048576',
 		ORK_CONTINUATION_RESTORE_TIMEOUT: '4m'

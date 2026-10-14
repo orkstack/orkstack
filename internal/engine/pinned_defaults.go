@@ -45,9 +45,11 @@ var DefaultHistoryReserve = HistoryReserve{
 // settings; the rest are pinned engine defaults, copied into the plan at
 // submit like the history reserve.
 
-// DefaultContinuationEnabled is engine.continuation.enabled's default: off
-// until the chaos scenarios have proven the writer (a later release flips it).
-const DefaultContinuationEnabled = false
+// DefaultContinuationEnabled is engine.continuation.enabled's default: on,
+// since the continuation chaos scenarios (C1–C31) proved the writer, in a
+// release after the one that first contained it — the order a rollback
+// relies on (docs/DEPLOY.md §4).
+const DefaultContinuationEnabled = true
 
 // DefaultContinuationEvents is engine.continuation.events' default: a
 // generation that reaches a moment with nothing in flight continues as new
