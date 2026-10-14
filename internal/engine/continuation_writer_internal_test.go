@@ -548,6 +548,14 @@ func segmentObjectForTest(t testing.TB, namespace, runID string) *orkstackv1.Con
 // production 1 s deadlock detector; and one batch's decode (a megabyte of
 // chunks, its parts verified, gunzipped and unmarshalled) takes at most
 // 200 ms, a 5x margin.
+// restoreBatchDecodeBound is the spec's bound on one batch's decode, a
+// fifth of the one-second deadlock detector; raceSlowdown scales it under
+// the race detector.
+const (
+	restoreBatchDecodeBound = 200 * time.Millisecond
+	raceSlowdown            = 10
+)
+
 func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 	wf, store, carry, size := cappedRestore(t, 4000)
 	h := newRefusalHarnessOver(t, store)
@@ -572,12 +580,22 @@ func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 		}
 		worst = max(worst, time.Since(begin))
 	}
-	if worst > 200*time.Millisecond {
-		t.Fatalf("the slowest batch decoded in %s, over 200 ms", worst)
+	// The spec's bound is for the production build. The race detector's
+	// instrumentation slows this CPU-bound decode several times over, so
+	// under -race the bound is scaled, never dropped, and the measurement
+	// is not written as evidence.
+	bound := restoreBatchDecodeBound
+	if raceBuild {
+		bound *= raceSlowdown
 	}
-	proof.WriteJSON(t, "continuation", "restore-deadlock-budget.json", map[string]any{
-		"checkpoint_bytes": size, "tasks": 4000, "whole_restore_ms": elapsed.Milliseconds(), "slowest_batch_decode_ms": worst.Milliseconds(),
-	})
+	if worst > bound {
+		t.Fatalf("the slowest batch decoded in %s, over %s", worst, bound)
+	}
+	if !raceBuild {
+		proof.WriteJSON(t, "continuation", "restore-deadlock-budget.json", map[string]any{
+			"checkpoint_bytes": size, "tasks": 4000, "whole_restore_ms": elapsed.Milliseconds(), "slowest_batch_decode_ms": worst.Milliseconds(),
+		})
+	}
 	t.Logf("E2 restore at the cap: %d bytes over 4,000 tasks restored in %s; slowest batch decode %s", size, elapsed, worst)
 }
 
