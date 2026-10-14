@@ -1315,11 +1315,17 @@ func (r *TemporalRunReader) readSnapshotAt(
 	case projection != nil && projection.switchSnapshot != nil && uri == projection.switchSnapshot.GetUri():
 		reference, decode = projection.switchSnapshot, DecodeSwitchSnapshot
 	case strings.Contains(uri, "/"+artifacts.ContinuationDir+"/"):
-		return nil, fmt.Errorf("engine: read snapshot of run %s: %w: %s is not an object its saved state names",
-			runID, ErrContinuationObjectInvalid, uri)
+		return nil, fmt.Errorf("engine: read the saved state of run %s: %w: it names an object outside the run's saved state",
+			runID, ErrContinuationObjectInvalid)
 	}
 	data, err := r.snapshots.ReadSnapshot(ctx, uri)
 	if err != nil {
+		if reference != nil {
+			// The store's error quotes the object's key, whose name spells
+			// what no user-facing error may (AGENTS.md §7).
+			return nil, fmt.Errorf("engine: read the saved state of run %s: %w", runID,
+				withoutObjectName(err, uri, subjectSavedState))
+		}
 		return nil, fmt.Errorf("engine: read snapshot of run %s: %w", runID, err)
 	}
 	run, err := decode(data, reference)
@@ -1327,7 +1333,7 @@ func (r *TemporalRunReader) readSnapshotAt(
 		if reference != nil {
 			// Already wraps ErrContinuationObjectInvalid; the store's error
 			// is not in the chain, so it can never read as NotFound.
-			return nil, fmt.Errorf("engine: read saved state of run %s: %w", runID, err)
+			return nil, fmt.Errorf("engine: read the saved state of run %s: %w", runID, err)
 		}
 		return nil, fmt.Errorf("engine: decode snapshot of run %s at %s: %w", runID, uri, err)
 	}

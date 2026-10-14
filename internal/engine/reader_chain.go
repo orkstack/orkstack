@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	historypb "go.temporal.io/api/history/v1"
 
@@ -181,60 +182,63 @@ func (r *TemporalRunReader) startedNamespace(attrs *historypb.WorkflowExecutionS
 // exactly this run's own key for its generation, kind and digest. A carry
 // naming another run's object is refused here, and nothing is read from it.
 func validateCarry(runID, namespace string, carry *orkstackv1.RunContinuation) error {
+	// Every sentence below reaches a client, and an archived gap keeps it as
+	// its reason: run vocabulary only (AGENTS.md §7), never the words for
+	// the mechanism behind it.
 	generation := carry.GetGeneration()
 	segments := carry.GetSegments()
 	if generation < 1 {
-		return fmt.Errorf("generation %d is not after the first", generation)
+		return fmt.Errorf("the saved state is numbered %d, not one taken after the run started", generation)
 	}
 	if int64(len(segments)) != generation {
-		return fmt.Errorf("generation %d names %d event segments", generation, len(segments))
+		return fmt.Errorf("the saved state names %d ranges of earlier events, want %d", len(segments), generation)
 	}
 	next := int64(1)
 	for i, seg := range segments {
+		span := fmt.Sprintf("earlier events %d–%d", seg.GetFirstSequence(), seg.GetLastSequence())
 		if seg.GetGeneration() != int64(i) {
-			return fmt.Errorf("event segment %d names generation %d", i, seg.GetGeneration())
+			return fmt.Errorf("%s are numbered %d, want %d", span, seg.GetGeneration(), i)
 		}
 		if seg.GetFirstSequence() != next {
-			return fmt.Errorf("event segment %d starts at sequence %d, want %d", i, seg.GetFirstSequence(), next)
+			return fmt.Errorf("%s start at sequence %d, want %d", span, seg.GetFirstSequence(), next)
 		}
 		if seg.GetLastSequence() < seg.GetFirstSequence()-1 ||
 			seg.GetEventCount() < 0 || seg.GetEventCount() > seg.GetLastSequence()-seg.GetFirstSequence()+1 {
-			return fmt.Errorf("event segment %d holds %d events in [%d, %d]", i,
-				seg.GetEventCount(), seg.GetFirstSequence(), seg.GetLastSequence())
+			return fmt.Errorf("%s cannot hold %d events", span, seg.GetEventCount())
 		}
 		obj := seg.GetObject()
 		if obj == nil || !artifacts.ContinuationURIMatches(obj.GetUri(), namespace, runID, int64(i),
 			artifacts.ContinuationKindEvents, obj.GetSha256()) {
-			return fmt.Errorf("event segment %d is not this run's own object", i)
+			return fmt.Errorf("%s are not this run's own object", span)
 		}
 		next = seg.GetLastSequence() + 1
 	}
 	if carry.GetEventSequence() != next-1 {
-		return fmt.Errorf("the carried sequence %d is not the last segment's last sequence %d",
+		return fmt.Errorf("the saved state's last event sequence %d is not the last earlier event's %d",
 			carry.GetEventSequence(), next-1)
 	}
 	checkpoint := carry.GetCheckpoint()
 	if checkpoint == nil || len(checkpoint.GetParts()) == 0 {
-		return fmt.Errorf("it names no checkpoint parts")
+		return fmt.Errorf("the saved state names no parts")
 	}
 	var offset int64
 	for i, part := range checkpoint.GetParts() {
 		if part.GetOffset() != offset || part.GetSizeBytes() <= 0 {
-			return fmt.Errorf("checkpoint part %d is not contiguous from offset 0", i)
+			return fmt.Errorf("saved state part %d is not contiguous from offset 0", i)
 		}
 		offset += part.GetSizeBytes()
 	}
 	if offset != checkpoint.GetSizeBytes() {
-		return fmt.Errorf("checkpoint parts cover %d of %d bytes", offset, checkpoint.GetSizeBytes())
+		return fmt.Errorf("the saved state's parts cover %d of its %d bytes", offset, checkpoint.GetSizeBytes())
 	}
 	if !artifacts.ContinuationURIMatches(checkpoint.GetUri(), namespace, runID, generation-1,
 		artifacts.ContinuationKindCheckpoint, checkpoint.GetSha256()) {
-		return fmt.Errorf("the checkpoint is not this run's own object")
+		return fmt.Errorf("the saved state is not this run's own object")
 	}
 	if snapshot := carry.GetSnapshot(); snapshot != nil &&
 		!artifacts.ContinuationURIMatches(snapshot.GetUri(), namespace, runID, generation-1,
 			artifacts.ContinuationKindSnapshot, snapshot.GetSha256()) {
-		return fmt.Errorf("the switch snapshot is not this run's own object")
+		return fmt.Errorf("the saved state's full copy is not this run's own object")
 	}
 	return nil
 }
@@ -281,7 +285,8 @@ func (r *TemporalRunReader) replaySegments(
 }
 
 // readSegment reads and verifies one event segment. reason is the short
-// sentence a gap records when the segment is lost.
+// sentence a gap records when the segment is lost: it is archived forever, so
+// it is run vocabulary only and never names the object.
 func (r *TemporalRunReader) readSegment(
 	ctx context.Context,
 	runID string,
@@ -291,8 +296,10 @@ func (r *TemporalRunReader) readSegment(
 	if r.snapshots == nil {
 		return nil, "", fmt.Errorf("%w: %s: snapshot store is not configured", ErrEventSegmentUnavailable, span)
 	}
-	data, err := r.snapshots.ReadSnapshot(ctx, seg.GetObject().GetUri())
+	uri := seg.GetObject().GetUri()
+	data, err := r.snapshots.ReadSnapshot(ctx, uri)
 	if err != nil {
+		err = withoutObjectName(err, uri, subjectEarlierEvents)
 		if errors.Is(err, artifacts.ErrNotFound) {
 			return nil, "segment object missing", fmt.Errorf("%w: %s: segment object missing: %v", ErrEventSegmentLost, span, err)
 		}
@@ -304,11 +311,15 @@ func (r *TemporalRunReader) readSegment(
 	}
 	segment, err := DecodeEventSegment(data, seg.GetObject())
 	if err != nil {
+		var invalid *continuationInvalidError
+		if errors.As(err, &invalid) {
+			return lost(invalid.detail)
+		}
 		return lost(err.Error())
 	}
 	if segment.GetRunId() != runID || segment.GetGeneration() != seg.GetGeneration() ||
 		segment.GetFirstSequence() != seg.GetFirstSequence() || segment.GetLastSequence() != seg.GetLastSequence() {
-		return lost("its run, generation or sequence range is not the one its reference names")
+		return lost("it is not the range of this run its reference names")
 	}
 	if int64(len(segment.GetEvents())) != seg.GetEventCount() {
 		return lost(fmt.Sprintf("it holds %d events, its reference records %d", len(segment.GetEvents()), seg.GetEventCount()))
@@ -326,3 +337,27 @@ func (r *TemporalRunReader) readSegment(
 	}
 	return segment.GetEvents(), "", nil
 }
+
+// withoutObjectName rewrites a store error's text so it never spells the
+// continuation object it failed on. Such an object's key names its
+// generation and kind ("…/continuations/000001-checkpoint-….pb.gz"), which
+// no user-facing error may (AGENTS.md §7), and a store error quotes the URI,
+// the bucket path or the file path, all ending in that key's last segment.
+// That segment becomes "<what>"; err stays in the chain, so errors.Is still
+// matches artifacts.ErrNotFound and the rest.
+func withoutObjectName(err error, uri, what string) error {
+	name := uri[strings.LastIndex(uri, "/")+1:]
+	if err == nil || name == "" || !strings.Contains(err.Error(), name) {
+		return err
+	}
+	return &renamedError{text: strings.ReplaceAll(err.Error(), name, "<"+what+">"), err: err}
+}
+
+// renamedError is an error with its text rewritten and its chain kept.
+type renamedError struct {
+	text string
+	err  error
+}
+
+func (e *renamedError) Error() string { return e.text }
+func (e *renamedError) Unwrap() error { return e.err }

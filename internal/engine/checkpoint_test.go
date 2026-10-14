@@ -137,12 +137,12 @@ func TestCheckpointRun_HeaderOnlyInPartZero(t *testing.T) {
 		t.Fatalf("no header: err = %v", err)
 	}
 	parts[2].Header = &orkstackv1.Run{Id: "ork-1-2"}
-	if _, err := CheckpointRun(parts...); err == nil || !strings.Contains(err.Error(), "part 2 carries a header") {
+	if _, err := CheckpointRun(parts...); err == nil || !strings.Contains(err.Error(), "part 2 holds a run header") {
 		t.Fatalf("header on part 2: err = %v", err)
 	}
 	// The stored object is refused the same way.
 	data, obj := checkpointObjectForTest(t, parts, "team-a", "ork-1-2", 0)
-	if _, err := DecodeCheckpoint(data, obj); err == nil || !strings.Contains(err.Error(), "part 2 carries a header") {
+	if _, err := DecodeCheckpoint(data, obj); err == nil || !strings.Contains(err.Error(), "part 2 holds a run header") {
 		t.Fatalf("DecodeCheckpoint with a header on part 2: err = %v", err)
 	}
 }

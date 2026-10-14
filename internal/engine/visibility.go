@@ -248,7 +248,7 @@ func (r *TemporalRunReader) chainStillLive(ctx context.Context, id string) (bool
 		if errors.As(err, &notFound) {
 			return false, nil
 		}
-		return false, fmt.Errorf("engine: describe run %s caught between two of its executions: %w", id, err)
+		return false, fmt.Errorf("engine: describe run %s while it carries on into a fresh history: %w", id, err)
 	}
 	info := resp.GetWorkflowExecutionInfo()
 	return info.GetCloseTime() == nil && !isContinuedAsNew(info) && isOpenExecution(info), nil

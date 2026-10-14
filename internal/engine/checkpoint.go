@@ -18,7 +18,42 @@ import (
 // switch snapshot or an event segment) whose bytes failed verification: a
 // size, SHA-256, gzip, protobuf or structure check. It is never a
 // NotFound, and never a degraded answer: an object that fails it is not used.
-var ErrContinuationObjectInvalid = errors.New("continuation object failed verification")
+//
+// Its text, and every error that matches it, speaks only the run's own
+// vocabulary — "saved state", "earlier events" — and never names the object
+// (whose key spells its generation and kind): these errors reach a client
+// unchanged, and an archived gap keeps its reason forever (AGENTS.md §7).
+var ErrContinuationObjectInvalid = errors.New("a stored part of the run failed verification")
+
+// Subjects of a verification failure, as a user reads them.
+const (
+	subjectSavedState    = "saved state"    // a checkpoint or a switch snapshot
+	subjectEarlierEvents = "earlier events" // an event segment
+)
+
+// continuationInvalidError is one verification failure: what failed (a
+// subject above) and the short detail of how, which a lost segment's gap
+// records as its reason. It matches ErrContinuationObjectInvalid.
+type continuationInvalidError struct {
+	subject string
+	detail  string
+}
+
+func (e *continuationInvalidError) Error() string {
+	return "the run's " + e.subject + " failed verification: " + e.detail
+}
+
+func (e *continuationInvalidError) Is(target error) bool {
+	return target == ErrContinuationObjectInvalid
+}
+
+func invalidContinuation(subject, format string, args ...any) error {
+	return &continuationInvalidError{subject: subject, detail: fmt.Sprintf(format, args...)}
+}
+
+func invalidSavedState(format string, args ...any) error {
+	return invalidContinuation(subjectSavedState, format, args...)
+}
 
 // CheckpointRun assembles the run a checkpoint holds from its parts, in
 // stored order. The first part carries the header (the Run with task_runs
@@ -31,10 +66,16 @@ var ErrContinuationObjectInvalid = errors.New("continuation object failed verifi
 // It refuses a missing header, a header on any part but the first, a
 // duplicate task row, a duplicate (task_id, item), an item whose task is not
 // an expanded fan-out, an index outside [0, count), and an expanded fan-out
-// missing one of its items.
+// missing one of its items. That last refusal goes beyond the spec's list
+// (1.1) and is sound because of two facts: an expansion creates all count
+// item rows at once (each.go, expandEach) and nothing removes one from the
+// run's state, and the switch writes its checkpoint over s.snapshot() with
+// items included (spec 2.7 step 5). A checkpoint short of an item row is
+// therefore never what a writer meant, and adopting it would restore a
+// fan-out with an item no row tracks. Stage 2's writer must keep both facts.
 func CheckpointRun(parts ...*orkstackv1.RunCheckpointPart) (*orkstackv1.Run, error) {
 	if len(parts) == 0 || parts[0] == nil || parts[0].GetHeader() == nil {
-		return nil, fmt.Errorf("%w: checkpoint has no header", ErrContinuationObjectInvalid)
+		return nil, invalidSavedState("it has no run header")
 	}
 	run := proto.Clone(parts[0].GetHeader()).(*orkstackv1.Run)
 	run.TaskRuns = nil
@@ -42,18 +83,18 @@ func CheckpointRun(parts ...*orkstackv1.RunCheckpointPart) (*orkstackv1.Run, err
 	var items []*orkstackv1.TaskRun
 	for i, part := range parts {
 		if part == nil {
-			return nil, fmt.Errorf("%w: checkpoint part %d is empty", ErrContinuationObjectInvalid, i)
+			return nil, invalidSavedState("part %d is empty", i)
 		}
 		if i > 0 && part.GetHeader() != nil {
-			return nil, fmt.Errorf("%w: checkpoint part %d carries a header; only part 0 may", ErrContinuationObjectInvalid, i)
+			return nil, invalidSavedState("part %d holds a run header; only part 0 may", i)
 		}
 		for _, row := range part.GetTaskRuns() {
 			id := row.GetTaskId()
 			if id == "" || row.Item != nil {
-				return nil, fmt.Errorf("%w: checkpoint task row %q is not a task row", ErrContinuationObjectInvalid, id)
+				return nil, invalidSavedState("task row %q is not a task row", id)
 			}
 			if _, dup := rows[id]; dup {
-				return nil, fmt.Errorf("%w: checkpoint repeats task %q", ErrContinuationObjectInvalid, id)
+				return nil, invalidSavedState("it repeats task %q", id)
 			}
 			row = proto.Clone(row).(*orkstackv1.TaskRun)
 			row.Items = nil
@@ -66,23 +107,23 @@ func CheckpointRun(parts ...*orkstackv1.RunCheckpointPart) (*orkstackv1.Run, err
 	for _, item := range items {
 		id := item.GetTaskId()
 		if item.Item == nil {
-			return nil, fmt.Errorf("%w: checkpoint item row of task %q has no index", ErrContinuationObjectInvalid, id)
+			return nil, invalidSavedState("an item row of task %q has no index", id)
 		}
 		index := item.GetItem()
 		row, ok := rows[id]
 		if !ok || !row.GetEach().GetExpanded() {
-			return nil, fmt.Errorf("%w: checkpoint item %d names task %q, which is not an expanded fan-out",
-				ErrContinuationObjectInvalid, index, id)
+			return nil, invalidSavedState("item %d names task %q, which is not an expanded fan-out",
+				index, id)
 		}
 		if index < 0 || index >= row.GetEach().GetCount() {
-			return nil, fmt.Errorf("%w: checkpoint item %d of task %q is outside [0, %d)",
-				ErrContinuationObjectInvalid, index, id, row.GetEach().GetCount())
+			return nil, invalidSavedState("item %d of task %q is outside [0, %d)",
+				index, id, row.GetEach().GetCount())
 		}
 		if seen[id] == nil {
 			seen[id] = map[int32]bool{}
 		}
 		if seen[id][index] {
-			return nil, fmt.Errorf("%w: checkpoint repeats item %d of task %q", ErrContinuationObjectInvalid, index, id)
+			return nil, invalidSavedState("it repeats item %d of task %q", index, id)
 		}
 		seen[id][index] = true
 		row.Items = append(row.Items, proto.Clone(item).(*orkstackv1.TaskRun))
@@ -92,8 +133,8 @@ func CheckpointRun(parts ...*orkstackv1.RunCheckpointPart) (*orkstackv1.Run, err
 			continue
 		}
 		if count := row.GetEach().GetCount(); int32(len(row.Items)) != count {
-			return nil, fmt.Errorf("%w: checkpoint holds %d of the %d items of task %q",
-				ErrContinuationObjectInvalid, len(row.Items), count, row.GetTaskId())
+			return nil, invalidSavedState("it holds %d of the %d items of task %q",
+				len(row.Items), count, row.GetTaskId())
 		}
 		sort.Slice(row.Items, func(i, j int) bool { return row.Items[i].GetItem() < row.Items[j].GetItem() })
 	}
@@ -104,42 +145,48 @@ func CheckpointRun(parts ...*orkstackv1.RunCheckpointPart) (*orkstackv1.Run, err
 // against the reference that names it: its size, the SHA-256 of the whole
 // object, then each part's offset, size, SHA-256 and decoded size, before any
 // row is used. Every failure wraps ErrContinuationObjectInvalid.
+//
+// It decodes part by part rather than as the one multistream unmarshal spec
+// 1.1 describes. The rows are the same — concatenated parts merge into one
+// message — but a single unmarshal would merge a stray header on a later part
+// into part 0's silently, so CheckpointRun could never refuse it, and it
+// could not check each part's own SHA-256 either.
 func DecodeCheckpoint(data []byte, obj *orkstackv1.ContinuationObject) (*orkstackv1.Run, error) {
-	if err := verifyContinuationBytes(data, obj); err != nil {
+	if err := verifyContinuationBytes(data, obj, subjectSavedState); err != nil {
 		return nil, err
 	}
 	parts := obj.GetParts()
 	if len(parts) == 0 {
-		return nil, fmt.Errorf("%w: checkpoint reference names no parts", ErrContinuationObjectInvalid)
+		return nil, invalidSavedState("its reference names no parts")
 	}
 	decoded := make([]*orkstackv1.RunCheckpointPart, 0, len(parts))
 	var offset, raw int64
 	for i, part := range parts {
 		if part.GetOffset() != offset || part.GetSizeBytes() <= 0 || part.GetOffset()+part.GetSizeBytes() > int64(len(data)) {
-			return nil, fmt.Errorf("%w: checkpoint part %d is not contiguous from offset 0", ErrContinuationObjectInvalid, i)
+			return nil, invalidSavedState("part %d is not contiguous from offset 0", i)
 		}
 		member := data[part.GetOffset() : part.GetOffset()+part.GetSizeBytes()]
 		if artifacts.ContinuationSHA256(member) != part.GetSha256() {
-			return nil, fmt.Errorf("%w: checkpoint part %d SHA-256 mismatch", ErrContinuationObjectInvalid, i)
+			return nil, invalidSavedState("part %d SHA-256 mismatch", i)
 		}
 		plain, err := gunzipBounded(member, part.GetRawBytes())
 		if err != nil {
-			return nil, fmt.Errorf("%w: checkpoint part %d: %v", ErrContinuationObjectInvalid, i, err)
+			return nil, invalidSavedState("part %d: %v", i, err)
 		}
 		message := &orkstackv1.RunCheckpointPart{}
 		if err := proto.Unmarshal(plain, message); err != nil {
-			return nil, fmt.Errorf("%w: checkpoint part %d: %v", ErrContinuationObjectInvalid, i, err)
+			return nil, invalidSavedState("part %d: %v", i, err)
 		}
 		decoded = append(decoded, message)
 		offset += part.GetSizeBytes()
 		raw += part.GetRawBytes()
 	}
 	if offset != int64(len(data)) {
-		return nil, fmt.Errorf("%w: checkpoint parts cover %d of %d bytes", ErrContinuationObjectInvalid, offset, len(data))
+		return nil, invalidSavedState("its parts cover %d of %d bytes", offset, len(data))
 	}
 	if obj.GetRawBytes() != raw {
-		return nil, fmt.Errorf("%w: checkpoint parts decode to %d bytes, the reference records %d",
-			ErrContinuationObjectInvalid, raw, obj.GetRawBytes())
+		return nil, invalidSavedState("its parts decode to %d bytes, its reference records %d",
+			raw, obj.GetRawBytes())
 	}
 	return CheckpointRun(decoded...)
 }
@@ -148,16 +195,16 @@ func DecodeCheckpoint(data []byte, obj *orkstackv1.ContinuationObject) (*orkstac
 // reference that names it (size, SHA-256, decoded size), gunzips it and
 // unmarshals one Run.
 func DecodeSwitchSnapshot(data []byte, obj *orkstackv1.ContinuationObject) (*orkstackv1.Run, error) {
-	if err := verifyContinuationBytes(data, obj); err != nil {
+	if err := verifyContinuationBytes(data, obj, subjectSavedState); err != nil {
 		return nil, err
 	}
 	plain, err := gunzipBounded(data, obj.GetRawBytes())
 	if err != nil {
-		return nil, fmt.Errorf("%w: switch snapshot: %v", ErrContinuationObjectInvalid, err)
+		return nil, invalidSavedState("%v", err)
 	}
 	run := &orkstackv1.Run{}
 	if err := proto.Unmarshal(plain, run); err != nil {
-		return nil, fmt.Errorf("%w: switch snapshot: %v", ErrContinuationObjectInvalid, err)
+		return nil, invalidSavedState("%v", err)
 	}
 	return run, nil
 }
@@ -166,32 +213,31 @@ func DecodeSwitchSnapshot(data []byte, obj *orkstackv1.ContinuationObject) (*ork
 // that names it, gunzips it and unmarshals the RunEventSegment. The caller
 // checks its run, generation and sequences.
 func DecodeEventSegment(data []byte, obj *orkstackv1.ContinuationObject) (*orkstackv1.RunEventSegment, error) {
-	if err := verifyContinuationBytes(data, obj); err != nil {
+	if err := verifyContinuationBytes(data, obj, subjectEarlierEvents); err != nil {
 		return nil, err
 	}
 	plain, err := gunzipBounded(data, obj.GetRawBytes())
 	if err != nil {
-		return nil, fmt.Errorf("%w: event segment: %v", ErrContinuationObjectInvalid, err)
+		return nil, invalidContinuation(subjectEarlierEvents, "%v", err)
 	}
 	segment := &orkstackv1.RunEventSegment{}
 	if err := proto.Unmarshal(plain, segment); err != nil {
-		return nil, fmt.Errorf("%w: event segment: %v", ErrContinuationObjectInvalid, err)
+		return nil, invalidContinuation(subjectEarlierEvents, "%v", err)
 	}
 	return segment, nil
 }
 
 // verifyContinuationBytes checks a whole stored object's size and SHA-256
-// against its reference.
-func verifyContinuationBytes(data []byte, obj *orkstackv1.ContinuationObject) error {
+// against its reference. It never names the object: subject says what failed.
+func verifyContinuationBytes(data []byte, obj *orkstackv1.ContinuationObject, subject string) error {
 	if obj == nil {
-		return fmt.Errorf("%w: no reference", ErrContinuationObjectInvalid)
+		return invalidContinuation(subject, "no reference names it")
 	}
 	if int64(len(data)) != obj.GetSizeBytes() {
-		return fmt.Errorf("%w: %s is %d bytes, its reference records %d",
-			ErrContinuationObjectInvalid, obj.GetUri(), len(data), obj.GetSizeBytes())
+		return invalidContinuation(subject, "%d bytes stored, its reference records %d", len(data), obj.GetSizeBytes())
 	}
 	if artifacts.ContinuationSHA256(data) != obj.GetSha256() {
-		return fmt.Errorf("%w: %s SHA-256 mismatch", ErrContinuationObjectInvalid, obj.GetUri())
+		return invalidContinuation(subject, "SHA-256 mismatch")
 	}
 	return nil
 }
