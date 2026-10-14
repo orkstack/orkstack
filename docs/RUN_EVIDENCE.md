@@ -271,8 +271,8 @@ version-2 bundle, printed as a notice:
 ```text
   events lost     events 1201–2400 of this run were lost from object storage before it was archived (segment object missing)
 ```
- Any failure exits 1 and is
-named, one line per member:
+
+Any failure exits 1 and is named, one line per member:
 
 ```text
 verified 41 present members against MANIFEST.json

@@ -973,8 +973,8 @@ Operators who look at the cluster directly will see:
   item j). A cluster whose visibility takes longer than an hour to index a
   switch can briefly under-count a switching run.
 - retiring a run deletes every generation, oldest first, then the current one
-  by its own execution id (`orkctl` and the cleanup worker do this; an
-  execution already gone counts as deleted).
+  by its own execution id (the cleanup worker does this; an execution
+  already gone counts as deleted).
 
 To list the runs carrying on right now:
 `temporal workflow list --query 'WorkflowType="RunWorkflow" AND ExecutionStatus="ContinuedAsNew"'`

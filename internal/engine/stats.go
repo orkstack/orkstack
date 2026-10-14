@@ -51,10 +51,6 @@ const (
 	// got", so the walk is generous and running out of it is a failure.
 	maxStatsScanPages = 2000
 
-	// executionStatusRunning is how the execution index spells a run that has
-	// been accepted and has not finished.
-	executionStatusRunning = "Running"
-
 	// statsTimeLayout renders a time bound for the index's query language:
 	// UTC, RFC 3339, nanosecond precision.
 	statsTimeLayout = "2006-01-02T15:04:05.000000000Z"
