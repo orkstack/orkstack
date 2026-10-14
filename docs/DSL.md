@@ -396,7 +396,9 @@ recorded, the ones never started are `CANCELED`, and failure handlers run
 (`docs/DEPLOY.md` §1, `engine.history.*`). The message says how much history
 was recorded and what was still running. The one gap is history size: a
 failure path that lands many large task results at once can still reach the
-cluster's size limit first.
+cluster's size limit first. The cluster then terminates the run, and the run
+still reads `FAILED` with `RUN_HISTORY_LIMIT` ("the run was stopped by the
+cluster at its history limit: …"), never as a cancel nobody asked for.
 
 ## Joins and failure handlers (`join:`)
 

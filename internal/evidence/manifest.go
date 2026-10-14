@@ -17,9 +17,17 @@ import (
 	"time"
 )
 
-// SchemaVersion is the only manifest schema this build writes, and the only
-// one Verify accepts. A newer bundle is not verified by an older tool.
+// SchemaVersion is the manifest schema every bundle whose run lost nothing
+// is written with.
 const SchemaVersion = 1
+
+// SchemaVersionEventGaps is the schema of a bundle whose run lost part of its
+// event stream from object storage before it was archived: the same members,
+// plus event_gaps naming every lost range. It is a new version, not an
+// additive key, so a tool older than it refuses the bundle with its own
+// message instead of verifying it silently. These are the two versions this
+// build reads; a newer bundle is not verified by an older tool.
+const SchemaVersionEventGaps = 2
 
 // ManifestPath is the name of a bundle's first member.
 const ManifestPath = "MANIFEST.json"
@@ -107,6 +115,24 @@ type Manifest struct {
 	Tasks            []TaskEntry `json:"tasks"`
 	Members          []Member    `json:"members"`
 	Counts           Counts      `json:"counts"`
+	// EventGaps is set, and only set, on a schema_version 2 bundle: every
+	// range of the run's event stream lost from object storage before the
+	// run was archived. The archive body (run.jsonl) records the same ranges
+	// as gap lines.
+	EventGaps []EventGap `json:"event_gaps,omitempty"`
+}
+
+// EventGap is one lost range of a run's event sequence, inclusive.
+type EventGap struct {
+	First  int64  `json:"first"`
+	Last   int64  `json:"last"`
+	Reason string `json:"reason"`
+}
+
+// Sentence is the notice a reader prints for the gap.
+func (g EventGap) Sentence() string {
+	return fmt.Sprintf("events %d–%d of this run were lost from object storage before it was archived (%s)",
+		g.First, g.Last, g.Reason)
 }
 
 // Scope is what the request asked for.
@@ -221,8 +247,10 @@ func (m Manifest) MarshalJSON() ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-// ParseManifest decodes a MANIFEST.json document. A schema_version other
-// than SchemaVersion is refused: a newer bundle is not read by an older tool.
+// ParseManifest decodes a MANIFEST.json document. It reads schema_version 1
+// and 2: version 2 requires a non-empty event_gaps, and version 1 forbids
+// one. Any other version is refused: a newer bundle is not read by an older
+// tool.
 func ParseManifest(document []byte) (*Manifest, error) {
 	var probe struct {
 		SchemaVersion *int `json:"schema_version"`
@@ -233,9 +261,9 @@ func ParseManifest(document []byte) (*Manifest, error) {
 	if probe.SchemaVersion == nil {
 		return nil, fmt.Errorf("evidence: MANIFEST.json has no schema_version")
 	}
-	if *probe.SchemaVersion != SchemaVersion {
-		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d is not supported by this tool (it reads %d)",
-			*probe.SchemaVersion, SchemaVersion)
+	if *probe.SchemaVersion != SchemaVersion && *probe.SchemaVersion != SchemaVersionEventGaps {
+		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d is not supported by this tool (it reads %d and %d)",
+			*probe.SchemaVersion, SchemaVersion, SchemaVersionEventGaps)
 	}
 	var m manifestJSON
 	decoder := json.NewDecoder(bytes.NewReader(document))
@@ -243,5 +271,17 @@ func ParseManifest(document []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("evidence: decode MANIFEST.json: %w", err)
 	}
 	manifest := Manifest(m)
+	switch {
+	case manifest.SchemaVersion == SchemaVersionEventGaps && len(manifest.EventGaps) == 0:
+		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d names no event_gaps", SchemaVersionEventGaps)
+	case manifest.SchemaVersion == SchemaVersion && len(manifest.EventGaps) > 0:
+		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d carries event_gaps, which only schema_version %d may",
+			SchemaVersion, SchemaVersionEventGaps)
+	}
+	for _, gap := range manifest.EventGaps {
+		if gap.First < 1 || gap.Last < gap.First {
+			return nil, fmt.Errorf("evidence: MANIFEST.json event gap %d–%d is not a range", gap.First, gap.Last)
+		}
+	}
 	return &manifest, nil
 }

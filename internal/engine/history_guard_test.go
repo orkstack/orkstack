@@ -101,7 +101,7 @@ func TestHistoryGuard_FailsRunHistoryLimitBeforeTheClusterLimit(t *testing.T) {
 		Run(func(mock.Arguments) { asked++ }).Return(workflow.Version(1)).Once()
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-guarded", compile(t, guardFlatDocument), payload(t, nil),
-		guardedPlan(1000, engine.DefaultHistoryMaxBytes))
+		guardedPlan(1000, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the run did not end")
@@ -147,7 +147,7 @@ func TestHistoryGuard_NoMarkerBelowThreshold(t *testing.T) {
 	h.env.OnGetVersion(engine.HistoryGuardChange, workflow.DefaultVersion, workflow.Version(1)).
 		Return(workflow.Version(1)).Never()
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-small", compile(t, guardFlatDocument), payload(t, nil),
-		guardedPlan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes))
+		guardedPlan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("a small run failed: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestHistoryGuard_PlanWithoutLimitNeverChecks(t *testing.T) {
 		Return(workflow.Version(1)).Never()
 	plan := defaultPlan()
 	plan.History = nil
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-unguarded", compile(t, guardFlatDocument), payload(t, nil), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-unguarded", compile(t, guardFlatDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("a run without a limit failed: %v", err)
 	}
@@ -204,7 +204,7 @@ func runGuardedFanOut(t *testing.T, runID, maxParallel string, length int, maxEv
 	h.env.SetCurrentHistoryLength(length)
 	doc := fmt.Sprintf(guardBatchDocument, maxParallel)
 	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc),
-		payload(t, map[string]any{"regions": guardItems(125)}), guardedPlan(maxEvents, engine.DefaultHistoryMaxBytes))
+		payload(t, map[string]any{"regions": guardItems(125)}), guardedPlan(maxEvents, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the run did not end")
 	}
@@ -315,7 +315,7 @@ func runGuardWithHandlers(t *testing.T) (*harness, *orkstackv1.Run) {
 	})
 	h.onSnapshot = onceAt(h.env, 850, taskStatusIs("a", orkstackv1.Status_STATUS_SUCCEEDED))
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-handlers", compile(t, guardHandlersDocument), payload(t, nil),
-		guardedPlan(1000, engine.DefaultHistoryMaxBytes))
+		guardedPlan(1000, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the run did not end")
 	}
@@ -400,7 +400,7 @@ func TestHistoryGuard_FailingPhaseStopsStartingHandlers(t *testing.T) {
 	// 900 + Fixed 96 + 8 for each of two pending handlers = 1,012.
 	h.onSnapshot = onceAt(h.env, 900, taskStatusIs("a", orkstackv1.Status_STATUS_FAILED))
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-failing", compile(t, guardFailingPhaseDocument), payload(t, nil),
-		guardedPlan(1000, engine.DefaultHistoryMaxBytes))
+		guardedPlan(1000, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the run did not end")
 	}
@@ -562,7 +562,7 @@ func TestStartChild_CopiesTheRunTreeLimits(t *testing.T) {
 			if len(start.plan.Children) > 0 {
 				// The middle run: the real interpreter, so its own startChild
 				// copies what it was started with.
-				return engine.RunWorkflow(ctx, start.runID, start.wf, start.input, start.plan)
+				return engine.RunWorkflow(ctx, start.runID, start.wf, start.input, start.plan, nil)
 			}
 			return &orkstackv1.Run{Status: orkstackv1.Status_STATUS_SUCCEEDED,
 				Output: payload(t, map[string]any{"value": "leaf-ok"})}, nil

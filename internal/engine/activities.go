@@ -41,6 +41,11 @@ type EventObserver interface {
 // engine replica; engine.TemporalRunReader is the production implementation.
 type RunEventSource interface {
 	Events(ctx context.Context, runID string, fromSequence int64) ([]*orkstackv1.Event, error)
+	// EventsForArchive is Events for the archive write: a segment that is
+	// permanently gone (missing, or failing verification) becomes an
+	// EventGap instead of an error; a transient failure is still an error,
+	// so the activity retries exactly as today.
+	EventsForArchive(ctx context.Context, runID string) ([]*orkstackv1.Event, []EventGap, error)
 }
 
 // EventActivities projects workflow-produced state into the in-process read
@@ -221,13 +226,16 @@ func (a *EventActivities) PublishEvent(
 	if snapshot == nil {
 		return nil
 	}
-	archived, err := a.archivedEvents(ctx, event.GetRunId())
+	archived, gaps, err := a.archivedEvents(ctx, event.GetRunId())
 	if err != nil {
 		return err
 	}
 	// Returning the error makes Temporal retry the activity, so a transient
-	// storage failure heals itself instead of silently dropping the run.
-	return a.archive.Archive(ctx, snapshot, archived)
+	// storage failure heals itself instead of silently dropping the run. A
+	// permanent loss cannot heal, so it is archived as an explicit gap: a run
+	// whose earlier events are gone still reaches the archive (AGENTS.md
+	// §15), and every read of the lost range says so.
+	return a.archive.Archive(ctx, snapshot, archived, gaps...)
 }
 
 func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orkstackv1.Run, error) {
@@ -254,20 +262,23 @@ func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orksta
 // It comes from the system of record when one is wired, and a failure to read
 // it is returned rather than papered over with the local log: an archive
 // written from a partial view is worse than a retried activity, because the
-// gap is permanent and silent. Without a source — a single-process engine, or
-// a unit test — the local bus saw every event of the run and is exact.
+// gap is permanent and silent. The one exception is a loss retrying cannot
+// heal — an earlier generation's event segment gone or altered — which the
+// source reports as explicit gaps, recorded in the body rather than hidden.
+// Without a source — a single-process engine, or a unit test — the local bus
+// saw every event of the run and is exact.
 func (a *EventActivities) archivedEvents(
 	ctx context.Context,
 	runID string,
-) ([]*orkstackv1.Event, error) {
+) ([]*orkstackv1.Event, []EventGap, error) {
 	if a.events == nil {
-		return a.bus.Events(runID, 0), nil
+		return a.bus.Events(runID, 0), nil, nil
 	}
-	events, err := a.events.Events(ctx, runID, 0)
+	events, gaps, err := a.events.EventsForArchive(ctx, runID)
 	if err != nil {
-		return nil, fmt.Errorf("read events of run %s for the archive: %w", runID, err)
+		return nil, nil, fmt.Errorf("read events of run %s for the archive: %w", runID, err)
 	}
-	return events, nil
+	return events, gaps, nil
 }
 
 // mergedSnapshot prefers the store's copy of a run: it still carries the

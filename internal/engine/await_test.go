@@ -152,7 +152,7 @@ func TestRunWorkflow_AwaitOpensWithoutAnActivityAndCompletesOnResolution(t *test
 	body := `{"model_uri": "s3://models/88421"}`
 	h.signalAt(time.Minute, completion("b", body, "alice"))
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-complete", compile(t, awaitedDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-complete", compile(t, awaitedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -239,7 +239,7 @@ func TestRunWorkflow_AwaitOutputDrivesADownstreamCondition(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
 			h := newHarness(t, &suite, okTask)
 			h.signalAt(time.Minute, completion("b", tc.body, ""))
-			h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-condition", compile(t, awaitedConditionDocument), payload(t, nil), defaultPlan())
+			h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-condition", compile(t, awaitedConditionDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 			if err := h.env.GetWorkflowError(); err != nil {
 				t.Fatalf("workflow error: %v", err)
 			}
@@ -253,7 +253,7 @@ func TestRunWorkflow_AwaitOutputDrivesADownstreamCondition(t *testing.T) {
 func TestRunWorkflow_AwaitDeadlineFailsTheRunWithAwaitTimedOut(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	h := newHarness(t, &suite, okTask)
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-timeout", compile(t, awaitedDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-timeout", compile(t, awaitedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -300,7 +300,7 @@ func TestRunWorkflow_AwaitRejectionFailsTheRunWithItsReason(t *testing.T) {
 		Via:       orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_CALLBACK,
 		Principal: "ci-bot",
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-reject", compile(t, awaitedDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-reject", compile(t, awaitedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	var appErr *temporal.ApplicationError
 	if err := h.env.GetWorkflowError(); !errors.As(err, &appErr) || appErr.Type() != engine.AwaitRejectedCode {
 		t.Fatalf("workflow error = %v, want an %s application error", err, engine.AwaitRejectedCode)
@@ -344,7 +344,7 @@ func TestRunWorkflow_ResolutionForATaskNotAwaitingIsLoggedAndIgnored(t *testing.
 		h.env.SignalWorkflow(engine.ResolveAwaitSignal, first)
 		h.env.SignalWorkflow(engine.ResolveAwaitSignal, second)
 	}, time.Minute)
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-twice", compile(t, awaitedDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-twice", compile(t, awaitedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestRunWorkflow_CancelWhileAwaitingEndsCanceled(t *testing.T) {
 	cancelled := 0
 	h.env.SetOnTimerCanceledListener(func(string) { cancelled++ })
 	h.env.RegisterDelayedCallback(h.env.CancelWorkflow, time.Minute)
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-cancel", compile(t, awaitedDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-cancel", compile(t, awaitedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -416,7 +416,7 @@ func TestRunWorkflow_SiblingFailureCancelsAnOpenAwait(t *testing.T) {
 		}
 		return okTask(in)
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-sibling", compile(t, awaitedSiblingDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-sibling", compile(t, awaitedSiblingDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -435,7 +435,7 @@ func TestRunWorkflow_SkippedAwaitNeverOpens(t *testing.T) {
 	h := newHarness(t, &suite, okTask)
 	timers := 0
 	h.env.SetOnTimerScheduledListener(func(string, time.Duration) { timers++ })
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-skipped", compile(t, awaitedSkippedDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-skipped", compile(t, awaitedSkippedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestRunWorkflow_AwaitOnlyOrkflowSucceeds(t *testing.T) {
 	h.signalAt(2*time.Minute, completion("second", `{"step":2}`, ""))
 	// No route at all: an await-only orkflow plans with empty Routes.
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-await-only", compile(t, awaitOnlyDocument), payload(t, nil),
-		engine.RunPlan{Namespace: "default", Routes: map[string]string{}})
+		engine.RunPlan{Namespace: "default", Routes: map[string]string{}}, (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestRunWorkflow_NoAwaitNoTimerAndNoAwaitState(t *testing.T) {
 	h := newHarness(t, &suite, okTask)
 	timers := 0
 	h.env.SetOnTimerScheduledListener(func(string, time.Duration) { timers++ })
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-await", compile(t, linearDocument), payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-await", compile(t, linearDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}

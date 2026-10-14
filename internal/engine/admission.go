@@ -218,6 +218,9 @@ func RefusalTelemetry(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) *orkstac
 type AdmissionReader interface {
 	// RunningCount is how many runs of namespace are in flight NOW — accepted
 	// and not finished, the population GetStatsResponse.running lists. It is
-	// the cluster's own answer, so any replica gets the same number.
-	RunningCount(ctx context.Context, namespace string) (int64, error)
+	// the cluster's own answer, so any replica gets the same number. ceiling
+	// is the namespace's max_running: the count is exact (distinct runs, a run
+	// that continued as new once) wherever it reaches the ceiling, and may be
+	// an upper bound below it.
+	RunningCount(ctx context.Context, namespace string, ceiling int64) (int64, error)
 }

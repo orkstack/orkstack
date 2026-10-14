@@ -293,7 +293,7 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	}
 	plan := parityPlan(c.wf)
 	plan.Children = parityChildren(t, c.wf)
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, c.wf, c.input, plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, c.wf, c.input, plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatalf("%s: workflow did not complete", c.name)
 	}

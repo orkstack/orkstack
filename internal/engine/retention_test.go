@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	commonpb "go.temporal.io/api/common/v1"
 	"testing"
 	"time"
 
@@ -35,10 +36,13 @@ type fakeWorkflowServiceAdmin struct {
 	describeExecutionErr   error
 	describeExecutionFound bool
 	describeExecutionClose time.Time
+	describeExecutionRunID string
 	describeExecutionCalls []*workflowservice.DescribeWorkflowExecutionRequest
 
 	deleteExecutionErr   error
 	deleteExecutionCalls []*workflowservice.DeleteWorkflowExecutionRequest
+	// deleteGone names executions already deleted (expired): NotFound.
+	deleteGone map[string]bool
 }
 
 func (f *fakeWorkflowServiceAdmin) DescribeNamespace(
@@ -91,7 +95,12 @@ func (f *fakeWorkflowServiceAdmin) DescribeWorkflowExecution(
 	if !f.describeExecutionFound {
 		return nil, serviceerror.NewNotFound("gone")
 	}
-	info := &workflowpb.WorkflowExecutionInfo{}
+	info := &workflowpb.WorkflowExecutionInfo{
+		Execution: &commonpb.WorkflowExecution{
+			WorkflowId: in.GetExecution().GetWorkflowId(),
+			RunId:      f.describeExecutionRunID,
+		},
+	}
 	if !f.describeExecutionClose.IsZero() {
 		info.CloseTime = timestamppb.New(f.describeExecutionClose)
 	}
@@ -106,6 +115,9 @@ func (f *fakeWorkflowServiceAdmin) DeleteWorkflowExecution(
 	f.deleteExecutionCalls = append(f.deleteExecutionCalls, in)
 	if f.deleteExecutionErr != nil {
 		return nil, f.deleteExecutionErr
+	}
+	if f.deleteGone[in.GetWorkflowExecution().GetRunId()] {
+		return nil, serviceerror.NewNotFound("execution already deleted")
 	}
 	return &workflowservice.DeleteWorkflowExecutionResponse{}, nil
 }

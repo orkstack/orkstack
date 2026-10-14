@@ -141,6 +141,30 @@ A change a version-1 reader could misread bumps `schema_version` (additive
 keys, like the fan-out `item`, do not); `verify` refuses a version it does not
 know rather than guessing.
 
+### Version 2: a run whose stream lost events
+
+A run that carries on into a fresh history reads the events of its earlier
+histories from immutable event segments in object storage. When one of them
+was missing or altered by the time the run was archived, the archive records
+the lost range as a `gap` line in `run.jsonl` (`docs/STORAGE.md`) rather than
+leaving the run unarchived, and the bundle of such a run is written with
+`schema_version: 2` and one more key:
+
+```json
+  "event_gaps": [
+    {"first": 1201, "last": 2400, "reason": "segment object missing"}
+  ]
+```
+
+Every member is exactly what version 1 would list — `run.jsonl` is still the
+archive body verbatim, gap lines included, and still `present` — so the
+bundle is exactly what the archive holds. A version-2 manifest must carry a
+non-empty `event_gaps`, and a version-1 manifest must not carry one. It is a
+new version rather than an additive key on purpose: a tool older than it
+refuses the bundle with its own `schema_version` message, instead of
+verifying it while ignoring the gap. Every bundle of a run that lost nothing
+stays version 1.
+
 ## States
 
 | State | Meaning | `sha256` | In the tar |
@@ -232,7 +256,8 @@ string. Its rules:
    order`, and verification continues.
 6. An absolute name, a `..` segment or a NUL is `unsafe path`; a non-regular
    entry is `not a regular file`.
-7. A `schema_version` other than 1 is refused.
+7. A `schema_version` other than 1 or 2 is refused, and so is a version 2
+   without `event_gaps` or a version 1 with them.
 8. The manifest must agree with itself: a member whose `state` is not one of
    `present`, `reclaimed`, `unrecorded` or `rejected` is `unknown state`, and
    a `path` listed a second time is `listed twice in manifest`. The engine
@@ -240,8 +265,14 @@ string. Its rules:
    accounted for exactly once, as verified, a finding, or a failure.
 
 Reclaimed, unrecorded and rejected members are findings, not failures: the
-command exits 0 and lists them with their reasons. Any failure exits 1 and is
-named, one line per member:
+command exits 0 and lists them with their reasons. So is each event gap of a
+version-2 bundle, printed as a notice:
+
+```text
+  events lost     events 1201–2400 of this run were lost from object storage before it was archived (segment object missing)
+```
+
+Any failure exits 1 and is named, one line per member:
 
 ```text
 verified 41 present members against MANIFEST.json
@@ -260,7 +291,8 @@ FAILED: 1 member does not match MANIFEST.json
 ```
 
 `--json` prints the report as one document — the manifest embedded, then the
-`verified`, `reclaimed`, `unrecorded`, `rejected` and `failures` lists.
+`verified`, `reclaimed`, `unrecorded`, `rejected` and `failures` lists, and
+`event_gaps` for a version-2 bundle.
 
 ## verify --against-store
 

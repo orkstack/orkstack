@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
+	"go.temporal.io/api/serviceerror"
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 
@@ -48,10 +50,6 @@ const (
 	// bound: a tenancy filter must not be answered by "as far as the budget
 	// got", so the walk is generous and running out of it is a failure.
 	maxStatsScanPages = 2000
-
-	// executionStatusRunning is how the execution index spells a run that has
-	// been accepted and has not finished.
-	executionStatusRunning = "Running"
 
 	// statsTimeLayout renders a time bound for the index's query language:
 	// UTC, RFC 3339, nanosecond precision.
@@ -129,23 +127,31 @@ func (r *TemporalRunReader) runningExecutions(
 	ctx context.Context,
 	w StatsWindow,
 ) ([]*orkstackv1.Run, error) {
-	query := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q",
-		RunWorkflowType, executionStatusRunning)
-	out := []*orkstackv1.Run{}
+	// Live runs, a chain caught between its two records included: one row
+	// per run, its ContinuedAsNew record settled (visibility.go).
+	query := fmt.Sprintf("WorkflowType = %q AND %s", RunWorkflowType, liveRunPredicate(r.clock()))
+	var records []*workflowpb.WorkflowExecutionInfo
 	err := r.walkExecutions(ctx, w, query, func(info *workflowpb.WorkflowExecutionInfo) {
-		run := r.listedRun(info)
-		if !inNamespace(run.GetNamespace(), w.Namespace) {
-			return
+		if inNamespace(r.memoString(info.GetMemo(), MemoNamespace), w.Namespace) {
+			records = append(records, info)
 		}
-		if started := run.GetCreatedAt(); started != nil && !started.AsTime().Before(w.Until) {
-			// It had not started by the end of the window this answer is
-			// about, so it is not part of it.
-			return
-		}
-		out = append(out, run)
 	})
 	if err != nil {
 		return nil, err
+	}
+	records, _, err = r.resolveChains(ctx, records)
+	if err != nil {
+		return nil, err
+	}
+	out := []*orkstackv1.Run{}
+	for _, info := range records {
+		run := r.listedRun(info)
+		if started := run.GetCreatedAt(); started != nil && !started.AsTime().Before(w.Until) {
+			// It had not started by the end of the window this answer is
+			// about, so it is not part of it.
+			continue
+		}
+		out = append(out, run)
 	}
 	// Newest first, stably: the index already answers in start-time order, and
 	// a stable sort therefore leaves two replicas with the same list. Nothing
@@ -169,46 +175,34 @@ func (r *TemporalRunReader) runningExecutions(
 //
 // A count that cannot be read is an error, never zero: reporting zero runs in
 // flight is exactly the number a cap is built to distrust. It is never cached.
-func (r *TemporalRunReader) RunningCount(ctx context.Context, namespace string) (int64, error) {
+//
+// A run that continued as new is ONE run however the index shows it — both
+// of its executions Running for a moment, or only the one that just closed
+// (ContinuedAsNew) — so the count is of distinct live runs (liveRunCount).
+// ceiling is the namespace's max_running: below it at most two CountWorkflow
+// calls answer, and at or above it a deduplicated, settled walk decides, so a
+// switching run neither refuses a submit at max_running − 1 nor is read as
+// gone. A walk, list or describe that fails returns the error.
+func (r *TemporalRunReader) RunningCount(ctx context.Context, namespace string, ceiling int64) (int64, error) {
 	if !r.namespaceIndexed {
-		return r.countRunning(ctx, namespace)
+		return r.countRunning(ctx, namespace, ceiling)
 	}
-	query := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q AND %s = %q",
-		RunWorkflowType, executionStatusRunning, task.SearchAttrOrkflowNamespace,
-		artifacts.ResolveNamespace(namespace))
-	response, err := r.client.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{
-		Query: query,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("engine: count the execution index (%s): %w", query, err)
-	}
-	return response.GetCount(), nil
+	base := fmt.Sprintf("WorkflowType = %q AND %s = %q",
+		RunWorkflowType, task.SearchAttrOrkflowNamespace, artifacts.ResolveNamespace(namespace))
+	return r.liveRunCount(ctx, base, ceiling)
 }
 
-// countRunning is the unindexed half of RunningCount: the same query
-// runningExecutions issues, walked with a visitor that only counts the
-// records whose memo namespace matches. No window, no sort, no
-// projection — the cluster is asked how many, not which.
-//
-// A window with only Namespace set is a valid argument to walkExecutions,
-// which reads w.Namespace and nothing else of it; because this path is taken
-// only when the namespace is not indexed, the walk takes its scan bound, and
-// running out of it is a failure rather than a short count.
-func (r *TemporalRunReader) countRunning(ctx context.Context, namespace string) (int64, error) {
+// countRunning is the unindexed half of RunningCount: the live-run query
+// runningExecutions issues, walked to the end (the scan bound, failing
+// closed) keeping only the records whose memo namespace matches, then
+// deduplicated by workflow id and settled, so a chain counts once. No window,
+// no sort, no projection — the cluster is asked how many, not which.
+func (r *TemporalRunReader) countRunning(ctx context.Context, namespace string, ceiling int64) (int64, error) {
 	namespace = artifacts.ResolveNamespace(namespace)
-	query := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q",
-		RunWorkflowType, executionStatusRunning)
-	var count int64
-	err := r.walkExecutions(ctx, StatsWindow{Namespace: namespace}, query,
-		func(info *workflowpb.WorkflowExecutionInfo) {
-			if inNamespace(r.listedRun(info).GetNamespace(), namespace) {
-				count++
-			}
-		})
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
+	query := fmt.Sprintf("WorkflowType = %q AND %s", RunWorkflowType, liveRunPredicate(r.clock()))
+	return r.walkLiveRuns(ctx, query, func(info *workflowpb.WorkflowExecutionInfo) bool {
+		return inNamespace(r.memoString(info.GetMemo(), MemoNamespace), namespace)
+	}, ceiling)
 }
 
 // windowRunDurations samples how long each run the window CREATED took, for
@@ -242,13 +236,33 @@ func (r *TemporalRunReader) countRunning(ctx context.Context, namespace string) 
 // the archive and sampled on the other by the cluster. Nothing closer exists —
 // the cluster does not store the engine's created_at — and the alternative
 // (two different populations) is what this replaced.
+//
+// A run that continued as new is one run with one record per execution. Its
+// created_at is the memo the first switch wrote, and its duration is its
+// final record's CloseTime minus that created_at. So:
+//
+//  1. Query A is the window's records that are not a closed generation
+//     (ExecutionStatus != "ContinuedAsNew" — this is a duration sample, not
+//     a liveness question). Membership is the memo created_at when present,
+//     else StartTime; the sample is CloseTime − created_at when the memo is
+//     present, else the record's own duration.
+//  2. Query B finds the chains created in the window whose final generation
+//     started after it (so A never saw them): the ContinuedAsNew records that
+//     started in the window, whose memo created_at is in it, not sampled by
+//     A. They are settled with one WorkflowId IN (…) listing per 100 ids: a
+//     latest record closed and not ContinuedAsNew is sampled; only an id
+//     still latest-ContinuedAsNew is described. This is bounded by the chains
+//     created in the window, and exact for as long as cluster retention holds
+//     generation 0's record.
 func (r *TemporalRunReader) windowRunDurations(
 	ctx context.Context,
 	w StatsWindow,
 ) ([]time.Duration, error) {
-	query := fmt.Sprintf("WorkflowType = %q AND StartTime >= %q AND StartTime < %q",
-		RunWorkflowType, statsTime(w.Since), statsTime(w.Until))
+	inWindow := func(at time.Time) bool { return !at.Before(w.Since) && at.Before(w.Until) }
+	query := fmt.Sprintf("WorkflowType = %q AND StartTime >= %q AND StartTime < %q AND ExecutionStatus != %q",
+		RunWorkflowType, statsTime(w.Since), statsTime(w.Until), executionStatusContinuedAsNew)
 	out := []time.Duration{}
+	sampled := map[string]bool{}
 	err := r.walkExecutions(ctx, w, query, func(info *workflowpb.WorkflowExecutionInfo) {
 		if !inNamespace(r.memoString(info.GetMemo(), MemoNamespace), w.Namespace) {
 			return
@@ -261,19 +275,92 @@ func (r *TemporalRunReader) windowRunDurations(
 			started.AsTime().Before(w.Since) || !started.AsTime().Before(w.Until) {
 			return
 		}
-		// Unfinished runs come back from this query too — the window's own
-		// runs are a mix — and one has no duration to sample.
-		if info.GetCloseTime() == nil {
+		created, carried := r.memoTime(info.GetMemo(), MemoCreatedAt)
+		if carried && !inWindow(created) {
+			// A chain created before the window whose final generation
+			// started inside it: the window did not create it.
 			return
 		}
-		if sample := executionDuration(info); sample > 0 {
+		sampled[info.GetExecution().GetWorkflowId()] = true
+		// Unfinished runs come back from this query too — the window's own
+		// runs are a mix — and one has no duration to sample.
+		if info.GetCloseTime() == nil || isContinuedAsNew(info) {
+			return
+		}
+		sample := executionDuration(info)
+		if carried {
+			sample = info.GetCloseTime().AsTime().Sub(created)
+		}
+		if sample > 0 {
 			out = append(out, sample)
 		}
 	})
 	if err != nil {
 		return nil, err
 	}
+	chains, err := r.windowChainDurations(ctx, w, sampled)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, chains...)
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+// windowChainDurations is windowRunDurations' Query B: the chains the window
+// created whose final generation started after it.
+func (r *TemporalRunReader) windowChainDurations(
+	ctx context.Context,
+	w StatsWindow,
+	sampled map[string]bool,
+) ([]time.Duration, error) {
+	query := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q AND StartTime >= %q AND StartTime < %q",
+		RunWorkflowType, executionStatusContinuedAsNew, statsTime(w.Since), statsTime(w.Until))
+	created := map[string]time.Time{}
+	var ids []string
+	err := r.walkExecutions(ctx, w, query, func(info *workflowpb.WorkflowExecutionInfo) {
+		if !inNamespace(r.memoString(info.GetMemo(), MemoNamespace), w.Namespace) {
+			return
+		}
+		id := info.GetExecution().GetWorkflowId()
+		at, ok := r.memoTime(info.GetMemo(), MemoCreatedAt)
+		if !ok || at.Before(w.Since) || !at.Before(w.Until) || sampled[id] {
+			return
+		}
+		if _, seen := created[id]; !seen {
+			ids = append(ids, id)
+		}
+		created[id] = at
+	})
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	latest, err := r.listChainRecords(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	var out []time.Duration
+	for _, id := range ids {
+		info, ok := latest[id]
+		if !ok || isContinuedAsNew(info) {
+			// Still caught mid-switch: ask the chain itself.
+			resp, err := r.client.DescribeWorkflowExecution(ctx, id, "")
+			if err != nil {
+				var notFound *serviceerror.NotFound
+				if errors.As(err, &notFound) {
+					continue
+				}
+				return nil, fmt.Errorf("engine: describe run %s for the stats window: %w", id, err)
+			}
+			info = resp.GetWorkflowExecutionInfo()
+		}
+		if info.GetCloseTime() == nil || isContinuedAsNew(info) || isOpenExecution(info) {
+			continue
+		}
+		if sample := info.GetCloseTime().AsTime().Sub(created[id]); sample > 0 {
+			out = append(out, sample)
+		}
+	}
 	return out, nil
 }
 
@@ -533,35 +620,46 @@ func PercentileDuration(ascending []time.Duration, p int) time.Duration {
 // release (docs/DEPLOY.md §3). RunWorkflow only: the idempotency claim is
 // AutoUpgrade and holds no release; a schedule's fire workflow lives exactly
 // as long as the run it starts and is not a run.
+//
+// It names no ExecutionStatus: liveRunCount and the listing add the live-run
+// predicate, so a chain caught between its two records — visible only as its
+// ContinuedAsNew record — still counts on its release, and a release whose
+// count is its drain authority never reads a live chain as gone.
 func releaseRunsQuery(indexedVersion string) string {
-	return fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q AND %s = %q",
-		RunWorkflowType, executionStatusRunning, task.SearchAttrDeploymentVersion, indexedVersion)
+	return fmt.Sprintf("WorkflowType = %q AND %s = %q",
+		RunWorkflowType, task.SearchAttrDeploymentVersion, indexedVersion)
 }
 
-// ReleaseRuns counts the runs executing on one release (CountWorkflow) and
-// lists the newest `limit` (one ListWorkflow page of that size), each through
-// listedRun. The index is deployment-wide on purpose: a release carries runs
-// of every namespace.
+// ReleaseRuns counts the runs executing on one release (liveRunCount: at
+// most two CountWorkflow calls, plus a settling of chains that switched in
+// the last hour) and lists the newest `limit` (one ListWorkflow page of that
+// size, deduplicated by workflow id and settled), each through listedRun. The
+// index is deployment-wide on purpose: a release carries runs of every
+// namespace.
 func (r *TemporalRunReader) ReleaseRuns(ctx context.Context, deployment, buildID string, limit int) (int64, []*orkstackv1.Run, error) {
 	indexed, err := task.IndexedVersion(deployment, buildID)
 	if err != nil {
 		return 0, nil, err
 	}
-	query := releaseRunsQuery(indexed)
-	counted, err := r.client.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{Query: query})
+	base := releaseRunsQuery(indexed)
+	count, err := r.liveRunCount(ctx, base, 0)
 	if err != nil {
 		return 0, nil, fmt.Errorf("engine: count the runs on release %s: %w", buildID, err)
 	}
 	runs := []*orkstackv1.Run{}
-	if limit > 0 && counted.GetCount() > 0 {
+	if limit > 0 && count > 0 {
 		listed, err := r.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
-			Query:    query,
+			Query:    base + " AND " + liveRunPredicate(r.clock()),
 			PageSize: int32(limit),
 		})
 		if err != nil {
 			return 0, nil, fmt.Errorf("engine: list the runs on release %s: %w", buildID, err)
 		}
-		for _, info := range listed.GetExecutions() {
+		records, _, err := r.resolveChains(ctx, listed.GetExecutions())
+		if err != nil {
+			return 0, nil, fmt.Errorf("engine: list the runs on release %s: %w", buildID, err)
+		}
+		for _, info := range records {
 			runs = append(runs, r.listedRun(info))
 		}
 		sort.SliceStable(runs, func(i, j int) bool {
@@ -571,16 +669,15 @@ func (r *TemporalRunReader) ReleaseRuns(ctx context.Context, deployment, buildID
 			runs = runs[:limit]
 		}
 	}
-	return counted.GetCount(), runs, nil
+	return count, runs, nil
 }
 
-// RunningRuns counts every executing RunWorkflow, on any release or none —
-// the predicate runningExecutions uses.
+// RunningRuns counts every executing run, on any release or none — the
+// population runningExecutions lists, a chain once (liveRunCount).
 func (r *TemporalRunReader) RunningRuns(ctx context.Context) (int64, error) {
-	query := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q", RunWorkflowType, executionStatusRunning)
-	counted, err := r.client.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{Query: query})
+	count, err := r.liveRunCount(ctx, fmt.Sprintf("WorkflowType = %q", RunWorkflowType), 0)
 	if err != nil {
 		return 0, fmt.Errorf("engine: count the runs in flight: %w", err)
 	}
-	return counted.GetCount(), nil
+	return count, nil
 }

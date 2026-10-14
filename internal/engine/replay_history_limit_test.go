@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -172,7 +173,7 @@ func TestHistoryLimitHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		pub[strconv.FormatInt(event.GetSequence(), 10)] = canonicalPayload(t, event)
 		return nil
 	}, activity.RegisterOptions{Name: engine.ActivityPublishEvent})
-	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan)
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan, (*orkstackv1.RunContinuation)(nil))
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the fixture's own input did not complete")
 	}
@@ -270,4 +271,38 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 			t.Fatalf("%s: no plan found to check", path)
 		}
 	}
+}
+
+// TestCommittedFixtures_StartWithFourArgumentsAndNoCarry: every committed
+// fixture's run start — and every child start it recorded — passed exactly
+// four arguments, so RunWorkflow's fifth parameter (the carry of a run that
+// continued as new) decodes as nil for each of them and none can enter the
+// carried path; the command-half replay tests then prove every one replays
+// against the five-parameter RunWorkflow.
+func TestCommittedFixtures_StartWithFourArgumentsAndNoCarry(t *testing.T) {
+	paths, err := filepath.Glob("testdata/history/*.json")
+	if err != nil || len(paths) < 11 {
+		t.Fatalf("committed fixtures = %v, %v; want all 11", paths, err)
+	}
+	for _, path := range paths {
+		recorded := loadHistoryFile(t, path)
+		starts := 0
+		for _, event := range recorded.GetEvents() {
+			input := event.GetWorkflowExecutionStartedEventAttributes().GetInput()
+			if attrs := event.GetStartChildWorkflowExecutionInitiatedEventAttributes(); attrs != nil {
+				input = attrs.GetInput()
+			}
+			if input == nil {
+				continue
+			}
+			starts++
+			if n := len(input.GetPayloads()); n != 4 {
+				t.Errorf("%s: event %d starts RunWorkflow with %d arguments, want 4", path, event.GetEventId(), n)
+			}
+		}
+		if starts == 0 {
+			t.Fatalf("%s: no start found", path)
+		}
+	}
+	t.Logf("E1: %d committed fixtures start with four arguments; their fifth decodes as nil", len(paths))
 }

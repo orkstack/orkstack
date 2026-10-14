@@ -75,7 +75,7 @@ func (r *awaitReader) Executions(context.Context, engine.StatsWindow) (engine.Ex
 	return engine.Executions{}, nil
 }
 
-func (r *awaitReader) RunningCount(context.Context, string) (int64, error) { return 0, nil }
+func (r *awaitReader) RunningCount(context.Context, string, int64) (int64, error) { return 0, nil }
 
 func (r *awaitReader) RunStart(_ context.Context, runID string) (*engine.RunStartRecord, error) {
 	r.mu.Lock()

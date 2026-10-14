@@ -382,6 +382,15 @@ internal never appears on any of those surfaces.
   implemented with. It is internal, exactly as **queue** is internal to
   **pool** (§7.1): no user-facing surface names a session, a session id, or a
   session task queue.
+- **Generation** means one Temporal execution in a run's continue-as-new
+  chain (§7.3). It is internal exactly as **session** and **queue** are: no
+  user-facing surface — the API, `orkctl`, the UI, or an error message —
+  names a generation, its execution, a checkpoint, a carry, or how many a run
+  had; engine logs, metrics and `docs/DEPLOY.md` are operator surfaces and
+  may. A run is one run, with one id, one event stream and one archive.
+  User-facing text says a run "carries on" or is "carried forward", and calls
+  its checkpoint its "saved state" (`RUN_STATE_*`); `RUN_HISTORY_LIMIT`
+  speaks of the run's history as a whole.
 - **Pin host** means an Orker configured to accept pins
   (`ORK_ORKER_MAX_PINS` above zero). Every Orker still runs ordinary tasks;
   only a pin host runs pinned ones.
@@ -519,7 +528,19 @@ cluster's index or usage (`max_running`, an enforced budget) is a lock-free
 read-then-act and therefore best-effort by a bounded overshoot; a lock would
 be the distributed lock service §2.1 forbids.
 
-Temporal is the read model for live runs. Finished runs past retention come from
+Temporal is the read model for live runs — for a run that has continued as
+new (§7.3), for its current generation. The events of its earlier generations
+are read from the immutable event segments the run wrote at each
+continuation, byte-for-byte the events Temporal recorded and verified by
+SHA-256, and its state at a continuation from the immutable checkpoint the
+next generation started from. Neither is execution state: Temporal decided
+everything they hold, and they only carry it across the generation boundary
+that Temporal's own retention may outlive. A segment found missing or altered
+when a run is archived is recorded in the archive, and in any evidence bundle
+exported from it, as an explicit gap, never dropped silently. A run's
+executions are one run in every list and count: a question about which runs
+are live never loses a run while one of its executions closes and the next one
+starts. Finished runs past retention come from
 the shared run archive. `RunStore` and `EventBus` are write-side helpers only:
 they support candidate submission, archive/webhook writes, and the stream for a
 run whose start failed. Never answer a read from process memory behind a wired

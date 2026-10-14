@@ -117,7 +117,7 @@ func (h *leanHarness) run(t *testing.T, runID, document string, input map[string
 	t.Helper()
 	plan := defaultPlan()
 	plan.CommitRoot = "mem://commits"
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, document), payload(t, input), plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, document), payload(t, input), plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}

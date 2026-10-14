@@ -141,13 +141,33 @@ const eventActivityTimeout = 10 * time.Second
 // records the routing in history, so every replay dispatches where the
 // original run did and a second engine finishes a run this one started without
 // redirecting its tasks onto its own defaults.
+//
+// carry is what an earlier generation of this run handed it when it
+// continued as new (continuation.go): nil for generation 0, which is every
+// start this release makes — StartRun, startChild and the schedule fire all
+// pass four arguments, and the missing fifth decodes as nil. A carried
+// generation's run-id argument is empty: its run id IS its workflow id
+// (AGENTS.md §7), read from there, so a release older than this one, which
+// drops the fifth payload, ends it INVALID_RUN before any side effect instead
+// of running the run again from event 1. This release cannot continue a
+// chain, so a carried start ends explicitly, RUN_STATE_UNSUPPORTED, with a
+// terminal event published after the carried sequence.
 func RunWorkflow(
 	ctx workflow.Context,
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
 	plan RunPlan,
+	carry *orkstackv1.RunContinuation,
 ) (*orkstackv1.Run, error) {
+	if carry != nil {
+		runID = workflow.GetInfo(ctx).WorkflowExecution.ID
+		// Before anything else: nothing below may read a plan pointer or the
+		// definition of a run this release cannot carry on.
+		state := &runState{runID: runID, wf: wf, input: input, plan: plan}
+		return state.endUnrestorable(ctx, carry, RunStateUnsupportedCode,
+			unsupportedCarryMessage(carry.GetVersion()))
+	}
 	if runID == "" {
 		return nil, temporal.NewNonRetryableApplicationError("run id is required", "INVALID_RUN", nil)
 	}

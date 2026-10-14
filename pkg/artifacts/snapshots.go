@@ -74,13 +74,26 @@ type RunSnapshotStore interface {
 	// Writing the same coordinates again overwrites idempotently and returns
 	// the same URI, which is what makes workflow-side retries safe.
 	WriteSnapshot(ctx context.Context, namespace, runID string, sequence int64, data []byte) (string, error)
-	// ReadSnapshot fetches the bytes at a URI WriteSnapshot returned. A
-	// missing snapshot returns an error matching ErrNotFound; a URI outside
-	// the snapshot prefix returns an error matching ErrInvalidURI.
+	// ReadSnapshot fetches the bytes at a URI WriteSnapshot or
+	// WriteContinuation returned; the caller decodes them. A missing snapshot
+	// returns an error matching ErrNotFound; a URI outside the snapshot prefix
+	// returns an error matching ErrInvalidURI.
 	ReadSnapshot(ctx context.Context, uri string) ([]byte, error)
 	// DeleteSnapshot removes one snapshot. It is idempotent: deleting a
 	// snapshot that is already gone returns nil.
 	DeleteSnapshot(ctx context.Context, uri string) error
+
+	// WriteContinuation stores data create-if-absent at RunContinuationKey
+	// (sha256 computed here) and returns its URI. An existing object at that
+	// key is success only when its bytes hash to the same sha256; anything
+	// else is an error. Never overwrites.
+	WriteContinuation(ctx context.Context, namespace, runID string, generation int64, kind string, data []byte) (string, error)
+	// ReadContinuationRange returns length bytes at offset of the
+	// continuation object at uri. It fails with ErrContinuationSize (never
+	// retryable) when the stored object's total size is not wantSize, and
+	// with an error matching ErrNotFound when it is gone. A URI that is not a
+	// continuation key returns an error matching ErrInvalidURI.
+	ReadContinuationRange(ctx context.Context, uri string, wantSize, offset, length int64) ([]byte, error)
 }
 
 // RunSnapshotStoreFactory builds a RunSnapshotStore from a Config. A backend

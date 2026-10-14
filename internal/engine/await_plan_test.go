@@ -176,7 +176,7 @@ func interpretAwaited(t *testing.T, runID string, wf *orkstackv1.Orkflow, assume
 			Via:        orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API,
 		})
 	}
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, payload(t, nil), defaultPlan())
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatalf("%s: workflow did not complete", runID)
 	}

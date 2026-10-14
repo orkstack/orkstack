@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
@@ -54,6 +55,11 @@ const (
 	// the user-facing slug and the id; absent when the plan carries no origin.
 	MemoOriginKind = "orkflow_origin_kind"
 	MemoOriginID   = "orkflow_origin_id"
+	// MemoCreatedAt carries a run's created_at, an RFC 3339 nano UTC string,
+	// once the run has continued as new: a generation's own StartTime is not
+	// the run's. The first switch upserts it, so it merges into generation
+	// 0's record too, and every switch copies the memo onward.
+	MemoCreatedAt = "orkflow_created_at"
 	// DefaultRunPageSize bounds an unlimited ListRuns.
 	DefaultRunPageSize = 200
 
@@ -104,7 +110,12 @@ type RunQuery struct {
 	BeforeID      string
 	// Complete orders a bounded full visibility walk before applying Limit.
 	// Temporal's visibility order is not a contract for equal creation times,
-	// so API cursor pages set this to retain every created_at/ID tie.
+	// so API cursor pages set this to retain every created_at/ID tie. It is
+	// also what places a run that continued as new: visibility orders each
+	// of its executions by its own StartTime, and only a walk sorted on the
+	// memo created_at (RunIndexTime) puts the run where it belongs. Any
+	// user-facing caller must set it; every caller sets Complete or
+	// Exhaustive, so a chain's records are deduplicated over the whole walk.
 	Complete bool
 	// Limit caps the runs RETURNED, newest first. 0 means DefaultRunPageSize,
 	// except under Exhaustive, where 0 means every match.
@@ -177,7 +188,8 @@ type workflowServiceAdmin interface {
 }
 
 // TemporalRunReader answers run reads from Temporal, so any replica can answer
-// for any run.
+// for any run: the current generation from Temporal, earlier generations from
+// their immutable event segments (reader_chain.go).
 //
 // A run's history is its event log. RunWorkflow records each lifecycle Event
 // and a small immutable snapshot URI in the PublishEvent activity input. The
@@ -211,6 +223,15 @@ type TemporalRunReader struct {
 	// predicate the cluster applies rather than a filter this reader applies
 	// afterwards. It is told, at boot, by the process that registered it.
 	namespaceIndexed bool
+
+	// now is the wall clock the switch-visibility window is measured from;
+	// nil means time.Now. A test sets it.
+	now func() time.Time
+
+	// chainINUnsupported records that this cluster refused a
+	// `WorkflowId IN (…)` listing, so resolveChains lists one id at a time
+	// for the rest of the process's life.
+	chainINUnsupported atomic.Bool
 
 	// originIndexed reports that this cluster has the OrkflowOriginKind and
 	// OrkflowOriginId search attributes (task.EnsureRunOriginSearchAttributes),
@@ -268,20 +289,54 @@ func (r *TemporalRunReader) LookupWorkflow(ctx context.Context, namespace, workf
 	return true, time.Time{}, nil
 }
 
-// DeleteWorkflow removes one finished execution's history and visibility
-// record from the cluster now, ahead of the backstop retention. An execution
-// the cluster no longer holds is not an error: the outcome asked for is the
-// outcome. It must only be called for a closed execution — the cluster would
-// terminate a running one first — which LookupWorkflow establishes.
-// namespace is the deployment's Temporal partition, never an
-// orkstack.v1.Namespace name.
+// DeleteWorkflow removes one finished run's history and visibility records
+// from the cluster now, ahead of the backstop retention: every generation of
+// it. A run that continued as new is a chain of executions under one workflow
+// id, and its current generation's carry names every earlier one; they are
+// deleted oldest first, then the current one by its own run id, so a read in
+// between never resolves to a stale generation and a partially retired chain
+// converges on the next pass (LookupWorkflow then finds the newest surviving
+// generation, closed). An execution the cluster no longer holds is not an
+// error: the outcome asked for is the outcome. It must only be called for a
+// closed run — the cluster would terminate a running one first — which
+// LookupWorkflow establishes. namespace is the deployment's Temporal
+// partition, never an orkstack.v1.Namespace name.
 func (r *TemporalRunReader) DeleteWorkflow(ctx context.Context, namespace, workflowID string) error {
 	if r.admin == nil {
 		return fmt.Errorf("engine: workflow deletion reader has no Temporal client")
 	}
+	described, err := r.admin.DescribeWorkflowExecution(ctx, &workflowservice.DescribeWorkflowExecutionRequest{
+		Namespace: namespace,
+		Execution: &commonpb.WorkflowExecution{WorkflowId: workflowID},
+	})
+	if err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			return nil
+		}
+		return err
+	}
+	current := described.GetWorkflowExecutionInfo().GetExecution().GetRunId()
+	carry, err := r.carryOf(ctx, workflowID, current)
+	if err != nil {
+		return err
+	}
+	for _, seg := range carry.GetSegments() {
+		if seg.GetExecutionId() == "" {
+			continue
+		}
+		if err := r.deleteExecution(ctx, namespace, workflowID, seg.GetExecutionId()); err != nil {
+			return err
+		}
+	}
+	return r.deleteExecution(ctx, namespace, workflowID, current)
+}
+
+// deleteExecution deletes one execution of workflowID; NotFound is success.
+func (r *TemporalRunReader) deleteExecution(ctx context.Context, namespace, workflowID, execution string) error {
 	_, err := r.admin.DeleteWorkflowExecution(ctx, &workflowservice.DeleteWorkflowExecutionRequest{
 		Namespace:         namespace,
-		WorkflowExecution: &commonpb.WorkflowExecution{WorkflowId: workflowID},
+		WorkflowExecution: &commonpb.WorkflowExecution{WorkflowId: workflowID, RunId: execution},
 	})
 	if err != nil {
 		var notFound *serviceerror.NotFound
@@ -291,6 +346,36 @@ func (r *TemporalRunReader) DeleteWorkflow(ctx context.Context, namespace, workf
 		return err
 	}
 	return nil
+}
+
+// carryOf decodes the carry of one execution's start: nil for a generation 0,
+// and for an execution the cluster no longer holds.
+func (r *TemporalRunReader) carryOf(ctx context.Context, workflowID, execution string) (*orkstackv1.RunContinuation, error) {
+	if r.client == nil {
+		return nil, fmt.Errorf("engine: workflow deletion reader has no Temporal client")
+	}
+	iter := r.client.GetWorkflowHistory(ctx, workflowID, execution, false,
+		enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	if !iter.HasNext() {
+		return nil, nil
+	}
+	historyEvent, err := iter.Next()
+	if err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("engine: read the start of run %s: %w", workflowID, err)
+	}
+	attrs := historyEvent.GetWorkflowExecutionStartedEventAttributes()
+	if attrs == nil {
+		return nil, nil
+	}
+	carry, err := r.decodeCarry(attrs)
+	if err != nil {
+		return nil, fmt.Errorf("engine: run %s: %w", workflowID, err)
+	}
+	return carry, nil
 }
 
 // NamespaceRetention returns Temporal's configured workflow retention period,
@@ -395,11 +480,13 @@ func (r *TemporalRunReader) GetRun(ctx context.Context, runID string) (*orkstack
 }
 
 // Events returns a run's whole event stream after fromSequence, in sequence
-// order, as Temporal recorded it.
+// order, as Temporal recorded it: the current generation from Temporal,
+// earlier generations from their immutable event segments.
 //
-// The stream is answered from history alone: no snapshot object is fetched,
-// so an event read succeeds even when a snapshot is unreadable or no snapshot
-// store is wired at all.
+// The stream is answered from history and segments alone: no snapshot object
+// is fetched, so an event read succeeds even when a snapshot is unreadable or
+// no snapshot store is wired at all. A segment that cannot be read is an error
+// wrapping ErrEventSegmentUnavailable — never NotFound: the run exists.
 func (r *TemporalRunReader) Events(
 	ctx context.Context,
 	runID string,
@@ -410,6 +497,23 @@ func (r *TemporalRunReader) Events(
 		return nil, err
 	}
 	return projection.events, nil
+}
+
+// EventsForArchive is Events(runID, 0) for the archive write: an earlier
+// generation's event segment that is permanently lost — missing, or failing
+// verification — is returned as an EventGap and the read continues, so the
+// run is archived with the loss recorded explicitly. A transient failure is
+// still an error.
+func (r *TemporalRunReader) EventsForArchive(
+	ctx context.Context,
+	runID string,
+) ([]*orkstackv1.Event, []EventGap, error) {
+	st := newScanState(true)
+	projection, err := r.scanWith(ctx, runID, false, 0, false, nil, st)
+	if err != nil {
+		return nil, nil, err
+	}
+	return projection.events, st.gaps, nil
 }
 
 // StreamEvents delivers a run's events after fromSequence to send, and ends at
@@ -512,9 +616,17 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	exhaustive := q.Exhaustive || q.Complete || (q.Namespace != "" && !scoped) || originUnscoped
 
 	limit, batch, pages := runListBudget(q, exhaustive)
+	// A walk that goes to the end (Complete, Exhaustive) sees every record
+	// of a chain, so it deduplicates by workflow id over the whole walk,
+	// before every trim (dedupeChains); a RUNNING question also settles each
+	// id whose latest record is ContinuedAsNew (resolveChains). Every caller
+	// issues one of the two; the early return below is for any other.
+	whole := q.Complete || q.Exhaustive
+	running := q.Status == orkstackv1.Status_STATUS_RUNNING
+	page := &chainPage{reader: r, query: q, running: running, settled: map[string]chainSettlement{}}
 	out := make([]*orkstackv1.Run, 0, batch)
 	var token []byte
-	for page := 0; page < pages; page++ {
+	for read := 0; read < pages; read++ {
 		response, err := r.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
 			Query:         query,
 			PageSize:      int32(batch),
@@ -523,26 +635,41 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 		if err != nil {
 			return nil, fmt.Errorf("engine: list runs from temporal: %w", err)
 		}
-		for _, execution := range response.GetExecutions() {
-			run := r.listedRun(execution)
-			if !matchesRunQuery(run, q) {
-				continue
+		if whole {
+			page.records = append(page.records, response.GetExecutions()...)
+			if q.Complete && limit > 0 && len(page.records) > limit {
+				if err := page.trim(ctx, limit); err != nil {
+					return nil, err
+				}
 			}
-			out = append(out, run)
-			// A full quota is a COMPLETE answer to "give me up to N", so the
-			// walk can stop even when it was asked to be exhaustive. What it
-			// must never do is stop SHORT — that is the ambiguity the error
-			// below exists to prevent.
-			if limit > 0 && len(out) >= limit && !q.Complete {
-				return out, nil
+		} else {
+			for _, execution := range response.GetExecutions() {
+				run := r.listedRun(execution)
+				if !matchesRunQuery(run, q) {
+					continue
+				}
+				out = append(out, run)
+				// A full quota is a COMPLETE answer to "give me up to N", so
+				// the walk can stop. What it must never do is stop SHORT —
+				// that is the ambiguity the errors below exist to prevent.
+				if limit > 0 && len(out) >= limit {
+					return out, nil
+				}
 			}
-		}
-		if q.Complete && limit > 0 && len(out) > limit {
-			out = completeRunPage(out, RunQuery{Limit: limit, Complete: true})
 		}
 		token = response.GetNextPageToken()
 		if len(token) == 0 {
-			return completeRunPage(out, q), nil
+			if !whole {
+				return completeRunPage(out, q), nil
+			}
+			runs, err := page.runs(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if !q.Complete && limit > 0 && len(runs) > limit {
+				runs = runs[:limit]
+			}
+			return completeRunPage(runs, q), nil
 		}
 	}
 	if q.Namespace != "" && !scoped {
@@ -572,6 +699,85 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 			q.OrkflowName, q.Namespace, pages)
 	}
 	return completeRunPage(out, q), nil
+}
+
+// chainPage accumulates a whole walk's visibility records: deduplicated by
+// workflow id, settled for a RUNNING question, filtered and — for a Complete
+// walk — trimmed to the page in created_at order whenever it outgrows it.
+type chainPage struct {
+	reader  *TemporalRunReader
+	query   RunQuery
+	running bool
+	records []*workflowpb.WorkflowExecutionInfo
+	// settled remembers the ids already settled, so a trim never asks the
+	// cluster about one chain twice.
+	settled map[string]chainSettlement
+}
+
+// settle deduplicates the records and, for a RUNNING question, settles every
+// id whose latest record is ContinuedAsNew and was not settled before.
+func (p *chainPage) settle(ctx context.Context) error {
+	p.records = dedupeChains(p.records)
+	if !p.running {
+		return nil
+	}
+	var fresh, kept []*workflowpb.WorkflowExecutionInfo
+	for _, info := range p.records {
+		id := info.GetExecution().GetWorkflowId()
+		if outcome, done := p.settled[id]; done && isContinuedAsNew(info) {
+			if outcome != chainFinished {
+				kept = append(kept, info)
+			}
+			continue
+		}
+		fresh = append(fresh, info)
+	}
+	resolved, settled, err := p.reader.resolveChains(ctx, fresh)
+	if err != nil {
+		return err
+	}
+	for id, outcome := range settled {
+		p.settled[id] = outcome
+	}
+	p.records = append(kept, resolved...)
+	return nil
+}
+
+// runs settles the records and projects the ones the query matches.
+func (p *chainPage) runs(ctx context.Context) ([]*orkstackv1.Run, error) {
+	if err := p.settle(ctx); err != nil {
+		return nil, err
+	}
+	out := make([]*orkstackv1.Run, 0, len(p.records))
+	for _, info := range p.records {
+		if run := p.reader.listedRun(info); matchesRunQuery(run, p.query) {
+			out = append(out, run)
+		}
+	}
+	return out, nil
+}
+
+// trim keeps only the records of the newest limit matching runs, so a long
+// Complete walk holds one page, not the whole index. Records of one chain
+// carry one created_at, so a trim treats them alike.
+func (p *chainPage) trim(ctx context.Context, limit int) error {
+	if err := p.settle(ctx); err != nil {
+		return err
+	}
+	byID := make(map[string]*workflowpb.WorkflowExecutionInfo, len(p.records))
+	runs := make([]*orkstackv1.Run, 0, len(p.records))
+	for _, info := range p.records {
+		if run := p.reader.listedRun(info); matchesRunQuery(run, p.query) {
+			byID[run.GetId()] = info
+			runs = append(runs, run)
+		}
+	}
+	runs = completeRunPage(runs, RunQuery{Limit: limit, Complete: true})
+	p.records = p.records[:0]
+	for _, run := range runs {
+		p.records = append(p.records, byID[run.GetId()])
+	}
+	return nil
 }
 
 func completeRunPage(runs []*orkstackv1.Run, q RunQuery) []*orkstackv1.Run {
@@ -616,7 +822,7 @@ func (r *TemporalRunReader) listQuery(q RunQuery) (query string, scoped, originS
 		query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowNamespace,
 			artifacts.ResolveNamespace(q.Namespace))
 	}
-	if predicate, ok := executionStatusPredicate(q.Status); ok {
+	if predicate, ok := executionStatusPredicate(q.Status, r.clock()); ok {
 		query += " AND " + predicate
 	}
 	if slug, ok := artifacts.OriginKindSlug(q.OriginKind); ok && r.originIndexed {
@@ -676,13 +882,17 @@ var readerDecodableStatuses = func() map[orkstackv1.Status]bool {
 // record decodes to either: statusFromExecution cannot return them. Narrowing
 // on them would assert something about the index that is not true of it, and
 // they are answered by the archive half, which stores the status it was given.
-func executionStatusPredicate(want orkstackv1.Status) (string, bool) {
+//
+// RUNNING is the live-run predicate (liveRunPredicate): open executions, and
+// a chain's ContinuedAsNew record closed within the switch-visibility window,
+// because a chain caught between its two records may be visible only as that
+// one. ListRuns settles such a record before it lists it (resolveChains).
+func executionStatusPredicate(want orkstackv1.Status, now time.Time) (string, bool) {
 	if want == orkstackv1.Status_STATUS_UNSPECIFIED {
 		return "", false
 	}
 	if want == orkstackv1.Status_STATUS_RUNNING {
-		return "ExecutionStatus NOT IN (" +
-			quotedExecutionStatuses(terminalExecutionStatuses) + ")", true
+		return liveRunPredicate(now), true
 	}
 	var match []enumspb.WorkflowExecutionStatus
 	for _, status := range terminalExecutionStatuses {
@@ -731,9 +941,21 @@ type runProjection struct {
 	// object is gone: history already recorded how far the run got, and a
 	// tolerated miss must not report a SUCCEEDED run as still PENDING.
 	lastRunStatus orkstackv1.Status
+	// checkpoint and switchSnapshot are the references a carried generation
+	// started from: the run's state at the switch, and the full snapshot of
+	// that exact state. A snapshot URI equal to either one's is decoded and
+	// verified against it (readSnapshotAt), never read as a plain snapshot.
+	checkpoint     *orkstackv1.ContinuationObject
+	switchSnapshot *orkstackv1.ContinuationObject
 }
 
-// scan walks a run's history once and decodes it.
+// scan walks a run's history once and decodes it: every generation of it.
+// The current generation is read from Temporal; a run that has continued as
+// new also carries, in its current generation's start, the references to the
+// immutable event segments its earlier generations wrote, and an event read
+// replays those first (replaySegments). An execution that continues as new
+// WHILE it is read names its successor, which is read next, so a stream
+// follows the switch and a plain read is still complete.
 //
 // With send set the scan is a stream: each event after fromSequence is handed
 // over as it is decoded and the walk stops at the run's terminal event. With
@@ -743,12 +965,12 @@ type runProjection struct {
 //
 // wantRun says the caller consumes the run projection, and it alone triggers
 // an object-storage fetch of the referenced snapshot. A run read collects no
-// events: projection.events stays empty, because GetRun never reads them. An event read passes
-// false: the events are complete in Temporal history, so a missing snapshot
-// object — or no configured snapshot store at all — must not destroy an
-// answer Temporal already gave. Turning a live run's event read into "not
-// found" because one snapshot object was unreadable is exactly the inversion
-// LookupRun rules out.
+// events and reads no segment: projection.events stays empty, because GetRun
+// never reads them. An event read passes false: the events are complete in
+// Temporal history and the segments, so a missing snapshot object — or no
+// configured snapshot store at all — must not destroy an answer Temporal
+// already gave. Turning a live run's event read into "not found" because one
+// snapshot object was unreadable is exactly the inversion LookupRun rules out.
 func (r *TemporalRunReader) scan(
 	ctx context.Context,
 	runID string,
@@ -757,34 +979,146 @@ func (r *TemporalRunReader) scan(
 	wantRun bool,
 	send func(*orkstackv1.Event) error,
 ) (*runProjection, error) {
-	iter := r.client.GetWorkflowHistory(ctx, runID, "", follow,
-		enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	return r.scanWith(ctx, runID, follow, fromSequence, wantRun, send, newScanState(false))
+}
 
-	projection := &runProjection{}
-	var (
-		seen         = map[int64]struct{}{}
-		lastSequence int64
-		read         int
-	)
+// scanWith is scan over a caller's scanState: the archive path passes one
+// that tolerates a lost segment and records the gap (EventsForArchive).
+func (r *TemporalRunReader) scanWith(
+	ctx context.Context,
+	runID string,
+	follow bool,
+	fromSequence int64,
+	wantRun bool,
+	send func(*orkstackv1.Event) error,
+	st *scanState,
+) (*runProjection, error) {
+	execution := "" // the workflow id's CURRENT execution; earlier ones come from segments
+	for {
+		successor, err := r.scanExecution(ctx, runID, execution, follow, fromSequence, wantRun, send, st)
+		if err != nil {
+			return nil, err
+		}
+		if st.stopped || successor == "" {
+			break
+		}
+		// The execution continued as new while it was read: follow it.
+		execution = successor
+	}
+	projection := st.projection
+	if st.stopped {
+		return projection, nil
+	}
+	if wantRun && !st.closed {
+		// This load runs for a LIVE run: a closed execution was already handled
+		// (and its snapshot loaded) in scanExecution. A missing snapshot object
+		// — an operator lifecycle rule over metadata/snapshots/, or any
+		// ordinary object-store 404 — must not erase a run Temporal is actively
+		// executing: ErrRunNotFound wraps the same artifacts.ErrNotFound
+		// sentinel, so returning the miss would read as "this run does not
+		// exist" one layer up, the exact inversion LookupRun rules out. The
+		// projection assembled from history still names the run, its orkflow,
+		// status and input; only the snapshot overlay is lost. The tolerance
+		// lives at this call site rather than inside loadSnapshot because the
+		// closed-run site needs the opposite contract. A transient (non-404)
+		// failure stays fatal so it maps to Unavailable, not to a silently
+		// degraded answer, and so does a continuation object that failed
+		// verification.
+		if err := r.loadSnapshot(ctx, runID, projection); err != nil {
+			if !errors.Is(err, artifacts.ErrNotFound) {
+				return nil, err
+			}
+			// The newest snapshot is gone, but nearly every lifecycle event
+			// writes its own snapshot before it publishes (workflow.go's emit),
+			// so the newest OTHER object — priorSnapshotURI — is nearly as
+			// complete — in particular it still carries TaskRuns, which
+			// startedRun never has at all. Right after a switch the newest is
+			// the checkpoint and the other is the switch snapshot, the exact
+			// state at the switch, so the fallback is exact. One bounded
+			// fallback attempt, not a walk further back: the point is to
+			// survive one miss on the object an event's own publish just
+			// wrote, not to paper over a store that is actually down.
+			prior, priorErr := r.readSnapshotAt(ctx, runID, projection.priorSnapshotURI, projection)
+			switch {
+			case priorErr == nil:
+				projection.run = mergeRunSnapshot(projection.run, prior)
+				projection.snapshotLoaded = true
+			case errors.Is(priorErr, ErrContinuationObjectInvalid):
+				return nil, priorErr
+			}
+			// Degrade with what history already recorded: the newest published
+			// lifecycle event's run status, so a run that got past PENDING is
+			// not reported as if it never started.
+			if projection.run != nil && projection.lastRunStatus != orkstackv1.Status_STATUS_UNSPECIFIED {
+				projection.run.Status = projection.lastRunStatus
+			}
+		}
+	}
+	if projection.run == nil && len(projection.events) == 0 {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
+	}
+	return projection, nil
+}
+
+// scanExecution reads one execution's history — the current one when
+// execution is empty — into st, and returns the execution it continued as new
+// into, or "" when it did not (or the walk stopped at a terminal event).
+func (r *TemporalRunReader) scanExecution(
+	ctx context.Context,
+	runID, execution string,
+	follow bool,
+	fromSequence int64,
+	wantRun bool,
+	send func(*orkstackv1.Event) error,
+	st *scanState,
+) (string, error) {
+	iter := r.client.GetWorkflowHistory(ctx, runID, execution, follow,
+		enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	projection := st.projection
+	read := 0
 	for iter.HasNext() {
 		historyEvent, err := iter.Next()
 		if err != nil {
 			var notFound *serviceerror.NotFound
 			if errors.As(err, &notFound) && read == 0 {
-				return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
+				// On the first execution: no such run. On a followed
+				// successor too: the chain's current generation is gone
+				// (retired), so the API falls back to the archive, and an
+				// older generation is never served as the run.
+				return "", fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
 			}
-			return nil, fmt.Errorf("engine: read history of run %s: %w", runID, err)
+			return "", fmt.Errorf("engine: read history of run %s: %w", runID, err)
 		}
 		read++
 
 		if attrs := historyEvent.GetWorkflowExecutionStartedEventAttributes(); attrs != nil {
-			projection.run = mergeRunSnapshot(projection.run, r.startedRun(runID, historyEvent, attrs))
+			carry, err := r.decodeCarry(attrs)
+			if err != nil {
+				return "", fmt.Errorf("engine: run %s: %w", runID, err)
+			}
+			st.carried = carry != nil
+			if carry != nil {
+				if err := r.adoptCarry(ctx, runID, attrs, carry, fromSequence, wantRun, send, st); err != nil {
+					return "", err
+				}
+				if st.stopped {
+					return "", nil
+				}
+			}
+			projection.run = mergeRunSnapshot(projection.run, r.startedRun(runID, historyEvent, attrs, carry))
 			continue
+		}
+		if attrs := historyEvent.GetWorkflowExecutionContinuedAsNewEventAttributes(); attrs != nil {
+			// This execution continued as new: its successor holds the run
+			// from here, in follow mode and in a plain read alike, because a
+			// plain read whose current execution switched during pagination
+			// must still read the successor to be complete.
+			return attrs.GetNewExecutionRunId(), nil
 		}
 		if r.isPublishEvent(historyEvent) {
 			event, snapshotURI, err := r.decodePublishEvent(runID, historyEvent)
 			if err != nil {
-				return nil, err
+				return "", err
 			}
 			// The prior URI advances only on a DIFFERENT object: on the lean
 			// event path a TASK_STARTED publishes with the URI its
@@ -803,103 +1137,46 @@ func (r *TemporalRunReader) scan(
 			if isRunLevelEvent(event) && event.GetStatus() != orkstackv1.Status_STATUS_UNSPECIFIED {
 				projection.lastRunStatus = event.GetStatus()
 			}
-			if _, duplicate := seen[event.GetSequence()]; duplicate {
-				continue
+			stop, err := st.deliver(event, fromSequence, wantRun, send)
+			if err != nil {
+				return "", err
 			}
-			seen[event.GetSequence()] = struct{}{}
-			if event.GetSequence() > lastSequence {
-				lastSequence = event.GetSequence()
-			}
-			if event.GetSequence() <= fromSequence {
-				if send != nil && isTerminalRunEvent(event) {
-					return projection, nil
-				}
-				continue
-			}
-			if send != nil {
-				if err := send(event); err != nil {
-					return nil, err
-				}
-			} else if !wantRun {
-				// A run read never looks at the events, so it never keeps
-				// them: GetRun on a 24k-event history allocates none.
-				projection.events = append(projection.events, event)
-			}
-			if isTerminalRunEvent(event) && send != nil {
-				return projection, nil
+			if stop {
+				return "", nil
 			}
 			continue
 		}
-		if status, cause, closed := closedExecution(historyEvent); closed {
+		if status, cause, closed := closedExecution(historyEvent, st.carried); closed {
+			st.closed = true
 			if wantRun {
 				// For a CLOSED run a missing snapshot stays fatal — and stays
 				// matching artifacts.ErrNotFound — on purpose: the API layer
 				// answers that error from the archive, which holds the finished
 				// run's complete body, task runs included. Tolerating the miss
 				// here would hand back a partial run and shadow that better
-				// answer. The tolerance below is only for runs still executing,
-				// which have no archive body yet.
+				// answer. The tolerance in scanWith is only for runs still
+				// executing, which have no archive body yet.
 				if err := r.loadSnapshot(ctx, runID, projection); err != nil {
-					return nil, err
+					return "", err
 				}
 			}
-			terminal := r.closeRun(projection, runID, historyEvent, status, cause, lastSequence)
+			terminal := r.closeRun(projection, runID, historyEvent, status, cause, st.lastSequence)
 			if terminal == nil || terminal.GetSequence() <= fromSequence {
 				continue
 			}
 			if send != nil {
 				if err := send(terminal); err != nil {
-					return nil, err
+					return "", err
 				}
-				return projection, nil
+				st.stopped = true
+				return "", nil
 			}
 			if !wantRun {
 				projection.events = append(projection.events, terminal)
 			}
 		}
 	}
-	if wantRun {
-		// This load runs for a LIVE run: a closed execution was already handled
-		// (and its snapshot loaded) above. A missing snapshot object — an
-		// operator lifecycle rule over metadata/snapshots/, or any ordinary
-		// object-store 404 — must not erase a run Temporal is actively
-		// executing: ErrRunNotFound wraps the same artifacts.ErrNotFound
-		// sentinel, so returning the miss would read as "this run does not
-		// exist" one layer up, the exact inversion LookupRun rules out. The
-		// projection assembled from history still names the run, its orkflow,
-		// status and input; only the snapshot overlay is lost. The tolerance
-		// lives at this call site rather than inside loadSnapshot because the
-		// closed-run site above needs the opposite contract. A transient
-		// (non-404) failure stays fatal so it maps to Unavailable, not to a
-		// silently degraded answer.
-		if err := r.loadSnapshot(ctx, runID, projection); err != nil {
-			if !errors.Is(err, artifacts.ErrNotFound) {
-				return nil, err
-			}
-			// The newest snapshot is gone, but nearly every lifecycle event
-			// writes its own snapshot before it publishes (workflow.go's emit),
-			// so the newest OTHER object — priorSnapshotURI — is nearly as
-			// complete — in particular it still carries TaskRuns, which
-			// startedRun never has at all. One bounded fallback attempt, not a
-			// walk further back: the point is to survive one miss on the object
-			// an event's own publish just wrote, not to paper over a store that
-			// is actually down.
-			if prior, priorErr := r.readSnapshotAt(ctx, runID, projection.priorSnapshotURI); priorErr == nil {
-				projection.run = mergeRunSnapshot(projection.run, prior)
-				projection.snapshotLoaded = true
-			}
-			// Degrade with what history already recorded: the newest published
-			// lifecycle event's run status, so a run that got past PENDING is
-			// not reported as if it never started.
-			if projection.run != nil && projection.lastRunStatus != orkstackv1.Status_STATUS_UNSPECIFIED {
-				projection.run.Status = projection.lastRunStatus
-			}
-		}
-	}
-	if projection.run == nil && len(projection.events) == 0 {
-		return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
-	}
-	return projection, nil
+	return "", nil
 }
 
 // closeRun overlays the outcome the execution itself reports, and returns a
@@ -992,7 +1269,7 @@ func (r *TemporalRunReader) loadSnapshot(
 	if projection.snapshotLoaded || projection.snapshotURI == "" {
 		return nil
 	}
-	run, err := r.readSnapshotAt(ctx, runID, projection.snapshotURI)
+	run, err := r.readSnapshotAt(ctx, runID, projection.snapshotURI, projection)
 	if err != nil {
 		return err
 	}
@@ -1005,10 +1282,18 @@ func (r *TemporalRunReader) loadSnapshot(
 // primitive behind loadSnapshot's newest-object read and the live-run
 // fallback to the prior one; neither call site's own tolerance for a miss
 // lives here.
+//
+// It decodes by what the URI is. A {seq}.pb snapshot is one marshalled Run.
+// The checkpoint and the switch snapshot a carried generation started from
+// are verified against the carry's references — size and SHA-256 of the
+// whole object, and of every checkpoint part — and a mismatch is an error
+// that does not match artifacts.ErrNotFound, never a degraded answer. A
+// continuation URI the carry does not name is refused unread.
 func (r *TemporalRunReader) readSnapshotAt(
 	ctx context.Context,
 	runID string,
 	uri string,
+	projection *runProjection,
 ) (*orkstackv1.Run, error) {
 	if uri == "" {
 		return nil, artifacts.ErrNotFound
@@ -1016,12 +1301,40 @@ func (r *TemporalRunReader) readSnapshotAt(
 	if r.snapshots == nil {
 		return nil, fmt.Errorf("engine: read snapshot of run %s: snapshot store is not configured", runID)
 	}
+	var reference *orkstackv1.ContinuationObject
+	decode := func(data []byte, _ *orkstackv1.ContinuationObject) (*orkstackv1.Run, error) {
+		run := &orkstackv1.Run{}
+		if err := proto.Unmarshal(data, run); err != nil {
+			return nil, err
+		}
+		return run, nil
+	}
+	switch {
+	case projection != nil && projection.checkpoint != nil && uri == projection.checkpoint.GetUri():
+		reference, decode = projection.checkpoint, DecodeCheckpoint
+	case projection != nil && projection.switchSnapshot != nil && uri == projection.switchSnapshot.GetUri():
+		reference, decode = projection.switchSnapshot, DecodeSwitchSnapshot
+	case strings.Contains(uri, "/"+artifacts.ContinuationDir+"/"):
+		return nil, fmt.Errorf("engine: read the saved state of run %s: %w: it names an object outside the run's saved state",
+			runID, ErrContinuationObjectInvalid)
+	}
 	data, err := r.snapshots.ReadSnapshot(ctx, uri)
 	if err != nil {
+		if reference != nil {
+			// The store's error quotes the object's key, whose name spells
+			// what no user-facing error may (AGENTS.md §7).
+			return nil, fmt.Errorf("engine: read the saved state of run %s: %w", runID,
+				withoutObjectName(err, uri, subjectSavedState))
+		}
 		return nil, fmt.Errorf("engine: read snapshot of run %s: %w", runID, err)
 	}
-	run := &orkstackv1.Run{}
-	if err := proto.Unmarshal(data, run); err != nil {
+	run, err := decode(data, reference)
+	if err != nil {
+		if reference != nil {
+			// Already wraps ErrContinuationObjectInvalid; the store's error
+			// is not in the chain, so it can never read as NotFound.
+			return nil, fmt.Errorf("engine: read the saved state of run %s: %w", runID, err)
+		}
 		return nil, fmt.Errorf("engine: decode snapshot of run %s at %s: %w", runID, uri, err)
 	}
 	return run, nil
@@ -1031,15 +1344,27 @@ func (r *TemporalRunReader) readSnapshotAt(
 // arguments the workflow was started with, dated by the execution's own start
 // time. It closes the window between a submission and the first PublishEvent
 // reaching history, so a read taken immediately after SubmitRun still answers.
+//
+// A generation after the first is not a start: the run was created and
+// started long before, and its carry says when. Payloads 1–3 are the original
+// arguments in every generation, so the name, version, namespace, input and
+// origin are read the same way; payload 0, empty after the first, is never
+// read — the run id is the workflow id the reader was asked about.
 func (r *TemporalRunReader) startedRun(
 	runID string,
 	historyEvent *historypb.HistoryEvent,
 	attrs *historypb.WorkflowExecutionStartedEventAttributes,
+	carry *orkstackv1.RunContinuation,
 ) *orkstackv1.Run {
 	run := &orkstackv1.Run{
 		Id:        runID,
 		Status:    orkstackv1.Status_STATUS_PENDING,
 		CreatedAt: cloneTime(historyEvent.GetEventTime()),
+	}
+	if carry != nil {
+		run.Status = orkstackv1.Status_STATUS_RUNNING
+		run.CreatedAt = cloneTime(carry.GetCreatedAt())
+		run.StartedAt = cloneTime(carry.GetStartedAt())
 	}
 	payloads := attrs.GetInput().GetPayloads()
 	if len(payloads) > 1 {
@@ -1076,7 +1401,17 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 		Status:    statusFromExecution(info.GetStatus()),
 		CreatedAt: cloneTime(info.GetStartTime()),
 	}
-	if info.GetCloseTime() != nil {
+	// A run that continued as new has one record per execution, each with
+	// its own StartTime; the run's own created_at travels in the memo the
+	// first switch writes, so every record of one chain carries the same one
+	// and is ordered by it (completeRunPage).
+	if created, ok := r.memoTime(info.GetMemo(), MemoCreatedAt); ok {
+		run.CreatedAt = timestamppb.New(created)
+	}
+	// A ContinuedAsNew record is a generation that closed, not the run: it
+	// stands for its chain as RUNNING (statusFromExecution's default arm),
+	// which has not finished.
+	if info.GetCloseTime() != nil && !isContinuedAsNew(info) {
 		run.FinishedAt = cloneTime(info.GetCloseTime())
 	}
 	run.OrkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
@@ -1089,6 +1424,20 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 		run.Origin = &orkstackv1.RunOrigin{Kind: kind, Id: r.memoString(info.GetMemo(), MemoOriginID)}
 	}
 	return run
+}
+
+// memoTime reads one RFC 3339 memo field; absent or unparsable reads as not
+// present.
+func (r *TemporalRunReader) memoTime(memo *commonpb.Memo, key string) (time.Time, bool) {
+	raw := r.memoString(memo, key)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at.UTC(), true
 }
 
 // memoString reads one memo field; a field the memo does not carry reads as
@@ -1199,9 +1548,13 @@ func RunFilterView(run *orkstackv1.Run) *orkstackv1.Run {
 }
 
 // closedExecution maps a history event that closes an execution onto the run
-// status it means.
+// status it means. carried says the execution started from a carry: a
+// generation after the first of a run that continued as new. A
+// continue-as-new close is not a close of the RUN — scanExecution follows it
+// to the successor — so it reports closed=false here.
 func closedExecution(
 	historyEvent *historypb.HistoryEvent,
+	carried bool,
 ) (orkstackv1.Status, *orkstackv1.Error, bool) {
 	switch historyEvent.GetEventType() {
 	case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED:
@@ -1212,11 +1565,23 @@ func closedExecution(
 			Code:    "RUN_FAILED",
 			Message: attrs.GetFailure().GetMessage(),
 		}
-		// A run-level failure type is the run's own code: what the run's
-		// terminal snapshot would have said, had its terminal emit landed.
-		if failureType := attrs.GetFailure().GetApplicationFailureInfo().GetType(); isRunLevelFailureType(failureType) {
+		failureType := attrs.GetFailure().GetApplicationFailureInfo().GetType()
+		switch {
+		case isRunLevelFailureType(failureType):
+			// A run-level failure type is the run's own code: what the run's
+			// terminal snapshot would have said, had its terminal emit landed.
 			failure.Code = failureType
-			failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+			failure.Category = runLevelFailureCategory(failureType)
+		case carried && failureType == "INVALID_RUN":
+			// Only one thing ends a carried generation INVALID_RUN: a release
+			// older than generations picked it up, dropped the carry and saw
+			// the empty run-id argument a switch passes (RunWorkflow). It
+			// refused before any side effect, as designed; the run itself
+			// cannot carry on there.
+			failure.Code = RunStateUnsupportedCode
+			failure.Message = "this run was carried forward by a newer release and an older release " +
+				"could not carry it on; roll the engines forward"
+			failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
 		}
 		return orkstackv1.Status_STATUS_FAILED, failure, true
 	case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED:
@@ -1227,6 +1592,17 @@ func closedExecution(
 	case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED:
 		attrs := historyEvent.GetWorkflowExecutionTerminatedEventAttributes()
 		message := attrs.GetReason()
+		if isHistoryLimitTermination(message) {
+			// The backstop for the history guard's one residual (a failure
+			// path whose completions carry more bytes than its reserve
+			// assumed): the cluster, not an operator, ended the run at its
+			// history limit, and the run says so rather than "canceled".
+			return orkstackv1.Status_STATUS_FAILED, &orkstackv1.Error{
+				Code:     RunHistoryLimitCode,
+				Message:  "the run was stopped by the cluster at its history limit: " + message,
+				Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
+			}, true
+		}
 		if message == "" {
 			message = "run terminated"
 		}
@@ -1247,7 +1623,24 @@ func closedExecution(
 // isRunLevelFailureType reports whether a workflow failure's ApplicationError
 // type is a code the run itself owns, rather than the cause's category.
 func isRunLevelFailureType(failureType string) bool {
-	return failureType == RunHistoryLimitCode
+	return failureType == RunHistoryLimitCode || isRunStateCode(failureType)
+}
+
+// runLevelFailureCategory is the category of a run-level failure code.
+func runLevelFailureCategory(failureType string) orkstackv1.FailureCategory {
+	if isRunStateCode(failureType) {
+		return runStateCategory(failureType)
+	}
+	return orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+}
+
+// isHistoryLimitTermination reports whether a termination reason is the
+// cluster's own at its per-execution history limit ("Workflow history count
+// exceeds limit." / "Workflow history size exceeds limit." on the Temporal
+// server), matched case-insensitively on "history" and "exceeds limit".
+func isHistoryLimitTermination(reason string) bool {
+	lower := strings.ToLower(reason)
+	return strings.Contains(lower, "history") && strings.Contains(lower, "exceeds limit")
 }
 
 // statusFromExecution maps a visibility status onto a run status.

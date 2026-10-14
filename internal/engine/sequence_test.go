@@ -61,7 +61,7 @@ func TestRunWorkflow_NumbersItsOwnEvents(t *testing.T) {
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
 
-	env.ExecuteWorkflow(engine.RunWorkflow, "ork-seq-1", compile(t, linearDocument), payload(t, nil), defaultPlan())
+	env.ExecuteWorkflow(engine.RunWorkflow, "ork-seq-1", compile(t, linearDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -127,7 +127,7 @@ func TestRunWorkflow_SnapshotCarriesCreatedAt(t *testing.T) {
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
 
-	env.ExecuteWorkflow(engine.RunWorkflow, "ork-seq-2", compile(t, linearDocument), payload(t, nil), defaultPlan())
+	env.ExecuteWorkflow(engine.RunWorkflow, "ork-seq-2", compile(t, linearDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	if err := env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}

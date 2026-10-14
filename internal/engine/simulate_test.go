@@ -89,7 +89,7 @@ func interpretFailing(t *testing.T, runID string, wf *orkstackv1.Orkflow, input 
 	})
 	plan := defaultPlan(pools...)
 	plan.CommitRoot = "mem://commits"
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, input, plan)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, input, plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatalf("%s: workflow did not complete", runID)
 	}

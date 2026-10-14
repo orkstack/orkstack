@@ -1094,9 +1094,16 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	q := queuesFor(cfg)
 	runWorker := worker.New(temporalClient, q.run, runWorkerOptions(cfg))
 	engine.RegisterWorkflows(runWorker)
+	snapshotActivities := engine.NewSnapshotActivities(snapshots)
 	runWorker.RegisterActivityWithOptions(
-		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		snapshotActivities.WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	// The terminal snapshot of a run that cannot carry on from the saved state
+	// a newer release handed it (engine.RunWorkflow's carry refusal).
+	runWorker.RegisterActivityWithOptions(
+		snapshotActivities.WriteFailedRunSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteFailedRunSnapshot},
 	)
 	// The local activity that counts a fan-out's task-sourced array, over the
 	// same store internal/api reads artifacts with.

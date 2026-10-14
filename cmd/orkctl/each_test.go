@@ -59,7 +59,7 @@ func (r *eachReader) Executions(context.Context, engine.StatsWindow) (engine.Exe
 	return engine.Executions{}, nil
 }
 
-func (r *eachReader) RunningCount(context.Context, string) (int64, error) { return 0, nil }
+func (r *eachReader) RunningCount(context.Context, string, int64) (int64, error) { return 0, nil }
 
 // RunStart answers what every run's start event says: its definition, naming
 // its orkflow and namespace.

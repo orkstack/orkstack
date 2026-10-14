@@ -70,3 +70,8 @@ func DisableHistoryGuardForTest() (restore func()) {
 	historyGuardDisabledForTest = true
 	return func() { historyGuardDisabledForTest = false }
 }
+
+// IsHistoryLimitTerminationForTest is isHistoryLimitTermination: whether a
+// termination reason is the cluster's own at its history limit, the text the
+// reader's backstop matches (TestIntegration_ContinueAsNewServerContract, h).
+func IsHistoryLimitTerminationForTest(reason string) bool { return isHistoryLimitTermination(reason) }

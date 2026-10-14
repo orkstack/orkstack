@@ -9,7 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
+	"syscall"
 )
 
 // LocalRunSnapshotStore keeps run snapshots on the filesystem, under exactly
@@ -159,8 +159,103 @@ func (s *LocalRunSnapshotStore) parseURI(uri string) (string, error) {
 		return "", fmt.Errorf("artifacts: local snapshot %q is outside the store: %w", uri, ErrInvalidURI)
 	}
 	key := filepath.ToSlash(rel)
-	if !strings.HasPrefix(key, SnapshotPrefix+"/") || !strings.HasSuffix(key, snapshotSuffix) {
+	if !isSnapshotObjectKey(key) {
 		return "", fmt.Errorf("artifacts: local snapshot %q is not a snapshot key: %w", uri, ErrInvalidURI)
 	}
 	return key, nil
+}
+
+// WriteContinuation writes one continuation object create-if-absent: the
+// bytes go to a temp file, which link(2) publishes at the content-addressed
+// key — the primitive that is both atomic and create-if-absent, as
+// LocalCommitStore.Create uses. An object already at the key is success only
+// when its bytes hash to the same SHA-256.
+func (s *LocalRunSnapshotStore) WriteContinuation(
+	ctx context.Context,
+	namespace, runID string,
+	generation int64,
+	kind string,
+	data []byte,
+) (string, error) {
+	if len(data) == 0 {
+		return "", fmt.Errorf("artifacts: local continuation: empty object")
+	}
+	sum := ContinuationSHA256(data)
+	key, err := RunContinuationKey(namespace, runID, generation, kind, sum)
+	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := s.root.MkdirAll(path.Dir(key), localDirPerm); err != nil {
+		return "", fmt.Errorf("artifacts: local continuation %q: create directory: %w", key, err)
+	}
+	tmpKey := path.Join(localTempDir, "continuation-"+randomToken())
+	if err := s.root.WriteFile(tmpKey, data, 0o644); err != nil {
+		_ = s.root.Remove(tmpKey)
+		return "", fmt.Errorf("artifacts: local continuation %q: write temp: %w", key, err)
+	}
+	defer func() { _ = s.root.Remove(tmpKey) }()
+	err = s.root.Link(tmpKey, key)
+	if errors.Is(err, syscall.EINTR) {
+		err = s.root.Link(tmpKey, key)
+	}
+	if errors.Is(err, fs.ErrExist) {
+		existing, readErr := s.root.ReadFile(key)
+		if readErr != nil {
+			return "", fmt.Errorf("artifacts: local continuation %q: read existing object: %w", key, readErr)
+		}
+		if ContinuationSHA256(existing) != sum {
+			return "", fmt.Errorf("artifacts: local continuation %q: an object with other bytes is already at the key", key)
+		}
+		return s.uri(key), nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("artifacts: local continuation %q: link: %w", key, err)
+	}
+	return s.uri(key), nil
+}
+
+// ReadContinuationRange reads length bytes at offset of the continuation
+// object at uri, after checking that the stored object is wantSize bytes.
+func (s *LocalRunSnapshotStore) ReadContinuationRange(
+	ctx context.Context,
+	uri string,
+	wantSize, offset, length int64,
+) ([]byte, error) {
+	key, err := s.parseURI(uri)
+	if err != nil {
+		return nil, err
+	}
+	if !isContinuationKey(key) {
+		return nil, fmt.Errorf("artifacts: local continuation %q is not a continuation key: %w", uri, ErrInvalidURI)
+	}
+	if err := checkContinuationRange(uri, wantSize, offset, length); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	file, err := s.root.Open(key)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("artifacts: local continuation %q: %w", uri, ErrNotFound)
+		}
+		return nil, fmt.Errorf("artifacts: local continuation %q: %w", uri, err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: local continuation %q: stat: %w", uri, err)
+	}
+	if info.Size() != wantSize {
+		return nil, fmt.Errorf("artifacts: local continuation %q is %d bytes, its reference records %d: %w",
+			uri, info.Size(), wantSize, ErrContinuationSize)
+	}
+	buf := make([]byte, length)
+	if _, err := file.ReadAt(buf, offset); err != nil {
+		return nil, fmt.Errorf("artifacts: local continuation %q: read [%d, %d): %w", uri, offset, offset+length, err)
+	}
+	return buf, nil
 }

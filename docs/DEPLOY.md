@@ -347,7 +347,7 @@ then the variable it becomes.
 | `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Lowers the built-in ceiling of 1000, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `1000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, apply and plan, and again at submit, so lowering it refuses new runs of an Orkflow applied above the new value. It may be raised, but every task's activity and lifecycle events land in the run's one history, which the Temporal cluster bounds (51,200 events and 50 MiB by default) and which a run cannot yet continue past: raise it only on a cluster whose history limits were raised to match (and set `engine.history.*` to them), or a large run stops `RUN_HISTORY_LIMIT` part-way |
 | `engine.history.max_events` | `ORK_HISTORY_MAX_EVENTS` | `51200` | `ork` | the cluster's per-execution history event limit. A run stops `RUN_HISTORY_LIMIT` before reaching it, counting what its own failure path still needs, instead of being terminated by the cluster with no reason. **Set it to the cluster's real limit if an operator changed it:** a value above the real limit defeats the guard, and one below stops runs early. Even at the default, a run that would finish just under the limit with much work still pending now stops `RUN_HISTORY_LIMIT`, because its failure path's reserve is kept back: 16 events per running task, 8 per pending task, 24 per open await, 12 per open pin, 48 per failure handler, plus 96 — about 8,100 for a 1,000-task flat stage. At least 100; anything else is refused at boot. Read at submit, so a change applies to new runs |
-| `engine.history.max_bytes` | `ORK_HISTORY_MAX_BYTES` | `50 MiB` | `ork` | the same, for history size. The reserve assumes completion results of ≤ 8 KiB each; a run whose failure path lands many larger results at once can still reach the cluster's size limit and be terminated by the cluster; this is the guard's one known gap. At least 64 KiB; anything else is refused at boot. Read at submit, so a change applies to new runs. Both limits are carried once per run tree, on the top-level run's plan (about 0.4 KB), so a run whose plan is already within that much of its 256 KiB bound is refused at submit (`FAILED_PRECONDITION`, naming the size) |
+| `engine.history.max_bytes` | `ORK_HISTORY_MAX_BYTES` | `50 MiB` | `ork` | the same, for history size. The reserve assumes completion results of ≤ 8 KiB each; a run whose failure path lands many larger results at once can still reach the cluster's size limit and be terminated by the cluster; this is the guard's one known gap, and such a run is still reported `RUN_HISTORY_LIMIT` (the reader maps the cluster's history-limit termination, "Workflow history count/size exceeds limit.", to it), never `RUN_TERMINATED`. At least 64 KiB; anything else is refused at boot. Read at submit, so a change applies to new runs. Both limits are carried once per run tree, on the top-level run's plan (about 0.4 KB), so a run whose plan is already within that much of its 256 KiB bound is refused at submit (`FAILED_PRECONDITION`, naming the size) |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
@@ -703,6 +703,11 @@ Do not expire the other prefixes: `metadata/orkflows/`, `metadata/namespaces/`,
 definitions and registries; `metadata/commits/` holds the commits a retry
 adopts and `metadata/snapshots/` what live reads need, both reclaimed by
 cleanup at retention; `metadata/runs/` and `metadata/index/` are the archive.
+That includes `metadata/snapshots/{ns}/{run}/continuations/`: the event
+segments, switch snapshots and saved state a run that carried on into a fresh
+history wrote (§2, "Runs that span several executions"). A live run reads its
+segments for its whole life and its archive is built from them, so a rule that
+expired one would turn part of the run's stream into a recorded gap.
 
 ```bash
 # MinIO: expire task logs after 30 days.
@@ -935,6 +940,45 @@ supported, on the same terms as editing the bucket by hand: the authored spec
 travels inside the schedule's action, and `ork` logs a warning when the
 cluster's policy no longer matches it. Change a schedule with
 `orkctl schedule update`.
+
+### Runs that span several executions: what the cluster shows
+
+A run whose history grew past its budget carries on into a fresh history: it
+continues as new, so on the cluster it is a chain of executions — generations
+— under one workflow id, its run id. This is an operator-only view; every
+OrkStack surface shows one run, with one id, one event stream and one archive.
+Operators who look at the cluster directly will see:
+
+- `temporal workflow list --query 'WorkflowId="ork-…"'` lists one record per
+  generation; every closed one has status `ContinuedAsNew`, and only the
+  newest is `Running` (or its final status). Each record's `StartTime` is its
+  own generation's, so the run's own `created_at` travels in the
+  `orkflow_created_at` memo, which every record of the chain carries.
+- `temporal workflow show --workflow-id ork-…` shows the current generation:
+  its start carries an empty run-id argument and the reference to its saved
+  state, and its events begin after the carried sequence. The events of
+  earlier generations are in their immutable event segments under
+  `metadata/snapshots/{ns}/{run}/continuations/`, which every read follows.
+- the cluster's index writes a switch's closing and starting records
+  independently, in an order it does not guarantee, so for a moment a run can
+  show as two `Running` records or only as the one that just closed. OrkStack
+  deduplicates by workflow id, treats a `ContinuedAsNew` record that closed
+  within the last **hour** (the switch-visibility window, W) as its run still
+  live, and settles such records with one batched listing by id per 100 runs —
+  a describe only for a run still caught between its two records. Every
+  liveness question — lists, the deletion gate, admission, release and drain
+  counts — therefore counts such a run once and never as gone. The assumption
+  is that the index shows a switch's successor within W; the server contract
+  test records the lag the test cluster shows (`TestIntegration_ContinueAsNewServerContract`,
+  item j). A cluster whose visibility takes longer than an hour to index a
+  switch can briefly under-count a switching run.
+- retiring a run deletes every generation, oldest first, then the current one
+  by its own execution id (the cleanup worker does this; an execution
+  already gone counts as deleted).
+
+To list the runs carrying on right now:
+`temporal workflow list --query 'WorkflowType="RunWorkflow" AND ExecutionStatus="ContinuedAsNew"'`
+returns the closed generations, and their workflow ids are the runs.
 
 ---
 
@@ -1246,6 +1290,26 @@ otherwise abandon, not as a routine tool.
 composition, `outputs:`, join policies, caching, schedules) needs the
 preparation in §3, "Releases that add Orkflow constructs" — for join policies
 it is a hold, because the silent outcome is destructive.
+
+**Never roll back below the first release that reads runs carried on into a
+fresh history.** That release (the read side of continue-as-new) must ship
+before any release that lets a run carry on, and stays the floor:
+
+- a release older than it that picks up a run's later generation ends that
+  generation before any side effect — the run fails, and every reader of this
+  release or later reports `RUN_STATE_UNSUPPORTED` ("this run was carried
+  forward by a newer release and an older release could not carry it on; roll
+  the engines forward") — but it publishes no terminal event, so the run has
+  no archive body and becomes unreadable once the cluster's retention expires
+  it;
+- once any run's archive records a lost range of its events (a `gap` line,
+  `docs/STORAGE.md`), a rollback below it is forbidden permanently: an older
+  release refuses the unknown archive line, so every read of that run fails.
+
+Check before rolling back:
+`temporal workflow list --query 'WorkflowType="RunWorkflow" AND ExecutionStatus="ContinuedAsNew"'`
+lists the closed generations of runs carrying on; while it returns any, do
+not go below that release.
 
 ### Back to unversioned workers
 
@@ -1649,6 +1713,12 @@ nothing that was refused while it was set.
   admitted, so a burst against several replicas can land a few runs over the
   cap. It is a guard, not a semaphore; a guard that is occasionally one over
   is worth far more than a lock service.
+- **A run that carries on into a fresh history is one run.** Admission counts
+  it once even while the cluster's index briefly shows both of its executions,
+  or only the one that just closed (§2, "Runs that span several executions").
+  Below the cap two index counts answer; at or above it the submit walks the
+  namespace's live runs, deduplicated by run id, so a switching run never
+  refuses a submit at `max_running − 1` and is never counted as gone.
 - **A keyed repeat is refused while held or at the cap.** Admission runs
   before an `idempotency_key` is looked at, so repeating a key whose first
   submission was accepted returns the refusal instead of that run while the

@@ -48,7 +48,7 @@ func (s *Service) admit(
 	}
 	name := artifacts.ResolveNamespace(ns.GetName())
 	if ns.GetMaxRunning() > 0 {
-		running, err := s.runningCount(ctx, binding, name)
+		running, err := s.runningCount(ctx, binding, name, int64(ns.GetMaxRunning()))
 		if err != nil {
 			return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
 				"namespace %q max_running could not be checked against the execution index: %w; ask again",
@@ -83,12 +83,13 @@ func (s *Service) admit(
 }
 
 // runningCount asks the binding's reader — the cluster the run would start
-// on — how many runs of the namespace are in flight.
-func (s *Service) runningCount(ctx context.Context, binding engine.Binding, namespace string) (int64, error) {
+// on — how many runs of the namespace are in flight, exact at ceiling (the
+// namespace's max_running).
+func (s *Service) runningCount(ctx context.Context, binding engine.Binding, namespace string, ceiling int64) (int64, error) {
 	if binding.Reader == nil {
 		return 0, errNoAdmissionReader
 	}
-	return binding.Reader.RunningCount(ctx, namespace)
+	return binding.Reader.RunningCount(ctx, namespace, ceiling)
 }
 
 // refuse logs and announces one refusal, then returns it as the Connect

@@ -21,6 +21,13 @@ tree to them in two halves per fixture:
   (`CompactRunResultForTest`). The projection is a strict subset of what was
   recorded, so no fixture is re-recorded for it.
 
+`RunWorkflow` takes a fifth argument, the carry a run's earlier generation
+hands the next when it continues as new. Every fixture's start, and every
+child start it recorded, passes four, so the fifth decodes as nil and no
+fixture enters the carried path; `TestCommittedFixtures_StartWithFourArgumentsAndNoCarry`
+makes that a checked premise, and the command halves replay every fixture
+against the five-parameter function.
+
 Each fixture also has a **negative test**: a deliberately altered body or
 stream that the guard must catch, so the fixture is known to see the kind of
 change it exists for.

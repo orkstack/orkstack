@@ -33,21 +33,23 @@ func runningCorpus() []statsCorpusRun {
 func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("indexed: one count with the namespace predicate, no list", func(t *testing.T) {
+	t.Run("indexed: two counts with the namespace predicate, no list", func(t *testing.T) {
 		index := statsIndexOver(t, runningCorpus())
 		reader := newRunReader(index, converter.GetDefaultDataConverter()).WithNamespaceIndex(true)
-		got, err := reader.RunningCount(ctx, "payments")
+		got, err := reader.RunningCount(ctx, "payments", 10)
 		if err != nil {
 			t.Fatalf("RunningCount: %v", err)
 		}
 		if got != 3 {
 			t.Errorf("RunningCount(payments) = %d, want 3", got)
 		}
-		if len(index.counts) != 1 || len(index.queries) != 0 {
-			t.Fatalf("counts %q, lists %q; want one count and no list", index.counts, index.queries)
+		// Open executions, then chains that switched in the last hour: none,
+		// so the open count is the answer.
+		if len(index.counts) != 2 || len(index.queries) != 0 {
+			t.Fatalf("counts %q, lists %q; want two counts and no list", index.counts, index.queries)
 		}
-		want := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q AND %s = %q",
-			RunWorkflowType, executionStatusRunning, task.SearchAttrOrkflowNamespace, "payments")
+		want := fmt.Sprintf("WorkflowType = %q AND %s = %q AND %s",
+			RunWorkflowType, task.SearchAttrOrkflowNamespace, "payments", openExecutionsPredicate())
 		if index.counts[0] != want {
 			t.Errorf("count query = %q, want %q", index.counts[0], want)
 		}
@@ -56,7 +58,7 @@ func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) 
 	t.Run("indexed: the default namespace resolves", func(t *testing.T) {
 		index := statsIndexOver(t, []statsCorpusRun{{id: "ork-d", namespace: "default", createdAt: time.Now()}})
 		reader := newRunReader(index, converter.GetDefaultDataConverter()).WithNamespaceIndex(true)
-		got, err := reader.RunningCount(ctx, "")
+		got, err := reader.RunningCount(ctx, "", 10)
 		if err != nil || got != 1 {
 			t.Fatalf("RunningCount(\"\") = %d, %v; want 1", got, err)
 		}
@@ -68,7 +70,7 @@ func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) 
 	t.Run("unindexed: no count, a memo-filtered walk", func(t *testing.T) {
 		index := statsIndexOver(t, runningCorpus())
 		reader := newRunReader(index, converter.GetDefaultDataConverter())
-		got, err := reader.RunningCount(ctx, "payments")
+		got, err := reader.RunningCount(ctx, "payments", 10)
 		if err != nil {
 			t.Fatalf("RunningCount: %v", err)
 		}
@@ -86,7 +88,7 @@ func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) 
 				t.Errorf("unindexed walk pushed the namespace predicate: %q", query)
 			}
 		}
-		billing, err := reader.RunningCount(ctx, "billing")
+		billing, err := reader.RunningCount(ctx, "billing", 10)
 		if err != nil || billing != 1 {
 			t.Errorf("RunningCount(billing) = %d, %v; want 1", billing, err)
 		}
@@ -96,7 +98,7 @@ func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) 
 		index := statsIndexOver(t, runningCorpus())
 		index.endless = true
 		reader := newRunReader(index, converter.GetDefaultDataConverter())
-		got, err := reader.RunningCount(ctx, "payments")
+		got, err := reader.RunningCount(ctx, "payments", 10)
 		if err == nil {
 			t.Fatalf("RunningCount over an endless index = %d, nil; want an error", got)
 		}
@@ -112,7 +114,7 @@ func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) 
 		index := statsIndexOver(t, runningCorpus())
 		index.countErr = fmt.Errorf("visibility unavailable")
 		reader := newRunReader(index, converter.GetDefaultDataConverter()).WithNamespaceIndex(true)
-		if got, err := reader.RunningCount(ctx, "payments"); err == nil {
+		if got, err := reader.RunningCount(ctx, "payments", 10); err == nil {
 			t.Fatalf("RunningCount = %d, nil; want the cluster's error", got)
 		}
 	})
