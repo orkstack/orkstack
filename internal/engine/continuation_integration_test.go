@@ -55,7 +55,9 @@ type canBehavior func(ctx context.Context, s *canStack, in *orkstackv1.ExecuteTa
 
 // startCANStack builds the stack; versioned runs every worker under one
 // Worker Deployment Version, as the fixture recorders do.
-func startCANStack(t *testing.T, ctx context.Context, label string, versioned bool, behavior canBehavior) *canStack {
+func startCANStack(t *testing.T, ctx context.Context, label string, versioned bool, behavior canBehavior,
+	extra ...func(w worker.Worker),
+) *canStack {
 	t.Helper()
 	cfg := s3Config()
 	requireMinIO(t, cfg)
@@ -99,6 +101,9 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 	}))
 	engine.RegisterWorkflows(runWorker)
 	registerRunActivities(runWorker, engine.NewSnapshotActivities(snapshots), s.values)
+	for _, register := range extra {
+		register(runWorker)
+	}
 	orker := worker.New(c, s.orkerQueue, options(worker.Options{
 		DisableRegistrationAliasing:        true,
 		DisableWorkflowWorker:              true,
