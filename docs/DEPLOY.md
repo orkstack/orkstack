@@ -2100,8 +2100,8 @@ saturated pool would:
   can never stall a run. Without it, a run above the cluster's 2,000 pending
   activities per execution would fail every workflow task — stuck. A run that
   keeps more than 1,000 activities pending at once now waits at 1,000.
-- **Carrying on into a fresh history** (`engine.continuation.*`, off by
-  default in this release). Past its budget (8,192 events or 8 MiB of growth)
+- **Carrying on into a fresh history** (`engine.continuation.*`, on by
+  default). Past its budget (8,192 events or 8 MiB of growth)
   a run carries on at its next moment with nothing running — the usual case
   for chains, staged DAGs and runs parked on awaits, which never pause. A run
   with no such moment (a fan-out that keeps refilling) holds new tasks once its
@@ -2122,6 +2122,40 @@ decision with `run_id`, `history_events`, `history_bytes` and `in_flight`;
 the `ork.run.continuation*` metrics (§7); and `orkctl run inspect`, which
 shows a held task with no attempt. A composed child that awaits for days holds
 its parent's new tasks for that long if the parent pauses meanwhile.
+
+### Engine capabilities and the fleet check
+
+Some runs need an engine newer than the one that could otherwise decide
+them: an `ork` process of an older release would compute that run's commands
+differently, and the first newer process to replay its history would fail it
+— a stuck run. Before such a run starts, the submit asks the cluster which
+processes could decide it, and refuses while any of them is too old.
+
+- **What each process advertises.** Every `ork` process polls Temporal with
+  its SDK identity followed by ` ork-caps=<list>`, for example
+  `48213@engine-2@ ork-caps=each-items-10k`, as
+  `temporal task-queue describe --task-queue ork-tasks` shows it. The run
+  worker and the projection worker share the process's client, so both carry
+  it. The releases page still counts one process per identity.
+- **Which pollers a submit checks.** The engine channel's fresh pollers of
+  this deployment that a run started now can land on: under versioning, the
+  current build's (the unversioned processes when no current version is set)
+  and the ramping build's; on an unversioned fleet, every process. A build
+  that keeps polling only to drain its pinned runs blocks nothing — it never
+  decides a run started now. Another deployment's engine sharing the
+  namespace is ignored.
+- **Which capabilities exist.** `each-items-10k`: a run tree in which some
+  run declares more than 1,000 fan-out items (`engine.each_max_items`, §1).
+  Only such a submit — a direct submit, a trigger or a schedule fire — reads
+  the poller list, once, never cached.
+- **What a refused submit says.** `FAILED_PRECONDITION`, naming the Orkflow,
+  how many items it declares and how many engine processes run a release
+  that cannot run them ("2 engine processes … finish the rollout first") —
+  a count, never an identity, because identities carry host names. The
+  identities are in the engine's own `missing_capability` warning
+  (`identities`).
+- **Fail closed.** A poller list that cannot be read refuses the submit
+  `UNAVAILABLE`; ask again once the cluster answers.
 
 ## 6. Replay safety across versions
 

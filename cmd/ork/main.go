@@ -330,6 +330,16 @@ func composeMaxDepthFromEnv() (int32, error) {
 	return value, nil
 }
 
+// sdkIdentity is the identity the Temporal SDK gives a client that names
+// none: `pid@host@` (go.temporal.io/sdk internal getWorkerIdentity("")).
+func sdkIdentity() string {
+	host, err := os.Hostname()
+	if err != nil {
+		host = "Unknown"
+	}
+	return fmt.Sprintf("%d@%s@", os.Getpid(), host)
+}
+
 func env(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok && value != "" {
 		return value
@@ -895,6 +905,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return err
 	}
+	// The run worker and the projection worker share this client, so both
+	// poll with its identity: the SDK's own, followed by the engine
+	// capabilities this build advertises. A submit that needs a capability
+	// checks the cluster's poller list for a process without it
+	// (engine.MissingCapability, docs/DEPLOY.md §5).
+	temporalOptions.Identity = engine.EngineIdentity(sdkIdentity())
 	temporalClient, err := client.DialContext(ctx, temporalOptions)
 	if err != nil {
 		return err
