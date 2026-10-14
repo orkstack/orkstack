@@ -845,7 +845,7 @@ func TestContinuation_CheckpointOverTheCapNeverSwitches(t *testing.T) {
 	}
 	run := mustFinalRun(t, h.store, "ork-overcap")
 	if !strings.Contains(run.GetError().GetMessage(), "it cannot carry on into a fresh history: its saved state is") ||
-		!strings.Contains(run.GetError().GetMessage(), "more than the 0.0 MiB a run carries forward") {
+		!strings.Contains(run.GetError().GetMessage(), "more than the 0.1 KiB a run carries forward") {
 		t.Fatalf("message = %q, want the size reason", run.GetError().GetMessage())
 	}
 	for _, uri := range h.snapshots.keys() {

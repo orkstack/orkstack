@@ -336,3 +336,27 @@ func TestChildFailure_MapsRunStateCodes(t *testing.T) {
 		t.Fatalf("childFailure(canceled) = %v %s, want CANCELED %s", status, code, ChildRunCanceledCode)
 	}
 }
+
+// TestSavedStateSize_TellsTwoSizesApart: the reason a run gives for not
+// carrying on names its saved state's size and the cap in units that tell
+// them apart — MiB from 1 MiB up, KiB below it, where a cap near
+// continuation.bytes' 16 KiB floor would otherwise read "0.1 MiB, more than
+// the 0.1 MiB".
+func TestSavedStateSize_TellsTwoSizesApart(t *testing.T) {
+	for _, tc := range []struct {
+		bytes int64
+		want  string
+	}{
+		{9_751_757, "9.3 MiB"},
+		{8 << 20, "8.0 MiB"},
+		{1 << 20, "1.0 MiB"},
+		{(1 << 20) - 1, "1024.0 KiB"},
+		{98_982, "96.7 KiB"},
+		{96_934, "94.7 KiB"},
+		{16 << 10, "16.0 KiB"},
+	} {
+		if got := savedStateSize(tc.bytes); got != tc.want {
+			t.Errorf("savedStateSize(%d) = %q, want %q", tc.bytes, got, tc.want)
+		}
+	}
+}
