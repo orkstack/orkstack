@@ -674,3 +674,24 @@ func TestContinuation_GenerationCeilingReasonNamesNoCount(t *testing.T) {
 		}
 	})
 }
+
+// TestContinuation_GiveUpReadsTheBudgetLikeEveryPath: abandonQuiesce reads
+// the budget through continuationBudget, as every other path does, so a
+// test-only override over a plan with no budget of its own spaces the retry
+// by the override's budget and never dereferences the plan's nil one.
+func TestContinuation_GiveUpReadsTheBudgetLikeEveryPath(t *testing.T) {
+	override := validBudget()
+	override.RetryEvents, override.RetryBytes = 123, 456
+	continuationPlanForTest = &override
+	defer func() { continuationPlanForTest = nil }()
+	plan := guardPlan(t, DefaultHistoryMaxEvents, DefaultHistoryMaxBytes)
+	plan.Continuation = nil
+	continuationProbe(t, 100, flatDefinition(t, 3), plan, func(ctx workflow.Context, s *runState) {
+		s.quiescing = true
+		s.abandonQuiesce(ctx, nil, "pin build is still open")
+		e, b := s.historyNow(ctx)
+		if s.quiescing || s.quiesceRetryAt != [2]int64{e + 123, b + 456} {
+			t.Errorf("quiescing %v retry at %v, want the override's spacing from (%d, %d)", s.quiescing, s.quiesceRetryAt, e, b)
+		}
+	})
+}

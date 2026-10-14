@@ -239,7 +239,7 @@ func (s *runState) pinBlockedReason() string {
 // once (right after the pin closes, say). Held work dispatches on the next
 // pass.
 func (s *runState) abandonQuiesce(ctx workflow.Context, inFlight map[string]workflow.Future, reason string) {
-	budget := s.plan.Continuation
+	budget := s.continuationBudget() // the one read of the budget, as every other path
 	e, b := s.historyNow(ctx)
 	s.quiescing = false
 	s.quiesceRetryAt = [2]int64{e + budget.RetryEvents, b + budget.RetryBytes}
