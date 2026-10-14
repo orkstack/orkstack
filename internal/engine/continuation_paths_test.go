@@ -14,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -25,26 +27,59 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 )
 
-// lineLogger records every log line's message, for a test that counts the
-// writer's decisions. It satisfies log.Logger.
+// lineLogger records every log line's message and key-value fields, for a
+// test that counts the writer's decisions or reads what one logged. It
+// satisfies log.Logger.
 type lineLogger struct {
-	mu    sync.Mutex
-	lines []string
+	mu     sync.Mutex
+	lines  []string
+	fields [][]any
 }
 
-func (l *lineLogger) add(msg string) {
+func (l *lineLogger) add(msg string, keyvals []any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.lines = append(l.lines, msg)
+	l.fields = append(l.fields, slices.Clone(keyvals))
 }
-func (l *lineLogger) Debug(msg string, _ ...any) {}
-func (l *lineLogger) Info(msg string, _ ...any)  { l.add(msg) }
-func (l *lineLogger) Warn(msg string, _ ...any)  { l.add(msg) }
-func (l *lineLogger) Error(msg string, _ ...any) { l.add(msg) }
+func (l *lineLogger) Debug(msg string, _ ...any)       {}
+func (l *lineLogger) Info(msg string, keyvals ...any)  { l.add(msg, keyvals) }
+func (l *lineLogger) Warn(msg string, keyvals ...any)  { l.add(msg, keyvals) }
+func (l *lineLogger) Error(msg string, keyvals ...any) { l.add(msg, keyvals) }
 
 var _ log.Logger = (*lineLogger)(nil)
+
+// loggedLine is one line a lineLogger recorded.
+type loggedLine struct {
+	msg    string
+	fields []any
+}
+
+// field is the value logged under key, or nil.
+func (l loggedLine) field(key string) any {
+	for i := 0; i+1 < len(l.fields); i += 2 {
+		if l.fields[i] == key {
+			return l.fields[i+1]
+		}
+	}
+	return nil
+}
+
+// only is every recorded line whose message is one of msgs, in order.
+func (l *lineLogger) only(msgs ...string) []loggedLine {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []loggedLine
+	for i, line := range l.lines {
+		if slices.Contains(msgs, line) {
+			out = append(out, loggedLine{msg: line, fields: l.fields[i]})
+		}
+	}
+	return out
+}
 
 func (l *lineLogger) count(msg string) int {
 	l.mu.Lock()
@@ -65,6 +100,7 @@ const (
 	logGiveUp    = "run resumed new tasks: it cannot reach a moment with nothing running"
 	logSwitched  = "run carried on into a fresh history"
 	logRestored  = "run restored its saved state"
+	logRetry     = "run could not save its state to carry on; retrying after more growth"
 )
 
 // raiseHistoryWhen moves a harness's raw history length to length the first
@@ -125,16 +161,137 @@ tasks:
     with: {command: "echo announce"}
 `
 
+const pinCloseDocument = `
+name: pin-close
+pins:
+  build: {}
+tasks:
+  - id: prep
+    uses: shell
+    pin: build
+    run_as_orker_user: true
+    with: {command: "echo prep"}
+  - id: compile
+    uses: shell
+    pin: build
+    needs: [prep]
+    run_as_orker_user: true
+    with: {command: "echo compile"}
+  - id: publish
+    uses: shell
+    needs: [compile]
+    with: {command: "echo publish"}
+  - id: announce
+    uses: shell
+    needs: [publish]
+    with: {command: "echo announce"}
+  - id: archive
+    uses: shell
+    needs: [announce]
+    with: {command: "echo archive"}
+  - id: notify
+    uses: shell
+    needs: [archive]
+    with: {command: "echo notify"}
+`
+
+// pinCloseProbe watches one pin's close against a run's switch: ReleasePin
+// is held until publish (the first task after the pin) runs, and the switch's
+// first write records how far the close had got.
+type pinCloseProbe struct {
+	gateOnce  sync.Once
+	gate      chan struct{} // closed to let ReleasePin return
+	released  chan struct{} // closed as ReleasePin returns
+	mu        sync.Mutex
+	completed bool // the pin's session completion activity finished
+	// atSwitch is, for every switch's first write, whether the close had
+	// finished (ReleasePin returned and the session completed) by then.
+	atSwitch []bool
+}
+
+func (p *pinCloseProbe) open() { p.gateOnce.Do(func() { close(p.gate) }) }
+
+func (p *pinCloseProbe) closeFinished() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	select {
+	case <-p.released:
+		return p.completed
+	default:
+		return false
+	}
+}
+
 // TestContinuation_PinOpenAtTriggerClosesBeforeSwitch: a run whose budget is
 // crossed while a pin is open finishes the pin on its host and closes it
 // first; it switches only at an idle point with nothing of the pin left —
-// not while the pin is still closing, which is in flight.
+// not while the pin is still closing, which is in flight (A4: no pin
+// opening, open or closing).
+//
+// The close is held open across an idle point: ReleasePin does not return
+// until publish runs, so the idle point right after the pin's last member
+// finished (nothing in flight, work left, the switch due) finds the pin
+// closing. A run that switched there would record the switch's first write
+// while ReleasePin is still running and the session not yet completed.
 func TestContinuation_PinOpenAtTriggerClosesBeforeSwitch(t *testing.T) {
-	g := runGenerations(t, "ork-pin-open", compile(t, pinOpenDocument), payload(t, nil), continuedPlan(1), okBehavior, pinSetup)
+	probe := &pinCloseProbe{gate: make(chan struct{}), released: make(chan struct{})}
+	defer probe.open() // never leave a ReleasePin blocked past the test
+	behavior := func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		if in.GetTaskId() == "publish" {
+			probe.open()
+			select { // a deadline, never a sleep: the close finishes once the gate opens
+			case <-probe.released:
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("ReleasePin never returned")
+			}
+		}
+		return okBehavior(ctx, in)
+	}
+	g := runGenerations(t, "ork-pin-open", compile(t, pinCloseDocument), payload(t, nil), continuedPlan(1), behavior,
+		func(h *harness, _ int) {
+			h.env.SetWorkerOptions(worker.Options{EnableSessionWorker: true, DeadlockDetectionTimeout: time.Second})
+			h.env.RegisterActivityWithOptions(func(ctx context.Context, in *orkstackv1.ReleasePinInput) error {
+				h.mu.Lock()
+				h.released = append(h.released, in)
+				h.mu.Unlock()
+				select {
+				case <-probe.gate:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				close(probe.released)
+				return nil
+			}, activity.RegisterOptions{Name: task.ActivityReleasePin})
+			h.env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, err error) {
+				if info.ActivityType.Name == sessionCompletionActivityName && err == nil {
+					probe.mu.Lock()
+					probe.completed = true
+					probe.mu.Unlock()
+				}
+			})
+			h.onContinuation = func(kind string, _ int64) error {
+				if kind == "events" {
+					finished := probe.closeFinished()
+					probe.mu.Lock()
+					probe.atSwitch = append(probe.atSwitch, finished)
+					probe.mu.Unlock()
+					probe.open() // a switch mid-close must not strand ReleasePin
+				}
+				return nil
+			}
+		})
 	generationsOK(t, g, 2)
-	gen0 := strings.Join(sortedTaskOrder(g.harnesses[0]), ",")
-	if !strings.HasPrefix(gen0, "compile,prep") && gen0 != "compile,prep,publish" {
-		t.Fatalf("generation 0 ran %q, want both pin members before the switch", gen0)
+	if len(probe.atSwitch) == 0 {
+		t.Fatal("the run never switched")
+	}
+	for i, finished := range probe.atSwitch {
+		if !finished {
+			t.Fatalf("switch %d began while the pin was still closing (ReleasePin or the session's completion unfinished)", i)
+		}
+	}
+	gen0 := g.harnesses[0].taskOrder()
+	if len(gen0) < 3 || !slices.Equal(gen0[:3], []string{"prep", "compile", "publish"}) {
+		t.Fatalf("generation 0 ran %v, want both pin members and then publish before the switch", gen0)
 	}
 	if got := len(g.harnesses[0].releases()); got != 1 {
 		t.Fatalf("generation 0 released %d pins, want the one it opened", got)
@@ -144,6 +301,9 @@ func TestContinuation_PinOpenAtTriggerClosesBeforeSwitch(t *testing.T) {
 			if id == "prep" || id == "compile" {
 				t.Fatalf("pin member %s ran after the switch", id)
 			}
+		}
+		if got := len(h.releases()); got != 0 {
+			t.Fatalf("a later generation released %d pins", got)
 		}
 	}
 }
@@ -535,8 +695,9 @@ func TestContinuation_FailureDuringHoldTakesTheFailPath(t *testing.T) {
 
 // TestContinuation_HoldNeverSpins proves a held, idle run always makes
 // progress under the production 1 s deadlock detector: idle with an open
-// await (it switches); after a failed write (it resumes); with an opening
-// pin and a closing pin (it waits on them).
+// await (it switches); after every attempt of a held switch's write failed
+// (it resumes dispatch, and retries only after growth); after a cancel (it
+// ends); with an opening pin and a closing pin (it waits on them).
 func TestContinuation_HoldNeverSpins(t *testing.T) {
 	deadlock := worker.Options{DeadlockDetectionTimeout: time.Second}
 	t.Run("idle with an open await", func(t *testing.T) {
@@ -551,25 +712,7 @@ func TestContinuation_HoldNeverSpins(t *testing.T) {
 			})
 		generationsOK(t, g, 2)
 	})
-	t.Run("after a failed write", func(t *testing.T) {
-		failed := false
-		g := runGenerations(t, "ork-spin-write", compile(t, spreadDocument), spreadInput(t, 8), holdPlan(), itemBehavior,
-			func(h *harness, generation int) {
-				h.env.SetWorkerOptions(deadlock)
-				if generation != 0 {
-					return
-				}
-				raiseHistoryAt(h, 2, 650)
-				h.onContinuation = func(kind string, _ int64) error {
-					if kind == "events" && !failed {
-						failed = true
-						return errors.New("object storage is unavailable")
-					}
-					return nil
-				}
-			})
-		generationsOK(t, g, 1)
-	})
+	t.Run("after a failed write while holding", holdNeverSpinsAfterFailedWrite)
 	t.Run("after cancel", holdNeverSpinsAfterCancel)
 	t.Run("with an opening and a closing pin", func(t *testing.T) {
 		g := runGenerations(t, "ork-spin-pins", compile(t, pinOpenDocument), payload(t, nil), holdPlan(), okBehavior,

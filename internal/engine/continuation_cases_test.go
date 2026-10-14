@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -270,5 +271,85 @@ func fixtureBehavior(results map[string]*orkstackv1.ExecuteTaskResult, current *
 			result.ValuesJson, result.ValuesInlined = values, true
 		}
 		return result, nil
+	}
+}
+
+// holdNeverSpinsAfterFailedWrite is TestContinuation_HoldNeverSpins'
+// failed-write case. A run that holds new dispatch to reach an idle point,
+// and then fails EVERY attempt of its switch's first write (object storage
+// down for the whole of the local activity's retry policy), must end its
+// hold: failedAttempt clears quiescing, so the run is never left holding
+// with nothing in flight and a switch it may not try yet — a spin the 1 s
+// deadlock detector would trip. It dispatches again, tries no switch until
+// it has grown by the plan's RetryEvents, holds again, and then switches.
+func holdNeverSpinsAfterFailedWrite(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	logs := &lineLogger{}
+	suite.SetLogger(logs)
+	plan := holdPlan()
+	// A retry spacing wider than one dispatch, in events alone (the bytes
+	// spacing out of reach), so "after growth" is visible in history_events.
+	plan.Continuation.RetryEvents = 4
+	plan.Continuation.RetryBytes = 1 << 40
+	var (
+		mu        sync.Mutex
+		attempts  int
+		atFailure int // items the Orker had received when the first try's last attempt failed
+		atRetry   int // items the Orker had received when the second try began
+	)
+	g := runGenerationsIn(t, &suite, "ork-spin-write", compile(t, spreadDocument), spreadInput(t, 16), plan, itemBehavior,
+		func(h *harness, generation int) {
+			h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+			if generation != 0 {
+				return
+			}
+			raiseHistoryAt(h, 2, 650)
+			h.onContinuation = func(kind string, _ int64) error {
+				if kind != "events" {
+					return nil
+				}
+				received := len(itemsDispatched(h))
+				mu.Lock()
+				defer mu.Unlock()
+				attempts++
+				switch {
+				case attempts <= 3: // every attempt of the first try
+					atFailure = received
+					return errors.New("object storage is unavailable")
+				case attempts == 4:
+					atRetry = received
+				}
+				return nil
+			}
+		})
+	generationsOK(t, g, 2)
+	if attempts < 4 {
+		t.Fatalf("%d write attempts, want the failed try's 3 and a retry", attempts)
+	}
+	// The hold came first, then the failure, then a second hold (the retry
+	// spacing reached), then the switch.
+	lines := logs.only(logQuiesce, logRetry, logSwitched)
+	var got []string
+	for _, line := range lines {
+		got = append(got, line.msg)
+	}
+	want := []string{logQuiesce, logRetry, logQuiesce, logSwitched}
+	if len(got) < len(want) || !slices.Equal(got[:len(want)], want) {
+		t.Fatalf("the writer logged %q, want it to begin %q", got, want)
+	}
+	// Dispatch resumed after the failure: the Orker received items between
+	// the failed try and the retry.
+	if atRetry <= atFailure {
+		t.Fatalf("the Orker had %d items at the failed try and %d at the retry: dispatch never resumed", atFailure, atRetry)
+	}
+	// No switch was tried until the run had grown by RetryEvents.
+	failedAt, _ := lines[1].field("history_events").(int64)
+	heldAgainAt, _ := lines[2].field("history_events").(int64)
+	if failedAt == 0 || heldAgainAt-failedAt < plan.Continuation.RetryEvents {
+		t.Fatalf("failed at %d events and held again at %d: want at least %d events of growth between",
+			failedAt, heldAgainAt, plan.Continuation.RetryEvents)
+	}
+	if got := len(itemsDispatched(g.harnesses[0])); got >= 16 {
+		t.Fatalf("generation 0 dispatched all %d items: the retry never switched", got)
 	}
 }
