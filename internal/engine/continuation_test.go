@@ -64,11 +64,27 @@ func runGenerations(
 ) *generations {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
+	return runGenerationsIn(t, &suite, runID, wf, input, plan, behavior, setup)
+}
+
+// runGenerationsIn is runGenerations under a suite the caller configured (a
+// logger, say).
+func runGenerationsIn(
+	t *testing.T,
+	suite *testsuite.WorkflowTestSuite,
+	runID string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+	plan engine.RunPlan,
+	behavior func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error),
+	setup func(h *harness, generation int),
+) *generations {
+	t.Helper()
 	store := newTestSnapshotStore()
 	out := &generations{runID: runID}
 	args := []any{runID, wf, input, plan, (*orkstackv1.RunContinuation)(nil)}
 	for generation := 0; generation < 32; generation++ {
-		h := newHarnessOver(t, &suite, store, behavior)
+		h := newHarnessOver(t, suite, store, behavior)
 		h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: runID})
 		if setup != nil {
 			setup(h, generation)
@@ -268,6 +284,11 @@ func (o *commandRecorderOutbound) ExecuteLocalActivity(ctx workflow.Context, act
 func (o *commandRecorderOutbound) NewTimer(ctx workflow.Context, d time.Duration) workflow.Future {
 	o.add(fmt.Sprintf("timer:%s", d))
 	return o.Next.NewTimer(ctx, d)
+}
+
+func (o *commandRecorderOutbound) Sleep(ctx workflow.Context, d time.Duration) error {
+	o.add(fmt.Sprintf("timer:%s", d))
+	return o.Next.Sleep(ctx, d)
 }
 
 func (o *commandRecorderOutbound) UpsertMemo(ctx workflow.Context, memo map[string]any) error {
