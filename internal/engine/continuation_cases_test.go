@@ -205,7 +205,7 @@ tasks:
 // streams themselves still replay.)
 func TestContinuation_PlanWithoutBudgetIsByteIdentical(t *testing.T) {
 	for _, path := range committedFixtures(t) {
-		if strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") {
+		if recordedWithTheWriter(path) {
 			continue // this stage's own fixtures were recorded with the new plan fields
 		}
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -351,5 +351,56 @@ func holdNeverSpinsAfterFailedWrite(t *testing.T) {
 	}
 	if got := len(itemsDispatched(g.harnesses[0])); got >= 16 {
 		t.Fatalf("generation 0 dispatched all %d items: the retry never switched", got)
+	}
+}
+
+// TestRunWorkflow_CancelSeenAtADispatchStartsNothing: an operator's cancel
+// that reaches the run in the same workflow task as the completion that made
+// its next task ready — here, a cancel recorded while a switch's writes ran,
+// which turns the switch back — starts nothing more. The run ends
+// RUN_CANCELED with the run's own reason, never a task's, and its stream has
+// no gap (the race C4 of the continuation chaos suite found: the next task's
+// dispatch was emitted on the canceled context, its snapshot write was
+// canceled, and its sequence number was burned).
+func TestRunWorkflow_CancelSeenAtADispatchStartsNothing(t *testing.T) {
+	restore := engine.ContinueAtEveryIdleForTest()
+	defer restore()
+	var suite testsuite.WorkflowTestSuite
+	h := newHarnessCtx(t, &suite, okBehavior)
+	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-cancel-dispatch"})
+	var once sync.Once
+	h.onContinuation = func(kind string, _ int64) error {
+		if kind == "checkpoint" {
+			once.Do(h.env.CancelWorkflow)
+		}
+		return nil
+	}
+	h.env.ExecuteWorkflow(engine.RunWorkflowType, "ork-cancel-dispatch", compile(t, continuationChainDocument), payload(t, nil),
+		continuedPlan(engine.DefaultContinuationEvents), (*orkstackv1.RunContinuation)(nil))
+	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(errors.Unwrap(err)) && !temporal.IsCanceledError(err) {
+		t.Fatalf("workflow error = %v, want a cancellation", err)
+	}
+	if h.continuationCount("checkpoint") != 1 {
+		t.Fatalf("%d checkpoint writes, want the one switch the cancel turned back", h.continuationCount("checkpoint"))
+	}
+	events := h.bus.Events("ork-cancel-dispatch", 0)
+	requireContiguous(t, events)
+	last := events[len(events)-1]
+	if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED || last.GetTaskId() != "" {
+		t.Fatalf("the run ended %v (task %q, %q), want RUN_CANCELED of the run itself", last.GetType(), last.GetTaskId(), last.GetMessage())
+	}
+	for _, call := range h.calls {
+		if call.GetTaskId() != "a" {
+			t.Fatalf("task %s was dispatched after the cancel reached the run", call.GetTaskId())
+		}
+	}
+	run := mustFinalRun(t, h.store, "ork-cancel-dispatch")
+	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != "RUN_CANCELED" {
+		t.Fatalf("run = %v %v", run.GetStatus(), run.GetError())
+	}
+	for _, id := range []string{"b", "c", "d", "e"} {
+		if row := taskRunOf(t, run, id); row.GetStatus() != orkstackv1.Status_STATUS_CANCELED || row.GetScheduledAt() != nil {
+			t.Fatalf("task %s is %v (scheduled %v), want CANCELED before it started", id, row.GetStatus(), row.GetScheduledAt())
+		}
 	}
 }

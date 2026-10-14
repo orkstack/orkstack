@@ -615,3 +615,56 @@ func TestStartChild_CopiesTheRunTreeLimits(t *testing.T) {
 		}
 	})
 }
+
+// TestHistoryGuard_NeverIssuesACommandItsFailurePathCannotFollow: the guard
+// is asked before each dispatch whether the run could still end cleanly
+// AFTER the dispatch's own command is recorded — not only now. A run whose
+// history plus its reserve fits, but would not once one more task's input (up
+// to the plan's values bound) is recorded, stops RUN_HISTORY_LIMIT before
+// that dispatch: dispatching first, and checking after, could leave its
+// failure path less room than it keeps back, and the cluster would terminate
+// it (continuation chaos C24, a 128 KiB input per dispatch, terminated at
+// 50 MiB). The lookahead is asked lazily, so a run that never meets the
+// difference records no marker.
+func TestHistoryGuard_NeverIssuesACommandItsFailurePathCannotFollow(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
+	})
+	const raw = 1 << 20
+	h.env.SetCurrentHistorySize(raw)
+	// Room for the run's reserve now (about 52 KiB), not for the reserve and
+	// one more task's input (the 256 KiB values bound and its command) too.
+	plan := guardedPlan(engine.DefaultHistoryMaxEvents, raw+200<<10)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-lookahead", compile(t, guardFlatDocument), payload(t, nil), plan,
+		(*orkstackv1.RunContinuation)(nil))
+	if !h.env.IsWorkflowCompleted() {
+		t.Fatal("the run did not end")
+	}
+	requireHistoryLimitError(t, h.env)
+	run := mustFinalRun(t, h.store, "ork-lookahead")
+	for _, id := range []string{"slow", "fast", "after"} {
+		if row := taskRunOf(t, run, id); row.GetScheduledAt() != nil {
+			t.Fatalf("%s was dispatched; the first dispatch's command alone leaves the failure path no room", id)
+		}
+	}
+	if run.GetError().GetCode() != engine.RunHistoryLimitCode || statusOf(run, "slow") != orkstackv1.Status_STATUS_CANCELED {
+		t.Fatalf("run %v, slow %v: want RUN_HISTORY_LIMIT with every task canceled before it started", run.GetError(), statusOf(run, "slow"))
+	}
+}
+
+// TestHistoryGuard_LookaheadAskedOnlyWhereItDiffers: a run whose next
+// command always fits never asks the lookahead's version.
+func TestHistoryGuard_LookaheadAskedOnlyWhereItDiffers(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
+	})
+	h.env.OnGetVersion(engine.HistoryGuardLookaheadChange, workflow.DefaultVersion, workflow.Version(1)).
+		Return(workflow.Version(1)).Never()
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-roomy", compile(t, guardFlatDocument), payload(t, nil),
+		guardedPlan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("a small run failed: %v", err)
+	}
+}

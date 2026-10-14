@@ -409,6 +409,15 @@ func awaitArchivedEvents(t *testing.T, ctx context.Context, archive *engine.RunA
 // timestamps are ignored: a retried emit may rewrite its own key.
 func (s *canStack) checkSequenceSnapshots(t *testing.T, ctx context.Context, runID string, events []*orkstackv1.Event) int {
 	t.Helper()
+	return checkSequenceSnapshots(t, ctx, s.snapshots, runID, events)
+}
+
+// checkSequenceSnapshots is canStack.checkSequenceSnapshots over any run
+// snapshot store in the test binary's bucket.
+func checkSequenceSnapshots(t *testing.T, ctx context.Context, snapshots *artifacts.S3RunSnapshotStore, runID string,
+	events []*orkstackv1.Event,
+) int {
+	t.Helper()
 	cfg := s3Config()
 	raw := newRawS3ClientForCommitE2E(t, cfg)
 	prefix, err := artifacts.RunSnapshotPrefix("default", runID)
@@ -440,7 +449,7 @@ func (s *canStack) checkSequenceSnapshots(t *testing.T, ctx context.Context, run
 		if err != nil {
 			t.Fatalf("snapshot key %q is neither a sequence nor a continuation", key)
 		}
-		data, err := s.snapshots.ReadSnapshot(ctx, "s3://"+cfg.S3Bucket+"/"+key)
+		data, err := snapshots.ReadSnapshot(ctx, "s3://"+cfg.S3Bucket+"/"+key)
 		if err != nil {
 			t.Fatal(err)
 		}

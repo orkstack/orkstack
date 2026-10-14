@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -555,8 +556,8 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		return nil, "", nil
 	}
 	if checkpoint.GetSizeBytes() > budget.CheckpointMaxBytes {
-		s.setNoSwitch(ctx, inFlight, fmt.Sprintf("its saved state is %s MiB, more than the %s MiB a run carries forward",
-			mebibytes(checkpoint.GetSizeBytes()), mebibytes(budget.CheckpointMaxBytes)))
+		s.setNoSwitch(ctx, inFlight, fmt.Sprintf("its saved state is %s, more than the %s a run carries forward",
+			savedStateSize(checkpoint.GetSizeBytes()), savedStateSize(budget.CheckpointMaxBytes)))
 		return nil, "", nil
 	}
 
@@ -616,6 +617,17 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		"hold_seconds", obs.HoldSeconds, "state_bytes", checkpoint.GetSizeBytes(), "generation", s.generation+1)
 	s.observeDecisionState("switch")
 	return workflow.NewContinueAsNewError(ctx, RunWorkflowType, "", s.wfArg, s.inputArg, s.plan, carry), "", nil
+}
+
+// savedStateSize names a saved state's size, or its cap, in units that tell
+// two sizes apart: MiB from 1 MiB up, KiB below — a cap near
+// continuation.bytes' 16 KiB floor in MiB would read "0.1 MiB, more than
+// the 0.1 MiB". A message's text, never a command-stream number.
+func savedStateSize(n int64) string {
+	if n >= 1<<20 {
+		return mebibytes(n) + " MiB"
+	}
+	return strconv.FormatFloat(float64(n)/(1<<10), 'f', 1, 64) + " KiB"
 }
 
 // carryReason is what a RUN_HISTORY_LIMIT message appends when the run could

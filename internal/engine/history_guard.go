@@ -391,6 +391,14 @@ func (s *runState) historyExhausted(ctx workflow.Context, inFlight map[string]wo
 	if !s.guardAdopted(ctx) {
 		return nil
 	}
+	return s.historyLimitError(ctx, inFlight, c, 0)
+}
+
+// historyLimitError is the guard's RUN_HISTORY_LIMIT at crossing c, with the
+// run's blockers and its own accounting; nextBytes is the command the
+// lookahead counted (history_guard_lookahead.go), zero for a crossing as the
+// history stands.
+func (s *runState) historyLimitError(ctx workflow.Context, inFlight map[string]workflow.Future, c historyCrossing, nextBytes int64) error {
 	blockers := s.historyBlockers(inFlight)
 	message := historyLimitMessage(s.runID, c.events, c.maxEvents, c.bytes, c.maxBytes,
 		c.reserveEvents, blockers, s.carryReason())
@@ -400,6 +408,7 @@ func (s *runState) historyExhausted(ctx workflow.Context, inFlight map[string]wo
 		ReserveEvents: c.reserveEvents, ReserveBytes: c.reserveBytes,
 		MaxEvents: c.maxEvents, MaxBytes: c.maxBytes,
 		InFlight: int64(len(inFlight)), DetachedPublishes: int64(len(s.pendingItemPublishes)),
+		NextCommandBytes: nextBytes,
 	}
 	// Operator-facing, replay-safe: the guard's own accounting at the
 	// crossing.
@@ -428,6 +437,9 @@ type HistoryCrossingDetail struct {
 	MaxBytes          int64 `json:"max_bytes"`
 	InFlight          int64 `json:"in_flight"`
 	DetachedPublishes int64 `json:"detached_publishes"`
+	// NextCommandBytes is the dispatch's own command the lookahead counted
+	// when it, and not the history as it stood, crossed the line.
+	NextCommandBytes int64 `json:"next_command_bytes,omitempty"`
 }
 
 // guardAdopted asks the guard's version once a line is crossed. A history

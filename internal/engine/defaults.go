@@ -19,10 +19,14 @@ const DefaultEachMaxItems = dsl.MaxEachItems
 // DefaultOrkflowMaxTasks is ORK_ORKFLOW_MAX_TASKS' default: the most tasks
 // one Orkflow may declare (docs/DSL.md "Tasks", docs/DEPLOY.md §1). A
 // deployment may lower or raise it. Every task is at least one activity and
-// its lifecycle events in the run's ONE history, which the cluster bounds and
-// a run cannot yet continue-as-new past; 1000 keeps a run of plain tasks
-// well inside the cluster's default history bound beside the 1000 fan-out
-// items DefaultEachMaxItems already allows.
+// its lifecycle events in the run's history, which the cluster bounds. A run
+// continues as new past its budget only at a moment with nothing in flight,
+// and each history must still hold what its failure path would append for
+// every task not yet started, so tasks that start together share ONE
+// history; 1000 keeps such a stage of plain tasks well inside the cluster's
+// default history bound beside the 1000 fan-out items DefaultEachMaxItems
+// already allows. A larger default waits on the soak that measures it, and
+// a deployment that raises it before then runs unmeasured.
 const DefaultOrkflowMaxTasks int32 = 1000
 
 // DefaultComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH's default: the built-in

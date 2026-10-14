@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/engine"
 )
 
 // TestLoadConfig_InFlightCapBounds: ORK_RUN_MAX_IN_FLIGHT is always
@@ -38,6 +40,7 @@ func TestLoadConfig_InFlightCapBounds(t *testing.T) {
 // refused over keys it does not use.
 func TestLoadConfig_ContinuationValidatedOnlyWhenEnabled(t *testing.T) {
 	t.Run("off: a low history limit and out-of-range keys boot", func(t *testing.T) {
+		t.Setenv("ORK_CONTINUATION_ENABLED", "false")
 		t.Setenv("ORK_HISTORY_MAX_EVENTS", "600")
 		t.Setenv("ORK_CONTINUATION_EVENTS", "10")
 		t.Setenv("ORK_CONTINUATION_BYTES", "1")
@@ -114,5 +117,27 @@ func TestLoadConfig_RestoreTimeoutMustFitTheHistoryBound(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestLoadConfig_ContinuationIsOnByDefault: with nothing set, runs carry on
+// into a fresh history (engine.continuation.enabled defaults to true), with
+// a budget the default history limits admit; and a deployment that tunes
+// engine.history.* below what that budget needs is refused at boot, naming
+// the keys — never a run that quietly cannot carry on.
+func TestLoadConfig_ContinuationIsOnByDefault(t *testing.T) {
+	cfg := loadConfig()
+	if cfg.limitsErr != nil || !cfg.continuation.enabled || cfg.continuation.events != engine.DefaultContinuationEvents {
+		t.Fatalf("defaults: enabled %t, events %d (%v); want on at %d", cfg.continuation.enabled,
+			cfg.continuation.events, cfg.limitsErr, engine.DefaultContinuationEvents)
+	}
+	t.Setenv("ORK_HISTORY_MAX_EVENTS", "600")
+	err := loadConfig().limitsErr
+	if err == nil || !strings.Contains(err.Error(), "ORK_CONTINUATION_EVENTS") || !strings.Contains(err.Error(), "ORK_HISTORY_MAX_EVENTS") {
+		t.Fatalf("a 600-event limit with continuation on by default = %v, want a refusal naming both keys", err)
+	}
+	t.Setenv("ORK_CONTINUATION_ENABLED", "false")
+	if err := loadConfig().limitsErr; err != nil {
+		t.Fatalf("the same limit with continuation turned off = %v, want it to boot", err)
 	}
 }

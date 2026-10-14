@@ -55,7 +55,7 @@ engine:
     max_events: 51200  # ork
     max_bytes: 52428800  # 50 MiB; ork
   continuation:
-    enabled: false  # ork
+    enabled: true  # ork
     events: 8192  # ork
     bytes: 8388608  # 8 MiB; ork
     restore_timeout: 1h  # ork

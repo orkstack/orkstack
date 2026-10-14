@@ -562,7 +562,7 @@ func TestContinuedHistory_CatchesASwitchWithoutItsGate(t *testing.T) {
 	defer engine.ForceContinuationForTest(budget, limit)()
 	caught := 0
 	for _, path := range committedFixtures(t) {
-		if strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") {
+		if recordedWithTheWriter(path) {
 			continue
 		}
 		recorded := loadHistoryFile(t, path)

@@ -360,8 +360,11 @@ count, the limit and the setting, and re-checked at submit
 (`FAILED_PRECONDITION`). Every entry of `tasks:` counts once; a fan-out's
 items (bounded by `max_items`) and a composed child's tasks (a separate run)
 do not. It exists because a run's
-tasks share one Temporal history; it may be raised once runs can
-continue-as-new (`docs/DSL.md`, "How many tasks an Orkflow may declare").
+tasks share a Temporal history: a run continues as new into a fresh one
+(§7.3) only at a moment with nothing of it in flight, so tasks that start
+together share one history, and a value above 1000 is unmeasured until the
+soak that sets a larger default has been run (`docs/DSL.md`, "How many tasks
+an Orkflow may declare").
 
 Tasks form a DAG whose only edges are explicit `needs`. Declaration order
 never sequences anything: a task becomes ready once every need has ended and
@@ -788,7 +791,40 @@ includes:
 - a failing run runs its failure handlers to their own outcomes and ends
   `FAILED` with the original reason; an operator cancel starts none and stops
   running ones; an Orker killed under a running handler retries it per its
-  own policy.
+  own policy;
+- a run continuing as new with tasks still running: no running task is
+  cancelled or dispatched twice, the switch happens only after all finish, and
+  the stream has no gap or duplicate; a fan-out whose items outlast any fixed
+  window still switches; a run whose budget is crossed by history bytes rather
+  than events switches and is guarded the same way;
+- an Orker killed during a hold, a resolution and an operator cancel racing
+  the switch, an engine replica killed mid-hold, between the switch's writes
+  and its commit, and right after a switch, the Temporal frontend unreachable
+  during the switch and during the next generation's start, and a Worker
+  Deployment Version rollout while a chain switches: each ends in a correct
+  durable state with one run id and a contiguous stream, no late write from a
+  replaced replica overwrites a newer snapshot, and no release, namespace or
+  deletion count ever reads the switching run as gone;
+- an await crossing a switch fires at its original instant and accepts a
+  resolution after it; an open pin finishes on its host before the run
+  switches, a pin waiting on an await gives the hold up, and a pin host lost
+  during a hold fails `PIN_HOST_LOST`; a composed child in flight holds the
+  switch;
+- a saved state corrupted, missing, malformed, or of an unknown format at the
+  next generation's start, and an operator cancel during that start: each ends
+  explicitly (`RUN_STATE_*` or `RUN_CANCELED`) with a terminal event built
+  from the run's exact state at the switch and an archive body; a start whose
+  reads keep failing stays within its stated history bound;
+- an earlier generation's history deleted while the run continues, and the
+  projection worker down during the switch: `GetRun`, events, the live stream
+  and the final archive are still complete; an event segment lost before the
+  run is archived leaves an archive and an evidence bundle with an explicit
+  gap, never a missing run;
+- a run that can never go idle fails `RUN_HISTORY_LIMIT` before the cluster's
+  limit; object storage unavailable at a switch never yields a switch without
+  its objects, nor a silent success; a saved state over its bound never
+  switches; a run with more work than its in-flight cap never exceeds the
+  cluster's pending-activity limit and never stalls with nothing in flight.
 
 Every execution must eventually reach either a correct durable state or an
 explicit actionable failure. There is no documented third state such as stuck,

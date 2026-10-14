@@ -13,6 +13,16 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 )
 
+// recordedWithTheWriter reports whether a committed fixture was recorded
+// under a plan that carries the writer's fields — Stage 2's continued and
+// in-flight-cap fixtures, and the cancel-before-dispatch fixture recorded
+// through a switch — so it is not one of the histories that predate the
+// writer, which the premise and negative tests over every fixture are about.
+func recordedWithTheWriter(path string) bool {
+	return strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") ||
+		strings.Contains(path, "cancel-before-dispatch")
+}
+
 // committedFixtures is every committed history fixture's path.
 func committedFixtures(t *testing.T) []string {
 	t.Helper()
@@ -36,7 +46,7 @@ func committedFixtures(t *testing.T) []string {
 func TestContinuation_RestoreEqualsLiveStateAtEveryIdlePoint(t *testing.T) {
 	defer engine.ContinueAtEveryIdleForTest()()
 	for _, path := range committedFixtures(t) {
-		if strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") {
+		if recordedWithTheWriter(path) {
 			continue // this stage's own fixtures already continue
 		}
 		t.Run(filepath.Base(path), func(t *testing.T) {

@@ -375,8 +375,11 @@ refused at submit, `failed_precondition`, before any run id is minted.
 
 What counts is every entry of `tasks:`, whatever its kind — container,
 awaited, composed, fan-out, failure handler — because every one is at least
-one activity or child start, and its lifecycle events, in the run's single
-history, which the cluster bounds and a run cannot yet continue past:
+one activity or child start, and its lifecycle events, in the run's history,
+which the cluster bounds. A long run carries on into a fresh history at a
+moment with nothing of it running (below, "When a ready task starts"), but
+tasks that start together share one history, and a ceiling above 1,000 is
+unmeasured until the soak that sets a larger default has been run:
 
 - **A fan-out counts once**, however large its `max_items`. Its items are
   bounded on their own — the sum of `max_items` over every fan-out is at most
@@ -404,9 +407,9 @@ cluster at its history limit: …"), never as a cancel nobody asked for.
 things can make it wait, `PENDING`, exactly as it would on a saturated pool:
 a run keeps at most `engine.run_max_in_flight` tasks, fan-out items, child
 runs and pins in flight (1,000 by default), and starts more as they finish;
-and, where the deployment lets runs carry on into a fresh history, a run whose
-history nears its hold line holds new tasks until the running ones finish, so
-it can carry on. Neither ever stops running work, and neither changes what a
+and a run whose history nears its hold line holds new tasks until the running
+ones finish, so it can carry on into a fresh history (on by default; a
+deployment may turn it off, `engine.continuation.enabled`). Neither ever stops running work, and neither changes what a
 task does, which tasks run, or their order under `needs:` — only when a ready
 task starts (`docs/DEPLOY.md` §5, "A run that pauses new tasks").
 
@@ -926,8 +929,8 @@ tasks:
   over every fan-out of one Orkflow is at most 1000 too (a deployment may
   lower that ceiling with `ORK_EACH_MAX_ITEMS`, `docs/DEPLOY.md` §1): the
   items of one run share one history budget. A run's history is bounded per
-  history; where the deployment enables it, a run carries on into a fresh
-  history transparently (`docs/DEPLOY.md` §1, `engine.continuation.*`). The
+  history; a run carries on into a fresh history transparently, by default
+  (`docs/DEPLOY.md` §1, `engine.continuation.*`). The
   bound is still declared up front and enforced before anything runs.
 - `max_parallel` — at most this many items run at once; absent or `0` means
   no bound of the task's own (the pool's Orkers are the bound).

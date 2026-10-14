@@ -771,6 +771,9 @@ func TestLoadConfig_EachMaxItemsBounds(t *testing.T) {
 // value at or above their minimum, and refuse boot naming the variable below
 // it or when malformed — never a silent fallback.
 func TestLoadConfig_HistoryLimitRefusesTinyValues(t *testing.T) {
+	// The guard alone: continuation, on by default, has keys of its own that
+	// a tiny history limit cannot hold (TestLoadConfig_ContinuationIsOnByDefault).
+	t.Setenv("ORK_CONTINUATION_ENABLED", "false")
 	cfg := loadConfig()
 	if cfg.limitsErr != nil || cfg.historyMaxEvents != engine.DefaultHistoryMaxEvents ||
 		cfg.historyMaxBytes != engine.DefaultHistoryMaxBytes {

@@ -122,3 +122,19 @@ func ForceContinuationForTest(budget ContinuationBudget, limit HistoryLimit) (re
 		continueAsNewForcedForTest = false
 	}
 }
+
+// DisableCancelBeforeDispatchForTest sets the test-only switch that makes a
+// canceled run dispatch as builds before the cancel-before-dispatch check
+// did, WITHOUT asking its version, and returns the function that clears it.
+func DisableCancelBeforeDispatchForTest() (restore func()) {
+	cancelBeforeDispatchDisabledForTest = true
+	return func() { cancelBeforeDispatchDisabledForTest = false }
+}
+
+// DisableHistoryGuardLookaheadForTest sets the test-only switch that skips
+// the guard's lookahead at a dispatch WITHOUT asking its version, and returns
+// the function that clears it.
+func DisableHistoryGuardLookaheadForTest() (restore func()) {
+	historyGuardLookaheadDisabledForTest = true
+	return func() { historyGuardLookaheadDisabledForTest = false }
+}
