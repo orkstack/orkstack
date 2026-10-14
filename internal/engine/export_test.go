@@ -122,3 +122,11 @@ func ForceContinuationForTest(budget ContinuationBudget, limit HistoryLimit) (re
 		continueAsNewForcedForTest = false
 	}
 }
+
+// DisableCancelBeforeDispatchForTest sets the test-only switch that makes a
+// canceled run dispatch as builds before the cancel-before-dispatch check
+// did, WITHOUT asking its version, and returns the function that clears it.
+func DisableCancelBeforeDispatchForTest() (restore func()) {
+	cancelBeforeDispatchDisabledForTest = true
+	return func() { cancelBeforeDispatchDisabledForTest = false }
+}

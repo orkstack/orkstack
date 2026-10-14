@@ -275,6 +275,37 @@ first time the cap holds, and every refill the cap held back. Recorded by
 - payload: `TestContinuedHistory_PayloadsMatchWhatCurrentCodeSends`
   ("in-flight cap": fully re-executed; the cap reads no history length)
 
+### `run-cancel-before-dispatch-v1.json` — a cancel seen at a dispatch
+
+A twelve-task chain under the plan of the continuation chaos suite's C4
+(a 120-event budget against a 1,000-event limit). Its first switch's
+checkpoint write was held while the operator's cancel was recorded, so the
+server refused the continue-as-new (`UNHANDLED_COMMAND`); the retried
+workflow task saw the cancel where the run would have dispatched its next
+task. It pins the lazy `cancel-before-dispatch` marker (`cancel.go`), asked
+only when the run's context is already canceled at a dispatch point, and the
+canceled ending that follows it: no task dispatched, every remaining task
+`CANCELED` before it started, and the run's own `RUN_CANCELED`, the stream
+contiguous. A build before the check dispatched the task instead, its emit on
+the canceled context burned a sequence number, and the run ended owned by the
+task.
+
+- command: `TestRunWorkflow_ReplaysCommittedCancelBeforeDispatchHistory`
+- payload: `TestCancelBeforeDispatchHistory_PayloadsMatchWhatCurrentCodeSends`
+  — re-executed from its own arguments with its recorded results, switching
+  where the recorded run did and canceled during that switch's checkpoint
+  write: every input and every event equals the recorded one
+- negative: `TestCancelBeforeDispatchHistory_CatchesTheCheckRemoved` (replayed
+  with the check skipped, the dispatch it never made fails the replay)
+- recorder: `TestIntegration_RecordCancelBeforeDispatchHistory`
+  (`cancel_before_dispatch_integration_test.go`); `ORK_REQUIRE_CANCEL_FIXTURE`.
+  It never skips: without `ORK_RECORD_GOLDEN_HISTORY` it records into the
+  proof directory and replays what it recorded.
+
+Like Stage 2's fixtures it was recorded with the writer's plan fields, so the
+premise and negative tests about the histories that predate the writer pass
+it by (`recordedWithTheWriter`).
+
 Every fixture recorded before the history guard carries no `history`,
 `continuation` or `in_flight` in its plan, so none of them enters the writer,
 a hold or the cap (`TestCommittedFixtures_DeclareNoNewPlanFields`).

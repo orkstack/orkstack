@@ -2187,6 +2187,16 @@ negative tests (`internal/engine/testdata/history/README.md`); a carried
 generation is replayed as the execution of the run's own workflow id, which
 is where it reads its run id from.
 
+**A cancel seen at a dispatch is a versioned change.** A run whose operator
+cancel reaches it in the same workflow task as the completion — or the
+refused switch — that made its next task ready ends canceled there, starting
+nothing more, with no gap in its stream; it records the
+`cancel-before-dispatch` version, asked only when its context is already
+canceled at a dispatch point. A history recorded before the check replays its
+`DefaultVersion` branch, which dispatched the task. The fixture
+`run-cancel-before-dispatch-v1.json` guards it, with its command, payload and
+negative tests.
+
 If any of them fails, current code no longer produces what the recorded build
 did. Either restore it (`workflow.GetVersion` for a deliberate command-stream
 change), or — if the contract genuinely changed and no old run can still be in

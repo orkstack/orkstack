@@ -260,6 +260,9 @@ func RunWorkflow(
 		}
 		// (C) Fan-out items a hold kept back (hold.go).
 		if state.heldFanOuts {
+			if state.canceledBeforeDispatch(ctx) {
+				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+			}
 			if id, err := state.resumeHeldFanOuts(ctx, runCtx, inFlight); err != nil {
 				return state.fail(ctx, cancelRun, inFlight, id, err)
 			}
@@ -268,6 +271,13 @@ func RunWorkflow(
 		// Re-scan after each completion so a fast branch can advance without
 		// waiting for an unrelated slow branch.
 		for _, id := range state.readyTasks() {
+			// An operator's cancel that reached the run in the same workflow
+			// task as the completion that made id ready starts nothing more:
+			// the run ends canceled here, before an emit on the canceled
+			// context could burn a sequence number (cancel.go).
+			if state.canceledBeforeDispatch(ctx) {
+				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+			}
 			// Check point 2: before every dispatch decision of the pass. O(1)
 			// after the pass's first count.
 			if err := state.historyExhausted(ctx, inFlight); err != nil {
