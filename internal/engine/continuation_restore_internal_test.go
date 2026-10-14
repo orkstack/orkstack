@@ -439,3 +439,135 @@ func TestReadyLoop_HeldTasksCostConstantPerPass(t *testing.T) {
 	t.Logf("E2 held tasks: %d held passes over %d tasks, slowest %s, mean %s", len(held), tasks-dispatched, worst,
 		total/time.Duration(len(held)))
 }
+
+// awaitedRestoreOrkflow is build → three awaits → publish.
+func awaitedRestoreOrkflow(t *testing.T) *orkstackv1.Orkflow {
+	t.Helper()
+	wf, err := dsl.Compile([]byte(`
+name: awaited
+version: v1
+tasks:
+  - id: build
+    uses: shell
+    with: {op: exec}
+  - id: gate0
+    needs: [build]
+    await: {timeout_seconds: 600}
+  - id: gate1
+    needs: [build]
+    await: {timeout_seconds: 600}
+  - id: gate2
+    needs: [build]
+    await: {timeout_seconds: 600}
+  - id: publish
+    uses: shell
+    needs: [gate0, gate1, gate2]
+    with: {op: exec}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf.Namespace = "team-a"
+	return wf
+}
+
+// awaitedRestoreRows is a state a switch could save for
+// awaitedRestoreOrkflow: build SUCCEEDED, the first open gates AWAITING with
+// a deadline still ahead, the rest PENDING, publish PENDING.
+func awaitedRestoreRows(open int) *orkstackv1.Run {
+	now := timestamppb.New(time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
+	ahead := timestamppb.New(time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+	rows := []*orkstackv1.TaskRun{{TaskId: "build", Status: orkstackv1.Status_STATUS_SUCCEEDED,
+		ValuesRef: &orkstackv1.ArtifactRef{Uri: "s3://x/values.json"}}}
+	for i := 0; i < 3; i++ {
+		row := &orkstackv1.TaskRun{TaskId: fmt.Sprintf("gate%d", i), Status: orkstackv1.Status_STATUS_PENDING}
+		if i < open {
+			row.Status = orkstackv1.Status_STATUS_AWAITING
+			row.Await = &orkstackv1.TaskAwait{Deadline: ahead}
+		}
+		rows = append(rows, row)
+	}
+	rows = append(rows, &orkstackv1.TaskRun{TaskId: "publish", Status: orkstackv1.Status_STATUS_PENDING})
+	return &orkstackv1.Run{
+		Id: refusalWorkflowID, Namespace: "team-a", OrkflowName: "awaited", OrkflowVersion: "v1",
+		Status: orkstackv1.Status_STATUS_RUNNING, CreatedAt: now, StartedAt: now, TaskRuns: rows,
+	}
+}
+
+// restoreProbe restores run's carry over a fixed raw history length, then
+// marks the generation's base, exactly as RunWorkflow does, and hands the
+// state and the number of chunk reads to inspect. inspect runs on the
+// workflow's goroutine, so it reports with t.Errorf, never t.Fatalf.
+func restoreProbe(t *testing.T, run *orkstackv1.Run, inspect func(s *runState, code string, reads int)) {
+	t.Helper()
+	store := newMemSnapshotStore()
+	carry := carryOver(t, store, run, "team-a", refusalWorkflowID)
+	wf, plan := awaitedRestoreOrkflow(t), refusalPlan()
+	runGuardWorkflow(t, func(env *testsuite.TestWorkflowEnvironment) {
+		env.SetCurrentHistoryLength(restoreProbeLength)
+		env.RegisterActivityWithOptions(NewSnapshotActivities(store).ReadContinuationChunk,
+			activity.RegisterOptions{Name: ActivityReadContinuationChunk})
+	}, func(ctx workflow.Context) error {
+		s := newRunState(ctx, refusalWorkflowID, wf, guardInput(t, map[string]any{}), plan)
+		s.beginPass()
+		code, _ := s.restore(ctx, ctx, carry)
+		if code == "" {
+			s.markGenerationBase(ctx)
+		}
+		store.mu.Lock()
+		reads := len(store.reads)
+		store.mu.Unlock()
+		inspect(s, code, reads)
+		return nil
+	})
+}
+
+const restoreProbeLength = 100
+
+// TestContinuation_RestoredAwaitTimersArePartOfTheBase (implementer note 4):
+// each open await's recreated deadline timer is a command of the bootstrap's
+// workflow task, so it is counted before the generation marks its base —
+// part of the base, never the generation's growth, exactly like the saved
+// state's chunk reads. With K awaits open the base is the raw history, one
+// event per chunk read, and K.
+func TestContinuation_RestoredAwaitTimersArePartOfTheBase(t *testing.T) {
+	for _, open := range []int{0, 1, 3} {
+		restoreProbe(t, awaitedRestoreRows(open), func(s *runState, code string, reads int) {
+			if code != "" {
+				t.Errorf("open=%d: restore refused a valid state: %s", open, code)
+			}
+			if reads == 0 {
+				t.Errorf("open=%d: restore read nothing", open)
+			}
+			want := int64(restoreProbeLength + reads + open)
+			if s.baseEvents != want {
+				t.Errorf("open=%d: base = %d events, want %d (history %d + %d chunk reads + %d await timers)",
+					open, s.baseEvents, want, restoreProbeLength, reads, open)
+			}
+			for i := 0; i < 3; i++ {
+				a := s.awaits[fmt.Sprintf("gate%d", i)]
+				if recreated := a.deadline != nil; recreated != (i < open) {
+					t.Errorf("open=%d: gate%d timer recreated = %t", open, i, recreated)
+				}
+			}
+		})
+	}
+}
+
+// TestContinuation_RestoreRefusalRecreatesNoAwaitTimer: every row is
+// validated before any timer is recreated, so a saved state refused for a
+// row after an open await leaves no stray timer behind.
+func TestContinuation_RestoreRefusalRecreatesNoAwaitTimer(t *testing.T) {
+	run := awaitedRestoreRows(3)
+	run.TaskRuns[4].Status = orkstackv1.Status_STATUS_FAILED
+	restoreProbe(t, run, func(s *runState, code string, _ int) {
+		if code != RunStateCorruptCode {
+			t.Errorf("code = %q, want %s", code, RunStateCorruptCode)
+		}
+		for i := 0; i < 3; i++ {
+			if s.awaits[fmt.Sprintf("gate%d", i)].deadline != nil {
+				t.Errorf("gate%d's timer was recreated for a refused state", i)
+			}
+		}
+	})
+}

@@ -340,7 +340,8 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 		}
 	}
 
-	// 7. Rebuild.
+	// 7. Rebuild. Every row was validated above, so nothing here can fail:
+	// a refusal never leaves a recreated await timer behind it.
 	for i, id := range s.order {
 		row := rows[i]
 		s.taskRuns[id] = row
@@ -357,18 +358,7 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 		if e != nil && row.GetEach().GetExpanded() && row.GetEach().GetCount() > 0 {
 			e.expanded = true
 			e.count = row.GetEach().GetCount()
-			e.next, e.settled = 0, 0
-			for _, item := range row.GetItems() {
-				if item.GetScheduledAt() != nil {
-					e.next++
-				}
-				if isTerminal(item.GetStatus()) {
-					e.settled++
-				}
-			}
-			if e.settled != e.next {
-				return fmt.Sprintf("fan-out %q has %d items dispatched and %d settled", id, e.next, e.settled)
-			}
+			e.next, e.settled = dispatchedAndSettled(row)
 			e.inFlight = 0
 			e.limit, e.stride = eachPacing(e.spec, e.count)
 		} else if e != nil && row.GetEach().GetExpanded() {
@@ -433,6 +423,9 @@ func (s *runState) validRestoredRow(id string, row *orkstackv1.TaskRun) string {
 					}
 				}
 			}
+			if next, settled := dispatchedAndSettled(row); settled != next {
+				return fmt.Sprintf("fan-out %q has %d items dispatched and %d settled", id, next, settled)
+			}
 		}
 		return ""
 	}
@@ -445,6 +438,20 @@ func (s *runState) validRestoredRow(id string, row *orkstackv1.TaskRun) string {
 		}
 	}
 	return fmt.Sprintf("task %q is %s", id, statusWord(status))
+}
+
+// dispatchedAndSettled counts a restored fan-out's items dispatched (those
+// with a scheduled time) and settled (terminal): its next and settled.
+func dispatchedAndSettled(row *orkstackv1.TaskRun) (next, settled int32) {
+	for _, item := range row.GetItems() {
+		if item.GetScheduledAt() != nil {
+			next++
+		}
+		if isTerminal(item.GetStatus()) {
+			settled++
+		}
+	}
+	return next, settled
 }
 
 // eachPacing is a fan-out's pacing from its spec and count: its window
