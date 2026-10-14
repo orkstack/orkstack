@@ -649,3 +649,28 @@ var _ = sort.Strings
 func startOptionsForTest() client.StartWorkflowOptions {
 	return client.StartWorkflowOptions{ID: refusalWorkflowID}
 }
+
+// TestContinuation_GenerationCeilingReasonNamesNoCount: at the plan's
+// MaxGenerations the reason a run gives for not carrying on reaches
+// RUN_HISTORY_LIMIT's message, a user-facing surface, so it never says how
+// many times the run carried forward (AGENTS.md §7, A2).
+func TestContinuation_GenerationCeilingReasonNamesNoCount(t *testing.T) {
+	b := DefaultContinuationBudget(1, 1<<40, time.Hour)
+	b.MaxGenerations = 7
+	plan := guardPlan(t, DefaultHistoryMaxEvents, DefaultHistoryMaxBytes)
+	plan.Continuation = &b
+	continuationProbe(t, 100, flatDefinition(t, 3), plan, func(ctx workflow.Context, s *runState) {
+		s.generation = 6
+		s.updateContinuation(ctx, nil)
+		if s.noSwitch != generationCeilingReason || !s.switchDue {
+			t.Errorf("noSwitch %q due %v, want the generation ceiling", s.noSwitch, s.switchDue)
+		}
+		reason := s.carryReason()
+		if reason != "it cannot carry on into a fresh history: "+generationCeilingReason {
+			t.Errorf("carryReason = %q", reason)
+		}
+		if strings.ContainsAny(reason, "0123456789") {
+			t.Errorf("carryReason %q names a count", reason)
+		}
+	})
+}

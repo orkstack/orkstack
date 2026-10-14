@@ -367,7 +367,9 @@ func (s *runState) updateContinuation(ctx workflow.Context, inFlight map[string]
 			"budget_events", budget.Events, "budget_bytes", budget.Bytes)
 	}
 	if s.generation+1 >= budget.MaxGenerations {
-		s.setNoSwitch(ctx, inFlight, fmt.Sprintf("it has already carried forward %d times", s.generation))
+		// User-facing through carryReason, so it names no count (A2); the
+		// operator's log line carries the generation.
+		s.setNoSwitch(ctx, inFlight, generationCeilingReason)
 		return
 	}
 	if s.quiescing || !reached(e, b, s.quiesceRetryAt) || !reached(e, b, s.switchRetryAt) {
@@ -401,8 +403,13 @@ func (s *runState) setNoSwitch(ctx workflow.Context, inFlight map[string]workflo
 	s.noSwitch = reason
 	s.quiescing = false
 	workflow.GetLogger(ctx).Warn("run will not carry on into a fresh history",
-		s.logFields(ctx, inFlight, "reason", reason)...)
+		s.logFields(ctx, inFlight, "reason", reason, "generation", s.generation)...)
 }
+
+// generationCeilingReason is noSwitch at the plan's MaxGenerations. It
+// reaches RUN_HISTORY_LIMIT's message, a user-facing surface, so it never
+// says how many times the run carried forward (AGENTS.md §7, A2).
+const generationCeilingReason = "it has already carried forward as many times as a run may"
 
 // failedAttempt records a switch whose writes failed (object storage
 // unavailable): the hold ends, and no switch is tried again until the run
