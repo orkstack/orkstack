@@ -262,8 +262,8 @@ func (e *eachSoak) startRealItemOrker(name string, c client.Client, slots int) *
 		})
 }
 
-// running is the items the real item Orker name is running now.
-func (e *eachSoak) running(name string) []string {
+// runningItems is the items the real item Orker name is running now.
+func (e *eachSoak) runningItems(name string) []string {
 	e.inflightMu.Lock()
 	defer e.inflightMu.Unlock()
 	var out []string
@@ -326,8 +326,8 @@ type soakRecord struct {
 	Missed               []string         `json:"missed_thresholds"`
 }
 
-// p95 is the 95th percentile of samples, in seconds (the slowest of ten).
-func p95(samples []time.Duration) float64 {
+// soakP95 is the 95th percentile of samples, in seconds (the slowest of ten).
+func soakP95(samples []time.Duration) float64 {
 	if len(samples) == 0 {
 		return 0
 	}
@@ -336,7 +336,7 @@ func p95(samples []time.Duration) float64 {
 	return sorted[int(math.Ceil(0.95*float64(len(sorted))))-1].Seconds()
 }
 
-func seconds(samples []time.Duration) []float64 {
+func soakSeconds(samples []time.Duration) []float64 {
 	out := make([]float64, len(samples))
 	for i, d := range samples {
 		out[i] = math.Round(d.Seconds()*1000) / 1000
@@ -361,10 +361,10 @@ func (e *eachSoak) getRunTimes(t *testing.T, ctx context.Context, runID string, 
 	return out, last
 }
 
-// taskFailures counts a history's failed workflow tasks: those the cluster
+// soakTaskFailures counts a history's failed workflow tasks: those the cluster
 // refused for too many pending activities, and all of them, with each one's
 // cause and message, and how many of those were the deadlock detector's.
-func taskFailures(h *historypb.History) (pendingLimit, all, deadlocks int, causes []string) {
+func soakTaskFailures(h *historypb.History) (pendingLimit, all, deadlocks int, causes []string) {
 	events := h.GetEvents()
 	for i, event := range events {
 		attrs := event.GetWorkflowTaskFailedEventAttributes()
@@ -398,9 +398,9 @@ func taskFailures(h *historypb.History) (pendingLimit, all, deadlocks int, cause
 	return pendingLimit, all, deadlocks, causes
 }
 
-// snapshotBytes sums the objects under the run's snapshot prefix: every
+// soakSnapshotBytes sums the objects under the run's snapshot prefix: every
 // {seq}.pb snapshot and every continuation object the run wrote.
-func snapshotBytes(t *testing.T, ctx context.Context, runID string) (int64, int) {
+func soakSnapshotBytes(t *testing.T, ctx context.Context, runID string) (int64, int) {
 	t.Helper()
 	cfg := s3Config()
 	raw := newRawS3ClientForCommitE2E(t, cfg)
@@ -447,7 +447,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 	// all expanded and half of them carry a result.
 	e.waitItemsSettled(t, ctx, stream, e.items/2)
 	liveTimes, liveRun := e.getRunTimes(t, ctx, runID, soakGetRunReads)
-	e.transcript.step("GetRun live: %v (run %v)", seconds(liveTimes), liveRun.GetStatus())
+	e.transcript.step("GetRun live: %v (run %v)", soakSeconds(liveTimes), liveRun.GetStatus())
 	if live != nil {
 		live(runID)
 	}
@@ -462,7 +462,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 		Elapsed: elapsed.Round(time.Second).String(), InFlightCap: engine.DefaultRunMaxInFlight,
 		EventsLimit: engine.DefaultHistoryMaxEvents, BytesLimit: engine.DefaultHistoryMaxBytes,
 		CheckpointCap: engine.DefaultContinuationBytes,
-		GetRunLive:    seconds(liveTimes), GetRunLiveP95: p95(liveTimes)}
+		GetRunLive:    soakSeconds(liveTimes), GetRunLiveP95: soakP95(liveTimes)}
 
 	// Events(0), the stream opened at submit, and the archive.
 	readStart := time.Now()
@@ -498,7 +498,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 			Bytes: info.GetWorkflowExecutionInfo().GetHistorySizeBytes()}
 		g.PeakPendingItems, g.PeakPending = pendingPeaks(h)
 		var deadlocks int
-		g.PendingLimitFailed, g.TaskFailures, deadlocks, g.TaskFailureCauses = taskFailures(h)
+		g.PendingLimitFailed, g.TaskFailures, deadlocks, g.TaskFailureCauses = soakTaskFailures(h)
 		rec.DeadlockTrips += deadlocks
 		facts := factsOf(t, h)
 		for key, done := range facts.completedAt {
@@ -537,7 +537,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 			t.Fatalf("%s completed %d times across the generations", key, n)
 		}
 	}
-	rec.SnapshotBytes, rec.SnapshotObjects = snapshotBytes(t, ctx, runID)
+	rec.SnapshotBytes, rec.SnapshotObjects = soakSnapshotBytes(t, ctx, runID)
 	defer func() {
 		if rec.ItemsOnRealOrkers == 0 {
 			t.Errorf("no item ran on a real Orker: the soak exercised no container")
@@ -570,7 +570,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 	if archivedRun.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("GetRun from the archive = %v", archivedRun.GetStatus())
 	}
-	rec.GetRunArchive, rec.GetRunArchiveP95 = seconds(archiveTimes), p95(archiveTimes)
+	rec.GetRunArchive, rec.GetRunArchiveP95 = soakSeconds(archiveTimes), soakP95(archiveTimes)
 	rec.GetRunDecodedBytes = proto.Size(archivedRun)
 
 	// E4's thresholds.

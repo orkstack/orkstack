@@ -15,9 +15,9 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// waitAfter blocks until the workflow log holds an entry with msg for runID
+// waitLogAfter blocks until the workflow log holds an entry with msg for runID
 // stamped after after, and returns the first such entry.
-func (b *chaosLogBook) waitAfter(t *testing.T, ctx context.Context, msg, runID string, after time.Time, within time.Duration) chaosLogEntry {
+func (b *chaosLogBook) waitLogAfter(t *testing.T, ctx context.Context, msg, runID string, after time.Time, within time.Duration) chaosLogEntry {
 	t.Helper()
 	deadline := time.NewTimer(within)
 	defer deadline.Stop()
@@ -81,7 +81,7 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 	}
 	var kills []c32Kill
 	kill := func(o *c32Orker, when string) {
-		running := e.running(o.name)
+		running := e.runningItems(o.name)
 		o.proxy.Cut()
 		o.orker.stop()
 		kills = append(kills, c32Kill{Orker: o.name, OrkerID: e.realIDs[o.name], When: when,
@@ -91,7 +91,7 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 	// busy is the first live Orker of candidates running an item now.
 	busy := func(candidates []*c32Orker) *c32Orker {
 		for _, o := range candidates {
-			if len(e.running(o.name)) > 0 {
+			if len(e.runningItems(o.name)) > 0 {
 				return o
 			}
 		}
@@ -103,14 +103,14 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 		after := time.Now()
 		var first *c32Orker
 		for attempt := 0; attempt < 20 && first == nil; attempt++ {
-			hold := e.logs.waitAfter(t, ctx, logQuiesce, runID, after, 10*time.Minute)
+			hold := e.logs.waitLogAfter(t, ctx, logQuiesce, runID, after, 10*time.Minute)
 			after = hold.At
 			if first = busy(killable); first == nil {
 				e.transcript.step("hold at %v events: no real Orker running an item; waiting for the next hold",
 					hold.Fields["history_events"])
 			} else {
 				e.transcript.step("hold at %v events with %s running %v", hold.Fields["history_events"], first.name,
-					e.running(first.name))
+					e.runningItems(first.name))
 			}
 		}
 		if first == nil {
@@ -122,7 +122,7 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 		// 2. Right after the next switch, another one with an item of the new
 		// generation running: nothing is in flight at a switch, so every item
 		// running after it was dispatched by the new generation.
-		switched := e.logs.waitAfter(t, ctx, logSwitched, runID, killedAt, 10*time.Minute)
+		switched := e.logs.waitLogAfter(t, ctx, logSwitched, runID, killedAt, 10*time.Minute)
 		e.transcript.step("switched at %v events after the first kill", switched.Fields["history_events"])
 		var rest []*c32Orker
 		for _, o := range killable {
@@ -164,7 +164,7 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 			if len(on) < 2 || on[len(on)-1] == k.Orker {
 				t.Fatalf("%s ran on %v: the killed %s's item was never retried elsewhere", key, on, k.Orker)
 			}
-			records := itemAttempts(t, ctx, e, rec.RunID, key)
+			records := c32ItemAttempts(t, ctx, e, rec.RunID, key)
 			wasAdopted := false
 			for _, r := range records {
 				if r.GetCommitAdopted() {
@@ -188,7 +188,7 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 		}
 		for _, o := range on {
 			if _, real := e.realIDs[o]; real {
-				itemAttempts(t, ctx, e, rec.RunID, key)
+				c32ItemAttempts(t, ctx, e, rec.RunID, key)
 				runs++
 				break
 			}
@@ -207,9 +207,9 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 		kills[1].Orker, kills[1].Items, retried, adopted, runs+len(checked), len(events))
 }
 
-// itemAttempts reads one item's attempt records and fails when any attempt
+// c32ItemAttempts reads one item's attempt records and fails when any attempt
 // ran its container twice (two records of one attempt that both ran it).
-func itemAttempts(t *testing.T, ctx context.Context, e *eachSoak, runID, key string) []*orkstackv1.TaskAttempt {
+func c32ItemAttempts(t *testing.T, ctx context.Context, e *eachSoak, runID, key string) []*orkstackv1.TaskAttempt {
 	t.Helper()
 	lb, rb := strings.Index(key, "["), strings.Index(key, "]")
 	index, err := strconv.Atoi(key[lb+1 : rb])

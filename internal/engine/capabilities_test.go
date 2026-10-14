@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,9 @@ import (
 	"go.temporal.io/api/serviceerror"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
 	"go.temporal.io/api/workflowservice/v1"
+	"go.temporal.io/sdk/client"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/orkstack/orkstack/internal/task"
@@ -34,10 +38,10 @@ func capsPoller(identity string, fresh bool, deployment, build string) *taskqueu
 	return info
 }
 
-// tagged is base advertising this build's capabilities.
-func tagged(base string) string { return EngineIdentity(base) }
+// capsTagged is base advertising this build's capabilities.
+func capsTagged(base string) string { return EngineIdentity(base) }
 
-func routedTo(current, ramping string) *taskqueuepb.TaskQueueVersioningInfo {
+func capsRoutedTo(current, ramping string) *taskqueuepb.TaskQueueVersioningInfo {
 	info := &taskqueuepb.TaskQueueVersioningInfo{}
 	if current != "" {
 		info.CurrentDeploymentVersion = &deploymentpb.WorkerDeploymentVersion{DeploymentName: "orkstack", BuildId: current}
@@ -49,7 +53,7 @@ func routedTo(current, ramping string) *taskqueuepb.TaskQueueVersioningInfo {
 	return info
 }
 
-func missing(t *testing.T, cluster *TemporalReleaseCluster, scope CapabilityScope) []string {
+func capsMissing(t *testing.T, cluster *TemporalReleaseCluster, scope CapabilityScope) []string {
 	t.Helper()
 	got, err := cluster.MissingCapability(context.Background(), CapabilityEachItems10k, scope)
 	if err != nil {
@@ -82,14 +86,14 @@ func TestEngineIdentity_AdvertisesCapabilities(t *testing.T) {
 func TestMissingCapability_ReportsProcessesWithoutIt(t *testing.T) {
 	cluster, fake, _ := newFakeReleaseCluster(t, "")
 	fake.channels[task.DefaultQueue] = &workflowservice.DescribeTaskQueueResponse{Pollers: []*taskqueuepb.PollerInfo{
-		capsPoller(tagged("1@a@"), true, "", ""),
+		capsPoller(capsTagged("1@a@"), true, "", ""),
 		capsPoller("2@b@", true, "", ""),
 		capsPoller("2@b@", true, "", ""), // one process, two records
 		capsPoller("3@c@", false, "", ""),
 		capsPoller("", true, "", ""),
 		capsPoller("4@d@ ork-caps=", true, "", ""),
 	}}
-	got := missing(t, cluster, ScopeWorkflow)
+	got := capsMissing(t, cluster, ScopeWorkflow)
 	if want := []string{"2@b@", "4@d@ ork-caps=", ""}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("missing = %q, want %q (stale 3@c ignored, the anonymous poller lacking)", got, want)
 	}
@@ -105,21 +109,21 @@ func TestMissingCapability_VersionedChecksOnlyTheBuildsNewRunsStartOn(t *testing
 	pollers := []*taskqueuepb.PollerInfo{
 		capsPoller("1@v1@", true, "orkstack", "v1"), // draining, without the tag
 		capsPoller("2@v2@", true, "orkstack", "v2"),
-		capsPoller(tagged("3@v2@"), true, "orkstack", "v2"),
+		capsPoller(capsTagged("3@v2@"), true, "orkstack", "v2"),
 		capsPoller("4@v3@", true, "orkstack", "v3"),
 		capsPoller("5@unversioned@", true, "", ""),
 	}
 	cluster, fake, _ := newFakeReleaseCluster(t, "")
 	fake.channels[task.DefaultQueue] = &workflowservice.DescribeTaskQueueResponse{
-		Pollers: pollers, VersioningInfo: routedTo("v2", "v3")}
-	if got, want := missing(t, cluster, ScopeWorkflow), []string{"2@v2@", "4@v3@"}; !reflect.DeepEqual(got, want) {
+		Pollers: pollers, VersioningInfo: capsRoutedTo("v2", "v3")}
+	if got, want := capsMissing(t, cluster, ScopeWorkflow), []string{"2@v2@", "4@v3@"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("current v2, ramping v3: missing = %q, want %q", got, want)
 	}
 
 	unset, fake2, _ := newFakeReleaseCluster(t, "")
 	fake2.channels[task.DefaultQueue] = &workflowservice.DescribeTaskQueueResponse{
-		Pollers: pollers, VersioningInfo: routedTo("", "v3")}
-	if got, want := missing(t, unset, ScopeWorkflow), []string{"4@v3@", "5@unversioned@"}; !reflect.DeepEqual(got, want) {
+		Pollers: pollers, VersioningInfo: capsRoutedTo("", "v3")}
+	if got, want := capsMissing(t, unset, ScopeWorkflow), []string{"4@v3@", "5@unversioned@"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("current unset, ramping v3: missing = %q, want %q", got, want)
 	}
 }
@@ -128,9 +132,9 @@ func TestMissingCapability_IgnoresAnotherDeploymentsEngine(t *testing.T) {
 	cluster, fake, _ := newFakeReleaseCluster(t, "")
 	fake.channels[task.DefaultQueue] = &workflowservice.DescribeTaskQueueResponse{Pollers: []*taskqueuepb.PollerInfo{
 		capsPoller("9@other@", true, "other", "v1"),
-		capsPoller(tagged("1@a@"), true, "orkstack", "v1"),
+		capsPoller(capsTagged("1@a@"), true, "orkstack", "v1"),
 	}}
-	if got := missing(t, cluster, ScopeWorkflow); len(got) != 0 {
+	if got := capsMissing(t, cluster, ScopeWorkflow); len(got) != 0 {
 		t.Fatalf("missing = %q: another deployment's engine was reported", got)
 	}
 }
@@ -141,9 +145,9 @@ func TestMissingCapability_UnversionedChecksEveryPoller(t *testing.T) {
 		capsPoller("1@v1@", true, "orkstack", "v1"),
 		capsPoller("2@v2@", true, "orkstack", "v2"),
 		capsPoller("3@u@", true, "", ""),
-		capsPoller(tagged("4@u@"), true, "", ""),
+		capsPoller(capsTagged("4@u@"), true, "", ""),
 	}}
-	got := missing(t, cluster, ScopeWorkflow)
+	got := capsMissing(t, cluster, ScopeWorkflow)
 	sort.Strings(got)
 	if want := []string{"1@v1@", "2@v2@", "3@u@"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("missing = %q, want every fresh poller without the tag %q", got, want)
@@ -154,7 +158,7 @@ func TestMissingCapability_WorkflowScopeNeverReadsTheEventsChannel(t *testing.T)
 	cluster, fake, _ := newFakeReleaseCluster(t, "")
 	fake.channels[EventQueue] = &workflowservice.DescribeTaskQueueResponse{Pollers: []*taskqueuepb.PollerInfo{
 		capsPoller("7@old@", true, "", "")}}
-	if got := missing(t, cluster, ScopeWorkflow); len(got) != 0 {
+	if got := capsMissing(t, cluster, ScopeWorkflow); len(got) != 0 {
 		t.Fatalf("missing = %q", got)
 	}
 	if len(fake.channelReqs) != 1 || fake.channelReqs[0].GetTaskQueue().GetName() != task.DefaultQueue {
@@ -162,34 +166,77 @@ func TestMissingCapability_WorkflowScopeNeverReadsTheEventsChannel(t *testing.T)
 	}
 }
 
+// typeAwareReleaseCluster is a release cluster over the production adapter
+// (temporalReleaseClient) and a real SDK client whose calls never leave the
+// process: a gRPC interceptor answers DescribeTaskQueue by queue name AND
+// task-queue type, as the cluster does — a channel described as a type its
+// workers do not register lists no pollers — and records every describe.
+func typeAwareReleaseCluster(t *testing.T,
+	answers map[string]map[enumspb.TaskQueueType]*workflowservice.DescribeTaskQueueResponse,
+) (*TemporalReleaseCluster, *[]*workflowservice.DescribeTaskQueueRequest) {
+	t.Helper()
+	var mu sync.Mutex
+	var described []*workflowservice.DescribeTaskQueueRequest
+	intercept := func(_ context.Context, method string, req, reply any, _ *grpc.ClientConn,
+		_ grpc.UnaryInvoker, _ ...grpc.CallOption,
+	) error {
+		in, ok := req.(*workflowservice.DescribeTaskQueueRequest)
+		if !ok {
+			return nil // GetSystemInfo and the like: an empty answer
+		}
+		mu.Lock()
+		described = append(described, in)
+		mu.Unlock()
+		answer := &workflowservice.DescribeTaskQueueResponse{}
+		if byType, ok := answers[in.GetTaskQueue().GetName()]; ok && byType[in.GetTaskQueueType()] != nil {
+			answer = byType[in.GetTaskQueueType()]
+		}
+		proto.Merge(reply.(*workflowservice.DescribeTaskQueueResponse), answer)
+		return nil
+	}
+	c, err := client.NewLazyClient(client.Options{
+		HostPort: "127.0.0.1:1", Namespace: "caps",
+		ConnectionOptions: client.ConnectionOptions{DialOptions: []grpc.DialOption{grpc.WithUnaryInterceptor(intercept)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.Close)
+	cluster, err := newReleaseCluster(temporalReleaseClient{Client: c, namespace: "caps"}, nil, "orkstack", task.DefaultQueue, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster.Now = func() time.Time { return releaseNow }
+	return cluster, &described
+}
+
 func TestMissingCapability_EventsScopeDescribesTheActivityChannel(t *testing.T) {
-	cluster, fake, _ := newFakeReleaseCluster(t, "")
-	fake.typed = map[string]map[enumspb.TaskQueueType]*workflowservice.DescribeTaskQueueResponse{
+	cluster, described := typeAwareReleaseCluster(t, map[string]map[enumspb.TaskQueueType]*workflowservice.DescribeTaskQueueResponse{
 		task.DefaultQueue: {enumspb.TASK_QUEUE_TYPE_WORKFLOW: {Pollers: []*taskqueuepb.PollerInfo{
-			capsPoller(tagged("1@a@"), true, "", "")}}},
+			capsPoller(capsTagged("1@a@"), true, "", "")}}},
 		// The projection worker registers only PublishEvent, so its pollers
 		// are listed under the activity type alone; a workflow-type describe
-		// returns none, as the real cluster does.
+		// returns none.
 		EventQueue: {enumspb.TASK_QUEUE_TYPE_ACTIVITY: {Pollers: []*taskqueuepb.PollerInfo{
-			capsPoller(tagged("1@a@"), true, "", ""),
+			capsPoller(capsTagged("1@a@"), true, "", ""),
 			capsPoller("8@draining@", true, "orkstack", "v0"),
 		}}},
-	}
-	got := missing(t, cluster, ScopeWorkflowAndEvents)
+	})
+	got := capsMissing(t, cluster, ScopeWorkflowAndEvents)
 	if want := []string{"8@draining@"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("missing = %q, want the events poller without the tag %q", got, want)
 	}
-	if len(fake.channelReqs) != 2 {
-		t.Fatalf("%d describes, want 2", len(fake.channelReqs))
+	if len(*described) != 2 {
+		t.Fatalf("%d describes, want 2", len(*described))
 	}
 	for i, want := range []struct {
 		queue string
 		kind  enumspb.TaskQueueType
 	}{{task.DefaultQueue, enumspb.TASK_QUEUE_TYPE_WORKFLOW}, {EventQueue, enumspb.TASK_QUEUE_TYPE_ACTIVITY}} {
-		req := fake.channelReqs[i]
-		if req.GetTaskQueue().GetName() != want.queue || req.GetTaskQueueType() != want.kind {
-			t.Fatalf("describe %d = %s as %v, want %s as %v", i, req.GetTaskQueue().GetName(),
-				req.GetTaskQueueType(), want.queue, want.kind)
+		req := (*described)[i]
+		if req.GetTaskQueue().GetName() != want.queue || req.GetTaskQueueType() != want.kind || req.GetNamespace() != "caps" {
+			t.Fatalf("describe %d = %s as %v in %q, want %s as %v", i, req.GetTaskQueue().GetName(),
+				req.GetTaskQueueType(), req.GetNamespace(), want.queue, want.kind)
 		}
 	}
 }

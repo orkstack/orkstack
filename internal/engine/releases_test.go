@@ -82,12 +82,8 @@ func (c *fakeDeploymentClient) GetHandle(name string) client.WorkerDeploymentHan
 type fakeReleaseClient struct {
 	deployments *fakeDeploymentClient
 
-	mu       sync.Mutex
-	channels map[string]*workflowservice.DescribeTaskQueueResponse // by queue name
-	// typed, when it holds the queue, answers by queue name AND task-queue
-	// type, as the real cluster does: a channel registered for one type lists
-	// no pollers when described as the other.
-	typed       map[string]map[enumspb.TaskQueueType]*workflowservice.DescribeTaskQueueResponse
+	mu          sync.Mutex
+	channels    map[string]*workflowservice.DescribeTaskQueueResponse // by queue name
 	channelErr  map[string]error
 	routing     []*workflowservice.DescribeTaskQueueResponse // when set: consumed one per call; the last repeats
 	channelReqs []*workflowservice.DescribeTaskQueueRequest
@@ -111,12 +107,6 @@ func (c *fakeReleaseClient) DescribeTaskQueue(_ context.Context, in *workflowser
 	name := in.GetTaskQueue().GetName()
 	if err := c.channelErr[name]; err != nil {
 		return nil, err
-	}
-	if byType, ok := c.typed[name]; ok {
-		if answer, ok := byType[in.GetTaskQueueType()]; ok {
-			return answer, nil
-		}
-		return &workflowservice.DescribeTaskQueueResponse{}, nil
 	}
 	if answer, ok := c.channels[name]; ok {
 		return answer, nil
