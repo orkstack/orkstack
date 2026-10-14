@@ -654,4 +654,3 @@ func TestContinuedHistory_CatchesAChangedPinnedBatchSize(t *testing.T) {
 		t.Fatal("generation 1 replayed with 4 chunks per task: the fixture cannot see its pinned batch size")
 	}
 }
-
