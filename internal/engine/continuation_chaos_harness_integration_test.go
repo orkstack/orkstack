@@ -310,6 +310,11 @@ type replicaOptions struct {
 	client      client.Client // an existing client to share (its identity is the replica's)
 	extra       []func(w worker.Worker)
 	deployment  task.Deployment // the Worker Deployment Version it runs; zero is unversioned
+	identity    string          // the identity its run worker polls with; "" is its name
+	// eachValues, when set, is where its CountEachItems reads a fan-out's
+	// array (the object store a real Orker committed it to); nil is the
+	// stack's in-memory values.
+	eachValues engine.EachValuesReader
 }
 
 // chaosReplica is one engine replica's run worker: RunWorkflow and every
@@ -339,17 +344,25 @@ func (s *chaosStack) startReplica(name string, o replicaOptions) *chaosReplica {
 	if o.beforeWrite != nil || o.beforeRead != nil {
 		activities = activities.WithContinuationHooksForTest(o.beforeWrite, o.beforeRead)
 	}
+	identity := name
+	if o.identity != "" {
+		identity = o.identity
+	}
 	options := worker.Options{
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
-		Identity:                    name,
+		Identity:                    identity,
 	}
 	if o.deployment.BuildID != "" {
 		options = o.deployment.Apply(options)
 	}
 	w := worker.New(c, s.runQueue, options)
 	engine.RegisterWorkflows(w)
-	registerRunActivities(w, activities, s.values)
+	if o.eachValues != nil {
+		registerRunActivitiesWith(w, activities, s.values, o.eachValues)
+	} else {
+		registerRunActivities(w, activities, s.values)
+	}
 	for _, register := range o.extra {
 		register(w)
 	}
@@ -456,12 +469,19 @@ func (s *chaosStack) startOrkerWith(name, q string, c client.Client, behavior ch
 // Worker Deployment Version deployment (zero: unversioned).
 func (s *chaosStack) startOrkerVersioned(name, q string, c client.Client, deployment task.Deployment, behavior chaosBehavior) *chaosOrker {
 	s.t.Helper()
+	return s.startOrkerSized(name, q, c, deployment, 2000, behavior)
+}
+
+// startOrkerSized is startOrkerVersioned running at most slots tasks at once,
+// as a real Orker's orker.max_concurrent bounds it.
+func (s *chaosStack) startOrkerSized(name, q string, c client.Client, deployment task.Deployment, slots int, behavior chaosBehavior) *chaosOrker {
+	s.t.Helper()
 	options := worker.Options{
 		DisableRegistrationAliasing:        true,
 		DisableWorkflowWorker:              true,
 		EnableSessionWorker:                true,
 		MaxConcurrentSessionExecutionSize:  4,
-		MaxConcurrentActivityExecutionSize: 2000,
+		MaxConcurrentActivityExecutionSize: slots,
 		Identity:                           name,
 	}
 	if deployment.BuildID != "" {
@@ -1109,6 +1129,23 @@ func (s *chaosStack) startRealOrker(name, pool, queue string, stores *realOrkerS
 	wrap func(next orkerCall) orkerCall,
 ) (*chaosOrker, string) {
 	s.t.Helper()
+	call, orkerID := s.realOrkerCall(name, pool, stores, wrap)
+	if c == nil {
+		c = s.control
+	}
+	o := s.startOrkerWith(name, queue, c, func(ctx context.Context, _ *chaosStack, _ string,
+		in *orkstackv1.ExecuteTaskInput,
+	) (*orkstackv1.ExecuteTaskResult, error) {
+		return call(ctx, in)
+	})
+	return o, orkerID
+}
+
+// realOrkerCall boots a real Orker's activities — real Docker runtime, real
+// commit and attempt stores, its own work root and identity — and returns its
+// ExecuteTask (behind wrap, when set) and its Orker id.
+func (s *chaosStack) realOrkerCall(name, pool string, stores *realOrkerStores, wrap func(next orkerCall) orkerCall) (orkerCall, string) {
+	s.t.Helper()
 	orkerID := proof.OrkerID("chaos-" + chaosLabel(s.scenario) + "-" + name)
 	activities := orker.NewActivitiesWithOptions(stores.store, orker.Options{
 		Logs: stores.logs, Commits: stores.commits, Attempts: stores.attempts, Refs: stores.refs,
@@ -1122,15 +1159,7 @@ func (s *chaosStack) startRealOrker(name, pool, queue string, stores *realOrkerS
 	if wrap != nil {
 		call = wrap(call)
 	}
-	if c == nil {
-		c = s.control
-	}
-	o := s.startOrkerWith(name, queue, c, func(ctx context.Context, _ *chaosStack, _ string,
-		in *orkstackv1.ExecuteTaskInput,
-	) (*orkstackv1.ExecuteTaskResult, error) {
-		return call(ctx, in)
-	})
-	return o, orkerID
+	return call, orkerID
 }
 
 // chaosWorkRoot is a fresh work root for one Orker of this test, under

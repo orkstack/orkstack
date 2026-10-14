@@ -135,13 +135,19 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 // registerRunActivities registers every local activity the run worker hosts,
 // as cmd/ork does.
 func registerRunActivities(w worker.Worker, snapshots *engine.SnapshotActivities, values *memValues) {
+	registerRunActivitiesWith(w, snapshots, values, values)
+}
+
+// registerRunActivitiesWith is registerRunActivities with CountEachItems
+// reading each, rather than the in-memory values.
+func registerRunActivitiesWith(w worker.Worker, snapshots *engine.SnapshotActivities, values *memValues, each engine.EachValuesReader) {
 	w.RegisterActivityWithOptions(snapshots.WriteSnapshot, activity.RegisterOptions{Name: engine.ActivityWriteSnapshot})
 	w.RegisterActivityWithOptions(snapshots.WriteFailedRunSnapshot, activity.RegisterOptions{Name: engine.ActivityWriteFailedRunSnapshot})
 	w.RegisterActivityWithOptions(snapshots.WriteEventSegment, activity.RegisterOptions{Name: engine.ActivityWriteEventSegment})
 	w.RegisterActivityWithOptions(snapshots.WriteSwitchSnapshot, activity.RegisterOptions{Name: engine.ActivityWriteSwitchSnapshot})
 	w.RegisterActivityWithOptions(snapshots.WriteCheckpoint, activity.RegisterOptions{Name: engine.ActivityWriteCheckpoint})
 	w.RegisterActivityWithOptions(snapshots.ReadContinuationChunk, activity.RegisterOptions{Name: engine.ActivityReadContinuationChunk})
-	w.RegisterActivityWithOptions(engine.NewEachActivities(values).CountEachItems, activity.RegisterOptions{Name: engine.ActivityCountEachItems})
+	w.RegisterActivityWithOptions(engine.NewEachActivities(each).CountEachItems, activity.RegisterOptions{Name: engine.ActivityCountEachItems})
 	compose := engine.NewComposeActivities(&memComposeStore{memValues: values})
 	w.RegisterActivityWithOptions(compose.RenderComposedValues, activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
 	w.RegisterActivityWithOptions(compose.StoreComposedValues, activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
