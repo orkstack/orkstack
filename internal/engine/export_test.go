@@ -106,3 +106,19 @@ func (a *SnapshotActivities) WithContinuationHooksForTest(
 	a.beforeContinuationRead = beforeRead
 	return a
 }
+
+// ForceContinuationForTest makes every run decide with budget and limit
+// instead of its plan's, and take the continue-as-new version WITHOUT
+// asking workflow.GetVersion, and returns the function that clears it: a
+// negative replay test proves a committed history replays only because of
+// the gate.
+func ForceContinuationForTest(budget ContinuationBudget, limit HistoryLimit) (restore func()) {
+	continuationPlanForTest = &budget
+	historyGuardPlanForTest = &limit
+	continueAsNewForcedForTest = true
+	return func() {
+		continuationPlanForTest = nil
+		historyGuardPlanForTest = nil
+		continueAsNewForcedForTest = false
+	}
+}

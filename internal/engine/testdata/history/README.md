@@ -211,3 +211,70 @@ has no `history`, so none of them enters the guard
   directory (`history-limit/recorded-history.json`) and replays that fresh
   history against current code, leaving this fixture untouched; with it, it
   also rewrites this file
+
+### `run-continued-g0-v1.json`, `run-continued-g1-v1.json` and `run-continued-g0-v1.objects/` — continuing as new
+
+One run recorded across a switch (`internal/engine/continuation.go`), under a
+plan whose continuation budget is 70 events against a 480-event history
+limit, read back in 64-byte chunks. Its definition is `approve` (an await
+with no needs, open from the start), `a → b`, `list → convert` (a fan-out
+over six parts, `max_parallel: 2`) and `merge` (needs `convert` and
+`approve`). Generation 0 crosses its budget after `list` has finished, while
+the fan-out refills — so no idle point precedes the crossing — holds new
+items at its hold line, waits for the two running ones, and switches with
+`approve` still open; the resolution is sent after the switch, and
+generation 1 never reaches its own budget.
+
+- `run-continued-g0-v1.json` ends with `CONTINUED_AS_NEW`. It pins the lazy
+  `continue-as-new` marker, the held refill, the `WriteEventSegment`,
+  `WriteSwitchSnapshot` and `WriteCheckpoint` markers, the `UpsertMemo` after
+  them, and the switch itself, its run-id argument empty.
+- `run-continued-g1-v1.json` starts with the carry (the fifth argument). It
+  pins the `ReadContinuationChunk` markers in their batches of
+  `chunks_per_task`, with the yield timers between them, the await's deadline
+  timer recreated with its remaining duration, the fan-out resumed at its
+  next index, and the resolution and completion.
+- `run-continued-g0-v1.objects/` holds the three objects generation 0 wrote —
+  `segment.pb.gz`, `switch-snapshot.pb.gz`, `checkpoint.pb.gz` — read back
+  from MinIO byte for byte by the recording, so the payload half checks the
+  carry against the bytes it names.
+
+- command: `TestRunWorkflow_ReplaysCommittedContinuedHistories`, replaying
+  each generation as the execution of the run's own workflow id (a carried
+  generation reads its run id from there)
+- payload: `TestContinuedHistory_PayloadsMatchWhatCurrentCodeSends` —
+  generation 0's prefix re-executed with the history length held at 0 (every
+  input and event before the marker); generation 0's carry against the
+  recorded history and the three objects; generation 1 fully re-executed from
+  its recorded arguments with its recorded chunks fed back (every input and
+  every event, and no continuation path taken)
+- negatives: `TestContinuedHistory_CatchesASwitchWithoutItsGate` (every
+  earlier fixture, against a body that switches at every idle point with the
+  version check removed); `TestContinuedHistory_CatchesATamperedCheckpoint`
+  (one altered chunk is never adopted: `RUN_STATE_CORRUPT`);
+  `TestContinuedHistory_CatchesAnOffByOneSequence`;
+  `TestContinuedHistory_CatchesAChangedPinnedBatchSize` (generation 1's plan
+  rewritten with `chunks_per_task: 4` fails to replay: the pinned value, not a
+  code constant, decides the batches)
+- recorder: `TestIntegration_RecordContinuedRunHistories`
+  (`continuation_integration_test.go`); `ORK_REQUIRE_CONTINUED_FIXTURES`.
+  Like the history-limit recorder it never skips: without
+  `ORK_RECORD_GOLDEN_HISTORY` it records into the proof directory and replays
+  what it recorded, leaving these fixtures untouched. It tries a short list
+  of (history limit, budget) pairs and keeps the first whose run lands the
+  shape above; the values committed are the ones that landed.
+
+### `run-in-flight-cap-v1.json` — the in-flight cap
+
+A 24-item fan-out without `max_parallel`, under a plan whose in-flight cap is
+16 (`RunPlan.InFlight`). Pins the lazy `run-in-flight-cap` marker, asked the
+first time the cap holds, and every refill the cap held back. Recorded by
+`TestIntegration_RecordContinuedRunHistories` beside the continued run.
+
+- command: `TestRunWorkflow_ReplaysCommittedInFlightCapHistory`
+- payload: `TestContinuedHistory_PayloadsMatchWhatCurrentCodeSends`
+  ("in-flight cap": fully re-executed; the cap reads no history length)
+
+Every fixture recorded before the history guard carries no `history`,
+`continuation` or `in_flight` in its plan, so none of them enters the writer,
+a hold or the cap (`TestCommittedFixtures_DeclareNoNewPlanFields`).
