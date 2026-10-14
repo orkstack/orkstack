@@ -301,9 +301,10 @@ func TestTemporalRunReader_StreamFollowsTheSwitch(t *testing.T) {
 		t.Fatal("the successor was not long-polled")
 	}
 	// The successor's carry names generation 0's segment, but every one of
-	// its events was already read from history: nothing is delivered twice.
-	if f.segmentReads() > 1 {
-		t.Fatalf("segment reads = %d", f.segmentReads())
+	// its events was already read from history: the segment is never read,
+	// and nothing is delivered twice.
+	if f.segmentReads() != 0 {
+		t.Fatalf("segment reads = %d, want 0: generation 0 was already read from its history", f.segmentReads())
 	}
 }
 
@@ -420,6 +421,45 @@ func TestTemporalRunReader_TerminatedGenerationSynthesizesAfterTheCarriedSequenc
 	requireContiguous(t, events, 1, 6)
 	if last := events[5]; last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
 		t.Fatalf("terminal = %v, want a synthesized RUN_CANCELED at 6", last)
+	}
+}
+
+// TestTemporalRunReader_TerminatedGenerationSynthesizesAfterTheCarriedSequenceFromLater:
+// a read from at or past the carried sequence skips every segment, so only
+// the carry itself can tell closeRun where the stream stands. Without it the
+// synthesized terminal event would be numbered 1, at or below fromSequence,
+// and dropped: the read would return nothing and the stream would never end
+// on its terminal event.
+func TestTemporalRunReader_TerminatedGenerationSynthesizesAfterTheCarriedSequenceFromLater(t *testing.T) {
+	terminated := closedEvent(9, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED, chainCreatedAt.Add(time.Hour))
+	// Two closed generations of 5 and 4 events: the carried sequence is 9,
+	// and the terminal event the reader synthesizes is 10.
+	f := newChain(t, chainSpec{closed: []int{5, 4}, current: 0, closeWith: terminated})
+	events, err := f.reader.Events(context.Background(), f.runID, 9)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	requireContiguous(t, events, 10, 10)
+	if events[0].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
+		t.Fatalf("terminal = %v, want a synthesized RUN_CANCELED at 10", events[0])
+	}
+	if f.segmentReads() != 0 {
+		t.Fatalf("segment reads = %d, want 0: every segment ends at or before 9", f.segmentReads())
+	}
+	var streamed []*orkstackv1.Event
+	if err := f.reader.StreamEvents(context.Background(), f.runID, 9, func(e *orkstackv1.Event) error {
+		streamed = append(streamed, e)
+		return nil
+	}); err != nil {
+		t.Fatalf("StreamEvents: %v", err)
+	}
+	requireContiguous(t, streamed, 10, 10)
+	if streamed[0].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
+		t.Fatalf("stream ended on %v, want the synthesized RUN_CANCELED at 10", streamed[0])
+	}
+	// From the terminal event itself there is nothing left to read.
+	if events, err := f.reader.Events(context.Background(), f.runID, 10); err != nil || len(events) != 0 {
+		t.Fatalf("Events from 10 = %v, %v; want none", sequencesOf(events), err)
 	}
 }
 
