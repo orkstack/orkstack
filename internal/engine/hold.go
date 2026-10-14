@@ -31,8 +31,9 @@ import (
 // cap replays with DefaultVersion and never holds.
 const InFlightCapChange = "run-in-flight-cap"
 
-// holdDispatch reports whether dispatch point id must wait. O(1):
-// pinClosureAllows is a set lookup, built at most once per pass.
+// holdDispatch reports whether dispatch point id must wait. O(declared
+// pins): livePins is counted once per call, and pinClosureAllows is a set
+// lookup, built at most once per pass.
 func (s *runState) holdDispatch(ctx workflow.Context, id string, inFlight map[string]workflow.Future) bool {
 	if s.quiescing && !s.pinClosureAllows(id) {
 		return true
@@ -42,8 +43,9 @@ func (s *runState) holdDispatch(ctx workflow.Context, id string, inFlight map[st
 		// N1: a cap hold with nothing in flight could never be released.
 		return false
 	}
-	atCap := s.inFlightWork(inFlight) >= int(lim.Max)
-	hardStop := lim.HardStop > 0 && s.pendingActivities(inFlight) >= int(lim.HardStop)
+	work := s.inFlightWork(inFlight)
+	atCap := work >= int(lim.Max)
+	hardStop := lim.HardStop > 0 && s.pendingActivitiesOver(work) >= int(lim.HardStop)
 	if !hardStop && (!atCap || s.pinClosureAllows(id)) {
 		return false
 	}
@@ -65,11 +67,12 @@ func (s *runState) inFlightWork(inFlight map[string]workflow.Future) int {
 	return len(inFlight) + s.livePins()
 }
 
-// pendingActivities is what the cluster counts: inFlightWork, the detached
-// item publishes, and the one blocking publish an emit may have
-// outstanding. Used only for the hard stop.
-func (s *runState) pendingActivities(inFlight map[string]workflow.Future) int {
-	return s.inFlightWork(inFlight) + len(s.pendingItemPublishes) + 1
+// pendingActivitiesOver is what the cluster counts, given work, the run's
+// inFlightWork: that work, the detached item publishes, and the one
+// blocking publish an emit may have outstanding. Used only for the hard
+// stop.
+func (s *runState) pendingActivitiesOver(work int) int {
+	return work + len(s.pendingItemPublishes) + 1
 }
 
 // livePins counts the pins opening, open, or closing: opened and not yet
