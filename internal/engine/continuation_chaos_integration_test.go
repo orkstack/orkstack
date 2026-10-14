@@ -1811,17 +1811,6 @@ func s3Key(t *testing.T, uri string) (bucket, key string) {
 	return bucket, key
 }
 
-// failureType is the ApplicationError type an execution closed with.
-func failureType(t *testing.T, h *historypb.History) string {
-	t.Helper()
-	for _, event := range h.GetEvents() {
-		if attrs := event.GetWorkflowExecutionFailedEventAttributes(); attrs != nil {
-			return attrs.GetFailure().GetApplicationFailureInfo().GetType()
-		}
-	}
-	return ""
-}
-
 // TestIntegration_ContinuationChaosC13_NeverIdleFailsBeforeTheLimit: an open
 // pin whose remaining member waits on an await that is never resolved, while
 // a long chain of other work runs: the hold is given up, and the run ends

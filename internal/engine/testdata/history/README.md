@@ -212,6 +212,29 @@ has no `history`, so none of them enters the guard
   history against current code, leaving this fixture untouched; with it, it
   also rewrites this file
 
+### `run-history-guard-lookahead-v1.json` — the guard's lookahead at a dispatch
+
+A 30-task chain, every dispatch carrying a 4 KiB input, under a plan whose
+history limit is 480 KiB (no continuation, no cap — the history-limit
+fixture's shape). A few tasks in, the run's history plus what its failure path
+keeps back still fits, but would not once the next dispatch's command —
+counted at the plan's 256 KiB values bound — is recorded: it pins the lazy
+`run-history-guard-lookahead` marker (`history_guard_lookahead.go`), asked
+only where the lookahead decides otherwise than the check without it, the
+guard's own marker, and the terminal `RUN_FAILED` owned by the run, typed
+`RUN_HISTORY_LIMIT`. A build before the lookahead dispatched the task and
+checked only after, which could leave the failure path less room than it
+keeps back; the cluster then terminated the run (continuation chaos C24).
+
+- command: `TestRunWorkflow_ReplaysCommittedHistoryGuardLookaheadHistory`
+- payload: `TestHistoryGuardLookaheadHistory_PayloadsMatchWhatCurrentCodeSends`
+  (the prefix before the marker re-executed with the guard off: every input
+  and event; and the recorded terminal event)
+- negative: `TestHistoryGuardLookaheadHistory_CatchesTheLookaheadRemoved`
+- recorder: `TestIntegration_RecordHistoryGuardLookaheadHistory`
+  (`history_guard_lookahead_integration_test.go`);
+  `ORK_REQUIRE_LOOKAHEAD_FIXTURE`. It never skips.
+
 ### `run-continued-g0-v1.json`, `run-continued-g1-v1.json` and `run-continued-g0-v1.objects/` — continuing as new
 
 One run recorded across a switch (`internal/engine/continuation.go`), under a

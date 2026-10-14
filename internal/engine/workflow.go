@@ -278,9 +278,10 @@ func RunWorkflow(
 			if state.canceledBeforeDispatch(ctx) {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			}
-			// Check point 2: before every dispatch decision of the pass. O(1)
-			// after the pass's first count.
-			if err := state.historyExhausted(ctx, inFlight); err != nil {
+			// Check point 2: before every dispatch decision of the pass, with
+			// the dispatch's own command counted (history_guard_lookahead.go).
+			// O(1) after the pass's first count.
+			if err := state.historyExhaustedBefore(ctx, inFlight, state.nextDispatchBytes(id)); err != nil {
 				return state.fail(ctx, cancelRun, inFlight, "", err)
 			}
 			state.updateContinuation(ctx, inFlight)

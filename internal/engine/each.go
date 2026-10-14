@@ -510,7 +510,7 @@ func (s *runState) dispatchItems(ctx, runCtx workflow.Context, id string, inFlig
 		// The history guard, check point 3: before e.next moves, so an item
 		// the guard stops is never dispatched and never marked FAILED; the
 		// run, not the fan-out, owns the reason (fail).
-		if err := s.historyExhausted(ctx, inFlight); err != nil {
+		if err := s.historyExhaustedBefore(ctx, inFlight, s.nextItemBytes()); err != nil {
 			return err
 		}
 		// A quiesce or the in-flight cap holds the item: e.next is unchanged,

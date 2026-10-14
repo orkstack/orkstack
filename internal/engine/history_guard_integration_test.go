@@ -507,8 +507,10 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 			input:     bigInput,
 			maxEvents: engine.DefaultHistoryMaxEvents, maxBytes: 2 << 20,
 			landed: func(t *testing.T, _ *guardStack, _ string, c closedRun) {
+				// As the history stood, or with the next dispatch's own
+				// command the lookahead counted.
 				if c.Crossing.Events+c.Crossing.ReserveEvents >= c.Crossing.MaxEvents ||
-					c.Crossing.Bytes+c.Crossing.ReserveBytes < c.Crossing.MaxBytes {
+					c.Crossing.Bytes+c.Crossing.NextCommandBytes+c.Crossing.ReserveBytes < c.Crossing.MaxBytes {
 					t.Fatalf("the crossing %+v was not the bytes dimension's", c.Crossing)
 				}
 			},
