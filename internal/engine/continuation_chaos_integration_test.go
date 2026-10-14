@@ -1769,8 +1769,11 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 				"complete list (%s, created %s, in created_at order: %t)", p.End.Format(time.RFC3339Nano), p.Count,
 				p.RunningRows, p.CompleteRows, p.Status, p.CreatedAt, p.OrderOK)
 		}
-		if !p.GateRefused || !strings.Contains(p.GateMessage, "1 active") {
-			t.Fatalf("the deletion gate at %s answered %q, want a refusal naming the live run", p.End.Format(time.RFC3339Nano), p.GateMessage)
+		// Live, or — once its terminal event is archived, a moment before
+		// its execution closes — finished within the window: either way the
+		// one run blocks the deletion, never none.
+		if !p.GateRefused || !strings.Contains(p.GateMessage, "1 run(s) block deletion") {
+			t.Fatalf("the deletion gate at %s answered %q, want a refusal naming the run", p.End.Format(time.RFC3339Nano), p.GateMessage)
 		}
 		if minCount < 0 || p.Count < minCount {
 			minCount = p.Count
@@ -3071,11 +3074,13 @@ func TestIntegration_ContinuationChaosC30_LostSegmentIsAnExplicitGap(t *testing.
 	s.transcript.step("archive gap line: %s", gapLine)
 
 	// Retired from the cluster: GetRun from the archive, events over the gap
-	// DataLoss naming the range.
+	// DataLoss naming the range. Every execution of the chain — it carried on
+	// again after the segment was deleted — reads NotFound first.
+	executions := s.chain(runID)
 	if err := s.reader.DeleteWorkflow(ctx, s.namespace, runID); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range s.chainFromCarry(carry, execution) {
+	for _, id := range executions {
 		s.waitExecutionGone(t, runID, id, time.Minute)
 	}
 	got, err := a.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
@@ -3133,15 +3138,6 @@ func TestIntegration_ContinuationChaosC30_LostSegmentIsAnExplicitGap(t *testing.
 	s.transcript.figure("event_gaps", report.EventGaps)
 	t.Logf("C30: a lost segment (%s): run SUCCEEDED; live events Unavailable; archive gap line; DataLoss after retirement; "+
 		"bundle schema %d with the gap; orkctl verify passes with the notice", rangeText, report.Manifest.SchemaVersion)
-}
-
-// chainFromCarry is every execution of a run up to current, from a carry.
-func (s *chaosStack) chainFromCarry(carry *orkstackv1.RunContinuation, current string) []string {
-	var out []string
-	for _, seg := range carry.GetSegments() {
-		out = append(out, seg.GetExecutionId())
-	}
-	return append(out, current)
 }
 
 // splitStore reads saved state through one store and does everything else
