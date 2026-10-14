@@ -893,3 +893,64 @@ func TestContinuation_HeldGenerationsReachTheSameOutcome(t *testing.T) {
 		}
 	}
 }
+
+// TestContinuation_SwitchWritesEncodeACopyACancelCannotChange: a local
+// activity's Get returns as soon as a cancel reaches it, while the activity
+// itself runs on. The switch snapshot and the checkpoint are therefore
+// handed a copy of the run's rows, so the cancellation that fail() then
+// records on the live rows can never reach — or race with — the encoding
+// still in progress. The checkpoint write here is held until the run's
+// cancellation has been recorded, and still sees the rows exactly as they
+// stood at the switch.
+func TestContinuation_SwitchWritesEncodeACopyACancelCannotChange(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	h := newHarnessCtx(t, &suite, okBehavior)
+	canceledRecorded := make(chan struct{})
+	var recordedOnce, cancelOnce sync.Once
+	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
+		if run.GetStatus() == orkstackv1.Status_STATUS_CANCELED {
+			recordedOnce.Do(func() { close(canceledRecorded) })
+		}
+		return nil
+	}
+	encoded := make(chan []string, 1)
+	var heldUntilRecorded bool
+	h.onContinuationRun = func(kind string, run *orkstackv1.Run) {
+		if kind != "checkpoint" {
+			return
+		}
+		cancelOnce.Do(func() {
+			h.env.CancelWorkflow()
+			select {
+			case <-canceledRecorded:
+				heldUntilRecorded = true
+			case <-time.After(10 * time.Second):
+			}
+			var statuses []string
+			for _, row := range run.GetTaskRuns() {
+				statuses = append(statuses, row.GetTaskId()+"="+row.GetStatus().String())
+			}
+			encoded <- statuses
+		})
+	}
+	h.env.ExecuteWorkflow(engine.RunWorkflowType, "ork-switch-copy", compile(t, continuationChainDocument), payload(t, nil),
+		continuedPlan(1), (*orkstackv1.RunContinuation)(nil))
+	requireCanceled(t, h.env.GetWorkflowError())
+	var statuses []string
+	select {
+	case statuses = <-encoded:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the checkpoint write never ran")
+	}
+	if !heldUntilRecorded {
+		t.Fatal("the run's cancellation was not recorded while the checkpoint write was held: the test proves nothing")
+	}
+	for _, s := range statuses {
+		if strings.HasSuffix(s, orkstackv1.Status_STATUS_CANCELED.String()) {
+			t.Fatalf("the checkpoint write encoded %v: the cancellation reached rows it was still encoding", statuses)
+		}
+	}
+	if run := mustFinalRun(t, h.store, "ork-switch-copy"); run.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
+		t.Fatalf("status = %v, want CANCELED", run.GetStatus())
+	}
+}

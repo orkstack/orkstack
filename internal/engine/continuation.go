@@ -536,8 +536,10 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 
 	// 4. The switch snapshot: a full snapshot of the exact state, items
 	// included, under a content-addressed key — never a {seq}.pb key, which
-	// the next generation's own emits own.
-	run := s.snapshot()
+	// the next generation's own emits own. A copy: a local activity's Get
+	// returns as soon as a cancel reaches it while the activity runs on, so
+	// the writes must never encode the live rows fail() would then change.
+	run := proto.Clone(s.snapshot()).(*orkstackv1.Run)
 	var switchSnapshot *orkstackv1.ContinuationObject
 	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteSwitchSnapshot, run, namespace, s.generation, obs).
 		Get(writeCtx, &switchSnapshot); err != nil {

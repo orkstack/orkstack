@@ -67,6 +67,11 @@ type harness struct {
 	// every saved-state read (kind "read"), from the local activity's
 	// goroutine; a non-nil error fails that attempt.
 	onContinuation func(kind string, offset int64) error
+	// onContinuationRun, when set, is called with the run the switch
+	// snapshot or checkpoint write (kind "snapshot" or "checkpoint") is
+	// about to encode, after onContinuation, from the local activity's
+	// goroutine.
+	onContinuationRun func(kind string, run *orkstackv1.Run)
 	// continuations counts the continuation local activities that ran, by
 	// kind.
 	continuations map[string]int
@@ -203,6 +208,15 @@ func (c *continuationHooks) hook(kind string, offset int64) error {
 	return nil
 }
 
+func (c *continuationHooks) runHook(kind string, run *orkstackv1.Run) {
+	c.h.mu.Lock()
+	fn := c.h.onContinuationRun
+	c.h.mu.Unlock()
+	if fn != nil {
+		fn(kind, run)
+	}
+}
+
 func (c *continuationHooks) WriteEventSegment(ctx context.Context, segment *orkstackv1.RunEventSegment, namespace string, obs engine.ContinuationObservationInput) (*orkstackv1.ContinuationObject, error) {
 	if err := c.hook("events", 0); err != nil {
 		return nil, err
@@ -214,6 +228,7 @@ func (c *continuationHooks) WriteSwitchSnapshot(ctx context.Context, run *orksta
 	if err := c.hook("snapshot", 0); err != nil {
 		return nil, err
 	}
+	c.runHook("snapshot", run)
 	return c.a.WriteSwitchSnapshot(ctx, run, namespace, generation, obs)
 }
 
@@ -221,6 +236,7 @@ func (c *continuationHooks) WriteCheckpoint(ctx context.Context, run *orkstackv1
 	if err := c.hook("checkpoint", 0); err != nil {
 		return nil, err
 	}
+	c.runHook("checkpoint", run)
 	return c.a.WriteCheckpoint(ctx, run, generation, capBytes, obs)
 }
 
