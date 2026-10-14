@@ -15,3 +15,7 @@ func (s *Service) NewRunIDForTest() string { return s.newRunID() }
 func (s *Service) TaskIsTerminalForTest(ctx context.Context, runID, namespace, taskID string) (bool, error) {
 	return s.taskIsTerminal(ctx, TaskLogQuery{RunID: runID, Namespace: namespace, TaskID: taskID})
 }
+
+// EachMaxItemsOfForTest exposes eachMaxItemsOf: Config.EachMaxItems as the
+// service reads it.
+var EachMaxItemsOfForTest = eachMaxItemsOf

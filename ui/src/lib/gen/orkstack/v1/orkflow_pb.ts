@@ -377,10 +377,11 @@ export type EachSpec = Message<"orkstack.v1.EachSpec"> & {
   as: string;
 
   /**
-   * max_items is the author's bound, 1..1000; the sum over every fan-out of
-   * one Orkflow is at most 1000, and at most the deployment's
-   * ORK_EACH_MAX_ITEMS. An array longer than this fails the task
-   * EACH_TOO_MANY_ITEMS before any item runs.
+   * max_items is the author's bound, 1..10000; the sum over every fan-out of
+   * one Orkflow is at most 10000, and at most the deployment's
+   * ORK_EACH_MAX_ITEMS (1000 unless the deployment raises it). An array
+   * longer than this fails the task EACH_TOO_MANY_ITEMS before any item
+   * runs.
    *
    * @generated from field: int32 max_items = 3;
    */

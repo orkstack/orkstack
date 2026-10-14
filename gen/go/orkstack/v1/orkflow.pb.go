@@ -553,10 +553,11 @@ type EachSpec struct {
 	// as is the name .each.<as> binds an item to. The compiler writes "item"
 	// when the document names none, so a stored value is never empty.
 	As string `protobuf:"bytes,2,opt,name=as,proto3" json:"as,omitempty"`
-	// max_items is the author's bound, 1..1000; the sum over every fan-out of
-	// one Orkflow is at most 1000, and at most the deployment's
-	// ORK_EACH_MAX_ITEMS. An array longer than this fails the task
-	// EACH_TOO_MANY_ITEMS before any item runs.
+	// max_items is the author's bound, 1..10000; the sum over every fan-out of
+	// one Orkflow is at most 10000, and at most the deployment's
+	// ORK_EACH_MAX_ITEMS (1000 unless the deployment raises it). An array
+	// longer than this fails the task EACH_TOO_MANY_ITEMS before any item
+	// runs.
 	MaxItems int32 `protobuf:"varint,3,opt,name=max_items,json=maxItems,proto3" json:"max_items,omitempty"`
 	// max_parallel bounds how many items are in flight at once; 0 means no
 	// bound of the task's own.

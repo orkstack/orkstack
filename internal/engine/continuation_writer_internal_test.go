@@ -244,7 +244,14 @@ func engineSources(t *testing.T) (*token.FileSet, map[string]*ast.File) {
 // declares is referenced by no other non-test file of internal/engine.
 // Workflow code reads the number the plan carries, never the constant, so a
 // release that changes a default moves only new runs (AGENTS.md §7.2).
+//
+// The one exemption is named, never a pattern: localItemInput (local_task.go)
+// composes an item's input for `orkctl task run`, outside any run — nothing it
+// computes is replayed or recorded — and a run's plan never reaches it
+// (--from-run reads the run, which carries none), so it reads the floor every
+// run it can be pointed at pinned (spec 4.2).
 func TestPinnedDefaults_ReadOnlyAtSubmit(t *testing.T) {
+	exempt := map[string]map[string]bool{"local_task.go": {"DefaultItemInputFloorBytes": true}}
 	fset, files := engineSources(t)
 	declared := map[string]bool{}
 	for _, decl := range files["pinned_defaults.go"].Decls {
@@ -272,7 +279,7 @@ func TestPinnedDefaults_ReadOnlyAtSubmit(t *testing.T) {
 			continue
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
-			if ident, ok := n.(*ast.Ident); ok && declared[ident.Name] {
+			if ident, ok := n.(*ast.Ident); ok && declared[ident.Name] && !exempt[filepath.Base(path)][ident.Name] {
 				t.Errorf("%s references %s, a pinned default: read the plan's number instead", fset.Position(ident.Pos()), ident.Name)
 			}
 			return true

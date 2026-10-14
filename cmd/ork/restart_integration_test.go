@@ -257,11 +257,12 @@ func bootEngine(
 	ctx context.Context,
 	t *testing.T,
 	binary, temporalAddress, name string,
+	extraEnv ...string,
 ) (string, orkstackv1connect.OrkflowServiceClient, *strings.Builder) {
 	t.Helper()
 	const attempts = 3
 	for attempt := 1; attempt <= attempts; attempt++ {
-		address, process := startEngine(ctx, t, binary, temporalAddress, name)
+		address, process := startEngine(ctx, t, binary, temporalAddress, name, extraEnv...)
 		client := orkflowClient(t, address)
 		if err := waitForEngine(ctx, client, process); err == nil {
 			return address, client, process.log
@@ -277,11 +278,13 @@ func bootEngine(
 	return "", nil, nil // unreachable: the last attempt fatals
 }
 
-// startEngine runs the real ork binary on a free loopback port.
+// startEngine runs the real ork binary on a free loopback port, with
+// extraEnv (KEY=value) after everything else, so it wins.
 func startEngine(
 	ctx context.Context,
 	t *testing.T,
 	binary, temporalAddress, name string,
+	extraEnv ...string,
 ) (string, *engineProcess) {
 	t.Helper()
 	address := freeAddress(t)
@@ -293,6 +296,7 @@ func startEngine(
 		// catalog names references that are not published yet.
 		localActivityCatalogEnv(t),
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	log := &strings.Builder{}
 	cmd.Stdout = log
 	cmd.Stderr = log

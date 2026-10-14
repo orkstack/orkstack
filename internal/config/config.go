@@ -135,8 +135,9 @@ var Schema = []Var{
 	{Path: "engine.idempotency_ttl", Env: "ORK_IDEMPOTENCY_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultClaimTTL)},
 	{Path: "engine.registry_auth_file", Env: "ORK_REGISTRY_AUTH_FILE", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault},
 	{Path: "engine.stats_cache_ttl", Env: "ORK_STATS_CACHE_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultStatsCacheTTL)},
-	// ORK_EACH_MAX_ITEMS' fallback is engine.DefaultEachMaxItems, the
-	// built-in ceiling (dsl.MaxEachItems) it may lower and never raise.
+	// ORK_EACH_MAX_ITEMS' fallback is engine.DefaultEachMaxItems: a
+	// deployment default of 1000, which a deployment lowers, or raises up to
+	// the built-in 10000 (dsl.MaxEachItems) with continuation on.
 	{Path: "engine.each_max_items", Env: "ORK_EACH_MAX_ITEMS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultEachMaxItems))},
 	// ORK_ORKFLOW_MAX_TASKS' fallback is engine.DefaultOrkflowMaxTasks: the
 	// most tasks one Orkflow may declare, a default a deployment may lower or

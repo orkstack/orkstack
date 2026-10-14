@@ -89,10 +89,22 @@ func itemFlightKey(id string, index int32) string {
 	return id + "#" + strconv.Itoa(int(index))
 }
 
-// eachBounds are the two per-item bounds, derived from the
-// Orkflow's declared item total alone, so they are known at apply and pinned
-// by the definition on replay. A run with no fan-out computes neither.
-func eachBounds(wf *orkstackv1.Orkflow, limits WorkspaceLimits) (share int32, inputLimit int64, artifactMax int32) {
+// eachBounds are the two per-item bounds, derived from the Orkflow's
+// declared item total S and the run's pinned floor alone, so they are known
+// at apply and fixed by the definition and the plan on replay. A run with no
+// fan-out computes neither.
+//
+//   - inputLimit = min(values_max_bytes, MaxActivityInputBytes,
+//     max(eachItemInputBudget/S, floor));
+//   - artifactMax = min(artifact_max_count, eachItemArtifactBudget/S), which
+//     keeps the AGGREGATE budget of eachItemArtifactBudget workload artifacts
+//     per run, so a saved state's artifact rows stay bounded.
+//
+// floor is the plan's ContinuationBudget.ItemInputFloorBytes: 0 for every
+// plan built before it, and for a run without continuation. It is inert for
+// S ≤ eachItemInputBudget/floor (1,024 at the 16 KiB default), so every
+// recorded history computes the bounds it computed then.
+func eachBounds(wf *orkstackv1.Orkflow, limits WorkspaceLimits, floor int64) (share int32, inputLimit int64, artifactMax int32) {
 	share = dsl.EachItemsDeclared(wf)
 	if share <= 0 {
 		return 0, 0, 0
@@ -102,7 +114,7 @@ func eachBounds(wf *orkstackv1.Orkflow, limits WorkspaceLimits) (share int32, in
 	if inputLimit <= 0 || inputLimit > task.MaxActivityInputBytes {
 		inputLimit = task.MaxActivityInputBytes
 	}
-	if shared := int64(eachItemInputBudget) / int64(share); shared < inputLimit {
+	if shared := max(int64(eachItemInputBudget)/int64(share), floor); shared < inputLimit {
 		inputLimit = shared
 	}
 	artifactMax = proto.GetArtifactMaxCount()
@@ -113,9 +125,11 @@ func eachBounds(wf *orkstackv1.Orkflow, limits WorkspaceLimits) (share int32, in
 }
 
 // EachItemBounds exposes eachBounds to internal/api, which checks a fan-out's
-// own share of every item's input at apply.
-func EachItemBounds(wf *orkstackv1.Orkflow, limits WorkspaceLimits) (inputLimit int64, artifactMax int32) {
-	_, inputLimit, artifactMax = eachBounds(wf, limits)
+// own share of every item's input at apply. floor is the floor a run of this
+// deployment would pin: DefaultItemInputFloorBytes with continuation on, 0
+// with it off.
+func EachItemBounds(wf *orkstackv1.Orkflow, limits WorkspaceLimits, floor int64) (inputLimit int64, artifactMax int32) {
+	_, inputLimit, artifactMax = eachBounds(wf, limits, floor)
 	return inputLimit, artifactMax
 }
 
@@ -633,6 +647,15 @@ func (s *runState) checkItemInput(id string, index int32, input *orkstackv1.Exec
 	}
 	if size <= s.itemInputLimit {
 		return nil
+	}
+	if s.itemInputLimit > int64(eachItemInputBudget)/int64(max(s.eachShare, 1)) {
+		// The run's pinned floor binds (more than 1,024 declared items):
+		// the shared budget is not what limits this item.
+		return temporal.NewNonRetryableApplicationError(fmt.Sprintf(
+			"%s: task %q item %d: the activity input serializes to %d bytes, over this Orkflow's %d-byte "+
+				"per-item limit for a fan-out total of %d items. Move large with: values and run inputs into "+
+				"an artifact.", task.ReasonInputTooLarge, id, index, size, s.itemInputLimit, s.eachShare),
+			task.CategoryContractViolation, nil)
 	}
 	return temporal.NewNonRetryableApplicationError(fmt.Sprintf(
 		"%s: task %q item %d: the activity input serializes to %d bytes, over this Orkflow's %d-byte "+

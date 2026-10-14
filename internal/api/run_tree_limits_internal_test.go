@@ -42,6 +42,7 @@ func TestPinRunTreeLimits_PinsEveryCommandStreamNumber(t *testing.T) {
 		HoldPercent:    engine.DefaultContinuationHoldPercent,
 		MaxGenerations: engine.DefaultContinuationMaxGenerations,
 		ChunkBytes:     engine.DefaultContinuationChunkBytes, ChunksPerTask: engine.DefaultContinuationChunksPerTask,
+		ItemInputFloorBytes: engine.DefaultItemInputFloorBytes,
 		Restore: engine.RestorePolicy{
 			TimeoutSeconds:       1200,
 			AttemptSeconds:       int64(engine.DefaultRestoreAttempt / time.Second),

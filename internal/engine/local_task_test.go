@@ -181,11 +181,27 @@ type parityCase struct {
 	wf     *orkstackv1.Orkflow
 	input  *orkstackv1.Payload
 	pinned bool
+	// continued gives the run the continuation budget a deployment with
+	// continuation on pins, and with it the per-item input floor.
+	continued bool
 	// fail names tasks whose activity fails (non-retryable ActivityFailed,
 	// with its output artifact on the failure detail), so a failure handler
 	// of them is dispatched and compared too.
 	fail map[string]bool
 }
+
+// localParityWideFanOut is corpus (d): a fan-out declaring 5,000 items —
+// three in the run's input — whose own `with:` is 8 KiB per item.
+var localParityWideFanOut = `
+name: parity-wide-fan-out
+inputs:
+  parts: {type: array}
+tasks:
+  - id: spread
+    uses: shell
+    each: {over: "{{ .inputs.parts }}", max_items: 5000}
+    with: {op: exec, part: "{{ .each.item }}", pad: "` + strings.Repeat("p", 8<<10) + `"}
+`
 
 // localParityHandler is corpus (c): a deploy that fails with an artifact
 // while a sibling is in flight, an any_failed handler of both and an
@@ -224,6 +240,11 @@ func parityCorpus(t *testing.T) []parityCase {
 		{name: "pinned", wf: compile(t, localParityPinned), input: payload(t, nil), pinned: true},
 		{name: "failure-handler", wf: compile(t, localParityHandler), input: payload(t, nil),
 			fail: map[string]bool{"deploy": true}},
+		// More than 1,024 declared items: every item's 8 KiB `with:` fits
+		// only under the floor the run pinned (16 KiB), never under
+		// 16 MiB / 5,000 alone (about 3.3 KiB).
+		{name: "fan-out-over-the-floor", wf: compile(t, localParityWideFanOut), continued: true,
+			input: payload(t, map[string]any{"parts": []any{"a", "b", "c"}})},
 	}
 	paths, err := filepath.Glob(filepath.Join("..", "..", "examples", "*.ork.yaml"))
 	if err != nil || len(paths) == 0 {
@@ -293,6 +314,11 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	}
 	plan := parityPlan(c.wf)
 	plan.Children = parityChildren(t, c.wf)
+	if c.continued {
+		budget := engine.DefaultContinuationBudget(engine.DefaultContinuationEvents, engine.DefaultContinuationBytes,
+			engine.DefaultContinuationRestoreTimeout)
+		plan.Continuation = &budget
+	}
 	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, c.wf, c.input, plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatalf("%s: workflow did not complete", c.name)

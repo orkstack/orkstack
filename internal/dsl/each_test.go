@@ -2,6 +2,7 @@ package dsl_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -173,12 +174,12 @@ func TestCompile_EachMaxItemsRequiredAndBounded(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "each.max_items is required") || fieldOf(err) != "tasks[1].each.max_items" {
 		t.Fatalf("absent max_items = %v (field %q)", err, fieldOf(err))
 	}
-	for _, n := range []string{"0", "-1", "1001"} {
+	for _, n := range []string{"0", "-1", "10001"} {
 		if err := compileFanOut(t, over+`, max_items: `+n+`}`); err == nil || fieldOf(err) != "tasks[1].each.max_items" {
 			t.Fatalf("max_items %s = %v (field %q)", n, err, fieldOf(err))
 		}
 	}
-	for _, n := range []string{"1", "1000"} {
+	for _, n := range []string{"1", "1000", "1001", "10000"} {
 		if err := compileFanOut(t, over+`, max_items: `+n+`}`); err != nil {
 			t.Fatalf("max_items %s = %v", n, err)
 		}
@@ -186,16 +187,44 @@ func TestCompile_EachMaxItemsRequiredAndBounded(t *testing.T) {
 	_, err = dsl.Compile(eachDoc(`
   - id: convert
     uses: shell
-    each: {over: "{{ .inputs.parts }}", max_items: 600}
+    each: {over: "{{ .inputs.parts }}", max_items: 6000}
     with: {op: exec}
   - id: render
     uses: shell
-    each: {over: "{{ .inputs.parts }}", max_items: 500}
+    each: {over: "{{ .inputs.parts }}", max_items: 5000}
     with: {op: exec}
 `))
 	if err == nil || fieldOf(err) != "tasks[2].each.max_items" ||
-		!strings.Contains(err.Error(), "convert 600, render 500") || !strings.Contains(err.Error(), "1100 items") {
-		t.Fatalf("600 + 500 = %v (field %q)", err, fieldOf(err))
+		!strings.Contains(err.Error(), "convert 6000, render 5000") || !strings.Contains(err.Error(), "11000 items") {
+		t.Fatalf("6000 + 5000 = %v (field %q)", err, fieldOf(err))
+	}
+}
+
+// TestValidate_EachMaxItemsBuiltInTenThousand: rule 21's built-in maximum is
+// 10,000 items per task and summed over an Orkflow's fan-outs — a deployment
+// setting may lower or raise its own ceiling up to it, never past it.
+func TestValidate_EachMaxItemsBuiltInTenThousand(t *testing.T) {
+	if dsl.MaxEachItems != 10000 {
+		t.Fatalf("dsl.MaxEachItems = %d, want the built-in 10000", dsl.MaxEachItems)
+	}
+	twoFanOuts := func(a, b int) string {
+		return fmt.Sprintf(`
+  - id: convert
+    uses: shell
+    each: {over: "{{ .inputs.parts }}", max_items: %d}
+    with: {op: exec}
+  - id: render
+    uses: shell
+    each: {over: "{{ .inputs.parts }}", max_items: %d}
+    with: {op: exec}
+`, a, b)
+	}
+	if _, err := dsl.Compile(eachDoc(twoFanOuts(6000, 4000))); err != nil {
+		t.Fatalf("6000 + 4000 = %v, want accepted", err)
+	}
+	_, err := dsl.Compile(eachDoc(twoFanOuts(6000, 4001)))
+	if err == nil || !strings.Contains(err.Error(), "10001 items") || !strings.Contains(err.Error(), "at most 10000, the built-in maximum") {
+		t.Fatalf("6000 + 4001 = %v, want refused at the built-in maximum", err)
 	}
 }
 
