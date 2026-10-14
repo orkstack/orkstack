@@ -76,7 +76,7 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 	for i := 1; i <= 3; i++ {
 		name := fmt.Sprintf("real-%d", i)
 		proxy := e.temporalProxy()
-		o := e.startRealItemOrker(name, e.dial(name, proxy.Addr()))
+		o := e.startRealItemOrker(name, e.dial(name, proxy.Addr()), 1)
 		killable = append(killable, &c32Orker{name: name, proxy: proxy, orker: o})
 	}
 	var kills []c32Kill

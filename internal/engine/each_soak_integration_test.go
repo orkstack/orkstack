@@ -43,17 +43,18 @@ import (
 // on at every default (table TC), on real Temporal and real MinIO, run to
 // completion across its generations, and measured against E4's thresholds.
 //
-// The Orkers are real in kind and in part. A real Orker — the production
-// dispatcher, Docker, the first-party shell image the Bash fixture holds to
-// the ABI, real commits and attempt records — computes the fan-out's list
-// (its own pool) and runs items beside two in-process Orkers that answer an
-// item at once with a result shaped as a real one is (a commit, two logs, a
-// values reference and inline values). On the measured host one container
-// takes about a second to run end to end, so 10,000 real containers would
-// make one shape take hours; the engine-side quantities E4 gates — history
-// per generation, pending activities, saved-state and snapshot bytes, read
-// latency, replay — do not depend on how long an item ran, and the real
-// Orkers' sample of items crosses every generation.
+// The Orkers are real in kind and in part. Real Orkers — the production
+// dispatcher, Docker, the first-party json and shell images (the shell image
+// is the one the Bash fixture holds to the ABI), real commits and attempt
+// records — compute the fan-out's list (on a pool of their own) and run
+// items beside two in-process Orkers that answer an item after a second with
+// a result shaped as a real one is (a commit, two logs, a values reference
+// and inline values). On the measured host one container takes about a
+// second to run end to end, so 10,000 real containers would make one shape
+// take hours; the engine-side quantities E4 gates — history per generation,
+// pending activities, saved-state and snapshot bytes, read latency, replay —
+// do not depend on what ran an item, and the real Orker's sample of items
+// crosses the generations (the test fails if it ran none).
 
 // soakItemsVar is ORK_SOAK_ITEMS: the fan-out's size. Unset is the built-in
 // maximum, dsl.MaxEachItems — the gated size, so a full proof re-proves the
@@ -76,13 +77,17 @@ func soakItems(t *testing.T) int {
 
 // E4's thresholds.
 const (
-	soakEventShare        = 0.8 // each generation's peak events and bytes under 80% of the limits
-	soakSnapshotBytesMax  = 512 << 20
-	soakGetRunP95Max      = 2 * time.Second
-	soakEventsReadMax     = 30 * time.Second
-	soakReplayMax         = 30 * time.Second
-	soakRealOrkers        = 2
-	soakRealOrkerSlots    = 4
+	soakEventShare       = 0.8 // each generation's peak events and bytes under 80% of the limits
+	soakSnapshotBytesMax = 512 << 20
+	soakGetRunP95Max     = 2 * time.Second
+	soakEventsReadMax    = 30 * time.Second
+	soakReplayMax        = 30 * time.Second
+	// One real item Orker of two slots per soak (C32: three of one slot):
+	// a full proof runs these tests beside each other and beside every
+	// other Docker-backed test, on a daemon that starts about one container
+	// a second.
+	soakRealOrkers        = 1
+	soakRealOrkerSlots    = 2
 	soakFastOrkers        = 2
 	soakGetRunReads       = 10
 	soakListPool          = "soak-list"
@@ -229,10 +234,10 @@ func startEachSoak(t *testing.T, ctx context.Context, scenario string, items int
 	return e
 }
 
-// startRealItemOrker starts one real item Orker, at soakRealOrkerSlots
+// startRealItemOrker starts one real item Orker, at slots
 // containers at once, over c (the control client when nil; C32 hands one
 // through a proxy, so cutting it is the host dying).
-func (e *eachSoak) startRealItemOrker(name string, c client.Client) *chaosOrker {
+func (e *eachSoak) startRealItemOrker(name string, c client.Client, slots int) *chaosOrker {
 	e.t.Helper()
 	call, id := e.realOrkerCall(name, task.DefaultPool, e.stores, nil)
 	e.realIDs[name] = id
@@ -242,7 +247,7 @@ func (e *eachSoak) startRealItemOrker(name string, c client.Client) *chaosOrker 
 	e.inflightMu.Lock()
 	e.inflight[name] = map[string]bool{}
 	e.inflightMu.Unlock()
-	return e.startOrkerSized(name, e.orkerQueue, c, task.Deployment{}, soakRealOrkerSlots,
+	return e.startOrkerSized(name, e.orkerQueue, c, task.Deployment{}, slots,
 		func(ctx context.Context, _ *chaosStack, _ string, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			key := attemptKey(in)
 			e.inflightMu.Lock()
@@ -533,6 +538,11 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 		}
 	}
 	rec.SnapshotBytes, rec.SnapshotObjects = snapshotBytes(t, ctx, runID)
+	defer func() {
+		if rec.ItemsOnRealOrkers == 0 {
+			t.Errorf("no item ran on a real Orker: the soak exercised no container")
+		}
+	}()
 	for key, on := range e.ranOnAll() {
 		if !strings.HasPrefix(key, "spread[") {
 			continue
@@ -675,7 +685,7 @@ func TestIntegration_SoakFanOut(t *testing.T) {
 	items := soakItems(t)
 	e := startEachSoak(t, ctx, fmt.Sprintf("soak-%d-fan-out", items), items)
 	for i := 1; i <= soakRealOrkers; i++ {
-		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil)
+		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
 	}
 	rec, _ := e.soakRun(t, ctx, "fan-out", 0, nil)
 	reportSoak(t, rec)
@@ -689,7 +699,7 @@ func TestIntegration_SoakFanOutMaxParallel(t *testing.T) {
 	items := soakItems(t)
 	e := startEachSoak(t, ctx, fmt.Sprintf("soak-%d-max-parallel", items), items)
 	for i := 1; i <= soakRealOrkers; i++ {
-		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil)
+		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
 	}
 	rec, _ := e.soakRun(t, ctx, "max-parallel", 64, nil)
 	reportSoak(t, rec)
