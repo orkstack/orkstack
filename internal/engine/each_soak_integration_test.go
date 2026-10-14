@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -22,6 +23,7 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
@@ -90,6 +92,7 @@ const (
 	soakRealOrkerSlots    = 2
 	soakFastOrkers        = 2
 	soakGetRunReads       = 10
+	soakGetRunSpacing     = 500 * time.Millisecond
 	soakListPool          = "soak-list"
 	soakRunWithin         = 45 * time.Minute
 	soakTestTimeout       = 60 * time.Minute
@@ -344,12 +347,20 @@ func soakSeconds(samples []time.Duration) []float64 {
 	return out
 }
 
-// getRunTimes reads the run through the API n times and times each read.
+// getRunTimes reads the run through the API n times, soakGetRunSpacing
+// apart as a page a reader keeps open re-reads it, and times each read.
 func (e *eachSoak) getRunTimes(t *testing.T, ctx context.Context, runID string, n int) ([]time.Duration, *orkstackv1.Run) {
 	t.Helper()
 	var out []time.Duration
 	var last *orkstackv1.Run
 	for i := 0; i < n; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(soakGetRunSpacing):
+			}
+		}
 		start := time.Now()
 		resp, err := e.api.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
 		if err != nil {
@@ -566,6 +577,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 	for _, execution := range chain {
 		e.waitExecutionGone(t, runID, execution, soakArchiveGetRunWait)
 	}
+	e.waitRetired(t, ctx, runID)
 	archiveTimes, archivedRun := e.getRunTimes(t, ctx, runID, soakGetRunReads)
 	if archivedRun.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("GetRun from the archive = %v", archivedRun.GetStatus())
@@ -615,6 +627,41 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 		miss("slowest generation replay %.3fs > %s", rec.SlowestReplaySeconds, soakReplayMax)
 	}
 	return rec, events
+}
+
+// waitRetired blocks until the cluster no longer knows the run at all: its
+// current execution describes NotFound and visibility lists none of its
+// executions. Only then is a read the archive's alone, as it is for a run
+// the cleanup worker retired long after it finished — not one racing the
+// cluster's own asynchronous deletion.
+func (e *eachSoak) waitRetired(t *testing.T, ctx context.Context, runID string) {
+	t.Helper()
+	deadline := time.Now().Add(soakArchiveGetRunWait)
+	tick := time.NewTicker(250 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		_, describeErr := e.control.DescribeWorkflowExecution(ctx, runID, "")
+		var notFound *serviceerror.NotFound
+		gone := errors.As(describeErr, &notFound)
+		if gone {
+			count, err := e.control.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{
+				Namespace: e.namespace, Query: fmt.Sprintf("WorkflowId = %q", runID)})
+			gone = err == nil && count.GetCount() == 0
+		}
+		if gone {
+			e.transcript.step("run %s retired: no execution describes and none is listed", runID)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %s still known to the cluster %s after its executions were deleted (describe: %v)",
+				runID, soakArchiveGetRunWait, describeErr)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
 }
 
 // waitItemsSettled blocks until the stream has carried n SUCCEEDED item
