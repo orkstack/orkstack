@@ -580,6 +580,12 @@ func TestIntegration_JoinCancelDuringHandlersKeepsTheRunFailed(t *testing.T) {
 	runID := joinRunID("i7")
 	j.startRun(runID, j.example(nil), map[string]any{"route": "canary", "fail_deploy": true, "smoke_seconds": 1, "rollback_seconds": 120})
 	j.awaitEvent(runID, 5*time.Minute, "rollback's TASK_STARTED", taskEvent("rollback", orkstackv1.EventType_EVENT_TYPE_TASK_STARTED))
+	// TASK_STARTED is the engine's word that it dispatched rollback; the
+	// cancel must find the attempt running on the Orker, so the test acts
+	// once the attempt heartbeats. Under a loaded proof a cancel sent on the
+	// event alone can beat the Orker to the task, which then never starts
+	// and leaves no attempt record.
+	j.awaitLiveAttempt(runID, "rollback", 1, 3*time.Minute)
 	if err := j.temporal.CancelWorkflow(j.ctx, runID, ""); err != nil {
 		t.Fatal(err)
 	}
