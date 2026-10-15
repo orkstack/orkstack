@@ -104,7 +104,11 @@ func (s *runState) endUnrestorable(
 	s.startedAt = carry.GetStartedAt()
 	s.finished = timestamppb.New(workflow.Now(ectx))
 	s.status = orkstackv1.Status_STATUS_FAILED
-	s.runError = &orkstackv1.Error{Code: code, Message: message, Category: runStateCategory(code)}
+	// The category comes from the same mapping the reader applies to the
+	// execution's close (runLevelFailureCategory), so a RUN_DEFINITION_* or
+	// RUN_STATE_* code reads with one category whichever generation it ends
+	// and whichever path serves it (AGENTS.md §4).
+	s.runError = &orkstackv1.Error{Code: code, Message: message, Category: runLevelFailureCategory(code)}
 	eventType := orkstackv1.EventType_EVENT_TYPE_RUN_FAILED
 	if canceled {
 		s.status = orkstackv1.Status_STATUS_CANCELED

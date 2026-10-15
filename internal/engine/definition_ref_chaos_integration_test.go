@@ -131,6 +131,7 @@ func TestIntegration_DefinitionChaosC33_CorruptAtALaterGeneration(t *testing.T) 
 		t.Fatalf("the execution failed with type %q, want %s", got, engine.RunDefinitionCorruptCode)
 	}
 	s.requireTerminalIsTheSwitchSnapshot(t, runID, carry)
+	s.requireCategory(t, runID, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION)
 	a := s.serveAPI(api.Config{})
 	served := apiEvents(t, ctx, a, runID)
 	if strings.Join(eventKeys(served), "\n") != strings.Join(eventKeys(events), "\n") {
@@ -206,6 +207,7 @@ func TestIntegration_DefinitionChaosC34_DeletedAtALaterGeneration(t *testing.T) 
 	if last := events[len(events)-1]; last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED {
 		t.Fatalf("the last event is %v, want a published RUN_FAILED", last.GetType())
 	}
+	s.requireCategory(t, runID, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR)
 	_, histories := s.histories(runID)
 	last := histories[len(histories)-1]
 	if got := failureType(t, last); got != engine.RunDefinitionUnavailableCode {
@@ -316,4 +318,26 @@ func TestIntegration_DefinitionChaosC36_CancelDuringTheLoad(t *testing.T) {
 	s.transcript.figure("cancel_latency", latency.String())
 	t.Logf("C36: canceled during generation 0's definition load: RUN_CANCELED %s after the cancel, RUN_CREATED and "+
 		"RUN_CANCELED through StreamRunEvents, archived", latency)
+}
+
+// requireCategory: the run's error reads with want from the terminal
+// snapshot (GetRun) and from the archive body alike — the same category
+// generation 0 and the history-only read give its code.
+func (s *chaosStack) requireCategory(t *testing.T, runID string, want orkstackv1.FailureCategory) {
+	t.Helper()
+	run, err := s.reader.GetRun(s.ctx, runID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if got := run.GetError().GetCategory(); got != want {
+		t.Fatalf("GetRun's error %v has category %v, want %v", run.GetError(), got, want)
+	}
+	archived, err := s.archive.LoadRun(s.ctx, runID)
+	if err != nil {
+		t.Fatalf("the archive body: %v", err)
+	}
+	if got := archived.GetError().GetCategory(); got != want {
+		t.Fatalf("the archive body's error %v has category %v, want %v", archived.GetError(), got, want)
+	}
+	s.transcript.step("the run's %s reads %v from GetRun and the archive body", run.GetError().GetCode(), want)
 }

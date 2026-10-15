@@ -284,6 +284,11 @@ func TestRunWorkflow_UnreadableDefinitionFailsUnavailableWithATerminalEvent(t *t
 			t.Fatalf("final run = %v with %d rows (%d succeeded), want %s over the switch snapshot's rows",
 				run.GetError(), len(run.GetTaskRuns()), succeeded, engine.RunDefinitionUnavailableCode)
 		}
+		// The category is generation 0's: a carried generation's end never
+		// collapses it into ContractViolation.
+		if got := run.GetError().GetCategory(); got != orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR {
+			t.Fatalf("final error category = %v, want %s InfrastructureError", got, engine.RunDefinitionUnavailableCode)
+		}
 	})
 }
 

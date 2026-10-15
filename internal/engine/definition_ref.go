@@ -386,7 +386,7 @@ func (s *runState) endBeforeStart(ctx workflow.Context, code, message string) (*
 	s.finished = timestamppb.New(workflow.Now(ectx))
 	eventType := orkstackv1.EventType_EVENT_TYPE_RUN_FAILED
 	s.status = orkstackv1.Status_STATUS_FAILED
-	s.runError = &orkstackv1.Error{Code: code, Message: message, Category: runDefinitionCategory(code)}
+	s.runError = &orkstackv1.Error{Code: code, Message: message, Category: runLevelFailureCategory(code)}
 	if canceled {
 		eventType = orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED
 		s.status = orkstackv1.Status_STATUS_CANCELED
