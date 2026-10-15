@@ -360,3 +360,8 @@ func TestRunSubmitWatchJSON_NoCallbacksLeavesStderrEmpty(t *testing.T) {
 		t.Fatalf("stdout is not one JSON document: %v\n%s", err, out.stdout)
 	}
 }
+
+// RunDefinition is a fake's: the start record's own definition.
+func (r *awaitReader) RunDefinition(_ context.Context, _ string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
+	return start.Orkflow, nil
+}

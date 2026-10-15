@@ -317,6 +317,54 @@ func TestEndUnrestorable_CanceledRunEndsCanceled(t *testing.T) {
 	}
 }
 
+// TestEndUnrestorable_CategoryIsTheReadersForEveryCode: a carried
+// generation that ends with a RUN_STATE_* or RUN_DEFINITION_* code records
+// the category the reader gives the same code from the execution's close
+// (closedExecution), and the one generation 0 records for it, so the
+// terminal snapshot, the archive body and the history-only read agree. A
+// RUN_DEFINITION_UNAVAILABLE that ends generation 1 is InfrastructureError,
+// never collapsed into ContractViolation (AGENTS.md §4).
+func TestEndUnrestorable_CategoryIsTheReadersForEveryCode(t *testing.T) {
+	for _, tc := range []struct {
+		code string
+		want orkstackv1.FailureCategory
+	}{
+		{RunStateUnavailableCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR},
+		{RunStateCorruptCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+		{RunStateUnsupportedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+		{RunDefinitionUnavailableCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR},
+		{RunDefinitionCorruptCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			var suite testsuite.WorkflowTestSuite
+			env := suite.NewTestWorkflowEnvironment()
+			env.RegisterActivityWithOptions(NewSnapshotActivities(newMemSnapshotStore()).WriteFailedRunSnapshot,
+				activity.RegisterOptions{Name: ActivityWriteFailedRunSnapshot})
+			env.RegisterActivityWithOptions(func(context.Context, *orkstackv1.Event, string, string) error { return nil },
+				activity.RegisterOptions{Name: ActivityPublishEvent})
+			var ended *orkstackv1.Run
+			env.RegisterWorkflowWithOptions(func(ctx workflow.Context) error {
+				s := &runState{runID: "ork-c", wf: refusalOrkflow()}
+				run, err := s.endUnrestorable(ctx, &orkstackv1.RunContinuation{Generation: 1, EventSequence: 3},
+					tc.code, "the run has stopped")
+				ended = run
+				return err
+			}, workflow.RegisterOptions{Name: "category-probe"})
+			env.ExecuteWorkflow("category-probe")
+			var appErr *temporal.ApplicationError
+			if err := env.GetWorkflowError(); !errors.As(err, &appErr) || appErr.Type() != tc.code {
+				t.Fatalf("workflow error = %v, want an ApplicationError of type %s", err, tc.code)
+			}
+			if got := ended.GetError(); got.GetCode() != tc.code || got.GetCategory() != tc.want {
+				t.Fatalf("the run ended %v, want %s %v", got, tc.code, tc.want)
+			}
+			if got := runLevelFailureCategory(tc.code); got != ended.GetError().GetCategory() {
+				t.Fatalf("the reader maps %s to %v, the ended run records %v", tc.code, got, ended.GetError().GetCategory())
+			}
+		})
+	}
+}
+
 func TestChildFailure_MapsRunStateCodes(t *testing.T) {
 	for _, tc := range []struct {
 		code string
@@ -325,6 +373,8 @@ func TestChildFailure_MapsRunStateCodes(t *testing.T) {
 		{RunStateUnavailableCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR},
 		{RunStateCorruptCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
 		{RunStateUnsupportedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+		{RunDefinitionUnavailableCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR},
+		{RunDefinitionCorruptCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
 	} {
 		status, code, category := childFailure(temporal.NewNonRetryableApplicationError("its saved state …", tc.code, nil))
 		if status != orkstackv1.Status_STATUS_FAILED || code != ChildRunFailedCode || category != tc.want {

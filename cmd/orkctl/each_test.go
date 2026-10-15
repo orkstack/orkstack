@@ -439,3 +439,8 @@ func TestTaskRun_RefusesADirectDependentOfAFanOut(t *testing.T) {
 		t.Fatalf("merge = %d %q", got.code, got.stderr)
 	}
 }
+
+// RunDefinition is a fake's: the start record's own definition.
+func (r *eachReader) RunDefinition(_ context.Context, _ string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
+	return start.Orkflow, nil
+}

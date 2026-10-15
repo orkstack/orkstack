@@ -154,6 +154,39 @@ type RunPlan struct {
 	// continuation.go). A run-tree limit. Nil: no cap (every plan built
 	// before this field).
 	InFlight *InFlightLimit `json:"in_flight,omitempty"`
+
+	// Definition names this run's planned definition when it is too large
+	// to travel as a start payload (docs/DEPLOY.md §1,
+	// engine.definition_by_reference): the start then carries a stub naming
+	// the definition by name, version, namespace and digest, and every
+	// generation copies the immutable object into its own history before it
+	// decides anything (loadDefinition, definition_ref.go). It carries no
+	// URI: the object's key is derived from the run id wherever it is read
+	// (artifacts.RunContinuationKey, kind "definition", generation 0), so the
+	// plan is the same whatever run id the start ends with, and a plan can
+	// never name another run's object. Top-level runs only: a child's
+	// definition travels inside its parent's plan. Nil on every plan built
+	// before it, and on every run whose definition fits a start payload.
+	Definition *DefinitionRef `json:"definition,omitempty"`
+}
+
+// DefinitionRef is a run's planned definition stored by reference: the
+// whole object's SHA-256, its stored and decoded sizes, and each gzip
+// member's place in it. Plain Go, mirroring orkstack.v1.ContinuationObject
+// without its URI.
+type DefinitionRef struct {
+	SHA256    string              `json:"sha256"`
+	SizeBytes int64               `json:"size_bytes"`
+	RawBytes  int64               `json:"raw_bytes"`
+	Parts     []DefinitionPartRef `json:"parts"`
+}
+
+// DefinitionPartRef is one gzip member of a definition object.
+type DefinitionPartRef struct {
+	Offset    int64  `json:"offset"`
+	SizeBytes int64  `json:"size_bytes"`
+	RawBytes  int64  `json:"raw_bytes"`
+	SHA256    string `json:"sha256"`
 }
 
 // ContinuationBudget is a run's per-generation budget: how much a generation
@@ -165,7 +198,7 @@ type RunPlan struct {
 type ContinuationBudget struct {
 	Events             int64         `json:"events"`               // growth per generation, in history events
 	Bytes              int64         `json:"bytes"`                // growth per generation, in history bytes
-	CheckpointMaxBytes int64         `json:"checkpoint_max_bytes"` // = Bytes: the largest saved state a generation reads (AGENTS.md §2.2)
+	CheckpointMaxBytes int64         `json:"checkpoint_max_bytes"` // = Bytes: the largest copy a generation reads, its saved state and definition together (A4b; A4c from Stage 5)
 	RetryEvents        int64         `json:"retry_events"`         // Events/4: growth before a failed switch or a given-up hold is retried
 	RetryBytes         int64         `json:"retry_bytes"`          // Bytes/4
 	HoldPercent        int64         `json:"hold_percent"`         // the hold line, % of the cluster limit

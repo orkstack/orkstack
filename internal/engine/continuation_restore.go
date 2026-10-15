@@ -64,9 +64,8 @@ func (s *runState) restore(ctx, runCtx workflow.Context, carry *orkstackv1.RunCo
 		return RunStateCorruptCode, corruptStateMessage("it does not record when the run was created and started")
 	}
 	checkpoint := carry.GetCheckpoint()
-	if checkpoint.GetSizeBytes() > budget.CheckpointMaxBytes {
-		return RunStateCorruptCode, corruptStateMessage(fmt.Sprintf("it is %d bytes, over the %d the run carries forward",
-			checkpoint.GetSizeBytes(), budget.CheckpointMaxBytes))
+	if what := copyOverCap(budget, s.plan, carry); what != "" {
+		return RunStateCorruptCode, corruptStateMessage(what)
 	}
 
 	// 3. Scalars.
@@ -105,6 +104,17 @@ func (s *runState) restore(ctx, runCtx workflow.Context, carry *orkstackv1.RunCo
 	return "", ""
 }
 
+// copyOverCap says how a carried generation's copy exceeds its cap — one cap
+// per generation, shared by the checkpoint and a definition passed by
+// reference (AGENTS.md §2.2), since this generation copies both into its
+// history — or "" when it fits. Checked before anything is read.
+func copyOverCap(budget ContinuationBudget, plan RunPlan, carry *orkstackv1.RunContinuation) string {
+	if copied := carry.GetCheckpoint().GetSizeBytes() + plan.definitionBytes(); copied > budget.CheckpointMaxBytes {
+		return fmt.Sprintf("it is %d bytes, over the %d the run carries forward", copied, budget.CheckpointMaxBytes)
+	}
+	return ""
+}
+
 // verificationDetail is a verification failure's short detail, without the
 // subject a continuationInvalidError prefixes.
 func verificationDetail(err error) string {
@@ -128,69 +138,124 @@ func (s *runState) readCheckpoint(
 	limit HistoryLimit,
 	checkpoint *orkstackv1.ContinuationObject,
 ) ([]*orkstackv1.RunCheckpointPart, string, string) {
-	started := workflow.Now(ctx)
-	timeout := time.Duration(budget.Restore.TimeoutSeconds) * time.Second
-	deadline := started.Add(timeout)
-	size := checkpoint.GetSizeBytes()
-	loc := ContinuationLocator{URI: checkpoint.GetUri()}
+	var parts []*orkstackv1.RunCheckpointPart
+	code, detail := s.readBootstrapObject(ctx, budget, limit, bootstrapObject{
+		loc:   ContinuationLocator{URI: checkpoint.GetUri()},
+		ref:   checkpoint,
+		final: true,
+		decode: func(index int, plain []byte) error {
+			part := &orkstackv1.RunCheckpointPart{}
+			if err := proto.Unmarshal(plain, part); err != nil {
+				return invalidSavedState("part %d: %v", index, err)
+			}
+			parts = append(parts, part)
+			return nil
+		},
+	})
+	switch code {
+	case "":
+		return parts, "", ""
+	case restoreCanceled:
+		return nil, restoreCanceled, "run canceled"
+	case RunStateCorruptCode:
+		return nil, code, corruptStateMessage(detail)
+	default:
+		return nil, code, unavailableStateMessage(bootstrapTimeout(budget), s.restoreErr)
+	}
+}
+
+// bootstrapObject is one object a generation's bootstrap copies into its
+// history: where it is, its reference (size, whole and per-part SHA-256 and
+// sizes), whether its last chunk completes the bootstrap (the checkpoint's
+// does), and what to do with each verified, gunzipped part.
+type bootstrapObject struct {
+	loc    ContinuationLocator
+	ref    *orkstackv1.ContinuationObject
+	final  bool
+	decode func(index int, plain []byte) error
+}
+
+// bootstrapTimeout is the bootstrap's one read deadline, from its start.
+func bootstrapTimeout(budget ContinuationBudget) time.Duration {
+	return time.Duration(budget.Restore.TimeoutSeconds) * time.Second
+}
+
+// bootstrapClock is the bootstrap's start and its one deadline: set by its
+// first read, and shared by every later one of the same generation — a
+// definition passed by reference is read first, and the checkpoint shares
+// its deadline.
+func (s *runState) bootstrapClock(ctx workflow.Context, budget ContinuationBudget) (started, deadline time.Time) {
+	if s.bootstrapStarted.IsZero() {
+		s.bootstrapStarted = workflow.Now(ctx)
+		s.bootstrapDeadline = s.bootstrapStarted.Add(bootstrapTimeout(budget))
+	}
+	return s.bootstrapStarted, s.bootstrapDeadline
+}
+
+// readBootstrapObject copies one object into this generation's history in
+// chunks of the budget's size, at most ChunksPerTask per workflow task — the
+// count shared by every object of the bootstrap, so one workflow-task
+// completion carries at most ChunkBytes·ChunksPerTask of markers — with a
+// timer yield between batches. It verifies and decodes every part as it
+// completes, then the whole object's SHA-256 and sizes. It returns "" when
+// the object was read, restoreCanceled, RunStateCorruptCode with what
+// failed verification, or RunStateUnavailableCode (s.restoreErr holds the
+// last read's error).
+func (s *runState) readBootstrapObject(
+	ctx workflow.Context,
+	budget ContinuationBudget,
+	limit HistoryLimit,
+	obj bootstrapObject,
+) (code, detail string) {
+	started, deadline := s.bootstrapClock(ctx, budget)
+	size := obj.ref.GetSizeBytes()
 	obs := ContinuationObservationInput{Namespace: s.wf.GetNamespace(), Generation: s.generation, RestoreStartedAt: started}
 
-	readChunk := func(off, length int64) ([]byte, string) {
-		chunkObs := obs
-		chunkObs.Final = off+length >= size
-		return s.readChunkBefore(ctx, deadline, budget, limit, loc, size, off, length, chunkObs)
-	}
-	fail := func(code string) ([]*orkstackv1.RunCheckpointPart, string, string) {
-		switch code {
-		case restoreCanceled:
-			return nil, restoreCanceled, "run canceled"
-		case RunStateCorruptCode:
-			return nil, code, corruptStateMessage(errorText(s.restoreErr))
-		default:
-			return nil, code, unavailableStateMessage(timeout, s.restoreErr)
-		}
-	}
-
 	whole := sha256.New()
-	decoder := &partDecoder{refs: checkpoint.GetParts()}
-	var batch int64
+	decoder := &partDecoder{refs: obj.ref.GetParts(), decode: obj.decode}
 	for off := int64(0); off < size; {
-		if batch == budget.ChunksPerTask {
+		if s.bootstrapBatch == budget.ChunksPerTask {
 			// The yield ends the workflow task, so its completion carries at
 			// most one batch of markers. A cancel during it returns at once.
 			_ = workflow.Sleep(ctx, continuationReadYield)
 			if ctx.Err() != nil {
-				return fail(restoreCanceled)
+				return restoreCanceled, ""
 			}
-			batch = 0
+			s.bootstrapBatch = 0
 		}
 		length := min(budget.ChunkBytes, size-off)
-		data, code := readChunk(off, length)
-		if code != "" {
-			return fail(code)
+		chunkObs := obs
+		chunkObs.Final = obj.final && off+length >= size
+		data, code := s.readChunkBefore(ctx, deadline, budget, limit, obj.loc, size, off, length, chunkObs)
+		switch code {
+		case "":
+		case RunStateCorruptCode:
+			return code, errorText(s.restoreErr)
+		default:
+			return code, ""
 		}
 		whole.Write(data)
 		if err := decoder.feed(data); err != nil {
-			return nil, RunStateCorruptCode, corruptStateMessage(verificationDetail(err))
+			return RunStateCorruptCode, verificationDetail(err)
 		}
 		off += length
-		batch++
+		s.bootstrapBatch++
 	}
-	// 5. Verify the whole object before any row is adopted.
-	if hex.EncodeToString(whole.Sum(nil)) != checkpoint.GetSha256() {
-		return nil, RunStateCorruptCode, corruptStateMessage("SHA-256 mismatch")
+	// Verify the whole object before any of it is used.
+	if hex.EncodeToString(whole.Sum(nil)) != obj.ref.GetSha256() {
+		return RunStateCorruptCode, "SHA-256 mismatch"
 	}
-	if len(decoder.decoded) != len(checkpoint.GetParts()) || len(decoder.pending) != 0 {
-		return nil, RunStateCorruptCode, corruptStateMessage("its parts do not cover it")
+	if decoder.decoded != len(obj.ref.GetParts()) || len(decoder.pending) != 0 {
+		return RunStateCorruptCode, "its parts do not cover it"
 	}
 	var raw int64
-	for _, ref := range checkpoint.GetParts() {
+	for _, ref := range obj.ref.GetParts() {
 		raw += ref.GetRawBytes()
 	}
-	if raw != checkpoint.GetRawBytes() {
-		return nil, RunStateCorruptCode, corruptStateMessage("its parts decode to another size than its reference records")
+	if raw != obj.ref.GetRawBytes() {
+		return RunStateCorruptCode, "its parts decode to another size than its reference records"
 	}
-	return decoder.decoded, "", ""
+	return "", ""
 }
 
 // readChunkBefore reads one chunk of the saved state as ONE local activity,
@@ -257,36 +322,36 @@ func errorText(err error) string {
 	return err.Error()
 }
 
-// partDecoder verifies and decodes a checkpoint's parts as their bytes
-// arrive: each part's SHA-256, its gunzipped size, and its message. Pure CPU,
-// no IO; at most one part (≤ 1 MiB raw unless a single row is larger) is
-// decoded at a time.
+// partDecoder verifies and decodes an object's parts as their bytes
+// arrive: each part's SHA-256 and its gunzipped size, then decode's own
+// message check. Pure CPU, no IO; at most one part (≤ 1 MiB raw unless a
+// single row or task is larger) is decoded at a time.
 type partDecoder struct {
 	refs    []*orkstackv1.ContinuationPart
+	decode  func(index int, plain []byte) error
 	pending []byte
-	decoded []*orkstackv1.RunCheckpointPart
+	decoded int
 }
 
 func (d *partDecoder) feed(data []byte) error {
 	d.pending = append(d.pending, data...)
-	for len(d.decoded) < len(d.refs) {
-		ref := d.refs[len(d.decoded)]
+	for d.decoded < len(d.refs) {
+		ref := d.refs[d.decoded]
 		if int64(len(d.pending)) < ref.GetSizeBytes() {
 			return nil
 		}
 		member := d.pending[:ref.GetSizeBytes()]
 		if artifacts.ContinuationSHA256(member) != ref.GetSha256() {
-			return invalidSavedState("part %d SHA-256 mismatch", len(d.decoded))
+			return invalidSavedState("part %d SHA-256 mismatch", d.decoded)
 		}
 		plain, err := gunzipBounded(member, ref.GetRawBytes())
 		if err != nil {
-			return invalidSavedState("part %d: %v", len(d.decoded), err)
+			return invalidSavedState("part %d: %v", d.decoded, err)
 		}
-		part := &orkstackv1.RunCheckpointPart{}
-		if err := proto.Unmarshal(plain, part); err != nil {
-			return invalidSavedState("part %d: %v", len(d.decoded), err)
+		if err := d.decode(d.decoded, plain); err != nil {
+			return err
 		}
-		d.decoded = append(d.decoded, part)
+		d.decoded++
 		d.pending = append([]byte(nil), d.pending[ref.GetSizeBytes():]...)
 	}
 	if len(d.pending) > 0 {

@@ -15,12 +15,13 @@ import (
 
 // recordedWithTheWriter reports whether a committed fixture was recorded
 // under a plan that carries the writer's fields — Stage 2's continued and
-// in-flight-cap fixtures, and the cancel-before-dispatch fixture recorded
-// through a switch — so it is not one of the histories that predate the
-// writer, which the premise and negative tests over every fixture are about.
+// in-flight-cap fixtures, the cancel-before-dispatch fixture recorded
+// through a switch, and Stage 5's definition-by-reference fixture — so it is
+// not one of the histories that predate the writer, which the premise and
+// negative tests over every fixture are about.
 func recordedWithTheWriter(path string) bool {
 	return strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") ||
-		strings.Contains(path, "cancel-before-dispatch")
+		strings.Contains(path, "cancel-before-dispatch") || strings.Contains(path, "definition-ref")
 }
 
 // committedFixtures is every committed history fixture's path.

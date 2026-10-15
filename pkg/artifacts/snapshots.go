@@ -94,6 +94,12 @@ type RunSnapshotStore interface {
 	// with an error matching ErrNotFound when it is gone. A URI that is not a
 	// continuation key returns an error matching ErrInvalidURI.
 	ReadContinuationRange(ctx context.Context, uri string, wantSize, offset, length int64) ([]byte, error)
+	// ContinuationURI is the URI this store gives the continuation object
+	// RunContinuationKey(namespace, runID, generation, kind, sha256) names,
+	// without touching the backend: a reader that knows an object only by
+	// its key (a run's definition, named by the run id and its digest)
+	// resolves it here, so no caller ever composes a store root.
+	ContinuationURI(namespace, runID string, generation int64, kind, sha256hex string) (string, error)
 }
 
 // RunSnapshotStoreFactory builds a RunSnapshotStore from a Config. A backend

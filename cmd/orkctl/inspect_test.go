@@ -403,3 +403,8 @@ func TestRunInspect_UnknownTaskAndOtherNamespaceAreNotFound(t *testing.T) {
 		t.Fatalf("other namespace: exit %d, stderr %q", res.code, res.stderr)
 	}
 }
+
+// RunDefinition is a fake's: the start record's own definition.
+func (l *liveReader) RunDefinition(_ context.Context, _ string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
+	return start.Orkflow, nil
+}

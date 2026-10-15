@@ -33,7 +33,9 @@ func TestRunContinuationKey(t *testing.T) {
 		{name: "wide generation", namespace: "", runID: "ork-1-2", generation: 1234567, kind: ContinuationKindEvents, sha: testSHA,
 			want: "metadata/snapshots/default/ork-1-2/continuations/1234567-events-" + testSHA + ".pb.gz"},
 		{name: "negative generation", runID: "ork-1-2", generation: -1, kind: ContinuationKindEvents, sha: testSHA, wantErr: true},
-		{name: "unknown kind", runID: "ork-1-2", kind: "definition", sha: testSHA, wantErr: true},
+		{name: "definition", runID: "ork-1-2", kind: ContinuationKindDefinition, sha: testSHA,
+			want: "metadata/snapshots/default/ork-1-2/continuations/000000-definition-" + testSHA + ".pb.gz"},
+		{name: "unknown kind", runID: "ork-1-2", kind: "ledger", sha: testSHA, wantErr: true},
 		{name: "empty run", runID: "", kind: ContinuationKindEvents, sha: testSHA, wantErr: true},
 		{name: "uppercase digest", runID: "ork-1-2", kind: ContinuationKindEvents, sha: strings.ToUpper(testSHA), wantErr: true},
 		{name: "short digest", runID: "ork-1-2", kind: ContinuationKindEvents, sha: testSHA[:63], wantErr: true},
@@ -232,5 +234,39 @@ func TestParseURI_AcceptsContinuationKeysOnly(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestContinuationURI_IsWhatTheWriteReturned: a reader that knows a
+// definition object only by its run id and digest resolves the same URI the
+// write returned, without touching the backend, and a malformed coordinate
+// is refused, never composed.
+func TestContinuationURI_IsWhatTheWriteReturned(t *testing.T) {
+	store, _ := newLocalSnapshotStore(t)
+	ctx := context.Background()
+	data := []byte("gzip members of a planned definition")
+	sum := ContinuationSHA256(data)
+	written, err := store.WriteContinuation(ctx, "team-a", "ork-1-2", 0, ContinuationKindDefinition, data)
+	if err != nil {
+		t.Fatalf("WriteContinuation: %v", err)
+	}
+	resolved, err := store.ContinuationURI("team-a", "ork-1-2", 0, ContinuationKindDefinition, sum)
+	if err != nil {
+		t.Fatalf("ContinuationURI: %v", err)
+	}
+	if resolved != written {
+		t.Fatalf("ContinuationURI = %q, the write returned %q", resolved, written)
+	}
+	if !ContinuationURIMatches(resolved, "team-a", "ork-1-2", 0, ContinuationKindDefinition, sum) {
+		t.Fatalf("URI %q does not match its own key", resolved)
+	}
+	s3, err := (&S3RunSnapshotStore{bucket: "runs"}).ContinuationURI("team-a", "ork-1-2", 0, ContinuationKindDefinition, sum)
+	if err != nil || !ContinuationURIMatches(s3, "team-a", "ork-1-2", 0, ContinuationKindDefinition, sum) {
+		t.Fatalf("s3 ContinuationURI = %q (%v), want a URI matching its key", s3, err)
+	}
+	for _, bad := range []struct{ kind, sum string }{{"ledger", sum}, {ContinuationKindDefinition, "not-hex"}} {
+		if uri, err := store.ContinuationURI("team-a", "ork-1-2", 0, bad.kind, bad.sum); err == nil {
+			t.Fatalf("ContinuationURI(%q, %q) = %q, want a refusal", bad.kind, bad.sum, uri)
+		}
 	}
 }

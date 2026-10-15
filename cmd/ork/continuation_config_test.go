@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -140,4 +141,56 @@ func TestLoadConfig_ContinuationIsOnByDefault(t *testing.T) {
 	if err := loadConfig().limitsErr; err != nil {
 		t.Fatalf("the same limit with continuation turned off = %v, want it to boot", err)
 	}
+}
+
+// TestLoadConfig_DefinitionByReferenceNeedsContinuation: a definition passed
+// by reference shares the continuation copy's bound, so an explicit true
+// without engine.continuation.enabled is refused at boot, naming both keys;
+// an unset key boots with continuation off whatever the built-in default
+// (today's false, or Stage 7's true), its effective value false; and an
+// unset key with continuation on takes the built-in default.
+func TestLoadConfig_DefinitionByReferenceNeedsContinuation(t *testing.T) {
+	t.Run("an explicit true with continuation off is refused", func(t *testing.T) {
+		t.Setenv("ORK_CONTINUATION_ENABLED", "false")
+		t.Setenv("ORK_DEFINITION_BY_REFERENCE", "true")
+		err := loadConfig().limitsErr
+		if err == nil || !strings.Contains(err.Error(), "ORK_DEFINITION_BY_REFERENCE") ||
+			!strings.Contains(err.Error(), "ORK_CONTINUATION_ENABLED") ||
+			!strings.Contains(err.Error(), "engine.definition_by_reference") || !strings.Contains(err.Error(), "engine.continuation.enabled") {
+			t.Fatalf("refusal = %v, want one naming both keys", err)
+		}
+	})
+	t.Run("a malformed value is refused", func(t *testing.T) {
+		t.Setenv("ORK_DEFINITION_BY_REFERENCE", "perhaps")
+		if err := loadConfig().limitsErr; err == nil || !strings.Contains(err.Error(), "ORK_DEFINITION_BY_REFERENCE") {
+			t.Fatalf("refusal = %v, want one naming the key", err)
+		}
+	})
+	for _, builtIn := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unset, continuation off, built-in %t", builtIn), func(t *testing.T) {
+			enabled, explicit, err := definitionByReferenceFromEnv(false, builtIn)
+			if err != nil || enabled || explicit {
+				t.Fatalf("= %t (explicit %t, %v), want false, booting", enabled, explicit, err)
+			}
+		})
+		t.Run(fmt.Sprintf("unset, continuation on, built-in %t", builtIn), func(t *testing.T) {
+			enabled, explicit, err := definitionByReferenceFromEnv(true, builtIn)
+			if err != nil || enabled != builtIn || explicit {
+				t.Fatalf("= %t (explicit %t, %v), want the built-in %t", enabled, explicit, err, builtIn)
+			}
+		})
+	}
+	t.Run("the boot's effective value", func(t *testing.T) {
+		t.Setenv("ORK_CONTINUATION_ENABLED", "false")
+		if cfg := loadConfig(); cfg.limitsErr != nil || cfg.definitionByReference || cfg.definitionByReferenceSet {
+			t.Fatalf("continuation off, key unset = %t (set %t, %v), want false", cfg.definitionByReference,
+				cfg.definitionByReferenceSet, cfg.limitsErr)
+		}
+		t.Setenv("ORK_CONTINUATION_ENABLED", "true")
+		t.Setenv("ORK_DEFINITION_BY_REFERENCE", "true")
+		if cfg := loadConfig(); cfg.limitsErr != nil || !cfg.definitionByReference || !cfg.definitionByReferenceSet {
+			t.Fatalf("continuation on, key true = %t (set %t, %v), want true", cfg.definitionByReference,
+				cfg.definitionByReferenceSet, cfg.limitsErr)
+		}
+	})
 }

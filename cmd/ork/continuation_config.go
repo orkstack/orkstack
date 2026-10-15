@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
@@ -112,4 +113,36 @@ func inFlightCapFromEnv() (int32, error) {
 			value, minRunMaxInFlight, maxRunMaxInFlight)
 	}
 	return value, nil
+}
+
+// definitionByReferenceFromEnv reads ORK_DEFINITION_BY_REFERENCE
+// (engine.definition_by_reference): whether a planned definition over a
+// start payload's 256 KiB travels by reference. A definition passed by
+// reference shares the continuation copy's bound, so it needs continuation:
+//
+//   - an explicit true without engine.continuation.enabled is refused,
+//     naming both keys;
+//   - an unset key — set by neither the configuration document, which is
+//     applied to the environment before this runs, nor the environment —
+//     takes builtIn AND continuationEnabled, so a release that flips the
+//     built-in default never refuses to boot a deployment that turned
+//     continuation off.
+//
+// builtIn is engine.DefaultDefinitionByReference; explicit reports whether
+// the key was set.
+func definitionByReferenceFromEnv(continuationEnabled, builtIn bool) (enabled, explicit bool, err error) {
+	raw, set := os.LookupEnv("ORK_DEFINITION_BY_REFERENCE")
+	if !set || raw == "" {
+		return builtIn && continuationEnabled, false, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, true, fmt.Errorf("ORK_DEFINITION_BY_REFERENCE=%q must be true or false: %w", raw, err)
+	}
+	if value && !continuationEnabled {
+		return false, true, fmt.Errorf("ORK_DEFINITION_BY_REFERENCE=true needs ORK_CONTINUATION_ENABLED=true " +
+			"(engine.definition_by_reference needs engine.continuation.enabled): a definition passed by " +
+			"reference is copied into each history under the continuation copy's bound")
+	}
+	return value, true, nil
 }

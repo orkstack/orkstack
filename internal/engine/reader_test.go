@@ -295,6 +295,16 @@ func (s *countingSnapshotStore) WriteContinuation(context.Context, string, strin
 	return "", fmt.Errorf("not implemented")
 }
 
+// ContinuationURI is the URI this store gives a continuation key: under the
+// s3://test/ root its writes use.
+func (s *countingSnapshotStore) ContinuationURI(namespace, runID string, generation int64, kind, sha256hex string) (string, error) {
+	key, err := artifacts.RunContinuationKey(namespace, runID, generation, kind, sha256hex)
+	if err != nil {
+		return "", err
+	}
+	return "s3://test/" + key, nil
+}
+
 // ReadContinuationRange counts as a read, as ReadSnapshot does.
 func (s *countingSnapshotStore) ReadContinuationRange(_ context.Context, uri string, wantSize, offset, length int64) ([]byte, error) {
 	s.reads++
@@ -1198,6 +1208,10 @@ func (s *failingSnapshotStore) WriteContinuation(context.Context, string, string
 
 func (s *failingSnapshotStore) ReadContinuationRange(context.Context, string, int64, int64, int64) ([]byte, error) {
 	return nil, s.err
+}
+
+func (s *failingSnapshotStore) ContinuationURI(namespace, runID string, generation int64, kind, sha256hex string) (string, error) {
+	return artifacts.RunContinuationKey(namespace, runID, generation, kind, sha256hex)
 }
 
 // TestTemporalRunReader_GetRunSurvivesAMissingSnapshotOnALiveRun is the run

@@ -350,8 +350,9 @@ then the variable it becomes.
 | `engine.history.max_bytes` | `ORK_HISTORY_MAX_BYTES` | `50 MiB` | `ork` | the same, for history size. Before each dispatch the run also counts that dispatch's own command (a task's input, up to `engine.limits.values_max_bytes`), so it never records one its failure path could not follow. The reserve assumes completion results of ≤ 8 KiB each; a run whose failure path lands many larger results at once can still reach the cluster's size limit and be terminated by the cluster; this is the guard's one known gap, and such a run is still reported `RUN_HISTORY_LIMIT` (the reader maps the cluster's history-limit termination, "Workflow history count/size exceeds limit.", to it), never `RUN_TERMINATED`. At least 64 KiB; anything else is refused at boot. Read at submit, so a change applies to new runs. Both limits are carried once per run tree, on the top-level run's plan (about 0.4 KB), so a run whose plan is already within that much of its 256 KiB bound is refused at submit (`FAILED_PRECONDITION`, naming the size) |
 | `engine.continuation.enabled` | `ORK_CONTINUATION_ENABLED` | `true` | `ork` | runs carry on into a fresh history once theirs has grown past the budget below, at their next moment with nothing running, so a large or long-lived run is bounded per history rather than stopped `RUN_HISTORY_LIMIT` (see §5, "A run that pauses new tasks", and §2, "Runs that span several executions"). On by default since the release after the one that first carried runs on (§4, "Rolling back"). The three keys below are validated only when this is true, so a deployment that lowers `engine.history.max_events` below 32,768 or `engine.history.max_bytes` below 40 MiB must lower `engine.continuation.events` or `.bytes` with it, or turn this off: it is refused at boot otherwise, naming the keys. Read at submit, so a change applies to new runs |
 | `engine.continuation.events` | `ORK_CONTINUATION_EVENTS` | `8192` | `ork` | history growth (events) after which a run carries on at its next moment with nothing running. A run with no such moment pauses new tasks once its history plus what its failure path still needs reaches 60% of the limit, and carries on once what was running finishes. At least 50, at most a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled. Read at submit, so a change applies to new runs |
-| `engine.continuation.bytes` | `ORK_CONTINUATION_BYTES` | `8 MiB` | `ork` | the same, for history bytes; also the largest saved state a run carries forward (the one bounded copy AGENTS.md §2.2 allows into history). A run whose saved state is larger carries on in its current history instead, and may stop `RUN_HISTORY_LIMIT` naming the size. At least 16 KiB, at most a fifth of `engine.history.max_bytes`; anything else is refused at boot when continuation is enabled |
+| `engine.continuation.bytes` | `ORK_CONTINUATION_BYTES` | `8 MiB` | `ork` | the same, for history bytes; also the most a run copies into any one of its histories (the one bounded copy AGENTS.md §2.2 allows into history): the saved state it carries forward, plus its definition when that is passed by reference (`engine.definition_by_reference`, below), which may take at most a quarter of it, compressed. A run whose saved state is larger carries on in its current history instead, and may stop `RUN_HISTORY_LIMIT` naming the size. At least 16 KiB, at most a fifth of `engine.history.max_bytes`; anything else is refused at boot when continuation is enabled |
 | `engine.continuation.restore_timeout` | `ORK_CONTINUATION_RESTORE_TIMEOUT` | `1h` | `ork` | how long a run that carried on waits for object storage to return its saved state before it fails `RUN_STATE_UNAVAILABLE`, explicitly. Each read is retried with a backoff doubling from 1 s to at most 1 minute, and a retry that would start past the timeout is not made, so the run stops at its last read inside the window — up to one backoff early (31 s into a 1m timeout, within the last minute of the default hour). 1m to 8h, and its worst-case history — about `128 + 3 per 8 s` events at the default bytes (1,478 at 1h, 10,928 at 8h)— must fit in a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled, naming this key, `engine.continuation.bytes` and `engine.history.max_events`. Each await still open when a run carries on adds one more event to that restore (its deadline timer, recreated), which the run's history guard counts like any other |
+| `engine.definition_by_reference` | `ORK_DEFINITION_BY_REFERENCE` | `false` | `ork` | a top-level run whose planned definition is over the 256 KiB a run's start may carry travels by reference instead: the start carries a stub naming it, and the run copies the definition into its own history in bounded chunks, sharing the copy bound below (`engine.continuation.bytes`), of which it may take at most a quarter, compressed (2 MiB at the default); a larger one is refused at submit and at apply, "split it into composed Orkflows" (`docs/DSL.md`, "How many tasks an Orkflow may declare"). Needs `engine.continuation.enabled`: an explicit `true` without it is refused at boot, naming both keys, and when neither the configuration file nor the environment sets this key it is on only where the built-in default is on and continuation is (the boot logs the effective value). A submit that needs it is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs an older release (§5, "Engine capabilities and the fleet check"). Keep it off until every replica runs a release that has it; turn it off and wait for its runs before rolling back below that release (§4, R3) |
 | `engine.run_max_in_flight` | `ORK_RUN_MAX_IN_FLIGHT` | `1000` | `ork` | the most activities, child runs and pins one run keeps pending at once; more wait `PENDING`, exactly as on a saturated pool, and dispatch resumes as running work finishes. An open pin's needs are exempt, below an absolute stop at 1,900. 16 to 1,800; anything else is refused at boot. Without it, a run above the cluster's 2,000 pending activities would stall. Read at submit, so a change applies to new runs |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
@@ -1334,6 +1335,19 @@ fan-out's per-item bounds differently, so it could fail such a run's replay.
 Once a rolled-back process polls, the fleet check (§5) already refuses new
 submits that need more than 1,000 items.
 
+**Before rolling back below the release that passes large definitions by
+reference** (R3), set `engine.definition_by_reference` off on every replica,
+then wait until every run started with its definition by reference has
+finished. An older release cannot read such a run's definition: it replays
+the run's history into a nondeterminism error and leaves the run stuck. The
+check: each such start logs `definition_by_reference=true` with its
+`run_id` ("run starts with its definition passed by reference"); list those
+run ids and confirm none is still running (`orkctl run get <id>`). Under
+versioning a `RunWorkflow` is Pinned, so such a run stays on the build that
+started it until it finishes; drain that build before decommissioning it.
+Once a rolled-back process polls, the fleet check (§5) refuses new submits
+that would need a reference.
+
 ### Back to unversioned workers
 
 To take a deployment out of versioned routing altogether — an escape hatch,
@@ -2142,7 +2156,7 @@ processes could decide it, and refuses while any of them is too old.
 
 - **What each process advertises.** Every `ork` process polls Temporal with
   its SDK identity followed by ` ork-caps=<list>`, for example
-  `48213@engine-2@ ork-caps=each-items-10k`, as
+  `48213@engine-2@ ork-caps=each-items-10k,definition-ref`, as
   `temporal task-queue describe --task-queue ork-tasks` shows it. The run
   worker and the projection worker share the process's client, so both carry
   it. The releases page still counts one process per identity.
@@ -2155,16 +2169,54 @@ processes could decide it, and refuses while any of them is too old.
   namespace is ignored.
 - **Which capabilities exist.** `each-items-10k`: a run tree in which some
   run declares more than 1,000 fan-out items (`engine.each_max_items`, §1).
+  `definition-ref`: a top-level run whose planned definition is over the
+  256 KiB a start may carry, with `engine.definition_by_reference` on (§1).
   Only such a submit — a direct submit, a trigger or a schedule fire — reads
   the poller list, once, never cached.
 - **What a refused submit says.** `FAILED_PRECONDITION`, naming the Orkflow,
   how many items it declares and how many engine processes run a release
   that cannot run them ("2 engine processes … finish the rollout first") —
-  a count, never an identity, because identities carry host names. The
-  identities are in the engine's own `missing_capability` warning
-  (`identities`).
+  a count, never an identity, because identities carry host names; for a
+  definition too large to start, today's 256 KiB refusal followed by "2
+  engine processes run a release that cannot yet read a definition this
+  large". The identities are in the engine's own `missing_capability`
+  warning (`identities`).
+- **The reader side.** An older process can still serve API requests while
+  a rollout drains. Keep `engine.definition_by_reference` off until every
+  replica runs the release that has it (§1).
 - **Fail closed.** A poller list that cannot be read refuses the submit
   `UNAVAILABLE`; ask again once the cluster answers.
+
+### Definitions passed by reference: the objects no run reads
+
+With `engine.definition_by_reference` on (§1), a top-level run whose planned
+definition is over the 256 KiB a start may carry has that definition written
+under its own snapshot prefix (`continuations/000000-definition-{sha256}.pb.gz`,
+`docs/STORAGE.md`) immediately before its start, and every history of the run
+copies it in, sharing the one copy bound per history with the run's saved
+state (`engine.continuation.bytes`; the definition takes at most a quarter of
+it, compressed). Run cleanup reclaims it with the run's prefix. Three kinds of
+such an object belong to no run that started, so no cleanup reaches them:
+
+- the engine died between the write and the start;
+- the cluster refused the run id as taken, and the submit started the run
+  under a fresh id with its own copy;
+- a schedule fire's preparation was retried after its write (only when the
+  preparation's own result was lost), and minted a fresh id.
+
+Each is at most a quarter of `engine.continuation.bytes` (2 MiB at the
+default), never read, and immutable. A bucket lifecycle rule must never
+expire `continuations/` (§1, "Retention cleanup and bucket lifecycle rules"),
+so sweep them by hand when you want the space back: an object
+`metadata/snapshots/{ns}/{run-id}/continuations/000000-definition-{sha256}.pb.gz`
+whose run id `orkctl run get -n {ns} {run-id}` answers `NotFound` for, older
+than the longest a submit takes (minutes), is one of these. The rule finds
+the first and third kinds always, and the second when the run that held the
+id belongs to another namespace. When that run belongs to the same
+namespace, `orkctl run get` finds it, so the rule never names the object, and
+none is needed: it lies under that run's own prefix, and that run's cleanup
+reclaims it with the rest of the prefix. Never delete an object whose run id
+`orkctl run get` finds — that run's own definition is stored the same way.
 
 ## 6. Replay safety across versions
 
@@ -2229,6 +2281,18 @@ runs. The fixtures `run-continued-g0-v1.json` and `run-continued-g1-v1.json`
 negative tests (`internal/engine/testdata/history/README.md`); a carried
 generation is replayed as the execution of the run's own workflow id, which
 is where it reads its run id from.
+
+**A definition passed by reference is a versioned change.** A run whose
+plan names its definition by reference (§1, `engine.definition_by_reference`)
+asks the `definition-by-reference` version once, in its first history, before
+anything else, and every later history reads that decision from what the run
+carried forward, never asking again; it then copies the definition into its
+history in the pinned chunk and batch sizes of its continuation budget. A
+history recorded by a build that ignored the plan field replays its
+`DefaultVersion` branch: the start's stub has no tasks, and the run ends
+`INVALID_ORKFLOW` as that build recorded. The fixture `run-definition-ref-v1.json`,
+with the definition object its recording wrote, guards it with its command,
+payload and negative tests (`internal/engine/testdata/history/README.md`).
 
 **The guard's lookahead at a dispatch is a versioned change.** Before each
 dispatch the guard asks whether the run could still end cleanly once that

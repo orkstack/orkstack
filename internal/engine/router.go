@@ -38,6 +38,10 @@ type RunReader interface {
 	// RunStart reads what a run was started with — its pinned definition and
 	// its plan — from its own start event (TemporalRunReader.RunStart).
 	RunStart(ctx context.Context, runID string) (*RunStartRecord, error)
+	// RunDefinition resolves the definition a start record names: its own
+	// for an inline one, the verified object for one passed by reference
+	// (TemporalRunReader.RunDefinition). Only the await doors call it.
+	RunDefinition(ctx context.Context, runID string, start *RunStartRecord) (*orkstackv1.Orkflow, error)
 }
 
 // RunStarter starts and cancels runs, as the router hands it out. Same reason

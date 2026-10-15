@@ -110,3 +110,8 @@ func (nopReader) RunningCount(context.Context, string, int64) (int64, error) { r
 func (nopReader) RunStart(context.Context, string) (*engine.RunStartRecord, error) {
 	return nil, engine.ErrRunNotFound
 }
+
+// RunDefinition is a fake's: the start record's own definition.
+func (nopReader) RunDefinition(_ context.Context, _ string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
+	return start.Orkflow, nil
+}

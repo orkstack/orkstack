@@ -165,6 +165,12 @@ func (s *LocalRunSnapshotStore) parseURI(uri string) (string, error) {
 	return key, nil
 }
 
+// ContinuationURI is the URI this store gives the continuation object at
+// RunContinuationKey(namespace, runID, generation, kind, sha256hex).
+func (s *LocalRunSnapshotStore) ContinuationURI(namespace, runID string, generation int64, kind, sha256hex string) (string, error) {
+	return continuationURI(s.uri, namespace, runID, generation, kind, sha256hex)
+}
+
 // WriteContinuation writes one continuation object create-if-absent: the
 // bytes go to a temp file, which link(2) publishes at the content-addressed
 // key — the primitive that is both atomic and create-if-absent, as

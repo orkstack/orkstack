@@ -104,7 +104,11 @@ func (s *runState) endUnrestorable(
 	s.startedAt = carry.GetStartedAt()
 	s.finished = timestamppb.New(workflow.Now(ectx))
 	s.status = orkstackv1.Status_STATUS_FAILED
-	s.runError = &orkstackv1.Error{Code: code, Message: message, Category: runStateCategory(code)}
+	// The category comes from the same mapping the reader applies to the
+	// execution's close (runLevelFailureCategory), so a RUN_DEFINITION_* or
+	// RUN_STATE_* code reads with one category whichever generation it ends
+	// and whichever path serves it (AGENTS.md §4).
+	s.runError = &orkstackv1.Error{Code: code, Message: message, Category: runLevelFailureCategory(code)}
 	eventType := orkstackv1.EventType_EVENT_TYPE_RUN_FAILED
 	if canceled {
 		s.status = orkstackv1.Status_STATUS_CANCELED
@@ -548,16 +552,19 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		return nil, "", nil
 	}
 
-	// 5. The checkpoint, refused over its cap.
+	// 5. The checkpoint, refused over its cap — which a definition passed
+	// by reference shares: the next generation copies both into its
+	// history (AGENTS.md §2.2).
+	definition := s.plan.definitionBytes()
 	var checkpoint *orkstackv1.ContinuationObject
 	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
-		budget.CheckpointMaxBytes, obs).Get(writeCtx, &checkpoint); err != nil {
+		budget.CheckpointMaxBytes-definition, obs).Get(writeCtx, &checkpoint); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
-	if checkpoint.GetSizeBytes() > budget.CheckpointMaxBytes {
+	if copied := checkpoint.GetSizeBytes() + definition; copied > budget.CheckpointMaxBytes {
 		s.setNoSwitch(ctx, inFlight, fmt.Sprintf("its saved state is %s, more than the %s a run carries forward",
-			savedStateSize(checkpoint.GetSizeBytes()), savedStateSize(budget.CheckpointMaxBytes)))
+			savedStateSize(copied), savedStateSize(budget.CheckpointMaxBytes)))
 		return nil, "", nil
 	}
 
@@ -649,10 +656,12 @@ func (s *runState) carryReason() string {
 
 // RestoreHistoryBound is the most history events one generation's bootstrap
 // appends, from its budget alone:
-//   - one marker per chunk of its largest copy: ceil(CheckpointMaxBytes / ChunkBytes);
+//   - one marker per chunk of its largest copy: N = ceil(CheckpointMaxBytes / ChunkBytes);
 //   - five events per batch yield (TimerStarted, TimerFired, and the
-//     WorkflowTaskCompleted/Scheduled/Started around it);
-//   - 24 for its first and last workflow tasks and an endUnrestorable;
+//     WorkflowTaskCompleted/Scheduled/Started around it), ceil(N / ChunksPerTask);
+//   - 24 for its first and last workflow tasks and an endUnrestorable — by
+//     count 12 of them: 3 opening its first task, its terminal snapshot's
+//     marker, 7 for PublishEvent's round trip, and the close;
 //   - while reads fail, at most failRate events per second for the whole
 //     restore timeout, where failRate = max(3/8, 6/minServerBackoff):
 //   - a workflow-task heartbeat (WorkflowTaskCompleted/Scheduled/Started)
@@ -666,6 +675,15 @@ func (s *runState) carryReason() string {
 //     BackoffMax.
 //     The two regimes never overlap in time: the task is open in the first
 //     and closed in the second.
+//
+// A definition passed by reference shares the copy's cap with the
+// checkpoint (copyOverCap) and is read as a second object first, so its d
+// bytes and the checkpoint's k, d+k at most the cap, can each end in a
+// partial chunk: ceil(d/C) + ceil(k/C) ≤ N + 1 markers. Both reads share one
+// batch counter, so N+1 reads take floor(N/P) yields, never more than the
+// ceil(N/P) charged above. The split adds that one marker and no yield, and
+// the 24's spare 12 hold it (TestRestoreHistoryBound_DefinitionAndCheckpointSplitAtTheCap
+// pins the worst case at every batch size).
 //
 // It assumes the cluster's default 10 s workflow-task timeout: StartRun sets
 // none. The recreated deadline timer of each await open at the switch adds
@@ -824,7 +842,9 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.baseEvents": fieldEphemeral, "runState.baseBytes": fieldEphemeral, "runState.genEvents": fieldEphemeral,
 	"runState.capLogged": fieldEphemeral, "runState.admitted": fieldEphemeral, "runState.pinClosure": fieldEphemeral,
 	"runState.pinClosureFresh": fieldEphemeral, "runState.gaveUp": fieldEphemeral, "runState.restoreErr": fieldEphemeral,
-	"runState.passReserve": fieldEphemeral, "runState.passCharge": fieldEphemeral, "runState.pendingHandlers": fieldEphemeral,
+	"runState.bootstrapStarted": fieldEphemeral, "runState.bootstrapDeadline": fieldEphemeral,
+	"runState.bootstrapBatch": fieldEphemeral,
+	"runState.passReserve":    fieldEphemeral, "runState.passCharge": fieldEphemeral, "runState.pendingHandlers": fieldEphemeral,
 	"runState.hist": fieldEphemeral, "runState.guardOff": fieldEphemeral,
 	"eachState.inFlight": fieldEphemeral,
 	// A pin's runtime: no pin is opening, open or closing at a switch, and

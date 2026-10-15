@@ -1623,13 +1623,16 @@ func closedExecution(
 // isRunLevelFailureType reports whether a workflow failure's ApplicationError
 // type is a code the run itself owns, rather than the cause's category.
 func isRunLevelFailureType(failureType string) bool {
-	return failureType == RunHistoryLimitCode || isRunStateCode(failureType)
+	return failureType == RunHistoryLimitCode || isRunStateCode(failureType) || isRunDefinitionCode(failureType)
 }
 
 // runLevelFailureCategory is the category of a run-level failure code.
 func runLevelFailureCategory(failureType string) orkstackv1.FailureCategory {
 	if isRunStateCode(failureType) {
 		return runStateCategory(failureType)
+	}
+	if isRunDefinitionCode(failureType) {
+		return runDefinitionCategory(failureType)
 	}
 	return orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
 }
@@ -1717,11 +1720,15 @@ func cloneTime(ts *timestamppb.Timestamp) *timestamppb.Timestamp {
 	return timestamppb.New(ts.AsTime())
 }
 
-// RunStartRecord is what a run was started with: the planned definition and
-// the plan, decoded from its WorkflowExecutionStarted event.
+// RunStartRecord is what a run was started with: the start definition and
+// the plan, decoded from its WorkflowExecutionStarted event. For a run whose
+// definition travels by reference (Plan.Definition), Orkflow is the stub the
+// start carried — name, version, namespace and digest, no tasks — and
+// ByReference is set; RunDefinition resolves it.
 type RunStartRecord struct {
-	Orkflow *orkstackv1.Orkflow
-	Plan    RunPlan
+	Orkflow     *orkstackv1.Orkflow
+	Plan        RunPlan
+	ByReference bool
 }
 
 // RunStart reads a run's first history event and decodes its definition and
@@ -1766,5 +1773,61 @@ func (r *TemporalRunReader) RunStart(ctx context.Context, runID string) (*RunSta
 	if err := r.converter.FromPayload(payloads[3], &record.Plan); err != nil {
 		return nil, fmt.Errorf("engine: run %s: decode the started plan: %w", runID, err)
 	}
+	record.ByReference = record.Plan.Definition != nil
 	return record, nil
+}
+
+// RunDefinition is the definition a run was started with, whatever way it
+// travelled: start.Orkflow for an inline one, and for one passed by
+// reference the object under the run's own prefix — its key derived from
+// runID, the run asked about (artifacts.RunContinuationKey, kind
+// "definition") — its reference checked against the plan's cap first, then
+// read in one range of exactly its recorded size from an object the store
+// confirms is that size, verified by SHA-256, part by part, and
+// checked against the stub's name, version, namespace and digest. It is not
+// workflow code. Only the await doors call it, because they read the
+// definition's tasks; RunStart itself reads one history event and no object.
+// A failure is an error naming the run, never the object.
+func (r *TemporalRunReader) RunDefinition(ctx context.Context, runID string, start *RunStartRecord) (*orkstackv1.Orkflow, error) {
+	if start == nil {
+		return nil, fmt.Errorf("engine: run %s: no start record to read its definition from", runID)
+	}
+	if !start.ByReference {
+		return start.Orkflow, nil
+	}
+	if r.snapshots == nil {
+		return nil, fmt.Errorf("engine: run %s: its definition is stored by reference and no snapshot store is configured", runID)
+	}
+	// The reference is checked against the plan's cap before anything is
+	// read, and the read takes exactly the bytes it records from an object
+	// whose stored size must match: a stored object of any other size is
+	// refused by the store before its body is taken, so this read is
+	// bounded by the cap whatever the store holds.
+	ref := start.Plan.Definition
+	budget := start.Plan.Continuation
+	if !budget.valid() {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, invalidDefinition("the run's plan names no valid budget to read it with"))
+	}
+	if what := ref.check(budget.CheckpointMaxBytes); what != "" {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, invalidDefinition("%s", what))
+	}
+	uri, err := r.snapshots.ContinuationURI(start.Orkflow.GetNamespace(), runID, 0,
+		artifacts.ContinuationKindDefinition, ref.SHA256)
+	if err != nil {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, invalidDefinition("its reference names no valid key"))
+	}
+	data, err := r.snapshots.ReadContinuationRange(ctx, uri, ref.SizeBytes, 0, ref.SizeBytes)
+	if err != nil {
+		err = withoutObjectName(err, uri, subjectDefinition)
+		if errors.Is(err, artifacts.ErrContinuationSize) {
+			return nil, fmt.Errorf("engine: run %s: %w", runID,
+				invalidDefinition("it is not the size it was saved at: %v", err))
+		}
+		return nil, fmt.Errorf("engine: run %s: read its definition: %w", runID, err)
+	}
+	wf, err := DecodeDefinitionObject(data, ref, start.Orkflow)
+	if err != nil {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, err)
+	}
+	return wf, nil
 }

@@ -157,6 +157,10 @@ var Schema = []Var{
 	{Path: "engine.continuation.events", Env: "ORK_CONTINUATION_EVENTS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(engine.DefaultContinuationEvents)},
 	{Path: "engine.continuation.bytes", Env: "ORK_CONTINUATION_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultContinuationBytes)},
 	{Path: "engine.continuation.restore_timeout", Env: "ORK_CONTINUATION_RESTORE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultContinuationRestoreTimeout)},
+	// ORK_DEFINITION_BY_REFERENCE's fallback is
+	// engine.DefaultDefinitionByReference — on, when unset, only where
+	// continuation is on (cmd/ork's definitionByReferenceFromEnv).
+	{Path: "engine.definition_by_reference", Env: "ORK_DEFINITION_BY_REFERENCE", Binaries: usesOrk, Kind: KindBool, Default: formatBool(engine.DefaultDefinitionByReference)},
 	// ORK_RUN_MAX_IN_FLIGHT's fallback is engine.DefaultRunMaxInFlight: the
 	// most activities, child runs and pins one run keeps pending.
 	{Path: "engine.run_max_in_flight", Env: "ORK_RUN_MAX_IN_FLIGHT", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultRunMaxInFlight))},

@@ -169,13 +169,31 @@ func RunWorkflow(
 	} else if runID == "" {
 		return nil, temporal.NewNonRetryableApplicationError("run id is required", "INVALID_RUN", nil)
 	}
-	if wf == nil || len(wf.GetTasks()) == 0 {
+	if wf == nil {
+		return nil, temporal.NewNonRetryableApplicationError("orkflow has no tasks", "INVALID_ORKFLOW", nil)
+	}
+	// A definition too large for a start payload travels by reference: the
+	// start carries a stub, and every generation copies the definition into
+	// its own history before it decides anything (definition_ref.go).
+	started := wf
+	loader, loaded, ended, end, endErr := loadDefinitionArgument(ctx, runID, wf, input, plan, carry)
+	if end {
+		return ended, endErr
+	}
+	if loader != nil {
+		wf = loaded
+	}
+	if len(wf.GetTasks()) == 0 {
 		return nil, temporal.NewNonRetryableApplicationError("orkflow has no tasks", "INVALID_ORKFLOW", nil)
 	}
 
 	state := newRunState(ctx, runID, wf, input, plan)
-	// The arguments as passed, handed on unchanged at a switch.
-	state.wfArg, state.inputArg = wf, input
+	// The arguments as passed, handed on unchanged at a switch: for a
+	// definition passed by reference, the stub.
+	state.wfArg, state.inputArg = started, input
+	if loader != nil {
+		state.adoptDefinitionLoad(loader, carry)
+	}
 	// Every task activity is scheduled on runCtx, never on ctx directly, so the
 	// run has one handle that ends all of them at once. Temporal does NOT
 	// cancel activities a workflow function abandons by returning: only an
@@ -631,7 +649,10 @@ type runState struct {
 	// every task classify said runs; pinClosure is pinClosureAllows' set,
 	// rebuilt (lazily) once per pass; gaveUp is the last structural
 	// give-up's reason; restoreErr is the last error a bootstrap read
-	// returned.
+	// returned. bootstrapStarted and bootstrapDeadline are the bootstrap's
+	// start and its one read deadline, and bootstrapBatch the reads of its
+	// current batch: shared by a definition passed by reference and the
+	// checkpoint read after it (readBootstrapObject).
 	generation            int64
 	wfArg                 *orkstackv1.Orkflow
 	inputArg              *orkstackv1.Payload
@@ -652,6 +673,9 @@ type runState struct {
 	pinClosureFresh       bool
 	gaveUp                string
 	restoreErr            error
+	bootstrapStarted      time.Time
+	bootstrapDeadline     time.Time
+	bootstrapBatch        int64
 }
 
 // pinState is one pin's whole life inside this run: who belongs to it, and
