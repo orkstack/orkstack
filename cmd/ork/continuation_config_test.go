@@ -194,3 +194,20 @@ func TestLoadConfig_DefinitionByReferenceNeedsContinuation(t *testing.T) {
 		}
 	})
 }
+
+// TestLoadConfig_SnapshotOverlays: ORK_SNAPSHOT_OVERLAYS (engine.snapshot_overlays)
+// is off when unset, takes true or false, and refuses anything else at boot,
+// naming the variable.
+func TestLoadConfig_SnapshotOverlays(t *testing.T) {
+	if cfg := loadConfig(); cfg.limitsErr != nil || cfg.snapshotOverlays != engine.DefaultSnapshotOverlays {
+		t.Fatalf("unset = %t (%v), want the built-in default %t", cfg.snapshotOverlays, cfg.limitsErr, engine.DefaultSnapshotOverlays)
+	}
+	t.Setenv("ORK_SNAPSHOT_OVERLAYS", "true")
+	if cfg := loadConfig(); cfg.limitsErr != nil || !cfg.snapshotOverlays {
+		t.Fatalf("true = %t (%v)", cfg.snapshotOverlays, cfg.limitsErr)
+	}
+	t.Setenv("ORK_SNAPSHOT_OVERLAYS", "sometimes")
+	if err := loadConfig().limitsErr; err == nil || !strings.Contains(err.Error(), "ORK_SNAPSHOT_OVERLAYS") {
+		t.Fatalf("a malformed value = %v, want a boot refusal naming ORK_SNAPSHOT_OVERLAYS", err)
+	}
+}
