@@ -34,13 +34,11 @@ func lastPlan(t *testing.T, starter *fakeStarter) engine.RunPlan {
 	return starter.plans[len(starter.plans)-1]
 }
 
-// TestSnapshotOverlay_OffByDefault: an unset engine.snapshot_overlays is off,
-// and with it off no plan carries a policy, however large the run, and the
-// fleet is never asked.
-func TestSnapshotOverlay_OffByDefault(t *testing.T) {
-	if engine.DefaultSnapshotOverlays {
-		t.Fatal("engine.DefaultSnapshotOverlays is on; Stage 6 ships it off")
-	}
+// TestSnapshotOverlay_OffMeansNoPolicy: with engine.snapshot_overlays off —
+// on by default from Stage 7 (cmd/ork TestDefaults_DefinitionByReferenceAndOverlaysOn),
+// so off only where a deployment turns it off — no plan carries a policy,
+// however large the run, and the fleet is never asked.
+func TestSnapshotOverlay_OffMeansNoPolicy(t *testing.T) {
 	caps := &fakeCapabilities{}
 	svc, starter := overlayService(t, false, caps, nil)
 	if err := applyDoc(t, svc, fanOutDoc("wide", 900, 1)); err != nil {
