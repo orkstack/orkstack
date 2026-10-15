@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -196,7 +197,7 @@ func TestLoadConfig_DefinitionByReferenceNeedsContinuation(t *testing.T) {
 }
 
 // TestLoadConfig_SnapshotOverlays: ORK_SNAPSHOT_OVERLAYS (engine.snapshot_overlays)
-// is off when unset, takes true or false, and refuses anything else at boot,
+// is the built-in default (on) when unset, takes true or false, and refuses anything else at boot,
 // naming the variable.
 func TestLoadConfig_SnapshotOverlays(t *testing.T) {
 	if cfg := loadConfig(); cfg.limitsErr != nil || cfg.snapshotOverlays != engine.DefaultSnapshotOverlays {
@@ -209,5 +210,30 @@ func TestLoadConfig_SnapshotOverlays(t *testing.T) {
 	t.Setenv("ORK_SNAPSHOT_OVERLAYS", "sometimes")
 	if err := loadConfig().limitsErr; err == nil || !strings.Contains(err.Error(), "ORK_SNAPSHOT_OVERLAYS") {
 		t.Fatalf("a malformed value = %v, want a boot refusal naming ORK_SNAPSHOT_OVERLAYS", err)
+	}
+}
+
+// TestDefaults_DefinitionByReferenceAndOverlaysOn: from Stage 7 both flags
+// are on by default (spec 7.3): an unset deployment boots with a definition
+// too large for a start passed by reference (continuation is on by default)
+// and with snapshot overlays, and the generated defaults say so.
+func TestDefaults_DefinitionByReferenceAndOverlaysOn(t *testing.T) {
+	if !engine.DefaultDefinitionByReference || !engine.DefaultSnapshotOverlays {
+		t.Fatalf("built-in defaults: definition_by_reference %t, snapshot_overlays %t; want both on",
+			engine.DefaultDefinitionByReference, engine.DefaultSnapshotOverlays)
+	}
+	cfg := loadConfig()
+	if cfg.limitsErr != nil || !cfg.definitionByReference || cfg.definitionByReferenceSet || !cfg.snapshotOverlays {
+		t.Fatalf("an unset deployment: definition_by_reference %t (set %t), snapshot_overlays %t (%v); want both on",
+			cfg.definitionByReference, cfg.definitionByReferenceSet, cfg.snapshotOverlays, cfg.limitsErr)
+	}
+	raw, err := os.ReadFile("../../deploy/orkstack.defaults.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"definition_by_reference: true", "snapshot_overlays: true"} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("deploy/orkstack.defaults.yaml does not say %q", want)
+		}
 	}
 }

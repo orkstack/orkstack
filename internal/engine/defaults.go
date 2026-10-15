@@ -91,9 +91,10 @@ func ApplyInputDefaults(wf *orkstackv1.Orkflow, input *orkstackv1.Payload) *orks
 }
 
 // DefaultDefinitionByReference is engine.definition_by_reference's built-in
-// default: off, until every replica runs a release that can read a
-// definition passed by reference (docs/DEPLOY.md §4, R3). Its effective value
-// is this AND engine.continuation.enabled when neither the configuration
-// document nor the environment sets the key, so a later release that flips
-// it never refuses to boot a deployment that turned continuation off.
-const DefaultDefinitionByReference = false
+// default: on, in a release after the one that first contained it — the
+// order a rollback relies on (docs/DEPLOY.md §4, R3) — so a definition too
+// large for a start payload travels by reference. Its effective value is
+// this AND engine.continuation.enabled when neither the configuration
+// document nor the environment sets the key, so the flip never refuses to
+// boot a deployment that turned continuation off.
+const DefaultDefinitionByReference = true

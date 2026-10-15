@@ -412,14 +412,15 @@ cluster at its history limit: …"), never as a cancel nobody asked for.
 **How large a definition may be.** A run starts with its planned definition
 as one of its start payloads, which AGENTS.md §2.2 bounds at 256 KiB; a
 definition larger than that (several hundred tasks, or large `with:` values)
-is refused at submit, `failed_precondition`, naming its size. Where the
-deployment turns on `engine.definition_by_reference` (`docs/DEPLOY.md` §1), it
-travels by reference instead, unchanged for the author: the run copies it
+travels by reference instead (`engine.definition_by_reference`, on by
+default, `docs/DEPLOY.md` §1), unchanged for the author: the run copies it
 into its own history in bounded chunks, up to a quarter of the deployment's
 `engine.continuation.bytes`, compressed (2 MiB at the default). Above that it
 is refused at apply, `invalid_argument` at `tasks`, and at submit,
 `failed_precondition`: "… compressed, over the … a run may carry forward;
-split it into composed Orkflows". The run's plan has its own 256 KiB bound,
+split it into composed Orkflows". A deployment that turns the setting off
+refuses a definition over 256 KiB at submit, `failed_precondition`, naming its
+size. The run's plan has its own 256 KiB bound,
 which still limits how many awaits and composed tasks one run tree holds
 (refused at submit by name).
 

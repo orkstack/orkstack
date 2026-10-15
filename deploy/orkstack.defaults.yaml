@@ -59,8 +59,8 @@ engine:
     events: 8192  # ork
     bytes: 8388608  # 8 MiB; ork
     restore_timeout: 1h  # ork
-  definition_by_reference: false  # ork
-  snapshot_overlays: false  # ork
+  definition_by_reference: true  # ork
+  snapshot_overlays: true  # ork
   run_max_in_flight: 1000  # ork
   compose_max_depth: 4  # ork
   cache_max_ttl: 168h  # ork
