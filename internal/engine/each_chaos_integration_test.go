@@ -71,6 +71,7 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
 	defer cancel()
 	items := soakItems(t)
+	soakAlone(t, ctx)
 	e := startEachSoak(t, ctx, "C32", items)
 	var killable []*c32Orker
 	for i := 1; i <= 3; i++ {

@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -85,7 +87,7 @@ const (
 	soakEventsReadMax    = 30 * time.Second
 	soakReplayMax        = 30 * time.Second
 	// One real item Orker of two slots per soak (C32: three of one slot):
-	// a full proof runs these tests beside each other and beside every
+	// a full proof runs these tests (one at a time, soakAlone) beside every
 	// other Docker-backed test, on a daemon that starts about one container
 	// a second.
 	soakRealOrkers        = 1
@@ -98,6 +100,47 @@ const (
 	soakTestTimeout       = 60 * time.Minute
 	soakArchiveGetRunWait = 2 * time.Minute
 )
+
+// soakAloneLock is the host-wide lock the three tests at the item ceiling —
+// both soaks and C32 — hold for their whole run, so one never measures
+// another: each drives one Temporal with a run whose every generation is
+// tens of thousands of events, and a live GetRun reads the current
+// generation's whole history (reader.go scanExecution), so two side by side
+// measure each other's load. Both soaks of the second Stage 4 full proof
+// (proof/can-stage4-2) ran together and each missed a GetRun p95 threshold;
+// the first full proof's, also together, met them. Every other test still
+// runs beside them.
+func soakAloneLock() string { return filepath.Join(os.TempDir(), "orkstack-each-soak.lock") }
+
+// soakAlone takes soakAloneLock, waiting at most until ctx's deadline, and
+// releases it when the test ends.
+func soakAlone(t *testing.T, ctx context.Context) {
+	t.Helper()
+	file, err := os.OpenFile(soakAloneLock(), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open the soak lock: %v", err)
+	}
+	locked := make(chan error, 1)
+	start := time.Now()
+	go func() { locked <- syscall.Flock(int(file.Fd()), syscall.LOCK_EX) }()
+	select {
+	case err := <-locked:
+		if err != nil {
+			_ = file.Close()
+			t.Fatalf("take the soak lock %s: %v", soakAloneLock(), err)
+		}
+	case <-ctx.Done():
+		_ = file.Close()
+		t.Fatalf("the soak lock %s was still held at the test's deadline (waited %s)",
+			soakAloneLock(), time.Since(start).Round(time.Second))
+	}
+	t.Logf("holding the soak lock %s (waited %s for another soak or C32)", soakAloneLock(),
+		time.Since(start).Round(time.Millisecond))
+	t.Cleanup(func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	})
+}
 
 // eachSoak is one deployment for one soak: an engine replica advertising
 // this build's capabilities, a projection worker, the Orkers, and the API
@@ -730,6 +773,7 @@ func TestIntegration_SoakFanOut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
 	defer cancel()
 	items := soakItems(t)
+	soakAlone(t, ctx)
 	e := startEachSoak(t, ctx, fmt.Sprintf("soak-%d-fan-out", items), items)
 	for i := 1; i <= soakRealOrkers; i++ {
 		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
@@ -744,6 +788,7 @@ func TestIntegration_SoakFanOutMaxParallel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
 	defer cancel()
 	items := soakItems(t)
+	soakAlone(t, ctx)
 	e := startEachSoak(t, ctx, fmt.Sprintf("soak-%d-max-parallel", items), items)
 	for i := 1; i <= soakRealOrkers; i++ {
 		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
