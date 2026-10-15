@@ -32,6 +32,8 @@ func byReferenceStart(t *testing.T, runID string) (*historypb.HistoryEvent, *ork
 	}
 	plan := awaitPlanForTest()
 	plan.Definition = &ref
+	budget := validBudget()
+	plan.Continuation = &budget
 	started := &historypb.HistoryEvent{
 		EventId: 1, EventTime: timestamppb.New(readerEpoch), EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
 		Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
@@ -81,9 +83,10 @@ func TestRunStart_ReadsOneEventAndNoObject(t *testing.T) {
 // TestRunDefinition_ResolvesTheReference: RunDefinition derives the object's
 // key from the run id it was asked about, reads it once, verifies its whole
 // SHA-256 and the stub's identity, and returns the definition; an inline
-// run's definition comes back without a read; a missing or altered object,
-// or one named under another run's id, is an error naming the run — never
-// the object.
+// run's definition comes back without a read; a missing, altered or
+// differently sized object, or one named under another run's id, is an
+// error naming the run — never the object; and a plan with no budget, or a
+// reference over the cap or not well formed, is refused before any read.
 func TestRunDefinition_ResolvesTheReference(t *testing.T) {
 	const runID = "ork-1700000000-92"
 	started, planned, data, store := byReferenceStart(t, runID)
@@ -119,7 +122,7 @@ func TestRunDefinition_ResolvesTheReference(t *testing.T) {
 		altered := bytes.Clone(data)
 		altered[len(altered)/3] ^= 0x01
 		return altered
-	}()} {
+	}(), "longer": append(bytes.Clone(data), 0)} {
 		t.Run("a "+name+" object", func(t *testing.T) {
 			bad := &countingSnapshotStore{objects: map[string][]byte{}}
 			if stored != nil {
@@ -133,8 +136,37 @@ func TestRunDefinition_ResolvesTheReference(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), runID) || strings.Contains(err.Error(), "definition-") {
 				t.Fatalf("RunDefinition = %v, want an error naming the run and not the object", err)
 			}
-			if name == "altered" && !errors.Is(err, ErrContinuationObjectInvalid) {
-				t.Fatalf("an altered object = %v, want a verification failure", err)
+			if name != "missing" && !errors.Is(err, ErrContinuationObjectInvalid) {
+				t.Fatalf("an %s object = %v, want a verification failure", name, err)
+			}
+		})
+	}
+	// The reference is checked against the plan's cap before anything is
+	// read, so a forged plan can never make the reader take more than the
+	// cap, whatever the store holds.
+	for name, edit := range map[string]func(p *RunPlan){
+		"no budget": func(p *RunPlan) { p.Continuation = nil },
+		"over the cap": func(p *RunPlan) {
+			b := *p.Continuation
+			b.CheckpointMaxBytes = p.Definition.SizeBytes - 1
+			p.Continuation = &b
+		},
+		"no parts": func(p *RunPlan) {
+			ref := *p.Definition
+			ref.Parts = nil
+			p.Definition = &ref
+		},
+	} {
+		t.Run("a plan with "+name, func(t *testing.T) {
+			forged := *record
+			edit(&forged.Plan)
+			before := store.reads
+			_, err := reader.RunDefinition(ctx, runID, &forged)
+			if !errors.Is(err, ErrContinuationObjectInvalid) || !strings.Contains(err.Error(), runID) {
+				t.Fatalf("RunDefinition = %v, want a verification failure naming the run", err)
+			}
+			if store.reads != before {
+				t.Fatalf("RunDefinition read %d objects for a malformed plan, want none", store.reads-before)
 			}
 		})
 	}

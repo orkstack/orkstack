@@ -1781,7 +1781,9 @@ func (r *TemporalRunReader) RunStart(ctx context.Context, runID string) (*RunSta
 // travelled: start.Orkflow for an inline one, and for one passed by
 // reference the object under the run's own prefix — its key derived from
 // runID, the run asked about (artifacts.RunContinuationKey, kind
-// "definition") — read, verified by size and SHA-256, part by part, and
+// "definition") — its reference checked against the plan's cap first, then
+// read in one range of exactly its recorded size from an object the store
+// confirms is that size, verified by SHA-256, part by part, and
 // checked against the stub's name, version, namespace and digest. It is not
 // workflow code. Only the await doors call it, because they read the
 // definition's tasks; RunStart itself reads one history event and no object.
@@ -1796,15 +1798,32 @@ func (r *TemporalRunReader) RunDefinition(ctx context.Context, runID string, sta
 	if r.snapshots == nil {
 		return nil, fmt.Errorf("engine: run %s: its definition is stored by reference and no snapshot store is configured", runID)
 	}
+	// The reference is checked against the plan's cap before anything is
+	// read, and the read takes exactly the bytes it records from an object
+	// whose stored size must match: a stored object of any other size is
+	// refused by the store before its body is taken, so this read is
+	// bounded by the cap whatever the store holds.
 	ref := start.Plan.Definition
+	budget := start.Plan.Continuation
+	if !budget.valid() {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, invalidDefinition("the run's plan names no valid budget to read it with"))
+	}
+	if what := ref.check(budget.CheckpointMaxBytes); what != "" {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, invalidDefinition("%s", what))
+	}
 	uri, err := r.snapshots.ContinuationURI(start.Orkflow.GetNamespace(), runID, 0,
 		artifacts.ContinuationKindDefinition, ref.SHA256)
 	if err != nil {
 		return nil, fmt.Errorf("engine: run %s: %w", runID, invalidDefinition("its reference names no valid key"))
 	}
-	data, err := r.snapshots.ReadSnapshot(ctx, uri)
+	data, err := r.snapshots.ReadContinuationRange(ctx, uri, ref.SizeBytes, 0, ref.SizeBytes)
 	if err != nil {
-		return nil, fmt.Errorf("engine: run %s: read its definition: %w", runID, withoutObjectName(err, uri, subjectDefinition))
+		err = withoutObjectName(err, uri, subjectDefinition)
+		if errors.Is(err, artifacts.ErrContinuationSize) {
+			return nil, fmt.Errorf("engine: run %s: %w", runID,
+				invalidDefinition("it is not the size it was saved at: %v", err))
+		}
+		return nil, fmt.Errorf("engine: run %s: read its definition: %w", runID, err)
 	}
 	wf, err := DecodeDefinitionObject(data, ref, start.Orkflow)
 	if err != nil {
