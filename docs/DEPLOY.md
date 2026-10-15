@@ -2156,7 +2156,7 @@ processes could decide it, and refuses while any of them is too old.
 
 - **What each process advertises.** Every `ork` process polls Temporal with
   its SDK identity followed by ` ork-caps=<list>`, for example
-  `48213@engine-2@ ork-caps=each-items-10k`, as
+  `48213@engine-2@ ork-caps=each-items-10k,definition-ref`, as
   `temporal task-queue describe --task-queue ork-tasks` shows it. The run
   worker and the projection worker share the process's client, so both carry
   it. The releases page still counts one process per identity.

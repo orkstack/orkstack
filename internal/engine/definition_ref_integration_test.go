@@ -469,6 +469,15 @@ func TestIntegration_ScheduledFireOfALargeDefinitionRuns(t *testing.T) {
 	if err := json.Unmarshal(prep.GetPlan(), &plan); err != nil || plan.Definition == nil {
 		t.Fatalf("the prepared plan names no definition by reference (%v)", err)
 	}
+	// The fire starts the run as its child after the preparation returns.
+	for deadline := time.Now().Add(time.Minute); ; {
+		if _, err := s.control.DescribeWorkflowExecution(ctx, runID, ""); err == nil {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatalf("the fire never started run %s: %v", runID, err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 	status, err := s.wait(runID, 5*time.Minute)
 	if status != enums.WORKFLOW_EXECUTION_STATUS_COMPLETED || err != nil {
 		t.Fatalf("the scheduled run closed %v: %v", status, err)
