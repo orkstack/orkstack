@@ -233,18 +233,31 @@ func TestContinuation_PlanWithoutBudgetIsByteIdentical(t *testing.T) {
 				h.env.ExecuteWorkflow(engine.RunWorkflowType, runID, wf, input, plan, (*orkstackv1.RunContinuation)(nil))
 				return r.list()
 			}
-			bare := commands(plan)
 			capped := plan
 			limit := engine.DefaultInFlightLimit(engine.DefaultRunMaxInFlight)
 			capped.InFlight = &limit
-			with := commands(capped)
-			if len(bare) == 0 {
-				t.Fatal("the fixture's definition issued no command")
+			// The test environment delivers concurrently running activities'
+			// results in the order their goroutines finish, so a fixture with
+			// parallel branches (run-join-v1.json) can interleave its two
+			// runs differently whatever their plans. A command the cap added
+			// or moved would differ in every pair, so a pair is drawn until
+			// one is identical, at most identicalPairAttempts times.
+			const identicalPairAttempts = 8
+			var bare, with []string
+			for attempt := 1; ; attempt++ {
+				bare, with = commands(plan), commands(capped)
+				if len(bare) == 0 {
+					t.Fatal("the fixture's definition issued no command")
+				}
+				if strings.Join(bare, "\n") == strings.Join(with, "\n") {
+					t.Logf("%d commands, identical (pair %d)", len(bare), attempt)
+					break
+				}
+				if attempt == identicalPairAttempts {
+					t.Fatalf("the command streams differ in %d pairs:\nrecorded plan %v\nwith the cap  %v",
+						attempt, bare, with)
+				}
 			}
-			if strings.Join(bare, "\n") != strings.Join(with, "\n") {
-				t.Fatalf("the command streams differ:\nrecorded plan %v\nwith the cap  %v", bare, with)
-			}
-			t.Logf("%d commands, identical", len(bare))
 		})
 	}
 }
