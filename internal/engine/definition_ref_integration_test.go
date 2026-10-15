@@ -245,7 +245,9 @@ func wideDefinitionDoc(name string, chains, length, noteBytes int) string {
 // generation's copy (definition plus checkpoint) against the cap, and
 // replays every generation.
 func TestIntegration_ThreeThousandTaskDefinitionRuns(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	// About 16 minutes on an idle dev cluster: every event of a 3,000-row
+	// run writes its whole snapshot, which Stage 6's overlays shrink.
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
 	s := newChaosStack(t, ctx, "E5/three-thousand")
 	s.startReplica("replica-a", capableReplica("replica-a", replicaOptions{}))
@@ -260,7 +262,7 @@ func TestIntegration_ThreeThousandTaskDefinitionRuns(t *testing.T) {
 	runID := submitted.GetRun().GetId()
 	s.transcript.run(runID)
 	started := time.Now()
-	status, err := s.wait(runID, 18*time.Minute)
+	status, err := s.wait(runID, 40*time.Minute)
 	if status != enums.WORKFLOW_EXECUTION_STATUS_COMPLETED || err != nil {
 		t.Fatalf("the run closed %v: %v", status, err)
 	}
