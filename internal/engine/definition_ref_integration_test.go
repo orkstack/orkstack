@@ -417,7 +417,8 @@ func TestIntegration_DefinitionObjectLostBeforeStartFailsExplicitly(t *testing.T
 // Orkflow whose definition is over a start payload's 256 KiB. The fire's
 // preparation — the real api.ScheduleActivities on the engine's run worker —
 // fits its own 256 KiB bound with the stub, writes the object under the run
-// id it minted, and the run it starts succeeds.
+// id it minted, and the run it starts succeeds; the await doors' read of
+// its whole definition then resolves from the real store.
 func TestIntegration_ScheduledFireOfALargeDefinitionRuns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -489,6 +490,17 @@ func TestIntegration_ScheduledFireOfALargeDefinitionRuns(t *testing.T) {
 		run.GetOrigin().GetKind() != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE {
 		t.Fatalf("GetRun = %v, %d rows, origin %v (%v); want a SUCCEEDED scheduled run of 500 tasks", run.GetStatus(),
 			len(run.GetTaskRuns()), run.GetOrigin(), err)
+	}
+	// The await doors' read of the whole definition (RunDefinition): the
+	// reference checked against the plan's cap, then one range of exactly
+	// its size from the real S3-compatible store, verified.
+	start, err := s.reader.RunStart(ctx, runID)
+	if err != nil || !start.ByReference {
+		t.Fatalf("RunStart = %v (%v), want a start by reference", start, err)
+	}
+	def, err := s.reader.RunDefinition(ctx, runID, start)
+	if err != nil || len(def.GetTasks()) != 500 || def.GetDefinitionDigest() != start.Orkflow.GetDefinitionDigest() {
+		t.Fatalf("RunDefinition = %d tasks (%v), want the whole 500-task definition", len(def.GetTasks()), err)
 	}
 	s.transcript.figure("preparation_bytes", full)
 	s.transcript.figure("definition_bytes", plan.Definition.SizeBytes)
