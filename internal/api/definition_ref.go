@@ -160,8 +160,16 @@ func (s *Service) writeDefinitionObject(ctx context.Context, runID string, sub s
 	if s.definitionObjects == nil {
 		return errors.New("store the run's definition: no object store is configured")
 	}
-	if _, err := s.definitionObjects.WriteContinuation(ctx, sub.wf.GetNamespace(), runID, 0,
+	namespace := sub.wf.GetNamespace()
+	if _, err := s.definitionObjects.WriteContinuation(ctx, namespace, runID, 0,
 		artifacts.ContinuationKindDefinition, sub.definitionObject); err != nil {
+		// A store error quotes the object's URI or path, whose last segment
+		// names its generation and kind; that segment becomes
+		// "<definition>", as on every read (engine.withoutObjectName).
+		if key, keyErr := artifacts.RunContinuationKey(namespace, runID, 0, artifacts.ContinuationKindDefinition,
+			artifacts.ContinuationSHA256(sub.definitionObject)); keyErr == nil {
+			err = engine.WithoutDefinitionObjectName(err, key)
+		}
 		return fmt.Errorf("store the run's definition: %w", err)
 	}
 	// R3's check (docs/DEPLOY.md §4): an operator rolling back below this

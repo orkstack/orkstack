@@ -353,6 +353,15 @@ func withoutObjectName(err error, uri, what string) error {
 	return &renamedError{text: strings.ReplaceAll(err.Error(), name, "<"+what+">"), err: err}
 }
 
+// WithoutDefinitionObjectName is withoutObjectName for the API's write of a
+// run's definition object, whose key is key (artifacts.RunContinuationKey,
+// kind "definition"): a failed write's store error never spells the object's
+// name to the submitter, nor into the RUN_START_FAILED error the failed run
+// records — as the reads never do.
+func WithoutDefinitionObjectName(err error, key string) error {
+	return withoutObjectName(err, key, subjectDefinition)
+}
+
 // renamedError is an error with its text rewritten and its chain kept.
 type renamedError struct {
 	text string

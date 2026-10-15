@@ -47,7 +47,12 @@ func (d *definitionObjects) WriteContinuation(_ context.Context, namespace, runI
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.err != nil {
-		return "", d.err
+		// Shaped as S3RunSnapshotStore's: the error quotes the object's URI.
+		key, err := artifacts.RunContinuationKey(namespace, runID, generation, kind, artifacts.ContinuationSHA256(data))
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("artifacts: put continuation %q: %w", "s3://test/"+key, d.err)
 	}
 	if generation != 0 || kind != artifacts.ContinuationKindDefinition || namespace == "" {
 		return "", fmt.Errorf("unexpected write %s/%s gen %d kind %s", namespace, runID, generation, kind)
@@ -403,6 +408,15 @@ func TestStartPreparedRun_DefinitionWriteFailureStartsNothing(t *testing.T) {
 	runs := cfg.Runs.List(engine.ListFilter{})
 	if len(runs) != 1 || runs[0].GetError().GetCode() != "RUN_START_FAILED" {
 		t.Fatalf("recorded %v, want one RUN_START_FAILED run", runs)
+	}
+	// Neither the caller nor the recorded run is told the object's name,
+	// which spells its generation and kind (AGENTS.md §7): the reads hide it
+	// the same way.
+	for what, text := range map[string]string{"the submit's error": err.Error(), "the recorded run's error": runs[0].GetError().GetMessage()} {
+		if strings.Contains(text, "-"+artifacts.ContinuationKindDefinition+"-") || strings.Contains(text, ".pb.gz") ||
+			!strings.Contains(text, "<definition>") {
+			t.Fatalf("%s = %q, want the object's name replaced by <definition>", what, text)
+		}
 	}
 	if events := cfg.Bus.Events(runs[0].GetId(), 0); len(events) != 2 {
 		t.Fatalf("published %d events, want RUN_CREATED and RUN_FAILED", len(events))
