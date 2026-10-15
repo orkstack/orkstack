@@ -644,8 +644,8 @@ declares the new feature — which no older history holds, so every recorded
 history replays unchanged without a version marker — or by a plan field the
 submitting engine sets together with a `workflow.GetVersion` gate asked lazily
 where the path first diverges (`lean-event-path`, `run-history-guard`,
-`continue-as-new`, `run-in-flight-cap`, `definition-by-reference`), so a
-history recorded before the gate
+`continue-as-new`, `run-in-flight-cap`, `definition-by-reference`,
+`snapshot-overlay`), so a history recorded before the gate
 replays its `DefaultVersion` branch; each new command path gets its own
 recorded history fixture. Every tunable number that decides whether, which,
 how many or where workflow code issues a command — a history ceiling or

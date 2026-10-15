@@ -147,6 +147,20 @@ func (s *memSnapshotStore) WriteSnapshot(_ context.Context, namespace, runID str
 	return uri, nil
 }
 
+// WriteSnapshotOverlay stores an overlay at its {seq}.ovl key under the
+// s3://test/ root, as the real stores name it.
+func (s *memSnapshotStore) WriteSnapshotOverlay(_ context.Context, namespace, runID string, sequence int64, data []byte) (string, error) {
+	key, err := artifacts.RunSnapshotOverlayKey(namespace, runID, sequence)
+	if err != nil {
+		return "", err
+	}
+	uri := "s3://test/" + key
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.objects[uri] = bytes.Clone(data)
+	return uri, nil
+}
+
 func (s *memSnapshotStore) ReadSnapshot(_ context.Context, uri string) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

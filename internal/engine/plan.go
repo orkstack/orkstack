@@ -168,6 +168,39 @@ type RunPlan struct {
 	// definition travels inside its parent's plan. Nil on every plan built
 	// before it, and on every run whose definition fits a start payload.
 	Definition *DefinitionRef `json:"definition,omitempty"`
+
+	// SnapshotOverlay is when this run writes a snapshot overlay instead of
+	// a full snapshot for a non-terminal event (snapshot_overlay.go,
+	// docs/DEPLOY.md §1, engine.snapshot_overlays): set at submit on a run
+	// tree whose largest run declares more than DefaultOverlayMinRows rows,
+	// while every engine process that could decide the run or project its
+	// events can read an overlay. A run-tree limit, like History: set on
+	// the top-level plan only, copied into each child's start plan by
+	// startChild; each run then decides from its OWN declared rows, so a
+	// small child of a large parent keeps full snapshots. Nil: every
+	// snapshot is full (every plan built before this field, and every plan
+	// of a deployment that leaves it off).
+	SnapshotOverlay *OverlayPolicy `json:"snapshot_overlay,omitempty"`
+}
+
+// OverlayPolicy is a run's snapshot-overlay thresholds, pinned per run
+// (DefaultOverlay* at submit), because MinRows decides which local activity
+// workflow code runs for an event's snapshot. A run uses overlays when its
+// declared rows — its tasks plus every fan-out's max_items — exceed MinRows.
+// MaxChain and MaxRows act inside that activity only, and their outcome is
+// recorded: a full snapshot is written after MaxChain overlays in a row, and
+// whenever more than MaxRows rows differ from the base.
+type OverlayPolicy struct {
+	MinRows  int64 `json:"min_rows"`
+	MaxChain int64 `json:"max_chain"`
+	MaxRows  int64 `json:"max_rows"`
+}
+
+// valid is the structural check workflow code makes before it uses a
+// policy: a policy that fails it is never used, and every snapshot of the
+// run is full. Only signs, never a tunable constant.
+func (p *OverlayPolicy) valid() bool {
+	return p != nil && p.MinRows >= 0 && p.MaxChain >= 1 && p.MaxRows >= 0
 }
 
 // DefinitionRef is a run's planned definition stored by reference: the

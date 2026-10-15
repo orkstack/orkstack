@@ -109,3 +109,30 @@ message RunEventSegment {
   // sequence order.
   repeated Event events = 5;
 }
+
+// RunSnapshotOverlay replaces, by key, the rows of the FULL snapshot at
+// base_uri. base_uri is always a {seq}.pb full snapshot of the same run,
+// never another overlay. base_sha256 is the lowercase hex SHA-256 of the
+// base bytes this overlay was diffed against: a {seq}.pb key can be
+// rewritten by a retried emit, so a reader verifies it.
+//
+// It is written as {seq}.ovl beside the {seq}.pb snapshots, for a
+// non-terminal event of a run whose plan enables overlays and that declares
+// more rows than its policy's floor. Materialized: the base's rows in base
+// order, each replaced by the overlay row with the same key — task_id for a
+// task row, (task_id, item) for an item row — and the header replacing the
+// base's. The writer writes one only when that materialization equals the
+// run it was asked to snapshot; otherwise it writes a full snapshot.
+// Internal: no RPC carries it.
+message RunSnapshotOverlay {
+  string base_uri = 1;
+  // header is the Run with task_runs cleared.
+  Run header = 2;
+  // task_runs holds the task rows that differ from the base's, items
+  // cleared.
+  repeated TaskRun task_runs = 3;
+  // items holds the item rows (task_id and item set) that differ from the
+  // base's.
+  repeated TaskRun items = 4;
+  string base_sha256 = 5;
+}

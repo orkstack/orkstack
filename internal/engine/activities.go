@@ -65,6 +65,9 @@ type EventActivities struct {
 	// publishes with the URI its TASK_SCHEDULED just did, so the second
 	// publish on this replica costs no read.
 	recent snapshotCache
+	// bases is the process's base cache (WithBaseCache): the full snapshots
+	// the overlays it resolves are written against. Nil caches none.
+	bases *SnapshotBaseCache
 }
 
 // snapshotCacheSize bounds snapshotCache: two publishes of one URI are
@@ -158,6 +161,13 @@ func (a *EventActivities) WithSnapshotStore(store SnapshotStore) *EventActivitie
 	return a
 }
 
+// WithBaseCache resolves snapshot overlays through cache, the process's one
+// base cache, shared with the activity that writes them.
+func (a *EventActivities) WithBaseCache(cache *SnapshotBaseCache) *EventActivities {
+	a.bases = cache
+	return a
+}
+
 // PublishEvent resolves and records a run snapshot, then publishes one
 // lifecycle event. dedupeKey makes the call idempotent across activity retries
 // and workflow replays.
@@ -245,13 +255,11 @@ func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orksta
 	if run, ok := a.recent.get(uri); ok {
 		return run, nil
 	}
-	data, err := a.snapshots.ReadSnapshot(ctx, uri)
+	// A {seq}.ovl is assembled with the full snapshot it names
+	// (materializeSnapshot): at most two reads, none on a cache hit.
+	run, err := materializeSnapshot(ctx, a.snapshots, a.bases, uri)
 	if err != nil {
 		return nil, fmt.Errorf("engine: publish event: read snapshot: %w", err)
-	}
-	run := &orkstackv1.Run{}
-	if err := proto.Unmarshal(data, run); err != nil {
-		return nil, fmt.Errorf("engine: publish event: decode snapshot %s: %w", uri, err)
 	}
 	a.recent.put(uri, run)
 	return run, nil

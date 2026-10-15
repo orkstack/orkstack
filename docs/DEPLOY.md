@@ -353,6 +353,7 @@ then the variable it becomes.
 | `engine.continuation.bytes` | `ORK_CONTINUATION_BYTES` | `8 MiB` | `ork` | the same, for history bytes; also the most a run copies into any one of its histories (the one bounded copy AGENTS.md §2.2 allows into history): the saved state it carries forward, plus its definition when that is passed by reference (`engine.definition_by_reference`, below), which may take at most a quarter of it, compressed. A run whose saved state is larger carries on in its current history instead, and may stop `RUN_HISTORY_LIMIT` naming the size. At least 16 KiB, at most a fifth of `engine.history.max_bytes`; anything else is refused at boot when continuation is enabled |
 | `engine.continuation.restore_timeout` | `ORK_CONTINUATION_RESTORE_TIMEOUT` | `1h` | `ork` | how long a run that carried on waits for object storage to return its saved state before it fails `RUN_STATE_UNAVAILABLE`, explicitly. Each read is retried with a backoff doubling from 1 s to at most 1 minute, and a retry that would start past the timeout is not made, so the run stops at its last read inside the window — up to one backoff early (31 s into a 1m timeout, within the last minute of the default hour). 1m to 8h, and its worst-case history — about `128 + 3 per 8 s` events at the default bytes (1,478 at 1h, 10,928 at 8h)— must fit in a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled, naming this key, `engine.continuation.bytes` and `engine.history.max_events`. Each await still open when a run carries on adds one more event to that restore (its deadline timer, recreated), which the run's history guard counts like any other |
 | `engine.definition_by_reference` | `ORK_DEFINITION_BY_REFERENCE` | `false` | `ork` | a top-level run whose planned definition is over the 256 KiB a run's start may carry travels by reference instead: the start carries a stub naming it, and the run copies the definition into its own history in bounded chunks, sharing the copy bound below (`engine.continuation.bytes`), of which it may take at most a quarter, compressed (2 MiB at the default); a larger one is refused at submit and at apply, "split it into composed Orkflows" (`docs/DSL.md`, "How many tasks an Orkflow may declare"). Needs `engine.continuation.enabled`: an explicit `true` without it is refused at boot, naming both keys, and when neither the configuration file nor the environment sets this key it is on only where the built-in default is on and continuation is (the boot logs the effective value). A submit that needs it is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs an older release (§5, "Engine capabilities and the fleet check"). Keep it off until every replica runs a release that has it; turn it off and wait for its runs before rolling back below that release (§4, R3) |
+| `engine.snapshot_overlays` | `ORK_SNAPSHOT_OVERLAYS` | `false` | `ork` | a run that declares more than 256 rows — its tasks plus every fan-out's `max_items` — writes, for each event before its last, only the rows that changed since its last full snapshot (a snapshot overlay, `docs/STORAGE.md`), and a full snapshot at least every 64 events and whenever more than 256 rows changed; its last event's snapshot is always full. Decided per run, so a small child of a large parent keeps full snapshots. Read at submit, so a change applies to new runs. While any `ork` process polling `ork-engine-events` runs an older release (a draining build's included), or a process of a build that new runs start on does, new runs write full snapshots instead, and the engine logs why at most once a minute (§5, "Snapshot overlays"). Turn it off and wait for its runs before rolling back below the release that has it (§4) |
 | `engine.run_max_in_flight` | `ORK_RUN_MAX_IN_FLIGHT` | `1000` | `ork` | the most activities, child runs and pins one run keeps pending at once; more wait `PENDING`, exactly as on a saturated pool, and dispatch resumes as running work finishes. An open pin's needs are exempt, below an absolute stop at 1,900. 16 to 1,800; anything else is refused at boot. Without it, a run above the cluster's 2,000 pending activities would stall. Read at submit, so a change applies to new runs |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
@@ -713,7 +714,10 @@ That includes `metadata/snapshots/{ns}/{run}/continuations/`: the event
 segments, switch snapshots and saved state a run that carried on into a fresh
 history wrote (§2, "Runs that span several executions"). A live run reads its
 segments for its whole life and its archive is built from them, so a rule that
-expired one would turn part of the run's stream into a recorded gap.
+expired one would turn part of the run's stream into a recorded gap. The
+full `{seq}.pb` snapshots of a run that writes snapshot overlays are the same:
+its `{seq}.ovl` overlays name them, so a rule that expired one would make the
+run's live state at those events unreadable (§5, "Snapshot overlays").
 
 ```bash
 # MinIO: expire task logs after 30 days.
@@ -1347,6 +1351,17 @@ versioning a `RunWorkflow` is Pinned, so such a run stays on the build that
 started it until it finishes; drain that build before decommissioning it.
 Once a rolled-back process polls, the fleet check (§5) refuses new submits
 that would need a reference.
+
+**Before rolling back below the release that writes snapshot overlays** (R4),
+set `engine.snapshot_overlays` off on every replica, then wait until every
+run started while it was on has finished: an older release cannot read a
+`{seq}.ovl` snapshot, so its reads of such a run's live state, and its
+publishes of the run's events, would fail. The check: the plan of such a run
+carries `snapshot_overlay` (`temporal workflow show` on a running run, its
+first event's fourth input), and only runs created before the flag went off
+can; confirm, as for R3, that none is still running. A finished run's archive
+body is always full — its last snapshot is never an overlay — so it stays
+readable on any release.
 
 ### Back to unversioned workers
 
@@ -2156,7 +2171,7 @@ processes could decide it, and refuses while any of them is too old.
 
 - **What each process advertises.** Every `ork` process polls Temporal with
   its SDK identity followed by ` ork-caps=<list>`, for example
-  `48213@engine-2@ ork-caps=each-items-10k,definition-ref`, as
+  `48213@engine-2@ ork-caps=each-items-10k,definition-ref,snapshot-overlay`, as
   `temporal task-queue describe --task-queue ork-tasks` shows it. The run
   worker and the projection worker share the process's client, so both carry
   it. The releases page still counts one process per identity.
@@ -2171,8 +2186,12 @@ processes could decide it, and refuses while any of them is too old.
   run declares more than 1,000 fan-out items (`engine.each_max_items`, §1).
   `definition-ref`: a top-level run whose planned definition is over the
   256 KiB a start may carry, with `engine.definition_by_reference` on (§1).
-  Only such a submit — a direct submit, a trigger or a schedule fire — reads
-  the poller list, once, never cached.
+  `snapshot-overlay`: a run tree in which some run declares more than 256
+  rows, with `engine.snapshot_overlays` on (§1); it also checks every process
+  polling `ork-engine-events`, and never refuses — a tree it cannot be sure of
+  writes full snapshots (§5, "Snapshot overlays"). Only such a submit — a
+  direct submit, a trigger or a schedule fire — reads the poller list, once,
+  never cached.
 - **What a refused submit says.** `FAILED_PRECONDITION`, naming the Orkflow,
   how many items it declares and how many engine processes run a release
   that cannot run them ("2 engine processes … finish the rollout first") —
@@ -2186,6 +2205,50 @@ processes could decide it, and refuses while any of them is too old.
   replica runs the release that has it (§1).
 - **Fail closed.** A poller list that cannot be read refuses the submit
   `UNAVAILABLE`; ask again once the cluster answers.
+
+### Snapshot overlays
+
+With `engine.snapshot_overlays` on (§1), every event of a run that declares
+more than 256 rows, except its last, names a `{seq}.ovl` overlay instead of a
+full `{seq}.pb` snapshot (`docs/STORAGE.md`): the run's header and the rows
+that differ from the last full snapshot it wrote, which the overlay names by
+URI and by the SHA-256 of its bytes. A reader takes at most two reads — the
+overlay and its base — and verifies the base against that digest.
+
+- **The base cache.** Each `ork` process keeps the full snapshots overlays are
+  written against in one cache, shared by the run worker that writes them,
+  the projection worker and the read API: at most 8 bases or 128 MiB of
+  snapshot bytes, least recently used first out. The writer caches every full
+  snapshot it writes, so its own overlays read nothing. A process serving
+  more large runs at once than the cache holds takes the miss path for each:
+  every overlay write and every projection of an event re-reads its base
+  (several MiB for a run of thousands of rows) besides the overlay, so the
+  write traffic still drops while read traffic can rise above one full read
+  per event. The saving quoted for overlays — snapshot bytes written for a
+  1,000-task run falling about tenfold — is for a cache that holds the run's
+  base; plan engine memory for the decoded bases (a few times their bytes).
+- **The fleet check.** Overlays are written only by runs whose submit found
+  every `ork` process polling `ork-engine-events` — every one, whatever its
+  build, because that channel is unversioned and any process may project any
+  run's event — and every process of a build that new runs start on,
+  advertising `snapshot-overlay` (§5, "Engine capabilities and the fleet
+  check"). Otherwise new runs write full snapshots, never a refusal, and the
+  engine logs "new runs write full snapshots, not overlays" with the
+  `identities` lacking it, at most once a minute per process. Under
+  versioning that keeps overlays off until the older build's processes are
+  decommissioned, not merely drained. Only a submit whose run tree has a run
+  over 256 rows reads the poller list, twice (the engine and projection
+  channels).
+- **A late write.** A failed attempt of an event's snapshot write can land
+  after its retry and replace a full `{seq}.pb` that overlays were already
+  written against. Those overlays then cannot be read: a live `GetRun` of
+  that run answers `UNAVAILABLE`, never a mixed or degraded run, until the
+  run's next full snapshot, at most 64 events later — sooner when the writer
+  misses its cache and sees the change. A process whose cache still holds
+  the verified bytes answers correctly. The run itself, its last snapshot
+  and its archive are unaffected.
+- **Never expire a `{seq}.pb` with a lifecycle rule while its run lives**:
+  overlays name it (§1, "Retention cleanup and bucket lifecycle rules").
 
 ### Definitions passed by reference: the objects no run reads
 
@@ -2292,6 +2355,21 @@ history recorded by a build that ignored the plan field replays its
 `DefaultVersion` branch: the start's stub has no tasks, and the run ends
 `INVALID_ORKFLOW` as that build recorded. The fixture `run-definition-ref-v1.json`,
 with the definition object its recording wrote, guards it with its command,
+payload and negative tests (`internal/engine/testdata/history/README.md`).
+
+**Snapshot overlays are a versioned change.** A run whose plan carries the
+overlay policy (§1, `engine.snapshot_overlays`) and that declares more rows
+than the policy's floor asks the `snapshot-overlay` version once, at its
+first snapshot before its last event, and carries the decision forward; with
+it, each such snapshot is written by the `WriteSnapshotOrOverlay` local
+activity instead of `WriteSnapshot`, from either place a snapshot is written
+(an event's own, and a fan-out's periodic item snapshot). Which of the two
+runs is decided by the pinned floor, the run's declared rows and the event
+type only; whether the activity wrote an overlay or a full snapshot is its
+recorded result, which a replay reads, so a replay never diffs. A history
+recorded before the gate replays its `DefaultVersion` branch, writing every
+snapshot in full. The fixture `run-snapshot-overlay-v1.json`, with the
+snapshots and overlays its recording wrote, guards it with its command,
 payload and negative tests (`internal/engine/testdata/history/README.md`).
 
 **The guard's lookahead at a dispatch is a versioned change.** Before each

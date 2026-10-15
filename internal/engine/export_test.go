@@ -138,3 +138,20 @@ func DisableHistoryGuardLookaheadForTest() (restore func()) {
 	historyGuardLookaheadDisabledForTest = true
 	return func() { historyGuardLookaheadDisabledForTest = false }
 }
+
+// SetSnapshotBaseHookForTest makes every snapshot write that moves a run's
+// overlay base hand the new base to f, and returns the function that clears
+// it.
+func SetSnapshotBaseHookForTest(f func(SnapshotBase)) (restore func()) {
+	snapshotBaseHookForTest = f
+	return func() { snapshotBaseHookForTest = nil }
+}
+
+// OverlayDiffsForTest is how many overlay diffs this process has run.
+func OverlayDiffsForTest() int64 { return overlayDiffs.Load() }
+
+// MaterializeSnapshotForTest reads the snapshot at uri as the run it stands
+// for, uncached: what every reader does (materializeSnapshot).
+func MaterializeSnapshotForTest(ctx context.Context, store SnapshotStore, uri string) (*orkstackv1.Run, error) {
+	return materializeSnapshot(ctx, store, nil, uri)
+}

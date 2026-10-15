@@ -676,6 +676,16 @@ type runState struct {
 	bootstrapStarted      time.Time
 	bootstrapDeadline     time.Time
 	bootstrapBatch        int64
+
+	// declaredRows is this run's declared rows — its tasks plus every
+	// fan-out's max_items (DeclaredRows) — which decides whether it writes
+	// snapshot overlays (snapshot_overlay.go). Derived from the definition.
+	declaredRows int64
+	// snapBase is the last full snapshot this generation wrote for one of
+	// its events and how many overlays have followed it, moved only by what
+	// writeEventSnapshot's markers record. Ephemeral: a generation's first
+	// write is always full.
+	snapBase SnapshotBase
 }
 
 // pinState is one pin's whole life inside this run: who belongs to it, and
@@ -794,6 +804,7 @@ func buildRunState(
 		// generation from the one after its carry's (restore).
 		genFirstSeq: 1,
 	}
+	state.declaredRows = DeclaredRows(wf)
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
 		state.tasks[t.GetId()] = t
@@ -2604,18 +2615,11 @@ func (s *runState) emitWithSnapshot(
 
 	snapshotURI := reuseURI
 	if snapshotURI == "" {
-		// A local activity is essential here: Temporal does not persist its
-		// input, while a regular activity would put this complete snapshot
-		// straight back into ActivityTaskScheduled.input and retain quadratic
-		// history growth. Its only recorded result is the small URI reference.
-		localCtx := workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
-			StartToCloseTimeout:    snapshotAttemptTimeout,
-			ScheduleToCloseTimeout: snapshotActivityTimeout,
-			RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
-		})
-		if err := workflow.ExecuteLocalActivity(
-			localCtx, ActivityWriteSnapshot, s.snapshot(), int64(s.eventSeq),
-		).Get(localCtx, &snapshotURI); err != nil {
+		// One local activity writes it (writeEventSnapshot): a full
+		// snapshot, or an overlay for a large run's non-terminal event.
+		uri, err := s.writeEventSnapshot(ctx, eventType)
+		snapshotURI = uri
+		if err != nil {
 			// Object storage is part of the durable record. Continuing would
 			// let a run succeed without a readable terminal snapshot or
 			// complete archive, so unlike the best-effort projection below

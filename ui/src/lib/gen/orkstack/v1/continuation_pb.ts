@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/continuation.proto.
  */
 export const file_orkstack_v1_continuation: GenFile = /*@__PURE__*/
-  fileDesc("Ch5vcmtzdGFjay92MS9jb250aW51YXRpb24ucHJvdG8SC29ya3N0YWNrLnYxIlkKEENvbnRpbnVhdGlvblBhcnQSDgoGb2Zmc2V0GAEgASgDEhIKCnNpemVfYnl0ZXMYAiABKAMSEQoJcmF3X2J5dGVzGAMgASgDEg4KBnNoYTI1NhgEIAEoCSKGAQoSQ29udGludWF0aW9uT2JqZWN0EgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSEgoKc2l6ZV9ieXRlcxgDIAEoAxIRCglyYXdfYnl0ZXMYBCABKAMSLAoFcGFydHMYBSADKAsyHS5vcmtzdGFjay52MS5Db250aW51YXRpb25QYXJ0IrABCg9FdmVudFNlZ21lbnRSZWYSEgoKZ2VuZXJhdGlvbhgBIAEoAxIUCgxleGVjdXRpb25faWQYAiABKAkSFgoOZmlyc3Rfc2VxdWVuY2UYAyABKAMSFQoNbGFzdF9zZXF1ZW5jZRgEIAEoAxITCgtldmVudF9jb3VudBgFIAEoAxIvCgZvYmplY3QYBiABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QizgMKD1J1bkNvbnRpbnVhdGlvbhIPCgd2ZXJzaW9uGAEgASgFEhIKCmdlbmVyYXRpb24YAiABKAMSFgoOZXZlbnRfc2VxdWVuY2UYAyABKAMSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKY2hlY2twb2ludBgGIAEoCzIfLm9ya3N0YWNrLnYxLkNvbnRpbnVhdGlvbk9iamVjdBIuCghzZWdtZW50cxgHIAMoCzIcLm9ya3N0YWNrLnYxLkV2ZW50U2VnbWVudFJlZhJNChF2ZXJzaW9uX2RlY2lzaW9ucxgIIAMoCzIyLm9ya3N0YWNrLnYxLlJ1bkNvbnRpbnVhdGlvbi5WZXJzaW9uRGVjaXNpb25zRW50cnkSMQoIc25hcHNob3QYCSABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QaNwoVVmVyc2lvbkRlY2lzaW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEigwEKEVJ1bkNoZWNrcG9pbnRQYXJ0EiAKBmhlYWRlchgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1bhInCgl0YXNrX3J1bnMYAiADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEiMKBWl0ZW1zGAMgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1biKIAQoPUnVuRXZlbnRTZWdtZW50Eg4KBnJ1bl9pZBgBIAEoCRISCgpnZW5lcmF0aW9uGAIgASgDEhYKDmZpcnN0X3NlcXVlbmNlGAMgASgDEhUKDWxhc3Rfc2VxdWVuY2UYBCABKAMSIgoGZXZlbnRzGAUgAygLMhIub3Jrc3RhY2sudjEuRXZlbnRCrQEKD2NvbS5vcmtzdGFjay52MUIRQ29udGludWF0aW9uUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp, file_orkstack_v1_run]);
+  fileDesc("Ch5vcmtzdGFjay92MS9jb250aW51YXRpb24ucHJvdG8SC29ya3N0YWNrLnYxIlkKEENvbnRpbnVhdGlvblBhcnQSDgoGb2Zmc2V0GAEgASgDEhIKCnNpemVfYnl0ZXMYAiABKAMSEQoJcmF3X2J5dGVzGAMgASgDEg4KBnNoYTI1NhgEIAEoCSKGAQoSQ29udGludWF0aW9uT2JqZWN0EgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSEgoKc2l6ZV9ieXRlcxgDIAEoAxIRCglyYXdfYnl0ZXMYBCABKAMSLAoFcGFydHMYBSADKAsyHS5vcmtzdGFjay52MS5Db250aW51YXRpb25QYXJ0IrABCg9FdmVudFNlZ21lbnRSZWYSEgoKZ2VuZXJhdGlvbhgBIAEoAxIUCgxleGVjdXRpb25faWQYAiABKAkSFgoOZmlyc3Rfc2VxdWVuY2UYAyABKAMSFQoNbGFzdF9zZXF1ZW5jZRgEIAEoAxITCgtldmVudF9jb3VudBgFIAEoAxIvCgZvYmplY3QYBiABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QizgMKD1J1bkNvbnRpbnVhdGlvbhIPCgd2ZXJzaW9uGAEgASgFEhIKCmdlbmVyYXRpb24YAiABKAMSFgoOZXZlbnRfc2VxdWVuY2UYAyABKAMSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKY2hlY2twb2ludBgGIAEoCzIfLm9ya3N0YWNrLnYxLkNvbnRpbnVhdGlvbk9iamVjdBIuCghzZWdtZW50cxgHIAMoCzIcLm9ya3N0YWNrLnYxLkV2ZW50U2VnbWVudFJlZhJNChF2ZXJzaW9uX2RlY2lzaW9ucxgIIAMoCzIyLm9ya3N0YWNrLnYxLlJ1bkNvbnRpbnVhdGlvbi5WZXJzaW9uRGVjaXNpb25zRW50cnkSMQoIc25hcHNob3QYCSABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QaNwoVVmVyc2lvbkRlY2lzaW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEigwEKEVJ1bkNoZWNrcG9pbnRQYXJ0EiAKBmhlYWRlchgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1bhInCgl0YXNrX3J1bnMYAiADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEiMKBWl0ZW1zGAMgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1biKIAQoPUnVuRXZlbnRTZWdtZW50Eg4KBnJ1bl9pZBgBIAEoCRISCgpnZW5lcmF0aW9uGAIgASgDEhYKDmZpcnN0X3NlcXVlbmNlGAMgASgDEhUKDWxhc3Rfc2VxdWVuY2UYBCABKAMSIgoGZXZlbnRzGAUgAygLMhIub3Jrc3RhY2sudjEuRXZlbnQiqwEKElJ1blNuYXBzaG90T3ZlcmxheRIQCghiYXNlX3VyaRgBIAEoCRIgCgZoZWFkZXIYAiABKAsyEC5vcmtzdGFjay52MS5SdW4SJwoJdGFza19ydW5zGAMgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIjCgVpdGVtcxgEIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SEwoLYmFzZV9zaGEyNTYYBSABKAlCrQEKD2NvbS5vcmtzdGFjay52MUIRQ29udGludWF0aW9uUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp, file_orkstack_v1_run]);
 
 /**
  * ContinuationPart is one gzip member of a checkpoint object: the unit a
@@ -324,4 +324,64 @@ export type RunEventSegment = Message<"orkstack.v1.RunEventSegment"> & {
  */
 export const RunEventSegmentSchema: GenMessage<RunEventSegment> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_continuation, 5);
+
+/**
+ * RunSnapshotOverlay replaces, by key, the rows of the FULL snapshot at
+ * base_uri. base_uri is always a {seq}.pb full snapshot of the same run,
+ * never another overlay. base_sha256 is the lowercase hex SHA-256 of the
+ * base bytes this overlay was diffed against: a {seq}.pb key can be
+ * rewritten by a retried emit, so a reader verifies it.
+ *
+ * It is written as {seq}.ovl beside the {seq}.pb snapshots, for a
+ * non-terminal event of a run whose plan enables overlays and that declares
+ * more rows than its policy's floor. Materialized: the base's rows in base
+ * order, each replaced by the overlay row with the same key — task_id for a
+ * task row, (task_id, item) for an item row — and the header replacing the
+ * base's. The writer writes one only when that materialization equals the
+ * run it was asked to snapshot; otherwise it writes a full snapshot.
+ * Internal: no RPC carries it.
+ *
+ * @generated from message orkstack.v1.RunSnapshotOverlay
+ */
+export type RunSnapshotOverlay = Message<"orkstack.v1.RunSnapshotOverlay"> & {
+  /**
+   * @generated from field: string base_uri = 1;
+   */
+  baseUri: string;
+
+  /**
+   * header is the Run with task_runs cleared.
+   *
+   * @generated from field: orkstack.v1.Run header = 2;
+   */
+  header?: Run | undefined;
+
+  /**
+   * task_runs holds the task rows that differ from the base's, items
+   * cleared.
+   *
+   * @generated from field: repeated orkstack.v1.TaskRun task_runs = 3;
+   */
+  taskRuns: TaskRun[];
+
+  /**
+   * items holds the item rows (task_id and item set) that differ from the
+   * base's.
+   *
+   * @generated from field: repeated orkstack.v1.TaskRun items = 4;
+   */
+  items: TaskRun[];
+
+  /**
+   * @generated from field: string base_sha256 = 5;
+   */
+  baseSha256: string;
+};
+
+/**
+ * Describes the message orkstack.v1.RunSnapshotOverlay.
+ * Use `create(RunSnapshotOverlaySchema)` to create a new message.
+ */
+export const RunSnapshotOverlaySchema: GenMessage<RunSnapshotOverlay> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 6);
 

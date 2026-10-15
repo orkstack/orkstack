@@ -142,6 +142,7 @@ func registerRunActivities(w worker.Worker, snapshots *engine.SnapshotActivities
 // reading each, rather than the in-memory values.
 func registerRunActivitiesWith(w worker.Worker, snapshots *engine.SnapshotActivities, values *memValues, each engine.EachValuesReader) {
 	w.RegisterActivityWithOptions(snapshots.WriteSnapshot, activity.RegisterOptions{Name: engine.ActivityWriteSnapshot})
+	w.RegisterActivityWithOptions(snapshots.WriteSnapshotOrOverlay, activity.RegisterOptions{Name: engine.ActivityWriteSnapshotOrOverlay})
 	w.RegisterActivityWithOptions(snapshots.WriteFailedRunSnapshot, activity.RegisterOptions{Name: engine.ActivityWriteFailedRunSnapshot})
 	w.RegisterActivityWithOptions(snapshots.WriteEventSegment, activity.RegisterOptions{Name: engine.ActivityWriteEventSegment})
 	w.RegisterActivityWithOptions(snapshots.WriteSwitchSnapshot, activity.RegisterOptions{Name: engine.ActivityWriteSwitchSnapshot})

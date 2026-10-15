@@ -541,6 +541,101 @@ func (x *RunEventSegment) GetEvents() []*Event {
 	return nil
 }
 
+// RunSnapshotOverlay replaces, by key, the rows of the FULL snapshot at
+// base_uri. base_uri is always a {seq}.pb full snapshot of the same run,
+// never another overlay. base_sha256 is the lowercase hex SHA-256 of the
+// base bytes this overlay was diffed against: a {seq}.pb key can be
+// rewritten by a retried emit, so a reader verifies it.
+//
+// It is written as {seq}.ovl beside the {seq}.pb snapshots, for a
+// non-terminal event of a run whose plan enables overlays and that declares
+// more rows than its policy's floor. Materialized: the base's rows in base
+// order, each replaced by the overlay row with the same key — task_id for a
+// task row, (task_id, item) for an item row — and the header replacing the
+// base's. The writer writes one only when that materialization equals the
+// run it was asked to snapshot; otherwise it writes a full snapshot.
+// Internal: no RPC carries it.
+type RunSnapshotOverlay struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	BaseUri string                 `protobuf:"bytes,1,opt,name=base_uri,json=baseUri,proto3" json:"base_uri,omitempty"`
+	// header is the Run with task_runs cleared.
+	Header *Run `protobuf:"bytes,2,opt,name=header,proto3" json:"header,omitempty"`
+	// task_runs holds the task rows that differ from the base's, items
+	// cleared.
+	TaskRuns []*TaskRun `protobuf:"bytes,3,rep,name=task_runs,json=taskRuns,proto3" json:"task_runs,omitempty"`
+	// items holds the item rows (task_id and item set) that differ from the
+	// base's.
+	Items         []*TaskRun `protobuf:"bytes,4,rep,name=items,proto3" json:"items,omitempty"`
+	BaseSha256    string     `protobuf:"bytes,5,opt,name=base_sha256,json=baseSha256,proto3" json:"base_sha256,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunSnapshotOverlay) Reset() {
+	*x = RunSnapshotOverlay{}
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunSnapshotOverlay) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunSnapshotOverlay) ProtoMessage() {}
+
+func (x *RunSnapshotOverlay) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunSnapshotOverlay.ProtoReflect.Descriptor instead.
+func (*RunSnapshotOverlay) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RunSnapshotOverlay) GetBaseUri() string {
+	if x != nil {
+		return x.BaseUri
+	}
+	return ""
+}
+
+func (x *RunSnapshotOverlay) GetHeader() *Run {
+	if x != nil {
+		return x.Header
+	}
+	return nil
+}
+
+func (x *RunSnapshotOverlay) GetTaskRuns() []*TaskRun {
+	if x != nil {
+		return x.TaskRuns
+	}
+	return nil
+}
+
+func (x *RunSnapshotOverlay) GetItems() []*TaskRun {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *RunSnapshotOverlay) GetBaseSha256() string {
+	if x != nil {
+		return x.BaseSha256
+	}
+	return ""
+}
+
 var File_orkstack_v1_continuation_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_continuation_proto_rawDesc = "" +
@@ -599,7 +694,14 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"generation\x12%\n" +
 	"\x0efirst_sequence\x18\x03 \x01(\x03R\rfirstSequence\x12#\n" +
 	"\rlast_sequence\x18\x04 \x01(\x03R\flastSequence\x12*\n" +
-	"\x06events\x18\x05 \x03(\v2\x12.orkstack.v1.EventR\x06eventsB\xad\x01\n" +
+	"\x06events\x18\x05 \x03(\v2\x12.orkstack.v1.EventR\x06events\"\xd9\x01\n" +
+	"\x12RunSnapshotOverlay\x12\x19\n" +
+	"\bbase_uri\x18\x01 \x01(\tR\abaseUri\x12(\n" +
+	"\x06header\x18\x02 \x01(\v2\x10.orkstack.v1.RunR\x06header\x121\n" +
+	"\ttask_runs\x18\x03 \x03(\v2\x14.orkstack.v1.TaskRunR\btaskRuns\x12*\n" +
+	"\x05items\x18\x04 \x03(\v2\x14.orkstack.v1.TaskRunR\x05items\x12\x1f\n" +
+	"\vbase_sha256\x18\x05 \x01(\tR\n" +
+	"baseSha256B\xad\x01\n" +
 	"\x0fcom.orkstack.v1B\x11ContinuationProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -614,7 +716,7 @@ func file_orkstack_v1_continuation_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_continuation_proto_rawDescData
 }
 
-var file_orkstack_v1_continuation_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_orkstack_v1_continuation_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_orkstack_v1_continuation_proto_goTypes = []any{
 	(*ContinuationPart)(nil),      // 0: orkstack.v1.ContinuationPart
 	(*ContinuationObject)(nil),    // 1: orkstack.v1.ContinuationObject
@@ -622,30 +724,34 @@ var file_orkstack_v1_continuation_proto_goTypes = []any{
 	(*RunContinuation)(nil),       // 3: orkstack.v1.RunContinuation
 	(*RunCheckpointPart)(nil),     // 4: orkstack.v1.RunCheckpointPart
 	(*RunEventSegment)(nil),       // 5: orkstack.v1.RunEventSegment
-	nil,                           // 6: orkstack.v1.RunContinuation.VersionDecisionsEntry
-	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
-	(*Run)(nil),                   // 8: orkstack.v1.Run
-	(*TaskRun)(nil),               // 9: orkstack.v1.TaskRun
-	(*Event)(nil),                 // 10: orkstack.v1.Event
+	(*RunSnapshotOverlay)(nil),    // 6: orkstack.v1.RunSnapshotOverlay
+	nil,                           // 7: orkstack.v1.RunContinuation.VersionDecisionsEntry
+	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(*Run)(nil),                   // 9: orkstack.v1.Run
+	(*TaskRun)(nil),               // 10: orkstack.v1.TaskRun
+	(*Event)(nil),                 // 11: orkstack.v1.Event
 }
 var file_orkstack_v1_continuation_proto_depIdxs = []int32{
 	0,  // 0: orkstack.v1.ContinuationObject.parts:type_name -> orkstack.v1.ContinuationPart
 	1,  // 1: orkstack.v1.EventSegmentRef.object:type_name -> orkstack.v1.ContinuationObject
-	7,  // 2: orkstack.v1.RunContinuation.created_at:type_name -> google.protobuf.Timestamp
-	7,  // 3: orkstack.v1.RunContinuation.started_at:type_name -> google.protobuf.Timestamp
+	8,  // 2: orkstack.v1.RunContinuation.created_at:type_name -> google.protobuf.Timestamp
+	8,  // 3: orkstack.v1.RunContinuation.started_at:type_name -> google.protobuf.Timestamp
 	1,  // 4: orkstack.v1.RunContinuation.checkpoint:type_name -> orkstack.v1.ContinuationObject
 	2,  // 5: orkstack.v1.RunContinuation.segments:type_name -> orkstack.v1.EventSegmentRef
-	6,  // 6: orkstack.v1.RunContinuation.version_decisions:type_name -> orkstack.v1.RunContinuation.VersionDecisionsEntry
+	7,  // 6: orkstack.v1.RunContinuation.version_decisions:type_name -> orkstack.v1.RunContinuation.VersionDecisionsEntry
 	1,  // 7: orkstack.v1.RunContinuation.snapshot:type_name -> orkstack.v1.ContinuationObject
-	8,  // 8: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
-	9,  // 9: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
-	9,  // 10: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
-	10, // 11: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	9,  // 8: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
+	10, // 9: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
+	10, // 10: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
+	11, // 11: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
+	9,  // 12: orkstack.v1.RunSnapshotOverlay.header:type_name -> orkstack.v1.Run
+	10, // 13: orkstack.v1.RunSnapshotOverlay.task_runs:type_name -> orkstack.v1.TaskRun
+	10, // 14: orkstack.v1.RunSnapshotOverlay.items:type_name -> orkstack.v1.TaskRun
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_continuation_proto_init() }
@@ -660,7 +766,7 @@ func file_orkstack_v1_continuation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_continuation_proto_rawDesc), len(file_orkstack_v1_continuation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -161,6 +161,10 @@ var Schema = []Var{
 	// engine.DefaultDefinitionByReference — on, when unset, only where
 	// continuation is on (cmd/ork's definitionByReferenceFromEnv).
 	{Path: "engine.definition_by_reference", Env: "ORK_DEFINITION_BY_REFERENCE", Binaries: usesOrk, Kind: KindBool, Default: formatBool(engine.DefaultDefinitionByReference)},
+	// ORK_SNAPSHOT_OVERLAYS falls back to engine.DefaultSnapshotOverlays:
+	// whether a large run writes snapshot overlays for its non-terminal
+	// events.
+	{Path: "engine.snapshot_overlays", Env: "ORK_SNAPSHOT_OVERLAYS", Binaries: usesOrk, Kind: KindBool, Default: formatBool(engine.DefaultSnapshotOverlays)},
 	// ORK_RUN_MAX_IN_FLIGHT's fallback is engine.DefaultRunMaxInFlight: the
 	// most activities, child runs and pins one run keeps pending.
 	{Path: "engine.run_max_in_flight", Env: "ORK_RUN_MAX_IN_FLIGHT", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultRunMaxInFlight))},

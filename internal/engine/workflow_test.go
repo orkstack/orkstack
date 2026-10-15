@@ -79,6 +79,10 @@ type harness struct {
 	locators []engine.ContinuationLocator
 	// countItems, when set, answers CountEachItems instead of the store.
 	countItems func(ref *orkstackv1.ArtifactRef) (int32, error)
+	// overlayBases is the base every WriteSnapshotOrOverlay call was handed,
+	// and overlayWrites what each wrote, in order.
+	overlayBases  []engine.SnapshotBase
+	overlayWrites []engine.SnapshotWritten
 }
 
 // eachCounter is the harness's CountEachItems: the test's answer when it set
@@ -157,6 +161,19 @@ func newHarnessShared(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshot
 			return write(ctx, run, sequence)
 		},
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	h.env.RegisterActivityWithOptions(
+		func(ctx context.Context, run *orkstackv1.Run, sequence int64, base engine.SnapshotBase,
+			policy engine.OverlayPolicy,
+		) (engine.SnapshotWritten, error) {
+			written, err := snapshotActivities.WriteSnapshotOrOverlay(ctx, run, sequence, base, policy)
+			h.mu.Lock()
+			h.overlayBases = append(h.overlayBases, base)
+			h.overlayWrites = append(h.overlayWrites, written)
+			h.mu.Unlock()
+			return written, err
+		},
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshotOrOverlay},
 	)
 	h.registerContinuationActivities(snapshotActivities)
 	h.env.RegisterActivityWithOptions(

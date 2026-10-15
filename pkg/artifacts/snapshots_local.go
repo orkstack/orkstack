@@ -70,6 +70,27 @@ func (s *LocalRunSnapshotStore) WriteSnapshot(
 	if err != nil {
 		return "", err
 	}
+	return s.putSnapshot(ctx, key, data)
+}
+
+// WriteSnapshotOverlay writes one snapshot overlay at RunSnapshotOverlayKey,
+// exactly as WriteSnapshot writes a full snapshot.
+func (s *LocalRunSnapshotStore) WriteSnapshotOverlay(
+	ctx context.Context,
+	namespace, runID string,
+	sequence int64,
+	data []byte,
+) (string, error) {
+	key, err := RunSnapshotOverlayKey(namespace, runID, sequence)
+	if err != nil {
+		return "", err
+	}
+	return s.putSnapshot(ctx, key, data)
+}
+
+// putSnapshot writes one snapshot or overlay object at key through a temp
+// file and a rename.
+func (s *LocalRunSnapshotStore) putSnapshot(ctx context.Context, key string, data []byte) (string, error) {
 	if len(data) == 0 {
 		return "", fmt.Errorf("artifacts: local snapshot %q: empty snapshot", key)
 	}

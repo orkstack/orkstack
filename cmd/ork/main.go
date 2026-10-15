@@ -98,6 +98,8 @@ type config struct {
 	// value (definitionByReferenceFromEnv), and definitionByReferenceSet
 	// whether the key was set; the boot logs both.
 	definitionByReference, definitionByReferenceSet bool
+	// snapshotOverlays is engine.snapshot_overlays (snapshotOverlaysFromEnv).
+	snapshotOverlays bool
 	// composeMaxDepth is ORK_COMPOSE_MAX_DEPTH: 1 … engine.MaxComposeDepth,
 	// refused at boot outside that range (docs/DEPLOY.md §1).
 	composeMaxDepth int32
@@ -143,6 +145,7 @@ func loadConfig() config {
 	byReference, byReferenceSet, byReferenceErr := definitionByReferenceFromEnv(continuation.enabled,
 		engine.DefaultDefinitionByReference)
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
+	snapshotOverlays, overlaysErr := snapshotOverlaysFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
 
 	cfg := config{
@@ -167,11 +170,12 @@ func loadConfig() config {
 		runMaxInFlight:                runMaxInFlight,
 		definitionByReference:         byReference,
 		definitionByReferenceSet:      byReferenceSet,
+		snapshotOverlays:              snapshotOverlays,
 		composeMaxDepth:               composeMaxDepth,
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
-			continuationErr, inFlightErr, byReferenceErr),
+			continuationErr, inFlightErr, byReferenceErr, overlaysErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1049,6 +1053,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// where continuation is (docs/DEPLOY.md §1).
 	logger.Info("definition by reference", "definition_by_reference", cfg.definitionByReference,
 		"explicit", cfg.definitionByReferenceSet, "continuation", cfg.continuation.enabled)
+	logger.Info("snapshot overlays", "snapshot_overlays", cfg.snapshotOverlays)
+	// The process's one cache of the full snapshots overlays are written
+	// against, shared by the activity that writes them, the projection
+	// worker and the run reader (docs/DEPLOY.md §5): at most 8 bases or
+	// 128 MiB.
+	snapshotBases := engine.NewSnapshotBaseCache()
 
 	// Task logs: the chunks an Orker wrote while a task ran. They live in the
 	// same bucket, so this engine serves the logs of a run it never started
@@ -1094,6 +1104,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// runs this one neither started nor projected.
 	reader := engine.NewTemporalRunReader(temporalClient).
 		WithSnapshotStore(snapshots).
+		WithBaseCache(snapshotBases).
 		WithNamespaceIndex(namespaceIndexed).
 		WithOriginIndex(originIndexed)
 
@@ -1144,10 +1155,16 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	q := queuesFor(cfg)
 	runWorker := worker.New(temporalClient, q.run, runWorkerOptions(cfg))
 	engine.RegisterWorkflows(runWorker)
-	snapshotActivities := engine.NewSnapshotActivities(snapshots)
+	snapshotActivities := engine.NewSnapshotActivities(snapshots).WithBaseCache(snapshotBases)
 	runWorker.RegisterActivityWithOptions(
 		snapshotActivities.WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	// A large run's non-terminal snapshot: an overlay on its last full one
+	// when it can be (engine.snapshot_overlays).
+	runWorker.RegisterActivityWithOptions(
+		snapshotActivities.WriteSnapshotOrOverlay,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshotOrOverlay},
 	)
 	// The terminal snapshot of a run that cannot carry on from its saved
 	// state (engine.RunWorkflow's restore refusals).
@@ -1214,7 +1231,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	eventActivities := engine.NewArchivingEventActivities(bus, runs, archive).
 		WithRunNotifier(runNotifier).
 		WithEventSource(reader).
-		WithSnapshotStore(snapshots)
+		WithSnapshotStore(snapshots).
+		WithBaseCache(snapshotBases)
 	if eventObserver != nil {
 		eventActivities = eventActivities.WithEventObserver(eventObserver)
 	}
@@ -1337,6 +1355,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		RunMaxInFlight:                cfg.runMaxInFlight,
 		DefinitionByReference:         cfg.definitionByReference,
 		DefinitionObjects:             snapshots,
+		SnapshotOverlays:              cfg.snapshotOverlays,
 		ComposeMaxDepth:               cfg.composeMaxDepth,
 		CacheMaxTTL:                   cfg.cacheMaxTTL,
 		Memos:                         memoStore,
