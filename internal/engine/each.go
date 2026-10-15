@@ -923,16 +923,15 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 	}
 	snapshotURI := ""
 	if fresh {
-		localCtx := workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
-			StartToCloseTimeout:    snapshotAttemptTimeout,
-			ScheduleToCloseTimeout: snapshotActivityTimeout,
-			RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
-		})
-		if err := workflow.ExecuteLocalActivity(
-			localCtx, ActivityWriteSnapshot, s.snapshot(), int64(s.eventSeq),
-		).Get(localCtx, &snapshotURI); err != nil {
+		// The same helper emit's snapshots go through, so an item's fresh
+		// snapshot is an overlay exactly when emit's would be, and the base
+		// an overlay names is the run's last full snapshot, whichever site
+		// wrote it.
+		uri, err := s.writeEventSnapshot(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG)
+		if err != nil {
 			return fmt.Errorf("write snapshot for event %d: %w", s.eventSeq, err)
 		}
+		snapshotURI = uri
 	}
 	base := ctx
 	if s.leanEvents(ctx) {

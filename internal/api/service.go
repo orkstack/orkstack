@@ -312,6 +312,13 @@ type Config struct {
 	DefinitionByReference bool
 	DefinitionObjects     DefinitionObjectWriter
 
+	// SnapshotOverlays is engine.snapshot_overlays: a run tree in which some
+	// run declares more than engine.DefaultOverlayMinRows rows gets the
+	// overlay policy on its plan (snapshot_overlay.go), while every engine
+	// process that could decide it or project its events can read an
+	// overlay; otherwise its runs write full snapshots, as before.
+	SnapshotOverlays bool
+
 	// ComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH: how many levels of child runs
 	// one run may start (a run is level 0). Zero means the built-in ceiling,
 	// engine.DefaultComposeMaxDepth; it may lower that ceiling and never
@@ -502,6 +509,10 @@ type Service struct {
 	// continuation on; definitionObjects is Config.DefinitionObjects.
 	definitionByReference bool
 	definitionObjects     DefinitionObjectWriter
+	// snapshotOverlays is Config.SnapshotOverlays; overlaysOff rate-limits
+	// the Warn logged while the fleet keeps a run tree off overlays.
+	snapshotOverlays bool
+	overlaysOff      warnLimiter
 	// composeMaxDepth is Config.ComposeMaxDepth, defaulted.
 	composeMaxDepth int
 	// cacheMaxTTL is Config.CacheMaxTTL, defaulted; memos is Config.Memos.
@@ -563,6 +574,7 @@ func NewService(cfg Config) *Service {
 		historyMaxEvents:      positiveOr(cfg.HistoryMaxEvents, engine.DefaultHistoryMaxEvents),
 		continuation:          continuationBudgetFor(cfg),
 		definitionByReference: cfg.DefinitionByReference && cfg.ContinuationEnabled,
+		snapshotOverlays:      cfg.SnapshotOverlays,
 		definitionObjects:     cfg.DefinitionObjects,
 		runMaxInFlight:        int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
 		historyMaxBytes:       positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
@@ -1538,6 +1550,12 @@ func (s *Service) prepare(
 	if err := s.fleetCheck(ctx, planned, &plan); err != nil {
 		return submission{}, err
 	}
+	// The snapshot-overlay policy, a run-tree limit like those
+	// pinRunTreeLimits pins, but decided here, once every child definition
+	// is known: only a tree with a run large enough to use overlays asks the
+	// fleet, and a fleet that cannot read them leaves the policy off — never
+	// a refusal (pinSnapshotOverlay).
+	s.pinSnapshotOverlay(ctx, planned, &plan)
 	// The origin travels on the replay-pinned plan, as CommitRoot does: the
 	// door that accepted the submission is the only thing that knows it, and
 	// workflow code may not ask.

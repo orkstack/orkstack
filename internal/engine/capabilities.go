@@ -40,10 +40,18 @@ const LegacyEachMaxItems int32 = 1000
 // INVALID_ORKFLOW, so a run it decides first can never be carried on.
 const CapabilityDefinitionRef = "definition-ref"
 
+// CapabilitySnapshotOverlay is what a run whose plan enables snapshot
+// overlays needs (RunPlan.SnapshotOverlay) of every process that could decide
+// it AND of every process polling the projection channel: an older build
+// would refuse a {seq}.ovl snapshot reference, so its publish of that event
+// would fail and be lost. Unlike the two above it never refuses a submit:
+// without it the run writes full snapshots, as it always has.
+const CapabilitySnapshotOverlay = "snapshot-overlay"
+
 // EngineCapabilities is what this build can run, in the order it advertises
 // them. A later stage appends its own token; a token is never removed while a
 // release that relies on it may still poll.
-var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef}
+var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef, CapabilitySnapshotOverlay}
 
 // capabilitySuffix separates a process's SDK identity from what it advertises.
 const capabilitySuffix = " ork-caps="

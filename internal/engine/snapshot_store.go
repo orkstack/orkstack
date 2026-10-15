@@ -22,6 +22,10 @@ const ActivityWriteSnapshot = "WriteSnapshot"
 // namespace — so run-scoped cleanup can reclaim it by prefix.
 type SnapshotStore interface {
 	WriteSnapshot(ctx context.Context, namespace, runID string, sequence int64, data []byte) (string, error)
+	// WriteSnapshotOverlay stores a snapshot overlay at {seq}.ovl
+	// (artifacts.RunSnapshotStore), for a run that writes overlays
+	// (snapshot_overlay.go).
+	WriteSnapshotOverlay(ctx context.Context, namespace, runID string, sequence int64, data []byte) (string, error)
 	ReadSnapshot(ctx context.Context, uri string) ([]byte, error)
 	// WriteContinuation and ReadContinuationRange are a run's continuation
 	// objects (artifacts.RunSnapshotStore): written create-if-absent under a
@@ -54,6 +58,10 @@ var (
 type SnapshotActivities struct {
 	store    SnapshotStore
 	observer ContinuationObserver
+	// bases is the full snapshots overlays are written against
+	// (WriteSnapshotOrOverlay): the process's shared cache once cmd/ork
+	// wires one (WithBaseCache), a private one until then.
+	bases *SnapshotBaseCache
 
 	beforeContinuationWrite func(ctx context.Context, kind string) error
 	beforeContinuationRead  func(ctx context.Context, offset int64) error
@@ -61,7 +69,14 @@ type SnapshotActivities struct {
 
 // NewSnapshotActivities returns snapshot activities backed by store.
 func NewSnapshotActivities(store SnapshotStore) *SnapshotActivities {
-	return &SnapshotActivities{store: store}
+	return &SnapshotActivities{store: store, bases: NewSnapshotBaseCache()}
+}
+
+// WithBaseCache shares cache, the process's one base cache, with the readers
+// that resolve the overlays these activities write (docs/DEPLOY.md §5).
+func (a *SnapshotActivities) WithBaseCache(cache *SnapshotBaseCache) *SnapshotActivities {
+	a.bases = cache
+	return a
 }
 
 // WriteSnapshot serializes and stores a complete run snapshot.

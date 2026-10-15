@@ -146,3 +146,19 @@ func definitionByReferenceFromEnv(continuationEnabled, builtIn bool) (enabled, e
 	}
 	return value, true, nil
 }
+
+// snapshotOverlaysFromEnv reads ORK_SNAPSHOT_OVERLAYS
+// (engine.snapshot_overlays): whether a run tree with a run declaring more
+// than engine.DefaultOverlayMinRows rows writes snapshot overlays. A value
+// that is not a boolean is refused; unset is engine.DefaultSnapshotOverlays.
+func snapshotOverlaysFromEnv() (bool, error) {
+	raw, set := os.LookupEnv("ORK_SNAPSHOT_OVERLAYS")
+	if !set || raw == "" {
+		return engine.DefaultSnapshotOverlays, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return engine.DefaultSnapshotOverlays, fmt.Errorf("ORK_SNAPSHOT_OVERLAYS=%q must be true or false: %w", raw, err)
+	}
+	return value, nil
+}

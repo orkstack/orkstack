@@ -141,12 +141,14 @@ func isContinuationKey(key string) bool {
 }
 
 // isSnapshotObjectKey is what ReadSnapshot and DeleteSnapshot accept: a
-// sequence snapshot ({seq}.pb) or a continuation object.
+// sequence snapshot ({seq}.pb), a snapshot overlay ({seq}.ovl) or a
+// continuation object.
 func isSnapshotObjectKey(key string) bool {
 	if !strings.HasPrefix(key, SnapshotPrefix+"/") {
 		return false
 	}
-	return strings.HasSuffix(key, snapshotSuffix) || isContinuationKey(key)
+	return strings.HasSuffix(key, snapshotSuffix) || strings.HasSuffix(key, snapshotOverlaySuffix) ||
+		isContinuationKey(key)
 }
 
 // checkContinuationRange validates a range read's arguments against the size

@@ -282,6 +282,10 @@ func (s *countingSnapshotStore) WriteSnapshot(context.Context, string, string, i
 	return "", fmt.Errorf("not implemented")
 }
 
+func (s *countingSnapshotStore) WriteSnapshotOverlay(context.Context, string, string, int64, []byte) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
 func (s *countingSnapshotStore) ReadSnapshot(_ context.Context, uri string) ([]byte, error) {
 	s.reads++
 	data, ok := s.objects[uri]
@@ -1195,6 +1199,10 @@ func TestExecutionStatusPredicate_TracksStatusFromExecution(t *testing.T) {
 type failingSnapshotStore struct{ err error }
 
 func (s *failingSnapshotStore) WriteSnapshot(context.Context, string, string, int64, []byte) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
+func (s *failingSnapshotStore) WriteSnapshotOverlay(context.Context, string, string, int64, []byte) (string, error) {
 	return "", fmt.Errorf("not implemented")
 }
 

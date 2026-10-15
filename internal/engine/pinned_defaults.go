@@ -144,3 +144,25 @@ func DefaultContinuationBudget(events, bytes int64, restoreTimeout time.Duration
 func DefaultInFlightLimit(maxInFlight int32) InFlightLimit {
 	return InFlightLimit{Max: maxInFlight, HardStop: DefaultPendingActivityHardStop}
 }
+
+// DefaultSnapshotOverlays is engine.snapshot_overlays' default: off, so
+// every run writes full snapshots, until an operator turns it on once every
+// engine process runs a release that reads overlays (docs/DEPLOY.md §4, R4).
+const DefaultSnapshotOverlays = false
+
+// The snapshot-overlay thresholds a run pins when the deployment enables
+// overlays (OverlayPolicy): a run declaring more than DefaultOverlayMinRows
+// rows writes an overlay for a non-terminal event, a full snapshot after
+// DefaultOverlayMaxChain overlays in a row, and a full snapshot whenever more
+// than DefaultOverlayMaxRows rows differ from the base.
+const (
+	DefaultOverlayMinRows  int64 = 256
+	DefaultOverlayMaxChain int64 = 64
+	DefaultOverlayMaxRows  int64 = 256
+)
+
+// DefaultOverlayPolicy is the policy pinRunTreeLimits pins on a new
+// top-level plan when overlays are enabled and the run tree can use them.
+func DefaultOverlayPolicy() OverlayPolicy {
+	return OverlayPolicy{MinRows: DefaultOverlayMinRows, MaxChain: DefaultOverlayMaxChain, MaxRows: DefaultOverlayMaxRows}
+}

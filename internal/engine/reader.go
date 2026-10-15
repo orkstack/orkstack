@@ -209,6 +209,8 @@ type TemporalRunReader struct {
 	temporal  client.Client
 	converter converter.DataConverter
 	snapshots SnapshotStore
+	// bases resolves snapshot overlays (WithBaseCache); nil caches none.
+	bases *SnapshotBaseCache
 
 	// admin is the narrowed seam NamespaceRetention, SetNamespaceRetention,
 	// LookupWorkflow and DeleteWorkflow use. It is set from the same Temporal
@@ -259,6 +261,14 @@ func NewTemporalRunReader(c client.Client) *TemporalRunReader {
 // history. All replicas use the same configured object store.
 func (r *TemporalRunReader) WithSnapshotStore(store SnapshotStore) *TemporalRunReader {
 	r.snapshots = store
+	return r
+}
+
+// WithBaseCache resolves snapshot overlays through cache, the process's one
+// base cache (docs/DEPLOY.md §5). Without one, every overlay read also reads
+// its base: two GETs.
+func (r *TemporalRunReader) WithBaseCache(cache *SnapshotBaseCache) *TemporalRunReader {
+	r.bases = cache
 	return r
 }
 
@@ -1043,7 +1053,7 @@ func (r *TemporalRunReader) scanWith(
 			case priorErr == nil:
 				projection.run = mergeRunSnapshot(projection.run, prior)
 				projection.snapshotLoaded = true
-			case errors.Is(priorErr, ErrContinuationObjectInvalid):
+			case errors.Is(priorErr, ErrContinuationObjectInvalid), errors.Is(priorErr, ErrSnapshotOverlayInvalid):
 				return nil, priorErr
 			}
 			// Degrade with what history already recorded: the newest published
@@ -1317,6 +1327,16 @@ func (r *TemporalRunReader) readSnapshotAt(
 	case strings.Contains(uri, "/"+artifacts.ContinuationDir+"/"):
 		return nil, fmt.Errorf("engine: read the saved state of run %s: %w: it names an object outside the run's saved state",
 			runID, ErrContinuationObjectInvalid)
+	}
+	if reference == nil {
+		// A {seq}.pb, or a {seq}.ovl assembled with the full snapshot it
+		// names, verified (materializeSnapshot): an overlay that cannot be
+		// assembled is an error that never matches NotFound.
+		run, err := materializeSnapshot(ctx, r.snapshots, r.bases, uri)
+		if err != nil {
+			return nil, fmt.Errorf("engine: read snapshot of run %s: %w", runID, err)
+		}
+		return run, nil
 	}
 	data, err := r.snapshots.ReadSnapshot(ctx, uri)
 	if err != nil {

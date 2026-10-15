@@ -815,7 +815,7 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.pins": fieldDerived, "runState.pinOrder": fieldDerived, "runState.awaits": fieldDerived,
 	"runState.resolutions": fieldDerived, "runState.eaches": fieldDerived, "runState.eachShare": fieldDerived,
 	"runState.itemInputLimit": fieldDerived, "runState.itemArtifactMax": fieldDerived,
-	"runState.children": fieldDerived, "runState.hasHandlers": fieldDerived,
+	"runState.children": fieldDerived, "runState.hasHandlers": fieldDerived, "runState.declaredRows": fieldDerived,
 	"runState.handlerCount": fieldDerived, "runState.handlerStartBytes": fieldDerived,
 	"eachState.spec": fieldDerived, "awaitState.spec": fieldDerived,
 	"pinState.name": fieldDerived, "pinState.pin": fieldDerived, "pinState.tasks": fieldDerived,
@@ -845,7 +845,7 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.bootstrapStarted": fieldEphemeral, "runState.bootstrapDeadline": fieldEphemeral,
 	"runState.bootstrapBatch": fieldEphemeral,
 	"runState.passReserve":    fieldEphemeral, "runState.passCharge": fieldEphemeral, "runState.pendingHandlers": fieldEphemeral,
-	"runState.hist": fieldEphemeral, "runState.guardOff": fieldEphemeral,
+	"runState.hist": fieldEphemeral, "runState.guardOff": fieldEphemeral, "runState.snapBase": fieldEphemeral,
 	"eachState.inFlight": fieldEphemeral,
 	// A pin's runtime: no pin is opening, open or closing at a switch, and
 	// every pin starts unopened in the next generation.

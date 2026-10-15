@@ -378,6 +378,23 @@ func (s *runState) failComposed(ctx workflow.Context, id, code string, category 
 // startChild requests one composed task's child run and returns its result
 // future once the start is confirmed. It is called from the main loop for a
 // ready task classify decided to run.
+// childStartPlan is the plan a child run starts with: the planned one, with
+// exactly its origin set. The run-tree limits travel once per tree, on the
+// top-level plan, and are copied into each child's START plan here —
+// deterministic, from this run's own argument. A recorded parent's plan has
+// none, so its child starts are byte-identical; a grandchild inherits
+// through its parent's copy. Never on the nested plan the parent carries:
+// that would cost every composed task its bytes inside the 256 KiB plan.
+func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
+	childPlan := planned.Plan
+	childPlan.Origin = &RunOrigin{Kind: RunOriginKindParentRun, ID: s.runID}
+	childPlan.History = s.plan.History
+	childPlan.Continuation = s.plan.Continuation
+	childPlan.InFlight = s.plan.InFlight
+	childPlan.SnapshotOverlay = s.plan.SnapshotOverlay
+	return childPlan
+}
+
 func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow.Future, error) {
 	c := s.children[id]
 	if c.err != nil {
@@ -431,18 +448,9 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 			fmt.Sprintf("task %q: the child run's input could not be rendered: %v", id, err), "")
 	}
 
-	// 4. The child's plan: the planned one, with exactly its origin set.
-	childPlan := c.plan.Plan
-	childPlan.Origin = &RunOrigin{Kind: RunOriginKindParentRun, ID: s.runID}
-	// The run-tree limits travel once per tree, on the top-level plan, and
-	// are copied into each child's START plan here — deterministic, from this
-	// run's own argument. A recorded parent's plan has none, so its child
-	// starts are byte-identical; a grandchild inherits through its parent's
-	// copy. Never on the nested plan the parent carries: that would cost
-	// every composed task its bytes inside the 256 KiB plan.
-	childPlan.History = s.plan.History
-	childPlan.Continuation = s.plan.Continuation
-	childPlan.InFlight = s.plan.InFlight
+	// 4. The child's plan: the planned one, with exactly its origin set and
+	// the run-tree limits copied (childStartPlan).
+	childPlan := s.childStartPlan(c.plan)
 
 	// 5. Start it, and wait for the start to be confirmed.
 	options := childWorkflowOptions(workflow.GetInfo(ctx).TaskQueueName, c.plan, c.wf, childPlan)

@@ -33,6 +33,14 @@ func (s *testSnapshotStore) WriteSnapshot(_ context.Context, namespace, runID st
 	return uri, nil
 }
 
+func (s *testSnapshotStore) WriteSnapshotOverlay(_ context.Context, namespace, runID string, sequence int64, data []byte) (string, error) {
+	uri := fmt.Sprintf("memory://snapshots/%s/%s/%d.ovl", namespace, runID, sequence)
+	s.mu.Lock()
+	s.objects[uri] = append([]byte(nil), data...)
+	s.mu.Unlock()
+	return uri, nil
+}
+
 func (s *testSnapshotStore) ReadSnapshot(_ context.Context, uri string) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
