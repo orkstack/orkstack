@@ -656,13 +656,12 @@ func (s *runState) carryReason() string {
 
 // RestoreHistoryBound is the most history events one generation's bootstrap
 // appends, from its budget alone:
-//   - one marker per chunk of its largest copy: ceil(CheckpointMaxBytes / ChunkBytes)
-//     — a definition passed by reference shares that cap with the checkpoint,
-//     so the term covers both (read as two objects, they round up at most one
-//     chunk more, inside the 24 below);
+//   - one marker per chunk of its largest copy: N = ceil(CheckpointMaxBytes / ChunkBytes);
 //   - five events per batch yield (TimerStarted, TimerFired, and the
-//     WorkflowTaskCompleted/Scheduled/Started around it);
-//   - 24 for its first and last workflow tasks and an endUnrestorable;
+//     WorkflowTaskCompleted/Scheduled/Started around it), ceil(N / ChunksPerTask);
+//   - 24 for its first and last workflow tasks and an endUnrestorable — by
+//     count 12 of them: 3 opening its first task, its terminal snapshot's
+//     marker, 7 for PublishEvent's round trip, and the close;
 //   - while reads fail, at most failRate events per second for the whole
 //     restore timeout, where failRate = max(3/8, 6/minServerBackoff):
 //   - a workflow-task heartbeat (WorkflowTaskCompleted/Scheduled/Started)
@@ -676,6 +675,15 @@ func (s *runState) carryReason() string {
 //     BackoffMax.
 //     The two regimes never overlap in time: the task is open in the first
 //     and closed in the second.
+//
+// A definition passed by reference shares the copy's cap with the
+// checkpoint (copyOverCap) and is read as a second object first, so its d
+// bytes and the checkpoint's k, d+k at most the cap, can each end in a
+// partial chunk: ceil(d/C) + ceil(k/C) ≤ N + 1 markers. Both reads share one
+// batch counter, so N+1 reads take floor(N/P) yields, never more than the
+// ceil(N/P) charged above. The split adds that one marker and no yield, and
+// the 24's spare 12 hold it (TestRestoreHistoryBound_DefinitionAndCheckpointSplitAtTheCap
+// pins the worst case at every batch size).
 //
 // It assumes the cluster's default 10 s workflow-task timeout: StartRun sets
 // none. The recreated deadline timer of each await open at the switch adds

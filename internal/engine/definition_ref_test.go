@@ -459,3 +459,112 @@ func TestDefinitionByReference_GateIsCarried(t *testing.T) {
 		}
 	}
 }
+
+// TestRestoreHistoryBound_DefinitionAndCheckpointSplitAtTheCap pins the
+// worst case RestoreHistoryBound's comment argues: a carried generation
+// whose definition and checkpoint together are exactly at the cap, split so
+// each object ends in a partial chunk that one object of their summed size
+// would not. The two objects take one chunk more than the bound's chunk
+// term (ceil(cap/chunk) + 1 markers), and never a yield more than its yield
+// term — the reads share one batch counter, so N+1 reads take floor(N/P)
+// yields, never over the ceil(N/P) the bound charges — so the bootstrap's
+// markers and yields exceed the bound's chunk and yield terms by at most
+// that one marker, which the bound's fixed 24 holds.
+func TestRestoreHistoryBound_DefinitionAndCheckpointSplitAtTheCap(t *testing.T) {
+	wf := definedChain(t)
+	for _, tc := range []struct {
+		name    string
+		perTask func(chunks int64) int64
+	}{
+		{"one chunk per task", func(int64) int64 { return 1 }},
+		{"two chunks per task", func(int64) int64 { return 2 }},
+		{"a batch one short of the chunks", func(n int64) int64 { return n - 1 }},
+		{"a batch of exactly the chunks", func(n int64) int64 { return n }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				budget   engine.ContinuationBudget
+				chunks   int64 // ceil(cap / chunk): the bound's chunk term
+				recorder *commandRecorder
+			)
+			g := runGenerationsWithArgs(t, definitionRunID, func(h *harness) []any {
+				stub, plan := storeDefinition(t, h.snapshots, definitionRunID, wf, continuedPlan(2))
+				return []any{definitionRunID, stub, payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil)}
+			}, func(h *harness, generation int) {
+				if generation == 1 {
+					recorder = recordCommands(h)
+				}
+			}, func(generation int, plan *engine.RunPlan, carry *orkstackv1.RunContinuation) {
+				if generation != 1 {
+					return
+				}
+				d, k := plan.Definition.SizeBytes, carry.GetCheckpoint().GetSizeBytes()
+				// The smallest chunk with at most 40 chunks at which both
+				// objects end in a partial chunk whose remainders fit one.
+				var chunk int64
+				for c := max(1, (d+k+39)/40); c < d+k; c++ {
+					if r1, r2 := d%c, k%c; r1 > 0 && r2 > 0 && r1+r2 <= c && (d+k+c-1)/c >= 3 {
+						chunk = c
+						break
+					}
+				}
+				if chunk == 0 {
+					t.Fatalf("no chunk size splits a %d-byte definition and a %d-byte checkpoint", d, k)
+				}
+				budget = *plan.Continuation
+				budget.CheckpointMaxBytes = d + k // exactly at the cap
+				budget.ChunkBytes = chunk
+				chunks = (d + k + chunk - 1) / chunk
+				budget.ChunksPerTask = tc.perTask(chunks)
+				plan.Continuation = &budget
+			})
+			if g.err != nil {
+				t.Fatalf("the run ended %v, want SUCCEEDED", g.err)
+			}
+			if len(g.harnesses) < 2 || recorder == nil {
+				t.Fatalf("the run had %d generations, want a carried one", len(g.harnesses))
+			}
+			commands := recorder.list()
+			last := -1
+			for i, c := range commands {
+				if c == "local:"+engine.ActivityReadContinuationChunk {
+					last = i
+				}
+			}
+			reads, yields := int64(0), int64(0)
+			for _, c := range commands[:last+1] {
+				switch c {
+				case "local:" + engine.ActivityReadContinuationChunk:
+					reads++
+				case "timer:1ms":
+					yields++
+				}
+			}
+			perTask := budget.ChunksPerTask
+			boundYields := (chunks + perTask - 1) / perTask
+			if reads != chunks+1 {
+				t.Fatalf("generation 1 read %d chunks, want %d: the split is not the worst case", reads, chunks+1)
+			}
+			if want := chunks / perTask; yields != want || yields > boundYields {
+				t.Fatalf("generation 1 yielded %d times over %d reads of %d per task, want %d, never over the bound's %d",
+					yields, reads, perTask, want, boundYields)
+			}
+			// The bound's chunk and yield terms: RestoreHistoryBound with no
+			// time to fail in, less its fixed 24.
+			noFailures := budget
+			noFailures.Restore.TimeoutSeconds = 0
+			terms := engine.RestoreHistoryBound(noFailures) - 24
+			if terms != chunks+5*boundYields {
+				t.Fatalf("the bound's chunk and yield terms are %d, want %d", terms, chunks+5*boundYields)
+			}
+			if got := reads + 5*yields; got > terms+1 {
+				t.Fatalf("the bootstrap appended %d markers and yield events, over the bound's terms %d plus one", got, terms)
+			}
+			t.Logf("cap %d = definition %d + checkpoint %d, chunk %d, %d per task: %d reads and %d yields "+
+				"(%d events) against the bound's %d chunks and %d yields (%d events)",
+				budget.CheckpointMaxBytes, budget.CheckpointMaxBytes-g.carries[0].GetCheckpoint().GetSizeBytes(),
+				g.carries[0].GetCheckpoint().GetSizeBytes(), budget.ChunkBytes, perTask, reads, yields, reads+5*yields,
+				chunks, boundYields, terms)
+		})
+	}
+}
