@@ -389,6 +389,12 @@ unmeasured until the soak that sets a larger default has been run:
   The child is a separate run with its own history, and its own definition
   met this ceiling when it was applied; the whole composition tree is further
   bounded by its 256 KiB plan (rule 31).
+- **A deep pipeline is bounded on its own.** A task's input carries one
+  upstream reference per ancestor whose success its running implies, so a
+  long default-join chain is refused at apply past about 1,500 plain tasks,
+  and a task more than about 300 such ancestors down may fail
+  `INPUT_TOO_LARGE` when it is dispatched (rule 44). Split such a pipeline
+  into composed Orkflows.
 
 A run that nonetheless grows near its cluster's history limit — many tasks
 running at once, long retries, an await parked for weeks — is not left to
@@ -1471,6 +1477,22 @@ How each node reads:
     composed task each count once ("How many tasks an Orkflow may declare").
     Enforced by `internal/api` at validate, apply and plan, and again at
     submit — the compiler has no deployment configuration to read.
+44. A task's required ancestors — its needs through default joins, a
+    fan-out only as a direct need, none behind a join policy or a failure
+    handler — must fit their smallest possible upstream references in one
+    activity input (`tasks[i].needs`). A plain ancestor's smallest reference
+    is about 170 B (its task id, a commit reference and a values digest), so
+    a default-join chain of plain tasks is refused past about 1,500 tasks; an
+    awaited or composed ancestor's reference has no commit, and such a chain
+    is refused past about 2,370. The refusal names the task and its count:
+    "Split the pipeline into composed Orkflows". Only a task that could
+    never be dispatched is refused: whenever it runs, every required
+    ancestor succeeded. Between about 300 and 1,500 required plain ancestors
+    the definition is accepted, but a task whose real upstream references
+    (about 800 B each, with a deployment's store and one artifact) exceed the
+    bound fails `INPUT_TOO_LARGE` when it is dispatched. Checked wherever a
+    document is compiled — validate, apply and `orkctl run plan --file` — and
+    never at submit: a version stored before this rule keeps starting.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that
