@@ -265,6 +265,23 @@ func (j *joinE2E) attemptsOf(runID, taskID string) []*orkstackv1.TaskAttempt {
 	return records
 }
 
+// attemptsLanded is attemptsOf once at least n records have landed, or
+// whatever has when within passes. A canceled attempt's record is the
+// Orker's last write for it, made after it acknowledged the cancel, so the
+// run can end before the record lands; a read right after the run ends can
+// see none.
+func (j *joinE2E) attemptsLanded(runID, taskID string, n int, within time.Duration) []*orkstackv1.TaskAttempt {
+	j.t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		records := j.attemptsOf(runID, taskID)
+		if len(records) >= n || time.Now().After(deadline) {
+			return records
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 func statusIs(t *testing.T, run *orkstackv1.Run, taskID string, want orkstackv1.Status) {
 	t.Helper()
 	if got := taskRunNamed(run, taskID).GetStatus(); got != want {
@@ -571,7 +588,7 @@ func TestIntegration_JoinCancelDuringHandlersKeepsTheRunFailed(t *testing.T) {
 		t.Fatalf("run = %v / %v, want FAILED with deploy's error", run.GetStatus(), run.GetError())
 	}
 	statusIs(t, run, "rollback", orkstackv1.Status_STATUS_CANCELED)
-	records := j.attemptsOf(runID, "rollback")
+	records := j.attemptsLanded(runID, "rollback", 1, 30*time.Second)
 	if len(records) != 1 || records[0].GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_CANCELED {
 		t.Errorf("rollback's attempt records = %v, want one CANCELED: a cancellation is never retried", records)
 	}
