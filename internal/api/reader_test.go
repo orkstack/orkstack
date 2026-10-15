@@ -80,6 +80,25 @@ type fakeReader struct {
 	// startless names runs whose start event reads as gone (aged out of
 	// history while the run record is still answered elsewhere).
 	startless map[string]bool
+	// definitions, when set, resolves a start record passed by reference,
+	// as TemporalRunReader.RunDefinition does over object storage; unset,
+	// RunDefinition returns the record's own definition, as every fake's
+	// does. runDefinitionCount counts the calls.
+	definitions        func(ctx context.Context, runID string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error)
+	runDefinitionCount int
+}
+
+// RunDefinition resolves a start record's definition: through definitions
+// when a test set it, otherwise the record's own.
+func (f *fakeReader) RunDefinition(ctx context.Context, runID string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
+	f.mu.Lock()
+	f.runDefinitionCount++
+	resolve := f.definitions
+	f.mu.Unlock()
+	if resolve != nil {
+		return resolve(ctx, runID, start)
+	}
+	return start.Orkflow, nil
 }
 
 // RunStart answers from starts, the way TemporalRunReader answers from a

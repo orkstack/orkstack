@@ -91,29 +91,45 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 		return
 	}
 
-	// 4. A callback await, with a credential on the plan.
-	callback := false
-	for _, task := range start.Orkflow.GetTasks() {
-		if task.GetId() == taskID && task.GetAwait().GetCallback() {
-			callback = true
-		}
-	}
+	// 4. A credential on the plan: one is minted for a callback await only,
+	//    so none means no callback await of that id (404).
 	cred, minted := start.Plan.Awaits[taskID]
-	if !callback || !minted {
+	if !minted {
 		writeTriggerError(w, http.StatusNotFound, "not_found", notFound)
 		return
 	}
 
 	// 5. A wrong token on a real await (401) and an unknown await (404) are
 	//    distinguishable, on the trigger door's reasoning: run ids and task
-	//    ids are not confidential, tokens are.
+	//    ids are not confidential, tokens are. Verified BEFORE the
+	//    definition is read: for a definition passed by reference that read
+	//    is an object GET and a decode, which a caller without the token
+	//    must never cause.
 	if !verifyAwaitToken(cred, token) {
 		writeTriggerError(w, http.StatusUnauthorized, "unauthenticated",
 			"the bearer token does not authenticate this await")
 		return
 	}
 
-	// 6. The body, bounded. A completion's bytes are kept verbatim.
+	// 6. The definition's own word that the task is a callback await: read
+	//    from object storage for a definition passed by reference, only now.
+	start, err = resolvedStart(ctx, binding, runID, start)
+	if err != nil {
+		writeTriggerError(w, http.StatusServiceUnavailable, "unavailable", connectMessage(err))
+		return
+	}
+	callback := false
+	for _, task := range start.Orkflow.GetTasks() {
+		if task.GetId() == taskID && task.GetAwait().GetCallback() {
+			callback = true
+		}
+	}
+	if !callback {
+		writeTriggerError(w, http.StatusNotFound, "not_found", notFound)
+		return
+	}
+
+	// 7. The body, bounded. A completion's bytes are kept verbatim.
 	var (
 		values []byte
 		reason string
@@ -143,7 +159,7 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 		}
 	}
 
-	// 7. The run, from the read model, WITHOUT a namespace check: the
+	// 8. The run, from the read model, WITHOUT a namespace check: the
 	//    namespace a callback acts in is the run's own.
 	run, err := svc.LookupRun(ctx, runID)
 	if err != nil {
@@ -156,7 +172,7 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 		return
 	}
 
-	// 8. One core, shared with ResolveAwait.
+	// 9. One core, shared with ResolveAwait.
 	response, err := svc.resolveAwait(ctx, awaitResolution{
 		binding:   binding,
 		run:       run,
@@ -174,7 +190,7 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 		return
 	}
 
-	// 9. 202: durably recorded in the run's history, not yet applied. The
+	// 10. 202: durably recorded in the run's history, not yet applied. The
 	//    body never carries the run — a token holder learns the coordinates
 	//    it already had and the digest of what it sent.
 	encoded, err := MarshalJSON(response)

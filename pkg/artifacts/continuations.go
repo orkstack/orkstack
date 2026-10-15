@@ -41,6 +41,11 @@ const (
 	// ContinuationKindSnapshot names a switch snapshot: the gzipped full
 	// orkstack.v1.Run at a switch.
 	ContinuationKindSnapshot = "snapshot"
+	// ContinuationKindDefinition names a run's planned definition when it
+	// travels by reference: gzip members of orkstack.v1.Orkflow, written by
+	// the submitting engine before the start that uses it, always at
+	// generation 0.
+	ContinuationKindDefinition = "definition"
 )
 
 // ErrContinuationSize reports a continuation object whose stored size is not
@@ -53,6 +58,7 @@ var continuationKinds = map[string]bool{
 	ContinuationKindCheckpoint: true,
 	ContinuationKindEvents:     true,
 	ContinuationKindSnapshot:   true,
+	ContinuationKindDefinition: true,
 }
 
 // RunContinuationKey renders the content-addressed key of one continuation
@@ -79,6 +85,17 @@ func RunContinuationKey(namespace, runID string, generation int64, kind, sha256h
 		return "", fmt.Errorf("artifacts: run continuation key: %q is not a lowercase hex SHA-256", sha256hex)
 	}
 	return fmt.Sprintf("%s%s/%06d-%s-%s%s", prefix, ContinuationDir, generation, kind, sha256hex, continuationSuffix), nil
+}
+
+// continuationURI renders the URI a store gives the key of one continuation
+// object, through that store's own uri function: what ContinuationURI
+// returns, validated as RunContinuationKey validates it.
+func continuationURI(uri func(string) string, namespace, runID string, generation int64, kind, sha256hex string) (string, error) {
+	key, err := RunContinuationKey(namespace, runID, generation, kind, sha256hex)
+	if err != nil {
+		return "", err
+	}
+	return uri(key), nil
 }
 
 // ContinuationURIMatches reports whether uri names exactly the key

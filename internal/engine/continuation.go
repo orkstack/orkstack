@@ -548,16 +548,19 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		return nil, "", nil
 	}
 
-	// 5. The checkpoint, refused over its cap.
+	// 5. The checkpoint, refused over its cap — which a definition passed
+	// by reference shares: the next generation copies both into its
+	// history (AGENTS.md §2.2).
+	definition := s.plan.definitionBytes()
 	var checkpoint *orkstackv1.ContinuationObject
 	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
-		budget.CheckpointMaxBytes, obs).Get(writeCtx, &checkpoint); err != nil {
+		budget.CheckpointMaxBytes-definition, obs).Get(writeCtx, &checkpoint); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
-	if checkpoint.GetSizeBytes() > budget.CheckpointMaxBytes {
+	if copied := checkpoint.GetSizeBytes() + definition; copied > budget.CheckpointMaxBytes {
 		s.setNoSwitch(ctx, inFlight, fmt.Sprintf("its saved state is %s, more than the %s a run carries forward",
-			savedStateSize(checkpoint.GetSizeBytes()), savedStateSize(budget.CheckpointMaxBytes)))
+			savedStateSize(copied), savedStateSize(budget.CheckpointMaxBytes)))
 		return nil, "", nil
 	}
 
@@ -649,7 +652,10 @@ func (s *runState) carryReason() string {
 
 // RestoreHistoryBound is the most history events one generation's bootstrap
 // appends, from its budget alone:
-//   - one marker per chunk of its largest copy: ceil(CheckpointMaxBytes / ChunkBytes);
+//   - one marker per chunk of its largest copy: ceil(CheckpointMaxBytes / ChunkBytes)
+//     — a definition passed by reference shares that cap with the checkpoint,
+//     so the term covers both (read as two objects, they round up at most one
+//     chunk more, inside the 24 below);
 //   - five events per batch yield (TimerStarted, TimerFired, and the
 //     WorkflowTaskCompleted/Scheduled/Started around it);
 //   - 24 for its first and last workflow tasks and an endUnrestorable;
@@ -824,7 +830,9 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.baseEvents": fieldEphemeral, "runState.baseBytes": fieldEphemeral, "runState.genEvents": fieldEphemeral,
 	"runState.capLogged": fieldEphemeral, "runState.admitted": fieldEphemeral, "runState.pinClosure": fieldEphemeral,
 	"runState.pinClosureFresh": fieldEphemeral, "runState.gaveUp": fieldEphemeral, "runState.restoreErr": fieldEphemeral,
-	"runState.passReserve": fieldEphemeral, "runState.passCharge": fieldEphemeral, "runState.pendingHandlers": fieldEphemeral,
+	"runState.bootstrapStarted": fieldEphemeral, "runState.bootstrapDeadline": fieldEphemeral,
+	"runState.bootstrapBatch": fieldEphemeral,
+	"runState.passReserve":    fieldEphemeral, "runState.passCharge": fieldEphemeral, "runState.pendingHandlers": fieldEphemeral,
 	"runState.hist": fieldEphemeral, "runState.guardOff": fieldEphemeral,
 	"eachState.inFlight": fieldEphemeral,
 	// A pin's runtime: no pin is opening, open or closing at a switch, and

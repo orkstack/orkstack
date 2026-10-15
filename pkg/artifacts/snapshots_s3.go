@@ -142,6 +142,12 @@ func (s *S3RunSnapshotStore) parseURI(uri string) (string, error) {
 	return key, nil
 }
 
+// ContinuationURI is the URI this store gives the continuation object at
+// RunContinuationKey(namespace, runID, generation, kind, sha256hex).
+func (s *S3RunSnapshotStore) ContinuationURI(namespace, runID string, generation int64, kind, sha256hex string) (string, error) {
+	return continuationURI(s.uri, namespace, runID, generation, kind, sha256hex)
+}
+
 // WriteContinuation writes one continuation object create-if-absent
 // (If-None-Match: *) at its content-addressed key. When the backend refuses
 // because an object is already there, the existing bytes are read back and

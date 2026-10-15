@@ -75,6 +75,8 @@ type harness struct {
 	// continuations counts the continuation local activities that ran, by
 	// kind.
 	continuations map[string]int
+	// locators is every bootstrap read's locator, in order.
+	locators []engine.ContinuationLocator
 	// countItems, when set, answers CountEachItems instead of the store.
 	countItems func(ref *orkstackv1.ArtifactRef) (int32, error)
 }
@@ -241,6 +243,9 @@ func (c *continuationHooks) WriteCheckpoint(ctx context.Context, run *orkstackv1
 }
 
 func (c *continuationHooks) ReadContinuationChunk(ctx context.Context, loc engine.ContinuationLocator, size, offset, length int64, obs engine.ContinuationObservationInput) ([]byte, error) {
+	c.h.mu.Lock()
+	c.h.locators = append(c.h.locators, loc)
+	c.h.mu.Unlock()
 	if err := c.hook("read", offset); err != nil {
 		return nil, err
 	}

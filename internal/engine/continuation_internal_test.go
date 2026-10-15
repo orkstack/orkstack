@@ -325,6 +325,8 @@ func TestChildFailure_MapsRunStateCodes(t *testing.T) {
 		{RunStateUnavailableCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR},
 		{RunStateCorruptCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
 		{RunStateUnsupportedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+		{RunDefinitionUnavailableCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR},
+		{RunDefinitionCorruptCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
 	} {
 		status, code, category := childFailure(temporal.NewNonRetryableApplicationError("its saved state …", tc.code, nil))
 		if status != orkstackv1.Status_STATUS_FAILED || code != ChildRunFailedCode || category != tc.want {

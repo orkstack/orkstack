@@ -25,10 +25,26 @@ import (
 // on its own key and nothing written at a switch ever lands on a {seq}.pb
 // snapshot key.
 
-// ContinuationLocator names the object a bootstrap read reads. A local
-// activity's input is never recorded, so widening it later is replay-safe.
+// ContinuationLocator names the object a bootstrap read reads: by its URI
+// (a checkpoint, as its carry names it), or — with URI empty — by its key
+// (a run's definition, which no URI ever names: workflow code never sees a
+// store root). A local activity's input is never recorded, so widening it
+// is replay-safe.
 type ContinuationLocator struct {
-	URI string `json:"uri"`
+	URI        string `json:"uri,omitempty"`
+	Namespace  string `json:"namespace,omitempty"`
+	RunID      string `json:"run_id,omitempty"`
+	Generation int64  `json:"generation,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	SHA256     string `json:"sha256,omitempty"`
+}
+
+// subject is what a read of the object is about, as a user reads it.
+func (l ContinuationLocator) subject() string {
+	if l.Kind == artifacts.ContinuationKindDefinition {
+		return subjectDefinition
+	}
+	return subjectSavedState
 }
 
 // ContinuationWriteObservation is what one switch write measured. Outcome is
@@ -321,18 +337,31 @@ func (a *SnapshotActivities) ReadContinuationChunk(
 	if err := a.beforeRead(ctx, offset); err != nil {
 		return nil, err
 	}
-	data, err := a.store.ReadContinuationRange(ctx, loc.URI, size, offset, length)
+	subject := loc.subject()
+	uri := loc.URI
+	if uri == "" {
+		// A key locator: the store resolves its own root, so workflow code
+		// never composes one. A key that does not resolve is malformed, and
+		// no retry makes it resolve.
+		resolved, err := a.store.ContinuationURI(loc.Namespace, loc.RunID, loc.Generation, loc.Kind, loc.SHA256)
+		if err != nil {
+			return nil, temporal.NewNonRetryableApplicationError(
+				"the run's "+subject+" is not named by a valid key", RunStateCorruptCode, nil)
+		}
+		uri = resolved
+	}
+	data, err := a.store.ReadContinuationRange(ctx, uri, size, offset, length)
 	if err != nil {
-		err = withoutObjectName(err, loc.URI, subjectSavedState)
+		err = withoutObjectName(err, uri, subject)
 		if errors.Is(err, artifacts.ErrContinuationSize) {
 			return nil, temporal.NewNonRetryableApplicationError(
-				"the run's saved state is not the size it was saved at: "+err.Error(), RunStateCorruptCode, nil)
+				"the run's "+subject+" is not the size it was saved at: "+err.Error(), RunStateCorruptCode, nil)
 		}
-		return nil, fmt.Errorf("read the run's saved state: %w", err)
+		return nil, fmt.Errorf("read the run's %s: %w", subject, err)
 	}
 	if int64(len(data)) != length {
 		return nil, temporal.NewNonRetryableApplicationError(fmt.Sprintf(
-			"the run's saved state returned %d bytes at offset %d, want %d", len(data), offset, length),
+			"the run's %s returned %d bytes at offset %d, want %d", subject, len(data), offset, length),
 			RunStateCorruptCode, nil)
 	}
 	attempt := int64(activity.GetInfo(ctx).Attempt)

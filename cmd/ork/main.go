@@ -94,6 +94,10 @@ type config struct {
 	// at boot outside their bounds (docs/DEPLOY.md §1).
 	continuation   continuationConfig
 	runMaxInFlight int32
+	// definitionByReference is engine.definition_by_reference's effective
+	// value (definitionByReferenceFromEnv), and definitionByReferenceSet
+	// whether the key was set; the boot logs both.
+	definitionByReference, definitionByReferenceSet bool
 	// composeMaxDepth is ORK_COMPOSE_MAX_DEPTH: 1 … engine.MaxComposeDepth,
 	// refused at boot outside that range (docs/DEPLOY.md §1).
 	composeMaxDepth int32
@@ -136,6 +140,8 @@ func loadConfig() config {
 	historyMaxEvents, historyMaxBytes, historyErr := historyLimitFromEnv()
 	continuation, continuationErr := continuationFromEnv(historyMaxEvents, historyMaxBytes)
 	eachMaxItems, eachErr := eachMaxItemsFromEnv(continuation.enabled)
+	byReference, byReferenceSet, byReferenceErr := definitionByReferenceFromEnv(continuation.enabled,
+		engine.DefaultDefinitionByReference)
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
 
@@ -159,11 +165,13 @@ func loadConfig() config {
 		historyMaxBytes:               historyMaxBytes,
 		continuation:                  continuation,
 		runMaxInFlight:                runMaxInFlight,
+		definitionByReference:         byReference,
+		definitionByReferenceSet:      byReferenceSet,
 		composeMaxDepth:               composeMaxDepth,
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
-			continuationErr, inFlightErr),
+			continuationErr, inFlightErr, byReferenceErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1037,6 +1045,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open snapshot store: %w", err)
 	}
+	// engine.definition_by_reference's effective value: on, unset, only
+	// where continuation is (docs/DEPLOY.md §1).
+	logger.Info("definition by reference", "definition_by_reference", cfg.definitionByReference,
+		"explicit", cfg.definitionByReferenceSet, "continuation", cfg.continuation.enabled)
 
 	// Task logs: the chunks an Orker wrote while a task ran. They live in the
 	// same bucket, so this engine serves the logs of a run it never started
@@ -1323,6 +1335,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		ContinuationBytes:             cfg.continuation.bytes,
 		ContinuationRestoreTimeout:    cfg.continuation.restoreTimeout,
 		RunMaxInFlight:                cfg.runMaxInFlight,
+		DefinitionByReference:         cfg.definitionByReference,
+		DefinitionObjects:             snapshots,
 		ComposeMaxDepth:               cfg.composeMaxDepth,
 		CacheMaxTTL:                   cfg.cacheMaxTTL,
 		Memos:                         memoStore,

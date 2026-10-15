@@ -229,3 +229,8 @@ func TestParseSince_ReadsALookbackOrAnInstant(t *testing.T) {
 		})
 	}
 }
+
+// RunDefinition is a fake's: the start record's own definition.
+func (s statsReader) RunDefinition(_ context.Context, _ string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
+	return start.Orkflow, nil
+}

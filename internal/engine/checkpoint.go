@@ -29,6 +29,7 @@ var ErrContinuationObjectInvalid = errors.New("a stored part of the run failed v
 const (
 	subjectSavedState    = "saved state"    // a checkpoint or a switch snapshot
 	subjectEarlierEvents = "earlier events" // an event segment
+	subjectDefinition    = "definition"     // a definition passed by reference
 )
 
 // continuationInvalidError is one verification failure: what failed (a

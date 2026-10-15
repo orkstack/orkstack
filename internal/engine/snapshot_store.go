@@ -29,6 +29,10 @@ type SnapshotStore interface {
 	// generation's bootstrap.
 	WriteContinuation(ctx context.Context, namespace, runID string, generation int64, kind string, data []byte) (string, error)
 	ReadContinuationRange(ctx context.Context, uri string, wantSize, offset, length int64) ([]byte, error)
+	// ContinuationURI resolves the URI of the continuation object at a key
+	// without touching the backend (artifacts.RunSnapshotStore): how a read
+	// of a run's definition, known by its run id and digest only, finds it.
+	ContinuationURI(namespace, runID string, generation int64, kind, sha256hex string) (string, error)
 }
 
 // compile-time checks: the artifacts platform-record stores are what

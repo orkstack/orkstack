@@ -346,7 +346,27 @@ func awaitStartOf(ctx context.Context, binding engine.Binding, runID string) (*e
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("read the start of run %q: %w", runID, err))
 	}
-	return start, nil
+	return resolvedStart(ctx, binding, runID, start)
+}
+
+// resolvedStart is a start record whose definition is the run's whole one:
+// for a definition passed by reference, read and verified from object
+// storage (engine.RunReader.RunDefinition), because a door checks the
+// resolution against the definition's tasks. An unreadable or altered object
+// is Unavailable, naming the run; such a run cannot take a resolution
+// anyway, since it ends RUN_DEFINITION_* itself.
+func resolvedStart(ctx context.Context, binding engine.Binding, runID string, start *engine.RunStartRecord) (*engine.RunStartRecord, error) {
+	if !start.ByReference {
+		return start, nil
+	}
+	wf, err := binding.Reader.RunDefinition(ctx, runID, start)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable,
+			fmt.Errorf("read the definition of run %q: %w", runID, err))
+	}
+	resolved := *start
+	resolved.Orkflow = wf
+	return &resolved, nil
 }
 
 // ResolveAwait completes or rejects an awaited task of a running run. It is a

@@ -303,6 +303,15 @@ type Config struct {
 	// engine.DefaultRunMaxInFlight. Pinned into every top-level plan.
 	RunMaxInFlight int32
 
+	// DefinitionByReference is engine.definition_by_reference's effective
+	// value: a top-level run whose planned definition is over a start
+	// payload's 256 KiB travels by reference (definition_ref.go). It needs
+	// ContinuationEnabled, which cmd/ork enforces at boot; without it this
+	// is ignored. DefinitionObjects is where the definition objects are
+	// written: the run snapshot store every reader resolves them from.
+	DefinitionByReference bool
+	DefinitionObjects     DefinitionObjectWriter
+
 	// ComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH: how many levels of child runs
 	// one run may start (a run is level 0). Zero means the built-in ceiling,
 	// engine.DefaultComposeMaxDepth; it may lower that ceiling and never
@@ -489,6 +498,10 @@ type Service struct {
 	// defaulted.
 	continuation   *engine.ContinuationBudget
 	runMaxInFlight int32
+	// definitionByReference is Config.DefinitionByReference, only with
+	// continuation on; definitionObjects is Config.DefinitionObjects.
+	definitionByReference bool
+	definitionObjects     DefinitionObjectWriter
 	// composeMaxDepth is Config.ComposeMaxDepth, defaulted.
 	composeMaxDepth int
 	// cacheMaxTTL is Config.CacheMaxTTL, defaulted; memos is Config.Memos.
@@ -513,56 +526,58 @@ type Service struct {
 // NewService builds a Service, filling in defaults for anything omitted.
 func NewService(cfg Config) *Service {
 	svc := &Service{
-		orkflows:          cfg.Orkflows,
-		namespaces:        cfg.Namespaces,
-		rawQueue:          cfg.RawQueue,
-		runs:              cfg.Runs,
-		bus:               cfg.Bus,
-		activities:        cfg.Activities,
-		orkers:            cfg.Orkers,
-		fleet:             cfg.Fleet,
-		releases:          cfg.Releases,
-		capabilities:      cfg.Capabilities,
-		catalog:           cfg.Catalog,
-		resolver:          cfg.Resolver,
-		system:            cfg.System,
-		telemetrySinks:    cfg.TelemetrySinks,
-		router:            cfg.Router,
-		archive:           cfg.Archive,
-		logs:              cfg.Logs,
-		artifactStore:     cfg.ArtifactStore,
-		attempts:          cfg.Attempts,
-		commits:           cfg.Commits,
-		logPoll:           cfg.LogPoll,
-		idempotency:       cfg.Idempotency,
-		webhooks:          cfg.Webhooks,
-		triggers:          cfg.Triggers,
-		schedules:         cfg.Schedules,
-		deliveries:        cfg.Deliveries,
-		redelivery:        cfg.Redelivery,
-		notifier:          cfg.Notifier,
-		observer:          cfg.Observer,
-		admissions:        cfg.Admissions,
-		artifacts:         cfg.Artifacts,
-		limits:            cfg.Limits,
-		eachMaxItems:      eachMaxItemsOf(cfg.EachMaxItems),
-		orkflowMaxTasks:   orkflowMaxTasksOf(cfg.OrkflowMaxTasks),
-		historyMaxEvents:  positiveOr(cfg.HistoryMaxEvents, engine.DefaultHistoryMaxEvents),
-		continuation:      continuationBudgetFor(cfg),
-		runMaxInFlight:    int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
-		historyMaxBytes:   positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
-		composeMaxDepth:   composeMaxDepthOf(cfg.ComposeMaxDepth),
-		cacheMaxTTL:       cacheMaxTTLOf(cfg.CacheMaxTTL),
-		memos:             cfg.Memos,
-		retention:         cfg.Retention,
-		retentionEnforced: cfg.RetentionEnforced,
-		imagePolicies:     cfg.ImagePolicies,
-		signatures:        cfg.Signatures,
-		transferBudget:    cfg.TransferBudgetSeconds,
-		floorThroughput:   cfg.FloorThroughputBytesPerSecond,
-		logger:            cfg.Logger,
-		now:               cfg.Now,
-		newRunID:          cfg.NewRunID,
+		orkflows:              cfg.Orkflows,
+		namespaces:            cfg.Namespaces,
+		rawQueue:              cfg.RawQueue,
+		runs:                  cfg.Runs,
+		bus:                   cfg.Bus,
+		activities:            cfg.Activities,
+		orkers:                cfg.Orkers,
+		fleet:                 cfg.Fleet,
+		releases:              cfg.Releases,
+		capabilities:          cfg.Capabilities,
+		catalog:               cfg.Catalog,
+		resolver:              cfg.Resolver,
+		system:                cfg.System,
+		telemetrySinks:        cfg.TelemetrySinks,
+		router:                cfg.Router,
+		archive:               cfg.Archive,
+		logs:                  cfg.Logs,
+		artifactStore:         cfg.ArtifactStore,
+		attempts:              cfg.Attempts,
+		commits:               cfg.Commits,
+		logPoll:               cfg.LogPoll,
+		idempotency:           cfg.Idempotency,
+		webhooks:              cfg.Webhooks,
+		triggers:              cfg.Triggers,
+		schedules:             cfg.Schedules,
+		deliveries:            cfg.Deliveries,
+		redelivery:            cfg.Redelivery,
+		notifier:              cfg.Notifier,
+		observer:              cfg.Observer,
+		admissions:            cfg.Admissions,
+		artifacts:             cfg.Artifacts,
+		limits:                cfg.Limits,
+		eachMaxItems:          eachMaxItemsOf(cfg.EachMaxItems),
+		orkflowMaxTasks:       orkflowMaxTasksOf(cfg.OrkflowMaxTasks),
+		historyMaxEvents:      positiveOr(cfg.HistoryMaxEvents, engine.DefaultHistoryMaxEvents),
+		continuation:          continuationBudgetFor(cfg),
+		definitionByReference: cfg.DefinitionByReference && cfg.ContinuationEnabled,
+		definitionObjects:     cfg.DefinitionObjects,
+		runMaxInFlight:        int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
+		historyMaxBytes:       positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
+		composeMaxDepth:       composeMaxDepthOf(cfg.ComposeMaxDepth),
+		cacheMaxTTL:           cacheMaxTTLOf(cfg.CacheMaxTTL),
+		memos:                 cfg.Memos,
+		retention:             cfg.Retention,
+		retentionEnforced:     cfg.RetentionEnforced,
+		imagePolicies:         cfg.ImagePolicies,
+		signatures:            cfg.Signatures,
+		transferBudget:        cfg.TransferBudgetSeconds,
+		floorThroughput:       cfg.FloorThroughputBytesPerSecond,
+		logger:                cfg.Logger,
+		now:                   cfg.Now,
+		newRunID:              cfg.NewRunID,
 	}
 	if svc.router == nil {
 		// One binding: this cluster, every namespace. Reader, Starter and
@@ -1004,6 +1019,11 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 		return nil, nil, nil, connect.NewError(connect.CodeInternal, err)
 	}
 	wf.DefinitionDigest = digest
+	// A definition too large for a start payload must fit what a run may
+	// carry by reference, when the deployment enables it.
+	if err := s.checkDefinitionCarriable(wf); err != nil {
+		return nil, nil, nil, err
+	}
 	return wf, ns, issues, nil
 }
 
@@ -1319,6 +1339,20 @@ type submission struct {
 	// response that starts the run discloses them. Only their salted digests
 	// ride the plan.
 	callbacks []awaitCallbackSecret
+	// start is the definition the run's start carries: wf itself, or — for
+	// a definition passed by reference — its stub, with definitionObject the
+	// encoded object written under the final run id before each start
+	// (definition_ref.go).
+	start            *orkstackv1.Orkflow
+	definitionObject []byte
+}
+
+// startDefinition is the definition the run's start carries.
+func (s submission) startDefinition() *orkstackv1.Orkflow {
+	if s.start != nil {
+		return s.start
+	}
+	return s.wf
 }
 
 // claimKey is the coordinate one idempotency key occupies: the caller's key,
@@ -1512,7 +1546,14 @@ func (s *Service) prepare(
 	// workflow start; refuse either over AGENTS.md §2.2's bound before
 	// anything is minted.
 	input := engine.ApplyInputDefaults(planned, msg.GetInput())
-	if err := checkRunStartPayloads(planned, input); err != nil {
+	// A definition over that bound travels by reference when the
+	// deployment enables it: the start then carries a stub, which is what
+	// the bound measures (definitionAtStart).
+	start, definitionObject, err := s.definitionAtStart(ctx, planned, &plan, input)
+	if err != nil {
+		return submission{}, err
+	}
+	if err := checkRunStartPayloads(start, input); err != nil {
 		return submission{}, err
 	}
 	// Callback tokens are minted LAST, after every refusal prepare makes, so
@@ -1536,14 +1577,16 @@ func (s *Service) prepare(
 		return submission{}, err
 	}
 	return submission{
-		callbacks: callbacks,
-		binding:   binding,
-		wf:        planned,
-		input:     input,
-		plan:      plan,
-		namespace: ns.GetName(),
-		key:       msg.GetIdempotencyKey(),
-		origin:    origin,
+		callbacks:        callbacks,
+		binding:          binding,
+		wf:               planned,
+		input:            input,
+		plan:             plan,
+		namespace:        ns.GetName(),
+		key:              msg.GetIdempotencyKey(),
+		origin:           origin,
+		start:            start,
+		definitionObject: definitionObject,
 	}, nil
 }
 
@@ -1885,7 +1928,14 @@ func (s *Service) startPreparedRun(
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	for attempt := 0; ; attempt++ {
 		runID := run.GetId()
-		err := sub.binding.Starter.StartRun(ctx, runID, sub.wf, sub.input, sub.plan)
+		// A definition passed by reference is written under THIS id
+		// immediately before the start that uses it — a reissued id gets its
+		// own copy — and a run whose definition could not be stored is never
+		// started.
+		if err := s.writeDefinitionObject(ctx, runID, sub); err != nil {
+			return nil, s.recordFailedStartWith(ctx, run, err, connect.CodeUnavailable)
+		}
+		err := sub.binding.Starter.StartRun(ctx, runID, sub.startDefinition(), sub.input, sub.plan)
 		if err == nil {
 			// The response is the run this call created, not a re-read of it.
 			// A read here would race the run's own first events — the workflow
@@ -1964,6 +2014,16 @@ func (s *Service) recordFailedStart(
 	run *orkstackv1.Run,
 	cause error,
 ) error {
+	return s.recordFailedStartWith(ctx, run, cause, connect.CodeInternal)
+}
+
+// recordFailedStartWith is recordFailedStart answering the caller with code.
+func (s *Service) recordFailedStartWith(
+	ctx context.Context,
+	run *orkstackv1.Run,
+	cause error,
+	code connect.Code,
+) error {
 	runID := run.GetId()
 	failedAt := timestamppb.New(s.now().UTC())
 	createdAt := run.GetCreatedAt()
@@ -1993,7 +2053,7 @@ func (s *Service) recordFailedStart(
 	}, runID+"#failed")
 	s.notifyRunFailedToStart(ctx, runID, failedAt, cause)
 	s.archiveRun(ctx, runID)
-	return connect.NewError(connect.CodeInternal, cause)
+	return connect.NewError(code, cause)
 }
 
 // notifyRunFailedToStart announces the terminal transition of a run that never

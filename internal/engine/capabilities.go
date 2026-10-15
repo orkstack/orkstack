@@ -33,10 +33,17 @@ const CapabilityEachItems10k = "each-items-10k"
 // many. A run tree with a run declaring more needs the capability.
 const LegacyEachMaxItems int32 = 1000
 
+// CapabilityDefinitionRef is what a run whose planned definition travels by
+// reference needs (RunPlan.Definition): a build that reads the definition
+// object into its history before deciding anything. An older build ignores
+// the plan field, finds a start definition with no tasks and ends the run
+// INVALID_ORKFLOW, so a run it decides first can never be carried on.
+const CapabilityDefinitionRef = "definition-ref"
+
 // EngineCapabilities is what this build can run, in the order it advertises
 // them. A later stage appends its own token; a token is never removed while a
 // release that relies on it may still poll.
-var EngineCapabilities = []string{CapabilityEachItems10k}
+var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef}
 
 // capabilitySuffix separates a process's SDK identity from what it advertises.
 const capabilitySuffix = " ork-caps="

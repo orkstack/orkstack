@@ -66,12 +66,15 @@ use Temporal Signals, including approval, external completion, resume, and abort
 Temporal history and payloads contain only small structured metadata and
 references. The hard maximum serialized payload size is **256 KiB**. Anything
 larger must be an Artifact. Never put large bytes in Temporal payloads or the
-event stream. The one exception is a run's own saved state copied into a new
-generation's history (§7.3): chunks of at most 128 KiB, at most the plan's
-checkpoint bound (8 MiB by default) per generation, verified by SHA-256 and
-counted in that generation's history. It exists because a generation's
-decisions must come from recorded bytes; it is never an artifact's bytes, and
-nothing else may use it.
+event stream. The one exception is a run's own saved state copied into a
+generation's history (§7.3): its checkpoint at a continuation and — for a
+definition too large to travel as a start payload — its planned definition, an
+immutable digest-addressed object under the run's own prefix. Both are copied
+in chunks of at most 128 KiB, together at most the plan's checkpoint bound
+(8 MiB by default) per generation, verified by SHA-256 and counted in that
+generation's history. It exists because a generation's decisions must come
+from recorded bytes; it is never an artifact's bytes, and nothing else may use
+it.
 
 Object storage holds artifacts, logs, immutable Orkflow-definition snapshots,
 and immutable activity completion and per-attempt records. Object-store data is
@@ -346,9 +349,14 @@ bespoke Temporal source code for each Orkflow. The interpreter resolves
 dependencies, schedules activities, waits on Temporal timers and Signals,
 applies retry policies, handles cancellation, and records compact outputs.
 
-A run's start payloads — its input, its planned definition and its plan — are
-each a §2.2 payload and are refused at submit above 256 KiB. That is a bound on
-a payload, not on an Orkflow: a limit on definition size beyond it is a
+A run's start payloads — its input, its start definition and its plan — are
+each a §2.2 payload and are refused at submit above 256 KiB. Where the
+deployment enables it, a planned definition too large for that travels by
+reference instead: the start carries a stub naming it by digest, and the run
+copies the immutable definition object into its own history under §2.2's
+saved-state exception, taking at most a quarter of that copy's bound,
+compressed, and refused at submit beyond it. Those are bounds on what a run
+carries, not on an Orkflow as authored: a further limit on definition size is a
 proposal, not a current hard invariant, and is not to be turned into one
 without a separate accepted contract.
 
@@ -636,7 +644,8 @@ declares the new feature — which no older history holds, so every recorded
 history replays unchanged without a version marker — or by a plan field the
 submitting engine sets together with a `workflow.GetVersion` gate asked lazily
 where the path first diverges (`lean-event-path`, `run-history-guard`,
-`continue-as-new`, `run-in-flight-cap`), so a history recorded before the gate
+`continue-as-new`, `run-in-flight-cap`, `definition-by-reference`), so a
+history recorded before the gate
 replays its `DefaultVersion` branch; each new command path gets its own
 recorded history fixture. Every tunable number that decides whether, which,
 how many or where workflow code issues a command — a history ceiling or

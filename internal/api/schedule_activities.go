@@ -38,8 +38,9 @@ func NewScheduleActivities(svc *Service, indexes IndexAnswerer) *ScheduleActivit
 
 // PrepareScheduledRun runs the ordinary submit preparation for one fire and
 // returns everything the fire needs to start the run as its child. It starts
-// nothing and writes nothing: a refusal leaves nothing behind, on prepare's
-// own promise.
+// nothing, and writes nothing but — last, for a definition passed by
+// reference — that definition's object: a refusal leaves nothing behind, on
+// prepare's own promise.
 func (a *ScheduleActivities) PrepareScheduledRun(
 	ctx context.Context,
 	rec *orkstackv1.ScheduleRecord,
@@ -80,7 +81,7 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 	}
 	prep := &orkstackv1.ScheduledRunPreparation{
 		Run:              run,
-		Orkflow:          sub.wf,
+		Orkflow:          sub.startDefinition(),
 		Input:            sub.input,
 		Plan:             plan,
 		NamespaceIndexed: nsIdx,
@@ -93,6 +94,14 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 	// start it.
 	if proto.Size(prep) > task.MaxActivityInputBytes {
 		return nil, refusedFire("prepared run exceeds 256 KiB")
+	}
+	// Last, after the run id is minted and after every refusal: a definition
+	// passed by reference is written under that id, so the fire's start
+	// finds it. A failed write is retried by the local activity's policy; a
+	// retry mints a new id, leaving at most one object no run reads
+	// (docs/DEPLOY.md §5).
+	if err := a.svc.writeDefinitionObject(ctx, run.GetId(), sub); err != nil {
+		return nil, err
 	}
 	return prep, nil
 }

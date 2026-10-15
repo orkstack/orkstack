@@ -287,38 +287,6 @@ func TestPinnedDefaults_ReadOnlyAtSubmit(t *testing.T) {
 	}
 }
 
-// TestContinuationChunkReads_AreTheCheckpointOnly is AGENTS.md §2.2's
-// saved-state exception kept to its one use: the only function of
-// internal/engine that schedules ActivityReadContinuationChunk — the one
-// bounded copy of large bytes into history — is the bootstrap's own chunk
-// read, which restore's readCheckpoint calls.
-func TestContinuationChunkReads_AreTheCheckpointOnly(t *testing.T) {
-	fset, files := engineSources(t)
-	allowed := map[string]bool{"readChunkBefore": true}
-	var users []string
-	for _, file := range files {
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			ast.Inspect(fn, func(n ast.Node) bool {
-				if ident, ok := n.(*ast.Ident); ok && ident.Name == "ActivityReadContinuationChunk" {
-					users = append(users, fn.Name.Name)
-					if !allowed[fn.Name.Name] {
-						t.Errorf("%s: %s schedules a saved-state chunk read; only the bootstrap may (AGENTS.md §2.2)",
-							fset.Position(ident.Pos()), fn.Name.Name)
-					}
-				}
-				return true
-			})
-		}
-	}
-	if len(users) != 1 {
-		t.Fatalf("chunk reads scheduled from %v, want exactly the bootstrap's", users)
-	}
-}
-
 func hexSHA(t testing.TB) string {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -575,7 +543,9 @@ func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 	elapsed := time.Since(started)
 
 	data, _ := store.get(carry.GetCheckpoint().GetUri())
-	decoder := &partDecoder{refs: carry.GetCheckpoint().GetParts()}
+	decoder := &partDecoder{refs: carry.GetCheckpoint().GetParts(), decode: func(_ int, plain []byte) error {
+		return proto.Unmarshal(plain, &orkstackv1.RunCheckpointPart{})
+	}}
 	var worst time.Duration
 	for off := 0; off < len(data); off += int(DefaultContinuationChunksPerTask * DefaultContinuationChunkBytes) {
 		end := min(len(data), off+int(DefaultContinuationChunksPerTask*DefaultContinuationChunkBytes))

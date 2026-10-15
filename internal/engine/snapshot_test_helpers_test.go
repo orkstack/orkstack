@@ -61,6 +61,16 @@ func (s *testSnapshotStore) WriteContinuation(_ context.Context, namespace, runI
 	return uri, nil
 }
 
+// ContinuationURI is the URI this store gives a continuation key: under the
+// s3://test/ root its writes use.
+func (s *testSnapshotStore) ContinuationURI(namespace, runID string, generation int64, kind, sha256hex string) (string, error) {
+	key, err := artifacts.RunContinuationKey(namespace, runID, generation, kind, sha256hex)
+	if err != nil {
+		return "", err
+	}
+	return "s3://test/" + key, nil
+}
+
 // ReadContinuationRange reads a range of a stored continuation object.
 func (s *testSnapshotStore) ReadContinuationRange(_ context.Context, uri string, wantSize, offset, length int64) ([]byte, error) {
 	s.mu.Lock()
