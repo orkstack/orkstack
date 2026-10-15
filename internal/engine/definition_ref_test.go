@@ -568,3 +568,68 @@ func TestRestoreHistoryBound_DefinitionAndCheckpointSplitAtTheCap(t *testing.T) 
 		})
 	}
 }
+
+// TestRunWorkflow_CarriedGenerationEndsOnAMalformedPlanOrCarry (implementer
+// note 2, a carried generation): a later generation whose plan names a
+// definition with no valid budget or a reference that is not well formed,
+// or whose carry does not record the definition-by-reference decision, ends
+// RUN_DEFINITION_CORRUPT through endUnrestorable — RUN_FAILED one sequence
+// after the carry's last event, over the switch snapshot's rows, never a
+// panic that retries the workflow task forever — and reads nothing.
+func TestRunWorkflow_CarriedGenerationEndsOnAMalformedPlanOrCarry(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		edit       func(plan *engine.RunPlan, carry *orkstackv1.RunContinuation)
+	}{
+		{"no budget", "no valid budget", func(p *engine.RunPlan, _ *orkstackv1.RunContinuation) { p.Continuation = nil }},
+		{"no parts", "names no parts", func(p *engine.RunPlan, _ *orkstackv1.RunContinuation) {
+			ref := *p.Definition
+			ref.Parts = nil
+			p.Definition = &ref
+		}},
+		{"bad digest", "no valid SHA-256", func(p *engine.RunPlan, _ *orkstackv1.RunContinuation) {
+			ref := *p.Definition
+			ref.SHA256 = "XYZ"
+			p.Definition = &ref
+		}},
+		{"no recorded decision", "does not record how its definition is read",
+			func(_ *engine.RunPlan, c *orkstackv1.RunContinuation) {
+				delete(c.VersionDecisions, engine.DefinitionByReferenceChange)
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wf := definedChain(t)
+			g := runGenerationsWithArgs(t, definitionRunID, func(h *harness) []any {
+				stub, plan := storeDefinition(t, h.snapshots, definitionRunID, wf, continuedPlan(2))
+				return []any{definitionRunID, stub, payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil)}
+			}, nil, func(generation int, plan *engine.RunPlan, carry *orkstackv1.RunContinuation) {
+				if generation == 1 {
+					tc.edit(plan, carry)
+				}
+			})
+			if len(g.harnesses) != 2 {
+				t.Fatalf("the run had %d generations, want it to end in its second", len(g.harnesses))
+			}
+			if applicationType(g.err) != engine.RunDefinitionCorruptCode || !strings.Contains(g.err.Error(), tc.want) {
+				t.Fatalf("generation 1 ended %v, want %s (%q)", g.err, engine.RunDefinitionCorruptCode, tc.want)
+			}
+			if reads := g.harnesses[1].continuationCount("read"); reads != 0 {
+				t.Fatalf("generation 1 read %d chunks, want none", reads)
+			}
+			events := g.events()
+			requireContiguous(t, events)
+			last := events[len(events)-1]
+			if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED || last.GetSequence() != g.carries[0].GetEventSequence()+1 {
+				t.Fatalf("the last event is %v at %d, want RUN_FAILED at %d", last.GetType(), last.GetSequence(),
+					g.carries[0].GetEventSequence()+1)
+			}
+			run := g.final(t)
+			if run.GetError().GetCode() != engine.RunDefinitionCorruptCode ||
+				run.GetError().GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION ||
+				len(run.GetTaskRuns()) != 5 {
+				t.Fatalf("final run = %v with %d rows, want %s ContractViolation over the switch snapshot's rows",
+					run.GetError(), len(run.GetTaskRuns()), engine.RunDefinitionCorruptCode)
+			}
+		})
+	}
+}
