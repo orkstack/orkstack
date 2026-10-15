@@ -303,17 +303,8 @@ func definitionDecision(ctx workflow.Context, carry *orkstackv1.RunContinuation)
 		v, ok := carry.GetVersionDecisions()[DefinitionByReferenceChange]
 		return workflow.Version(v), ok
 	}
-	if definitionByReferenceForcedForTest {
-		return 1, true
-	}
 	return workflow.GetVersion(ctx, DefinitionByReferenceChange, workflow.DefaultVersion, 1), true
 }
-
-// definitionByReferenceForcedForTest is a TEST-ONLY switch, the precedent of
-// continueAsNewForcedForTest: generation 0 takes version 1 WITHOUT asking
-// workflow.GetVersion, so a negative replay test proves the committed
-// fixtures replay only because of the gate. Never set in production code.
-var definitionByReferenceForcedForTest = false
 
 // loadDefinition copies the run's definition object into this generation's
 // history with the bootstrap's own reader (readBootstrapObject): one local

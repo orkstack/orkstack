@@ -26,6 +26,11 @@ func TestEachBounds_ReplayNeutralForRecordedSizes(t *testing.T) {
 	for _, path := range committedFixtures(t) {
 		recorded := loadHistoryFile(t, path)
 		_, wf, _, plan := goldenWorkflowArgs(t, recorded)
+		if plan.Definition != nil {
+			// Recorded after the floor existed (a definition passed by
+			// reference is a later stage's), so it pins the floor itself.
+			continue
+		}
 		if plan.Continuation != nil && plan.Continuation.ItemInputFloorBytes != 0 {
 			t.Errorf("%s: a recorded plan carries an item input floor of %d", filepath.Base(path),
 				plan.Continuation.ItemInputFloorBytes)

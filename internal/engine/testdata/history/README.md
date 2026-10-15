@@ -332,3 +332,39 @@ it by (`recordedWithTheWriter`).
 Every fixture recorded before the history guard carries no `history`,
 `continuation` or `in_flight` in its plan, so none of them enters the writer,
 a hold or the cap (`TestCommittedFixtures_DeclareNoNewPlanFields`).
+
+### `run-definition-ref-v1.json` and `run-definition-ref-v1.objects/` — a definition passed by reference
+
+Generation 0 of a five-task fan-in whose definition travels by reference
+(`docs/DEPLOY.md` §1, `engine.definition_by_reference`): the start carries the
+stub — name, version, namespace and digest, no tasks — and the plan names the
+definition object (`RunPlan.Definition`, no URI). Its plan pins 1 KiB chunks,
+two per workflow task, so the history holds the lazy
+`definition-by-reference` marker as its first command, then the definition's
+six `ReadContinuationChunk` markers in three batches with a 1 ms yield timer
+between them (`definition_ref.go`, `loadDefinition`), and only then
+`RUN_CREATED` and the run's own tasks. A build before the gate ignores the
+plan field, finds a stub with no tasks and ends the run `INVALID_ORKFLOW`; a
+history it recorded carries no marker and replays that branch.
+
+`run-definition-ref-v1.objects/definition.pb.gz` is the definition object
+the recording wrote and read back from MinIO, byte for byte: gzip members of
+`Orkflow`, part 0 the definition with its tasks cleared, then task-only
+parts. Its bytes are exactly the recorded chunks, concatenated.
+
+- command: `TestRunWorkflow_ReplaysCommittedDefinitionRefHistory`
+- payload: `TestDefinitionRefHistory_PayloadsMatchWhatCurrentCodeSends` — the
+  object checked against the recorded chunks, the plan's reference and the
+  stub, then the run re-executed from its own arguments with the recorded
+  chunks and results fed back: every input and every event equals the
+  recorded one
+- negative: `TestDefinitionRefHistory_CatchesAChangedPinnedChunkSize` (the
+  plan's `chunk_bytes` doubled, the reads it issues no longer match)
+- recorder: `TestIntegration_RecordDefinitionRefHistory`
+  (`definition_ref_integration_test.go`). It never skips: without
+  `ORK_RECORD_GOLDEN_HISTORY` it records into the proof directory and replays
+  what it recorded.
+
+It was recorded with the writer's plan fields, so the premise and negative
+tests about the histories that predate the writer pass it by
+(`recordedWithTheWriter`).
