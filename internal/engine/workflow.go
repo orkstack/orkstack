@@ -249,8 +249,11 @@ func RunWorkflow(
 	state.markGenerationBase(ctx)
 
 	for {
-		if readyLoopProbeForTest != nil && readyLoopProbeForTest.pass != nil {
-			readyLoopProbeForTest.pass()
+		if readyLoopProbeForTest != nil {
+			readyLoopProbeForTest.maxRetained = max(readyLoopProbeForTest.maxRetained, state.retainedClosureEntries())
+			if readyLoopProbeForTest.pass != nil {
+				readyLoopProbeForTest.pass()
+			}
 		}
 		// The reserve is counted at most once per pass.
 		state.beginPass()
@@ -551,8 +554,13 @@ type runState struct {
 	// from results because a condition needs a map and an upstream ref needs
 	// a reference, and conflating them is how bytes end up on the wire.
 	outputs map[string]map[string]any
-	closure map[string][]string
-	leaves  map[string]struct{}
+	// pinMemberClosures is the one retained needs-closure memo: an opened
+	// pin's unfinished members' closures (pinMemberClosure), reused by
+	// pinClosureAllows' per-pass set and closureHasReadyWork until the pin
+	// closes. Every other closure is computed on demand (closureOf) and not
+	// kept, so newRunState and a run's retained memory stay O(T).
+	pinMemberClosures map[string][]string
+	leaves            map[string]struct{}
 
 	// pins is one entry per DECLARED pin, keyed by name, and pinOrder is their
 	// names sorted. Both are built once in newRunState from wf.Pins, so the
@@ -795,7 +803,6 @@ func buildRunState(
 		taskRuns: map[string]*orkstackv1.TaskRun{},
 		results:  map[string]*orkstackv1.ExecuteTaskResult{},
 		outputs:  map[string]map[string]any{},
-		closure:  map[string][]string{},
 		leaves:   map[string]struct{}{},
 		status:   orkstackv1.Status_STATUS_PENDING,
 		pins:     map[string]*pinState{},
@@ -870,9 +877,6 @@ func buildRunState(
 			delete(state.leaves, need)
 		}
 	}
-	for _, id := range state.order {
-		state.closure[id] = state.transitiveNeeds(id)
-	}
 	// One entry per DECLARED pin, with its members in declaration order. The
 	// compiler already sorts Orkflow.pins by name; sorted again here so the
 	// order the Selector registers readiness in is this workflow's own
@@ -904,11 +908,23 @@ func (s *runState) start(ctx workflow.Context) {
 	s.startedAt = timestamppb.New(workflow.Now(ctx))
 }
 
-// transitiveNeeds returns the sorted transitive `needs` closure of id. The DSL
-// permits referencing any transitively upstream task, so the whole closure is
-// threaded into the downstream activity input.
-func (s *runState) transitiveNeeds(id string) []string {
-	return transitiveNeedsOf(s.tasks, id)
+// closureOf returns the sorted transitive `needs` closure of id, computed on
+// demand from the definition's needs and not retained. The DSL permits
+// referencing any transitively upstream task, so the whole closure is
+// threaded into the downstream activity input. It is exactly
+// transitiveNeedsOf, so every command input is what an eager closure built
+// at newRunState gave; one call costs O(|closure(id)|) time and memory,
+// released when the caller is done with it. Its callers ask it at most once
+// per task each: classify's conditions (upstreamOutputs; a task that runs is
+// remembered by admitted, a skipped one is terminal) and its dispatch
+// (upstreamFor, a composed task's input). An opened pin's members keep
+// theirs in pinMemberClosures.
+func (s *runState) closureOf(id string) []string {
+	closure := transitiveNeedsOf(s.tasks, id)
+	if readyLoopProbeForTest != nil {
+		readyLoopProbeForTest.closureEntries += len(closure)
+	}
+	return closure
 }
 
 // transitiveNeedsOf is transitiveNeeds over a plain task map, shared with
@@ -1252,6 +1268,10 @@ func (s *runState) closePinFor(ctx workflow.Context, id string) {
 	// which "no member ever reported" is finally true (attributeLostPinHost).
 	s.attributeLostPinHost(p)
 	p.doneSent = true
+	// Every member is terminal: the pin's closures are no longer read.
+	for _, member := range p.tasks {
+		delete(s.pinMemberClosures, member)
+	}
 	// Buffered with room for exactly this, so the loop cannot block here and
 	// the signal survives arriving before the coroutine's Receive.
 	p.done.Send(ctx, true)
@@ -1578,8 +1598,9 @@ func (s *runState) markSkipped(ctx workflow.Context, id, reason string) error {
 // ancestor's values.json and artifacts from the store, which is where bytes
 // live (OQ-2, AGENTS.md §2.2).
 func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
-	refs := make([]*orkstackv1.UpstreamRef, 0, len(s.closure[id]))
-	for _, need := range s.closure[id] {
+	closure := s.closureOf(id)
+	refs := make([]*orkstackv1.UpstreamRef, 0, len(closure))
+	for _, need := range closure {
 		// A fan-out contributes ONE ref, whatever its count, and only to a
 		// DIRECT dependent: its items are files nothing else may read (rule
 		// 24), and the Orker stages each from its own commit.
@@ -1628,8 +1649,9 @@ func (s *runState) directlyNeeds(id, need string) bool {
 // upstreamOutputs is the condition-evaluation view of the same closure: each
 // completed ancestor's decoded values.json.
 func (s *runState) upstreamOutputs(id string) map[string]map[string]any {
-	out := make(map[string]map[string]any, len(s.closure[id]))
-	for _, need := range s.closure[id] {
+	closure := s.closureOf(id)
+	out := make(map[string]map[string]any, len(closure))
+	for _, need := range closure {
 		if values, ok := s.outputs[need]; ok {
 			out[need] = values
 		}
@@ -2598,6 +2620,10 @@ func (s *runState) emitWithSnapshot(
 	message string,
 	reuseURI string,
 ) (string, error) {
+	if readyLoopProbeForTest != nil && readyLoopProbeForTest.emit != nil {
+		readyLoopProbeForTest.emit(true)
+		defer readyLoopProbeForTest.emit(false)
+	}
 	if isTerminalRunEventType(eventType) && len(s.pendingItemPublishes) > 0 {
 		s.drainItemPublishes(ctx)
 	}

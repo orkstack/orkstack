@@ -415,8 +415,9 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 
 	// 3. The child's input, rendered by one local activity whose result is
 	// recorded as a marker: a replay reads the marker and never re-renders.
-	closure := make(map[string]bool, len(s.closure[id]))
-	for _, need := range s.closure[id] {
+	needs := s.closureOf(id)
+	closure := make(map[string]bool, len(needs))
+	for _, need := range needs {
 		closure[need] = true
 	}
 	var with any = map[string]any{}

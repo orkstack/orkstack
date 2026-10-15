@@ -811,7 +811,7 @@ var runStateFieldClass = map[string]fieldClass{
 	// Derived: structure and spec, rebuilt from the arguments.
 	"runState.runID": fieldDerived, "runState.wf": fieldDerived, "runState.plan": fieldDerived,
 	"runState.input": fieldDerived, "runState.inputs": fieldDerived, "runState.order": fieldDerived,
-	"runState.tasks": fieldDerived, "runState.closure": fieldDerived, "runState.leaves": fieldDerived,
+	"runState.tasks": fieldDerived, "runState.pinMemberClosures": fieldDerived, "runState.leaves": fieldDerived,
 	"runState.pins": fieldDerived, "runState.pinOrder": fieldDerived, "runState.awaits": fieldDerived,
 	"runState.resolutions": fieldDerived, "runState.eaches": fieldDerived, "runState.eachShare": fieldDerived,
 	"runState.itemInputLimit": fieldDerived, "runState.itemArtifactMax": fieldDerived,
