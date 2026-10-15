@@ -738,16 +738,19 @@ func TestBindAndServe_AcceptsConnectionsAsSoonAsItReturns(t *testing.T) {
 	}
 }
 
-// ORK_EACH_MAX_ITEMS lowers the built-in fan-out ceiling and never raises it:
-// 0 and 1001 refuse boot, 1 and 1000 are accepted, unset is the ceiling.
+// ORK_EACH_MAX_ITEMS has a deployment default of 1000, which a deployment
+// lowers, or raises up to the built-in 10000 with continuation on (the
+// default): 0 and 10001 refuse boot, 1 through 10000 are accepted, unset is
+// the default.
 func TestLoadConfig_EachMaxItemsBounds(t *testing.T) {
 	for _, tc := range []struct {
 		raw     string
 		want    int32
 		refused bool
 	}{
-		{"", 1000, false}, {"1", 1, false}, {"1000", 1000, false},
-		{"0", 1000, true}, {"1001", 1000, true}, {"-3", 1000, true}, {"many", 1000, true},
+		{"", 1000, false}, {"1", 1, false}, {"1000", 1000, false}, {"1001", 1001, false},
+		{"10000", 10000, false},
+		{"0", 1000, true}, {"10001", 1000, true}, {"-3", 1000, true}, {"many", 1000, true},
 	} {
 		t.Run("ORK_EACH_MAX_ITEMS="+tc.raw, func(t *testing.T) {
 			t.Setenv("ORK_EACH_MAX_ITEMS", tc.raw)
@@ -760,9 +763,33 @@ func TestLoadConfig_EachMaxItemsBounds(t *testing.T) {
 			}
 		})
 	}
-	t.Setenv("ORK_EACH_MAX_ITEMS", "1500")
-	if err := loadConfig().limitsErr; err == nil || !strings.Contains(err.Error(), "ORK_EACH_MAX_ITEMS=1500 is above the 1000 ceiling; it may only lower it") {
-		t.Fatalf("1500 = %v", err)
+}
+
+// TestEachMaxItemsFromEnv_RaisesOnlyWithContinuation: above the deployment
+// default of 1000 a run's items span more than one history, so a raise is
+// refused with continuation off, naming both keys; above the built-in
+// 10000 it is refused whatever continuation says, with the new message.
+func TestEachMaxItemsFromEnv_RaisesOnlyWithContinuation(t *testing.T) {
+	t.Setenv("ORK_CONTINUATION_ENABLED", "false")
+	t.Setenv("ORK_EACH_MAX_ITEMS", "5000")
+	err := loadConfig().limitsErr
+	if err == nil || !strings.Contains(err.Error(), "ORK_EACH_MAX_ITEMS=5000") ||
+		!strings.Contains(err.Error(), "ORK_CONTINUATION_ENABLED") {
+		t.Fatalf("5000 with continuation off = %v, want a refusal naming both keys", err)
+	}
+	t.Setenv("ORK_EACH_MAX_ITEMS", "1000")
+	if cfg := loadConfig(); cfg.limitsErr != nil || cfg.eachMaxItems != 1000 {
+		t.Fatalf("1000 with continuation off = %d, %v", cfg.eachMaxItems, cfg.limitsErr)
+	}
+	t.Setenv("ORK_CONTINUATION_ENABLED", "true")
+	t.Setenv("ORK_EACH_MAX_ITEMS", "5000")
+	if cfg := loadConfig(); cfg.limitsErr != nil || cfg.eachMaxItems != 5000 {
+		t.Fatalf("5000 with continuation on = %d, %v", cfg.eachMaxItems, cfg.limitsErr)
+	}
+	t.Setenv("ORK_EACH_MAX_ITEMS", "10001")
+	if err := loadConfig().limitsErr; err == nil ||
+		!strings.Contains(err.Error(), "ORK_EACH_MAX_ITEMS=10001 is above the built-in maximum of 10000") {
+		t.Fatalf("10001 = %v", err)
 	}
 }
 

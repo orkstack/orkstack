@@ -46,6 +46,15 @@ const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 const STAMP = Date.now().toString(36);
 const FAN_OUT = `each-fan-out-${STAMP}`;
 const FAILING = `each-fan-out-fails-${STAMP}`;
+const GATED = `each-fan-out-gated-${STAMP}`;
+
+// The gated size: the built-in item maximum (internal/dsl MaxEachItems),
+// which the fan-out soak measured (ORK_SOAK_ITEMS selects a fallback size, as
+// it does for the soak). The engine below raises ORK_EACH_MAX_ITEMS to it,
+// with continuation on by default.
+const GATED_ITEMS = Number(process.env.ORK_SOAK_ITEMS ?? 10000);
+// E4: the run page and the fan-out's item list are interactive within 5 s.
+const GATED_RENDER_BUDGET_MS = 5_000;
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'each-fan-out')
@@ -125,6 +134,33 @@ tasks:
 `;
 }
 
+// GATED_ITEMS items over a list a json task computes, two at a time: the
+// grid holds every cell from the moment the fan-out expands, however few
+// items have run.
+function gatedOrkflow(): string {
+	return `name: ${GATED}
+version: "0.1.0"
+description: A fan-out at the gated item size.
+
+tasks:
+  - id: list
+    uses: json
+    network: none
+    with: {op: query, nullInput: true, filter: "[range(0; ${GATED_ITEMS})]"}
+
+  - id: spread
+    uses: shell
+    needs: [list]
+    network: none
+    timeout_seconds: 120
+    each:
+      over: '{{ .tasks.list.output.result }}'
+      max_items: ${GATED_ITEMS}
+      max_parallel: 2
+    with: {op: exec, command: [echo, "{{ .each.item }}"]}
+`;
+}
+
 // One at a time, item 3 always fails: items 4 and 5 are never dispatched.
 function failingOrkflow(): string {
 	return `name: ${FAILING}
@@ -189,7 +225,8 @@ test.beforeAll(async () => {
 		...cluster,
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18597',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
+		ORK_EACH_MAX_ITEMS: String(GATED_ITEMS)
 	});
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
@@ -224,7 +261,8 @@ test.beforeAll(async () => {
 
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: fanOutOrkflow() });
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: failingOrkflow() });
-	note(`applied ${FAN_OUT} and ${FAILING}`);
+	await rpc('OrkflowService/ApplyOrkflow', { yaml: gatedOrkflow() });
+	note(`applied ${FAN_OUT}, ${FAILING} and ${GATED}`);
 });
 
 test.afterAll(async () => {
@@ -389,4 +427,57 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 	}
 	note(`run error: ${(await page.getByTestId('run-error').first().textContent())?.trim()}`);
 	await shot(page, 'screenshot-each-failed.png');
+});
+
+// E4: at the gated item size, the run page and the fan-out's item list each
+// become interactive within 5 s — live, with every cell drawn and two items
+// at a time running, and again once the run has finished (canceled here: a
+// real container per item would take hours at this size on one Orker).
+test('the run page and the item list at the gated size are interactive within 5 s', async ({ page }) => {
+	test.setTimeout(10 * 60_000);
+	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: GATED });
+	const run = submitted.run.id;
+	note(`submitted ${GATED} (${GATED_ITEMS} items) as run ${run}`);
+	await waitFor(`run ${run}'s fan-out expanded`, async () => {
+		const answer = await rpc<{ run?: { taskRuns?: { taskId: string; each?: { expanded?: boolean } }[] } }>(
+			'RunService/GetRun',
+			{ runId: run }
+		);
+		return (answer.run?.taskRuns ?? []).some((row) => row.taskId === 'spread' && row.each?.expanded);
+	});
+
+	const last = GATED_ITEMS - 1;
+	const measure = async (phase: string) => {
+		const started = Date.now();
+		await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+		await expect(page.getByTestId('run-status')).toBeVisible({ timeout: 30_000 });
+		const pageReady = Date.now() - started;
+		const cell = page.getByTestId(`task-spread-item-${last}`);
+		await expect(cell).toBeVisible({ timeout: 30_000 });
+		await cell.click();
+		await expect(cell).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 });
+		await expect(page.getByTestId('task-spread-item-panel-label')).toHaveText(`spread[${last}]`, {
+			timeout: 30_000
+		});
+		const listReady = Date.now() - started;
+		await expect(page.getByTestId('task-spread-item-grid').locator('button[data-item]')).toHaveCount(GATED_ITEMS);
+		note(
+			`${phase}: run page interactive ${pageReady} ms, item list of ${GATED_ITEMS} interactive ` +
+				`(item ${last} selected) ${listReady} ms after navigation`
+		);
+		await shot(page, `screenshot-each-gated-${phase}.png`);
+		expect(pageReady, `${phase} run page`).toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
+		expect(listReady, `${phase} item list`).toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
+	};
+
+	await measure('live');
+	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+
+	await rpc('RunService/CancelRun', { runId: run, reason: 'each-fan-out e2e: gated-size render measured' });
+	await waitFor(`run ${run} finished`, async () => {
+		const answer = await rpc<{ run?: { status?: string } }>('RunService/GetRun', { runId: run });
+		return answer.run?.status === 'STATUS_CANCELED';
+	});
+	await measure('finished');
+	await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
 });

@@ -344,7 +344,7 @@ then the variable it becomes.
 | `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
 | `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` |
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
-| `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Lowers the built-in ceiling of 1000, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
+| `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Default 1000. Lowers it, or raises it up to the built-in 10,000; above 1,000 it needs `engine.continuation.enabled` (refused at boot otherwise, naming both keys). Checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value. A submit that needs more than 1,000 items is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs a release older than the one that raised the maximum; a draining older build does not block it (§5, "Engine capabilities and the fleet check"). Before rolling back below that release, lower it to 1,000 and wait for such runs (§4) |
 | `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `1000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, apply and plan, and again at submit, so lowering it refuses new runs of an Orkflow applied above the new value. It may be raised, but every task's activity and lifecycle events land in the run's history, which the Temporal cluster bounds (51,200 events and 50 MiB by default). A run carries on into a fresh history past `engine.continuation.*` (on by default), but only at a moment with nothing of it running, and each history must still hold what its failure path would append for every task not yet started, so a stage of many tasks that start together is bounded by one history: raising this above 1,000 is unmeasured until the soak that sets a larger default has been run, and such a run may stop `RUN_HISTORY_LIMIT` part-way, explicitly. With continuation off, a run has one history: raise it only on a cluster whose history limits were raised to match (and set `engine.history.*` to them) |
 | `engine.history.max_events` | `ORK_HISTORY_MAX_EVENTS` | `51200` | `ork` | the cluster's per-execution history event limit. A run stops `RUN_HISTORY_LIMIT` before reaching it, counting what its own failure path still needs, instead of being terminated by the cluster with no reason. **Set it to the cluster's real limit if an operator changed it:** a value above the real limit defeats the guard, and one below stops runs early. Even at the default, a run that would finish just under the limit with much work still pending now stops `RUN_HISTORY_LIMIT`, because its failure path's reserve is kept back: 16 events per running task, 8 per pending task, 24 per open await, 12 per open pin, 48 per failure handler, plus 96 — about 8,100 for a 1,000-task flat stage. At least 100; anything else is refused at boot. Read at submit, so a change applies to new runs |
 | `engine.history.max_bytes` | `ORK_HISTORY_MAX_BYTES` | `50 MiB` | `ork` | the same, for history size. Before each dispatch the run also counts that dispatch's own command (a task's input, up to `engine.limits.values_max_bytes`), so it never records one its failure path could not follow. The reserve assumes completion results of ≤ 8 KiB each; a run whose failure path lands many larger results at once can still reach the cluster's size limit and be terminated by the cluster; this is the guard's one known gap, and such a run is still reported `RUN_HISTORY_LIMIT` (the reader maps the cluster's history-limit termination, "Workflow history count/size exceeds limit.", to it), never `RUN_TERMINATED`. At least 64 KiB; anything else is refused at boot. Read at submit, so a change applies to new runs. Both limits are carried once per run tree, on the top-level run's plan (about 0.4 KB), so a run whose plan is already within that much of its 256 KiB bound is refused at submit (`FAILED_PRECONDITION`, naming the size) |
@@ -1325,6 +1325,15 @@ Check before rolling back:
 lists the closed generations of runs carrying on; while it returns any, do
 not go below that release.
 
+**Before rolling back below the release that raised the fan-out maximum to
+10,000 items**, lower `engine.each_max_items` to at most 1,000, then wait
+until every run created before that change has finished: every running run
+`orkctl run list` shows has a later `created_at` (a run that carries on into
+a fresh history keeps its `created_at`). An older release computes a larger
+fan-out's per-item bounds differently, so it could fail such a run's replay.
+Once a rolled-back process polls, the fleet check (§5) already refuses new
+submits that need more than 1,000 items.
+
 ### Back to unversioned workers
 
 To take a deployment out of versioned routing altogether — an escape hatch,
@@ -2100,8 +2109,8 @@ saturated pool would:
   can never stall a run. Without it, a run above the cluster's 2,000 pending
   activities per execution would fail every workflow task — stuck. A run that
   keeps more than 1,000 activities pending at once now waits at 1,000.
-- **Carrying on into a fresh history** (`engine.continuation.*`, off by
-  default in this release). Past its budget (8,192 events or 8 MiB of growth)
+- **Carrying on into a fresh history** (`engine.continuation.*`, on by
+  default). Past its budget (8,192 events or 8 MiB of growth)
   a run carries on at its next moment with nothing running — the usual case
   for chains, staged DAGs and runs parked on awaits, which never pause. A run
   with no such moment (a fan-out that keeps refilling) holds new tasks once its
@@ -2122,6 +2131,40 @@ decision with `run_id`, `history_events`, `history_bytes` and `in_flight`;
 the `ork.run.continuation*` metrics (§7); and `orkctl run inspect`, which
 shows a held task with no attempt. A composed child that awaits for days holds
 its parent's new tasks for that long if the parent pauses meanwhile.
+
+### Engine capabilities and the fleet check
+
+Some runs need an engine newer than the one that could otherwise decide
+them: an `ork` process of an older release would compute that run's commands
+differently, and the first newer process to replay its history would fail it
+— a stuck run. Before such a run starts, the submit asks the cluster which
+processes could decide it, and refuses while any of them is too old.
+
+- **What each process advertises.** Every `ork` process polls Temporal with
+  its SDK identity followed by ` ork-caps=<list>`, for example
+  `48213@engine-2@ ork-caps=each-items-10k`, as
+  `temporal task-queue describe --task-queue ork-tasks` shows it. The run
+  worker and the projection worker share the process's client, so both carry
+  it. The releases page still counts one process per identity.
+- **Which pollers a submit checks.** The engine channel's fresh pollers of
+  this deployment that a run started now can land on: under versioning, the
+  current build's (the unversioned processes when no current version is set)
+  and the ramping build's; on an unversioned fleet, every process. A build
+  that keeps polling only to drain its pinned runs blocks nothing — it never
+  decides a run started now. Another deployment's engine sharing the
+  namespace is ignored.
+- **Which capabilities exist.** `each-items-10k`: a run tree in which some
+  run declares more than 1,000 fan-out items (`engine.each_max_items`, §1).
+  Only such a submit — a direct submit, a trigger or a schedule fire — reads
+  the poller list, once, never cached.
+- **What a refused submit says.** `FAILED_PRECONDITION`, naming the Orkflow,
+  how many items it declares and how many engine processes run a release
+  that cannot run them ("2 engine processes … finish the rollout first") —
+  a count, never an identity, because identities carry host names. The
+  identities are in the engine's own `missing_capability` warning
+  (`identities`).
+- **Fail closed.** A poller list that cannot be read refuses the submit
+  `UNAVAILABLE`; ask again once the cluster answers.
 
 ## 6. Replay safety across versions
 

@@ -12,11 +12,14 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// MaxEachItems bounds a whole Orkflow: the sum of max_items over every each:
-// task it declares (docs/DSL.md rule 21). It is the ceiling
-// ORK_EACH_MAX_ITEMS may lower and never raise; engine/each.go derives the
-// per-item history bounds from the declared sum.
-const MaxEachItems = 1000
+// MaxEachItems is the built-in maximum of rule 21's per-task and summed
+// bounds: the sum of max_items over every each: task one Orkflow declares
+// (docs/DSL.md rule 21). A deployment's ORK_EACH_MAX_ITEMS has a deployment
+// default of 1000, which a deployment lowers, or raises up to this built-in
+// 10000 with continuation on; engine/each.go derives the per-item bounds from
+// the declared sum. It is the largest size the fan-out soak measured
+// (internal/engine/each_soak_integration_test.go).
+const MaxEachItems = 10000
 
 // DefaultEachAs is the name .each binds an item to when `as:` is absent.
 const DefaultEachAs = "item"
@@ -346,11 +349,12 @@ func validateEach(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task, clos
 		}
 	}
 
-	// Rule 21 (per Orkflow): the declared total stays inside one history budget.
+	// Rule 21 (per Orkflow): the declared total stays inside the built-in
+	// maximum; the deployment's own setting is the API's check.
 	if total := EachItemsDeclared(wf); total > MaxEachItems {
 		return validationError(EachSumAnchor(wf, MaxEachItems), fmt.Errorf(
-			"orkflow declares %d items across its fan-outs (%s); at most %d — the items of one run "+
-				"share one history budget", total, EachContributors(wf), MaxEachItems))
+			"orkflow declares %d items across its fan-outs (%s); at most %d, the built-in maximum — "+
+				"the items of one run share its per-item bounds", total, EachContributors(wf), MaxEachItems))
 	}
 	return nil
 }

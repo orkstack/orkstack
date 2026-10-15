@@ -821,7 +821,7 @@ func buildRunState(
 		}
 	}
 	if len(state.eaches) > 0 {
-		state.eachShare, state.itemInputLimit, state.itemArtifactMax = eachBounds(wf, plan.Limits)
+		state.eachShare, state.itemInputLimit, state.itemArtifactMax = eachBounds(wf, plan.Limits, plan.itemInputFloor())
 	}
 	for _, t := range wf.GetTasks() {
 		// A failure handler's needs edges do not remove its needs from the

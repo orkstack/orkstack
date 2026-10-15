@@ -219,6 +219,15 @@ type Config struct {
 	// answers all three Unavailable.
 	Releases engine.ReleaseCluster
 
+	// Capabilities answers the fleet check (docs/DEPLOY.md §5, "Engine
+	// capabilities and the fleet check"): which engine processes that could
+	// decide a run started now lack a capability that run needs. `ork` wires
+	// the same engine.TemporalReleaseCluster as Releases. It is read only by
+	// a submit that needs a capability — today a run tree declaring more
+	// than engine.LegacyEachMaxItems fan-out items — and nil refuses such a
+	// submit Unavailable: an unanswered question fails closed.
+	Capabilities engine.CapabilityChecker
+
 	// Catalog is the deployment's activity table (§4.2): the short names
 	// `uses:` may spell. Nil selects dsl.BuiltinActivityCatalog.
 	Catalog dsl.Catalog
@@ -258,9 +267,11 @@ type Config struct {
 	Limits    engine.WorkspaceLimits
 
 	// EachMaxItems is ORK_EACH_MAX_ITEMS: the most items one Orkflow's
-	// fan-outs (each:) may declare in total. Zero means the built-in
-	// ceiling, engine.DefaultEachMaxItems; it may lower that ceiling and
-	// never raise it. Checked at validate/apply and again at submit.
+	// fan-outs (each:) may declare in total. Zero means a deployment default
+	// of 1000 (engine.DefaultEachMaxItems), which a deployment lowers, or
+	// raises up to the built-in 10000 (dsl.MaxEachItems) with continuation
+	// on; cmd/ork refuses anything else at boot. Checked at validate/apply
+	// and again at submit.
 	EachMaxItems int32
 
 	// OrkflowMaxTasks is ORK_ORKFLOW_MAX_TASKS (engine.orkflow_max_tasks):
@@ -397,6 +408,8 @@ type Service struct {
 	fleet engine.OrkerFleet
 	// releases is the release routing seam (Config.Releases).
 	releases engine.ReleaseCluster
+	// capabilities is the fleet check (Config.Capabilities).
+	capabilities engine.CapabilityChecker
 	// catalog and resolver are the two halves of §4.1: the catalog turns a
 	// short name into a reference, and the resolver turns a reference into a
 	// digest. Both live here because ApplyOrkflow is where §4.3 puts them.
@@ -509,6 +522,7 @@ func NewService(cfg Config) *Service {
 		orkers:            cfg.Orkers,
 		fleet:             cfg.Fleet,
 		releases:          cfg.Releases,
+		capabilities:      cfg.Capabilities,
 		catalog:           cfg.Catalog,
 		resolver:          cfg.Resolver,
 		system:            cfg.System,
@@ -1482,6 +1496,12 @@ func (s *Service) prepare(
 		ns: ns, resolver: s.resolverFor(binding), allowEmpty: msg.GetAllowEmptyPool(),
 		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(),
 	}, planned, &plan, 0, nil); err != nil {
+		return submission{}, err
+	}
+	// The fleet check, once the whole tree is planned and before anything is
+	// minted: a run tree that needs a capability is refused while a process
+	// that could decide it lacks one (fleetCheck).
+	if err := s.fleetCheck(ctx, planned, &plan); err != nil {
 		return submission{}, err
 	}
 	// The origin travels on the replay-pinned plan, as CommitRoot does: the

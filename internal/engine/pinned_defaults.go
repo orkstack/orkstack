@@ -104,6 +104,13 @@ const (
 	DefaultPendingActivityHardStop int32 = 1900
 )
 
+// DefaultItemInputFloorBytes is the per-item input floor a run pins with its
+// continuation budget (ContinuationBudget.ItemInputFloorBytes): a fan-out of
+// up to dsl.MaxEachItems items still gives each item 16 KiB of activity
+// input, where eachItemInputBudget alone would leave 1.6 KiB at 10,000. It
+// binds only above 1,024 declared items.
+const DefaultItemInputFloorBytes int64 = 16 << 10
+
 // DefaultContinuationBudget is the budget pinRunTreeLimits pins on a new
 // top-level plan when continuation is enabled: the deployment's events, bytes
 // and restore timeout (engine.continuation.*), and every other number at its
@@ -111,15 +118,16 @@ const (
 // the bound it checks is the one every run then carries.
 func DefaultContinuationBudget(events, bytes int64, restoreTimeout time.Duration) ContinuationBudget {
 	return ContinuationBudget{
-		Events:             events,
-		Bytes:              bytes,
-		CheckpointMaxBytes: bytes,
-		RetryEvents:        max(1, events/4),
-		RetryBytes:         max(1, bytes/4),
-		HoldPercent:        DefaultContinuationHoldPercent,
-		MaxGenerations:     DefaultContinuationMaxGenerations,
-		ChunkBytes:         DefaultContinuationChunkBytes,
-		ChunksPerTask:      DefaultContinuationChunksPerTask,
+		Events:              events,
+		Bytes:               bytes,
+		CheckpointMaxBytes:  bytes,
+		RetryEvents:         max(1, events/4),
+		RetryBytes:          max(1, bytes/4),
+		HoldPercent:         DefaultContinuationHoldPercent,
+		MaxGenerations:      DefaultContinuationMaxGenerations,
+		ChunkBytes:          DefaultContinuationChunkBytes,
+		ChunksPerTask:       DefaultContinuationChunksPerTask,
+		ItemInputFloorBytes: DefaultItemInputFloorBytes,
 		Restore: RestorePolicy{
 			TimeoutSeconds:       int64(restoreTimeout / time.Second),
 			AttemptSeconds:       int64(DefaultRestoreAttempt / time.Second),

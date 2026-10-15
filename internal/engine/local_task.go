@@ -292,7 +292,12 @@ func localItemInput(wf *orkstackv1.Orkflow, spec *orkstackv1.Task, t LocalTask, 
 		LogMaxBytes:      input.GetLimits().GetLogMaxBytes(),
 		CommitMaxBytes:   input.GetLimits().GetCommitMaxBytes(),
 	}
-	_, inputLimit, artifactMax := eachBounds(wf, limits)
+	// The floor every run this could be pointed at pinned: a run declaring
+	// more than 1,024 items exists only on a deployment with continuation on,
+	// which pins DefaultItemInputFloorBytes, and at 1,024 or fewer the floor
+	// is inert. A run carries no plan to --from-run, so the local binary's
+	// constant stands in for it, as its other rules already do.
+	_, inputLimit, artifactMax := eachBounds(wf, limits, DefaultItemInputFloorBytes)
 	input.IdempotencyKey = task.ItemIdempotencyKeyFor(wf.GetNamespace(), t.RunID, t.TaskID, index)
 	input.Limits = proto.Clone(input.GetLimits()).(*orkstackv1.WorkspaceLimits)
 	input.Limits.ArtifactMaxCount = artifactMax

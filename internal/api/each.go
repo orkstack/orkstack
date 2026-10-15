@@ -84,12 +84,29 @@ func needsItem(run *orkstackv1.Run, taskID, command string) error {
 		taskID, node.GetEach().GetCount(), command))
 }
 
-// eachMaxItemsOf defaults Config.EachMaxItems to the built-in ceiling.
+// eachMaxItemsOf is Config.EachMaxItems with 0 meaning the deployment default
+// (engine.DefaultEachMaxItems, 1000), and never above the built-in maximum
+// (dsl.MaxEachItems, 10000). Boot already refuses a value above the maximum,
+// or above 1000 without continuation (cmd/ork); this clamp is defensive.
 func eachMaxItemsOf(configured int32) int32 {
-	if configured <= 0 || configured > engine.DefaultEachMaxItems {
+	switch {
+	case configured <= 0:
 		return engine.DefaultEachMaxItems
+	case configured > dsl.MaxEachItems:
+		return dsl.MaxEachItems
 	}
 	return configured
+}
+
+// itemInputFloor is the per-item input floor a run of this deployment pins
+// (engine.eachBounds): the continuation budget's, 0 with continuation off.
+// Apply checks a fan-out's own share of every item's input against the same
+// bound the run will hold it to.
+func (s *Service) itemInputFloor() int64 {
+	if s.continuation == nil {
+		return 0
+	}
+	return s.continuation.ItemInputFloorBytes
 }
 
 // checkEachLimits is apply and validate's fan-out check: the
@@ -111,7 +128,7 @@ func (s *Service) checkEachLimits(wf *orkstackv1.Orkflow) error {
 				total, dsl.EachContributors(wf), s.eachMaxItems),
 		})
 	}
-	inputLimit, _ := engine.EachItemBounds(wf, s.limits)
+	inputLimit, _ := engine.EachItemBounds(wf, s.limits, s.itemInputFloor())
 	for i, t := range wf.GetTasks() {
 		if t.GetEach() == nil {
 			continue

@@ -74,8 +74,10 @@ type config struct {
 	poolErr        error
 	idempotencyTTL time.Duration
 	contractLimits engine.WorkspaceLimits
-	// eachMaxItems is ORK_EACH_MAX_ITEMS: 1 … dsl.MaxEachItems, refused at
-	// boot outside that range (docs/DEPLOY.md §1).
+	// eachMaxItems is ORK_EACH_MAX_ITEMS: a deployment default of 1000,
+	// which a deployment lowers, or raises up to the built-in 10000
+	// (dsl.MaxEachItems) with continuation on; refused at boot otherwise
+	// (docs/DEPLOY.md §1).
 	eachMaxItems int32
 	// orkflowMaxTasks is ORK_ORKFLOW_MAX_TASKS: the most tasks one Orkflow
 	// may declare, any whole number 1 or more; refused at boot otherwise
@@ -129,11 +131,11 @@ func loadConfig() config {
 	commitMaxBytes, commitErr := envInt64("ORK_COMMIT_MAX_BYTES", engine.DefaultCommitMaxBytes)
 	transferBudgetSeconds, transferErr := envInt32AllowZero("ORK_TRANSFER_BUDGET_SECONDS", 0)
 	floorThroughput, throughputErr := envInt64AllowZero("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond)
-	eachMaxItems, eachErr := eachMaxItemsFromEnv()
 	orkflowMaxTasks, tasksErr := envInt32("ORK_ORKFLOW_MAX_TASKS", engine.DefaultOrkflowMaxTasks)
 	composeMaxDepth, composeErr := composeMaxDepthFromEnv()
 	historyMaxEvents, historyMaxBytes, historyErr := historyLimitFromEnv()
 	continuation, continuationErr := continuationFromEnv(historyMaxEvents, historyMaxBytes)
+	eachMaxItems, eachErr := eachMaxItemsFromEnv(continuation.enabled)
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
 
@@ -273,16 +275,26 @@ func envInt32AllowZero(key string, fallback int32) (int32, error) {
 	return int32(parsed), nil
 }
 
-// eachMaxItemsFromEnv reads ORK_EACH_MAX_ITEMS: a positive integer no
-// greater than the built-in ceiling, which it may lower and never raise.
-func eachMaxItemsFromEnv() (int32, error) {
+// eachMaxItemsFromEnv reads ORK_EACH_MAX_ITEMS: a positive integer, with a
+// deployment default of 1000 (engine.DefaultEachMaxItems), which a deployment
+// lowers, or raises up to the built-in 10000 (dsl.MaxEachItems) with
+// continuation on. Above the deployment default a run's items need more than
+// one history, so a raise without engine.continuation.enabled is refused,
+// naming both keys.
+func eachMaxItemsFromEnv(continuationEnabled bool) (int32, error) {
 	value, err := envInt32("ORK_EACH_MAX_ITEMS", engine.DefaultEachMaxItems)
 	if err != nil {
 		return engine.DefaultEachMaxItems, err
 	}
 	if value > dsl.MaxEachItems {
 		return engine.DefaultEachMaxItems, fmt.Errorf(
-			"ORK_EACH_MAX_ITEMS=%d is above the %d ceiling; it may only lower it", value, dsl.MaxEachItems)
+			"ORK_EACH_MAX_ITEMS=%d is above the built-in maximum of %d", value, dsl.MaxEachItems)
+	}
+	if value > engine.DefaultEachMaxItems && !continuationEnabled {
+		return engine.DefaultEachMaxItems, fmt.Errorf(
+			"ORK_EACH_MAX_ITEMS=%d is above %d, which needs ORK_CONTINUATION_ENABLED=true "+
+				"(engine.each_max_items above %d needs engine.continuation.enabled): a run's items "+
+				"then span more than one history", value, engine.DefaultEachMaxItems, engine.DefaultEachMaxItems)
 	}
 	return value, nil
 }
@@ -328,6 +340,16 @@ func composeMaxDepthFromEnv() (int32, error) {
 			"ORK_COMPOSE_MAX_DEPTH=%d is above the %d ceiling; it may only lower it", value, engine.MaxComposeDepth)
 	}
 	return value, nil
+}
+
+// sdkIdentity is the identity the Temporal SDK gives a client that names
+// none: `pid@host@` (go.temporal.io/sdk internal getWorkerIdentity("")).
+func sdkIdentity() string {
+	host, err := os.Hostname()
+	if err != nil {
+		host = "Unknown"
+	}
+	return fmt.Sprintf("%d@%s@", os.Getpid(), host)
 }
 
 func env(key, fallback string) string {
@@ -895,6 +917,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return err
 	}
+	// The run worker and the projection worker share this client, so both
+	// poll with its identity: the SDK's own, followed by the engine
+	// capabilities this build advertises. A submit that needs a capability
+	// checks the cluster's poller list for a process without it
+	// (engine.MissingCapability, docs/DEPLOY.md §5).
+	temporalOptions.Identity = engine.EngineIdentity(sdkIdentity())
 	temporalClient, err := client.DialContext(ctx, temporalOptions)
 	if err != nil {
 		return err
@@ -1251,8 +1279,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Orkers:     starter,
 		Fleet:      starter,
 		Releases:   releases,
-		Catalog:    cfg.activityCatalog,
-		Resolver:   resolver,
+		// The fleet check reads the same cluster seam (docs/DEPLOY.md §5).
+		Capabilities: releases,
+		Catalog:      cfg.activityCatalog,
+		Resolver:     resolver,
 		// The image policy store and the signature verifier, over the same
 		// resolver: one registry client, one credential file.
 		ImagePolicies: imagePolicies,

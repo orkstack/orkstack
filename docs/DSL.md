@@ -924,14 +924,15 @@ tasks:
   where it costs each item one reference.
 - `as` — the name an item is bound to under `.each`: `^[a-z][a-z0-9_]*$`,
   at most 64 bytes, never `index` or `count`. Absent means `item`.
-- `max_items` — **required**, from 1 to 1000. More elements than this fail
-  the task `EACH_TOO_MANY_ITEMS` before any item runs. The sum of `max_items`
-  over every fan-out of one Orkflow is at most 1000 too (a deployment may
-  lower that ceiling with `ORK_EACH_MAX_ITEMS`, `docs/DEPLOY.md` §1): the
-  items of one run share one history budget. A run's history is bounded per
-  history; a run carries on into a fresh history transparently, by default
-  (`docs/DEPLOY.md` §1, `engine.continuation.*`). The
-  bound is still declared up front and enforced before anything runs.
+- `max_items` — **required**, from 1 to 10,000. More elements than this
+  fail the task `EACH_TOO_MANY_ITEMS` before any item runs. The sum of
+  `max_items` over every fan-out of one Orkflow is at most the deployment's
+  `engine.each_max_items` (`ORK_EACH_MAX_ITEMS`, `docs/DEPLOY.md` §1): 1,000
+  by default, which a deployment lowers, or raises up to the built-in 10,000
+  with continuation on. A run's items are not bounded by one history: a run
+  carries on into a fresh history transparently (`engine.continuation.*`).
+  The bound is still declared up front and enforced before anything runs,
+  and it sets the per-item bounds below.
 - `max_parallel` — at most this many items run at once; absent or `0` means
   no bound of the task's own (the pool's Orkers are the bound).
 
@@ -958,10 +959,16 @@ N items have no single value to substitute.
 `max_items`), every item is held to bounds derived from `S` alone, so they are
 known at apply and identical on replay:
 
-| Bound | Value | At S = 1000 | At S ≤ 64 |
-| --- | --- | --- | --- |
-| activity input (`with:`, run input, upstream refs) | `min(values_max_bytes, 16 MiB / S)` | 16 KiB | 256 KiB |
-| output artifacts per item | `min(artifact_max_count, 16384 / S)` | 16 | 256 |
+| Bound | Value | At S = 1000 | At S ≤ 64 | More than 1,024 items (floor applies) |
+| --- | --- | --- | --- | --- |
+| activity input (`with:`, run input, upstream refs) | `min(values_max_bytes, max(16 MiB / S, 16 KiB))` | 16 KiB | 256 KiB | 16 KiB |
+| output artifacts per item | `min(artifact_max_count, 16384 / S)` | 16 | 256 | `16384 / S`: 1 at 10,000 |
+
+The 16 KiB floor is pinned by a run that carries on into fresh histories
+(the default); a deployment with continuation off cannot declare more than
+1,000 items, where the floor never binds. The artifact bound keeps a run's
+fan-outs to 16,384 workload artifacts in total, however many items they
+declare.
 
 Apply refuses a fan-out whose own `with:`, `env`, `secrets` and resources
 already exceed the input bound; the run input and upstream references are
@@ -1364,10 +1371,13 @@ How each node reads:
     equal what `over` parses to.
 20. `each.as`, when present, matches `^[a-z][a-z0-9_]*$`, is at most 64
     bytes, and is neither `index` nor `count`.
-21. `each.max_items` is present and between 1 and 1000, and the sum of
-    `max_items` over every fan-out of the Orkflow is at most 1000; the error
-    names every contributor. A deployment's `ORK_EACH_MAX_ITEMS` may lower
-    the ceiling, enforced at validate, apply and submit by `internal/api`.
+21. `each.max_items` is present and between 1 and 10000, the built-in
+    maximum, and the sum of `max_items` over every fan-out of the Orkflow is
+    at most 10000; the error names every contributor. The deployment's
+    setting, `engine.each_max_items` (`ORK_EACH_MAX_ITEMS`, 1000 by
+    default; a deployment lowers it, or raises it up to 10000 with
+    continuation on), bounds the sum, enforced at validate, apply and submit
+    by `internal/api`.
 22. `each.max_parallel` is not negative and not above `max_items`; `0` and
     absent are one value (no bound of the task's own).
 23. A fan-out is not pinned.

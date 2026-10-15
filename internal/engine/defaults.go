@@ -8,13 +8,14 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/dsl"
 )
 
-// DefaultEachMaxItems is ORK_EACH_MAX_ITEMS' default: the built-in ceiling
-// on the items one Orkflow's fan-outs may declare in total, which a
-// deployment may lower and never raise (docs/DSL.md "Fan-out").
-const DefaultEachMaxItems = dsl.MaxEachItems
+// DefaultEachMaxItems is ORK_EACH_MAX_ITEMS' default: the items one
+// Orkflow's fan-outs may declare in total — a deployment default of 1000,
+// which a deployment lowers, or raises up to the built-in 10000
+// (dsl.MaxEachItems) with continuation on (docs/DSL.md "Fan-out",
+// docs/DEPLOY.md §1).
+const DefaultEachMaxItems int32 = 1000
 
 // DefaultOrkflowMaxTasks is ORK_ORKFLOW_MAX_TASKS' default: the most tasks
 // one Orkflow may declare (docs/DSL.md "Tasks", docs/DEPLOY.md §1). A

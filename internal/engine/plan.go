@@ -173,6 +173,11 @@ type ContinuationBudget struct {
 	ChunkBytes         int64         `json:"chunk_bytes"`          // one bootstrap read
 	ChunksPerTask      int64         `json:"chunks_per_task"`      // reads per workflow task before a yield
 	Restore            RestorePolicy `json:"restore"`
+	// ItemInputFloorBytes is the per-item input floor of a fan-out total
+	// above 1,024 items (eachBounds): DefaultItemInputFloorBytes, set with
+	// continuation, which every run declaring more than 1,000 items needs.
+	// Zero in every plan built before it.
+	ItemInputFloorBytes int64 `json:"item_input_floor_bytes,omitempty"`
 }
 
 // RestorePolicy is the bootstrap's read deadline and the Temporal retry
@@ -476,6 +481,16 @@ func taskLogExportProto(name string) orkstackv1.TaskLogExport {
 		return orkstackv1.TaskLogExport(v)
 	}
 	return orkstackv1.TaskLogExport_TASK_LOG_EXPORT_UNSPECIFIED
+}
+
+// itemInputFloor is the per-item input floor this run pinned (eachBounds),
+// 0 for a plan without one: every plan built before it, and every run
+// without continuation.
+func (p RunPlan) itemInputFloor() int64 {
+	if p.Continuation == nil || p.Continuation.ItemInputFloorBytes < 0 {
+		return 0
+	}
+	return p.Continuation.ItemInputFloorBytes
 }
 
 // Route answers where one pool's tasks go.
