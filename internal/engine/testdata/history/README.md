@@ -368,3 +368,48 @@ parts. Its bytes are exactly the recorded chunks, concatenated.
 It was recorded with the writer's plan fields, so the premise and negative
 tests about the histories that predate the writer pass it by
 (`recordedWithTheWriter`).
+
+### `run-snapshot-overlay-v1.json` and `run-snapshot-overlay-v1.objects/` — snapshot overlays
+
+One run of a chain of plain tasks around a fan-out of 24 items, one at a
+time (`prep` → `convert` → `a` → `merge`, 44 declared rows), whose plan
+carries a snapshot-overlay policy (`docs/DEPLOY.md` §1,
+`engine.snapshot_overlays`) with a floor of 16 rows, a chain of at most 6
+overlays and at most 256 changed rows. The history holds the lazy
+`snapshot-overlay` marker at the run's first snapshot, then a
+`WriteSnapshotOrOverlay` marker for every non-terminal snapshot from both
+write sites — an event's own (`emitWithSnapshot`) and the fan-out's fresh item
+snapshots (`emitItem`) — each recording what it wrote (`SnapshotWritten`):
+full `{seq}.pb` snapshots and, between them, overlays, ten for item-fresh
+events and twelve for emits. The terminal `RUN_SUCCEEDED` snapshot is a
+`WriteSnapshot` marker; with it the run wrote five full snapshots. A build before the gate writes every snapshot
+through `WriteSnapshot`; a history it recorded carries no marker and replays
+that branch. The run is sequential so that every event lands at the same
+sequence when the payload half re-executes it.
+
+`run-snapshot-overlay-v1.objects/` holds every full snapshot and overlay the
+recording wrote, read back from MinIO byte for byte, each named by its key's
+leaf (`{seq}.pb`, `{seq}.ovl`).
+
+- command: `TestRunWorkflow_ReplaysCommittedSnapshotOverlayHistory`; and
+  `TestSnapshotOverlay_DiffRunsInTheLocalActivityOnly` and
+  `TestSnapshotOverlay_ItemFreshEmitReplays` — the replay runs no diff, and
+  the base the workflow follows is exactly what the recorded results make
+  it, item-fresh writes included
+- payload: `TestSnapshotOverlayHistory_PayloadsMatchWhatCurrentCodeSends` —
+  the run re-executed from its own arguments with its recorded results and
+  snapshot writes fed back: every input and every event equals the recorded
+  one, every overlay write is handed the recorded base and the plan's policy,
+  and every companion object, read as a reader reads it (an overlay through
+  its recorded base), is the run current code hands that write, times aside
+- negative: `TestSnapshotOverlayHistory_CatchesAChangedPinnedMinRows` (the
+  plan's `min_rows` raised over the run's rows: the snapshot activity no
+  longer matches, `TMPRL1100`)
+- recorder: `TestIntegration_RecordSnapshotOverlayHistory`
+  (`snapshot_overlay_integration_test.go`). It never skips: without
+  `ORK_RECORD_GOLDEN_HISTORY` it records into the proof directory, checks
+  every overlay reads back, and replays what it recorded.
+
+It was recorded with the writer's plan fields, so the premise and negative
+tests about the histories that predate the writer pass it by
+(`recordedWithTheWriter`).
