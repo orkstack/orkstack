@@ -198,7 +198,7 @@ type DefinitionPartRef struct {
 type ContinuationBudget struct {
 	Events             int64         `json:"events"`               // growth per generation, in history events
 	Bytes              int64         `json:"bytes"`                // growth per generation, in history bytes
-	CheckpointMaxBytes int64         `json:"checkpoint_max_bytes"` // = Bytes: the largest saved state a generation reads (AGENTS.md §2.2)
+	CheckpointMaxBytes int64         `json:"checkpoint_max_bytes"` // = Bytes: the largest copy a generation reads, its saved state and definition together (A4b; A4c from Stage 5)
 	RetryEvents        int64         `json:"retry_events"`         // Events/4: growth before a failed switch or a given-up hold is retried
 	RetryBytes         int64         `json:"retry_bytes"`          // Bytes/4
 	HoldPercent        int64         `json:"hold_percent"`         // the hold line, % of the cluster limit

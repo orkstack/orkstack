@@ -58,7 +58,8 @@ const DefaultContinuationEnabled = true
 const DefaultContinuationEvents int64 = 8192
 
 // DefaultContinuationBytes is engine.continuation.bytes' default: the same,
-// for history bytes, and the largest saved state a run carries forward.
+// for history bytes, and the most a run copies into one history: its saved
+// state, plus its definition when that is passed by reference.
 const DefaultContinuationBytes int64 = 8 << 20
 
 // DefaultContinuationHoldPercent is the hold line: a run holds new dispatch
