@@ -234,6 +234,13 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		return err
 	}
 
+	// Rule 44: a task's required ancestors must fit their smallest possible
+	// upstream references in one activity input. After rules 5 and 37–42,
+	// because which ancestors are required depends on the join policies.
+	if err := checkAncestry(wf); err != nil {
+		return err
+	}
+
 	// Rule 8: templates parse and reference only declared inputs and
 	// (transitively) upstream tasks.
 	inputs := map[string]struct{}{}

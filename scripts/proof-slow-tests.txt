@@ -212,3 +212,4 @@ github.com/orkstack/orkstack/pkg/artifacts	TestS3RunArchive_KeyOrderPagingIsOneP
 github.com/orkstack/orkstack/pkg/artifacts	TestS3RunArchive_MarkerWritesDoNotScaleSerially	31.29
 github.com/orkstack/orkstack/pkg/artifacts	TestS3RunArchive_RecentPagingAgainstMinIO	60.22
 github.com/orkstack/orkstack/pkg/artifacts	TestS3Store_PreservesOpaqueNames	47.99
+github.com/orkstack/orkstack/internal/engine	TestIntegration_SoakTasks	3300.00

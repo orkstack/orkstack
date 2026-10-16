@@ -360,19 +360,38 @@ carries, not on an Orkflow as authored: a further limit on definition size is a
 proposal, not a current hard invariant, and is not to be turned into one
 without a separate accepted contract.
 
-One definition limit is accepted (2026-10-11): an Orkflow declares at most
-**1000 tasks**. It is a deployment-configurable default, not a fixed
-invariant — `engine.orkflow_max_tasks` (`ORK_ORKFLOW_MAX_TASKS`) lowers or
-raises it — refused `INVALID_ARGUMENT` at validate, apply and plan, naming the
-count, the limit and the setting, and re-checked at submit
-(`FAILED_PRECONDITION`). Every entry of `tasks:` counts once; a fan-out's
-items (bounded by `max_items`) and a composed child's tasks (a separate run)
-do not. It exists because a run's
-tasks share a Temporal history: a run continues as new into a fresh one
-(§7.3) only at a moment with nothing of it in flight, so tasks that start
-together share one history, and a value above 1000 is unmeasured until the
-soak that sets a larger default has been run (`docs/DSL.md`, "How many tasks
-an Orkflow may declare").
+One definition limit is accepted (2026-10-11; raised with continue-as-new,
+§7.3): an Orkflow declares at most `engine.orkflow_max_tasks`
+(`ORK_ORKFLOW_MAX_TASKS`) tasks — 4000 by default — a deployment-configurable
+default that a deployment lowers or raises, refused `INVALID_ARGUMENT` at
+validate, apply and plan, naming the count, the limit and the setting, and
+re-checked at submit (`FAILED_PRECONDITION`). Every entry of `tasks:` counts
+once; a fan-out's items (bounded by `max_items`) and a composed child's tasks
+(a separate run) do not. A run's history is bounded per generation, but each
+generation must still hold what its failure path would append for every task
+not yet started, so a run's shape and the deployment's history, continuation
+and in-flight settings bound how many tasks it may declare; `docs/DEPLOY.md`
+states that bound in closed form for plain tasks, derived from measured
+per-task costs and not itself a measured size, a stage of tasks that all
+start together is the binding shape, the boot warns when the setting exceeds
+it, and a run beyond it may stop `RUN_HISTORY_LIMIT`, explicitly. Staying
+within that bound is necessary, not sufficient: a run within it can still stop
+explicitly on history bytes, on the size of its saved state, or on large
+inline outputs. The default 4000 is the largest size at which every measured
+shape — a flat stage with long and with short tasks, a staged DAG and deep
+chains of plain tasks with small outputs — completed within the measured
+per-generation history, snapshot, in-flight, workflow-code, read-latency and
+run-page thresholds; it is the largest measured value, is not raised without
+re-running that evidence, and above it a deployment runs unmeasured, warned at
+boot. With continuation off a run has one history: the default is then at
+most the declared history event limit divided by 50, and an explicit value
+above that is refused at boot. A planned definition above 256 KiB travels by
+reference (§2.2's saved-state exception), so the start-payload bound no longer
+limits how many tasks an Orkflow declares; the run plan's own 256 KiB bound
+still limits how many awaits and composed tasks one run tree holds, refused at
+submit by name. A run's saved state holds every task's inline output, so a run
+whose tasks return large inline outputs may stop `RUN_HISTORY_LIMIT` before
+the ceiling, explicitly.
 
 Tasks form a DAG whose only edges are explicit `needs`. Declaration order
 never sequences anything: a task becomes ready once every need has ended and
@@ -833,7 +852,12 @@ includes:
   limit; object storage unavailable at a switch never yields a switch without
   its objects, nor a silent success; a saved state over its bound never
   switches; a run with more work than its in-flight cap never exceeds the
-  cluster's pending-activity limit and never stalls with nothing in flight.
+  cluster's pending-activity limit and never stalls with nothing in flight;
+- a run at the deployment's task ceiling and a run at the fan-out item
+  ceiling complete across generations with their definition passed by
+  reference and snapshot overlays on, each generation within the measured
+  share of the cluster's history limits and replaying within the deadlock
+  detector's budget, and every run within its in-flight cap.
 
 Every execution must eventually reach either a correct durable state or an
 explicit actionable failure. There is no documented third state such as stuck,

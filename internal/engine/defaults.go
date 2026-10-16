@@ -18,17 +18,19 @@ import (
 const DefaultEachMaxItems int32 = 1000
 
 // DefaultOrkflowMaxTasks is ORK_ORKFLOW_MAX_TASKS' default: the most tasks
-// one Orkflow may declare (docs/DSL.md "Tasks", docs/DEPLOY.md §1). A
-// deployment may lower or raise it. Every task is at least one activity and
-// its lifecycle events in the run's history, which the cluster bounds. A run
-// continues as new past its budget only at a moment with nothing in flight,
-// and each history must still hold what its failure path would append for
-// every task not yet started, so tasks that start together share ONE
-// history; 1000 keeps such a stage of plain tasks well inside the cluster's
-// default history bound beside the 1000 fan-out items DefaultEachMaxItems
-// already allows. A larger default waits on the soak that measures it, and
-// a deployment that raises it before then runs unmeasured.
-const DefaultOrkflowMaxTasks int32 = 1000
+// one Orkflow may declare (docs/DSL.md "How many tasks an Orkflow may
+// declare", docs/DEPLOY.md §1). A deployment may lower or raise it. It is
+// also the measured maximum: the largest size, of 4,000, 3,000 and 2,000, at
+// which the task soak's every shape (a flat stage of long and of short
+// tasks, a staged DAG, deep chains; plain tasks with small outputs) met
+// every E7 threshold, so cmd/ork warns at boot about an explicit value above
+// it. Tasks that start together share one history, which must also hold
+// what its failure path would append for every task not yet started:
+// ShapeMaxTasks is the closed-form bound on such a stage for the configured
+// settings (4,222 at the defaults), and the boot warns above it too. With
+// continuation off a run has one history, and cmd/ork defaults the ceiling
+// to at most history.max_events / UncontinuedEventsPerTask.
+const DefaultOrkflowMaxTasks int32 = 4000
 
 // DefaultComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH's default: the built-in
 // ceiling on how many levels of child runs one run may start, which a
@@ -91,9 +93,10 @@ func ApplyInputDefaults(wf *orkstackv1.Orkflow, input *orkstackv1.Payload) *orks
 }
 
 // DefaultDefinitionByReference is engine.definition_by_reference's built-in
-// default: off, until every replica runs a release that can read a
-// definition passed by reference (docs/DEPLOY.md §4, R3). Its effective value
-// is this AND engine.continuation.enabled when neither the configuration
-// document nor the environment sets the key, so a later release that flips
-// it never refuses to boot a deployment that turned continuation off.
-const DefaultDefinitionByReference = false
+// default: on, in a release after the one that first contained it — the
+// order a rollback relies on (docs/DEPLOY.md §4, R3) — so a definition too
+// large for a start payload travels by reference. Its effective value is
+// this AND engine.continuation.enabled when neither the configuration
+// document nor the environment sets the key, so the flip never refuses to
+// boot a deployment that turned continuation off.
+const DefaultDefinitionByReference = true

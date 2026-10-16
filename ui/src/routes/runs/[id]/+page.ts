@@ -5,6 +5,14 @@ import { namespaceFrom } from '$lib/namespace';
 import type { RunArtifact } from '$lib/gen/orkstack/v1/run_service_pb';
 import type { PageLoad } from './$types';
 
+// The run page renders in the browser only. Server-rendered, a run at the
+// task ceiling was sent as one HTML document of every task card plus the same
+// rows again as hydration data (15 MB at 4,000 tasks), and the browser then
+// parsed it and hydrated every card: twice the work of rendering it here,
+// before the page answered a click. Everything on it is live state the
+// browser keeps anyway.
+export const ssr = false;
+
 export const load: PageLoad = async ({ fetch, params, url }) => {
 	// A run id addresses a run inside a namespace, not across the deployment:
 	// the engine answers NotFound for a run of another one, so the page has to

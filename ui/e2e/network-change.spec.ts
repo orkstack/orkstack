@@ -18,6 +18,13 @@ import { expect, NETWORK_CHANGED, test, type Page } from "./test";
 //   N2  (the guard) the same load through the `test` the specs use arrives
 //       whole: the navigation is made again, exactly once, and every one of
 //       the page's scripts ran.
+//   N3  (the cause, after `load`) a page that imports its code dynamically —
+//       as a page rendered in the browser only does — has its navigation
+//       resolve while that code is still in flight, and a network change in
+//       that window loses it after the navigation was over;
+//   N4  (the guard, after `load`) the same load through the guarded `test`
+//       waits for that code, sees the loss, and navigates again: the page the
+//       spec gets ran every script.
 //
 // The page is this spec's own — a document and CHUNKS module scripts from a
 // local server that can hold its responses — so the window is deterministic
@@ -67,6 +74,21 @@ unguarded.beforeAll(async () => {
       );
       return;
     }
+    if (req.url === "/dynamic") {
+      documents++;
+      // Imported from a module script: Chromium fires `load` without waiting
+      // for these, so the navigation resolves while they are held.
+      res.writeHead(200, {
+        "content-type": "text/html",
+        "cache-control": "no-store",
+      });
+      res.end(
+        `<!doctype html><html><head><script type="module">` +
+          `for (let i = 0; i < ${CHUNKS}; i++) import("/chunk/" + i + ".js");` +
+          `</script></head><body>dynamic chunks</body></html>`,
+      );
+      return;
+    }
     if (req.url?.startsWith("/chunk/")) {
       if (holding) held.push(res);
       else sendChunk(res);
@@ -101,8 +123,10 @@ function changeHostNetwork(tag: string) {
 async function loadAcrossNetworkChange(
   page: Page,
   tag: string,
-): Promise<string[]> {
+  path = "/",
+): Promise<{ aborted: string[]; resolvedWhileHeld: boolean }> {
   const aborted: string[] = [];
+  let resolvedWhileHeld = false;
   page.on("requestfailed", (request) => {
     if (request.failure()?.errorText === NETWORK_CHANGED)
       aborted.push(request.url());
@@ -110,7 +134,10 @@ async function loadAcrossNetworkChange(
   held.length = 0;
   holding = true;
   documents = 0;
-  const navigation = page.goto(`${origin}/`);
+  const navigation = page.goto(`${origin}${path}`).then((response) => {
+    if (holding) resolvedWhileHeld = true;
+    return response;
+  });
   try {
     await waitFor(
       `${PER_HOST} chunk requests held open`,
@@ -130,13 +157,13 @@ async function loadAcrossNetworkChange(
     }
   }
   await navigation;
-  return aborted;
+  return { aborted, resolvedWhileHeld };
 }
 
 unguarded(
   "N1: a page load across a host network change loses the code it was waiting for",
   async ({ page }) => {
-    const aborted = await loadAcrossNetworkChange(page, "n1");
+    const { aborted } = await loadAcrossNetworkChange(page, "n1");
     const ran = await page.evaluate(
       () => (globalThis as { __chunks?: number }).__chunks ?? 0,
     );
@@ -153,7 +180,7 @@ unguarded(
 test("N2: the same load through the guarded test navigates again and arrives whole", async ({
   page,
 }) => {
-  const aborted = await loadAcrossNetworkChange(page, "n2");
+  const { aborted } = await loadAcrossNetworkChange(page, "n2");
   const ran = await page.evaluate(
     () => (globalThis as { __chunks?: number }).__chunks ?? 0,
   );
@@ -161,6 +188,51 @@ test("N2: the same load through the guarded test navigates again and arrives who
     `N2 guarded: ${aborted.length} request(s) aborted with ${NETWORK_CHANGED} on the first load; ` +
       `document requested ${documents} time(s); ${ran} of ${CHUNKS} scripts ran on the page the spec got`,
   );
+  expect(aborted.length).toBeGreaterThan(0);
+  expect(documents).toBe(2);
+  expect(ran).toBe(CHUNKS);
+});
+
+unguarded(
+  "N3: a navigation resolves before the code it imports, and a network change then loses it",
+  async ({ page }) => {
+    const { aborted, resolvedWhileHeld } = await loadAcrossNetworkChange(
+      page,
+      "n3",
+      "/dynamic",
+    );
+    const ran = await page.evaluate(
+      () => (globalThis as { __chunks?: number }).__chunks ?? 0,
+    );
+    note(
+      `N3 unguarded, dynamic imports: navigation resolved while its code was held: ${resolvedWhileHeld}; ` +
+        `${aborted.length} request(s) aborted with ${NETWORK_CHANGED}; ${ran} of ${CHUNKS} scripts ran; ` +
+        `document requested ${documents} time(s)`,
+    );
+    expect(resolvedWhileHeld).toBe(true);
+    expect(aborted.length).toBeGreaterThan(0);
+    expect(ran).toBeLessThan(CHUNKS);
+    expect(documents).toBe(1);
+  },
+);
+
+test("N4: the guarded test waits for that code, and navigates again when it was lost", async ({
+  page,
+}) => {
+  const { aborted, resolvedWhileHeld } = await loadAcrossNetworkChange(
+    page,
+    "n4",
+    "/dynamic",
+  );
+  const ran = await page.evaluate(
+    () => (globalThis as { __chunks?: number }).__chunks ?? 0,
+  );
+  note(
+    `N4 guarded, dynamic imports: navigation resolved while its code was held: ${resolvedWhileHeld}; ` +
+      `${aborted.length} request(s) aborted with ${NETWORK_CHANGED} on the first load; ` +
+      `document requested ${documents} time(s); ${ran} of ${CHUNKS} scripts ran on the page the spec got`,
+  );
+  expect(resolvedWhileHeld).toBe(false);
   expect(aborted.length).toBeGreaterThan(0);
   expect(documents).toBe(2);
   expect(ran).toBe(CHUNKS);

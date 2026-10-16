@@ -145,10 +145,11 @@ func DefaultInFlightLimit(maxInFlight int32) InFlightLimit {
 	return InFlightLimit{Max: maxInFlight, HardStop: DefaultPendingActivityHardStop}
 }
 
-// DefaultSnapshotOverlays is engine.snapshot_overlays' default: off, so
-// every run writes full snapshots, until an operator turns it on once every
-// engine process runs a release that reads overlays (docs/DEPLOY.md §4, R4).
-const DefaultSnapshotOverlays = false
+// DefaultSnapshotOverlays is engine.snapshot_overlays' default: on, in a
+// release after the one that first contained it — the order a rollback
+// relies on (docs/DEPLOY.md §4, R4). The fleet check still writes full
+// snapshots while any engine process cannot read an overlay.
+const DefaultSnapshotOverlays = true
 
 // The snapshot-overlay thresholds a run pins when the deployment enables
 // overlays (OverlayPolicy): a run declaring more than DefaultOverlayMinRows

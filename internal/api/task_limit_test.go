@@ -39,9 +39,10 @@ func requireTaskCeilingRefusal(t *testing.T, message string, count, limit int) {
 }
 
 func TestValidateOrkflow_MoreTasksThanTheCeilingIsAnIssue(t *testing.T) {
+	n := int(engine.DefaultOrkflowMaxTasks)
 	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore()})
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
-		Yaml: manyTasksDoc("wide", 1001)}))
+		Yaml: manyTasksDoc("wide", n+1)}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,28 +51,29 @@ func TestValidateOrkflow_MoreTasksThanTheCeilingIsAnIssue(t *testing.T) {
 		t.Fatalf("issues = %v; want one error", issues)
 	}
 	// Anchored at the first task past the ceiling, so an editor can point at it.
-	if issues[0].GetField() != "tasks[1000]" {
-		t.Fatalf("field = %q; want tasks[1000]", issues[0].GetField())
+	if want := fmt.Sprintf("tasks[%d]", n); issues[0].GetField() != want {
+		t.Fatalf("field = %q; want %s", issues[0].GetField(), want)
 	}
-	requireTaskCeilingRefusal(t, issues[0].GetMessage(), 1001, 1000)
+	requireTaskCeilingRefusal(t, issues[0].GetMessage(), n+1, n)
 
 	// Exactly at the default ceiling is accepted.
 	ok, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
-		Yaml: manyTasksDoc("wide", 1000)}))
+		Yaml: manyTasksDoc("wide", n)}))
 	if err != nil || len(ok.Msg.GetIssues()) != 0 {
-		t.Fatalf("1000 tasks = %v, %v; want accepted", ok.Msg.GetIssues(), err)
+		t.Fatalf("%d tasks = %v, %v; want accepted", n, ok.Msg.GetIssues(), err)
 	}
 }
 
 func TestApplyOrkflow_MoreTasksThanTheCeilingIsInvalidArgumentAndWritesNothing(t *testing.T) {
+	n := int(engine.DefaultOrkflowMaxTasks)
 	store := engine.NewMemoryOrkflowStore()
 	svc := api.NewService(api.Config{Orkflows: store})
 	_, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-		Yaml: manyTasksDoc("wide", 1001)}))
+		Yaml: manyTasksDoc("wide", n+1)}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("apply = %v; want invalid_argument", err)
 	}
-	requireTaskCeilingRefusal(t, err.Error(), 1001, 1000)
+	requireTaskCeilingRefusal(t, err.Error(), n+1, n)
 	if _, getErr := store.Get(context.Background(), "default", "wide", ""); getErr == nil {
 		t.Fatal("a refused apply stored a definition")
 	}
@@ -102,11 +104,12 @@ func TestValidateOrkflow_TheTaskCeilingIsConfigurable(t *testing.T) {
 		requireTaskCeilingRefusal(t, issues[0].GetMessage(), 4, 3)
 	}
 
-	raised := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), OrkflowMaxTasks: 1500})
+	n := int(engine.DefaultOrkflowMaxTasks)
+	raised := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), OrkflowMaxTasks: int32(n + 500)})
 	ok, err := raised.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
-		Yaml: manyTasksDoc("wide", 1001)}))
+		Yaml: manyTasksDoc("wide", n+1)}))
 	if err != nil || len(ok.Msg.GetIssues()) != 0 {
-		t.Fatalf("raised to 1500, 1001 tasks = %v, %v; want accepted", ok.Msg.GetIssues(), err)
+		t.Fatalf("raised to %d, %d tasks = %v, %v; want accepted", n+500, n+1, ok.Msg.GetIssues(), err)
 	}
 }
 

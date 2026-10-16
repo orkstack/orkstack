@@ -29,6 +29,7 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -116,7 +117,14 @@ func soakAloneLock() string { return filepath.Join(os.TempDir(), "orkstack-each-
 // releases it when the test ends.
 func soakAlone(t *testing.T, ctx context.Context) {
 	t.Helper()
-	file, err := os.OpenFile(soakAloneLock(), os.O_CREATE|os.O_RDWR, 0o600)
+	holdLock(t, ctx, soakAloneLock())
+}
+
+// holdLock takes the host-wide file lock at path, waiting at most until
+// ctx's deadline, and releases it when the test ends.
+func holdLock(t *testing.T, ctx context.Context, path string) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("open the soak lock: %v", err)
 	}
@@ -127,14 +135,14 @@ func soakAlone(t *testing.T, ctx context.Context) {
 	case err := <-locked:
 		if err != nil {
 			_ = file.Close()
-			t.Fatalf("take the soak lock %s: %v", soakAloneLock(), err)
+			t.Fatalf("take the soak lock %s: %v", path, err)
 		}
 	case <-ctx.Done():
 		_ = file.Close()
 		t.Fatalf("the soak lock %s was still held at the test's deadline (waited %s)",
-			soakAloneLock(), time.Since(start).Round(time.Second))
+			path, time.Since(start).Round(time.Second))
 	}
-	t.Logf("holding the soak lock %s (waited %s for another soak or C32)", soakAloneLock(),
+	t.Logf("holding the soak lock %s (waited %s for another soak)", path,
 		time.Since(start).Round(time.Millisecond))
 	t.Cleanup(func() {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
@@ -155,6 +163,8 @@ type eachSoak struct {
 	// inflight is, per real item Orker, the items it is running now.
 	inflightMu sync.Mutex
 	inflight   map[string]map[string]bool
+	// document, when set, is the soak's Orkflow instead of soakDocument.
+	document func(name string, items, maxParallel int) string
 }
 
 // soakDocument is the soak's Orkflow: a json task computing [0, …, items−1],
@@ -230,6 +240,15 @@ func soakFastItem(ctx context.Context, _ *chaosStack, orker string, in *orkstack
 // caller's to start (startRealItemOrker).
 func startEachSoak(t *testing.T, ctx context.Context, scenario string, items int) *eachSoak {
 	t.Helper()
+	return startEachSoakWith(t, ctx, scenario, items, nil)
+}
+
+// startEachSoakWith is startEachSoak with the API's configuration amended by
+// configure, when set, before it is served.
+func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items int,
+	configure func(s *chaosStack, cfg *api.Config),
+) *eachSoak {
+	t.Helper()
 	cfg := s3Config()
 	requireMinIO(t, cfg)
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
@@ -256,7 +275,10 @@ func startEachSoak(t *testing.T, ctx context.Context, scenario string, items int
 		identity:   engine.EngineIdentity(fmt.Sprintf("%d@soak-replica-a@", os.Getpid())),
 		eachValues: stores.store,
 	})
-	s.startProjection(nil)
+	// With this build's capabilities, as cmd/ork's projection worker polls:
+	// a run that writes snapshot overlays needs every projection process to
+	// read them (Stage 7's defaults turn them on).
+	s.startCapableProjection("soak-projection")
 
 	// The list's own real Orker, on a pool of its own.
 	listCall, _ := s.realOrkerCall("lister", soakListPool, stores, nil)
@@ -273,10 +295,14 @@ func startEachSoak(t *testing.T, ctx context.Context, scenario string, items int
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.api = s.serveAPI(api.Config{
+	apiConfig := api.Config{
 		EachMaxItems: int32(items), ContinuationEnabled: true, Capabilities: cluster,
 		Catalog: catalog, Resolver: dsl.NewResolver(""),
-	})
+	}
+	if configure != nil {
+		configure(s, &apiConfig)
+	}
+	e.api = s.serveAPI(apiConfig)
 	return e
 }
 
@@ -489,7 +515,11 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 ) (soakRecord, []*orkstackv1.Event) {
 	t.Helper()
 	name := "soak-" + shape
-	e.api.apply(t, ctx, soakDocument(name, e.items, maxParallel))
+	document := soakDocument(name, e.items, maxParallel)
+	if e.document != nil {
+		document = e.document(name, e.items, maxParallel)
+	}
+	e.api.apply(t, ctx, document)
 	started := time.Now()
 	submitted := e.api.submit(t, ctx, name)
 	runID := submitted.GetRun().GetId()
@@ -794,5 +824,55 @@ func TestIntegration_SoakFanOutMaxParallel(t *testing.T) {
 		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
 	}
 	rec, _ := e.soakRun(t, ctx, "max-parallel", 64, nil)
+	reportSoak(t, rec)
+}
+
+// soakPaddedDocument is soakDocument with a 300 KB description, so the
+// planned definition is over the 256 KiB a run's start may carry and
+// travels by reference. A description is the Orkflow's own: it reaches no
+// task's input and no run snapshot, so the soak's measurements are the
+// fan-out's.
+func soakPaddedDocument(name string, items, maxParallel int) string {
+	document := soakDocument(name, items, maxParallel)
+	first, rest, _ := strings.Cut(document, "\n")
+	note := sha256.Sum256([]byte(name))
+	return first + "\ndescription: \"" + strings.Repeat(hex.EncodeToString(note[:]), 300_000/64) + "\"\n" + rest
+}
+
+// TestIntegration_SoakItemCeilingWithStage7Defaults: E4's fan-out at the
+// item ceiling (ORK_SOAK_ITEMS, default the built-in maximum), with Stage 7's
+// defaults — its definition, padded over a start payload, passed by
+// reference, and snapshot overlays on — meets E4's thresholds (spec T7,
+// AGENTS.md §11's item-ceiling clause).
+func TestIntegration_SoakItemCeilingWithStage7Defaults(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
+	defer cancel()
+	items := soakItems(t)
+	soakAlone(t, ctx)
+	e := startEachSoakWith(t, ctx, fmt.Sprintf("soak-%d-stage7", items), items, func(s *chaosStack, cfg *api.Config) {
+		cfg.DefinitionByReference, cfg.DefinitionObjects, cfg.SnapshotOverlays = true, s.store, true
+	})
+	e.document = soakPaddedDocument
+	for i := 1; i <= soakRealOrkers; i++ {
+		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
+	}
+	var plan engine.RunPlan
+	rec, _ := e.soakRun(t, ctx, "stage7", 0, func(runID string) {
+		_, histories := e.histories(runID)
+		first := histories[0].GetEvents()[0].GetWorkflowExecutionStartedEventAttributes()
+		if err := converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], &plan); err != nil {
+			t.Fatalf("decode the run's plan: %v", err)
+		}
+	})
+	if plan.Definition == nil || plan.SnapshotOverlay == nil {
+		rec.Missed = append(rec.Missed, fmt.Sprintf("the run did not start with Stage 7's defaults: definition by reference %t, overlays %t",
+			plan.Definition != nil, plan.SnapshotOverlay != nil))
+	}
+	var objectBytes int64
+	if plan.Definition != nil {
+		objectBytes = plan.Definition.SizeBytes
+	}
+	t.Logf("E7 item ceiling with Stage 7's defaults: definition by reference %t (%d B object), overlays %t",
+		plan.Definition != nil, objectBytes, plan.SnapshotOverlay != nil)
 	reportSoak(t, rec)
 }

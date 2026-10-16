@@ -58,7 +58,7 @@
 	import { statsClient } from '$lib/clients/stats';
 	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, taskRunCommand, timestampJson } from '$lib/runDetail';
 	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '$lib/eventBuffer';
-	import { eventBatcher } from '$lib/eventBatch';
+	import { eventBatcher, slicedApply } from '$lib/eventBatch';
 	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
 	import {
 		EventType,
@@ -269,6 +269,29 @@
 	// a chatty run's page heavy.
 	let buffer = $state.raw(emptyEventBuffer());
 	let tasks = $state<TaskView[]>(untrack(seedTasks));
+	// taskById indexes `tasks` by id, so an event, a card or a derived value
+	// finds its task in one lookup instead of a scan of every card: at the
+	// task ceiling (thousands of tasks) a scan per event — and one per task
+	// inside the failing-handlers banner — kept a live page busy for tens of
+	// seconds. It holds the same reactive objects `tasks` does; `tasks` is
+	// only ever seeded and pushed to, so a length that moved is the one
+	// change that rebuilds it.
+	const taskById = new Map<string, TaskView>();
+	function findTask(id: string): TaskView | undefined {
+		if (taskById.size !== tasks.length) {
+			taskById.clear();
+			for (const task of tasks) taskById.set(task.id, task);
+		}
+		return taskById.get(id);
+	}
+	// The tasks the loaded snapshot already holds as finished. Their attempts
+	// arrive with the whole run's timeline read after the page renders, so a
+	// replayed terminal event of one of them asks for nothing more: a live
+	// page opened on a run thousands of tasks into its life would otherwise
+	// send one attempts read per finished task.
+	const finishedAtLoad = $derived(
+		new Set((data.run?.taskRuns ?? []).filter((tr) => isTerminal(tr.status)).map((tr) => tr.taskId))
+	);
 	// The header's "· N cached": reused results, fan-out items included.
 	const cachedTotal = $derived(
 		cachedCount(
@@ -645,7 +668,7 @@
 
 	function mergeTerminalFacts() {
 		for (const tr of data.run?.taskRuns ?? []) {
-			const existing = tasks.find((t) => t.id === tr.taskId);
+			const existing = findTask(tr.taskId);
 			upsertTask(tr.taskId, {
 				status: tr.status,
 				attempt: tr.attempt,
@@ -689,7 +712,7 @@
 				...(tr.each
 					? {
 							each: tr.each,
-							items: mergeItems(tasks.find((t) => t.id === tr.taskId)?.items ?? [], itemsFromTaskRun(tr))
+							items: mergeItems(findTask(tr.taskId)?.items ?? [], itemsFromTaskRun(tr))
 						}
 					: {})
 			});
@@ -740,7 +763,7 @@
 	// attempt from its first chunk, emptying the pane under a reader who had
 	// scrolled up. A field-by-field patch touches only the fields that moved.
 	function upsertTask(taskId: string, patch: Partial<TaskView>) {
-		const existing = tasks.find((t) => t.id === taskId);
+		const existing = findTask(taskId);
 		if (existing) {
 			Object.assign(existing, patch);
 			return;
@@ -764,13 +787,13 @@
 	// isFanOut answers from the definition first: a fan-out is declared, so
 	// the page knows before its first snapshot row says so.
 	function isFanOut(taskId: string): boolean {
-		return taskDefs.get(taskId)?.each !== undefined || tasks.find((t) => t.id === taskId)?.each !== undefined;
+		return taskDefs.get(taskId)?.each !== undefined || findTask(taskId)?.each !== undefined;
 	}
 
 	// isComposed answers from the definition first too: a composed task is
 	// declared (`uses: orkflow:`), whether or not its child has started.
 	function isComposed(taskId: string): boolean {
-		return taskDefs.get(taskId)?.orkflow !== undefined || tasks.find((t) => t.id === taskId)?.child !== undefined;
+		return taskDefs.get(taskId)?.orkflow !== undefined || findTask(taskId)?.child !== undefined;
 	}
 	// Whether this run's definition composes anything: the header's
 	// "Child runs" link is drawn only then.
@@ -808,7 +831,7 @@
 			onEvent(event);
 		}
 		for (const [taskId, list] of itemEvents) {
-			const known = tasks.find((t) => t.id === taskId);
+			const known = findTask(taskId);
 			upsertTask(taskId, { items: applyItemEvents(known?.items ?? [], list) });
 			for (const event of list) {
 				if (isTerminal(event.status) && selectedItemByTask[taskId] === event.item) {
@@ -823,28 +846,35 @@
 	function onEvent(event: Event) {
 		const status = event.status === Status.UNSPECIFIED ? undefined : event.status;
 		switch (event.type) {
+			// A run never leaves a terminal status. The socket replays a run's
+			// stream from its first event, so on a page opened on a finished
+			// run its RUN_CREATED and RUN_STARTED arrive after the snapshot
+			// said how it ended — and for a run of thousands of tasks, its own
+			// end arrives many frames later. They move nothing back.
 			case EventType.RUN_CREATED:
-				runStatus = status ?? Status.PENDING;
+				if (!isTerminal(runStatus)) runStatus = status ?? Status.PENDING;
 				break;
 			case EventType.RUN_STARTED:
-				runStatus = status ?? Status.RUNNING;
+				if (!isTerminal(runStatus)) runStatus = status ?? Status.RUNNING;
 				startedAt = event.timestamp;
 				break;
+			// The terminal re-read is for a page that watched the run end; one
+			// opened on a finished run already holds its terminal snapshot.
 			case EventType.RUN_SUCCEEDED:
 				runStatus = status ?? Status.SUCCEEDED;
 				finishedAt = event.timestamp;
-				refreshTerminalFacts();
+				if (!terminalFactsRead) refreshTerminalFacts();
 				break;
 			case EventType.RUN_FAILED:
 				runStatus = status ?? Status.FAILED;
 				finishedAt = event.timestamp;
 				if (event.message) runErrorMessage = event.message;
-				refreshTerminalFacts();
+				if (!terminalFactsRead) refreshTerminalFacts();
 				break;
 			case EventType.RUN_CANCELED:
 				runStatus = status ?? Status.CANCELED;
 				finishedAt = event.timestamp;
-				refreshTerminalFacts();
+				if (!terminalFactsRead) refreshTerminalFacts();
 				break;
 			// TASK_SCHEDULED and TASK_STARTED are the live "this task reached an
 			// Orker" signal, and the page needs it as a TIMESTAMP, not only a
@@ -863,9 +893,11 @@
 			case EventType.TASK_STARTED: {
 				const fallback =
 					event.type === EventType.TASK_SCHEDULED ? Status.PENDING : Status.RUNNING;
-				const known = tasks.find((t) => t.id === event.taskId);
+				const known = findTask(event.taskId);
+				// A finished task's replayed dispatch moves its status nowhere:
+				// a task never leaves a terminal status either.
 				upsertTask(event.taskId, {
-					status: status ?? fallback,
+					...(isTerminal(known?.status) ? {} : { status: status ?? fallback }),
 					...(known?.scheduledAt ? {} : { scheduledAt: event.timestamp })
 				});
 				// A fan-out schedules once, when its array was counted: read
@@ -885,7 +917,7 @@
 			case EventType.TASK_SUCCEEDED:
 				upsertTask(event.taskId, { status: status ?? Status.SUCCEEDED });
 				if (isFanOut(event.taskId) || isComposed(event.taskId)) rereadAndMerge();
-				else {
+				else if (!finishedAtLoad.has(event.taskId)) {
 					void refreshAttempts(event.taskId);
 					// A cached task's memo decision travels on its snapshot row,
 					// never on the event: one event-triggered read brings it.
@@ -898,14 +930,14 @@
 					message: event.message
 				});
 				if (isFanOut(event.taskId) || isComposed(event.taskId)) rereadAndMerge();
-				else void refreshAttempts(event.taskId);
+				else if (!finishedAtLoad.has(event.taskId)) void refreshAttempts(event.taskId);
 				break;
 			// An awaited task started waiting. Its deadline is TASK_AWAITING's
 			// own timestamp plus the definition's timeout — the engine stamps both
 			// from one workflow.Now — so the event's timestamp is recorded as the
 			// open instant until a snapshot brings the deadline itself.
 			case EventType.TASK_AWAITING: {
-				const known = tasks.find((t) => t.id === event.taskId);
+				const known = findTask(event.taskId);
 				upsertTask(event.taskId, {
 					status: status ?? Status.AWAITING,
 					message: event.message,
@@ -995,6 +1027,11 @@
 	// bumps `socketEpoch`, which restarts this effect from `lastSequence` — a
 	// plain variable, read once per start, never a dependency — so the events
 	// already applied are not replayed into the reducer or the buffer.
+	// How long a finished run's replayed events gather before they are
+	// applied (see the socket effect below).
+	const REPLAY_BATCH_MS = 250;
+	// The most replayed events applied in one idle slice.
+	const REPLAY_SLICE = 100;
 	const socketRunId = $derived(data.run?.id ?? '');
 	const socketNamespace = $derived(data.namespace);
 	let socketEpoch = $state(0);
@@ -1011,7 +1048,17 @@
 			lastSequenceRun = runId;
 		}
 		streamFailure = '';
-		const batch = eventBatcher(applyEvents);
+		// A run the page opened finished is replayed, not watched: its stream
+		// arrives as fast as the socket delivers it and changes nothing a
+		// reader is waiting on, so it is applied in coarser batches — at a run
+		// of thousands of tasks, a frame-by-frame replay re-laid out the page
+		// a hundred times before it answered a click. A live run keeps its
+		// per-frame batches.
+		const replayed = untrack(() => isTerminal(data.run?.status));
+		// ...and a slice of it at a time, so a click is answered between
+		// slices rather than after the whole replay.
+		const slices = replayed ? slicedApply(applyEvents, REPLAY_SLICE, whenIdle) : undefined;
+		const batch = eventBatcher(slices ? slices.apply : applyEvents, replayed ? replayBatches : undefined);
 		const stop = watchRunEvents(
 			runId,
 			namespace,
@@ -1033,10 +1080,30 @@
 			// What arrived for THIS run is applied, never dropped: lastSequence
 			// already counts it, so a restart would not deliver it again. A
 			// page that moved on to another run drops it instead.
-			if (untrack(() => socketRunId) === runId) batch.flush();
-			else batch.cancel();
+			if (untrack(() => socketRunId) === runId) {
+				batch.flush();
+				slices?.drain();
+			} else {
+				batch.cancel();
+				slices?.cancel();
+			}
 		};
 	});
+	// whenIdle runs a replay slice when the browser has nothing better to do,
+	// so a reader's click is always handled first; a browser without
+	// requestIdleCallback takes the next task.
+	function whenIdle(run: () => void): () => void {
+		if (typeof requestIdleCallback === 'function') {
+			const handle = requestIdleCallback(run, { timeout: 1000 });
+			return () => cancelIdleCallback(handle);
+		}
+		const timer = setTimeout(run, 0);
+		return () => clearTimeout(timer);
+	}
+	function replayBatches(flush: () => void): () => void {
+		const timer = setTimeout(flush, REPLAY_BATCH_MS);
+		return () => clearTimeout(timer);
+	}
 	function retryStream(): void {
 		socketEpoch += 1;
 	}
@@ -1071,7 +1138,7 @@
 	// stamping started_at ONLY at real dispatch.
 	// A task's join: the pinned definition's, else the snapshot's.
 	function joinOf(id: string): JoinPolicy | undefined {
-		return taskDefs.get(id)?.join || tasks.find((t) => t.id === id)?.join;
+		return taskDefs.get(id)?.join || findTask(id)?.join;
 	}
 	// The failure handlers still to finish, from the LIVE task views: one
 	// drops out of the banner the moment its own terminal event arrives.
@@ -1085,7 +1152,7 @@
 	function notStartedCaption(task: TaskView): string {
 		if (task.status === Status.CANCELED || isTerminal(runStatus)) return 'Never started';
 		const blocking = (taskDefs.get(task.id)?.needs ?? []).filter(
-			(need) => !isTerminal(tasks.find((t) => t.id === need)?.status)
+			(need) => !isTerminal(findTask(need)?.status)
 		);
 		return blocking.length > 0 ? `Waiting for ${blocking.join(', ')}` : 'Waiting to start';
 	}
@@ -1665,8 +1732,21 @@
 						substitute for it, and the `Pin <name>` label below says the
 						same thing in words.
 					-->
+					<!--
+						content-visibility: auto lets the browser skip laying out and
+						painting a card while it is off screen, and the intrinsic size
+						keeps the list's height (and its scrollbar) honest meanwhile:
+						on a run of thousands of tasks every scroll and focus otherwise
+						re-laid out every card, seconds before the page answered. It
+						also contains the card's painting, so a card that can hold an
+						overlay — an await's resolve and reject dialogs, a composed
+						task's panel, an open Inspect with its command popover — is
+						never skipped, and its overlay is never clipped to it.
+					-->
 					<div
-						class="rounded-lg border bg-surface px-4 py-3 shadow-xs {dispatched
+						class="rounded-lg border bg-surface px-4 py-3 shadow-xs {isAwait || composed || inspectOpenByTask[task.id]
+							? ''
+							: '[content-visibility:auto] [contain-intrinsic-size:auto_7rem]'} {dispatched
 							? 'border-border'
 							: 'border-dashed border-border-subtle opacity-60'}"
 						style={accent

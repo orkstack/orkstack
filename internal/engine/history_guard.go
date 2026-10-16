@@ -385,6 +385,10 @@ func (s *runState) historyExhausted(ctx workflow.Context, inFlight map[string]wo
 		return nil
 	}
 	c, ok := s.crossing(ctx, inFlight, 100)
+	if ok && historyGuardProbeForTest != nil {
+		reserve, _ := s.reserveNow(inFlight) // the per-pass count every crossing decision uses
+		historyGuardProbeForTest(s.runID, c.events, reserve)
+	}
 	if !ok || !c.crossed() {
 		return nil
 	}
@@ -393,6 +397,14 @@ func (s *runState) historyExhausted(ctx workflow.Context, inFlight map[string]wo
 	}
 	return s.historyLimitError(ctx, inFlight, c, 0)
 }
+
+// historyGuardProbeForTest is a TEST-ONLY probe, the precedent of
+// readyLoopProbeForTest: when set, every guard check reports the run, its
+// history as the guard counts it and its failure path's reserve (reserveNow,
+// exactly failReserve: every dispatch charges what it adds), so a
+// test can find the largest sum a run ever reached. Never set in production
+// code.
+var historyGuardProbeForTest func(runID string, events, reserve int64)
 
 // historyLimitError is the guard's RUN_HISTORY_LIMIT at crossing c, with the
 // run's blockers and its own accounting; nextBytes is the command the

@@ -127,7 +127,9 @@ func (s *runState) pinClosureAllows(id string) bool {
 }
 
 // rebuildPinClosure builds pinClosureAllows' set: O(the size of the open
-// pins' closures).
+// pins' closures). It also lets go of the memoised closure of every member
+// that no longer needs one: a member of a pin that closed (or was signalled
+// done), and a member that is terminal.
 func (s *runState) rebuildPinClosure() {
 	if readyLoopProbeForTest != nil {
 		readyLoopProbeForTest.closureRebuilds++
@@ -137,21 +139,50 @@ func (s *runState) rebuildPinClosure() {
 	for _, name := range s.pinOrder {
 		p := s.pins[name]
 		if !p.opened || p.doneSent {
+			for _, member := range p.tasks {
+				delete(s.pinMemberClosures, member)
+			}
 			continue
 		}
 		for _, member := range p.tasks {
 			if isTerminal(s.taskRuns[member].GetStatus()) {
+				delete(s.pinMemberClosures, member)
 				continue
 			}
 			if s.pinClosure == nil {
 				s.pinClosure = map[string]bool{}
 			}
 			s.pinClosure[member] = true
-			for _, need := range s.closure[member] {
+			for _, need := range s.pinMemberClosure(member) {
 				s.pinClosure[need] = true
 			}
 		}
 	}
+}
+
+// pinMemberClosure is an opened pin's member's needs closure, memoised in
+// pinMemberClosures until rebuildPinClosure sees the member terminal or its
+// pin closed: the one closure a run retains (closureOf).
+func (s *runState) pinMemberClosure(member string) []string {
+	if closure, ok := s.pinMemberClosures[member]; ok {
+		return closure
+	}
+	if s.pinMemberClosures == nil {
+		s.pinMemberClosures = map[string][]string{}
+	}
+	closure := s.closureOf(member)
+	s.pinMemberClosures[member] = closure
+	return closure
+}
+
+// retainedClosureEntries is the closure entries the run holds between
+// passes: its pins' members' memo (closureOf keeps nothing else).
+func (s *runState) retainedClosureEntries() int {
+	n := 0
+	for _, closure := range s.pinMemberClosures {
+		n += len(closure)
+	}
+	return n
 }
 
 // fanOutCanDispatch reports whether the fan-out id is expanded, RUNNING, and
@@ -223,7 +254,7 @@ func (s *runState) pinBlockedReason() string {
 			if isTerminal(s.taskRuns[member].GetStatus()) {
 				continue
 			}
-			candidates := append([]string{member}, s.closure[member]...)
+			candidates := append([]string{member}, s.pinMemberClosure(member)...)
 			for _, id := range candidates {
 				if a := s.awaits[id]; a != nil && a.open {
 					return fmt.Sprintf("pin %s waits on await %s", name, id)
@@ -268,5 +299,16 @@ var readyLoopProbeForTest *readyLoopProbe
 
 type readyLoopProbe struct {
 	classify, conditions, closureRebuilds int
-	pass, selector                        func()
+	// closureEntries is every entry closureOf computed over the run, and
+	// maxRetained the most closure entries the run held at the top of a
+	// pass (retainedClosureEntries).
+	closureEntries, maxRetained int
+	pass, selector              func()
+	// selectorRun, when set, is called with the run's id as the loop
+	// reaches its Selector: its pass is over.
+	selectorRun func(runID string)
+	// emit, when set, is called with true as an event write starts and
+	// false when it returns, so a test can time a pass's workflow code
+	// apart from its event writes.
+	emit func(start bool)
 }

@@ -140,8 +140,10 @@ var Schema = []Var{
 	// the built-in 10000 (dsl.MaxEachItems) with continuation on.
 	{Path: "engine.each_max_items", Env: "ORK_EACH_MAX_ITEMS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultEachMaxItems))},
 	// ORK_ORKFLOW_MAX_TASKS' fallback is engine.DefaultOrkflowMaxTasks: the
-	// most tasks one Orkflow may declare, a default a deployment may lower or
-	// raise.
+	// most tasks one Orkflow may declare, the largest size the task soak
+	// measured, a default a deployment may lower or raise (warned above it,
+	// and above the flat-stage bound); with continuation off cmd/ork lowers
+	// an unset key to history.max_events / 50 and refuses more.
 	{Path: "engine.orkflow_max_tasks", Env: "ORK_ORKFLOW_MAX_TASKS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultOrkflowMaxTasks))},
 	// ORK_HISTORY_MAX_EVENTS and ORK_HISTORY_MAX_BYTES fall back to
 	// engine.DefaultHistoryMaxEvents and DefaultHistoryMaxBytes: the Temporal
