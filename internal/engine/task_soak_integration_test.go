@@ -10,19 +10,21 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/contrib/opentelemetry"
 	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -199,46 +201,84 @@ func soakFastTask(run time.Duration) chaosBehavior {
 	}
 }
 
-// latencyHandler is a metrics handler that keeps every workflow-task
-// execution latency the SDK records, and drops every other metric.
+// latencyHandler is the SDK's own OpenTelemetry metrics handler over a
+// manual reader, so the soak reads the workflow-task execution latency the
+// SDK records (temporal_workflow_task_execution_latency, in seconds) as a
+// histogram with buckets fine enough for its p99.
 type latencyHandler struct {
-	mu      sync.Mutex
-	samples []time.Duration
+	reader  *sdkmetric.ManualReader
+	handler client.MetricsHandler
 }
 
-func (h *latencyHandler) WithTags(map[string]string) client.MetricsHandler { return h }
-func (h *latencyHandler) Counter(name string) client.MetricsCounter {
-	return client.MetricsNopHandler.Counter(name)
-}
-func (h *latencyHandler) Gauge(name string) client.MetricsGauge {
-	return client.MetricsNopHandler.Gauge(name)
-}
-func (h *latencyHandler) Timer(name string) client.MetricsTimer {
-	if name != "temporal_workflow_task_execution_latency" {
-		return client.MetricsNopHandler.Timer(name)
+// latencyBuckets are the histogram's bounds, in seconds: 5 ms steps to
+// 2 s, then coarser.
+func latencyBuckets() []float64 {
+	var out []float64
+	for ms := 5; ms <= 2000; ms += 5 {
+		out = append(out, float64(ms)/1000)
 	}
-	return latencyTimer{h}
+	return append(out, 3, 5, 10, 30, 60)
 }
 
-type latencyTimer struct{ h *latencyHandler }
-
-func (t latencyTimer) Record(d time.Duration) {
-	t.h.mu.Lock()
-	t.h.samples = append(t.h.samples, d)
-	t.h.mu.Unlock()
+func newLatencyHandler() *latencyHandler {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader), sdkmetric.WithView(sdkmetric.NewView(
+		sdkmetric.Instrument{Name: "temporal_workflow_task_execution_latency"},
+		sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{Boundaries: latencyBuckets()}},
+	)))
+	return &latencyHandler{reader: reader, handler: opentelemetry.NewMetricsHandler(opentelemetry.MetricsHandlerOptions{
+		Meter: provider.Meter("task-soak")})}
 }
 
-// maxAndP99 is the latency's largest sample and 99th percentile, in ms.
-func (h *latencyHandler) maxAndP99() (float64, float64, int) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if len(h.samples) == 0 {
+// maxAndP99 is the latency's largest sample and 99th percentile (the upper
+// bound of the bucket it falls in), in ms, and the sample count.
+func (h *latencyHandler) maxAndP99(ctx context.Context) (float64, float64, int) {
+	var rm metricdata.ResourceMetrics
+	if err := h.reader.Collect(ctx, &rm); err != nil {
 		return 0, 0, 0
 	}
-	sorted := append([]time.Duration(nil), h.samples...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	ms := func(d time.Duration) float64 { return math.Round(float64(d.Microseconds())/10) / 100 }
-	return ms(sorted[len(sorted)-1]), ms(sorted[int(math.Ceil(0.99*float64(len(sorted))))-1]), len(sorted)
+	ms := func(seconds float64) float64 { return math.Round(seconds*100000) / 100 }
+	var count uint64
+	var maxSeen float64
+	buckets := map[int]uint64{}
+	var bounds []float64
+	for _, scope := range rm.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != "temporal_workflow_task_execution_latency" {
+				continue
+			}
+			hist, ok := m.Data.(metricdata.Histogram[float64])
+			if !ok {
+				continue
+			}
+			for _, point := range hist.DataPoints {
+				count += point.Count
+				if v, ok := point.Max.Value(); ok {
+					maxSeen = max(maxSeen, v)
+				}
+				bounds = point.Bounds
+				for i, c := range point.BucketCounts {
+					buckets[i] += c
+				}
+			}
+		}
+	}
+	if count == 0 {
+		return 0, 0, 0
+	}
+	target := uint64(math.Ceil(0.99 * float64(count)))
+	var cumulative uint64
+	p99 := maxSeen
+	for i := 0; i <= len(bounds); i++ {
+		cumulative += buckets[i]
+		if cumulative >= target {
+			if i < len(bounds) {
+				p99 = min(bounds[i], maxSeen)
+			}
+			break
+		}
+	}
+	return ms(maxSeen), ms(p99), int(count)
 }
 
 // taskSoakGeneration is one generation as stage7-soak/<size>-<shape>.json
@@ -550,10 +590,10 @@ func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int
 	if shape.real {
 		e.stores = s.realStores()
 	}
-	metrics := &latencyHandler{}
+	metrics := newLatencyHandler()
 	identity := engine.EngineIdentity(fmt.Sprintf("%d@soak-replica-a@", os.Getpid()))
 	c, err := client.DialContext(ctx, client.Options{HostPort: s.address, Namespace: s.namespace, Identity: identity,
-		Logger: s.logs.logger("replica-a"), MetricsHandler: metrics})
+		Logger: s.logs.logger("replica-a"), MetricsHandler: metrics.handler})
 	if err != nil {
 		t.Fatalf("dial the replica's client: %v", err)
 	}
@@ -648,7 +688,7 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 		t.Fatalf("the run closed %v: %v", status, err)
 	}
 	rec.Elapsed = time.Since(started).Round(time.Second).String()
-	rec.TaskLatencyMaxMs, rec.TaskLatencyP99Ms, rec.TaskLatencySamples = metrics.maxAndP99()
+	rec.TaskLatencyMaxMs, rec.TaskLatencyP99Ms, rec.TaskLatencySamples = metrics.maxAndP99(ctx)
 
 	readStart := time.Now()
 	events, err := e.reader.Events(ctx, runID, 0)
@@ -772,8 +812,9 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 	// E7's thresholds.
 	miss := func(format string, args ...any) { rec.Missed = append(rec.Missed, fmt.Sprintf(format, args...)) }
 	// Above about 420 tasks a definition is over a start payload's 256 KiB
-	// and travels by reference (spec 5.1); every gated size is far above it.
-	if (!rec.ByReference && n >= 1000) || !rec.Overlays {
+	// and travels by reference (spec 5.1), and above 256 rows a run writes
+	// overlays; every gated size is far above both.
+	if (!rec.ByReference && n >= 1000) || (!rec.Overlays && int64(n) > engine.DefaultOverlayMinRows) {
 		miss("the run did not start with Stage 7's defaults: definition by reference %t, overlays %t", rec.ByReference, rec.Overlays)
 	}
 	if rec.PeakPendingTasks > int(rec.InFlightCap) {

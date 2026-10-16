@@ -101,23 +101,23 @@ func newFlatStageRun(t *testing.T, tasks int, mode string, seed uint64) *flatSta
 		base:  int(RestoreHistoryBound(*plan.Continuation) + generation0Start),
 	}
 	r.landing = r.rng.Float64() * 0.2
-	r.landFrom = r.rng.IntN(r.dueAt() + 1)
+	r.landFrom = r.rng.IntN(r.stageDueAt() + 1)
 	return r
 }
 
-// dueAt is the closed form's ⌈G/d⌉: the dispatches after which a
+// stageDueAt is the closed form's ⌈G/d⌉: the dispatches after which a
 // generation's budget is due.
-func (r *flatStageRun) dueAt() int {
+func (r *flatStageRun) stageDueAt() int {
 	return int(ceilDiv(r.plan.Continuation.Events, PlainDispatchEvents))
 }
 
-func (r *flatStageRun) setLength(length int) {
+func (r *flatStageRun) stageSetLength(length int) {
 	r.length = length
 	r.env.SetCurrentHistoryLength(length)
 }
 
-// land lands the completion of every running task in ids not landed yet.
-func (r *flatStageRun) land(ids []string) {
+// stageLand lands the completion of every running task in ids not landed yet.
+func (r *flatStageRun) stageLand(ids []string) {
 	for _, id := range ids {
 		if r.running[id] && !r.landed[id] {
 			r.landed[id] = true
@@ -134,7 +134,7 @@ func (r *flatStageRun) land(ids []string) {
 	r.env.SetCurrentHistoryLength(r.length)
 }
 
-func (r *flatStageRun) runningIDs() []string {
+func (r *flatStageRun) stageRunningIDs() []string {
 	ids := make([]string, 0, len(r.running))
 	for _, task := range r.wf.GetTasks() { // declaration order: the seed decides, not map order
 		if r.running[task.GetId()] {
@@ -146,36 +146,36 @@ func (r *flatStageRun) runningIDs() []string {
 
 // maybeLandRandom, for landRandom, lands a random subset of the running
 // completions at this publish, with the seed's chance.
-func (r *flatStageRun) maybeLandRandom() {
+func (r *flatStageRun) stageMaybeLand() {
 	if r.mode != landRandom || (!r.released && r.dispatched < r.landFrom) || r.rng.Float64() >= r.landing {
 		return
 	}
 	var pick []string
-	for _, id := range r.runningIDs() {
+	for _, id := range r.stageRunningIDs() {
 		if r.rng.IntN(2) == 0 {
 			pick = append(pick, id)
 		}
 	}
-	r.land(pick)
+	r.stageLand(pick)
 }
 
-func (r *flatStageRun) publish(_ context.Context, event *orkstackv1.Event, _, _ string) error {
+func (r *flatStageRun) stagePublish(_ context.Context, event *orkstackv1.Event, _, _ string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch event.GetType() {
 	case orkstackv1.EventType_EVENT_TYPE_RUN_STARTED:
-		r.setLength(r.base)
+		r.stageSetLength(r.base)
 	case orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED:
 		r.dispatched++
 		r.total++
-		r.setLength(r.length + 7)
-		r.maybeLandRandom()
+		r.stageSetLength(r.length + 7)
+		r.stageMaybeLand()
 	case orkstackv1.EventType_EVENT_TYPE_TASK_STARTED:
-		r.setLength(r.length + int(PlainDispatchEvents) - 7)
+		r.stageSetLength(r.length + int(PlainDispatchEvents) - 7)
 		if r.mode == landInPass && r.dispatched == r.landAt {
-			r.land(r.runningIDs())
+			r.stageLand(r.stageRunningIDs())
 		}
-		r.maybeLandRandom()
+		r.stageMaybeLand()
 	case orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED:
 		id := event.GetTaskId()
 		collect := PlainCompletionEvents
@@ -184,13 +184,13 @@ func (r *flatStageRun) publish(_ context.Context, event *orkstackv1.Event, _, _ 
 		}
 		delete(r.running, id)
 		delete(r.landed, id)
-		r.setLength(r.length + int(collect))
-		r.maybeLandRandom()
+		r.stageSetLength(r.length + int(collect))
+		r.stageMaybeLand()
 	}
 	return nil
 }
 
-func (r *flatStageRun) execute(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+func (r *flatStageRun) stageExecute(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 	r.mu.Lock()
 	r.arrived++
 	r.running[in.GetTaskId()] = true
@@ -204,8 +204,8 @@ func (r *flatStageRun) execute(ctx context.Context, in *orkstackv1.ExecuteTaskIn
 	return &orkstackv1.ExecuteTaskResult{TaskId: in.GetTaskId(), ValuesJson: []byte(`{}`)}, nil
 }
 
-// newGeneration builds generation g's environment.
-func (r *flatStageRun) newGeneration(remaining int) *testsuite.TestWorkflowEnvironment {
+// stageGeneration builds generation g's environment.
+func (r *flatStageRun) stageGeneration(remaining int) *testsuite.TestWorkflowEnvironment {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetTestTimeout(5 * time.Minute)
@@ -222,25 +222,25 @@ func (r *flatStageRun) newGeneration(remaining int) *testsuite.TestWorkflowEnvir
 	env.RegisterActivityWithOptions(activities.WriteSwitchSnapshot, activity.RegisterOptions{Name: ActivityWriteSwitchSnapshot})
 	env.RegisterActivityWithOptions(activities.WriteCheckpoint, activity.RegisterOptions{Name: ActivityWriteCheckpoint})
 	env.RegisterActivityWithOptions(activities.ReadContinuationChunk, activity.RegisterOptions{Name: ActivityReadContinuationChunk})
-	env.RegisterActivityWithOptions(r.publish, activity.RegisterOptions{Name: ActivityPublishEvent})
-	env.RegisterActivityWithOptions(r.execute, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	env.RegisterActivityWithOptions(r.stagePublish, activity.RegisterOptions{Name: ActivityPublishEvent})
+	env.RegisterActivityWithOptions(r.stageExecute, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: r.runID})
 	r.mu.Lock()
 	r.env = env
 	r.dispatched, r.arrived = 0, 0
-	r.landAt = min(r.dueAt(), remaining)
+	r.landAt = min(r.stageDueAt(), remaining)
 	r.release, r.released = make(chan struct{}), false
 	r.running, r.landed = map[string]bool{}, map[string]bool{}
 	r.peaks = append(r.peaks, 0)
 	if r.generation > 0 {
-		r.setLength(r.base) // a carried generation's base, as a slow restore leaves it
+		r.stageSetLength(r.base) // a carried generation's base, as a slow restore leaves it
 	}
 	r.mu.Unlock()
 	return env
 }
 
-// atSelector releases every ExecuteTask once the generation's pass is over.
-func (r *flatStageRun) atSelector() {
+// stageAtSelector releases every ExecuteTask once the generation's pass is over.
+func (r *flatStageRun) stageAtSelector() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.released {
@@ -249,24 +249,24 @@ func (r *flatStageRun) atSelector() {
 	}
 }
 
-// observe is the guard probe's view of this run: the largest history plus
+// stageObserve is the guard probe's view of this run: the largest history plus
 // reserve of the current generation.
-func (r *flatStageRun) observe(events, reserve int64) {
+func (r *flatStageRun) stageObserve(events, reserve int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.peaks[len(r.peaks)-1] = max(r.peaks[len(r.peaks)-1], events+reserve)
 }
 
-// run drives the run through its generations, or only its first when
+// drive takes the run through its generations, or only its first when
 // firstOnly; it returns the last generation's workflow error.
-func (r *flatStageRun) run(firstOnly bool) error {
+func (r *flatStageRun) drive(firstOnly bool) error {
 	r.t.Helper()
 	flatStageRuns.Store(r.runID, r)
 	defer flatStageRuns.Delete(r.runID)
 	args := []any{r.runID, r.wf, (*orkstackv1.Payload)(nil), r.plan, (*orkstackv1.RunContinuation)(nil)}
 	tasks := len(r.wf.GetTasks())
 	for r.generation = 0; r.generation < 64; r.generation++ {
-		env := r.newGeneration(tasks - r.total)
+		env := r.stageGeneration(tasks - r.total)
 		env.ExecuteWorkflow(RunWorkflowType, args...)
 		if !env.IsWorkflowCompleted() {
 			r.t.Fatalf("generation %d did not end", r.generation)
@@ -300,12 +300,12 @@ func (r *flatStageRun) run(firstOnly bool) error {
 func installGuardProbe(t *testing.T) {
 	historyGuardProbeForTest = func(runID string, events, reserve int64) {
 		if r, ok := flatStageRuns.Load(runID); ok {
-			r.(*flatStageRun).observe(events, reserve)
+			r.(*flatStageRun).stageObserve(events, reserve)
 		}
 	}
 	readyLoopProbeForTest = &readyLoopProbe{selectorRun: func(runID string) {
 		if r, ok := flatStageRuns.Load(runID); ok {
-			r.(*flatStageRun).atSelector()
+			r.(*flatStageRun).stageAtSelector()
 		}
 	}}
 	t.Cleanup(func() { historyGuardProbeForTest, readyLoopProbeForTest = nil, nil })
@@ -340,14 +340,14 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 	for _, mode := range []string{landLate, landInPass} {
 		t.Run(mode, func(t *testing.T) {
 			r := newFlatStageRun(t, tasks, mode, 1)
-			if err := r.run(false); err != nil {
+			if err := r.drive(false); err != nil {
 				t.Fatalf("a flat stage of %d tasks, landings %s: %v", tasks, mode, err)
 			}
 			if r.total != tasks {
 				t.Fatalf("%d dispatches over the run, want each of %d tasks once", r.total, tasks)
 			}
-			if got := r.genDispatch[0]; got != r.dueAt() {
-				t.Fatalf("generation 0 dispatched %d tasks before its hold, want ⌈G/d⌉ = %d", got, r.dueAt())
+			if got := r.genDispatch[0]; got != r.stageDueAt() {
+				t.Fatalf("generation 0 dispatched %d tasks before its hold, want ⌈G/d⌉ = %d", got, r.stageDueAt())
 			}
 			predicted := predictedPeak(r, tasks)
 			t.Logf("E7 flat stage of %d tasks, landings %s: %d generations %v; generation 0's peak of history "+
@@ -362,12 +362,12 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 	}
 	t.Run("one task more, landing in the pass", func(t *testing.T) {
 		r := newFlatStageRun(t, tasks+1, landInPass, 1)
-		err := r.run(true)
+		err := r.drive(true)
 		if !isRunHistoryLimit(err) {
 			t.Fatalf("a flat stage of %d tasks = %v, want RUN_HISTORY_LIMIT in generation 0", tasks+1, err)
 		}
-		if got := r.genDispatch[0]; got != r.dueAt() {
-			t.Fatalf("it failed after %d dispatches, want right after the %dth, before any hold", got, r.dueAt())
+		if got := r.genDispatch[0]; got != r.stageDueAt() {
+			t.Fatalf("it failed after %d dispatches, want right after the %dth, before any hold", got, r.stageDueAt())
 		}
 		t.Logf("E7 one task over (%d): RUN_HISTORY_LIMIT in generation 0 after %d dispatches, peak %d", tasks+1, r.genDispatch[0], r.peaks[0])
 	})
@@ -394,7 +394,7 @@ func TestHistoryGuard_CompletionsLandingDuringThePassNeverTripTheGuard(t *testin
 			t.Run(fmt.Sprint(seed), func(t *testing.T) {
 				t.Parallel()
 				r := newFlatStageRun(t, tasks, landRandom, seed)
-				err := r.run(true)
+				err := r.drive(true)
 				var can *workflow.ContinueAsNewError
 				if !errors.As(err, &can) {
 					t.Fatalf("seed %d: generation 0 ended %v, want it to carry on", seed, err)
