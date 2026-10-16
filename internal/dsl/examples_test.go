@@ -687,3 +687,26 @@ func TestExamples_KeepTheirDefinitionDigests(t *testing.T) {
 		t.Fatalf("example digests moved:\n got:\n%s\nwant:\n%s", got.String(), want)
 	}
 }
+
+// TestDocs_LinkWhatAnOrkflowDoesNotDeclare: the reasons schedules, triggers
+// and webhooks are not keys of an Orkflow live in one section of the DSL
+// reference, where an author looking for a `schedule:` key lands, and every
+// document about those objects links it.
+func TestDocs_LinkWhatAnOrkflowDoesNotDeclare(t *testing.T) {
+	reference, err := os.ReadFile("../../docs/DSL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(reference), "\n### What an Orkflow does not declare\n") {
+		t.Fatal(`docs/DSL.md has no "### What an Orkflow does not declare" section`)
+	}
+	for _, doc := range []string{"ORKFLOW_SCHEDULES.md", "ORKFLOW_TRIGGERS.md", "AUTOMATION.md", "ORKFLOW_PATTERNS.md"} {
+		raw, err := os.ReadFile(filepath.Join("../../docs", doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "(DSL.md#what-an-orkflow-does-not-declare)") {
+			t.Errorf("docs/%s does not link DSL.md#what-an-orkflow-does-not-declare", doc)
+		}
+	}
+}

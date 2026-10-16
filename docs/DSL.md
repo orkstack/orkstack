@@ -72,6 +72,35 @@ way, the refusal also says where the two lines go. A stored version whose YAML
 is a flow mapping, or has anything but comments before its first key, is shown
 as stored; add the header when you next apply it.
 
+### What an Orkflow does not declare
+
+An Orkflow has no `schedule:`, `trigger:` or `webhook:` key. It says **what
+runs**; its namespace says **when it starts and who hears about it** — with
+`orkctl schedule`, `orkctl trigger` and `orkctl webhook`, or declaratively in
+the namespace's [automation document](AUTOMATION.md). Four reasons:
+
+- **A version is immutable; they are not.** A version is never rewritten, and
+  its definition digest is what a run pins. A schedule is paused, resumed,
+  fired by hand, backfilled and re-timed; a trigger is renamed and re-pinned; a
+  webhook is re-pointed and re-scoped — each in place — and a schedule or a
+  trigger may follow the `current` version rather than name one. Declared in
+  the definition, each of those changes would be a new version, and promoting
+  or rolling back a version would create or remove the schedules and triggers
+  that came with it.
+- **Credentials do not belong in a definition.** A trigger's token is shown
+  once and stored only as a salted hash; a webhook's signing secret is shown
+  once and kept only to sign deliveries; replacing either means deleting and
+  re-creating the object. A definition is the opposite: immutable, and shown to
+  every reader of its namespace — `orkctl orkflow get`, the diff, the version
+  page, a run's evidence bundle.
+- **One Orkflow, many bindings.** Several schedules may start one Orkflow with
+  different inputs, several callers may each hold a trigger of their own, and a
+  webhook may listen to one task, one Orkflow, a namespace or the whole
+  deployment — none of it an edit to the Orkflow.
+- **One file, many environments.** The same document is applied to staging and
+  to production, and each namespace's automation document binds it its own
+  way; the file stays one file.
+
 ### `namespace`
 
 A namespace is a scope: an orkflow name is unique *within* one, so two

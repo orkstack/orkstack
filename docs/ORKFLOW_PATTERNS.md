@@ -427,7 +427,9 @@ triggers and webhooks ([the automation contract](AUTOMATION.md)). `orkctl apply`
 `--dry-run`, checks for drift with `--check`, pins a reviewed plan with
 `--expect-plan`, and deletes what the document no longer names with
 `--prune`. A trigger's token is printed once and never stored in the
-document. It is a one-shot diff-and-write, not a controller.
+document. It is a one-shot diff-and-write, not a controller. Why these are
+not keys of the Orkflow itself: [What an Orkflow does not
+declare](DSL.md#what-an-orkflow-does-not-declare).
 
 Examples: [the automation document](../examples/automation/examples.ork.yaml).
 

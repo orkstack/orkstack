@@ -1,8 +1,10 @@
 # Declarative automation contract
 
 An **automation document** is one reviewable YAML file per namespace that
-declares, by name, everything that surrounds that namespace's Orkflows: its
-settings, its schedules, its triggers and its webhooks. It lives in Git beside
+declares, by name, everything that surrounds that namespace's Orkflows — what
+an Orkflow itself does not declare
+([DSL.md](DSL.md#what-an-orkflow-does-not-declare)): its settings, its
+schedules, its triggers and its webhooks. It lives in Git beside
 the Orkflow documents; `orkctl apply` applies both.
 
 ```yaml

@@ -8,6 +8,9 @@ and it starts runs the way both of them do: through the ordinary submit
 preparation. `AGENTS.md` §2.1 names the mechanism — *"Cron scheduling must
 use Temporal Schedules"* — and this document is how OrkStack uses it.
 
+A schedule is an object of its own, not a key of the Orkflow: see
+[What an Orkflow does not declare](DSL.md#what-an-orkflow-does-not-declare).
+
 ```text
 Temporal Schedule  ──fires──>  ScheduleFireWorkflow (engine, ork-tasks)
                                    │  local activity PrepareScheduledRun
