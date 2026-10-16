@@ -218,6 +218,7 @@ gitignored; the commit or pull request quotes it. No proof, no done.
 | [docs/ORKFLOW_TRIGGERS.md](./docs/ORKFLOW_TRIGGERS.md) | Inbound triggers: plain-HTTP run starters with bearer tokens |
 | [docs/ORKFLOW_SCHEDULES.md](./docs/ORKFLOW_SCHEDULES.md) | Schedules on Temporal Schedules: specs, fires, backfill, overlap |
 | [docs/AUTOMATION.md](./docs/AUTOMATION.md) | Automation documents: a namespace's settings, schedules, triggers and webhooks as YAML |
+| [docs/schemas/](./docs/schemas/) | JSON Schemas of the authored documents (generated) |
 | [docs/DEPLOY.md](./docs/DEPLOY.md) | Topology, configuration, releases and rollback, operations, telemetry |
 | [docs/STORAGE.md](./docs/STORAGE.md) | What is persisted where: the object-store key layout and its invariants |
 | [docs/STATS.md](./docs/STATS.md) | Where stats, failure fingerprints, flakes, usage and cache numbers come from |

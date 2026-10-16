@@ -23,9 +23,6 @@ import (
 // is two runs.
 const MaxAwaitTimeoutSeconds = 30 * 24 * 60 * 60 // 2592000
 
-// awaitSchemaTypes is the inputs vocabulary (docs/DSL.md "Inputs").
-var awaitSchemaTypes = []string{"string", "number", "boolean", "object", "array"}
-
 // awaitDocument is one awaited task's declaration. KnownFields(true) on the
 // decoder applies to it, so a misspelled key inside `await:` is refused.
 type awaitDocument struct {
@@ -184,7 +181,7 @@ func validateAwaitTask(taskIndex int, task *orkstackv1.Task) error {
 		if !ok {
 			return validationError(field, fmt.Errorf(
 				"task %q: await.schema.%s must be a mapping with a `type` (one of %s)",
-				id, name, strings.Join(awaitSchemaTypes, ", ")))
+				id, name, strings.Join(typeWords, ", ")))
 		}
 		decl := entry.StructValue.GetFields()
 		keys := make([]string, 0, len(decl))
@@ -207,10 +204,10 @@ func validateAwaitTask(taskIndex int, task *orkstackv1.Task) error {
 			}
 		}
 		typ, ok := decl["type"].GetKind().(*structpb.Value_StringValue)
-		if !ok || !slices.Contains(awaitSchemaTypes, typ.StringValue) {
+		if !ok || !slices.Contains(typeWords, typ.StringValue) {
 			return validationError(field, fmt.Errorf(
 				"task %q: await.schema.%s: `type` is required and must be one of %s",
-				id, name, strings.Join(awaitSchemaTypes, ", ")))
+				id, name, strings.Join(typeWords, ", ")))
 		}
 		if required, present := decl["required"]; present {
 			if _, ok := required.GetKind().(*structpb.Value_BoolValue); !ok {

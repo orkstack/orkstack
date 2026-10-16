@@ -58,6 +58,9 @@ func checkSlug(kind, value string) error {
 	return nil
 }
 
+// SlugPattern is the slug rule's pattern, for a schema that states it.
+func SlugPattern() string { return slugPattern.String() }
+
 // ValidSlug reports why value cannot be used as an identifier of the named
 // kind, so a caller outside this package can hold a client-supplied name to
 // the SAME rule the compiler applies.
@@ -455,20 +458,26 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	return wf, nil
 }
 
+// networkWords are the DSL's network modes (AGENTS.md §6: only these two).
+var networkWords = []string{"default", "none"}
+
+// networkModes maps each of networkWords to its enum.
+var networkModes = map[string]orkstackv1.NetworkMode{
+	"default": orkstackv1.NetworkMode_NETWORK_MODE_DEFAULT,
+	"none":    orkstackv1.NetworkMode_NETWORK_MODE_NONE,
+}
+
 // networkModeOf maps the DSL's word to the enum. An unrecognized value is
 // carried as UNSPECIFIED and refused by validate, so the error names the task
 // and the value rather than silently selecting a default.
 func networkModeOf(raw string) orkstackv1.NetworkMode {
-	switch raw {
-	case "":
+	if raw == "" {
 		return orkstackv1.NetworkMode_NETWORK_MODE_UNSPECIFIED
-	case "default":
-		return orkstackv1.NetworkMode_NETWORK_MODE_DEFAULT
-	case "none":
-		return orkstackv1.NetworkMode_NETWORK_MODE_NONE
-	default:
-		// A sentinel the validator recognizes. Returning DEFAULT here would
-		// run a typo'd `network: nonw` with full network access.
-		return orkstackv1.NetworkMode(-1)
 	}
+	if mode, ok := networkModes[raw]; ok {
+		return mode
+	}
+	// A sentinel the validator recognizes. Returning DEFAULT here would
+	// run a typo'd `network: nonw` with full network access.
+	return orkstackv1.NetworkMode(-1)
 }

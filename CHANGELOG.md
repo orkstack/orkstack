@@ -10,6 +10,11 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- JSON Schemas for the authored documents, generated from the parsers:
+  `docs/schemas/orkflow.v1.json`, `docs/schemas/automation.v1.json`, and
+  `docs/schemas/orkstack.v1.json`, which selects one by `apiVersion` and
+  `kind`. First-party `with:` blocks complete from each image's interface
+  label (docs/DSL.md, "Editor support").
 - The `http` activity's `body:` accepts a YAML mapping or list and sends it as
   compact JSON, with `Content-Type: application/json` unless `headers` sets a
   content type. A string body is still sent as written.

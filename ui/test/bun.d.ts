@@ -45,6 +45,12 @@ declare module 'node:fs' {
 	export function readdirSync(path: string, options?: { recursive?: boolean }): string[];
 }
 
+// Bun's built-in YAML 1.2 reader: authoredSchemas.test.ts reads the shipped
+// documents the way an editor's YAML language server does.
+declare const Bun: {
+	readonly YAML: { parse(text: string): unknown };
+};
+
 interface ImportMeta {
 	/** Bun: the directory of the current module. */
 	readonly dir: string;

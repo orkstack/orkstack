@@ -101,6 +101,60 @@ the namespace's [automation document](AUTOMATION.md). Four reasons:
   to production, and each namespace's automation document binds it its own
   way; the file stays one file.
 
+### Editor support
+
+The authored documents have JSON Schemas, generated from the parsers' own key
+tables (`go run ./internal/schemas/cmd/genschemas`) and checked in under
+[`docs/schemas/`](schemas/):
+
+- [`orkflow.v1.json`](schemas/orkflow.v1.json) — `kind: Orkflow`;
+- [`automation.v1.json`](schemas/automation.v1.json) — `kind: Automation`;
+- [`orkstack.v1.json`](schemas/orkstack.v1.json) — either: it selects the
+  kind's schema by `apiVersion` and `kind`.
+
+An editor with a YAML language server (VS Code's YAML extension, for one)
+uses them through a modeline among the leading comments — the extension reads
+every comment — with the path relative to the file in this repository:
+
+```yaml
+# yaml-language-server: $schema=../docs/schemas/orkflow.v1.json
+```
+
+or through a mapping in VS Code's `settings.json`, where the dispatcher covers
+both kinds behind one extension:
+
+```json
+"yaml.schemas": {"<path or URL of orkstack.v1.json>": ["*.ork.yaml", "*.ork.yml"]}
+```
+
+A first-party image's `with:` keys complete from its interface label, and
+each key's hover is this reference's text. The schema checks a document's
+shape — its keys, their types, the words a key takes, the required keys and
+the task kinds. What it cannot express is `orkctl orkflow validate`'s: a
+`needs:` cycle or an unknown task, templates that read an undeclared input or
+a task outside the needs closure, the ancestry bound, the deployment's task
+ceiling, an image's interface beyond the builtin catalog, the strict
+YAML-to-JSON rules (an editor reads `yes` and `'yes'` as one string), pools,
+secrets and image policy.
+
+A key the compiler reads as text takes a number or a boolean too (`cpu: 2`,
+`PORT: 8080`): it compiles to the text as written. The schema is deliberately
+stricter in five places, each a misspelling or a defect more often than a
+choice:
+
+| Class | The schema refuses | The compiler |
+|---|---|---|
+| V | a `version:` that is a number or a boolean | reads its text (`version: 1.10` is `"1.10"`); write it quoted |
+| N | a key written with no value (`env: ~`) | reads the key as not written |
+| I | a non-integral number for an integer key (`timeout_seconds: 1.5`) | truncates it toward zero |
+| B | a YAML 1.1 word for a boolean key (`run_as_orker_user: yes`) | reads it as `true` |
+| D | an `inputs:` declaration key or `type` word it does not know | ignores the key, compares the word as written |
+
+A first-party `with:` value of an undeclared type is an error in the editor
+and a warning at validate. The docs site will serve the schemas at
+`/schemas/orkflow/v1.json`, `/schemas/automation/v1.json` and
+`/schemas/orkstack/v1.json`; until it does, point at the files in a checkout.
+
 ### `namespace`
 
 A namespace is a scope: an orkflow name is unique *within* one, so two

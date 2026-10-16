@@ -38,9 +38,18 @@ const (
 // interfaceTypes is the complete type vocabulary, the one docs/DSL.md
 // "Inputs" already has. A field's type is one of these words, or several
 // joined by "|" for a key that accepts any of them (fieldTypes).
-var interfaceTypes = map[string]struct{}{
-	"string": {}, "number": {}, "boolean": {}, "object": {}, "array": {},
-}
+var interfaceTypes = func() map[string]struct{} {
+	out := make(map[string]struct{}, len(typeWords))
+	for _, word := range typeWords {
+		out[word] = struct{}{}
+	}
+	return out
+}()
+
+// typeWords is that vocabulary in the order every message names it. An
+// await's schema entries (rule 17) and an Orkflow's inputs: declare their
+// types in the same words.
+var typeWords = []string{"string", "number", "boolean", "object", "array"}
 
 // interfaceKeyPattern bounds a with: key. It is looser than a slug because
 // first-party images already read camelCase keys (timeoutSeconds,

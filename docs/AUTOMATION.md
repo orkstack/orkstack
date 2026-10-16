@@ -78,6 +78,9 @@ interpolation, and per-environment differences are separate documents.
 | `settings` | no | The namespace's settings, as an overlay. |
 | `schedules`, `triggers`, `webhooks` | no | `name: entry` mappings. |
 
+Its JSON Schema is [`docs/schemas/automation.v1.json`](schemas/automation.v1.json),
+generated from this parser (`docs/DSL.md`, "Editor support").
+
 A document **manages** a section when it declares the key, even as `{}`; a
 section it omits is not managed and a plan says nothing about it. A section
 written as null (`triggers:` and nothing) is an error, because "manage none"

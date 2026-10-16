@@ -2,6 +2,7 @@ package dsl
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -176,19 +177,20 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 			orkstackv1.NetworkMode_NETWORK_MODE_DEFAULT,
 			orkstackv1.NetworkMode_NETWORK_MODE_NONE:
 		default:
-			return fmt.Errorf("task %q: `network:` must be \"default\" or \"none\"", task.GetId())
+			return validationError(fmt.Sprintf("tasks[%d].network", taskIndex),
+				fmt.Errorf("task %q: `network:` must be \"default\" or \"none\"", task.GetId()))
 		}
 		// Rule 6c: a secret names a file and a source, and the name is
 		// validated rather than sanitized so it can never escape the secrets
 		// directory.
-		for _, secret := range task.GetSecrets() {
+		for secretIndex, secret := range task.GetSecrets() {
 			if !validSecretName(secret.GetName()) {
-				return fmt.Errorf("task %q: secret name %q must match ^[A-Za-z0-9._-]{1,128}$",
-					task.GetId(), secret.GetName())
+				return validationError(fmt.Sprintf("tasks[%d].secrets[%d].name", taskIndex, secretIndex),
+					fmt.Errorf("task %q: secret name %q must match %s", task.GetId(), secret.GetName(), secretNamePattern))
 			}
 			if secret.GetSource() == "" {
-				return fmt.Errorf("task %q: secret %q needs a `source:` (e.g. \"env:DB_PASSWORD\")",
-					task.GetId(), secret.GetName())
+				return validationError(fmt.Sprintf("tasks[%d].secrets[%d].source", taskIndex, secretIndex),
+					fmt.Errorf("task %q: secret %q needs a `source:` (e.g. \"env:DB_PASSWORD\")", task.GetId(), secret.GetName()))
 			}
 		}
 		// Rule 7: an explicit pool is a slug. The compiler checks the shape
@@ -475,16 +477,8 @@ func transitiveNeeds(byID map[string]*orkstackv1.Task) map[string]map[string]str
 // this file gets. A sanitized name is a name the author did not write, and
 // this one becomes a path segment under /orkstack/input/secrets.
 func validSecretName(name string) bool {
-	if name == "" || len(name) > 128 {
-		return false
-	}
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '.' || r == '_' || r == '-':
-		default:
-			return false
-		}
-	}
-	return name != "." && name != ".."
+	return secretNamePattern.MatchString(name) && name != "." && name != ".."
 }
+
+// secretNamePattern is rule 6c's grammar; "." and ".." are refused besides.
+var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)

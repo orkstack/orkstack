@@ -898,6 +898,10 @@ Every code change follows this order:
    `deploy/orkstack.defaults.yaml` with `make config-defaults`; the
    completeness tests refuse a setting that is missing from any of the
    three.
+   For a change to an authored document's keys or words, or to a first-party
+   image's interface label, regenerate `docs/schemas/` with
+   `go run ./internal/schemas/cmd/genschemas`; `TestSchemas_AreGenerated`
+   refuses a stale schema.
 3. Write a behavior test that fails for the right reason.
 4. Implement until it passes.
 5. Run `make lint test`; for Temporal or storage changes, run the affected
@@ -1166,6 +1170,7 @@ internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentati
 internal/archive/      Run retirement and the cluster retention controller
 internal/automation/   Automation documents: parse, plan, export
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
+internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables
 internal/testsupport/  Test-only helpers shared by suites
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters

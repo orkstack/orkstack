@@ -15,7 +15,8 @@ contract. This file is the quick checklist.
    code in the same change.
 2. New configuration setting? Add it to `internal/config`'s `Schema`, to
    `docs/DEPLOY.md`'s configuration table, and run `make config-defaults`
-   (AGENTS.md §11.1).
+   (AGENTS.md §11.1). Changed a DSL or automation key, or a first-party
+   image's interface label? Run `go run ./internal/schemas/cmd/genschemas`.
 3. Write a behavior test first (AGENTS.md §11.1).
 4. Implement until green.
 5. `make lint test` must pass; run the affected integration tests against
