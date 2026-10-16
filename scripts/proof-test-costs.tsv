@@ -3389,3 +3389,4 @@ github.com/orkstack/orkstack/pkg/webhooks	TestWebhook_EmptyEventsMeansRunTransit
 github.com/orkstack/orkstack/pkg/webhooks	TestWebhook_MatchesScopeExactlyAndEmptyMeansEvery	0.00
 github.com/orkstack/orkstack/pkg/webhooks	TestWebhook_TaskScopeIsIgnoredForRunTransitions	0.00
 github.com/orkstack/orkstack/internal/engine	TestIntegration_ThreeThousandTaskDefinitionRuns	985.47
+github.com/orkstack/orkstack/internal/engine	TestIntegration_SoakTasks	3300.00

@@ -417,6 +417,30 @@ func (s *chaosStack) startProjection(c client.Client) worker.Worker {
 	return stoppable
 }
 
+// startCapableProjection is startProjection polling with this build's
+// engine identity, as cmd/ork's projection worker does: the snapshot-overlay
+// fleet check reads every poller of the projection channel, and an
+// anonymous one counts as a release that cannot read an overlay.
+func (s *chaosStack) startCapableProjection(name string) worker.Worker {
+	s.t.Helper()
+	w := worker.New(s.control, engine.EventQueue, worker.Options{DisableRegistrationAliasing: true,
+		DisableWorkflowWorker: true, Identity: engine.EngineIdentity(fmt.Sprintf("%d@%s@", os.Getpid(), name))})
+	w.RegisterActivityWithOptions(
+		engine.NewArchivingEventActivities(s.bus, s.runs, s.archive).WithEventSource(s.reader).WithSnapshotStore(s.store).PublishEvent,
+		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
+	if err := w.Start(); err != nil {
+		s.t.Fatalf("start the projection worker: %v", err)
+	}
+	var once sync.Once
+	stoppable := &stoppableWorker{Worker: w, stop: func() { once.Do(w.Stop) }}
+	s.t.Cleanup(stoppable.Stop)
+	s.mu.Lock()
+	s.projection = stoppable
+	s.mu.Unlock()
+	s.transcript.step("projection worker %s started with this build's capabilities", name)
+	return stoppable
+}
+
 // stoppableWorker makes Stop idempotent, so a scenario's stop and the
 // cleanup's never stop one worker twice.
 type stoppableWorker struct {
