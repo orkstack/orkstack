@@ -27,7 +27,7 @@ const (
 	readmePath  = "../../examples/README.md"
 )
 
-// predatesPatterns names the eleven examples that predate
+// predatesPatterns names the ten examples that predate
 // docs/ORKFLOW_PATTERNS.md. Apart from their document header they are kept
 // byte-identical: a stored version cannot change, and the two header lines
 // are the one addition it takes (docs/DSL.md, "The document header"). So they
@@ -41,7 +41,6 @@ var predatesPatterns = map[string]bool{
 	"composed-release.ork.yaml":   true,
 	"file-read.ork.yaml":          true,
 	"hello.ork.yaml":              true,
-	"http-post.ork.yaml":          true,
 	"pinned-build.ork.yaml":       true,
 	"release-block.ork.yaml":      true,
 	"shell-eval.ork.yaml":         true,

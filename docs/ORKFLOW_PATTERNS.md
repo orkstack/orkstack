@@ -48,7 +48,7 @@ Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
 
 | You need to… | Use |
 |---|---|
-| reshape JSON, compute values, make a decision, build the array a fan-out reads, build a request body | `json` (one jq filter, or a deep merge) |
+| reshape JSON, compute values, make a decision, build the array a fan-out reads, build a request body | `json` (one jq filter, or a deep merge) — or write the body as a YAML mapping in `http`'s `body:` |
 | render a text file — a config, a manifest — from a template file and data | `template` (its template is a file, so its `{{ }}` never meets the DSL's) |
 | exact decimal arithmetic (money), time zones and calendars as business rules, a library, heavy computation, anything you would unit-test as code | your own image ("When to write your own image") |
 | run a command | `shell` |
@@ -149,9 +149,9 @@ order of preference:
    value for the shell.
 4. **jq's `vars`** for values into a filter — never spliced into the filter
    text — and files for structures and large integers.
-5. **JSON built by jq** (`tojson`), never by splicing a value into a JSON
-   string in `with:`: a quote or a newline in the value would break the
-   document, or change its meaning.
+5. **A YAML mapping in `with:`** — an http `body:`, jq `vars:` — or JSON
+   built by jq (`tojson`); never a value spliced into a JSON string: a quote
+   or a newline in the value would break the document, or change its meaning.
 6. **A value used in a URL or a path is validated first**, by the prepare
    task, so a malformed one fails before any request is made.
 
@@ -163,6 +163,7 @@ Also:
   rendered — only `with:` and `condition:` are.
 
 Examples: [inputs-and-escaping](../examples/inputs-and-escaping.ork.yaml),
+[http-post](../examples/http-post.ork.yaml),
 [notify-block](../examples/notify-block.ork.yaml),
 [order-saga](../examples/order-saga.ork.yaml),
 [poll-until-ready](../examples/poll-until-ready.ork.yaml).
@@ -474,7 +475,7 @@ edited except for their document header. Follow the guide, not them.
 | [`examples/each-fan-out.ork.yaml`](../examples/each-fan-out.ork.yaml) | a fan-out over a computed list | "Batch transforms into one prepare task" |
 | [`examples/file-read.ork.yaml`](../examples/file-read.ork.yaml) | *older* — the file activity | "jq, a template, or your own image" |
 | [`examples/hello.ork.yaml`](../examples/hello.ork.yaml) | *older* — fetch, transform, checksum | "The rule: the platform moves data, tasks compute" |
-| [`examples/http-post.ork.yaml`](../examples/http-post.ork.yaml) | *older* — a POST and its status | "A non-2xx answer is data" |
+| [`examples/http-post.ork.yaml`](../examples/http-post.ork.yaml) | a POST whose JSON body is a YAML mapping, and its status | "Pass values as data, never as code", "A non-2xx answer is data" |
 | [`examples/inputs-and-escaping.ork.yaml`](../examples/inputs-and-escaping.ork.yaml) | typed inputs and escaping | "Pass values as data, never as code" |
 | [`examples/notify-block.ork.yaml`](../examples/notify-block.ork.yaml) | a reusable notification block | "Reuse a block with declared outputs", "Pass values as data, never as code" |
 | [`examples/order-saga.ork.yaml`](../examples/order-saga.ork.yaml) | a saga over an HTTP API | "Undo what was done: failure handlers and sagas", "Side effects are at-least-once", "A non-2xx answer is data", "Reuse a block with declared outputs" |

@@ -15,9 +15,8 @@ exactly what a third-party image built on `curl` would do.
   with:
     op: post
     url: https://example.test/hooks/deploy
-    headers:
-      content-type: application/json
-    body: '{"status":"ok"}'
+    body:
+      status: ok
 ```
 
 ## Configuration
@@ -29,11 +28,18 @@ Read from `/orkstack/input/config.json`.
 | `op` | string | `get` (default), `post`, `put`, `patch`, `delete`, `head` |
 | `url` | string | **Required.** The absolute request URL. |
 | `headers` | object | Request headers, one per key |
-| `body` | string | Request body, sent verbatim |
+| `body` | string, mapping or list | A string is sent verbatim; a mapping or a list is sent as compact JSON, with `Content-Type: application/json` unless `headers` sets a content type |
 | `timeoutSeconds` | number | Passed to curl as `--max-time` |
 | `captureBodyAs` | string | Save the response body as this output artifact |
 
 `op` is the portable spelling of the HTTP method; the two are the same thing.
+
+**Body.** Write a JSON body as a YAML mapping (or list) under `body:`. Each
+string leaf is a template the Orker renders before this image runs, and the
+image serializes the result, so a quote, a backslash or a newline in a value
+stays inside its string: escaping is correct by construction. JSON built by
+splicing a value into a string (`body: '{"message": "{{ .inputs.message }}"}'`)
+is not — a quote in the value breaks the document.
 Header values are quoted before they reach argv, so a rendered value cannot
 inject a curl argument — the same argv discipline `activity-shell` applies to
 `command`.
@@ -94,7 +100,7 @@ key of Output — `json` included, although it is present only for a JSON body
 of at most 1 MiB. The label, as the Dockerfile carries it:
 
 ```dockerfile
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type":"string","required":true},"headers":{"type":"object"},"body":{"type":"string"},"timeoutSeconds":{"type":"number"},"captureBodyAs":{"type":"string"}},"ops":{"get":{},"post":{},"put":{},"patch":{},"delete":{},"head":{}},"defaultOp":"get","values":{"status":{"type":"number"},"headers":{"type":"object"},"durationMs":{"type":"number"},"sizeBytes":{"type":"number"},"json":{"type":"object"}}}'
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type":"string","required":true},"headers":{"type":"object"},"body":{"type":"string|object|array"},"timeoutSeconds":{"type":"number"},"captureBodyAs":{"type":"string"}},"ops":{"get":{},"post":{},"put":{},"patch":{},"delete":{},"head":{}},"defaultOp":"get","values":{"status":{"type":"number"},"headers":{"type":"object"},"durationMs":{"type":"number"},"sizeBytes":{"type":"number"},"json":{"type":"object"}}}'
 ```
 
 `orkctl activity inspect http` renders it as a table.

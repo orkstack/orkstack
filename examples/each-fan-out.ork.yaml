@@ -9,7 +9,7 @@
 apiVersion: orkstack/v1
 kind: Orkflow
 name: each-fan-out
-version: "0.2.0"
+version: "0.3.0"
 description: "List parts in a json task, convert each part as its own item, merge them."
 
 tasks:
@@ -19,7 +19,9 @@ tasks:
     with:
       op: query
       nullInput: true
-      filter: '[{name: "a"}, {name: "b"}, {name: "c"}, {name: "d"}]'
+      vars:
+        parts: [{name: a}, {name: b}, {name: c}, {name: d}]
+      filter: '$vars.parts'
 
   - id: convert
     uses: shell

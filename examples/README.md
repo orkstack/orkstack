@@ -12,17 +12,18 @@ of its comment header, and the comment header lists everything the example
 needs before it runs. Every example begins with its comment header, then the
 document header `apiVersion: orkstack/v1` and `kind: Orkflow`.
 
-The eleven examples marked *older* below do not follow every rule of the
+The ten examples marked *older* below do not follow every rule of the
 guide, and are not edited except for their document header: each pins a
 `version:` a deployment may already store, and applying changed bytes under
 a stored version is refused — the two lines `apiVersion: orkstack/v1` and
 `kind: Orkflow` are the one addition a stored version takes
 ([`docs/DSL.md`](../docs/DSL.md), "The document header").
-Five of them splice a rendered value into shell text or a JSON string —
-`http-post`, `shell-eval`, `file-read`, `pinned-build` and `advanced-demo` —
+Six of them splice a rendered value into shell text — `shell-eval`,
+`file-read`, `pinned-build`, `advanced-demo`, `awaited-approval` (whose
+`approver` comes from whoever resolves the await) and `cached-pipeline` —
 which the guide's "Pass values as data, never as code" says not to do, and
-`cached-pipeline` caches a task with no `ttl_seconds` (its one validation
-warning). Follow the guide, not them.
+`cached-pipeline` also caches a task with no `ttl_seconds` (its one
+validation warning). Follow the guide, not them.
 
 ## Running them
 
@@ -56,7 +57,7 @@ orkctl run submit decide-and-route --watch       # run it, with --input K=V as i
 | [each-fan-out](each-fan-out.ork.yaml) | a fan-out over a list a json task computes | `json`, `shell` | nothing |
 | [file-read](file-read.ork.yaml) | *older* — compress, decompress, checksum | `shell`, `file` | nothing |
 | [hello](hello.ork.yaml) | *older* — fetch, transform, checksum | `http`, `shell`, `file` | internet access to `httpbin.org` |
-| [http-post](http-post.ork.yaml) | *older* — a POST, and a condition on its status | `http`, `file`, `shell` | internet access to `httpbin.org` |
+| [http-post](http-post.ork.yaml) | a POST whose JSON body is a YAML mapping, and a condition on its status | `http`, `file`, `shell` | internet access to `httpbin.org` |
 | [inputs-and-escaping](inputs-and-escaping.ork.yaml) | typed inputs; argv, positional arguments, `sh` and jq `vars` against a hostile default | `shell`, `json`, `file` | the input `release` |
 | [notify-block](notify-block.ork.yaml) | a reusable block: one JSON notification, its status as the declared output | `json`, `http` | the inputs `url` and `text`; an HTTP endpoint you provide |
 | [order-saga](order-saga.ork.yaml) | a saga over an HTTP API: compensate, report either way | `json`, `http`, `notify-block` | the inputs `api`, `notify_url` and `order`; `notify-block` applied first; an HTTP endpoint you provide |

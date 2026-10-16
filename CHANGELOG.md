@@ -8,6 +8,14 @@ include breaking changes, and each is marked **BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- The `http` activity's `body:` accepts a YAML mapping or list and sends it as
+  compact JSON, with `Content-Type: application/json` unless `headers` sets a
+  content type. A string body is still sent as written.
+- An activity interface label's `type` may name several types joined by `|`
+  (`string|object|array`).
+
 ### Changed
 
 - **BREAKING:** every Orkflow begins with `apiVersion: orkstack/v1` and
@@ -33,3 +41,12 @@ include breaking changes, and each is marked **BREAKING**.
 - A stored Orkflow version is shown with its header wherever OrkStack shows its
   YAML (`orkctl orkflow get --json`, `edit`, `diff`, the UI). Evidence bundles
   keep the source verbatim.
+- The `custom-image` (0.2.0) and `each-fan-out` (0.3.0) examples write their
+  fixed lists as jq `vars:` in YAML instead of jq literals.
+
+### Fixed
+
+- `examples/http-post.ork.yaml` built its JSON body by splicing the message
+  into a string, so a quote or a backslash in it posted malformed JSON. It now
+  writes the body as a YAML mapping (version 0.3.0).
+- The `http` activity no longer appends a newline to a string body.

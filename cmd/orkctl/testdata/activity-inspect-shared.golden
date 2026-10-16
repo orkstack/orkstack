@@ -7,18 +7,18 @@ Resolved    2026-01-02T03:04:05Z
 
 Interface   schema 1 · selected by op: (6 ops, default get) · 5 keys shared by every op
 
-OP      KEY             TYPE    REQUIRED  DEFAULT
-*       body            string  no        -
-*       captureBodyAs   string  no        -
-*       headers         object  no        -
-*       timeoutSeconds  number  no        -
-*       url             string  yes       -
-delete  -               -       -         -
-get     -               -       -         -
-head    -               -       -         -
-patch   -               -       -         -
-post    -               -       -         -
-put     -               -       -         -
+OP      KEY             TYPE                 REQUIRED  DEFAULT
+*       body            string|object|array  no        -
+*       captureBodyAs   string               no        -
+*       headers         object               no        -
+*       timeoutSeconds  number               no        -
+*       url             string               yes       -
+delete  -               -                    -         -
+get     -               -                    -         -
+head    -               -                    -         -
+patch   -               -                    -         -
+post    -               -                    -         -
+put     -               -                    -         -
 
 VALUES
 KEY         TYPE

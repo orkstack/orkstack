@@ -291,11 +291,11 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 		if !reflect.DeepEqual(seen, wantSeen) {
 			t.Fatalf("the order service saw %v, want %v", seen, wantSeen)
 		}
-		// The http image writes `body:` to its request file with `jq -r`,
-		// which ends it with one newline (images/activity-http/entry.sh); the
-		// bytes before it are exactly the text prepare built.
+		// The http image sends a string `body:` verbatim, with no newline
+		// added (images/activity-http/entry.sh writes it with `jq -j`): the
+		// bytes are exactly the text prepare built.
 		for i, key := range []string{"reservation", "payment", "shipment"} {
-			if string(requests[i].Body) != fmt.Sprint(prepared[key])+"\n" {
+			if string(requests[i].Body) != fmt.Sprint(prepared[key]) {
 				t.Fatalf("%s body = %q, want what prepare built: %q", key, requests[i].Body, prepared[key])
 			}
 		}
@@ -466,6 +466,23 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 		run = x.runToEnd("http-post", "--input", "url="+base+"/post")
 		requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
 		requireTaskStatus(t, run, "summarize", orkstackv1.Status_STATUS_SUCCEEDED)
+
+		// The body is a YAML mapping, so a quote, a backslash and a newline
+		// in the message stay inside its string: the bytes sent are exactly
+		// the compact JSON of the rendered mapping.
+		posted := len(x.services.Requests("/post"))
+		run = x.runToEnd("http-post", "--input-json", `{"url":"`+base+`/post","message":"say \"hi\" \\ bye\nnext"}`)
+		requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+		requireTaskStatus(t, run, "summarize", orkstackv1.Status_STATUS_SUCCEEDED)
+		requests := x.services.Requests("/post")
+		if len(requests) != posted+1 {
+			t.Fatalf("POST /post requests = %d, want %d", len(requests), posted+1)
+		}
+		received := requests[len(requests)-1]
+		if want := `{"message":"say \"hi\" \\ bye\nnext"}`; string(received.Body) != want || received.ContentType != "application/json" {
+			t.Fatalf("http-post sent %q with Content-Type %q, want %q as application/json", received.Body, received.ContentType, want)
+		}
+		x.note("http-post with a quote, a backslash and a newline sent %s (Content-Type %s)", received.Body, received.ContentType)
 
 		run = x.runToEnd("pinned-build")
 		requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
