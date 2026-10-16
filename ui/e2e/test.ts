@@ -30,7 +30,15 @@ export { expect, type Page } from "@playwright/test";
 // WHAT. A navigation (`goto`, `reload`) during which Chromium aborted a
 // document, script or stylesheet with net::ERR_NETWORK_CHANGED is made again,
 // up to NAVIGATION_ATTEMPTS times, and each repeat is printed so it appears in
-// the suite's log. That is all:
+// the suite's log. "During" lasts until the page's own code has arrived, not
+// only until the navigation resolves: the `load` event does not wait for a
+// script the page imports dynamically, and a page rendered in the browser
+// only (the run page, `ssr = false`) is still fetching most of its chunks
+// when `goto` returns — a network change in that window left the run-origin
+// spec a 500 screen after a navigation the guard had already passed. So the
+// guard waits, after the navigation, until no script or stylesheet the page
+// requested is still in flight (and the page has had a turn to request the
+// next), bounded by CODE_SETTLE_MS, and judges the whole window. That is all:
 //
 //   - only that error code. Every other failure — a 500 from the server, a
 //     chunk that 404s, a refused connection — reaches the spec exactly as it
@@ -51,6 +59,13 @@ export const NAVIGATION_ATTEMPTS = 3;
 
 export const NETWORK_CHANGED = "net::ERR_NETWORK_CHANGED";
 
+/**
+ * How long, after a navigation resolves, the guard waits for the page's own
+ * code still in flight. Past it the navigation is judged on what it saw; the
+ * spec's own assertions decide the rest.
+ */
+export const CODE_SETTLE_MS = 30_000;
+
 /** The resource types whose loss leaves a page that cannot hydrate. */
 const PAGE_CODE = new Set(["document", "script", "stylesheet"]);
 
@@ -69,7 +84,15 @@ export async function navigateThroughNetworkChanges(
 ): Promise<Response | null> {
   for (let attempt = 1; ; attempt++) {
     const aborted: string[] = [];
+    const inFlight = new Set<Request>();
+    const onRequest = (request: Request) => {
+      if (PAGE_CODE.has(request.resourceType())) inFlight.add(request);
+    };
+    const onFinished = (request: Request) => {
+      inFlight.delete(request);
+    };
     const onFailed = (request: Request) => {
+      inFlight.delete(request);
       if (
         request.failure()?.errorText === NETWORK_CHANGED &&
         PAGE_CODE.has(request.resourceType())
@@ -77,16 +100,21 @@ export async function navigateThroughNetworkChanges(
         aborted.push(request.url());
       }
     };
+    page.on("request", onRequest);
+    page.on("requestfinished", onFinished);
     page.on("requestfailed", onFailed);
     let response: Response | null = null;
     try {
       response = await navigate();
+      await pageCodeSettled(page, inFlight, Date.now() + CODE_SETTLE_MS);
     } catch (err) {
       // The document itself can be the request that was waiting. Any
       // other navigation error is the spec's to see.
       if (!String(err).includes(NETWORK_CHANGED)) throw err;
       aborted.push(`${label} (the document)`);
     } finally {
+      page.off("request", onRequest);
+      page.off("requestfinished", onFinished);
       page.off("requestfailed", onFailed);
     }
     if (aborted.length === 0) return response;
@@ -101,6 +129,43 @@ export async function navigateThroughNetworkChanges(
     console.log(
       `e2e: ${what}; navigating again (attempt ${attempt + 1} of ${NAVIGATION_ATTEMPTS})`,
     );
+  }
+}
+
+/**
+ * pageCodeSettled returns once none of the page's scripts or stylesheets in
+ * `inFlight` is still loading and the page has had a turn to request more
+ * (its module graph imports the next chunks only once the last ones ran), or
+ * at `deadline`. It waits on request events, never on a clock of its own,
+ * and a page that closed or navigated away has settled.
+ */
+async function pageCodeSettled(
+  page: Page,
+  inFlight: Set<Request>,
+  deadline: number,
+): Promise<void> {
+  while (Date.now() < deadline) {
+    if (inFlight.size === 0) {
+      try {
+        await page.evaluate(() => 0);
+      } catch {
+        return;
+      }
+      if (inFlight.size === 0) return;
+    }
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        page.off("requestfinished", done);
+        page.off("requestfailed", done);
+        page.off("close", done);
+        resolve();
+      };
+      const timer = setTimeout(done, Math.max(0, deadline - Date.now()));
+      page.on("requestfinished", done);
+      page.on("requestfailed", done);
+      page.on("close", done);
+    });
   }
 }
 
