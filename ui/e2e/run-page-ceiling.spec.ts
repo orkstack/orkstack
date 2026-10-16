@@ -169,7 +169,7 @@ async function measureRunPage(page: Page, runId: string, tasks: number, phase: s
 // the same size, its rows archived by test/tools/archive-sized-run, is
 // opened too, and its time quoted, not gated.
 test('the run page at the gated task size is interactive within 5 s, live and finished', async ({ page }) => {
-	test.setTimeout(20 * 60_000);
+	test.setTimeout(30 * 60_000);
 	const run = (await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: GATED_ORKFLOW })).run.id;
 	note(`submitted ${GATED_ORKFLOW} (${GATED_TASKS} tasks) as run ${run}`);
 	await waitFor(
@@ -189,13 +189,24 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
 
 	await rpc('RunService/CancelRun', { runId: run, reason: 'run-page-ceiling e2e: gated-size render measured' });
+	// Finished means its last snapshot: the run reads CANCELED as soon as the
+	// cancel is decided, and its thousands of rows reach their own ends over
+	// the minutes the run takes to record them.
+	const terminal = ['STATUS_SUCCEEDED', 'STATUS_FAILED', 'STATUS_CANCELED', 'STATUS_SKIPPED'];
 	await waitFor(
-		`run ${run} finished`,
+		`run ${run} finished, every task row with it`,
 		async () => {
-			const answer = await rpc<{ run?: { status?: string } }>('RunService/GetRun', { runId: run });
-			return answer.run?.status === 'STATUS_CANCELED';
+			const answer = await rpc<{ run?: { status?: string; taskRuns?: { status?: string }[] } }>('RunService/GetRun', {
+				runId: run
+			});
+			const rows = answer.run?.taskRuns ?? [];
+			return (
+				answer.run?.status === 'STATUS_CANCELED' &&
+				rows.length === GATED_TASKS &&
+				rows.every((row) => terminal.includes(row.status ?? ''))
+			);
 		},
-		600_000
+		900_000
 	);
 	const finished = await measureRunPage(page, run, GATED_TASKS, 'finished');
 	await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
