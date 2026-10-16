@@ -58,7 +58,7 @@
 	import { statsClient } from '$lib/clients/stats';
 	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, taskRunCommand, timestampJson } from '$lib/runDetail';
 	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '$lib/eventBuffer';
-	import { eventBatcher } from '$lib/eventBatch';
+	import { eventBatcher, slicedApply } from '$lib/eventBatch';
 	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
 	import {
 		EventType,
@@ -1030,6 +1030,8 @@
 	// How long a finished run's replayed events gather before they are
 	// applied (see the socket effect below).
 	const REPLAY_BATCH_MS = 250;
+	// The most replayed events applied in one idle slice.
+	const REPLAY_SLICE = 100;
 	const socketRunId = $derived(data.run?.id ?? '');
 	const socketNamespace = $derived(data.namespace);
 	let socketEpoch = $state(0);
@@ -1053,7 +1055,10 @@
 		// a hundred times before it answered a click. A live run keeps its
 		// per-frame batches.
 		const replayed = untrack(() => isTerminal(data.run?.status));
-		const batch = eventBatcher(applyEvents, replayed ? replayBatches : undefined);
+		// ...and a slice of it at a time, so a click is answered between
+		// slices rather than after the whole replay.
+		const slices = replayed ? slicedApply(applyEvents, REPLAY_SLICE, whenIdle) : undefined;
+		const batch = eventBatcher(slices ? slices.apply : applyEvents, replayed ? replayBatches : undefined);
 		const stop = watchRunEvents(
 			runId,
 			namespace,
@@ -1075,10 +1080,26 @@
 			// What arrived for THIS run is applied, never dropped: lastSequence
 			// already counts it, so a restart would not deliver it again. A
 			// page that moved on to another run drops it instead.
-			if (untrack(() => socketRunId) === runId) batch.flush();
-			else batch.cancel();
+			if (untrack(() => socketRunId) === runId) {
+				batch.flush();
+				slices?.drain();
+			} else {
+				batch.cancel();
+				slices?.cancel();
+			}
 		};
 	});
+	// whenIdle runs a replay slice when the browser has nothing better to do,
+	// so a reader's click is always handled first; a browser without
+	// requestIdleCallback takes the next task.
+	function whenIdle(run: () => void): () => void {
+		if (typeof requestIdleCallback === 'function') {
+			const handle = requestIdleCallback(run, { timeout: 1000 });
+			return () => cancelIdleCallback(handle);
+		}
+		const timer = setTimeout(run, 0);
+		return () => clearTimeout(timer);
+	}
 	function replayBatches(flush: () => void): () => void {
 		const timer = setTimeout(flush, REPLAY_BATCH_MS);
 		return () => clearTimeout(timer);

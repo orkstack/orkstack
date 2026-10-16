@@ -147,3 +147,40 @@ test('order and dedupe survive the batch', () => {
 	expect(batches).toHaveLength(1);
 	expect(batches[0].map((e) => Number(e.sequence))).toEqual([1, 2, 3, 4, 5]);
 });
+
+// A finished run's replay is applied a slice per task, in order, so the page
+// answers a click between slices; drain applies the rest at once and cancel
+// drops it.
+test('a replay is applied in ordered slices, drained or cancelled', async () => {
+	const { slicedApply } = await import('../src/lib/eventBatch');
+	const applied: number[][] = [];
+	const tasks: (() => void)[] = [];
+	const sliced = slicedApply(
+		(events) => applied.push(events.map((e) => Number(e.sequence))),
+		300,
+		(run) => {
+			tasks.push(run);
+			return () => {
+				const i = tasks.indexOf(run);
+				if (i >= 0) tasks.splice(i, 1);
+			};
+		}
+	);
+	sliced.apply(Array.from({ length: 700 }, (_, i) => itemEvent(i + 1, i)));
+	sliced.apply([itemEvent(701, 700)]);
+	expect(applied).toHaveLength(0);
+	expect(tasks).toHaveLength(1);
+	tasks.shift()?.();
+	expect(applied.map((s) => s.length)).toEqual([300]);
+	tasks.shift()?.();
+	expect(applied.map((s) => s.length)).toEqual([300, 300]);
+	sliced.drain();
+	expect(applied.map((s) => s.length)).toEqual([300, 300, 101]);
+	expect(applied.flat()).toEqual(Array.from({ length: 701 }, (_, i) => i + 1));
+	expect(tasks).toHaveLength(0);
+
+	sliced.apply([itemEvent(702, 701)]);
+	sliced.cancel();
+	expect(tasks).toHaveLength(0);
+	expect(applied.flat()).toHaveLength(701);
+});
