@@ -70,7 +70,9 @@ const note = noteTo(out('transcript.txt'));
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
 function orkflowYaml(): string {
-	return `name: ${ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${ORKFLOW}
 version: "0.1.0"
 description: Delivery records browser proof.
 tasks:

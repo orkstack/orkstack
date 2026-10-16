@@ -105,6 +105,8 @@ func newOverlayHarness(t *testing.T) *overlayHarness {
 // task before and one after: 2 + 1 + items rows.
 func overlayDocument(items, parallel int) string {
 	return fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: overlay
 inputs:
   regions: {type: array}
@@ -225,6 +227,8 @@ func TestSnapshotOverlay_MaterializesToTheFullRun(t *testing.T) {
 // changes.
 func checkInPlaceMutations(t *testing.T) {
 	wf := guardCompile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned
 inputs:
   regions: {type: array}

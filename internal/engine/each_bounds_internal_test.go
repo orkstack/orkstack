@@ -14,6 +14,8 @@ import (
 func fanOutDeclaring(t *testing.T, items int, pad int) *orkstackv1.Orkflow {
 	t.Helper()
 	doc := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: bounds
 inputs:
   parts: {type: array}

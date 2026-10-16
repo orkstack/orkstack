@@ -358,6 +358,8 @@ func rowsByID(rows []*orkstackv1.Orker) map[string]*orkstackv1.Orker {
 // cordonEchoYAML is one unpinned task: a real container that writes its
 // values and exits.
 const cordonEchoYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: __NAME__
 version: 0.1.0
 tasks:
@@ -374,6 +376,8 @@ tasks:
 // before its second member runs — the pin that is open while its host is
 // cordoned.
 const cordonHoldPinYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: __NAME__
 version: 0.1.0
 pins:
@@ -413,6 +417,8 @@ tasks:
 
 // cordonQuickPinYAML is a pin of two quick members.
 const cordonQuickPinYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: __NAME__
 version: 0.1.0
 pins:

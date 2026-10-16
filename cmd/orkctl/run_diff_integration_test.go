@@ -45,7 +45,9 @@ var sixtyFourHex = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // 0 otherwise, writing values.json either way, and sleeps `sleep` seconds
 // first. One attempt only: the diff is about the outcome, not the retries.
 func runDiffOrkflow(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: run-diff probe.
 inputs:

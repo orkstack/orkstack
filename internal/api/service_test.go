@@ -258,7 +258,7 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 func TestApplyRejectsInvalidDocument(t *testing.T) {
 	f := newFixture(t)
 	_, err := f.orkflowClient().ApplyOrkflow(context.Background(),
-		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: "name: Bad_Name\ntasks: []\n"}))
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: "apiVersion: orkstack/v1\nkind: Orkflow\nname: Bad_Name\ntasks: []\n"}))
 	if err == nil {
 		t.Fatal("Apply(invalid) = nil error, want InvalidArgument")
 	}

@@ -53,7 +53,9 @@ func taskRunFixtureDoc(name, marker string, strict bool) string {
 	if !strict {
 		comparison = ""
 	}
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: orkctl task run fixture.
 inputs:
@@ -446,7 +448,9 @@ func TestIntegration_TaskRunSecretIsExplicitAndNeverKept(t *testing.T) {
 	defer cancel()
 	s := newTaskRunStack(ctx, t)
 	name := fmt.Sprintf("task-run-secret-%d-%d", os.Getpid(), time.Now().UnixNano())
-	s.apply(fmt.Sprintf(`name: %s
+	s.apply(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 tasks:
   - id: secretive
@@ -507,7 +511,9 @@ func TestIntegration_TaskRunInterruptStopsTheContainer(t *testing.T) {
 	defer cancel()
 	s := newTaskRunStack(ctx, t)
 	doc := filepath.Join(t.TempDir(), "interrupt.ork.yaml")
-	if err := os.WriteFile(doc, []byte(fmt.Sprintf(`name: task-run-interrupt-%d
+	if err := os.WriteFile(doc, []byte(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: task-run-interrupt-%d
 version: "0.1.0"
 tasks:
   - id: looper

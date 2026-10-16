@@ -197,6 +197,8 @@ func partsJSON(n int) string {
 }
 
 const eachTaskDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan
 tasks:
   - id: list
@@ -362,6 +364,8 @@ func TestRunWorkflow_EachOverAnUpstreamOutputRunsOneActivityPerItem(t *testing.T
 }
 
 const eachInputDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan-input
 inputs:
   regions: {type: array}

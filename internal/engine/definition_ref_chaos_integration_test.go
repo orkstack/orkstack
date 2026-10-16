@@ -56,7 +56,7 @@ func (s *chaosStack) definitionChaosRun(t *testing.T, name string, budget engine
 	s.startOrker("orker-1", instant)
 	runID := s.newRunID()
 	s.transcript.run(runID)
-	wf := compile(t, "name: "+name+"\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, ""))
+	wf := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: "+name+"\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, ""))
 	stub, plan, uri := storeDefinitionIn(t, s.ctx, s.store, runID, wf, s.plan(1000, engine.DefaultHistoryMaxBytes, &budget))
 	if err := s.starter.StartRun(s.ctx, runID, stub, nil, plan); err != nil {
 		t.Fatalf("StartRun %s: %v", runID, err)

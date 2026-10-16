@@ -291,7 +291,9 @@ func emptyAndRemoveBucket(raw *s3.Client, bucket string) {
 
 // policyOrkflowYAML is one task running `command` on `uses`, not retried.
 func policyOrkflowYAML(name, uses, command string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: image policy probe.
 tasks:
@@ -311,7 +313,9 @@ tasks:
 // for the test to act while it runs; the second allows three attempts, so
 // "exactly one attempt" is a statement about retryability.
 func twoStepYAML(name, uses string, sleep int) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: image policy probe, two steps.
 tasks:

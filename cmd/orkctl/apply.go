@@ -21,6 +21,9 @@ func newApplyCommand(g *globalFlags) *cobra.Command {
 		Short: "Apply orkflow and automation documents",
 		Long: "apply uploads orkflow DSL documents to the engine, which compiles,\n" +
 			"validates, and stores them. Compilation errors are reported by the engine.\n\n" +
+			"Each file's kind: decides what it is: kind: Orkflow is an orkflow document\n" +
+			"and kind: Automation an automation document; both begin with apiVersion:\n" +
+			"orkstack/v1, and a file with no kind is refused before anything is sent.\n\n" +
 			"It also applies automation documents (kind: Automation): one YAML file per\n" +
 			"namespace declaring its settings, schedules, triggers and webhooks by name\n" +
 			"(docs/AUTOMATION.md). The engine plans; this command sends each planned\n" +

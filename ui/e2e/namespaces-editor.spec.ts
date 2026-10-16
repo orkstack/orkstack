@@ -153,7 +153,9 @@ async function purgeOwnOrkflows(): Promise<void> {
 }
 
 function orkflowYaml(name: string, version: string, description: string): string {
-	return `name: ${name}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "${version}"
 description: ${description}
 
@@ -400,7 +402,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 
 	// 1. A document the compiler rejects: the message is the engine's, and
 	//    nothing is stored.
-	await page.getByTestId('editor-yaml').fill('name: broken\nversion: "9.9.9"\ntasks: []\n');
+	await page.getByTestId('editor-yaml').fill('apiVersion: orkstack/v1\nkind: Orkflow\nname: broken\nversion: "9.9.9"\ntasks: []\n');
 	await page.getByTestId('editor-apply').click();
 	await expect(page.getByTestId('editor-error')).toBeVisible();
 	await expect(page.getByTestId('editor-error')).toContainText(/task/i);

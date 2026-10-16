@@ -370,7 +370,9 @@ func decodeSubmittedID(t *testing.T, stdout string) string {
 
 // originOrkflowYAML is one quick shell task.
 func originOrkflowYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: run origin probe.
 tasks:

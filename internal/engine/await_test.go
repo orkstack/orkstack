@@ -15,6 +15,8 @@ import (
 
 // awaitedDocument is a → await b → c: the narrative's shape, small.
 const awaitedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: awaited
 tasks:
   - id: a
@@ -34,6 +36,8 @@ tasks:
 `
 
 const awaitedConditionDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: awaited-condition
 tasks:
   - id: b
@@ -46,6 +50,8 @@ tasks:
 `
 
 const awaitedSiblingDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: awaited-sibling
 tasks:
   - id: a
@@ -61,6 +67,8 @@ tasks:
 `
 
 const awaitedSkippedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: awaited-skipped
 inputs:
   gate: {type: boolean, default: false}
@@ -75,6 +83,8 @@ tasks:
 `
 
 const awaitOnlyDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: await-only
 tasks:
   - id: first

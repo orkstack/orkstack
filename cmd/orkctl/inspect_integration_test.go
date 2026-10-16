@@ -196,7 +196,9 @@ func parseTime(t *testing.T, value string) time.Time {
 // chattyOrkflow is one task that writes a line every 200 ms until it is
 // stopped, with the task's own bounds explicit.
 func chattyOrkflow(name, retry string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: live attempt introspection probe — a task that keeps talking.
 tasks:
@@ -318,7 +320,9 @@ func TestIntegration_InspectRunShowsAnAttemptWaitingForAnOrker(t *testing.T) {
 	defer s.writeTranscript("run-inspect-waiting.txt")
 
 	name := uniqueName("inspect-wait")
-	s.apply(fmt.Sprintf(`name: %s
+	s.apply(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: live attempt introspection probe — waits for an orker.
 tasks:
@@ -368,7 +372,9 @@ func TestIntegration_InspectRunNeverShowsAPreviousAttemptsDetail(t *testing.T) {
 	awaitActivityPoller(ctx, t, s.temporal, s.queue)
 
 	name := uniqueName("inspect-retry")
-	s.apply(fmt.Sprintf(`name: %s
+	s.apply(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: live attempt introspection probe — fails, then backs off.
 tasks:

@@ -27,6 +27,8 @@
 # config/<environment>.json, each JSON file one object.
 #
 #   orkctl run submit pinned-checkout --input repo=https://git.example.com/acme/app.git --input environment=prod
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-checkout
 version: "0.1.0"
 description: "Check a commit out once into a pin, validate and package it in place, and checksum the package outside the pin."

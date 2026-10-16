@@ -24,6 +24,8 @@
 #                 `with:` names no `.each` at all.
 #   summary       gathers the items' values; collate concatenates artifacts
 #   collate       from both images with the first-party file activity.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: custom-image
 version: "0.1.0"
 description: "Two custom OCI images, Go and shell, as durable activities: no SDK, no op, no catalog name. Build and push them first."

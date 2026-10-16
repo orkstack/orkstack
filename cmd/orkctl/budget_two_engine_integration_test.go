@@ -101,7 +101,9 @@ func newBudgetStack(ctx context.Context, t *testing.T, label string) *budgetStac
 // usageProbeYAML is the three-task usage probe: one task sized below the
 // Orker's default, one that takes the default, and one that fails twice.
 func usageProbeYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: usage probe.
 tasks:

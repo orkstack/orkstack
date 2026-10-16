@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -89,8 +90,8 @@ func Export(namespace string, live Live) (string, []*orkstackv1.AutomationStep, 
 	sortSteps(unmanaged)
 
 	header := mapping(
-		plainNode("apiVersion"), plainNode(APIVersion),
-		plainNode("kind"), plainNode(Kind),
+		plainNode("apiVersion"), plainNode(dsl.APIVersion),
+		plainNode("kind"), plainNode(dsl.KindAutomation),
 		plainNode("namespace"), plainNode(ns),
 	)
 	settingsNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

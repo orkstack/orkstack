@@ -23,6 +23,8 @@ import (
 )
 
 const composeChildYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -39,6 +41,8 @@ tasks:
 `
 
 const composeParentYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 version: "1.0.0"
 tasks:
@@ -246,6 +250,8 @@ func TestValidateOrkflow_StaleDescendantDigestIsAnError(t *testing.T) {
 func composeParentYAMLWithout(t *testing.T) string {
 	t.Helper()
 	return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 version: "1.0.0"
 tasks:
@@ -341,6 +347,8 @@ func TestValidateOrkflow_OutputReferenceMustBeDeclared(t *testing.T) {
 	f := newComposeFixture(t)
 	f.mustApply(t, composeChildYAML)
 	doc := `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 version: "1.0.0"
 outputs:
@@ -377,6 +385,8 @@ tasks:
 func TestValidateOrkflow_ChildCallbackAwaitIsAWarning(t *testing.T) {
 	f := newComposeFixture(t)
 	f.mustApply(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: approval-gate
 version: "1.0"
 tasks:
@@ -384,6 +394,8 @@ tasks:
     await: { timeout_seconds: 60, callback: true }
 `)
 	issues := f.validate(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 version: "1.0.0"
 tasks:
@@ -409,6 +421,8 @@ func TestApplyOrkflow_CompositionRefusalWritesNothing(t *testing.T) {
 // --- submit ------------------------------------------------------------------
 
 const notarizeYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: notarize
 version: "1.0"
 tasks:
@@ -610,6 +624,8 @@ func TestSubmitRun_ChildImagePolicyRefusalNamesTheChild(t *testing.T) {
 		t.Fatalf("apply child: %v", err)
 	}
 	if err := f.apply(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 version: "1.0.0"
 tasks:
@@ -629,6 +645,8 @@ tasks:
 func TestSubmitRun_ChildEachCapIsRechecked(t *testing.T) {
 	f := newComposeFixture(t)
 	f.mustApply(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -671,6 +689,8 @@ func TestSubmitRun_PlanOverBudgetIsFailedPreconditionAndMintsNothing(t *testing.
 func TestSubmitRun_ChildCallbackTokensAreDisclosedToNoOne(t *testing.T) {
 	f := newComposeFixture(t)
 	f.mustApply(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: approval-gate
 version: "1.0"
 tasks:
@@ -678,6 +698,8 @@ tasks:
     await: { timeout_seconds: 60, callback: true }
 `)
 	f.mustApply(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 version: "1.0.0"
 tasks:

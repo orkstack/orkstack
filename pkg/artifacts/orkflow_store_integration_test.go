@@ -67,7 +67,7 @@ func testOrkflow(t *testing.T, name, version string, appliedAt time.Time) *orkst
 			With:           with,
 			TimeoutSeconds: 300,
 		}},
-		SourceYaml: fmt.Sprintf("name: %s\nversion: %q\n", name, version),
+		SourceYaml: fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: %q\n", name, version),
 		CreatedAt:  timestamppb.New(appliedAt),
 	}
 }

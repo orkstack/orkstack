@@ -249,6 +249,8 @@ func continuedCarryOf(t *testing.T, h *historypb.History) *orkstackv1.RunContinu
 // canFixture is the continued run's recorded shape (testdata/history/README.md).
 func canFixtureDocument() string {
 	return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: continued
 version: "1.0.0"
 tasks:
@@ -604,6 +606,8 @@ func TestIntegration_RecordContinuedRunHistories(t *testing.T) {
 }
 
 const inFlightCapFixtureDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: capped
 version: "1.0.0"
 inputs:

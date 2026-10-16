@@ -29,7 +29,9 @@ import (
 
 // overlayFanOut declares items fan-out items: items+1 declared rows.
 func overlayFanOut(name, version string, items int) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "%s"
 inputs:
   parts: {type: array}

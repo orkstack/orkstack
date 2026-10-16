@@ -37,14 +37,13 @@ var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // defect the pattern itself closed, measured in the one class the corpus had
 // no member of. The two bounds are not one constant, and the reason is
 // layering rather than the compiler: the artifact store is a public package
-// and this one is not, so the store does not import this package and a
-// program that only stores artifacts never builds the YAML front end. They
-// are held together by measurement instead —
+// and this one is not, so although the store imports this package for the
+// rules both must share (the slug rule, the document identity of
+// VersionedSource), it shares no slug constant with it. They are held
+// together by measurement instead —
 // TestNamespaceName_RegistryAndCompilerAgree and
 // TestNamespacePools_AreExactlyThePoolsDispatchCanReach both carry a name at
-// the bound and a name one byte over. Both are tests inside pkg/artifacts
-// that import this package, which is free: a test dependency is not part of
-// an importer's build.
+// the bound and a name one byte over.
 const MaxSlug = 200
 
 // checkSlug reports why value cannot be used as an identifier, naming the kind
@@ -94,6 +93,14 @@ func (o Options) catalog() Catalog {
 
 // document is the YAML shape of a *.ork.yaml file.
 type document struct {
+	// APIVersion and Kind are the document header (docs/DSL.md, "The
+	// document header"). checkHeader reads them before this decode; they are
+	// decoded so KnownFields accepts them, and never compiled: the header is
+	// not part of the definition, so neither the compiled message nor its
+	// digest sees it.
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+
 	// Namespace scopes the orkflow. Absent means the built-in "default"
 	// namespace, and it stays empty in the compiled message: "empty means
 	// default" is one rule, resolved once, where the name becomes a key.
@@ -277,14 +284,20 @@ func DocumentPinsVersion(source []byte) (bool, error) {
 
 // Compile parses, validates, and compiles a DSL document. The returned
 // Orkflow carries the original source bytes in SourceYaml; when the document
-// does not pin `version`, Version is the sha256 of those same bytes, so a
-// version always names the source it is stored with (sourceHash).
+// does not pin `version`, Version is the sha256 of its versioned source (those
+// bytes less the two header lines written first), so a version always names
+// the source it is stored with (sourceHash).
 func Compile(source []byte) (*orkstackv1.Orkflow, error) {
 	return CompileWithOptions(source, Options{})
 }
 
 // CompileWithOptions is Compile with explicit options.
 func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error) {
+	// The header first: a document of another kind, or none, is refused by
+	// what it is, before a strict decode reports its keys as unknown.
+	if err := checkHeader(source); err != nil {
+		return nil, err
+	}
 	// Strict: a key the schema does not define is refused, never ignored.
 	// yaml.v3 would otherwise drop what it cannot map, and an author would
 	// find out about a misspelled or unsupported key only when the run
@@ -323,7 +336,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	// directly would let one document compile to two different messages, and
 	// the message is what both the definition digest (canonicalPins) and the
 	// store's "is this apply a repeat?" comparison read (proto.Equal in
-	// pkg/artifacts.sameStoredOrkflow). Two authors who type the same two pin
+	// pkg/artifacts.SameStoredOrkflow). Two authors who type the same two pin
 	// keys in either order must get the same bytes; so must one author twice.
 	// Absent rather than empty for the same reason normalizeMap is careful
 	// about presence: an unpinned document's message must be exactly what it
@@ -482,7 +495,7 @@ func normalizeValue(v any) any {
 		// the source's hash — but the STORE compares the compiled document, so
 		// a compilation that varied with map iteration order would make
 		// re-applying an unchanged file a different document under a stored
-		// version (pkg/artifacts.sameStoredOrkflow).
+		// version (pkg/artifacts.SameStoredOrkflow).
 		type entry struct {
 			key      string
 			identity string

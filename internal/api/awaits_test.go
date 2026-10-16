@@ -29,6 +29,8 @@ import (
 )
 
 const awaitedYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: awaited-api
 version: "1.0.0"
 tasks:
@@ -52,6 +54,8 @@ tasks:
 `
 
 const awaitOnlyYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: await-only-api
 version: "1.0.0"
 tasks:

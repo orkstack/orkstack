@@ -3,18 +3,22 @@
 ## What these are
 
 Every Orkflow here is a runnable reference document: the test suite compiles
-each one, runs every `orkctl run plan --file` line in its header as a CI check,
+each one, runs every `orkctl run plan --file` line in its comment header as a CI check,
 and runs each end to end against a real engine, Orker, Temporal and object
 store (all but `advanced-demo`, which needs the internet).
 [`docs/ORKFLOW_PATTERNS.md`](../docs/ORKFLOW_PATTERNS.md) is the guide they
 illustrate; each example names the sections it shows in a `# Pattern:` line
-of its header, and the header lists everything the example needs before it
-runs.
+of its comment header, and the comment header lists everything the example
+needs before it runs. Every example begins with its comment header, then the
+document header `apiVersion: orkstack/v1` and `kind: Orkflow`.
 
 The eleven examples marked *older* below do not follow every rule of the
-guide, and are not edited: each pins a `version:` a deployment may already
-store, and applying changed bytes under a stored version is refused. Five of
-them splice a rendered value into shell text or a JSON string —
+guide, and are not edited except for their document header: each pins a
+`version:` a deployment may already store, and applying changed bytes under
+a stored version is refused — the two lines `apiVersion: orkstack/v1` and
+`kind: Orkflow` are the one addition a stored version takes
+([`docs/DSL.md`](../docs/DSL.md), "The document header").
+Five of them splice a rendered value into shell text or a JSON string —
 `http-post`, `shell-eval`, `file-read`, `pinned-build` and `advanced-demo` —
 which the guide's "Pass values as data, never as code" says not to do, and
 `cached-pipeline` caches a task with no `ttl_seconds` (its one validation
@@ -26,11 +30,11 @@ warning). Follow the guide, not them.
 make up                                          # the whole local stack
 orkctl apply examples/decide-and-route.ork.yaml  # store one example
 orkctl run plan decide-and-route --output decide='{"result":{"route":"canary","notify":true}}'
-orkctl run submit decide-and-route --watch       # run it, with --input K=V as its header says
+orkctl run submit decide-and-route --watch       # run it, with --input K=V as its comment header says
 ```
 
 - `orkctl run plan <name> …` plans a stored Orkflow; the plan lines in a
-  header use `--file examples/<file>` and plan the file without storing it.
+  comment header use `--file examples/<file>` and plan the file without storing it.
 - `orkctl task run --file examples/<file> --task <id> …` tries one task
   locally, without a run.
 - The UI's Apply page lists the same files as cards; a card's text is the

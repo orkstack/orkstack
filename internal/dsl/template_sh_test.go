@@ -12,6 +12,8 @@ import (
 // means the DSL's parse-time stubs have to know the name.
 func TestCompile_AcceptsTheShHelper(t *testing.T) {
 	source := `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: quoted
 inputs:
   name:

@@ -104,12 +104,27 @@ func TestParse_AcceptsTheSummaryDocument(t *testing.T) {
 	}
 }
 
+// TestParse_AnOrkflowIsNotAnAutomationDocument: an Orkflow reaches this
+// parser only through PlanAutomation or Admin → Automation, and is named for
+// what it is rather than refused key by key.
+func TestParse_AnOrkflowIsNotAnAutomationDocument(t *testing.T) {
+	source := "apiVersion: orkstack/v1\nkind: Orkflow\nname: deploy\ntasks:\n  - id: a\n    uses: shell\n"
+	doc, issues := Parse([]byte(source))
+	if doc != nil {
+		t.Fatal("an Orkflow was parsed as an automation document")
+	}
+	if len(issues) != 1 || issues[0].GetField() != "kind" ||
+		issues[0].GetMessage() != "line 2: kind: Orkflow is an Orkflow, not an automation document: apply it with orkctl apply or the Apply page" {
+		t.Fatalf("issues = %v", issues)
+	}
+}
+
 func TestParse_HeaderIsRequiredAndExact(t *testing.T) {
 	cases := map[string]struct{ source, field, fragment string }{
 		"missing apiVersion": {"kind: Automation\nnamespace: payments\n", "apiVersion", "apiVersion is required"},
 		"other apiVersion":   {"apiVersion: orkstack/v2\nkind: Automation\nnamespace: payments\n", "apiVersion", "want orkstack/v1"},
 		"missing kind":       {"apiVersion: orkstack/v1\nnamespace: payments\n", "kind", "kind is required"},
-		"other kind":         {"apiVersion: orkstack/v1\nkind: Orkflow\nnamespace: payments\n", "kind", "want Automation"},
+		"other kind":         {"apiVersion: orkstack/v1\nkind: Pipeline\nnamespace: payments\n", "kind", "want Automation"},
 		"missing namespace":  {"apiVersion: orkstack/v1\nkind: Automation\n", "namespace", "never inferred"},
 		"non-slug namespace": {"apiVersion: orkstack/v1\nkind: Automation\nnamespace: Payments\n", "namespace", "line 3"},
 	}

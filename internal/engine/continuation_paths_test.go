@@ -136,6 +136,8 @@ func pinSetup(h *harness, _ int) {
 }
 
 const pinOpenDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-open
 pins:
   build: {}
@@ -162,6 +164,8 @@ tasks:
 `
 
 const pinCloseDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-close
 pins:
   build: {}
@@ -309,6 +313,8 @@ func TestContinuation_PinOpenAtTriggerClosesBeforeSwitch(t *testing.T) {
 }
 
 const pinFanOutDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-fan
 pins:
   build: {}
@@ -358,6 +364,8 @@ func TestContinuation_PinMemberDownstreamOfFanOutDoesNotDeadlock(t *testing.T) {
 }
 
 const pinAwaitDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-await
 pins:
   build: {}
@@ -423,6 +431,8 @@ func TestContinuation_PinBlockedOnAwaitGivesTheHoldUp(t *testing.T) {
 }
 
 const skipPropagationDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: skip-propagation
 pins:
   build: {}
@@ -480,6 +490,8 @@ func TestContinuation_GiveUpWaitsForSkipPropagation(t *testing.T) {
 }
 
 const awaitAcrossDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: await-across
 tasks:
   - id: approve
@@ -616,6 +628,8 @@ func TestContinuation_ResolutionQueuedAtSwitchIsAppliedOnce(t *testing.T) {
 // the run holds new dispatch ends it RUN_CANCELED, its running work stopped.
 func TestContinuation_CancelDuringHoldEndsCanceled(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: hold-cancel
 tasks:
   - id: slow
@@ -850,7 +864,7 @@ func reproducedShapes(t *testing.T) []reproducedShape {
 		plan.Children = composedPlan.Children
 		return plan
 	}
-	flat := "name: stages\ntasks:\n"
+	flat := "apiVersion: orkstack/v1\nkind: Orkflow\nname: stages\ntasks:\n"
 	for stage := 0; stage < 3; stage++ {
 		for i := 0; i < 3; i++ {
 			needs := "[]"
@@ -873,6 +887,8 @@ func reproducedShapes(t *testing.T) []reproducedShape {
 // reproducedComposedDocument composes a child whose input reads nothing
 // upstream, so the harness's stand-in values never need a store.
 const reproducedComposedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: parent
 version: "1.0.0"
 tasks:
@@ -894,6 +910,8 @@ tasks:
 `
 
 const reproducedChildDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -907,6 +925,8 @@ tasks:
 // reproducedPinDocument is a pin whose member needs an unpinned task, with
 // work after the pin so a natural idle point follows its close.
 const reproducedPinDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-needs
 pins:
   build: {}

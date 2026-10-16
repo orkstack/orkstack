@@ -22,6 +22,8 @@ func (p failingProbe) ObservePool(context.Context, string) (engine.PoolLiveness,
 }
 
 const mixedAwaitDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: mixed-await
 tasks:
   - id: crunch

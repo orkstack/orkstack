@@ -460,6 +460,8 @@ func taskRunOf(t *testing.T, run *orkstackv1.Run, taskID string) *orkstackv1.Tas
 }
 
 const linearDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: linear
 tasks:
   - id: alpha
@@ -565,6 +567,8 @@ func assertEventOrder(t *testing.T, events []*orkstackv1.Event) {
 }
 
 const fanOutDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fanout
 tasks:
   - id: left
@@ -630,6 +634,8 @@ func TestRunWorkflow_FansOutIndependentTasks(t *testing.T) {
 }
 
 const upstreamDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: upstream
 tasks:
   - id: fetch
@@ -726,6 +732,8 @@ func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
 }
 
 const conditionDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: conditional
 inputs:
   enabled:
@@ -819,6 +827,8 @@ func TestRunWorkflow_RunsTaskWithMetCondition(t *testing.T) {
 }
 
 const retryDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: retrying
 tasks:
   - id: flaky
@@ -903,6 +913,8 @@ func TestRunWorkflow_RetriesPerPolicyThenFailsRun(t *testing.T) {
 // Orker actually said.
 func TestRunWorkflow_KeepsTheTaskCauseWhenSnapshotWritesFail(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: cause-kept
 tasks:
   - id: doomed
@@ -964,6 +976,8 @@ tasks:
 
 func TestRunWorkflow_SingleAttemptWhenNoRetryPolicy(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: no-retry
 tasks:
   - id: only
@@ -995,6 +1009,8 @@ tasks:
 
 func TestRunWorkflow_PassesDeclaredInputDefaultsToExecuteTask(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: default-input
 inputs:
   url:
@@ -1026,6 +1042,8 @@ tasks:
 
 func TestRunWorkflow_SchedulesChildWhenItsOwnNeedCompletes(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: readiness-driven
 tasks:
   - id: slow
@@ -1168,6 +1186,8 @@ func TestRunWorkflow_LeavesTelemetryUnsetWithNoPlanSelection(t *testing.T) {
 }
 
 const cancelSiblingsDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: cancel-siblings
 tasks:
   - id: doomed
@@ -1423,6 +1443,8 @@ func TestRunWorkflow_NeverAnnouncesACanceledSiblingAsATaskOutcome(t *testing.T) 
 // pinnedDocument is the docs/DSL.md "Pins" shape: two members of one pin, plus an unpinned
 // downstream task that sees them only through what they committed.
 const pinnedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned
 pins:
   build: {}
@@ -1561,6 +1583,8 @@ func TestRunWorkflow_SchedulesEveryPinnedTaskOnOnePinSessionAndReleasesIt(t *tes
 // Orker nothing — no session, no slot, no shared directory, no lifetime clock.
 func TestRunWorkflow_NeverOpensAPinWhoseTasksAreAllSkipped(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-skipped
 inputs:
   enabled:
@@ -1624,6 +1648,8 @@ tasks:
 // promises never to do.
 func TestRunWorkflow_HoldsAPinnedTaskUntilItsSessionIsReadyWithoutHoldingSiblings(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-held
 pins:
   build: {}
@@ -1702,6 +1728,8 @@ tasks:
 // between them run at the same time — and, being one pin, on one session.
 func TestRunWorkflow_RunsConcurrentPinMembersOnOneSession(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-concurrent
 pins:
   build: {}
@@ -1971,6 +1999,8 @@ func TestRunWorkflow_BackfillsALostPinMembersOrkerIDFromItsSibling(t *testing.T)
 // correctly call it PIN_HOST_LOST, because no time had passed.
 func TestRunWorkflow_ClassifiesAPinThatOutlivedItsTimeoutAsPinTimeout(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-brief
 pins:
   brief:
@@ -2293,6 +2323,8 @@ func TestRunWorkflow_LeavesAPinnedTaskThatFailedOnItsOwnToTheOrdinaryPath(t *tes
 // have to infer that from a test about pins.
 func TestRunWorkflow_RecordsTheOrkerOfAnUnpinnedTaskThatFailed(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: unpinned-orker-id
 tasks:
   - id: doomed

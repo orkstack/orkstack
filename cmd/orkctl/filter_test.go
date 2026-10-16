@@ -137,7 +137,7 @@ func TestNamespaceList_FilteredGolden(t *testing.T) {
 
 // orkflowSourceNamed is a minimal orkflow document.
 func orkflowSourceNamed(name, team string) string {
-	return fmt.Sprintf("name: %s\nversion: \"1.0.0\"\ndescription: the %s orkflow\nlabels: {team: %s}\n"+
+	return fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ndescription: the %s orkflow\nlabels: {team: %s}\n"+
 		"tasks:\n  - id: build\n    uses: shell\n    with: {command: \"echo build\"}\n", name, name, team)
 }
 

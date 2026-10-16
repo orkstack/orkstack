@@ -79,6 +79,8 @@ func TestParseEachOver_RefusesEverythingButOneReference(t *testing.T) {
 
 func eachDoc(task string) []byte {
 	return []byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan
 inputs:
   parts: {type: array}
@@ -258,6 +260,8 @@ func TestCompile_EachMaxParallelBounds(t *testing.T) {
 
 func TestCompile_EachRefusesPin(t *testing.T) {
 	_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan
 inputs: {parts: {type: array}}
 pins: {build: {}}
@@ -440,6 +444,8 @@ func TestCompile_EachRootOnlyInWithOfAFanOut(t *testing.T) {
 
 func TestCompile_AwaitRefusesEach(t *testing.T) {
 	_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan
 inputs: {parts: {type: array}}
 tasks:

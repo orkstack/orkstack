@@ -40,6 +40,8 @@ func TestEffectiveCacheTTL(t *testing.T) {
 }
 
 const cachedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: cached
 tasks:
   - id: featurize
@@ -362,6 +364,8 @@ func TestGroupMemoInventory(t *testing.T) {
 // ---------------------------------------------------------------- the pool check
 
 const cachePoolsDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: cache-pools
 tasks:
   - id: fetch

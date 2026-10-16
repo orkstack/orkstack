@@ -165,7 +165,9 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
 // because every task already IS a container: the image goes in `uses:` and
 // the argv in the task's own `command`.
 function containerOrkflowYaml(name: string): string {
-	return `name: ${name}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "0.1.0"
 description: Admin spec — a real docker container, run for real.
 tasks:

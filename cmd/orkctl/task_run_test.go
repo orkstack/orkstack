@@ -46,7 +46,9 @@ const (
 // plus the members the closure tests need (a skipped task and a second producer), a task
 // declaring a secret, one whose with: reads an output key that does not
 // exist, and a pinned task.
-const taskRunFixtureYAML = `name: task-run-fixture
+const taskRunFixtureYAML = `apiVersion: orkstack/v1
+kind: Orkflow
+name: task-run-fixture
 version: "1"
 inputs:
   target:

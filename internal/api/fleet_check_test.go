@@ -44,7 +44,9 @@ func (f *fakeCapabilities) questions() int {
 // fanOutDoc is an Orkflow whose one fan-out declares items, each item's own
 // `with:` padded to pad bytes.
 func fanOutDoc(name string, items, pad int) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 inputs:
   parts: {type: array}
 tasks:

@@ -108,7 +108,9 @@ function longOrkflow(): string {
     needs: [${stage.join(', ')}]
     timeout_seconds: 120
     with: {op: exec, command: [sh, -c, "echo merged"]}`);
-	return `name: ${LONG}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${LONG}
 version: "0.1.0"
 description: A run long enough to carry on into fresh histories, twice at least.
 
@@ -122,7 +124,9 @@ ${tasks.join('\n')}
 }
 
 function shortOrkflow(): string {
-	return `name: ${SHORT}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${SHORT}
 version: "0.1.0"
 tasks:
   - id: only

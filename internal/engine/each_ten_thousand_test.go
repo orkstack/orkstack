@@ -16,6 +16,8 @@ import (
 // rule docs/DSL.md states — with no max_parallel, so only the in-flight cap
 // and the holds bound it.
 const tenThousandDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: ten-thousand
 tasks:
   - id: list

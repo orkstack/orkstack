@@ -234,7 +234,9 @@ func TestIntegration_CLISubmitCallbackAndWatchAnAwaitedRun(t *testing.T) {
 	}
 }
 
-const twoAwaitsYAML = `name: two-awaits
+const twoAwaitsYAML = `apiVersion: orkstack/v1
+kind: Orkflow
+name: two-awaits
 version: "1.0.0"
 tasks:
   - id: callback-gate
@@ -284,7 +286,9 @@ func TestIntegration_AwaitResolvedOnASecondEngineReplica(t *testing.T) {
 func TestIntegration_CallbackRefusalsLeaveTheRunAwaiting(t *testing.T) {
 	c := newAwaitCLI(t, 1, false)
 	path := filepath.Join(t.TempDir(), "refusals.ork.yaml")
-	if err := os.WriteFile(path, []byte(`name: refusals
+	if err := os.WriteFile(path, []byte(`apiVersion: orkstack/v1
+kind: Orkflow
+name: refusals
 version: "1.0.0"
 tasks:
   - id: gate

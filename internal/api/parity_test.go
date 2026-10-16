@@ -22,7 +22,7 @@ import (
 func TestValidateOrkflowDoesNotWriteAndReturnsDocumentIssues(t *testing.T) {
 	store := engine.NewMemoryOrkflowStore()
 	svc := api.NewService(api.Config{Orkflows: store})
-	valid := "name: validate-only\ntasks:\n  - id: one\n    uses: busybox:latest\n"
+	valid := "apiVersion: orkstack/v1\nkind: Orkflow\nname: validate-only\ntasks:\n  - id: one\n    uses: busybox:latest\n"
 	response, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: valid}))
 	if err != nil || response.Msg.GetOrkflow().GetDefinitionDigest() == "" {
 		t.Fatalf("ValidateOrkflow = %v, %v", response, err)
@@ -30,11 +30,11 @@ func TestValidateOrkflowDoesNotWriteAndReturnsDocumentIssues(t *testing.T) {
 	if _, err := store.Get(context.Background(), "default", "validate-only", ""); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Fatalf("validation wrote a definition: %v", err)
 	}
-	invalid, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: "name: bad\ntasks:\n - id: a\n   uses: busybox\n   needs: [missing]\n"}))
+	invalid, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: "apiVersion: orkstack/v1\nkind: Orkflow\nname: bad\ntasks:\n - id: a\n   uses: busybox\n   needs: [missing]\n"}))
 	if err != nil || len(invalid.Msg.GetIssues()) != 1 || invalid.Msg.GetIssues()[0].GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR || invalid.Msg.GetIssues()[0].GetField() != "tasks[0].needs[0]" {
 		t.Fatalf("invalid validation = %#v, %v", invalid, err)
 	}
-	missingName, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: "tasks:\n - id: a\n   uses: busybox\n"}))
+	missingName, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: "apiVersion: orkstack/v1\nkind: Orkflow\ntasks:\n - id: a\n   uses: busybox\n"}))
 	if err != nil || missingName.Msg.GetIssues()[0].GetField() != "name" {
 		t.Fatalf("missing name issue = %#v, %v", missingName, err)
 	}
@@ -50,6 +50,8 @@ func TestValidateOrkflowDoesNotWriteAndReturnsDocumentIssues(t *testing.T) {
 func TestValidateOrkflowWarnsAboutAPinThatKeepsEveryImagesOwnUser(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore()})
 	const allDefault = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-default-user
 pins:
   build: {}
@@ -99,7 +101,7 @@ tasks:
 	// And an unpinned document's response is exactly what it was before pins
 	// existed: no pins, no issues.
 	unpinned, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(
-		&orkstackv1.ValidateOrkflowRequest{Yaml: "name: unpinned-doc\ntasks:\n  - id: a\n    uses: busybox:latest\n"}))
+		&orkstackv1.ValidateOrkflowRequest{Yaml: "apiVersion: orkstack/v1\nkind: Orkflow\nname: unpinned-doc\ntasks:\n  - id: a\n    uses: busybox:latest\n"}))
 	if err != nil {
 		t.Fatalf("ValidateOrkflow (unpinned) = %v", err)
 	}

@@ -37,6 +37,8 @@ const snapshotOverlayFixture = "testdata/history/run-snapshot-overlay-v1.json"
 // payload half re-executes it, so each recorded object can be compared with
 // the run current code hands that write.
 const snapshotOverlayFixtureDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: overlaid
 version: "1.0.0"
 inputs:
@@ -253,7 +255,7 @@ func (c *countingStore) total() int64 { return c.fullBytes.Load() + c.overlayByt
 // overlayFlatDocument is n plain tasks that start together.
 func overlayFlatDocument(name string, n int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "name: %s\nversion: \"1.0.0\"\ntasks:\n", name)
+	fmt.Fprintf(&b, "apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n", name)
 	for i := 0; i < n; i++ {
 		fmt.Fprintf(&b, "  - id: t%04d\n    uses: shell\n    needs: []\n    with: {op: exec}\n", i)
 	}

@@ -98,7 +98,7 @@ func TestDeliveries_TwoEngines_FilteredListingAndItsNextPage(t *testing.T) {
 		orkflowName, hook.ID)
 
 	if _, err := replicaA.flows.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-		Yaml: fmt.Sprintf("name: %s\nversion: \"0.1.0\"\ndescription: delivery record probe.\ntasks:\n"+
+		Yaml: fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"0.1.0\"\ndescription: delivery record probe.\ntasks:\n"+
 			"  - id: hello\n    uses: shell\n    timeout_seconds: 60\n    with:\n      op: exec\n"+
 			"      command: [\"sh\", \"-c\", \"echo hello\"]\n", orkflowName),
 	})); err != nil {

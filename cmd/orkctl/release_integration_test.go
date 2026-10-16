@@ -366,7 +366,9 @@ func (s *relStack) apply(name, yaml string) {
 }
 
 func (s *relStack) applyGated(name string) {
-	s.apply(name, fmt.Sprintf(`name: %s
+	s.apply(name, fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 description: a run held in flight by a gate.
 tasks:
   - id: gate
@@ -385,7 +387,9 @@ tasks:
 }
 
 func (s *relStack) applyPinnedGated(name string) {
-	s.apply(name, fmt.Sprintf(`name: %s
+	s.apply(name, fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 description: a pinned run held in flight by a gate.
 pins:
   build:
@@ -411,7 +415,9 @@ tasks:
 }
 
 func (s *relStack) applyQuick(name string) {
-	s.apply(name, fmt.Sprintf(`name: %s
+	s.apply(name, fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 description: one quick task.
 tasks:
   - id: only

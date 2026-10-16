@@ -379,7 +379,9 @@ func TestIntegration_APinnedRunFinishesOnItsOwnVersionAcrossAPromotion(t *testin
 // promotionOrkflowYAML is a one-task orkflow that says which version it is, so
 // a run's own output identifies the document that produced it.
 func promotionOrkflowYAML(name, version, marker string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "%s"
 description: version %s
 tasks:
@@ -394,7 +396,9 @@ tasks:
 // slowPromotionOrkflowYAML is the same, but takes long enough that the pointer
 // can be moved while it runs.
 func slowPromotionOrkflowYAML(name, version string, seconds int) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "%s"
 description: version %s (slow)
 tasks:

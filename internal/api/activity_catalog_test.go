@@ -168,7 +168,9 @@ func applyServiceWithRegistry(t *testing.T) (*api.Service, *movableRegistry, str
 	return svc, registry, host
 }
 
-const applyDocument = `name: pinned
+const applyDocument = `apiVersion: orkstack/v1
+kind: Orkflow
+name: pinned
 tasks:
   - id: one
     uses: shell
@@ -215,7 +217,7 @@ func TestApplyOrkflow_PinsTheIndexDigestAtApplyTime(t *testing.T) {
 }
 
 // Re-applying an unchanged document against an unchanged tag is a no-op: same
-// version, created=false. This is what `sameStoredOrkflow` decides, and it is
+// version, created=false. This is what `artifacts.SameStoredOrkflow` decides, and it is
 // the case ImageRef.resolved_at had to be removed for (§4.4).
 func TestApplyOrkflow_ReApplyingAnUnchangedDocumentIsIdempotent(t *testing.T) {
 	svc, _, _ := applyServiceWithRegistry(t)

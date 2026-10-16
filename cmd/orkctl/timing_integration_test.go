@@ -199,7 +199,9 @@ func awaitTaskScheduled(ctx context.Context, t *testing.T, replica *engineReplic
 }
 
 func twoTaskTimingOrkflow(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: task timing probe — queue wait, then run.
 tasks:
@@ -360,7 +362,9 @@ func TestIntegration_RetriedTaskTimingSplitsAttempts(t *testing.T) {
 	s.startOrker()
 
 	name := fmt.Sprintf("timing-flaky-%d-%d", os.Getpid(), time.Now().UnixNano())
-	s.apply(fmt.Sprintf(`name: %s
+	s.apply(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: task timing probe — a task that fails once.
 tasks:
@@ -430,7 +434,9 @@ func TestIntegration_AFailedTaskCarriesItsStart(t *testing.T) {
 	s.startOrker()
 
 	name := fmt.Sprintf("timing-fail-%d-%d", os.Getpid(), time.Now().UnixNano())
-	s.apply(fmt.Sprintf(`name: %s
+	s.apply(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: task timing probe — a task that fails.
 tasks:
@@ -474,7 +480,9 @@ func TestIntegration_ReclaimedAttemptRecordsRenderUnavailable(t *testing.T) {
 	s.startOrker()
 
 	name := fmt.Sprintf("timing-reclaim-%d-%d", os.Getpid(), time.Now().UnixNano())
-	s.apply(fmt.Sprintf(`name: %s
+	s.apply(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: task timing probe — records reclaimed.
 tasks:

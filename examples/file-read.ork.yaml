@@ -8,6 +8,8 @@
 #
 # This pipeline seeds a file with the shell, then round-trips it through
 # compression and verifies the digest survived.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: file-read
 version: "0.2.0"
 description: Seed a file, compress it, decompress it, and prove the bytes round-tripped.

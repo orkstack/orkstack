@@ -32,7 +32,9 @@ import (
 // compare a local item run with the Orker's own, and item 2 exits 1 on its
 // first attempt so one item retries.
 func eachCLIDoc(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 inputs:
   parts:

@@ -7,28 +7,8 @@
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
+	import { API_VERSION, ORKFLOW_PLACEHOLDER } from '$lib/placeholders';
 	import type { PageProps } from './$types';
-
-	// The placeholder must be a document that actually APPLIES: `uses:`, the
-	// only image-selecting field in the DSL, selects a first-party activity
-	// image. It mirrors examples/http-post.ork.yaml.
-	const PLACEHOLDER = `name: my-orkflow
-version: "0.1.0"
-description: Describe what this orkflow does.
-
-inputs:
-  url:
-    type: string
-    default: "https://httpbin.org/get"
-
-tasks:
-  - id: fetch
-    uses: http
-    with:
-      op: get
-      url: "{{ .inputs.url }}"
-      captureBodyAs: response
-`;
 
 	let { data }: PageProps = $props();
 
@@ -177,14 +157,14 @@ tasks:
 	}}
 >
 	<div class="flex flex-col gap-1.5">
-		<label for="yaml" class="text-sm font-medium text-fg"> Orkflow YAML (DSL v0) </label>
+		<label for="yaml" class="text-sm font-medium text-fg"> Orkflow YAML (apiVersion: {API_VERSION}) </label>
 		<textarea
 			id="yaml"
 			data-testid="apply-yaml"
 			bind:value={yaml}
 			rows="18"
 			spellcheck="false"
-			placeholder={PLACEHOLDER}
+			placeholder={ORKFLOW_PLACEHOLDER}
 			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs [font-variant-ligatures:none] placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 		></textarea>
 		<div class="flex flex-wrap gap-3 text-sm">

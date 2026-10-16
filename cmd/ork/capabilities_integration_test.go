@@ -31,7 +31,9 @@ import (
 
 // capsFanOut declares 5,000 items over its run input, so its submit needs
 // the each-items-10k capability.
-const capsFanOut = `name: caps-wide
+const capsFanOut = `apiVersion: orkstack/v1
+kind: Orkflow
+name: caps-wide
 version: "1.0.0"
 inputs:
   parts: {type: array}

@@ -24,6 +24,8 @@ An activity image may expose one operation selector, spelled `op`, inside its
 arguments for that operation.
 
 ```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
 name: notify
 inputs:
   url:

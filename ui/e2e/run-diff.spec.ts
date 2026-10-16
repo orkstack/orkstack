@@ -48,7 +48,9 @@ let succeeded = '';
 let failed = '';
 
 function probeWorkflow(): string {
-	return `name: ${NAME}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${NAME}
 version: "0.1.0"
 description: Run diff coverage.
 inputs:

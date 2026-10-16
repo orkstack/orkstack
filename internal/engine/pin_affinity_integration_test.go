@@ -751,6 +751,8 @@ const pinAffinityPinTimeoutSeconds = 300
 // printf format strings of their own, and %%s in a Go format string is a
 // reliable way to write a test that lies about what the container ran.
 const pinRoundTripYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: __NAME__
 version: 0.1.0
 pins:
@@ -803,6 +805,8 @@ tasks:
 // test does not wait out the window, it polls for the winner's identity and
 // kills as soon as it knows (awaitPinDispatch).
 const pinHoldYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: __NAME__
 version: 0.1.0
 pins:

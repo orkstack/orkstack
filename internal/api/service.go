@@ -777,7 +777,7 @@ func (s *Service) ApplyOrkflow(
 			wf.GetName(), wf.GetVersion(), ns.GetName())
 	}
 	resp := &orkstackv1.ApplyOrkflowResponse{
-		Orkflow: stored,
+		Orkflow: shown(stored),
 		Created: created,
 	}
 	for _, issue := range issues { // WARNING only: an ERROR already returned
@@ -1202,7 +1202,27 @@ func (s *Service) GetOrkflow(
 		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
 			req.Msg.GetName(), req.Msg.GetVersion(), ns.GetName())
 	}
-	return connect.NewResponse(&orkstackv1.GetOrkflowResponse{Orkflow: wf}), nil
+	return connect.NewResponse(&orkstackv1.GetOrkflowResponse{Orkflow: shown(wf)}), nil
+}
+
+// shown returns wf with its source as OrkStack shows it (dsl.EmittedSource):
+// a version stored before the header existed gains the two header lines after
+// its leading comments, and every other source is returned as stored. It is
+// applied only where YAML is shown — GetOrkflow, ListOrkflows, ApplyOrkflow's
+// returned document and DiffOrkflowVersions — never at a store read, so no
+// stored byte and no evidence member moves (docs/DSL.md, "The document
+// header"). wf itself is never modified.
+func shown(wf *orkstackv1.Orkflow) *orkstackv1.Orkflow {
+	if wf == nil {
+		return nil
+	}
+	source := dsl.EmittedSource(wf.GetSourceYaml())
+	if source == wf.GetSourceYaml() {
+		return wf
+	}
+	out := proto.Clone(wf).(*orkstackv1.Orkflow)
+	out.SourceYaml = source
+	return out
 }
 
 // ListOrkflows returns the latest version of every orkflow in one namespace,
@@ -1257,6 +1277,9 @@ func (s *Service) ListOrkflows(
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
 		response.NextPageToken = token
+	}
+	for i, wf := range response.Orkflows {
+		response.Orkflows[i] = shown(wf)
 	}
 	return connect.NewResponse(response), nil
 }

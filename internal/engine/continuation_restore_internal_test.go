@@ -29,6 +29,8 @@ import (
 func restoredOrkflow(t *testing.T) *orkstackv1.Orkflow {
 	t.Helper()
 	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pipeline
 version: v1
 inputs:
@@ -444,6 +446,8 @@ func TestReadyLoop_HeldTasksCostConstantPerPass(t *testing.T) {
 func awaitedRestoreOrkflow(t *testing.T) *orkstackv1.Orkflow {
 	t.Helper()
 	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: awaited
 version: v1
 tasks:

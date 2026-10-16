@@ -7,9 +7,11 @@ it needs to run. Two rules run through all of it: environment variables are
 an ordinary way to configure a task, and caching is the author's assertion,
 not a property OrkStack expects of tasks.
 
-Every example cites the sections below by title in its header
-(`# Pattern: docs/ORKFLOW_PATTERNS.md, "<title>"`). The test suite compiles
-every example, runs every `orkctl run plan --file` line in its header, and
+Every example cites the sections below by title in its comment header, the
+leading `#` lines (`# Pattern: docs/ORKFLOW_PATTERNS.md, "<title>"`); the
+document header (`apiVersion: orkstack/v1`, `kind: Orkflow`; [the DSL
+reference](DSL.md), "The document header") follows them. The test suite compiles
+every example, runs every `orkctl run plan --file` line in its comment header, and
 runs it end to end
 against a real stack (all but `advanced-demo`, which needs the internet).
 
@@ -442,7 +444,7 @@ how each kind of task reads).
   every other task that depends on it is unreached.
 - `--assert-runs TASK` and `--assert-skipped TASK` make a plan a CI check: it
   exits `4` when the plan contradicts one.
-- Every `orkctl run plan --file` line in an example's header is run by the
+- Every `orkctl run plan --file` line in an example's comment header is run by the
   test suite.
 - `orkctl task run` runs one task's filter or template locally.
 
@@ -454,7 +456,7 @@ Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
 
 Examples marked *older* do not follow every rule of this guide; see
 [`examples/README.md`](../examples/README.md) for which, and why they are not
-edited. Follow the guide, not them.
+edited except for their document header. Follow the guide, not them.
 
 | Example | Shows | Sections |
 |---|---|---|

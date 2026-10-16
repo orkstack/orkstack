@@ -86,7 +86,9 @@ function startOrker() {
 // SIGTERM, so a cancellation is visible for the whole grace window rather than
 // for the instant a well-behaved workload takes to exit.
 function orkflow(): string {
-	return `name: ${ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${ORKFLOW}
 version: "0.1.0"
 description: Live attempt introspection — a task that keeps talking.
 

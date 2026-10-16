@@ -70,7 +70,7 @@ interpolation, and per-environment differences are separate documents.
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `apiVersion` | yes | Exactly `orkstack/v1`. |
-| `kind` | yes | Exactly `Automation`; it is what tells `orkctl apply` this is not an Orkflow. |
+| `kind` | yes | Exactly `Automation`; an Orkflow says `kind: Orkflow`, and `orkctl apply` dispatches on it. |
 | `namespace` | yes | The one namespace the document describes, a slug. Required and authoritative: never inferred from `-n`, `ORK_NAMESPACE` or a saved default, so a document that prunes can never land in the wrong namespace by accident of a shell. |
 | `settings` | no | The namespace's settings, as an overlay. |
 | `schedules`, `triggers`, `webhooks` | no | `name: entry` mappings. |
@@ -272,9 +272,9 @@ orkctl apply <file|dir>... [--dry-run | --check] [--prune]
 
 One Orkflow file with none of the automation flags behaves as a plain Orkflow
 apply (`--json` prints `ApplyOrkflowResponse`). Otherwise each argument is a file, or a directory read non-recursively for
-`*.ork.yaml` and `*.ork.yml` in lexical order. A file with no `kind` and no
-`apiVersion` is an Orkflow; `kind: Automation` is an automation document;
-anything else is refused. Two automation documents naming one namespace are
+`*.ork.yaml` and `*.ork.yml` in lexical order. A file's `kind:` decides:
+`kind: Orkflow` is an Orkflow, `kind: Automation` an automation document, and
+a file with no `kind`, or any other, is refused before anything is sent. Two automation documents naming one namespace are
 refused. Only an `-n` typed on the command line is checked against a
 document's namespace; `ORK_NAMESPACE` and the saved default never apply to
 it.
@@ -282,7 +282,10 @@ it.
 Nothing is written until every document has been read, validated and planned:
 
 1. Each Orkflow document is validated, and its compiled name and version
-   looked up: **new**, **identical** (stored with byte-identical source) or
+   looked up: **new**, **identical** (stored with
+   the same source, not counting the two header lines written first — so a
+   version stored before the header existed is identical to its file with them
+   added; `docs/DSL.md`, "The document header") or
    **conflicting** (stored with different source — an error).
 2. Each automation document is planned, told which Orkflow versions this
    invocation stores first.

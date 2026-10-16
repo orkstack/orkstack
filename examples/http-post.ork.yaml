@@ -7,6 +7,8 @@
 # Header values are quoted before they reach argv, the same argv discipline
 # activity-shell applies to `command`, so a rendered value cannot inject a
 # request argument.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: http-post
 version: "0.2.0"
 description: "POST a JSON body with `op: post` and archive the echoed response."

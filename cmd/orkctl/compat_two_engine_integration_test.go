@@ -101,7 +101,9 @@ func resolvedOn(ctx context.Context, t *testing.T, replica *engineReplica, name 
 // drops output url, adds sbom, rewrites every task).
 func compatReleaseBlock(name, version string) string {
 	if version == "2.1.0" {
-		return fmt.Sprintf(`name: %s
+		return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "2.1.0"
 inputs:
   image: { type: string, required: true }
@@ -119,7 +121,9 @@ tasks:
     with: { op: eval, command: ["sh", "-c", "echo publish"] }
 `, name)
 	}
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "3.0.0"
 inputs:
   image: { type: string, required: true }
@@ -213,7 +217,9 @@ func TestIntegration_CallersSeeCompositionTriggersAndSchedules(t *testing.T) {
 	schedule := "nightly-" + stamp
 
 	s.applyFile(t, s.a, compatReleaseBlock(block, "2.1.0"))
-	s.applyFile(t, s.a, fmt.Sprintf(`name: %s
+	s.applyFile(t, s.a, fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "4.2.0"
 tasks:
   - id: release
@@ -304,7 +310,9 @@ func TestIntegration_ConcurrentPromotionNeverLandsAnUnacknowledgedBreak(t *testi
 	s := startCompatStack(ctx, t)
 	name := fmt.Sprintf("gate-race-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	doc := func(version, inputs string) string {
-		return fmt.Sprintf(`name: %s
+		return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "%s"
 %soutputs:
   out: '{{ .tasks.report.output.value }}'

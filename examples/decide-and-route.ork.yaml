@@ -23,6 +23,8 @@
 #   orkctl run plan --file examples/decide-and-route.ork.yaml --output decide='{"result":{"route":"canary","notify":true}}' --assert-runs canary --assert-skipped direct --assert-skipped hold --assert-runs notify-owner --assert-runs report
 #   orkctl run plan --file examples/decide-and-route.ork.yaml --output decide='{"result":{"route":"direct","notify":false}}' --assert-runs direct --assert-skipped canary --assert-skipped notify-owner --assert-runs report
 #   orkctl run plan --file examples/decide-and-route.ork.yaml --output decide='{"result":{"route":"hold","notify":true}}' --assert-runs hold --assert-skipped notify-owner --assert-runs report
+apiVersion: orkstack/v1
+kind: Orkflow
 name: decide-and-route
 version: "0.1.0"
 description: "Decide a rollout route in a json task, branch three ways on its value, and re-join after the branch that ran."

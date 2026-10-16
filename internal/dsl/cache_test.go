@@ -12,6 +12,8 @@ import (
 
 func cacheDoc(cache string) []byte {
 	return []byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: cached
 tasks:
   - id: featurize
@@ -134,6 +136,8 @@ func TestCompile_CacheTTLAndScopeRules(t *testing.T) {
 
 func TestCompile_CacheRefusesPin(t *testing.T) {
 	_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: cached
 pins: {build: {}}
 tasks:
@@ -151,6 +155,8 @@ tasks:
 
 func TestCompile_AwaitRefusesCache(t *testing.T) {
 	_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: cached
 tasks:
   - id: gate
@@ -166,6 +172,8 @@ tasks:
 
 func TestCompile_ComposedTaskRefusesCache(t *testing.T) {
 	_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: caller
 tasks:
   - id: release

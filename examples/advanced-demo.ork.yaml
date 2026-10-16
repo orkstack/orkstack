@@ -6,6 +6,8 @@
 # requests, network isolation, a cancellation grace period, and a task that
 # emits one line a second so a log-stream viewer has something continuous to
 # render instead of one final burst.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: advanced-demo
 version: "1.0.1"
 description: >-

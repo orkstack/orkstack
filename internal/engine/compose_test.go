@@ -244,6 +244,8 @@ func (h *composeHarness) events(runID, taskID string) []*orkstackv1.Event {
 }
 
 const composedParentDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: parent
 version: "1.0.0"
 inputs:
@@ -265,6 +267,8 @@ tasks:
 `
 
 const composedChildDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -691,6 +695,8 @@ func TestRunWorkflow_ComposedTaskWithoutAPlannedChildIsInvalidComposition(t *tes
 }
 
 const outputsDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: block
 version: "1.0.0"
 inputs:
@@ -850,7 +856,7 @@ func TestRunWorkflow_TopLevelResultIsCompact(t *testing.T) {
 	// 1,000 synthetic tasks: the result the run completes with must not grow
 	// with them (AGENTS.md §2.2; it used to be 1.5 KB per task).
 	var doc strings.Builder
-	doc.WriteString("name: wide\ntasks:\n")
+	doc.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: wide\ntasks:\n")
 	for i := 0; i < 1000; i++ {
 		fmt.Fprintf(&doc, "  - id: t%04d\n    uses: shell\n    needs: []\n    with: { op: eval, command: [\"true\"] }\n", i)
 	}
@@ -1167,6 +1173,8 @@ func TestRunWorkflow_SiblingFailureCancelsTheRunningChild(t *testing.T) {
 }
 
 const composedOnlyDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: composed-only
 tasks:
   - id: release
@@ -1174,6 +1182,8 @@ tasks:
 `
 
 const mixedComposedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: mixed-composed
 tasks:
   - id: crunch
@@ -1217,6 +1227,8 @@ func TestCheckAllowedPools_SkipsComposedTasks(t *testing.T) {
 }
 
 const simulateComposedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: plan-composed
 tasks:
   - id: build

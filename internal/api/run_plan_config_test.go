@@ -57,6 +57,8 @@ func TestSubmitRunPinsDurabilityConfigurationIntoRunPlan(t *testing.T) {
 				NewRunID:              func() string { return "run-plan" },
 			})
 			if _, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: plan-test
 version: 1.0.0
 tasks:

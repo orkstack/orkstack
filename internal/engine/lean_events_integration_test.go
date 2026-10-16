@@ -28,6 +28,8 @@ import (
 const leanFanOutItems = 200
 
 const leanFanOutDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: lean-fan
 tasks:
   - id: list

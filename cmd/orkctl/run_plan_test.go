@@ -14,7 +14,9 @@ import (
 // path it was given, and a relative one keeps the golden machine-independent.
 const advancedDemoPath = "../../examples/advanced-demo.ork.yaml"
 
-const planFailsDocument = `name: plan-fails
+const planFailsDocument = `apiVersion: orkstack/v1
+kind: Orkflow
+name: plan-fails
 version: "1.0.0"
 inputs:
   a:

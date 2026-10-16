@@ -57,7 +57,9 @@ const out = proofOut(PROOF_DIR);
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
 function orkflowYaml(): string {
-	return `name: ${ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${ORKFLOW}
 version: "0.1.0"
 description: Scoped webhook browser proof.
 tasks:

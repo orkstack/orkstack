@@ -23,6 +23,8 @@ import (
 // published without the run waiting for each.
 
 const leanChainDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: lean-chain
 tasks:
   - id: a

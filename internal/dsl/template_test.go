@@ -56,7 +56,9 @@ func TestReferencedUpstream_SeesEverySpellingTheCheckerAccepts(t *testing.T) {
 // validate, naming the key, never discovered at run time.
 func TestValidate_LiteralBracesInAWithStringNeedTheEscape(t *testing.T) {
 	doc := func(filter string) []byte {
-		return []byte(`name: braces
+		return []byte(`apiVersion: orkstack/v1
+kind: Orkflow
+name: braces
 version: "0.1.0"
 tasks:
   - id: q

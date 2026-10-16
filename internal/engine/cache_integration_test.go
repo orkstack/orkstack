@@ -638,7 +638,7 @@ func TestIntegration_CacheSubmitRefusesAPoolWhoseOrkerPredatesCaching(t *testing
 		NewRunID: func() string { return fmt.Sprintf("ork-cache-i13-%d", time.Now().UnixNano()) },
 	})
 	name := fmt.Sprintf("cached-i13-%d", token)
-	if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: "name: " + name +
+	if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: "apiVersion: orkstack/v1\nkind: Orkflow\nname: " + name +
 		"\nversion: \"1\"\ntasks:\n  - id: featurize\n    uses: shell\n    cache: {enabled: true}\n    with: {op: exec, command: [\"true\"]}\n"})); err != nil {
 		t.Fatalf("apply: %v", err)
 	}

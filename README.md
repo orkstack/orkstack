@@ -8,7 +8,8 @@
 
 ---
 
-> Status: pre-release.
+> Status: pre-release; breaking changes are listed in
+> [CHANGELOG.md](./CHANGELOG.md).
 
 ## Why
 
@@ -103,6 +104,10 @@ make up             # Temporal, MinIO, a registry, engine, orker and UI, health-
 ./bin/orkctl run submit hello-ork --watch
 make down           # stop everything (data is kept)
 ```
+
+An Orkflow is a YAML document that begins with `apiVersion: orkstack/v1` and
+`kind: Orkflow`; `examples/hello.ork.yaml` is a small one, and
+[docs/DSL.md](./docs/DSL.md) is the reference.
 
 [`examples/README.md`](./examples/README.md) lists every example and what it
 needs to run.

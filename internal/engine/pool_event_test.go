@@ -24,6 +24,8 @@ import (
 // user-visible string the sweep cannot see is covered by a test.
 
 const poolDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pool-routing
 tasks:
   - id: crunch
@@ -125,6 +127,8 @@ func TestRunWorkflow_TaskRunRecordsThePoolItRanOn(t *testing.T) {
 // by: namespace and pool.
 func TestRunWorkflow_ExecuteTaskInputCarriesNamespaceAndPool(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: payments
 name: pool-input
 tasks:
@@ -181,6 +185,8 @@ tasks:
 func TestRunWorkflow_TheReportedPoolNamesTheOrkersTheTaskReached(t *testing.T) {
 	// Same pool, spelled both ways, plus a pool of its own.
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pool-agreement
 tasks:
   - id: silent

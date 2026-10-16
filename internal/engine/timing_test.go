@@ -108,6 +108,8 @@ func TestRunWorkflow_StartedAtIsTheOrkersStartNotTheDispatch(t *testing.T) {
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-started-at",
 		compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: one
 tasks:
   - id: only
@@ -154,6 +156,8 @@ func TestRunWorkflow_StartedAtComesFromTheFailureDetail(t *testing.T) {
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-failed-start",
 		compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: doomed
 tasks:
   - id: doomed
@@ -204,6 +208,8 @@ func TestRunWorkflow_LeavesStartedAtUnsetWhenNoOrkerReported(t *testing.T) {
 			h.env.SetStartTime(timingStart)
 			h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-report",
 				compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: lost
 tasks:
   - id: lost
@@ -256,6 +262,8 @@ func TestRunWorkflow_AdoptedCommitReportsTheCommittingAttemptsStart(t *testing.T
 	h.env.SetStartTime(timingStart)
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-adopted",
 		compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: adopted
 tasks:
   - id: committed

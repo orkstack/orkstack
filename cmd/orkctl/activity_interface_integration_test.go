@@ -220,7 +220,7 @@ func TestInterfaceManifests_TransformImagesAreCheckedAtValidate(t *testing.T) {
 
 	name := fmt.Sprintf("iface-tx-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 	head := func(uses string) string {
-		return fmt.Sprintf("name: %s\nversion: \"1.0.0\"\ntasks:\n  - id: q\n    uses: %s\n    pool: %s\n    network: none\n    with:\n", name, uses, stack.pool)
+		return fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n  - id: q\n    uses: %s\n    pool: %s\n    network: none\n    with:\n", name, uses, stack.pool)
 	}
 	for _, tc := range []struct {
 		what, doc, field, contains string
@@ -249,7 +249,7 @@ func TestInterfaceManifests_TransformImagesAreCheckedAtValidate(t *testing.T) {
 }
 
 func interfaceDocuments(name, pool string) (gzpi, missing, warned string) {
-	head := fmt.Sprintf("name: %s\nversion: \"1.0.0\"\ntasks:\n  - id: copy\n    uses: file\n    pool: %s\n    with:\n", name, pool)
+	head := fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n  - id: copy\n    uses: file\n    pool: %s\n    with:\n", name, pool)
 	return head + "      op: gzpi\n      src: in/x\n",
 		head + "      op: copy\n",
 		head + "      op: copy\n      src: in/x\n      srcs: [y]\n"
@@ -320,7 +320,9 @@ func TestInterfaceManifests_AWarnedDocumentStillRuns(t *testing.T) {
 	// an artifact an upstream task writes (a literal `in/x` has nothing to
 	// copy). The undeclared `srcs` is the same warning; the image ignores it.
 	name := fmt.Sprintf("iface-run-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
-	doc := fmt.Sprintf(`name: %s
+	doc := fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "1.0.0"
 tasks:
   - id: seed
@@ -434,7 +436,7 @@ func TestInterfaceManifests_ADocumentNamingAnUnlabelledImageIsUnchanged(t *testi
 	reference := pushUnlabelledImage(ctx, t, testRegistry(), "orkstack-test/interface-plain")
 	name := fmt.Sprintf("iface-plain-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 	// Keys no interface declares: with no label, nothing is checked.
-	doc := fmt.Sprintf("name: %s\nversion: \"1.0.0\"\ntasks:\n  - id: one\n    uses: %s\n    pool: %s\n    with:\n      anything: 1\n      op: whatever\n",
+	doc := fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n  - id: one\n    uses: %s\n    pool: %s\n    with:\n      anything: 1\n      op: whatever\n",
 		name, reference, stack.pool)
 	path := writeInterfaceDocument(t, name, doc)
 	validated := requireCLI(t, stack.cli, "validate", "orkflow", "validate", path)

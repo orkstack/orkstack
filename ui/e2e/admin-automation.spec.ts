@@ -64,7 +64,9 @@ const transcript: string[] = [];
 const note = (line: string) => transcript.push(line);
 
 function orkflowYaml(): string {
-	return `name: ${ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${ORKFLOW}
 version: "0.1.0"
 description: Declarative automation browser proof.
 tasks:

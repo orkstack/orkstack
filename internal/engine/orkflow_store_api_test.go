@@ -206,6 +206,8 @@ func TestOrkflowPaths_ReportAMissingOrkflowAsNotFound(t *testing.T) {
 // TestIntegration_TwoNamespacesStayDisjointThroughTheCLI.
 func TestApplyOrkflow_StoresTheNamespaceTheDocumentNames(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: payments
 name: nightly-close
 tasks:
@@ -240,8 +242,8 @@ tasks:
 
 	// The default namespace, named explicitly or left out, still applies.
 	for _, accepted := range []string{
-		"namespace: " + artifacts.DefaultNamespace + "\nname: nightly-close\ntasks:\n  - id: settle\n    uses: shell\n",
-		"name: nightly-close\ntasks:\n  - id: settle\n    uses: shell\n",
+		"apiVersion: orkstack/v1\nkind: Orkflow\nnamespace: " + artifacts.DefaultNamespace + "\nname: nightly-close\ntasks:\n  - id: settle\n    uses: shell\n",
+		"apiVersion: orkstack/v1\nkind: Orkflow\nname: nightly-close\ntasks:\n  - id: settle\n    uses: shell\n",
 	} {
 		if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 			Yaml: accepted,

@@ -231,6 +231,8 @@ func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunRespons
 }
 
 const diamondDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: diamond
 inputs:
   take_c:
@@ -256,6 +258,8 @@ tasks:
 `
 
 const forwardDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: forward
 tasks:
   - id: second
@@ -272,6 +276,8 @@ tasks:
 `
 
 const skippedPinDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: skipped-pin
 inputs:
   build:
@@ -296,6 +302,8 @@ tasks:
 `
 
 const outputConditionDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: output-condition
 tasks:
   - id: x
@@ -374,6 +382,8 @@ func TestSimulate_AgreesWithTheInterpreter(t *testing.T) {
 }
 
 const wavesDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: waves
 tasks:
   - id: build
@@ -431,6 +441,8 @@ func TestSimulate_WaveIsOneMoreThanTheDeepestNeed(t *testing.T) {
 }
 
 const smokeDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: smoke
 inputs:
   region:
@@ -490,6 +502,8 @@ func TestSimulate_SkippedTaskKeepsItsWouldBeWaveAndIsNotCounted(t *testing.T) {
 }
 
 const twoSkippedNeedsDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: two-skipped
 inputs:
   on:
@@ -526,6 +540,8 @@ func TestSimulate_UpstreamSkipNamesTheFirstSkippedNeed(t *testing.T) {
 }
 
 const conditionErrorDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: condition-error
 inputs:
   a:
@@ -606,6 +622,8 @@ func TestSimulate_AssumedOutputDrivesAnUpstreamCondition(t *testing.T) {
 }
 
 const publishDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: publish-gate
 inputs:
   go:
@@ -654,6 +672,8 @@ func TestSimulate_UnsuppliedUpstreamOutputIsEmptyAndReported(t *testing.T) {
 }
 
 const defaultsDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: defaults
 inputs:
   enabled:
@@ -774,6 +794,8 @@ func TestClassify_UsesTheSharedSkipReasons(t *testing.T) {
 }
 
 const simulateEachInputDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: simulate-each-input
 inputs:
   regions: {type: array}
@@ -789,6 +811,8 @@ tasks:
 `
 
 const simulateEachTaskDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: simulate-each-task
 tasks:
   - id: list

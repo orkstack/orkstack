@@ -211,7 +211,9 @@ sed -i.bak -e 's/echo one/echo forked/' -e 's/1\.0\.0/1\.1\.0/' "$1"`)
 func writeVersionScopedOrkflow(t *testing.T, name, version, pool, marker string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+"-"+version+".ork.yaml")
-	document := fmt.Sprintf(`name: %s
+	document := fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "%s"
 description: %s
 tasks:

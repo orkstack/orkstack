@@ -44,6 +44,7 @@
 	} from '$lib/gen/orkstack/v1/automation_pb';
 	import { ValidationSeverity } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { namespaceLabel } from '$lib/namespace';
+	import { automationPlaceholder } from '$lib/placeholders';
 	import { shellQuote } from '$lib/runDetail';
 	import type { PageProps } from './$types';
 
@@ -345,7 +346,7 @@
 		bind:value={yaml}
 		rows="16"
 		spellcheck="false"
-		placeholder={'apiVersion: orkstack/v1\nkind: Automation\nnamespace: ' + namespaceLabel(namespace) + '\n\ntriggers:\n  github-deploy:\n    orkflow: deploy'}
+		placeholder={automationPlaceholder(namespaceLabel(namespace))}
 		class="mt-3 w-full rounded-md border border-border bg-surface p-3 font-mono text-xs text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 	></textarea>
 	<div class="mt-3 flex flex-wrap items-center gap-4">

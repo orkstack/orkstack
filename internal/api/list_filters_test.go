@@ -21,7 +21,9 @@ import (
 
 // orkflowYAML is a minimal orkflow named name, labelled team=team.
 func orkflowYAML(name, team string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "1.0.0"
 description: the %s orkflow
 labels: {team: %s}

@@ -302,6 +302,8 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 
 	// ── 1. a task pinned to a pool runs on that pool's Orker, and only there ──
 	twoPoolJob := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: %s
 version: 0.1.0
 tasks:
@@ -322,6 +324,8 @@ tasks:
 
 	// ── 3's setup, submitted FIRST so the visibility argument below holds ──
 	coldJob := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: %s
 version: 0.1.0
 tasks:
@@ -354,6 +358,8 @@ tasks:
 
 	// ── 2. a pool the namespace forbids is refused, at apply and at submit ──
 	forbiddenJob := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: %s
 version: 0.1.0
 tasks:

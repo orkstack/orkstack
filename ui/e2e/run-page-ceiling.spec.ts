@@ -72,7 +72,7 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
 // gatedOrkflow is the task soak's flat-short shape at the gated size: every
 // task needs nothing and runs the shortest container there is.
 function gatedOrkflow(): string {
-	const lines = [`name: ${GATED_ORKFLOW}`, 'version: "0.1.0"', 'description: A flat stage at the gated task size.', 'tasks:'];
+	const lines = ['apiVersion: orkstack/v1', 'kind: Orkflow', `name: ${GATED_ORKFLOW}`, 'version: "0.1.0"', 'description: A flat stage at the gated task size.', 'tasks:'];
 	for (let i = 0; i < GATED_TASKS; i++) {
 		lines.push(`  - id: t${i}`, '    uses: shell', '    network: none', '    with: {op: exec, command: [echo, ok]}');
 	}

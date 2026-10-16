@@ -45,7 +45,7 @@ func TestIntegration_RecordHistoryGuardLookaheadHistory(t *testing.T) {
 	plan.History = &engine.HistoryLimit{MaxEvents: engine.DefaultHistoryMaxEvents, MaxBytes: 480 << 10, Reserve: engine.DefaultHistoryReserve}
 	runID := fmt.Sprintf("ork-history-guard-lookahead-%d", time.Now().UnixNano())
 	s.transcript.run(runID)
-	s.start(runID, compile(t, "name: guard-lookahead\nversion: \"1.0.0\"\ninputs:\n  blob: {type: string}\ntasks:\n"+guardChain("c", 30, "")),
+	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: guard-lookahead\nversion: \"1.0.0\"\ninputs:\n  blob: {type: string}\ntasks:\n"+guardChain("c", 30, "")),
 		blobInput(t, 4<<10), plan)
 	if status, _ := s.wait(runID, 3*time.Minute); status != enums.WORKFLOW_EXECUTION_STATUS_FAILED {
 		t.Fatalf("the recorded run closed %v, want Failed (never Terminated)", status)

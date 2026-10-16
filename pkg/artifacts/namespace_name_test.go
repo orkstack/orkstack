@@ -126,7 +126,7 @@ func TestNamespaceName_BoundsTheNameWhereTheCompilerDoes(t *testing.T) {
 // legal and means the built-in default — so the registry must resolve it to
 // that same default rather than refuse it as a name.
 func TestNamespaceName_AnAbsentNamespaceIsTheOneNameOutsideTheCorpus(t *testing.T) {
-	wf, err := dsl.Compile([]byte("name: probe\ntasks:\n  - id: only\n    uses: shell\n"))
+	wf, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: probe\ntasks:\n  - id: only\n    uses: shell\n"))
 	if err != nil {
 		t.Fatalf("a document naming no namespace must compile: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestNamespaceName_AnAbsentNamespaceIsTheOneNameOutsideTheCorpus(t *testing.
 func compilerAcceptsNamespace(t *testing.T, name string) bool {
 	t.Helper()
 	document := fmt.Sprintf(
-		"namespace: %q\nname: probe\ntasks:\n  - id: only\n    uses: shell\n", name)
+		"apiVersion: orkstack/v1\nkind: Orkflow\nnamespace: %q\nname: probe\ntasks:\n  - id: only\n    uses: shell\n", name)
 	wf, err := dsl.Compile([]byte(document))
 	switch {
 	case err == nil:

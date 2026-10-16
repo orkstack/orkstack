@@ -17,13 +17,6 @@ import (
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
-const (
-	// APIVersion is the only apiVersion an automation document may name.
-	APIVersion = "orkstack/v1"
-	// Kind is what tells `orkctl apply` a document is not an orkflow.
-	Kind = "Automation"
-)
-
 // Document is a parsed automation document. A nil section is one the
 // document does not manage; a non-nil empty one is managed and empty.
 type Document struct {

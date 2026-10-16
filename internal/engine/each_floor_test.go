@@ -55,6 +55,8 @@ func TestEachBounds_ReplayNeutralForRecordedSizes(t *testing.T) {
 // each item's own `with:` carries pad bytes.
 func flooredFanOutDocument(pad int) string {
 	return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: wide-fan-out
 inputs:
   parts: {type: array}

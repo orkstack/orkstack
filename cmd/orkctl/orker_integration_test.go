@@ -129,7 +129,9 @@ func (s *orkerStack) awaitOrker(i int, want func(*orkstackv1.Orker) bool) *orkst
 func (s *orkerStack) submitSleep(seconds int) string {
 	s.t.Helper()
 	name := fmt.Sprintf("sleep-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
-	source := fmt.Sprintf(`name: %s
+	source := fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 description: orker drain probe.
 tasks:
   - id: sleep

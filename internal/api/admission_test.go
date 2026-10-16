@@ -27,6 +27,8 @@ import (
 // reconcileYAML is the orkflow every admission test knocks with. Its label is
 // what the refusal counter's selection must carry stamped ork.label.tier.
 const reconcileYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: payments
 name: reconcile
 version: 1.0.0

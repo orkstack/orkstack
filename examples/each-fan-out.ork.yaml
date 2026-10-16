@@ -6,6 +6,8 @@
 # task's job — the platform only moves the array to the items.
 #
 # Pattern: docs/ORKFLOW_PATTERNS.md, "Batch transforms into one prepare task"
+apiVersion: orkstack/v1
+kind: Orkflow
 name: each-fan-out
 version: "0.2.0"
 description: "List parts in a json task, convert each part as its own item, merge them."

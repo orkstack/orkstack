@@ -32,7 +32,9 @@ const proof = proofOut(process.env.ORK_PROOF_DIR ? path.join(process.env.ORK_PRO
 const rpc = <T>(method: string, body: unknown) => callEngine<T>(ENGINE, method, body);
 
 function yaml(version: string, defaultValue: string) {
-	return `name: ${FLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${FLOW}
 version: "${version}"
 description: authoring operations
 inputs:
@@ -146,7 +148,7 @@ test('version-pinned submit, typed inputs, CLI, and run-again retain author inte
 
 test('apply validates without writing, imports and exports exact YAML, and guards a dirty draft', async ({ page }) => {
 	await page.goto(`${UI}/apply?ns=${NS}`);
-	await page.getByTestId('apply-yaml').fill('name: broken\nversion: "1"\ntasks: []\n');
+	await page.getByTestId('apply-yaml').fill('apiVersion: orkstack/v1\nkind: Orkflow\nname: broken\nversion: "1"\ntasks: []\n');
 	await page.getByTestId('apply-validate').click();
 	await expect(page.getByTestId('apply-validation-issues')).toBeVisible();
 	const before = await rpc<{ orkflows: { name: string }[] }>('OrkflowService/ListOrkflows', { namespace: NS });
@@ -191,7 +193,9 @@ test('apply validates without writing, imports and exports exact YAML, and guard
 // nothing is stored — rather than by a disabled button.
 test('apply reports a missing required with key as an error and an undeclared key as a warning that survives apply', async ({ page }) => {
 	const name = `${FLOW}-iface`;
-	const missing = `name: ${name}
+	const missing = `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "1.0.0"
 tasks:
   - id: copy
@@ -215,7 +219,9 @@ tasks:
 	const refused = await rpc<{ orkflows?: { name: string }[] }>('OrkflowService/ListOrkflows', { namespace: NS });
 	expect((refused.orkflows ?? []).filter((workflow) => workflow.name === name)).toHaveLength(0);
 
-	const warned = `name: ${name}
+	const warned = `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "1.0.0"
 tasks:
   - id: copy

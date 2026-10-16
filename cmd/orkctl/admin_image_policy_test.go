@@ -287,7 +287,9 @@ func TestNamespaceUpdate_RefusesAnEmptyRequireSignedByLocally(t *testing.T) {
 // ghcr.io/-only floor.
 func migrateDocument(t *testing.T) string {
 	t.Helper()
-	return writeKey(t, "deploy.ork.yaml", `name: deploy
+	return writeKey(t, "deploy.ork.yaml", `apiVersion: orkstack/v1
+kind: Orkflow
+name: deploy
 version: 0.1.0
 tasks:
   - id: prepare

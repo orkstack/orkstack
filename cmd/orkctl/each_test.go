@@ -344,7 +344,9 @@ func TestRunTiming_FanOutRowsAndItems(t *testing.T) {
 	}
 }
 
-const eachCLIYAML = `name: each-cli
+const eachCLIYAML = `apiVersion: orkstack/v1
+kind: Orkflow
+name: each-cli
 version: "1.0.0"
 inputs:
   regions: {type: array}
@@ -385,7 +387,9 @@ func TestRunPlanAndOrkflowGetEachGoldens(t *testing.T) {
 	requireGolden(t, "orkflow-get-each.golden", got.stdout)
 }
 
-const taskRunEachYAML = `name: task-run-each
+const taskRunEachYAML = `apiVersion: orkstack/v1
+kind: Orkflow
+name: task-run-each
 version: "1"
 tasks:
   - id: list

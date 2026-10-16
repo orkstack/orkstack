@@ -180,6 +180,8 @@ func okBehavior(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1
 }
 
 const continuationChainDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: chain
 tasks:
   - id: a
@@ -331,6 +333,8 @@ func recordCommands(h *harness) *commandRecorder {
 }
 
 const spreadDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: spread
 inputs:
   parts: {type: array}
@@ -571,6 +575,8 @@ func TestContinuation_SwitchCarriesSequenceCreatedAtStartedAtDecisionsAndSwitchS
 }
 
 const defaultedInputDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: defaulted
 inputs:
   region: {type: string, default: eu}
@@ -630,6 +636,8 @@ func TestContinuation_SwitchPassesAnEmptyRunIDAndTheOriginalArguments(t *testing
 }
 
 const strideDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: stride
 inputs:
   parts: {type: array}
@@ -735,6 +743,8 @@ func TestSwitchSnapshot_NeverWritesASequenceKey(t *testing.T) {
 // generation.
 func TestContinuation_NoSwitchWhenNothingRemains(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: two
 tasks:
   - id: a
@@ -759,6 +769,8 @@ tasks:
 // no switch is tried again until it has grown by the plan's retry spacing.
 func TestContinuation_WriteFailureNeverSwitchesAndRetriesAfterGrowth(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: long
 tasks:
   - id: t1

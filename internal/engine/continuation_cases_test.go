@@ -22,6 +22,8 @@ import (
 )
 
 const pinComposedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-composed
 version: "1.0.0"
 pins:
@@ -156,6 +158,8 @@ func TestContinuation_UnreadableCheckpointFailsUnavailableAfterTheRestoreTimeout
 // ends the run without a spin.
 func holdNeverSpinsAfterCancel(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: hold-cancel
 tasks:
   - id: slow

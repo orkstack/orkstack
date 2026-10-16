@@ -1012,7 +1012,7 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 	runID := fmt.Sprintf("ork-evidence-%d", time.Now().UnixNano())
 	definition := &orkstackv1.Orkflow{
 		Name: "evidence-cleanup", Namespace: orkNamespace, Version: "1.0.0",
-		SourceYaml: "name: evidence-cleanup\nversion: 1.0.0\n",
+		SourceYaml: "apiVersion: orkstack/v1\nkind: Orkflow\nname: evidence-cleanup\nversion: 1.0.0\n",
 		Tasks: []*orkstackv1.Task{{
 			Id: "completed", Uses: "evidence-test", Image: &orkstackv1.ImageRef{Reference: "evidence-test", Pinned: "evidence-test"},
 			TimeoutSeconds: 30,

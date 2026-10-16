@@ -248,7 +248,9 @@ func requireCLI(
 func writeVersionedCLIOrkflow(t *testing.T, name, version, pool, marker string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+"-"+version+".ork.yaml")
-	document := fmt.Sprintf(`name: %s
+	document := fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "%s"
 description: %s
 tasks:

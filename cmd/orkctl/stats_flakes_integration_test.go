@@ -46,7 +46,9 @@ type flakeCorpus struct {
 // flakeOrkflowYAML is the flake-index fixture: flaky fails on attempt 1 and
 // succeeds on attempt 2; steady succeeds first time.
 func flakeOrkflowYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: flake index probe.
 tasks:

@@ -26,6 +26,8 @@
 #   orkctl run plan --file examples/approval-gate.ork.yaml --input notify_url=https://hooks.example.com/changes --output assess='{"result":{"risky":false}}' --assert-skipped approval --assert-runs apply --assert-runs announce --assert-skipped tell-requester
 #   orkctl run plan --file examples/approval-gate.ork.yaml --input notify_url=https://hooks.example.com/changes --output assess='{"result":{"risky":true}}' --output approval='{"approved":false,"approver":"dana"}' --assert-runs approval --assert-skipped apply --assert-runs announce
 #   orkctl run plan --file examples/approval-gate.ork.yaml --input notify_url=https://hooks.example.com/changes --output assess='{"result":{"risky":true}}' --assume-failed approval --assert-runs tell-requester
+apiVersion: orkstack/v1
+kind: Orkflow
 name: approval-gate
 version: "0.1.0"
 description: "Assess a change in a json task, wait for an approval only when it is risky, then apply, decline or report a rejection. Apply notify-block first."

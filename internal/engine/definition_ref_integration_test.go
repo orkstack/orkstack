@@ -48,7 +48,7 @@ const (
 func definitionRefFixtureDocument() string {
 	r := rand.New(rand.NewSource(5))
 	var b strings.Builder
-	b.WriteString("name: by-reference\nversion: \"1.0.0\"\ntasks:\n")
+	b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: by-reference\nversion: \"1.0.0\"\ntasks:\n")
 	for i, id := range []string{"a", "b", "c", "d"} {
 		note := make([]byte, 600)
 		r.Read(note)
@@ -220,7 +220,7 @@ func capableReplica(name string, o replicaOptions) replicaOptions {
 func wideDefinitionDoc(name string, chains, length, noteBytes int) string {
 	r := rand.New(rand.NewSource(int64(chains*length + noteBytes)))
 	var b strings.Builder
-	fmt.Fprintf(&b, "name: %s\nversion: \"1.0.0\"\ntasks:\n", name)
+	fmt.Fprintf(&b, "apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n", name)
 	for c := 0; c < chains; c++ {
 		for i := 0; i < length; i++ {
 			note := make([]byte, noteBytes/2)

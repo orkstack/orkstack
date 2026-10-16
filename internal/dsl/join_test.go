@@ -18,6 +18,8 @@ import (
 // lines (indented as task keys).
 func joinDoc(join string) []byte {
 	return []byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: joined
 tasks:
   - id: a
@@ -96,6 +98,8 @@ func TestValidate_Rule38_AJoinNeedsANeed(t *testing.T) {
 	for _, word := range []string{"none_failed", "any_failed", "all_done"} {
 		t.Run(word, func(t *testing.T) {
 			_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: lonely
 tasks:
   - id: a
@@ -115,6 +119,8 @@ tasks:
 func TestValidate_Rule39_FailureHandlerIsNotPinnedFannedOutOrCached(t *testing.T) {
 	pinned := func(join string) string {
 		return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: handler
 pins: {build: {}}
 inputs:
@@ -134,6 +140,8 @@ tasks:
 	}
 	fannedOut := func(join string) string {
 		return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: handler
 inputs:
   parts: {type: array}
@@ -151,6 +159,8 @@ tasks:
 	}
 	cached := func(join string) string {
 		return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: handler
 tasks:
   - id: a
@@ -196,6 +206,8 @@ tasks:
 func TestValidate_Rule40_NoOrdinaryTaskNeedsAnAnyFailedTask(t *testing.T) {
 	doc := func(join string) string {
 		return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: never
 tasks:
   - id: deploy
@@ -230,6 +242,8 @@ tasks:
 func TestValidate_Rule41_OutputsMayNotReadAnAnyFailedTask(t *testing.T) {
 	doc := func(join, output string) string {
 		return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: outs
 outputs:
   result: '` + output + `'
@@ -259,7 +273,7 @@ tasks:
 func TestValidate_Rule42_AContainerFailureHandlerNamesAtMost32Needs(t *testing.T) {
 	doc := func(handler string, n int) string {
 		var b strings.Builder
-		b.WriteString("name: wide\ntasks:\n")
+		b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: wide\ntasks:\n")
 		needs := make([]string, n)
 		for i := range n {
 			needs[i] = fmt.Sprintf("t%d", i)
@@ -291,6 +305,8 @@ func TestValidate_Rule42_AContainerFailureHandlerNamesAtMost32Needs(t *testing.T
 
 func TestValidate_AwaitAndComposedTasksMayCarryJoin(t *testing.T) {
 	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: kinds
 tasks:
   - id: deploy
@@ -315,6 +331,8 @@ tasks:
 		t.Fatalf("composed join = %v", got)
 	}
 	_, err = dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: kinds
 tasks:
   - id: gate
@@ -331,6 +349,8 @@ tasks:
 		t.Fatalf("awaited pool = %v", err)
 	}
 	_, err = dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: kinds
 tasks:
   - id: release
@@ -355,6 +375,8 @@ func sureOf(sure map[string]map[string]bool, id string) []string {
 
 func TestSureAncestors_Table(t *testing.T) {
 	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: sure
 tasks:
   - id: decide
@@ -541,6 +563,8 @@ func warningsOf(t *testing.T, doc string) []string {
 }
 
 const rejoinHead = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: w1
 tasks:
   - id: decide
@@ -601,6 +625,8 @@ func TestJoinWarnings_UnguardedReadsOfUncertainAncestors(t *testing.T) {
     with: {op: exec, command: ["{{ .tasks.full.output.x }}"]}
 `, []string{"tasks[3].condition: " + fieldSentence("verify", "full", "(a join lies between them)")}},
 		{"a failure handler's artifact read, guarded or not", `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: w1
 tasks:
   - id: deploy
@@ -615,6 +641,8 @@ tasks:
 			`exist when "rollback" runs; a missing artifact fails the render. Read it from task.json's ` +
 			`inputs.artifacts instead, where a missing file is a missing entry`}},
 		{"a failure handler's field read", `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: w1
 tasks:
   - id: deploy

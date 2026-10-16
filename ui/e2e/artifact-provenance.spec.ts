@@ -39,7 +39,9 @@ const out = proofOut(PROOF_DIR);
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
 function completedWorkflow(): string {
-	return `name: ${NAME}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${NAME}
 version: "0.1.0"
 description: Artifact provenance coverage.
 tasks:

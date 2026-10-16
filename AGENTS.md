@@ -404,8 +404,9 @@ The repository vocabulary is deliberate. The user-facing words below are the
 ones the DSL, the proto, `orkctl`, the UI and every message use; a word marked
 internal never appears on any of those surfaces.
 
-- **Orkflow** means the user-authored YAML entity, its name, version, and
-  compiled definition.
+- **Orkflow** means the user-authored YAML entity (`apiVersion: orkstack/v1`,
+  `kind: Orkflow`), its name, version, and compiled definition; its `version`
+  is the Orkflow's own, `apiVersion` the document format's.
 - **Temporal workflow** means Temporal's workflow context, history, workflow
   type, workflow ID, or workflow task.
 - **Pool** means the user-facing set of Orkers.

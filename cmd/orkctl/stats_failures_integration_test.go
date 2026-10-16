@@ -161,7 +161,9 @@ func awaitTerminalIn(ctx context.Context, t *testing.T, replica *engineReplica, 
 // attempt and one failure. The shell image's `exec` op runs the argv and
 // writes values.json itself, so a failure here is the one the argv causes.
 func fingerprintOrkflowYAML(name, uses, command string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: failure fingerprint probe.
 tasks:

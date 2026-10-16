@@ -136,6 +136,8 @@ func TestCompile_RejectsInvalidDocuments(t *testing.T) {
 		{
 			name: "duplicate task ids",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: dup-wf
 tasks:
   - id: a
@@ -150,6 +152,8 @@ tasks:
 		{
 			name: "missing needs target",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: missing-need
 tasks:
   - id: a
@@ -162,6 +166,8 @@ tasks:
 		{
 			name: "cyclic needs",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: cyclic
 tasks:
   - id: a
@@ -178,6 +184,8 @@ tasks:
 		{
 			name: "self cycle",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: self-cycle
 tasks:
   - id: a
@@ -190,6 +198,8 @@ tasks:
 		{
 			name: "invalid orkflow slug",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: Hello_Ork
 tasks:
   - id: a
@@ -201,6 +211,8 @@ tasks:
 		{
 			name: "invalid task slug",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: bad-task-slug
 tasks:
   - id: Fetch_Thing
@@ -212,6 +224,8 @@ tasks:
 		{
 			name: "unparseable template in with",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: bad-template
 tasks:
   - id: a
@@ -224,6 +238,8 @@ tasks:
 		{
 			name: "unparseable template in condition",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: bad-condition
 tasks:
   - id: a
@@ -238,6 +254,8 @@ tasks:
 			// a task that names no activity has nothing to run.
 			name: "uses is missing",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: no-uses
 tasks:
   - id: a
@@ -252,6 +270,8 @@ tasks:
 			// loss, not an oversight.
 			name: "uses is a template",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: templated-uses
 inputs:
   image: {type: string, default: "alpine:3.20"}
@@ -268,6 +288,8 @@ tasks:
 			// differently from its document.
 			name: "unknown task key is refused",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: unknown-key
 tasks:
   - id: a
@@ -280,6 +302,8 @@ tasks:
 		{
 			name: "unknown top-level key is refused",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: unknown-key
 queue: gpu
 tasks:
@@ -293,6 +317,8 @@ tasks:
 			// container, so a workload names the image it wants directly.
 			name: "uses container is an unknown activity",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: no-container-activity
 tasks:
   - id: a
@@ -305,6 +331,8 @@ tasks:
 			// select the one with full network access.
 			name: "unknown network mode",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: bad-network
 tasks:
   - id: a
@@ -316,6 +344,8 @@ tasks:
 		{
 			name: "secret without a source",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: bad-secret
 tasks:
   - id: a
@@ -328,6 +358,8 @@ tasks:
 		{
 			name: "undeclared input reference",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: undeclared-input
 tasks:
   - id: a
@@ -340,6 +372,8 @@ tasks:
 		{
 			name: "non-upstream task reference",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: non-upstream
 tasks:
   - id: a
@@ -355,6 +389,8 @@ tasks:
 		{
 			name: "non-upstream artifact reference",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: non-upstream-artifact
 tasks:
   - id: a
@@ -370,6 +406,8 @@ tasks:
 		{
 			name: "malformed artifact reference",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: bad-artifact
 tasks:
   - id: a
@@ -386,6 +424,8 @@ tasks:
 		{
 			name: "missing name",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 tasks:
   - id: a
     uses: shell
@@ -403,6 +443,8 @@ tasks:
 			// never a second, one-task group.
 			name: "task pins to an undeclared pin",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: unknown-pin
 pins:
   build: {}
@@ -419,6 +461,8 @@ tasks:
 			// host, so it is held to the slug rule like every other name.
 			name: "declared pin name is not a slug",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: bad-pin-slug
 pins:
   Build_1: {}
@@ -434,6 +478,8 @@ tasks:
 			// Rule 10: a pin is one process out of ONE pool's set.
 			name: "pin spans two pools",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-two-pools
 pins:
   build: {}
@@ -456,6 +502,8 @@ tasks:
 			// break the pin's second task.
 			name: "pin disagrees on run_as_orker_user",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-two-users
 pins:
   build: {}
@@ -477,6 +525,8 @@ tasks:
 			// error names the half that is unreferenced.
 			name: "declared pin nothing references",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: unused-pin
 pins:
   build: {}
@@ -494,6 +544,8 @@ tasks:
 			// lifetime at all is a negative one.
 			name: "negative pin timeout",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: negative-pin-timeout
 pins:
   build:
@@ -512,6 +564,8 @@ tasks:
 			// define is refused rather than ignored.
 			name: "unknown key inside a pin declaration",
 			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: unknown-pin-option
 pins:
   build:
@@ -541,6 +595,8 @@ tasks:
 
 func TestCompile_AcceptsTransitiveUpstreamReference(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: transitive
 tasks:
   - id: a
@@ -562,11 +618,13 @@ tasks:
 }
 
 // TestCompile_UnpinnedVersionNamesTheBytesItStores is the derived version's
-// whole contract: it is the sha256 of the source the document is stored with.
+// whole contract: it is the sha256 of the source the document is stored with,
+// less only the two header lines when they are its first YAML lines
+// (dsl.VersionedSource) — the very bytes the store compares.
 //
 // The second half is not decoration. A version names ONE stored document, and
 // the store decides "this apply is what is already there" by comparing what it
-// holds — source bytes included (pkg/artifacts.sameStoredOrkflow). A
+// holds — source bytes included (pkg/artifacts.SameStoredOrkflow). A
 // derivation covering LESS than those bytes names two different documents: a
 // comment-only edit compiled to the same version carrying different source,
 // and the store then refused it as an attempt to rewrite an immutable version
@@ -576,6 +634,8 @@ tasks:
 // disagree.
 func TestCompile_UnpinnedVersionNamesTheBytesItStores(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: unpinned
 description: hash me
 tasks:
@@ -603,7 +663,7 @@ tasks:
 
 	// And the version IS those bytes' hash, so nothing else has to agree with
 	// the compiler about what "the same document" means — it can measure it.
-	sum := sha256.Sum256([]byte(first.GetSourceYaml()))
+	sum := sha256.Sum256(dsl.VersionedSource([]byte(first.GetSourceYaml())))
 	if want := hex.EncodeToString(sum[:]); first.GetVersion() != want {
 		t.Errorf("version %q does not name the stored source (sha256 %q)",
 			first.GetVersion(), want)
@@ -626,16 +686,64 @@ tasks:
 		if changed.GetVersion() == first.GetVersion() {
 			t.Errorf("%s did not change the version %q", what, first.GetVersion())
 		}
-		sum := sha256.Sum256([]byte(changed.GetSourceYaml()))
+		sum := sha256.Sum256(dsl.VersionedSource([]byte(changed.GetSourceYaml())))
 		if want := hex.EncodeToString(sum[:]); changed.GetVersion() != want {
 			t.Errorf("%s: version %q does not name the stored source (sha256 %q)",
 				what, changed.GetVersion(), want)
+		}
+	}
+
+	// The header as the document's first two YAML lines is left out, above or
+	// below the leading comments: moving it there keeps the version.
+	const body = "# one\n# two\nname: unpinned\ndescription: hash me\ntasks:\n  - id: a\n    uses: shell\n    with: {command: \"echo 1\"}\n"
+	below := strings.Replace(body, "name:", dsl.OrkflowHeader+"name:", 1)
+	base, err := dsl.Compile([]byte(below))
+	if err != nil {
+		t.Fatalf("Compile (header below the comments): %v", err)
+	}
+	if sum := sha256.Sum256([]byte(body)); base.GetVersion() != hex.EncodeToString(sum[:]) {
+		t.Errorf("header below the comments: version %q is not the header-less text's hash", base.GetVersion())
+	}
+	for what, placed := range map[string]string{
+		"above the comments": dsl.OrkflowHeader + body,
+		"among the comments": strings.Replace(body, "# two", strings.TrimSuffix(dsl.OrkflowHeader, "\n")+"\n# two", 1),
+		"below, in CRLF":     strings.ReplaceAll(below, "\n", "\r\n"),
+	} {
+		wf, err := dsl.Compile([]byte(placed))
+		if err != nil {
+			t.Fatalf("Compile (header %s): %v", what, err)
+		}
+		if what == "below, in CRLF" {
+			if sum := sha256.Sum256([]byte(strings.ReplaceAll(body, "\n", "\r\n"))); wf.GetVersion() != hex.EncodeToString(sum[:]) {
+				t.Errorf("header %s: version %q is not the header-less text's hash", what, wf.GetVersion())
+			}
+			continue
+		}
+		if wf.GetVersion() != base.GetVersion() {
+			t.Errorf("header %s: version %q, want %q", what, wf.GetVersion(), base.GetVersion())
+		}
+	}
+	// Any other form of the header is hashed with the rest.
+	for what, placed := range map[string]string{
+		"after name:": strings.Replace(body, "description:", dsl.OrkflowHeader+"description:", 1),
+		"quoted":      strings.Replace(body, "name:", "apiVersion: \"orkstack/v1\"\nkind: Orkflow\nname:", 1),
+		"reordered":   strings.Replace(body, "name:", "kind: Orkflow\napiVersion: orkstack/v1\nname:", 1),
+		"commented":   strings.Replace(body, "name:", "apiVersion: orkstack/v1\nkind: Orkflow # x\nname:", 1),
+	} {
+		wf, err := dsl.Compile([]byte(placed))
+		if err != nil {
+			t.Fatalf("Compile (header %s): %v", what, err)
+		}
+		if sum := sha256.Sum256([]byte(placed)); wf.GetVersion() != hex.EncodeToString(sum[:]) {
+			t.Errorf("header %s: version %q is not the whole source's hash", what, wf.GetVersion())
 		}
 	}
 }
 
 func TestCompile_PinnedVersionIsPreservedVerbatim(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned
 version: "  2.0.0-RC1  "
 tasks:
@@ -654,6 +762,8 @@ tasks:
 
 func TestCompile_CompilesRetryTimeoutAndPool(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: options
 tasks:
   - id: a
@@ -691,6 +801,8 @@ tasks:
 // where the name becomes a storage key, and never guessed twice.
 func TestCompile_CarriesTheNamespaceAndLeavesAbsenceEmpty(t *testing.T) {
 	const named = `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: payments
 name: nightly-close
 tasks:
@@ -707,6 +819,8 @@ tasks:
 	}
 
 	const anonymous = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: nightly-close
 tasks:
   - id: settle
@@ -727,6 +841,8 @@ func TestCompile_RejectsANamespaceOrPoolThatIsNotASlug(t *testing.T) {
 		{
 			name: "namespace",
 			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: Payments Team
 name: nightly-close
 tasks:
@@ -739,6 +855,8 @@ tasks:
 		{
 			name: "pool",
 			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: nightly-close
 tasks:
   - id: settle
@@ -770,11 +888,13 @@ tasks:
 // matters twice: the definition digest is computed over the compiled message
 // (dsl.canonicalPins), and the store decides "this apply is a repeat of an
 // unchanged document" by comparing the message it holds
-// (pkg/artifacts.sameStoredOrkflow). A compilation that varied with map
+// (pkg/artifacts.SameStoredOrkflow). A compilation that varied with map
 // iteration order would make re-applying an unchanged file a different
 // document under a stored version.
 func TestCompile_CompilesPinsSortedByNameWhateverTheSourceOrder(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: sorted-pins
 pins:
   zebra: {}
@@ -849,6 +969,8 @@ tasks:
 // key for it, and this keeps the message itself unchanged too.
 func TestCompile_LeavesPinsAbsentWhenTheDocumentDeclaresNone(t *testing.T) {
 	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: unpinned-doc
 tasks:
   - id: a
@@ -878,6 +1000,8 @@ func TestCompile_AcceptsPinsAtTheirDefaults(t *testing.T) {
 		{
 			name: "absent timeout",
 			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-no-timeout
 pins:
   build: {}
@@ -891,6 +1015,8 @@ tasks:
 		{
 			name: "explicit zero timeout means derived",
 			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-zero-timeout
 pins:
   build:
@@ -905,6 +1031,8 @@ tasks:
 		{
 			name: "absent pool and main are the same pool",
 			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-default-pool-two-spellings
 pins:
   build: {}
@@ -1006,6 +1134,8 @@ func TestCompile_RejectsIndirectInvalidTemplateReferences(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			document := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: indirect-reference
 inputs:
   url:
@@ -1032,6 +1162,8 @@ tasks:
 
 func TestCompile_AcceptsValidIndexedAndRelativeTemplateReferences(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: indexed-references
 inputs:
   url:
@@ -1073,6 +1205,8 @@ func TestCompile_RejectsRootVariablesNamedTreesAndUnreboundElseReferences(t *tes
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			document := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: complete-template-validation
 inputs:
   url:
@@ -1101,6 +1235,8 @@ tasks:
 
 func TestCompile_AcceptsValidRootVariableReferences(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: root-variable-references
 inputs:
   url:
@@ -1128,6 +1264,8 @@ tasks:
 
 func TestCompile_AcceptsNamedTemplateWithReboundRelativeContext(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: named-rebound
 inputs:
   obj:
@@ -1158,6 +1296,8 @@ func TestCompile_RejectsRootPreservingWithAndIndexBypasses(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			document := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: root-bypass
 inputs:
   present:
@@ -1181,6 +1321,8 @@ tasks:
 
 func TestCompile_AcceptsValidRootPreservingWithAndIndexPaths(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: root-paths
 inputs:
   present:
@@ -1213,10 +1355,12 @@ tasks:
 // it is the source's hash, and the source does not change. The STORE notices,
 // because it compares the whole compiled document, so a compilation that
 // varied would make re-applying an unchanged file a "different document under
-// a stored version" every few tries (pkg/artifacts.sameStoredOrkflow). The
+// a stored version" every few tries (pkg/artifacts.SameStoredOrkflow). The
 // assertion is therefore on the compiled message, not only on the version.
 func TestCompile_CollidingNormalizedKeysCompileTheSameEveryTime(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: colliding-keys
 tasks:
   - id: only
@@ -1249,6 +1393,8 @@ tasks:
 
 func TestCompile_PreservesExplicitEmptyStructPresence(t *testing.T) {
 	const explicit = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: explicit-empty
 inputs: {}
 tasks:
@@ -1268,6 +1414,8 @@ tasks:
 	}
 
 	const omitted = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: omitted-empty
 tasks:
   - id: only

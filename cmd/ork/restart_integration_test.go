@@ -53,7 +53,9 @@ func probeOrkflowVersion() string {
 }
 
 func probeOrkflowYAML(version, nonce string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "%s"
 description: %s
 tasks:

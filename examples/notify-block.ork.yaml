@@ -16,6 +16,8 @@
 # document, or change its meaning. A non-2xx answer is data here (the http
 # activity exits 0 for any response it received): the block reports `status`
 # and its caller decides what a 500 means.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: notify-block
 version: "0.1.0"
 description: "Post one JSON notification built by a json task; its declared output is the HTTP status."

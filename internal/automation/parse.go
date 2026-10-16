@@ -118,7 +118,7 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 	var root yaml.Node
 	if err := decoder.Decode(&root); err != nil {
 		if errors.Is(err, io.EOF) {
-			p.errorAt("", nil, "the document is empty: want apiVersion: %s, kind: %s and a namespace", APIVersion, Kind)
+			p.errorAt("", nil, "the document is empty: want apiVersion: %s, kind: %s and a namespace", dsl.APIVersion, dsl.KindAutomation)
 		} else {
 			p.errorAt("", nil, "the document is not valid YAML: %v", err)
 		}
@@ -135,13 +135,22 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 		return nil, p.issues
 	}
 	if len(root.Content) == 0 {
-		p.errorAt("", nil, "the document is empty: want apiVersion: %s, kind: %s and a namespace", APIVersion, Kind)
+		p.errorAt("", nil, "the document is empty: want apiVersion: %s, kind: %s and a namespace", dsl.APIVersion, dsl.KindAutomation)
 		return nil, p.issues
 	}
 	body := root.Content[0]
 	if body.Kind != yaml.MappingNode {
 		p.errorAt("", body, "an automation document is a mapping with apiVersion, kind and namespace, got %s", describeNode(body))
 		return nil, p.issues
+	}
+	// An Orkflow reaches this parser only through PlanAutomation or Admin →
+	// Automation; it is named for what it is, not refused key by key.
+	for i := 0; i+1 < len(body.Content); i += 2 {
+		if key, value := body.Content[i], body.Content[i+1]; key.Value == "kind" &&
+			value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value == dsl.KindOrkflow {
+			p.errorAt("kind", value, "kind: %s is an Orkflow, not an automation document: apply it with orkctl apply or the Apply page", dsl.KindOrkflow)
+			return nil, p.issues
+		}
 	}
 	if alias := findAlias(body); alias != nil {
 		p.errorAt("", alias, "anchors, aliases and merge keys are not supported in an automation document")
@@ -214,16 +223,16 @@ func (p *parser) header(values, keyNodes map[string]*yaml.Node) {
 	apiVersion, ok := values["apiVersion"]
 	switch {
 	case !ok:
-		p.errorAt("apiVersion", nil, "apiVersion is required: want %s", APIVersion)
-	case apiVersion.Kind != yaml.ScalarNode || apiVersion.Value != APIVersion:
-		p.errorAt("apiVersion", apiVersion, "apiVersion %s is not supported: want %s", describeNode(apiVersion), APIVersion)
+		p.errorAt("apiVersion", nil, "apiVersion is required: want %s", dsl.APIVersion)
+	case apiVersion.Kind != yaml.ScalarNode || apiVersion.Value != dsl.APIVersion:
+		p.errorAt("apiVersion", apiVersion, "apiVersion %s is not supported: want %s", describeNode(apiVersion), dsl.APIVersion)
 	}
 	kind, ok := values["kind"]
 	switch {
 	case !ok:
-		p.errorAt("kind", nil, "kind is required: want %s", Kind)
-	case kind.Kind != yaml.ScalarNode || kind.Value != Kind:
-		p.errorAt("kind", kind, "kind %s is not an automation document: want %s", describeNode(kind), Kind)
+		p.errorAt("kind", nil, "kind is required: want %s", dsl.KindAutomation)
+	case kind.Kind != yaml.ScalarNode || kind.Value != dsl.KindAutomation:
+		p.errorAt("kind", kind, "kind %s is not an automation document: want %s", describeNode(kind), dsl.KindAutomation)
 	}
 	namespace, ok := values["namespace"]
 	switch {

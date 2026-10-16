@@ -49,7 +49,9 @@ const shot = (page: Page, name: string) => page.screenshot({ path: out(name), fu
 const example = (file: string) => readFileSync(path.join(repoRoot, 'examples', file), 'utf8');
 
 // A child whose one task fails, and a parent composing it.
-const failingBlock = `name: failing-block
+const failingBlock = `apiVersion: orkstack/v1
+kind: Orkflow
+name: failing-block
 version: "0.1.0"
 outputs:
   digest: '{{ .tasks.attest.output.value }}'
@@ -61,14 +63,18 @@ tasks:
       op: exec
       command: ["sh", "-c", "echo attest failed >&2; exit 1"]
 `;
-const failingParent = `name: composed-failing
+const failingParent = `apiVersion: orkstack/v1
+kind: Orkflow
+name: composed-failing
 version: "0.1.0"
 tasks:
   - id: release
     uses: orkflow:failing-block@0.1.0
 `;
 // A child that sleeps until it is cancelled, and a parent composing it.
-const slowBlock = `name: slow-block
+const slowBlock = `apiVersion: orkstack/v1
+kind: Orkflow
+name: slow-block
 version: "0.1.0"
 tasks:
   - id: wait
@@ -78,7 +84,9 @@ tasks:
       op: exec
       command: ["sh", "-c", "sleep 600"]
 `;
-const slowParent = `name: composed-slow
+const slowParent = `apiVersion: orkstack/v1
+kind: Orkflow
+name: composed-slow
 version: "0.1.0"
 tasks:
   - id: release
@@ -263,7 +271,9 @@ test('the Orkflow page shows the child reference, its digest and the outputs', a
 
 test('apply shows composition issues on the uses line', async ({ page }) => {
 	await page.goto(`${UI}/apply?ns=${NS}`);
-	await page.getByTestId('apply-yaml').fill(`name: composed-issues
+	await page.getByTestId('apply-yaml').fill(`apiVersion: orkstack/v1
+kind: Orkflow
+name: composed-issues
 version: "1.0.0"
 tasks:
   - id: release
@@ -275,7 +285,9 @@ tasks:
 	await expect(unknown).toContainText('has no version "9.9.9"');
 	await expect(unknown).toContainText('(versions: 0.1.0 (current))');
 
-	await page.getByTestId('apply-yaml').fill(`name: composed-issues
+	await page.getByTestId('apply-yaml').fill(`apiVersion: orkstack/v1
+kind: Orkflow
+name: composed-issues
 version: "1.0.0"
 tasks:
   - id: release

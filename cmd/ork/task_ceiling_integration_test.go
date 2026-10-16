@@ -20,7 +20,7 @@ import (
 // flatShellDoc is an Orkflow of n independent `uses: shell` tasks.
 func flatShellDoc(name string, n int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "name: %s\nversion: \"1.0.0\"\ntasks:\n", name)
+	fmt.Fprintf(&b, "apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n", name)
 	for i := range n {
 		fmt.Fprintf(&b, "  - id: t%d\n    uses: shell\n    with: {op: exec, command: [echo, ok]}\n", i)
 	}

@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // The helpers below read and build yaml.v3 nodes. The parser walks nodes
@@ -77,28 +79,9 @@ func stringMap(node *yaml.Node) (map[string]string, error) {
 	return out, nil
 }
 
-// describeNode names what a node is, for a type error.
-func describeNode(node *yaml.Node) string {
-	switch node.Kind {
-	case yaml.MappingNode:
-		return "a mapping"
-	case yaml.SequenceNode:
-		return "a list"
-	case yaml.ScalarNode:
-		switch node.Tag {
-		case "!!null":
-			return "null"
-		case "!!int", "!!float":
-			return "the number " + node.Value
-		case "!!bool":
-			return "the boolean " + node.Value
-		}
-		return fmt.Sprintf("%q", node.Value)
-	case yaml.AliasNode:
-		return "an alias"
-	}
-	return "an unsupported node"
-}
+// describeNode names what a node is, for a type error: dsl.DescribeNode,
+// the one vocabulary every authored document's messages use.
+func describeNode(node *yaml.Node) string { return dsl.DescribeNode(node) }
 
 func isNull(node *yaml.Node) bool {
 	return node.Kind == yaml.ScalarNode && node.Tag == "!!null"

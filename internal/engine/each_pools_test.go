@@ -36,6 +36,8 @@ func (p *eachSupportPools) OrkerOnPool(_ context.Context, queue string) (*orksta
 }
 
 const eachPoolsDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: each-pools
 tasks:
   - id: list

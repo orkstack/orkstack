@@ -1,4 +1,4 @@
-# OrkStack Orkflow DSL (v0)
+# OrkStack Orkflow DSL (apiVersion: orkstack/v1)
 
 An orkflow is a YAML document compiled into the `orkstack.v1.Orkflow` proto and
 applied to the `ork` engine with `orkctl apply`.
@@ -7,6 +7,8 @@ applied to the `ork` engine with `orkctl apply`.
 
 | field         | required | description                                            |
 |---------------|----------|--------------------------------------------------------|
+| `apiVersion`  | yes      | The document format's version: exactly `orkstack/v1` (see "The document header"). |
+| `kind`        | yes      | Exactly `Orkflow`; an automation document says `Automation`. |
 | `namespace`   | no       | Slug scope; absent means the built-in `default`.        |
 | `name`        | yes      | Slug identifier, unique within its namespace.           |
 | `version`     | no       | Author-pinned version; defaults to the source's hash.  |
@@ -17,12 +19,58 @@ applied to the `ork` engine with `orkctl apply`.
 | `pins`        | no       | Declared task pins (see below).                        |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
-`orkctl apply` also accepts **automation documents**, recognised by
-`kind: Automation` (with `apiVersion: orkstack/v1` and a `namespace:`): one
-file per namespace declaring its settings, schedules, triggers and webhooks by
-name. No orkflow document can carry `kind` or `apiVersion` — the compiler
-refuses an unknown key — so the two never collide. See
-[`docs/AUTOMATION.md`](AUTOMATION.md).
+`orkctl apply` reads each file's `kind:`: `Orkflow` is this document, `Automation`
+an **automation document** — one file per namespace declaring its settings,
+schedules, triggers and webhooks by name
+([`docs/AUTOMATION.md`](AUTOMATION.md)). A file with no `kind` is refused.
+
+### The document header
+
+```yaml
+# An Orkflow may open with comments; the header follows them.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: deploy
+version: "1.4.0"
+```
+
+Every Orkflow begins with these two keys. `apiVersion` is the version of the
+document format — which keys exist and what they mean — and `orkstack/v1` is
+the only one; `version` is this Orkflow's own version, which its author pins or
+the source derives. `kind` says what the document is: `Orkflow`, or
+`Automation` for an [automation document](AUTOMATION.md), which uses the same
+`apiVersion`. `orkctl apply` reads `kind` to decide what a file is, and refuses
+a file with none.
+
+A document without the header is refused at validate, apply and plan
+(`INVALID_ARGUMENT`, on `apiVersion`), naming the two lines to add. Another
+`apiVersion` is refused naming `orkstack/v1`; another `kind` is refused naming
+the kinds there are, and `kind: Automation` says where that document goes.
+
+Write the two lines exactly as above, as the document's first YAML lines.
+Comments may stand above or below them; OrkStack writes them after the leading
+comments when it shows a document, and that is the recommended place. The
+compiler accepts the two keys anywhere at the top level, quoted or not.
+
+The header is not part of the definition. It does not enter the compiled
+Orkflow or its definition digest, and no memo key sees it. A derived version,
+and the check that decides whether an apply repeats a stored version, leave out
+exactly these two lines when they are the document's first YAML lines. Written
+any other way (later in the document, quoted, in the other order, with a
+comment after them), they count like any other line.
+
+**A version applied before the header was required** is stored without it and
+stays exactly as stored: it reads, runs and diffs as before, and a run's
+evidence bundle carries its source verbatim. Wherever OrkStack shows its YAML —
+`orkctl orkflow get --json`, `orkctl orkflow edit`, `orkctl orkflow diff`, the
+version and diff pages — it shows it with the two lines added after its leading
+comments. Applying that document, or your file with the two lines added as its
+first YAML lines (above or below its comments), is the stored version, pinned
+or derived: nothing is written. Any other change is a new document, as always.
+When a pinned version's re-apply is refused and its header is written another
+way, the refusal also says where the two lines go. A stored version whose YAML
+is a flow mapping, or has anything but comments before its first key, is shown
+as stored; add the header when you next apply it.
 
 ### `namespace`
 
@@ -70,8 +118,10 @@ orkctl apply deploy.ork.yaml     # edited file:    a new version
 ```
 
 `version:` is optional. When a document pins none, the compiler derives one
-from the source itself: the sha256 of the very bytes that version is stored
-with. So editing and applying produces a new version without anybody inventing
+from the source itself: the sha256 of the bytes that version is stored with,
+not counting its two header lines when they are its first YAML lines — so
+adding the header to a document applied before it was required names the
+version that document already had. So editing and applying produces a new version without anybody inventing
 a number, and re-applying an unchanged file produces the same version and
 writes nothing. A version names the document a reader opens, comments
 included — a comment-only edit is a new version, because what is stored
@@ -687,6 +737,8 @@ into a fresh history until it closes (`docs/DEPLOY.md` §1,
 `RUN_HISTORY_LIMIT`.
 
 ```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
 name: build-and-test
 version: "1.0.0"
 
@@ -1532,6 +1584,14 @@ How each node reads:
     bound fails `INPUT_TOO_LARGE` when it is dispatched. Checked wherever a
     document is compiled — validate, apply and `orkctl run plan --file` — and
     never at submit: a version stored before this rule keeps starting.
+45. The document begins with the header `apiVersion: orkstack/v1` and
+    `kind: Orkflow` (see "The document header"), checked first, before any
+    other rule: a document with neither is refused on `apiVersion`, naming
+    the two lines; a missing one is refused naming the line to add; another
+    `apiVersion` names `orkstack/v1` (field `apiVersion`); another `kind`
+    names the kinds there are, and `kind: Automation` says where an
+    automation document goes (field `kind`). A version stored before this
+    rule is never re-checked: no read path compiles a stored source.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that
@@ -1543,8 +1603,7 @@ path components of a stored object key, a pool becomes an execution channel,
 and a pin name becomes a directory component on the Orker, so a longer name is
 one the compiler could accept and nothing could store. The orkflow store and
 the namespace registry (`pkg/artifacts`) enforce the same 200; they share no
-constant, so the store does not import the compiler, and a test in
-`pkg/artifacts` fails on any disagreement.
+constant, and a test in `pkg/artifacts` fails on any disagreement.
 
 ## Labels
 
@@ -1570,7 +1629,8 @@ only the one that sorts first.
 
 See `examples/hello.ork.yaml` for a fetch → transform → checksum pipeline that
 uses the first-party `http`, `shell`, and `file` OCI activity images with
-artifact hand-off. Every shipped example is compiled by
+artifact hand-off. Every shipped example carries the document header after its
+comment header. Every shipped example is compiled by
 `TestCompile_AcceptsEveryShippedExample`. `examples/README.md` lists every
 shipped example and what it needs to run, and `docs/ORKFLOW_PATTERNS.md` is the
 best-practice guide they illustrate.

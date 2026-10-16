@@ -114,6 +114,8 @@ func (p poolOrkers) OrkerOnPool(
 
 // gpuOrkflow names a pool on one of its two tasks.
 const gpuOrkflow = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: gpu-job
 version: 0.1.0
 tasks:
@@ -223,6 +225,8 @@ func TestSubmitRun_RefusesAPoolTheNamespaceDoesNotAllow(t *testing.T) {
 func TestApplyAndSubmit_AgreeOnTheAllowListUnderABoundChannel(t *testing.T) {
 	// A task that names no pool at all; under the bound channel it is gpu's.
 	const unpinned = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: unpinned
 version: 0.1.0
 tasks:
@@ -232,6 +236,8 @@ tasks:
 `
 	// The same channel, named the other way round.
 	const mainPinned = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: main-pinned
 version: 0.1.0
 tasks:
@@ -861,6 +867,8 @@ func poolNames(pools []*orkstackv1.Pool) []string {
 // ---------------------------------------------------------------------------
 
 const pinnedGpuOrkflow = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-gpu-job
 version: 0.1.0
 pins:
@@ -975,6 +983,8 @@ func TestSubmitRun_AcceptsAPinnedRunWhosePoolHostsPins(t *testing.T) {
 // them apart.
 func TestSubmitRun_RefusesAPinThatResolvesOntoTwoPoolsAsAnInvalidArgument(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-split-job
 version: 0.1.0
 pins:

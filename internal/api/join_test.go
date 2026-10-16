@@ -16,7 +16,9 @@ import (
 
 // joinYAML is a deploy with a re-join before it and two failure handlers
 // after it (docs/DSL.md "Joins and failure handlers").
-const joinYAML = `name: joined
+const joinYAML = `apiVersion: orkstack/v1
+kind: Orkflow
+name: joined
 version: "1.0.0"
 inputs:
   route: {type: string, default: canary}
@@ -88,7 +90,9 @@ func TestPlanRun_AssumeFailedReturnsFailsAtCountsAndUnused(t *testing.T) {
 	}
 }
 
-const joinWarningYAML = `name: warned
+const joinWarningYAML = `apiVersion: orkstack/v1
+kind: Orkflow
+name: warned
 tasks:
   - id: canary
     uses: busybox:latest
@@ -142,14 +146,14 @@ func TestApplyOrkflow_StoresWithJoinWarningsAndRefusesRules37To42(t *testing.T) 
 	}
 	for rule, tasks := range refused {
 		_, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-			Yaml: "name: refused-" + rule + "\ntasks:\n  - id: a\n    uses: busybox:latest\n" + tasks,
+			Yaml: "apiVersion: orkstack/v1\nkind: Orkflow\nname: refused-" + rule + "\ntasks:\n  - id: a\n    uses: busybox:latest\n" + tasks,
 		}))
 		if connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Errorf("rule %s: apply = %v, want InvalidArgument", rule, err)
 		}
 	}
 	_, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-		Yaml: "name: refused-41\noutputs:\n  r: '{{ .tasks.h.output.x }}'\ntasks:\n  - id: a\n    uses: busybox:latest\n" +
+		Yaml: "apiVersion: orkstack/v1\nkind: Orkflow\nname: refused-41\noutputs:\n  r: '{{ .tasks.h.output.x }}'\ntasks:\n  - id: a\n    uses: busybox:latest\n" +
 			"  - id: h\n    uses: busybox:latest\n    needs: [a]\n    join: any_failed\n",
 	}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "whose join is any_failed") {

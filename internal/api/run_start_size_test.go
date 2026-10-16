@@ -91,7 +91,7 @@ func TestSubmitRun_MeasuresTheInputAsSent(t *testing.T) {
 func TestSubmitRun_RefusesADefinitionOverThePayloadBound(t *testing.T) {
 	starter := &fakeStarter{}
 	f := newRunIDFixture(t, starter, nil)
-	yaml := "name: big-ork\nversion: \"1.0.0\"\ndescription: \"" +
+	yaml := "apiVersion: orkstack/v1\nkind: Orkflow\nname: big-ork\nversion: \"1.0.0\"\ndescription: \"" +
 		strings.Repeat("d", task.MaxActivityInputBytes+1) + "\"\n" +
 		"tasks:\n  - id: one\n    uses: shell\n    with: {op: exec, command: [\"true\"]}\n"
 	if _, err := f.svc.ApplyOrkflow(context.Background(),

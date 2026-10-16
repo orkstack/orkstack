@@ -294,6 +294,8 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 // members are all terminal.
 func TestPinMemberClosures_ReleasedWhenThePinCloses(t *testing.T) {
 	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned
 pins: {build: {}}
 tasks:

@@ -94,7 +94,9 @@ function orkctl(...args: string[]): string {
 }
 
 function document(name: string, uses: string): string {
-	return `name: ${name}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "0.1.0"
 description: Image policy coverage.
 tasks:

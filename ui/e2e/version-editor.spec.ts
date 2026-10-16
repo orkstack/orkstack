@@ -95,7 +95,9 @@ const catalog = () =>
 // supposed to be visible. JSON.stringify keeps a caller's embedded newline a
 // legal scalar rather than a broken document.
 function orkflowYaml(version: string, description: string, command = 'echo hello'): string {
-	return `name: ${ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${ORKFLOW}
 version: "${version}"
 description: ${description}
 
