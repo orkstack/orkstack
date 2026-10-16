@@ -1652,6 +1652,27 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 	}
 	middleID := middleRun.GetRun().GetId()
 	s.transcript.step("chain %s and middle %s submitted (max_running 3)", runID, middleID)
+	// The polls below judge the chain's switch, so they start once the
+	// cluster's index lists both runs: a poll in the first moments after the
+	// middle run's submit can find it not yet indexed, which is the index's
+	// lag on a fresh start, not a chain that went invisible (a feature proof
+	// of Stage 7 read count 1 a tenth of a second after the submit).
+	indexed := time.Now().Add(30 * time.Second)
+	for {
+		count, err := reader.RunningCount(ctx, ns, 3)
+		if err == nil && count >= 2 {
+			break
+		}
+		if time.Now().After(indexed) {
+			t.Fatalf("the cluster's index never listed the chain and the middle run (count %d, %v)", count, err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	s.transcript.step("the index lists the chain and the middle run")
 
 	var (
 		pollMu sync.Mutex
