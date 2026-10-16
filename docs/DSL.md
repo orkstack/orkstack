@@ -358,14 +358,20 @@ Orkers is refused at submit rather than left waiting for one
 
 ### How many tasks an Orkflow may declare
 
-An Orkflow declares at most **1000 tasks** — a deployment default an operator
-may lower or raise (`engine.orkflow_max_tasks`, `ORK_ORKFLOW_MAX_TASKS`,
-`docs/DEPLOY.md` §1). A document over it is refused `invalid_argument` at
-validate, apply and `orkctl run plan --file`, anchored at the first task past
-the ceiling, with a message naming the count, the limit and the setting:
+An Orkflow declares at most **4,000 tasks** by default — a deployment default an
+operator may lower or raise (`engine.orkflow_max_tasks`,
+`ORK_ORKFLOW_MAX_TASKS`, `docs/DEPLOY.md` §1). 4,000 is also the largest size
+measured: a flat stage of long and of short tasks, a staged DAG of 250 lanes
+and deep lanes of at most 380 tasks, all plain tasks with small outputs, each
+completed within its measured history, snapshot, in-flight, workflow-code,
+read-latency and run-page thresholds. A deployment that raises it runs
+unmeasured, and the engine says so at boot. A document over the ceiling is
+refused `invalid_argument` at validate, apply and `orkctl run plan --file`,
+anchored at the first task past it, with a message naming the count, the
+limit and the setting:
 
 ```
-tasks[1000]: orkflow declares 1001 tasks; this deployment allows at most 1000
+tasks[4000]: orkflow declares 4001 tasks; this deployment allows at most 4000
 (engine.orkflow_max_tasks, ORK_ORKFLOW_MAX_TASKS). Split it into Orkflows
 composed with uses: orkflow:, or move a repeated task into a fan-out (each:)
 ```
@@ -378,8 +384,22 @@ awaited, composed, fan-out, failure handler — because every one is at least
 one activity or child start, and its lifecycle events, in the run's history,
 which the cluster bounds. A long run carries on into a fresh history at a
 moment with nothing of it running (below, "When a ready task starts"), but
-tasks that start together share one history, and a ceiling above 1,000 is
-unmeasured until the soak that sets a larger default has been run:
+tasks that start together share one history, which must also keep back what
+its failure path would need for every task not yet started:
+
+- **A stage of more than X plain tasks that start together may stop
+  `RUN_HISTORY_LIMIT`** in its first history, explicitly. X is 4,222 at the
+  default settings and moves with the deployment's history, continuation and
+  in-flight settings (`docs/DEPLOY.md` §5, "Task ceiling and the flat-stage
+  bound"); the engine warns at boot when its ceiling is above X. At or below
+  X such a stage cannot reach that limit before it carries on — that is
+  necessary, not sufficient: awaits, pins, fan-outs, composed tasks and
+  failure handlers keep more history back each, and a run can still stop,
+  explicitly, on history bytes or on the size of its saved state (below).
+- **With continuation off** (`engine.continuation.enabled`), a run has one
+  history: the default ceiling is then at most `engine.history.max_events`
+  divided by 50 (1,024 at the default limit), and a larger explicit setting is
+  refused at boot.
 
 - **A fan-out counts once**, however large its `max_items`. Its items are
   bounded on their own — the sum of `max_items` over every fan-out is at most
@@ -395,6 +415,18 @@ unmeasured until the soak that sets a larger default has been run:
   and a task more than about 300 such ancestors down may fail
   `INPUT_TOO_LARGE` when it is dispatched (rule 44). Split such a pipeline
   into composed Orkflows.
+- **Awaits and composed tasks are bounded by the run's plan.** A definition
+  too large for a run's start travels by reference (below), but the run's
+  256 KiB plan still holds an entry for every await and a nested plan for
+  every composed task: one plan holds about 2,050 awaits with a callback, or
+  381 composed tasks of a one-task child. Past that a submit is refused,
+  `failed_precondition`, naming the plan's size.
+- **Large inline outputs** count too. A run's saved state holds every task's
+  inline output (up to 4 KiB of values each), and must fit
+  `engine.continuation.bytes` (8 MiB by default) to carry on: at 4,000 tasks it
+  fits while tasks return about 2,368 bytes of inline values or less on
+  average. A run whose tasks return more stops `RUN_HISTORY_LIMIT` with the
+  size of its saved state when it would carry on, explicitly.
 
 A run that nonetheless grows near its cluster's history limit — many tasks
 running at once, long retries, an await parked for weeks — is not left to
@@ -1474,10 +1506,16 @@ How each node reads:
     (`tasks[i].needs`): its input records how every need ended, and that
     record is bounded. An awaited or composed failure handler is not limited.
 43. An Orkflow declares at most `ORK_ORKFLOW_MAX_TASKS` tasks (default
-    1000; field `tasks[<limit>]`, the first task past it). A fan-out and a
-    composed task each count once ("How many tasks an Orkflow may declare").
-    Enforced by `internal/api` at validate, apply and plan, and again at
-    submit — the compiler has no deployment configuration to read.
+    4,000, the largest size measured; field `tasks[<limit>]`, the first task
+    past it). A fan-out and a composed task each count once. A stage of more
+    than X plain tasks that start together (4,222 at the default settings)
+    may stop `RUN_HISTORY_LIMIT`; staying within X is necessary, not
+    sufficient. With continuation off the default is at most
+    `history.max_events / 50`. The plan bounds awaits and composed tasks,
+    large inline outputs bound the saved state, and rule 44 bounds a deep
+    pipeline ("How many tasks an Orkflow may declare"). Enforced by
+    `internal/api` at validate, apply and plan, and again at submit — the
+    compiler has no deployment configuration to read.
 44. A task's required ancestors — its needs through default joins, a
     fan-out only as a direct need, none behind a join policy or a failure
     handler — must fit their smallest possible upstream references in one

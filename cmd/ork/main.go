@@ -80,9 +80,13 @@ type config struct {
 	// (docs/DEPLOY.md §1).
 	eachMaxItems int32
 	// orkflowMaxTasks is ORK_ORKFLOW_MAX_TASKS: the most tasks one Orkflow
-	// may declare, any whole number 1 or more; refused at boot otherwise
-	// (docs/DEPLOY.md §1).
+	// may declare, any whole number 1 or more, N (the largest size the task
+	// soak measured) by default; with continuation off, at most
+	// history.max_events / 50, and that quotient when unset; refused at boot
+	// otherwise. taskCeiling is how the boot decided it, with what it warns
+	// (taskCeilingFromEnv, docs/DEPLOY.md §1 and §5).
 	orkflowMaxTasks int32
+	taskCeiling     taskCeiling
 	// historyMaxEvents and historyMaxBytes are ORK_HISTORY_MAX_EVENTS and
 	// ORK_HISTORY_MAX_BYTES: the cluster's per-execution history limits a
 	// run stops RUN_HISTORY_LIMIT before reaching. At least
@@ -137,7 +141,6 @@ func loadConfig() config {
 	commitMaxBytes, commitErr := envInt64("ORK_COMMIT_MAX_BYTES", engine.DefaultCommitMaxBytes)
 	transferBudgetSeconds, transferErr := envInt32AllowZero("ORK_TRANSFER_BUDGET_SECONDS", 0)
 	floorThroughput, throughputErr := envInt64AllowZero("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond)
-	orkflowMaxTasks, tasksErr := envInt32("ORK_ORKFLOW_MAX_TASKS", engine.DefaultOrkflowMaxTasks)
 	composeMaxDepth, composeErr := composeMaxDepthFromEnv()
 	historyMaxEvents, historyMaxBytes, historyErr := historyLimitFromEnv()
 	continuation, continuationErr := continuationFromEnv(historyMaxEvents, historyMaxBytes)
@@ -145,6 +148,7 @@ func loadConfig() config {
 	byReference, byReferenceSet, byReferenceErr := definitionByReferenceFromEnv(continuation.enabled,
 		engine.DefaultDefinitionByReference)
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
+	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
 	snapshotOverlays, overlaysErr := snapshotOverlaysFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
 
@@ -163,7 +167,8 @@ func loadConfig() config {
 		transferBudgetSeconds:         transferBudgetSeconds,
 		floorThroughputBytesPerSecond: floorThroughput,
 		eachMaxItems:                  eachMaxItems,
-		orkflowMaxTasks:               orkflowMaxTasks,
+		orkflowMaxTasks:               tasks.value,
+		taskCeiling:                   tasks,
 		historyMaxEvents:              historyMaxEvents,
 		historyMaxBytes:               historyMaxBytes,
 		continuation:                  continuation,
@@ -1054,6 +1059,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	logger.Info("definition by reference", "definition_by_reference", cfg.definitionByReference,
 		"explicit", cfg.definitionByReferenceSet, "continuation", cfg.continuation.enabled)
 	logger.Info("snapshot overlays", "snapshot_overlays", cfg.snapshotOverlays)
+	// The task ceiling as the boot decided it, and what it warns about: a
+	// value above the measured maximum, or above the flat-stage bound
+	// (docs/DEPLOY.md §5, "Task ceiling and the flat-stage bound").
+	logger.Info("task ceiling", "orkflow_max_tasks", cfg.taskCeiling.value, "explicit", cfg.taskCeiling.explicit,
+		"measured_max", engine.DefaultOrkflowMaxTasks, "flat_stage_bound", cfg.taskCeiling.flatBound,
+		"continuation", cfg.continuation.enabled)
+	for _, warning := range cfg.taskCeiling.warnings {
+		logger.Warn(warning)
+	}
 	// The process's one cache of the full snapshots overlays are written
 	// against, shared by the activity that writes them, the projection
 	// worker and the run reader (docs/DEPLOY.md §5): at most 8 bases or

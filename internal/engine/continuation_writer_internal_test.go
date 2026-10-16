@@ -11,6 +11,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -447,18 +448,30 @@ func TestContinuation_CheckpointSizesAtTheCeilings(t *testing.T) {
 	}
 	full := func() *orkstackv1.Payload { return randomOutput(t, 4096) }
 	measure("e_1000_tasks_4KiB_outputs", sizedRun(t, 1000, 0, 0, 0, full))
-	measure("e_4000_tasks_4KiB_outputs", sizedRun(t, 4000, 0, 0, 0, full))
-	lo, hi := 0, 4096
-	for hi-lo > 64 {
-		mid := (lo + hi) / 2
-		if checkpointSize(t, sizedRun(t, 4000, 0, 0, 0, func() *orkstackv1.Payload { return randomOutput(t, mid) })) <= limit {
-			lo = mid
-		} else {
-			hi = mid
+	// (e) at 4,000 tasks and, re-run for E7, at the task ceiling
+	// (DefaultOrkflowMaxTasks): the largest average inline output that still
+	// carries forward there is what docs/DSL.md states.
+	largestFitting := func(tasks int) int {
+		lo, hi := 0, 4096
+		if checkpointSize(t, sizedRun(t, tasks, 0, 0, 0, full)) <= limit {
+			return hi // the maximal output fits
 		}
+		for hi-lo > 64 {
+			mid := (lo + hi) / 2
+			if checkpointSize(t, sizedRun(t, tasks, 0, 0, 0, func() *orkstackv1.Payload { return randomOutput(t, mid) })) <= limit {
+				lo = mid
+			} else {
+				hi = mid
+			}
+		}
+		return lo
 	}
-	results["e_largest_average_inline_output_at_4000_tasks"] = lo
-	t.Logf("E2 checkpoint (e): at 4,000 tasks the largest average inline output that fits the cap is about %d bytes", lo)
+	for _, tasks := range slices.Compact([]int{4000, int(DefaultOrkflowMaxTasks)}) {
+		measure(fmt.Sprintf("e_%d_tasks_4KiB_outputs", tasks), sizedRun(t, tasks, 0, 0, 0, full))
+		lo := largestFitting(tasks)
+		results[fmt.Sprintf("e_largest_average_inline_output_at_%d_tasks", tasks)] = lo
+		t.Logf("E2 checkpoint (e): at %d tasks the largest average inline output that fits the cap is about %d bytes", tasks, lo)
+	}
 	proof.WriteJSON(t, "continuation", "checkpoint-sizes.json", results)
 }
 

@@ -50,7 +50,7 @@ engine:
   registry_auth_file: ""  # ork
   stats_cache_ttl: 5s  # ork
   each_max_items: 1000  # ork
-  orkflow_max_tasks: 1000  # ork
+  orkflow_max_tasks: 4000  # ork
   history:
     max_events: 51200  # ork
     max_bytes: 52428800  # 50 MiB; ork

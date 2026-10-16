@@ -854,7 +854,7 @@ func TestLoadConfig_OrkflowMaxTasks(t *testing.T) {
 		want    int32
 		refused bool
 	}{
-		{"", 1000, false}, {"1", 1, false}, {"200", 200, false}, {"5000", 5000, false},
+		{"", engine.DefaultOrkflowMaxTasks, false}, {"1", 1, false}, {"200", 200, false}, {"5000", 5000, false},
 		{"0", 0, true}, {"-3", 0, true}, {"many", 0, true}, {"1.5", 0, true},
 	} {
 		t.Run("ORK_ORKFLOW_MAX_TASKS="+tc.raw, func(t *testing.T) {

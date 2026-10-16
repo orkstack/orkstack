@@ -304,6 +304,9 @@ type readyLoopProbe struct {
 	// pass (retainedClosureEntries).
 	closureEntries, maxRetained int
 	pass, selector              func()
+	// selectorRun, when set, is called with the run's id as the loop
+	// reaches its Selector: its pass is over.
+	selectorRun func(runID string)
 	// emit, when set, is called with true as an event write starts and
 	// false when it returns, so a test can time a pass's workflow code
 	// apart from its event writes.

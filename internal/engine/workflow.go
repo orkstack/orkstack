@@ -488,6 +488,9 @@ func RunWorkflow(
 		if readyLoopProbeForTest != nil && readyLoopProbeForTest.selector != nil {
 			readyLoopProbeForTest.selector()
 		}
+		if readyLoopProbeForTest != nil && readyLoopProbeForTest.selectorRun != nil {
+			readyLoopProbeForTest.selectorRun(state.runID)
+		}
 		selector.Select(ctx)
 		// A pin's readiness is NOT a task outcome: nothing is collected, and
 		// nothing is terminal. It only unblocks the pin's members, so the loop
