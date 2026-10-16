@@ -168,7 +168,7 @@ func TestCompile_AwaitSchemaDeclarations(t *testing.T) {
 		{"unknown type", "{x: {type: integer}}", "`type` is required and must be one of string, number, boolean, object, array"},
 		{"missing type", "{x: {required: true}}", "`type` is required"},
 		{"default", "{x: {type: string, default: a}}", "an await's schema declares no default — a resolution's values.json is stored as the caller's exact bytes"},
-		{"extra key", "{x: {type: string, description: y}}", `unknown key "description"`},
+		{"extra key", "{x: {type: string, description: why}}", `unknown key "description"`},
 		{"non-mapping entry", "{x: string}", "must be a mapping"},
 		{"non-boolean required", "{x: {type: string, required: yes-please}}", "`required` must be true or false"},
 	}

@@ -297,8 +297,11 @@ A task whose template reads an input nobody supplied fails `RENDER_FAILED`
 
 The schema above is YAML, like the rest of this document — but the VALUES a
 run is submitted with are JSON, never YAML, and stay JSON in the recorded
-output too. The DSL declares shape; the submission carries data. See
-`docs/JSON.md` for why.
+output too. The DSL declares shape; the submission carries data. A
+`default:` — and every value under `with:` and `await.schema` — is YAML
+converted to JSON by the strict mapping (`docs/JSON.md`, "Data written in an
+authored document"): `yes`, `0755`, `1:30` or a date there is refused, naming
+the path; quote it. See `docs/JSON.md` for why.
 
 ## Outputs
 
@@ -1369,7 +1372,9 @@ See `examples/cached-pipeline.ork.yaml`.
 A task's `with:` values and `condition:` are Go `text/template` templates, as
 are `outputs:` values and `each.over` (one reference, see "Fan-out"). Every
 other key — `command`, `env`, `uses` included — is literal. A literal `{{` in
-`with:` is written `{{ "{{" }}`. The context:
+`with:` is written `{{ "{{" }}`. A value that begins with `{{` is quoted
+(`'{{ .inputs.x }}'`): unquoted, a scalar starting with `{` is a YAML flow
+mapping, not a template — the quotes are YAML's, not JSON. The context:
 
 - `.inputs.<name>` — the submitted input, after defaults.
 - `.tasks.<id>.output.<field>` — a succeeded ancestor's `values.json`.
@@ -1621,6 +1626,14 @@ How each node reads:
     names the kinds there are, and `kind: Automation` says where an
     automation document goes (field `kind`). A version stored before this
     rule is never re-checked: no read path compiles a stored source.
+46. `inputs`, every `tasks[i].with` and every `tasks[i].await.schema` are
+    authored data, converted to JSON by the strict mapping (`docs/JSON.md`,
+    "Data written in an authored document"): each is a mapping (or absent, or
+    a bare null, which is absent); a plain value the YAML readers resolve
+    differently (`yes`, `on`, `0755`, `1:30`, `1e3`, a date), a number JSON
+    cannot hold exactly, a null or ambiguous key, a key written twice, and
+    any tag, anchor, alias or merge key are refused, at the field path of the
+    value (`tasks[1].with.flags.verbose`) and its line.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

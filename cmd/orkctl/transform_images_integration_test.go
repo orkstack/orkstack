@@ -272,8 +272,8 @@ tasks:
     with:
       op: query
       nullInput: true
-      vars: {id: '{{ .tasks.big.output.result.id }}', n: '{{ .tasks.big.output.result.n }}'}
-      filter: '[$vars.id, $vars.n, ($vars.n | tonumber | floor)]'
+      vars: {id: '{{ .tasks.big.output.result.id }}', num: '{{ .tasks.big.output.result.n }}'}
+      filter: '[$vars.id, $vars.num, ($vars.num | tonumber | floor)]'
       as: templated.json
 `, name)
 }

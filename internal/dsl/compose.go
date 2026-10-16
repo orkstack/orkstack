@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"google.golang.org/protobuf/types/known/structpb"
-
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
@@ -179,13 +177,11 @@ func compileComposedTask(taskIndex int, td taskDocument, namespace string) (*ork
 		TimeoutSeconds: 0,
 		Orkflow:        &orkstackv1.OrkflowRef{Name: name, Version: version},
 	}
-	if td.With != nil {
-		with, err := structpb.NewStruct(normalizeMap(td.With))
-		if err != nil {
-			return nil, fmt.Errorf("task %q: with: %w", td.ID, err)
-		}
-		task.With = with
+	with, err := freeForm("with", fmt.Sprintf("tasks[%d].with", taskIndex), &td.With)
+	if err != nil {
+		return nil, err
 	}
+	task.With = with
 	return task, nil
 }
 

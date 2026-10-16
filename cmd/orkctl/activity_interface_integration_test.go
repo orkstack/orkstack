@@ -252,7 +252,7 @@ func interfaceDocuments(name, pool string) (gzpi, missing, warned string) {
 	head := fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n  - id: copy\n    uses: file\n    pool: %s\n    with:\n", name, pool)
 	return head + "      op: gzpi\n      src: in/x\n",
 		head + "      op: copy\n",
-		head + "      op: copy\n      src: in/x\n      srcs: [y]\n"
+		head + "      op: copy\n      src: in/x\n      srcs: [why]\n"
 }
 
 func TestInterfaceManifests_ValidateAndApplyAgainstTheRealRegistry(t *testing.T) {
@@ -338,7 +338,7 @@ tasks:
     with:
       op: copy
       src: '{{ artifact "seed/x.txt" }}'
-      srcs: [y]
+      srcs: [why]
 `, name, stack.pool, stack.pool)
 	path := writeInterfaceDocument(t, name, doc)
 	validated := requireCLI(t, stack.cli, "validate", "orkflow", "validate", path)

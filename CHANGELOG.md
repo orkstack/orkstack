@@ -20,6 +20,16 @@ include breaking changes, and each is marked **BREAKING**.
 - **BREAKING:** `orkctl apply` decides what a file is by its `kind:`
   (`Orkflow` or `Automation`) and refuses a file with neither, before anything
   is sent.
+- **BREAKING:** an automation document's schedule `input:` is a YAML mapping.
+  A JSON object written as a string is refused, naming the YAML form: remove
+  the quotes. `orkctl export` writes `input:` as a mapping.
+- **BREAKING:** data written in an Orkflow — `inputs:`, `with:`,
+  `await.schema` — becomes JSON through one strict mapping: a plain value YAML
+  readers resolve differently (`yes`, `on`, `0755`, `1:30`, `1e3`, a date), a
+  number JSON cannot hold exactly, and tags, anchors, aliases and merge keys
+  are refused, naming the path (docs/JSON.md, "Data written in an authored
+  document"). A document that compiled before either compiles to the same
+  definition or is refused; none changes silently.
 - A stored Orkflow version is shown with its header wherever OrkStack shows its
   YAML (`orkctl orkflow get --json`, `edit`, `diff`, the UI). Evidence bundles
   keep the source verbatim.

@@ -92,7 +92,8 @@ schedules:
     orkflow: reconcile
     cron: "0 2 * * *"
     timezone: Europe/Lisbon
-    input: '{"mode": "full"}'
+    input:
+      mode: full
 
 triggers:
   github-deploy:

@@ -24,7 +24,8 @@ schedules:
     cron: "0 2 * * *"
     timezone: Europe/Lisbon
     overlap: skip
-    input: '{"mode": "full"}'
+    input:
+      mode: full
 
 triggers:
   github-deploy:
@@ -132,13 +133,15 @@ or unmanaged before it ships; a test walks the descriptor and fails otherwise.
 | `overlap` | `skip`\|`buffer-one`\|`buffer-all`\|`cancel-other`\|`allow-all` | `skip` |
 | `catchup_window` | Go duration, ≥ 10s | the cluster's default |
 | `pause_on_failure` | boolean | `false` |
-| `input` | **a string containing a JSON object** | none |
+| `input` | a YAML mapping, converted to JSON by the strict mapping (`docs/JSON.md`) | none |
 
 There is no `paused` key — pause is operational, shown as a note, never
 changed — and no magic `version` word: `version: current` pins a version
-named `current`. Run input is JSON, never YAML (`AGENTS.md` §3.1): `input` is
-a JSON object written as a string, `input: '{"mode": "full"}'`; a YAML mapping
-there is refused, and `'{}'` is recorded as unset. Cron syntax is the
+named `current`. Run input is JSON on the wire; in this document it is written
+as a YAML mapping and converted by the strict mapping (`AGENTS.md` §3.1,
+`docs/JSON.md`), so `apply --dry-run` shows exactly the JSON each fire submits.
+A string is refused (a JSON object written as a string was the shape before
+this release), and `{}` is recorded as unset. Cron syntax is the
 cluster's alone: an expression it cannot parse fails that step of the apply.
 
 ### `triggers`
@@ -253,7 +256,9 @@ functions in the engine and shown verbatim by every client: strings as `%q`;
 an unpinned version as `current` (unquoted); lists as `[a, b]`; maps as
 `{k: "v"}` sorted by key; durations in their short form (`168h`, `1h30m`);
 `run_retention` unset as `inherit`; timestamps RFC 3339 UTC, `unset` when
-absent; input as compact JSON with sorted keys; events in lifecycle order,
+absent; input as compact JSON with sorted keys in a plan (an export writes
+input as a YAML mapping, keys sorted, quoting any string a YAML reader could
+read as something else); events in lifecycle order,
 `[]` meaning every run transition.
 
 ### The digest
@@ -403,4 +408,4 @@ name, pin, URL, events and scope, never a secret.
 | Deriving an object's id from its name | An existing object could never be adopted without re-issuing its URL, and a deleted trigger's URL would come back to life under a new token. |
 | Delete-and-recreate to make a field true | Re-issues the trigger token or webhook secret the integration depends on. |
 | Planning in each client | The plan is served by one planner so `apply --dry-run` and Admin → Automation can never disagree about what an apply would do; only the writes are client-side. |
-| A YAML mapping for schedule `input` | Run input is JSON, never YAML (`AGENTS.md` §3.1). |
+| A JSON object written as a string for schedule `input` (the shape before this release) | The document is YAML; a JSON string inside it is a second syntax with its own quoting, and a reader cannot see the input's shape. The mapping is converted by the strict mapping — never a lenient decode — so `yes`, `0755` or a date is refused rather than coerced, and run input stays JSON on the wire (`AGENTS.md` §3.1). |

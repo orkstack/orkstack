@@ -52,7 +52,7 @@ func definitionRefFixtureDocument() string {
 	for i, id := range []string{"a", "b", "c", "d"} {
 		note := make([]byte, 600)
 		r.Read(note)
-		fmt.Fprintf(&b, "  - id: %s\n    uses: shell\n    needs: []\n    with: {op: exec, n: %d, note: \"%x\"}\n", id, i, note)
+		fmt.Fprintf(&b, "  - id: %s\n    uses: shell\n    needs: []\n    with: {op: exec, num: %d, note: \"%x\"}\n", id, i, note)
 	}
 	b.WriteString("  - id: merge\n    uses: shell\n    needs: [a, b, c, d]\n    with: {op: exec}\n")
 	return b.String()

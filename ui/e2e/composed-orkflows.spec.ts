@@ -294,7 +294,7 @@ tasks:
     uses: orkflow:release-block@0.1.0
     with:
       image: x
-      extra: y
+      extra: why
   - id: after
     uses: shell
     needs: [release]

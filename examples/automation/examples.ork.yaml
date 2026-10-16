@@ -34,7 +34,9 @@ schedules:
     cron: "*/15 * * * *"
     timezone: UTC
     overlap: skip
-    input: '{"status_url": "https://exports.example.com/status", "export_url": "https://exports.example.com/latest.json"}'
+    input:
+      status_url: https://exports.example.com/status
+      export_url: https://exports.example.com/latest.json
 
 triggers:
   change-from-ci:

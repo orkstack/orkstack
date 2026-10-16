@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/structpb"
+	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -36,7 +37,8 @@ type awaitDocument struct {
 	Callback bool `yaml:"callback"`
 	// Schema declares the values a completion must carry, in the vocabulary
 	// top-level `inputs:` uses. Optional.
-	Schema map[string]any `yaml:"schema"`
+	// A data position: a yaml.Node value, like document.Inputs.
+	Schema yaml.Node `yaml:"schema"`
 }
 
 // awaitExecutionKeys lists, in the order they are checked, the YAML keys an
@@ -52,7 +54,7 @@ func awaitExecutionKeys(td taskDocument) []struct {
 		written bool
 	}{
 		{"uses", td.Uses != ""},
-		{"with", td.With != nil},
+		{"with", present(td.With)},
 		{"command", td.Command != nil},
 		{"env", td.Env != nil},
 		{"secrets", td.Secrets != nil},
@@ -111,13 +113,11 @@ func compileAwaitTask(taskIndex int, td taskDocument) (*orkstackv1.Task, error) 
 		TimeoutSeconds: *td.Await.TimeoutSeconds,
 		Callback:       td.Await.Callback,
 	}
-	if td.Await.Schema != nil {
-		schema, err := structpb.NewStruct(normalizeMap(td.Await.Schema))
-		if err != nil {
-			return nil, fmt.Errorf("task %q: await.schema: %w", td.ID, err)
-		}
-		spec.Schema = schema
+	schema, err := freeForm("await.schema", fmt.Sprintf("tasks[%d].await.schema", taskIndex), &td.Await.Schema)
+	if err != nil {
+		return nil, err
 	}
+	spec.Schema = schema
 	join, err := compileJoin(taskIndex, td)
 	if err != nil {
 		return nil, err

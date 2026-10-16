@@ -209,7 +209,7 @@ kind: Orkflow
 name: caller
 inputs:
   t: { type: string }
-  n: { type: string }
+  num: { type: string }
 ` + outputsLine + `
 tasks:
   - id: build
@@ -225,7 +225,7 @@ tasks:
 	}{
 		{"artifact", `{{ artifact "build/x.txt" }}`, "the artifact helper resolves on an Orker"},
 		{"env", `{{ env "HOME" }}`, "the env helper"},
-		{"sh", `{{ sh .inputs.n }}`, "the sh helper"},
+		{"sh", `{{ sh .inputs.num }}`, "the sh helper"},
 		{"artifacts", `{{ .tasks.build.artifacts }}`, ".tasks.build.artifacts is not a value"},
 		{"each", `{{ .each.x }}`, ".each is not available here"},
 		{"dynamic index", `{{ index .tasks .inputs.t "output" "v" }}`, "names every task it reads literally"},
@@ -258,7 +258,7 @@ apiVersion: orkstack/v1
 kind: Orkflow
 name: caller
 inputs:
-  n: { type: string }
+  num: { type: string }
 tasks:
   - id: build
     uses: shell
@@ -268,7 +268,7 @@ tasks:
     needs: [build]
     with:
       op: exec
-      command: ["sh", "-c", "cat {{ artifact \"build/x.txt\" }} {{ sh .inputs.n }} {{ env \"HOME\" }} {{ .tasks.build.artifacts }}"]
+      command: ["sh", "-c", "cat {{ artifact \"build/x.txt\" }} {{ sh .inputs.num }} {{ env \"HOME\" }} {{ .tasks.build.artifacts }}"]
 `); err != nil {
 			t.Fatalf("refused: %v", err)
 		}

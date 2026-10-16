@@ -506,16 +506,16 @@ apiVersion: orkstack/v1
 kind: Orkflow
 name: two-skipped
 inputs:
-  on:
+  enabled:
     type: boolean
 tasks:
   - id: x
     uses: shell
-    condition: "{{ .inputs.on }}"
+    condition: "{{ .inputs.enabled }}"
     with: {command: "echo"}
   - id: y
     uses: shell
-    condition: "{{ .inputs.on }}"
+    condition: "{{ .inputs.enabled }}"
     with: {command: "echo"}
   - id: z
     uses: shell
@@ -526,7 +526,7 @@ tasks:
 // An upstream skip names the first skipped need in needs: order.
 func TestSimulate_UpstreamSkipNamesTheFirstSkippedNeed(t *testing.T) {
 	wf := compile(t, twoSkippedNeedsDocument)
-	input := payload(t, map[string]any{"on": false})
+	input := payload(t, map[string]any{"enabled": false})
 	plan := simulate(t, wf, input, nil)
 	z := planTaskOf(t, plan, "z")
 	if z.GetSkippedBy() != "x" || z.GetSkipReason() != `upstream task "x" was skipped` {

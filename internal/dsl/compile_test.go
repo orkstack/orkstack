@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -1346,18 +1347,11 @@ tasks:
 	}
 }
 
-// TestCompile_CollidingNormalizedKeysCompileTheSameEveryTime guards the other
-// half of "one version, one document".
-//
-// YAML lets two distinct keys stringify to one JSON key (`null` and
-// `"<nil>"`), so the conversion loses one of them — and which one it loses
-// must not depend on map iteration order. The version cannot notice any more:
-// it is the source's hash, and the source does not change. The STORE notices,
-// because it compares the whole compiled document, so a compilation that
-// varied would make re-applying an unchanged file a "different document under
-// a stored version" every few tries (pkg/artifacts.SameStoredOrkflow). The
-// assertion is therefore on the compiled message, not only on the version.
-func TestCompile_CollidingNormalizedKeysCompileTheSameEveryTime(t *testing.T) {
+// TestCompile_ANullKeyInWithIsRefused: YAML lets two distinct keys stringify
+// to one JSON key (`null` and `"<nil>"`), and the old decode resolved the
+// collision last-wins. The strict mapping refuses a null key outright (R14),
+// so there is no collision to resolve and one document compiles one way.
+func TestCompile_ANullKeyInWithIsRefused(t *testing.T) {
 	const document = `
 apiVersion: orkstack/v1
 kind: Orkflow
@@ -1370,23 +1364,15 @@ tasks:
         null: one
         "<nil>": two
 `
-	var first *orkstackv1.Orkflow
-	for i := 0; i < 5_000; i++ {
-		wf, err := dsl.Compile([]byte(document))
-		if err != nil {
-			t.Fatalf("Compile() iteration %d: %v", i, err)
-		}
-		if i == 0 {
-			first = wf
-			continue
-		}
-		if wf.GetVersion() != first.GetVersion() {
-			t.Fatalf("version changed at iteration %d: %q vs %q",
-				i, wf.GetVersion(), first.GetVersion())
-		}
-		if !proto.Equal(wf, first) {
-			t.Fatalf("the same bytes compiled differently at iteration %d:\n%v\nvs\n%v",
-				i, wf, first)
+	_, err := dsl.Compile([]byte(document))
+	want := "line 10: the key null is null, and a JSON object key is a string; quote it ('null') for the key 'null'"
+	if err == nil || err.Error() != want || fieldOf(err) != "tasks[0].with.nested.null" {
+		t.Fatalf("Compile() = %v (field %q), want %q on tasks[0].with.nested.null", err, fieldOf(err), want)
+	}
+	for _, key := range []string{"~", "null", "Null"} {
+		doc := strings.Replace(document, "        null: one\n", "        "+key+": one\n", 1)
+		if _, err := dsl.Compile([]byte(doc)); err == nil || !strings.Contains(err.Error(), "is null, and a JSON object key is a string") {
+			t.Errorf("key %s: %v", key, err)
 		}
 	}
 }
@@ -1428,4 +1414,68 @@ tasks:
 	if wf.Inputs != nil || wf.GetTasks()[0].With != nil {
 		t.Errorf("omitted fields became present: inputs=%v with=%v", wf.Inputs, wf.GetTasks()[0].With)
 	}
+	preservesPresenceForEveryDataPosition(t)
+}
+
+// preservesPresenceForEveryDataPosition is the rest of
+// TestCompile_PreservesExplicitEmptyStructPresence: for each data position, an absent key and a bare null (`key:`, `key: ~`,
+// `key: null`) compile to an unset field with one digest, and `{}` to a
+// present, empty struct.
+func preservesPresenceForEveryDataPosition(t *testing.T) {
+	documents := map[string]func(value string) string{
+		"inputs": func(value string) string {
+			return "apiVersion: orkstack/v1\nkind: Orkflow\nname: x\nversion: \"1\"\n" + value + "tasks:\n  - id: a\n    uses: shell\n"
+		},
+		"with": func(value string) string {
+			return "apiVersion: orkstack/v1\nkind: Orkflow\nname: x\nversion: \"1\"\ntasks:\n  - id: a\n    uses: shell\n" + indent(value, "    ")
+		},
+		"schema": func(value string) string {
+			return "apiVersion: orkstack/v1\nkind: Orkflow\nname: x\nversion: \"1\"\ntasks:\n  - id: a\n    await:\n      timeout_seconds: 60\n" + indent(value, "      ")
+		},
+	}
+	struct_ := func(position string, wf *orkstackv1.Orkflow) *structpb.Struct {
+		switch position {
+		case "inputs":
+			return wf.GetInputs()
+		case "with":
+			return wf.GetTasks()[0].GetWith()
+		}
+		return wf.GetTasks()[0].GetAwait().GetSchema()
+	}
+	for position, document := range documents {
+		absent, err := dsl.Compile([]byte(document("")))
+		if err != nil {
+			t.Fatalf("%s absent: %v", position, err)
+		}
+		absentDigest, _ := dsl.DefinitionDigest(absent)
+		if struct_(position, absent) != nil {
+			t.Errorf("%s absent compiled present", position)
+		}
+		for _, null := range []string{position + ":\n", position + ": ~\n", position + ": null\n"} {
+			wf, err := dsl.Compile([]byte(document(null)))
+			if err != nil {
+				t.Fatalf("%q: %v", null, err)
+			}
+			if struct_(position, wf) != nil {
+				t.Errorf("%q compiled present", null)
+			}
+			if digest, _ := dsl.DefinitionDigest(wf); digest != absentDigest {
+				t.Errorf("%q digest %s, want the absent form's %s", null, digest, absentDigest)
+			}
+		}
+		empty, err := dsl.Compile([]byte(document(position + ": {}\n")))
+		if err != nil {
+			t.Fatalf("%s: {}: %v", position, err)
+		}
+		if got := struct_(position, empty); got == nil || len(got.GetFields()) != 0 {
+			t.Errorf("%s: {} = %v, want a present empty struct", position, got)
+		}
+	}
+}
+
+func indent(text, prefix string) string {
+	if text == "" {
+		return ""
+	}
+	return prefix + text
 }

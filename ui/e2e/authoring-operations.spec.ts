@@ -229,7 +229,7 @@ tasks:
     with:
       op: copy
       src: in/x
-      srcs: [y]
+      srcs: [why]
 `;
 	await page.getByTestId('apply-yaml').fill(warned);
 	await page.getByTestId('apply-validate').click();

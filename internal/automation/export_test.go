@@ -2,6 +2,7 @@ package automation
 
 import (
 	"flag"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -9,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -282,7 +285,7 @@ func TestDigest_CoversActionableStepsOnly(t *testing.T) {
 
 func TestRender_Golden(t *testing.T) {
 	input := &orkstackv1.Payload{}
-	doc := mustParse(t, header+"schedules:\n  s:\n    orkflow: a\n    cron: '@daily'\n    input: '{\"z\": 1, \"a\": [true, null], \"m\": {\"k\": \"v\"}}'\n")
+	doc := mustParse(t, header+"schedules:\n  s:\n    orkflow: a\n    cron: '@daily'\n    input:\n      z: 1\n      a: [true, null]\n      m: {k: v}\n")
 	input = doc.Schedules["s"].Input
 	lines := []string{
 		"string: " + renderString("say \"hi\"\n"),
@@ -315,4 +318,46 @@ func TestRender_Golden(t *testing.T) {
 		"webhook summary: " + webhookSummary("https://hooks.acme.dev/etl", "payments", "nightly-etl", ""),
 	}
 	requireGolden(t, "render.golden", strings.Join(lines, "\n")+"\n")
+}
+
+// TestExport_WritesInputAsAYAMLMapping: an exported schedule input is a block
+// mapping, keys sorted — the shape Parse reads.
+func TestExport_WritesInputAsAYAMLMapping(t *testing.T) {
+	yaml, _, err := Export("payments", fullLive())
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if !strings.Contains(yaml, "    input:\n      mode: full\n") || strings.Contains(yaml, `input: '`) {
+		t.Fatalf("input is not written as a YAML mapping:\n%s", yaml)
+	}
+}
+
+// TestExport_InputRoundTripsThroughTheStrictMapping: every string a YAML
+// reader could read as something else is quoted on export, so Parse reads
+// the export back to the same input.
+func TestExport_InputRoundTripsThroughTheStrictMapping(t *testing.T) {
+	values := map[string]any{
+		"yes": "yes", "octal": "0755", "sexagesimal": "1:30", "date": "2026-01-02", "tilde": "~",
+		"empty": "", "space": " x", "colon": "a: b", "hash": "#c", "true-text": "true", "number-text": "12",
+		"zero": 0.0, "negative-zero": math.Copysign(0, -1), "bound": float64(1 << 53), "past-bound": float64(1<<53 + 2),
+		"big": 1e21, "small": 1e-7, "tenth": 0.1, "flag": true, "nothing": nil,
+		"list": []any{"on", 1.5, []any{}}, "nested": map[string]any{"0755": "key", "k": map[string]any{}},
+	}
+	data, err := structpb.NewStruct(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := identicalLive()
+	live.Schedules[0].Input = &orkstackv1.Payload{Data: data}
+	exported, _, err := Export("payments", live)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	doc, issues := Parse([]byte(exported))
+	if HasErrors(issues) {
+		t.Fatalf("Parse(Export) = %v\n%s", issues, exported)
+	}
+	if got := doc.Schedules["nightly-reconcile"].Input; !proto.Equal(got.GetData(), data) {
+		t.Fatalf("input changed across export and parse:\n got %v\nwant %v\n%s", got.GetData(), data, exported)
+	}
 }

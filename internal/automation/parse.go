@@ -48,10 +48,6 @@ const (
 // may name.
 var secretEnvPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
-// inputRefusal is the one explanation every non-JSON-object input earns.
-const inputRefusal = `input must be a JSON object written as a string, e.g. input: '{"mode": "full"}' — ` +
-	"run input is JSON, never YAML (AGENTS.md §3.1)"
-
 // parser collects issues for one Parse.
 type parser struct {
 	issues []*orkstackv1.ValidationIssue
@@ -511,28 +507,47 @@ func (p *parser) timestamp(field, key string, node *yaml.Node) *timestamppb.Time
 	return timestamppb.New(at)
 }
 
-// input reads a schedule's input: a JSON object written as a string. A YAML
-// mapping is refused, because run input is JSON, never YAML.
+// input reads a schedule's run input: a YAML mapping, converted to JSON by
+// the strict mapping (dsl.AuthoredJSON; docs/JSON.md, "Data written in an
+// authored document"). A string is refused — a JSON object written as a
+// string was the shape before — and the message names the YAML form; {} is
+// recorded as unset.
 func (p *parser) input(field string, node *yaml.Node) *orkstackv1.Payload {
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
-		p.errorAt(field, node, "%s", inputRefusal)
+	switch {
+	case isNull(node):
+		p.errorAt(field, node, "input is null: write the run input as a mapping, or remove the key")
+		return nil
+	case node.Kind == yaml.ScalarNode && node.Tag == "!!str":
+		var object map[string]any
+		if json.Unmarshal([]byte(node.Value), &object) == nil && object != nil {
+			example := strings.TrimSpace(node.Value)
+			if len(example) > 60 {
+				cut := 60
+				for cut > 0 && !utf8.RuneStart(example[cut]) {
+					cut--
+				}
+				example = example[:cut] + "…"
+			}
+			p.errorAt(field, node, "input is a string: write the object as YAML instead — without the quotes, %s is a YAML mapping (docs/AUTOMATION.md, \"schedules\")", example)
+			return nil
+		}
+		p.errorAt(field, node, "input must be a YAML mapping of the run's input, e.g. input: {mode: full}, got %s", describeNode(node))
+		return nil
+	case node.Kind != yaml.MappingNode:
+		p.errorAt(field, node, "input must be a YAML mapping of the run's input, got %s", describeNode(node))
 		return nil
 	}
-	decoder := json.NewDecoder(strings.NewReader(node.Value))
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		p.errorAt(field, node, "input is not valid JSON (%v); %s", err, inputRefusal)
+	value, err := dsl.AuthoredJSON(node, field)
+	if err != nil {
+		var refused *dsl.AuthoredDataError
+		if errors.As(err, &refused) {
+			p.issues = append(p.issues, errorIssue(refused.Path, fmt.Sprintf("line %d: %s", refused.Line, refused.Reason)))
+		} else {
+			p.errorAt(field, node, "%v", err)
+		}
 		return nil
 	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		p.errorAt(field, node, "input has text after its JSON object; %s", inputRefusal)
-		return nil
-	}
-	object, ok := value.(map[string]any)
-	if !ok {
-		p.errorAt(field, node, "%s", inputRefusal)
-		return nil
-	}
+	object := value.(map[string]any)
 	if len(object) == 0 {
 		return nil
 	}

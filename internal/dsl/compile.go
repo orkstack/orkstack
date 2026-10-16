@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -109,7 +108,12 @@ type document struct {
 	Version     string            `yaml:"version"`
 	Description string            `yaml:"description"`
 	Labels      map[string]string `yaml:"labels"`
-	Inputs      map[string]any    `yaml:"inputs"`
+	// Inputs is a data position (docs/JSON.md, "Data written in an
+	// authored document"): a yaml.Node VALUE, so it holds exactly what was
+	// written — tags, anchors and aliases included — for the strict mapping
+	// (freeForm) to judge. A pointer would not: yaml.v3 decodes into a
+	// *yaml.Node as an ordinary struct.
+	Inputs yaml.Node `yaml:"inputs"`
 
 	// Outputs is the Orkflow's declared return contract: output name to a
 	// template over .inputs and .tasks.<id>.output, rendered once by the
@@ -152,7 +156,8 @@ type taskDocument struct {
 	// queue is internal to a pool (AGENTS.md §7.1).
 	Pin string `yaml:"pin"`
 
-	With map[string]any `yaml:"with"`
+	// With is a data position, a yaml.Node value like document.Inputs.
+	With yaml.Node `yaml:"with"`
 
 	// Uses is the only image-selecting field in the DSL: a catalog activity
 	// name ("shell") or a registry reference ("ghcr.io/acme/migrate:v3",
@@ -318,13 +323,11 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		SourceYaml:  string(source),
 	}
 
-	if doc.Inputs != nil {
-		inputs, err := structpb.NewStruct(normalizeMap(doc.Inputs))
-		if err != nil {
-			return nil, fmt.Errorf("inputs: %w", err)
-		}
-		wf.Inputs = inputs
+	inputs, err := freeForm("inputs", "inputs", &doc.Inputs)
+	if err != nil {
+		return nil, err
 	}
+	wf.Inputs = inputs
 	if len(doc.Outputs) > 0 {
 		wf.Outputs = doc.Outputs
 	}
@@ -434,13 +437,11 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 				Source: sd.Source,
 			})
 		}
-		if td.With != nil {
-			with, err := structpb.NewStruct(normalizeMap(td.With))
-			if err != nil {
-				return nil, fmt.Errorf("task %q: with: %w", td.ID, err)
-			}
-			task.With = with
+		with, err := freeForm("with", fmt.Sprintf("tasks[%d].with", taskIndex), &td.With)
+		if err != nil {
+			return nil, err
 		}
+		task.With = with
 		wf.Tasks = append(wf.Tasks, task)
 	}
 
@@ -469,72 +470,5 @@ func networkModeOf(raw string) orkstackv1.NetworkMode {
 		// A sentinel the validator recognizes. Returning DEFAULT here would
 		// run a typo'd `network: nonw` with full network access.
 		return orkstackv1.NetworkMode(-1)
-	}
-}
-
-// normalizeMap converts a YAML-decoded value into the JSON-compatible shape
-// structpb requires (map keys become strings, ints stay numeric).
-func normalizeMap(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = normalizeValue(v)
-	}
-	return out
-}
-
-func normalizeValue(v any) any {
-	switch typed := v.(type) {
-	case map[string]any:
-		return normalizeMap(typed)
-	case map[any]any:
-		// YAML permits non-string keys, while JSON/Struct do not. Distinct YAML
-		// keys can stringify to the same value (for example null and "<nil>").
-		// Sort by both the normalized key and a typed identity before applying
-		// the unavoidable last-value-wins conversion, so one document always
-		// compiles to one message. A version does not depend on this — it is
-		// the source's hash — but the STORE compares the compiled document, so
-		// a compilation that varied with map iteration order would make
-		// re-applying an unchanged file a different document under a stored
-		// version (pkg/artifacts.SameStoredOrkflow).
-		type entry struct {
-			key      string
-			identity string
-			value    any
-		}
-		entries := make([]entry, 0, len(typed))
-		for key, value := range typed {
-			entries = append(entries, entry{
-				key:      fmt.Sprint(key),
-				identity: fmt.Sprintf("%T:%#v", key, key),
-				value:    value,
-			})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].key != entries[j].key {
-				return entries[i].key < entries[j].key
-			}
-			return entries[i].identity < entries[j].identity
-		})
-		out := make(map[string]any, len(entries))
-		for _, item := range entries {
-			out[item.key] = normalizeValue(item.value)
-		}
-		return out
-	case []any:
-		out := make([]any, len(typed))
-		for i, val := range typed {
-			out[i] = normalizeValue(val)
-		}
-		return out
-	case int:
-		return float64(typed)
-	case int32:
-		return float64(typed)
-	case int64:
-		return float64(typed)
-	case uint64:
-		return float64(typed)
-	default:
-		return v
 	}
 }

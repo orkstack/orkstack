@@ -247,9 +247,10 @@ func exportSchedule(s *orkstackv1.Schedule) *yaml.Node {
 		addPair(entry, plainNode("pause_on_failure"), &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
 	}
 	if !inputEmpty(s.GetInput()) {
-		addPair(entry, plainNode("input"), &yaml.Node{
-			Kind: yaml.ScalarNode, Tag: "!!str", Value: compactInput(s.GetInput()), Style: yaml.SingleQuotedStyle,
-		})
+		// A YAML mapping, keys sorted, quoting any string a YAML reader could
+		// read as something else: Parse's strict mapping reads it back to
+		// the same input.
+		addPair(entry, plainNode("input"), dsl.AuthoredNode(s.GetInput().GetData().AsMap()))
 	}
 	return entry
 }

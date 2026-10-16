@@ -21,6 +21,56 @@ editor all agree on this one wire shape, so a copied command reproduces
 exactly what the UI would have sent — a second, YAML, input mode would need
 its own YAML→JSON translation step, and a gap between what a reader typed and
 what was actually submitted is exactly what this dialect exists to prevent.
+An authored document may write runtime data as YAML; the strict mapping below
+turns it into this JSON, never a lenient decode.
+
+## Data written in an authored document
+
+An Orkflow and an automation document are YAML, and some of what they hold is
+runtime data: an Orkflow's `inputs:` (their defaults), every task's `with:` —
+an `http` `body:`, jq `vars:`, a composed task's input — an await's `schema:`,
+and a schedule's `input:`. It is written as YAML and becomes JSON through one
+strict mapping, never a lenient decode. On the wire it is the JSON this page
+describes, and the API, the CLI and the UI take only JSON (`AGENTS.md` §3.1).
+
+| YAML | JSON |
+|---|---|
+| a mapping | an object, keys as written |
+| a sequence | an array |
+| a quoted or block scalar (`'…'`, `"…"`, `\|`, `>`) | a string, exactly |
+| `null`, `~`, nothing | `null` |
+| `true`, `false` (also `True`, `TRUE`, `False`, `FALSE`) | a boolean |
+| a decimal number (`42`, `-1`, `+12`, `1.5`, `.5`, `1.5e+3`), or hex `0x1F` | a number |
+| any other plain text | a string |
+
+A plain (unquoted) value is accepted only when the YAML readers an author's
+tools use agree on it — YAML 1.2 (editors), YAML 1.1 (many libraries) and the
+reader earlier OrkStack releases used — and the JSON it becomes keeps its value
+exactly. Anything else is refused, naming the path and the line. Quote it for
+the string, or write the number as JSON writes it:
+
+| Refused | Why | Examples |
+|---|---|---|
+| YAML 1.1 booleans | a boolean to YAML 1.1, a string to YAML 1.2 | `yes`, `No`, `on`, `OFF`, `y`, `n` |
+| numbers YAML 1.1 reads differently | two readers, two numbers — or a number and a string | `0755` (493 or 755), `0b101`, `1_000`, `-0x1F`, `1:30` (90, base 60) |
+| numbers YAML 1.1 reads as text | write `1000`, `1.0e+3` or `-0.5` | `1e3`, `1.5e3`, `-.5`, `0o17`, `08` |
+| a number earlier releases read differently | write `31` | `0X1F` |
+| dates and times | a timestamp to some readers; JSON has none | `2026-01-02`, `2026-01-02T03:04:05Z` |
+| numbers JSON cannot hold | | `.inf`, `.nan`, `1e400`, `9007199254740993` (beyond 2^53) |
+| numbers JSON would change | a JSON number keeps about 17 significant digits; write the number it becomes, or quote it | `9007199254740993.0` (becomes `9007199254740992`), `0.30000000000000001` (becomes `0.3`), `1.0e-400` (becomes `0`) |
+| tags, anchors, aliases, merge keys | write the data out | `!!str 1`, `&base`, `*base`, `<<:` |
+| a null key, or a key the readers disagree on | a JSON key is a string | `~:`, `yes:`, `0755:` |
+| a key written twice in one mapping | a JSON object holds each key once | `a: 1` and `a: 2` in one mapping, or `1:` beside `"1":` |
+
+A version-like value in one of these places is data like any other:
+`with: {version: 1.10}` is the number `1.1`, as JSON's own `1.10` is. Quote
+it for the text: `version: '1.10'`. An Orkflow's own top-level `version:` is
+not runtime data: it is always read as text, so `version: 1.10` there names
+the version `1.10`.
+
+`orkctl export` writes a schedule's `input:` back as a mapping, quoting every
+string a YAML reader could read as something else, so an export applies
+unchanged.
 
 ## The enum dialect
 

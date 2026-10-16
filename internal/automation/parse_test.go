@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,8 @@ schedules:
     cron: "0 2 * * *"
     timezone: Europe/Lisbon
     overlap: skip
-    input: '{"mode": "full"}'
+    input:
+      mode: full
 
 triggers:
   github-deploy:
@@ -229,25 +231,68 @@ func TestParse_SettingsHoldIsRefusedAsOperational(t *testing.T) {
 	requireIssue(t, issues, "settings.hold", "operational state", "orkctl namespace update --hold")
 }
 
-func TestParse_InputMustBeAJSONObjectString(t *testing.T) {
-	entry := func(input string) string {
-		return header + "schedules:\n  s:\n    orkflow: a\n    cron: '@daily'\n    input: " + input + "\n"
-	}
-	_, issues := Parse([]byte(entry("{ mode: full }")))
-	requireIssue(t, issues, "schedules.s.input", "line 8", "input must be a JSON object written as a string", "never YAML (AGENTS.md §3.1)")
-	for _, bad := range []string{`'[1]'`, `'nope'`, `'{"a": no}'`, "[1]", "12"} {
-		if _, issues := Parse([]byte(entry(bad))); !HasErrors(issues) {
-			t.Errorf("input %s was accepted", bad)
+func scheduleWithInput(input string) string {
+	return header + "schedules:\n  s:\n    orkflow: a\n    cron: '@daily'\n    input:" + input + "\n"
+}
+
+// TestParse_InputIsAYAMLMapping: a schedule's input is written as YAML, block
+// or flow, and {} is recorded as unset.
+func TestParse_InputIsAYAMLMapping(t *testing.T) {
+	for name, input := range map[string]string{
+		"block": "\n      num: 1\n      b: true\n      s: full\n      l: [1, x]\n      m:\n        k: v",
+		"flow":  " {num: 1, b: true, s: full, l: [1, x], m: {k: v}}",
+	} {
+		doc := mustParse(t, scheduleWithInput(input))
+		got, err := json.Marshal(doc.Schedules["s"].Input.GetData().AsMap())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := `{"b":true,"l":[1,"x"],"m":{"k":"v"},"num":1,"s":"full"}`; string(got) != want {
+			t.Errorf("%s: input = %s, want %s", name, got, want)
 		}
 	}
-	doc := mustParse(t, entry(`'{}'`))
-	if doc.Schedules["s"].Input != nil {
-		t.Error("input '{}' was not recorded as unset")
+	if doc := mustParse(t, scheduleWithInput(" {}")); doc.Schedules["s"].Input != nil {
+		t.Error("input {} was not recorded as unset")
 	}
-	doc = mustParse(t, entry(`'{"n": 1, "b": true}'`))
-	fields := doc.Schedules["s"].Input.GetData().GetFields()
-	if fields["n"].GetNumberValue() != 1 || !fields["b"].GetBoolValue() {
-		t.Errorf("JSON types lost: %v", fields)
+}
+
+// TestParse_AJSONStringInputIsRefusedNamingTheYAMLForm: a JSON object written
+// as a string — the shape before — is refused, and the message shows the
+// author's own text as the YAML mapping it already is.
+func TestParse_AJSONStringInputIsRefusedNamingTheYAMLForm(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{` '{"mode": "full"}'`, `line 8: input is a string: write the object as YAML instead — without the quotes, {"mode": "full"} is a YAML mapping (docs/AUTOMATION.md, "schedules")`},
+		{` '{"a_rather_long_key": "with a rather long value", "and": "more of it"}'`,
+			`line 8: input is a string: write the object as YAML instead — without the quotes, {"a_rather_long_key": "with a rather long value", "and": "mo… is a YAML mapping (docs/AUTOMATION.md, "schedules")`},
+		{` full`, `line 8: input must be a YAML mapping of the run's input, e.g. input: {mode: full}, got "full"`},
+		{` '[1]'`, `line 8: input must be a YAML mapping of the run's input, e.g. input: {mode: full}, got "[1]"`},
+		{` ~`, `line 8: input is null: write the run input as a mapping, or remove the key`},
+		{` [1]`, `line 8: input must be a YAML mapping of the run's input, got a list`},
+		{` 12`, `line 8: input must be a YAML mapping of the run's input, got the number 12`},
+		{` true`, `line 8: input must be a YAML mapping of the run's input, got the boolean true`},
+	} {
+		_, issues := Parse([]byte(scheduleWithInput(tc.input)))
+		if len(issues) != 1 || issues[0].GetField() != "schedules.s.input" || issues[0].GetMessage() != tc.want {
+			t.Errorf("input:%s → %v\nwant %q on schedules.s.input", tc.input, issues, tc.want)
+		}
+	}
+}
+
+// TestParse_InputUsesTheStrictMapping: a plain value YAML readers resolve
+// differently is refused at its own path.
+func TestParse_InputUsesTheStrictMapping(t *testing.T) {
+	_, issues := Parse([]byte(scheduleWithInput(" {flag: yes}")))
+	want := "line 8: yes is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yes') for the string"
+	if len(issues) != 1 || issues[0].GetField() != "schedules.s.input.flag" || issues[0].GetMessage() != want {
+		t.Fatalf("issues = %v, want %q on schedules.s.input.flag", issues, want)
+	}
+}
+
+func TestParse_InputRefusesADuplicateKey(t *testing.T) {
+	_, issues := Parse([]byte(scheduleWithInput("\n      a: 1\n      a: 2")))
+	want := `line 10: the key "a" is written twice (first at line 9)`
+	if len(issues) != 1 || issues[0].GetField() != "schedules.s.input.a" || issues[0].GetMessage() != want {
+		t.Fatalf("issues = %v, want %q on schedules.s.input.a", issues, want)
 	}
 }
 

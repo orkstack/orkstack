@@ -245,7 +245,8 @@ schedules:
     cron: "0 2 * * *"
     timezone: Europe/Lisbon
     overlap: skip
-    input: '{"mode": "full"}'
+    input:
+      mode: full
 triggers:
   github-deploy:
     orkflow: %[1]s
