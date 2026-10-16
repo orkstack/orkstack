@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -648,5 +649,39 @@ func TestExamples_WithMatchesTheImageInterfaces(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no task was checked")
+	}
+}
+
+// TestExamples_KeepTheirDefinitionDigests holds every shipped example to the
+// definition digest and version it compiled to when the golden was recorded.
+// The document header (docs/DSL.md, "The document header") is not part of the
+// definition, so adding it moves no line of the golden; only an example whose
+// definition changed on purpose, with its version bumped, may.
+// Regenerate with: go test ./internal/dsl -run '^TestExamples_KeepTheirDefinitionDigests$' -update
+func TestExamples_KeepTheirDefinitionDigests(t *testing.T) {
+	const golden = "testdata/example-digests.golden"
+	var got strings.Builder
+	for _, path := range orkflowExamples(t) {
+		wf, err := dsl.CompileFile(path)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		digest, err := dsl.DefinitionDigest(wf)
+		if err != nil {
+			t.Fatalf("%s: digest: %v", path, err)
+		}
+		fmt.Fprintf(&got, "%s %s %s\n", filepath.Base(path), digest, wf.GetVersion())
+	}
+	if *updateCompat {
+		if err := os.WriteFile(golden, []byte(got.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read %s: %v (record it with -update)", golden, err)
+	}
+	if got.String() != string(want) {
+		t.Fatalf("example digests moved:\n got:\n%s\nwant:\n%s", got.String(), want)
 	}
 }

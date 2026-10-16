@@ -1,0 +1,26 @@
+{
+  "name":  "composed",
+  "version":  "0.1.0",
+  "inputs":  {
+    "image":  {
+      "default":  "ghcr.io/acme/app:1.4",
+      "type":  "string"
+    }
+  },
+  "tasks":  [
+    {
+      "id":  "release",
+      "with":  {
+        "image":  "{{ .inputs.image }}"
+      },
+      "uses":  "orkflow:release-block@2.1.0",
+      "orkflow":  {
+        "name":  "release-block",
+        "version":  "2.1.0"
+      }
+    }
+  ],
+  "outputs":  {
+    "digest":  "{{ .tasks.release.output.digest }}"
+  }
+}

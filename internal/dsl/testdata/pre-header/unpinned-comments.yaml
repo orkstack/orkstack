@@ -1,0 +1,14 @@
+# OrkStack orkflow DSL
+#
+# An unpinned document with leading comments: its version is derived
+# from its source.
+name: unpinned-comments
+description: An unpinned pre-header document.
+
+tasks:
+  # One task.
+  - id: say
+    uses: shell
+    with:
+      op: eval
+      command: ["sh", "-c", "echo hello"]

@@ -1,0 +1,179 @@
+{
+  "name":  "every-feature",
+  "version":  "1.0.0",
+  "description":  "Every feature a definition can carry, written before the header.",
+  "labels":  {
+    "team":  "platform"
+  },
+  "inputs":  {
+    "parts":  {
+      "default":  [
+        {
+          "name":  "a"
+        },
+        {
+          "name":  "b"
+        }
+      ],
+      "type":  "array"
+    },
+    "retries":  {
+      "default":  3,
+      "type":  "number"
+    },
+    "verbose":  {
+      "default":  false,
+      "type":  "boolean"
+    }
+  },
+  "tasks":  [
+    {
+      "id":  "prepare",
+      "with":  {
+        "command":  [
+          "sh",
+          "-c",
+          "echo prepare"
+        ],
+        "op":  "exec",
+        "scalars":  {
+          "b1":  true,
+          "b2":  false,
+          "big":  9007199254740992,
+          "f1":  1.5,
+          "f2":  0.5,
+          "f3":  1,
+          "f4":  1,
+          "f5":  1.5,
+          "f6":  1500,
+          "f7":  0.0015,
+          "h1":  31,
+          "i1":  0,
+          "i2":  0,
+          "i3":  12,
+          "i4":  42,
+          "m1":  {
+            "a":  "b"
+          },
+          "n1":  null,
+          "n2":  null,
+          "n3":  null,
+          "s1":  "1.2.3",
+          "s2":  "10.0.0.1",
+          "s3":  "v1",
+          "s4":  "3d",
+          "s5":  "inf",
+          "s6":  "nUll",
+          "s7":  "_1",
+          "s8":  "https://x/y"
+        }
+      },
+      "timeoutSeconds":  300,
+      "uses":  "shell",
+      "network":  "NETWORK_MODE_NONE",
+      "cache":  {
+        "ttlSeconds":  3600,
+        "scope":  "CACHE_SCOPE_ORKFLOW"
+      }
+    },
+    {
+      "id":  "approval",
+      "needs":  [
+        "prepare"
+      ],
+      "await":  {
+        "timeoutSeconds":  3600,
+        "schema":  {
+          "approved":  {
+            "required":  true,
+            "type":  "boolean"
+          },
+          "approver":  {
+            "type":  "string"
+          }
+        }
+      }
+    },
+    {
+      "id":  "convert",
+      "with":  {
+        "command":  [
+          "sh",
+          "-c",
+          "echo {{ sh .each.part.name }}"
+        ],
+        "op":  "eval"
+      },
+      "needs":  [
+        "approval"
+      ],
+      "timeoutSeconds":  300,
+      "retry":  {
+        "maximumAttempts":  2,
+        "initialIntervalSeconds":  1,
+        "backoffCoefficient":  2,
+        "maximumIntervalSeconds":  60
+      },
+      "uses":  "shell",
+      "each":  {
+        "over":  "{{ .inputs.parts }}",
+        "as":  "part",
+        "maxItems":  10,
+        "maxParallel":  2,
+        "source":  {
+          "input":  "parts"
+        }
+      }
+    },
+    {
+      "id":  "merge",
+      "with":  {
+        "command":  [
+          "sh",
+          "-c",
+          "printf merged"
+        ],
+        "op":  "eval"
+      },
+      "needs":  [
+        "convert"
+      ],
+      "timeoutSeconds":  120,
+      "uses":  "shell",
+      "env":  {
+        "MODE":  "merge"
+      },
+      "resources":  {
+        "cpu":  "1",
+        "memory":  "512Mi"
+      },
+      "pin":  "build"
+    },
+    {
+      "id":  "cleanup",
+      "with":  {
+        "command":  [
+          "sh",
+          "-c",
+          "echo cleanup"
+        ],
+        "op":  "eval"
+      },
+      "needs":  [
+        "merge"
+      ],
+      "timeoutSeconds":  300,
+      "uses":  "shell",
+      "join":  "JOIN_POLICY_ALL_DONE"
+    }
+  ],
+  "pins":  [
+    {
+      "name":  "build",
+      "timeoutSeconds":  600
+    }
+  ],
+  "outputs":  {
+    "merged":  "{{ .tasks.merge.output.value }}"
+  }
+}
