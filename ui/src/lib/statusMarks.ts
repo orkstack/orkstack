@@ -4,6 +4,7 @@
 // (red) carry colour at all, and each status's word is always written beside
 // its mark. The CSS for every mark is in app.css's `.mark-*` primitives.
 import { Status } from './gen/orkstack/v1/common_pb';
+import { statusClasses } from './status';
 
 export type MarkShape = 'square' | 'dot' | 'ring' | 'cross' | 'strike' | 'hatch' | 'hollow' | 'dotted';
 /** live: the drafting blue; alarm: the revision red; the rest are ink. */
@@ -31,4 +32,16 @@ export const STATUS_MARKS: Record<Status, StatusMark> = {
 
 export function statusMark(status: Status | undefined): StatusMark {
 	return STATUS_MARKS[status ?? Status.UNSPECIFIED] ?? STATUS_MARKS[Status.UNSPECIFIED];
+}
+
+const STAMP_CLASS = new Map<Status, string>(
+	(Object.keys(STATUS_MARKS).map(Number) as Status[]).map((s) => {
+		const mark = STATUS_MARKS[s];
+		return [s, `stamp ${statusClasses(s)}${mark.inner ? '' : ` ${mark.className}`}`];
+	})
+);
+
+/** The whole class of a status stamp, computed once per status. */
+export function stampClass(status: Status | undefined): string {
+	return STAMP_CLASS.get(status ?? Status.UNSPECIFIED) ?? STAMP_CLASS.get(Status.UNSPECIFIED)!;
 }
