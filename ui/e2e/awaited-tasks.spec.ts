@@ -50,7 +50,9 @@ const shot = (page: Page, name: string) => page.screenshot({ path: out(name), fu
 // wants a value downstream uses op: eval and prints it — a values.json the
 // command writes is overwritten (images/activity-shell/README.md).
 function workflow(): string {
-	return `name: ${NAME}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${NAME}
 version: "0.1.0"
 description: Plan, wait for an approval, apply.
 tasks:

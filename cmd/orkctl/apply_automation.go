@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/automation"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // applyOptions are apply's flags beyond the global ones.
@@ -48,10 +50,12 @@ type applyInput struct {
 	namespace string
 }
 
-// classifyDocument peeks a file's top-level keys with a non-strict decode.
-// No orkflow document can carry apiVersion or kind — the compiler refuses an
-// unknown key — so their absence is an orkflow, kind: Automation is an
-// automation document, and anything else is refused here.
+// classifyDocument peeks a file's top-level keys with a non-strict decode
+// and reads its kind: explicitly: kind: Orkflow is an orkflow document,
+// kind: Automation an automation document, and a file with no kind, or any
+// other, is refused here, before anything is sent. The engine checks each
+// kind's apiVersion; YAML that does not parse is the engine's to explain,
+// with a line, through ValidateOrkflow.
 func classifyDocument(path string, source []byte) (applyInput, error) {
 	var peek struct {
 		APIVersion string `yaml:"apiVersion"`
@@ -60,23 +64,29 @@ func classifyDocument(path string, source []byte) (applyInput, error) {
 	}
 	in := applyInput{path: path, source: source, kind: orkflowDocument}
 	if err := yaml.Unmarshal(source, &peek); err != nil {
-		// Malformed YAML is the engine's to explain, with a line and a
-		// field, through ValidateOrkflow.
 		return in, nil
 	}
 	switch {
-	case peek.Kind == "" && peek.APIVersion == "":
+	case peek.Kind == dsl.KindOrkflow:
 		in.namespace = peek.Namespace
 		return in, nil
-	case peek.Kind == automation.Kind:
+	case peek.Kind == dsl.KindAutomation:
 		in.kind = automationDocument
 		in.namespace = peek.Namespace
 		if in.namespace == "" {
 			in.namespace = "default"
 		}
 		return in, nil
+	case peek.Kind == "" && peek.APIVersion == "":
+		return in, fmt.Errorf("%s: no apiVersion or kind: an OrkStack document begins with %q and its kind — "+
+			"%q for an Orkflow, %q for an automation document; add the two lines at the top, after any leading comments",
+			path, "apiVersion: "+dsl.APIVersion, "kind: "+dsl.KindOrkflow, "kind: "+dsl.KindAutomation)
+	case peek.Kind == "":
+		return in, fmt.Errorf("%s: kind is required: add %q (or %q) below %q",
+			path, "kind: "+dsl.KindOrkflow, "kind: "+dsl.KindAutomation, "apiVersion: "+dsl.APIVersion)
 	default:
-		return in, fmt.Errorf("%s: unknown document kind %q: want an orkflow document, or kind: %s", path, peek.Kind, automation.Kind)
+		return in, fmt.Errorf("%s: unknown document kind %q: want kind: %s or kind: %s",
+			path, peek.Kind, dsl.KindOrkflow, dsl.KindAutomation)
 	}
 }
 
@@ -300,7 +310,11 @@ func (r *applyRun) validateOrkflows(inputs []applyInput) error {
 			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_NEW
 		case err != nil:
 			return rpcError("read "+in.path, err)
-		case stored.Msg.GetOrkflow().GetSourceYaml() == string(in.source):
+		case bytes.Equal(dsl.VersionedSource([]byte(stored.Msg.GetOrkflow().GetSourceYaml())), dsl.VersionedSource(in.source)):
+			// The store's own source rule (pkg/artifacts.SameStoredOrkflow):
+			// GetOrkflow returns the shown form, whose versioned source is
+			// the stored one's, so this says identical exactly when the
+			// apply would be a no-op on the source.
 			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_IDENTICAL
 		default:
 			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_CONFLICTING
@@ -388,8 +402,14 @@ func (r *applyRun) checkRefusals() {
 		}
 		if doc.GetStored() == orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_CONFLICTING {
 			wf := doc.GetValidated().GetOrkflow()
+			advice := "bump version: or drop it"
+			if dsl.HeaderOutOfForm(string(r.sources[doc.GetFile()])) {
+				advice = fmt.Sprintf("if only the header changed, write %q and %q as the file's first two lines "+
+					"(after any leading comments); otherwise bump version: or drop it",
+					"apiVersion: "+dsl.APIVersion, "kind: "+dsl.KindOrkflow)
+			}
 			r.refusals = append(r.refusals, fmt.Sprintf("%s: version %s of %s is stored with different source; "+
-				"ApplyOrkflow would refuse it — bump version: or drop it", doc.GetFile(), wf.GetVersion(), wf.GetName()))
+				"ApplyOrkflow would refuse it — %s", doc.GetFile(), wf.GetVersion(), wf.GetName(), advice))
 		}
 	}
 	for _, doc := range r.report.GetAutomation() {

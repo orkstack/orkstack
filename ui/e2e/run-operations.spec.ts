@@ -38,7 +38,9 @@ const out = proofOut(PROOF_DIR);
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
 function workflow(): string {
-	return `name: ${NAME}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${NAME}
 version: "0.1.0"
 description: Browser run operations coverage.
 tasks:
@@ -56,7 +58,9 @@ tasks:
 }
 
 function completedWorkflow(): string {
-	return `name: ${COMPLETED_NAME}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${COMPLETED_NAME}
 version: "0.1.0"
 description: Retained output and artifact download coverage.
 tasks:

@@ -28,7 +28,9 @@ import (
 // REAL values.json (the shell image writes exitCode), which the plan is told
 // through an assumed output.
 func planBranchesYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: run-plan agreement probe.
 inputs:

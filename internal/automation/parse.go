@@ -48,10 +48,6 @@ const (
 // may name.
 var secretEnvPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
-// inputRefusal is the one explanation every non-JSON-object input earns.
-const inputRefusal = `input must be a JSON object written as a string, e.g. input: '{"mode": "full"}' — ` +
-	"run input is JSON, never YAML (AGENTS.md §3.1)"
-
 // parser collects issues for one Parse.
 type parser struct {
 	issues []*orkstackv1.ValidationIssue
@@ -118,7 +114,7 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 	var root yaml.Node
 	if err := decoder.Decode(&root); err != nil {
 		if errors.Is(err, io.EOF) {
-			p.errorAt("", nil, "the document is empty: want apiVersion: %s, kind: %s and a namespace", APIVersion, Kind)
+			p.errorAt("", nil, "the document is empty: want apiVersion: %s, kind: %s and a namespace", dsl.APIVersion, dsl.KindAutomation)
 		} else {
 			p.errorAt("", nil, "the document is not valid YAML: %v", err)
 		}
@@ -135,13 +131,22 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 		return nil, p.issues
 	}
 	if len(root.Content) == 0 {
-		p.errorAt("", nil, "the document is empty: want apiVersion: %s, kind: %s and a namespace", APIVersion, Kind)
+		p.errorAt("", nil, "the document is empty: want apiVersion: %s, kind: %s and a namespace", dsl.APIVersion, dsl.KindAutomation)
 		return nil, p.issues
 	}
 	body := root.Content[0]
 	if body.Kind != yaml.MappingNode {
 		p.errorAt("", body, "an automation document is a mapping with apiVersion, kind and namespace, got %s", describeNode(body))
 		return nil, p.issues
+	}
+	// An Orkflow reaches this parser only through PlanAutomation or Admin →
+	// Automation; it is named for what it is, not refused key by key.
+	for i := 0; i+1 < len(body.Content); i += 2 {
+		if key, value := body.Content[i], body.Content[i+1]; key.Value == "kind" &&
+			value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value == dsl.KindOrkflow {
+			p.errorAt("kind", value, "kind: %s is an Orkflow, not an automation document: apply it with orkctl apply or the Apply page", dsl.KindOrkflow)
+			return nil, p.issues
+		}
 	}
 	if alias := findAlias(body); alias != nil {
 		p.errorAt("", alias, "anchors, aliases and merge keys are not supported in an automation document")
@@ -214,16 +219,16 @@ func (p *parser) header(values, keyNodes map[string]*yaml.Node) {
 	apiVersion, ok := values["apiVersion"]
 	switch {
 	case !ok:
-		p.errorAt("apiVersion", nil, "apiVersion is required: want %s", APIVersion)
-	case apiVersion.Kind != yaml.ScalarNode || apiVersion.Value != APIVersion:
-		p.errorAt("apiVersion", apiVersion, "apiVersion %s is not supported: want %s", describeNode(apiVersion), APIVersion)
+		p.errorAt("apiVersion", nil, "apiVersion is required: want %s", dsl.APIVersion)
+	case apiVersion.Kind != yaml.ScalarNode || apiVersion.Value != dsl.APIVersion:
+		p.errorAt("apiVersion", apiVersion, "apiVersion %s is not supported: want %s", describeNode(apiVersion), dsl.APIVersion)
 	}
 	kind, ok := values["kind"]
 	switch {
 	case !ok:
-		p.errorAt("kind", nil, "kind is required: want %s", Kind)
-	case kind.Kind != yaml.ScalarNode || kind.Value != Kind:
-		p.errorAt("kind", kind, "kind %s is not an automation document: want %s", describeNode(kind), Kind)
+		p.errorAt("kind", nil, "kind is required: want %s", dsl.KindAutomation)
+	case kind.Kind != yaml.ScalarNode || kind.Value != dsl.KindAutomation:
+		p.errorAt("kind", kind, "kind %s is not an automation document: want %s", describeNode(kind), dsl.KindAutomation)
 	}
 	namespace, ok := values["namespace"]
 	switch {
@@ -502,28 +507,47 @@ func (p *parser) timestamp(field, key string, node *yaml.Node) *timestamppb.Time
 	return timestamppb.New(at)
 }
 
-// input reads a schedule's input: a JSON object written as a string. A YAML
-// mapping is refused, because run input is JSON, never YAML.
+// input reads a schedule's run input: a YAML mapping, converted to JSON by
+// the strict mapping (dsl.AuthoredJSON; docs/JSON.md, "Data written in an
+// authored document"). A string is refused — a JSON object written as a
+// string was the shape before — and the message names the YAML form; {} is
+// recorded as unset.
 func (p *parser) input(field string, node *yaml.Node) *orkstackv1.Payload {
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
-		p.errorAt(field, node, "%s", inputRefusal)
+	switch {
+	case isNull(node):
+		p.errorAt(field, node, "input is null: write the run input as a mapping, or remove the key")
+		return nil
+	case node.Kind == yaml.ScalarNode && node.Tag == "!!str":
+		var object map[string]any
+		if json.Unmarshal([]byte(node.Value), &object) == nil && object != nil {
+			example := strings.TrimSpace(node.Value)
+			if len(example) > 60 {
+				cut := 60
+				for cut > 0 && !utf8.RuneStart(example[cut]) {
+					cut--
+				}
+				example = example[:cut] + "…"
+			}
+			p.errorAt(field, node, "input is a string: write the object as YAML instead — without the quotes, %s is a YAML mapping (docs/AUTOMATION.md, \"schedules\")", example)
+			return nil
+		}
+		p.errorAt(field, node, "input must be a YAML mapping of the run's input, e.g. input: {mode: full}, got %s", describeNode(node))
+		return nil
+	case node.Kind != yaml.MappingNode:
+		p.errorAt(field, node, "input must be a YAML mapping of the run's input, got %s", describeNode(node))
 		return nil
 	}
-	decoder := json.NewDecoder(strings.NewReader(node.Value))
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		p.errorAt(field, node, "input is not valid JSON (%v); %s", err, inputRefusal)
+	value, err := dsl.AuthoredJSON(node, field)
+	if err != nil {
+		var refused *dsl.AuthoredDataError
+		if errors.As(err, &refused) {
+			p.issues = append(p.issues, errorIssue(refused.Path, fmt.Sprintf("line %d: %s", refused.Line, refused.Reason)))
+		} else {
+			p.errorAt(field, node, "%v", err)
+		}
 		return nil
 	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		p.errorAt(field, node, "input has text after its JSON object; %s", inputRefusal)
-		return nil
-	}
-	object, ok := value.(map[string]any)
-	if !ok {
-		p.errorAt(field, node, "%s", inputRefusal)
-		return nil
-	}
+	object := value.(map[string]any)
 	if len(object) == 0 {
 		return nil
 	}

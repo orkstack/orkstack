@@ -645,7 +645,9 @@ func awaitArchivedEventText(
 // the point: it is slower than any flush interval, so a chunk exists long
 // before the task ends and a reader that only saw the end would see nothing.
 func slowEmittingOrkflowYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: slow-emitting task, followed live from a second replica.
 tasks:
@@ -675,7 +677,9 @@ tasks:
 //     them, so a path that leaked only the head of a task's output, or only its
 //     tail, would still be caught by one of the two.
 func markerOrkflowYAML(name, tag string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: marker task, for the no-bytes-in-history invariant.
 tasks:

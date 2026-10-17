@@ -68,6 +68,8 @@ test('interfaceHeadline matches orkctl activity inspect', () => {
 test('interfaceRows lists shared keys first, then ops by name, as the CLI table does', () => {
 	const rows = interfaceRows(label('activity-http'));
 	expect(rows.slice(0, 5).map((r) => r.key)).toEqual(['body', 'captureBodyAs', 'headers', 'timeoutSeconds', 'url']);
+	// A union type is rendered as written, as `orkctl activity inspect` does.
+	expect(rows[0]).toEqual({ op: '*', key: 'body', type: 'string|object|array', required: 'no', default: '-' });
 	expect(rows[4]).toEqual({ op: '*', key: 'url', type: 'string', required: 'yes', default: '-' });
 	expect(rows[5]).toEqual({ op: 'delete', key: '-', type: '-', required: '-', default: '-' });
 	const file = interfaceRows(label('activity-file'));

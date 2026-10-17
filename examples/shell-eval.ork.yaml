@@ -10,6 +10,8 @@
 # `eval` not failing on a non-zero exit is one IMAGE's documented contract, not
 # a platform rule. It is how the platform avoids inventing a magic exit code:
 # the container reports what happened and the Orkflow decides what it means.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: shell-eval
 version: "0.2.0"
 description: "Measure with `op: eval`, report with `op: exec`, package with `op: script`."

@@ -36,7 +36,7 @@ import (
 // composed child, and a two-member pin.
 func transparentDocument() string {
 	var b strings.Builder
-	b.WriteString("name: transparent\nversion: \"1.0.0\"\npins:\n  build: {}\ntasks:\n")
+	b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: transparent\nversion: \"1.0.0\"\npins:\n  build: {}\ntasks:\n")
 	b.WriteString("  - id: approve\n    needs: []\n    await: {timeout_seconds: 3600}\n")
 	for i := 1; i <= 8; i++ {
 		needs := "[]"
@@ -69,6 +69,8 @@ func transparentDocument() string {
 }
 
 const transparentChildDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -491,7 +493,7 @@ func TestIntegration_ContinuationReplaysEveryGeneration(t *testing.T) {
 	s := startCANStack(t, ctx, "replay-gens", false, canFixtureBehavior)
 	budget := engine.DefaultContinuationBudget(60, 1<<20, 5*time.Minute)
 	runID := fmt.Sprintf("ork-replay-gens-%d", time.Now().UnixNano())
-	wf := compile(t, "name: gens\ntasks:\n"+guardChain("g", 30, ""))
+	wf := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: gens\ntasks:\n"+guardChain("g", 30, ""))
 	if err := s.starter.StartRun(ctx, runID, wf, nil, s.plan(1000, &budget)); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -528,6 +530,8 @@ func TestIntegration_ComposedChildThatContinuesCompletesItsParent(t *testing.T) 
 	budget := engine.DefaultContinuationBudget(50, 1<<20, 5*time.Minute)
 	runID := fmt.Sprintf("ork-composed-can-%d", time.Now().UnixNano())
 	parent := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: outer
 version: "1.0.0"
 tasks:
@@ -544,7 +548,7 @@ tasks:
     with: {op: exec}
 `)
 	parent.Namespace = "default"
-	child := compile(t, "name: release-block\nversion: \"2.1.0\"\ninputs:\n  image: {type: string, required: true}\ntasks:\n"+
+	child := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: release-block\nversion: \"2.1.0\"\ninputs:\n  image: {type: string, required: true}\ntasks:\n"+
 		guardChain("k", 12, ""))
 	child.Namespace = "default"
 	child.DefinitionDigest = childDigest
@@ -605,7 +609,7 @@ func TestIntegration_ScheduledRunThatContinuesCompletesItsFire(t *testing.T) {
 	prepare := func(_ context.Context, rec *orkstackv1.ScheduleRecord, at time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		wf, err := dsl.Compile([]byte("name: nightly\nversion: \"1.0.0\"\ntasks:\n" + guardChain("n", 12, "")))
+		wf, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: nightly\nversion: \"1.0.0\"\ntasks:\n" + guardChain("n", 12, "")))
 		if err != nil {
 			return nil, err
 		}

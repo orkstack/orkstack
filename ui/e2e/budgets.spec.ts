@@ -62,7 +62,9 @@ const note = noteTo(out('transcript.txt'));
 
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
-const SLEEPER = `name: ${ORKFLOW}
+const SLEEPER = `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${ORKFLOW}
 version: "0.1.0"
 description: Namespace budgets coverage.
 tasks:

@@ -50,7 +50,9 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
 const shot = (page: Page, name: string) => page.screenshot({ path: out(name), fullPage: true });
 
 function workflow(): string {
-	return `name: ${NAME}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${NAME}
 version: "0.1.0"
 description: Run origin coverage.
 tasks:

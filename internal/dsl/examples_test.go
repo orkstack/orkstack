@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,8 +18,8 @@ import (
 )
 
 // The example conventions (examples/README.md): every example
-// this repository ships is documentation, so its header, its index entries
-// and the guide it cites are held to rules a reader can rely on.
+// this repository ships is documentation, so its comment header, its index
+// entries and the guide it cites are held to rules a reader can rely on.
 
 const (
 	examplesDir = "../../examples"
@@ -26,10 +27,12 @@ const (
 	readmePath  = "../../examples/README.md"
 )
 
-// predatesPatterns names the eleven examples that predate
-// docs/ORKFLOW_PATTERNS.md. They are kept byte-identical — a stored version
-// cannot change — so they are exempt from the header rules, and from the
-// network and cache rules below; every other rule holds them too.
+// predatesPatterns names the ten examples that predate
+// docs/ORKFLOW_PATTERNS.md. Apart from their document header they are kept
+// byte-identical: a stored version cannot change, and the two header lines
+// are the one addition it takes (docs/DSL.md, "The document header"). So they
+// are exempt from the comment-header rules, and from the network and cache
+// rules below; every other rule holds them too.
 var predatesPatterns = map[string]bool{
 	"advanced-demo.ork.yaml":      true,
 	"awaited-approval.ork.yaml":   true,
@@ -38,7 +41,6 @@ var predatesPatterns = map[string]bool{
 	"composed-release.ork.yaml":   true,
 	"file-read.ork.yaml":          true,
 	"hello.ork.yaml":              true,
-	"http-post.ork.yaml":          true,
 	"pinned-build.ork.yaml":       true,
 	"release-block.ork.yaml":      true,
 	"shell-eval.ork.yaml":         true,
@@ -648,5 +650,62 @@ func TestExamples_WithMatchesTheImageInterfaces(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no task was checked")
+	}
+}
+
+// TestExamples_KeepTheirDefinitionDigests holds every shipped example to the
+// definition digest and version it compiled to when the golden was recorded.
+// The document header (docs/DSL.md, "The document header") is not part of the
+// definition, so adding it moves no line of the golden; only an example whose
+// definition changed on purpose, with its version bumped, may.
+// Regenerate with: go test ./internal/dsl -run '^TestExamples_KeepTheirDefinitionDigests$' -update
+func TestExamples_KeepTheirDefinitionDigests(t *testing.T) {
+	const golden = "testdata/example-digests.golden"
+	var got strings.Builder
+	for _, path := range orkflowExamples(t) {
+		wf, err := dsl.CompileFile(path)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		digest, err := dsl.DefinitionDigest(wf)
+		if err != nil {
+			t.Fatalf("%s: digest: %v", path, err)
+		}
+		fmt.Fprintf(&got, "%s %s %s\n", filepath.Base(path), digest, wf.GetVersion())
+	}
+	if *updateCompat {
+		if err := os.WriteFile(golden, []byte(got.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read %s: %v (record it with -update)", golden, err)
+	}
+	if got.String() != string(want) {
+		t.Fatalf("example digests moved:\n got:\n%s\nwant:\n%s", got.String(), want)
+	}
+}
+
+// TestDocs_LinkWhatAnOrkflowDoesNotDeclare: the reasons schedules, triggers
+// and webhooks are not keys of an Orkflow live in one section of the DSL
+// reference, where an author looking for a `schedule:` key lands, and every
+// document about those objects links it.
+func TestDocs_LinkWhatAnOrkflowDoesNotDeclare(t *testing.T) {
+	reference, err := os.ReadFile("../../docs/DSL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(reference), "\n### What an Orkflow does not declare\n") {
+		t.Fatal(`docs/DSL.md has no "### What an Orkflow does not declare" section`)
+	}
+	for _, doc := range []string{"ORKFLOW_SCHEDULES.md", "ORKFLOW_TRIGGERS.md", "AUTOMATION.md", "ORKFLOW_PATTERNS.md"} {
+		raw, err := os.ReadFile(filepath.Join("../../docs", doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "(DSL.md#what-an-orkflow-does-not-declare)") {
+			t.Errorf("docs/%s does not link DSL.md#what-an-orkflow-does-not-declare", doc)
+		}
 	}
 }

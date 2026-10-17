@@ -90,7 +90,9 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
  * with the sticky bit, and a pin is one process out of one pool's set).
  */
 function pinnedOrkflow(): string {
-	return `name: ${PINNED_ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${PINNED_ORKFLOW}
 version: "0.1.0"
 description: Two pinned tasks hand a file over on disk; a second pin and an unpinned task stand apart.
 

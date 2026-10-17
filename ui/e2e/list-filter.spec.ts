@@ -65,7 +65,9 @@ const PAY = Array.from({ length: 6 }, (_, i) => `pay-${String(i + 1).padStart(2,
 const SEARCH = Array.from({ length: 6 }, (_, i) => `search-${String(i + 1).padStart(2, '0')}`);
 
 function orkflowYaml(name: string, team: string): string {
-	return `name: ${name}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "1.0.0"
 description: list filter fixture ${name}
 labels: {team: ${team}}

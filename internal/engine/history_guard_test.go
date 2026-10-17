@@ -66,6 +66,8 @@ func requireHistoryLimitError(t *testing.T, env *testsuite.TestWorkflowEnvironme
 func busEvents(h *harness, runID string) []*orkstackv1.Event { return h.bus.Events(runID, 0) }
 
 const guardFlatDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: guard-flat
 tasks:
   - id: slow
@@ -177,6 +179,8 @@ func TestHistoryGuard_PlanWithoutLimitNeverChecks(t *testing.T) {
 }
 
 const guardBatchDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: guard-batch
 inputs:
   regions: {type: array}
@@ -286,6 +290,8 @@ func TestHistoryGuard_StopsFanOutDispatchMidBatch(t *testing.T) {
 }
 
 const guardHandlersDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: guard-handlers
 tasks:
   - id: a
@@ -368,6 +374,8 @@ func TestHistoryGuard_RunLevelFailureTextsNameNoTask(t *testing.T) {
 }
 
 const guardFailingPhaseDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: guard-failing
 tasks:
   - id: a
@@ -441,6 +449,8 @@ func (h *harness) taskCalls(taskID string) []*orkstackv1.ExecuteTaskInput {
 }
 
 const guardWideChildDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -497,6 +507,8 @@ func TestComposedTask_ChildHistoryLimitReachesTheParentWithItsCategory(t *testin
 }
 
 const guardMiddleChildDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -511,6 +523,8 @@ tasks:
 `
 
 const guardLeafDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: leaf
 version: "1.0.0"
 inputs:

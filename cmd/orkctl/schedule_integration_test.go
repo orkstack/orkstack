@@ -196,7 +196,9 @@ func scheduleOrkflowYAML(name, version string, sleepSeconds int, pool string) st
 	if pool != "" {
 		poolLine = "\n    pool: " + pool
 	}
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: %q
 description: schedule probe.
 tasks:

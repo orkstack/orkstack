@@ -50,7 +50,9 @@ const pipeline = (name: string) => example('cached-pipeline.ork.yaml').replace('
 // The fan-out over a run input, its convert cached (activity-shell writes its
 // own values.json, so the array comes from the input, as each-fan-out.spec.ts
 // does).
-const cachedFanOut = (name: string) => `name: ${name}
+const cachedFanOut = (name: string) => `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "0.1.0"
 inputs:
   parts:

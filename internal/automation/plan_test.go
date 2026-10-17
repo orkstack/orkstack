@@ -526,3 +526,22 @@ func TestPlan_NotesForPausedHoldAndSecretEnv(t *testing.T) {
 		t.Errorf("webhook notes = %v", notes)
 	}
 }
+
+// TestPlan_ShowsTheJSONAYAMLInputBecomes: the plan renders a YAML input as the
+// exact JSON each fire submits, compact with sorted keys.
+func TestPlan_ShowsTheJSONAYAMLInputBecomes(t *testing.T) {
+	source := strings.Replace(summaryDoc, "    input:\n      mode: full\n",
+		"    input:\n      z: 1\n      a: [true, null]\n      m:\n        k: v\n", 1)
+	steps, issues := plan(t, source, identicalLive(), false)
+	requireNoErrors(t, issues)
+	step := stepFor(t, steps, kindSchedule, "nightly-reconcile")
+	for _, change := range step.GetChanges() {
+		if change.GetField() == "input" {
+			if got, want := change.GetAfter(), `{"a":[true,null],"m":{"k":"v"},"z":1}`; got != want {
+				t.Fatalf("input after = %s, want %s", got, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("no input change among %v", step.GetChanges())
+}

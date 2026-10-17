@@ -163,7 +163,9 @@ export const ActivityInfoSchema: GenMessage<ActivityInfo> = /*@__PURE__*/
  */
 export type FieldSchema = Message<"orkstack.v1.FieldSchema"> & {
   /**
-   * type is one of "string", "number", "boolean", "object", "array".
+   * type is one of "string", "number", "boolean", "object", "array", or
+   * several joined by "|" (string|object|array) for a key that accepts any
+   * of them.
    *
    * @generated from field: string type = 1;
    */
@@ -181,7 +183,7 @@ export type FieldSchema = Message<"orkstack.v1.FieldSchema"> & {
   /**
    * default is documentary: what the image assumes when the key is
    * absent. The engine never writes it into `with:`. When set, its JSON
-   * type must match `type`; null is not a default (omit the field).
+   * type must be one of `type`'s; null is not a default (omit the field).
    *
    * @generated from field: google.protobuf.Value default = 3;
    */

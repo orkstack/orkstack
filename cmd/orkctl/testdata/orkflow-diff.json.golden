@@ -1,5 +1,5 @@
 {
-  "unifiedDiff": "--- a/deploy@1.0.0\n+++ b/deploy@2.0.0\n@@ -1,9 +1,9 @@\n name: deploy\n-version: \"1.0.0\"\n-description: the 1.0.0 version\n+version: \"2.0.0\"\n+description: the 2.0.0 version\n tasks:\n   - id: build\n     uses: shell\n     with:\n       op: exec\n-      command: echo one\n+      command: echo two\n",
+  "unifiedDiff": "--- a/deploy@1.0.0\n+++ b/deploy@2.0.0\n@@ -1,11 +1,11 @@\n apiVersion: orkstack/v1\n kind: Orkflow\n name: deploy\n-version: \"1.0.0\"\n-description: the 1.0.0 version\n+version: \"2.0.0\"\n+description: the 2.0.0 version\n tasks:\n   - id: build\n     uses: shell\n     with:\n       op: exec\n-      command: echo one\n+      command: echo two\n",
   "fromVersion": "1.0.0",
   "toVersion": "2.0.0"
 }

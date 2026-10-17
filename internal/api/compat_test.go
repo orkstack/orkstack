@@ -23,6 +23,8 @@ import (
 // a required region and a defaulted timeout, drops output url, adds output
 // sbom, and rewrites every task — 7 findings, 2 BREAKING.
 const compatBlock210 = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -42,6 +44,8 @@ tasks:
 `
 
 const compatBlock300 = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "3.0.0"
 inputs:
@@ -65,6 +69,8 @@ tasks:
 // compatBlock203 has 2.1.0's inputs and no outputs: against 2.1.0 it removes
 // both outputs (BREAKING); against a version with no outputs it is UNKNOWN.
 const compatBlock203 = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.0.3"
 inputs:
@@ -573,6 +579,8 @@ func TestPlanRun_YAMLFormReadsNoVersions(t *testing.T) {
 }
 
 const compatCheckout420 = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: checkout-service
 version: "4.2.0"
 tasks:

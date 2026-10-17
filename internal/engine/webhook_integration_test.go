@@ -39,7 +39,9 @@ const webhookOrkflowName = "webhook-ork"
 // on the machine, and a stolen activity would look like a webhook bug
 // (AGENTS.md §11.1).
 func webhookOrkflowYAML(pool string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "1.0.0"
 description: Three tasks whose run transitions must reach a registered webhook.
 tasks:

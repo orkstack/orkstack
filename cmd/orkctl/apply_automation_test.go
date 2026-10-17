@@ -15,6 +15,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -91,7 +92,8 @@ schedules:
     orkflow: reconcile
     cron: "0 2 * * *"
     timezone: Europe/Lisbon
-    input: '{"mode": "full"}'
+    input:
+      mode: full
 
 triggers:
   github-deploy:
@@ -161,24 +163,33 @@ func TestApply_SingleOrkflowFileIsUnchanged(t *testing.T) {
 	}
 }
 
-func TestApply_ClassifiesDocuments(t *testing.T) {
+// TestApply_ClassifiesDocumentsByKind: kind: decides what a file is, and a
+// file with no kind, or another, is refused before anything is sent.
+func TestApply_ClassifiesDocumentsByKind(t *testing.T) {
 	cases := []struct {
 		source  string
 		want    documentKind
 		wantErr string
 	}{
-		{"name: hello\nversion: '1'\ntasks: []\n", orkflowDocument, ""},
+		{"apiVersion: orkstack/v1\nkind: Orkflow\nname: hello\nversion: '1'\ntasks: []\n", orkflowDocument, ""},
+		{"apiVersion: orkstack/v2\nkind: Orkflow\nname: hello\n", orkflowDocument, ""},
 		{"apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\n", automationDocument, ""},
 		{"apiVersion: orkstack/v2\nkind: Automation\nnamespace: payments\n", automationDocument, ""},
-		{"apiVersion: orkstack/v1\nkind: Workflow\n", orkflowDocument, `unknown document kind "Workflow"`},
-		{"apiVersion: orkstack/v1\nnamespace: payments\n", orkflowDocument, `unknown document kind ""`},
 		{"name: [unclosed\n", orkflowDocument, ""},
+		{"name: hello\ntasks: []\n", orkflowDocument,
+			`x.ork.yaml: no apiVersion or kind: an OrkStack document begins with "apiVersion: orkstack/v1" and its kind — "kind: Orkflow" for an Orkflow, "kind: Automation" for an automation document; add the two lines at the top, after any leading comments`},
+		{"apiVersion: orkstack/v1\nnamespace: payments\n", orkflowDocument,
+			`x.ork.yaml: kind is required: add "kind: Orkflow" (or "kind: Automation") below "apiVersion: orkstack/v1"`},
+		{"apiVersion: orkstack/v1\nkind: Workflow\n", orkflowDocument,
+			`x.ork.yaml: unknown document kind "Workflow": want kind: Orkflow or kind: Automation`},
+		{"kind: orkflow\nname: hello\n", orkflowDocument,
+			`x.ork.yaml: unknown document kind "orkflow": want kind: Orkflow or kind: Automation`},
 	}
 	for _, tc := range cases {
 		in, err := classifyDocument("x.ork.yaml", []byte(tc.source))
 		switch {
 		case tc.wantErr != "":
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), "want an orkflow document, or kind: Automation") {
+			if err == nil || err.Error() != tc.wantErr {
 				t.Errorf("%q: err = %v, want %q", tc.source, err, tc.wantErr)
 			}
 		case err != nil:
@@ -189,12 +200,110 @@ func TestApply_ClassifiesDocuments(t *testing.T) {
 	}
 }
 
+// TestApply_RefusesAFileWithNoKindBeforeAnyRequest: the single-file shortcut
+// classifies first, so a header-less file is refused with no RPC.
+func TestApply_RefusesAFileWithNoKindBeforeAnyRequest(t *testing.T) {
+	f := newFixture(t)
+	raw, err := os.ReadFile(examplePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "hello.ork.yaml")
+	if err := os.WriteFile(path, dsl.VersionedSource(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mark := len(f.requests())
+	out := f.run("apply", path).requireExit(t, exitError)
+	if !strings.Contains(out.stderr, path+": no apiVersion or kind: an OrkStack document begins with") {
+		t.Fatalf("stderr does not name the file and the header:\n%s", out.stderr)
+	}
+	if got := f.requests()[mark:]; len(got) != 0 {
+		t.Fatalf("a header-less file sent %v", got)
+	}
+}
+
+// TestApply_AMixedDirectoryWithAHeaderlessFileWritesNothing: one header-less
+// file among an Orkflow and an automation document refuses the whole
+// directory, names the file, and sends no write.
+func TestApply_AMixedDirectoryWithAHeaderlessFileWritesNothing(t *testing.T) {
+	a := newAutomationFixture(t)
+	dir := filepath.Join(a.dir, "mixed")
+	a.write(t, "mixed/deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
+	a.write(t, "mixed/automation.ork.yaml", cliAutomationDoc)
+	bad := a.write(t, "mixed/legacy.ork.yaml", string(dsl.VersionedSource([]byte(orkflowSource(t, "legacy", "1.0.0")))))
+	mark := len(a.requests())
+	out := a.run("apply", dir, "-n", "payments").requireExit(t, exitError)
+	if !strings.Contains(out.stderr, bad+": no apiVersion or kind") {
+		t.Fatalf("stderr does not name the header-less file:\n%s", out.stderr)
+	}
+	if writes := a.writes(mark); len(writes) != 0 {
+		t.Fatalf("a refused directory wrote: %v", writes)
+	}
+}
+
+// TestApply_AMixedDirectoryAppliesOrkflowsThenAutomation: the same directory
+// without the bad file applies its Orkflow first, then the plan's steps.
+func TestApply_AMixedDirectoryAppliesOrkflowsThenAutomation(t *testing.T) {
+	a := newAutomationFixture(t)
+	dir := filepath.Join(a.dir, "mixed")
+	a.write(t, "mixed/deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
+	a.write(t, "mixed/automation.ork.yaml", strings.Replace(cliAutomationDoc, "    orkflow: deploy\n", "    orkflow: deploy\n    version: 1.4.0\n", 1))
+	mark := len(a.requests())
+	a.run("apply", dir, "-n", "payments").requireExit(t, exitOK)
+	want := []string{
+		"OrkflowService/ApplyOrkflow",
+		"NamespaceService/UpdateNamespace",
+		"ScheduleService/CreateSchedule",
+		"TriggerService/CreateTrigger",
+		"WebhookService/RegisterWebhook",
+	}
+	if got := a.writes(mark); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("writes = %v, want %v", got, want)
+	}
+}
+
+// TestApply_DryRunComparesTheVersionedSource: --dry-run's identical check is
+// the store's own source rule, so moving the header among the leading lines
+// is identical, and any other header form is a conflict whose refusal says
+// where the two lines go.
+func TestApply_DryRunComparesTheVersionedSource(t *testing.T) {
+	a := newAutomationFixture(t)
+	legacy := string(dsl.VersionedSource([]byte(orkflowSource(t, "pinned", "3.0.0"))))
+	below, ok := dsl.AddHeader(legacy)
+	if !ok {
+		t.Fatal("AddHeader refused the example")
+	}
+	a.run("apply", a.write(t, "below.ork.yaml", below), "-n", "payments").requireExit(t, exitOK)
+
+	onLine1 := a.write(t, "line1.ork.yaml", dsl.OrkflowHeader+legacy)
+	out := a.run("apply", onLine1, "-n", "payments", "--dry-run").requireExit(t, exitOK)
+	out.requireContains(t, "Dry run: nothing was written.")
+	if strings.Contains(out.stdout, "stored with different source") {
+		t.Fatalf("the header on line 1 was not identical:\n%s", out.stdout)
+	}
+	mark := len(a.requests())
+	a.run("apply", onLine1, "-n", "payments", "--check").requireExit(t, exitOK)
+	a.run("apply", onLine1, "-n", "payments", "--prune").requireExit(t, exitOK)
+	if writes := a.writes(mark); len(writes) != 0 {
+		t.Fatalf("an identical document wrote: %v", writes)
+	}
+
+	afterName := a.write(t, "after.ork.yaml", strings.Replace(legacy, "\nversion:", "\n"+strings.TrimSuffix(dsl.OrkflowHeader, "\n")+"\nversion:", 1))
+	refused := a.run("apply", afterName, "-n", "payments", "--dry-run").requireExit(t, exitError)
+	refused.requireContains(t, "stored with different source",
+		`ApplyOrkflow would refuse it — if only the header changed, write "apiVersion: orkstack/v1" and "kind: Orkflow" as the file's first two lines (after any leading comments); otherwise bump version: or drop it`)
+
+	edited := a.write(t, "edited.ork.yaml", strings.Replace(below, "description:", "description: changed —", 1))
+	today := a.run("apply", edited, "-n", "payments", "--dry-run").requireExit(t, exitError)
+	today.requireContains(t, "ApplyOrkflow would refuse it — bump version: or drop it")
+}
+
 func TestApply_DirectoryExpandsOrkYamlLexicallyAndNonRecursively(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"b.ork.yaml", "a.ork.yml", "c.yaml", "notes.txt", "sub/d.ork.yaml"} {
 		path := filepath.Join(dir, name)
 		_ = os.MkdirAll(filepath.Dir(path), 0o755)
-		if err := os.WriteFile(path, []byte("name: x\n"), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: x\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

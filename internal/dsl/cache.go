@@ -2,6 +2,7 @@ package dsl
 
 import (
 	"fmt"
+	"slices"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -17,15 +18,18 @@ type cacheDocument struct {
 	Scope      string `yaml:"scope"`
 }
 
+// cacheScopeWords are the DSL's cache scopes, the default first.
+var cacheScopeWords = []string{"orkflow", "namespace"}
+
 // cacheScopeOf maps the DSL's word to the enum. "" and "orkflow" are one
 // value: normalising here means a document that writes `scope: orkflow` and
 // one that omits it compile to one message and one digest. An unknown word
 // is UNSPECIFIED, which the caller has already refused.
 func cacheScopeOf(raw string) orkstackv1.CacheScope {
 	switch raw {
-	case "", "orkflow":
+	case "", cacheScopeWords[0]:
 		return orkstackv1.CacheScope_CACHE_SCOPE_ORKFLOW
-	case "namespace":
+	case cacheScopeWords[1]:
 		return orkstackv1.CacheScope_CACHE_SCOPE_NAMESPACE
 	default:
 		return orkstackv1.CacheScope_CACHE_SCOPE_UNSPECIFIED
@@ -49,9 +53,7 @@ func compileCache(taskIndex int, td taskDocument) (*orkstackv1.CacheSpec, error)
 				"OrkStack cannot verify", td.ID))
 	}
 	// Rule 35, YAML layer.
-	switch td.Cache.Scope {
-	case "", "orkflow", "namespace":
-	default:
+	if td.Cache.Scope != "" && !slices.Contains(cacheScopeWords, td.Cache.Scope) {
 		return nil, validationError(at("scope"), fmt.Errorf(
 			"task %q: cache.scope %q is not orkflow or namespace", td.ID, td.Cache.Scope))
 	}

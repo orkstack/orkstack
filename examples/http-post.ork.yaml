@@ -4,12 +4,25 @@
 # spelling of the HTTP method; the full set is get, post, put, patch, delete
 # and head.
 #
-# Header values are quoted before they reach argv, the same argv discipline
-# activity-shell applies to `command`, so a rendered value cannot inject a
-# request argument.
+# The body is a YAML mapping: each string in it is rendered, and the image
+# serializes the result as compact JSON, so a quote or a backslash in the
+# message stays inside its string. It is sent with
+# `Content-Type: application/json`, the default for a mapping or a list.
+# A value spliced into a JSON string instead would break the document.
+#
+# It needs internet access to httpbin.org, or `--input url=…` naming an
+# endpoint that answers a POST.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Pass values as data, never as code"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "A non-2xx answer is data"
+#
+#   orkctl run plan --file examples/http-post.ork.yaml --output publish='{"status":200}' --assert-runs summarize
+#   orkctl run plan --file examples/http-post.ork.yaml --output publish='{"status":503}' --assert-skipped summarize
+apiVersion: orkstack/v1
+kind: Orkflow
 name: http-post
-version: "0.2.0"
-description: "POST a JSON body with `op: post` and archive the echoed response."
+version: "0.3.0"
+description: "POST a JSON body written as a YAML mapping with `op: post`, and archive the echoed response."
 
 inputs:
   url:
@@ -20,18 +33,17 @@ inputs:
     default: "hello from orkstack"
 
 tasks:
-  # 1. The request. `captureBodyAs` writes the exact response bytes as an
-  #    output artifact; `json` on the values carries the parsed body when it
-  #    is valid JSON and at most 1 MiB.
+  # 1. The request. `body:` is data, not text: the image sends it as compact
+  #    JSON. `captureBodyAs` writes the exact response bytes as an output
+  #    artifact; `json` on the values carries the parsed body when it is valid
+  #    JSON and at most 1 MiB.
   - id: publish
     uses: http
     with:
       op: post
       url: "{{ .inputs.url }}"
-      headers:
-        content-type: application/json
-      body: |
-        {"message": "{{ .inputs.message }}"}
+      body:
+        message: "{{ .inputs.message }}"
       captureBodyAs: response
 
   # 2. `copy` re-exports the materialized response under a chosen name. A
@@ -41,13 +53,16 @@ tasks:
   - id: archive
     uses: file
     needs: [publish]
+    network: none
     with:
       op: copy
       src: '{{ artifact "publish/response" }}'
       as: response.json
 
   # 3. An HTTP status is data. Branching on it in the document is the whole
-  #    point of the image exiting 0 for any response it received.
+  #    point of the image exiting 0 for any response it received. The status
+  #    and the artifact's path reach the shell as positional arguments, never
+  #    spliced into its text.
   - id: summarize
     uses: shell
     needs: [publish, archive]
@@ -57,7 +72,7 @@ tasks:
       command:
         - sh
         - -c
-        - >-
-          printf 'status=%s bytes=%s\n'
-          "{{ .tasks.publish.output.status }}"
-          "$(wc -c < "{{ artifact "archive/response.json" }}" | tr -d ' ')"
+        - 'printf "status=%s bytes=%s\n" "$1" "$(wc -c < "$2" | tr -d " ")"'
+        - sh
+        - '{{ .tasks.publish.output.status }}'
+        - '{{ artifact "archive/response.json" }}'

@@ -25,6 +25,8 @@ import (
 // an upstream artifact, where `a` declares every Task field ExecuteTaskInput
 // carries, plus a task `e` whose condition is false and is never dispatched.
 const localParityDiamond = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: local-parity
 version: "3"
 inputs:
@@ -83,6 +85,8 @@ tasks:
 // localParityPinned is corpus (b): a two-member pin, so pin is shown to be the
 // only additional difference for a pinned task.
 const localParityPinned = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: local-parity-pin
 pins:
   build:
@@ -193,6 +197,8 @@ type parityCase struct {
 // localParityWideFanOut is corpus (d): a fan-out declaring 5,000 items —
 // three in the run's input — whose own `with:` is 8 KiB per item.
 var localParityWideFanOut = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: parity-wide-fan-out
 inputs:
   parts: {type: array}
@@ -208,6 +214,8 @@ tasks:
 // all_done handler, so a failure handler's input — its JoinContext and the
 // failed need's artifacts — is compared too.
 const localParityHandler = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: local-parity-handler
 tasks:
   - id: build
@@ -603,6 +611,8 @@ func TestLocalTaskInput_RefusesAnUnknownTaskAnEmptyRunIDAndANilOrkflow(t *testin
 // supplies, as for any other ancestor.
 func TestLocalTaskInput_RefusesAnAwaitedTask(t *testing.T) {
 	wf := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: local-await
 version: "1"
 tasks:
@@ -662,6 +672,8 @@ func TestLocalTaskInput_AppliesDeclaredDefaultsOnce(t *testing.T) {
 func TestLocalTaskInput_RefusesAnOversizeInputAsTheInterpreterDoes(t *testing.T) {
 	big := strings.Repeat("x", 300*1024)
 	wf := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: oversize
 tasks:
   - id: huge

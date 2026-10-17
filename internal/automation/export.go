@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -89,8 +90,8 @@ func Export(namespace string, live Live) (string, []*orkstackv1.AutomationStep, 
 	sortSteps(unmanaged)
 
 	header := mapping(
-		plainNode("apiVersion"), plainNode(APIVersion),
-		plainNode("kind"), plainNode(Kind),
+		plainNode("apiVersion"), plainNode(dsl.APIVersion),
+		plainNode("kind"), plainNode(dsl.KindAutomation),
 		plainNode("namespace"), plainNode(ns),
 	)
 	settingsNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
@@ -246,9 +247,10 @@ func exportSchedule(s *orkstackv1.Schedule) *yaml.Node {
 		addPair(entry, plainNode("pause_on_failure"), &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
 	}
 	if !inputEmpty(s.GetInput()) {
-		addPair(entry, plainNode("input"), &yaml.Node{
-			Kind: yaml.ScalarNode, Tag: "!!str", Value: compactInput(s.GetInput()), Style: yaml.SingleQuotedStyle,
-		})
+		// A YAML mapping, keys sorted, quoting any string a YAML reader could
+		// read as something else: Parse's strict mapping reads it back to
+		// the same input.
+		addPair(entry, plainNode("input"), dsl.AuthoredNode(s.GetInput().GetData().AsMap()))
 	}
 	return entry
 }

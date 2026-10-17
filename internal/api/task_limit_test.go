@@ -16,7 +16,7 @@ import (
 // manyTasksDoc is an Orkflow of n plain tasks, none of them a fan-out.
 func manyTasksDoc(name string, n int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "name: %s\ntasks:\n", name)
+	fmt.Fprintf(&b, "apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\ntasks:\n", name)
 	for i := range n {
 		fmt.Fprintf(&b, "  - id: t%d\n    uses: busybox:latest\n", i)
 	}
@@ -119,6 +119,8 @@ func TestValidateOrkflow_FanOutItemsAreNotCountedAsTasks(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), OrkflowMaxTasks: 2})
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
 		Yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan
 inputs:
   parts: {type: array}

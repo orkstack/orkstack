@@ -288,7 +288,9 @@ func secretRefusal(namespace, source, task, secret, allowed string) string {
 // secretOrkflowYAML is one task naming one secret, with the shape
 // statsOrkflowYAML uses.
 func secretOrkflowYAML(name, taskID, secretName, source, command string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: secret policy probe.
 tasks:

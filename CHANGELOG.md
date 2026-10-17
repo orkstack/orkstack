@@ -1,0 +1,57 @@
+# Changelog
+
+All notable changes to OrkStack are recorded here. The format follows
+[Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and versions
+will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) from the
+first release. OrkStack has not reached 1.0: until it does, a release may
+include breaking changes, and each is marked **BREAKING**.
+
+## [Unreleased]
+
+### Added
+
+- JSON Schemas for the authored documents, generated from the parsers:
+  `docs/schemas/orkflow.v1.json`, `docs/schemas/automation.v1.json`, and
+  `docs/schemas/orkstack.v1.json`, which selects one by `apiVersion` and
+  `kind`. First-party `with:` blocks complete from each image's interface
+  label (docs/DSL.md, "Editor support").
+- The `http` activity's `body:` accepts a YAML mapping or list and sends it as
+  compact JSON, with `Content-Type: application/json` unless `headers` sets a
+  content type. A string body is still sent as written.
+- An activity interface label's `type` may name several types joined by `|`
+  (`string|object|array`).
+
+### Changed
+
+- **BREAKING:** every Orkflow begins with `apiVersion: orkstack/v1` and
+  `kind: Orkflow`. A document without them is refused at validate, apply and
+  plan, naming the two lines to add. The header is not part of the definition:
+  digests, derived versions and memo keys are unchanged, a version stored
+  before this release still reads, runs and diffs, and applying it again with
+  the two lines added as its first YAML lines, above or below its comments, is
+  a no-op (docs/DSL.md, "The document header").
+- **BREAKING:** `orkctl apply` decides what a file is by its `kind:`
+  (`Orkflow` or `Automation`) and refuses a file with neither, before anything
+  is sent.
+- **BREAKING:** an automation document's schedule `input:` is a YAML mapping.
+  A JSON object written as a string is refused, naming the YAML form: remove
+  the quotes. `orkctl export` writes `input:` as a mapping.
+- **BREAKING:** data written in an Orkflow — `inputs:`, `with:`,
+  `await.schema` — becomes JSON through one strict mapping: a plain value YAML
+  readers resolve differently (`yes`, `on`, `0755`, `1:30`, `1e3`, a date), a
+  number JSON cannot hold exactly, and tags, anchors, aliases and merge keys
+  are refused, naming the path (docs/JSON.md, "Data written in an authored
+  document"). A document that compiled before either compiles to the same
+  definition or is refused; none changes silently.
+- A stored Orkflow version is shown with its header wherever OrkStack shows its
+  YAML (`orkctl orkflow get --json`, `edit`, `diff`, the UI). Evidence bundles
+  keep the source verbatim.
+- The `custom-image` (0.2.0) and `each-fan-out` (0.3.0) examples write their
+  fixed lists as jq `vars:` in YAML instead of jq literals.
+
+### Fixed
+
+- `examples/http-post.ork.yaml` built its JSON body by splicing the message
+  into a string, so a quote or a backslash in it posted malformed JSON. It now
+  writes the body as a YAML mapping (version 0.3.0).
+- The `http` activity no longer appends a newline to a string body.

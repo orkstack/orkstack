@@ -315,7 +315,9 @@ func awaitFile(t *testing.T, path, message string) {
 func writeVersionedOrkflow(t *testing.T, name, version, marker string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+"-"+version+".ork.yaml")
-	document := fmt.Sprintf(`name: %s
+	document := fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "%s"
 description: the %s version
 tasks:
@@ -337,7 +339,9 @@ tasks:
 func writeUnpinnedOrkflow(t *testing.T, name, marker string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
-	document := fmt.Sprintf(`name: %s
+	document := fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 description: an orkflow that names no version
 tasks:
   - id: build

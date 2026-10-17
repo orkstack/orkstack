@@ -233,7 +233,7 @@ func (f *policyFixture) stored(t *testing.T, namespace string) int {
 
 func orkflowUsing(name string, uses ...string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "name: %s\nversion: 0.1.0\ntasks:\n", name)
+	fmt.Fprintf(&b, "apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: 0.1.0\ntasks:\n", name)
 	ids := []string{"migrate", "verify", "report"}
 	for i, u := range uses {
 		fmt.Fprintf(&b, "  - id: %s\n    uses: %q\n", ids[i], u)

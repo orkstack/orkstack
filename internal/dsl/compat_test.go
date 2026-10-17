@@ -28,6 +28,8 @@ const (
 // adds a required region and a defaulted timeout, drops output url, adds
 // output sbom, and rewrites every task.
 const releaseBlock210 = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -55,6 +57,8 @@ tasks:
 `
 
 const releaseBlock300 = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "3.0.0"
 inputs:
@@ -280,6 +284,8 @@ func equalFindings(a, b []wantFinding) bool {
 func TestCompareInterfaces_ImplementationChangesAreNotFindings(t *testing.T) {
 	base := compile(t, releaseBlock210)
 	rewritten := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.2.0"
 inputs:

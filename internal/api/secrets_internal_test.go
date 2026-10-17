@@ -54,6 +54,8 @@ func TestApplyOrkflow_SecretRefusalCarriesItsFieldPath(t *testing.T) {
 	_, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Namespace: "sandbox",
 		Yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: exfil
 version: "1"
 tasks:

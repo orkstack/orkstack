@@ -194,6 +194,10 @@ func (s *Service) DiffOrkflowVersions(
 		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
 			req.Msg.GetName(), req.Msg.GetToVersion(), ns.GetName())
 	}
+	// Both sides as GetOrkflow shows them, so the diff is exactly the two
+	// texts the version pages show (a version stored before the header is
+	// shown with it), and its hunk line numbers match them.
+	from, to = shown(from), shown(to)
 	return connect.NewResponse(&orkstackv1.DiffOrkflowVersionsResponse{
 		UnifiedDiff: dsl.Unified(
 			versionLabel(from), versionLabel(to),

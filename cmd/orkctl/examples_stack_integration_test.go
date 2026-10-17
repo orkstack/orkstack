@@ -327,6 +327,10 @@ type exampleServices struct {
 
 type serviceRequest struct {
 	Method, Path string
+	// ContentType is the request's Content-Type header, as sent.
+	ContentType string
+	// ContentTypes counts the Content-Type headers the request carried.
+	ContentTypes int
 	Body         []byte
 }
 
@@ -353,7 +357,8 @@ func (s *exampleServices) serve(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	s.mu.Lock()
 	if r.URL.Path != "/healthz" {
-		s.requests = append(s.requests, serviceRequest{Method: r.Method, Path: r.URL.Path, Body: body})
+		s.requests = append(s.requests, serviceRequest{Method: r.Method, Path: r.URL.Path, Body: body,
+			ContentType: r.Header.Get("Content-Type"), ContentTypes: len(r.Header.Values("Content-Type"))})
 	}
 	status, forced := s.statuses[r.URL.Path]
 	s.mu.Unlock()

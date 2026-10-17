@@ -11,6 +11,8 @@ import (
 )
 
 const telemetryDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: telemetry-plan
 tasks:
   - id: work
@@ -81,6 +83,8 @@ func TestPoolResolver_PlanTelemetry_PolicyOnly(t *testing.T) {
 // namespace sets no policy at all.
 func TestPoolResolver_PlanTelemetry_LabelsOnly(t *testing.T) {
 	document := `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: telemetry-plan
 labels:
   x: "1"
@@ -117,6 +121,8 @@ func TestPoolResolver_PlanTelemetry_BothSurviveWithNoCollision(t *testing.T) {
 		},
 	}
 	document := `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: telemetry-plan
 labels:
   x: "orkflow-value"
@@ -151,6 +157,8 @@ func TestPoolResolver_PlanTelemetry_LabelsCapAt32(t *testing.T) {
 		fmt.Fprintf(&labelLines, "  l%02d: \"v\"\n", i)
 	}
 	document := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: telemetry-plan
 labels:
 %s
@@ -188,6 +196,8 @@ tasks:
 // outside the attribute alphabet) both export cleanly.
 func TestPoolResolver_PlanTelemetry_SanitizesLabelKeysAndValues(t *testing.T) {
 	document := `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: telemetry-plan
 labels:
   Team: payments
@@ -215,6 +225,8 @@ tasks:
 // letters sort before lowercase in byte order) wins.
 func TestPoolResolver_PlanTelemetry_LabelSanitizedKeyCollisionKeepsFirstSorted(t *testing.T) {
 	document := `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: telemetry-plan
 labels:
   Team: from-Team
@@ -238,6 +250,8 @@ tasks:
 // export, rather than carried onto the wire as-is.
 func TestPoolResolver_PlanTelemetry_LabelValueSanitized(t *testing.T) {
 	document := `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: telemetry-plan
 labels:
   note: "payments\ndrop table"

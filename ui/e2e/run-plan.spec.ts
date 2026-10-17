@@ -73,7 +73,9 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
 // build always runs; deploy is gated on a declared boolean; smoke needs deploy,
 // so it is skipped exactly when deploy is — the upstream-skip sentence.
 function planOrkflow(): string {
-	return `name: ${FLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${FLOW}
 version: "0.1.0"
 description: The submit dialog's Plan action.
 inputs:

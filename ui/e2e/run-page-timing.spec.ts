@@ -95,7 +95,9 @@ function startOrker() {
 }
 
 function waitOrkflow(): string {
-	return `name: ${WAIT_ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${WAIT_ORKFLOW}
 version: "0.1.0"
 description: Task timing — submitted while no Orker polls, so it waits.
 
@@ -110,7 +112,9 @@ tasks:
 }
 
 function flakyOrkflow(): string {
-	return `name: ${FLAKY_ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${FLAKY_ORKFLOW}
 version: "0.1.0"
 description: Task timing — a task that fails once and succeeds on attempt 2.
 

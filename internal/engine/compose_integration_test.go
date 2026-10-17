@@ -456,12 +456,12 @@ func TestIntegration_ComposedSubmitRefusalsMintNothing(t *testing.T) {
 			t.Fatalf("apply: %v", err)
 		}
 	}
-	apply("name: i9-leaf\nversion: \"1\"\ntasks:\n  - id: x\n    uses: shell\n    with: {op: exec, command: [\"true\"]}\n")
-	apply("name: i9-gpu\nversion: \"1\"\ntasks:\n  - id: x\n    uses: shell\n    pool: gpu\n    with: {op: exec, command: [\"true\"]}\n")
-	apply("name: i9-mid\nversion: \"1\"\ntasks:\n  - id: leaf\n    uses: orkflow:i9-leaf@1\n")
-	apply("name: i9-deep\nversion: \"1\"\ntasks:\n  - id: mid\n    uses: orkflow:i9-mid@1\n")
-	apply("name: i9-pool\nversion: \"1\"\ntasks:\n  - id: g\n    uses: orkflow:i9-gpu@1\n")
-	apply("name: i9-gone\nversion: \"1\"\ntasks:\n  - id: leaf\n    uses: orkflow:i9-leaf@1\n")
+	apply("apiVersion: orkstack/v1\nkind: Orkflow\nname: i9-leaf\nversion: \"1\"\ntasks:\n  - id: x\n    uses: shell\n    with: {op: exec, command: [\"true\"]}\n")
+	apply("apiVersion: orkstack/v1\nkind: Orkflow\nname: i9-gpu\nversion: \"1\"\ntasks:\n  - id: x\n    uses: shell\n    pool: gpu\n    with: {op: exec, command: [\"true\"]}\n")
+	apply("apiVersion: orkstack/v1\nkind: Orkflow\nname: i9-mid\nversion: \"1\"\ntasks:\n  - id: leaf\n    uses: orkflow:i9-leaf@1\n")
+	apply("apiVersion: orkstack/v1\nkind: Orkflow\nname: i9-deep\nversion: \"1\"\ntasks:\n  - id: mid\n    uses: orkflow:i9-mid@1\n")
+	apply("apiVersion: orkstack/v1\nkind: Orkflow\nname: i9-pool\nversion: \"1\"\ntasks:\n  - id: g\n    uses: orkflow:i9-gpu@1\n")
+	apply("apiVersion: orkstack/v1\nkind: Orkflow\nname: i9-gone\nversion: \"1\"\ntasks:\n  - id: leaf\n    uses: orkflow:i9-leaf@1\n")
 
 	before, err := reader.ListRuns(ctx, engine.RunQuery{})
 	if err != nil {

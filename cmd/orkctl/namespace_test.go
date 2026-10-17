@@ -324,7 +324,7 @@ func TestApply_RefusesASelectorThatContradictsTheDocument(t *testing.T) {
 	f.run("namespace", "create", "staging").requireExit(t, exitOK)
 
 	path := filepath.Join(t.TempDir(), "deploy.ork.yaml")
-	document := "namespace: payments\nname: deploy\nversion: 1.0.0\ntasks:\n" +
+	document := "apiVersion: orkstack/v1\nkind: Orkflow\nnamespace: payments\nname: deploy\nversion: 1.0.0\ntasks:\n" +
 		"  - id: build\n    uses: shell\n    with: {command: \"echo build\"}\n"
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write orkflow: %v", err)
@@ -347,7 +347,7 @@ func TestApply_RefusesASelectorThatContradictsTheDocument(t *testing.T) {
 func writeOrkflow(t *testing.T, name, taskID string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
-	document := "name: " + name + "\nversion: 1.0.0\ntasks:\n" +
+	document := "apiVersion: orkstack/v1\nkind: Orkflow\nname: " + name + "\nversion: 1.0.0\ntasks:\n" +
 		"  - id: " + taskID + "\n    uses: shell\n    with: {command: \"echo hi\"}\n"
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write orkflow %s: %v", name, err)
@@ -364,7 +364,7 @@ func writeOrkflow(t *testing.T, name, taskID string) string {
 func exfilDocument(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "exfil.ork.yaml")
-	document := "name: exfil\nversion: 1.0.0\ntasks:\n" +
+	document := "apiVersion: orkstack/v1\nkind: Orkflow\nname: exfil\nversion: 1.0.0\ntasks:\n" +
 		"  - id: grab\n    uses: shell\n" +
 		"    secrets:\n      - name: db\n        source: env:PROD_DB_PASSWORD\n" +
 		"    with: {command: \"cat /orkstack/input/secrets/db\"}\n"

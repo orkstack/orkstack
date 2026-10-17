@@ -56,7 +56,9 @@ func largestSubmitted(t *testing.T, high int, build func(n int) string) (int, er
 	return low, try(high)
 }
 
-const leafYAML = `name: leaf
+const leafYAML = `apiVersion: orkstack/v1
+kind: Orkflow
+name: leaf
 version: "1.0.0"
 tasks:
   - id: work
@@ -72,7 +74,7 @@ tasks:
 func TestPlanSize_LargestAwaitAndComposeCounts(t *testing.T) {
 	awaits, awaitErr := largestSubmitted(t, 8000, func(n int) string {
 		var b strings.Builder
-		b.WriteString("name: counted\nversion: \"1.0.0\"\ntasks:\n")
+		b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: counted\nversion: \"1.0.0\"\ntasks:\n")
 		for i := range n {
 			fmt.Fprintf(&b, "  - id: a%d\n    await: {timeout_seconds: 60, callback: true}\n", i)
 		}
@@ -80,7 +82,7 @@ func TestPlanSize_LargestAwaitAndComposeCounts(t *testing.T) {
 	})
 	composed, composeErr := largestSubmitted(t, 8000, func(n int) string {
 		var b strings.Builder
-		b.WriteString("name: counted\nversion: \"1.0.0\"\ntasks:\n")
+		b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: counted\nversion: \"1.0.0\"\ntasks:\n")
 		for i := range n {
 			fmt.Fprintf(&b, "  - id: c%d\n    uses: orkflow:leaf@1.0.0\n", i)
 		}

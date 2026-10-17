@@ -31,6 +31,8 @@ import (
 // overlayChaosDocument is a task held at a gate beside a 300-item fan-out:
 // 303 declared rows, over the default policy's floor.
 const overlayChaosDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: overlay-chaos
 version: "1.0.0"
 inputs:

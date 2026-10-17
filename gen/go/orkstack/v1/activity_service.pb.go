@@ -283,7 +283,9 @@ func (x *ActivityInfo) GetInterfaceError() string {
 // and not one word more: no pattern, no range, no enum, no nesting.
 type FieldSchema struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// type is one of "string", "number", "boolean", "object", "array".
+	// type is one of "string", "number", "boolean", "object", "array", or
+	// several joined by "|" (string|object|array) for a key that accepts any
+	// of them.
 	Type string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
 	// required means the image refuses to run without this key. A field
 	// with a default is never required (the two contradict; the manifest
@@ -291,7 +293,7 @@ type FieldSchema struct {
 	Required bool `protobuf:"varint,2,opt,name=required,proto3" json:"required,omitempty"`
 	// default is documentary: what the image assumes when the key is
 	// absent. The engine never writes it into `with:`. When set, its JSON
-	// type must match `type`; null is not a default (omit the field).
+	// type must be one of `type`'s; null is not a default (omit the field).
 	Default       *structpb.Value `protobuf:"bytes,3,opt,name=default,proto3" json:"default,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

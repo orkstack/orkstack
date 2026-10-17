@@ -522,7 +522,9 @@ func TestIntegration_ATriggerInvokeIsRefusedByAHoldWith412(t *testing.T) {
 }
 
 func admissionOrkflowYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: admission probe.
 tasks:
@@ -540,7 +542,9 @@ tasks:
 // admissionSlowOrkflowYAML runs long enough to be in flight while the test
 // holds or caps its namespace, and then succeeds.
 func admissionSlowOrkflowYAML(name string, seconds int) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: admission probe, in flight for a while.
 tasks:

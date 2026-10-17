@@ -121,7 +121,9 @@ message ActivityInfo {
 // vocabulary an Orkflow's `inputs:` already has (docs/DSL.md, "Inputs")
 // and not one word more: no pattern, no range, no enum, no nesting.
 message FieldSchema {
-  // type is one of "string", "number", "boolean", "object", "array".
+  // type is one of "string", "number", "boolean", "object", "array", or
+  // several joined by "|" (string|object|array) for a key that accepts any
+  // of them.
   string type = 1;
   // required means the image refuses to run without this key. A field
   // with a default is never required (the two contradict; the manifest
@@ -129,7 +131,7 @@ message FieldSchema {
   bool required = 2;
   // default is documentary: what the image assumes when the key is
   // absent. The engine never writes it into `with:`. When set, its JSON
-  // type must match `type`; null is not a default (omit the field).
+  // type must be one of `type`'s; null is not a default (omit the field).
   google.protobuf.Value default = 3;
 }
 

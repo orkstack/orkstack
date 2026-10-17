@@ -26,6 +26,8 @@ import (
 // the bus, a snapshot being written — never waited for with a sleep.
 
 const rejoinDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: rejoin
 inputs:
   route: {type: string}
@@ -58,6 +60,8 @@ tasks:
 // it; announce is an ordinary task after deploy; rollback is an any_failed
 // handler of deploy; notify an all_done handler of deploy and smoke.
 const joinFailDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: join-fail
 tasks:
   - id: build
@@ -95,6 +99,8 @@ tasks:
 // joinFailWithoutHandlersDocument is joinFailDocument with every failure
 // handler removed: what the same failure records with no handler at all.
 const joinFailWithoutHandlersDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: join-fail
 tasks:
   - id: build
@@ -334,6 +340,8 @@ func TestRunWorkflow_NoneFailedIsSkippedWhenEveryNeedWasSkipped(t *testing.T) {
 }
 
 const anyFailedSkippedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: any-failed-skipped
 tasks:
   - id: deploy
@@ -472,6 +480,8 @@ func TestRunWorkflow_FailFastStillCancelsSiblingsAndUnstartedNonHandlers(t *test
 }
 
 const allDoneRunningDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: all-done-running
 tasks:
   - id: a
@@ -531,6 +541,8 @@ func TestRunWorkflow_AllDoneHandlerRunningWhenAnotherTaskFailsIsNotCanceled(t *t
 }
 
 const twoHandlersDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: two-handlers
 tasks:
   - id: deploy
@@ -572,6 +584,8 @@ func TestRunWorkflow_AFailingHandlerStopsNothingAndLeavesTheRunError(t *testing.
 }
 
 const escalateDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: escalate
 tasks:
   - id: deploy
@@ -623,6 +637,8 @@ func TestRunWorkflow_AnyFailedOnAHandlerEscalates(t *testing.T) {
 // build) is a handler running beside it; rollback (any_failed on slow) is a
 // pending handler; after is an ordinary task after slow.
 const operatorCancelDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: operator-cancel
 tasks:
   - id: build
@@ -717,6 +733,8 @@ func TestRunWorkflow_OperatorCancelStartsNoHandlerAndStopsRunningOnes(t *testing
 // handlerCancelDocument: deploy fails; rollback (a handler) runs until
 // cancelled; escalate waits on rollback; notify all_done on deploy succeeds.
 const handlerCancelDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: handler-cancel
 tasks:
   - id: deploy
@@ -859,6 +877,8 @@ func TestRunWorkflow_EmitsOneFailingNoteNamingTheOutstandingHandlers(t *testing.
 		return okTask(in)
 	})
 	h2.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-note", compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: no-note
 tasks:
   - id: a
@@ -883,6 +903,8 @@ tasks:
 }
 
 const brokenConditionDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: broken-condition
 inputs:
   a: {type: string}
@@ -1012,6 +1034,8 @@ func TestRunWorkflow_RefusedDispatchOfTheCauseIsRecordedFailed(t *testing.T) {
 	plan := defaultPlan()
 	plan.Limits = engine.WorkspaceLimits{ValuesMaxBytes: 4096}
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-refused-cause", compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: refused-cause
 tasks:
   - id: big
@@ -1066,6 +1090,8 @@ func TestRunWorkflow_TerminalTransitionsOfThisSpecReleaseTheirPin(t *testing.T) 
 		cause string
 	}{
 		{"a broken condition (failCondition)", `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-condition
 inputs:
   a: {type: string}
@@ -1090,6 +1116,8 @@ tasks:
     with: {op: exec}
 `, map[string]any{"a": "x", "b": 1}, 0, "compile"},
 		{"a refused cause (recordRefusedDispatch)", `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-refused
 pins:
   build: {}
@@ -1138,6 +1166,8 @@ tasks:
 }
 
 const handlerRetryDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: handler-retry
 tasks:
   - id: deploy
@@ -1309,6 +1339,8 @@ func childPlanFor(t *testing.T, plan *engine.RunPlan, id string, child *orkstack
 }
 
 const composedHandlerDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: composed-handler
 tasks:
   - id: deploy
@@ -1375,6 +1407,8 @@ func TestRunWorkflow_ComposedHandlerStartsAChildInAFailingRun(t *testing.T) {
 }
 
 const awaitedHandlerDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: awaited-handler
 tasks:
   - id: deploy
@@ -1430,6 +1464,8 @@ func TestRunWorkflow_RejectedAwaitStartsItsAnyFailedHandler(t *testing.T) {
 	reject.Values, reject.ValuesJson, reject.Reject, reject.Reason = nil, nil, true, "not today"
 	h.signalAt(time.Minute, reject)
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-rejected-gate", compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: rejected-gate
 tasks:
   - id: gate
@@ -1469,6 +1505,8 @@ func TestRunWorkflow_AnItemFailureStartsTheFanOutsHandler(t *testing.T) {
 		return okTask(in)
 	})
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-item-handler", compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: item-handler
 inputs:
   regions: {type: array}
@@ -1536,6 +1574,8 @@ func TestRunWorkflow_NoneFailedFanOutWhoseSourceWasSkippedFailsEachOverMissing(t
 	plan := defaultPlan()
 	plan.CommitRoot = "mem://commits"
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-each-over-missing", compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: each-over-missing
 tasks:
   - id: a
@@ -1569,6 +1609,8 @@ func TestRunWorkflow_HandlerEdgesDoNotRemoveLeavesFromTheRunOutput(t *testing.T)
 		return succeeded(in.TaskId, map[string]any{"by": in.TaskId}), nil
 	})
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-handler-leaves", compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: handler-leaves
 tasks:
   - id: deploy
@@ -1722,6 +1764,8 @@ func TestRunWorkflow_AHandlersRefusedOrHalfDoneDispatchIsRecorded(t *testing.T) 
 		plan := defaultPlan()
 		plan.Limits = engine.WorkspaceLimits{ValuesMaxBytes: limit}
 		h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: refused-handler
 tasks:
   - id: deploy

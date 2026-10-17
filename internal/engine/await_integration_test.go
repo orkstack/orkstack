@@ -307,6 +307,8 @@ func writeAwaitProof(t *testing.T, name, body string) {
 }
 
 const awaitIntegrationYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: await-integration
 version: "1.0.0"
 tasks:
@@ -516,6 +518,8 @@ func TestIntegration_ConcurrentResolutionsApplyExactlyOne(t *testing.T) {
 func TestIntegration_AwaitOnlyOrkflowRunsWithNoOrker(t *testing.T) {
 	s := newAwaitStack(t, awaitStackOptions{noOrker: true})
 	s.apply(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: await-only-integration
 version: "1.0.0"
 tasks:

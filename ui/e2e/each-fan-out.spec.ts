@@ -85,7 +85,9 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
 const PARTS = ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => ({ name }));
 
 function fanOutOrkflow(): string {
-	return `name: ${FAN_OUT}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${FAN_OUT}
 version: "0.1.0"
 description: Six parts fanned out two at a time, one retried, merged.
 
@@ -138,7 +140,9 @@ tasks:
 // grid holds every cell from the moment the fan-out expands, however few
 // items have run.
 function gatedOrkflow(): string {
-	return `name: ${GATED}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${GATED}
 version: "0.1.0"
 description: A fan-out at the gated item size.
 
@@ -163,7 +167,9 @@ tasks:
 
 // One at a time, item 3 always fails: items 4 and 5 are never dispatched.
 function failingOrkflow(): string {
-	return `name: ${FAILING}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${FAILING}
 version: "0.1.0"
 description: Item 3 always fails; the items after it never start.
 

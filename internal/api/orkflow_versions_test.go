@@ -34,7 +34,9 @@ func versionedService(t *testing.T) *api.Service {
 // versionedDocument is one orkflow whose body carries `marker`, so two versions
 // are distinguishable by what they would run rather than by their number alone.
 func versionedDocument(name, version, marker string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "%s"
 tasks:
   - id: build
@@ -243,7 +245,9 @@ func TestApplyOrkflow_UnpinnedEditsBecomeANewVersionAutomatically(t *testing.T) 
 	svc := versionedService(t)
 	ctx := context.Background()
 	unpinned := func(marker string) string {
-		return fmt.Sprintf(`name: deploy
+		return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: deploy
 tasks:
   - id: build
     uses: shell
@@ -297,7 +301,9 @@ tasks:
 func TestApplyOrkflow_ACommentOnlyEditOfAnUnpinnedDocumentIsANewVersion(t *testing.T) {
 	svc := versionedService(t)
 	ctx := context.Background()
-	const document = `name: deploy
+	const document = `apiVersion: orkstack/v1
+kind: Orkflow
+name: deploy
 tasks:
   - id: build
     uses: shell

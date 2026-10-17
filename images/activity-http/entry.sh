@@ -55,8 +55,22 @@ eval "set -- $(jq -r '(.headers // {}) | to_entries | map("--header", "\(.key): 
 
 # A request body is written to a file rather than passed as an argument: it may
 # be large, and it may contain anything.
-if jq -e 'has("body")' "$CONFIG" >/dev/null; then
-    jq -r '.body' "$CONFIG" > "$TMP/request-body"
+#
+# A body is sent as written: a string verbatim (jq -j adds no newline), a mapping or a
+# list as compact JSON — every string leaf was rendered by the Orker before this runs,
+# so a quote or a backslash in a value stays inside its string. A JSON body defaults
+# Content-Type to application/json unless headers sets a content type.
+if jq -e 'has("body") and .body != null' "$CONFIG" >/dev/null; then
+    body_type=$(jq -r '.body | type' "$CONFIG")
+    case "$body_type" in
+      string) jq -j '.body' "$CONFIG" > "$TMP/request-body" ;;
+      object|array)
+          jq -cj '.body' "$CONFIG" > "$TMP/request-body"
+          if ! jq -e '(.headers // {}) | keys | map(ascii_downcase) | index("content-type")' "$CONFIG" >/dev/null; then
+              set -- "$@" --header "Content-Type: application/json"
+          fi ;;
+      *) fail "with.body must be a string, a mapping or a list, got $body_type" ;;
+    esac
     set -- "$@" --data-binary "@$TMP/request-body"
 fi
 

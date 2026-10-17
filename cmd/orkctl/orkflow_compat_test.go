@@ -24,7 +24,9 @@ import (
 // (docs/UI_CLI_PARITY.md "Interface compatibility")
 // ---------------------------------------------------------------------------
 
-const compatBlock210 = `name: release-block
+const compatBlock210 = `apiVersion: orkstack/v1
+kind: Orkflow
+name: release-block
 version: "2.1.0"
 inputs:
   image: { type: string, required: true }
@@ -42,7 +44,9 @@ tasks:
     with: { op: eval, command: ["true"] }
 `
 
-const compatBlock300 = `name: release-block
+const compatBlock300 = `apiVersion: orkstack/v1
+kind: Orkflow
+name: release-block
 version: "3.0.0"
 inputs:
   image: { type: string, required: true }
@@ -62,7 +66,9 @@ tasks:
     with: { op: eval, command: ["true"] }
 `
 
-const compatCheckout = `name: checkout-service
+const compatCheckout = `apiVersion: orkstack/v1
+kind: Orkflow
+name: checkout-service
 version: "4.2.0"
 tasks:
   - id: release
@@ -77,7 +83,9 @@ tasks:
     with: { op: exec, command: ["echo", "{{ .tasks.release.output.digest }}"] }
 `
 
-const compatBilling = `name: billing-sync
+const compatBilling = `apiVersion: orkstack/v1
+kind: Orkflow
+name: billing-sync
 version: "1.9.0"
 tasks:
   - id: release

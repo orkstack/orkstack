@@ -9,6 +9,9 @@ webhook, a schedule ([ORKFLOW_SCHEDULES.md](ORKFLOW_SCHEDULES.md)), a
 subscription, or a new execution authority: an invocation is one `SubmitRun`
 call, and Temporal owns everything after it.
 
+A trigger is an object of its own, not a key of the Orkflow: see
+[What an Orkflow does not declare](DSL.md#what-an-orkflow-does-not-declare).
+
 `TriggerService` (`proto/orkstack/v1/trigger_service.proto`) manages triggers;
 `orkctl trigger` and the Orkflow page's **Triggers** tab are its two clients,
 with parity as [UI_CLI_PARITY.md](UI_CLI_PARITY.md) defines it.

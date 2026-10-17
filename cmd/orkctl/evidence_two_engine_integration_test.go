@@ -36,7 +36,9 @@ import (
 // number from /orkstack/input/task.json and exits 1, so attempt 1 fails as
 // ACTIVITY_FAILED and attempt 2 succeeds.
 func evidenceOrkflowYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: run evidence probe.
 tasks:
@@ -72,7 +74,9 @@ tasks:
 // evidenceSleeperYAML is a task that sleeps long enough to be asked about
 // while it runs.
 func evidenceSleeperYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: run evidence live-run probe.
 tasks:

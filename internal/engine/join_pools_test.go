@@ -34,6 +34,8 @@ func joinPoolsResolver(p *joinSupportPools) *engine.PoolResolver {
 }
 
 const joinPoolsDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: join-pools
 tasks:
   - id: deploy
@@ -121,6 +123,8 @@ func TestPoolResolverPlan_AsksOnlyForPoolsOfContainerFailureHandlers(t *testing.
 	// A definition with no join, and one whose only handlers are awaited or
 	// composed, cause no describe call at all.
 	for _, doc := range []string{`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: no-join
 tasks:
   - id: a
@@ -128,6 +132,8 @@ tasks:
     pool: gpu
     with: {op: exec}
 `, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: await-handler
 tasks:
   - id: a

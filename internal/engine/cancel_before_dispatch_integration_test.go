@@ -43,7 +43,7 @@ func TestIntegration_RecordCancelBeforeDispatchHistory(t *testing.T) {
 	plan, _ := s.tcPlan()
 	runID := fmt.Sprintf("ork-cancel-before-dispatch-%d", time.Now().UnixNano())
 	s.transcript.run(runID)
-	s.start(runID, compile(t, "name: cancel-before-dispatch\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 12, "")), nil, plan)
+	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: cancel-before-dispatch\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 12, "")), nil, plan)
 	entered := hook.waitEntered(t, 2*time.Minute)
 	if err := s.starter.CancelRun(ctx, runID, ""); err != nil {
 		t.Fatalf("cancel: %v", err)

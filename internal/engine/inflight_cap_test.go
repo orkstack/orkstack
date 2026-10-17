@@ -66,7 +66,7 @@ func (p *runningPeak) value() int {
 // flatDocument is n tasks that all start together.
 func flatDocument(n int) string {
 	var b strings.Builder
-	b.WriteString("name: flat\ntasks:\n")
+	b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: flat\ntasks:\n")
 	for i := 0; i < n; i++ {
 		fmt.Fprintf(&b, "  - id: t%d\n    uses: shell\n    needs: []\n    with: {op: exec}\n", i)
 	}
@@ -74,6 +74,8 @@ func flatDocument(n int) string {
 }
 
 const wideFanOutDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: wide
 inputs:
   parts: {type: array}
@@ -181,6 +183,8 @@ func TestInFlightCap_GateIsLazy(t *testing.T) {
 }
 
 const pinNeedsUnpinnedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-needs
 pins:
   build: {}
@@ -254,6 +258,8 @@ func TestInFlightCap_NeverSpins(t *testing.T) {
 	}
 	t.Run("two pins open with nothing in flight", func(t *testing.T) {
 		const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: two-pins
 pins:
   one: {}
@@ -318,6 +324,8 @@ func sortedTaskOrder(h *harness) []string {
 // pinnedOverCap is a pin open while unpinned work fills the cap: compile,
 // the pin's member, needs fetch and fan, both in the pin's closure.
 const pinnedOverCapDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-over-cap
 pins:
   build: {}

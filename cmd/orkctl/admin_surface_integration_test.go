@@ -628,7 +628,9 @@ func awaitLivePoolsOnB(
 func writeAdminProbeOrkflow(t *testing.T, name, pool string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
-	document := fmt.Sprintf(`name: %s
+	document := fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "1.0.0"
 description: admin surface probe
 tasks:

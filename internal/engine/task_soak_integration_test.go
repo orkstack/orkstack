@@ -124,7 +124,7 @@ func taskSoakDocument(name string, n, lanes int, run time.Duration) string {
 		command = fmt.Sprintf(`[sleep, "%d"]`, int(run.Seconds()))
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "name: %s\nversion: \"1.0.0\"\ntasks:\n", name)
+	fmt.Fprintf(&b, "apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n", name)
 	for i := range n {
 		fmt.Fprintf(&b, "  - id: t%d\n    uses: shell\n    network: none\n    timeout_seconds: 600\n", i)
 		b.WriteString("    retry: {maximum_attempts: 3}\n")

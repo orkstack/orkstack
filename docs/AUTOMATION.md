@@ -1,8 +1,10 @@
 # Declarative automation contract
 
 An **automation document** is one reviewable YAML file per namespace that
-declares, by name, everything that surrounds that namespace's Orkflows: its
-settings, its schedules, its triggers and its webhooks. It lives in Git beside
+declares, by name, everything that surrounds that namespace's Orkflows — what
+an Orkflow itself does not declare
+([DSL.md](DSL.md#what-an-orkflow-does-not-declare)): its settings, its
+schedules, its triggers and its webhooks. It lives in Git beside
 the Orkflow documents; `orkctl apply` applies both.
 
 ```yaml
@@ -22,7 +24,8 @@ schedules:
     cron: "0 2 * * *"
     timezone: Europe/Lisbon
     overlap: skip
-    input: '{"mode": "full"}'
+    input:
+      mode: full
 
 triggers:
   github-deploy:
@@ -70,10 +73,13 @@ interpolation, and per-environment differences are separate documents.
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `apiVersion` | yes | Exactly `orkstack/v1`. |
-| `kind` | yes | Exactly `Automation`; it is what tells `orkctl apply` this is not an Orkflow. |
+| `kind` | yes | Exactly `Automation`; an Orkflow says `kind: Orkflow`, and `orkctl apply` dispatches on it. |
 | `namespace` | yes | The one namespace the document describes, a slug. Required and authoritative: never inferred from `-n`, `ORK_NAMESPACE` or a saved default, so a document that prunes can never land in the wrong namespace by accident of a shell. |
 | `settings` | no | The namespace's settings, as an overlay. |
 | `schedules`, `triggers`, `webhooks` | no | `name: entry` mappings. |
+
+Its JSON Schema is [`docs/schemas/automation.v1.json`](schemas/automation.v1.json),
+generated from this parser (`docs/DSL.md`, "Editor support").
 
 A document **manages** a section when it declares the key, even as `{}`; a
 section it omits is not managed and a plan says nothing about it. A section
@@ -130,13 +136,15 @@ or unmanaged before it ships; a test walks the descriptor and fails otherwise.
 | `overlap` | `skip`\|`buffer-one`\|`buffer-all`\|`cancel-other`\|`allow-all` | `skip` |
 | `catchup_window` | Go duration, ≥ 10s | the cluster's default |
 | `pause_on_failure` | boolean | `false` |
-| `input` | **a string containing a JSON object** | none |
+| `input` | a YAML mapping, converted to JSON by the strict mapping (`docs/JSON.md`) | none |
 
 There is no `paused` key — pause is operational, shown as a note, never
 changed — and no magic `version` word: `version: current` pins a version
-named `current`. Run input is JSON, never YAML (`AGENTS.md` §3.1): `input` is
-a JSON object written as a string, `input: '{"mode": "full"}'`; a YAML mapping
-there is refused, and `'{}'` is recorded as unset. Cron syntax is the
+named `current`. Run input is JSON on the wire; in this document it is written
+as a YAML mapping and converted by the strict mapping (`AGENTS.md` §3.1,
+`docs/JSON.md`), so `apply --dry-run` shows exactly the JSON each fire submits.
+A string is refused (a JSON object written as a string was the shape before
+this release), and `{}` is recorded as unset. Cron syntax is the
 cluster's alone: an expression it cannot parse fails that step of the apply.
 
 ### `triggers`
@@ -251,7 +259,9 @@ functions in the engine and shown verbatim by every client: strings as `%q`;
 an unpinned version as `current` (unquoted); lists as `[a, b]`; maps as
 `{k: "v"}` sorted by key; durations in their short form (`168h`, `1h30m`);
 `run_retention` unset as `inherit`; timestamps RFC 3339 UTC, `unset` when
-absent; input as compact JSON with sorted keys; events in lifecycle order,
+absent; input as compact JSON with sorted keys in a plan (an export writes
+input as a YAML mapping, keys sorted, quoting any string a YAML reader could
+read as something else); events in lifecycle order,
 `[]` meaning every run transition.
 
 ### The digest
@@ -272,9 +282,9 @@ orkctl apply <file|dir>... [--dry-run | --check] [--prune]
 
 One Orkflow file with none of the automation flags behaves as a plain Orkflow
 apply (`--json` prints `ApplyOrkflowResponse`). Otherwise each argument is a file, or a directory read non-recursively for
-`*.ork.yaml` and `*.ork.yml` in lexical order. A file with no `kind` and no
-`apiVersion` is an Orkflow; `kind: Automation` is an automation document;
-anything else is refused. Two automation documents naming one namespace are
+`*.ork.yaml` and `*.ork.yml` in lexical order. A file's `kind:` decides:
+`kind: Orkflow` is an Orkflow, `kind: Automation` an automation document, and
+a file with no `kind`, or any other, is refused before anything is sent. Two automation documents naming one namespace are
 refused. Only an `-n` typed on the command line is checked against a
 document's namespace; `ORK_NAMESPACE` and the saved default never apply to
 it.
@@ -282,7 +292,10 @@ it.
 Nothing is written until every document has been read, validated and planned:
 
 1. Each Orkflow document is validated, and its compiled name and version
-   looked up: **new**, **identical** (stored with byte-identical source) or
+   looked up: **new**, **identical** (stored with
+   the same source, not counting the two header lines written first — so a
+   version stored before the header existed is identical to its file with them
+   added; `docs/DSL.md`, "The document header") or
    **conflicting** (stored with different source — an error).
 2. Each automation document is planned, told which Orkflow versions this
    invocation stores first.
@@ -398,4 +411,4 @@ name, pin, URL, events and scope, never a secret.
 | Deriving an object's id from its name | An existing object could never be adopted without re-issuing its URL, and a deleted trigger's URL would come back to life under a new token. |
 | Delete-and-recreate to make a field true | Re-issues the trigger token or webhook secret the integration depends on. |
 | Planning in each client | The plan is served by one planner so `apply --dry-run` and Admin → Automation can never disagree about what an apply would do; only the writes are client-side. |
-| A YAML mapping for schedule `input` | Run input is JSON, never YAML (`AGENTS.md` §3.1). |
+| A JSON object written as a string for schedule `input` (the shape before this release) | The document is YAML; a JSON string inside it is a second syntax with its own quoting, and a reader cannot see the input's shape. The mapping is converted by the strict mapping — never a lenient decode — so `yes`, `0755` or a date is refused rather than coerced, and run input stays JSON on the wire (`AGENTS.md` §3.1). |

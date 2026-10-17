@@ -14,7 +14,7 @@
         "uses": "shell"
       }
     ],
-    "sourceYaml": "name: deploy\nversion: \"1.1.0\"\ndescription: the 1.1.0 version\ntasks:\n  - id: build\n    uses: shell\n    with:\n      op: exec\n      command: echo forked\n",
+    "sourceYaml": "apiVersion: orkstack/v1\nkind: Orkflow\nname: deploy\nversion: \"1.1.0\"\ndescription: the 1.1.0 version\ntasks:\n  - id: build\n    uses: shell\n    with:\n      op: exec\n      command: echo forked\n",
     "createdAt": "2026-01-02T03:04:05.000000002Z",
     "namespace": "default",
     "definitionDigest": "sha256:410da35f99869bec604f1afb786ce83eaf1be161d313f47475cd1d759871638a"

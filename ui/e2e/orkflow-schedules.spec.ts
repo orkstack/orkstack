@@ -75,7 +75,9 @@ async function liveOrkers(): Promise<number> {
 }
 
 function workflow(): string {
-	return `name: ${NAME}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${NAME}
 version: "0.1.0"
 description: Orkflow schedules coverage.
 tasks:

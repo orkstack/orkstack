@@ -177,7 +177,10 @@ filter over the same files would fail the same way.
   renders to a **string**, an object renders as Go's `map[k:v]` rather than
   JSON, and a number renders as above — so strings, booleans and small numbers
   travel in `vars` (`$vars.limit | tonumber`), while structures, ids and large
-  integers travel as files.
+  integers travel as files. Data a filter only returns — a fixed list a
+  fan-out reads — goes in `vars:` as YAML (`vars: {labels: [alpha, beta]}`,
+  `filter: '$vars.labels'`), never as a jq literal: a filter is code, the list
+  is data.
 - **Literal braces.** `filter` and every `vars` leaf are `with:` strings, and a
   `with:` string containing `{{` is a DSL template: `orkctl orkflow validate`
   parses it and the Orker renders it before the container starts. A filter that

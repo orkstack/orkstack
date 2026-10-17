@@ -40,6 +40,8 @@ func (everyPoolLive) ObservePool(context.Context, string) (engine.PoolLiveness, 
 }
 
 const twoPoolDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pool-plan
 tasks:
   - id: crunch
@@ -390,6 +392,8 @@ func TestPoolResolver_HoldsTheAllowListAgainstThePoolItDispatchesTo(t *testing.T
 // mainPoolDocument names the default pool the long way, which is the spelling
 // a bound channel collapses.
 const mainPoolDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: main-pool
 tasks:
   - id: settle
@@ -541,6 +545,8 @@ func (s stalePool) ObservePool(context.Context, string) (engine.PoolLiveness, er
 }
 
 const onePoolDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: one-pool
 tasks:
   - id: settle
@@ -626,6 +632,8 @@ func (r refusingDescriber) OrkerOnPool(_ context.Context, queue string) (*orksta
 }
 
 const pinnedSubmitDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-submit
 pins:
   build: {}
@@ -831,6 +839,8 @@ func TestPoolResolver_DoesNotRefusePinsWithNoAuthorityToAsk(t *testing.T) {
 // pools cannot be. Only this check, on the resolved route, can see it.
 func TestPoolResolver_RefusesAPinWhoseTasksRESOLVEOntoTwoPools(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pin-split-by-default
 pins:
   build: {}
@@ -933,6 +943,8 @@ func TestPoolResolver_PlanRefusesASecretTheNamespaceDoesNotAllow(t *testing.T) {
 		AllowedSecrets: []string{"env:SANDBOX_*"},
 	}
 	wf := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: exfil
 version: "1"
 tasks:

@@ -24,6 +24,8 @@
 # `note` defaults to a value with a quote and a semicolon in it on purpose.
 #   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --input release=1.4.2 --assert-runs regional --assert-skipped publish
 #   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --input release=1.4.2 --input dry_run=false --assert-runs publish
+apiVersion: orkstack/v1
+kind: Orkflow
 name: inputs-and-escaping
 version: "0.1.0"
 description: "Object, array, number and boolean inputs; argv, positional arguments, the sh helper and jq $vars against a hostile default."

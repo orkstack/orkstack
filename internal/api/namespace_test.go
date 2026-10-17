@@ -200,6 +200,8 @@ func mustApply(t *testing.T, svc *api.Service, document, namespace string) *orks
 // stored object, which is precisely the bug it is here to catch.
 func TestTwoNamespaces_SameOrkflowName_ListsAndRunsStayDisjoint(t *testing.T) {
 	const deployInA = `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: alpha
 name: deploy
 version: 1.0.0
@@ -209,6 +211,8 @@ tasks:
     with: {command: "echo build"}
 `
 	const deployInB = `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: bravo
 name: deploy
 version: 1.0.0
@@ -355,6 +359,8 @@ func TestSubmitRun_OneIdempotencyKeyInTwoNamespacesStartsTwoRuns(t *testing.T) {
 	// shared provisioning script produces, and the one where a shared key is
 	// most likely.
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 tasks:
   - id: build
@@ -425,6 +431,8 @@ tasks:
 // there, which is the contract every read path must honour.
 func TestApplyOrkflow_AppliesIntoANonDefaultNamespaceAndReadsItBack(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: payments
 name: nightly-close
 tasks:
@@ -479,6 +487,8 @@ tasks:
 // definition where its author will not look for it.
 func TestApplyOrkflow_RefusesASelectorThatDisagreesWithTheDocument(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: payments
 name: nightly-close
 tasks:
@@ -512,6 +522,8 @@ tasks:
 // several namespaces.
 func TestApplyOrkflow_SelectorAdoptsADocumentThatNamesNoNamespace(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 tasks:
   - id: build
@@ -723,6 +735,8 @@ func TestUpdateNamespace_RefusesAStaleEtag(t *testing.T) {
 // TestDeleteNamespace_RefusesWhileItHoldsOrkflows keeps definitions reachable.
 func TestDeleteNamespace_RefusesWhileItHoldsOrkflows(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: payments
 name: nightly-close
 tasks:
@@ -871,6 +885,8 @@ func namespaceNames(namespaces []*orkstackv1.Namespace) []string {
 // "there is no such run".
 func TestRunID_IsAnAddressInsideANamespaceNotACapabilityOverTheDeployment(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 tasks:
   - id: build
@@ -992,6 +1008,8 @@ tasks:
 // another namespace is 404, before any upgrade.
 func TestWebSocketBridge_RefusesARunOfAnotherNamespace(t *testing.T) {
 	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 tasks:
   - id: build

@@ -65,6 +65,8 @@ func TestParseOrkflowUses_RequiresOnePinnedVersion(t *testing.T) {
 		}
 	}
 	_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 namespace: team-a
 name: caller
 tasks:
@@ -89,6 +91,8 @@ tasks:
 }
 
 const composedCaller = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: composed-release
 version: "0.1.0"
 inputs:
@@ -157,6 +161,8 @@ func TestCompile_ComposedTaskTakesNoExecutionKeys(t *testing.T) {
 	for key, line := range keys {
 		t.Run(key, func(t *testing.T) {
 			_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: caller
 tasks:
   - id: release
@@ -176,6 +182,8 @@ tasks:
 	}
 	t.Run("run_as_orker_user false is accepted", func(t *testing.T) {
 		if _, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: caller
 tasks:
   - id: release
@@ -196,10 +204,12 @@ func compileErr(t *testing.T, doc string) error {
 func TestCompile_EngineRenderedTemplatesRefuseOrkerHelpers(t *testing.T) {
 	base := func(withLine, outputsLine string) string {
 		return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: caller
 inputs:
   t: { type: string }
-  n: { type: string }
+  num: { type: string }
 ` + outputsLine + `
 tasks:
   - id: build
@@ -215,7 +225,7 @@ tasks:
 	}{
 		{"artifact", `{{ artifact "build/x.txt" }}`, "the artifact helper resolves on an Orker"},
 		{"env", `{{ env "HOME" }}`, "the env helper"},
-		{"sh", `{{ sh .inputs.n }}`, "the sh helper"},
+		{"sh", `{{ sh .inputs.num }}`, "the sh helper"},
 		{"artifacts", `{{ .tasks.build.artifacts }}`, ".tasks.build.artifacts is not a value"},
 		{"each", `{{ .each.x }}`, ".each is not available here"},
 		{"dynamic index", `{{ index .tasks .inputs.t "output" "v" }}`, "names every task it reads literally"},
@@ -244,9 +254,11 @@ tasks:
 	}
 	t.Run("a container task keeps its helpers", func(t *testing.T) {
 		if err := compileErr(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: caller
 inputs:
-  n: { type: string }
+  num: { type: string }
 tasks:
   - id: build
     uses: shell
@@ -256,7 +268,7 @@ tasks:
     needs: [build]
     with:
       op: exec
-      command: ["sh", "-c", "cat {{ artifact \"build/x.txt\" }} {{ sh .inputs.n }} {{ env \"HOME\" }} {{ .tasks.build.artifacts }}"]
+      command: ["sh", "-c", "cat {{ artifact \"build/x.txt\" }} {{ sh .inputs.num }} {{ env \"HOME\" }} {{ .tasks.build.artifacts }}"]
 `); err != nil {
 			t.Fatalf("refused: %v", err)
 		}
@@ -266,6 +278,8 @@ tasks:
 func TestCompile_OutputsRules(t *testing.T) {
 	doc := func(outputs string) string {
 		return `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: block
 inputs:
   image: { type: string }
@@ -313,6 +327,8 @@ tasks:
 
 func TestCompile_FanOutCannotReadAComposedTask(t *testing.T) {
 	err := compileErr(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: caller
 tasks:
   - id: release
@@ -397,6 +413,8 @@ func TestReferencedUpstreamIn(t *testing.T) {
 
 func TestOutputReferences(t *testing.T) {
 	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: caller
 inputs:
   k: { type: string }

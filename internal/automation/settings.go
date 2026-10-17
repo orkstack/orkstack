@@ -302,7 +302,7 @@ func parseTelemetry(node *yaml.Node, ns *orkstackv1.Namespace) error {
 		return fmt.Errorf("telemetry must be a mapping of sink, task_logs and attributes")
 	}
 	policy := &orkstackv1.TelemetryPolicy{}
-	allowed := []string{"sink", "task_logs", "attributes"}
+	allowed := telemetrySubKeys
 	seen := map[string]bool{}
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		key, value := node.Content[i].Value, node.Content[i+1]
@@ -322,15 +322,14 @@ func parseTelemetry(node *yaml.Node, ns *orkstackv1.Namespace) error {
 			if err != nil {
 				return fmt.Errorf("telemetry.task_logs: %w", err)
 			}
-			switch raw {
-			case "", "inherit":
-			case "enabled":
-				policy.TaskLogs = orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED
-			case "disabled":
-				policy.TaskLogs = orkstackv1.TaskLogExport_TASK_LOG_EXPORT_DISABLED
-			default:
+			if raw == "" {
+				raw = "inherit"
+			}
+			value, ok := taskLogWords[raw]
+			if !ok {
 				return fmt.Errorf("telemetry.task_logs %q: want one of enabled, disabled, inherit", raw)
 			}
+			policy.TaskLogs = value
 		case "attributes":
 			attributes, err := stringMap(value)
 			if err != nil {
@@ -360,6 +359,18 @@ func exportTelemetry(ns *orkstackv1.Namespace) *yaml.Node {
 		plainNode("task_logs"), plainNode(taskLogsSlug(policy.GetTaskLogs())),
 		plainNode("attributes"), mapNode(policy.GetAttributes()))
 	return out
+}
+
+// telemetrySubKeys are the sub-keys of `settings.telemetry`, in document order.
+var telemetrySubKeys = []string{"sink", "task_logs", "attributes"}
+
+// taskLogWords are the document's words for a task-log export switch, the
+// words `orkctl namespace update --task-logs` takes. An absent or empty
+// task_logs reads as inherit.
+var taskLogWords = map[string]orkstackv1.TaskLogExport{
+	"inherit":  orkstackv1.TaskLogExport_TASK_LOG_EXPORT_UNSPECIFIED,
+	"enabled":  orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED,
+	"disabled": orkstackv1.TaskLogExport_TASK_LOG_EXPORT_DISABLED,
 }
 
 // budgetSubKeys are the sub-keys of `settings.budget`, in document order.

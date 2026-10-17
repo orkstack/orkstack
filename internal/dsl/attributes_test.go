@@ -120,6 +120,8 @@ func repeatKeys(n int) map[string]string {
 // sanitizes them, not the compiler.
 func TestCompile_AcceptsFreeFormLabels(t *testing.T) {
 	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: free-form-labels
 labels:
   Team: payments
@@ -155,7 +157,7 @@ func TestCompile_Accepts40Labels(t *testing.T) {
 
 func labelsDocument(n int) string {
 	var b strings.Builder
-	b.WriteString("name: label-bounds\nlabels:\n")
+	b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: label-bounds\nlabels:\n")
 	for i := 0; i < n; i++ {
 		fmt.Fprintf(&b, "  k%d: \"v\"\n", i)
 	}

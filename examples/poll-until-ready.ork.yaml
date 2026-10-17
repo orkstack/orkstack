@@ -22,6 +22,8 @@
 #
 # Run it every 15 minutes with a schedule, not a loop:
 # examples/automation/examples.ork.yaml declares one.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: poll-until-ready
 version: "0.1.0"
 description: "Poll a status endpoint through a retry policy, fetch the export once it is ready, and summarize it."

@@ -289,7 +289,7 @@ func TestIntegration_RunHistoryLimitFailsExplicitly(t *testing.T) {
 	s := startGuardStack(t, ctx, guardBehaviorByPrefix)
 	runID := fmt.Sprintf("ork-history-limit-%d", time.Now().UnixNano())
 	plan := s.limitedPlan(600, engine.DefaultHistoryMaxBytes)
-	err := s.startAndWait(runID, "name: long-chain\ntasks:\n"+guardChain("c", 60, ""), nil, plan)
+	err := s.startAndWait(runID, "apiVersion: orkstack/v1\nkind: Orkflow\nname: long-chain\ntasks:\n"+guardChain("c", 60, ""), nil, plan)
 	if err == nil {
 		t.Fatal("a 60-task chain finished under a 600-event history limit")
 	}
@@ -348,6 +348,8 @@ type guardShape struct {
 }
 
 const guardShapeChildDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: shape-child
 version: "1.0.0"
 tasks:
@@ -406,7 +408,7 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 	shapes := []guardShape{
 		{
 			name:      "64 tasks in flight",
-			document:  "name: shape-in-flight\ntasks:\n" + blockers64.String() + guardChain("q", 60, ""),
+			document:  "apiVersion: orkstack/v1\nkind: Orkflow\nname: shape-in-flight\ntasks:\n" + blockers64.String() + guardChain("q", 60, ""),
 			maxEvents: 3000, maxBytes: engine.DefaultHistoryMaxBytes,
 			landed: func(t *testing.T, _ *guardStack, _ string, c closedRun) {
 				if c.Crossing.InFlight != 64 {
@@ -416,7 +418,7 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 		},
 		{
 			name: "an open 3-member pin",
-			document: "name: shape-pin\npins:\n  build: {}\ntasks:\n" +
+			document: "apiVersion: orkstack/v1\nkind: Orkflow\nname: shape-pin\npins:\n  build: {}\ntasks:\n" +
 				"  - id: p1\n    uses: shell\n    pin: build\n    run_as_orker_user: true\n    needs: []\n    with: {op: exec}\n" +
 				"  - id: p2\n    uses: shell\n    pin: build\n    run_as_orker_user: true\n    needs: [p1]\n    with: {op: exec}\n" +
 				"  - id: p3\n    uses: shell\n    pin: build\n    run_as_orker_user: true\n    needs: [p2]\n    with: {op: exec}\n" +
@@ -430,7 +432,7 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 		},
 		{
 			name: "a 200-item fan-out without max_parallel",
-			document: "name: shape-fan\ninputs:\n  parts: {type: array}\ntasks:\n" +
+			document: "apiVersion: orkstack/v1\nkind: Orkflow\nname: shape-fan\ninputs:\n  parts: {type: array}\ntasks:\n" +
 				"  - id: spread\n    uses: shell\n    each: {over: \"{{ .inputs.parts }}\", max_items: 200}\n    with: {op: exec, part: \"{{ .each.item }}\"}\n",
 			input:     payload(t, map[string]any{"parts": guardItems(200)}),
 			maxEvents: 2000, maxBytes: engine.DefaultHistoryMaxBytes,
@@ -450,7 +452,7 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 		},
 		{
 			name: "three failure handlers: plain, composed and an await",
-			document: "name: shape-handlers\ntasks:\n" + guardChain("q", 60, "") +
+			document: "apiVersion: orkstack/v1\nkind: Orkflow\nname: shape-handlers\ntasks:\n" + guardChain("q", 60, "") +
 				"  - id: hp\n    uses: shell\n    needs: [q59]\n    join: all_done\n    with: {op: exec}\n" +
 				"  - id: hc\n    uses: orkflow:shape-child@1.0.0\n    needs: [q59]\n    join: all_done\n" +
 				"  - id: ha\n    await: {timeout_seconds: 2}\n    needs: [q59]\n    join: all_done\n",
@@ -468,7 +470,7 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 		},
 		{
 			name: "an await resolved at the crossing",
-			document: "name: shape-await\ntasks:\n" +
+			document: "apiVersion: orkstack/v1\nkind: Orkflow\nname: shape-await\ntasks:\n" +
 				"  - id: approve\n    await: {timeout_seconds: 3600}\n" +
 				"  - id: hold\n    uses: shell\n    needs: []\n    with: {op: exec}\n" + guardChain("q", 60, ""),
 			maxEvents: 1000, maxBytes: engine.DefaultHistoryMaxBytes,
@@ -484,12 +486,12 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 		},
 		{
 			name: "a composed task whose child reaches its own guard",
-			document: "name: shape-parent\ntasks:\n" +
+			document: "apiVersion: orkstack/v1\nkind: Orkflow\nname: shape-parent\ntasks:\n" +
 				"  - id: build\n    uses: shell\n    with: {op: exec}\n" +
 				"  - id: release\n    uses: orkflow:shape-child@1.0.0\n    needs: [build]\n",
 			maxEvents: 600, maxBytes: engine.DefaultHistoryMaxBytes,
 			children: func(t *testing.T, plan *engine.RunPlan) {
-				composeChild(t, s, plan, "release", "name: shape-child\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 40, ""))
+				composeChild(t, s, plan, "release", "apiVersion: orkstack/v1\nkind: Orkflow\nname: shape-child\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 40, ""))
 			},
 			guarded: func(plan engine.RunPlan, _ string) string { return plan.Children["release"].RunID },
 			landed: func(t *testing.T, s *guardStack, runID string, _ closedRun) {
@@ -503,7 +505,7 @@ func TestIntegration_HistoryGuardHoldsAcrossShapes(t *testing.T) {
 		},
 		{
 			name:      "bytes: a 24-task flat stage with a 128 KiB input",
-			document:  "name: shape-bytes\ninputs:\n  blob: {type: string}\ntasks:\n" + flat24.String(),
+			document:  "apiVersion: orkstack/v1\nkind: Orkflow\nname: shape-bytes\ninputs:\n  blob: {type: string}\ntasks:\n" + flat24.String(),
 			input:     bigInput,
 			maxEvents: engine.DefaultHistoryMaxEvents, maxBytes: 2 << 20,
 			landed: func(t *testing.T, _ *guardStack, _ string, c closedRun) {
@@ -631,7 +633,7 @@ func TestIntegration_LargeRunResultIsCompact(t *testing.T) {
 	defer cancel()
 	s := startGuardStack(t, ctx, guardBehaviorByPrefix)
 	var doc strings.Builder
-	doc.WriteString("name: wide\ntasks:\n")
+	doc.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: wide\ntasks:\n")
 	for i := 0; i < 200; i++ {
 		fmt.Fprintf(&doc, "  - id: t%03d\n    uses: shell\n    needs: []\n    with: {op: exec}\n", i)
 	}
@@ -671,7 +673,7 @@ const historyLimitFixture = "testdata/history/run-history-limit-v1.json"
 // guard crosses inside the fan-out's first dispatch batch — the exact,
 // per-command count is what decides where.
 func historyLimitFixtureDocument() string {
-	return "name: history-limit\nversion: \"1.0.0\"\ninputs:\n  parts: {type: array}\ntasks:\n" +
+	return "apiVersion: orkstack/v1\nkind: Orkflow\nname: history-limit\nversion: \"1.0.0\"\ninputs:\n  parts: {type: array}\ntasks:\n" +
 		"  - id: spread\n    uses: shell\n    each: {over: \"{{ .inputs.parts }}\", max_items: 30}\n" +
 		"    with: {op: exec, part: \"{{ .each.item }}\"}\n" +
 		guardChain("c", 40, "spread")

@@ -59,7 +59,9 @@ func interfaceService(t *testing.T, label string) (*api.Service, *movableRegistr
 	return svc, registry, host
 }
 
-const missingSrcAndExtraSrcs = `name: copier
+const missingSrcAndExtraSrcs = `apiVersion: orkstack/v1
+kind: Orkflow
+name: copier
 tasks:
   - id: one
     uses: file
@@ -68,7 +70,9 @@ tasks:
       srcs: [b]
 `
 
-const extraSrcs = `name: copier
+const extraSrcs = `apiVersion: orkstack/v1
+kind: Orkflow
+name: copier
 tasks:
   - id: one
     uses: file
@@ -185,7 +189,9 @@ func TestApplyOrkflow_CarriesInterfaceWarningsAndStores(t *testing.T) {
 // the stored ImageRef differs only in its content addresses, and the digest
 // and version are recomputed from the stored document alone.
 func TestApplyOrkflow_AnImageWithoutALabelAppliesExactlyAsBefore(t *testing.T) {
-	const doc = `name: copier
+	const doc = `apiVersion: orkstack/v1
+kind: Orkflow
+name: copier
 tasks:
   - id: one
     uses: file

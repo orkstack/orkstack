@@ -54,7 +54,9 @@ const DIR = process.env.ORK_PROOF_DIR ? path.join(process.env.ORK_PROOF_DIR, 'br
 const out = proofOut(DIR);
 const rpc = <T>(method: string, body: unknown) => callEngine<T>(ENGINE, method, body);
 
-function workflow() { return `name: ${FLOW}
+function workflow() { return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${FLOW}
 version: "1.0.0"
 description: browsing fixture
 tasks:
@@ -65,7 +67,9 @@ tasks:
       command: ["sh", "-c", "printf '{}' > /orkstack/output/values.json"]
 `; }
 
-function failingWorkflow() { return `name: ${FAILING}
+function failingWorkflow() { return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${FAILING}
 version: "1.0.0"
 description: browsing fixture that fails
 tasks:

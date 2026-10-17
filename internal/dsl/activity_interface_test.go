@@ -137,7 +137,7 @@ func TestParseInterfaceLabel_AcceptsEveryFirstPartyLabel(t *testing.T) {
 		},
 		"activity-http": {
 			fields: map[string]*orkstackv1.FieldSchema{
-				"url": field(str, true), "headers": field(obj, false), "body": field(str, false),
+				"url": field(str, true), "headers": field(obj, false), "body": field("string|object|array", false),
 				"timeoutSeconds": field(num, false), "captureBodyAs": field(str, false),
 			},
 			ops: map[string]map[string]*orkstackv1.FieldSchema{
@@ -245,7 +245,7 @@ func TestParseInterfaceLabel_ValidatesShape(t *testing.T) {
 		{"an op named Copy", `{"schemaVersion":1,"ops":{"Copy":{}}}`, `op "Copy" is not a lowercase op name (^[a-z][a-z0-9_-]{0,63}$)`},
 		{"257 fields", `{"schemaVersion":1,"fields":{` + strings.Join(manyFields, ",") + `}}`, "fields declares 257 keys, limit is 256"},
 		{"a key of 129 bytes", `{"schemaVersion":1,"values":{"` + longKey + `":{"type":"string"}}}`, `values: key "` + longKey + `" is not a valid with: key`},
-		{"type integer", `{"schemaVersion":1,"ops":{"copy":{"fields":{"n":{"type":"integer"}}}}}`, `ops.copy.fields.n: type "integer" is not one of string, number, boolean, object, array`},
+		{"type integer", `{"schemaVersion":1,"ops":{"copy":{"fields":{"n":{"type":"integer"}}}}}`, `ops.copy.fields.n: type "integer" is not one of string, number, boolean, object, array, or several of them joined by |`},
 		{"required with a default", `{"schemaVersion":1,"fields":{"a":{"type":"string","required":true,"default":"x"}}}`, "fields.a: required and default contradict; a defaulted key is never required"},
 		{"default null", `{"schemaVersion":1,"fields":{"a":{"type":"string","default":null}}}`, "fields.a: null is not a default; omit the field"},
 		{"default string on a number", `{"schemaVersion":1,"fields":{"n":{"type":"number","default":"3"}}}`, "fields.n: default is a string but type is number"},
@@ -475,4 +475,44 @@ func mustMarshalInterface(t *testing.T, iface *orkstackv1.ActivityInterface) str
 		t.Fatalf("marshal: %v", err)
 	}
 	return string(raw)
+}
+
+func TestParseInterfaceLabel_AcceptsAUnionType(t *testing.T) {
+	iface, err := ParseInterfaceLabel(`{"schemaVersion":1,"fields":{"body":{"type":"string|object|array"},"a":{"type":"string|number","default":"x"},"b":{"type":"string|number","default":3}}}`)
+	if err != nil {
+		t.Fatalf("a union type was refused: %v", err)
+	}
+	if got := iface.GetFields()["body"].GetType(); got != "string|object|array" {
+		t.Fatalf("type = %q, want it as written", got)
+	}
+	_, err = ParseInterfaceLabel(`{"schemaVersion":1,"fields":{"a":{"type":"string|number","default":true}}}`)
+	if err == nil || err.Error() != "fields.a: default is a boolean but type is string|number" {
+		t.Fatalf("a default outside the union = %v", err)
+	}
+}
+
+func TestParseInterfaceLabel_RefusesABadUnion(t *testing.T) {
+	for typ, want := range map[string]string{
+		"string|text":    `fields.a: type "string|text" is not one of string, number, boolean, object, array, or several of them joined by |`,
+		"string||object": `fields.a: type "string||object" is not one of string, number, boolean, object, array, or several of them joined by |`,
+		"|string":        `fields.a: type "|string" is not one of string, number, boolean, object, array, or several of them joined by |`,
+		"string|string":  `fields.a: type "string|string" names "string" twice`,
+	} {
+		_, err := ParseInterfaceLabel(`{"schemaVersion":1,"fields":{"a":{"type":"` + typ + `"}}}`)
+		if err == nil || err.Error() != want {
+			t.Errorf("%s: err = %v, want %q", typ, err, want)
+		}
+	}
+}
+
+func TestCheckWith_AUnionAcceptsEachOfItsTypes(t *testing.T) {
+	for _, body := range []any{"raw", map[string]any{"status": "ok"}, []any{1.0, "two"}} {
+		if got := CheckWith(0, taskWith(t, map[string]any{"op": "post", "url": "https://x", "body": body}), httpInterface(t)); len(got) != 0 {
+			t.Errorf("body %#v: %v", body, got)
+		}
+	}
+	got := CheckWith(0, taskWith(t, map[string]any{"op": "post", "url": "https://x", "body": 12.0}), httpInterface(t))
+	assertIssues(t, got, []wantIssue{{sevWarning, "tasks[0].with.body",
+		`with.body is declared string|object|array by the interface of ` + testPinned +
+			`; this document supplies a number — the image may coerce it, or refuse it at run time`}})
 }

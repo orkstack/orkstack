@@ -117,7 +117,7 @@ func (s *recordingStarter) StartRun(ctx context.Context, runID string, wf *orkst
 func largeDoc(name string, n, pad int) string {
 	r := rand.New(rand.NewSource(int64(n*pad + len(name))))
 	var b strings.Builder
-	fmt.Fprintf(&b, "name: %s\nversion: \"1.0.0\"\ntasks:\n", name)
+	fmt.Fprintf(&b, "apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n", name)
 	for i := 0; i < n; i++ {
 		note := make([]byte, pad/2)
 		r.Read(note)

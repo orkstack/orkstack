@@ -43,7 +43,9 @@ import (
 // recordsOrkflowYAML is a one-task orkflow on a private pool with one declared
 // input, so a test can look for the input's value in the stored record.
 func recordsOrkflowYAML(name, pool string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "1.0.0"
 description: One task whose run transitions reach a recorded webhook.
 inputs:

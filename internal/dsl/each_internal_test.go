@@ -11,6 +11,8 @@ import (
 
 func eachDocInternal(task string) []byte {
 	return []byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan
 tasks:
   - id: list

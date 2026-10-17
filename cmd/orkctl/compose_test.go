@@ -158,6 +158,8 @@ func TestRunGet_TreeReadsChildrenInTheParentsNamespace(t *testing.T) {
 func TestOrkflowGetComposedGolden(t *testing.T) {
 	f := newFixture(t)
 	child := writePlanFile(t, "release-block.ork.yaml", `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:
@@ -182,6 +184,8 @@ tasks:
 }
 
 const composedPlanYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: deploy
 version: "1.0.0"
 outputs:
@@ -209,6 +213,8 @@ func TestRunLogsComposedHintGolden(t *testing.T) {
 func TestTaskRun_RefusesAComposedTask(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	fx.run("apply", fx.writeDoc(t, "release-block.ork.yaml", `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "2.1.0"
 inputs:

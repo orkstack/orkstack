@@ -19,6 +19,8 @@ import (
 // exfilOrkflow names a secret source the sandbox namespace's list does not
 // allow. It is the research narrative's contractor document.
 const exfilOrkflow = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: exfil
 version: "1"
 tasks:
@@ -32,6 +34,8 @@ tasks:
 
 // permittedOrkflow names a source inside env:SANDBOX_*.
 const permittedOrkflow = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fetch
 version: "1"
 tasks:

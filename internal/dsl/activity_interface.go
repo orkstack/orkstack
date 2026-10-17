@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -35,10 +36,20 @@ const (
 )
 
 // interfaceTypes is the complete type vocabulary, the one docs/DSL.md
-// "Inputs" already has.
-var interfaceTypes = map[string]struct{}{
-	"string": {}, "number": {}, "boolean": {}, "object": {}, "array": {},
-}
+// "Inputs" already has. A field's type is one of these words, or several
+// joined by "|" for a key that accepts any of them (fieldTypes).
+var interfaceTypes = func() map[string]struct{} {
+	out := make(map[string]struct{}, len(typeWords))
+	for _, word := range typeWords {
+		out[word] = struct{}{}
+	}
+	return out
+}()
+
+// typeWords is that vocabulary in the order every message names it. An
+// await's schema entries (rule 17) and an Orkflow's inputs: declare their
+// types in the same words.
+var typeWords = []string{"string", "number", "boolean", "object", "array"}
 
 // interfaceKeyPattern bounds a with: key. It is looser than a slug because
 // first-party images already read camelCase keys (timeoutSeconds,
@@ -54,6 +65,10 @@ const opKey = "op"
 // ParseInterfaceLabel turns the label's text into a validated
 // ActivityInterface. The error is the human-readable reason the manifest
 // was rejected and becomes ActivityInfo.interface_error verbatim. Pure.
+//
+// A field's type is one of "string", "number", "boolean", "object", "array",
+// or several joined by "|" (string|object|array) for a key that accepts any
+// of them.
 func ParseInterfaceLabel(raw string) (*orkstackv1.ActivityInterface, error) {
 	if len(raw) > MaxInterfaceLabelBytes {
 		return nil, fmt.Errorf("label is %d bytes, limit is %d", len(raw), MaxInterfaceLabelBytes)
@@ -118,8 +133,16 @@ func checkFieldMap(where string, fields map[string]*orkstackv1.FieldSchema) erro
 			return fmt.Errorf("%s: key %q is not a valid with: key", where, key)
 		}
 		f := fields[key]
-		if _, ok := interfaceTypes[f.GetType()]; !ok {
-			return fmt.Errorf("%s.%s: type %q is not one of string, number, boolean, object, array", where, key, f.GetType())
+		seen := map[string]bool{}
+		for _, word := range fieldTypes(f) {
+			if _, ok := interfaceTypes[word]; !ok {
+				return fmt.Errorf("%s.%s: type %q is not one of string, number, boolean, object, array, or several of them joined by |",
+					where, key, f.GetType())
+			}
+			if seen[word] {
+				return fmt.Errorf("%s.%s: type %q names %q twice", where, key, f.GetType(), word)
+			}
+			seen[word] = true
 		}
 		def := f.GetDefault()
 		if f.GetRequired() && def != nil {
@@ -131,11 +154,17 @@ func checkFieldMap(where string, fields map[string]*orkstackv1.FieldSchema) erro
 		if _, isNull := def.GetKind().(*structpb.Value_NullValue); isNull {
 			return fmt.Errorf("%s.%s: null is not a default; omit the field", where, key)
 		}
-		if got := valueTypeOf(def); got != f.GetType() {
+		if got := valueTypeOf(def); !slices.Contains(fieldTypes(f), got) {
 			return fmt.Errorf("%s.%s: default is a %s but type is %s", where, key, got, f.GetType())
 		}
 	}
 	return nil
+}
+
+// fieldTypes is a field's type split into its words: one, or several joined
+// by "|".
+func fieldTypes(f *orkstackv1.FieldSchema) []string {
+	return strings.Split(f.GetType(), "|")
 }
 
 // valueTypeOf is jsonTypeOf for a structpb.Value.
@@ -340,7 +369,7 @@ func CheckWith(taskIndex int, task *orkstackv1.Task, iface *orkstackv1.ActivityI
 		if s, isString := v.(string); isString && isTemplated(s) {
 			continue
 		}
-		if got := jsonTypeOf(v); got != f.GetType() {
+		if got := jsonTypeOf(v); !slices.Contains(fieldTypes(f), got) {
 			typed = append(typed, warnAt(k, fmt.Sprintf(
 				"with.%s is declared %s by the interface of %s; this document supplies a %s — "+
 					"the image may coerce it, or refuse it at run time", k, f.GetType(), pinned, got)))

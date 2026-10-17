@@ -485,7 +485,9 @@ func awaitOrkflowVisible(
 // test is about which run starts, not about what it does. The task names no
 // queue, so the engine binds it to the Orker queue both replicas dispatch to.
 func idempotencyOrkflowYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: two-replica idempotency probe.
 tasks:

@@ -4,6 +4,8 @@
 # in a shell, and checksum the result. Three tasks, three first-party
 # activities, and no SDK anywhere — each task is an ordinary OCI container that
 # reads /orkstack/input and writes /orkstack/output.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: hello-ork
 version: "0.2.0"
 description: Fetch JSON, extract a field, and record the result's digest.

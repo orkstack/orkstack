@@ -8,7 +8,8 @@
 
 ---
 
-> Status: pre-release.
+> Status: pre-release; breaking changes are listed in
+> [CHANGELOG.md](./CHANGELOG.md).
 
 ## Why
 
@@ -103,6 +104,10 @@ make up             # Temporal, MinIO, a registry, engine, orker and UI, health-
 ./bin/orkctl run submit hello-ork --watch
 make down           # stop everything (data is kept)
 ```
+
+An Orkflow is a YAML document that begins with `apiVersion: orkstack/v1` and
+`kind: Orkflow`; `examples/hello.ork.yaml` is a small one, and
+[docs/DSL.md](./docs/DSL.md) is the reference.
 
 [`examples/README.md`](./examples/README.md) lists every example and what it
 needs to run.
@@ -213,6 +218,7 @@ gitignored; the commit or pull request quotes it. No proof, no done.
 | [docs/ORKFLOW_TRIGGERS.md](./docs/ORKFLOW_TRIGGERS.md) | Inbound triggers: plain-HTTP run starters with bearer tokens |
 | [docs/ORKFLOW_SCHEDULES.md](./docs/ORKFLOW_SCHEDULES.md) | Schedules on Temporal Schedules: specs, fires, backfill, overlap |
 | [docs/AUTOMATION.md](./docs/AUTOMATION.md) | Automation documents: a namespace's settings, schedules, triggers and webhooks as YAML |
+| [docs/schemas/](./docs/schemas/) | JSON Schemas of the authored documents (generated) |
 | [docs/DEPLOY.md](./docs/DEPLOY.md) | Topology, configuration, releases and rollback, operations, telemetry |
 | [docs/STORAGE.md](./docs/STORAGE.md) | What is persisted where: the object-store key layout and its invariants |
 | [docs/STATS.md](./docs/STATS.md) | Where stats, failure fingerprints, flakes, usage and cache numbers come from |

@@ -28,6 +28,8 @@
 # See both paths before anything runs:
 #   orkctl run plan branch-and-recover --input route=full
 #   orkctl run plan branch-and-recover --input route=full --assume-failed deploy
+apiVersion: orkstack/v1
+kind: Orkflow
 name: branch-and-recover
 version: "0.1.0"
 description: "Branch on a decision, re-join after the branch that ran, and recover when deploy fails."

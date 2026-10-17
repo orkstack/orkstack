@@ -185,7 +185,9 @@ func (x *transformStack) attempts(t *testing.T, runID, task string) []*orkstackv
 // ============================================================== json
 
 func x1Document(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 inputs:
   env: {type: string, required: true}
@@ -270,8 +272,8 @@ tasks:
     with:
       op: query
       nullInput: true
-      vars: {id: '{{ .tasks.big.output.result.id }}', n: '{{ .tasks.big.output.result.n }}'}
-      filter: '[$vars.id, $vars.n, ($vars.n | tonumber | floor)]'
+      vars: {id: '{{ .tasks.big.output.result.id }}', num: '{{ .tasks.big.output.result.n }}'}
+      filter: '[$vars.id, $vars.num, ($vars.num | tonumber | floor)]'
       as: templated.json
 `, name)
 }
@@ -335,7 +337,9 @@ func gitSecrets() string {
 }
 
 func x2Document(name, url string) string {
-	return fmt.Sprintf(`name: %[1]s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %[1]s
 version: "0.1.0"
 inputs:
   env: {type: string, required: true}
@@ -500,7 +504,9 @@ func gitResolveDocument(name, url, ref, extra string) string {
 	if ref != "" {
 		refLine = ", ref: " + ref
 	}
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 tasks:
   - id: resolve
@@ -561,7 +567,9 @@ func TestIntegration_TransformImages_PublicCloneByCommitIsCached(t *testing.T) {
 	x := startTransformStack(ctx, t, true)
 	defer x.finish(t, "X2c")
 	name := transformName("x2c")
-	applied := x.applyCLI(t, fmt.Sprintf(`name: %s
+	applied := x.applyCLI(t, fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 inputs:
   commit: {type: string, required: true}
@@ -622,7 +630,9 @@ func TestIntegration_TransformImages_GitCheckoutIntoAPin(t *testing.T) {
 	x := startTransformStack(ctx, t, true)
 	defer x.finish(t, "X3")
 	name := transformName("x3")
-	x.applyCLI(t, fmt.Sprintf(`name: %s
+	x.applyCLI(t, fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 pins:
   build: {}
@@ -767,7 +777,9 @@ func TestIntegration_TransformImages_GitTokenStaysSecret(t *testing.T) {
 
 	// (d) no tokenSecret, the CA kept: git meets the 401 and cannot ask.
 	name = transformName("x4d")
-	x.applyCLI(t, fmt.Sprintf(`name: %s
+	x.applyCLI(t, fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 tasks:
   - id: resolve
@@ -808,7 +820,7 @@ func TestIntegration_TransformImages_GitVerifiesTLSUnlessTheTaskSaysOtherwise(t 
 	outcomes := map[string]*orkstackv1.Run{}
 	for _, doc := range documents {
 		name := transformName("x5")
-		x.applyCLI(t, fmt.Sprintf("name: %s\nversion: \"0.1.0\"\ntasks:\n  - id: resolve\n    uses: git\n%s", name, doc.body))
+		x.applyCLI(t, fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"0.1.0\"\ntasks:\n  - id: resolve\n    uses: git\n%s", name, doc.body))
 		outcomes[doc.label] = x.runToEnd(ctx, t, name, "")
 	}
 	x.note("tls default=%s caFile=%s GIT_SSL_NO_VERIFY=%s",
@@ -836,7 +848,9 @@ func TestIntegration_TransformImages_GitCancellationReachesTheFetch(t *testing.T
 	x := startTransformStack(ctx, t, true)
 	defer x.finish(t, "X6")
 	name := transformName("x6")
-	x.applyCLI(t, fmt.Sprintf(`name: %s
+	x.applyCLI(t, fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 tasks:
   - id: clone
@@ -886,7 +900,7 @@ func TestIntegration_TransformImages_FailuresAreExplicit(t *testing.T) {
 	defer x.finish(t, "X7")
 	one := func(body string) *orkstackv1.Run {
 		name := transformName("x7")
-		x.applyCLI(t, fmt.Sprintf("name: %s\nversion: \"0.1.0\"\ntasks:\n%s", name, body))
+		x.applyCLI(t, fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"0.1.0\"\ntasks:\n%s", name, body))
 		return x.runToEnd(ctx, t, name, "")
 	}
 
@@ -967,7 +981,7 @@ func TestIntegration_TransformImages_FailuresAreExplicit(t *testing.T) {
 		t.Fatalf("(e) result = %#v, want \"{{name}}\"", got)
 	}
 	path := filepath.Join(t.TempDir(), "unescaped.ork.yaml")
-	unescaped := "name: unescaped\nversion: \"0.1.0\"\ntasks:\n  - id: q\n    uses: json\n    network: none\n    with: {op: query, nullInput: true, filter: '\"{{name}}\"'}\n"
+	unescaped := "apiVersion: orkstack/v1\nkind: Orkflow\nname: unescaped\nversion: \"0.1.0\"\ntasks:\n  - id: q\n    uses: json\n    network: none\n    with: {op: query, nullInput: true, filter: '\"{{name}}\"'}\n"
 	if err := os.WriteFile(path, []byte(unescaped), 0o644); err != nil {
 		t.Fatal(err)
 	}

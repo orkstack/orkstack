@@ -134,7 +134,9 @@ const submit = (orkflowName: string) =>
  * the 200 that follows it.
  */
 function liveOrkflow(probeUrl: string): string {
-	return `name: ${LIVE_ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${LIVE_ORKFLOW}
 version: "0.1.0"
 description: Live run page — a chatty container and a task that retries.
 
@@ -174,7 +176,9 @@ tasks:
  * inspector would go deaf the moment a reader closed it.
  */
 function eventsOrkflow(): string {
-	return `name: ${EVENTS_ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${EVENTS_ORKFLOW}
 version: "0.1.0"
 description: Event inspector — a slow task, then a failing one.
 
@@ -213,7 +217,9 @@ tasks:
  * was killed mid-run.
  */
 function liveFailureOrkflow(): string {
-	return `name: ${LIVE_FAILURE_ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${LIVE_FAILURE_ORKFLOW}
 version: "0.1.0"
 description: Live terminal attempt facts.
 

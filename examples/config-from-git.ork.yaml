@@ -35,6 +35,8 @@
 #
 #   orkctl run submit config-from-git --input repo=https://git.example.com/acme/app.git --input environment=prod
 #   orkctl run submit config-from-git --input repo=... --input environment=prod   # again: tmpl..manifest are SUCCEEDED (cached)
+apiVersion: orkstack/v1
+kind: Orkflow
 name: config-from-git
 version: "0.1.0"
 description: "Resolve a branch to a commit, clone it once, and render one config file per service; cached while the commit holds."

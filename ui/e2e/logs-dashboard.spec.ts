@@ -198,7 +198,9 @@ const STATUS_FAILED = 'STATUS_FAILED';
  * in the same document the log pane is proven against.
  */
 function chattyOrkflow(version: string, description: string): string {
-	return `name: ${ORKFLOW}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${ORKFLOW}
 version: "${version}"
 description: ${description}
 namespace: ${ALPHA}
@@ -239,7 +241,9 @@ tasks:
 `;
 }
 
-const failingOrkflow = () => `name: ${FAILING}
+const failingOrkflow = () => `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${FAILING}
 version: "0.1.0"
 description: a task that fails, so the dashboard has a failure to report
 namespace: ${ALPHA}
@@ -259,7 +263,9 @@ tasks:
  * fails attempt 1, so it retries once and succeeds, deterministically, with no
  * stub and no clock. `steady` never retries.
  */
-const retryingOrkflow = () => `name: ${RETRYING}
+const retryingOrkflow = () => `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${RETRYING}
 version: "0.1.0"
 description: a task that needs a second attempt, so the dashboard has a retry to report
 namespace: ${ALPHA}

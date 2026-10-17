@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -161,30 +162,19 @@ func (s *MemoryOrkflowStore) Put(
 		s.nameList[namespace] = append(s.nameList[namespace], wf.GetName())
 	}
 	if existing, ok := versions[wf.GetVersion()]; ok {
-		if sameStoredOrkflow(existing, stored) {
+		// The durable store's own rule (artifacts.SameStoredOrkflow), so
+		// the two stores cannot disagree about what a repeat is.
+		if artifacts.SameStoredOrkflow(existing, stored) {
 			return proto.Clone(existing).(*orkstackv1.Orkflow), false, nil
 		}
 		return nil, false, fmt.Errorf(
 			"engine: orkflow %q version %q in namespace %q is already stored with different "+
-				"content; a version is immutable, so publish a new version: %w",
-			wf.GetName(), wf.GetVersion(), namespace, artifacts.ErrVersionExists)
+				"content; %s: %w",
+			wf.GetName(), wf.GetVersion(), namespace, dsl.VersionExistsAdvice(wf.GetSourceYaml()), artifacts.ErrVersionExists)
 	}
 	versions[wf.GetVersion()] = stored
 	s.latest[namespace][wf.GetName()] = wf.GetVersion()
 	return proto.Clone(stored).(*orkstackv1.Orkflow), true, nil
-}
-
-// sameStoredOrkflow mirrors the durable store's rule for "this apply would
-// store what is already stored": everything but created_at, which is stamped
-// per apply and would otherwise make every repeat a rewrite.
-func sameStoredOrkflow(stored, incoming *orkstackv1.Orkflow) bool {
-	if stored.GetSourceYaml() != incoming.GetSourceYaml() {
-		return false
-	}
-	a := proto.Clone(stored).(*orkstackv1.Orkflow)
-	b := proto.Clone(incoming).(*orkstackv1.Orkflow)
-	a.CreatedAt, b.CreatedAt = nil, nil
-	return proto.Equal(a, b)
 }
 
 // Get returns the orkflow for name at version within one namespace; an empty

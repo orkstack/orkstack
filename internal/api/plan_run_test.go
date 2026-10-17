@@ -15,7 +15,9 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-const planDocument = `name: plan-me
+const planDocument = `apiVersion: orkstack/v1
+kind: Orkflow
+name: plan-me
 version: "1.0.0"
 inputs:
   enabled:
@@ -182,7 +184,7 @@ func TestPlanRun_YamlFormIsPreparedNotStored(t *testing.T) {
 		t.Fatalf("a yaml plan stored the definition: %v", err)
 	}
 
-	_, err = planRun(svc, &orkstackv1.PlanRunRequest{Yaml: "name: bad\ntasks:\n - id: a\n   uses: busybox\n   needs: [missing]\n"})
+	_, err = planRun(svc, &orkstackv1.PlanRunRequest{Yaml: "apiVersion: orkstack/v1\nkind: Orkflow\nname: bad\ntasks:\n - id: a\n   uses: busybox\n   needs: [missing]\n"})
 	requirePlanCode(t, err, connect.CodeInvalidArgument, "tasks[0].needs[0]")
 
 	other := "namespace: team-a\n" + planDocument

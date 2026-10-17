@@ -28,6 +28,8 @@
 # every task of one pin must agree on both: /orkstack/shared is 1777 with the
 # sticky bit, so two members running as different users could each create files
 # the other cannot replace, and a pin is one process out of one pool's set.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pinned-build
 version: "0.1.0"
 description: "Two pinned tasks hand a file over on disk; an unpinned one reads the committed artifact."

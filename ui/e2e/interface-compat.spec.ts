@@ -69,7 +69,9 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
 // timeout, drops output url, adds sbom, and rewrites every task.
 function block(version: '2.1.0' | '3.0.0'): string {
 	if (version === '2.1.0') {
-		return `name: ${BLOCK}
+		return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${BLOCK}
 version: "2.1.0"
 inputs:
   image: { type: string, required: true }
@@ -87,7 +89,9 @@ tasks:
     with: { op: eval, command: ["sh", "-c", "echo publish"] }
 `;
 	}
-	return `name: ${BLOCK}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${BLOCK}
 version: "3.0.0"
 inputs:
   image: { type: string, required: true }
@@ -109,7 +113,9 @@ tasks:
 }
 
 function plain(version: string): string {
-	return `name: ${PLAIN}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${PLAIN}
 version: "${version}"
 inputs:
   who: { type: string, default: "world" }
@@ -120,7 +126,9 @@ tasks:
 `;
 }
 
-const checkoutYaml = `name: ${CHECKOUT}
+const checkoutYaml = `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${CHECKOUT}
 version: "4.2.0"
 tasks:
   - id: release

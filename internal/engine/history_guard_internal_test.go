@@ -66,6 +66,8 @@ func itemsArray(n int) []any {
 }
 
 const guardFanOutDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: guard-fan
 inputs:
   regions: {type: array}
@@ -247,6 +249,8 @@ func TestNoteCommand_ChargesThePlansBytes(t *testing.T) {
 
 // guardStateDocument has one of everything failReserve counts.
 const guardStateDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: guard-state
 inputs:
   regions: {type: array}
@@ -570,7 +574,7 @@ func reserveWalks(t *testing.T, ctx workflow.Context) {
 // flatDocument is n tasks with no needs: one flat stage.
 func flatDocument(n int) string {
 	var b strings.Builder
-	b.WriteString("name: flat\ntasks:\n")
+	b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: flat\ntasks:\n")
 	for i := 0; i < n; i++ {
 		fmt.Fprintf(&b, "  - id: t%04d\n    uses: shell\n    needs: []\n    with: {op: exec}\n", i)
 	}

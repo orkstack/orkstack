@@ -18,6 +18,8 @@ import (
 )
 
 const dispatchDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: dispatch
 version: 1.0.0
 tasks:

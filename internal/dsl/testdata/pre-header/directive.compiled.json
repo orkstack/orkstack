@@ -1,0 +1,19 @@
+{
+  "name":  "directive",
+  "version":  "0.1.0",
+  "tasks":  [
+    {
+      "id":  "say",
+      "with":  {
+        "command":  [
+          "sh",
+          "-c",
+          "echo directive"
+        ],
+        "op":  "eval"
+      },
+      "timeoutSeconds":  300,
+      "uses":  "shell"
+    }
+  ]
+}

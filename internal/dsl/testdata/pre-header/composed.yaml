@@ -1,0 +1,14 @@
+# A composed task, written before the header.
+name: composed
+version: "0.1.0"
+inputs:
+  image:
+    type: string
+    default: "ghcr.io/acme/app:1.4"
+outputs:
+  digest: '{{ .tasks.release.output.digest }}'
+tasks:
+  - id: release
+    uses: orkflow:release-block@2.1.0
+    with:
+      image: '{{ .inputs.image }}'

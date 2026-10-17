@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -37,14 +36,13 @@ var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // defect the pattern itself closed, measured in the one class the corpus had
 // no member of. The two bounds are not one constant, and the reason is
 // layering rather than the compiler: the artifact store is a public package
-// and this one is not, so the store does not import this package and a
-// program that only stores artifacts never builds the YAML front end. They
-// are held together by measurement instead —
+// and this one is not, so although the store imports this package for the
+// rules both must share (the slug rule, the document identity of
+// VersionedSource), it shares no slug constant with it. They are held
+// together by measurement instead —
 // TestNamespaceName_RegistryAndCompilerAgree and
 // TestNamespacePools_AreExactlyThePoolsDispatchCanReach both carry a name at
-// the bound and a name one byte over. Both are tests inside pkg/artifacts
-// that import this package, which is free: a test dependency is not part of
-// an importer's build.
+// the bound and a name one byte over.
 const MaxSlug = 200
 
 // checkSlug reports why value cannot be used as an identifier, naming the kind
@@ -59,6 +57,9 @@ func checkSlug(kind, value string) error {
 	}
 	return nil
 }
+
+// SlugPattern is the slug rule's pattern, for a schema that states it.
+func SlugPattern() string { return slugPattern.String() }
 
 // ValidSlug reports why value cannot be used as an identifier of the named
 // kind, so a caller outside this package can hold a client-supplied name to
@@ -94,6 +95,14 @@ func (o Options) catalog() Catalog {
 
 // document is the YAML shape of a *.ork.yaml file.
 type document struct {
+	// APIVersion and Kind are the document header (docs/DSL.md, "The
+	// document header"). checkHeader reads them before this decode; they are
+	// decoded so KnownFields accepts them, and never compiled: the header is
+	// not part of the definition, so neither the compiled message nor its
+	// digest sees it.
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+
 	// Namespace scopes the orkflow. Absent means the built-in "default"
 	// namespace, and it stays empty in the compiled message: "empty means
 	// default" is one rule, resolved once, where the name becomes a key.
@@ -102,7 +111,12 @@ type document struct {
 	Version     string            `yaml:"version"`
 	Description string            `yaml:"description"`
 	Labels      map[string]string `yaml:"labels"`
-	Inputs      map[string]any    `yaml:"inputs"`
+	// Inputs is a data position (docs/JSON.md, "Data written in an
+	// authored document"): a yaml.Node VALUE, so it holds exactly what was
+	// written — tags, anchors and aliases included — for the strict mapping
+	// (freeForm) to judge. A pointer would not: yaml.v3 decodes into a
+	// *yaml.Node as an ordinary struct.
+	Inputs yaml.Node `yaml:"inputs"`
 
 	// Outputs is the Orkflow's declared return contract: output name to a
 	// template over .inputs and .tasks.<id>.output, rendered once by the
@@ -145,7 +159,8 @@ type taskDocument struct {
 	// queue is internal to a pool (AGENTS.md §7.1).
 	Pin string `yaml:"pin"`
 
-	With map[string]any `yaml:"with"`
+	// With is a data position, a yaml.Node value like document.Inputs.
+	With yaml.Node `yaml:"with"`
 
 	// Uses is the only image-selecting field in the DSL: a catalog activity
 	// name ("shell") or a registry reference ("ghcr.io/acme/migrate:v3",
@@ -277,14 +292,20 @@ func DocumentPinsVersion(source []byte) (bool, error) {
 
 // Compile parses, validates, and compiles a DSL document. The returned
 // Orkflow carries the original source bytes in SourceYaml; when the document
-// does not pin `version`, Version is the sha256 of those same bytes, so a
-// version always names the source it is stored with (sourceHash).
+// does not pin `version`, Version is the sha256 of its versioned source (those
+// bytes less the two header lines written first), so a version always names
+// the source it is stored with (sourceHash).
 func Compile(source []byte) (*orkstackv1.Orkflow, error) {
 	return CompileWithOptions(source, Options{})
 }
 
 // CompileWithOptions is Compile with explicit options.
 func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error) {
+	// The header first: a document of another kind, or none, is refused by
+	// what it is, before a strict decode reports its keys as unknown.
+	if err := checkHeader(source); err != nil {
+		return nil, err
+	}
 	// Strict: a key the schema does not define is refused, never ignored.
 	// yaml.v3 would otherwise drop what it cannot map, and an author would
 	// find out about a misspelled or unsupported key only when the run
@@ -305,13 +326,11 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		SourceYaml:  string(source),
 	}
 
-	if doc.Inputs != nil {
-		inputs, err := structpb.NewStruct(normalizeMap(doc.Inputs))
-		if err != nil {
-			return nil, fmt.Errorf("inputs: %w", err)
-		}
-		wf.Inputs = inputs
+	inputs, err := freeForm("inputs", "inputs", &doc.Inputs)
+	if err != nil {
+		return nil, err
 	}
+	wf.Inputs = inputs
 	if len(doc.Outputs) > 0 {
 		wf.Outputs = doc.Outputs
 	}
@@ -323,7 +342,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	// directly would let one document compile to two different messages, and
 	// the message is what both the definition digest (canonicalPins) and the
 	// store's "is this apply a repeat?" comparison read (proto.Equal in
-	// pkg/artifacts.sameStoredOrkflow). Two authors who type the same two pin
+	// pkg/artifacts.SameStoredOrkflow). Two authors who type the same two pin
 	// keys in either order must get the same bytes; so must one author twice.
 	// Absent rather than empty for the same reason normalizeMap is careful
 	// about presence: an unpinned document's message must be exactly what it
@@ -421,13 +440,11 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 				Source: sd.Source,
 			})
 		}
-		if td.With != nil {
-			with, err := structpb.NewStruct(normalizeMap(td.With))
-			if err != nil {
-				return nil, fmt.Errorf("task %q: with: %w", td.ID, err)
-			}
-			task.With = with
+		with, err := freeForm("with", fmt.Sprintf("tasks[%d].with", taskIndex), &td.With)
+		if err != nil {
+			return nil, err
 		}
+		task.With = with
 		wf.Tasks = append(wf.Tasks, task)
 	}
 
@@ -441,87 +458,26 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	return wf, nil
 }
 
+// networkWords are the DSL's network modes (AGENTS.md §6: only these two).
+var networkWords = []string{"default", "none"}
+
+// networkModes maps each of networkWords to its enum.
+var networkModes = map[string]orkstackv1.NetworkMode{
+	"default": orkstackv1.NetworkMode_NETWORK_MODE_DEFAULT,
+	"none":    orkstackv1.NetworkMode_NETWORK_MODE_NONE,
+}
+
 // networkModeOf maps the DSL's word to the enum. An unrecognized value is
 // carried as UNSPECIFIED and refused by validate, so the error names the task
 // and the value rather than silently selecting a default.
 func networkModeOf(raw string) orkstackv1.NetworkMode {
-	switch raw {
-	case "":
+	if raw == "" {
 		return orkstackv1.NetworkMode_NETWORK_MODE_UNSPECIFIED
-	case "default":
-		return orkstackv1.NetworkMode_NETWORK_MODE_DEFAULT
-	case "none":
-		return orkstackv1.NetworkMode_NETWORK_MODE_NONE
-	default:
-		// A sentinel the validator recognizes. Returning DEFAULT here would
-		// run a typo'd `network: nonw` with full network access.
-		return orkstackv1.NetworkMode(-1)
 	}
-}
-
-// normalizeMap converts a YAML-decoded value into the JSON-compatible shape
-// structpb requires (map keys become strings, ints stay numeric).
-func normalizeMap(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = normalizeValue(v)
+	if mode, ok := networkModes[raw]; ok {
+		return mode
 	}
-	return out
-}
-
-func normalizeValue(v any) any {
-	switch typed := v.(type) {
-	case map[string]any:
-		return normalizeMap(typed)
-	case map[any]any:
-		// YAML permits non-string keys, while JSON/Struct do not. Distinct YAML
-		// keys can stringify to the same value (for example null and "<nil>").
-		// Sort by both the normalized key and a typed identity before applying
-		// the unavoidable last-value-wins conversion, so one document always
-		// compiles to one message. A version does not depend on this — it is
-		// the source's hash — but the STORE compares the compiled document, so
-		// a compilation that varied with map iteration order would make
-		// re-applying an unchanged file a different document under a stored
-		// version (pkg/artifacts.sameStoredOrkflow).
-		type entry struct {
-			key      string
-			identity string
-			value    any
-		}
-		entries := make([]entry, 0, len(typed))
-		for key, value := range typed {
-			entries = append(entries, entry{
-				key:      fmt.Sprint(key),
-				identity: fmt.Sprintf("%T:%#v", key, key),
-				value:    value,
-			})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].key != entries[j].key {
-				return entries[i].key < entries[j].key
-			}
-			return entries[i].identity < entries[j].identity
-		})
-		out := make(map[string]any, len(entries))
-		for _, item := range entries {
-			out[item.key] = normalizeValue(item.value)
-		}
-		return out
-	case []any:
-		out := make([]any, len(typed))
-		for i, val := range typed {
-			out[i] = normalizeValue(val)
-		}
-		return out
-	case int:
-		return float64(typed)
-	case int32:
-		return float64(typed)
-	case int64:
-		return float64(typed)
-	case uint64:
-		return float64(typed)
-	default:
-		return v
-	}
+	// A sentinel the validator recognizes. Returning DEFAULT here would
+	// run a typo'd `network: nonw` with full network access.
+	return orkstackv1.NetworkMode(-1)
 }

@@ -157,6 +157,8 @@ func TestParseCatalog(t *testing.T) {
 // error rather than a run-time surprise.
 func TestCompile_RejectsAnUnknownBareUses(t *testing.T) {
 	_, err := Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: demo
 tasks:
   - id: one
@@ -175,6 +177,8 @@ func TestCompile_AcceptsAThirdPartyReferenceWithNoCatalogEntry(t *testing.T) {
 	// production activity" true: no catalog entry, no allow-list, no
 	// registration step.
 	if _, err := Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: demo
 tasks:
   - id: one
@@ -186,6 +190,8 @@ tasks:
 
 func TestCompileWithOptions_HonoursAConfiguredCatalog(t *testing.T) {
 	source := []byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: demo
 tasks:
   - id: one

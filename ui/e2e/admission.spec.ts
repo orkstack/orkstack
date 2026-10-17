@@ -62,7 +62,9 @@ const note = noteTo(out('transcript.txt'));
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
 function orkflow(name: string, command: string): string {
-	return `name: ${name}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "0.1.0"
 description: Namespace admission coverage.
 tasks:

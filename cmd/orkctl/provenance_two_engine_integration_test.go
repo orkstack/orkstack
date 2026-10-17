@@ -215,7 +215,9 @@ func runProvenanceCLI(t *testing.T, replica *engineReplica, runID string) string
 // provenanceOrkflowYAML writes one deterministic artifact, so two runs
 // produce byte-identical report.txt files.
 func provenanceOrkflowYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: artifact provenance probe.
 tasks:

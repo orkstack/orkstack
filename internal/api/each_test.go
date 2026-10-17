@@ -494,6 +494,8 @@ func TestExportRunEvidence_ItemMembers(t *testing.T) {
 }
 
 const eachValidateDoc = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan-validate
 inputs:
   parts: {type: array}
@@ -575,6 +577,8 @@ func TestSubmitRun_PoolWithoutEachSupportIsFailedPrecondition(t *testing.T) {
 		Starter: starter, Pools: livePools{gpuQueue: 1}, PoolOrkers: eachSupportOrkers(false),
 	})
 	doc := `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan-gpu
 inputs:
   parts: {type: array}

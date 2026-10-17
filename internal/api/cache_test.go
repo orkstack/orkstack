@@ -25,6 +25,8 @@ import (
 )
 
 const cachedYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: cached-pipeline
 tasks:
   - id: featurize
@@ -37,6 +39,8 @@ tasks:
 `
 
 const uncachedYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: plain
 tasks:
   - id: work

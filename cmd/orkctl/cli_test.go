@@ -48,7 +48,7 @@ func TestApply_MissingFileExitsNonZero(t *testing.T) {
 func TestApply_InvalidOrkflowExitsNonZero(t *testing.T) {
 	f := newFixture(t)
 	path := filepath.Join(t.TempDir(), "broken.ork.yaml")
-	if err := os.WriteFile(path, []byte("name: \"\"\ntasks: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: \"\"\ntasks: []\n"), 0o644); err != nil {
 		t.Fatalf("write broken orkflow: %v", err)
 	}
 

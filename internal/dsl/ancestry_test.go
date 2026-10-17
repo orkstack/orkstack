@@ -47,7 +47,7 @@ func writeLink(b *strings.Builder, id, need string, kind chainKind, join string)
 // each needing the one before.
 func chainDocument(n int, kind chainKind) string {
 	var b strings.Builder
-	b.WriteString("name: chain\ntasks:\n")
+	b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: chain\ntasks:\n")
 	for i := range n {
 		need := ""
 		if i > 0 {
@@ -162,6 +162,8 @@ func requireAncestryRefusal(t *testing.T, err error, index int, id string, count
 // definition mixing every kind.
 func TestValidate_MinimalInputBytesIsThePayloadSizeOfTheMinimalInput(t *testing.T) {
 	wf := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: mixed
 namespace: payments
 tasks:
@@ -225,7 +227,7 @@ func TestValidate_AncestryThatFitsIsAccepted(t *testing.T) {
 // then a task z needing both last links with join (default when empty).
 func twoChainsDocument(n int, join string) string {
 	var b strings.Builder
-	b.WriteString("name: two-chains\ntasks:\n")
+	b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: two-chains\ntasks:\n")
 	for _, lane := range []string{"a", "b"} {
 		for i := range n {
 			need := ""
@@ -264,7 +266,7 @@ func TestValidate_SkippableAncestorsAreNotCounted(t *testing.T) {
 	// after j: the last b requires b0 … b(n−2) and j, never an a.
 	behind := func(join string) string {
 		var b strings.Builder
-		b.WriteString("name: behind\ntasks:\n")
+		b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: behind\ntasks:\n")
 		for i := range n {
 			need := ""
 			if i > 0 {
@@ -302,7 +304,7 @@ func TestValidate_SkippableAncestorsAreNotCounted(t *testing.T) {
 	// default-join task; as a handler it counts nothing.
 	handler := func(join string) string {
 		var b strings.Builder
-		b.WriteString("name: handler\ntasks:\n")
+		b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: handler\ntasks:\n")
 		for i := range depth {
 			need := ""
 			if i > 0 {
@@ -329,6 +331,8 @@ func TestValidate_SkippableAncestorsAreNotCounted(t *testing.T) {
 // both (its own needs stay required through it).
 func TestValidate_IndirectFanOutAddsNoRef(t *testing.T) {
 	wf := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: fan
 tasks:
   - id: list

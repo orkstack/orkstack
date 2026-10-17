@@ -36,6 +36,8 @@
 #   orkctl run plan --file examples/order-saga.ork.yaml --assume-failed shipped --assert-runs release --assert-runs refund --assert-runs report --assert-runs notify
 #   orkctl run plan --file examples/order-saga.ork.yaml --assume-failed reserve --assert-runs release --assert-skipped refund --assert-runs report
 #   orkctl run plan --file examples/order-saga.ork.yaml --assume-failed prepare --assert-skipped release --assert-skipped refund --assert-runs report --assert-runs notify
+apiVersion: orkstack/v1
+kind: Orkflow
 name: order-saga
 version: "0.1.0"
 description: "Reserve, charge and ship an order over HTTP; release and refund when a later step fails; report either way. Apply notify-block first."

@@ -1,0 +1,19 @@
+{
+  "name":  "unpinned-bare",
+  "version":  "81907074657e9eb629e27cbc97e5ca39c23fc5b39d188ecc1f4b8f575ee2884c",
+  "tasks":  [
+    {
+      "id":  "say",
+      "with":  {
+        "command":  [
+          "sh",
+          "-c",
+          "echo bare"
+        ],
+        "op":  "eval"
+      },
+      "timeoutSeconds":  300,
+      "uses":  "shell"
+    }
+  ]
+}

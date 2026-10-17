@@ -146,7 +146,7 @@ func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 // The reason is that the digest is STAMPED INTO the document it describes.
 // Emitting `"pins": []` and `"pin": ""` unconditionally would move the digest
 // of EVERY definition already stored, and the move is not cosmetic:
-// sameStoredOrkflow (pkg/artifacts/orkflow_store.go) decides "this apply is a
+// SameStoredOrkflow (pkg/artifacts/orkflow_store.go) decides "this apply is a
 // repeat of an unchanged document" with proto.Equal after clearing only
 // created_at. A re-apply of an unchanged, source-hash-versioned document would
 // then carry a moved definition_digest, compare unequal, and be refused as an
@@ -289,7 +289,7 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 // how a digest acquires a dependency on a future value. resolved_at does not
 // exist at all (§2.2 reserves it): a per-apply timestamp inside Task.image
 // would make every re-apply of an unchanged document unequal, and
-// pkg/artifacts.sameStoredOrkflow would refuse it with ErrVersionExists.
+// pkg/artifacts.SameStoredOrkflow would refuse it with ErrVersionExists.
 //
 // platforms is emitted in the INDEX'S OWN ORDER, not sorted (§4.3 step 4).
 // The digest hashes it, so the order is part of the contract; index order is
@@ -363,7 +363,7 @@ const derivedVersionSeparator = 0x1F
 
 // DerivedVersion is the version of a document that pins none (§4.4):
 //
-//	hex(sha256(sourceYAML ‖ 0x1F ‖ canonicalImages(wf)))
+//	hex(sha256(VersionedSource(sourceYAML) ‖ 0x1F ‖ canonicalImages(wf)))
 //
 // It is assigned AFTER image resolution, and this is the whole point. Compile
 // stamps a provisional sourceHash, and the applier replaces it here once the
@@ -374,16 +374,19 @@ const derivedVersionSeparator = 0x1F
 // new version.
 //
 // This does NOT re-open the question hash.go settles — "two notions of 'the
-// same document' in one system is one too many". The source bytes are hashed
-// in FULL here, so a comment-only edit mints a new version. The resolution is
-// not a second notion of the document but a second input to what runs.
+// same document' in one system is one too many". The versioned source — the
+// bytes the store compares, less only the two header lines written first —
+// is hashed in FULL here, so a comment-only edit mints a new version, and
+// adding the header to a document applied before it was required names the
+// version that document already had. The resolution is not a second notion of
+// the document but a second input to what runs.
 func DerivedVersion(sourceYAML []byte, wf *orkstackv1.Orkflow) (string, error) {
 	images, err := canonicalImages(wf)
 	if err != nil {
 		return "", err
 	}
 	h := sha256.New()
-	h.Write(sourceYAML)
+	h.Write(VersionedSource(sourceYAML))
 	h.Write([]byte{derivedVersionSeparator})
 	h.Write(images)
 	return hex.EncodeToString(h.Sum(nil)), nil

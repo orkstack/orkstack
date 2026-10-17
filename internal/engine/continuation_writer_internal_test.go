@@ -132,7 +132,7 @@ func TestContinuation_BudgetWithoutHistoryLimitNeverSwitches(t *testing.T) {
 
 func flatDefinition(t *testing.T, n int) *orkstackv1.Orkflow {
 	var b strings.Builder
-	b.WriteString("name: flat\ntasks:\n")
+	b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: flat\ntasks:\n")
 	for i := 0; i < n; i++ {
 		fmt.Fprintf(&b, "  - id: t%d\n    uses: shell\n    needs: []\n    with: {op: exec}\n", i)
 	}

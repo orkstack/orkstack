@@ -111,6 +111,8 @@ func TestSimulate_AssumeFailedLeavesIndependentWorkPlannedAsRunning(t *testing.T
 
 func TestSimulate_UnreachedByNamesTheFailureThatCutIt(t *testing.T) {
 	chain := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: chain
 tasks:
   - id: a
@@ -209,6 +211,8 @@ func TestSimulate_ConditionErrorPlansTheBrokenTasksHandlers(t *testing.T) {
 
 func TestSimulate_AHandlersBrokenConditionAfterFailsAtCutsNothing(t *testing.T) {
 	wf := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: two-fails
 inputs:
   a: {type: string}

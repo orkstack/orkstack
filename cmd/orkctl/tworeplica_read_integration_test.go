@@ -560,7 +560,9 @@ func sequenceList(events []*orkstackv1.Event) []int64 {
 // happen while the run is executing, because a finished run could be answered
 // from the archive and would prove nothing.
 func twoReplicaOrkflowYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: two-replica read probe.
 tasks:

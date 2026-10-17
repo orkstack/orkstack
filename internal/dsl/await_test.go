@@ -50,6 +50,8 @@ func TestCompile_AwaitTaskCompiles(t *testing.T) {
 
 func TestCompile_AwaitWithNoSchemaCompilesToNoSchemaField(t *testing.T) {
 	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: bare-await
 tasks:
   - id: gate
@@ -83,7 +85,7 @@ func TestCompile_AwaitRefusesEveryExecutionField(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.key, func(t *testing.T) {
-			source := "name: refused\npins: {build: {}}\ntasks:\n  - id: gate\n    await: {timeout_seconds: 60}\n    " + tc.yaml + "\n"
+			source := "apiVersion: orkstack/v1\nkind: Orkflow\nname: refused\npins: {build: {}}\ntasks:\n  - id: gate\n    await: {timeout_seconds: 60}\n    " + tc.yaml + "\n"
 			_, err := dsl.Compile([]byte(source))
 			if err == nil {
 				t.Fatalf("compiled an await with %s", tc.key)
@@ -102,7 +104,7 @@ func TestCompile_AwaitRefusesEveryExecutionField(t *testing.T) {
 		})
 	}
 	t.Run("run_as_orker_user false is absent", func(t *testing.T) {
-		_, err := dsl.Compile([]byte("name: ok\ntasks:\n  - id: gate\n    await: {timeout_seconds: 60}\n    run_as_orker_user: false\n"))
+		_, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: ok\ntasks:\n  - id: gate\n    await: {timeout_seconds: 60}\n    run_as_orker_user: false\n"))
 		if err != nil {
 			t.Fatalf("run_as_orker_user: false refused: %v", err)
 		}
@@ -110,7 +112,7 @@ func TestCompile_AwaitRefusesEveryExecutionField(t *testing.T) {
 }
 
 func TestCompile_AwaitNeedsExactlyOneOfUsesAndAwait(t *testing.T) {
-	_, err := dsl.Compile([]byte("name: both\ntasks:\n  - id: gate\n    uses: shell\n    await: {timeout_seconds: 60}\n"))
+	_, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: both\ntasks:\n  - id: gate\n    uses: shell\n    await: {timeout_seconds: 60}\n"))
 	if err == nil || !strings.Contains(err.Error(), `task "gate": uses: and await: are exclusive — an awaited task runs no image`) {
 		t.Fatalf("uses + await: error = %v, want the rule-6 refusal", err)
 	}
@@ -118,7 +120,7 @@ func TestCompile_AwaitNeedsExactlyOneOfUsesAndAwait(t *testing.T) {
 	if !errors.As(err, &verr) || verr.Field != "tasks[0].uses" {
 		t.Fatalf("error not anchored at tasks[0].uses: %#v", err)
 	}
-	_, err = dsl.Compile([]byte("name: neither\ntasks:\n  - id: gate\n    needs: []\n"))
+	_, err = dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: neither\ntasks:\n  - id: gate\n    needs: []\n"))
 	if err == nil || !strings.Contains(err.Error(), "`uses:` is required") {
 		t.Fatalf("neither: error = %v, want the uses-required refusal", err)
 	}
@@ -139,7 +141,7 @@ func TestCompile_AwaitTimeoutBounds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := dsl.Compile([]byte("name: bounds\ntasks:\n  - id: gate\n    await: " + tc.await + "\n"))
+			_, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: bounds\ntasks:\n  - id: gate\n    await: " + tc.await + "\n"))
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("refused: %v", err)
@@ -166,13 +168,13 @@ func TestCompile_AwaitSchemaDeclarations(t *testing.T) {
 		{"unknown type", "{x: {type: integer}}", "`type` is required and must be one of string, number, boolean, object, array"},
 		{"missing type", "{x: {required: true}}", "`type` is required"},
 		{"default", "{x: {type: string, default: a}}", "an await's schema declares no default — a resolution's values.json is stored as the caller's exact bytes"},
-		{"extra key", "{x: {type: string, description: y}}", `unknown key "description"`},
+		{"extra key", "{x: {type: string, description: why}}", `unknown key "description"`},
 		{"non-mapping entry", "{x: string}", "must be a mapping"},
 		{"non-boolean required", "{x: {type: string, required: yes-please}}", "`required` must be true or false"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := dsl.Compile([]byte("name: schema\ntasks:\n  - id: gate\n    await:\n      timeout_seconds: 60\n      schema: " + tc.schema + "\n"))
+			_, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: schema\ntasks:\n  - id: gate\n    await:\n      timeout_seconds: 60\n      schema: " + tc.schema + "\n"))
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want %q", err, tc.wantErr)
 			}
@@ -184,6 +186,8 @@ func TestCompile_AwaitSchemaDeclarations(t *testing.T) {
 	}
 	t.Run("the five types", func(t *testing.T) {
 		_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: schema
 tasks:
   - id: gate
@@ -205,6 +209,8 @@ tasks:
 
 func TestCompile_ArtifactHelperNamingAnAwaitIsRefused(t *testing.T) {
 	_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: artifact-await
 tasks:
   - id: gate
@@ -224,6 +230,8 @@ tasks:
 
 func TestCompile_TemplatesMayReadAnAwaitsOutput(t *testing.T) {
 	_, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: read-await
 tasks:
   - id: gate

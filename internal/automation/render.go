@@ -158,11 +158,10 @@ func telemetryZero(policy *orkstackv1.TelemetryPolicy) bool {
 // taskLogsSlug is the document spelling of a task-log export switch, the
 // spelling `orkctl namespace update --task-logs` takes.
 func taskLogsSlug(value orkstackv1.TaskLogExport) string {
-	switch value {
-	case orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED:
-		return "enabled"
-	case orkstackv1.TaskLogExport_TASK_LOG_EXPORT_DISABLED:
-		return "disabled"
+	for word, export := range taskLogWords {
+		if export == value && word != "inherit" {
+			return word
+		}
 	}
 	return "inherit"
 }

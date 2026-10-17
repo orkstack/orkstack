@@ -69,6 +69,8 @@ func (s *switched) next(t *testing.T, setup func(h *harness)) *harness {
 // bigChainDocument is a chain long enough that its saved state spans many
 // small chunks.
 const bigChainDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: big-chain
 tasks:
   - id: a

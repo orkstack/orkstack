@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // OrkflowStore is the system of record for orkflow definitions. Runs live in
@@ -385,13 +386,17 @@ func pinnedOrkflow(versions []*orkstackv1.Orkflow, version string) *orkstackv1.O
 	return nil
 }
 
-// sameStoredOrkflow reports whether re-applying incoming would store exactly
-// what stored already holds, which is what makes a repeat a no-op instead of a
-// rewrite.
+// SameStoredOrkflow reports whether storing incoming would store what stored holds:
+// the same document (dsl.VersionedSource of each side's source — the very bytes a
+// derived version hashes, so the two can never disagree), and every other field
+// equal but created_at. A version stored before the header existed is therefore
+// the same document as its source with the two header lines written first, above,
+// among or below its leading comments.
 //
-// created_at is excluded because it is stamped per apply: comparing it would
-// make every re-apply "different" and every apply a rewrite — the defect this
-// check exists to remove.
+// This is what makes a repeat a no-op instead of a rewrite. created_at is
+// excluded because it is stamped per apply: comparing it would make every
+// re-apply "different" and every apply a rewrite — the defect this check
+// exists to remove.
 //
 // The design's rule was "compare source_yaml". This compares the whole
 // document (with created_at cleared) because source_yaml alone is empty for a
@@ -400,18 +405,20 @@ func pinnedOrkflow(versions []*orkstackv1.Orkflow, version string) *orkstackv1.O
 // the second would be silently dropped. Comparing everything is strictly
 // safer: it never treats a difference as a repeat.
 //
-// It is also the reason a DERIVED version covers the source bytes rather than
-// the document's semantic content (internal/dsl.sourceHash): this comparison
-// is what "the same document" means, so a derivation that ignored comments
-// would hand one version two documents and get the second refused below, with
-// no version left for the author to publish it under.
-func sameStoredOrkflow(stored, incoming *orkstackv1.Orkflow) bool {
-	if stored.GetSourceYaml() != incoming.GetSourceYaml() {
+// It is also the reason a DERIVED version covers the versioned source rather
+// than the document's semantic content (internal/dsl.sourceHash): this
+// comparison is what "the same document" means, so a derivation that ignored
+// comments would hand one version two documents and get the second refused
+// below, with no version left for the author to publish it under. The engine's
+// in-memory store calls this function too, so there is one rule.
+func SameStoredOrkflow(stored, incoming *orkstackv1.Orkflow) bool {
+	if !bytes.Equal(dsl.VersionedSource([]byte(stored.GetSourceYaml())),
+		dsl.VersionedSource([]byte(incoming.GetSourceYaml()))) {
 		return false
 	}
-	a := proto.Clone(stored).(*orkstackv1.Orkflow)
-	b := proto.Clone(incoming).(*orkstackv1.Orkflow)
+	a, b := proto.Clone(stored).(*orkstackv1.Orkflow), proto.Clone(incoming).(*orkstackv1.Orkflow)
 	a.CreatedAt, b.CreatedAt = nil, nil
+	a.SourceYaml, b.SourceYaml = "", ""
 	return proto.Equal(a, b)
 }
 
@@ -681,14 +688,14 @@ func (s *S3OrkflowStore) settle(
 	stored, incoming *orkstackv1.Orkflow,
 	key string,
 ) (*orkstackv1.Orkflow, bool, error) {
-	if sameStoredOrkflow(stored, incoming) {
+	if SameStoredOrkflow(stored, incoming) {
 		return stored, false, nil
 	}
 	return nil, false, fmt.Errorf(
 		"artifacts: orkflow %q version %q in namespace %q is already stored with different "+
-			"content (%s); a version is immutable, so publish a new version: %w",
+			"content (%s); %s: %w",
 		incoming.GetName(), incoming.GetVersion(), incoming.GetNamespace(),
-		s.uri(key), ErrVersionExists)
+		s.uri(key), dsl.VersionExistsAdvice(incoming.GetSourceYaml()), ErrVersionExists)
 }
 
 // Get reads one orkflow version from one namespace. An empty version resolves

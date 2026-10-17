@@ -400,6 +400,8 @@ func TestSnapshotOverlayHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) 
 func TestSnapshotOverlay_FirstEmitOfAGenerationIsFull(t *testing.T) {
 	defer engine.ContinueAtEveryIdleForTest()()
 	wf := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: carried-overlay
 inputs:
   regions: {type: array}

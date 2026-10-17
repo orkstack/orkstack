@@ -405,7 +405,9 @@ func runningIDs(stats *orkstackv1.GetStatsResponse) []string {
 // take a multiple of the backoff to get there and the durations would say
 // nothing about how long the work takes.
 func statsOrkflowYAML(name, command string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: stats probe.
 tasks:
@@ -423,7 +425,9 @@ tasks:
 // statsSlowOrkflowYAML runs long enough for both replicas to be asked while it
 // is still going.
 func statsSlowOrkflowYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "0.1.0"
 description: stats probe, still running.
 tasks:

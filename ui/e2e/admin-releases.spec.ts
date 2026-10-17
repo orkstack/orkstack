@@ -299,7 +299,9 @@ test('a release missing a pool cannot be promoted, and says why', async ({ page 
 
 test('promoting moves new runs and the previous release shows what it is finishing', async ({ page }) => {
 	test.setTimeout(300_000);
-	const yaml = `name: ${GATED}
+	const yaml = `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${GATED}
 description: a run held in flight by a gate.
 tasks:
   - id: gate

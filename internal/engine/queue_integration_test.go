@@ -304,6 +304,8 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	// ran on. It is also the isolation guarantee: `pool: main` may not escape
 	// ORK_ORKER_QUEUE onto the shared queue (AGENTS.md §11.1).
 	pinnedSource := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
 name: pool-main-pinned
 version: "0.1.0"
 tasks:

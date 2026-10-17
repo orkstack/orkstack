@@ -229,7 +229,9 @@ func TestActivityInspect_ReportsTheServerError(t *testing.T) {
 	g.run("activity", "inspect", "{{ .x }}").requireStderrContains(t, dsl.ReasonImageNotPinned)
 }
 
-const validateErrorsDocument = `name: deploy
+const validateErrorsDocument = `apiVersion: orkstack/v1
+kind: Orkflow
+name: deploy
 version: "3"
 tasks:
   - id: copy
@@ -239,7 +241,9 @@ tasks:
       srcs: [b]
 `
 
-const validateWarningsDocument = `name: deploy
+const validateWarningsDocument = `apiVersion: orkstack/v1
+kind: Orkflow
+name: deploy
 version: "3"
 tasks:
   - id: copy

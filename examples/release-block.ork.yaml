@@ -2,6 +2,8 @@
 #
 # A reusable block: sign an image reference and record where it lives. Its
 # `outputs:` is its interface — the one thing a composing Orkflow may read.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: release-block
 version: "0.1.0"
 description: "Sign an image reference and publish its record; the block other Orkflows compose."

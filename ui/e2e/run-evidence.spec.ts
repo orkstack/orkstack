@@ -67,7 +67,9 @@ const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGI
 
 /** The run-operations completedWorkflow shape: one artifact, values, logs. */
 function completedWorkflow(): string {
-	return `name: ${COMPLETED}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${COMPLETED}
 version: "0.1.0"
 description: Run evidence coverage.
 tasks:
@@ -85,7 +87,9 @@ tasks:
 }
 
 function sleeperWorkflow(): string {
-	return `name: ${SLEEPER}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${SLEEPER}
 version: "0.1.0"
 description: A run that is still running when the page is asked about it.
 tasks:

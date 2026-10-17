@@ -3,6 +3,8 @@
 # Compose release-block at a pinned version: its run is a child run with its
 # own id, history and logs, and its declared outputs are this task's values.
 # Apply examples/release-block.ork.yaml into the same namespace first.
+apiVersion: orkstack/v1
+kind: Orkflow
 name: composed-release
 version: "0.1.0"
 description: "Build, hand the image to release-block, announce what it recorded."

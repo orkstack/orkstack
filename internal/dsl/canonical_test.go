@@ -1,6 +1,8 @@
 package dsl
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -426,7 +428,7 @@ func TestCanonicalNumber_RendersWithoutExponentOrFraction(t *testing.T) {
 }
 
 func TestDerivedVersion_CoversBothSourceAndResolution(t *testing.T) {
-	source := []byte("name: golden\ntasks: []\n")
+	source := []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: golden\ntasks: []\n")
 	wf := goldenOrkflow(t)
 
 	base, err := DerivedVersion(source, wf)
@@ -441,7 +443,7 @@ func TestDerivedVersion_CoversBothSourceAndResolution(t *testing.T) {
 		// hash.go settled this: the source bytes are hashed in full, so a
 		// cosmetic edit is a version. Two notions of "the same document" in
 		// one system is one too many.
-		got, err := DerivedVersion([]byte("name: golden\ntasks: []\n# a comment\n"), wf)
+		got, err := DerivedVersion([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: golden\ntasks: []\n# a comment\n"), wf)
 		if err != nil {
 			t.Fatalf("derive: %v", err)
 		}
@@ -612,7 +614,7 @@ func TestCanonicalInputLine_IsOneSortedCompactLine(t *testing.T) {
 // with and without a label" is exactly this: the same ImageRef, once with an
 // interface beside it and once without.)
 func TestDefinitionDigest_IgnoresTheInterface(t *testing.T) {
-	source := []byte("name: golden\ntasks:\n  - id: one\n    uses: file\n    with:\n      op: copy\n      src: a\n")
+	source := []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: golden\ntasks:\n  - id: one\n    uses: file\n    with:\n      op: copy\n      src: a\n")
 	img := newTestImage(t, map[string]string{InterfaceLabel: testLabel})
 	body := img.index(t, "linux/amd64", "attestation")
 	stub := &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex, sendDigest: digestOf(body),
@@ -744,5 +746,50 @@ func TestCanonicalOrkflow_JoinEmittedOnlyWhenSet(t *testing.T) {
 	other.Tasks[0].Join = orkstackv1.JoinPolicy_JOIN_POLICY_NONE_FAILED
 	if d, _ := DefinitionDigest(other); d == withJoin {
 		t.Fatal("a different join did not change the digest")
+	}
+}
+
+// TestDerivedVersion_AddingTheHeaderKeepsTheVersion: the header written as a
+// document's first YAML lines is left out of the derived version, so a
+// document applied before the header was required names the same version
+// with the two lines added — after its comments, above them on line 1, and
+// behind a byte order mark. The expectation is the base formula, computed
+// inline.
+func TestDerivedVersion_AddingTheHeaderKeepsTheVersion(t *testing.T) {
+	wf := goldenOrkflow(t)
+	images, err := canonicalImages(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := func(source string) string {
+		h := sha256.New()
+		h.Write([]byte(source))
+		h.Write([]byte{0x1F})
+		h.Write(images)
+		return hex.EncodeToString(h.Sum(nil))
+	}
+	const legacy = "# golden\n# a pre-header document\nname: golden\ntasks: []\n"
+	const bom = "\xEF\xBB\xBF"
+	added, ok := AddHeader(legacy)
+	if !ok {
+		t.Fatal("AddHeader refused the legacy document")
+	}
+	bomAdded, ok := AddHeader(bom + legacy)
+	if !ok {
+		t.Fatal("AddHeader refused the byte-order-marked legacy document")
+	}
+	for _, tc := range []struct{ what, source, legacy string }{
+		{"AddHeader", added, legacy},
+		{"the header on line 1", OrkflowHeader + legacy, legacy},
+		{"a byte order mark, AddHeader", bomAdded, bom + legacy},
+		{"a byte order mark, the header on line 1", bom + OrkflowHeader + legacy, bom + legacy},
+	} {
+		got, err := DerivedVersion([]byte(tc.source), wf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := base(tc.legacy); got != want {
+			t.Errorf("%s: derived %q, want the legacy document's %q", tc.what, got, want)
+		}
 	}
 }

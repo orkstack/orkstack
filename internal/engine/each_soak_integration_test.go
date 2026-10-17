@@ -176,7 +176,9 @@ func soakDocument(name string, items, maxParallel int) string {
 	if maxParallel > 0 {
 		parallel = fmt.Sprintf(", max_parallel: %d", maxParallel)
 	}
-	return fmt.Sprintf(`name: %s
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
 version: "1.0.0"
 tasks:
   - id: list

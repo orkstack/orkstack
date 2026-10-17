@@ -108,7 +108,9 @@ const rpcB = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENG
 // no per-task `pull:` because the image is pinned to an index digest at apply
 // time (§4.3) and the Orker pulls that digest.
 function chattyOrkflowYaml(name: string): string {
-	return `name: ${name}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "0.1.0"
 description: Operating story — a chatty container, followed live.
 tasks:
@@ -130,7 +132,9 @@ tasks:
 }
 
 function versionedOrkflowYaml(name: string, version: string, description: string, command: string): string {
-	return `name: ${name}
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
 version: "${version}"
 description: ${description}
 tasks:

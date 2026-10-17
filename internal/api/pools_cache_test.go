@@ -88,6 +88,8 @@ func applyPoolScopeYAML(t *testing.T, svc *api.Service, yaml string) {
 }
 
 const mainOnlyOrkflow = `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: main-job
 version: 0.1.0
 tasks:

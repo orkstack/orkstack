@@ -24,7 +24,9 @@ import (
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
 
-const awaitedCLIYAML = `name: awaited-cli
+const awaitedCLIYAML = `apiVersion: orkstack/v1
+kind: Orkflow
+name: awaited-cli
 version: "1.0.0"
 tasks:
   - id: plan

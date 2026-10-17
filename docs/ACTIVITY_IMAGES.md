@@ -24,6 +24,8 @@ An activity image may expose one operation selector, spelled `op`, inside its
 arguments for that operation.
 
 ```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
 name: notify
 inputs:
   url:
@@ -35,9 +37,8 @@ tasks:
     with:
       op: post
       url: "{{ .inputs.url }}"
-      headers:
-        content-type: application/json
-      body: '{"status":"ok"}'
+      body:
+        status: ok
 ```
 
 The catalog name `http` resolves to the `activity-http` OCI image at apply time.
@@ -94,7 +95,9 @@ LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields
 - `values` is documentary: the keys the image writes to `values.json`.
 
 Each key is declared with exactly the vocabulary an Orkflow's `inputs:` has —
-`type` (`string`, `number`, `boolean`, `object`, `array`), `required`, and a
+`type` (`string`, `number`, `boolean`, `object`, `array`, or several joined by
+`|` for a key that accepts any of them — `activity-http`'s `body` is
+`string|object|array`), `required`, and a
 documentary `default` the engine never writes into `with:` — and not one word
 more: no pattern, range, enum or nesting. A word outside the vocabulary makes
 the label unreadable rather than being ignored, and so do `required` together
@@ -114,7 +117,10 @@ What a document is told:
   **warning**; a templated value (`{{ … }}`) is never typed, because the
   Orker renders every template to a string;
 - a label the engine cannot read is one warning on the task's `uses:`, and the
-  image is still pinned and runnable.
+  image is still pinned and runnable. An engine older than the `|` union
+  reads a label that uses one as unreadable, so in a fleet that mixes releases
+  it warns once and still runs the image; first-party images and engines are
+  released together.
 
 `orkctl activity inspect <name-or-reference>` and Admin → Activities show what
 an image declares. Every first-party image carries the label; each README's

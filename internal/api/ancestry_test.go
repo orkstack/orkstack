@@ -25,7 +25,7 @@ const deepChainLength = 1600
 // one before; withNeeds false drops every needs: line.
 func deepChainDoc(name string, n int, withNeeds bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "name: %s\nversion: \"1.0.0\"\ntasks:\n", name)
+	fmt.Fprintf(&b, "apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\nversion: \"1.0.0\"\ntasks:\n", name)
 	for i := range n {
 		fmt.Fprintf(&b, "  - id: c%d\n    uses: busybox:latest\n", i)
 		if withNeeds && i > 0 {

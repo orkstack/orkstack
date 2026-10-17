@@ -822,7 +822,9 @@ func TestIntegration_JoinEngineRestartDuringHandlersDispatchesNothingTwice(t *te
 func TestIntegration_JoinComposedHandlersRunInTheirOrder(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i11")
-	child := j.compileDoc(`name: join-child
+	child := j.compileDoc(`apiVersion: orkstack/v1
+kind: Orkflow
+name: join-child
 version: "1.0.0"
 tasks:
   - id: work
@@ -834,14 +836,18 @@ tasks:
     join: any_failed
     with: {op: exec, command: ["echo", "child tidied"]}
 `)
-	block := j.compileDoc(`name: rollback-block
+	block := j.compileDoc(`apiVersion: orkstack/v1
+kind: Orkflow
+name: rollback-block
 version: "1.0.0"
 tasks:
   - id: undo
     uses: shell
     with: {op: exec, command: ["echo", "undone"]}
 `)
-	parent := j.compileDoc(`name: join-parent
+	parent := j.compileDoc(`apiVersion: orkstack/v1
+kind: Orkflow
+name: join-parent
 version: "1.0.0"
 tasks:
   - id: release
@@ -907,7 +913,9 @@ func TestIntegration_JoinAwaitedHandlers(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i12")
 	// (a) A rejected approval gate fires its any_failed handler.
-	gate := j.compileDoc(`name: join-gate
+	gate := j.compileDoc(`apiVersion: orkstack/v1
+kind: Orkflow
+name: join-gate
 version: "1.0.0"
 tasks:
   - id: gate
@@ -968,7 +976,9 @@ tasks:
 func TestIntegration_JoinAnItemFailureStartsTheFanOutsHandler(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i13")
-	wf := j.compileDoc(`name: join-items
+	wf := j.compileDoc(`apiVersion: orkstack/v1
+kind: Orkflow
+name: join-items
 version: "1.0.0"
 inputs:
   regions: {type: array}
@@ -1017,7 +1027,9 @@ func TestIntegration_JoinALostPinStartsAnUnpinnedHandler(t *testing.T) {
 			logs: j.logs, refs: refs, temporalNamespace: j.namespace,
 		})
 	}
-	wf := j.compileDoc(`name: join-pin
+	wf := j.compileDoc(`apiVersion: orkstack/v1
+kind: Orkflow
+name: join-pin
 version: "1.0.0"
 pins:
   build: {}
@@ -1082,7 +1094,9 @@ tasks:
 func TestIntegration_JoinCachedReJoinHitsForTheSameRoute(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i15")
-	wf := j.compileDoc(`name: join-cache
+	wf := j.compileDoc(`apiVersion: orkstack/v1
+kind: Orkflow
+name: join-cache
 version: "1.0.0"
 inputs:
   route: {type: string}
@@ -1123,7 +1137,9 @@ tasks:
 func TestIntegration_JoinBrokenConditionFailsItsTaskWhenAHandlerExists(t *testing.T) {
 	j := startJoinE2E(t)
 	j.orker("join-i16")
-	base := `name: join-broken
+	base := `apiVersion: orkstack/v1
+kind: Orkflow
+name: join-broken
 version: "1.0.0"
 inputs:
   a: {type: string, default: x}

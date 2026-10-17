@@ -121,12 +121,20 @@ for example as `workspace.tar.gz`; the artifact layer has no directory
 semantics. Artifacts remain opaque.
 
 Structured runtime data — `values.json`, a run's submitted input, and its
-recorded output — is always JSON, never YAML: it is the one format the
-Temporal payload, the Connect API, `orkctl --json` and the UI's typed input
+recorded output — is always JSON on the wire, never YAML: it is the one format
+the Temporal payload, the Connect API, `orkctl --json` and the UI's typed input
 editor share (`docs/JSON.md`), so a copied CLI command reproduces exactly what
 was submitted, and it has none of YAML's silent coercions (`no`, `on`,
 octal-looking numbers). Documents a person authors — an Orkflow, an automation
-document — stay YAML. Do not add a YAML input mode to the UI or CLI.
+document — stay YAML, and each begins with `apiVersion: orkstack/v1` and its
+`kind:` (`Orkflow`, `Automation`). Inside one, runtime data is written as YAML
+too — a task's `with:` (an http `body:`, jq `vars:`), an Orkflow's `inputs:`
+defaults, an await's `schema:`, a schedule's `input:` — and becomes JSON only
+through the strict mapping (`docs/JSON.md`, "Data written in an authored
+document"), never a lenient decode: a plain scalar that YAML readers resolve
+differently (`yes`, `0755`, `1:30`, a date), a number JSON cannot hold
+exactly, and tags, anchors, aliases and merge keys are refused, naming the
+path. Do not add a YAML input mode to the UI or CLI.
 
 ### 3.2 Exit status and logs
 
@@ -404,8 +412,9 @@ The repository vocabulary is deliberate. The user-facing words below are the
 ones the DSL, the proto, `orkctl`, the UI and every message use; a word marked
 internal never appears on any of those surfaces.
 
-- **Orkflow** means the user-authored YAML entity, its name, version, and
-  compiled definition.
+- **Orkflow** means the user-authored YAML entity (`apiVersion: orkstack/v1`,
+  `kind: Orkflow`), its name, version, and compiled definition; its `version`
+  is the Orkflow's own, `apiVersion` the document format's.
 - **Temporal workflow** means Temporal's workflow context, history, workflow
   type, workflow ID, or workflow task.
 - **Pool** means the user-facing set of Orkers.
@@ -889,6 +898,10 @@ Every code change follows this order:
    `deploy/orkstack.defaults.yaml` with `make config-defaults`; the
    completeness tests refuse a setting that is missing from any of the
    three.
+   For a change to an authored document's keys or words, or to a first-party
+   image's interface label, regenerate `docs/schemas/` with
+   `go run ./internal/schemas/cmd/genschemas`; `TestSchemas_AreGenerated`
+   refuses a stale schema.
 3. Write a behavior test that fails for the right reason.
 4. Implement until it passes.
 5. Run `make lint test`; for Temporal or storage changes, run the affected
@@ -1157,6 +1170,7 @@ internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentati
 internal/archive/      Run retirement and the cluster retention controller
 internal/automation/   Automation documents: parse, plan, export
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
+internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables
 internal/testsupport/  Test-only helpers shared by suites
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters

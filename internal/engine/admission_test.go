@@ -94,6 +94,8 @@ func TestRefusalTelemetry_IsTheSelectionTheRunWouldHaveCarried(t *testing.T) {
 		},
 	}
 	wf := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
 name: reconcile
 labels:
   Tier: gold

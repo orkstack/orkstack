@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/structpb"
+	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -21,9 +22,6 @@ import (
 // await can keep that release's workers required. A longer business process
 // is two runs.
 const MaxAwaitTimeoutSeconds = 30 * 24 * 60 * 60 // 2592000
-
-// awaitSchemaTypes is the inputs vocabulary (docs/DSL.md "Inputs").
-var awaitSchemaTypes = []string{"string", "number", "boolean", "object", "array"}
 
 // awaitDocument is one awaited task's declaration. KnownFields(true) on the
 // decoder applies to it, so a misspelled key inside `await:` is refused.
@@ -36,7 +34,8 @@ type awaitDocument struct {
 	Callback bool `yaml:"callback"`
 	// Schema declares the values a completion must carry, in the vocabulary
 	// top-level `inputs:` uses. Optional.
-	Schema map[string]any `yaml:"schema"`
+	// A data position: a yaml.Node value, like document.Inputs.
+	Schema yaml.Node `yaml:"schema"`
 }
 
 // awaitExecutionKeys lists, in the order they are checked, the YAML keys an
@@ -52,7 +51,7 @@ func awaitExecutionKeys(td taskDocument) []struct {
 		written bool
 	}{
 		{"uses", td.Uses != ""},
-		{"with", td.With != nil},
+		{"with", present(td.With)},
 		{"command", td.Command != nil},
 		{"env", td.Env != nil},
 		{"secrets", td.Secrets != nil},
@@ -111,13 +110,11 @@ func compileAwaitTask(taskIndex int, td taskDocument) (*orkstackv1.Task, error) 
 		TimeoutSeconds: *td.Await.TimeoutSeconds,
 		Callback:       td.Await.Callback,
 	}
-	if td.Await.Schema != nil {
-		schema, err := structpb.NewStruct(normalizeMap(td.Await.Schema))
-		if err != nil {
-			return nil, fmt.Errorf("task %q: await.schema: %w", td.ID, err)
-		}
-		spec.Schema = schema
+	schema, err := freeForm("await.schema", fmt.Sprintf("tasks[%d].await.schema", taskIndex), &td.Await.Schema)
+	if err != nil {
+		return nil, err
 	}
+	spec.Schema = schema
 	join, err := compileJoin(taskIndex, td)
 	if err != nil {
 		return nil, err
@@ -184,7 +181,7 @@ func validateAwaitTask(taskIndex int, task *orkstackv1.Task) error {
 		if !ok {
 			return validationError(field, fmt.Errorf(
 				"task %q: await.schema.%s must be a mapping with a `type` (one of %s)",
-				id, name, strings.Join(awaitSchemaTypes, ", ")))
+				id, name, strings.Join(typeWords, ", ")))
 		}
 		decl := entry.StructValue.GetFields()
 		keys := make([]string, 0, len(decl))
@@ -207,10 +204,10 @@ func validateAwaitTask(taskIndex int, task *orkstackv1.Task) error {
 			}
 		}
 		typ, ok := decl["type"].GetKind().(*structpb.Value_StringValue)
-		if !ok || !slices.Contains(awaitSchemaTypes, typ.StringValue) {
+		if !ok || !slices.Contains(typeWords, typ.StringValue) {
 			return validationError(field, fmt.Errorf(
 				"task %q: await.schema.%s: `type` is required and must be one of %s",
-				id, name, strings.Join(awaitSchemaTypes, ", ")))
+				id, name, strings.Join(typeWords, ", ")))
 		}
 		if required, present := decl["required"]; present {
 			if _, ok := required.GetKind().(*structpb.Value_BoolValue); !ok {
