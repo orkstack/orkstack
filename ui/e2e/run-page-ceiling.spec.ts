@@ -132,11 +132,48 @@ test.afterAll(async () => {
 	await killStarted();
 });
 
+// Opening, timed: milliseconds from navigation to the header, to every card,
+// and to interactive.
+interface Opening {
+	header: number;
+	cards: number;
+	interactive: number;
+}
+
+// The drift guard beside the gate: the UI revamp's stages are each held to the
+// MEDIAN of five opens of the same run against one baseline, because a single
+// open's run-to-run spread on one tree (~500 ms) is as large as the drift it
+// would have to see. The extra opens happen after the gated first open and
+// assert nothing; their medians are written for a stage to quote.
+const EXTRA_OPENS = 4;
+const openings: Record<string, Opening[]> = {};
+
+function median(values: number[]): number {
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+function medianOf(phase: string): Opening {
+	const all = openings[phase] ?? [];
+	return {
+		header: median(all.map((o) => o.header)),
+		cards: median(all.map((o) => o.cards)),
+		interactive: median(all.map((o) => o.interactive))
+	};
+}
+
 // measureRunPage opens a run's page and times it to interactive: its header,
 // every one of its task cards drawn, the last of them in view, and the page
 // answering a click (the last card's Inspect opens). It returns the
-// milliseconds from navigation.
-async function measureRunPage(page: Page, runId: string, tasks: number, phase: string): Promise<number> {
+// milliseconds from navigation, and records the opening under its phase.
+async function measureRunPage(
+	page: Page,
+	runId: string,
+	tasks: number,
+	phase: string,
+	screenshot = true
+): Promise<number> {
 	const started = Date.now();
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
 	await expect(page.getByTestId('run-status')).toBeVisible({ timeout: 60_000 });
@@ -156,9 +193,10 @@ async function measureRunPage(page: Page, runId: string, tasks: number, phase: s
 		`${phase}: run page of ${runId} (${tasks} tasks) interactive ${elapsed} ms after navigation ` +
 			`(header ${header} ms, every card ${cards} ms)`
 	);
+	(openings[phase] ??= []).push({ header, cards, interactive: elapsed });
 	// The viewport, not the full page: a page of thousands of cards is taller
 	// than a screenshot may be.
-	await page.screenshot({ path: outPath(`screenshot-run-page-gated-${phase}.png`) });
+	if (screenshot) await page.screenshot({ path: outPath(`screenshot-run-page-gated-${phase}.png`) });
 	return elapsed;
 }
 
@@ -187,6 +225,7 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 
 	const live = await measureRunPage(page, run, GATED_TASKS, 'live');
 	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+	for (let i = 0; i < EXTRA_OPENS; i++) await measureRunPage(page, run, GATED_TASKS, 'live', false);
 
 	await rpc('RunService/CancelRun', { runId: run, reason: 'run-page-ceiling e2e: gated-size render measured' });
 	// Finished means its last snapshot: the run reads CANCELED as soon as the
@@ -210,6 +249,14 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 	);
 	const finished = await measureRunPage(page, run, GATED_TASKS, 'finished');
 	await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
+	for (let i = 0; i < EXTRA_OPENS; i++) await measureRunPage(page, run, GATED_TASKS, 'finished', false);
+	const medians = { opens: 1 + EXTRA_OPENS, live: medianOf('live'), finished: medianOf('finished') };
+	writeFileSync(outPath('medians.json'), JSON.stringify(medians, null, 2) + '\n');
+	note(
+		`medians of ${medians.opens} opens (quoted, not gated): ` +
+			`live header ${medians.live.header} ms, cards ${medians.live.cards} ms, interactive ${medians.live.interactive} ms; ` +
+			`finished header ${medians.finished.header} ms, cards ${medians.finished.cards} ms, interactive ${medians.finished.interactive} ms`
+	);
 
 	// The output-maximal rows, quoted only.
 	const definition = await rpc<{ orkflow?: { definitionDigest?: string } }>('OrkflowService/GetOrkflow', {
