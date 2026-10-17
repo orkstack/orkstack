@@ -158,7 +158,7 @@
 			<Pagination testid="deliveries" noun="delivery record" page={c.page} count={0} {previousHref} {firstHref} />
 		{/if}
 	{:else}
-		<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+		<div class="overflow-x-auto rounded-md border border-border bg-surface">
 			<table class="w-full min-w-[900px] text-left text-sm" data-testid="deliveries-table">
 				<thead class="bg-surface-sunken text-xs text-fg-muted">
 					<tr>
@@ -195,10 +195,10 @@
 							<td class="p-3">
 								<span
 									data-testid="delivery-outcome-{d.id}"
-									class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 tracking-wide whitespace-nowrap {outcomeClasses(d.delivered)}"
+									class="inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium leading-4 tracking-caps whitespace-nowrap {outcomeClasses(d.delivered)}"
 									>{d.delivered ? 'delivered' : 'failed'}</span
 								>
-								{#if d.redeliveryOf}<span class="ml-1 text-[11px] text-fg-muted" data-testid="delivery-is-redelivery-{d.id}">redelivery</span>{/if}
+								{#if d.redeliveryOf}<span class="ml-1 text-2xs text-fg-muted" data-testid="delivery-is-redelivery-{d.id}">redelivery</span>{/if}
 							</td>
 							<td class="p-3 text-xs tabular-nums" data-testid="delivery-attempt-count-{d.id}">{d.attempts.length}</td>
 							<td class="p-3 font-mono text-xs" data-testid="delivery-last-{d.id}">{lastAttemptLabel(d)}</td>
@@ -261,7 +261,7 @@
 												confirming = d;
 												redeliverError = '';
 											}}
-											class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs hover:bg-surface-hover"
+											class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg hover:bg-surface-hover"
 											>Redeliver</button
 										>
 										{#if results[d.id]}

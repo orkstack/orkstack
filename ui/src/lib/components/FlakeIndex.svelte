@@ -140,7 +140,7 @@
 </script>
 
 <details
-	class="rounded-lg border border-border bg-surface shadow-xs"
+	class="rounded-md border border-border bg-surface"
 	data-testid="stability"
 	{open}
 	ontoggle={toggled}
@@ -157,7 +157,7 @@
 				<span class="text-xs font-medium text-fg-muted">Group by</span>
 				{#each FLAKE_DIMENSIONS as dim (dim)}
 					<label
-						class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors duration-150 {checked[
+						class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors {checked[
 							dim
 						]
 							? 'border-brand-200 bg-brand-50 text-brand-700'
@@ -215,7 +215,7 @@
 									{@const rate = fmtRetryRate(group)}
 									{@const flaky = group.retryRateDefined && group.retryRate > 0}
 									<tr
-										class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+										class="border-t border-border-subtle transition-colors hover:bg-surface-hover"
 										data-testid="stability-row-{i}"
 									>
 										{#each columns as dim, c (dim)}

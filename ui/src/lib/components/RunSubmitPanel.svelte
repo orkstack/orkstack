@@ -248,7 +248,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 	// recipes are whole class strings rather than a base plus an override.
 	function modeClass(active: boolean): string {
 		const tone = active ? 'font-semibold text-fg' : 'text-fg-secondary hover:text-fg';
-		return `rounded px-1.5 py-0.5 transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none ${tone}`;
+		return `rounded-sm px-1.5 py-0.5 transition-colors ${tone}`;
 	}
 
 	function currentVersionLabel() {
@@ -500,7 +500,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					bind:value={inputsJson}
 					rows="8"
 					spellcheck="false"
-					class="min-h-[160px] rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="min-h-[160px] rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm leading-5 text-fg focus:border-brand-500"
 				></textarea>
 				<p class="text-xs text-fg-muted">
 					JSON is lossless: it retains values and keys beyond the declared form fields.
@@ -520,7 +520,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					id="run-submit-idempotency-key"
 					data-testid="run-submit-idempotency-key"
 					bind:value={idempotencyKey}
-					class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500"
 				/>
 				<p class="text-xs text-fg-muted">
 					If the result is uncertain, retry with this same key. It is retained after an error.
@@ -555,7 +555,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					data-testid="submit-origin-ref"
 					bind:value={originReference}
 					placeholder="https://ci.example/jobs/123"
-					class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg placeholder:text-fg-placeholder focus:border-brand-500"
 				/>
 				<p class="text-xs text-fg-muted">
 					A CI job URL, a ticket, or an event id recorded on the run; up to 256 bytes.
@@ -571,7 +571,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					bind:value={assumedOutputsJson}
 					rows="3"
 					spellcheck="false"
-					class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm leading-5 text-fg focus:border-brand-500"
 				></textarea>
 				{#if assumedError}
 					<p data-testid="run-submit-assumed-outputs-error" class="text-sm text-danger-700">
@@ -593,7 +593,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					bind:value={assumeFailedText}
 					spellcheck="false"
 					placeholder="deploy"
-					class="h-9 rounded-md border border-border bg-surface px-3 font-mono text-[13px] text-fg shadow-xs placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg placeholder:text-fg-placeholder focus:border-brand-500"
 				/>
 				<p class="text-xs text-fg-muted">
 					Plans the failure path: each task, when it would run, failed after its retries — its failure
@@ -631,7 +631,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					!!typedInputError ||
 					!!assumedError ||
 					!selectedOrkflow}
-				class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:bg-surface-sunken focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+				class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg transition-colors hover:bg-surface-sunken disabled:pointer-events-none disabled:opacity-50"
 			>
 				{planning ? 'Planning…' : 'Plan'}
 			</button>
@@ -644,7 +644,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					!!selectionError ||
 					!!typedInputError ||
 					!selectedOrkflow}
-				class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+				class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 			>
 				{submitting ? 'Submitting…' : 'Submit run'}
 			</button>

@@ -23,6 +23,20 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- The UI is redrawn as a drawing office (stage 1 of 4: the shell). A slim
+  top bar replaces the sidebar, with two modes — **Build** (Runs, Orkflows,
+  Apply) and **Operate** (the Admin pages) — and a row along the bottom edge
+  states what each page is. **Ctrl+K** (**⌘K** on macOS) opens a command
+  palette that jumps to any page, run or Orkflow and switches the namespace
+  or the appearance; it never writes (docs/UI_CLI_PARITY.md, "Navigation and
+  the command palette"). Light and dark are designed together and follow the
+  system unless one is chosen; a browser that refuses storage now follows
+  the system too instead of painting light. Statuses are stamps that differ
+  by drawn mark as well as colour, every focus ring is one solid 2 px line,
+  and the faces are the self-hosted Archivo Narrow and Spline Sans Mono
+  (55 KB preloaded, down from 89 KB). Every colour, size, radius, shadow and
+  motion is a token in `ui/src/tokens.css`; a test refuses a raw value
+  anywhere else.
 - **BREAKING:** every Orkflow begins with `apiVersion: orkstack/v1` and
   `kind: Orkflow`. A document without them is refused at validate, apply and
   plan, naming the two lines to add. The header is not part of the definition:

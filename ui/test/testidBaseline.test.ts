@@ -140,9 +140,13 @@ test('every testid shape on the baseline is still produced', () => {
 	}
 	const baseline = readFileSync(fixture, 'utf8').split('\n').filter(Boolean);
 	expect(baseline.length > 700).toBe(true);
-	const missing = baseline.filter((shape) => !now.has(shape) && !(shape in ALLOWED_REMOVALS));
+	// A literal that moved from an attribute into a component prop or an
+	// object field (`testid: 'theme-dark'`, rendered as data-testid={c.testid})
+	// is still produced.
+	const produced = (shape: string) => now.has(shape) || now.has(shape.replace(/^id /, 'prop '));
+	const missing = baseline.filter((shape) => !produced(shape) && !(shape in ALLOWED_REMOVALS));
 	expect(missing).toEqual([]);
 	// An allowance for a shape that is still produced (or never was) is stale.
-	const stale = Object.keys(ALLOWED_REMOVALS).filter((shape) => now.has(shape) || !baseline.includes(shape));
+	const stale = Object.keys(ALLOWED_REMOVALS).filter((shape) => produced(shape) || !baseline.includes(shape));
 	expect(stale).toEqual([]);
 });

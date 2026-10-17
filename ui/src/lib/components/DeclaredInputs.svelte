@@ -82,7 +82,7 @@
 						rows="3"
 						value={drafts[spec.name] ?? composite(value[spec.name])}
 						oninput={(event) => updateComposite(spec.name, spec.type, event.currentTarget.value)}
-						class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] text-fg"
+						class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg"
 					></textarea>
 				{:else}
 					<input

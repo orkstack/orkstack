@@ -45,24 +45,23 @@
 	}: Props = $props();
 </script>
 
-<div
-	class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4 animate-fade-in motion-reduce:animate-none"
->
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
 	<div
 		data-testid={testid}
+		data-overlay
 		role="dialog"
 		aria-modal="true"
 		aria-label={title}
 		tabindex="-1"
 		use:focusTrap={{ initial: destructive ? '[data-confirm-cancel]' : undefined }}
-		class="w-full max-w-lg focus:outline-none rounded-xl border border-border bg-surface-raised p-6 shadow-lg animate-dialog-in motion-reduce:animate-none"
+		class="w-full max-w-lg rounded-md border-(length:--rule-region) border-ink bg-sheet p-6 text-ink shadow-overlay animate-overlay-in focus:outline-none motion-reduce:animate-none"
 	>
-		<h2 class="text-base font-semibold text-fg">{title}</h2>
-		<div class="mt-2 text-sm text-fg-secondary">{@render body()}</div>
+		<h2 class="border-b border-rule pb-3 text-lg font-semibold text-ink">{title}</h2>
+		<div class="mt-3 text-sm text-ink-secondary">{@render body()}</div>
 		{#if error}
 			<p
 				data-testid="{testid}-error"
-				class="mt-4 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700"
+				class="severity-error mt-4 border border-red bg-red-tint px-3 py-2 text-sm"
 			>
 				{error}
 			</p>
@@ -74,7 +73,7 @@
 				data-confirm-cancel
 				disabled={busy}
 				onclick={() => oncancel()}
-				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-50"
+				class="btn"
 			>
 				Cancel
 			</button>
@@ -83,9 +82,7 @@
 				data-testid={acceptTestid}
 				disabled={busy || acceptDisabled}
 				onclick={() => onaccept()}
-				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-50 {destructive
-					? 'bg-danger-600 hover:bg-danger-700 focus-visible:ring-danger-500/40 active:bg-danger-800'
-					: 'bg-brand-600 hover:bg-brand-700 focus-visible:ring-brand-500/40 active:bg-brand-800'}"
+				class="btn {destructive ? 'btn-danger' : 'btn-primary'}"
 			>
 				{busy ? 'Working…' : acceptLabel}
 			</button>

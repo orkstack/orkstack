@@ -366,7 +366,7 @@
 					data-testid="versions-reload"
 					disabled={reloading}
 					onclick={reload}
-					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
+					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
 				>
 					{reloading ? 'Reloading…' : 'Reload'}
 				</button>
@@ -376,7 +376,7 @@
 					disabled={reloading || deleteSafety !== 'safe'}
 					title={deleteSafetyReason || 'Permanently delete this orkflow and every version'}
 					onclick={askToDelete}
-					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-danger-200 bg-surface px-3.5 text-sm font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-danger-200 bg-surface px-3.5 text-sm font-medium text-danger-700 transition-colors hover:border-danger-300 hover:bg-danger-50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
 				>
 					Delete Orkflow
 				</button>
@@ -389,7 +389,7 @@
 		</div>
 	</div>
 
-	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+	<div class="overflow-x-auto rounded-md border border-border bg-surface">
 		<table class="w-full min-w-[640px] border-collapse text-left text-sm" data-testid="version-list">
 			<thead class="bg-surface-sunken">
 				<tr>
@@ -404,7 +404,7 @@
 			<tbody>
 				{#each versions as version (version.version)}
 					<tr
-						class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+						class="border-t border-border-subtle transition-colors hover:bg-surface-hover"
 						data-testid="version-row-{version.version}"
 					>
 						<td class="h-11 px-4 pl-5 align-middle">
@@ -412,14 +412,14 @@
 							{#if runsNow(version)}
 								<span
 									data-testid="version-current-{version.version}"
-									class="ml-2 inline-flex items-center rounded-full border border-succeeded-border bg-succeeded-bg px-2 py-0.5 text-[11px] font-medium text-succeeded-fg"
+									class="ml-2 inline-flex items-center rounded-full border border-succeeded-border bg-succeeded-bg px-2 py-0.5 text-2xs font-medium text-succeeded-fg"
 									title="runs when no version is named">current</span
 								>
 							{/if}
 							{#if version.version === headVersion}
 								<span
 									data-testid="version-head-{version.version}"
-									class="ml-2 inline-flex items-center rounded-full border border-info-200 bg-info-50 px-2 py-0.5 text-[11px] font-medium text-info-700"
+									class="ml-2 inline-flex items-center rounded-full border border-info-200 bg-info-50 px-2 py-0.5 text-2xs font-medium text-info-700"
 									title="the most recently applied version — what an edit is derived from"
 									>head</span
 								>
@@ -467,7 +467,7 @@
 									href={editHref(version.version)}
 									data-testid="version-edit-{version.version}"
 									title="edit this version's source and apply it as a new version"
-									class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+									class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
 								>
 									Edit
 								</a>
@@ -478,7 +478,7 @@
 										type="button"
 										data-testid="promote-{version.version}"
 										onclick={() => askToPromote(version.version)}
-										class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+										class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
 									>
 										Promote
 									</button>
@@ -499,7 +499,7 @@
 				data-testid="diff-run"
 				disabled={diffing}
 				onclick={runDiff}
-				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3 text-xs font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3 text-xs font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 			>
 				{diffing ? 'Diffing…' : `Diff ${diffFrom || '…'} → ${diffTo || '…'}`}
 			</button>
@@ -508,7 +508,7 @@
 				data-testid="compat-run"
 				disabled={comparing}
 				onclick={runCompat}
-				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
+				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
 			>
 				{comparing ? 'Comparing…' : `Compare interfaces ${diffFrom || '…'} → ${diffTo || '…'}`}
 			</button>

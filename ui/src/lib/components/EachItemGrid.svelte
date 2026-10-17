@@ -145,7 +145,7 @@
 					aria-pressed={selected === item.index}
 					title={itemAriaLabel(item)}
 					onclick={() => onSelect(selected === item.index ? undefined : item.index)}
-					class="relative inline-flex h-7 min-w-7 items-center justify-center rounded-sm border px-1 font-mono text-[10px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 {STATUS_CLASSES[
+					class="relative inline-flex h-7 min-w-7 items-center justify-center rounded-sm border px-1 font-mono text-2xs leading-none {STATUS_CLASSES[
 						item.status
 					]} {selected === item.index ? 'ring-2 ring-brand-500' : ''}"
 				>{item.index}{#if isCachedItem(item)}<span

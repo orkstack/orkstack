@@ -134,7 +134,7 @@
 						{#each answer.references as ref, i (ref.runId + ':' + ref.taskId + ':' + ref.kind + ':' + i)}
 							<li
 								data-testid="{base}-reference-row"
-								class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-border-subtle bg-surface px-2 py-1"
+								class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-border-subtle bg-surface px-2 py-1"
 							>
 								<a
 									href={withNamespace(`/runs/${encodeURIComponent(ref.runId)}`, namespace)}
@@ -144,7 +144,7 @@
 								{#if ref.runId === runId}
 									<span
 										data-testid="{base}-this-run"
-										class="rounded-full border border-border px-1.5 text-[11px] text-fg-muted">this run</span
+										class="rounded-full border border-border px-1.5 text-2xs text-fg-muted">this run</span
 									>
 								{/if}
 								<span class="text-fg-secondary">{ref.orkflowName}@{ref.orkflowVersion}</span>

@@ -130,13 +130,13 @@
 
 <section class="mb-4 flex flex-wrap items-center gap-3" data-testid="cache-window">
 	<span class="text-sm font-medium text-fg">Window</span>
-	<div role="group" aria-label="Cache window" class="inline-flex h-9 rounded-md border border-border bg-surface shadow-xs">
+	<div role="group" aria-label="Cache window" class="inline-flex h-9 rounded-md border border-border bg-surface">
 		{#each CACHE_WINDOWS as preset (preset)}
 			<a
 				data-testid="cache-window-{preset}"
 				aria-current={data.window.window === preset ? 'page' : undefined}
 				href={windowHref(preset)}
-				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors duration-150 first:rounded-l-md last:rounded-r-md last:border-r-0 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700"
+				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors first:rounded-l-md last:rounded-r-md last:border-r-0 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700"
 				>{preset}</a
 			>
 		{/each}
@@ -148,12 +148,12 @@
 			data-testid="cache-window-since"
 			bind:value={customSince}
 			placeholder={data.window.window === 'custom' ? data.window.since : '2026-09-20T00:00:00Z'}
-			class="h-9 w-56 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			class="h-9 w-56 rounded-md border border-border bg-surface px-3 text-sm text-fg placeholder:text-fg-placeholder focus:border-brand-500"
 		/>
 		<button
 			type="submit"
 			data-testid="cache-window-apply"
-			class="h-9 rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover">Apply</button
+			class="h-9 rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover">Apply</button
 		>
 	</form>
 	{#if data.orkflow}
@@ -168,7 +168,7 @@
 			type="button"
 			data-testid="cache-purge"
 			onclick={openPurge}
-			class="h-9 rounded-md border border-danger-200 bg-surface px-3 text-sm font-medium text-danger-700 shadow-xs hover:bg-danger-50"
+			class="h-9 rounded-md border border-danger-200 bg-surface px-3 text-sm font-medium text-danger-700 hover:bg-danger-50"
 			>Purge memos</button
 		>
 	</div>
@@ -193,7 +193,7 @@
 		{#if stats.usage.length === 0}
 			<p class="text-sm text-fg-muted" data-testid="cache-usage-empty">No cached task finished in this window.</p>
 		{:else}
-			<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+			<div class="overflow-x-auto rounded-md border border-border bg-surface">
 				<table class="w-full min-w-[720px] border-collapse text-left text-sm" data-testid="cache-usage">
 					<thead class="bg-surface-sunken">
 						<tr>
@@ -233,7 +233,7 @@
 		{#if stats.inventory.length === 0}
 			<p class="text-sm text-fg-muted" data-testid="cache-memos-empty">No memos stored.</p>
 		{:else}
-			<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+			<div class="overflow-x-auto rounded-md border border-border bg-surface">
 				<table class="w-full min-w-[720px] border-collapse text-left text-sm" data-testid="cache-memos">
 					<thead class="bg-surface-sunken">
 						<tr>
@@ -310,7 +310,7 @@
 							data-testid="cache-purge-task"
 							bind:value={purgeTask}
 							placeholder="featurize"
-							class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+							class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg placeholder:text-fg-placeholder focus:border-brand-500"
 						/>
 					</label>
 				{/if}
@@ -320,7 +320,7 @@
 						data-testid="cache-purge-older-than"
 						bind:value={purgeOlderThan}
 						placeholder="72h"
-						class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+						class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg placeholder:text-fg-placeholder focus:border-brand-500"
 					/>
 				</label>
 				<p class="text-fg-muted">No run, commit or artifact is touched; the next run of these tasks runs its container.</p>
@@ -339,14 +339,14 @@
 						<button
 							type="button"
 							onclick={() => (purgeOpen = false)}
-							class="h-9 rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+							class="h-9 rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
 							>Close</button
 						>
 						<button
 							type="submit"
 							data-testid="cache-purge-confirm"
 							disabled={purging || Boolean(purgeInvalid)}
-							class="h-9 rounded-md bg-danger-600 px-3 text-sm font-medium text-white shadow-xs hover:bg-danger-700 disabled:opacity-50"
+							class="h-9 rounded-md bg-danger-600 px-3 text-sm font-medium text-on-ink hover:bg-danger-700 disabled:opacity-50"
 							>{purging ? 'Purging…' : 'Purge'}</button
 						>
 					</div>

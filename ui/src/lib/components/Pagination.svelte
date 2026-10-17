@@ -14,6 +14,7 @@
 	// is known — which page this is, how many rows it holds, and whether it is
 	// the last — because a made-up total is worse than an absent one.
 	import type { Snippet } from 'svelte';
+	import Icon from './Icon.svelte';
 
 	interface Props {
 		/** testid prefix: 'runs' → runs-previous, runs-next, runs-first, runs-page-status */
@@ -59,12 +60,11 @@
 		children = undefined
 	}: Props = $props();
 
-	// The app's secondary button, verbatim (OrkflowVersions.svelte, and the
-	// dashboard's window controls): a disabled direction is an <a> with no
-	// href, so it is not a link at all, plus the `aria-disabled` and
-	// `pointer-events-none opacity-50` every disabled control here wears.
-	const BUTTON =
-		'inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none';
+	// The app's quiet button (the `.btn` primitive): a disabled direction is
+	// an <a> with no href, so it is not a link at all, plus the
+	// `aria-disabled` and `pointer-events-none opacity-50` every disabled
+	// control here wears.
+	const BUTTON = 'btn';
 	const DISABLED = ' pointer-events-none opacity-50';
 
 	// Page 1 that is also the last page says nothing about pages: there are
@@ -80,18 +80,15 @@
 	const showFirst = $derived(page > 1 && !previousHref && firstHref !== undefined);
 </script>
 
-{#snippet chevron(d: string)}
-	<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="size-4 shrink-0"><path {d} /></svg>
-{/snippet}
 
 <div class="mt-4 flex items-center justify-between gap-3" data-testid="{testid}-pagination">
 	<div class="flex items-center gap-3">
 		{@render children?.()}
-		<span class="text-sm text-fg-muted tabular-nums" data-testid="{testid}-page-status">{status}</span>
+		<span class="figure text-sm text-ink-muted" data-testid="{testid}-page-status">{status}</span>
 	</div>
 	<div class="flex items-center gap-2">
 		{#if showFirst}<a data-testid="{testid}-first" href={firstHref} class={BUTTON}>First page</a>{/if}
-		<a data-testid="{testid}-previous" aria-disabled={!previousHref} href={previousHref} class="{BUTTON}{previousHref ? '' : DISABLED}">{@render chevron('m12 6-4 4 4 4')}Previous</a>
-		<a data-testid="{testid}-next" aria-disabled={!nextHref} href={nextHref} onclick={() => onnext?.()} class="{BUTTON}{nextHref ? '' : DISABLED}">Next{@render chevron('m8 6 4 4-4 4')}</a>
+		<a data-testid="{testid}-previous" aria-disabled={!previousHref} href={previousHref} class="{BUTTON}{previousHref ? '' : DISABLED}"><Icon name="chevronLeft" />Previous</a>
+		<a data-testid="{testid}-next" aria-disabled={!nextHref} href={nextHref} onclick={() => onnext?.()} class="{BUTTON}{nextHref ? '' : DISABLED}">Next<Icon name="chevronRight" /></a>
 	</div>
 </div>

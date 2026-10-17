@@ -192,7 +192,7 @@
 	};
 
 	const actionClass =
-		'inline-flex h-7 items-center rounded-md border border-border bg-surface px-2.5 text-xs font-medium text-fg shadow-xs hover:bg-surface-hover disabled:opacity-50';
+		'inline-flex h-7 items-center rounded-md border border-border bg-surface px-2.5 text-xs font-medium text-fg hover:bg-surface-hover disabled:opacity-50';
 
 	function drainCommand(orker: string): string {
 		return `orkctl orker drain ${shellQuote(orker)}`;
@@ -267,7 +267,7 @@
 	{#if filtered && resp.releases.length === 0}
 		<p class="mb-4 text-sm text-fg-muted" data-testid="releases-empty">No releases match these filters.</p>
 	{/if}
-	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+	<div class="overflow-x-auto rounded-md border border-border bg-surface">
 		<table class="w-full min-w-[960px] border-collapse text-left text-sm" data-testid="releases-table">
 			<thead class="bg-surface-sunken">
 				<tr>

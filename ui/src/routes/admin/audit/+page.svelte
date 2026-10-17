@@ -131,7 +131,7 @@
 		<Pagination testid="audit" noun="record" page={c.page} count={0} {previousHref} {firstHref} />
 	{/if}
 {:else}
-	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+	<div class="overflow-x-auto rounded-md border border-border bg-surface">
 		<table class="w-full min-w-[820px] text-left text-sm" data-testid="audit-table">
 			<thead class="bg-surface-sunken text-xs text-fg-muted">
 				<tr>
@@ -162,7 +162,7 @@
 						<td class="p-3">
 							<span
 								data-testid="audit-result"
-								class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium tracking-wide whitespace-nowrap leading-4 {refused(rec.succeeded)}"
+								class="inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium tracking-caps whitespace-nowrap leading-4 {refused(rec.succeeded)}"
 								>{auditResultLabel(rec)}</span
 							>
 						</td>

@@ -127,7 +127,7 @@
 		{#each data.examples as example (example.slug)}
 			<div
 				data-testid="apply-example-{example.slug}"
-				class="flex flex-col rounded-lg border border-border bg-surface p-4 shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+				class="flex flex-col rounded-md border border-border bg-surface p-4 transition-colors hover:border-border-strong hover:bg-surface-hover"
 			>
 				<h3 class="font-medium text-fg">{example.name}</h3>
 				<p class="mt-1 grow text-sm text-fg-muted">{example.description}</p>
@@ -165,7 +165,7 @@
 			rows="18"
 			spellcheck="false"
 			placeholder={ORKFLOW_PLACEHOLDER}
-			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs [font-variant-ligatures:none] placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm leading-5 text-fg [font-variant-ligatures:none] placeholder:text-fg-placeholder focus:border-brand-500"
 		></textarea>
 		<div class="flex flex-wrap gap-3 text-sm">
 			<label class="cursor-pointer font-medium text-brand-700">Import YAML<input data-testid="apply-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
@@ -199,7 +199,7 @@
 		type="submit"
 		data-testid="apply-submit"
 		disabled={applying}
-		class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+		class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 	>
 		{applying ? 'Applying…' : 'Apply orkflow'}
 	</button>

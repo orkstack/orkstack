@@ -111,7 +111,7 @@
 				no trigger or schedule starts it.
 			</p>
 		{:else}
-			<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+			<div class="overflow-x-auto rounded-md border border-border bg-surface">
 				<table class="w-full min-w-[720px] border-collapse text-left text-sm" data-testid="callers-table">
 					<thead class="bg-surface-sunken">
 						<tr>

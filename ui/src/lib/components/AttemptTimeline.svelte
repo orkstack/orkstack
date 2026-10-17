@@ -159,7 +159,7 @@
 							<span class="font-mono font-medium text-fg-secondary">#{attempt.attempt}</span>
 							<span
 								data-testid="task-{taskId}-attempt-{attempt.attempt}-outcome"
-								class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium tracking-wide whitespace-nowrap uppercase leading-4 {attemptOutcomeClasses(
+								class="inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium tracking-caps whitespace-nowrap uppercase leading-4 {attemptOutcomeClasses(
 									attempt.outcome
 								)}"
 							>
@@ -207,7 +207,7 @@
 						</div>
 						{#if unreported}
 							<p
-								class="mt-1 text-[11px] text-fg-muted"
+								class="mt-1 text-2xs text-fg-muted"
 								data-testid="task-{taskId}-attempt-{attempt.attempt}-unreported"
 							>
 								{UNREPORTED_CAPTION}
@@ -221,7 +221,7 @@
 							-->
 							{@const phases = attemptPhases(attempt)}
 							<p
-								class="mt-1 font-mono text-[11px] break-words text-fg-muted"
+								class="mt-1 font-mono text-2xs break-words text-fg-muted"
 								data-testid="attempt-{taskId}-{attempt.attempt}-phases"
 							>
 								{#if phases.kind === 'phases'}
@@ -238,7 +238,7 @@
 								which input changed between a miss and the run whose
 								memo it no longer matches.
 							-->
-							<div class="mt-1 text-[11px] text-fg-muted" data-testid="task-{taskId}-attempt-{attempt.attempt}-cache">
+							<div class="mt-1 text-2xs text-fg-muted" data-testid="task-{taskId}-attempt-{attempt.attempt}-cache">
 								<span>{attemptCacheLine(attempt.cache)}</span>
 								{#if keyComponentRows(attempt.cache.keyComponents).length > 0}
 									<details class="mt-1" data-testid="task-{taskId}-attempt-{attempt.attempt}-cache-components">

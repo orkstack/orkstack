@@ -1,24 +1,22 @@
 <script lang="ts">
+	// A status, stamped: a 1 px frame, tracked caps, and the status's drawn
+	// mark before its word ($lib/statusMarks.ts). The mark is CSS on the stamp
+	// itself — RUNNING and AWAITING alone draw theirs as one inner span — so a
+	// run page of thousands of stamps adds no element per stamp. The text is
+	// exactly the status word and nothing else: lists read it as the cell's
+	// whole text.
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { statusClasses, statusLabel } from '$lib/status';
+	import { statusMark } from '$lib/statusMarks';
 
 	let { status, testid }: { status: Status | undefined; testid?: string } = $props();
+
+	const mark = $derived(statusMark(status));
 </script>
 
-<span
-	data-testid={testid}
-	class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium tracking-wide whitespace-nowrap uppercase leading-4 {statusClasses(
-		status
-	)}"
->
-	{#if status === Status.RUNNING}
-		<span
-			class="size-1.5 rounded-full bg-running-solid animate-pulse-dot motion-reduce:animate-none"
+<span data-testid={testid} class="stamp {statusClasses(status)} {mark.inner ? '' : mark.className}"
+	>{#if mark.inner}<span
+			class="{mark.className} {status === Status.RUNNING ? 'animate-live-dot motion-reduce:animate-none' : ''}"
 			aria-hidden="true"
-		></span>
-	{:else if status === Status.AWAITING}
-		<!-- Static, no pulse: an awaiting task is waiting, not working. -->
-		<span class="size-1.5 rounded-full bg-awaiting-solid" aria-hidden="true"></span>
-	{/if}
-	{statusLabel(status)}
-</span>
+		></span>{/if}{statusLabel(status)}</span
+>

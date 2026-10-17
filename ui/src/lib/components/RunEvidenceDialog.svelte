@@ -222,7 +222,7 @@
 					<div class="mt-2 flex items-start gap-2">
 						<pre
 							data-testid="run-evidence-too-large-command"
-							class="min-w-0 flex-1 overflow-x-auto rounded bg-surface-sunken p-2 font-mono text-xs text-fg">{overLimit.command}</pre>
+							class="min-w-0 flex-1 overflow-x-auto rounded-sm bg-surface-sunken p-2 font-mono text-xs text-fg">{overLimit.command}</pre>
 						<CliEquivalent command={overLimit.command} testid="run-evidence-too-large-cli" label="Copy the export command" />
 					</div>
 				</div>
@@ -235,7 +235,7 @@
 					data-testid="run-evidence-download"
 					disabled={!manifest || loading || downloading || tooLarge}
 					onclick={() => void download()}
-					class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3 text-sm font-medium text-white shadow-xs hover:bg-brand-700 disabled:opacity-50"
+					class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:opacity-50"
 				>{downloading
 						? 'Downloading…'
 						: tooLarge

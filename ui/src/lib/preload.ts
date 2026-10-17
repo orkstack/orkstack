@@ -10,7 +10,8 @@
 //     4 KiB as base64, which put a Cyrillic-ext face into the render-blocking
 //     CSS of every page whether or not a Cyrillic character ever appears
 //     (inlineAsset, used by vite.config.ts);
-//   * the two faces every page does use — Inter and JetBrains Mono, latin,
+//   * the two faces every page does use — Archivo Narrow and Spline Sans
+//     Mono, latin,
 //     variable weight — are preloaded from the server-rendered HTML, so they
 //     download beside the CSS rather than after it has been parsed
 //     (preloadAsset, used by hooks.server.ts).

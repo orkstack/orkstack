@@ -123,7 +123,7 @@
 			data-testid="pool-orkers-refresh-{pool}"
 			disabled={loading}
 			onclick={() => void load()}
-			class="shrink-0 rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium text-fg shadow-xs hover:bg-surface-hover disabled:opacity-50"
+			class="shrink-0 rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
 		>
 			{loading ? 'Refreshing…' : 'Refresh'}
 		</button>
@@ -215,7 +215,7 @@
 									data-testid="orker-uncordon-{orker.orkerId}"
 									disabled={uncordonBusy === orker.orkerId}
 									onclick={() => void uncordon(orker)}
-									class="rounded-md border border-border bg-surface px-2.5 py-1 font-medium text-fg shadow-xs hover:bg-surface-hover disabled:opacity-50"
+									class="rounded-md border border-border bg-surface px-2.5 py-1 font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
 								>
 									Uncordon
 								</button>
@@ -224,7 +224,7 @@
 									type="button"
 									data-testid="orker-cordon-{orker.orkerId}"
 									onclick={() => openCordon(orker)}
-									class="rounded-md border border-warning-300 bg-warning-50 px-2.5 py-1 font-medium text-warning-800 shadow-xs hover:bg-warning-200"
+									class="rounded-md border border-warning-300 bg-warning-50 px-2.5 py-1 font-medium text-warning-800 hover:bg-warning-200"
 								>
 									Cordon
 								</button>
@@ -276,7 +276,7 @@
 				placeholder="Why is this Orker leaving the pool?"
 			/>
 			<p
-				class="mt-3 overflow-x-auto rounded bg-surface-sunken p-2 font-mono text-xs text-fg-muted"
+				class="mt-3 overflow-x-auto rounded-sm bg-surface-sunken p-2 font-mono text-xs text-fg-muted"
 				data-testid="orker-cordon-command"
 			>
 				{cordonCommand(cordoning?.orkerId ?? '', reason.trim() || '<reason>')}

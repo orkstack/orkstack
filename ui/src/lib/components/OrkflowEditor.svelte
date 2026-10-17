@@ -338,7 +338,7 @@
 			oninput={() => (noop = '')}
 			rows="24"
 			spellcheck="false"
-			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs [font-variant-ligatures:none] [tab-size:2] whitespace-pre focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm leading-5 text-fg [font-variant-ligatures:none] [tab-size:2] whitespace-pre focus:border-brand-500"
 		></textarea>
 		<div class="flex flex-wrap gap-3 text-sm">
 			<label class="cursor-pointer font-medium text-brand-700">Import YAML<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
@@ -418,7 +418,7 @@
 						data-testid="editor-conflict-diff"
 						disabled={conflictBusy || !conflictHead}
 						onclick={showConflictDiff}
-						class="inline-flex h-8 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs hover:bg-warning-50 disabled:pointer-events-none disabled:opacity-50"
+						class="inline-flex h-8 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 hover:bg-warning-50 disabled:pointer-events-none disabled:opacity-50"
 					>
 						{conflictBusy
 							? 'Working…'
@@ -429,7 +429,7 @@
 						data-testid="editor-conflict-rebase"
 						disabled={conflictBusy || !conflictHead}
 						onclick={retarget}
-						class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
+						class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
 					>
 						Keep my edit and retarget head {conflictHead || '…'}
 					</button>
@@ -460,7 +460,7 @@
 			type="submit"
 			data-testid="editor-apply"
 			disabled={applying || validating}
-			class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+			class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 		>
 			{applying ? 'Applying…' : `Apply as a new version of ${name}`}
 		</button>

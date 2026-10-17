@@ -32,7 +32,7 @@
 			data-testid={testid}
 			bind:value
 			placeholder="cosign:<key-name>"
-			class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 		/>
 	{:else}
 		<Select {testid} {value} {options} onchange={(next) => (value = next)} />

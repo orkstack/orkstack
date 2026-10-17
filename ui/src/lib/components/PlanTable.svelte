@@ -73,7 +73,7 @@
 						<td class="px-3 py-2 align-top">
 							<span
 								data-testid="run-plan-row-{row.taskId}-outcome"
-								class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] leading-4 font-medium whitespace-nowrap {OUTCOME_CLASSES[
+								class="inline-flex items-center rounded-full border px-2 py-0.5 text-2xs leading-4 font-medium whitespace-nowrap {OUTCOME_CLASSES[
 									row.outcome
 								]}">{planOutcomeWord(row.outcome)}</span
 							>

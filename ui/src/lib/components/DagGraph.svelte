@@ -18,7 +18,7 @@
 {#if tasks.length === 0}
 	<p class="text-sm text-fg-muted">No tasks.</p>
 {:else}
-	<div class="overflow-x-auto rounded-lg border border-border bg-surface p-3 shadow-xs">
+	<div class="overflow-x-auto rounded-md border border-border bg-surface p-3">
 		<svg
 			data-testid="orkflow-dag"
 			width={layout.width}
@@ -74,9 +74,7 @@
 						x={node.x + 12}
 						y={node.y + 24}
 						fill="var(--color-fg)"
-						font-size="13"
-						font-weight="600"
-						font-family="var(--font-sans)">{node.task.id}</text
+						class="font-sans text-sm font-semibold">{node.task.id}</text
 					>
 					{#if node.task.orkflow}
 						<!-- A composed task: it runs another Orkflow as a child run. -->
@@ -85,16 +83,14 @@
 							x={node.x + 12}
 							y={node.y + 43}
 							fill="var(--color-brand-700)"
-							font-size="11"
-							font-family="var(--font-mono)">orkflow {node.task.orkflow.name}@{node.task.orkflow.version}</text
+							class="font-mono text-2xs">orkflow {node.task.orkflow.name}@{node.task.orkflow.version}</text
 						>
 					{:else}
 						<text
 							x={node.x + 12}
 							y={node.y + 43}
 							fill="var(--color-fg-muted)"
-							font-size="11"
-							font-family="var(--font-mono)">{activityLabel(node.task) || '—'}</text
+							class="font-mono text-2xs">{activityLabel(node.task) || '—'}</text
 						>
 					{/if}
 					{#if node.task.each}
@@ -105,8 +101,7 @@
 							y={node.y + 24}
 							text-anchor="end"
 							fill="var(--color-brand-700)"
-							font-size="11"
-							font-family="var(--font-mono)">each ≤ {node.task.each.maxItems}</text
+							class="font-mono text-2xs">each ≤ {node.task.each.maxItems}</text
 						>
 					{:else if joinAttr(node.task.join)}
 						<!-- A join: when the task starts, decided from how its needs ended. -->
@@ -116,8 +111,7 @@
 							y={node.y + 24}
 							text-anchor="end"
 							fill="var(--color-brand-700)"
-							font-size="11"
-							font-family="var(--font-mono)">join {joinWord(node.task.join)}</text
+							class="font-mono text-2xs">join {joinWord(node.task.join)}</text
 						>
 					{/if}
 					{#if node.task.cache}
@@ -128,8 +122,7 @@
 							y={node.y + 43}
 							text-anchor="end"
 							fill="var(--color-brand-700)"
-							font-size="11"
-							font-family="var(--font-mono)">cached</text
+							class="font-mono text-2xs">cached</text
 						>
 					{/if}
 				</g>

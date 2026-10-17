@@ -17,6 +17,7 @@
 	// the page is read once and settles it.
 	import { navigating, page } from '$app/state';
 	import { withNamespace } from '$lib/namespace';
+	import { OPERATE_PAGES } from '$lib/navigation';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -37,20 +38,7 @@
 		navigating.to !== null && navigating.to.url.pathname.startsWith('/admin')
 	);
 
-	const tabs = [
-		{ id: 'overview', href: '/admin', label: 'Overview' },
-		{ id: 'namespaces', href: '/admin/namespaces', label: 'Namespaces' },
-		{ id: 'pools', href: '/admin/pools', label: 'Pools' },
-		{ id: 'releases', href: '/admin/releases', label: 'Releases' },
-		{ id: 'activities', href: '/admin/activities', label: 'Activities' },
-		{ id: 'webhooks', href: '/admin/webhooks', label: 'Webhooks' },
-		{ id: 'automation', href: '/admin/automation', label: 'Automation' },
-		{ id: 'retention', href: '/admin/retention', label: 'Retention' },
-		{ id: 'usage', href: '/admin/usage', label: 'Usage' },
-		{ id: 'cache', href: '/admin/cache', label: 'Cache' },
-		{ id: 'image-policy', href: '/admin/image-policy', label: 'Image policy' },
-		{ id: 'audit', href: '/admin/audit', label: 'Audit' }
-	];
+	const tabs = OPERATE_PAGES;
 
 	// "overview" only ever matches the exact `/admin` path: every other tab's
 	// href is a PREFIX of it (`/admin/namespaces` starts with `/admin`), so a
@@ -65,30 +53,38 @@
 	);
 </script>
 
-<svelte:head><title>Admin — OrkStack</title></svelte:head>
-
-<div class="mb-6">
-	<h1 class="text-xl font-semibold tracking-tight text-fg">Admin</h1>
-	<p class="mt-1 text-sm text-fg-muted">
+<div class="mb-4">
+	<h1 class="text-xl font-semibold tracking-tight text-ink">Operate</h1>
+	<p class="mt-1 text-sm text-ink-secondary">
 		Manage namespaces, watch pool health, and read what this deployment is made of.
 	</p>
 </div>
 
-<nav class="mb-6 flex gap-1 border-b border-border" aria-label="Admin views" data-testid="admin-nav">
-	{#each tabs as tab (tab.id)}
-		<a
-			href={link(tab.href)}
-			data-testid="admin-tab-{tab.id}"
-			aria-current={current === tab.id ? 'page' : undefined}
-			class="-mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium text-fg-muted transition-colors duration-150 hover:text-fg current:border-brand-600 current:text-fg"
-		>
-			{tab.label}
-		</a>
-	{/each}
+<!--
+	The Operate pages as the sheet's first row: tracked-caps tabs on a 1.5 px
+	rule. On a narrow screen the strip scrolls inside its own frame, never the page.
+-->
+<nav
+	class="mb-6 overflow-x-auto border-b-(length:--rule-region) border-ink"
+	aria-label="Admin views"
+	data-testid="admin-nav"
+>
+	<div class="flex w-max gap-1">
+		{#each tabs as tab (tab.id)}
+			<a
+				href={link(tab.href)}
+				data-testid="admin-tab-{tab.id}"
+				aria-current={current === tab.id ? 'page' : undefined}
+				class="caps -mb-px border-b-2 border-transparent px-3 py-2.5 whitespace-nowrap text-ink-muted transition-colors hover:text-ink current:border-blue current:text-ink"
+			>
+				{tab.label}
+			</a>
+		{/each}
+	</div>
 </nav>
 
 {#if navigatingWithinAdmin}
-	<p class="mb-4 text-sm text-fg-muted" data-testid="admin-nav-loading">Loading…</p>
+	<p class="mb-4 text-sm text-ink-muted" data-testid="admin-nav-loading">Loading…</p>
 {/if}
 
 {@render children()}

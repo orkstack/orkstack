@@ -93,7 +93,7 @@
 	<h1 class="text-xl font-semibold tracking-tight text-fg">Orkflows</h1>
 	<a
 		href={withNamespace('/apply', data.namespace)}
-		class="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800"
+		class="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800"
 	>
 		Apply orkflow
 	</a>
@@ -119,21 +119,21 @@
 	<p class="text-sm text-fg-muted" data-testid="orkflows-loading">Loading orkflows…</p>
 {:else if data.orkflows.length === 0 && data.applied.length > 0}
 	<p
-		class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
+		class="rounded-md border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
 		data-testid="orkflows-empty"
 	>
 		No orkflows match these filters.
 	</p>
 {:else if data.orkflows.length === 0}
 	<p
-		class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
+		class="rounded-md border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
 		data-testid="orkflows-empty"
 	>
 		No orkflows in namespace {namespaceLabel(data.namespace)} yet. Apply one from a YAML document
 		to get started.
 	</p>
 {:else}
-	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+	<div class="overflow-x-auto rounded-md border border-border bg-surface">
 		<table class="w-full min-w-[640px] border-collapse text-left text-sm" data-testid="orkflow-list">
 			<thead class="bg-surface-sunken">
 				<tr>
@@ -147,7 +147,7 @@
 			<tbody>
 				{#each data.orkflows as wf (wf.name + '@' + wf.version)}
 					<tr
-						class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+						class="border-t border-border-subtle transition-colors hover:bg-surface-hover"
 						data-testid="orkflow-row-{wf.name}"
 					>
 						<td class="h-11 px-4 pl-5 align-middle font-medium">

@@ -77,7 +77,7 @@
 			<h2 class="text-sm font-semibold text-fg">This deployment</h2>
 			<span class="text-xs text-fg-muted">describes the replica that answered</span>
 		</div>
-		<div class="overflow-hidden rounded-lg border border-border bg-surface shadow-xs">
+		<div class="overflow-hidden rounded-md border border-border bg-surface">
 			<dl class="divide-y divide-border-subtle text-sm">
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
 					<dt class="text-fg-muted">Engine version</dt>
@@ -141,7 +141,7 @@
 			<a
 				href={withNamespace(card.href, data.namespace)}
 				data-testid={card.testid}
-				class="rounded-lg border border-border bg-surface p-4 shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+				class="rounded-md border border-border bg-surface p-4 transition-colors hover:border-border-strong hover:bg-surface-hover"
 			>
 				<h3 class="font-medium text-fg">{card.title}</h3>
 				<p class="mt-1 text-sm text-fg-muted">{card.body}</p>

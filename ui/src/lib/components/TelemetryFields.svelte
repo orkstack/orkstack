@@ -67,7 +67,7 @@
 			data-testid="{idPrefix}-telemetry-sink{testIdSuffix}"
 			bind:value={sink}
 			placeholder="default"
-			class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 		/>
 	{:else}
 		<Select
@@ -94,7 +94,7 @@
 		bind:value={attributesText}
 		rows="3"
 		placeholder="team=payments"
-		class="rounded-md border border-border bg-surface px-3 py-2 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+		class="rounded-md border border-border bg-surface px-3 py-2 text-fg focus:border-brand-500"
 	></textarea>
 	{#if attributesHint}
 		<span class="text-xs text-fg-muted">{attributesHint}</span>

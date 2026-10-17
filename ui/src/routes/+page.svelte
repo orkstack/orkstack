@@ -183,13 +183,13 @@
 		since a window in force with nothing marked was a control that hid its
 		own state. The group no longer clips its overflow: the popover hangs out
 		of it. -->
-	<div role="group" aria-label="Stats window" class="inline-flex h-9 rounded-md border border-border bg-surface shadow-xs">
+	<div role="group" aria-label="Stats window" class="inline-flex h-9 rounded-md border border-border bg-surface">
 		{#each ['15m', '6h', '24h'] as preset (preset)}
 			<a
 				data-testid="dashboard-window-{preset}"
 				aria-current={data.window === preset ? 'page' : undefined}
 				href={windowHref(preset)}
-				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors duration-150 first:rounded-l-md hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
+				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors first:rounded-l-md hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700"
 			>{preset}</a>
 		{/each}
 		<Popover open={customOpen} onOpenChange={(open) => (customOpen = open)} align="end" testid="dashboard-window-custom-popover">
@@ -201,7 +201,7 @@
 					aria-expanded={customOpen}
 					aria-haspopup="dialog"
 					onclick={() => (customOpen = !customOpen)}
-					class="inline-flex h-full items-center rounded-r-md px-3 text-sm font-medium text-fg-muted transition-colors duration-150 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
+					class="inline-flex h-full items-center rounded-r-md px-3 text-sm font-medium text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700"
 				>{customLabel}</button>
 			{/snippet}
 			{#snippet content()}
@@ -216,13 +216,13 @@
 						type="datetime-local"
 						bind:value={customSince}
 						max={sinceInputValue(new Date(now).toISOString())}
-						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500"
 					/>
 					<button
 						type="submit"
 						data-testid="dashboard-window-custom-apply"
 						disabled={!customValid}
-						class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+						class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 					>Apply</button>
 				</form>
 			{/snippet}
@@ -278,7 +278,7 @@
 			</p>
 			{#if pools.length === 0}
 				<p
-					class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
+					class="rounded-md border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
 					data-testid="pools-empty"
 				>
 					No pool could be read for {shown}.
@@ -287,7 +287,7 @@
 				<div class="space-y-2" data-testid="pool-list">
 					{#each pools as pool (pool.name)}
 						<div
-							class="rounded-lg border border-border bg-surface px-4 py-3 shadow-xs"
+							class="rounded-md border border-border bg-surface px-4 py-3"
 							data-testid="pool-{pool.name}"
 						>
 							<div class="flex items-center justify-between gap-3">
@@ -331,13 +331,13 @@
 			</p>
 			{#if failures.length === 0}
 				<p
-					class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
+					class="rounded-md border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
 					data-testid="failures-empty"
 				>
 					No run failed in this window.
 				</p>
 			{:else}
-				<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+				<div class="overflow-x-auto rounded-md border border-border bg-surface">
 					<table class="w-full min-w-[420px] border-collapse text-sm" data-testid="failure-table">
 						<thead class="bg-surface-sunken">
 							<tr>
@@ -350,7 +350,7 @@
 						<tbody>
 							{#each failures as failure (failure.orkflowName)}
 								<tr
-									class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+									class="border-t border-border-subtle transition-colors hover:bg-surface-hover"
 									data-testid="failure-{failure.orkflowName}"
 								>
 									<td class="h-11 px-4 pl-5 align-middle">
@@ -416,7 +416,7 @@
 		<h2 class="mb-3 text-sm font-semibold text-fg">Running now</h2>
 		{#if running.length === 0}
 			<p
-				class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
+				class="rounded-md border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
 				data-testid="running-empty"
 			>
 				Nothing is running in {shown}.
@@ -426,7 +426,7 @@
 				{#each running as run (run.id)}
 					<a
 						href={withNamespace(`/runs/${run.id}`, data.namespace)}
-						class="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3 shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+						class="flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-4 py-3 transition-colors hover:border-border-strong hover:bg-surface-hover"
 						data-testid="running-{run.id}"
 					>
 						<div>

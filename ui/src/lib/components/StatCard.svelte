@@ -17,29 +17,30 @@
 	let { label, value, note = '', testid, tone = 'plain' }: Props = $props();
 
 	const missing = $derived(value === UNAVAILABLE);
+	// One alarm colour in this world: a bad figure is red ink, a busy one
+	// drafting blue, every other figure plain ink. A good figure needs no
+	// colour to be good.
 	const valueClass = $derived(
 		missing
-			? 'font-normal italic text-fg-muted'
-			: tone === 'good'
-				? 'text-succeeded-fg'
-				: tone === 'bad'
-					? 'text-failed-fg'
-					: tone === 'busy'
-						? 'text-running-fg'
-						: 'text-fg'
+			? 'font-normal italic text-ink-muted'
+			: tone === 'bad'
+				? 'text-red'
+				: tone === 'busy'
+					? 'text-blue'
+					: 'text-ink'
 	);
 </script>
 
-<div class="rounded-lg border border-border bg-surface p-4 shadow-xs">
-	<div class="text-xs font-medium text-fg-muted">{label}</div>
+<div class="border-l border-rule px-4 py-2 first:border-l-0 first:pl-0">
+	<div class="caps text-ink-muted">{label}</div>
 	<div
 		data-testid={testid}
 		data-unavailable={missing ? 'true' : 'false'}
-		class="mt-1.5 text-2xl font-semibold tracking-tight tabular-nums {valueClass}"
+		class="figure mt-1 text-lg font-semibold {valueClass}"
 	>
 		{value}
 	</div>
 	{#if note}
-		<div class="mt-1 text-xs text-fg-muted" data-testid="{testid}-note">{note}</div>
+		<div class="mt-0.5 text-xs text-ink-muted" data-testid="{testid}-note">{note}</div>
 	{/if}
 </div>

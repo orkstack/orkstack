@@ -22,13 +22,13 @@
 <div
 	role="status"
 	data-testid={testid}
-	class="mb-4 flex items-start gap-3 rounded-lg border border-danger-200 bg-danger-50 px-4 py-3 text-sm text-danger-800"
+	class="mb-4 flex items-start gap-3 border border-red bg-red-tint px-4 py-3 text-sm text-red-strong"
 >
 	<div class="min-w-0 flex-1">
-		<p class="font-semibold" data-testid="{testid}-title">
+		<p class="severity-error font-semibold" data-testid="{testid}-title">
 			On hold since {fmtTimestamp(hold.since)} — "{hold.reason}"
 		</p>
-		<p class="mt-1 text-danger-700">
+		<p class="mt-1 text-ink">
 			New runs of namespace <span class="font-mono">{namespace}</span> are refused until the hold is
 			released. Runs already accepted finish untouched.
 		</p>

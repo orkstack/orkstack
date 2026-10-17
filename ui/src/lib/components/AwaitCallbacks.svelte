@@ -63,7 +63,7 @@
 			type="button"
 			data-testid="await-callbacks-continue"
 			onclick={() => oncontinue()}
-			class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs hover:bg-brand-700"
+			class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink hover:bg-brand-700"
 		>Continue to the run</button>
 	</div>
 </section>

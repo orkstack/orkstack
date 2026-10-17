@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import { rememberRecent } from '$lib/palette/recent';
 	import DagGraph from '$lib/components/DagGraph.svelte';
 	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -19,6 +20,11 @@
 
 	let { data }: PageProps = $props();
 	const wf = $derived(data.orkflow);
+
+	// The palette's RECENT group: this browser remembers the Orkflow's name.
+	$effect(() => {
+		if (data.orkflow?.name) rememberRecent({ kind: 'orkflow', id: data.orkflow.name, namespace: namespaceLabel(data.namespace) });
+	});
 
 	// The tab is a coordinate of the page, so it lives in the URL beside the
 	// namespace and the version: a link to "the versions of deploy in payments"
@@ -107,7 +113,7 @@
 			href={tabHref(tab.id)}
 			data-testid="tab-{tab.id}"
 			aria-current={data.tab === tab.id ? 'page' : undefined}
-			class="-mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium text-fg-muted transition-colors duration-150 hover:text-fg current:border-brand-600 current:text-fg"
+			class="-mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium text-fg-muted transition-colors hover:text-fg current:border-brand-600 current:text-fg"
 		>
 			{tab.label}
 		</a>
@@ -147,7 +153,7 @@
 					>
 				{/if}
 			</div>
-			<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+			<div class="overflow-x-auto rounded-md border border-border bg-surface">
 				<table class="w-full min-w-[720px] border-collapse text-left text-sm">
 					<thead class="bg-surface-sunken">
 						<tr>
@@ -163,7 +169,7 @@
 					<tbody>
 						{#each wf.tasks as task (task.id)}
 							<tr
-								class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+								class="border-t border-border-subtle transition-colors hover:bg-surface-hover"
 								data-testid="task-row-{task.id}"
 							>
 								<td class="h-11 px-4 pl-5 align-middle font-medium text-fg">{task.id}</td>
@@ -240,7 +246,7 @@
 		<section class="mb-8" data-testid="orkflow-outputs">
 			<h2 class="mb-3 text-sm font-semibold text-fg">Outputs</h2>
 			{#if Object.keys(wf.outputs ?? {}).length > 0}
-				<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+				<div class="overflow-x-auto rounded-md border border-border bg-surface">
 					<table class="w-full border-collapse text-left text-sm">
 						<thead class="bg-surface-sunken">
 							<tr>
@@ -273,13 +279,13 @@
 				type="button"
 				data-testid="orkflow-submit-run"
 				onclick={() => (submitDialogOpen = true)}
-				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none"
+				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800"
 			>
 				Submit a run
 			</button>
 			<a
 				href={listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters(wf.name, '', '', '') })}
-				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
 			>
 				View runs
 			</a>

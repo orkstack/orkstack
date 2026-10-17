@@ -176,47 +176,47 @@
 	const cli = $derived([...command, ...filterFlags(applied)].join(' '));
 
 	const inputClass =
-		'h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none';
+		'field h-9 w-full px-3 text-sm';
 </script>
 
 <form
 	role="search"
-	class="mb-5 rounded-lg border border-border bg-surface p-4 shadow-xs"
+	class="mb-5 border-y-(length:--rule-region) border-ink bg-paper py-4"
 	data-testid="{testid}-filters"
 	onsubmit={submit}
 >
 	{#if rows.length === 0}
-		<p class="text-sm text-fg-muted" data-testid="{testid}-filters-none">No filters applied. Add one to narrow this list.</p>
+		<p class="text-sm text-ink-muted" data-testid="{testid}-filters-none">No filters applied. Add one to narrow this list.</p>
 	{/if}
 	<div class="flex flex-col gap-3">
 		{#each rows as row, i (i)}
 			{@const field = declared(row.path)}
 			<div class="grid items-end gap-2 sm:grid-cols-[minmax(0,14rem)_minmax(0,9rem)_minmax(0,11rem)_minmax(0,1fr)_auto]" data-testid="{testid}-filter-row-{i}">
 				<div class="flex flex-col gap-1.5 text-sm">
-					<label class="font-medium text-fg" for="{testid}-filter-field-{i}">Field</label>
+					<label class="caps text-ink-muted" for="{testid}-filter-field-{i}">Field</label>
 					<Select id="{testid}-filter-field-{i}" testid="{testid}-filter-field-{i}" value={row.path} options={fieldOptions} onchange={(next) => setField(i, next)} />
 				</div>
 				{#if field?.kind === 'labels'}
 					<label class="flex flex-col gap-1.5 text-sm">
-						<span class="font-medium text-fg">Key</span>
+						<span class="caps text-ink-muted">Key</span>
 						<input class="{inputClass} font-mono" data-testid="{testid}-filter-key-{i}" bind:value={rows[i].key} placeholder="team" autocomplete="off" spellcheck="false" />
 					</label>
 				{:else}
 					<div></div>
 				{/if}
 				<div class="flex flex-col gap-1.5 text-sm">
-					<label class="font-medium text-fg" for="{testid}-filter-op-{i}">Operator</label>
+					<label class="caps text-ink-muted" for="{testid}-filter-op-{i}">Operator</label>
 					<Select id="{testid}-filter-op-{i}" testid="{testid}-filter-op-{i}" value={String(row.op)} options={operatorOptions(row)} onchange={(next) => setOp(i, next)} />
 				</div>
 				<div class="flex flex-col gap-1.5 text-sm">
-					<span class="font-medium text-fg">Value</span>
+					<span class="caps text-ink-muted">Value</span>
 					{#if field?.kind === 'enum' && row.op === FilterOperator.IN}
 						<div class="flex flex-wrap gap-x-3 gap-y-1" role="group" aria-label="{field.label} values" data-testid="{testid}-filter-value-{i}">
 							{#each field.values as value (value)}
-								<label class="inline-flex items-center gap-1.5 text-sm text-fg">
+								<label class="inline-flex items-center gap-1.5 text-sm text-ink">
 									<input
 										type="checkbox"
-										class="size-4 accent-brand-600"
+										class="size-4 accent-blue"
 										data-testid="{testid}-filter-value-{i}-{value}"
 										checked={row.picked.includes(value)}
 										onchange={(event) => togglePicked(i, value, event.currentTarget.checked)}
@@ -231,7 +231,7 @@
 						<Select testid="{testid}-filter-value-{i}" label="{field.label} value" value={row.text} options={[{ value: 'true', label: 'true' }, { value: 'false', label: 'false' }]} onchange={(next) => (rows[i].text = next)} />
 					{:else if field?.kind === 'time'}
 						<input type="datetime-local" class={inputClass} data-testid="{testid}-filter-value-{i}" bind:value={rows[i].text} />
-						<span class="text-xs text-fg-muted tabular-nums" data-testid="{testid}-filter-utc-{i}">{row.text ? `${isoFromLocal(row.text)} (UTC)` : 'no instant'}</span>
+						<span class="figure text-xs text-ink-muted" data-testid="{testid}-filter-utc-{i}">{row.text ? `${isoFromLocal(row.text)} (UTC)` : 'no instant'}</span>
 					{:else}
 						<input
 							class="{inputClass} font-mono"
@@ -245,14 +245,14 @@
 				</div>
 				<button
 					type="button"
-					class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg-secondary shadow-xs transition-colors duration-150 hover:bg-surface-hover"
+					class="btn"
 					data-testid="{testid}-filter-remove-{i}"
 					aria-label="Remove this filter"
 					onclick={() => removeRow(i)}>Remove</button
 				>
 			</div>
 			{#if field?.requires}
-				<p class="-mt-1 text-xs text-fg-muted" data-testid="{testid}-filter-requires-{i}">
+				<p class="-mt-1 text-xs text-ink-muted" data-testid="{testid}-filter-requires-{i}">
 					needs an equals filter on {field.requires}
 				</p>
 			{/if}
@@ -261,20 +261,20 @@
 	{#if children}
 		<div class="mt-4 flex flex-wrap items-end gap-4">{@render children()}</div>
 	{/if}
-	<div class="mt-4 flex flex-wrap items-center gap-4 border-t border-border-subtle pt-4">
+	<div class="mt-4 flex flex-wrap items-center gap-4 border-t border-rule pt-4">
 		<button
 			type="button"
-			class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+			class="btn"
 			data-testid="{testid}-filter-add"
 			onclick={addRow}>Add filter</button
 		>
 		<button
 			type="submit"
-			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800"
+			class="btn btn-primary"
 			data-testid="{testid}-filters-apply">Apply filters</button
 		>
 		{#if applied.length > 0}
-			<a href={clearHref} class="text-sm font-medium text-brand-700 hover:underline" data-testid="{testid}-filters-clear">Clear filters</a>
+			<a href={clearHref} class="link text-sm font-medium" data-testid="{testid}-filters-clear">Clear filters</a>
 		{/if}
 		<div class="ml-auto">
 			<CliEquivalent testid="{testid}-filters-cli" label="CLI equivalent of these filters" command={cli} />

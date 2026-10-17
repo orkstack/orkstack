@@ -35,9 +35,9 @@ function enumValues(name: string): number[] {
 test('verdictWord covers every declared verdict', () => {
 	const words = enumValues('InterfaceVerdict').map((v) => verdictWord(v as InterfaceVerdict));
 	expect(words).toEqual(['', 'compatible', 'breaking', 'unknown']);
-	expect(verdictChipClass(InterfaceVerdict.BREAKING)).toContain('danger');
-	expect(verdictChipClass(InterfaceVerdict.COMPATIBLE)).toContain('info');
-	expect(verdictChipClass(InterfaceVerdict.UNKNOWN)).toContain('text-fg-muted');
+	expect(verdictChipClass(InterfaceVerdict.BREAKING)).toContain('text-red-strong');
+	expect(verdictChipClass(InterfaceVerdict.COMPATIBLE)).toContain('text-ink');
+	expect(verdictChipClass(InterfaceVerdict.UNKNOWN)).toContain('text-ink-muted');
 });
 
 test('changeWord is the CLI CHANGE column for every declared change', () => {

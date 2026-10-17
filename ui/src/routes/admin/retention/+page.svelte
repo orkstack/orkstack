@@ -135,7 +135,7 @@
 	</p>
 {:else}
 	<section class="mb-8" data-testid="retention-info">
-		<div class="overflow-hidden rounded-lg border border-border bg-surface shadow-xs">
+		<div class="overflow-hidden rounded-md border border-border bg-surface">
 			<dl class="divide-y divide-border-subtle text-sm">
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
 					<dt class="text-fg-muted">Maximum run retention</dt>
@@ -162,7 +162,7 @@
 		</p>
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface p-5 shadow-xs">
+	<section class="rounded-md border border-border bg-surface p-5">
 		<h2 class="mb-3 text-sm font-semibold text-fg">Change the maximum</h2>
 		<form
 			class="flex flex-wrap items-end gap-3"
@@ -178,14 +178,14 @@
 					bind:value={hours}
 					inputmode="decimal"
 					placeholder="168"
-					class="h-9 w-32 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 w-32 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 			</label>
 			<button
 				type="submit"
 				data-testid="retention-set-submit"
 				disabled={setBusy}
-				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 			>
 				{setBusy ? 'Setting…' : 'Set retention'}
 			</button>
@@ -237,7 +237,7 @@
 					bind:value={confirmTyped}
 					inputmode="decimal"
 					autocomplete="off"
-					class="h-9 w-32 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 w-32 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 			</label>
 		{/snippet}

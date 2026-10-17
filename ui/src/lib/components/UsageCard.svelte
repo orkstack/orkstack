@@ -115,7 +115,7 @@
 	};
 </script>
 
-<section class="rounded-lg border border-border bg-surface shadow-xs" data-testid="usage">
+<section class="rounded-md border border-border bg-surface" data-testid="usage">
 	<div class="flex flex-wrap items-center gap-3 border-b border-border-subtle px-4 py-3">
 		<h2 class="text-sm font-semibold text-fg" data-testid="usage-heading">{heading}</h2>
 		{#if loading}
@@ -181,7 +181,7 @@
 				<span class="text-xs font-medium text-fg-muted">Group by</span>
 				{#each USAGE_DIMENSIONS as dim (dim)}
 					<label
-						class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors duration-150 {checked[dim]
+						class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors {checked[dim]
 							? 'border-brand-200 bg-brand-50 text-brand-700'
 							: 'border-border bg-surface text-fg-muted hover:bg-surface-hover'}"
 					>

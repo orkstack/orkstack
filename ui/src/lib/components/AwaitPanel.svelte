@@ -183,7 +183,7 @@
 
 	function modeClass(active: boolean): string {
 		const tone = active ? 'font-semibold text-fg' : 'text-fg-secondary hover:text-fg';
-		return `rounded px-1.5 py-0.5 transition-colors duration-150 ${tone}`;
+		return `rounded-sm px-1.5 py-0.5 transition-colors ${tone}`;
 	}
 </script>
 
@@ -199,13 +199,13 @@
 					type="button"
 					data-testid="task-{task.id}-resolve"
 					onclick={() => open('resolve')}
-					class="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-medium text-white shadow-xs hover:bg-brand-700"
+					class="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-medium text-on-ink hover:bg-brand-700"
 				>Resolve</button>
 				<button
 					type="button"
 					data-testid="task-{task.id}-reject"
 					onclick={() => open('reject')}
-					class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 shadow-xs hover:bg-danger-50"
+					class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 hover:bg-danger-50"
 				>Reject</button>
 				<CliEquivalent
 					command={resolveCli({ namespace, runId, taskId: task.id })}
@@ -310,7 +310,7 @@
 						bind:value={jsonText}
 						rows="8"
 						spellcheck="false"
-						class="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs"
+						class="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm leading-5 text-fg"
 					></textarea>
 				{/if}
 				{#if error}
@@ -323,7 +323,7 @@
 						data-testid="await-resolve-submit"
 						disabled={busy}
 						onclick={() => void submitResolve()}
-						class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs hover:bg-brand-700 disabled:opacity-50"
+						class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:opacity-50"
 					>{busy ? 'Delivering…' : 'Resolve'}</button>
 				</div>
 			</div>
@@ -348,7 +348,7 @@
 					class="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg"
 					placeholder="Why is this await rejected?"
 				></textarea>
-				<p class="overflow-x-auto rounded bg-surface-sunken p-2 font-mono text-xs text-fg-muted">{rejectCommand}</p>
+				<p class="overflow-x-auto rounded-sm bg-surface-sunken p-2 font-mono text-xs text-fg-muted">{rejectCommand}</p>
 				{#if error}
 					<ErrorPanel testid="await-reject-error" subject="the rejection of {task.id}" message={error} />
 				{/if}
@@ -358,7 +358,7 @@
 						data-testid="await-reject-submit"
 						disabled={busy || reason.trim() === ''}
 						onclick={() => void submitReject()}
-						class="inline-flex h-9 items-center rounded-md bg-danger-600 px-3.5 text-sm font-medium text-white shadow-xs hover:bg-danger-700 disabled:opacity-50"
+						class="inline-flex h-9 items-center rounded-md bg-danger-600 px-3.5 text-sm font-medium text-on-ink hover:bg-danger-700 disabled:opacity-50"
 					>{busy ? 'Delivering…' : 'Reject'}</button>
 				</div>
 			</div>

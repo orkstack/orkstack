@@ -27,7 +27,7 @@
 	>
 		{verdictLine(response.verdict, response.findings)}
 	</p>
-	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+	<div class="overflow-x-auto rounded-md border border-border bg-surface">
 		<table class="w-full min-w-[640px] border-collapse text-left text-sm" data-testid="compat-findings">
 			<thead class="bg-surface-sunken">
 				<tr>

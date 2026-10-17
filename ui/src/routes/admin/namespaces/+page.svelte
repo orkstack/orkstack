@@ -763,7 +763,7 @@
 		onretry={retry}
 	/>
 {:else}
-	<section class="mb-8 rounded-lg border border-border bg-surface p-5 shadow-xs">
+	<section class="mb-8 rounded-md border border-border bg-surface p-5">
 		<h2 class="mb-3 text-sm font-semibold text-fg">Create a namespace</h2>
 		<form
 			class="grid gap-3 sm:grid-cols-2"
@@ -778,7 +778,7 @@
 					data-testid="ns-create-name"
 					bind:value={createName}
 					placeholder="payments"
-					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 				{#if createErrors.name}
 					<span class="text-xs text-danger-700" data-testid="ns-create-error-name"
@@ -791,7 +791,7 @@
 				<input
 					data-testid="ns-create-description"
 					bind:value={createDescription}
-					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 			</label>
 			<label class="flex flex-col gap-1.5 text-sm">
@@ -800,7 +800,7 @@
 					data-testid="ns-create-default-pool"
 					bind:value={createDefaultPool}
 					placeholder={DEFAULT_POOL_NAME}
-					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 				{#if createErrors.defaultPool}
 					<span class="text-xs text-danger-700" data-testid="ns-create-error-default-pool"
@@ -814,7 +814,7 @@
 					data-testid="ns-create-allowed-pools"
 					bind:value={createAllowedPools}
 					placeholder="cpu, gpu"
-					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 				{#if createErrors.allowedPools}
 					<span class="text-xs text-danger-700" data-testid="ns-create-error-allowed-pools"
@@ -829,7 +829,7 @@
 					bind:value={createRunRetentionHours}
 					inputmode="decimal"
 					placeholder="inherit"
-					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 				<span class="text-xs text-fg-muted">Blank inherits the deployment maximum.</span>
 				{#if createErrors.runRetention}
@@ -844,7 +844,7 @@
 					data-testid="ns-create-hold-reason"
 					bind:value={createHoldReason}
 					placeholder="accepting"
-					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 				{#if createErrors.holdReason}
 					<span class="text-xs text-danger-700" data-testid="ns-create-error-hold-reason"
@@ -859,7 +859,7 @@
 					bind:value={createMaxRunning}
 					inputmode="numeric"
 					placeholder="0"
-					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 				{#if createErrors.maxRunning}
 					<span class="text-xs text-danger-700" data-testid="ns-create-error-max-running"
@@ -872,15 +872,15 @@
 				<div class="grid gap-3 sm:grid-cols-4">
 					<label class="flex flex-col gap-1.5">
 						<span class="text-xs font-medium text-fg">Budget cpu-seconds</span>
-						<input data-testid="ns-create-budget-cpu-seconds" bind:value={createBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+						<input data-testid="ns-create-budget-cpu-seconds" bind:value={createBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500" />
 					</label>
 					<label class="flex flex-col gap-1.5">
 						<span class="text-xs font-medium text-fg">Budget GiB-seconds</span>
-						<input data-testid="ns-create-budget-gib-seconds" bind:value={createBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+						<input data-testid="ns-create-budget-gib-seconds" bind:value={createBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500" />
 					</label>
 					<label class="flex flex-col gap-1.5">
 						<span class="text-xs font-medium text-fg">Budget period (hours)</span>
-						<input data-testid="ns-create-budget-period-hours" bind:value={createBudgetPeriodHours} inputmode="numeric" placeholder="720" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+						<input data-testid="ns-create-budget-period-hours" bind:value={createBudgetPeriodHours} inputmode="numeric" placeholder="720" class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500" />
 					</label>
 					<label class="flex items-center gap-2 self-end pb-2">
 						<input type="checkbox" class="size-4 accent-brand-600" data-testid="ns-create-budget-enforce" bind:checked={createBudgetEnforce} />
@@ -902,7 +902,7 @@
 					rows="2"
 					placeholder="env:SANDBOX_*"
 					spellcheck="false"
-					class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs text-fg focus:border-brand-500"
 				></textarea>
 				<span class="text-xs text-fg-muted"
 					>Bounds which <code>source:</code> values this namespace's tasks may name. Each Orker's own
@@ -938,7 +938,7 @@
 					type="submit"
 					data-testid="ns-create-submit"
 					disabled={createBusy}
-					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 				>
 					{createBusy ? 'Creating…' : 'Create namespace'}
 				</button>
@@ -977,7 +977,7 @@
 			</p>
 		{/if}
 		{#if data.namespacesList.length > 0}
-			<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+			<div class="overflow-x-auto rounded-md border border-border bg-surface">
 				<table class="w-full min-w-[720px] border-collapse text-left text-sm" data-testid="namespace-list">
 					<thead class="bg-surface-sunken">
 						<tr>
@@ -1001,8 +1001,8 @@
 					<tbody>
 						{#each data.namespacesList as ns (ns.name)}
 							<tr
-								class="border-t border-border-subtle transition-colors duration-150 {ns.hold
-									? 'bg-warning-50 hover:bg-warning-100'
+								class="border-t border-border-subtle transition-colors {ns.hold
+									? 'bg-warning-50 hover:bg-paper-sunken'
 									: 'hover:bg-surface-hover'}"
 								data-testid="namespace-row-{ns.name}"
 								data-held={ns.hold ? 'true' : 'false'}
@@ -1059,7 +1059,7 @@
 											type="button"
 											data-testid="namespace-edit-{ns.name}"
 											onclick={() => openEdit(ns)}
-											class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+											class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
 										>
 											Edit
 										</button>
@@ -1068,7 +1068,7 @@
 												type="button"
 												data-testid="namespace-release-hold-{ns.name}"
 												onclick={() => askToRelease(ns)}
-												class="inline-flex h-8 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs transition-colors duration-150 hover:bg-warning-50"
+												class="inline-flex h-8 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 transition-colors hover:bg-warning-50"
 											>
 												Release hold
 											</button>
@@ -1077,7 +1077,7 @@
 												type="button"
 												data-testid="namespace-hold-action-{ns.name}"
 												onclick={() => askToHold(ns.name)}
-												class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+												class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
 											>
 												Hold…
 											</button>
@@ -1104,7 +1104,7 @@
 												type="button"
 												data-testid="namespace-delete-{ns.name}"
 												onclick={() => askToDelete(ns.name)}
-												class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50"
+												class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 transition-colors hover:border-danger-300 hover:bg-danger-50"
 											>
 												Delete
 											</button>
@@ -1128,7 +1128,7 @@
 												<input
 													data-testid="ns-edit-description-{ns.name}"
 													bind:value={editDescription}
-													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 												/>
 											</label>
 											<label class="flex flex-col gap-1.5 text-sm">
@@ -1136,7 +1136,7 @@
 												<input
 													data-testid="ns-edit-default-pool-{ns.name}"
 													bind:value={editDefaultPool}
-													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 												/>
 												{#if editErrors.defaultPool}
 													<span class="text-xs text-danger-700">{editErrors.defaultPool}</span>
@@ -1147,7 +1147,7 @@
 												<input
 													data-testid="ns-edit-allowed-pools-{ns.name}"
 													bind:value={editAllowedPools}
-													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 												/>
 												{#if editErrors.allowedPools}
 													<span class="text-xs text-danger-700">{editErrors.allowedPools}</span>
@@ -1160,7 +1160,7 @@
 													bind:value={editRunRetentionHours}
 													inputmode="decimal"
 													placeholder="inherit"
-													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 												/>
 												{#if editErrors.runRetention}
 													<span class="text-xs text-danger-700">{editErrors.runRetention}</span>
@@ -1172,7 +1172,7 @@
 													data-testid="ns-edit-hold-reason-{ns.name}"
 													bind:value={editHoldReason}
 													placeholder="accepting"
-													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 												/>
 												<span class="text-xs text-fg-muted">A reason closes the namespace to new runs; blank releases it.</span>
 												{#if editErrors.holdReason}
@@ -1186,7 +1186,7 @@
 													bind:value={editMaxRunning}
 													inputmode="numeric"
 													placeholder="0"
-													class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+													class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 												/>
 												{#if editErrors.maxRunning}
 													<span class="text-xs text-danger-700">{editErrors.maxRunning}</span>
@@ -1197,15 +1197,15 @@
 												<div class="grid gap-3 sm:grid-cols-4">
 													<label class="flex flex-col gap-1.5">
 														<span class="text-xs font-medium text-fg">Budget cpu-seconds</span>
-														<input data-testid="ns-edit-budget-cpu-seconds-{ns.name}" bind:value={editBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+														<input data-testid="ns-edit-budget-cpu-seconds-{ns.name}" bind:value={editBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500" />
 													</label>
 													<label class="flex flex-col gap-1.5">
 														<span class="text-xs font-medium text-fg">Budget GiB-seconds</span>
-														<input data-testid="ns-edit-budget-gib-seconds-{ns.name}" bind:value={editBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+														<input data-testid="ns-edit-budget-gib-seconds-{ns.name}" bind:value={editBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500" />
 													</label>
 													<label class="flex flex-col gap-1.5">
 														<span class="text-xs font-medium text-fg">Budget period (hours)</span>
-														<input data-testid="ns-edit-budget-period-hours-{ns.name}" bind:value={editBudgetPeriodHours} inputmode="numeric" placeholder="720" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+														<input data-testid="ns-edit-budget-period-hours-{ns.name}" bind:value={editBudgetPeriodHours} inputmode="numeric" placeholder="720" class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500" />
 													</label>
 													<label class="flex items-center gap-2 self-end pb-2">
 														<input type="checkbox" class="size-4 accent-brand-600" data-testid="ns-edit-budget-enforce-{ns.name}" bind:checked={editBudgetEnforce} />
@@ -1227,7 +1227,7 @@
 													rows="2"
 													placeholder="unrestricted"
 													spellcheck="false"
-													class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+													class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs text-fg focus:border-brand-500"
 												></textarea>
 												<span class="text-xs text-fg-muted"
 													>Bounds which <code>source:</code> values this namespace's tasks may name. Each
@@ -1262,7 +1262,7 @@
 													type="submit"
 													data-testid="ns-edit-save-{ns.name}"
 													disabled={editBusy}
-													class="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-50"
+													class="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-medium text-on-ink transition-colors hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-50"
 												>
 													{editBusy ? 'Saving…' : 'Save'}
 												</button>
@@ -1275,7 +1275,7 @@
 													data-testid="ns-edit-cancel-{ns.name}"
 													disabled={editBusy}
 													onclick={closeEdit}
-													class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
+													class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
 												>
 													Cancel
 												</button>
@@ -1295,7 +1295,7 @@
 													data-testid="namespace-edit-conflict-retry-{ns.name}"
 													onclick={reloadEtagAndRetry}
 													disabled={editBusy}
-													class="mt-2 inline-flex h-7 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs hover:bg-warning-50 disabled:pointer-events-none disabled:opacity-50"
+													class="mt-2 inline-flex h-7 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 hover:bg-warning-50 disabled:pointer-events-none disabled:opacity-50"
 												>
 													Reload latest and re-apply my edit
 												</button>
@@ -1348,7 +1348,7 @@
 					data-testid="namespace-hold-reason-input"
 					bind:value={holdReasonInput}
 					placeholder="partner CI loop, INC-4412"
-					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
 				/>
 				{#if holdReasonError}
 					<span class="text-xs text-danger-700" data-testid="namespace-hold-reason-error"

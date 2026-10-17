@@ -23,17 +23,20 @@
 	});
 
 	function tone(line: string): string {
+		// A drawing's revision marks, not a traffic light: an added line is
+		// drafting blue, a removed one is set back on the sunken ground, and
+		// red stays reserved for failure. The +/- before each line says which.
 		if (line.startsWith('+++') || line.startsWith('---'))
-			return 'bg-surface-sunken font-medium text-fg-muted';
-		if (line.startsWith('@@')) return 'bg-info-50 text-info-700';
-		if (line.startsWith('+')) return 'bg-succeeded-bg text-succeeded-fg';
-		if (line.startsWith('-')) return 'bg-failed-bg text-failed-fg';
-		if (line.startsWith('\\')) return 'text-warning-700 italic';
-		return 'text-fg-secondary';
+			return 'bg-paper-sunken font-semibold text-ink-secondary';
+		if (line.startsWith('@@')) return 'text-blue';
+		if (line.startsWith('+')) return 'bg-blue-tint text-ink';
+		if (line.startsWith('-')) return 'bg-paper-sunken text-ink-muted';
+		if (line.startsWith('\\')) return 'text-ink-muted italic';
+		return 'text-ink-secondary';
 	}
 </script>
 
 <pre
 	data-testid={testid}
-	class="overflow-x-auto rounded-lg border border-border bg-surface py-2 font-mono text-[13px] leading-5 shadow-xs [font-variant-ligatures:none]"
+	class="overflow-x-auto rounded-sm border border-rule-strong bg-paper py-2 font-mono text-sm leading-5 [font-variant-ligatures:none]"
 >{#each lines as line, i (i)}<span class="inline-block min-w-full px-4 {tone(line)}">{line}</span>{'\n'}{/each}</pre>

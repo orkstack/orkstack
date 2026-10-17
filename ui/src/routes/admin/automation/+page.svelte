@@ -261,10 +261,10 @@
 	}
 
 	const inputClass =
-		'h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none';
+		'h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500';
 	const buttonClass =
-		'inline-flex h-9 items-center justify-center rounded-md px-3.5 text-sm font-medium shadow-xs transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50';
-	const primary = `${buttonClass} bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800`;
+		'inline-flex h-9 items-center justify-center rounded-md px-3.5 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50';
+	const primary = `${buttonClass} bg-brand-600 text-on-ink hover:bg-brand-700 active:bg-brand-800`;
 	const secondary = `${buttonClass} border border-border bg-surface text-fg hover:border-border-strong hover:bg-surface-hover`;
 </script>
 
@@ -278,7 +278,7 @@
 	<span class="font-medium text-fg">{namespaceLabel(namespace)}</span>.
 </p>
 
-<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs">
+<section class="mb-6 rounded-md border border-border bg-surface p-4">
 	<div class="flex items-center justify-between gap-3">
 		<h2 class="text-sm font-semibold text-fg">Export</h2>
 		<CliEquivalent command={automationExportCli(namespaceLabel(namespace))} testid="automation-export-cli" />
@@ -335,7 +335,7 @@
 	{/if}
 </section>
 
-<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs">
+<section class="mb-6 rounded-md border border-border bg-surface p-4">
 	<div class="flex items-center justify-between gap-3">
 		<h2 class="text-sm font-semibold text-fg">Document</h2>
 		<CliEquivalent command={automationPlanCli(namespaceLabel(namespace), prune)} testid="automation-plan-cli" />
@@ -347,7 +347,7 @@
 		rows="16"
 		spellcheck="false"
 		placeholder={automationPlaceholder(namespaceLabel(namespace))}
-		class="mt-3 w-full rounded-md border border-border bg-surface p-3 font-mono text-xs text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+		class="mt-3 w-full rounded-md border border-border bg-surface p-3 font-mono text-xs text-fg focus:border-brand-500"
 	></textarea>
 	<div class="mt-3 flex flex-wrap items-center gap-4">
 		<label class="text-sm text-fg-secondary">
@@ -392,7 +392,7 @@
 {/if}
 
 {#if plan}
-	<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs" data-testid="automation-plan-section">
+	<section class="mb-6 rounded-md border border-border bg-surface p-4" data-testid="automation-plan-section">
 		<h2 class="text-sm font-semibold text-fg">
 			Plan{plan.namespace ? ` — namespace ${plan.namespace}` : ''}
 		</h2>

@@ -99,6 +99,31 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   controls are a presentation of declared inputs, not a schema language (see
   "Baseline operator flows").
 
+### Navigation and the command palette
+
+The UI is arranged in two modes. **Build** is the dashboard, Runs, Orkflows
+and Apply — the surfaces an author reads every day; **Operate** is every
+page under Admin. Runs, Orkflows and Apply stay one click away from any
+Operate page, and every link carries the namespace in the picker.
+
+**Ctrl+K** (**⌘K** on macOS and iOS, and only that there: Ctrl+K stays a
+text-editing key) opens the command palette from anywhere, a text field
+included, except while another dialog, menu or list is open, which keeps the
+keystroke and its own state. The palette jumps to any page of either mode, to
+an Orkflow or a run found by name, to a run by its id (it navigates and lets
+the run page say whether the run exists; it never looks a run up itself), to
+the runs and Orkflows recently opened in this browser (ids and names only,
+never inputs), and switches the namespace or the appearance. It never writes:
+a command that changes something opens the same dialog as the page's own
+button, with its confirmation and its CLI equivalent. It is the browser's
+presentation of navigation, so it has no `orkctl` twin; every action it
+reaches keeps the one it already has.
+
+Each page states what it is in a row along the bottom edge — its name (or an
+Orkflow, a version, a digest and a status), the namespace, and on Operate
+pages what its figures cover. It never shows a run id: a run's id is its
+page's heading.
+
 ## Filtering lists
 
 Every list whose collection grows with use takes one structured filter,

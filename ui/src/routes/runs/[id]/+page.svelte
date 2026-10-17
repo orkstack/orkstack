@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
 	import { pollWhileVisible } from '$lib/visibility';
+	import { rememberRecent } from '$lib/palette/recent';
 	import { onDestroy, untrack } from 'svelte';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
@@ -200,6 +201,17 @@
 	}
 
 	const run = $derived(data.run);
+
+	// The palette's RECENT group: this browser remembers the run's id, its
+	// namespace and its Orkflow's name — never its inputs — after the page has
+	// drawn, off the path that draws the header and the task cards.
+	$effect(() => {
+		const id = data.run?.id;
+		if (!id) return;
+		const entry = { kind: 'run' as const, id, namespace: namespaceLabel(data.namespace), orkflow: data.run?.orkflowName };
+		const t = setTimeout(() => rememberRecent(entry), 0);
+		return () => clearTimeout(t);
+	});
 	// Whether the pinned definition declares `outputs:` — then Run.output IS
 	// those, and otherwise it is every leaf task's values.
 	const declaresOutputs = $derived(Object.keys(data.orkflow?.outputs ?? {}).length > 0);
@@ -1451,7 +1463,7 @@
 				data-testid="run-stability-toggle"
 				aria-pressed={historyOpen}
 				onclick={toggleHistory}
-				class="inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-medium whitespace-nowrap transition-colors duration-150 {historyOpen
+				class="inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-medium whitespace-nowrap transition-colors {historyOpen
 					? 'border-brand-200 bg-brand-50 text-brand-700'
 					: 'border-border bg-surface text-fg-muted hover:bg-surface-hover'}"
 			>Retry history ({HISTORY_WINDOW})</button>
@@ -1484,7 +1496,7 @@
 					class="h-1.5 w-1.5 rounded-full {isTerminal(runStatus)
 						? 'bg-fg-muted'
 						: socketState === 'open'
-							? 'bg-succeeded-solid animate-pulse-dot motion-reduce:animate-none'
+							? 'bg-succeeded-solid animate-live-dot motion-reduce:animate-none'
 							: 'bg-warning-600'}"
 				></span>
 				{isTerminal(runStatus)
@@ -1506,14 +1518,14 @@
 					type="button"
 					data-testid="run-evidence"
 					onclick={() => (evidenceDialogOpen = true)}
-					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
 				>Evidence</button>
 			{/if}
 			{#if composesAny}
 				<a
 					href={childrenListHref(data.namespace, run.id)}
 					data-testid="run-children-link"
-					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
 				>Child runs</a>
 				<CliEquivalent
 					command={runCommand(data.namespace, ['run', 'list', '--filter', 'origin.kind=PARENT_RUN', '--filter', `origin.id=${run.id}`])}
@@ -1525,13 +1537,13 @@
 				type="button"
 				data-testid="compare-run"
 				onclick={() => void openCompare()}
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
 			>Compare</button>
 			<button
 				type="button"
 				data-testid="run-again"
 				onclick={() => (runAgainDialogOpen = true)}
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
 			>Run again</button>
 			<CliEquivalent
 				command={runCommand(data.namespace, ['run', 'get', run.id])}
@@ -1542,7 +1554,7 @@
 				type="button"
 				data-testid="export-run-json"
 				onclick={() => downloadJson(`${run.id}.json`, runExport())}
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
 			>Export JSON</button>
 			{#if !isTerminal(runStatus)}
 				<button
@@ -1550,7 +1562,7 @@
 					data-testid="cancel-run"
 					disabled={cancellationRequested}
 					onclick={() => { cancelDialog = true; cancelError = ''; }}
-					class="inline-flex h-9 items-center rounded-md bg-danger-600 px-3 text-sm font-medium text-white shadow-xs hover:bg-danger-700 disabled:opacity-50"
+					class="inline-flex h-9 items-center rounded-md bg-danger-600 px-3 text-sm font-medium text-on-ink hover:bg-danger-700 disabled:opacity-50"
 				>{cancellationRequested ? 'Cancellation requested' : 'Cancel run'}</button>
 			{/if}
 			<a
@@ -1559,7 +1571,7 @@
 				data-sveltekit-noscroll
 				aria-expanded={eventsOpen}
 				aria-controls="run-events"
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-brand-700"
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-brand-700"
 			>{eventsOpen ? 'Hide events' : 'Show events'}</a>
 		</div>
 	</div>
@@ -1616,23 +1628,23 @@
 	{/if}
 
 	<div class="mb-6 grid grid-cols-2 gap-4 text-sm sm:grid-cols-5">
-		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+		<div class="rounded-md border border-border bg-surface p-3">
 			<div class="text-xs font-medium text-fg-muted">Created</div>
 			<div class="mt-1 text-fg-secondary">{fmtTimestamp(run.createdAt)}</div>
 		</div>
-		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+		<div class="rounded-md border border-border bg-surface p-3">
 			<div class="text-xs font-medium text-fg-muted">Started</div>
 			<div class="mt-1 text-fg-secondary">{fmtTimestamp(startedAt ?? run.startedAt)}</div>
 		</div>
-		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+		<div class="rounded-md border border-border bg-surface p-3">
 			<div class="text-xs font-medium text-fg-muted">Finished</div>
 			<div class="mt-1 text-fg-secondary">{fmtTimestamp(finishedAt ?? run.finishedAt)}</div>
 		</div>
-		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+		<div class="rounded-md border border-border bg-surface p-3">
 			<div class="text-xs font-medium text-fg-muted">Elapsed</div>
 			<div class="mt-1 text-fg-secondary" data-testid="run-elapsed">{formatDuration(startedAt ?? run.startedAt, finishedAt ?? run.finishedAt ?? (isTerminal(runStatus) ? undefined : currentTimestamp))}</div>
 		</div>
-		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+		<div class="rounded-md border border-border bg-surface p-3">
 			<div class="text-xs font-medium text-fg-muted">Tasks</div>
 			<div class="mt-1 text-fg-secondary" data-testid="task-summary">
 				{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}{#if cachedTotal > 0}<span data-testid="task-summary-cached"> · {cachedTotal} cached</span>{/if}
@@ -1641,7 +1653,7 @@
 	</div>
 
 	<section class="mb-6 grid gap-4 lg:grid-cols-2" aria-label="Run values">
-		<div class="min-w-0 rounded-lg border border-border bg-surface p-4 shadow-xs">
+		<div class="min-w-0 rounded-md border border-border bg-surface p-4">
 			<div class="flex items-center justify-between gap-3">
 				<h2 class="text-sm font-semibold text-fg">Inputs</h2>
 				{#if run.input}
@@ -1650,7 +1662,7 @@
 			</div>
 			<pre data-testid="run-input" class="mt-2 max-h-56 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{run.input ? payloadJson(run.input) : 'No input values are recorded for this run.'}</pre>
 		</div>
-		<div class="min-w-0 rounded-lg border border-border bg-surface p-4 shadow-xs">
+		<div class="min-w-0 rounded-md border border-border bg-surface p-4">
 			<div class="flex items-center justify-between gap-3">
 				<h2 class="text-sm font-semibold text-fg" data-testid="run-output-kind">
 					{declaresOutputs ? 'Declared outputs' : 'Leaf task values'}
@@ -1744,7 +1756,7 @@
 						never skipped, and its overlay is never clipped to it.
 					-->
 					<div
-						class="rounded-lg border bg-surface px-4 py-3 shadow-xs {isAwait || composed || inspectOpenByTask[task.id]
+						class="rounded-md border bg-surface px-4 py-3 {isAwait || composed || inspectOpenByTask[task.id]
 							? ''
 							: '[content-visibility:auto] [contain-intrinsic-size:auto_7rem]'} {dispatched
 							? 'border-border'
@@ -1776,7 +1788,7 @@
 									<span
 										data-testid="task-{task.id}-join"
 										title={joinTitle(task.join, taskDefs.get(task.id)?.needs ?? [])}
-										class="inline-flex items-center rounded-full border border-border bg-surface-sunken px-2 py-0.5 font-mono text-[11px] leading-4 whitespace-nowrap text-fg-secondary"
+										class="inline-flex items-center rounded-full border border-border bg-surface-sunken px-2 py-0.5 font-mono text-2xs leading-4 whitespace-nowrap text-fg-secondary"
 									>join {joinWord(task.join)}</span>
 								{/if}
 								{#if dispatched || task.status === Status.SKIPPED}
@@ -1785,7 +1797,7 @@
 									<span
 										data-testid="task-{task.id}-status"
 										data-state="not-started"
-										class="text-[11px] whitespace-nowrap text-fg-muted"
+										class="text-2xs whitespace-nowrap text-fg-muted"
 									>{notStartedCaption(task)}</span>
 								{/if}
 								<!--
@@ -1803,7 +1815,7 @@
 										<span
 											data-testid="task-{task.id}-retries"
 											title="Temporal retried these items. Open an item for the outcome and error of every attempt."
-											class="inline-flex items-center rounded-full border border-warning-200 bg-warning-50 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-warning-700 leading-4"
+											class="inline-flex items-center rounded-full border border-warning-200 bg-warning-50 px-2 py-0.5 text-2xs font-medium whitespace-nowrap text-warning-700 leading-4"
 										>{retried}</span>
 									{/if}
 								{:else}
@@ -2031,7 +2043,7 @@
 								data-testid="task-inspect-toggle-{task.id}"
 								aria-expanded={inspectOpenByTask[task.id] ?? false}
 								onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}
-								class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+								class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
 							>
 								<span class="text-fg-muted">{inspectOpenByTask[task.id] ? '▾' : '▸'}</span>
 								{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}
@@ -2313,7 +2325,7 @@
 						stays visible while the reason field is typed into. Styled to match
 						the popover's command block; not hidden behind its icon.
 					-->
-					<p class="mt-3 overflow-x-auto rounded bg-surface-sunken p-2 font-mono text-xs text-fg-muted">{runCommand(data.namespace, ['run', 'cancel', run.id, ...(cancelReason.trim() ? ['--reason', cancelReason.trim()] : [])])}</p>
+					<p class="mt-3 overflow-x-auto rounded-sm bg-surface-sunken p-2 font-mono text-xs text-fg-muted">{runCommand(data.namespace, ['run', 'cancel', run.id, ...(cancelReason.trim() ? ['--reason', cancelReason.trim()] : [])])}</p>
 				{/snippet}
 			</ConfirmDialog>
 		{/if}
@@ -2400,7 +2412,7 @@
 							placeholder="ork-…"
 							autocomplete="off"
 							spellcheck="false"
-							class="h-9 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg shadow-xs focus-visible:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500/25 focus-visible:outline-none"
+							class="h-9 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg focus-visible:border-brand-500"
 						/>
 					</div>
 					<div class="flex justify-end">
@@ -2409,7 +2421,7 @@
 							data-testid="compare-open"
 							disabled={compareTarget === ''}
 							onclick={openComparison}
-							class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3 text-sm font-medium text-white shadow-xs hover:bg-brand-700 disabled:opacity-50"
+							class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:opacity-50"
 						>Open comparison</button>
 					</div>
 				</div>

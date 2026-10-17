@@ -50,10 +50,10 @@
 <div
 	data-testid={testid}
 	role="alert"
-	class="rounded-lg border border-failed-border bg-surface shadow-xs"
+	class="rounded-md border border-failed-border bg-surface"
 >
 	<div
-		class="flex flex-wrap items-center gap-2 rounded-t-lg border-b border-failed-border bg-failed-bg px-5 py-3 text-sm font-semibold text-failed-fg"
+		class="flex flex-wrap items-center gap-2 rounded-t-md border-b border-failed-border bg-failed-bg px-5 py-3 text-sm font-semibold text-failed-fg"
 	>
 		<!--
 			The badge is shown only when the wire actually carries a category.

@@ -98,7 +98,7 @@
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="pool-list">
 		{#each data.pools as pool (pool.name)}
 			<div
-				class="rounded-lg border bg-surface p-4 shadow-xs {pool.unavailableReason
+				class="rounded-md border bg-surface p-4 {pool.unavailableReason
 					? 'border-warning-200 bg-warning-50'
 					: pool.liveOrkerCount === 0
 						? 'border-danger-200 bg-danger-50'

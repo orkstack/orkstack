@@ -114,7 +114,7 @@
 	fixed by starting one, not by asking again.
 -->
 <section class="mb-6" data-testid="orker-section">
-	<h2 class="mb-2 text-[11px] font-medium tracking-wider text-fg-muted uppercase">Orker</h2>
+	<h2 class="mb-2 text-2xs font-medium tracking-caps text-fg-muted uppercase">Orker</h2>
 	{#if data.orkerError}
 		<div
 			class="rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm"
@@ -134,7 +134,7 @@
 	{:else}
 		{@const orker = data.orker}
 		<div
-			class="grid grid-cols-2 gap-4 rounded-lg border border-border bg-surface p-4 text-sm shadow-xs sm:grid-cols-4"
+			class="grid grid-cols-2 gap-4 rounded-md border border-border bg-surface p-4 text-sm sm:grid-cols-4"
 			data-testid="orker-card"
 		>
 			<div>
@@ -179,7 +179,7 @@
 	{/if}
 </section>
 
-<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs" data-testid="activity-local-tools">
+<section class="mb-6 rounded-md border border-border bg-surface p-4" data-testid="activity-local-tools">
 	<h2 class="text-sm font-semibold text-fg">Local activity tools</h2>
 	<p class="mt-1 text-sm text-fg-muted">
 		Builds and contract tests run on your machine with its OCI runtime. They are intentionally not browser actions.
@@ -192,7 +192,7 @@
 	{#if copiedLocalTool}<p data-testid="activity-local-tool-copied" class="mt-2 text-xs text-fg-muted">{copiedLocalTool}</p>{/if}
 </section>
 
-<h2 class="mb-2 text-[11px] font-medium tracking-wider text-fg-muted uppercase">Catalog</h2>
+<h2 class="mb-2 text-2xs font-medium tracking-caps text-fg-muted uppercase">Catalog</h2>
 
 <ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} />
 
@@ -215,7 +215,7 @@
 		directly with <code>uses:</code>.
 	</p>
 {:else}
-	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs" data-testid="activity-list">
+	<div class="overflow-x-auto rounded-md border border-border bg-surface" data-testid="activity-list">
 		<table class="w-full min-w-[960px] border-collapse text-left text-sm">
 			<thead class="bg-surface-sunken">
 				<tr>
@@ -231,7 +231,7 @@
 			<tbody>
 				{#each data.activities as activity (activity.name)}
 					<tr
-						class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+						class="border-t border-border-subtle transition-colors hover:bg-surface-hover"
 						data-testid="activity-row-{activity.name}"
 					>
 						<td class="h-11 px-4 pl-5 align-middle font-medium text-fg" data-testid="activity-name-{activity.name}">
@@ -290,7 +290,7 @@
 							{#if activity.indexDigest}
 								<button
 									type="button"
-									class="inline-flex items-center gap-1 rounded text-brand-700 hover:underline focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
+									class="inline-flex items-center gap-1 rounded-sm text-brand-700 hover:underline"
 									aria-expanded={!!disclosed[activity.name]}
 									aria-controls="activity-interface-panel-{activity.name}"
 									data-testid="activity-interface-{activity.name}"
@@ -331,7 +331,7 @@
 	this page.
 -->
 <section class="mt-6" data-testid="activity-inspect">
-	<h2 class="mb-2 text-[11px] font-medium tracking-wider text-fg-muted uppercase">Inspect a reference</h2>
+	<h2 class="mb-2 text-2xs font-medium tracking-caps text-fg-muted uppercase">Inspect a reference</h2>
 	<form class="flex flex-wrap items-center gap-2" data-testid="activity-inspect-form" onsubmit={inspect}>
 		<label class="sr-only" for="activity-inspect-reference">Catalog name or registry reference</label>
 		<input
@@ -341,13 +341,13 @@
 			placeholder="file, or ghcr.io/acme/migrate:v3"
 			autocomplete="off"
 			spellcheck="false"
-			class="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg shadow-xs focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none sm:max-w-md"
+			class="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg sm:max-w-md"
 			data-testid="activity-inspect-reference"
 		/>
 		<button
 			type="submit"
 			disabled={inspecting || inspectReference.trim() === ''}
-			class="h-9 rounded-md bg-brand-600 px-3 text-sm font-medium text-white shadow-xs hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+			class="h-9 rounded-md bg-brand-600 px-3 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
 			data-testid="activity-inspect-submit">{inspecting ? 'Inspecting…' : 'Inspect'}</button
 		>
 		<CliEquivalent testid="activity-inspect-cli" command={inspectCli} label="orkctl activity inspect for this reference" />
@@ -358,7 +358,7 @@
 		</div>
 	{:else if inspected}
 		<div
-			class="mt-3 space-y-3 rounded-lg border border-border bg-surface p-4 text-sm shadow-xs"
+			class="mt-3 space-y-3 rounded-md border border-border bg-surface p-4 text-sm"
 			data-testid="activity-inspect-result"
 		>
 			<dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">

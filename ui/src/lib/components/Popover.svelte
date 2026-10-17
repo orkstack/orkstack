@@ -63,7 +63,8 @@
 	{#if open}
 		<div
 			data-testid={testid}
-			class="absolute z-10 mt-1 rounded-md border border-border bg-surface p-3 shadow-md {align ===
+			data-overlay
+			class="absolute z-10 mt-1 rounded-md border border-ink bg-sheet p-3 text-ink shadow-overlay animate-overlay-in motion-reduce:animate-none {align ===
 			'end'
 				? 'right-0'
 				: 'left-0'}"

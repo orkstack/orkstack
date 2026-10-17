@@ -236,9 +236,9 @@
 	};
 
 	const inputClass =
-		'h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none';
+		'h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500';
 	const smallButton =
-		'inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50';
+		'inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50';
 </script>
 
 <p class="mb-5 text-sm text-fg-secondary" data-testid="schedules-scope">
@@ -247,7 +247,7 @@
 	the schedule; OrkStack stores nothing else about it.
 </p>
 
-<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs">
+<section class="mb-6 rounded-md border border-border bg-surface p-4">
 	<h2 class="text-sm font-semibold text-fg">Create schedule</h2>
 	<form
 		class="mt-3 space-y-4"
@@ -289,7 +289,7 @@
 					bind:value={cronText}
 					rows="2"
 					placeholder="0 2 * * *"
-					class="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg focus:border-brand-500"
 				></textarea>
 			</div>
 			<div class="flex flex-col gap-1.5">
@@ -376,7 +376,7 @@
 						bind:value={inputText}
 						rows="3"
 						placeholder={'{"mode": "full"}'}
-						class="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+						class="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg focus:border-brand-500"
 					></textarea>
 				</div>
 				<label class="flex items-center gap-2 text-sm text-fg">
@@ -399,7 +399,7 @@
 			type="submit"
 			data-testid="schedule-create"
 			disabled={creating}
-			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 		>
 			{creating ? 'Creating…' : 'Create schedule'}
 		</button>
@@ -430,7 +430,7 @@
 			{@const state = scheduleState(schedule)}
 			{@const newest = lastFire(schedule)}
 			{@const outcome = newest ? fireOutcome(newest) : undefined}
-			<li data-testid="schedule-row-{schedule.name}" class="rounded-lg border border-border bg-surface p-4 shadow-xs">
+			<li data-testid="schedule-row-{schedule.name}" class="rounded-md border border-border bg-surface p-4">
 				<div class="flex flex-wrap items-start justify-between gap-4">
 					<div class="min-w-0 space-y-1">
 						<p class="flex items-center gap-2">
@@ -438,7 +438,7 @@
 							<span
 								data-testid="schedule-row-state-{schedule.name}"
 								title={state === 'paused' ? schedule.note : state === 'unavailable' ? schedule.unavailableReason : ''}
-								class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium tracking-wide uppercase {stateClasses[
+								class="inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium tracking-caps uppercase {stateClasses[
 									state
 								]}">{state}</span
 							>
@@ -536,7 +536,7 @@
 								deleting = schedule.name;
 								actionError = '';
 							}}
-							class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50 focus-visible:ring-2 focus-visible:ring-danger-500/40 focus-visible:outline-none"
+							class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 transition-colors hover:border-danger-300 hover:bg-danger-50"
 						>
 							Delete
 						</button>
@@ -639,7 +639,7 @@
 						type="submit"
 						data-testid="schedule-pause-accept"
 						disabled={actionBusy}
-						class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs hover:bg-brand-700 disabled:opacity-50"
+						class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:opacity-50"
 						>{actionBusy ? 'Pausing…' : 'Pause'}</button
 					>
 				</div>

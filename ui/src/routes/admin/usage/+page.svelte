@@ -108,13 +108,13 @@
 
 <section class="mb-4 flex flex-wrap items-center gap-3">
 	<span class="text-sm font-medium text-fg">Window</span>
-	<div role="group" aria-label="Usage window" class="inline-flex h-9 rounded-md border border-border bg-surface shadow-xs">
+	<div role="group" aria-label="Usage window" class="inline-flex h-9 rounded-md border border-border bg-surface">
 		{#each USAGE_WINDOWS as preset (preset)}
 			<a
 				data-testid="usage-window-{preset}"
 				aria-current={data.window === preset ? 'page' : undefined}
 				href={windowHref(preset)}
-				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors duration-150 first:rounded-l-md last:rounded-r-md last:border-r-0 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700"
+				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors first:rounded-l-md last:rounded-r-md last:border-r-0 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700"
 				>{preset}</a
 			>
 		{/each}
@@ -141,7 +141,7 @@
 		onretry={retry}
 	/>
 {:else}
-	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+	<div class="overflow-x-auto rounded-md border border-border bg-surface">
 		<table class="w-full min-w-[900px] border-collapse text-left text-sm" data-testid="usage-table">
 			<thead class="bg-surface-sunken">
 				<tr>

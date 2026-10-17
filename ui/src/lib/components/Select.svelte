@@ -35,7 +35,7 @@
 		 * trigger's and the listbox's aria-label (selectName.ts).
 		 */
 		label?: string;
-		/** 'console' is the dark log-pane surface, where this sits among 11px mono chrome. */
+		/** 'console' is the compact log-pane variant, where this sits among 11 px mono chrome. */
 		variant?: 'default' | 'console';
 	}
 
@@ -187,20 +187,20 @@
 		if (isConsole) {
 			const tone = selected
 				? active
-					? 'bg-white/20 text-console-fg'
-					: 'bg-white/10 text-console-fg'
+					? 'bg-blue-tint font-semibold text-ink underline'
+					: 'bg-blue-tint font-semibold text-ink'
 				: active
-					? 'bg-white/5 text-console-fg'
-					: 'text-console-fg';
-			return `block w-full cursor-pointer px-1.5 py-1 text-left text-[11px] ${tone}`;
+					? 'bg-hover text-ink underline'
+					: 'text-ink';
+			return `block w-full cursor-pointer px-1.5 py-1 text-left text-2xs ${tone}`;
 		}
 		const tone = selected
 			? active
-				? 'bg-brand-100 text-brand-700'
-				: 'bg-brand-50 text-brand-700'
+				? 'bg-blue-tint font-semibold text-ink underline'
+				: 'bg-blue-tint font-semibold text-ink'
 			: active
-				? 'bg-surface-hover text-fg'
-				: 'text-fg';
+				? 'bg-hover text-ink underline'
+				: 'text-ink';
 		return `block w-full cursor-pointer px-3 py-1.5 text-left text-sm ${tone}`;
 	}
 
@@ -234,8 +234,8 @@
 		onclick={() => (open ? closePanel() : openPanel())}
 		onkeydown={onKeydown}
 		class={isConsole
-			? 'inline-flex h-6 w-full items-center justify-between gap-1 rounded-sm border border-console-border bg-console-bg px-1.5 text-left text-[11px] text-console-fg hover:border-console-muted focus-visible:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500/25 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50'
-			: 'inline-flex h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 text-left text-sm text-fg shadow-xs hover:border-border-strong focus-visible:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500/25 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50'}
+			? 'inline-flex h-6 w-full items-center justify-between gap-1 rounded-sm border border-rule-strong bg-paper px-1.5 text-left text-2xs text-ink hover:bg-hover disabled:pointer-events-none disabled:opacity-50'
+			: 'field inline-flex h-9 w-full items-center justify-between gap-2 px-3 text-left text-sm hover:bg-hover disabled:pointer-events-none disabled:opacity-50'}
 	>
 		<span class="truncate">{selectedLabel}</span>
 		<svg
@@ -246,7 +246,7 @@
 			stroke-linecap="round"
 			stroke-linejoin="round"
 			aria-hidden="true"
-			class="shrink-0 {isConsole ? 'size-3 text-console-muted' : 'size-4 text-fg-muted'}"
+			class="shrink-0 {isConsole ? 'size-3 text-ink-muted' : 'size-4 text-ink-muted'}"
 		>
 			<path d="m6 8 4 4 4-4" />
 		</svg>
@@ -259,9 +259,10 @@
 			role="listbox"
 			{...aria.listbox}
 			data-testid="{testid}-listbox"
+			data-overlay
 			class={isConsole
-				? 'absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-sm border border-console-border bg-console-header normal-case shadow-md'
-				: 'absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-border bg-surface shadow-md'}
+				? 'absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-sm border border-ink bg-sheet normal-case shadow-overlay'
+				: 'absolute z-10 mt-1 max-h-64 w-full min-w-max overflow-auto rounded-md border border-ink bg-sheet py-1 shadow-overlay'}
 		>
 			{#each options as option, index (option.value)}
 				<button

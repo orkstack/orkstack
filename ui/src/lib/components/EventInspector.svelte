@@ -100,9 +100,9 @@
 	}
 </script>
 
-<section data-testid="event-inspector" class="rounded-lg border border-border bg-surface shadow-xs">
+<section data-testid="event-inspector" class="rounded-md border border-border bg-surface">
 	<div
-		class="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-t-lg border-b border-border bg-surface/95 px-3 py-2 text-xs backdrop-blur"
+		class="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-t-md border-b border-border bg-surface/95 px-3 py-2 text-xs backdrop-blur"
 	>
 		{#each EVENT_FILTERS as chip (chip.id)}
 			<button
@@ -110,7 +110,7 @@
 				data-testid="event-filter-{chip.id}"
 				aria-pressed={filter === chip.id}
 				onclick={() => (filter = chip.id)}
-				class="rounded-full border px-2.5 py-0.5 transition-colors duration-150 {filter === chip.id
+				class="rounded-full border px-2.5 py-0.5 transition-colors {filter === chip.id
 					? 'border-brand-200 bg-brand-50 text-brand-700'
 					: 'border-border text-fg-muted hover:text-fg'}"
 			>
@@ -169,7 +169,7 @@
 					data-testid="event-entry"
 					data-kind={eventTypeLabel(event.type)}
 					data-failure={isFailureEvent(event)}
-					class="grid grid-cols-[3.5rem_5.5rem_9.5rem_8rem_minmax(0,1fr)] items-baseline gap-2 rounded px-1 py-0.5 {isFailureEvent(
+					class="grid grid-cols-[3.5rem_5.5rem_9.5rem_8rem_minmax(0,1fr)] items-baseline gap-2 rounded-sm px-1 py-0.5 {isFailureEvent(
 						event
 					)
 						? 'bg-failed-bg'

@@ -124,7 +124,7 @@
 			<a
 				href={swapHref}
 				data-testid="run-diff-swap"
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
 				>Swap</a
 			>
 			<CliEquivalent command={cli} testid="run-diff-cli" />

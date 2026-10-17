@@ -246,7 +246,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 	was opened at. If the engine's API is published somewhere else, invoke that address instead.
 </p>
 
-<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs">
+<section class="mb-6 rounded-md border border-border bg-surface p-4">
 	<h2 class="text-sm font-semibold text-fg">Create trigger</h2>
 	<form
 		class="mt-3 space-y-4"
@@ -285,7 +285,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 				maxlength={200}
 				title="lowercase letters, digits and hyphens, starting with a letter"
 				placeholder="github-deploy"
-				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500"
 			/>
 		</div>
 
@@ -298,7 +298,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 				data-testid="trigger-create-description"
 				bind:value={description}
 				placeholder="what calls this — nightly kickoff, deploy hook, …"
-				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500"
 			/>
 		</div>
 
@@ -310,7 +310,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 			type="submit"
 			data-testid="trigger-create-submit"
 			disabled={creating}
-			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 		>
 			{creating ? 'Creating…' : 'Create trigger'}
 		</button>
@@ -370,7 +370,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 		{#each triggers as trigger (trigger.id)}
 			<li
 				data-testid="trigger-{trigger.id}"
-				class="rounded-lg border border-border bg-surface p-4 shadow-xs"
+				class="rounded-md border border-border bg-surface p-4"
 			>
 				<div class="flex items-start justify-between gap-4">
 					<div class="min-w-0">
@@ -397,7 +397,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 							type="button"
 							data-testid="edit-trigger-{trigger.id}"
 							onclick={() => startEdit(trigger)}
-							class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none"
+							class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
 						>
 							Edit
 						</button>
@@ -408,7 +408,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 								deleting = trigger.id;
 								deleteError = '';
 							}}
-							class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50 focus-visible:ring-2 focus-visible:ring-danger-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none"
+							class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 transition-colors hover:border-danger-300 hover:bg-danger-50"
 						>
 							Delete
 						</button>
@@ -472,7 +472,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 						pattern={SCOPE_SLUG_PATTERN}
 						maxlength={200}
 						title="lowercase letters, digits and hyphens, starting with a letter"
-						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500"
 					/>
 				</div>
 				<div class="flex flex-col gap-1.5">
@@ -492,7 +492,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 						id="trigger-edit-description"
 						data-testid="trigger-edit-description"
 						bind:value={editDescription}
-						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500"
 					/>
 				</div>
 				{#if editError}
@@ -503,7 +503,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 						type="submit"
 						data-testid="trigger-edit-submit"
 						disabled={saving}
-						class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-50"
+						class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-50"
 					>
 						{saving ? 'Saving…' : 'Save'}
 					</button>

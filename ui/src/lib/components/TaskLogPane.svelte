@@ -410,16 +410,16 @@
 		data-testid="task-log-toggle-{taskId}"
 		onclick={toggle}
 		aria-expanded={open}
-		class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+		class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
 	>
 		<span class="text-fg-muted">{open ? '▾' : '▸'}</span>
 		{open ? 'Hide output' : 'Show output'}
 	</button>
 
 	{#if open}
-		<div class="mt-2 overflow-hidden rounded-lg border border-console-border bg-console-bg shadow-xs">
+		<div class="mt-2 overflow-hidden rounded-md border border-console-border bg-console-bg">
 			<div
-				class="flex flex-wrap items-center gap-3 border-b border-console-border bg-console-header px-3 py-2 font-mono text-[11px] tracking-wide uppercase"
+				class="flex flex-wrap items-center gap-3 border-b border-console-border bg-console-header px-3 py-2 font-mono text-2xs tracking-caps uppercase"
 			>
 				<span
 					data-testid="task-log-state-{taskId}"
@@ -433,7 +433,7 @@
 				>
 					{#if stateLabel === 'LIVE'}
 						<span
-							class="size-1.5 rounded-full bg-console-live animate-pulse-dot motion-reduce:animate-none"
+							class="size-1.5 rounded-full bg-console-live animate-live-dot motion-reduce:animate-none"
 							aria-hidden="true"
 						></span>
 					{/if}
@@ -494,7 +494,7 @@
 					data-testid="task-log-download-{taskId}"
 					disabled={downloading || !dispatched}
 					onclick={downloadRetained}
-					class="h-6 rounded-sm border border-console-border px-2 text-console-fg normal-case tracking-normal hover:bg-white/5 disabled:opacity-50"
+					class="h-6 rounded-sm border border-console-border px-2 text-console-fg normal-case tracking-normal hover:bg-ink/5 disabled:opacity-50"
 				>
 					{downloading ? 'Preparing download…' : 'Download retained logs'}
 				</button>

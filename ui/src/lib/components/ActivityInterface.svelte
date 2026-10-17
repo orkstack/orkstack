@@ -64,7 +64,7 @@
 		</div>
 		{#if values.length > 0}
 			<div>
-				<p class="mb-1 text-[11px] font-medium tracking-wider text-fg-muted uppercase">
+				<p class="mb-1 text-2xs font-medium tracking-caps text-fg-muted uppercase">
 					Values the image writes to values.json
 				</p>
 				<table class="border-collapse text-left text-xs" data-testid="activity-interface-values">
