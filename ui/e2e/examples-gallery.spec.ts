@@ -130,8 +130,8 @@ test('P0: fonts stay out of the stylesheet, and the two latin faces are preloade
 	const response = await fetch(`${UI}/apply?ns=${NS}`);
 	const fonts = (response.headers.get('link') ?? '').split(',').filter((link) => link.includes('as="font"'));
 	expect(fonts.map((link) => /assets\/([a-z-]+)\./.exec(link)?.[1]).sort()).toEqual([
-		'inter-latin-wght-normal',
-		'jetbrains-mono-latin-wght-normal'
+		'archivo-narrow-latin-wght-normal',
+		'spline-sans-mono-latin-wght-normal'
 	]);
 	const html = await response.text();
 	const sheets = [...html.matchAll(/<link href="([^"]+\.css)" rel="stylesheet"/g)].map((m) => m[1]);
