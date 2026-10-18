@@ -113,3 +113,27 @@ export async function addListFilter(
 	if (row.value !== undefined) await page.getByTestId(`${testid}-filter-value-${index}`).fill(row.value);
 	return index;
 }
+
+/**
+ * taskMapCellCenter returns a point to click for the task map's cell `index`
+ * (a task's cell: the map's first section). It reads the map's own geometry
+ * (`data-pitch`, `data-columns`), scrolls the map's area — never the page —
+ * so the cell's row is in view, and returns the cell's centre in page
+ * coordinates. The area's padding is the map's `p-2`.
+ */
+export async function taskMapCellCenter(page: Page, index: number): Promise<{ x: number; y: number }> {
+	const map = page.getByTestId('task-map');
+	await expect(map).toHaveAttribute('data-painted', 'true');
+	const pitch = Number(await map.getAttribute('data-pitch'));
+	const columns = Number(await map.getAttribute('data-columns'));
+	const area = page.getByTestId('task-map-area');
+	const row = Math.floor(index / columns);
+	const col = index % columns;
+	await area.evaluate((el, top) => (el.scrollTop = Math.max(0, top)), row * pitch - pitch);
+	const box = await area.boundingBox();
+	if (!box) throw new Error('the task map area is not on screen');
+	const scrollTop = await area.evaluate((el) => el.scrollTop);
+	const PAD = 8;
+	const half = (pitch - 2) / 2;
+	return { x: box.x + PAD + col * pitch + half, y: box.y + PAD + row * pitch - scrollTop + half };
+}

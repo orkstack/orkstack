@@ -24,6 +24,10 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 		let artifacts: RunArtifact[] = [];
 		let artifactsError: string | null = null;
 		let orkflow = null;
+		// Why the pinned definition could not be read, when it could not: the
+		// page still renders every task, in the run's own order, and says why
+		// its DAG is missing.
+		let orkflowError: string | null = null;
 		if (run) {
 			try {
 				const artifactRes = await runClient(fetch).listRunArtifacts({ runId: run.id, namespace, taskId: '' });
@@ -43,14 +47,17 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 					namespace
 				});
 				orkflow = wfRes.orkflow ?? null;
-			} catch {
-				orkflow = null; // orkflow may have been superseded; statuses still render
+				if (!orkflow) orkflowError = 'the engine returned no definition';
+			} catch (err) {
+				orkflow = null; // statuses still render without it
+				orkflowError = errorMessage(err);
 			}
 		}
 		return {
 			runId: params.id,
 			run,
 			orkflow,
+			orkflowError,
 			artifacts,
 			artifactsError,
 			namespace,
@@ -61,6 +68,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			runId: params.id,
 			run: null,
 			orkflow: null,
+			orkflowError: null as string | null,
 			artifacts: [],
 			artifactsError: null,
 			namespace,

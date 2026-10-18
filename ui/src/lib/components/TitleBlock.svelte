@@ -11,6 +11,8 @@
 	import { statusLabel } from '$lib/status';
 	import { statusMark } from '$lib/statusMarks';
 	import { titleCellTestid, type TitleField } from '$lib/sheet';
+	import { copyText } from '$lib/clipboard';
+	import Icon from './Icon.svelte';
 
 	let { fields, lifted = false }: { fields: TitleField[]; lifted?: boolean } = $props();
 
@@ -20,6 +22,11 @@
 		return new Set([0, status > 0 ? status : 1]);
 	});
 	const folded = $derived(fields.filter((_, i) => !kept.has(i)));
+
+	let copied = $state('');
+	async function copyValue(f: TitleField): Promise<void> {
+		if (f.copy && (await copyText(f.copy)) === 'copied') copied = f.label;
+	}
 
 	function statusInk(status: Status | undefined): string {
 		if (status === Status.FAILED) return 'text-red';
@@ -40,6 +47,16 @@
 		<a href={f.href} class="link {f.mono ? 'font-mono' : ''}" title={f.title}>{f.value}</a>
 	{:else}
 		<span class={f.mono ? 'font-mono' : ''} title={f.title}>{f.value}</span>
+	{/if}
+	{#if f.copy}
+		<button
+			type="button"
+			data-testid="{titleCellTestid(f.label)}-copy"
+			class="btn-icon -my-1 inline-flex size-6 items-center justify-center align-middle"
+			aria-label={copied === f.label ? `Copied the ${f.label.toLowerCase()}` : `Copy the whole ${f.label.toLowerCase()}`}
+			title={copied === f.label ? 'Copied' : f.copy}
+			onclick={() => void copyValue(f)}><Icon name={copied === f.label ? 'check' : 'copy'} /></button
+		>
 	{/if}
 {/snippet}
 

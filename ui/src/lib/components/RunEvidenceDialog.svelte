@@ -137,7 +137,7 @@
 <Dialog title="Evidence bundle of {runId}" testid="run-evidence-dialog" {onclose} widthClass="max-w-2xl">
 	{#snippet body()}
 		<div class="grid grid-cols-1 gap-4">
-			<p class="text-sm text-fg-secondary">
+			<p class="text-sm text-ink-secondary">
 				One tar.gz of everything this run recorded — the archived run and events, the pinned definition,
 				and per task its commit, values, artifacts, attempt records and logs — with a MANIFEST.json naming
 				each member's sha256. Verify it later, offline, with <code class="font-mono text-xs"
@@ -145,7 +145,7 @@
 				>.
 			</p>
 			<div class="flex flex-wrap gap-4">
-				<label class="flex items-center gap-1.5 text-sm text-fg">
+				<label class="flex items-center gap-1.5 text-sm text-ink">
 					<input
 						type="checkbox"
 						data-testid="run-evidence-logs"
@@ -153,7 +153,7 @@
 						disabled={downloading}
 					/>Include logs
 				</label>
-				<label class="flex items-center gap-1.5 text-sm text-fg">
+				<label class="flex items-center gap-1.5 text-sm text-ink">
 					<input
 						type="checkbox"
 						data-testid="run-evidence-artifacts"
@@ -174,22 +174,22 @@
 			{/if}
 
 			{#if loading}
-				<p class="text-sm text-fg-muted" data-testid="run-evidence-loading">Reading the manifest…</p>
+				<p class="text-sm text-ink-muted" data-testid="run-evidence-loading">Reading the manifest…</p>
 			{:else if manifest}
 				<div class="grid grid-cols-1 gap-1.5">
-					<p class="text-sm font-medium text-fg" data-testid="run-evidence-summary">{evidenceSummary(manifest)}</p>
-					<p class="font-mono text-xs break-all text-fg-muted" data-testid="run-evidence-definition">
+					<p class="text-sm font-medium text-ink" data-testid="run-evidence-summary">{evidenceSummary(manifest)}</p>
+					<p class="font-mono text-xs break-all text-ink-muted" data-testid="run-evidence-definition">
 						{definitionLine(manifest)}
 					</p>
 				</div>
 				{#if absent.length}
 					<div>
-						<p class="text-xs font-medium text-fg-muted">Not in the bundle, and why</p>
+						<p class="text-xs font-medium text-ink-muted">Not in the bundle, and why</p>
 						<ul class="mt-1 grid grid-cols-1 gap-1" data-testid="run-evidence-absent">
 							{#each absent as member (member.path)}
 								<li class="text-xs">
-									<span class="font-mono text-fg">{member.path}</span>
-									<span class="text-fg-muted">— {member.state}: {member.reason}</span>
+									<span class="font-mono text-ink">{member.path}</span>
+									<span class="text-ink-muted">— {member.state}: {member.reason}</span>
 								</li>
 							{/each}
 						</ul>
@@ -202,13 +202,13 @@
 						aria-expanded={showManifest}
 						aria-controls="run-evidence-manifest"
 						onclick={() => (showManifest = !showManifest)}
-						class="text-xs font-medium text-brand-700 hover:underline"
+						class="text-xs font-medium text-blue hover:underline"
 					>{showManifest ? 'Hide manifest' : 'View manifest'}</button>
 					{#if showManifest}
 						<pre
 							id="run-evidence-manifest"
 							data-testid="run-evidence-manifest"
-							class="mt-2 max-h-64 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{manifestText}</pre>
+							class="mt-2 max-h-64 overflow-auto rounded-sm bg-paper-sunken p-3 font-mono text-xs text-ink-secondary">{manifestText}</pre>
 					{/if}
 				</div>
 			{/if}
@@ -216,13 +216,13 @@
 			{#if overLimit}
 				<div
 					data-testid="run-evidence-too-large"
-					class="rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
+					class="rounded-sm border border-rule-strong bg-paper-sunken px-3 py-2 text-sm text-ink-secondary"
 				>
 					<p>{overLimit.message}</p>
 					<div class="mt-2 flex items-start gap-2">
 						<pre
 							data-testid="run-evidence-too-large-command"
-							class="min-w-0 flex-1 overflow-x-auto rounded-sm bg-surface-sunken p-2 font-mono text-xs text-fg">{overLimit.command}</pre>
+							class="min-w-0 flex-1 overflow-x-auto rounded-sm bg-paper-sunken p-2 font-mono text-xs text-ink">{overLimit.command}</pre>
 						<CliEquivalent command={overLimit.command} testid="run-evidence-too-large-cli" label="Copy the export command" />
 					</div>
 				</div>
@@ -235,7 +235,7 @@
 					data-testid="run-evidence-download"
 					disabled={!manifest || loading || downloading || tooLarge}
 					onclick={() => void download()}
-					class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:opacity-50"
+					class="btn btn-primary"
 				>{downloading
 						? 'Downloading…'
 						: tooLarge

@@ -20,6 +20,8 @@ export interface TitleField {
 	status?: Status;
 	/** Full text for a shortened value (a digest's whole hash). */
 	title?: string;
+	/** A value worth copying whole (a digest): the cell offers a copy button. */
+	copy?: string;
 }
 
 export type TitleGetter = () => TitleField[];

@@ -15,8 +15,10 @@
 	import Icon from './Icon.svelte';
 	import { appearance } from '$lib/theme.svelte';
 	import { copyText, MANUAL_COPY_MESSAGE } from '$lib/clipboard';
+	import { NEVER_SEEN, heldRuns, loadHeld } from '$lib/heldRuns';
 	import {
 		GROUP_ORDER,
+		commandId,
 		namespaceCommands,
 		openRunCommand,
 		pageCommands,
@@ -76,6 +78,23 @@
 		});
 	const recency = new Map(recents.map((r, i) => [`recent-${i}`, r.at]));
 
+	// CHANGED RUNS: the runs this browser holds a changed mark for, read from
+	// its own store ($lib/heldRuns) — no request.
+	const changedCommands: Command[] = $derived(heldRuns(loadHeld(), namespace)
+		.slice(0, 8)
+		.map((h) => {
+			const href = withNamespace(`/runs/${encodeURIComponent(h.id)}`, namespace);
+			return {
+				id: commandId('changed', h.id),
+				group: 'Changed runs' as const,
+				label: `Open run ${h.id}`,
+				context: h.seen === NEVER_SEEN ? `${h.now}, failed while you were away` : `${h.now}, was ${h.seen.toLowerCase()}`,
+				keywords: h.orkflow,
+				action: { kind: 'navigate' as const, href },
+				href
+			};
+		}));
+
 	const pages = $derived(pageCommands(namespace));
 	const namespaceSwitches = $derived(namespaceCommands(namespaces, namespace));
 	const themes = $derived(themeCommands(appearance.choice));
@@ -121,6 +140,7 @@
 		const typed = q.trim() !== '';
 		const all: Command[] = [
 			...(typed ? [] : recentCommands),
+			...changedCommands,
 			...providedCommands(q),
 			...pages,
 			...themes,

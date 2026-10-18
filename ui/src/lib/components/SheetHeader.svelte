@@ -25,5 +25,5 @@
 		</h1>
 		{#if meta}<div class="mt-1 text-sm text-ink-secondary">{@render meta()}</div>{/if}
 	</div>
-	{#if actions}<div class="flex shrink-0 flex-wrap items-center gap-2">{@render actions()}</div>{/if}
+	{#if actions}<div class="flex max-w-full min-w-0 flex-wrap items-center gap-2">{@render actions()}</div>{/if}
 </header>

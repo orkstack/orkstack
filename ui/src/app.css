@@ -188,6 +188,55 @@
 		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
 	}
 
+	/* A drawing's frame: the region rule all round. */
+	.frame {
+		border: var(--rule-region) solid var(--color-ink);
+	}
+	/* A heavier rule above a region of a page. */
+	.region {
+		border-top: var(--rule-region) solid var(--color-ink);
+	}
+	/* The drafting grid: only ever behind the DAG. It scrolls with what is
+	   drawn on it. */
+	.drafting-grid {
+		background-color: var(--color-paper);
+		background-image:
+			linear-gradient(var(--color-grid-major) var(--rule-hair), transparent var(--rule-hair)),
+			linear-gradient(90deg, var(--color-grid-major) var(--rule-hair), transparent var(--rule-hair)),
+			linear-gradient(var(--color-grid) var(--rule-hair), transparent var(--rule-hair)),
+			linear-gradient(90deg, var(--color-grid) var(--rule-hair), transparent var(--rule-hair));
+		background-size:
+			var(--grid-pitch-major) var(--grid-pitch-major),
+			var(--grid-pitch-major) var(--grid-pitch-major),
+			var(--grid-pitch-minor) var(--grid-pitch-minor),
+			var(--grid-pitch-minor) var(--grid-pitch-minor);
+		background-attachment: local;
+	}
+
+	/* A disclosure button's chevron, drawn on the button itself (no element:
+	   a run page holds one per task card), pointing down once expanded. */
+	.btn-disclosure::before {
+		content: '';
+		flex: none;
+		width: calc(var(--spacing) * 1.5);
+		height: calc(var(--spacing) * 1.5);
+		margin-inline: calc(var(--spacing) * 0.5);
+		border-right: var(--rule-region) solid var(--color-ink-muted);
+		border-bottom: var(--rule-region) solid var(--color-ink-muted);
+		transform: rotate(-45deg);
+	}
+	.btn-disclosure[aria-expanded='true']::before {
+		transform: rotate(45deg);
+	}
+
+	/* A run's task card the reader selected (the map, the DAG, the palette).
+	   Inset, because a card skipped by content-visibility clips paint
+	   outside its box. */
+	.task-card[data-selected='true'] {
+		outline: var(--rule-frame) solid var(--color-blue);
+		outline-offset: calc(var(--rule-frame) * -1);
+	}
+
 	/* A caveat that is not an alarm. The NOTE label is markup beside it. */
 	.note {
 		border: var(--rule-hair) solid var(--color-rule);

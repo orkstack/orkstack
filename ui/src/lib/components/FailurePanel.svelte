@@ -38,23 +38,28 @@
 		retryState?: RetryState;
 		/** How many tries the attempt timeline knows of, for the exhausted-budget phrasing. */
 		attemptCount?: number;
+		/** Inside the run's revision cloud: no frame of its own. */
+		bare?: boolean;
 	}
 
-	let { error, testid, compact = false, retryState, attemptCount = 0 }: Props = $props();
+	let { error, testid, compact = false, retryState, attemptCount = 0, bare = false }: Props = $props();
 
 	const retryNote = $derived(retryStateLabel(retryState, attemptCount));
 
 	const category = $derived(error.category ?? FailureCategory.UNSPECIFIED);
 </script>
 
+<!--
+	Red ink and a 1 px red rule, the code in the mono after a filled mark —
+	never a tinted band. Inside the run's revision cloud (`bare`) it drops its
+	own rule: the cloud is the frame.
+-->
 <div
 	data-testid={testid}
 	role="alert"
-	class="rounded-md border border-failed-border bg-surface"
+	class="{bare ? '' : 'rounded-sm border border-red bg-paper px-4 py-3'} text-sm"
 >
-	<div
-		class="flex flex-wrap items-center gap-2 rounded-t-md border-b border-failed-border bg-failed-bg px-5 py-3 text-sm font-semibold text-failed-fg"
-	>
+	<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
 		<!--
 			The badge is shown only when the wire actually carries a category.
 			A run-level RUN_FAILED wrapper carries FAILURE_CATEGORY_UNSPECIFIED —
@@ -66,48 +71,37 @@
 				data-testid="{testid}-category"
 				data-category={categoryTestid(category)}
 				title={failureCategoryBlurb(category)}
-				class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium {failureCategoryClasses(
-					category
-				)}"
+				class="stamp {failureCategoryClasses(category)}"
 			>
 				{failureCategoryLabel(category)}
 			</span>
 		{/if}
 		{#if error.code}
-			<span class="font-mono text-xs font-normal text-failed-fg/80" data-testid="{testid}-code">
-				{error.code}
-			</span>
+			<span class="severity-error font-mono text-sm font-semibold" data-testid="{testid}-code">{error.code}</span>
 		{/if}
-		<span
-			class="text-xs font-normal {error.retryable ? 'text-warning-700' : 'text-fg-muted'}"
-			data-testid="{testid}-retryable"
-		>
+		<span class="text-xs {error.retryable ? 'text-ink' : 'text-ink-muted'}" data-testid="{testid}-retryable">
 			{error.retryable ? 'retryable' : 'not retryable'}
 		</span>
 		{#if retryNote}
-			<span class="text-xs font-normal text-fg-muted" data-testid="{testid}-retry-state">
-				{retryNote}
-			</span>
+			<span class="text-xs text-ink-muted" data-testid="{testid}-retry-state">{retryNote}</span>
 		{/if}
 	</div>
 
-	<div class="p-5 text-sm">
-		{#if !compact && category !== FailureCategory.UNSPECIFIED}
-			<p class="mb-1.5 text-xs text-fg-muted" data-testid="{testid}-blurb">
-				{failureCategoryBlurb(category)}
-			</p>
-		{/if}
+	{#if !compact && category !== FailureCategory.UNSPECIFIED}
+		<p class="mt-2 text-xs text-ink-muted" data-testid="{testid}-blurb">
+			{failureCategoryBlurb(category)}
+		</p>
+	{/if}
 
-		{#if error.message}
-			<p class="break-words whitespace-pre-wrap text-fg" data-testid="{testid}-message">
-				{error.message}
-			</p>
-		{/if}
+	{#if error.message}
+		<p class="mt-1.5 max-w-prose break-words whitespace-pre-wrap text-ink" data-testid="{testid}-message">
+			{error.message}
+		</p>
+	{/if}
 
-		{#if error.details && !compact}
-			<pre
-				class="mt-2 overflow-x-auto rounded-md border border-border-subtle bg-surface-sunken p-2 font-mono text-xs text-fg-secondary"
-				data-testid="{testid}-details">{error.details}</pre>
-		{/if}
-	</div>
+	{#if error.details && !compact}
+		<pre
+			class="mt-2 overflow-x-auto rounded-sm border border-rule-faint bg-paper-sunken p-2 font-mono text-xs text-ink-secondary"
+			data-testid="{testid}-details">{error.details}</pre>
+	{/if}
 </div>

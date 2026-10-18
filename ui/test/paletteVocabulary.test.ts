@@ -106,12 +106,18 @@ test('the shell and its new components render no banned word', () => {
 		'lib/components/ThemeSwitch.svelte',
 		'lib/components/CommandPalette.svelte',
 		'lib/components/MenuDrawer.svelte',
-		'lib/components/StatusPill.svelte'
+		'lib/components/StatusPill.svelte',
+		// Stage 2: the run sheet's new components.
+		'lib/components/TaskMap.svelte',
+		'lib/components/TaskMapLegend.svelte',
+		'lib/components/DrawingFrame.svelte',
+		'lib/components/RevisionCloud.svelte',
+		'lib/components/VersionTable.svelte'
 	];
 	const found: string[] = [];
 	for (const f of files) {
 		const strings = renderedStrings(readFileSync(`${import.meta.dir}/../src/${f}`, 'utf8'));
-		expect(strings.length > 0 || f.endsWith('StatusPill.svelte')).toBe(true);
+		expect(strings.length > 0 || f.endsWith('StatusPill.svelte') || f.endsWith('RevisionCloud.svelte')).toBe(true);
 		for (const s of strings) for (const w of bannedWords(s)) found.push(`${f}: "${s}" (${w})`);
 	}
 	expect(found).toEqual([]);
@@ -121,4 +127,17 @@ test('the shell and its new components render no banned word', () => {
 	const block = readFileSync(`${import.meta.dir}/../src/lib/components/TitleBlock.svelte`, 'utf8');
 	expect(block.includes('aria-label="Page summary"')).toBe(true);
 	expect(block.includes('Page details')).toBe(true);
+});
+
+// The commands a page adds to the palette, and the words its title block
+// and the map say: every `label: '…'` literal and the cloud's tag.
+test('the run and runs pages add no banned word to the palette or the title block', () => {
+	const found: string[] = [];
+	for (const f of ['routes/runs/[id]/+page.svelte', 'routes/runs/+page.svelte', 'routes/runs/[id]/compare/+page.svelte', 'lib/taskMap.ts', 'lib/heldRuns.ts']) {
+		const text = readFileSync(`${import.meta.dir}/../src/${f}`, 'utf8');
+		const labels = [...text.matchAll(/label: (?:'([^']*)'|`([^`]*)`)/g)].map((m) => (m[1] ?? m[2]).replace(/\$\{[^}]*\}/g, ' '));
+		const sentences = [...text.matchAll(/(?:text \+?= |return )["'`]([^"'`]*)["'`]/g)].map((m) => m[1]);
+		for (const s of [...labels, ...sentences]) for (const w of bannedWords(s)) found.push(`${f}: "${s}" (${w})`);
+	}
+	expect(found).toEqual([]);
 });

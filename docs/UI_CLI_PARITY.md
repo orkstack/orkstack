@@ -607,6 +607,30 @@ URL keeps `since=` as an ISO instant because that is what `orkctl stats
 `?window=custom` without a valid `since` shows the error panel rather than
 snapping back to `24h`, which would disagree with the address bar.
 
+#### Changed-run marks
+
+The Runs page marks a run whose status changed since this browser last saw
+it, and keeps the mark until the run is opened. It is a per-browser
+presentation of the statuses `orkctl run list` prints, not a capability: what
+was seen lives in this browser's `localStorage` only (at most 500 runs per
+namespace), nothing is written to the deployment, and another browser or
+person sees its own marks. A browser that refuses storage marks nothing.
+
+- The first visit to a namespace's list marks nothing. A run listed with a
+  status other than the one this browser last saw is marked, on the ground
+  of its new status, with a drawn delta in its RUN cell whose accessible name
+  says what it was ("Changed since you last looked; it was running"); a run
+  that failed after the last visit is marked as "failed while you were
+  away".
+- Opening a run's page counts as seeing it, and so does watching its status
+  change there. **Mark all seen** (on the page, and in the command palette,
+  which also lists the changed runs) clears every mark.
+- While the page is visible it re-reads the same listing every 15 s and
+  updates the status of the rows already shown in place; it never reorders
+  or inserts rows, and offers runs that appeared above as "N newer runs —
+  show". A listing row is `RUNNING` while a task waits on an approval, so a
+  run that starts waiting is not marked.
+
 ### Task attempts
 
 Temporal keeps only a task's final outcome, so `TaskRun.attempt` and
@@ -808,8 +832,8 @@ identical[; {n} field(s) unavailable].` and one footnote per unavailable side.
 Digests are never abbreviated; exit status is 0 whenever the RPC succeeded.
 UI: **Compare** on the run page pre-selects the Orkflow's newest other
 SUCCEEDED run and opens `/runs/{from}/compare?to={to}`, a deep-linkable page
-with a swap link, the same table (only differing cells tinted), summary and
-footnotes.
+with a swap link, the same table (each differing pair's TO side marked as the
+change, its FROM side quiet), summary and footnotes.
 
 ### Artifact retrieval
 

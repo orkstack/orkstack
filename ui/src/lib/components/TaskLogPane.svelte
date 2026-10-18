@@ -410,36 +410,36 @@
 		data-testid="task-log-toggle-{taskId}"
 		onclick={toggle}
 		aria-expanded={open}
-		class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
+		class="btn btn-sm"
 	>
-		<span class="text-fg-muted">{open ? '▾' : '▸'}</span>
+		<span class="text-ink-muted">{open ? '▾' : '▸'}</span>
 		{open ? 'Hide output' : 'Show output'}
 	</button>
 
 	{#if open}
-		<div class="mt-2 overflow-hidden rounded-md border border-console-border bg-console-bg">
+		<div class="mt-2 overflow-hidden rounded-sm border border-rule bg-paper-sunken">
 			<div
-				class="flex flex-wrap items-center gap-3 border-b border-console-border bg-console-header px-3 py-2 font-mono text-2xs tracking-caps uppercase"
+				class="flex flex-wrap items-center gap-3 border-b border-rule bg-paper-sunken px-3 py-2 font-mono text-2xs tracking-caps uppercase"
 			>
 				<span
 					data-testid="task-log-state-{taskId}"
 					class="inline-flex items-center gap-1.5 {stateLabel === 'LIVE'
-						? 'text-console-live'
+						? 'text-blue'
 						: stateLabel === 'ENDED'
-							? 'text-console-muted'
+							? 'text-ink-muted'
 							: stateLabel === 'FAILED'
-								? 'text-console-stderr'
-								: 'text-console-notice'}"
+								? 'text-red'
+								: 'text-ink-secondary'}"
 				>
 					{#if stateLabel === 'LIVE'}
 						<span
-							class="size-1.5 rounded-full bg-console-live animate-live-dot motion-reduce:animate-none"
+							class="size-1.5 rounded-full bg-blue animate-live-dot motion-reduce:animate-none"
 							aria-hidden="true"
 						></span>
 					{/if}
 					{stateLabel}</span
 				>
-				<span data-testid="task-log-follow-{taskId}" class="text-console-muted">
+				<span data-testid="task-log-follow-{taskId}" class="text-ink-muted">
 					{following ? 'FOLLOWING' : 'PAUSED'}
 				</span>
 				{#if maxAttempt > 1}
@@ -450,7 +450,7 @@
 						A number pins the pane to a finished try, which the
 						engine serves from the store.
 					-->
-					<label class="flex items-center gap-1.5 text-console-muted normal-case">
+					<label class="flex items-center gap-1.5 text-ink-muted normal-case">
 						Attempt:
 						<Select
 							testid="task-log-attempt-select-{taskId}"
@@ -464,14 +464,14 @@
 				{#if shownAttempt > 1 || pinned !== null}
 					<span
 						data-testid="task-log-attempt-{taskId}"
-						class="rounded-full border border-warning-600/50 bg-warning-600/15 px-2 text-console-notice normal-case tracking-normal"
+						class="rounded-sm border border-rule-strong px-1.5 text-ink-secondary normal-case tracking-normal"
 						>attempt {shownAttempt || pinned}</span
 					>
 				{/if}
 				{#if hasStderr}
 					<span
 						data-testid="task-log-stderr-legend-{taskId}"
-						class="text-console-stderr/80 normal-case tracking-normal"
+						class="text-red/80 normal-case tracking-normal"
 					>
 						stderr shown in red
 					</span>
@@ -481,12 +481,12 @@
 						type="button"
 						data-testid="task-log-jump-{taskId}"
 						onclick={jumpToLatest}
-						class="h-6 rounded-sm border border-console-live/40 px-2 text-console-live normal-case tracking-normal hover:bg-console-live/10"
+						class="h-6 rounded-sm border border-blue/40 px-2 text-blue normal-case tracking-normal hover:bg-blue/10"
 					>
 						Jump to latest
 					</button>
 				{/if}
-				<span class="ml-auto text-console-muted normal-case tracking-normal" data-testid="task-log-count-{taskId}">
+				<span class="ml-auto text-ink-muted normal-case tracking-normal" data-testid="task-log-count-{taskId}">
 					{lines.length} lines
 				</span>
 				<button
@@ -494,17 +494,17 @@
 					data-testid="task-log-download-{taskId}"
 					disabled={downloading || !dispatched}
 					onclick={downloadRetained}
-					class="h-6 rounded-sm border border-console-border px-2 text-console-fg normal-case tracking-normal hover:bg-ink/5 disabled:opacity-50"
+					class="h-6 rounded-sm border border-rule px-2 text-ink normal-case tracking-normal hover:bg-ink/5 disabled:opacity-50"
 				>
 					{downloading ? 'Preparing download…' : 'Download retained logs'}
 				</button>
-				<label class="flex items-center gap-1 text-console-muted normal-case tracking-normal">
+				<label class="flex items-center gap-1 text-ink-muted normal-case tracking-normal">
 					Search
-					<input data-testid="task-log-search-{taskId}" bind:value={search} placeholder="loaded lines" class="h-6 w-28 rounded-sm border border-console-border bg-console-bg px-1.5 text-console-fg placeholder:text-console-muted" />
+					<input data-testid="task-log-search-{taskId}" bind:value={search} placeholder="loaded lines" class="h-6 w-28 rounded-sm border border-rule bg-paper-sunken px-1.5 text-ink placeholder:text-ink-muted" />
 				</label>
 			</div>
 			{#if downloadError}
-				<p data-testid="task-log-download-error-{taskId}" class="border-b border-console-border px-3 py-1.5 font-mono text-xs text-console-stderr">
+				<p data-testid="task-log-download-error-{taskId}" class="border-b border-rule px-3 py-1.5 font-mono text-xs text-red">
 					{downloadError}
 				</p>
 			{/if}
@@ -512,10 +512,10 @@
 			{#if dropped > 0}
 				<p
 					data-testid="task-log-dropped-{taskId}"
-					class="border-b border-console-border px-3 py-1.5 font-mono text-xs text-console-notice"
+					class="border-b border-rule px-3 py-1.5 font-mono text-xs text-ink-secondary"
 				>
 					{dropped} earlier lines are no longer shown here (scrollback is {scrollback} lines).
-					The whole output is in the artifact store: <code class="text-console-fg"
+					The whole output is in the artifact store: <code class="text-ink"
 						>orkctl run logs {runId} --task {taskId}{item !== undefined ? ` --item ${item}` : ''}</code
 					>
 				</p>
@@ -524,18 +524,18 @@
 			{#if retried}
 				<p
 					data-testid="task-log-retried-{taskId}"
-					class="border-b border-console-border px-3 py-1.5 font-mono text-xs text-console-notice"
+					class="border-b border-rule px-3 py-1.5 font-mono text-xs text-ink-secondary"
 				>
 					This task retried, and this pane is now following attempt {shownAttempt}. The
 					earlier attempt's output is still in the artifact store:
-					<code class="text-console-fg"
+					<code class="text-ink"
 						>orkctl run logs {runId} --task {taskId} --attempt {shownAttempt - 1}</code
 					>
 				</p>
 			{/if}
 
 			{#if socketState === 'failed'}
-				<div class="border-b border-console-border bg-surface px-3 py-2">
+				<div class="border-b border-rule bg-paper px-3 py-2">
 					<ErrorPanel
 						testid="task-log-error-{taskId}"
 						retryTestid="task-log-retry-{taskId}"
@@ -554,11 +554,11 @@
 				class="max-h-80 overflow-y-auto px-3 py-2 font-mono text-xs leading-5 [font-variant-ligatures:none] lg:max-h-[480px]"
 			>
 				{#if !started}
-					<p data-testid="task-log-waiting-{taskId}" class="text-console-muted">
+					<p data-testid="task-log-waiting-{taskId}" class="text-ink-muted">
 						This task has not been dispatched yet. Its output appears here when it starts.
 					</p>
 				{:else if lines.length === 0}
-					<p data-testid="task-log-empty-{taskId}" class="text-console-muted">
+					<p data-testid="task-log-empty-{taskId}" class="text-ink-muted">
 						{#if ended}
 							This task wrote nothing.
 						{:else if socketState === 'failed'}
@@ -568,7 +568,7 @@
 						{/if}
 					</p>
 				{:else if filteredLines.length === 0}
-					<p data-testid="task-log-no-match-{taskId}" class="text-console-muted">No loaded lines match this search.</p>
+					<p data-testid="task-log-no-match-{taskId}" class="text-ink-muted">No loaded lines match this search.</p>
 				{:else}
 					{#each filteredLines as line (line.n)}
 						<!--
@@ -584,10 +584,10 @@
 							data-line={line.n}
 							data-stream={line.stream}
 							class="whitespace-pre-wrap break-all {line.notice
-								? 'text-console-notice'
+								? 'text-ink-secondary'
 								: line.stream === 'stderr'
-									? 'text-console-stderr'
-									: 'text-console-fg'}"
+									? 'text-red'
+									: 'text-ink'}"
 						>
 							{line.text}
 						</div>
@@ -598,7 +598,7 @@
 			{#if truncated}
 				<p
 					data-testid="task-log-truncated-{taskId}"
-					class="border-t border-console-border px-3 py-1.5 font-mono text-xs text-console-notice"
+					class="border-t border-rule px-3 py-1.5 font-mono text-xs text-ink-secondary"
 				>
 					This task's output passed its cap and was truncated by the Orker. Nothing beyond the
 					notice above was stored.

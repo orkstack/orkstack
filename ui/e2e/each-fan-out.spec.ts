@@ -486,4 +486,16 @@ test('the run page and the item list at the gated size are interactive within 5 
 	});
 	await measure('finished');
 	await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
+
+	// The task map, outside the timed span (UI revamp, stage 2): its section
+	// of the fan-out drew every item's cell after the two tasks' own.
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&view=map`);
+	const map = page.getByTestId('task-map');
+	await expect(map).toHaveAttribute('data-painted', 'true', { timeout: 30_000 });
+	await expect(map).toHaveAttribute('data-cells', String(2 + GATED_ITEMS));
+	await expect(page.getByTestId('task-map-section-spread')).toContainText(
+		`${new Intl.NumberFormat('en-US').format(GATED_ITEMS)} items`
+	);
+	note(`task map: ${await map.getAttribute('data-cells')} cells painted, the spread section ${GATED_ITEMS} items`);
+	await shot(page, 'screenshot-each-gated-map.png');
 });

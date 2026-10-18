@@ -92,16 +92,16 @@
 	}
 </script>
 
-<div class="mt-3 border-t border-border-subtle pt-3" data-testid="task-{taskId}-attempts">
+<div class="mt-3 border-t border-rule-faint pt-3" data-testid="task-{taskId}-attempts">
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<button
 			type="button"
 			data-testid="task-{taskId}-attempts-toggle"
 			aria-expanded={open}
 			onclick={() => (open = !open)}
-			class="inline-flex items-center gap-1.5 text-xs font-medium text-fg uppercase"
+			class="inline-flex items-center gap-1.5 text-xs font-medium text-ink uppercase"
 		>
-			<span class="text-fg-muted">{open ? '▾' : '▸'}</span>
+			<span class="text-ink-muted">{open ? '▾' : '▸'}</span>
 			Attempts ({attempts.length})
 		</button>
 		{#if attempts.length > 0}
@@ -123,7 +123,7 @@
 			own record — the same rule and reasons as `orkctl run timing`.
 		-->
 		{#if timing && decidedOn > 1 && timing.queueWait.kind !== 'na'}
-			<p class="mt-2 text-xs text-fg-secondary" data-testid="attempt-{taskId}-orker-wait">
+			<p class="mt-2 text-xs text-ink-secondary" data-testid="attempt-{taskId}-orker-wait">
 				{#if timing.queueWait.kind === 'value'}
 					Waited for an Orker {formatQuantity(timing.queueWait)}{pool ? ` on pool ${pool}` : ''}
 				{:else}
@@ -137,7 +137,7 @@
 				same statement as an UNREPORTED row. Records live on the same
 				lifecycle as logs, so a run past cleanup has none at all.
 			-->
-			<p class="mt-2 text-xs text-fg-muted" data-testid="task-{taskId}-attempts-empty">
+			<p class="mt-2 text-xs text-ink-muted" data-testid="task-{taskId}-attempts-empty">
 				No attempt records for this task. They are written as each attempt ends and are
 				reclaimed with the run's logs.
 			</p>
@@ -151,15 +151,15 @@
 					<li
 						data-testid="task-{taskId}-attempt-{attempt.attempt}"
 						data-outcome={attemptOutcomeLabel(attempt.outcome)}
-						class="rounded-md border px-3 py-2 {unreported
-							? 'border-dashed border-border-subtle bg-transparent opacity-70'
-							: 'border-border-subtle bg-surface'}"
+						class="rounded-sm border px-3 py-2 {unreported
+							? 'border-dashed border-rule-faint bg-transparent opacity-70'
+							: 'border-rule-faint bg-paper'}"
 					>
-						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted">
-							<span class="font-mono font-medium text-fg-secondary">#{attempt.attempt}</span>
+						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+							<span class="font-mono font-medium text-ink-secondary">#{attempt.attempt}</span>
 							<span
 								data-testid="task-{taskId}-attempt-{attempt.attempt}-outcome"
-								class="inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium tracking-caps whitespace-nowrap uppercase leading-4 {attemptOutcomeClasses(
+								class="stamp {attemptOutcomeClasses(
 									attempt.outcome
 								)}"
 							>
@@ -185,7 +185,7 @@
 										aria-expanded={errorOpen[attempt.attempt] ?? false}
 										onclick={() =>
 											(errorOpen[attempt.attempt] = !errorOpen[attempt.attempt])}
-										class="font-medium text-brand-700 hover:underline"
+										class="font-medium text-blue hover:underline"
 									>
 										{errorOpen[attempt.attempt] ? 'Hide error' : 'Show error'}
 									</button>
@@ -201,13 +201,13 @@
 									type="button"
 									data-testid="task-{taskId}-attempt-{attempt.attempt}-logs"
 									onclick={() => onViewLogs(attempt.attempt)}
-									class="font-medium text-brand-700 hover:underline">View logs</button
+									class="font-medium text-blue hover:underline">View logs</button
 								>
 							</span>
 						</div>
 						{#if unreported}
 							<p
-								class="mt-1 text-2xs text-fg-muted"
+								class="mt-1 text-2xs text-ink-muted"
 								data-testid="task-{taskId}-attempt-{attempt.attempt}-unreported"
 							>
 								{UNREPORTED_CAPTION}
@@ -221,7 +221,7 @@
 							-->
 							{@const phases = attemptPhases(attempt)}
 							<p
-								class="mt-1 font-mono text-2xs break-words text-fg-muted"
+								class="mt-1 font-mono text-2xs break-words text-ink-muted"
 								data-testid="attempt-{taskId}-{attempt.attempt}-phases"
 							>
 								{#if phases.kind === 'phases'}
@@ -238,15 +238,15 @@
 								which input changed between a miss and the run whose
 								memo it no longer matches.
 							-->
-							<div class="mt-1 text-2xs text-fg-muted" data-testid="task-{taskId}-attempt-{attempt.attempt}-cache">
+							<div class="mt-1 text-2xs text-ink-muted" data-testid="task-{taskId}-attempt-{attempt.attempt}-cache">
 								<span>{attemptCacheLine(attempt.cache)}</span>
 								{#if keyComponentRows(attempt.cache.keyComponents).length > 0}
 									<details class="mt-1" data-testid="task-{taskId}-attempt-{attempt.attempt}-cache-components">
-										<summary class="cursor-pointer font-medium text-brand-700">Key components</summary>
+										<summary class="cursor-pointer font-medium text-blue">Key components</summary>
 										<dl class="mt-1 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 font-mono">
 											{#each keyComponentRows(attempt.cache.keyComponents) as [name, value] (name)}
 												<dt>{name}</dt>
-												<dd class="break-all text-fg-secondary">{value}</dd>
+												<dd class="break-all text-ink-secondary">{value}</dd>
 											{/each}
 										</dl>
 									</details>

@@ -22,6 +22,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { taskMapCellCenter } from './uiHelpers';
 
 // The run detail page at the task ceiling (spec E7, the run-page case of
 // T7): the deployment's default engine.orkflow_max_tasks is the largest size
@@ -200,6 +201,17 @@ async function measureRunPage(
 	return elapsed;
 }
 
+// cardInViewport: the card's box ends inside the viewport, below the bar and
+// above the title block.
+async function cardInViewport(page: Page, testid: string): Promise<boolean> {
+	return page.evaluate((id) => {
+		const card = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();
+		const top = document.querySelector('header')!.getBoundingClientRect().bottom;
+		const bottom = document.querySelector('[data-testid="title-block"]')!.getBoundingClientRect().top;
+		return card.top >= top - 1 && card.bottom <= bottom + 1;
+	}, testid);
+}
+
 // E7: the run page of the gated-size flat-short run is interactive within
 // 5 s, live — every card drawn while its tasks start — and again once the
 // run has finished (canceled here: a real container per task would keep one
@@ -257,6 +269,32 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 			`live header ${medians.live.header} ms, cards ${medians.live.cards} ms, interactive ${medians.live.interactive} ms; ` +
 			`finished header ${medians.finished.header} ms, cards ${medians.finished.cards} ms, interactive ${medians.finished.interactive} ms`
 	);
+
+	// The task map at the ceiling, outside the timed span (UI revamp, stage
+	// 2): the run opens on its map, which drew every task's cell; from the
+	// top of the page, selecting the middle and the last cell selects that
+	// task and lands its card between the bar and the title block — where the
+	// card-height estimate behind the scroll is most wrong.
+	await page.evaluate(() => window.scrollTo(0, 0));
+	const map = page.getByTestId('task-map');
+	await expect(map).toHaveAttribute('data-painted', 'true');
+	await expect(map).toHaveAttribute('data-cells', String(GATED_TASKS));
+	note(`task map: ${await map.getAttribute('data-cells')} cells painted`);
+	await page.screenshot({ path: outPath('screenshot-task-map-gated-light.png') });
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await page.screenshot({ path: outPath('screenshot-task-map-gated-dark.png') });
+	await page.emulateMedia({ colorScheme: 'light' });
+	for (const index of [Math.floor(GATED_TASKS / 2), GATED_TASKS - 1]) {
+		const id = `t${index}`;
+		const at = await taskMapCellCenter(page, index);
+		await page.mouse.click(at.x, at.y);
+		await expect(page).toHaveURL(new RegExp(`task=${id}\\b`));
+		await expect(map).toHaveAttribute('data-selected', id);
+		await expect(page.getByTestId(`task-${id}`)).toHaveAttribute('data-selected', 'true');
+		await expect.poll(() => cardInViewport(page, `task-${id}`)).toBe(true);
+		note(`task map: cell ${index} selected ${id}, its card inside the viewport`);
+		await page.evaluate(() => window.scrollTo(0, 0));
+	}
 
 	// The output-maximal rows, quoted only.
 	const definition = await rpc<{ orkflow?: { definitionDigest?: string } }>('OrkflowService/GetOrkflow', {

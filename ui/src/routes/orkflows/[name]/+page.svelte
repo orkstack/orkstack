@@ -2,7 +2,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { rememberRecent } from '$lib/palette/recent';
-	import DagGraph from '$lib/components/DagGraph.svelte';
+	import DrawingFrame from '$lib/components/DrawingFrame.svelte';
 	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import OrkflowEditor from '$lib/components/OrkflowEditor.svelte';
@@ -137,9 +137,13 @@
 			The engine returned no document for {data.name}.
 		</p>
 	{:else}
-		<section class="mb-8">
-			<h2 class="mb-3 text-sm font-semibold text-fg">Task DAG</h2>
-			<DagGraph tasks={wf.tasks} />
+		<section class="mb-8" aria-label="Task DAG">
+			<DrawingFrame
+				testid="orkflow-drawing"
+				caption="{wf.name} @ {wf.version} · {wf.tasks.length} {wf.tasks.length === 1 ? 'task' : 'tasks'}"
+				tasks={wf.tasks}
+				orkflowLabel="{wf.name}@{wf.version}"
+			/>
 		</section>
 
 		<section class="mb-8">
@@ -169,7 +173,8 @@
 					<tbody>
 						{#each wf.tasks as task (task.id)}
 							<tr
-								class="border-t border-border-subtle transition-colors hover:bg-surface-hover"
+								id="task-row-{task.id}"
+								class="scroll-mt-16 border-t border-border-subtle transition-colors hover:bg-surface-hover target:bg-blue-tint"
 								data-testid="task-row-{task.id}"
 							>
 								<td class="h-11 px-4 pl-5 align-middle font-medium text-fg">{task.id}</td>

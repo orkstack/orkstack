@@ -102,6 +102,16 @@
 	--rule-hair: 1px;
 	--rule-region: 1.5px;
 	--rule-frame: 2px;
+	/* A failed node's outline on the DAG: the drawing's heaviest line. */
+	--rule-alarm: 3px;
+
+	/* The drafting grid behind the DAG, and nowhere else: an 8 px minor grid
+	   under a 40 px major one. */
+	--grid-pitch-minor: 8px;
+	--grid-pitch-major: 40px;
+
+	/* A task the run never started, drawn faded on the DAG. */
+	--opacity-faded: 0.45;
 
 	/* Motion: exponential ease-out from an already-visible default. */
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);

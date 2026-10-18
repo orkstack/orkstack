@@ -49,7 +49,7 @@
 		data-testid={testid}
 		data-flaky={inRun ? undefined : 'true'}
 		{title}
-		class="inline-flex items-center rounded-full border border-warning-200 bg-warning-50 px-2 py-0.5 text-2xs font-medium whitespace-nowrap text-warning-700 leading-4"
+		class="stamp border-rule-strong bg-paper text-ink-secondary"
 	>
 		{label}
 	</span>

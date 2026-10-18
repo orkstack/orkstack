@@ -27,6 +27,7 @@
 		type ItemView
 	} from '$lib/each';
 	import FailurePanel from '$lib/components/FailurePanel.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import RetryBadge from '$lib/components/RetryBadge.svelte';
 	import CacheBadge from '$lib/components/CacheBadge.svelte';
 	import type { CacheResult } from '$lib/gen/orkstack/v1/activity_pb';
@@ -106,6 +107,21 @@
 	import { ArtifactKind, type LiveAttempt, type RunArtifact } from '$lib/gen/orkstack/v1/run_service_pb';
 	import { liveLine } from '$lib/live';
 	import { afterNavigation } from '$lib/settle';
+	import DrawingFrame, { type DrawingView } from '$lib/components/DrawingFrame.svelte';
+	import RevisionCloud from '$lib/components/RevisionCloud.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
+	import TaskMap from '$lib/components/TaskMap.svelte';
+	import TaskMapLegend from '$lib/components/TaskMapLegend.svelte';
+	import VersionTable from '$lib/components/VersionTable.svelte';
+	import { DAG_DRAW_LIMIT, type NodeState } from '$lib/dag';
+	import { itemLabel } from '$lib/each';
+	import { isFailureHandler } from '$lib/join';
+	import { recordSeen } from '$lib/heldRuns';
+	import { registerProvider } from '$lib/palette/context';
+	import { commandId, type Command } from '$lib/palette/commands';
+	import { match } from '$lib/palette/rank';
+	import { setTitleBlock } from '$lib/sheet.svelte';
+	import { scrollToCard, twoFrames, type MapTask } from '$lib/taskMap';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -679,6 +695,7 @@
 	}
 
 	function mergeTerminalFacts() {
+		mapRevision++;
 		for (const tr of data.run?.taskRuns ?? []) {
 			const existing = findTask(tr.taskId);
 			upsertTask(tr.taskId, {
@@ -828,6 +845,7 @@
 	// and write per fan-out it touches, and the reducer below for every other
 	// event.
 	function applyEvents(events: Event[]) {
+		mapRevision++;
 		buffer = appendEvents(buffer, events);
 		// AN ITEM'S EVENT MOVES THAT ITEM'S CELL AND NOTHING ELSE. It is a
 		// TASK_LOG carrying `item`; the task's own status is the node's, and
@@ -878,6 +896,7 @@
 				if (!terminalFactsRead) refreshTerminalFacts();
 				break;
 			case EventType.RUN_FAILED:
+				if (!isTerminal(runStatus) && loadedLive) failedWhileWatched = true;
 				runStatus = status ?? Status.FAILED;
 				finishedAt = event.timestamp;
 				if (event.message) runErrorMessage = event.message;
@@ -1128,7 +1147,8 @@
 	// `inspectOpenByTask`, component state, and a link carries none of it.
 	const eventsOpen = $derived(page.url.searchParams.get('events') === '1');
 	function eventsHref(open: boolean): string {
-		const params = new URLSearchParams(page.url.searchParams);
+		void shallowTick;
+		const params = new URLSearchParams(typeof location === 'undefined' ? page.url.searchParams : location.search);
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
 		params.delete('events');
 		if (open) params.set('events', '1');
@@ -1181,7 +1201,8 @@
 	);
 	function selectItem(taskId: string, item: number | undefined): void {
 		selectedItemByTask[taskId] = item;
-		replaceState(taskHref(taskId, 0, item), page.state);
+		selectedTask = taskId;
+		shallow(writeHref({ task: taskId, attempt: 0, item }));
 		if (item !== undefined) void refreshAttempts(taskId, item);
 	}
 	// A deep-linked item's timeline is read once, as if its panel had been
@@ -1203,7 +1224,7 @@
 		return `/runs/${encodeURIComponent(data.runId)}?${params.toString()}`;
 	}
 	function setTaskAttempt(taskId: string, attempt: number | null, item?: number): void {
-		replaceState(taskHref(taskId, attempt ?? 0, item), page.state);
+		shallow(writeHref({ task: taskId, attempt: attempt ?? 0, item }));
 	}
 	// The pin requests handed to each task's log pane, newest nonce last.
 	//
@@ -1362,6 +1383,291 @@
 			)
 		);
 	}
+
+	// ---------------------------------------------------------------------
+	// THE SHEET: its title block, its drawing, the task a reader selected,
+	// what the palette offers on this page, and the changed-run mark.
+	// ---------------------------------------------------------------------
+
+	// A shallow write moves the address bar and NOT page.url (that is what
+	// makes it shallow), so every write after the first builds on the address
+	// bar itself; `shallowTick` lets the one link built from it (Show events)
+	// follow.
+	let shallowTick = $state(0);
+	function shallow(href: string): void {
+		replaceState(href, page.state);
+		shallowTick++;
+	}
+	function writeHref(next: { task?: string; attempt?: number; item?: number; view?: DrawingView }): string {
+		const params = new URLSearchParams(location.search);
+		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
+		if (next.task !== undefined) {
+			params.set('task', next.task);
+			if (next.attempt) params.set('attempt', String(next.attempt));
+			else params.delete('attempt');
+			if (next.item !== undefined) params.set('item', String(next.item));
+			else params.delete('item');
+		}
+		if (next.view !== undefined) params.set('view', next.view);
+		return `/runs/${encodeURIComponent(data.runId)}?${params.toString()}`;
+	}
+
+	// The title block: what this page is, along the bottom edge. Never the
+	// run id — that is this page's heading.
+	setTitleBlock(() => {
+		const r = data.run;
+		const namespace = namespaceLabel(data.namespace);
+		if (!r) return [{ label: 'PAGE', value: 'Run' }, { label: 'NAMESPACE', value: namespace }];
+		const digest = r.orkflowDefinitionDigest ?? '';
+		const hex = digest.includes(':') ? digest.slice(digest.indexOf(':') + 1) : digest;
+		return [
+			{
+				label: 'ORKFLOW',
+				value: r.orkflowName,
+				href: withNamespace(`/orkflows/${encodeURIComponent(r.orkflowName)}?version=${encodeURIComponent(r.orkflowVersion)}`, data.namespace)
+			},
+			{ label: 'VERSION', value: r.orkflowVersion },
+			{ label: 'DIGEST', value: hex.slice(0, 8) || '—', mono: true, title: digest || undefined, copy: digest || undefined },
+			{ label: 'NAMESPACE', value: namespace },
+			{ label: 'STATUS', value: statusLabel(runStatus), status: runStatus }
+		];
+	});
+
+	// Did the page open on a run still going? Then a failure that arrives is
+	// one the reader watched happen, and the cloud draws itself in.
+	const loadedLive = untrack(() => !isTerminal(data.run?.status ?? Status.UNSPECIFIED));
+	let failedWhileWatched = $state(false);
+
+	// The drawing's view: the URL's `view=` if it names one, else the task map
+	// for a run of more than DAG_DRAW_LIMIT tasks or with no readable
+	// definition (the DAG needs its needs), else the DAG.
+	const loadedTasks = untrack(() => Math.max(data.orkflow?.tasks.length ?? 0, data.run?.taskRuns.length ?? 0));
+	const urlView = untrack(() => page.url.searchParams.get('view'));
+	let view = $state<DrawingView>(
+		urlView === 'dag' || urlView === 'map'
+			? urlView
+			: !untrack(() => data.orkflow) || loadedTasks > DAG_DRAW_LIMIT
+				? 'map'
+				: 'dag'
+	);
+	function setView(next: DrawingView): void {
+		view = next;
+		shallow(writeHref({ view: next }));
+	}
+	const drawingViews = [
+		{ id: 'dag' as const, label: 'DAG', testid: 'run-view-dag' },
+		{ id: 'map' as const, label: 'Task map', testid: 'run-view-map' }
+	];
+
+	// The task a reader selected — from the map, the DAG or the palette — and
+	// the item of a fan-out. A deep link seeds it and does not scroll.
+	let selectedTask = $state(untrack(() => page.url.searchParams.get('task') ?? ''));
+	const selectedCell = $derived(
+		selectedTask ? { taskId: selectedTask, item: selectedItemByTask[selectedTask] } : null
+	);
+	function selectTask(taskId: string, item?: number): void {
+		if (item !== undefined && isFanOut(taskId)) selectItem(taskId, item);
+		else {
+			selectedTask = taskId;
+			shallow(writeHref({ task: taskId, attempt: 0 }));
+		}
+		void bringIntoView(taskId);
+	}
+	function cardOf(taskId: string): HTMLElement | null {
+		return document.querySelector(`[data-testid="task-${CSS.escape(taskId)}"]`);
+	}
+	async function bringIntoView(taskId: string): Promise<void> {
+		const card = cardOf(taskId);
+		if (!card) return;
+		await scrollToCard({
+			rect: () => card.getBoundingClientRect(),
+			scroll: () => card.scrollIntoView({ block: 'center' }),
+			viewport: () => ({
+				top: document.querySelector('header')?.getBoundingClientRect().bottom ?? 0,
+				bottom: document.querySelector('[data-testid="title-block"]')?.getBoundingClientRect().top ?? innerHeight
+			}),
+			frames: twoFrames
+		});
+	}
+	// The selected card is marked imperatively, on two elements, so a new
+	// selection never re-renders thousands of cards.
+	$effect(() => {
+		const id = selectedTask;
+		const card = id ? cardOf(id) : null;
+		card?.setAttribute('data-selected', 'true');
+		return () => card?.removeAttribute('data-selected');
+	});
+
+	// The map reads the tasks only in idle time and once per `mapRevision`
+	// (one per event batch, one per merged snapshot).
+	let mapRevision = $state(0);
+	function mapSource(): MapTask[] {
+		return tasks.map((t) => ({
+			id: t.id,
+			status: t.status,
+			needs: taskDefs.get(t.id)?.needs ?? [],
+			items: t.each !== undefined || taskDefs.get(t.id)?.each !== undefined ? t.items.map((i) => ({ index: i.index, status: i.status })) : undefined
+		}));
+	}
+	let legend = $state.raw(new Map<Status, number>());
+	let taskMap = $state<{ focusStatus: (status: Status) => void } | undefined>(undefined);
+
+	function attemptWords(task: TaskView): string {
+		if (task.attempt <= 0) return '';
+		const max = taskDefs.get(task.id)?.retry?.maximumAttempts ?? 0;
+		return `attempt ${task.attempt} of ${Math.max(max, 1, task.attempt)}`;
+	}
+	// The readout's words for a cell.
+	function describeCell(taskId: string, item?: number): string {
+		const task = findTask(taskId);
+		if (!task) return taskId;
+		if (item !== undefined) {
+			const it = task.items.find((i) => i.index === item);
+			return [itemLabel(taskId, item), statusLabel(it?.status), it?.run?.error?.code, it?.attempt ? `attempt ${it.attempt}` : '']
+				.filter(Boolean)
+				.join(' · ');
+		}
+		return [task.id, statusLabel(task.status), task.error?.code, attemptWords(task)].filter(Boolean).join(' · ');
+	}
+
+	// What a DAG node says on this page: its status and a line under its id.
+	function nodeState(id: string): NodeState | undefined {
+		const task = findTask(id);
+		if (!task) return undefined;
+		const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt);
+		if (!dispatched && task.status !== Status.SKIPPED) {
+			const never = isTerminal(runStatus) || task.status === Status.CANCELED;
+			const handler = isFailureHandler(joinOf(id));
+			return {
+				status: task.status,
+				line: never ? (handler ? 'failure handler · never ran' : 'never started') : 'waiting',
+				neverStarted: never
+			};
+		}
+		const took = isTerminal(task.status) ? formatDuration(task.startedAt ?? task.scheduledAt, task.finishedAt) : '';
+		const word =
+			task.status === Status.SUCCEEDED
+				? 'ok'
+				: task.status === Status.FAILED
+					? task.error?.code || 'failed'
+					: statusLabel(task.status).toLowerCase();
+		return { status: task.status, line: took && took !== '—' ? `${word} · ${took}` : word };
+	}
+
+	// The run's failure, for the cloud: the first task that failed, and its try.
+	const failedTask = $derived(tasks.find((t) => t.status === Status.FAILED && !isFailureHandler(joinOf(t.id))));
+	const cloudTag = $derived(
+		`Version ${run?.orkflowVersion ?? ''} · ${failedTask ? `${failedTask.id} failed` : 'run failed'}`
+	);
+	const failedImage = $derived(failedTask ? pinnedOrReference(taskDefs.get(failedTask.id)?.image) : '');
+	const getCommand = $derived(run ? runCommand(data.namespace, ['run', 'get', run.id, '--json']) : '');
+	const againCommand = $derived(run ? runCommand(data.namespace, ['run', 'again', run.id]) : '');
+
+	// Watching a run is seeing it: the runs list stops holding its changed
+	// mark (this browser only, $lib/heldRuns), now and on every status change
+	// while the page is visible. Off the path that draws the page.
+	$effect(() => {
+		const id = data.run?.id;
+		const status = statusLabel(runStatus);
+		const orkflow = data.run?.orkflowName ?? '';
+		const namespace = namespaceLabel(data.namespace);
+		if (!id) return;
+		const t = setTimeout(() => {
+			if (document.visibilityState === 'visible') recordSeen(namespace, id, status, orkflow);
+		}, 0);
+		return () => clearTimeout(t);
+	});
+
+	// What this page adds to the palette. Registering builds nothing: the
+	// commands are made only while the palette is open, per query, and the
+	// task jumps are the best eight ids by the palette's own ranking.
+	function taskJumps(query: string): Command[] {
+		const q = query.trim();
+		if (!q) return [];
+		const best: { id: string; grade: number; span: number }[] = [];
+		for (const t of tasks) {
+			const m = match(t.id, q);
+			if (!m) continue;
+			best.push({ id: t.id, grade: m.grade, span: m.span });
+			if (best.length > 64) {
+				best.sort((a, b) => b.grade - a.grade || a.span - b.span);
+				best.length = 8;
+			}
+		}
+		best.sort((a, b) => b.grade - a.grade || a.span - b.span);
+		return best.slice(0, 8).map((b) => ({
+			id: commandId('task', b.id),
+			group: 'Tasks' as const,
+			label: `Jump to task ${b.id}`,
+			context: statusLabel(findTask(b.id)?.status),
+			keywords: b.id,
+			action: { kind: 'page' as const, run: () => selectTask(b.id) }
+		}));
+	}
+	function pageCommands(): Command[] {
+		if (!run) return [];
+		const out: Command[] = [];
+		const nextFailed = tasks.find((t) => t.status === Status.FAILED);
+		if (nextFailed)
+			out.push({
+				id: 'run-next-failed',
+				group: 'Tasks',
+				label: 'Jump to the next failed task',
+				context: nextFailed.id,
+				action: { kind: 'page', run: () => selectTask(nextFailed.id) }
+			});
+		out.push({ id: 'run-again', group: 'Actions', label: 'Run again…', action: { kind: 'page', run: () => (runAgainDialogOpen = true) } });
+		if (!isTerminal(runStatus) && !cancellationRequested)
+			out.push({
+				id: 'run-cancel',
+				group: 'Actions',
+				label: 'Cancel run…',
+				action: {
+					kind: 'page',
+					run: () => {
+						cancelDialog = true;
+						cancelError = '';
+					}
+				}
+			});
+		out.push({ id: 'run-compare', group: 'Actions', label: 'Compare with…', action: { kind: 'page', run: () => void openCompare() } });
+		if (isTerminal(runStatus))
+			out.push({ id: 'run-evidence', group: 'Actions', label: 'Open evidence…', action: { kind: 'page', run: () => (evidenceDialogOpen = true) } });
+		out.push({
+			id: 'run-export',
+			group: 'Actions',
+			label: 'Export run JSON',
+			action: { kind: 'page', run: () => downloadJson(`${run.id}.json`, runExport()) }
+		});
+		const href = eventsHref(!eventsOpen);
+		out.push({
+			id: 'run-events',
+			group: 'Actions',
+			label: eventsOpen ? 'Hide events' : 'Show events',
+			action: { kind: 'navigate', href }
+		});
+		out.push({ id: 'run-copy-id', group: 'Actions', label: 'Copy run id', action: { kind: 'copy', text: run.id, what: 'the run id' } });
+		out.push({
+			id: 'run-copy-get',
+			group: 'Actions',
+			label: 'Copy orkctl run get --json',
+			context: 'command',
+			action: { kind: 'copy', text: getCommand, what: 'the command' }
+		});
+		return out;
+	}
+	// A provider offers at most eight: the page's own commands that match
+	// come first (with nothing typed, all of them — never more than eight),
+	// then the best task ids.
+	$effect(() =>
+		registerProvider({
+			id: 'run-page',
+			commands: (query) => {
+				const own = query.trim() ? pageCommands().filter((c) => match(c.label, query)) : pageCommands();
+				return [...own, ...taskJumps(query)].slice(0, 8);
+			}
+		})
+	);
 </script>
 
 <svelte:head><title>Run {run?.id ?? ''} — OrkStack</title></svelte:head>
@@ -1376,17 +1682,16 @@
 		onretry={retry}
 	/>
 {:else if retrying}
-	<p class="text-sm text-fg-muted" data-testid="run-loading">Loading the run…</p>
+	<p class="text-sm text-ink-muted" data-testid="run-loading">Loading the run…</p>
 {:else if run}
-	<div class="mb-6 flex flex-wrap items-center gap-4">
-		<div>
-			<h1 class="font-mono text-xl font-semibold break-all text-fg" data-testid="run-id">{run.id}</h1>
-			<p class="text-sm break-all text-fg-muted">
+	<SheetHeader title={run.id} testid="run-id" mono>
+		{#snippet meta()}
+			<p class="break-all">
 				<a
 					href={withNamespace(`/orkflows/${encodeURIComponent(run.orkflowName)}?version=${encodeURIComponent(run.orkflowVersion)}`, data.namespace)}
 					data-testid="pinned-orkflow-link"
-					class="font-medium text-brand-700 hover:underline">{run.orkflowName}</a
-				>@{run.orkflowVersion}
+					class="link font-semibold">{run.orkflowName}</a
+				><span class="font-mono text-ink-secondary">@{run.orkflowVersion}</span>
 			</p>
 			<!--
 				WHAT STARTED IT. The kind is a recorded fact, never an inference:
@@ -1395,11 +1700,11 @@
 				when it provably is an http(s) URL; the principal is the gateway's
 				assertion and says so.
 			-->
-			<p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-fg-muted" data-testid="run-origin">
+			<p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-muted" data-testid="run-origin">
 				{#if originSlug}
 					<span
 						data-testid="run-origin-kind"
-						class="inline-flex items-center rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-xs font-medium text-fg-secondary"
+						class="stamp border-rule-strong bg-paper text-ink-secondary"
 						>{originSlug}</span
 					>
 					{#if origin?.id}
@@ -1407,10 +1712,10 @@
 							<a
 								href={originHref}
 								data-testid="run-origin-link"
-								class="font-mono text-xs text-brand-700 hover:underline">{origin.id}</a
+								class="link font-mono text-xs">{origin.id}</a
 							>
 						{:else}
-							<span data-testid="run-origin-id" class="font-mono text-xs text-fg-secondary">{origin.id}</span>
+							<span data-testid="run-origin-id" class="font-mono text-xs text-ink-secondary">{origin.id}</span>
 						{/if}
 					{/if}
 					{#if origin?.description}
@@ -1423,10 +1728,10 @@
 								target="_blank"
 								rel="noopener noreferrer"
 								data-testid="run-origin-reference"
-								class="break-all text-brand-700 hover:underline">{origin.reference}</a
+								class="link break-all">{origin.reference}</a
 							>
 						{:else}
-							<span data-testid="run-origin-reference" class="font-mono text-xs break-all text-fg-secondary"
+							<span data-testid="run-origin-reference" class="font-mono text-xs break-all text-ink-secondary"
 								>{origin.reference}</span
 							>
 						{/if}
@@ -1440,8 +1745,7 @@
 					<span data-testid="run-origin-kind" class="italic" title={UNRECORDED_CAPTION}>{UNRECORDED}</span>
 				{/if}
 			</p>
-		</div>
-		<div class="flex items-center gap-3">
+			<div class="mt-2 flex flex-wrap items-center gap-2">
 			<StatusPill status={runStatus} testid="run-status" />
 			<!--
 				RETRIES, WHEN THERE WERE ANY. A run whose tasks all passed first
@@ -1453,7 +1757,7 @@
 				<span
 					data-testid="run-retries"
 					title="Total task retries in this run. Each task's own attempts are under its Inspect."
-					class="inline-flex items-center rounded-full border border-warning-200 bg-warning-50 px-2.5 py-0.5 text-xs font-medium whitespace-nowrap text-warning-700"
+					class="stamp border-rule-strong bg-paper text-ink-secondary"
 				>
 					Retries: {runRetries}
 				</span>
@@ -1463,9 +1767,7 @@
 				data-testid="run-stability-toggle"
 				aria-pressed={historyOpen}
 				onclick={toggleHistory}
-				class="inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-medium whitespace-nowrap transition-colors {historyOpen
-					? 'border-brand-200 bg-brand-50 text-brand-700'
-					: 'border-border bg-surface text-fg-muted hover:bg-surface-hover'}"
+				class="btn btn-sm {historyOpen ? 'border-blue bg-blue-tint text-blue-strong' : 'text-ink-secondary'}"
 			>Retry history ({HISTORY_WINDOW})</button>
 			{#if historyOpen}
 				<CliEquivalent
@@ -1473,31 +1775,30 @@
 					testid="run-stability-cli"
 				/>
 				{#if historyLoading}
-					<span class="text-xs text-fg-muted" data-testid="run-stability-loading">loading…</span>
+					<span class="text-xs text-ink-muted" data-testid="run-stability-loading">loading…</span>
 				{:else if historyError}
 					<span class="text-xs text-failed-fg" data-testid="run-stability-error"
 						>retry history unavailable: {historyError}</span
 					>
 				{:else if history}
-					<span class="text-xs text-fg-muted" data-testid="run-stability-note">{historyNote}</span>
+					<span class="text-xs text-ink-muted" data-testid="run-stability-note">{historyNote}</span>
 				{/if}
 			{/if}
 			<span
 				data-testid="live-badge"
-				class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium {isTerminal(
-					runStatus
-				)
-					? 'border-border bg-surface-sunken text-fg-muted'
+				class="stamp {isTerminal(runStatus)
+					? 'border-rule bg-paper-sunken text-ink-muted'
 					: socketState === 'open'
-						? 'border-succeeded-border bg-succeeded-bg text-succeeded-fg'
-						: 'border-warning-200 bg-warning-50 text-warning-700'}"
+						? 'border-blue bg-blue-tint text-blue-strong'
+						: 'border-red bg-paper text-red-strong'}"
 			>
 				<span
-					class="h-1.5 w-1.5 rounded-full {isTerminal(runStatus)
-						? 'bg-fg-muted'
+					aria-hidden="true"
+					class="size-1.5 rounded-full {isTerminal(runStatus)
+						? 'bg-ink-muted'
 						: socketState === 'open'
-							? 'bg-succeeded-solid animate-live-dot motion-reduce:animate-none'
-							: 'bg-warning-600'}"
+							? 'bg-blue animate-live-dot motion-reduce:animate-none'
+							: 'border border-red'}"
 				></span>
 				{isTerminal(runStatus)
 					? 'ENDED'
@@ -1509,74 +1810,57 @@
 								? 'NOT CONNECTED'
 								: 'CONNECTING'}
 			</span>
-		</div>
-		<div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+			</div>
+		{/snippet}
+		{#snippet actions()}
 			{#if isTerminal(runStatus)}
 				<!-- The engine exports evidence for finished runs only, so a live
 				     run is not offered it. -->
-				<button
-					type="button"
-					data-testid="run-evidence"
-					onclick={() => (evidenceDialogOpen = true)}
-					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
-				>Evidence</button>
+				<button type="button" data-testid="run-evidence" onclick={() => (evidenceDialogOpen = true)} class="btn">Evidence</button>
 			{/if}
 			{#if composesAny}
-				<a
-					href={childrenListHref(data.namespace, run.id)}
-					data-testid="run-children-link"
-					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
-				>Child runs</a>
+				<a href={childrenListHref(data.namespace, run.id)} data-testid="run-children-link" class="btn">Child runs</a>
 				<CliEquivalent
 					command={runCommand(data.namespace, ['run', 'list', '--filter', 'origin.kind=PARENT_RUN', '--filter', `origin.id=${run.id}`])}
 					testid="run-children-cli"
 					label="Copy the command that lists this run's child runs"
 				/>
 			{/if}
-			<button
-				type="button"
-				data-testid="compare-run"
-				onclick={() => void openCompare()}
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
-			>Compare</button>
-			<button
-				type="button"
-				data-testid="run-again"
-				onclick={() => (runAgainDialogOpen = true)}
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
-			>Run again</button>
-			<CliEquivalent
-				command={runCommand(data.namespace, ['run', 'get', run.id])}
-				testid="run-inspect-cli"
-				label="Copy CLI"
-			/>
-			<button
-				type="button"
-				data-testid="export-run-json"
-				onclick={() => downloadJson(`${run.id}.json`, runExport())}
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover"
-			>Export JSON</button>
-			{#if !isTerminal(runStatus)}
-				<button
-					type="button"
-					data-testid="cancel-run"
-					disabled={cancellationRequested}
-					onclick={() => { cancelDialog = true; cancelError = ''; }}
-					class="inline-flex h-9 items-center rounded-md bg-danger-600 px-3 text-sm font-medium text-on-ink hover:bg-danger-700 disabled:opacity-50"
-				>{cancellationRequested ? 'Cancellation requested' : 'Cancel run'}</button>
-			{/if}
+			<button type="button" data-testid="compare-run" onclick={() => void openCompare()} class="btn">Compare</button>
+			<button type="button" data-testid="export-run-json" onclick={() => downloadJson(`${run.id}.json`, runExport())} class="btn"
+				>Export JSON</button
+			>
 			<a
 				href={eventsHref(!eventsOpen)}
 				data-testid="events-toggle"
 				data-sveltekit-noscroll
 				aria-expanded={eventsOpen}
 				aria-controls="run-events"
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-brand-700"
-			>{eventsOpen ? 'Hide events' : 'Show events'}</a>
-		</div>
-	</div>
+				class="btn">{eventsOpen ? 'Hide events' : 'Show events'}</a
+			>
+			<CliEquivalent command={runCommand(data.namespace, ['run', 'get', run.id])} testid="run-inspect-cli" label="Copy CLI" />
+			{#if !isTerminal(runStatus)}
+				<button
+					type="button"
+					data-testid="cancel-run"
+					disabled={cancellationRequested}
+					onclick={() => {
+						cancelDialog = true;
+						cancelError = '';
+					}}
+					class="btn border-red text-red-strong hover:bg-red-tint">{cancellationRequested ? 'Cancellation requested' : 'Cancel run'}</button
+				>
+			{/if}
+			<button
+				type="button"
+				data-testid="run-again"
+				onclick={() => (runAgainDialogOpen = true)}
+				class="btn {isTerminal(runStatus) ? 'btn-primary' : ''}">Run again</button
+			>
+		{/snippet}
+	</SheetHeader>
 	{#if copied}
-		<p data-testid="copy-status" class="-mt-4 mb-4 text-xs text-fg-muted">{copied}</p>
+		<p data-testid="copy-status" role="status" class="-mt-4 mb-4 text-xs text-ink-muted">{copied}</p>
 	{/if}
 	{#if socketState === 'failed' && !isTerminal(runStatus)}
 		<div class="mb-4">
@@ -1590,18 +1874,11 @@
 		</div>
 	{/if}
 	{#if cancellationRequested && !isTerminal(runStatus)}
-		<p data-testid="cancellation-requested" class="mb-4 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-700">
-			Cancellation requested. Waiting for the run to stop.
+		<p data-testid="cancellation-requested" class="note mb-4 flex gap-3 px-3 py-2 text-sm">
+			<span class="caps text-ink-muted">Note</span>
+			<span>Cancellation requested. Waiting for the run to stop.</span>
 		</p>
 	{/if}
-
-	<!--
-		The run's terminal error. The snapshot's Error carries the §8.1
-		category, the §8.2 reason code and the retryable flag, so when it is
-		present it is rendered in full rather than as a bare sentence. A run
-		whose failure arrived only over the socket
-		has a message and no category, and says exactly that much.
-	-->
 	{#if runFailing(runStatus, runError, failingNote)}
 		<!--
 			A failing run: its outcome is decided FAILED and its failure
@@ -1611,67 +1888,155 @@
 		<p
 			data-testid="run-failing"
 			data-handlers={failingHandlers.map((h) => h.id).join(',')}
-			class="mb-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
+			role="status"
+			class="severity-warning mb-4 border border-red px-3 py-2 text-sm"
 		>
 			{failingBannerText(failingHandlers)}
 		</p>
 	{/if}
-	{#if runError}
-		<div class="mb-6"><FailurePanel error={runError} testid="run-error" /></div>
-	{:else if runErrorMessage}
-		<div
-			data-testid="run-error"
-			class="mb-6 rounded-md border border-danger-200 bg-danger-50 px-4 py-3 text-sm text-danger-700"
-		>
-			{runErrorMessage}
-		</div>
-	{/if}
 
-	<div class="mb-6 grid grid-cols-2 gap-4 text-sm sm:grid-cols-5">
-		<div class="rounded-md border border-border bg-surface p-3">
-			<div class="text-xs font-medium text-fg-muted">Created</div>
-			<div class="mt-1 text-fg-secondary">{fmtTimestamp(run.createdAt)}</div>
-		</div>
-		<div class="rounded-md border border-border bg-surface p-3">
-			<div class="text-xs font-medium text-fg-muted">Started</div>
-			<div class="mt-1 text-fg-secondary">{fmtTimestamp(startedAt ?? run.startedAt)}</div>
-		</div>
-		<div class="rounded-md border border-border bg-surface p-3">
-			<div class="text-xs font-medium text-fg-muted">Finished</div>
-			<div class="mt-1 text-fg-secondary">{fmtTimestamp(finishedAt ?? run.finishedAt)}</div>
-		</div>
-		<div class="rounded-md border border-border bg-surface p-3">
-			<div class="text-xs font-medium text-fg-muted">Elapsed</div>
-			<div class="mt-1 text-fg-secondary" data-testid="run-elapsed">{formatDuration(startedAt ?? run.startedAt, finishedAt ?? run.finishedAt ?? (isTerminal(runStatus) ? undefined : currentTimestamp))}</div>
-		</div>
-		<div class="rounded-md border border-border bg-surface p-3">
-			<div class="text-xs font-medium text-fg-muted">Tasks</div>
-			<div class="mt-1 text-fg-secondary" data-testid="task-summary">
-				{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}{#if cachedTotal > 0}<span data-testid="task-summary-cached"> · {cachedTotal} cached</span>{/if}
-			</div>
-		</div>
-	</div>
-
-	<section class="mb-6 grid gap-4 lg:grid-cols-2" aria-label="Run values">
-		<div class="min-w-0 rounded-md border border-border bg-surface p-4">
-			<div class="flex items-center justify-between gap-3">
-				<h2 class="text-sm font-semibold text-fg">Inputs</h2>
-				{#if run.input}
-					<button type="button" data-testid="copy-run-input" onclick={() => void copy(payloadJson(run.input), 'Inputs copied', 'run-input')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
+	<!--
+		THE DRAWING beside its aside: the run's tasks as a DAG or a task map,
+		and what a reader asks next — which version this is, why it failed, on
+		which image, and the command that reproduces it. Below 1280 px the
+		aside follows the drawing.
+	-->
+	<div class="mb-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_var(--spacing-aside)]">
+		<div class="min-w-0">
+			<DrawingFrame
+				testid="run-drawing"
+				caption="{run.orkflowName} @ {run.orkflowVersion} · {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'}"
+				views={drawingViews}
+				{view}
+				onview={setView}
+				tasks={data.orkflow?.tasks ?? null}
+				unavailable={data.orkflowError ?? 'the definition was not found'}
+				orkflowLabel="{run.orkflowName}@{run.orkflowVersion}"
+				on="run"
+				dagLabel="Task DAG of this run"
+				stateOf={nodeState}
+				selected={selectedTask}
+				hrefOf={(id) => taskHref(id, 0)}
+				onselect={(id) => selectTask(id)}
+				neighbourhoodWhenLarge
+			>
+				{#snippet map()}
+					<TaskMap
+						bind:this={taskMap}
+						source={mapSource}
+						definition={data.orkflow !== null}
+						revision={mapRevision}
+						selected={selectedCell}
+						onselect={selectTask}
+						describe={describeCell}
+						onlegend={(counts) => (legend = counts)}
+					/>
+				{/snippet}
+			</DrawingFrame>
+			<div class="mt-2 min-h-12 sm:min-h-6">
+				{#if view === 'map'}
+					<TaskMapLegend counts={legend} onpick={(status) => taskMap?.focusStatus(status)} />
+				{:else}
+					<p class="text-xs text-ink-muted">A dashed outline is a failure handler; a faded node never started.</p>
 				{/if}
 			</div>
-			<pre data-testid="run-input" class="mt-2 max-h-56 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{run.input ? payloadJson(run.input) : 'No input values are recorded for this run.'}</pre>
 		</div>
-		<div class="min-w-0 rounded-md border border-border bg-surface p-4">
+		<aside class="min-w-0 space-y-6" aria-label="About this run">
+			<VersionTable namespace={data.namespace} orkflowName={run.orkflowName} runVersion={run.orkflowVersion} {runStatus} />
+			{#if runError || runErrorMessage}
+				<!--
+					The run's terminal error. The snapshot's Error carries the §8.1
+					category, the §8.2 reason code and the retryable flag, so when it
+					is present it is rendered in full rather than as a bare sentence.
+					A run whose failure arrived only over the socket has a message
+					and no category, and says exactly that much.
+				-->
+				{#if runStatus === Status.FAILED}
+					<RevisionCloud tag={cloudTag} attempts={failedTask ? attemptWords(failedTask) : ''} animate={failedWhileWatched}>
+						{#if runError}
+							<FailurePanel error={runError} testid="run-error" bare />
+						{:else}
+							<div data-testid="run-error" role="alert" class="text-sm text-ink">{runErrorMessage}</div>
+						{/if}
+					</RevisionCloud>
+				{:else if runError}
+					<!-- A run that ended without failing (canceled): its reason, never a failure's cloud. -->
+					<FailurePanel error={runError} testid="run-error" />
+				{:else}
+					<div data-testid="run-error" role="alert" class="rounded-sm border border-rule-strong px-4 py-3 text-sm text-ink">{runErrorMessage}</div>
+				{/if}
+			{/if}
+			{#if failedImage}
+				<section aria-labelledby="run-image-heading">
+					<h2 id="run-image-heading" class="caps mb-1 text-ink-muted">Image</h2>
+					<p class="font-mono text-xs break-all text-ink" data-testid="run-failed-image">{failedImage}</p>
+				</section>
+			{/if}
+			<section aria-labelledby="run-reproduce-heading">
+				<h2 id="run-reproduce-heading" class="caps mb-1 text-ink-muted">Reproduce</h2>
+				<ul class="space-y-1.5">
+					{#each [{ key: 'get', command: getCommand, what: 'Read this run' }, { key: 'again', command: againCommand, what: 'Run it again' }] as line (line.key)}
+						<li class="flex items-start gap-2">
+							<code class="min-w-0 flex-1 font-mono text-xs break-all text-ink" data-testid="run-reproduce-{line.key}">{line.command}</code>
+							<button
+								type="button"
+								class="btn-icon -mt-1.5 inline-flex size-7 shrink-0 items-center justify-center"
+								aria-label="Copy: {line.what}"
+								title="Copy: {line.what}"
+								onclick={() => void copy(line.command, 'Command copied', `run-reproduce-${line.key}`)}><Icon name="copy" /></button
+							>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		</aside>
+	</div>
+
+	<dl class="mb-6 grid grid-cols-2 border-y border-rule text-sm sm:grid-cols-5" aria-label="Timing and tasks">
+		<div class="border-r border-b border-rule px-3 py-2 sm:border-b-0">
+			<dt class="caps text-ink-muted">Created</dt>
+			<dd class="figure mt-0.5 text-xs text-ink-secondary">{fmtTimestamp(run.createdAt)}</dd>
+		</div>
+		<div class="border-b border-rule px-3 py-2 sm:border-r sm:border-b-0">
+			<dt class="caps text-ink-muted">Started</dt>
+			<dd class="figure mt-0.5 text-xs text-ink-secondary">{fmtTimestamp(startedAt ?? run.startedAt)}</dd>
+		</div>
+		<div class="border-r border-b border-rule px-3 py-2 sm:border-b-0">
+			<dt class="caps text-ink-muted">Finished</dt>
+			<dd class="figure mt-0.5 text-xs text-ink-secondary">{fmtTimestamp(finishedAt ?? run.finishedAt)}</dd>
+		</div>
+		<div class="border-b border-rule px-3 py-2 sm:border-r sm:border-b-0">
+			<dt class="caps text-ink-muted">Elapsed</dt>
+			<dd class="figure mt-0.5 text-ink" data-testid="run-elapsed">{formatDuration(startedAt ?? run.startedAt, finishedAt ?? run.finishedAt ?? (isTerminal(runStatus) ? undefined : currentTimestamp))}</dd>
+		</div>
+		<div class="col-span-2 px-3 py-2 sm:col-span-1">
+			<dt class="caps text-ink-muted">Tasks</dt>
+			<dd class="mt-0.5 text-ink" data-testid="task-summary">
+				{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}{#if cachedTotal > 0}<span data-testid="task-summary-cached"> · {cachedTotal} cached</span>{/if}
+			</dd>
+		</div>
+	</dl>
+
+	<section class="mb-6 grid gap-6 lg:grid-cols-2" aria-label="Run values">
+		<div class="min-w-0">
 			<div class="flex items-center justify-between gap-3">
-				<h2 class="text-sm font-semibold text-fg" data-testid="run-output-kind">
+				<h2 class="caps text-ink-muted">Inputs</h2>
+				{#if run.input}
+					<button type="button" data-testid="copy-run-input" onclick={() => void copy(payloadJson(run.input), 'Inputs copied', 'run-input')} class="link text-xs">Copy JSON</button>
+				{/if}
+			</div>
+			<pre data-testid="run-input" class="mt-1.5 max-h-56 overflow-auto rounded-sm border border-rule-faint bg-paper-sunken p-3 font-mono text-xs text-ink-secondary">{run.input ? payloadJson(run.input) : 'No input values are recorded for this run.'}</pre>
+		</div>
+		<div class="min-w-0">
+			<div class="flex items-center justify-between gap-3">
+				<h2 class="caps text-ink-muted" data-testid="run-output-kind">
 					{declaresOutputs ? 'Declared outputs' : 'Leaf task values'}
 				</h2>
 				{#if run.output}
-					<button type="button" data-testid="copy-run-output" onclick={() => void copy(payloadJson(run.output), 'Run output copied', 'run-output')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
+					<button type="button" data-testid="copy-run-output" onclick={() => void copy(payloadJson(run.output), 'Run output copied', 'run-output')} class="link text-xs">Copy JSON</button>
 				{/if}
 			</div>
-			<pre data-testid="run-output" class="mt-2 max-h-56 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{run.output ? payloadJson(run.output) : isTerminal(runStatus) ? 'This run finished without aggregated output values.' : 'Run output is not available yet.'}</pre>
+			<pre data-testid="run-output" class="mt-1.5 max-h-56 overflow-auto rounded-sm border border-rule-faint bg-paper-sunken p-3 font-mono text-xs text-ink-secondary">{run.output ? payloadJson(run.output) : isTerminal(runStatus) ? 'This run finished without aggregated output values.' : 'Run output is not available yet.'}</pre>
 		</div>
 	</section>
 
@@ -1695,11 +2060,12 @@
 				/>
 			</section>
 		{/if}
-		<section>
-			<h2 class="mb-3 text-sm font-semibold text-fg">Tasks</h2>
+		<section class="region pt-4" aria-labelledby="run-tasks-heading">
+			<h2 id="run-tasks-heading" class="caps mb-3 text-ink-muted">Tasks</h2>
 			{#if data.artifactsError}
-				<p data-testid="artifacts-unavailable" class="mb-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-700">
-					Artifact metadata is unavailable: {data.artifactsError}. Downloads require the engine's recorded-artifact read API and are never linked directly to storage URIs.
+				<p data-testid="artifacts-unavailable" class="note mb-3 flex gap-3 px-3 py-2 text-xs">
+					<span class="caps text-ink-muted">Note</span>
+					<span>Artifact metadata is unavailable: {data.artifactsError}. Downloads require the engine's recorded-artifact read API and are never linked directly to storage URIs.</span>
 				</p>
 			{/if}
 			<!--
@@ -1709,15 +2075,16 @@
 				it costs — nothing else changes.
 			-->
 			{#if attemptsError}
-				<p data-testid="attempts-unavailable" class="mb-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-700">
-					Attempt history is not available: {attemptsError}. Task statuses, output and artifacts
-					are unaffected; what each earlier try of a retried task did cannot be shown.
+				<p data-testid="attempts-unavailable" class="note mb-3 flex gap-3 px-3 py-2 text-xs">
+					<span class="caps text-ink-muted">Note</span>
+					<span>Attempt history is not available: {attemptsError}. Task statuses, output and artifacts
+					are unaffected; what each earlier try of a retried task did cannot be shown.</span>
 				</p>
 			{/if}
 			{#if artifactDownloadError}
-				<p data-testid="artifact-download-error" class="mb-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700">Artifact download failed: {artifactDownloadError}</p>
+				<p data-testid="artifact-download-error" role="alert" class="severity-error mb-3 border border-red px-3 py-2 text-xs">Error: artifact download failed: {artifactDownloadError}</p>
 			{/if}
-			<div class="space-y-2" data-testid="task-list">
+			<div class="space-y-1.5" data-testid="task-list">
 				{#each tasks as task (task.id)}
 					{@const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt)}
 					{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
@@ -1756,13 +2123,13 @@
 						never skipped, and its overlay is never clipped to it.
 					-->
 					<div
-						class="rounded-md border bg-surface px-4 py-3 {isAwait || composed || inspectOpenByTask[task.id]
+						class="task-card rounded-sm border bg-paper px-4 py-3 {isAwait || composed || inspectOpenByTask[task.id]
 							? ''
 							: '[content-visibility:auto] [contain-intrinsic-size:auto_7rem]'} {dispatched
-							? 'border-border'
-							: 'border-dashed border-border-subtle opacity-60'}"
+							? 'border-rule'
+							: 'border-dashed border-rule-strong'}"
 						style={accent
-							? `border-left-width:3px;border-left-style:solid;border-left-color:var(--color-${accent}-line);background-color:var(--color-${accent}-fill)`
+							? `border-style:solid;border-color:var(--color-${accent}-line);background-color:var(--color-${accent}-fill)`
 							: undefined}
 						data-testid="task-{task.id}"
 						data-dispatched={dispatched}
@@ -1771,9 +2138,9 @@
 					>
 						<div class="flex items-center justify-between gap-4">
 							<div class="min-w-0">
-								<a href={taskHref(task.id, task.attempt)} class="font-medium break-all text-brand-700 hover:underline" data-testid="task-deep-link-{task.id}">{task.id}</a>
+								<a href={taskHref(task.id, task.attempt)} class="font-semibold break-all text-ink hover:text-blue hover:underline" data-testid="task-deep-link-{task.id}">{task.id}</a>
 								{#if task.message && !task.error}
-									<p class="text-xs break-words text-fg-secondary">{task.message}</p>
+									<p class="text-xs break-words text-ink-secondary">{task.message}</p>
 	{/if}
 							</div>
 							<!--
@@ -1788,7 +2155,7 @@
 									<span
 										data-testid="task-{task.id}-join"
 										title={joinTitle(task.join, taskDefs.get(task.id)?.needs ?? [])}
-										class="inline-flex items-center rounded-full border border-border bg-surface-sunken px-2 py-0.5 font-mono text-2xs leading-4 whitespace-nowrap text-fg-secondary"
+										class="inline-flex items-center rounded-sm border border-rule-strong px-1.5 font-mono text-2xs leading-4 whitespace-nowrap text-ink-secondary"
 									>join {joinWord(task.join)}</span>
 								{/if}
 								{#if dispatched || task.status === Status.SKIPPED}
@@ -1797,7 +2164,7 @@
 									<span
 										data-testid="task-{task.id}-status"
 										data-state="not-started"
-										class="text-2xs whitespace-nowrap text-fg-muted"
+										class="text-2xs whitespace-nowrap text-ink-muted"
 									>{notStartedCaption(task)}</span>
 								{/if}
 								<!--
@@ -1815,7 +2182,7 @@
 										<span
 											data-testid="task-{task.id}-retries"
 											title="Temporal retried these items. Open an item for the outcome and error of every attempt."
-											class="inline-flex items-center rounded-full border border-warning-200 bg-warning-50 px-2 py-0.5 text-2xs font-medium whitespace-nowrap text-warning-700 leading-4"
+											class="stamp border-rule-strong bg-paper text-ink-secondary"
 										>{retried}</span>
 									{/if}
 								{:else}
@@ -1838,7 +2205,7 @@
 								{/if}
 							</div>
 						</div>
-						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
+						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
 							<!--
 								WAITING OR SLOW. While the task has not finished, the only
 								honest number is how long ago it was scheduled — no
@@ -1882,7 +2249,7 @@
 										data-live={line.kind}
 										data-stale={line.stale}
 										title={line.title}
-										class={line.stale ? 'font-medium text-warning-700' : ''}>{line.text}</span
+										class={line.stale ? 'font-medium text-ink-secondary' : ''}>{line.text}</span
 									>
 									{#if live.heartbeatAvailable && live.orkerId && !task.orkerId}
 										<span data-testid="task-{task.id}-live-orker">Orker {live.orkerId}</span>
@@ -2043,9 +2410,8 @@
 								data-testid="task-inspect-toggle-{task.id}"
 								aria-expanded={inspectOpenByTask[task.id] ?? false}
 								onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}
-								class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
+								class="btn btn-sm btn-disclosure"
 							>
-								<span class="text-fg-muted">{inspectOpenByTask[task.id] ? '▾' : '▸'}</span>
 								{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}
 							</button>
 						</div>
@@ -2053,10 +2419,10 @@
 							{@const def = taskDefs.get(task.id)}
 							{@const taskArtifacts = (artifactsByTask.get(task.id) ?? []).filter((record) => record.item === undefined)}
 							<div
-								class="mt-2 rounded-md border border-border-subtle bg-surface-sunken p-3"
+								class="mt-2 rounded-sm border border-rule-faint bg-paper-sunken p-3"
 								data-testid="task-{task.id}-inspect"
 							>
-								<p class="text-xs break-all text-fg-muted" data-testid="task-{task.id}-activity">{task.activity || 'activity not yet known'}</p>
+								<p class="text-xs break-all text-ink-muted" data-testid="task-{task.id}-activity">{task.activity || 'activity not yet known'}</p>
 								<!--
 									WHAT RAN, AND WHAT IT PRODUCED.
 
@@ -2074,32 +2440,32 @@
 								-->
 								{#if composed}
 									<dl
-										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs"
+										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-rule-faint pt-3 text-xs"
 										data-testid="task-{task.id}-detail"
 									>
 										<div>
-											<dt class="text-fg-muted uppercase">Child orkflow</dt>
-											<dd class="mt-0.5 font-mono break-all text-fg-secondary" data-testid="task-{task.id}-child-ref">
+											<dt class="caps text-ink-muted">Child orkflow</dt>
+											<dd class="mt-0.5 font-mono break-all text-ink-secondary" data-testid="task-{task.id}-child-ref">
 												{childLabel(task.child)}
 											</dd>
 										</div>
 										<div>
-											<dt class="text-fg-muted uppercase">Definition digest</dt>
-											<dd class="mt-0.5 font-mono break-all text-fg-secondary" data-testid="task-{task.id}-child-digest">
+											<dt class="caps text-ink-muted">Definition digest</dt>
+											<dd class="mt-0.5 font-mono break-all text-ink-secondary" data-testid="task-{task.id}-child-digest">
 												{task.child?.orkflowDefinitionDigest || '—'}
 											</dd>
 										</div>
 									</dl>
 								{:else if !isAwait && (def || task.exitCode !== undefined || task.commit)}
 									<dl
-										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs sm:grid-cols-2"
+										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-rule-faint pt-3 text-xs sm:grid-cols-2"
 										data-testid="task-{task.id}-detail"
 									>
 										{#if def?.image}
 											<div class="sm:col-span-2">
-												<dt class="text-fg-muted uppercase">Image</dt>
+												<dt class="caps text-ink-muted">Image</dt>
 												<dd
-													class="mt-0.5 font-mono break-all text-fg-secondary"
+													class="mt-0.5 font-mono break-all text-ink-secondary"
 													data-testid="task-{task.id}-image"
 												>
 													{pinnedOrReference(def.image) || '—'}
@@ -2107,7 +2473,7 @@
 												{#if def.image.indexDigest}
 													<dd class="mt-0.5">
 														<span
-															class="font-mono text-brand-700"
+															class="font-mono text-blue"
 															title={def.image.indexDigest}
 															data-digest={def.image.indexDigest}
 															data-testid="task-{task.id}-image-digest"
@@ -2119,9 +2485,9 @@
 										{/if}
 										{#if def && def.command.length > 0}
 											<div class="sm:col-span-2">
-												<dt class="text-fg-muted uppercase">Command</dt>
+												<dt class="caps text-ink-muted">Command</dt>
 												<dd
-													class="mt-0.5 font-mono break-all text-fg-secondary"
+													class="mt-0.5 font-mono break-all text-ink-secondary"
 													data-testid="task-{task.id}-command"
 												>
 													{JSON.stringify(def.command)}
@@ -2130,7 +2496,7 @@
 										{/if}
 										{#if def && Object.keys(def.env).length > 0}
 											<div class="sm:col-span-2">
-												<dt class="text-fg-muted uppercase">Environment</dt>
+												<dt class="caps text-ink-muted">Environment</dt>
 												<!--
 													Env is shown as NAME=VALUE. It is
 													workload-supplied, non-secret configuration by
@@ -2141,7 +2507,7 @@
 													reaches the engine at all.
 												-->
 												<dd
-													class="mt-0.5 font-mono break-all text-fg-secondary"
+													class="mt-0.5 font-mono break-all text-ink-secondary"
 													data-testid="task-{task.id}-env"
 												>
 													{Object.entries(def.env)
@@ -2153,9 +2519,9 @@
 										{/if}
 										{#if def && def.secrets.length > 0}
 											<div>
-												<dt class="text-fg-muted uppercase">Secrets</dt>
+												<dt class="caps text-ink-muted">Secrets</dt>
 												<dd
-													class="mt-0.5 font-mono text-fg-secondary"
+													class="mt-0.5 font-mono text-ink-secondary"
 													title="names only — a secret's value is resolved on the Orker and never reaches this page"
 													data-testid="task-{task.id}-secrets"
 												>
@@ -2165,18 +2531,18 @@
 										{/if}
 										{#if def?.cache}
 											<div>
-												<dt class="text-fg-muted uppercase">Cache</dt>
-												<dd class="mt-0.5 text-fg-secondary" data-testid="task-{task.id}-cache-spec">
+												<dt class="caps text-ink-muted">Cache</dt>
+												<dd class="mt-0.5 text-ink-secondary" data-testid="task-{task.id}-cache-spec">
 													{cacheSpecLabel(def.cache)}
 												</dd>
 											</div>
 										{/if}
 										{#if task.cache}
 											<div class="sm:col-span-2" data-testid="task-{task.id}-cache-detail">
-												<dt class="text-fg-muted uppercase">Cache decision</dt>
-												<dd class="mt-0.5 text-fg-secondary">{cacheOutcomeLabel(task.cache.outcome)}</dd>
+												<dt class="caps text-ink-muted">Cache decision</dt>
+												<dd class="mt-0.5 text-ink-secondary">{cacheOutcomeLabel(task.cache.outcome)}</dd>
 												{#if task.cache.key}
-													<dd class="mt-0.5 font-mono break-all text-fg-muted" data-testid="task-{task.id}-cache-key">
+													<dd class="mt-0.5 font-mono break-all text-ink-muted" data-testid="task-{task.id}-cache-key">
 														{task.cache.key}
 													</dd>
 												{/if}
@@ -2184,19 +2550,19 @@
 													<dd class="mt-0.5">
 														Reused the result of run
 														<a
-															class="font-mono text-brand-700 hover:underline"
+															class="link font-mono"
 															href={cacheSourceHref(data.namespace, task.cache.source)}
 															data-testid="task-{task.id}-cache-detail-source">{task.cache.source?.runId}</a
 														>, produced {fmtTimestamp(task.cache.source?.finishedAt)}{#if sourceAttemptDuration(task.cache.source)}
 															(its attempt took {sourceAttemptDuration(task.cache.source)}){/if}.
 													</dd>
 													<dd
-														class="mt-0.5 font-mono break-all text-fg-muted"
+														class="mt-0.5 font-mono break-all text-ink-muted"
 														data-testid="task-{task.id}-cache-source-commit"
 													>
 														{task.cache.source?.commitUri}
 													</dd>
-													<dd class="mt-0.5 text-fg-muted">
+													<dd class="mt-0.5 text-ink-muted">
 														stdout.log and stderr.log below are the producing run's; this
 														attempt's own log is the cache line in the log pane.
 													</dd>
@@ -2207,7 +2573,7 @@
 														</dd>
 													{/if}
 													{#if memoWriteSentence(task.cache)}
-														<dd class="mt-0.5 text-fg-muted" data-testid="task-{task.id}-cache-memo">
+														<dd class="mt-0.5 text-ink-muted" data-testid="task-{task.id}-cache-memo">
 															{memoWriteSentence(task.cache)}
 														</dd>
 													{/if}
@@ -2215,12 +2581,12 @@
 											</div>
 										{/if}
 										<div>
-											<dt class="text-fg-muted uppercase">Exit code</dt>
+											<dt class="caps text-ink-muted">Exit code</dt>
 											<dd
 												class="mt-0.5 font-mono {task.exitCode === undefined
-													? 'text-fg-muted'
+													? 'text-ink-muted'
 													: task.exitCode === 0
-														? 'text-fg-secondary'
+														? 'text-ink-secondary'
 														: 'text-failed-fg'}"
 												data-state={task.exitCode === undefined ? 'unknown' : 'measured'}
 												data-testid="task-{task.id}-exit-code"
@@ -2230,9 +2596,9 @@
 										</div>
 										{#if task.commit?.uri}
 											<div class="sm:col-span-2">
-												<dt class="text-fg-muted uppercase">Commit</dt>
+												<dt class="caps text-ink-muted">Commit</dt>
 												<dd
-													class="mt-0.5 font-mono break-all text-fg-muted"
+													class="mt-0.5 font-mono break-all text-ink-muted"
 													data-testid="task-{task.id}-commit"
 												>
 													{task.commit.uri}
@@ -2270,18 +2636,18 @@
 									no pinned definition still lists them.
 								-->
 								{#if taskArtifacts.length > 0}
-									<div class="mt-3 border-t border-border-subtle pt-3" data-testid="task-artifacts-{task.id}">
-										<h4 class="text-xs text-fg-muted uppercase">Artifacts</h4>
+									<div class="mt-3 border-t border-rule-faint pt-3" data-testid="task-artifacts-{task.id}">
+										<h4 class="caps text-ink-muted">Artifacts</h4>
 										{#each taskArtifacts as record (record.kind + ':' + (record.artifact?.name ?? ''))}
 											{#if record.artifact}
 												{@const key = `${record.taskId}:${record.kind}:${record.artifact.name}`}
-												<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border-subtle px-3 py-2 text-xs">
-													<span class="font-medium text-fg">{artifactKindLabel(record.kind)}</span>
-													<span class="font-mono break-all text-fg-secondary">{record.artifact.name}</span>
-													<span class="text-fg-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
-													<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => downloadArtifact(record)} disabled={downloadingArtifact === key} class="ml-auto font-medium text-brand-700 hover:underline disabled:opacity-50">{downloadingArtifact === key ? 'Downloading…' : 'Download'}</button>
+												<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-rule-faint bg-paper px-3 py-2 text-xs">
+													<span class="font-medium text-ink">{artifactKindLabel(record.kind)}</span>
+													<span class="font-mono break-all text-ink-secondary">{record.artifact.name}</span>
+													<span class="text-ink-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
+													<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => downloadArtifact(record)} disabled={downloadingArtifact === key} class="link ml-auto font-medium disabled:opacity-50">{downloadingArtifact === key ? 'Downloading…' : 'Download'}</button>
 													<ArtifactProvenance runId={run.id} namespace={data.namespace} taskId={task.id} kind={record.kind} name={record.artifact.name} />
-													<details class="w-full min-w-0 text-fg-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
+													<details class="w-full min-w-0 text-ink-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
 												</div>
 											{/if}
 										{/each}
@@ -2290,12 +2656,12 @@
 							</div>
 						{/if}
 						{#if task.output || task.valuesRef}
-							<div class="mt-3 rounded-md border border-border-subtle bg-surface-sunken p-3">
+							<div class="mt-3 rounded-sm border border-rule-faint bg-paper-sunken p-3">
 								<div class="flex items-center justify-between gap-3">
-									<span class="text-xs font-medium text-fg">Task values</span>
-									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => void copy(payloadJson(task.output), 'Task values copied', `task-values-${task.id}`)} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>{/if}
+									<span class="text-xs font-medium text-ink">Task values</span>
+									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => void copy(payloadJson(task.output), 'Task values copied', `task-values-${task.id}`)} class="link text-xs">Copy JSON</button>{/if}
 								</div>
-								<pre data-testid="task-values-{task.id}" class="mt-2 max-h-40 overflow-auto font-mono text-xs text-fg-secondary">{task.output ? payloadJson(task.output) : isTerminal(task.status) ? 'This task finished without inline values. Its recorded values artifact, if present, is listed under Inspect.' : 'Task values are not available yet.'}</pre>
+								<pre data-testid="task-values-{task.id}" class="mt-2 max-h-40 overflow-auto font-mono text-xs text-ink-secondary">{task.output ? payloadJson(task.output) : isTerminal(task.status) ? 'This task finished without inline values. Its recorded values artifact, if present, is listed under Inspect.' : 'Task values are not available yet.'}</pre>
 							</div>
 						{/if}
 					</div>
@@ -2317,15 +2683,15 @@
 			>
 				{#snippet body()}
 					<p>The request is sent to the durable execution service. This page keeps the current status until that service records a transition.</p>
-					<label class="mt-3 block text-sm font-medium text-fg" for="cancel-reason">Reason <span class="font-normal text-fg-muted">(optional)</span></label>
-					<textarea id="cancel-reason" data-testid="cancel-reason" bind:value={cancelReason} rows="3" class="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg" placeholder="Why should this run stop?"></textarea>
+					<label class="mt-3 block text-sm font-medium text-ink" for="cancel-reason">Reason <span class="font-normal text-ink-muted">(optional)</span></label>
+					<textarea id="cancel-reason" data-testid="cancel-reason" bind:value={cancelReason} rows="3" class="field mt-1 w-full px-3 py-2 text-sm" placeholder="Why should this run stop?"></textarea>
 					<!--
 						Deliberately NOT a CliEquivalent popover. This is a live preview of
 						the exact destructive command this dialog is about to run, and it
 						stays visible while the reason field is typed into. Styled to match
 						the popover's command block; not hidden behind its icon.
 					-->
-					<p class="mt-3 overflow-x-auto rounded-sm bg-surface-sunken p-2 font-mono text-xs text-fg-muted">{runCommand(data.namespace, ['run', 'cancel', run.id, ...(cancelReason.trim() ? ['--reason', cancelReason.trim()] : [])])}</p>
+					<p class="mt-3 overflow-x-auto rounded-sm bg-paper-sunken p-2 font-mono text-xs text-ink-muted">{runCommand(data.namespace, ['run', 'cancel', run.id, ...(cancelReason.trim() ? ['--reason', cancelReason.trim()] : [])])}</p>
 				{/snippet}
 			</ConfirmDialog>
 		{/if}
@@ -2370,11 +2736,11 @@
 			{#snippet body()}
 				<div class="grid grid-cols-1 gap-4">
 					<div class="grid grid-cols-1 gap-1.5">
-						<label for="compare-target" class="text-xs font-medium text-fg-muted"
+						<label for="compare-target" class="text-xs font-medium text-ink-muted"
 							>A recent run of {run.orkflowName}</label
 						>
 						{#if compareLoading}
-							<p class="text-sm text-fg-muted" data-testid="compare-loading">Loading recent runs…</p>
+							<p class="text-sm text-ink-muted" data-testid="compare-loading">Loading recent runs…</p>
 						{:else if compareError}
 							<ErrorPanel
 								testid="compare-error"
@@ -2384,7 +2750,7 @@
 								onretry={() => void openCompare()}
 							/>
 						{:else if compareCandidates.length === 0}
-							<p class="text-sm text-fg-muted" data-testid="compare-no-candidates">
+							<p class="text-sm text-ink-muted" data-testid="compare-no-candidates">
 								No other run of {run.orkflowName} in this namespace. Paste a run id below.
 							</p>
 						{:else}
@@ -2401,7 +2767,7 @@
 						{/if}
 					</div>
 					<div class="grid grid-cols-1 gap-1.5">
-						<label for="compare-target-id" class="text-xs font-medium text-fg-muted"
+						<label for="compare-target-id" class="text-xs font-medium text-ink-muted"
 							>Or any run id (of any orkflow)</label
 						>
 						<input
@@ -2412,7 +2778,7 @@
 							placeholder="ork-…"
 							autocomplete="off"
 							spellcheck="false"
-							class="h-9 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg focus-visible:border-brand-500"
+							class="field h-9 px-3 font-mono text-sm"
 						/>
 					</div>
 					<div class="flex justify-end">
@@ -2421,7 +2787,7 @@
 							data-testid="compare-open"
 							disabled={compareTarget === ''}
 							onclick={openComparison}
-							class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:opacity-50"
+							class="btn btn-primary"
 						>Open comparison</button>
 					</div>
 				</div>

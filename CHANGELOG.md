@@ -37,6 +37,24 @@ include breaking changes, and each is marked **BREAKING**.
   (55 KB preloaded, down from 89 KB). Every colour, size, radius, shadow and
   motion is a token in `ui/src/tokens.css`; a test refuses a raw value
   anywhere else.
+- The run page, the Runs page and compare are redrawn (stage 2 of 4). A run
+  opens on its drawing: the DAG on a grid, each node drawn by its status and a
+  link that selects its task, or — past 80 tasks — a task map with one cell
+  per task and per fan-out item, readable and keyboard-operable at 4,000
+  tasks (arrows, Home/End, PageUp/Down, F for the next failure, Enter to
+  select). The DAG is drawn up to 80 tasks, on request up to 300, and never
+  above, where a selected task's neighbourhood is drawn instead; the Orkflow
+  page's DAG follows the same bound. Beside it, the versions of the run's
+  Orkflow (this run's, the current one and the newest), and a failed run's
+  reason in a dashed red outline with the commands that reproduce it. A run
+  whose definition or versions cannot be read still shows everything else,
+  with the reason. The Runs page updates the statuses it shows every 15 s
+  without reordering, and marks a run whose status changed since this
+  browser last saw it until it is opened (docs/UI_CLI_PARITY.md,
+  "Changed-run marks"); the command palette lists the changed runs, selects
+  a task by id on a run page, and opens the run's actions behind their
+  confirmations. A closed popover no longer listens to the page, so a run
+  page of 4,000 tasks becomes interactive about 0.4 s sooner.
 - **BREAKING:** every Orkflow begins with `apiVersion: orkstack/v1` and
   `kind: Orkflow`. A document without them is refused at validate, apply and
   plan, naming the two lines to add. The header is not part of the definition:

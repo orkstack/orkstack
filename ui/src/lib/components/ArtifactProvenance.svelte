@@ -81,7 +81,7 @@
 	aria-expanded={open}
 	aria-controls={base}
 	onclick={toggle}
-	class="font-medium text-brand-700 hover:underline"
+	class="font-medium text-blue hover:underline"
 >
 	{open ? 'Hide provenance' : 'Provenance'}
 </button>
@@ -89,10 +89,10 @@
 	<div
 		id={base}
 		data-testid={base}
-		class="w-full min-w-0 rounded-md border border-border-subtle bg-surface-sunken px-3 py-2 text-xs"
+		class="w-full min-w-0 rounded-sm border border-rule-faint bg-paper-sunken px-3 py-2 text-xs"
 	>
 		<div class="flex items-start justify-between gap-3">
-			<p class="font-medium text-fg">Provenance of <span class="font-mono">{name}</span> <span class="text-fg-muted">({kindName})</span></p>
+			<p class="font-medium text-ink">Provenance of <span class="font-mono">{name}</span> <span class="text-ink-muted">({kindName})</span></p>
 			<CliEquivalent
 				command={provenanceCommand(namespace, runId, taskId, kind, name, item)}
 				testid="artifact-provenance-cli-{key}"
@@ -100,7 +100,7 @@
 			/>
 		</div>
 		{#if loading}
-			<p class="mt-2 text-fg-muted" data-testid="{base}-loading">Loading…</p>
+			<p class="mt-2 text-ink-muted" data-testid="{base}-loading">Loading…</p>
 		{:else if error}
 			<div class="mt-2">
 				<ErrorPanel
@@ -113,52 +113,52 @@
 			</div>
 		{:else if answer}
 			<dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-				<dt class="text-fg-muted uppercase">Bytes</dt>
+				<dt class="text-ink-muted uppercase">Bytes</dt>
 				<dd
 					data-testid="{base}-bytes"
-					class={answer.bytesPresent ? 'text-fg-secondary' : 'font-medium text-danger-700'}
+					class={answer.bytesPresent ? 'text-ink-secondary' : 'font-medium text-red-strong'}
 				>
 					{answer.bytesPresent ? BYTES_PRESENT : BYTES_MISSING}
 				</dd>
-				<dt class="text-fg-muted uppercase">Reference</dt>
-				<dd data-testid="{base}-reference" class="text-fg-secondary">
+				<dt class="text-ink-muted uppercase">Reference</dt>
+				<dd data-testid="{base}-reference" class="text-ink-secondary">
 					{referenceStateText(answer.ownReference, answer.releasedAt)}
 				</dd>
 			</dl>
 			<div class="mt-2" data-testid="{base}-references">
 				{#if answer.references.length === 0}
-					<p class="text-fg-muted" data-testid="{base}-references-empty">{NO_REFERENCES}</p>
+					<p class="text-ink-muted" data-testid="{base}-references-empty">{NO_REFERENCES}</p>
 				{:else}
-					<p class="text-fg-muted uppercase">Referenced by</p>
+					<p class="text-ink-muted uppercase">Referenced by</p>
 					<ul class="mt-1 space-y-1">
 						{#each answer.references as ref, i (ref.runId + ':' + ref.taskId + ':' + ref.kind + ':' + i)}
 							<li
 								data-testid="{base}-reference-row"
-								class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-border-subtle bg-surface px-2 py-1"
+								class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-rule-faint bg-paper px-2 py-1"
 							>
 								<a
 									href={withNamespace(`/runs/${encodeURIComponent(ref.runId)}`, namespace)}
 									data-testid="{base}-reference-link"
-									class="font-mono break-all text-brand-700 hover:underline">{ref.runId}</a
+									class="font-mono break-all text-blue hover:underline">{ref.runId}</a
 								>
 								{#if ref.runId === runId}
 									<span
 										data-testid="{base}-this-run"
-										class="rounded-full border border-border px-1.5 text-2xs text-fg-muted">this run</span
+										class="stamp border-rule-strong text-ink-secondary">this run</span
 									>
 								{/if}
-								<span class="text-fg-secondary">{ref.orkflowName}@{ref.orkflowVersion}</span>
-								<span class="font-mono text-fg-secondary">{ref.taskId}</span>
-								<span class="text-fg-muted">{refKind(ref.kind)}</span>
+								<span class="text-ink-secondary">{ref.orkflowName}@{ref.orkflowVersion}</span>
+								<span class="font-mono text-ink-secondary">{ref.taskId}</span>
+								<span class="text-ink-muted">{refKind(ref.kind)}</span>
 								<StatusPill status={ref.runStatus} />
-								<span class="text-fg-muted">{rfc3339(ref.runCreatedAt)}</span>
+								<span class="text-ink-muted">{rfc3339(ref.runCreatedAt)}</span>
 							</li>
 						{/each}
 					</ul>
 				{/if}
 			</div>
 			{#if unreadableText(answer.referencesUnreadable)}
-				<p class="mt-2 text-fg-muted" data-testid="{base}-unreadable">{unreadableText(answer.referencesUnreadable)}</p>
+				<p class="mt-2 text-ink-muted" data-testid="{base}-unreadable">{unreadableText(answer.referencesUnreadable)}</p>
 			{/if}
 		{/if}
 	</div>

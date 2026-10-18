@@ -304,11 +304,13 @@ export function deadCandidates(candidates: string[], reference: DesignSystem, ou
 	return dead;
 }
 
+// A component's <style> block is CSS, not markup: its property names
+// (font-size, font-family) are declarations, never class candidates. Rules 1
+// and 3 still read every value in it.
 function candidatesOf(text: string, ext: string): string[] {
 	const scanner = new Scanner({});
-	return scanner
-		.getCandidatesWithPositions({ content: stripComments(text, ext), extension: ext })
-		.map((c) => c.candidate);
+	const content = ext === 'svelte' ? stripComments(text, ext).replace(/<style[\s\S]*?<\/style>/g, ' ') : stripComments(text, ext);
+	return scanner.getCandidatesWithPositions({ content, extension: ext }).map((c) => c.candidate);
 }
 
 async function systems(appCssText: string) {
@@ -327,6 +329,9 @@ test('rule 5 fixtures: dead utilities and lost variants are caught; prose and li
 	expect(deadCandidates(fixture, reference, ours).sort()).toEqual(
 		['animate-pulse-dot', 'hover:bg-warning-100', 'rounded-lg', 'shadow-xs', 'text-white'].sort()
 	);
+	// A <style> block's declarations are not candidates; a class beside it still is.
+	const styled = candidatesOf('<p class="rounded-lg">x</p><style>.a { font-size: var(--text-sm); font-family: var(--font-sans); }</style>', 'svelte');
+	expect(deadCandidates(styled, reference, ours)).toEqual(['rounded-lg']);
 	// The variant clause: drop @custom-variant current, and every current:
 	// candidate is dead — including one that is not a colour utility.
 	const dropped = await systems(appCss.replace(/@custom-variant current[^;]+;/, ''));
@@ -359,7 +364,7 @@ function block(opening: string): string {
 const namesIn = (body: string) => new Set([...body.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)].map((m) => m[1]));
 
 /** Read with var() from CSS or an inline style; never a utility. */
-const RUNTIME_ONLY = /^--(?:color-pin-|rule-|duration-|underline-offset$|opacity-disabled$)/;
+const RUNTIME_ONLY = /^--(?:color-pin-|rule-|duration-|grid-pitch-|underline-offset$|opacity-)/;
 
 test('rule 6: tokens.css and the registration declare the same names', () => {
 	const registered = new Set(

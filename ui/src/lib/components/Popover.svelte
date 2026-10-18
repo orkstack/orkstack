@@ -41,24 +41,36 @@
 	// dismissOnOutsideOrEscape's own document-level listener. Without this, a
 	// CliEquivalent popover opened inside a Dialog closed BOTH on one Escape.
 	//
-	// An action, not an `onkeydown` template attribute: the wrapping element
-	// is a plain positioning `<div>` with no interactive role of its own (the
-	// real interactive elements are inside `trigger`/`content`), and Svelte's
-	// a11y check flags a static element with a declarative key handler. An
-	// imperative listener isn't statically checkable that way, and behaves
-	// identically — it still runs before the bubble reaches `document`.
-	function stopEscapeHere(node: HTMLElement): { destroy(): void } {
-		function onKeyDown(event: KeyboardEvent): void {
-			if (event.key !== 'Escape' || !open) return;
-			event.stopPropagation();
-			onOpenChange(false);
-		}
-		node.addEventListener('keydown', onKeyDown);
-		return { destroy: () => node.removeEventListener('keydown', onKeyDown) };
+	// An imperative listener, not an `onkeydown` template attribute: the
+	// wrapping element is a plain positioning `<div>` with no interactive role
+	// of its own (the real interactive elements are inside `trigger`/
+	// `content`), and Svelte's a11y check flags a static element with a
+	// declarative key handler. It still runs before the bubble reaches
+	// `document`.
+	function stopEscapeHere(event: KeyboardEvent): void {
+		if (event.key !== 'Escape' || !open) return;
+		event.stopPropagation();
+		onOpenChange(false);
 	}
+
+	// Every listener is installed only while the panel is open. A closed
+	// popover listens to nothing: a run page holds one per task card, and at
+	// 4,000 cards two document listeners each were the largest single cost of
+	// drawing the page.
+	let root = $state<HTMLDivElement | undefined>(undefined);
+	$effect(() => {
+		if (!open || !root) return;
+		const node = root;
+		const outside = dismissOnOutsideOrEscape(node, dismiss);
+		node.addEventListener('keydown', stopEscapeHere);
+		return () => {
+			outside.destroy();
+			node.removeEventListener('keydown', stopEscapeHere);
+		};
+	});
 </script>
 
-<div class="relative inline-block" use:dismissOnOutsideOrEscape={dismiss} use:stopEscapeHere>
+<div class="relative inline-block" bind:this={root}>
 	{@render trigger()}
 	{#if open}
 		<div

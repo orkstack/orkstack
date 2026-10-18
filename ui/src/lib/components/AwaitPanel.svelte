@@ -182,30 +182,30 @@
 	}
 
 	function modeClass(active: boolean): string {
-		const tone = active ? 'font-semibold text-fg' : 'text-fg-secondary hover:text-fg';
+		const tone = active ? 'font-semibold text-ink' : 'text-ink-secondary hover:text-ink';
 		return `rounded-sm px-1.5 py-0.5 transition-colors ${tone}`;
 	}
 </script>
 
 <div
-	class="mt-3 rounded-md border border-awaiting-border bg-awaiting-bg/40 px-3 py-2 text-sm"
+	class="mt-3 rounded-sm border border-awaiting-border bg-awaiting-bg/40 px-3 py-2 text-sm"
 	data-testid="task-{task.id}-await"
 >
 	<div class="flex flex-wrap items-center justify-between gap-2">
-		<p class="font-medium text-fg" data-testid="task-{task.id}-await-state">{stateLabel}</p>
+		<p class="font-medium text-ink" data-testid="task-{task.id}-await-state">{stateLabel}</p>
 		{#if awaiting && !runTerminal}
 			<div class="flex flex-wrap items-center gap-2">
 				<button
 					type="button"
 					data-testid="task-{task.id}-resolve"
 					onclick={() => open('resolve')}
-					class="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-medium text-on-ink hover:bg-brand-700"
+					class="btn btn-sm btn-primary"
 				>Resolve</button>
 				<button
 					type="button"
 					data-testid="task-{task.id}-reject"
 					onclick={() => open('reject')}
-					class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 hover:bg-danger-50"
+					class="inline-flex h-8 items-center rounded-sm border border-red bg-paper px-3 text-xs font-medium text-red-strong hover:bg-red-tint"
 				>Reject</button>
 				<CliEquivalent
 					command={resolveCli({ namespace, runId, taskId: task.id })}
@@ -215,10 +215,10 @@
 			</div>
 		{/if}
 	</div>
-	<dl class="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-fg-muted">
+	<dl class="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-muted">
 		<div>
 			<dt class="inline">Deadline</dt>
-			<dd class="ml-1 inline text-fg-secondary" data-testid="task-{task.id}-await-deadline">
+			<dd class="ml-1 inline text-ink-secondary" data-testid="task-{task.id}-await-deadline">
 				{deadline ? fmtDeadline(deadline) : timeoutSeconds ? `${timeoutSeconds}s after it starts waiting` : '—'}
 			</dd>
 		</div>
@@ -233,21 +233,21 @@
 		{#if task.await?.resolvedBy}
 			<div title="Asserted by the resolving request's gateway, never authenticated by OrkStack.">
 				<dt class="inline">Resolved by</dt>
-				<dd class="ml-1 inline text-fg-secondary" data-testid="task-{task.id}-await-resolved-by">
+				<dd class="ml-1 inline text-ink-secondary" data-testid="task-{task.id}-await-resolved-by">
 					{task.await.resolvedBy} (asserted)
 				</dd>
 			</div>
 		{/if}
 	</dl>
 	{#if delivered && awaiting}
-		<p class="mt-2 text-xs font-medium text-fg-secondary" data-testid="task-{task.id}-await-delivered">
+		<p class="mt-2 text-xs font-medium text-ink-secondary" data-testid="task-{task.id}-await-delivered">
 			{delivered === 'repeat'
 				? 'Already resolved with these values — nothing was sent'
 				: 'Delivered — waiting for the run to apply it'}
 		</p>
 	{/if}
 	{#if callback}
-		<div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
+		<div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
 			<span>Accepts a callback at <span class="font-mono break-all">POST {callbackUrl}</span></span>
 			<CliEquivalent
 				command={awaitCurl({ url: callbackUrl })}
@@ -255,7 +255,7 @@
 				label="Callback command for this await"
 			/>
 		</div>
-		<p class="mt-1 text-xs text-fg-muted">
+		<p class="mt-1 text-xs text-ink-muted">
 			The token was shown once, to whoever submitted the run; only its digest is kept. If the
 			engine's API is published at another address than this page, post there instead.
 		</p>
@@ -302,7 +302,7 @@
 							resetKey="await-{task.id}"
 						/>
 					{:else}
-						<p class="text-xs text-fg-muted">This await declares no schema. Use JSON to send values.</p>
+						<p class="text-xs text-ink-muted">This await declares no schema. Use JSON to send values.</p>
 					{/if}
 				{:else}
 					<textarea
@@ -310,7 +310,7 @@
 						bind:value={jsonText}
 						rows="8"
 						spellcheck="false"
-						class="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm leading-5 text-fg"
+						class="w-full rounded-sm border border-rule bg-paper px-3 py-2 font-mono text-sm leading-5 text-ink"
 					></textarea>
 				{/if}
 				{#if error}
@@ -323,7 +323,7 @@
 						data-testid="await-resolve-submit"
 						disabled={busy}
 						onclick={() => void submitResolve()}
-						class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:opacity-50"
+						class="btn btn-primary"
 					>{busy ? 'Delivering…' : 'Resolve'}</button>
 				</div>
 			</div>
@@ -339,16 +339,16 @@
 					A rejection fails this task with AWAIT_REJECTED and the run with it. If a "no" should
 					branch the run instead, resolve with a value a downstream condition reads.
 				</p>
-				<label class="block text-sm font-medium text-fg" for="await-reject-reason-{task.id}">Reason</label>
+				<label class="block text-sm font-medium text-ink" for="await-reject-reason-{task.id}">Reason</label>
 				<textarea
 					id="await-reject-reason-{task.id}"
 					data-testid="await-reject-reason"
 					bind:value={reason}
 					rows="3"
-					class="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg"
+					class="w-full rounded-sm border border-rule bg-paper px-3 py-2 text-sm text-ink"
 					placeholder="Why is this await rejected?"
 				></textarea>
-				<p class="overflow-x-auto rounded-sm bg-surface-sunken p-2 font-mono text-xs text-fg-muted">{rejectCommand}</p>
+				<p class="overflow-x-auto rounded-sm bg-paper-sunken p-2 font-mono text-xs text-ink-muted">{rejectCommand}</p>
 				{#if error}
 					<ErrorPanel testid="await-reject-error" subject="the rejection of {task.id}" message={error} />
 				{/if}
@@ -358,7 +358,7 @@
 						data-testid="await-reject-submit"
 						disabled={busy || reason.trim() === ''}
 						onclick={() => void submitReject()}
-						class="inline-flex h-9 items-center rounded-md bg-danger-600 px-3.5 text-sm font-medium text-on-ink hover:bg-danger-700 disabled:opacity-50"
+						class="btn btn-danger"
 					>{busy ? 'Delivering…' : 'Reject'}</button>
 				</div>
 			</div>
