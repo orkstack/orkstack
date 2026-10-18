@@ -17,6 +17,8 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ScopeNote from '$lib/components/ScopeNote.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
 	import ListFilter from '$lib/components/ListFilter.svelte';
 	import { listHref } from '$lib/browsing';
 	import type { FieldFilter } from '$lib/listFilter';
@@ -100,11 +102,13 @@
 
 <svelte:head><title>Admin — Activities — OrkStack</title></svelte:head>
 
-<p class="mb-4 text-sm text-fg-muted" data-testid="activities-scope-caption">
+<SheetHeader title="Activities" />
+
+<ScopeNote testid="activities-scope-caption">
 	Every activity this deployment can run, as configured on the engine — deployment-wide, not scoped
 	by the namespace selector above. An activity is an OCI image; a task names one with
 	<code>uses:</code>.
-</p>
+</ScopeNote>
 
 <!--
 	ORKER STATUS. Presented the way the Pools page presents liveness: an
@@ -113,86 +117,85 @@
 	"no answer" means no Orker is serving that pool right now — which is
 	fixed by starting one, not by asking again.
 -->
-<section class="mb-6" data-testid="orker-section">
-	<h2 class="mb-2 text-2xs font-medium tracking-caps text-fg-muted uppercase">Orker</h2>
+<section class="mb-10" data-testid="orker-section" aria-labelledby="orker-heading">
+	<h2 id="orker-heading" class="mb-2 text-md font-semibold text-ink">Orker</h2>
 	{#if data.orkerError}
 		<div
-			class="rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm"
+			class="border border-red px-4 py-3 text-sm"
 			data-testid="orker-unavailable"
 		>
-			<p class="font-medium text-warning-800">No Orker answered the default pool.</p>
-			<p class="mt-1 break-words text-warning-700">{data.orkerError}</p>
-			<p class="mt-1 text-xs text-warning-700/80">
+			<p class="severity-warning font-semibold">No Orker answered the default pool.</p>
+			<p class="mt-1 break-words text-ink-secondary">{data.orkerError}</p>
+			<p class="mt-1 text-xs text-ink-secondary">
 				Nothing was measured. Start an Orker for this deployment's default pool — this is not a
 				report that zero Orkers are healthy.
 			</p>
 		</div>
 	{:else if !data.orker}
-		<p class="text-sm text-fg-muted" data-testid="orker-empty">
+		<p class="text-sm text-ink-muted" data-testid="orker-empty">
 			The probe returned no Orker description.
 		</p>
 	{:else}
 		{@const orker = data.orker}
-		<div
-			class="grid grid-cols-2 gap-4 rounded-md border border-border bg-surface p-4 text-sm sm:grid-cols-4"
+		<!-- The Orker's facts in the title block's anatomy. -->
+		<dl
+			class="grid grid-cols-2 border-t-(length:--rule-frame) border-b border-ink text-sm sm:grid-cols-4"
 			data-testid="orker-card"
 		>
-			<div>
-				<div class="text-xs font-medium text-fg-muted">Orker</div>
-				<div class="mt-1 font-mono text-fg-secondary" data-testid="orker-id">{orker.orkerId || '—'}</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Orker</dt>
+				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-id">{orker.orkerId || '—'}</dd>
 			</div>
-			<div>
-				<div class="text-xs font-medium text-fg-muted">Pool</div>
-				<div class="mt-1 text-fg-secondary" data-testid="orker-pool">{orker.pool || '—'}</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Pool</dt>
+				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-pool">{orker.pool || '—'}</dd>
 			</div>
-			<div>
-				<div class="text-xs font-medium text-fg-muted">Runtime</div>
-				<div class="mt-1 text-fg-secondary" data-testid="orker-runtime">
-					{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}
-				</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Runtime</dt>
+				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-runtime">{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}</dd>
 			</div>
-			<div>
-				<div class="text-xs font-medium text-fg-muted">Build</div>
-				<div class="mt-1 font-mono text-xs text-fg-secondary" data-testid="orker-build">
-					{orker.buildId || 'unversioned'}
-				</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Build</dt>
+				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-build">{orker.buildId || 'unversioned'}</dd>
 			</div>
-			<div>
-				<div class="text-xs font-medium text-fg-muted">Security profile</div>
-				<div class="mt-1 text-fg-secondary" data-testid="orker-security-profile">
-					{orker.securityProfile || '—'}
-				</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Security profile</dt>
+				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
 			</div>
-			<div>
-				<div class="text-xs font-medium text-fg-muted">Max concurrent</div>
-				<div class="mt-1 text-fg-secondary" data-testid="orker-max-concurrent">
-					{orker.maxConcurrent}
-				</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Max concurrent</dt>
+				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-max-concurrent">{String(orker.maxConcurrent)}</dd>
 			</div>
-			<div>
-				<div class="text-xs font-medium text-fg-muted">Rootless</div>
-				<div class="mt-1 text-fg-secondary" data-testid="orker-rootless">
-					{orker.rootless ? 'yes' : 'no'}
-				</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Rootless</dt>
+				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-rootless">{orker.rootless ? 'yes' : 'no'}</dd>
 			</div>
-		</div>
+		</dl>
 	{/if}
 </section>
 
-<section class="mb-6 rounded-md border border-border bg-surface p-4" data-testid="activity-local-tools">
-	<h2 class="text-sm font-semibold text-fg">Local activity tools</h2>
-	<p class="mt-1 text-sm text-fg-muted">
+<section class="region mb-10 pt-3" data-testid="activity-local-tools">
+	<h2 class="text-md font-semibold text-ink">Local activity tools</h2>
+	<p class="mt-1 max-w-prose text-sm text-ink-secondary">
 		Builds and contract tests run on your machine with its OCI runtime. They are intentionally not browser actions.
 	</p>
-	<p class="mt-2 text-xs text-fg-muted">Prerequisites: a local build context, Docker or another supported OCI runtime, and access to the image registry when pushing.</p>
-	<div class="mt-3 grid gap-3 lg:grid-cols-2">
-		<div class="rounded-md bg-surface-sunken p-3"><p class="text-xs font-medium text-fg">Build an image</p><code data-testid="activity-build-command" class="mt-1 block break-all font-mono text-xs text-fg-secondary">orkctl activity build ./images/my-activity</code><button type="button" onclick={() => void copyLocalTool('orkctl activity build ./images/my-activity', 'Build command copied', 'activity-build-command')} class="mt-2 text-xs font-medium text-brand-700 hover:underline">Copy build command</button></div>
-		<div class="rounded-md bg-surface-sunken p-3"><p class="text-xs font-medium text-fg">Run the activity contract test</p><code data-testid="activity-test-command" class="mt-1 block break-all font-mono text-xs text-fg-secondary">orkctl activity test my-image</code><button type="button" onclick={() => void copyLocalTool('orkctl activity test my-image', 'Test command copied', 'activity-test-command')} class="mt-2 text-xs font-medium text-brand-700 hover:underline">Copy test command</button></div>
-	</div>
-	{#if copiedLocalTool}<p data-testid="activity-local-tool-copied" class="mt-2 text-xs text-fg-muted">{copiedLocalTool}</p>{/if}
+	<p class="mt-2 max-w-prose text-xs text-ink-muted">Prerequisites: a local build context, Docker or another supported OCI runtime, and access to the image registry when pushing.</p>
+	<ul class="mt-3 border-t border-rule">
+		<li class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-2">
+			<p class="w-56 text-sm font-semibold text-ink">Build an image</p>
+			<code data-testid="activity-build-command" class="min-w-0 flex-1 break-all font-mono text-xs text-ink-secondary">orkctl activity build ./images/my-activity</code>
+			<button type="button" onclick={() => void copyLocalTool('orkctl activity build ./images/my-activity', 'Build command copied', 'activity-build-command')} class="btn btn-sm">Copy build command</button>
+		</li>
+		<li class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-2">
+			<p class="w-56 text-sm font-semibold text-ink">Run the activity contract test</p>
+			<code data-testid="activity-test-command" class="min-w-0 flex-1 break-all font-mono text-xs text-ink-secondary">orkctl activity test my-image</code>
+			<button type="button" onclick={() => void copyLocalTool('orkctl activity test my-image', 'Test command copied', 'activity-test-command')} class="btn btn-sm">Copy test command</button>
+		</li>
+	</ul>
+	{#if copiedLocalTool}<p data-testid="activity-local-tool-copied" class="confirm mt-2 text-xs text-ink" role="status">{copiedLocalTool}</p>{/if}
 </section>
 
-<h2 class="mb-2 text-2xs font-medium tracking-caps text-fg-muted uppercase">Catalog</h2>
+<h2 class="mb-2 text-md font-semibold text-ink">Catalog</h2>
 
 <ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} />
 
@@ -206,39 +209,39 @@
 		onretry={retry}
 	/>
 {:else if busy}
-	<p class="text-sm text-fg-muted" data-testid="activities-loading">Loading activities…</p>
+	<p class="text-sm text-ink-muted" data-testid="activities-loading">Loading activities…</p>
 {:else if data.activities.length === 0 && data.applied.length > 0}
-	<p class="text-sm text-fg-muted" data-testid="activities-empty">No activities match these filters.</p>
+	<p class="text-sm text-ink-muted" data-testid="activities-empty">No activities match these filters.</p>
 {:else if data.activities.length === 0}
-	<p class="text-sm text-fg-muted" data-testid="activities-empty">
+	<p class="text-sm text-ink-muted" data-testid="activities-empty">
 		This deployment has no activities configured. A task can still name any registry reference
 		directly with <code>uses:</code>.
 	</p>
 {:else}
-	<div class="overflow-x-auto rounded-md border border-border bg-surface" data-testid="activity-list">
-		<table class="w-full min-w-[960px] border-collapse text-left text-sm">
-			<thead class="bg-surface-sunken">
+	<div class="overflow-x-auto border-t-2 border-ink" data-testid="activity-list">
+		<table class="register min-w-[960px]">
+			<thead>
 				<tr>
-					<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Name</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Reference</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Index digest</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Media type</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Platforms</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Interface</th>
-					<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Resolved</th>
+					<th scope="col">Name</th>
+					<th scope="col">Reference</th>
+					<th scope="col">Index digest</th>
+					<th scope="col">Media type</th>
+					<th scope="col">Platforms</th>
+					<th scope="col">Interface</th>
+					<th scope="col">Resolved</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each data.activities as activity (activity.name)}
 					<tr
-						class="border-t border-border-subtle transition-colors hover:bg-surface-hover"
+						class="transition-colors hover:bg-hover"
 						data-testid="activity-row-{activity.name}"
 					>
-						<td class="h-11 px-4 pl-5 align-middle font-medium text-fg" data-testid="activity-name-{activity.name}">
+						<td class="font-mono font-semibold text-ink" data-testid="activity-name-{activity.name}">
 							{activity.name}
 						</td>
 						<td
-							class="h-11 px-4 align-middle font-mono text-xs text-fg-secondary"
+							class="font-mono text-xs whitespace-nowrap text-ink-secondary"
 							data-testid="activity-reference-{activity.name}"
 						>
 							{activity.reference || '—'}
@@ -250,29 +253,29 @@
 							and in a data attribute, so nothing here is the only
 							copy of the value.
 						-->
-						<td class="h-11 px-4 align-middle">
+						<td>
 							{#if activity.indexDigest}
 								<span
-									class="font-mono text-xs text-brand-700"
+									class="figure text-xs whitespace-nowrap text-ink"
 									title={activity.indexDigest}
 									data-digest={activity.indexDigest}
 									data-testid="activity-digest-{activity.name}">{shortDigest(activity.indexDigest)}</span
 								>
 							{:else}
 								<span
-									class="text-xs text-fg-muted"
+									class="text-xs text-ink-muted"
 									data-testid="activity-digest-unresolved-{activity.name}"
 									title="this reference has not been resolved to an index digest">unresolved</span
 								>
 							{/if}
 						</td>
 						<td
-							class="h-11 px-4 align-middle font-mono text-xs text-fg-muted"
+							class="font-mono text-xs text-ink-muted"
 							data-testid="activity-media-type-{activity.name}"
 						>
 							{activity.mediaType || '—'}
 						</td>
-						<td class="h-11 px-4 align-middle text-xs text-fg-muted" data-testid="activity-platforms-{activity.name}">
+						<td class="font-mono text-xs text-ink-muted" data-testid="activity-platforms-{activity.name}">
 							{#if activity.platforms.length > 0}
 								{activity.platforms.join(', ')}
 							{:else}
@@ -286,28 +289,28 @@
 							is a disclosure: the full table opens in a row beneath,
 							so the catalog stays one line per activity.
 						-->
-						<td class="h-11 px-4 align-middle text-xs">
+						<td class="text-xs">
 							{#if activity.indexDigest}
 								<button
 									type="button"
-									class="inline-flex items-center gap-1 rounded-sm text-brand-700 hover:underline"
+									class="btn-disclosure inline-flex items-center gap-1 font-semibold whitespace-nowrap text-blue hover:underline"
 									aria-expanded={!!disclosed[activity.name]}
 									aria-controls="activity-interface-panel-{activity.name}"
 									data-testid="activity-interface-{activity.name}"
 									onclick={() => (disclosed[activity.name] = !disclosed[activity.name])}
 								>
-									<span aria-hidden="true">{disclosed[activity.name] ? '▾' : '▸'}</span>{interfaceSummary(activity)}
+									{interfaceSummary(activity)}
 								</button>
 							{:else}
-								<span class="text-fg-muted" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
+								<span class="text-ink-muted" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
 							{/if}
 						</td>
-						<td class="h-11 px-4 pr-5 align-middle text-xs text-fg-muted" data-testid="activity-resolved-at-{activity.name}">
+						<td class="figure text-xs whitespace-nowrap text-ink-muted" data-testid="activity-resolved-at-{activity.name}">
 							{fmtTimestamp(activity.resolvedAt)}
 						</td>
 					</tr>
 					{#if disclosed[activity.name]}
-						<tr class="border-t border-border-subtle bg-surface-sunken/40">
+						<tr class="bg-paper-sunken">
 							<td
 								colspan="7"
 								class="px-5 py-3"
@@ -330,8 +333,8 @@
 	registry, uncached, writing nothing. Namespace-agnostic like the rest of
 	this page.
 -->
-<section class="mt-6" data-testid="activity-inspect">
-	<h2 class="mb-2 text-2xs font-medium tracking-caps text-fg-muted uppercase">Inspect a reference</h2>
+<section class="region mt-10 pt-3" data-testid="activity-inspect">
+	<h2 class="mb-2 text-md font-semibold text-ink">Inspect a reference</h2>
 	<form class="flex flex-wrap items-center gap-2" data-testid="activity-inspect-form" onsubmit={inspect}>
 		<label class="sr-only" for="activity-inspect-reference">Catalog name or registry reference</label>
 		<input
@@ -341,13 +344,13 @@
 			placeholder="file, or ghcr.io/acme/migrate:v3"
 			autocomplete="off"
 			spellcheck="false"
-			class="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg sm:max-w-md"
+			class="field h-9 min-w-0 flex-1 px-3 font-mono text-sm sm:max-w-md"
 			data-testid="activity-inspect-reference"
 		/>
 		<button
 			type="submit"
 			disabled={inspecting || inspectReference.trim() === ''}
-			class="h-9 rounded-md bg-brand-600 px-3 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+			class="btn btn-primary"
 			data-testid="activity-inspect-submit">{inspecting ? 'Inspecting…' : 'Inspect'}</button
 		>
 		<CliEquivalent testid="activity-inspect-cli" command={inspectCli} label="orkctl activity inspect for this reference" />
@@ -358,24 +361,24 @@
 		</div>
 	{:else if inspected}
 		<div
-			class="mt-3 space-y-3 rounded-md border border-border bg-surface p-4 text-sm"
+			class="mt-3 space-y-3 border-t-(length:--rule-region) border-b border-ink py-3 text-sm"
 			data-testid="activity-inspect-result"
 		>
 			<dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
-				<dt class="text-fg-muted">Activity</dt>
-				<dd class="text-fg" data-testid="activity-inspect-activity">
+				<dt class="caps text-ink-muted">Activity</dt>
+				<dd class="text-ink" data-testid="activity-inspect-activity">
 					{inspected.name ? `${inspected.name} (catalog)` : `${inspected.reference} (reference)`}
 				</dd>
-				<dt class="text-fg-muted">Reference</dt>
-				<dd class="font-mono break-all text-fg-secondary">{inspected.reference}</dd>
-				<dt class="text-fg-muted">Pinned</dt>
-				<dd class="font-mono break-all text-brand-700" data-testid="activity-inspect-pinned">{pinnedReference(inspected)}</dd>
-				<dt class="text-fg-muted">Media type</dt>
-				<dd class="font-mono text-fg-secondary">{inspected.mediaType || '-'}</dd>
-				<dt class="text-fg-muted">Platforms</dt>
-				<dd class="text-fg-secondary">{inspected.platforms.length > 0 ? inspected.platforms.join(', ') : '-'}</dd>
-				<dt class="text-fg-muted">Resolved</dt>
-				<dd class="text-fg-secondary">{fmtTimestamp(inspected.resolvedAt)}</dd>
+				<dt class="caps text-ink-muted">Reference</dt>
+				<dd class="font-mono break-all text-ink-secondary">{inspected.reference}</dd>
+				<dt class="caps text-ink-muted">Pinned</dt>
+				<dd class="font-mono break-all text-ink" data-testid="activity-inspect-pinned">{pinnedReference(inspected)}</dd>
+				<dt class="caps text-ink-muted">Media type</dt>
+				<dd class="font-mono text-ink-secondary">{inspected.mediaType || '-'}</dd>
+				<dt class="caps text-ink-muted">Platforms</dt>
+				<dd class="text-ink-secondary">{inspected.platforms.length > 0 ? inspected.platforms.join(', ') : '-'}</dd>
+				<dt class="caps text-ink-muted">Resolved</dt>
+				<dd class="text-ink-secondary">{fmtTimestamp(inspected.resolvedAt)}</dd>
 			</dl>
 			<ActivityInterface info={inspected} />
 		</div>

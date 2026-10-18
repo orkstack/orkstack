@@ -37,7 +37,10 @@
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { ListAuditRecordsRequestSchema } from '$lib/gen/orkstack/v1/audit_pb';
 	import type { FieldFilter } from '$lib/listFilter';
-	import { fmtTimestamp, statusClasses } from '$lib/status';
+	import { fmtTimestamp } from '$lib/status';
+	import { stampClass } from '$lib/statusMarks';
+	import ScopeNote from '$lib/components/ScopeNote.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
 	import { timestampDate } from '@bufbuild/protobuf/wkt';
 	import type { Timestamp } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
@@ -91,18 +94,20 @@
 		data.audit?.nextPageToken ? auditHref(c, { cursor: data.audit.nextPageToken, page: c.page + 1 }) : undefined
 	);
 	const firstHref = $derived(auditHref(c, { cursor: '', page: 1 }));
-	const refused = (ok: boolean) => statusClasses(ok ? Status.SUCCEEDED : Status.FAILED);
+	const refused = (ok: boolean) => stampClass(ok ? Status.SUCCEEDED : Status.FAILED);
 </script>
 
 <svelte:head><title>Admin — Audit — OrkStack</title></svelte:head>
 
-<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-	<p class="text-sm text-fg-muted" data-testid="audit-scope">
-		{auditScopeSentence(c.filters)}{#if data.audit}
-			<span class="font-mono text-xs" data-testid="audit-window">{resolvedSince} to {resolvedUntil}</span>.{/if}
-	</p>
-	<CliEquivalent testid="audit-cli" command={auditCliCommand(c)} label="orkctl admin audit for this listing" />
-</div>
+<SheetHeader title="Audit">
+	{#snippet actions()}
+		<CliEquivalent testid="audit-cli" command={auditCliCommand(c)} label="orkctl admin audit for this listing" />
+	{/snippet}
+</SheetHeader>
+
+<ScopeNote testid="audit-scope">
+	{auditScopeSentence(c.filters)}{#if data.audit}{' '}<span class="font-mono text-xs" data-testid="audit-window">{resolvedSince} to {resolvedUntil}</span>.{/if}
+</ScopeNote>
 
 <ListFilter
 	request={ListAuditRecordsRequestSchema}
@@ -122,7 +127,7 @@
 		onretry={retry}
 	/>
 {:else if records.length === 0}
-	<p class="text-sm text-fg-muted" data-testid="audit-empty">
+	<p class="text-sm text-ink-muted" data-testid="audit-empty">
 		{#if c.filters.length > 0 && c.page === 1}No audit records match these filters.{:else}No audit records in this window{c.page > 1 ? ' past the previous page' : ''}.{/if}
 	</p>
 	{#if c.page > 1}
@@ -131,38 +136,41 @@
 		<Pagination testid="audit" noun="record" page={c.page} count={0} {previousHref} {firstHref} />
 	{/if}
 {:else}
-	<div class="overflow-x-auto rounded-md border border-border bg-surface">
-		<table class="w-full min-w-[820px] text-left text-sm" data-testid="audit-table">
-			<thead class="bg-surface-sunken text-xs text-fg-muted">
+	<div class="overflow-x-auto border-t-2 border-ink">
+		<table class="register min-w-[820px]" data-testid="audit-table">
+			<thead>
 				<tr>
-					<th class="p-3 font-medium">When</th>
-					<th class="p-3 font-medium">Principal</th>
-					<th class="p-3 font-medium">Action</th>
-					<th class="p-3 font-medium">Namespace</th>
-					<th class="p-3 font-medium">Target</th>
-					<th class="p-3 font-medium">Result</th>
+					<th scope="col">When</th>
+					<th scope="col">Principal <span class="font-normal normal-case tracking-normal">(asserted)</span></th>
+					<th scope="col">Action</th>
+					<th scope="col">Namespace</th>
+					<th scope="col">Target</th>
+					<th scope="col">Result</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each records as rec (rec.id)}
-					<tr class="border-t border-border-subtle align-top" data-testid="audit-row" data-record-id={rec.id}>
-						<td class="p-3 text-xs whitespace-nowrap text-fg-secondary" data-testid="audit-when">{fmtTimestamp(rec.at)}</td>
-						<td
-							class="p-3 {rec.principal ? 'text-fg' : 'italic text-fg-muted'}"
-							data-testid="audit-principal">{auditPrincipalLabel(rec.principal)}</td
-						>
-						<td class="p-3 font-mono text-xs" data-testid="audit-action">{rec.action}</td>
-						<td class="p-3 text-xs" data-testid="audit-namespace">{rec.namespace || '-'}</td>
-						<td class="p-3 break-all font-mono text-xs" data-testid="audit-target">
+					<tr class="align-top {rec.succeeded ? '' : 'bg-red-tint'}" data-testid="audit-row" data-record-id={rec.id}>
+						<td class="figure text-xs whitespace-nowrap text-ink-secondary" data-testid="audit-when">{fmtTimestamp(rec.at)}</td>
+						<td>
+							{#if rec.principal}<span class="block text-2xs text-ink-muted">asserted by</span>{/if}
+							<span
+								class={rec.principal ? 'font-mono text-xs text-ink' : 'italic text-ink-muted'}
+								data-testid="audit-principal">{auditPrincipalLabel(rec.principal)}</span
+							>
+						</td>
+						<td class="font-mono text-xs" data-testid="audit-action">{rec.action}</td>
+						<td class="font-mono text-xs whitespace-nowrap" data-testid="audit-namespace">{rec.namespace || '-'}</td>
+						<td class="break-all font-mono text-xs" data-testid="audit-target">
 							{rec.target || '-'}
 							{#if rec.detail}
-								<span class="mt-1 block font-sans text-xs text-fg-muted" data-testid="audit-detail">{rec.detail}</span>
+								<span class="mt-1 block font-sans text-xs text-ink-muted" data-testid="audit-detail">{rec.detail}</span>
 							{/if}
 						</td>
-						<td class="p-3">
+						<td>
 							<span
 								data-testid="audit-result"
-								class="inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium tracking-caps whitespace-nowrap leading-4 {refused(rec.succeeded)}"
+								class={refused(rec.succeeded)}
 								>{auditResultLabel(rec)}</span
 							>
 						</td>
@@ -183,4 +191,4 @@
 	/>
 {/if}
 
-<p class="mt-5 text-xs text-fg-muted" data-testid="audit-caption">{AUDIT_CAPTION}</p>
+<p class="mt-5 max-w-prose text-xs text-ink-muted" data-testid="audit-caption">{AUDIT_CAPTION}</p>

@@ -1162,7 +1162,7 @@ filter and `--limit`, never a window), `webhook delivery ID`, `webhook
 redeliver ID` (exit 1 when the receiver did not accept it). UI: the
 **Deliveries** panel on Admin → Webhooks — a caption with the resolved window
 and scope, the filter form (`deliveryFilter` in the URL) with its CLI
-equivalent, a delivered/failed pill, attempts and last
+equivalent, a delivered/failed stamp, attempts and last
 status, an expanded row with the signature, body digest and byte count ("body
 not stored") and the attempt timeline, a per-webhook **Deliveries** link
 (`deliveryFilter=webhook_id=<id>`), and
@@ -1251,8 +1251,8 @@ CLI: `orker list [--filter F…]` (`--filter pool=build`), `orker get ID`
 drain ID [--reason] [--timeout] [--watch]` — a client-side loop: exit 0
 drained, 4 timed out naming what remains, 1 unreachable, uncordoned or
 restarted. Orker commands ignore `--namespace`. UI: **Admin → Pools**, the
-filter form over the pool cards (`pool list [--filter F…]`), a
-per-pool **Show Orkers** disclosure with a state pill (`ready`, `cordoned`,
+filter form over the pool register (`pool list [--filter F…]`), a
+per-pool **Show Orkers** disclosure with a state stamp (`ready`, `cordoned`,
 `unreachable`), tasks, pins, last seen and open pins linking to their runs;
 **Cordon** through a dialog that requires a reason and shows a server error in
 place; one-click **Uncordon**.

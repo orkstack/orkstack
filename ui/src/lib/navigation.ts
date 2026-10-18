@@ -82,6 +82,7 @@ export function operateScope(pageId: string): string {
 	switch (pageId) {
 		case 'pools':
 		case 'automation':
+		case 'cache':
 			return 'This namespace';
 		case 'audit':
 			return 'All namespaces';

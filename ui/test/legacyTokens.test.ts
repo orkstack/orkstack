@@ -1,22 +1,15 @@
 import { expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 
-// The UI revamp's only staged token debt: the colour names pages used before
-// the drawing office (surface, fg, brand-600, danger-700, console-bg, …).
-// tokens.css points each at a token of the world (its LEGACY ALIASES block)
-// so a page not yet redrawn still renders in it; this test holds their USE to
-// a ceiling that each stage lowers as it redraws its routes, and that reaches
-// zero — with the alias block deleted — when the last stage lands.
+// The colour names pages used before the drawing office (surface, fg,
+// brand-600, danger-700, console-bg, …) are gone: every page is drawn in the
+// world's own tokens, and tokens.css no longer carries the alias block that
+// pointed those names at them. This test keeps it so — no source may spell a
+// legacy colour name, and the alias block may not come back.
 //
-// `--color-fg` is the one permanent alias (a spec reads it by name); the
-// utilities spelled with it (`text-fg`) are still legacy and still counted.
-
-/**
- * Stage 1 (foundation) left 2,080; Stage 2 (runs) redrew the run pages and
- * their components (1,569); Stage 3 (authoring) the dashboard, the Orkflow
- * pages, Apply and their components.
- */
-const CEILING = 856;
+// `--color-fg` is the one permanent alias (run-page-pins.spec.ts reads it by
+// name); it stays in tokens.css, but the utilities spelled with it
+// (`text-fg`) are legacy and are refused like the rest.
 
 const src = `${import.meta.dir}/../src`;
 
@@ -35,7 +28,7 @@ test('fixtures: legacy names are counted, the world’s own are not', () => {
 	expect(legacyUses('class="border bg-paper text-ink border-rule border-t text-red-strong bg-failed-bg text-2xs"')).toEqual([]);
 });
 
-test('legacy colour names stay within this stage’s ceiling', () => {
+test('no source spells a legacy colour name', () => {
 	const files = readdirSync(src, { recursive: true })
 		.map((rel) => `${src}/${rel}`)
 		.filter((p) => /\.(svelte|ts|css|html)$/.test(p) && !p.includes('/lib/gen/') && !/\/(tokens|tailwind-tokens)\.css$/.test(p));
@@ -46,11 +39,14 @@ test('legacy colour names stay within this stage’s ceiling', () => {
 		if (n) byFile[path.slice(src.length + 1)] = n;
 		total += n;
 	}
-	if (total > CEILING) console.log(JSON.stringify(byFile, null, 1));
-	expect(total <= CEILING).toBe(true);
+	expect(byFile).toEqual({});
+	expect(total).toBe(0);
 });
 
-test('the alias block exists while the ceiling is above zero, and goes with it', () => {
-	const tokens = readFileSync(`${src}/tokens.css`, 'utf8');
-	expect(tokens.includes('LEGACY ALIASES')).toBe(CEILING > 0);
+test('the alias block is gone, and --color-fg is the one alias left', () => {
+	for (const file of ['tokens.css', 'tailwind-tokens.css']) {
+		const text = readFileSync(`${src}/${file}`, 'utf8');
+		expect(text.includes('LEGACY ALIASES')).toBe(false);
+		expect(text.match(new RegExp(`--color-(?:${LEGACY})\\s*:`, 'g')) ?? []).toEqual(['--color-fg:']);
+	}
 });

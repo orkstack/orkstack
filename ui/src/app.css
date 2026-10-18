@@ -164,6 +164,26 @@
 		color: var(--color-ink);
 	}
 
+	/* A form's field block: a caps label above its control, and an optional
+	   hint in the label's own line set in plain case. */
+	.field-label {
+		display: block;
+		margin-bottom: calc(var(--spacing) * 1.5);
+		font-size: var(--text-2xs);
+		line-height: var(--text-2xs--line-height);
+		font-weight: var(--font-weight-semibold);
+		letter-spacing: var(--tracking-caps);
+		text-transform: uppercase;
+		color: var(--color-ink-secondary);
+	}
+	.field-hint {
+		font-size: var(--text-xs);
+		font-weight: var(--font-weight-normal);
+		letter-spacing: var(--tracking-normal);
+		text-transform: none;
+		color: var(--color-ink-muted);
+	}
+
 	/* A hairline-ruled table: caps heads on the sunken ground. */
 	.register {
 		width: 100%;

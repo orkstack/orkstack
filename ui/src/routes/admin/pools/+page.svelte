@@ -16,6 +16,8 @@
 	import { shellQuote } from '$lib/runDetail';
 	import { ListPoolsRequestSchema } from '$lib/gen/orkstack/v1/namespace_service_pb';
 	import PoolOrkers from '$lib/components/PoolOrkers.svelte';
+	import ScopeNote from '$lib/components/ScopeNote.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
 	import type { Pool } from '$lib/gen/orkstack/v1/namespace_pb';
 	import { namespaceLabel } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
@@ -70,10 +72,12 @@
 
 <svelte:head><title>Admin — Pools — OrkStack</title></svelte:head>
 
-<p class="mb-4 text-sm text-fg-muted" data-testid="pools-scope-caption">
+<SheetHeader title="Pools" />
+
+<ScopeNote testid="pools-scope-caption">
 	Pools namespace {namespaceLabel(data.namespace)} may dispatch onto — this view honours the namespace
 	selector above.
-</p>
+</ScopeNote>
 
 <ListFilter request={ListPoolsRequestSchema} applied={data.applied} testid="pools" {command} onapply={applyFilters} {clearHref} />
 
@@ -87,73 +91,67 @@
 		onretry={retry}
 	/>
 {:else if busy}
-	<p class="text-sm text-fg-muted" data-testid="pools-loading">Loading pool health…</p>
+	<p class="text-sm text-ink-muted" data-testid="pools-loading">Loading pool health…</p>
 {:else if data.pools.length === 0 && data.applied.length > 0}
-	<p class="text-sm text-fg-muted" data-testid="pools-empty">No pools match these filters.</p>
+	<p class="text-sm text-ink-muted" data-testid="pools-empty">No pools match these filters.</p>
 {:else if data.pools.length === 0}
-	<p class="text-sm text-fg-muted" data-testid="pools-empty">
+	<p class="text-sm text-ink-muted" data-testid="pools-empty">
 		No pools are in scope for namespace {namespaceLabel(data.namespace)}.
 	</p>
 {:else}
-	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="pool-list">
+	<!-- A register of pools, one ruled row each. A pool no Orker serves sits
+		on the red tint; one the cluster could not answer for says so in the
+		outlined warning mark, and has no number at all. -->
+	<div class="hidden grid-cols-[minmax(10rem,1fr)_minmax(12rem,2fr)_minmax(10rem,1fr)] gap-4 border-t-2 border-b-(length:--rule-region) border-ink bg-paper-sunken px-3 py-2 md:grid" aria-hidden="true">
+		<span class="caps text-ink-muted">Pool</span>
+		<span class="caps text-ink-muted">Live Orkers</span>
+		<span class="caps text-ink-muted">Last seen</span>
+	</div>
+	<ul class="border-t-2 border-ink md:border-t-0" data-testid="pool-list">
 		{#each data.pools as pool (pool.name)}
-			<div
-				class="rounded-md border bg-surface p-4 {pool.unavailableReason
-					? 'border-warning-200 bg-warning-50'
-					: pool.liveOrkerCount === 0
-						? 'border-danger-200 bg-danger-50'
-						: 'border-border'}"
+			<li
+				class="border-b border-rule px-3 py-3 {pool.liveOrkerCount === 0 && !pool.unavailableReason ? 'bg-red-tint' : ''}"
 				data-testid="pool-card-{pool.name}"
 			>
-				<div class="mb-2 flex items-center justify-between">
-					<h3 class="font-medium text-fg">{pool.name}</h3>
-					{#if pool.isDefault}
-						<span
-							class="rounded-full border border-info-200 bg-info-50 px-2 py-0.5 text-xs font-medium text-info-700"
-							data-testid="pool-default-{pool.name}"
-						>
-							default
-						</span>
-					{/if}
-				</div>
-
-				{#if pool.unavailableReason}
-					<p
-						class="rounded-md border border-warning-200 bg-warning-50 px-2 py-1.5 text-xs text-warning-800"
-						data-testid="pool-unavailable-{pool.name}"
-					>
-						Could not be reached: {pool.unavailableReason}. Orker count is <strong>unknown</strong
-						>, not zero — ask again rather than scaling.
-					</p>
-				{:else}
-					<p class="text-sm text-fg-secondary">
-						<span
-							class="font-semibold {pool.liveOrkerCount === 0
-								? 'text-failed-fg'
-								: 'text-succeeded-fg'}"
-							data-testid="pool-orker-count-{pool.name}"
-						>
-							{orkerLabel(pool)}
-						</span>
-						{pool.liveOrkerCount === 1 ? 'live Orker' : 'live Orkers'}
-						{#if pool.liveOrkerCount === 0}
-							<span class="ml-1 text-xs text-failed-fg" data-testid="pool-no-orkers-{pool.name}"
-								>— no live Orkers; a task sent here waits</span
-							>
+				<div class="grid gap-x-4 gap-y-1 md:grid-cols-[minmax(10rem,1fr)_minmax(12rem,2fr)_minmax(10rem,1fr)] md:items-baseline">
+					<h2 class="flex items-center gap-2 font-mono text-sm font-semibold text-ink">
+						{pool.name}
+						{#if pool.isDefault}
+							<span class="stamp border-blue font-sans text-blue" data-testid="pool-default-{pool.name}">default</span>
 						{/if}
+					</h2>
+					{#if pool.unavailableReason}
+						<p class="severity-warning text-xs" data-testid="pool-unavailable-{pool.name}">
+							Could not be reached: {pool.unavailableReason}. Orker count is <strong>unknown</strong
+							>, not zero — ask again rather than scaling.
+						</p>
+					{:else}
+						<p class="text-sm text-ink-secondary">
+							<span
+								class="figure font-semibold {pool.liveOrkerCount === 0 ? 'text-red-strong' : 'text-ink'}"
+								data-testid="pool-orker-count-{pool.name}"
+							>
+								{orkerLabel(pool)}
+							</span>
+							{pool.liveOrkerCount === 1 ? 'live Orker' : 'live Orkers'}
+							{#if pool.liveOrkerCount === 0}
+								<span class="ml-1 text-xs text-red-strong" data-testid="pool-no-orkers-{pool.name}"
+									>— no live Orkers; a task sent here waits</span
+								>
+							{/if}
+						</p>
+					{/if}
+					<p class="text-xs text-ink-muted">
+						<span class="md:sr-only">Last seen: </span><span class="figure" data-testid="pool-last-seen-{pool.name}"
+							>{pool.lastSeen ? fmtTimestamp(pool.lastSeen) : 'never (or gone quiet)'}</span
+						>
 					</p>
-				{/if}
-
-				<p class="mt-2 text-xs text-fg-muted">
-					Last seen: <span data-testid="pool-last-seen-{pool.name}"
-						>{pool.lastSeen ? fmtTimestamp(pool.lastSeen) : 'never (or gone quiet)'}</span
-					>
-				</p>
+				</div>
 
 				{#if !pool.unavailableReason}
 					<button
 						type="button"
-						class="mt-2 text-xs font-medium text-brand-700 hover:underline"
+						class="btn-disclosure mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue hover:underline"
 						aria-expanded={expanded[pool.name] ?? false}
 						data-testid="pool-orkers-toggle-{pool.name}"
 						onclick={() => (expanded[pool.name] = !expanded[pool.name])}
@@ -164,11 +162,11 @@
 						<PoolOrkers pool={pool.name} namespace={data.namespace} />
 					{/if}
 				{/if}
-			</div>
+			</li>
 		{/each}
-	</div>
-	<p class="mt-4 text-xs text-fg-muted" data-testid="pools-default-note">
-		A task naming no pool runs on <span class="font-medium text-fg-secondary">{data.defaultPool}</span
+	</ul>
+	<p class="mt-4 text-xs text-ink-muted" data-testid="pools-default-note">
+		A task naming no pool runs on <span class="font-mono font-semibold text-ink-secondary">{data.defaultPool}</span
 		>.
 	</p>
 {/if}

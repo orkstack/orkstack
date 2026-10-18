@@ -10,6 +10,8 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ScopeNote from '$lib/components/ScopeNote.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
 	import ListFilter from '$lib/components/ListFilter.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 	import { errorMessage } from '$lib/client';
@@ -98,29 +100,29 @@
 
 <svelte:head><title>Admin — Usage — OrkStack</title></svelte:head>
 
-<div class="mb-4 flex flex-wrap items-center gap-3">
-	<h2 class="text-base font-semibold text-fg">Usage</h2>
-	<p class="text-sm text-fg-muted">
-		What each namespace RESERVED over the last {data.window}, each measured on its own, one page of namespaces at a
-		time. Deployment-wide: the namespace switcher does not filter this page; the filters below do.
-	</p>
-</div>
+<SheetHeader title="Usage">
+	{#snippet meta()}What each namespace reserved over the last <span class="figure text-ink">{data.window}</span>{/snippet}
+	{#snippet actions()}
+		<span class="caps text-ink-muted" aria-hidden="true">Window</span>
+		<div role="group" aria-label="Usage window" class="inline-flex h-8 rounded-sm border border-rule-strong bg-paper">
+			{#each USAGE_WINDOWS as preset (preset)}
+				<a
+					data-testid="usage-window-{preset}"
+					aria-current={data.window === preset ? 'page' : undefined}
+					href={windowHref(preset)}
+					class="figure inline-flex items-center border-r border-rule-strong px-3 text-sm text-ink-secondary transition-colors last:border-r-0 hover:bg-hover hover:text-ink current:bg-blue-tint current:font-semibold current:text-blue-strong"
+					>{preset}</a
+				>
+			{/each}
+		</div>
+		<CliEquivalent command={adminUsageCli(data.window)} testid="usage-admin-cli" />
+	{/snippet}
+</SheetHeader>
 
-<section class="mb-4 flex flex-wrap items-center gap-3">
-	<span class="text-sm font-medium text-fg">Window</span>
-	<div role="group" aria-label="Usage window" class="inline-flex h-9 rounded-md border border-border bg-surface">
-		{#each USAGE_WINDOWS as preset (preset)}
-			<a
-				data-testid="usage-window-{preset}"
-				aria-current={data.window === preset ? 'page' : undefined}
-				href={windowHref(preset)}
-				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors first:rounded-l-md last:rounded-r-md last:border-r-0 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700"
-				>{preset}</a
-			>
-		{/each}
-	</div>
-	<div class="ml-auto"><CliEquivalent command={adminUsageCli(data.window)} testid="usage-admin-cli" /></div>
-</section>
+<ScopeNote testid="usage-admin-scope">
+	What each namespace RESERVED over the last {data.window}, each measured on its own, one page of namespaces at a
+	time. Deployment-wide: the namespace switcher does not filter this page; the filters below do.
+</ScopeNote>
 
 <ListFilter
 	request={ListNamespacesRequestSchema}
@@ -141,46 +143,46 @@
 		onretry={retry}
 	/>
 {:else}
-	<div class="overflow-x-auto rounded-md border border-border bg-surface">
-		<table class="w-full min-w-[900px] border-collapse text-left text-sm" data-testid="usage-table">
-			<thead class="bg-surface-sunken">
+	<div class="overflow-x-auto border-t-2 border-ink">
+		<table class="register min-w-[900px]" data-testid="usage-table">
+			<thead>
 				<tr>
-					<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Namespace</th>
-					<th class="h-10 px-4 text-right text-xs font-medium text-fg-muted">Runs</th>
-					<th class="h-10 px-4 text-right text-xs font-medium text-fg-muted">Tasks</th>
-					<th class="h-10 px-4 text-right text-xs font-medium text-fg-muted">Attempts</th>
-					<th class="h-10 px-4 text-right text-xs font-medium text-fg-muted">Task-seconds</th>
-					<th class="h-10 px-4 text-right text-xs font-medium text-fg-muted">cpu-seconds</th>
-					<th class="h-10 px-4 text-right text-xs font-medium text-fg-muted">GiB-seconds</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Computed</th>
-					<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Budget</th>
+					<th scope="col">Namespace</th>
+					<th scope="col" class="text-right">Runs</th>
+					<th scope="col" class="text-right">Tasks</th>
+					<th scope="col" class="text-right">Attempts</th>
+					<th scope="col" class="text-right">Task-seconds</th>
+					<th scope="col" class="text-right">cpu-seconds</th>
+					<th scope="col" class="text-right">GiB-seconds</th>
+					<th scope="col">Computed</th>
+					<th scope="col">Budget</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each data.namespacesList as ns (ns.name)}
 					{@const row = rows[ns.name]}
-					<tr class="border-t border-border-subtle" data-testid="usage-ns-{ns.name}">
-						<td class="h-11 px-4 pl-5 align-middle font-medium">
-							<a class="text-fg hover:text-brand-700" href={withNamespace('/', ns.name)}>{ns.name}</a>
+					<tr class="transition-colors hover:bg-hover" data-testid="usage-ns-{ns.name}">
+						<td>
+							<a class="link font-mono font-semibold" href={withNamespace('/', ns.name)}>{ns.name}</a>
 						</td>
 						{#if !row || row.loading}
-							<td colspan="8" class="h-11 px-4 align-middle text-xs text-fg-muted" data-testid="usage-ns-{ns.name}-loading"
+							<td colspan="8" class="text-xs text-ink-muted" data-testid="usage-ns-{ns.name}-loading"
 								>measuring…</td
 							>
 						{:else if row.error}
-							<td colspan="8" class="h-11 px-4 align-middle text-xs text-danger-700" data-testid="usage-ns-{ns.name}-error"
+							<td colspan="8" class="severity-error text-xs" data-testid="usage-ns-{ns.name}-error"
 								>{row.error}</td
 							>
 						{:else if row.resp}
 							{@const total = row.resp.total}
-							<td class="h-11 px-4 text-right align-middle tabular-nums" data-testid="usage-ns-{ns.name}-runs">{(total?.runs ?? 0n).toString()}</td>
-							<td class="h-11 px-4 text-right align-middle tabular-nums">{(total?.tasks ?? 0n).toString()}</td>
-							<td class="h-11 px-4 text-right align-middle tabular-nums">{(total?.attempts ?? 0n).toString()}</td>
-							<td class="h-11 px-4 text-right align-middle tabular-nums">{fmtUnitSeconds(total?.taskSeconds ?? 0)}</td>
-							<td class="h-11 px-4 text-right align-middle tabular-nums" data-testid="usage-ns-{ns.name}-cpu-seconds">{fmtUnitSeconds(total?.cpuSeconds ?? 0)}</td>
-							<td class="h-11 px-4 text-right align-middle tabular-nums">{fmtUnitSeconds(total?.gibSeconds ?? 0)}</td>
-							<td class="h-11 px-4 align-middle text-xs text-fg-muted">{fmtInstant(row.resp.computedAt)}</td>
-							<td class="h-11 px-4 pr-5 align-middle text-fg-secondary" data-testid="usage-ns-{ns.name}-budget">{budgetCellLabel(row.resp)}</td>
+							<td class="figure text-right" data-testid="usage-ns-{ns.name}-runs">{(total?.runs ?? 0n).toString()}</td>
+							<td class="figure text-right">{(total?.tasks ?? 0n).toString()}</td>
+							<td class="figure text-right">{(total?.attempts ?? 0n).toString()}</td>
+							<td class="figure text-right">{fmtUnitSeconds(total?.taskSeconds ?? 0)}</td>
+							<td class="figure text-right" data-testid="usage-ns-{ns.name}-cpu-seconds">{fmtUnitSeconds(total?.cpuSeconds ?? 0)}</td>
+							<td class="figure text-right">{fmtUnitSeconds(total?.gibSeconds ?? 0)}</td>
+							<td class="figure text-xs text-ink-muted">{fmtInstant(row.resp.computedAt)}</td>
+							<td class="text-ink-secondary" data-testid="usage-ns-{ns.name}-budget">{budgetCellLabel(row.resp)}</td>
 						{/if}
 					</tr>
 				{/each}
@@ -188,5 +190,5 @@
 		</table>
 	</div>
 	<Pagination testid="usage-namespaces" noun="namespace" page={data.page} count={data.namespacesList.length} {previousHref} {nextHref} {firstHref} onnext={next} />
-	<p class="mt-3 text-xs font-medium text-fg-secondary" data-testid="usage-admin-caveat">{USAGE_CAVEAT}</p>
+	<p class="mt-3 max-w-prose text-xs text-ink-secondary" data-testid="usage-admin-caveat">{USAGE_CAVEAT}</p>
 {/if}

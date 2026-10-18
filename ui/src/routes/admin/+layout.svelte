@@ -2,8 +2,8 @@
 	// The Admin area's own sub-navigation.
 	//
 	// Every route under here carries `?ns=` like any other page — the
-	// namespace switcher stays visible on all of them — but only Pools and
-	// Automation RESPECT it (an automation document describes exactly one
+	// namespace switcher stays visible on all of them — but only Pools, Cache
+	// and Automation RESPECT it (an automation document describes exactly one
 	// namespace, and the page plans, exports and applies in the switcher's). Namespaces, Releases, Activities, Webhooks, Retention (the deployment MAXIMUM;
 	// a namespace's own run retention lives on the Namespaces page), Image
 	// policy (the deployment FLOOR; a namespace's own signer lives on the
@@ -51,21 +51,28 @@
 			: (tabs.find((t) => t.id !== 'overview' && page.url.pathname.startsWith(t.href))?.id ??
 					'overview')
 	);
-</script>
 
-<div class="mb-4">
-	<h1 class="text-xl font-semibold tracking-tight text-ink">Operate</h1>
-	<p class="mt-1 text-sm text-ink-secondary">
-		Manage namespaces, watch pool health, and read what this deployment is made of.
-	</p>
-</div>
+	// On a narrow screen the strip scrolls inside its own frame, so the page
+	// you are on may sit past its right edge; bring its tab into the frame
+	// (the strip only — the page itself never scrolls for it).
+	let strip = $state<HTMLElement | undefined>();
+	$effect(() => {
+		const tab = strip?.querySelector<HTMLElement>(`[data-testid="admin-tab-${current}"]`);
+		if (!strip || !tab || strip.scrollWidth <= strip.clientWidth) return;
+		const left = tab.offsetLeft;
+		if (left < strip.scrollLeft || left + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) {
+			strip.scrollLeft = left - (strip.clientWidth - tab.offsetWidth) / 2;
+		}
+	});
+</script>
 
 <!--
 	The Operate pages as the sheet's first row: tracked-caps tabs on a 1.5 px
 	rule. On a narrow screen the strip scrolls inside its own frame, never the page.
 -->
 <nav
-	class="mb-6 overflow-x-auto border-b-(length:--rule-region) border-ink"
+	bind:this={strip}
+	class="relative mb-6 overflow-x-auto border-b-(length:--rule-region) border-ink"
 	aria-label="Admin views"
 	data-testid="admin-nav"
 >

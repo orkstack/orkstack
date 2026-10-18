@@ -57,6 +57,7 @@ test('a path belongs to exactly one mode and one page', () => {
 
 test('each Operate page says what its figures cover', () => {
 	expect(operateScope('pools')).toBe('This namespace');
+	expect(operateScope('cache')).toBe('This namespace');
 	expect(operateScope('audit')).toBe('All namespaces');
 	expect(operateScope('namespaces')).toBe('Deployment-wide');
 });

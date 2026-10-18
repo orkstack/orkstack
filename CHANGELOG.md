@@ -68,6 +68,20 @@ include breaking changes, and each is marked **BREAKING**.
   Apply puts Validate and Apply in its header and lists the examples as a
   ruled list. Validation errors and warnings are told apart by a filled or an
   outlined mark as well as by their words.
+- The Operate pages are redrawn (stage 4 of 4), and every page of the UI is
+  now drawn only in the shared tokens. Each Admin page opens with its own
+  heading under the Operate tabs and says once, as a note, what it covers:
+  the deployment, the namespace selected or every namespace (Cache, like
+  Pools and Automation, is the selected namespace's). Lists are ruled
+  registers, forms are ruled field blocks with each label above its control,
+  and destructive actions are quiet red behind their confirmations. The
+  overview's facts read like the bottom row, and its links are an index of
+  every Operate page with what it governs and how far it reaches. A held
+  namespace sits on a red tint with its reason in red; budgets, counts and
+  digests are set as figures; failed webhook deliveries and refused audit
+  records are tinted red; the audit trail says each principal was asserted.
+  On a narrow screen the Operate tabs scroll inside their own row and bring
+  the page you are on into view.
 - **BREAKING:** every Orkflow begins with `apiVersion: orkstack/v1` and
   `kind: Orkflow`. A document without them is refused at validate, apply and
   plan, naming the two lines to add. The header is not part of the definition:

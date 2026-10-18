@@ -26,22 +26,22 @@
 </script>
 
 <label class="flex flex-col gap-1.5 text-sm">
-	<span class="font-medium text-fg">Require signed by</span>
+	<span class="field-label mb-0">Require signed by</span>
 	{#if keysError}
 		<input
 			data-testid={testid}
 			bind:value
 			placeholder="cosign:<key-name>"
-			class="h-9 rounded-md border border-border bg-surface px-3 text-fg focus:border-brand-500"
+			class="field h-9 px-3 font-mono"
 		/>
 	{:else}
 		<Select {testid} {value} {options} onchange={(next) => (value = next)} />
 	{/if}
-	<span class="text-xs text-fg-muted"
+	<span class="text-xs text-ink-muted"
 		>Every image executed in this namespace must carry a valid cosign signature by this key.
 		Tightens the deployment image policy; cannot loosen it.</span
 	>
 	{#if error}
-		<span class="text-xs text-danger-700" data-testid={errorTestid}>{error}</span>
+		<span class="severity-error text-xs" data-testid={errorTestid}>{error}</span>
 	{/if}
 </label>

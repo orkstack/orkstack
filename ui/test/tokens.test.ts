@@ -323,11 +323,11 @@ async function systems(appCssText: string) {
 test('rule 5 fixtures: dead utilities and lost variants are caught; prose and live classes pass', async () => {
 	const { reference, ours } = await systems(appCss);
 	const fixture = candidatesOf(
-		'<p class="rounded-lg shadow-xs text-white hover:bg-warning-100 animate-pulse-dot bg-paper text-ink p-4 rounded-md current:text-fg animate-live-dot font-semibold">to row list content-type</p>',
+		'<p class="rounded-lg shadow-xs text-white hover:bg-ink-100 animate-pulse-dot bg-paper text-ink p-4 rounded-md current:text-fg animate-live-dot font-semibold">to row list content-type</p>',
 		'svelte'
 	);
 	expect(deadCandidates(fixture, reference, ours).sort()).toEqual(
-		['animate-pulse-dot', 'hover:bg-warning-100', 'rounded-lg', 'shadow-xs', 'text-white'].sort()
+		['animate-pulse-dot', 'hover:bg-ink-100', 'rounded-lg', 'shadow-xs', 'text-white'].sort()
 	);
 	// A <style> block's declarations are not candidates; a class beside it still is.
 	const styled = candidatesOf('<p class="rounded-lg">x</p><style>.a { font-size: var(--text-sm); font-family: var(--font-sans); }</style>', 'svelte');

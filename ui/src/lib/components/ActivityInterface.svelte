@@ -25,38 +25,38 @@
 
 <div class="space-y-3 text-sm" data-testid="activity-interface">
 	{#if info.interfaceError}
-		<p class="text-warning-700" data-testid="activity-interface-malformed">
-			<span class="font-medium">Interface</span> {interfaceHeadline(info)}
+		<p class="text-ink-secondary" data-testid="activity-interface-malformed">
+			<span class="caps text-ink-muted">Interface</span> {interfaceHeadline(info)}
 		</p>
 	{:else if !iface}
-		<p class="text-fg-muted" data-testid="activity-interface-none">
-			<span class="font-medium text-fg-secondary">Interface</span> {interfaceHeadline(info)}
+		<p class="text-ink-muted" data-testid="activity-interface-none">
+			<span class="caps text-ink-muted">Interface</span> {interfaceHeadline(info)}
 		</p>
 	{:else}
-		<p class="text-fg-secondary" data-testid="activity-interface-summary">
-			<span class="font-medium">Interface</span> {interfaceHeadline(info)}
+		<p class="text-ink-secondary" data-testid="activity-interface-summary">
+			<span class="caps text-ink-muted">Interface</span> {interfaceHeadline(info)}
 		</p>
-		<div class="overflow-x-auto rounded-md border border-border-subtle">
-			<table class="w-full border-collapse text-left text-xs" data-testid="activity-interface-table">
-				<thead class="bg-surface-sunken">
+		<div class="overflow-x-auto">
+			<table class="register text-xs" data-testid="activity-interface-table">
+				<thead>
 					<tr>
-						{#if hasOps}<th class="h-8 px-3 font-medium text-fg-muted">Op</th>{/if}
-						<th class="h-8 px-3 font-medium text-fg-muted">Key</th>
-						<th class="h-8 px-3 font-medium text-fg-muted">Type</th>
-						<th class="h-8 px-3 font-medium text-fg-muted">Required</th>
-						<th class="h-8 px-3 font-medium text-fg-muted">Default</th>
+						{#if hasOps}<th scope="col">Op</th>{/if}
+						<th scope="col">Key</th>
+						<th scope="col">Type</th>
+						<th scope="col">Required</th>
+						<th scope="col">Default</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each rows as row (`${row.op}-${row.key}`)}
-						<tr class="border-t border-border-subtle" data-testid="activity-interface-row-{row.op}-{row.key}">
-							{#if hasOps}<td class="h-8 px-3 font-mono text-fg-secondary">{row.op}</td>{/if}
-							<td class="h-8 px-3 font-mono text-fg">{row.key}</td>
-							<td class="h-8 px-3 text-fg-secondary">{row.type}</td>
-							<td class="h-8 px-3 {row.required === 'yes' ? 'font-medium text-fg' : 'text-fg-muted'}">
+						<tr data-testid="activity-interface-row-{row.op}-{row.key}">
+							{#if hasOps}<td class="py-1 font-mono text-ink-secondary">{row.op}</td>{/if}
+							<td class="py-1 font-mono text-ink">{row.key}</td>
+							<td class="py-1 font-mono text-ink-secondary">{row.type}</td>
+							<td class="py-1 {row.required === 'yes' ? 'font-semibold text-ink' : 'text-ink-muted'}">
 								{row.required === 'yes' ? 'required' : row.required === 'no' ? 'optional' : '-'}
 							</td>
-							<td class="h-8 px-3 font-mono text-fg-muted">{row.default}</td>
+							<td class="py-1 font-mono text-ink-muted">{row.default}</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -64,15 +64,15 @@
 		</div>
 		{#if values.length > 0}
 			<div>
-				<p class="mb-1 text-2xs font-medium tracking-caps text-fg-muted uppercase">
+				<p class="caps mb-1 text-ink-muted">
 					Values the image writes to values.json
 				</p>
 				<table class="border-collapse text-left text-xs" data-testid="activity-interface-values">
 					<tbody>
 						{#each values as value (value.key)}
 							<tr data-testid="activity-interface-value-{value.key}">
-								<td class="py-0.5 pr-4 font-mono text-fg">{value.key}</td>
-								<td class="py-0.5 text-fg-secondary">{value.type}</td>
+								<td class="py-0.5 pr-4 font-mono text-ink">{value.key}</td>
+								<td class="py-0.5 font-mono text-ink-secondary">{value.type}</td>
 							</tr>
 						{/each}
 					</tbody>

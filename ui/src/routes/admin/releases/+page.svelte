@@ -15,6 +15,8 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import ListFilter from '$lib/components/ListFilter.svelte';
+	import ScopeNote from '$lib/components/ScopeNote.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
 	import { listHref } from '$lib/browsing';
 	import { errorMessage } from '$lib/client';
 	import { systemClient } from '$lib/clients/system';
@@ -181,18 +183,18 @@
 	const roleClass = (r: Release): string => {
 		switch (r.role) {
 			case ReleaseRole.CURRENT:
-				return 'border-succeeded-border bg-succeeded-bg text-succeeded-fg';
+				return 'border-ink bg-paper-sunken text-ink';
 			case ReleaseRole.RAMPING:
-				return 'border-info-200 bg-info-50 text-info-700';
+				return 'border-blue bg-blue-tint text-blue-strong';
 			case ReleaseRole.CANDIDATE:
-				return 'border-border bg-surface text-fg';
+				return 'border-dashed border-rule-strong text-ink';
 			default:
-				return 'border-border-subtle bg-surface-sunken text-fg-muted';
+				return 'border-rule-strong text-ink-muted';
 		}
 	};
 
 	const actionClass =
-		'inline-flex h-7 items-center rounded-md border border-border bg-surface px-2.5 text-xs font-medium text-fg hover:bg-surface-hover disabled:opacity-50';
+		'btn btn-sm';
 
 	function drainCommand(orker: string): string {
 		return `orkctl orker drain ${shellQuote(orker)}`;
@@ -201,26 +203,30 @@
 
 <svelte:head><title>Admin — Releases — OrkStack</title></svelte:head>
 
-<div class="mb-4 flex flex-wrap items-start justify-between gap-3">
-	<p class="max-w-3xl text-sm text-fg-muted" data-testid="releases-scope">
-		Releases of deployment <strong class="text-fg">{resp?.deploymentName || '—'}</strong>. A release
-		is one build of the engine and Orkers, deployed together. Deployment-wide: the namespace switcher
-		does not scope this page.
-	</p>
-	<div class="flex items-center gap-3">
-		<span class="text-xs text-fg-muted" data-testid="releases-observed-at"
+<SheetHeader title="Releases">
+	{#snippet meta()}
+		<span class="figure text-xs text-ink-muted" data-testid="releases-observed-at"
 			>observed at {fmtTimestamp(resp?.observedAt)}</span
 		>
-		<button type="button" data-testid="releases-refresh" disabled={busy} onclick={() => void refresh()} class={actionClass}>
+	{/snippet}
+	{#snippet actions()}
+		<button type="button" data-testid="releases-refresh" disabled={busy} onclick={() => void refresh()} class="btn">
 			{busy ? 'Refreshing…' : 'Refresh'}
 		</button>
 		<CliEquivalent command="orkctl release status" testid="releases-cli-status" />
-	</div>
-</div>
+	{/snippet}
+</SheetHeader>
+
+<ScopeNote testid="releases-scope">
+	Releases of deployment <strong class="text-ink">{resp?.deploymentName || '—'}</strong>. A release
+	is one build of the engine and Orkers, deployed together. Deployment-wide: the namespace switcher
+	does not scope this page.
+</ScopeNote>
 
 {#if result}
 	<p
-		class="mb-4 rounded-md border border-succeeded-border bg-succeeded-bg px-3 py-2 text-sm text-succeeded-fg"
+		class="confirm mb-4 border-y border-rule py-2 text-sm text-ink"
+		role="status"
 		data-testid="releases-result"
 	>
 		{result}
@@ -239,10 +245,10 @@
 		onretry={() => void refresh()}
 	/>
 {:else if !resp}
-	<p class="text-sm text-fg-muted" data-testid="releases-loading">Loading releases…</p>
+	<p class="text-sm text-ink-muted" data-testid="releases-loading">Loading releases…</p>
 {:else if !resp.versioned}
 	<p
-		class="rounded-md border border-border bg-surface px-4 py-3 text-sm text-fg-secondary"
+		class="note max-w-prose px-4 py-3 text-sm text-ink-secondary"
 		data-testid="releases-versioning-off"
 	>
 		{versioningOffSentence}
@@ -250,14 +256,15 @@
 {:else}
 	{#if !current && !filtered}
 		<p
-			class="mb-4 rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800"
+			class="severity-warning mb-4 border border-red px-4 py-3 text-sm"
 			data-testid="releases-no-current"
 		>
 			No release is current: {noCurrentSentence(resp.unversionedEngineReplicas)}
 		</p>
 	{:else if current && current.engineReplicas === 0}
 		<p
-			class="mb-4 rounded-md border border-danger-200 bg-danger-50 px-4 py-3 text-sm text-danger-700"
+			class="severity-error mb-4 border border-red bg-red-tint px-4 py-3 text-sm"
+			role="alert"
 			data-testid="releases-current-no-engine"
 		>
 			The current release has no running engine: new runs will not start.
@@ -265,51 +272,51 @@
 	{/if}
 
 	{#if filtered && resp.releases.length === 0}
-		<p class="mb-4 text-sm text-fg-muted" data-testid="releases-empty">No releases match these filters.</p>
+		<p class="mb-4 text-sm text-ink-muted" data-testid="releases-empty">No releases match these filters.</p>
 	{/if}
-	<div class="overflow-x-auto rounded-md border border-border bg-surface">
-		<table class="w-full min-w-[960px] border-collapse text-left text-sm" data-testid="releases-table">
-			<thead class="bg-surface-sunken">
+	<div class="overflow-x-auto border-t-2 border-ink">
+		<table class="register min-w-[960px]" data-testid="releases-table">
+			<thead>
 				<tr>
-					<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Release</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Role</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Engines</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Orkers</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Pools served</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Runs</th>
-					<th class="h-10 px-4 text-xs font-medium text-fg-muted">State</th>
-					<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Actions</th>
+					<th scope="col">Release</th>
+					<th scope="col">Role</th>
+					<th scope="col" class="text-right">Engines</th>
+					<th scope="col" class="text-right">Orkers</th>
+					<th scope="col">Pools served</th>
+					<th scope="col" class="text-right">Runs</th>
+					<th scope="col">State</th>
+					<th scope="col">Actions</th>
 				</tr>
 			</thead>
 			{#each resp.releases as release (release.buildId)}
 				{@const build = release.buildId}
-				<tbody class="border-t border-border-subtle">
+				<tbody>
 					<tr data-testid="release-row-{build}">
-						<td class="h-11 px-4 pl-5 align-middle font-mono text-xs font-medium text-fg">{build}</td>
-						<td class="h-11 px-4 align-middle">
+						<td class="figure font-semibold text-ink">{build}</td>
+						<td>
 							<span
-								class="rounded-full border px-2 py-0.5 text-xs font-medium {roleClass(release)}"
+								class="stamp {roleClass(release)}"
 								data-testid="release-role-{build}">{roleLabel(release)}</span
 							>
 						</td>
-						<td class="h-11 px-4 align-middle text-fg" data-testid="release-engine-{build}"
+						<td class="figure text-right text-ink" data-testid="release-engine-{build}"
 							>{release.engineReplicas}</td
 						>
-						<td class="h-11 px-4 align-middle text-fg" data-testid="release-orkers-{build}"
+						<td class="figure text-right text-ink" data-testid="release-orkers-{build}"
 							>{release.orkers.length}</td
 						>
-						<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="release-pools-{build}"
+						<td class="font-mono text-xs text-ink-secondary" data-testid="release-pools-{build}"
 							>{release.poolsServed.length ? release.poolsServed.join(', ') : '—'}</td
 						>
 						<td
-							class="h-11 px-4 align-middle text-fg"
+							class="figure text-right text-ink"
 							data-testid="release-runs-{build}"
 							title={release.runsUnavailableReason || undefined}>{runsLabel(release)}</td
 						>
-						<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="release-state-{build}"
+						<td class="text-ink-secondary" data-testid="release-state-{build}"
 							>{stateLabel(release)}</td
 						>
-						<td class="h-11 px-4 pr-5 align-middle">
+						<td>
 							<div class="flex flex-wrap items-center gap-1.5">
 								{#if canPromote(release)}
 									<button type="button" class={actionClass} data-testid="release-promote-{build}" onclick={() => void openDialog('promote', build)}>Promote</button>
@@ -332,13 +339,13 @@
 					</tr>
 					{#if (release.blockers.length > 0 && release.role !== ReleaseRole.CURRENT) || hasHolds(release) || release.runsUnavailableReason}
 						<tr>
-							<td colspan="8" class="px-5 pb-3">
+							<td colspan="8" class="pt-0 pb-3">
 								{#if release.blockers.length > 0 && release.role !== ReleaseRole.CURRENT}
 									<div
-										class="rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-800"
+										class="note px-3 py-2 text-xs text-ink-secondary"
 										data-testid="release-blockers-{build}"
 									>
-										<p class="font-medium">
+										<p class="font-semibold text-ink">
 											{release.role === ReleaseRole.RAMPING
 												? `${build} is ramping but cannot take more new runs — the runs it takes now are affected too:`
 												: `${build} cannot take new runs yet:`}
@@ -351,14 +358,14 @@
 									</div>
 								{/if}
 								{#if release.runsUnavailableReason}
-									<p class="mt-1 text-xs text-fg-muted" data-testid="release-runs-unknown-{build}">
+									<p class="mt-1 text-xs text-ink-muted" data-testid="release-runs-unknown-{build}">
 										Runs in flight could not be counted: {release.runsUnavailableReason}
 									</p>
 								{/if}
 								{#if hasHolds(release)}
 									<button
 										type="button"
-										class="mt-2 text-xs font-medium text-brand-700 hover:underline"
+										class="btn-disclosure mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue hover:underline"
 										data-testid="release-holds-toggle-{build}"
 										aria-expanded={!!expanded[build]}
 										onclick={() => (expanded[build] = !expanded[build])}
@@ -372,18 +379,18 @@
 													{#each release.runs as run (run.id)}
 														<li>
 															<a
-																class="font-mono text-brand-700 hover:underline"
+																class="link font-mono"
 																href={withNamespace('/runs/' + run.id, run.namespace)}
 																data-testid="release-run-{build}-{run.id}">{run.id}</a
 															>
-															<span class="text-fg-secondary"
+															<span class="text-ink-secondary"
 																>{run.namespace || 'default'}/{run.orkflowName}@{run.orkflowVersion}</span
 															>
 														</li>
 													{/each}
 												</ul>
 												{#if release.runsInFlight > release.runs.length}
-													<p class="text-fg-muted">and {release.runsInFlight - release.runs.length} more</p>
+													<p class="text-ink-muted">and {release.runsInFlight - release.runs.length} more</p>
 												{/if}
 											{/if}
 											{#each release.orkers as orker (orker.orkerId)}
@@ -397,7 +404,7 @@
 															     run id is text, never a link guessed into `default`. -->
 															{#if pinRun}
 																<a
-																	class="font-mono text-brand-700 hover:underline"
+																	class="link font-mono"
 																	href={withNamespace('/runs/' + pin.runId, pinRun.namespace)}
 																	data-testid="release-pin-run-{pin.runId}">{pin.runId}</a
 																>
@@ -412,7 +419,7 @@
 													</div>
 												{/each}
 											{/each}
-											<p class="text-fg-muted">
+											<p class="text-ink-muted">
 												Keep one of its engines and one of its Orkers in every pool it serves running until it
 												is drained, and stop no Orker that hosts an open pin.
 											</p>
@@ -429,7 +436,7 @@
 
 	{#if resp.orkersUnavailableReason}
 		<p
-			class="mt-4 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
+			class="severity-warning mt-4 border border-red px-3 py-2 text-sm"
 			data-testid="releases-orkers-error"
 		>
 			{resp.orkersUnavailableReason}
@@ -437,11 +444,11 @@
 	{/if}
 
 	{#if resp.unattributedOrkers.length > 0}
-		<section class="mt-6" data-testid="releases-unattributed">
-			<h2 class="mb-2 text-sm font-semibold text-fg">Orkers that belong to no release</h2>
-			<ul class="space-y-1 text-sm text-fg-secondary">
+		<section class="region mt-8 pt-3" data-testid="releases-unattributed">
+			<h2 class="mb-2 text-md font-semibold text-ink">Orkers that belong to no release</h2>
+			<ul class="text-sm text-ink-secondary">
 				{#each resp.unattributedOrkers as orker (orker.orkerId)}
-					<li data-testid="releases-unattributed-{orker.orkerId}">
+					<li class="border-b border-rule py-1.5" data-testid="releases-unattributed-{orker.orkerId}">
 						<span class="font-mono">{orker.orkerId}</span>:
 						{#if orker.unavailableReason}
 							did not answer ({orker.unavailableReason})
@@ -479,11 +486,11 @@
 							data-testid="release-ramp-percent"
 							bind:value={percent}
 							inputmode="numeric"
-							class="h-8 w-20 rounded-md border border-border bg-surface px-2 text-sm text-fg"
+							class="field h-8 w-20 px-2 text-sm"
 						/>
 					</label>
 					{#if rampPercent === null}
-						<p class="mb-2 text-xs text-danger-700" data-testid="release-ramp-percent-error">
+						<p class="mb-2 text-xs text-red-strong" data-testid="release-ramp-percent-error">
 							A ramp is a whole percent from 1 to 100; stop a ramp with Stop ramp.
 						</p>
 					{/if}
@@ -500,8 +507,8 @@
 						{#if dialogBlockers.length === 0}
 							<p>No blockers: this release can take new runs.</p>
 						{:else}
-							<p class="font-medium text-warning-800">{dialog.build} cannot take new runs yet:</p>
-							<ul class="mt-1 list-disc space-y-0.5 pl-4 text-warning-800">
+							<p class="font-medium text-ink-secondary">{dialog.build} cannot take new runs yet:</p>
+							<ul class="mt-1 list-disc space-y-0.5 pl-4 text-ink-secondary">
 								{#each dialogBlockers as blocker, i (i)}
 									<li>{blocker.message}</li>
 								{/each}
@@ -511,7 +518,7 @@
 				{/if}
 				{@const command = dialogCommand(dialog.kind, dialog.build)}
 				{#if command}
-					<div class="mt-3 flex items-center gap-2 text-xs text-fg-muted">
+					<div class="mt-3 flex items-center gap-2 text-xs text-ink-muted">
 						<span>CLI equivalent</span>
 						<CliEquivalent {command} testid="release-dialog-cli" />
 					</div>

@@ -155,3 +155,36 @@ test('the run, runs and authoring pages add no banned word to the palette or the
 	}
 	expect(found).toEqual([]);
 });
+
+// Stage 4: the Operate sheets. Every string an admin page, its components and
+// the scope NOTE render — the headers, field labels, captions and registers —
+// says the product's words.
+test('the Operate sheets render no banned word', () => {
+	const files = [
+		'routes/admin/+page.svelte',
+		'routes/admin/namespaces/+page.svelte',
+		'routes/admin/pools/+page.svelte',
+		'routes/admin/releases/+page.svelte',
+		'routes/admin/activities/+page.svelte',
+		'routes/admin/webhooks/+page.svelte',
+		'routes/admin/automation/+page.svelte',
+		'routes/admin/retention/+page.svelte',
+		'routes/admin/usage/+page.svelte',
+		'routes/admin/cache/+page.svelte',
+		'routes/admin/image-policy/+page.svelte',
+		'routes/admin/audit/+page.svelte',
+		'lib/components/ScopeNote.svelte',
+		'lib/components/PoolOrkers.svelte',
+		'lib/components/WebhookDeliveries.svelte',
+		'lib/components/TelemetryFields.svelte',
+		'lib/components/SignerField.svelte',
+		'lib/components/ActivityInterface.svelte'
+	];
+	const found: string[] = [];
+	for (const f of files) {
+		const strings = renderedStrings(readFileSync(`${import.meta.dir}/../src/${f}`, 'utf8'));
+		expect(strings.length > 0).toBe(true);
+		for (const s of strings) for (const w of bannedWords(s)) found.push(`${f}: "${s}" (${w})`);
+	}
+	expect(found).toEqual([]);
+});
