@@ -68,16 +68,15 @@
 	};
 </script>
 
-<section class="mt-10" data-testid="orkflow-callers">
+<section class="region mt-10 pt-3" data-testid="orkflow-callers">
 	<div class="mb-3 flex items-center justify-between gap-4">
 		<div class="flex items-center gap-4">
-			<h3 class="text-sm font-semibold text-fg">Callers</h3>
-			<label class="inline-flex items-center gap-2 text-xs text-fg-secondary">
+			<h3 class="text-md font-semibold text-ink">Callers</h3>
+			<label class="inline-flex items-center gap-2 text-xs text-ink-secondary">
 				<input
 					type="checkbox"
 					data-testid="callers-all-versions"
 					bind:checked={allVersions}
-					class="accent-brand-600"
 				/>
 				Include every version of each Orkflow
 			</label>
@@ -90,7 +89,7 @@
 	</div>
 
 	{#if loading}
-		<p data-testid="callers-loading" class="text-sm text-fg-muted">Scanning the namespace for callers…</p>
+		<p data-testid="callers-loading" class="text-sm text-ink-muted">Scanning the namespace for callers…</p>
 	{:else if error}
 		<ErrorPanel
 			testid="callers-error"
@@ -101,58 +100,58 @@
 		/>
 	{:else if response}
 		{#if response.storedVersions === 0}
-			<p data-testid="callers-deleted" class="mb-3 text-sm text-fg-secondary">
+			<p data-testid="callers-deleted" class="mb-3 text-sm text-ink-secondary">
 				No version of {name} is stored in namespace {namespaceLabel(namespace)}; these still reference it.
 			</p>
 		{/if}
 		{#if response.callers.length === 0}
-			<p data-testid="callers-empty" class="text-sm text-fg-muted">
+			<p data-testid="callers-empty" class="text-sm text-ink-muted">
 				Nothing in namespace {namespaceLabel(namespace)} references {name}: no orkflow composes it and
 				no trigger or schedule starts it.
 			</p>
 		{:else}
-			<div class="overflow-x-auto rounded-md border border-border bg-surface">
-				<table class="w-full min-w-[720px] border-collapse text-left text-sm" data-testid="callers-table">
-					<thead class="bg-surface-sunken">
+			<div class="overflow-x-auto border-t-2 border-ink">
+				<table class="register min-w-[720px]" data-testid="callers-table">
+					<thead>
 						<tr>
-							<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Kind</th>
-							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Caller</th>
-							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Version</th>
-							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Task</th>
-							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Pins</th>
-							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Reads</th>
-							<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Supplies</th>
+							<th>Kind</th>
+							<th>Caller</th>
+							<th>Version</th>
+							<th>Task</th>
+							<th>Pins</th>
+							<th>Reads</th>
+							<th>Supplies</th>
 						</tr>
 					</thead>
 					<tbody>
 						{#each response.callers as caller, index (index)}
-							<tr class="border-t border-border-subtle" data-testid={rowTestid(caller)}>
-								<td class="h-11 px-4 pl-5 align-middle text-fg-secondary">{callerKindWord(caller)}</td>
-								<td class="h-11 px-4 align-middle">
+							<tr data-testid={rowTestid(caller)}>
+								<td class="text-ink-secondary">{callerKindWord(caller)}</td>
+								<td>
 									<a
 										href={callerHref(caller, name, namespace)}
-										class="font-medium text-brand-700 hover:underline"
+										class="link font-semibold"
 										title={caller.description || undefined}>{callerLabel(caller)}</a
 									>
 								</td>
-								<td class="h-11 px-4 align-middle text-fg-secondary">
+								<td class="text-ink-secondary">
 									{caller.callerVersion
 										? `${caller.callerVersion}${response.allVersions && caller.callerVersionIsCurrent ? '*' : ''}`
 										: '—'}
 								</td>
-								<td class="h-11 px-4 align-middle font-mono text-xs text-fg-secondary"
+								<td class="font-mono text-xs text-ink-secondary"
 									>{caller.taskId || '—'}</td
 								>
 								<td
-									class="h-11 px-4 align-middle {pinsLabel(caller) === 'current'
-										? 'font-medium text-fg'
-										: 'text-fg-secondary'}"
+									class="{pinsLabel(caller) === 'current'
+										? 'font-medium text-ink'
+										: 'text-ink-secondary'}"
 									title={caller.unavailableReason || undefined}>{pinsLabel(caller)}</td
 								>
-								<td class="h-11 px-4 align-middle font-mono text-xs text-fg-secondary"
+								<td class="font-mono text-xs text-ink-secondary"
 									>{caller.outputsRead.length ? caller.outputsRead.join(', ') : '—'}</td
 								>
-								<td class="h-11 px-4 pr-5 align-middle font-mono text-xs text-fg-secondary"
+								<td class="font-mono text-xs text-ink-secondary"
 									>{caller.inputsSupplied.length ? caller.inputsSupplied.join(', ') : '—'}</td
 								>
 							</tr>
@@ -160,7 +159,7 @@
 					</tbody>
 				</table>
 			</div>
-			<div class="mt-3 space-y-0.5 text-xs text-fg-muted" data-testid="callers-scanned">
+			<div class="mt-3 space-y-0.5 text-xs text-ink-muted" data-testid="callers-scanned">
 				{#each callersFooter(response) as line, index (index)}
 					<p>{line}</p>
 				{/each}

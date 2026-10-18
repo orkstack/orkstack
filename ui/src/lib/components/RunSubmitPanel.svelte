@@ -247,8 +247,8 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 	// element and trusted to resolve in source order, so the active and idle
 	// recipes are whole class strings rather than a base plus an override.
 	function modeClass(active: boolean): string {
-		const tone = active ? 'font-semibold text-fg' : 'text-fg-secondary hover:text-fg';
-		return `rounded-sm px-1.5 py-0.5 transition-colors ${tone}`;
+		const tone = active ? 'bg-blue-tint font-semibold text-blue-strong' : 'text-ink-secondary hover:bg-hover hover:text-ink';
+		return `-ml-px border border-rule-strong px-2.5 py-1 transition-colors first:ml-0 first:rounded-l-sm last:rounded-r-sm ${tone}`;
 	}
 
 	function currentVersionLabel() {
@@ -413,16 +413,17 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 	{#if replayFromRunId}
 		<section
 			data-testid="run-submit-replay-banner"
-			class="rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800"
+			class="note flex gap-3 px-4 py-3 text-sm"
 		>
-			<strong>Reviewing a new run from {replayFromRunId}.</strong>
+			<span class="caps shrink-0 text-ink-muted">Note</span>
+			<span><strong>Reviewing a new run from {replayFromRunId}.</strong>
 			It starts {orkflowName}@{chosenVersion || currentVersionLabel()} with that run’s input. Submitting
-			creates a new run and does not reuse its idempotency key.
+			creates a new run and does not reuse its idempotency key.</span>
 		</section>
 	{/if}
 
 	<div class="flex flex-col gap-1.5">
-		<label for="run-submit-version" class="text-sm font-medium text-fg">Version</label>
+		<label for="run-submit-version" class="caps text-ink-muted">Version</label>
 		<Select
 			id="run-submit-version"
 			testid="run-submit-version"
@@ -431,7 +432,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 			disabled={versionsLoading}
 			onchange={(next) => (selectedVersion = next)}
 		/>
-		<p data-testid="run-submit-version-mode" class="text-xs text-fg-muted">
+		<p data-testid="run-submit-version-mode" class="text-xs text-ink-muted">
 			{chosenVersion
 				? `Pinned explicitly to ${chosenVersion}.`
 				: `Current pointer (${currentVersionLabel()}) will be resolved by the engine.`}
@@ -445,16 +446,17 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 			message={selectionError}
 		/>
 	{:else if versionsLoading && !selectedOrkflow}
-		<p data-testid="run-submit-loading" class="text-sm text-fg-muted">Loading {orkflowName}…</p>
+		<p data-testid="run-submit-loading" class="text-sm text-ink-muted">Loading {orkflowName}…</p>
 	{/if}
 
 	{#if selectedOrkflow}
-		<div class="flex items-center justify-between gap-3 border-b border-border pb-2">
-			<h3 class="text-sm font-medium text-fg">Input</h3>
-			<div class="flex gap-2 text-xs">
+		<div class="flex items-center justify-between gap-3 border-b border-rule pb-2">
+			<h3 class="caps text-ink-muted">Input</h3>
+			<div class="flex text-xs" role="group" aria-label="Input editor">
 				<button
 					type="button"
 					data-testid="run-submit-input-form-mode"
+					aria-pressed={inputMode === 'form'}
 					onclick={() => setInputMode('form')}
 					class={modeClass(inputMode === 'form')}
 				>
@@ -463,6 +465,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 				<button
 					type="button"
 					data-testid="run-submit-input-json-mode"
+					aria-pressed={inputMode === 'json'}
 					onclick={() => setInputMode('json')}
 					class={modeClass(inputMode === 'json')}
 				>
@@ -480,18 +483,18 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 				resetKey={`${selectedOrkflow.name}@${selectedOrkflow.version}:${inputMode}`}
 			/>
 			{#if typedInputError}
-				<p data-testid="run-submit-declared-input-error" class="text-sm text-danger-700">
+				<p data-testid="run-submit-declared-input-error" class="severity-error text-sm">
 					{typedInputError}
 				</p>
 			{/if}
 			{#if specs.length === 0}
-				<p class="text-sm text-fg-muted">
+				<p class="text-sm text-ink-muted">
 					This orkflow declares no inputs. Use JSON to send an explicit object.
 				</p>
 			{/if}
 		{:else}
 			<div class="flex flex-col gap-1.5">
-				<label for="run-submit-inputs-json" class="text-sm font-medium text-fg"
+				<label for="run-submit-inputs-json" class="caps text-ink-muted"
 					>Inputs (JSON object)</label
 				>
 				<textarea
@@ -500,70 +503,70 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					bind:value={inputsJson}
 					rows="8"
 					spellcheck="false"
-					class="min-h-[160px] rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm leading-5 text-fg focus:border-brand-500"
+					class="field min-h-[160px] px-3 py-2 font-mono text-sm leading-5"
 				></textarea>
-				<p class="text-xs text-fg-muted">
+				<p class="text-xs text-ink-muted">
 					JSON is lossless: it retains values and keys beyond the declared form fields.
 				</p>
 			</div>
 		{/if}
 	{/if}
 
-	<details class="rounded-md border border-border bg-surface p-3">
-		<summary class="cursor-pointer text-sm font-medium text-fg">Advanced submission options</summary>
+	<details class="border-y border-rule py-2">
+		<summary class="cursor-pointer text-sm font-semibold text-ink marker:text-ink-muted hover:text-blue">Advanced submission options</summary>
 		<div class="mt-3 space-y-3">
 			<div class="flex flex-col gap-1.5">
-				<label for="run-submit-idempotency-key" class="text-sm text-fg">
-					Idempotency key <span class="text-fg-muted">(optional)</span>
+				<label for="run-submit-idempotency-key" class="text-sm text-ink">
+					Idempotency key <span class="text-ink-muted">(optional)</span>
 				</label>
 				<input
 					id="run-submit-idempotency-key"
 					data-testid="run-submit-idempotency-key"
 					bind:value={idempotencyKey}
-					class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500"
+					class="field h-9 px-3 text-sm"
 				/>
-				<p class="text-xs text-fg-muted">
+				<p class="text-xs text-ink-muted">
 					If the result is uncertain, retry with this same key. It is retained after an error.
 				</p>
 			</div>
-			<label class="flex items-start gap-2 text-sm text-fg">
+			<label class="flex items-start gap-2 text-sm text-ink">
 				<input
 					data-testid="run-submit-allow-empty-pool"
 					type="checkbox"
 					bind:checked={allowEmptyPool}
-					class="mt-0.5 accent-brand-600"
+					class="mt-0.5"
 				/>
 				Submit even if a resolved pool currently has no live Orker.
 			</label>
 			{#if declaresCache}
-				<label class="flex items-start gap-2 text-sm text-fg">
+				<label class="flex items-start gap-2 text-sm text-ink">
 					<input
 						data-testid="run-submit-no-cache"
 						type="checkbox"
 						bind:checked={noCache}
-						class="mt-0.5 accent-brand-600"
+						class="mt-0.5"
 					/>
 					Ignore cached results (every cached task runs its container and refreshes its memo)
 				</label>
 			{/if}
 			<div class="flex flex-col gap-1.5">
-				<label for="run-submit-origin-ref" class="text-sm text-fg">
-					Origin reference <span class="text-fg-muted">(optional)</span>
+				<label for="run-submit-origin-ref" class="text-sm text-ink">
+					Origin reference <span class="text-ink-muted">(optional)</span>
 				</label>
 				<input
 					id="run-submit-origin-ref"
 					data-testid="submit-origin-ref"
 					bind:value={originReference}
 					placeholder="https://ci.example/jobs/123"
-					class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg placeholder:text-fg-placeholder focus:border-brand-500"
+					class="field h-9 px-3 text-sm"
 				/>
-				<p class="text-xs text-fg-muted">
+				<p class="text-xs text-ink-muted">
 					A CI job URL, a ticket, or an event id recorded on the run; up to 256 bytes.
 				</p>
 			</div>
 			<div class="flex flex-col gap-1.5">
-				<label for="run-submit-assumed-outputs" class="text-sm text-fg">
-					Assumed task outputs <span class="text-fg-muted">(JSON object keyed by task id, optional)</span>
+				<label for="run-submit-assumed-outputs" class="text-sm text-ink">
+					Assumed task outputs <span class="text-ink-muted">(JSON object keyed by task id, optional)</span>
 				</label>
 				<textarea
 					id="run-submit-assumed-outputs"
@@ -571,21 +574,21 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					bind:value={assumedOutputsJson}
 					rows="3"
 					spellcheck="false"
-					class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm leading-5 text-fg focus:border-brand-500"
+					class="field px-3 py-2 font-mono text-sm leading-5"
 				></textarea>
 				{#if assumedError}
-					<p data-testid="run-submit-assumed-outputs-error" class="text-sm text-danger-700">
+					<p data-testid="run-submit-assumed-outputs-error" class="severity-error text-sm">
 						{assumedError}
 					</p>
 				{/if}
-				<p class="text-xs text-fg-muted">
+				<p class="text-xs text-ink-muted">
 					Stubs a task's values.json so a condition that reads an upstream output can be planned.
 					Tasks not listed are planned with an empty output.
 				</p>
 			</div>
 			<div class="flex flex-col gap-1.5">
-				<label for="run-submit-assume-failed" class="text-sm text-fg">
-					Assume these tasks fail <span class="text-fg-muted">(comma-separated task ids)</span>
+				<label for="run-submit-assume-failed" class="text-sm text-ink">
+					Assume these tasks fail <span class="text-ink-muted">(comma-separated task ids)</span>
 				</label>
 				<input
 					id="run-submit-assume-failed"
@@ -593,9 +596,9 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					bind:value={assumeFailedText}
 					spellcheck="false"
 					placeholder="deploy"
-					class="h-9 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg placeholder:text-fg-placeholder focus:border-brand-500"
+					class="field h-9 px-3 font-mono text-sm"
 				/>
-				<p class="text-xs text-fg-muted">
+				<p class="text-xs text-ink-muted">
 					Plans the failure path: each task, when it would run, failed after its retries — its failure
 					handlers are planned and the tasks that depend on it are unreached.
 				</p>
@@ -631,7 +634,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					!!typedInputError ||
 					!!assumedError ||
 					!selectedOrkflow}
-				class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg transition-colors hover:bg-surface-sunken disabled:pointer-events-none disabled:opacity-50"
+				class="btn"
 			>
 				{planning ? 'Planning…' : 'Plan'}
 			</button>
@@ -644,7 +647,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 					!!selectionError ||
 					!!typedInputError ||
 					!selectedOrkflow}
-				class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+				class="btn btn-primary"
 			>
 				{submitting ? 'Submitting…' : 'Submit run'}
 			</button>
@@ -657,7 +660,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 				{/if}
 			</div>
 		{:else}
-			<span data-testid="run-submit-cli-unavailable" class="text-xs text-warning-700">
+			<span data-testid="run-submit-cli-unavailable" class="text-xs text-ink-secondary">
 				Fix the input JSON to export a CLI command.
 			</span>
 		{/if}

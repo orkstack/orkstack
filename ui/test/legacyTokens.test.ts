@@ -11,8 +11,12 @@ import { readdirSync, readFileSync } from 'node:fs';
 // `--color-fg` is the one permanent alias (a spec reads it by name); the
 // utilities spelled with it (`text-fg`) are still legacy and still counted.
 
-/** Stage 1 (foundation) left 2,080; Stage 2 (runs) redrew the run pages and their components. */
-const CEILING = 1569;
+/**
+ * Stage 1 (foundation) left 2,080; Stage 2 (runs) redrew the run pages and
+ * their components (1,569); Stage 3 (authoring) the dashboard, the Orkflow
+ * pages, Apply and their components.
+ */
+const CEILING = 856;
 
 const src = `${import.meta.dir}/../src`;
 

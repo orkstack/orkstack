@@ -112,7 +112,9 @@ test('the shell and its new components render no banned word', () => {
 		'lib/components/TaskMapLegend.svelte',
 		'lib/components/DrawingFrame.svelte',
 		'lib/components/RevisionCloud.svelte',
-		'lib/components/VersionTable.svelte'
+		'lib/components/VersionTable.svelte',
+		// Stage 3: the authoring sheets' new component.
+		'lib/components/CountCell.svelte'
 	];
 	const found: string[] = [];
 	for (const f of files) {
@@ -131,9 +133,21 @@ test('the shell and its new components render no banned word', () => {
 
 // The commands a page adds to the palette, and the words its title block
 // and the map say: every `label: '…'` literal and the cloud's tag.
-test('the run and runs pages add no banned word to the palette or the title block', () => {
+test('the run, runs and authoring pages add no banned word to the palette or the title block', () => {
 	const found: string[] = [];
-	for (const f of ['routes/runs/[id]/+page.svelte', 'routes/runs/+page.svelte', 'routes/runs/[id]/compare/+page.svelte', 'lib/taskMap.ts', 'lib/heldRuns.ts']) {
+	for (const f of [
+		'routes/runs/[id]/+page.svelte',
+		'routes/runs/+page.svelte',
+		'routes/runs/[id]/compare/+page.svelte',
+		'lib/taskMap.ts',
+		'lib/heldRuns.ts',
+		// Stage 3: the authoring sheets and the Orkflow page's provider.
+		'routes/+page.svelte',
+		'routes/orkflows/+page.svelte',
+		'routes/orkflows/[name]/+page.svelte',
+		'routes/apply/+page.svelte',
+		'lib/palette/orkflowPage.ts'
+	]) {
 		const text = readFileSync(`${import.meta.dir}/../src/${f}`, 'utf8');
 		const labels = [...text.matchAll(/label: (?:'([^']*)'|`([^`]*)`)/g)].map((m) => (m[1] ?? m[2]).replace(/\$\{[^}]*\}/g, ' '));
 		const sentences = [...text.matchAll(/(?:text \+?= |return )["'`]([^"'`]*)["'`]/g)].map((m) => m[1]);

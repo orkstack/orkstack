@@ -57,15 +57,15 @@
 
 {#if specs.length > 0}
 	<fieldset class="space-y-4" data-testid="declared-inputs">
-		<legend class="text-sm font-medium text-fg">Declared inputs</legend>
+		<legend class="caps mb-1 text-ink-muted">Declared inputs</legend>
 		{#each specs as spec (spec.name)}
 			<div class="flex flex-col gap-1.5">
-				<label for="input-{spec.name}" class="text-sm text-fg-secondary">
-					{spec.name}{#if spec.required}<span class="ml-1 text-danger-600">required</span>{/if}
-					<span class="ml-1 text-xs text-fg-muted">{spec.type}</span>
+				<label for="input-{spec.name}" class="text-sm text-ink">
+					<span class="font-mono">{spec.name}</span>{#if spec.required}<span class="caps ml-2 text-red-strong">required</span>{/if}
+					<span class="figure ml-2 text-xs text-ink-muted">{spec.type}</span>
 				</label>
 				{#if spec.type === 'boolean'}
-					<label class="flex items-center gap-2 text-sm text-fg">
+					<label class="flex items-center gap-2 text-sm text-ink">
 						<input
 							id="input-{spec.name}"
 							data-testid="declared-input-{spec.name}"
@@ -82,7 +82,7 @@
 						rows="3"
 						value={drafts[spec.name] ?? composite(value[spec.name])}
 						oninput={(event) => updateComposite(spec.name, spec.type, event.currentTarget.value)}
-						class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg"
+						class="field px-3 py-2 font-mono text-sm"
 					></textarea>
 				{:else}
 					<input
@@ -96,12 +96,12 @@
 							if (spec.type === 'number') updateNumber(spec.name, raw);
 							else onchange(setInput(value, spec.name, raw));
 						}}
-						class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg"
+						class="field h-9 px-3 text-sm"
 					/>
 				{/if}
-				{#if errors[spec.name]}<p class="text-xs text-danger-700">{errors[spec.name]}</p>{/if}
+				{#if errors[spec.name]}<p class="severity-error text-xs">{errors[spec.name]}</p>{/if}
 				{#if spec.defaultValue !== undefined}
-					<p class="text-xs text-fg-muted">Default: <code>{JSON.stringify(spec.defaultValue)}</code></p>
+					<p class="text-xs text-ink-muted">Default: <code>{JSON.stringify(spec.defaultValue)}</code></p>
 				{/if}
 			</div>
 		{/each}

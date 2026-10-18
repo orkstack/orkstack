@@ -208,7 +208,7 @@ tasks:
 	await page.getByTestId('apply-validate').click();
 	const error = page.locator('[data-testid="apply-validation-issue"][data-field="tasks[0].with.src"]');
 	await expect(error).toHaveAttribute('data-severity', 'error');
-	await expect(error).toHaveClass(/text-danger-700/);
+	await expect(error).toHaveClass(/severity-error/);
 	await expect(error).toContainText('with.src is required by the interface of');
 	await expect(error).toContainText('/orkstack/activity-file@sha256:');
 	await expect(error).toContainText('for op "copy" and is not supplied');
@@ -235,7 +235,7 @@ tasks:
 	await page.getByTestId('apply-validate').click();
 	const warning = page.locator('[data-testid="apply-validation-issue"][data-field="tasks[0].with.srcs"]');
 	await expect(warning).toHaveAttribute('data-severity', 'warning');
-	await expect(warning).toHaveClass(/text-warning-700/);
+	await expect(warning).toHaveClass(/severity-warning/);
 	await expect(warning).toContainText('(declared: as, op, src); the image may still accept it');
 	await expect(page.locator('[data-testid="apply-validation-issue"][data-severity="error"]')).toHaveCount(0);
 	await expect(page.getByTestId('apply-submit')).toBeEnabled();

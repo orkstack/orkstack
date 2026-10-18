@@ -55,6 +55,19 @@ include breaking changes, and each is marked **BREAKING**.
   a task by id on a run page, and opens the run's actions behind their
   confirmations. A closed popover no longer listens to the page, so a run
   page of 4,000 tasks becomes interactive about 0.4 s sooner.
+- The dashboard, the Orkflows pages and Apply are redrawn (stage 3 of 4).
+  The dashboard's numbers are one ruled line of counts — each status count
+  beside its drawn mark, never a coloured figure — above its registers:
+  running now, recent failures, pool health, stability and usage. The
+  Orkflows list adds each Orkflow's definition digest and labels, and its
+  only link is the name. An Orkflow's page opens with **Submit a run** and
+  **View runs** in its header, its DAG beside the versions it has (the one
+  shown, the current one and the newest), and a bottom row naming the
+  version shown, its digest and whether it is current; the command palette
+  on that page opens Submit a run…, switches tabs and jumps to a task's row.
+  Apply puts Validate and Apply in its header and lists the examples as a
+  ruled list. Validation errors and warnings are told apart by a filled or an
+  outlined mark as well as by their words.
 - **BREAKING:** every Orkflow begins with `apiVersion: orkstack/v1` and
   `kind: Orkflow`. A document without them is refused at validate, apply and
   plan, naming the two lines to add. The header is not part of the definition:

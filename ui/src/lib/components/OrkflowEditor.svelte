@@ -297,7 +297,7 @@
 		onretry={reload}
 	/>
 {:else if reloading}
-	<p data-testid="editor-loading" class="text-sm text-fg-muted">Reloading the stored document…</p>
+	<p data-testid="editor-loading" class="text-sm text-ink-muted">Reloading the stored document…</p>
 {:else}
 	<form
 		class="space-y-4"
@@ -307,16 +307,16 @@
 			void apply();
 		}}
 	>
-		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-fg-secondary">
+		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-ink-secondary">
 			<span>
-				Editing <span class="font-medium text-fg">{name}</span> in namespace
-				<span class="font-medium text-fg">{namespaceLabel(namespace)}</span>, derived from
+				Editing <span class="font-medium text-ink">{name}</span> in namespace
+				<span class="font-medium text-ink">{namespaceLabel(namespace)}</span>, derived from
 				version
-				<span class="font-medium text-brand-700" data-testid="editor-base-version">{base}</span>.
+				<span class="figure font-semibold text-blue" data-testid="editor-base-version">{base}</span>.
 			</span>
-			<span class="text-xs text-fg-muted">
+			<span class="text-xs text-ink-muted">
 				The newest applied version is
-				<span class="font-medium text-fg-secondary" data-testid="editor-head-version"
+				<span class="font-medium text-ink-secondary" data-testid="editor-head-version"
 					>{expectedHead}</span
 				>{#if base === expectedHead}, which is what this edit is derived from.{:else}<span
 						data-testid="editor-fork-notice"
@@ -324,7 +324,7 @@
 						runs is unchanged until somebody promotes.</span
 					>{/if}
 			</span>
-			<span class="text-xs text-fg-muted">
+			<span class="text-xs text-ink-muted">
 				Applying stores a NEW version — change <code>version:</code> before you apply. Re-applying
 				the same version with different content is refused.
 			</span>
@@ -338,12 +338,12 @@
 			oninput={() => (noop = '')}
 			rows="24"
 			spellcheck="false"
-			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm leading-5 text-fg [font-variant-ligatures:none] [tab-size:2] whitespace-pre focus:border-brand-500"
+			class="field min-h-[360px] w-full px-3 py-2 font-mono text-sm leading-5 [font-variant-ligatures:none] [tab-size:2] whitespace-pre"
 		></textarea>
 		<div class="flex flex-wrap gap-3 text-sm">
-			<label class="cursor-pointer font-medium text-brand-700">Import YAML<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
-			<button type="button" data-testid="editor-export" onclick={exportYaml} class="font-medium text-brand-700">Export YAML</button>
-			{#if dirty}<span data-testid="editor-unsaved" class="text-warning-700">Unsaved changes</span>{/if}
+			<label class="link cursor-pointer font-semibold">Import YAML<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
+			<button type="button" data-testid="editor-export" onclick={exportYaml} class="link font-semibold">Export YAML</button>
+			{#if dirty}<span data-testid="editor-unsaved" class="caps self-center text-ink-secondary">Unsaved changes</span>{/if}
 		</div>
 
 		{#if applyError}
@@ -353,38 +353,39 @@
 			<p
 				data-testid="editor-noop"
 				role="status"
-				class="rounded-md border border-border bg-surface-sunken px-4 py-2 text-sm text-fg-secondary"
+				class="note flex gap-3 px-4 py-2 text-sm"
 			>
-				{noop} Nothing was applied, and no new version was created.
+				<span class="caps text-ink-muted">Note</span>
+				<span>{noop} Nothing was applied, and no new version was created.</span>
 			</p>
 		{/if}
 		{#each warnings as warning, i (i)}
-			<div class="rounded-md border border-warning-200 bg-warning-50 px-4 py-2 text-sm text-warning-700">
+			<div class="severity-warning border border-red px-4 py-2 text-sm">
 				{warning}
 			</div>
 		{/each}
 		{#if issues.length > 0}
-			<div data-testid="editor-validation-issues" class="space-y-2 rounded-md border border-border bg-surface-sunken p-3 text-sm">
-				<p class="font-medium text-fg">Validation results</p>
+			<div data-testid="editor-validation-issues" class="space-y-2 border-t border-rule pt-3 text-sm">
+				<p class="caps text-ink-muted">Validation results</p>
 				{#each issues as issue, i (`${issue.field}-${i}`)}
-					<p class={issue.severity === ValidationSeverity.ERROR ? 'text-danger-700' : 'text-warning-700'}><span class="font-medium">{issue.field || 'document'}</span>: {issue.message}</p>
+					<p class={issue.severity === ValidationSeverity.ERROR ? 'severity-error' : 'severity-warning'}><span class="font-medium">{issue.field || 'document'}</span>: {issue.message}</p>
 				{/each}
 			</div>
 		{/if}
 		{#if applied}
-			<p data-testid="editor-apply-success" class="rounded-md border border-success-200 bg-success-50 px-4 py-2 text-sm text-success-700">Applied {applied.name}@{applied.version}. Warnings remain visible above. <a class="font-medium underline" href={versionsHref}>Open versions</a></p>
+			<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Applied {applied.name}@{applied.version}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
 		{/if}
 
 		{#if conflict}
 			<div
 				data-testid="editor-conflict"
 				role="alert"
-				class="space-y-3 rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800"
+				class="space-y-3 border border-red bg-red-tint px-4 py-3 text-sm text-ink"
 			>
-				<p class="font-medium">
+				<p class="severity-error font-semibold">
 					{name} changed while this edit was open. Nothing was overwritten.
 				</p>
-				<p class="whitespace-pre-wrap text-warning-700">{conflict.message}</p>
+				<p class="whitespace-pre-wrap text-ink-secondary">{conflict.message}</p>
 				<p>
 					This edit is derived from
 					<span class="font-medium" data-testid="editor-conflict-base">{conflict.base}</span>; the
@@ -418,7 +419,7 @@
 						data-testid="editor-conflict-diff"
 						disabled={conflictBusy || !conflictHead}
 						onclick={showConflictDiff}
-						class="inline-flex h-8 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 hover:bg-warning-50 disabled:pointer-events-none disabled:opacity-50"
+						class="btn btn-sm"
 					>
 						{conflictBusy
 							? 'Working…'
@@ -429,7 +430,7 @@
 						data-testid="editor-conflict-rebase"
 						disabled={conflictBusy || !conflictHead}
 						onclick={retarget}
-						class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
+						class="btn btn-sm"
 					>
 						Keep my edit and retarget head {conflictHead || '…'}
 					</button>
@@ -445,7 +446,7 @@
 					/>
 				{:else if conflictDiff !== null}
 					{#if conflictDiff === ''}
-						<p data-testid="conflict-diff-identical" class="text-sm text-fg-secondary">
+						<p data-testid="conflict-diff-identical" class="text-sm text-ink-secondary">
 							The two versions' source YAML is byte-identical.
 						</p>
 					{:else}
@@ -455,12 +456,12 @@
 			</div>
 		{/if}
 
-		<button type="button" data-testid="editor-validate" disabled={validating || applying} onclick={() => void validate()} class="mr-3 inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg disabled:opacity-50">{validating ? 'Validating…' : 'Validate'}</button>
+		<button type="button" data-testid="editor-validate" disabled={validating || applying} onclick={() => void validate()} class="btn mr-3">{validating ? 'Validating…' : 'Validate'}</button>
 		<button
 			type="submit"
 			data-testid="editor-apply"
 			disabled={applying || validating}
-			class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+			class="btn btn-primary"
 		>
 			{applying ? 'Applying…' : `Apply as a new version of ${name}`}
 		</button>

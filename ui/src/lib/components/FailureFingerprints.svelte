@@ -145,32 +145,32 @@
 </script>
 
 <details
-	class="mt-4 rounded-md border border-border bg-surface"
+	class="mt-4 border-t border-rule"
 	data-testid="failure-fingerprints"
 	{open}
 	ontoggle={toggled}
 >
 	<summary
 		data-testid="failure-fingerprints-toggle"
-		class="cursor-pointer px-4 py-3 text-sm font-medium text-fg select-none hover:bg-surface-hover"
+		class="cursor-pointer py-2 text-sm font-semibold text-ink select-none marker:text-ink-muted hover:text-blue"
 	>
 		Fingerprints — the same failures, grouped
 	</summary>
 	{#if open}
-		<div class="border-t border-border-subtle px-4 py-3">
+		<div class="pb-3">
 			<div class="mb-3 flex flex-wrap items-center gap-2">
-				<span class="text-xs font-medium text-fg-muted">Group by</span>
+				<span class="caps text-ink-muted">Group by</span>
 				{#each FINGERPRINT_DIMENSIONS as dim (dim)}
 					<label
-						class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors {checked[
+						class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 text-xs font-medium transition-colors {checked[
 							dim
 						]
-							? 'border-brand-200 bg-brand-50 text-brand-700'
-							: 'border-border bg-surface text-fg-muted hover:bg-surface-hover'}"
+							? 'border-blue bg-blue-tint text-blue-strong'
+							: 'border-rule-strong bg-paper text-ink-secondary hover:bg-hover'}"
 					>
 						<input
 							type="checkbox"
-							class="size-3.5 accent-brand-600"
+							class="size-3.5"
 							data-testid="fingerprint-dim-{groupBySpelling(dim)}"
 							bind:checked={checked[dim]}
 						/>
@@ -179,14 +179,14 @@
 				{/each}
 				<div class="ml-auto flex items-center gap-2">
 					{#if loading}
-						<span class="text-xs text-fg-muted" data-testid="failure-fingerprints-loading">loading…</span>
+						<span class="text-xs text-ink-muted" data-testid="failure-fingerprints-loading">loading…</span>
 					{/if}
 					<CliEquivalent command={cli} testid="fingerprint-cli" />
 				</div>
 			</div>
 
 			{#if groupBy.length === 0}
-				<p class="text-sm text-fg-muted" data-testid="failure-fingerprints-none">
+				<p class="text-sm text-ink-muted" data-testid="failure-fingerprints-none">
 					Tick at least one dimension to group by.
 				</p>
 			{:else if error}
@@ -200,55 +200,55 @@
 				/>
 			{:else if result}
 				{#if result.groups.length === 0}
-					<p class="text-sm text-fg-muted" data-testid="failure-fingerprints-empty">
+					<p class="text-sm text-ink-muted" data-testid="failure-fingerprints-empty">
 						No run failed in this window.
 					</p>
 				{:else}
-					<div class="overflow-x-auto rounded-md border border-border">
-						<table class="w-full border-collapse text-xs" data-testid="fingerprint-table">
-							<thead class="bg-surface-sunken">
+					<div class="overflow-x-auto border-t-2 border-ink">
+						<table class="register text-xs" data-testid="fingerprint-table">
+							<thead>
 								<tr>
 									{#each columns as dim (dim)}
-										<th class="h-8 px-3 text-left font-medium text-fg-muted">{groupBySpelling(dim)}</th>
+										<th>{groupBySpelling(dim)}</th>
 									{/each}
-									<th class="h-8 px-3 text-right font-medium text-fg-muted">runs</th>
-									<th class="h-8 px-3 text-left font-medium text-fg-muted">first</th>
-									<th class="h-8 px-3 text-left font-medium text-fg-muted">last</th>
+									<th class="text-right">runs</th>
+									<th>first</th>
+									<th>last</th>
 								</tr>
 							</thead>
 							<tbody>
 								{#each result.groups as group, i (i)}
 									{@const href = rowHref(group.orkflowName)}
 									<tr
-										class="border-t border-border-subtle transition-colors hover:bg-surface-hover"
+										class="transition-colors hover:bg-hover"
 										data-testid="fingerprint-row-{i}"
 									>
 										{#each columns as dim, c (dim)}
 											{@const cell = fingerprintCell(group, dim)}
-											<td class="align-middle">
+											<td class="p-0">
 												<a
 													{href}
 													tabindex={c === 0 ? undefined : -1}
 													data-testid="fingerprint-cell-{i}-{groupBySpelling(dim)}"
 													data-unavailable={cell.unavailable ? 'true' : 'false'}
 													class="block px-3 py-2 {dim === FailureGroupBy.IMAGE ? 'font-mono break-all' : ''} {cell.unavailable
-														? 'font-normal text-fg-muted italic'
-														: 'text-fg'}">{cell.text}</a
+														? 'font-normal text-ink-muted italic'
+														: 'text-ink'}">{cell.text}</a
 												>
 											</td>
 										{/each}
-										<td class="align-middle">
+										<td class="p-0">
 											<a {href} tabindex="-1" class="block px-3 py-2 text-right text-failed-fg tabular-nums"
 												>{group.runCount.toString()}</a
 											>
 										</td>
-										<td class="align-middle">
-											<a {href} tabindex="-1" class="block px-3 py-2 whitespace-nowrap text-fg-muted"
+										<td class="p-0">
+											<a {href} tabindex="-1" class="block px-3 py-2 whitespace-nowrap text-ink-muted"
 												>{fmtInstant(group.firstSeen)}</a
 											>
 										</td>
-										<td class="align-middle">
-											<a {href} tabindex="-1" class="block px-3 py-2 whitespace-nowrap text-fg-muted"
+										<td class="p-0">
+											<a {href} tabindex="-1" class="block px-3 py-2 whitespace-nowrap text-ink-muted"
 												>{fmtInstant(group.lastSeen)}</a
 											>
 										</td>
@@ -258,7 +258,7 @@
 						</table>
 					</div>
 				{/if}
-				<div class="mt-2 space-y-0.5 text-xs text-fg-muted" data-testid="failure-fingerprints-footer">
+				<div class="mt-2 space-y-0.5 text-xs text-ink-muted" data-testid="failure-fingerprints-footer">
 					{#each footer as line (line)}
 						<p>{line}</p>
 					{/each}

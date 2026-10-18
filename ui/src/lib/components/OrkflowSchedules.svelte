@@ -230,25 +230,25 @@
 	}
 
 	const stateClasses: Record<string, string> = {
-		active: 'border-success-200 bg-success-50 text-success-700',
-		paused: 'border-warning-200 bg-warning-50 text-warning-800',
-		unavailable: 'border-danger-200 bg-danger-50 text-danger-700'
+		active: 'border-rule-strong bg-paper-sunken text-ink',
+		paused: 'border-rule-strong bg-paper-sunken text-ink-secondary',
+		unavailable: 'border-red bg-red-tint text-red-strong'
 	};
 
 	const inputClass =
-		'h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-brand-500';
+		'field h-9 w-full px-3 text-sm';
 	const smallButton =
-		'inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50';
+		'btn btn-sm';
 </script>
 
-<p class="mb-5 text-sm text-fg-secondary" data-testid="schedules-scope">
-	Each schedule starts <span class="font-medium text-fg">{name}</span> in
-	<span class="font-medium text-fg">{namespaceLabel(namespace)}</span> at the times it names. Temporal keeps
+<p class="mb-5 max-w-prose text-sm text-ink-secondary" data-testid="schedules-scope">
+	Each schedule starts <span class="font-medium text-ink">{name}</span> in
+	<span class="font-medium text-ink">{namespaceLabel(namespace)}</span> at the times it names. Temporal keeps
 	the schedule; OrkStack stores nothing else about it.
 </p>
 
-<section class="mb-6 rounded-md border border-border bg-surface p-4">
-	<h2 class="text-sm font-semibold text-fg">Create schedule</h2>
+<section class="region mb-8 pt-3">
+	<h2 class="text-md font-semibold text-ink">Create schedule</h2>
 	<form
 		class="mt-3 space-y-4"
 		data-testid="schedule-create-form"
@@ -259,7 +259,7 @@
 	>
 		<div class="grid gap-4 sm:grid-cols-2">
 			<div class="flex flex-col gap-1.5">
-				<label for="schedule-name" class="text-sm font-medium text-fg">Name</label>
+				<label for="schedule-name" class="text-sm font-medium text-ink">Name</label>
 				<input
 					id="schedule-name"
 					data-testid="schedule-name"
@@ -269,7 +269,7 @@
 				/>
 			</div>
 			<div class="flex flex-col gap-1.5">
-				<label for="schedule-version" class="text-sm font-medium text-fg">Version</label>
+				<label for="schedule-version" class="text-sm font-medium text-ink">Version</label>
 				<Select
 					id="schedule-version"
 					testid="schedule-version"
@@ -280,8 +280,8 @@
 				/>
 			</div>
 			<div class="flex flex-col gap-1.5">
-				<label for="schedule-cron" class="text-sm font-medium text-fg">
-					Cron <span class="font-normal text-fg-muted">(one expression per line)</span>
+				<label for="schedule-cron" class="text-sm font-medium text-ink">
+					Cron <span class="font-normal text-ink-muted">(one expression per line)</span>
 				</label>
 				<textarea
 					id="schedule-cron"
@@ -289,18 +289,18 @@
 					bind:value={cronText}
 					rows="2"
 					placeholder="0 2 * * *"
-					class="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg focus:border-brand-500"
+					class="field w-full px-3 py-2 font-mono text-sm"
 				></textarea>
 			</div>
 			<div class="flex flex-col gap-1.5">
-				<label for="schedule-interval" class="text-sm font-medium text-fg">
-					Interval <span class="font-normal text-fg-muted">(optional, e.g. 15m)</span>
+				<label for="schedule-interval" class="text-sm font-medium text-ink">
+					Interval <span class="font-normal text-ink-muted">(optional, e.g. 15m)</span>
 				</label>
 				<input id="schedule-interval" data-testid="schedule-interval" bind:value={intervalText} class={inputClass} />
 			</div>
 			<div class="flex flex-col gap-1.5">
-				<label for="schedule-timezone" class="text-sm font-medium text-fg">
-					Time zone <span class="font-normal text-fg-muted">(IANA; empty is UTC)</span>
+				<label for="schedule-timezone" class="text-sm font-medium text-ink">
+					Time zone <span class="font-normal text-ink-muted">(IANA; empty is UTC)</span>
 				</label>
 				<input
 					id="schedule-timezone"
@@ -311,7 +311,7 @@
 				/>
 			</div>
 			<div class="flex flex-col gap-1.5">
-				<label for="schedule-overlap" class="text-sm font-medium text-fg">
+				<label for="schedule-overlap" class="text-sm font-medium text-ink">
 					When the previous run is still going
 				</label>
 				<Select
@@ -325,15 +325,15 @@
 			</div>
 		</div>
 
-		<details class="rounded-md border border-border-subtle p-3">
-			<summary class="cursor-pointer text-sm font-medium text-fg">Advanced</summary>
+		<details class="border-y border-rule py-2">
+			<summary class="cursor-pointer text-sm font-semibold text-ink marker:text-ink-muted hover:text-blue">Advanced</summary>
 			<div class="mt-3 grid gap-4 sm:grid-cols-2">
 				<div class="flex flex-col gap-1.5">
-					<label for="schedule-jitter" class="text-sm font-medium text-fg">Jitter</label>
+					<label for="schedule-jitter" class="text-sm font-medium text-ink">Jitter</label>
 					<input id="schedule-jitter" data-testid="schedule-jitter" bind:value={jitterText} placeholder="30s" class={inputClass} />
 				</div>
 				<div class="flex flex-col gap-1.5">
-					<label for="schedule-catchup-window" class="text-sm font-medium text-fg">Catch-up window</label>
+					<label for="schedule-catchup-window" class="text-sm font-medium text-ink">Catch-up window</label>
 					<input
 						id="schedule-catchup-window"
 						data-testid="schedule-catchup-window"
@@ -343,7 +343,7 @@
 					/>
 				</div>
 				<div class="flex flex-col gap-1.5">
-					<label for="schedule-start-at" class="text-sm font-medium text-fg">Start at (RFC 3339)</label>
+					<label for="schedule-start-at" class="text-sm font-medium text-ink">Start at (RFC 3339)</label>
 					<input
 						id="schedule-start-at"
 						data-testid="schedule-start-at"
@@ -353,7 +353,7 @@
 					/>
 				</div>
 				<div class="flex flex-col gap-1.5">
-					<label for="schedule-end-at" class="text-sm font-medium text-fg">End at (RFC 3339)</label>
+					<label for="schedule-end-at" class="text-sm font-medium text-ink">End at (RFC 3339)</label>
 					<input
 						id="schedule-end-at"
 						data-testid="schedule-end-at"
@@ -363,12 +363,12 @@
 					/>
 				</div>
 				<div class="flex flex-col gap-1.5 sm:col-span-2">
-					<label for="schedule-description" class="text-sm font-medium text-fg">Description</label>
+					<label for="schedule-description" class="text-sm font-medium text-ink">Description</label>
 					<input id="schedule-description" data-testid="schedule-description" bind:value={description} class={inputClass} />
 				</div>
 				<div class="flex flex-col gap-1.5 sm:col-span-2">
-					<label for="schedule-input" class="text-sm font-medium text-fg">
-						Input <span class="font-normal text-fg-muted">(a JSON object, submitted as given at every fire)</span>
+					<label for="schedule-input" class="text-sm font-medium text-ink">
+						Input <span class="font-normal text-ink-muted">(a JSON object, submitted as given at every fire)</span>
 					</label>
 					<textarea
 						id="schedule-input"
@@ -376,17 +376,17 @@
 						bind:value={inputText}
 						rows="3"
 						placeholder={'{"mode": "full"}'}
-						class="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg focus:border-brand-500"
+						class="field w-full px-3 py-2 font-mono text-sm"
 					></textarea>
 				</div>
-				<label class="flex items-center gap-2 text-sm text-fg">
+				<label class="flex items-center gap-2 text-sm text-ink">
 					<input type="checkbox" data-testid="schedule-pause-on-failure" bind:checked={pauseOnFailure} />
 					Pause the schedule when a fire fails or is refused
 				</label>
 			</div>
 		</details>
 
-		<label class="flex items-center gap-2 text-sm text-fg">
+		<label class="flex items-center gap-2 text-sm text-ink">
 			<input type="checkbox" data-testid="schedule-create-paused" bind:checked={createPaused} />
 			Create paused so I can review the next fire times first
 		</label>
@@ -399,7 +399,7 @@
 			type="submit"
 			data-testid="schedule-create"
 			disabled={creating}
-			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink transition-colors hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+			class="btn border-ink"
 		>
 			{creating ? 'Creating…' : 'Create schedule'}
 		</button>
@@ -420,44 +420,44 @@
 		onretry={reload}
 	/>
 {:else if schedules.length === 0}
-	<p data-testid="schedules-empty" class="text-sm text-fg-muted">
+	<p data-testid="schedules-empty" class="text-sm text-ink-muted">
 		No schedules exist for {name} in namespace {namespaceLabel(namespace)}. Create one above to start it at
 		the times it names.
 	</p>
 {:else}
-	<ul class="space-y-3" data-testid="schedule-list">
+	<ul class="border-t-2 border-ink" data-testid="schedule-list">
 		{#each schedules as schedule (schedule.name)}
 			{@const state = scheduleState(schedule)}
 			{@const newest = lastFire(schedule)}
 			{@const outcome = newest ? fireOutcome(newest) : undefined}
-			<li data-testid="schedule-row-{schedule.name}" class="rounded-md border border-border bg-surface p-4">
+			<li data-testid="schedule-row-{schedule.name}" class="border-b border-rule py-3">
 				<div class="flex flex-wrap items-start justify-between gap-4">
 					<div class="min-w-0 space-y-1">
 						<p class="flex items-center gap-2">
-							<span class="text-sm font-medium text-fg">{schedule.name}</span>
+							<span class="font-mono text-sm font-semibold text-ink">{schedule.name}</span>
 							<span
 								data-testid="schedule-row-state-{schedule.name}"
 								title={state === 'paused' ? schedule.note : state === 'unavailable' ? schedule.unavailableReason : ''}
-								class="inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium tracking-caps uppercase {stateClasses[
+								class="stamp {stateClasses[
 									state
 								]}">{state}</span
 							>
-							<span class="font-mono text-xs text-fg-muted">{schedule.id}</span>
+							<span class="font-mono text-xs text-ink-muted">{schedule.id}</span>
 						</p>
 						{#if state === 'paused' && schedule.note}
-							<p class="text-xs text-warning-800" data-testid="schedule-row-note-{schedule.name}">{schedule.note}</p>
+							<p class="text-xs text-ink-secondary" data-testid="schedule-row-note-{schedule.name}">{schedule.note}</p>
 						{/if}
 						{#if state === 'unavailable'}
-							<p class="text-xs text-danger-700">{schedule.unavailableReason}</p>
+							<p class="severity-error text-xs">{schedule.unavailableReason}</p>
 						{:else}
-							<p class="text-sm text-fg-secondary">
+							<p class="text-sm text-ink-secondary">
 								Runs {schedule.orkflowName}@{schedule.orkflowVersion || 'current'} · {whenLabel(schedule.spec)} ·
 								overlap {overlapLabel(schedule.spec?.overlap ?? 0)}
 							</p>
 							{#if schedule.description}
-								<p class="text-sm text-fg-secondary">{schedule.description}</p>
+								<p class="text-sm text-ink-secondary">{schedule.description}</p>
 							{/if}
-							<p class="text-xs text-fg-muted">
+							<p class="text-xs text-ink-muted">
 								Next fire <span data-testid="schedule-row-next-{schedule.name}"
 									>{schedule.nextFireTimes.length > 0 ? isoUTC(schedule.nextFireTimes[0]) : '—'}</span
 								>
@@ -466,10 +466,10 @@
 									{#if outcome?.kind === 'run'}
 										<a
 											href={withNamespace(`/runs/${outcome.runId}`, namespace)}
-											class="font-mono text-brand-700 hover:underline">{outcome.runId}</a
+											class="font-mono link">{outcome.runId}</a
 										>
 									{:else if outcome?.kind === 'refused'}
-										<span class="text-danger-700" title={outcome.refusal}>refused</span>
+										<span class="text-red-strong" title={outcome.refusal}>refused</span>
 									{:else}
 										-
 									{/if}
@@ -536,7 +536,7 @@
 								deleting = schedule.name;
 								actionError = '';
 							}}
-							class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 transition-colors hover:border-danger-300 hover:bg-danger-50"
+							class="btn btn-sm border-red text-red-strong hover:bg-red-tint"
 						>
 							Delete
 						</button>
@@ -553,13 +553,13 @@
 				</div>
 
 				{#if expanded[schedule.name] && state !== 'unavailable'}
-					<div class="mt-4 grid gap-4 border-t border-border-subtle pt-4 md:grid-cols-2">
+					<div class="mt-3 grid gap-4 border-t border-rule pt-3 md:grid-cols-2">
 						<div>
-							<h3 class="mb-2 text-xs font-semibold text-fg">Next fires</h3>
+							<h3 class="caps mb-2 text-ink-muted">Next fires</h3>
 							{#if schedule.nextFireTimes.length === 0}
-								<p class="text-xs text-fg-muted" data-testid="schedule-next-fires-{schedule.name}">None.</p>
+								<p class="text-xs text-ink-muted" data-testid="schedule-next-fires-{schedule.name}">None.</p>
 							{:else}
-								<ol class="space-y-0.5 font-mono text-xs text-fg-secondary" data-testid="schedule-next-fires-{schedule.name}">
+								<ol class="space-y-0.5 font-mono text-xs text-ink-secondary" data-testid="schedule-next-fires-{schedule.name}">
 									{#each schedule.nextFireTimes as at, index (index)}
 										<li>{isoUTC(at)}</li>
 									{/each}
@@ -567,30 +567,30 @@
 							{/if}
 						</div>
 						<div>
-							<h3 class="mb-2 text-xs font-semibold text-fg">Recent fires</h3>
-							<p class="mb-2 text-xs text-fg-muted" data-testid="schedule-fires-{schedule.name}">
+							<h3 class="caps mb-2 text-ink-muted">Recent fires</h3>
+							<p class="mb-2 text-xs text-ink-muted" data-testid="schedule-fires-{schedule.name}">
 								Fires: {firesLabel(schedule)}
 							</p>
 							{#if schedule.recentFires.length === 0}
-								<p class="text-xs text-fg-muted" data-testid="schedule-recent-{schedule.name}">No fires yet.</p>
+								<p class="text-xs text-ink-muted" data-testid="schedule-recent-{schedule.name}">No fires yet.</p>
 							{:else}
-								<table class="w-full text-left text-xs" data-testid="schedule-recent-{schedule.name}">
-									<thead class="text-fg-muted">
-										<tr><th class="pr-3 font-medium">Scheduled</th><th class="pr-3 font-medium">Run</th></tr>
+								<table class="register text-xs" data-testid="schedule-recent-{schedule.name}">
+									<thead class="text-ink-muted">
+										<tr><th class="pr-3">Scheduled</th><th class="pr-3">Run</th></tr>
 									</thead>
-									<tbody class="font-mono text-fg-secondary">
+									<tbody class="font-mono text-ink-secondary">
 										{#each schedule.recentFires as recent, index (index)}
 											{@const result = fireOutcome(recent)}
 											<tr>
 												<td class="pr-3 align-top">{isoUTC(recent.scheduledAt)}</td>
 												<td class="align-top">
 													{#if result.kind === 'run'}
-														<a href={withNamespace(`/runs/${result.runId}`, namespace)} class="text-brand-700 hover:underline"
+														<a href={withNamespace(`/runs/${result.runId}`, namespace)} class="link"
 															>{result.runId}</a
 														>
 													{:else if result.kind === 'refused'}
-														<span class="text-danger-700">refused</span>
-														<span class="block font-sans text-fg-secondary">{result.refusal}</span>
+														<span class="text-red-strong">refused</span>
+														<span class="block font-sans text-ink-secondary">{result.refusal}</span>
 													{:else}
 														<span class="italic">{result.kind}</span>
 													{/if}
@@ -618,11 +618,11 @@
 					void pause();
 				}}
 			>
-				<p class="text-sm text-fg-secondary">
+				<p class="text-sm text-ink-secondary">
 					No fire happens while it is paused; nothing is deleted. The reason is kept as the schedule's note and shown
 					on every read.
 				</p>
-				<label for="schedule-pause-reason" class="text-sm font-medium text-fg">Reason (optional)</label>
+				<label for="schedule-pause-reason" class="text-sm font-medium text-ink">Reason (optional)</label>
 				<input
 					id="schedule-pause-reason"
 					data-testid="schedule-pause-reason"
@@ -639,7 +639,7 @@
 						type="submit"
 						data-testid="schedule-pause-accept"
 						disabled={actionBusy}
-						class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-on-ink hover:bg-brand-700 disabled:opacity-50"
+						class="btn btn-primary"
 						>{actionBusy ? 'Pausing…' : 'Pause'}</button
 					>
 				</div>
@@ -668,7 +668,7 @@
 				This starts a run of {name} now, as if its time had come, under the schedule's own overlap policy — even while
 				the schedule is paused.
 			</p>
-			<p class="mt-2 text-fg-muted">
+			<p class="mt-2 text-ink-muted">
 				Anything the run does outside OrkStack happens again: activities are at-least-once, and a second run repeats
 				its external side effects.
 			</p>
@@ -694,7 +694,7 @@
 	>
 		{#snippet body()}
 			<p>No fire happens after this. Runs it already started continue and keep their origin.</p>
-			<p class="mt-2 font-mono text-xs text-fg-muted">{scheduleDeleteCli(deleting, namespace)}</p>
+			<p class="mt-2 font-mono text-xs text-ink-muted">{scheduleDeleteCli(deleting, namespace)}</p>
 		{/snippet}
 	</ConfirmDialog>
 {/if}

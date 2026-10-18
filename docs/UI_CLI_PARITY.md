@@ -113,7 +113,10 @@ keystroke and its own state. The palette jumps to any page of either mode, to
 an Orkflow or a run found by name, to a run by its id (it navigates and lets
 the run page say whether the run exists; it never looks a run up itself), to
 the runs and Orkflows recently opened in this browser (ids and names only,
-never inputs), and switches the namespace or the appearance. It never writes:
+never inputs), and switches the namespace or the appearance. The page you
+are on adds its own commands: a run page selects a task by id and offers the
+run's actions; an Orkflow page offers Submit a run…, its other tabs and a
+jump to any task's row in its task list. It never writes:
 a command that changes something opens the same dialog as the page's own
 button, with its confirmation and its CLI equivalent. It is the browser's
 presentation of navigation, so it has no `orkctl` twin; every action it
@@ -1303,7 +1306,7 @@ clients show it verbatim. Operator semantics are in [DEPLOY.md](DEPLOY.md).
 | Policy | CLI | UI | Refusal |
 | --- | --- | --- | --- |
 | Hold and cap | `--hold REASON`, `--release-hold`, `--max-running N` | Hold and Max running columns; Hold… / Release hold; a hold banner on Orkflows, the dashboard and the submit dialog, with submit disabled | `failed_precondition` `NAMESPACE_HELD` / `MAX_RUNNING_REACHED`, with the reason and the fix |
-| Budget | `--budget-cpu-seconds`, `--budget-gib-seconds`, `--budget-period`, `--budget-enforce[=false]`, `--clear-budget`; `stats usage` | Budget column and fields; dashboard Usage card; Admin → Usage ([STATS.md](STATS.md) §8) | `BUDGET_EXCEEDED` / `BUDGET_UNMEASURABLE`, with usage, budget, period and fix |
+| Budget | `--budget-cpu-seconds`, `--budget-gib-seconds`, `--budget-period`, `--budget-enforce[=false]`, `--clear-budget`; `stats usage` | Budget column and fields; dashboard Usage section; Admin → Usage ([STATS.md](STATS.md) §8) | `BUDGET_EXCEEDED` / `BUDGET_UNMEASURABLE`, with usage, budget, period and fix |
 | Secret sources | `--allow-secret PATTERN…`, `--clear-allowed-secrets` | Allowed secrets column, one per line, `unrestricted` caption | `invalid_argument` at apply/validate/submit naming the task, secret and list; the Orker's own floor refuses with `SECRET_NOT_PERMITTED` before pulling |
 | Required signer | `--require-signed-by cosign:KEY`, `--clear-require-signed-by` | Signed by column and a signer select | see image policy below |
 
@@ -1367,7 +1370,7 @@ issues, warnings kept after apply.
 
 Failure fingerprints (`stats failures`, the dashboard's **Fingerprints**
 disclosure), the flake index (`stats flakes`, the **Stability** disclosure
-and the run page's retry history), usage (`stats usage`, the **Usage** card
+and the run page's retry history), usage (`stats usage`, the **Usage** section
 and Admin → Usage) and cache statistics are specified, numbers and parity
 both, in [STATS.md](STATS.md).
 

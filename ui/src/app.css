@@ -245,6 +245,19 @@
 		color: var(--color-ink);
 	}
 
+	/* A confirmation ("Applied x@y"): ink, after a drawn check mark. */
+	.confirm::before {
+		content: '';
+		display: inline-block;
+		width: calc(var(--spacing) * 1.5);
+		height: calc(var(--spacing) * 2.5);
+		margin-right: calc(var(--spacing) * 2);
+		border-right: var(--rule-region) solid var(--color-ink);
+		border-bottom: var(--rule-region) solid var(--color-ink);
+		transform: translateY(-15%) rotate(45deg);
+		vertical-align: middle;
+	}
+
 	/* Severity: red ink, told apart by the mark before it — filled for an
 	   error, outlined for a warning — and by the word beside it. */
 	.severity-error,

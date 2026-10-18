@@ -34,7 +34,7 @@
 	} from '$lib/usage';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
-	import StatCard from './StatCard.svelte';
+	import CountCell from './CountCell.svelte';
 
 	interface Props {
 		namespace: string;
@@ -109,24 +109,24 @@
 	const footer = $derived(result ? usageFooter(result) : []);
 	const cli = $derived(usageCli(namespaceLabel(namespace), windowWord, groupBy));
 	const toneClass: Record<string, string> = {
-		danger: 'bg-danger-500',
-		warning: 'bg-warning-600',
-		ok: 'bg-brand-600'
+		danger: 'bg-red',
+		warning: 'bg-ink-secondary',
+		ok: 'bg-ink'
 	};
 </script>
 
-<section class="rounded-md border border-border bg-surface" data-testid="usage">
-	<div class="flex flex-wrap items-center gap-3 border-b border-border-subtle px-4 py-3">
-		<h2 class="text-sm font-semibold text-fg" data-testid="usage-heading">{heading}</h2>
+<section class="region pt-3" data-testid="usage">
+	<div class="flex flex-wrap items-center gap-3 pb-3">
+		<h2 class="text-md font-semibold text-ink" data-testid="usage-heading">{heading}</h2>
 		{#if loading}
-			<span class="text-xs text-fg-muted" data-testid="usage-loading">loading…</span>
+			<span class="text-xs text-ink-muted" data-testid="usage-loading">loading…</span>
 		{/if}
 		{#if result}
-			<span class="text-xs text-fg-muted" data-testid="usage-computed-at">measured {fmtAge(result.computedAt, now)}</span>
+			<span class="text-xs text-ink-muted" data-testid="usage-computed-at">measured {fmtAge(result.computedAt, now)}</span>
 		{/if}
 		<div class="ml-auto"><CliEquivalent command={cli} testid="usage-cli" /></div>
 	</div>
-	<div class="px-4 py-3">
+	<div>
 		{#if error}
 			<ErrorPanel
 				testid="usage-error"
@@ -139,9 +139,9 @@
 		{:else if result}
 			<div class="mb-4" data-testid="usage-budget">
 				{#if result.budget}
-					<p class="mb-2 text-xs text-fg-secondary" data-testid="usage-budget-mode">{budgetModeLabel(result.budget)}</p>
+					<p class="mb-2 text-xs text-ink-secondary" data-testid="usage-budget-mode">{budgetModeLabel(result.budget)}</p>
 					{#if shares.length === 0}
-						<p class="text-xs text-fg-muted" data-testid="usage-budget-window-differs">
+						<p class="text-xs text-ink-muted" data-testid="usage-budget-window-differs">
 							This window is not the budget's; the budget is held against the last {fmtGoDuration(result.budget.period)}.
 						</p>
 					{/if}
@@ -149,11 +149,11 @@
 						{@const tone = shareTone(cell, result.budgetReached)}
 						<div class="mb-2">
 							<div class="mb-1 flex items-center justify-between text-xs">
-								<span class="font-medium text-fg">{cell.unit}</span>
-								<span class="text-fg-secondary tabular-nums" data-testid="usage-bar-{cell.dim}-label">{shareLabel(cell)}</span>
+								<span class="font-medium text-ink">{cell.unit}</span>
+								<span class="text-ink-secondary tabular-nums" data-testid="usage-bar-{cell.dim}-label">{shareLabel(cell)}</span>
 							</div>
 							<div
-								class="h-2 w-full overflow-hidden rounded-full bg-surface-sunken"
+								class="h-2 w-full overflow-hidden border border-rule-strong bg-paper-sunken"
 								role="meter"
 								aria-label="{cell.unit} reserved against the budget"
 								aria-valuemin="0"
@@ -162,30 +162,30 @@
 								data-testid="usage-bar-{cell.dim}"
 								data-tone={tone}
 							>
-								<div class="h-full rounded-full {toneClass[tone]}" style="width: {Math.min(1, cell.ratio) * 100}%"></div>
+								<div class="h-full {toneClass[tone]}" style="width: {Math.min(1, cell.ratio) * 100}%"></div>
 							</div>
 						</div>
 					{/each}
 				{:else}
-					<p class="text-sm font-medium text-fg-secondary" data-testid="usage-unbounded">unbounded</p>
+					<p class="text-sm font-medium text-ink-secondary" data-testid="usage-unbounded">unbounded</p>
 				{/if}
 			</div>
 
-			<div class="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-				<StatCard label="Task-seconds" value={fmtUnitSeconds(result.total?.taskSeconds ?? 0)} testid="usage-task-seconds" />
-				<StatCard label="cpu-seconds (reserved)" value={fmtUnitSeconds(result.total?.cpuSeconds ?? 0)} testid="usage-cpu-seconds" />
-				<StatCard label="GiB-seconds (reserved)" value={fmtUnitSeconds(result.total?.gibSeconds ?? 0)} testid="usage-gib-seconds" />
+			<div class="mb-4 grid grid-cols-3 border-y border-rule">
+				<CountCell label="Task-seconds" value={fmtUnitSeconds(result.total?.taskSeconds ?? 0)} testid="usage-task-seconds" />
+				<CountCell label="cpu-seconds (reserved)" value={fmtUnitSeconds(result.total?.cpuSeconds ?? 0)} testid="usage-cpu-seconds" />
+				<CountCell label="GiB-seconds (reserved)" value={fmtUnitSeconds(result.total?.gibSeconds ?? 0)} testid="usage-gib-seconds" />
 			</div>
 
 			<div class="mb-3 flex flex-wrap items-center gap-2">
-				<span class="text-xs font-medium text-fg-muted">Group by</span>
+				<span class="caps text-ink-muted">Group by</span>
 				{#each USAGE_DIMENSIONS as dim (dim)}
 					<label
-						class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors {checked[dim]
-							? 'border-brand-200 bg-brand-50 text-brand-700'
-							: 'border-border bg-surface text-fg-muted hover:bg-surface-hover'}"
+						class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 text-xs font-medium transition-colors {checked[dim]
+							? 'border-blue bg-blue-tint text-blue-strong'
+							: 'border-rule-strong bg-paper text-ink-secondary hover:bg-hover'}"
 					>
-						<input type="checkbox" class="size-3.5 accent-brand-600" data-testid="usage-dim-{groupBySpelling(dim)}" bind:checked={checked[dim]} />
+						<input type="checkbox" class="size-3.5" data-testid="usage-dim-{groupBySpelling(dim)}" bind:checked={checked[dim]} />
 						{groupBySpelling(dim)}
 					</label>
 				{/each}
@@ -193,35 +193,35 @@
 
 			{#if result.groupBy.length > 0}
 				{#if result.rows.length === 0}
-					<p class="mb-3 text-sm text-fg-muted" data-testid="usage-empty">No task was dispatched in this window.</p>
+					<p class="mb-3 text-sm text-ink-muted" data-testid="usage-empty">No task was dispatched in this window.</p>
 				{:else}
-					<div class="mb-3 overflow-x-auto rounded-md border border-border">
-						<table class="w-full border-collapse text-xs" data-testid="usage-table">
-							<thead class="bg-surface-sunken">
+					<div class="mb-3 overflow-x-auto border-t-2 border-ink">
+						<table class="register text-xs" data-testid="usage-table">
+							<thead>
 								<tr>
 									{#each result.groupBy as dim (dim)}
-										<th class="h-8 px-3 text-left font-medium text-fg-muted">{groupBySpelling(dim)}</th>
+										<th>{groupBySpelling(dim)}</th>
 									{/each}
-									<th class="h-8 px-3 text-right font-medium text-fg-muted">runs</th>
-									<th class="h-8 px-3 text-right font-medium text-fg-muted">tasks</th>
-									<th class="h-8 px-3 text-right font-medium text-fg-muted">attempts</th>
-									<th class="h-8 px-3 text-right font-medium text-fg-muted">task-seconds</th>
-									<th class="h-8 px-3 text-right font-medium text-fg-muted">cpu-seconds</th>
-									<th class="h-8 px-3 text-right font-medium text-fg-muted">GiB-seconds</th>
+									<th class="text-right">runs</th>
+									<th class="text-right">tasks</th>
+									<th class="text-right">attempts</th>
+									<th class="text-right">task-seconds</th>
+									<th class="text-right">cpu-seconds</th>
+									<th class="text-right">GiB-seconds</th>
 								</tr>
 							</thead>
 							<tbody>
 								{#each result.rows as row, i (i)}
-									<tr class="border-t border-border-subtle" data-testid="usage-row-{i}">
+									<tr data-testid="usage-row-{i}">
 										{#each result.groupBy as dim (dim)}
-											<td class="px-3 py-2 text-fg">{usageCell(row, dim)}</td>
+											<td class="text-ink">{usageCell(row, dim)}</td>
 										{/each}
-										<td class="px-3 py-2 text-right tabular-nums">{row.runs.toString()}</td>
-										<td class="px-3 py-2 text-right tabular-nums">{row.tasks.toString()}</td>
-										<td class="px-3 py-2 text-right tabular-nums">{row.attempts.toString()}</td>
-										<td class="px-3 py-2 text-right tabular-nums">{fmtUnitSeconds(row.taskSeconds)}</td>
-										<td class="px-3 py-2 text-right tabular-nums">{fmtUnitSeconds(row.cpuSeconds)}</td>
-										<td class="px-3 py-2 text-right tabular-nums">{fmtUnitSeconds(row.gibSeconds)}</td>
+										<td class="figure text-right">{row.runs.toString()}</td>
+										<td class="figure text-right">{row.tasks.toString()}</td>
+										<td class="figure text-right">{row.attempts.toString()}</td>
+										<td class="figure text-right">{fmtUnitSeconds(row.taskSeconds)}</td>
+										<td class="figure text-right">{fmtUnitSeconds(row.cpuSeconds)}</td>
+										<td class="figure text-right">{fmtUnitSeconds(row.gibSeconds)}</td>
 									</tr>
 								{/each}
 							</tbody>
@@ -230,9 +230,9 @@
 				{/if}
 			{/if}
 
-			<div class="space-y-0.5 text-xs text-fg-muted" data-testid="usage-footer">
+			<div class="space-y-0.5 text-xs text-ink-muted" data-testid="usage-footer">
 				{#each footer as line, i (i)}
-					<p data-testid={i === 0 ? 'usage-caveat' : `usage-footer-${i}`} class={i === 0 ? 'font-medium text-fg-secondary' : ''}>{line}</p>
+					<p data-testid={i === 0 ? 'usage-caveat' : `usage-footer-${i}`} class={i === 0 ? 'font-medium text-ink-secondary' : ''}>{line}</p>
 				{/each}
 			</div>
 		{/if}
