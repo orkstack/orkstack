@@ -29,9 +29,9 @@
 	const mark = $derived(status === undefined ? null : statusMark(status));
 </script>
 
-<div class="min-w-0 border-l border-rule px-2 py-1 first:border-l-0 first:pl-0 sm:px-3 sm:first:pl-0 {place}" title={note || undefined}>
-	<div class="caps flex items-center gap-1.5 text-ink-muted max-sm:tracking-normal {mark && !mark.inner ? mark.className : ''}">
-		{#if mark?.inner}<span class={mark.className} aria-hidden="true"></span>{/if}{label}
+<div class="min-w-0 border-l border-rule px-1.5 py-1 first:border-l-0 first:pl-0 sm:px-3 sm:first:pl-0 {place}" title={note || undefined}>
+	<div class="caps flex items-center gap-1 text-ink-muted sm:gap-1.5 max-sm:tracking-normal {mark && !mark.inner ? mark.className : ''}">
+		{#if mark?.inner}<span class={mark.className} aria-hidden="true"></span>{/if}<span class="min-w-0 wrap-anywhere">{label}</span>
 	</div>
 	<div
 		data-testid={testid}

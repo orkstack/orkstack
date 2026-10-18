@@ -26,12 +26,13 @@ import {
 // The design screens (UI revamp, finish), against a real engine and Orker on
 // real Temporal and MinIO: the key pages — the runs register, a failed run on
 // its DAG and on its task map, an Orkflow page, Apply, the dashboard and one
-// Operate page — in light and dark, at 1440 × 900 and 390 × 844, each as its
-// first viewport and as the full page, written under ORK_PROOF_DIR as the
-// record of what shipped. Screenshots only: each page is
-// asserted only far enough to know it has rendered what the screen shows; the
-// stage specs (run-sheet, authoring-sheets, operate-sheets, shell) hold the
-// behaviour.
+// Operate page — in light and dark, at 1440 × 900, 390 × 844 and 320 × 640,
+// each as its first viewport and as the full page, written under
+// ORK_PROOF_DIR as the record of what shipped. Each page is asserted only far
+// enough to know it has rendered what the screen shows, and at 320 px that
+// nothing runs past the right edge outside a frame that scrolls (WCAG 1.4.10
+// reflow, plan §2.14); the stage specs (run-sheet, authoring-sheets,
+// operate-sheets, shell) hold the behaviour.
 //
 // Isolation (AGENTS.md §11.1): its own Temporal namespace, bucket and ports;
 // it ends only the processes it started.
@@ -247,12 +248,40 @@ const SCREENS: Screen[] = [
 
 const VIEWPORTS = [
 	{ label: '1440', width: 1440, height: 900 },
-	{ label: '390', width: 390, height: 844 }
+	{ label: '390', width: 390, height: 844 },
+	{ label: '320', width: 320, height: 640 }
 ];
 
-test('screens: the key pages in light and dark, at 1440 and 390 px', async ({ page }) => {
+// What runs past the right edge, named, so a failure says where: only what
+// no scrolling frame of its own (a register, the DAG, the strip) contains.
+async function pastRightEdge(page: Page): Promise<string[]> {
+	return page.evaluate(() => {
+		if (document.documentElement.scrollWidth <= window.innerWidth) return [];
+		const contained = (el: Element): boolean => {
+			for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+				if (['auto', 'scroll', 'hidden', 'clip'].includes(getComputedStyle(p).overflowX)) return true;
+			}
+			return false;
+		};
+		const loose = [...document.querySelectorAll('body *')].filter(
+			(el) => el.getBoundingClientRect().right > window.innerWidth + 0.5 && !contained(el)
+		);
+		return [
+			`document ${document.documentElement.scrollWidth} px wide`,
+			...loose
+				.slice(0, 8)
+				.map(
+					(el) =>
+						`${el.tagName.toLowerCase()}${el.getAttribute('data-testid') ? `[${el.getAttribute('data-testid')}]` : ''}.${el.className.toString().slice(0, 60)} → ${Math.round(el.getBoundingClientRect().right)}`
+				)
+		];
+	});
+}
+
+test('screens: the key pages in light and dark, at 1440, 390 and 320 px', async ({ page }) => {
 	test.setTimeout(10 * 60_000);
 	const written: string[] = [];
+	const reflowed: string[] = [];
 	for (const theme of ['light', 'dark'] as const) {
 		await page.setViewportSize({ width: 1440, height: 900 });
 		await page.goto(`${UI_ORIGIN}/?ns=default`);
@@ -266,6 +295,10 @@ test('screens: the key pages in light and dark, at 1440 and 390 px', async ({ pa
 				await expect(page.getByTestId('title-block')).toBeVisible();
 				await screen.ready(page);
 				const base = `screen-${screen.name}-${theme}-${viewport.label}`;
+				if (viewport.width === 320) {
+					expect(await pastRightEdge(page), `${base}: nothing runs past the right edge at 320 px`).toEqual([]);
+					reflowed.push(base);
+				}
 				await page.screenshot({ path: out(`${base}-first.png`) });
 				await page.screenshot({ path: out(`${base}.png`), fullPage: true });
 				written.push(base);
@@ -273,6 +306,7 @@ test('screens: the key pages in light and dark, at 1440 and 390 px', async ({ pa
 		}
 	}
 	note(`${written.length} screens, each its first viewport (-first.png) and the full page (.png): ${written.join(', ')}`);
+	note(`reflow at 320 px: ${reflowed.length} pages, nothing past the right edge outside a scrolling frame (${reflowed.join(', ')})`);
 	await page.setViewportSize({ width: 1280, height: 720 });
 	await page.goto(`${UI_ORIGIN}/?ns=default`);
 	await page.getByTestId('theme-system').click();
