@@ -205,9 +205,9 @@
 </SheetHeader>
 
 <ListFilter request={ListRunsRequestSchema} applied={data.applied} testid="run" {command} onapply={applyFilters} {clearHref}>
-	<div class="flex flex-col gap-1.5 text-sm">
+	<div class="flex items-center gap-2 text-sm">
 		<label class="field-label mb-0" for="run-filter-size">Page size</label>
-		<div class="w-24"><Select id="run-filter-size" testid="run-filter-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
+		<div class="w-20"><Select id="run-filter-size" testid="run-filter-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
 	</div>
 </ListFilter>
 
@@ -231,7 +231,7 @@
 		{/if}
 	</p>
 {:else}
-	<div class="mb-2 flex min-h-8 flex-wrap items-center gap-x-4 gap-y-2" aria-live="polite">
+	<div class="mb-1 flex min-h-7 flex-wrap items-center gap-x-4 gap-y-2" aria-live="polite">
 		{#if heldCount > 0}
 			<p data-testid="runs-held-summary" class="inline-flex items-center gap-1.5 text-sm text-ink">
 				<Icon name="delta" class="size-3.5 text-red" />
@@ -246,8 +246,10 @@
 		{/if}
 	</div>
 	<div class="overflow-x-auto border-t-2 border-ink">
-		<table class="register min-w-[760px]" data-testid="run-list">
-			<thead>
+		<!-- Below 640 px a row stacks: the run and its status, the Orkflow and
+			when it was created, its origin and how long it took. -->
+		<table class="register register-stacked sm:min-w-[760px]" data-testid="run-list">
+			<thead class="max-sm:sr-only">
 				<tr>
 					<th scope="col">Run</th>
 					<th scope="col">Orkflow</th>
@@ -262,7 +264,7 @@
 					{@const status = statusOf(run)}
 					{@const from = held.get(run.id)}
 					<tr
-						class="group h-11 {from !== undefined
+						class="group sm:h-11 {from !== undefined
 							? status === Status.FAILED
 								? 'bg-red-tint'
 								: 'bg-paper-sunken'
@@ -271,7 +273,7 @@
 						data-held={from !== undefined ? 'true' : undefined}
 						data-held-from={from}
 					>
-						<td class="whitespace-nowrap">
+						<td class="whitespace-nowrap max-sm:truncate">
 							{#if from !== undefined}<span
 									role="img"
 									aria-label={heldLabel(from)}
@@ -282,8 +284,8 @@
 								class="font-mono text-xs font-medium text-ink group-hover:underline hover:text-blue">{run.id}</a
 							>
 						</td>
-						<td class="text-ink-secondary">{run.orkflowName}@{run.orkflowVersion}</td>
-						<td class="text-ink-secondary">
+						<td class="text-ink-secondary max-sm:row-start-2 max-sm:truncate max-sm:text-xs">{run.orkflowName}@{run.orkflowVersion}</td>
+						<td class="text-ink-secondary max-sm:row-start-3 max-sm:truncate max-sm:text-xs">
 							{#if run.origin && originKindSlug(run.origin.kind)}
 								<span data-testid="run-row-origin-{run.id}"
 									>{originKindSlug(run.origin.kind)}{#if run.origin.id}{' '}<span class="font-mono text-xs"
@@ -296,9 +298,9 @@
 								>
 							{/if}
 						</td>
-						<td><StatusPill {status} /></td>
-						<td class="figure text-xs whitespace-nowrap text-ink-secondary">{fmtTimestamp(run.createdAt)}</td>
-						<td class="figure text-xs whitespace-nowrap text-ink-secondary">{finishedOf(run) ? formatDuration(run.createdAt, finishedOf(run)) : '—'}</td>
+						<td class="max-sm:col-start-2 max-sm:row-start-1 max-sm:justify-self-end"><StatusPill {status} /></td>
+						<td class="figure text-xs whitespace-nowrap text-ink-secondary max-sm:col-start-2 max-sm:row-start-2 max-sm:justify-self-end">{fmtTimestamp(run.createdAt)}</td>
+						<td class="figure text-xs whitespace-nowrap text-ink-secondary max-sm:col-start-2 max-sm:row-start-3 max-sm:justify-self-end max-sm:before:mr-1 max-sm:before:font-sans max-sm:before:text-ink-muted max-sm:before:content-['took']">{finishedOf(run) ? formatDuration(run.createdAt, finishedOf(run)) : '—'}</td>
 					</tr>
 				{/each}
 			</tbody>

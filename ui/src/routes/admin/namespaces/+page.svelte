@@ -749,9 +749,9 @@
 		onapply={applyFilters}
 		{clearHref}
 	>
-		<div class="flex flex-col gap-1.5 text-sm">
+		<div class="flex items-center gap-2 text-sm">
 			<label class="field-label mb-0" for="namespaces-page-size">Page size</label>
-			<div class="w-24"><Select id="namespaces-page-size" testid="namespaces-page-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
+			<div class="w-20"><Select id="namespaces-page-size" testid="namespaces-page-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
 		</div>
 	</ListFilter>
 {/snippet}

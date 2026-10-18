@@ -21,6 +21,7 @@
 		failureCategoryLabel
 	} from '$lib/activity';
 	import { retryStateLabel } from '$lib/attempts';
+	import { plainFailure } from '$lib/failureText';
 	import { RetryState } from '$lib/gen/orkstack/v1/run_pb';
 
 	interface Props {
@@ -40,9 +41,21 @@
 		attemptCount?: number;
 		/** Inside the run's revision cloud: no frame of its own. */
 		bare?: boolean;
+		/**
+		 * A run that ended without failing (an operator's cancel) says why in
+		 * ink, as a NOTE: red is for failure and attention only.
+		 */
+		tone?: 'failure' | 'note';
 	}
 
-	let { error, testid, compact = false, retryState, attemptCount = 0, bare = false }: Props = $props();
+	let { error, testid, compact = false, retryState, attemptCount = 0, bare = false, tone = 'failure' }: Props = $props();
+
+	// The sentence without the execution service's wrapper, and the reason
+	// code it led with. A run's RUN_FAILED wraps its task's reason: the panel
+	// leads with that reason and keeps the run's own code beside it.
+	const plain = $derived(plainFailure(error.message));
+	const reason = $derived(plain.code && plain.code !== error.code ? plain.code : undefined);
+	const failure = $derived(tone === 'failure');
 
 	const retryNote = $derived(retryStateLabel(retryState, attemptCount));
 
@@ -50,16 +63,20 @@
 </script>
 
 <!--
-	Red ink and a 1 px red rule, the code in the mono after a filled mark —
-	never a tinted band. Inside the run's revision cloud (`bare`) it drops its
-	own rule: the cloud is the frame.
+	A task's failure is one tinted ground with red ink, the code in the mono
+	after a filled mark — no rule of its own, so the task row is the only
+	other line round it. Inside the run's revision cloud (`bare`) it has no
+	ground: the cloud is the frame. A NOTE (a canceled run) is ink on the
+	note ground.
 -->
 <div
 	data-testid={testid}
-	role="alert"
-	class="{bare ? '' : 'rounded-sm border border-red bg-paper px-4 py-3'} text-sm"
+	role={failure ? 'alert' : 'status'}
+	data-tone={tone}
+	class="{bare ? '' : failure ? 'rounded-sm bg-red-tint px-3 py-2' : 'note px-3 py-2'} text-sm"
 >
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+		{#if !failure}<span class="caps text-ink-muted">Note</span>{/if}
 		<!--
 			The badge is shown only when the wire actually carries a category.
 			A run-level RUN_FAILED wrapper carries FAILURE_CATEGORY_UNSPECIFIED —
@@ -76,32 +93,36 @@
 				{failureCategoryLabel(category)}
 			</span>
 		{/if}
-		{#if error.code}
-			<span class="severity-error font-mono text-sm font-semibold" data-testid="{testid}-code">{error.code}</span>
+		{#if reason}
+			<span class="severity-error font-mono text-sm font-semibold" data-testid="{testid}-reason">{reason}</span>
 		{/if}
-		<span class="text-xs {error.retryable ? 'text-ink' : 'text-ink-muted'}" data-testid="{testid}-retryable">
+		{#if error.code}
+			<span
+				class="font-mono {reason ? 'text-xs text-ink-secondary' : failure ? 'severity-error text-sm font-semibold' : 'text-sm font-semibold text-ink'}"
+				data-testid="{testid}-code">{error.code}</span
+			>
+		{/if}
+		<span class="text-xs {error.retryable ? 'text-ink' : 'text-ink-secondary'}" data-testid="{testid}-retryable">
 			{error.retryable ? 'retryable' : 'not retryable'}
 		</span>
 		{#if retryNote}
-			<span class="text-xs text-ink-muted" data-testid="{testid}-retry-state">{retryNote}</span>
+			<span class="text-xs text-ink-secondary" data-testid="{testid}-retry-state">{retryNote}</span>
 		{/if}
 	</div>
 
 	{#if !compact && category !== FailureCategory.UNSPECIFIED}
-		<p class="mt-2 text-xs text-ink-muted" data-testid="{testid}-blurb">
+		<p class="mt-2 text-xs text-ink-secondary" data-testid="{testid}-blurb">
 			{failureCategoryBlurb(category)}
 		</p>
 	{/if}
 
-	{#if error.message}
+	{#if plain.text}
 		<p class="mt-1.5 max-w-prose break-words whitespace-pre-wrap text-ink" data-testid="{testid}-message">
-			{error.message}
+			{plain.text}
 		</p>
 	{/if}
 
-	{#if error.details && !compact}
-		<pre
-			class="mt-2 overflow-x-auto rounded-sm border border-rule-faint bg-paper-sunken p-2 font-mono text-xs text-ink-secondary"
-			data-testid="{testid}-details">{error.details}</pre>
+	{#if error.details && !compact && !plain.text.includes(error.details)}
+		<p class="mt-1.5 font-mono text-xs break-words text-ink-secondary" data-testid="{testid}-details">{error.details}</p>
 	{/if}
 </div>

@@ -11,12 +11,16 @@
 	// focus, status, strike, tags) is a path, a circle, a line or text.
 	//
 	// The caller bounds what is drawn (DrawingFrame: at most 80 tasks, 300 on
-	// request); this component lays out whatever it is handed.
+	// request); this component lays out whatever it is handed. The drawing
+	// takes its container's width — never wider than its natural size, never
+	// narrower than DAG_MIN_SCALE of it — so a typical Orkflow is drawn whole
+	// in its frame, and one too wide for that scrolls in it.
 	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import {
 		DAG_DASH,
 		DAG_LINE_CHARS,
+		DAG_MIN_SCALE,
 		DAG_NODE_H,
 		DAG_NODE_W,
 		edgePath,
@@ -98,10 +102,9 @@
 {:else}
 	<svg
 		data-testid={run ? 'run-dag' : 'orkflow-dag'}
-		width={layout.width}
-		height={layout.height}
 		viewBox="0 0 {layout.width} {layout.height}"
-		class="dag block"
+		style="width:100%;max-width:{layout.width}px;min-width:{Math.round(layout.width * DAG_MIN_SCALE)}px"
+		class="dag block h-auto"
 		role="group"
 		aria-label={label}
 	>
@@ -239,6 +242,14 @@
 		fill: none;
 		stroke: var(--color-ink);
 		stroke-width: var(--rule-region);
+	}
+	/* A drawing scaled to its frame keeps its rules at their drawn weight. */
+	.dag-outline,
+	.dag-edge,
+	.dag-select,
+	.dag-focus,
+	.dag-strike {
+		vector-effect: non-scaling-stroke;
 	}
 	.dag-arrowhead {
 		fill: var(--color-ink);

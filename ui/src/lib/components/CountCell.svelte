@@ -15,7 +15,10 @@
 	interface Props {
 		label: string;
 		value: string;
+		/** A sub-line under the figure; it wraps rather than hides. */
 		note?: string;
+		/** The longer account a pointer reveals; the note when absent. */
+		explain?: string;
 		testid: string;
 		/** A count of runs in one status: its mark is drawn beside the label. */
 		status?: Status;
@@ -23,13 +26,13 @@
 		class?: string;
 	}
 
-	let { label, value, note = '', testid, status = undefined, class: place = '' }: Props = $props();
+	let { label, value, note = '', explain = '', testid, status = undefined, class: place = '' }: Props = $props();
 
 	const missing = $derived(value === UNAVAILABLE);
 	const mark = $derived(status === undefined ? null : statusMark(status));
 </script>
 
-<div class="min-w-0 border-l border-rule px-1.5 py-1 first:border-l-0 first:pl-0 sm:px-3 sm:first:pl-0 {place}" title={note || undefined}>
+<div class="min-w-0 border-l border-rule px-1.5 py-1 first:border-l-0 first:pl-0 sm:px-3 sm:first:pl-0 {place}" title={explain || note || undefined}>
 	<div class="caps flex items-center gap-1 text-ink-muted sm:gap-1.5 max-sm:tracking-normal {mark && !mark.inner ? mark.className : ''}">
 		{#if mark?.inner}<span class={mark.className} aria-hidden="true"></span>{/if}<span class="min-w-0 wrap-anywhere">{label}</span>
 	</div>
@@ -41,6 +44,6 @@
 		{value}
 	</div>
 	{#if note}
-		<div class="truncate text-2xs text-ink-muted" data-testid="{testid}-note">{note}</div>
+		<div class="text-2xs text-balance text-ink-muted" data-testid="{testid}-note">{note}</div>
 	{/if}
 </div>

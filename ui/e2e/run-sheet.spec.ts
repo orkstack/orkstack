@@ -370,9 +370,12 @@ test('map: past 80 tasks the run opens on its map, painted only after the last c
 	await expect(map).toHaveAttribute('data-order', 'dag');
 	expect(await page.evaluate(() => (window as unknown as { __cardsAtPaint?: number }).__cardsAtPaint)).toBe(81);
 	await expect(page.getByTestId('task-map-legend')).toBeVisible();
-	// A canceled run says why it ended, and draws no failure's cloud.
+	// A canceled run says why it ended, and draws no failure's cloud: an ink
+	// NOTE, its code in ink — red is for failure and attention only.
 	await expect(page.getByTestId('run-error')).toContainText('RUN_CANCELED');
 	await expect(page.getByTestId('run-error-tag')).toHaveCount(0);
+	await expect(page.getByTestId('run-error')).toHaveAttribute('data-tone', 'note');
+	expect(await page.getByTestId('run-error-code').evaluate((el) => getComputedStyle(el).color)).toBe(await tokenColor(page, '--color-ink'));
 	await page.screenshot({ path: out('screenshot-run-map-81-light.png') });
 
 	// A click selects the task under it and brings its card into view.

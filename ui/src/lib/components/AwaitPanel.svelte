@@ -188,7 +188,7 @@
 </script>
 
 <div
-	class="mt-3 rounded-sm border border-awaiting-border bg-awaiting-bg/40 px-3 py-2 text-sm"
+	class="mt-3 rounded-sm bg-awaiting-bg/40 px-3 py-2 text-sm"
 	data-testid="task-{task.id}-await"
 >
 	<div class="flex flex-wrap items-center justify-between gap-2">

@@ -121,7 +121,7 @@
 
 <div
 	bind:this={panel}
-	class="mt-3 rounded-sm border border-rule-faint bg-paper-sunken px-3 py-2 text-sm"
+	class="mt-3 rounded-sm bg-paper-sunken px-3 py-2 text-sm"
 	data-testid="task-{taskId}-child"
 	data-following={read ? 'read' : 'idle'}
 >

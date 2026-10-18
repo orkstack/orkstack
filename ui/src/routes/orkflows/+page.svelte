@@ -113,9 +113,9 @@
 </SheetHeader>
 
 <ListFilter request={ListOrkflowsRequestSchema} applied={data.applied} testid="orkflow" {command} onapply={applyFilters} {clearHref}>
-	<div class="flex flex-col gap-1.5 text-sm">
+	<div class="flex items-center gap-2 text-sm">
 		<label class="field-label mb-0" for="orkflow-page-size">Page size</label>
-		<div class="w-24"><Select id="orkflow-page-size" testid="orkflow-page-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
+		<div class="w-20"><Select id="orkflow-page-size" testid="orkflow-page-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
 	</div>
 </ListFilter>
 
@@ -143,8 +143,10 @@
 	<!-- One link per row: the NAME. Everything else in a row is text, so a
 		row is one place to go and a reader's click on it is never ambiguous. -->
 	<div class="overflow-x-auto border-t-2 border-ink">
-		<table class="register min-w-[760px]" data-testid="orkflow-list">
-			<thead>
+		<!-- Below 640 px a row stacks: name and version, digest and when it was
+			applied, labels and task count. -->
+		<table class="register register-stacked sm:min-w-[760px]" data-testid="orkflow-list">
+			<thead class="max-sm:sr-only">
 				<tr>
 					<th scope="col">Name</th>
 					<th scope="col">Version</th>
@@ -161,13 +163,13 @@
 							<a href={withNamespace(`/orkflows/${wf.name}`, data.namespace)} class="link font-semibold">{wf.name}</a>
 							{#if wf.description}<p class="truncate text-xs text-ink-muted" title={wf.description}>{wf.description}</p>{/if}
 						</td>
-						<td class="figure text-ink">{wf.version}</td>
-						<td class="figure text-ink-secondary" title={wf.definitionDigest || undefined} data-testid="orkflow-digest-{wf.name}"
+						<td class="figure text-ink max-sm:col-start-2 max-sm:row-start-1 max-sm:justify-self-end">{wf.version}</td>
+						<td class="figure text-ink-secondary max-sm:row-start-2 max-sm:text-xs" title={wf.definitionDigest || undefined} data-testid="orkflow-digest-{wf.name}"
 							>{wf.definitionDigest ? digest8(wf.definitionDigest) : '—'}</td
 						>
-						<td class="figure text-right text-ink-secondary" data-testid="orkflow-taskcount-{wf.name}">{wf.tasks.length}</td>
-						<td class="figure text-xs text-ink-secondary">{fmtTimestamp(wf.createdAt)}</td>
-						<td>
+						<td class="figure text-right text-ink-secondary max-sm:col-start-2 max-sm:row-start-3 max-sm:justify-self-end max-sm:text-xs max-sm:after:ml-1 max-sm:after:font-sans max-sm:after:content-['tasks']" data-testid="orkflow-taskcount-{wf.name}">{wf.tasks.length}</td>
+						<td class="figure text-xs text-ink-secondary max-sm:col-start-2 max-sm:row-start-2 max-sm:justify-self-end">{fmtTimestamp(wf.createdAt)}</td>
+						<td class="max-sm:row-start-3">
 							<span class="flex flex-wrap gap-1">
 								{#each labelPairs(wf.labels) as [key, value] (key)}
 									<span class="stamp border-rule-strong font-mono normal-case tracking-normal text-ink-secondary">{key}={value}</span>

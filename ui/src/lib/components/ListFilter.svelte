@@ -18,6 +18,7 @@
 	import type { Snippet } from 'svelte';
 	import type { DescMessage } from '@bufbuild/protobuf';
 	import CliEquivalent from './CliEquivalent.svelte';
+	import Icon from './Icon.svelte';
 	import Select from './Select.svelte';
 	import { sinceInputValue } from '$lib/browsing';
 	import {
@@ -175,109 +176,90 @@
 	}
 	const cli = $derived([...command, ...filterFlags(applied)].join(' '));
 
-	const inputClass =
-		'field h-9 w-full px-3 text-sm';
+	const inputClass = 'field h-9 px-3 text-sm';
 </script>
 
-<form
-	role="search"
-	class="mb-5 border-y-(length:--rule-region) border-ink bg-paper py-4"
-	data-testid="{testid}-filters"
-	onsubmit={submit}
->
-	{#if rows.length === 0}
-		<p class="text-sm text-ink-muted" data-testid="{testid}-filters-none">No filters applied. Add one to narrow this list.</p>
-	{/if}
-	<div class="flex flex-col gap-3">
-		{#each rows as row, i (i)}
-			{@const field = declared(row.path)}
-			<div class="grid items-end gap-2 sm:grid-cols-[minmax(0,14rem)_minmax(0,9rem)_minmax(0,11rem)_minmax(0,1fr)_auto]" data-testid="{testid}-filter-row-{i}">
-				<div class="flex flex-col gap-1.5 text-sm">
-					<label class="caps text-ink-muted" for="{testid}-filter-field-{i}">Field</label>
-					<Select id="{testid}-filter-field-{i}" testid="{testid}-filter-field-{i}" value={row.path} options={fieldOptions} onchange={(next) => setField(i, next)} />
-				</div>
-				{#if field?.kind === 'labels'}
-					<label class="flex flex-col gap-1.5 text-sm">
-						<span class="caps text-ink-muted">Key</span>
-						<input class="{inputClass} font-mono" data-testid="{testid}-filter-key-{i}" bind:value={rows[i].key} placeholder="team" autocomplete="off" spellcheck="false" />
-					</label>
-				{:else}
-					<div></div>
-				{/if}
-				<div class="flex flex-col gap-1.5 text-sm">
-					<label class="caps text-ink-muted" for="{testid}-filter-op-{i}">Operator</label>
-					<Select id="{testid}-filter-op-{i}" testid="{testid}-filter-op-{i}" value={String(row.op)} options={operatorOptions(row)} onchange={(next) => setOp(i, next)} />
-				</div>
-				<div class="flex flex-col gap-1.5 text-sm">
-					<span class="caps text-ink-muted">Value</span>
-					{#if field?.kind === 'enum' && row.op === FilterOperator.IN}
-						<div class="flex flex-wrap gap-x-3 gap-y-1" role="group" aria-label="{field.label} values" data-testid="{testid}-filter-value-{i}">
-							{#each field.values as value (value)}
-								<label class="inline-flex items-center gap-1.5 text-sm text-ink">
-									<input
-										type="checkbox"
-										class="size-4 accent-blue"
-										data-testid="{testid}-filter-value-{i}-{value}"
-										checked={row.picked.includes(value)}
-										onchange={(event) => togglePicked(i, value, event.currentTarget.checked)}
-									/>
-									{value}
-								</label>
-							{/each}
-						</div>
-					{:else if field?.kind === 'enum'}
-						<Select testid="{testid}-filter-value-{i}" label="{field.label} value" value={row.text} options={field.values.map((v) => ({ value: v, label: v }))} onchange={(next) => (rows[i].text = next)} />
-					{:else if field?.kind === 'bool'}
-						<Select testid="{testid}-filter-value-{i}" label="{field.label} value" value={row.text} options={[{ value: 'true', label: 'true' }, { value: 'false', label: 'false' }]} onchange={(next) => (rows[i].text = next)} />
-					{:else if field?.kind === 'time'}
-						<input type="datetime-local" class={inputClass} data-testid="{testid}-filter-value-{i}" bind:value={rows[i].text} />
-						<span class="figure text-xs text-ink-muted" data-testid="{testid}-filter-utc-{i}">{row.text ? `${isoFromLocal(row.text)} (UTC)` : 'no instant'}</span>
-					{:else}
-						<input
-							class="{inputClass} font-mono"
-							data-testid="{testid}-filter-value-{i}"
-							bind:value={rows[i].text}
-							placeholder={row.op === FilterOperator.IN ? 'a,b (\\, is a literal comma)' : 'empty matches an unset value'}
-							autocomplete="off"
-							spellcheck="false"
-						/>
-					{/if}
-				</div>
-				<button
-					type="button"
-					class="btn"
-					data-testid="{testid}-filter-remove-{i}"
-					aria-label="Remove this filter"
-					onclick={() => removeRow(i)}>Remove</button
-				>
+<!--
+	One toolbar: each filter in force (or being written) is a compact group
+	of its own controls — field, operator, value, remove — and after them Add
+	filter, the page's own controls (page size), Apply and the CLI twin, on
+	one line where they fit. With no filter it is one row; the list below
+	starts right under it.
+-->
+<form role="search" class="mb-3 flex flex-wrap items-center gap-2" data-testid="{testid}-filters" onsubmit={submit}>
+	{#each rows as row, i (i)}
+		{@const field = declared(row.path)}
+		<div
+			class="flex flex-wrap items-center gap-1.5 rounded-sm border border-rule-strong bg-paper p-1 text-sm"
+			data-testid="{testid}-filter-row-{i}"
+		>
+			<label class="sr-only" for="{testid}-filter-field-{i}">Field</label>
+			<div class="w-52 max-w-full">
+				<Select id="{testid}-filter-field-{i}" testid="{testid}-filter-field-{i}" value={row.path} options={fieldOptions} onchange={(next) => setField(i, next)} />
 			</div>
-			{#if field?.requires}
-				<p class="-mt-1 text-xs text-ink-muted" data-testid="{testid}-filter-requires-{i}">
-					needs an equals filter on {field.requires}
-				</p>
+			{#if field?.kind === 'labels'}
+				<label class="w-28">
+					<span class="sr-only">Key</span>
+					<input class="{inputClass} w-full font-mono" data-testid="{testid}-filter-key-{i}" bind:value={rows[i].key} placeholder="team" autocomplete="off" spellcheck="false" />
+				</label>
 			{/if}
-		{/each}
-	</div>
-	{#if children}
-		<div class="mt-4 flex flex-wrap items-end gap-4">{@render children()}</div>
-	{/if}
-	<div class="mt-4 flex flex-wrap items-center gap-4 border-t border-rule pt-4">
-		<button
-			type="button"
-			class="btn"
-			data-testid="{testid}-filter-add"
-			onclick={addRow}>Add filter</button
-		>
-		<button
-			type="submit"
-			class="btn btn-primary"
-			data-testid="{testid}-filters-apply">Apply filters</button
-		>
-		{#if applied.length > 0}
-			<a href={clearHref} class="link text-sm font-medium" data-testid="{testid}-filters-clear">Clear filters</a>
-		{/if}
-		<div class="ml-auto">
-			<CliEquivalent testid="{testid}-filters-cli" label="CLI equivalent of these filters" command={cli} />
+			<label class="sr-only" for="{testid}-filter-op-{i}">Operator</label>
+			<div class="w-36">
+				<Select id="{testid}-filter-op-{i}" testid="{testid}-filter-op-{i}" value={String(row.op)} options={operatorOptions(row)} onchange={(next) => setOp(i, next)} />
+			</div>
+			{#if field?.kind === 'enum' && row.op === FilterOperator.IN}
+				<div class="flex flex-wrap gap-x-3 gap-y-1 px-1" role="group" aria-label="{field.label} values" data-testid="{testid}-filter-value-{i}">
+					{#each field.values as value (value)}
+						<label class="inline-flex items-center gap-1.5 text-sm text-ink">
+							<input
+								type="checkbox"
+								class="size-4 accent-blue"
+								data-testid="{testid}-filter-value-{i}-{value}"
+								checked={row.picked.includes(value)}
+								onchange={(event) => togglePicked(i, value, event.currentTarget.checked)}
+							/>
+							{value}
+						</label>
+					{/each}
+				</div>
+			{:else if field?.kind === 'enum'}
+				<div class="w-44"><Select testid="{testid}-filter-value-{i}" label="{field.label} value" value={row.text} options={field.values.map((v) => ({ value: v, label: v }))} onchange={(next) => (rows[i].text = next)} /></div>
+			{:else if field?.kind === 'bool'}
+				<div class="w-24"><Select testid="{testid}-filter-value-{i}" label="{field.label} value" value={row.text} options={[{ value: 'true', label: 'true' }, { value: 'false', label: 'false' }]} onchange={(next) => (rows[i].text = next)} /></div>
+			{:else if field?.kind === 'time'}
+				<input type="datetime-local" class="{inputClass} w-52" aria-label="{field.label} value" data-testid="{testid}-filter-value-{i}" bind:value={rows[i].text} />
+				<span class="figure px-1 text-xs text-ink-muted" data-testid="{testid}-filter-utc-{i}">{row.text ? `${isoFromLocal(row.text)} (UTC)` : 'no instant'}</span>
+			{:else}
+				<input
+					class="{inputClass} w-48 font-mono"
+					aria-label="{field?.label ?? row.path} value"
+					data-testid="{testid}-filter-value-{i}"
+					bind:value={rows[i].text}
+					placeholder={row.op === FilterOperator.IN ? 'a,b (\\, is a literal comma)' : 'empty matches an unset value'}
+					autocomplete="off"
+					spellcheck="false"
+				/>
+			{/if}
+			{#if field?.requires}
+				<span class="px-1 text-xs text-ink-muted" data-testid="{testid}-filter-requires-{i}">needs an equals filter on {field.requires}</span>
+			{/if}
+			<button
+				type="button"
+				class="btn-icon inline-flex size-8 items-center justify-center"
+				data-testid="{testid}-filter-remove-{i}"
+				aria-label="Remove this filter"
+				title="Remove this filter"
+				onclick={() => removeRow(i)}><Icon name="close" /></button
+			>
 		</div>
+	{/each}
+	<button type="button" class="btn" data-testid="{testid}-filter-add" onclick={addRow}><Icon name="filter" class="size-3.5" />Add filter</button>
+	{#if children}{@render children()}{/if}
+	<button type="submit" class="btn btn-primary" data-testid="{testid}-filters-apply">Apply filters</button>
+	{#if applied.length > 0}
+		<a href={clearHref} class="link text-sm font-medium" data-testid="{testid}-filters-clear">Clear filters</a>
+	{/if}
+	<div class="ml-auto">
+		<CliEquivalent testid="{testid}-filters-cli" label="CLI equivalent of these filters" command={cli} />
 	</div>
 </form>

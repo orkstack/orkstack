@@ -85,9 +85,10 @@
 		return base;
 	});
 
+	const rateExplain = 'Runs that succeeded ÷ runs that finished in this window; a canceled run counts as finished.';
 	const rateNote = $derived(
 		stats?.successRateDefined
-			? 'succeeded ÷ finished (canceled counts as finished)'
+			? 'succeeded ÷ all finished'
 			: 'no run finished in this window'
 	);
 
@@ -247,15 +248,15 @@
 	<section
 		aria-label="Run counts"
 		data-testid="dashboard-counts"
-		class="mb-8 grid grid-cols-4 border-y border-rule lg:grid-cols-7"
+		class="mb-8 grid grid-cols-12 border-y border-rule lg:grid-cols-7"
 	>
-		<CountCell label="Running" value={fmtCount(counts['running'])} testid="stat-running" status={Status.RUNNING} />
-		<CountCell label="Succeeded" value={fmtCount(counts['succeeded'])} testid="stat-succeeded" status={Status.SUCCEEDED} />
-		<CountCell label="Failed" value={fmtCount(counts['failed'])} testid="stat-failed" status={Status.FAILED} />
-		<CountCell label="Canceled" value={fmtCount(counts['canceled'])} testid="stat-canceled" status={Status.CANCELED} />
-		<CountCell label="Success rate" value={successRate} note={rateNote} testid="stat-success-rate" class="max-lg:border-t max-lg:border-l-0 max-lg:pl-0 max-lg:sm:pl-0" />
-		<CountCell label="p50 duration" value={p50} note={coverageNote} testid="stat-p50" class="max-lg:border-t" />
-		<CountCell label="p95 duration" value={p95} note={coverageNote} testid="stat-p95" class="max-lg:border-t" />
+		<CountCell label="Running" value={fmtCount(counts['running'])} testid="stat-running" status={Status.RUNNING} class="col-span-3 lg:col-span-1" />
+		<CountCell label="Succeeded" value={fmtCount(counts['succeeded'])} testid="stat-succeeded" status={Status.SUCCEEDED} class="col-span-3 lg:col-span-1" />
+		<CountCell label="Failed" value={fmtCount(counts['failed'])} testid="stat-failed" status={Status.FAILED} class="col-span-3 lg:col-span-1" />
+		<CountCell label="Canceled" value={fmtCount(counts['canceled'])} testid="stat-canceled" status={Status.CANCELED} class="col-span-3 lg:col-span-1" />
+		<CountCell label="Success rate" value={successRate} note={rateNote} testid="stat-success-rate" explain={rateExplain} class="col-span-4 lg:col-span-1 max-lg:border-t max-lg:border-l-0 max-lg:pl-0 max-lg:sm:pl-0" />
+		<CountCell label="p50 duration" value={p50} note={coverageNote} testid="stat-p50" class="col-span-4 lg:col-span-1 max-lg:border-t" />
+		<CountCell label="p95 duration" value={p95} note={coverageNote} testid="stat-p95" class="col-span-4 lg:col-span-1 max-lg:border-t" />
 	</section>
 
 	<section class="region mb-10 pt-3" aria-labelledby="dashboard-running-heading">

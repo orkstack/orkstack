@@ -35,11 +35,19 @@ export interface DagLayout {
 }
 
 // Drawing geometry, not tokens: user units of the SVG the DAG is drawn in.
+// LAYER_GAP is the room an edge needs between two layers — its elbow and
+// its arrowhead — and no more, so a five-layer Orkflow is drawn whole in
+// the run page's frame at 1440 px (DagGraph scales the drawing down to the
+// frame, never below DAG_MIN_SCALE).
 export const DAG_NODE_W = 190;
 export const DAG_NODE_H = 58;
-const LAYER_GAP = 110;
+const LAYER_GAP = 56;
 const ROW_GAP = 34;
 const PAD = 24;
+
+// The smallest a drawing is scaled to fit its frame: below it the node
+// text is too small to read, and the frame scrolls instead.
+export const DAG_MIN_SCALE = 0.6;
 
 // The dash of a failure handler's outline and of every edge into it — ISO
 // 128's hidden line, meaning only "a handler". It is set as the SVG

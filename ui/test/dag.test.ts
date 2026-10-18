@@ -19,7 +19,8 @@ import { DAG_FIXTURES } from './dagFixtures';
 const tasksOf = (spec: [string, string[]][]): Task[] => spec.map(([id, needs]) => create(TaskSchema, { id, needs }));
 
 // What layoutDag drew on each fixture before it was re-based on layerOrder
-// (recorded from main's function; see test/dagFixtures.ts).
+// (recorded from main's function, x re-derived for LAYER_GAP 56; see
+// test/dagFixtures.ts).
 const PINNED = JSON.parse(readFileSync(`${import.meta.dir}/fixtures/dag-layouts.json`, 'utf8')) as Record<
 	string,
 	{ nodes: { id: string; layer: number; index: number; x: number; y: number }[]; edges: unknown[]; width: number; height: number }

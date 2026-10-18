@@ -207,6 +207,34 @@
 		border-bottom: var(--rule-hair) solid var(--color-rule);
 		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
 	}
+	/* A register that reflows below 640 px: each row becomes a small grid of
+	   its own cells — two columns, the cells placed by the page's max-sm:
+	   utilities — so nothing it says hides behind a sideways scroll. The page
+	   keeps the heads for assistive technology only (max-sm:sr-only). */
+	.register-stacked,
+	.register-stacked tbody {
+		@variant max-sm {
+			display: block;
+		}
+	}
+	.register-stacked tr {
+		@variant max-sm {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			column-gap: calc(var(--spacing) * 3);
+			row-gap: var(--spacing);
+			align-items: center;
+			border-bottom: var(--rule-hair) solid var(--color-rule);
+			padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+		}
+	}
+	.register-stacked td {
+		@variant max-sm {
+			min-width: 0;
+			border-bottom: 0;
+			padding: 0;
+		}
+	}
 
 	/* A drawing's frame: the region rule all round. */
 	.frame {

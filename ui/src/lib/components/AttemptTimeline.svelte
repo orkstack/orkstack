@@ -142,7 +142,7 @@
 				reclaimed with the run's logs.
 			</p>
 		{:else}
-			<ul class="mt-2 space-y-1.5">
+			<ul class="mt-2">
 				{#each attempts as attempt (attempt.attempt)}
 					{@const unreported = isUnreported(attempt)}
 					{@const exitCode = measuredExit(attempt)}
@@ -151,9 +151,7 @@
 					<li
 						data-testid="task-{taskId}-attempt-{attempt.attempt}"
 						data-outcome={attemptOutcomeLabel(attempt.outcome)}
-						class="rounded-sm border px-3 py-2 {unreported
-							? 'border-dashed border-rule-faint bg-transparent opacity-70'
-							: 'border-rule-faint bg-paper'}"
+						class="border-b border-rule-faint py-2 last:border-b-0 {unreported ? 'opacity-70' : ''}"
 					>
 						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
 							<span class="font-mono font-medium text-ink-secondary">#{attempt.attempt}</span>

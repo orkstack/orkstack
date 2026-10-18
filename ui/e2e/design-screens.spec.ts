@@ -311,3 +311,165 @@ test('screens: the key pages in light and dark, at 1440, 390 and 320 px', async 
 	await page.goto(`${UI_ORIGIN}/?ns=default`);
 	await page.getByTestId('theme-system').click();
 });
+
+/** The colour a token resolves to, as a computed style reports it. */
+async function tokenColor(page: Page, token: string): Promise<string> {
+	return page.evaluate((name) => {
+		const probe = document.createElement('span');
+		probe.style.color = `var(${name})`;
+		document.body.appendChild(probe);
+		const c = getComputedStyle(probe).color;
+		probe.remove();
+		return c;
+	}, token);
+}
+
+/** How the run page's DAG sits in its frame: its scale, and whether the frame scrolls. */
+async function dagFit(page: Page) {
+	return page.evaluate(() => {
+		const svg = document.querySelector('[data-testid="run-dag"]') as SVGSVGElement;
+		const panel = svg.closest('[role="tabpanel"]') as HTMLElement;
+		const node = document.querySelector('[data-testid="run-dag-node-charge"]')!.getBoundingClientRect();
+		const box = panel.getBoundingClientRect();
+		return {
+			scale: svg.getBoundingClientRect().width / svg.viewBox.baseVal.width,
+			scrolls: panel.scrollWidth > panel.clientWidth + 1,
+			failedInView: node.left >= box.left - 0.5 && node.right <= box.right + 0.5
+		};
+	});
+}
+
+test('finish review: the DAG fits its frame, the failure speaks plainly, rows are ruled, lists start high and reflow', async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default`);
+	await expect(page.getByTestId('run-dag')).toBeVisible();
+
+	// The saga's five layers are drawn whole at 1440, scaled no lower than 0.6,
+	// and the frame offers no scrolling.
+	const wide = await dagFit(page);
+	note(`DAG at 1440: ${JSON.stringify(wide)}`);
+	expect(wide.scrolls).toBe(false);
+	expect(wide.scale).toBeGreaterThanOrEqual(0.6);
+	expect(wide.scale).toBeLessThanOrEqual(1);
+	await expect(page.getByTestId('run-dag-scroll-right')).toHaveCount(0);
+	await expect(page.getByTestId('run-dag-scroll-left')).toHaveCount(0);
+
+	// The failure leads with the task's reason and its sentence; the run's own
+	// code stays beside it, and no word of the execution service's wrapper is
+	// on the page.
+	await expect(page.getByTestId('run-error-reason')).toHaveText('CONTAINER_EXIT_NONZERO');
+	await expect(page.getByTestId('run-error-code')).toHaveText('RUN_FAILED');
+	await expect(page.getByTestId('run-error-message')).toHaveText('task "charge": the container exited 3');
+	await expect(page.getByTestId('task-charge-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
+	await expect(page.getByTestId('task-charge-error-message')).toHaveText('task "charge": the container exited 3');
+	for (const id of ['run-error', 'task-charge-error']) {
+		for (const word of ['activity error', 'scheduledEventID', 'startedEventID', 'identity:', 'ExecuteTask', '(type:']) {
+			await expect(page.getByTestId(id)).not.toContainText(word);
+		}
+	}
+
+	// A task is a hairline-ruled row on clean ground, not a box: its output
+	// and Inspect toggles sit on its own line of facts, and its failure is one
+	// tinted ground with no rule of its own.
+	const rows = await page.evaluate(() => {
+		const read = (id: string) => {
+			const el = document.querySelector(`[data-testid="${id}"]`)!;
+			const s = getComputedStyle(el);
+			return { top: s.borderTopWidth, left: s.borderLeftWidth, bottom: s.borderBottomWidth, ground: s.backgroundColor };
+		};
+		const top = (id: string) => document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect().top;
+		return {
+			row: read('task-validate'),
+			failure: read('task-charge-error'),
+			togglesLevel: Math.abs(top('task-log-toggle-validate') - top('task-inspect-toggle-validate')),
+			togglesBelowRowTop: top('task-inspect-toggle-validate') - top('task-validate'),
+			rowHeight: document.querySelector('[data-testid="task-validate"]')!.getBoundingClientRect().height
+		};
+	});
+	note(`task rows: ${JSON.stringify(rows)}`);
+	expect(rows.row).toMatchObject({ top: '0px', left: '0px', bottom: '1px', ground: 'rgba(0, 0, 0, 0)' });
+	expect(rows.failure).toMatchObject({ top: '0px', left: '0px', bottom: '0px' });
+	expect(rows.failure.ground).toBe(await tokenColor(page, '--color-red-tint'));
+	expect(rows.togglesLevel).toBeLessThanOrEqual(2);
+	expect(rows.togglesBelowRowTop).toBeLessThan(64);
+	await page.getByTestId('task-log-toggle-validate').click();
+	await expect(page.getByTestId('task-log-toggle-validate')).toHaveAttribute('aria-expanded', 'true');
+	await expect(page.getByTestId('task-log-state-validate')).toBeVisible();
+	await page.getByTestId('task-log-toggle-validate').click();
+	await expect(page.getByTestId('task-log-state-validate')).toHaveCount(0);
+
+	// At 390 the drawing scrolls in its frame: the frame says so with a
+	// control, and the failed task is the one in view.
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default`);
+	await expect(page.getByTestId('run-dag')).toBeVisible();
+	await expect.poll(async () => (await dagFit(page)).failedInView).toBe(true);
+	const narrow = await dagFit(page);
+	note(`DAG at 390: ${JSON.stringify(narrow)}`);
+	expect(narrow.scrolls).toBe(true);
+	expect(narrow.scale).toBeGreaterThanOrEqual(0.6 - 0.001);
+	await expect(page.getByTestId('run-dag-scroll-left').or(page.getByTestId('run-dag-scroll-right')).first()).toBeVisible();
+	await page.screenshot({ path: out('finish-run-dag-390.png') });
+
+	// The registers reflow below 640 px: nothing scrolls sideways, and a run's
+	// status is on screen beside its id.
+	for (const [list, url, row] of [
+		['runs', `${UI_ORIGIN}/runs?ns=default`, `run-row-${failedRun}`],
+		['orkflows', `${UI_ORIGIN}/orkflows?ns=default`, `orkflow-row-${SAGA}`]
+	] as const) {
+		await page.goto(url);
+		await expect(page.getByTestId(row)).toBeVisible();
+		const fit = await page.evaluate((id) => {
+			const tr = document.querySelector(`[data-testid="${id}"]`)!;
+			const frame = tr.closest('table')!.parentElement!;
+			return {
+				scrolls: frame.scrollWidth > frame.clientWidth + 1,
+				rightmost: Math.max(...[...tr.children].map((td) => td.getBoundingClientRect().right))
+			};
+		}, row);
+		note(`${list} at 390: ${JSON.stringify(fit)}`);
+		expect(fit.scrolls, `${list}: the register does not scroll sideways at 390`).toBe(false);
+		expect(fit.rightmost).toBeLessThanOrEqual(390);
+		await page.screenshot({ path: out(`finish-${list}-390.png`) });
+	}
+
+	// The count band: its sub-lines are whole, and at 390 its two ruled lines
+	// both run the band's full width.
+	await page.goto(`${UI_ORIGIN}/?ns=default`);
+	await expect(page.getByTestId('stat-succeeded')).not.toHaveText('0', { timeout: 60_000 });
+	const band = await page.evaluate(() => {
+		const counts = document.querySelector('[data-testid="dashboard-counts"]')!;
+		const right = counts.getBoundingClientRect().right;
+		const cells = [...counts.children].map((el) => el.getBoundingClientRect());
+		const rows = [...new Set(cells.map((c) => Math.round(c.top)))];
+		const notes = [...counts.querySelectorAll('[data-testid$="-note"]')].map((el) => ({
+			id: el.getAttribute('data-testid'),
+			cut: el.scrollWidth > el.clientWidth + 1
+		}));
+		return { rows: rows.map((top) => Math.abs(Math.round(right - Math.max(...cells.filter((c) => Math.round(c.top) === top).map((c) => c.right))))), notes };
+	});
+	note(`band at 390: ${JSON.stringify(band)}`);
+	expect(band.rows).toEqual([0, 0]);
+	for (const n of band.notes) expect(n.cut, `${n.id} is whole`).toBe(false);
+
+	// The runs register at 1280 × 720: the filter toolbar is one row, and the
+	// table starts in the top half of the first viewport.
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await page.goto(`${UI_ORIGIN}/runs?ns=default`);
+	await expect(page.getByTestId(`run-row-${failedRun}`)).toBeVisible();
+	const toolbar = await page.evaluate(() => {
+		const top = (id: string) => Math.round(document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect().top);
+		const mid = (id: string) => {
+			const r = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();
+			return Math.round(r.top + r.height / 2);
+		};
+		return {
+			rows: new Set(['run-filter-add', 'run-filter-size', 'run-filters-apply', 'run-filters-cli-trigger'].map(mid)).size,
+			table: top('run-list')
+		};
+	});
+	note(`runs toolbar at 1280x720: ${JSON.stringify(toolbar)}`);
+	expect(toolbar.rows).toBe(1);
+	expect(toolbar.table).toBeLessThan(360);
+	await page.screenshot({ path: out('finish-runs-1280.png') });
+});

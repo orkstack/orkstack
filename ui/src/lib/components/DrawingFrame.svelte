@@ -13,9 +13,16 @@
 	// drawn; up to DAG_LEGIBLE_LIMIT on request; beyond that it is never laid
 	// out, and the run page draws the selected task's one-hop neighbourhood
 	// instead.
-	import type { Snippet } from 'svelte';
+	//
+	// A drawing is scaled to the frame's width (DagGraph, down to
+	// DAG_MIN_SCALE). One still wider than that scrolls inside the frame: the
+	// frame says so with a scroll control at the edge that hides more, and on
+	// first drawing it brings the selected task — else the failed one, whose
+	// failure handlers follow it — into view.
+	import { tick, type Snippet } from 'svelte';
 	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import DagGraph from './DagGraph.svelte';
+	import Icon from './Icon.svelte';
 	import { DAG_LEGIBLE_LIMIT, dagBound, neighbourhood, type NodeState } from '$lib/dag';
 
 	interface Props {
@@ -73,6 +80,64 @@
 		tasks && bound === 'too-large' && neighbourhoodWhenLarge && selected ? neighbourhood(tasks, selected) : []
 	);
 	const fmt = new Intl.NumberFormat('en-US');
+	const prefix = $derived(on === 'run' ? 'run-dag' : 'dag');
+
+	const drawn = $derived(
+		view === 'dag' && !!tasks && (bound === 'draw' || (bound === 'on-request' && drawAll) || near.length > 0)
+	);
+	let panel = $state<HTMLDivElement | undefined>(undefined);
+	let hidden = $state({ left: false, right: false });
+
+	function measure(): void {
+		if (!panel) return;
+		const max = panel.scrollWidth - panel.clientWidth;
+		hidden = { left: panel.scrollLeft > 1, right: panel.scrollLeft < max - 1 };
+	}
+
+	$effect(() => {
+		const el = panel;
+		if (!el || !drawn || typeof ResizeObserver === 'undefined') {
+			hidden = { left: false, right: false };
+			return;
+		}
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		const drawing = el.querySelector('svg');
+		if (drawing) observer.observe(drawing);
+		measure();
+		return () => observer.disconnect();
+	});
+
+	// Once per drawing: a drawing that does not fit shows the task a reader
+	// came for, not its first layer.
+	let placed = false;
+	$effect(() => {
+		const el = panel;
+		if (!el || !drawn) {
+			placed = false;
+			return;
+		}
+		if (placed) return;
+		placed = true;
+		void tick().then(() => bringIntoView(el));
+	});
+
+	function bringIntoView(el: HTMLDivElement): void {
+		if (el.scrollWidth <= el.clientWidth + 1 && el.scrollHeight <= el.clientHeight + 1) return;
+		const target = el.querySelector('.dag-node.is-selected') ?? el.querySelector('.dag-node.is-failed');
+		if (!target) return;
+		const node = target.getBoundingClientRect();
+		const frame = el.getBoundingClientRect();
+		const margin = Math.min(frame.width * 0.15, 48);
+		el.scrollLeft += node.left - frame.left - margin;
+		if (node.top < frame.top || node.bottom > frame.bottom) el.scrollTop += node.top - frame.top - margin;
+		measure();
+	}
+
+	function scrollBy(direction: 1 | -1): void {
+		const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+		panel?.scrollBy({ left: direction * panel.clientWidth * 0.75, behavior: still ? 'auto' : 'smooth' });
+	}
 
 	function onTabKey(event: KeyboardEvent, index: number): void {
 		if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
@@ -126,6 +191,8 @@
 		<p class="flex min-w-0 items-center px-3 font-mono text-xs text-ink-secondary" title={caption}><span class="truncate">{caption}</span></p>
 	</div>
 	<div
+		bind:this={panel}
+		onscroll={measure}
 		id="{uid}-panel"
 		role={views.length > 1 ? 'tabpanel' : undefined}
 		aria-labelledby={views.length > 1 ? `${uid}-tab-${view}` : undefined}
@@ -139,7 +206,7 @@
 				'run-drawing-unavailable'
 			)}
 		{:else if bound === 'draw' || (bound === 'on-request' && drawAll)}
-			<div class="inline-block p-4">
+			<div class="p-2">
 				<DagGraph tasks={tasks} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} />
 			</div>
 		{:else if bound === 'on-request'}
@@ -160,10 +227,30 @@
 				on === 'run' ? 'run-dag-too-large' : 'dag-too-large'
 			)}
 			{#if near.length}
-				<div class="inline-block p-4">
+				<div class="p-2">
 					<DagGraph tasks={near} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} />
 				</div>
 			{/if}
 		{/if}
 	</div>
+	{#if drawn && hidden.left}
+		<button
+			type="button"
+			data-testid="{prefix}-scroll-left"
+			class="btn absolute top-1/2 left-0 z-10 size-8 border-ink bg-paper p-0 text-ink"
+			aria-label="Scroll the DAG left"
+			title="More of the DAG to the left"
+			onclick={() => scrollBy(-1)}><Icon name="chevronLeft" /></button
+		>
+	{/if}
+	{#if drawn && hidden.right}
+		<button
+			type="button"
+			data-testid="{prefix}-scroll-right"
+			class="btn absolute top-1/2 right-0 z-10 size-8 border-ink bg-paper p-0 text-ink"
+			aria-label="Scroll the DAG right"
+			title="More of the DAG to the right"
+			onclick={() => scrollBy(1)}><Icon name="chevronRight" /></button
+		>
+	{/if}
 </section>

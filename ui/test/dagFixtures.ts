@@ -1,7 +1,9 @@
 // The fixture DAGs dag.test.ts pins layoutDag on. Each is a list of
 // [id, needs]; test/fixtures/dag-layouts.json holds what layoutDag drew for
 // each BEFORE it was re-based on layerOrder, so the re-base is proven not to
-// move a node, an edge or the drawing's size.
+// move a node, an edge or the drawing's size. Its x coordinates and widths
+// were later re-derived, layer by layer, for the tighter LAYER_GAP (56, was
+// 110); no layer, row, y or height moved.
 export const DAG_FIXTURES: Record<string, [string, string[]][]> = {
 	single: [['only', []]],
 	chain: [

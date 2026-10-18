@@ -159,7 +159,7 @@
 	{#if current}
 		{@const run = current.run}
 		{@const live = current.status === Status.RUNNING ? liveOf(current.index) : undefined}
-		<div class="mt-3 rounded-sm border border-rule-faint bg-paper-sunken p-3" data-testid="task-{taskId}-item-panel">
+		<div class="mt-3 rounded-sm bg-paper-sunken p-3" data-testid="task-{taskId}-item-panel">
 			<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
 				<span class="font-mono font-medium text-ink" data-testid="task-{taskId}-item-panel-label">{itemLabel(taskId, current.index)}</span>
 				<span data-testid="task-{taskId}-item-panel-status">{itemStatusText(current)}</span>

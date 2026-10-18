@@ -73,6 +73,13 @@
 		 * item's own log (its attempts, its chunks). Undefined for a task's own.
 		 */
 		item?: number;
+		/** Whether the pane is open; bindable, so a caller can hold the toggle. */
+		open?: boolean;
+		/**
+		 * Draw the pane's own Show output button. A caller that puts the
+		 * toggle in its own row of actions passes false and binds `open`.
+		 */
+		toggle?: boolean;
 	}
 
 	let {
@@ -87,10 +94,18 @@
 		onAttemptChange,
 		onAttemptSeen,
 		scrollback = 2000,
-		item
+		item,
+		open = $bindable(false),
+		toggle: ownToggle = true
 	}: Props = $props();
 
-	let open = $state(false);
+	// Opened from outside (a caller's own toggle): follow the output, as the
+	// pane's own button does.
+	let wasOpen = false;
+	$effect(() => {
+		if (open && !wasOpen) following = true;
+		wasOpen = open;
+	});
 	// $state.raw: this array is replaced wholesale on every batch and can hold
 	// thousands of entries. A deeply reactive proxy per line is the difference
 	// between a chatty task rendering and a chatty task melting the tab.
@@ -404,20 +419,21 @@
 	}
 </script>
 
-<div class="mt-2">
-	<button
-		type="button"
-		data-testid="task-log-toggle-{taskId}"
-		onclick={toggle}
-		aria-expanded={open}
-		class="btn btn-sm"
-	>
-		<span class="text-ink-muted">{open ? '▾' : '▸'}</span>
-		{open ? 'Hide output' : 'Show output'}
-	</button>
+<div class={ownToggle || open ? 'mt-2' : ''}>
+	{#if ownToggle}
+		<button
+			type="button"
+			data-testid="task-log-toggle-{taskId}"
+			onclick={toggle}
+			aria-expanded={open}
+			class="btn btn-sm btn-disclosure"
+		>
+			{open ? 'Hide output' : 'Show output'}
+		</button>
+	{/if}
 
 	{#if open}
-		<div class="mt-2 overflow-hidden rounded-sm border border-rule bg-paper-sunken">
+		<div class="{ownToggle ? 'mt-2' : ''} overflow-hidden rounded-sm border border-rule bg-paper-sunken">
 			<div
 				class="flex flex-wrap items-center gap-3 border-b border-rule bg-paper-sunken px-3 py-2 font-mono text-2xs tracking-caps uppercase"
 			>

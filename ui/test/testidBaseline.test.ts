@@ -19,7 +19,10 @@ const src = `${import.meta.dir}/../src`;
 const fixture = `${import.meta.dir}/fixtures/testid-baseline.txt`;
 
 /** Shape → why it may be gone (and the spec change that goes with it). */
-const ALLOWED_REMOVALS: Record<string, string> = {};
+const ALLOWED_REMOVALS: Record<string, string> = {
+	'id {}-filters-none':
+		"ListFilter's zero-state sentence is gone: the filter toolbar is one row and says nothing while no filter is in force (finish review, list-filter chrome). No spec read it; no spec changes."
+};
 
 function sources(): string[] {
 	return readdirSync(src, { recursive: true })

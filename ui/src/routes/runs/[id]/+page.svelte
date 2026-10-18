@@ -27,6 +27,7 @@
 		type ItemView
 	} from '$lib/each';
 	import FailurePanel from '$lib/components/FailurePanel.svelte';
+	import { plainFailure } from '$lib/failureText';
 	import Icon from '$lib/components/Icon.svelte';
 	import RetryBadge from '$lib/components/RetryBadge.svelte';
 	import CacheBadge from '$lib/components/CacheBadge.svelte';
@@ -552,6 +553,9 @@
 	// the address would make a link's meaning depend on which cards the sender
 	// happened to have expanded.
 	let inspectOpenByTask = $state<Record<string, boolean>>({});
+	// Which tasks' output panes are open: the toggle sits in the row's
+	// actions, the pane below it (TaskLogPane binds it).
+	let logOpenByTask = $state<Record<string, boolean>>({});
 	let copied = $state('');
 	let downloadingArtifact = $state('');
 	let artifactDownloadError = $state('');
@@ -1956,14 +1960,18 @@
 						{#if runError}
 							<FailurePanel error={runError} testid="run-error" bare />
 						{:else}
-							<div data-testid="run-error" role="alert" class="text-sm text-ink">{runErrorMessage}</div>
+							{@const plain = plainFailure(runErrorMessage)}
+							<div data-testid="run-error" role="alert" class="text-sm text-ink">
+								{#if plain.code}<p class="severity-error font-mono font-semibold">{plain.code}</p>{/if}
+								<p class="mt-1.5 max-w-prose break-words">{plain.text}</p>
+							</div>
 						{/if}
 					</RevisionCloud>
 				{:else if runError}
-					<!-- A run that ended without failing (canceled): its reason, never a failure's cloud. -->
-					<FailurePanel error={runError} testid="run-error" />
+					<!-- A run that ended without failing (canceled): its reason in ink, a NOTE — never a failure's cloud or red. -->
+					<FailurePanel error={runError} testid="run-error" tone="note" />
 				{:else}
-					<div data-testid="run-error" role="alert" class="rounded-sm border border-rule-strong px-4 py-3 text-sm text-ink">{runErrorMessage}</div>
+					<div data-testid="run-error" role="status" class="note px-3 py-2 text-sm text-ink">{plainFailure(runErrorMessage).text}</div>
 				{/if}
 			{/if}
 			{#if failedImage}
@@ -2084,7 +2092,8 @@
 			{#if artifactDownloadError}
 				<p data-testid="artifact-download-error" role="alert" class="severity-error mb-3 border border-red px-3 py-2 text-xs">Error: artifact download failed: {artifactDownloadError}</p>
 			{/if}
-			<div class="space-y-1.5" data-testid="task-list">
+			<!-- One hairline-ruled row per task, on clean ground: no box round a row. -->
+			<div class="border-t border-rule" data-testid="task-list">
 				{#each tasks as task (task.id)}
 					{@const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt)}
 					{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
@@ -2094,10 +2103,10 @@
 					{@const fanOut = task.each !== undefined || taskDefs.get(task.id)?.each !== undefined}
 					{@const composed = task.child !== undefined || taskDefs.get(task.id)?.orkflow !== undefined}
 					<!--
-						A pinned task's card carries its pin's accent as a thicker
-						left edge and a faint fill, so the members of one pin read as
-						a block in the list without being re-sorted — the DAG order
-						is the order, and regrouping the list would hide it.
+						A pinned task's row is the one row with an outline: its pin's
+						line, 1 px all round, and a faint fill, so the members of one
+						pin read as a block in the list without being re-sorted — the
+						DAG order is the order, and regrouping the list would hide it.
 
 						The accent is applied as an inline style rather than a class
 						because the token is chosen at runtime: Tailwind's scanner
@@ -2123,14 +2132,12 @@
 						never skipped, and its overlay is never clipped to it.
 					-->
 					<div
-						class="task-card rounded-sm border bg-paper px-4 py-3 {isAwait || composed || inspectOpenByTask[task.id]
+						class="task-card px-3 py-3 {isAwait || composed || inspectOpenByTask[task.id]
 							? ''
-							: '[content-visibility:auto] [contain-intrinsic-size:auto_7rem]'} {dispatched
-							? 'border-rule'
-							: 'border-dashed border-rule-strong'}"
-						style={accent
-							? `border-style:solid;border-color:var(--color-${accent}-line);background-color:var(--color-${accent}-fill)`
-							: undefined}
+							: '[content-visibility:auto] [contain-intrinsic-size:auto_5rem]'} {accent
+							? 'relative -mt-px rounded-sm border'
+							: 'border-b border-rule'}"
+						style={accent ? `border-color:var(--color-${accent}-line);background-color:var(--color-${accent}-fill)` : undefined}
 						data-testid="task-{task.id}"
 						data-dispatched={dispatched}
 						data-pin={task.pin || undefined}
@@ -2325,6 +2332,29 @@
 									label="Copy timing CLI"
 								/>
 							{/if}
+							<!-- The row's own actions, inline: its output and what ran. -->
+							<span class="ml-auto flex flex-wrap items-center gap-2">
+								{#if !isAwait && !composed && !fanOut}
+									<button
+										type="button"
+										data-testid="task-log-toggle-{task.id}"
+										aria-expanded={logOpenByTask[task.id] ?? false}
+										onclick={() => (logOpenByTask[task.id] = !logOpenByTask[task.id])}
+										class="btn btn-sm btn-disclosure"
+									>
+										{logOpenByTask[task.id] ? 'Hide output' : 'Show output'}
+									</button>
+								{/if}
+								<button
+									type="button"
+									data-testid="task-inspect-toggle-{task.id}"
+									aria-expanded={inspectOpenByTask[task.id] ?? false}
+									onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}
+									class="btn btn-sm btn-disclosure"
+								>
+									{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}
+								</button>
+							</span>
 						</div>
 
 						{#if task.error}
@@ -2402,24 +2432,15 @@
 							pinRequest={logPinByTask[task.id]}
 							onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt)}
 							onAttemptSeen={(attempt) => attemptSeen(task.id, attempt)}
+							toggle={false}
+							bind:open={() => logOpenByTask[task.id] ?? false, (open) => (logOpenByTask[task.id] = open)}
 						/>
 						{/if}
-						<div class="mt-2">
-							<button
-								type="button"
-								data-testid="task-inspect-toggle-{task.id}"
-								aria-expanded={inspectOpenByTask[task.id] ?? false}
-								onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}
-								class="btn btn-sm btn-disclosure"
-							>
-								{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}
-							</button>
-						</div>
 						{#if inspectOpenByTask[task.id]}
 							{@const def = taskDefs.get(task.id)}
 							{@const taskArtifacts = (artifactsByTask.get(task.id) ?? []).filter((record) => record.item === undefined)}
 							<div
-								class="mt-2 rounded-sm border border-rule-faint bg-paper-sunken p-3"
+								class="mt-3 rounded-sm bg-paper-sunken p-3"
 								data-testid="task-{task.id}-inspect"
 							>
 								<p class="text-xs break-all text-ink-muted" data-testid="task-{task.id}-activity">{task.activity || 'activity not yet known'}</p>
@@ -2641,7 +2662,7 @@
 										{#each taskArtifacts as record (record.kind + ':' + (record.artifact?.name ?? ''))}
 											{#if record.artifact}
 												{@const key = `${record.taskId}:${record.kind}:${record.artifact.name}`}
-												<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-rule-faint bg-paper px-3 py-2 text-xs">
+												<div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule-faint py-2 text-xs last:border-b-0">
 													<span class="font-medium text-ink">{artifactKindLabel(record.kind)}</span>
 													<span class="font-mono break-all text-ink-secondary">{record.artifact.name}</span>
 													<span class="text-ink-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
@@ -2656,7 +2677,7 @@
 							</div>
 						{/if}
 						{#if task.output || task.valuesRef}
-							<div class="mt-3 rounded-sm border border-rule-faint bg-paper-sunken p-3">
+							<div class="mt-3 rounded-sm bg-paper-sunken p-3">
 								<div class="flex items-center justify-between gap-3">
 									<span class="text-xs font-medium text-ink">Task values</span>
 									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => void copy(payloadJson(task.output), 'Task values copied', `task-values-${task.id}`)} class="link text-xs">Copy JSON</button>{/if}
