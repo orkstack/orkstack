@@ -5,9 +5,11 @@ import { TaskSchema, type Task } from '../src/lib/gen/orkstack/v1/orkflow_pb';
 import {
 	DAG_DASH,
 	DAG_DRAW_LIMIT,
+	DAG_LINE_CHARS,
 	DAG_LEGIBLE_LIMIT,
 	dagBound,
 	edgePath,
+	fitDagLine,
 	layerOrder,
 	layoutDag,
 	neighbourhood
@@ -133,6 +135,16 @@ test('edgePath routes an edge orthogonally: across, down, across', () => {
 
 test('the failure-handler dash is the attribute join-policy.spec.ts reads', () => {
 	expect(DAG_DASH).toBe('5 4');
+});
+
+test('a node line fits its node: durations go first, then the end is cut', () => {
+	expect(fitDagLine('ok · 1.6s')).toBe('ok · 1.6s');
+	expect(fitDagLine('CONTAINER_EXIT_NONZERO · 1.6s')).toBe('CONTAINER_EXIT_NONZERO');
+	expect(fitDagLine('ARTIFACT_UPLOAD_FAILED_AFTER_RETRIES · 12m 3s')).toBe('ARTIFACT_UPLOAD_FAILED…');
+	expect(fitDagLine('ghcr.io/acme/migrate@sha256:0123456789abcdef')).toHaveLength(DAG_LINE_CHARS);
+	expect(fitDagLine('handler · never ran')).toBe('handler · never ran');
+	// A cached node gives "cached " of its room to the tag.
+	expect(fitDagLine('CONTAINER_EXIT_NONZERO · 1.6s', DAG_LINE_CHARS - 7)).toBe('CONTAINER_EXIT_…');
 });
 
 test('the DAG bound: draw up to 80, on request to 300, never above', () => {

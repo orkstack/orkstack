@@ -82,6 +82,13 @@ include breaking changes, and each is marked **BREAKING**.
   records are tinted red; the audit trail says each principal was asserted.
   On a narrow screen the Operate tabs scroll inside their own row and bring
   the page you are on into view.
+- The redrawn UI's last pass: a DAG node's second line now fits its node — a
+  long error code keeps its whole name and drops the duration beside it (the
+  task's card still has it), and anything longer ends in an ellipsis with the
+  full line on hover; on a narrow screen the bottom row's second cell is as
+  wide as its value, so a run's status reads in full; and the Runs and
+  Orkflows pages label their page size the way every other form field is
+  labelled.
 - **BREAKING:** every Orkflow begins with `apiVersion: orkstack/v1` and
   `kind: Orkflow`. A document without them is refused at validate, apply and
   plan, naming the two lines to add. The header is not part of the definition:

@@ -114,7 +114,7 @@
 
 <ListFilter request={ListOrkflowsRequestSchema} applied={data.applied} testid="orkflow" {command} onapply={applyFilters} {clearHref}>
 	<div class="flex flex-col gap-1.5 text-sm">
-		<label class="font-medium text-ink" for="orkflow-page-size">Page size</label>
+		<label class="field-label mb-0" for="orkflow-page-size">Page size</label>
 		<div class="w-24"><Select id="orkflow-page-size" testid="orkflow-page-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
 	</div>
 </ListFilter>

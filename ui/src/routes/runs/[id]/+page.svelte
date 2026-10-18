@@ -1540,7 +1540,7 @@
 			const handler = isFailureHandler(joinOf(id));
 			return {
 				status: task.status,
-				line: never ? (handler ? 'failure handler · never ran' : 'never started') : 'waiting',
+				line: never ? (handler ? 'handler · never ran' : 'never started') : 'waiting',
 				neverStarted: never
 			};
 		}

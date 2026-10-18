@@ -47,6 +47,29 @@ const PAD = 24;
 // attribute and the attribute must be the dash drawn.
 export const DAG_DASH = '5 4';
 
+// How many characters a node's second line holds: the node's width less its
+// two text insets, over the mono face's advance (Spline Sans Mono, about
+// 0.64 em, at --text-2xs, 11 px). The face is monospaced, so a count of
+// characters is a width.
+export const DAG_LINE_CHARS = 23;
+
+/**
+ * fitDagLine fits a node's second line into `room` characters: it drops
+ * trailing " · " parts first (a duration after an error code), so what
+ * names the outcome stays whole, and only then cuts the end with an
+ * ellipsis. The full line stays in the node's accessible name and title.
+ */
+export function fitDagLine(line: string, room: number = DAG_LINE_CHARS): string {
+	let fitted = line;
+	while (fitted.length > room) {
+		const cut = fitted.lastIndexOf(' · ');
+		if (cut <= 0) break;
+		fitted = fitted.slice(0, cut);
+	}
+	if (fitted.length <= room) return fitted;
+	return `${fitted.slice(0, Math.max(room - 1, 0))}…`;
+}
+
 // How many tasks a legible DAG holds. Up to DAG_DRAW_LIMIT it is drawn;
 // beyond, on request up to DAG_LEGIBLE_LIMIT; beyond that never laid out at
 // all (each node is a link, and 4,000 of them is no drawing a person reads).

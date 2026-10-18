@@ -66,7 +66,7 @@
 	class="sticky bottom-0 z-30 border-t-2 border-ink bg-paper transition-shadow {lifted ? 'shadow-lift' : ''}"
 >
 	<div
-		class="grid h-titleblock grid-cols-[2fr_repeat(var(--_cells),1fr)] max-sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto]"
+		class="grid h-titleblock grid-cols-[2fr_repeat(var(--_cells),1fr)] max-sm:grid-cols-[minmax(0,1fr)_fit-content(45%)_auto]"
 		style:--_cells={Math.max(fields.length - 1, 1)}
 	>
 		{#each fields as f, i (f.label)}

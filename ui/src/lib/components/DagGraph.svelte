@@ -14,7 +14,17 @@
 	// request); this component lays out whatever it is handed.
 	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { DAG_DASH, DAG_NODE_H, DAG_NODE_W, edgePath, layoutDag, type NodeState } from '$lib/dag';
+	import {
+		DAG_DASH,
+		DAG_LINE_CHARS,
+		DAG_NODE_H,
+		DAG_NODE_W,
+		edgePath,
+		fitDagLine,
+		layoutDag,
+		type DagNode,
+		type NodeState
+	} from '$lib/dag';
 	import { activityLabel } from '$lib/activity';
 	import { isFailureHandler, joinTitle, joinWord } from '$lib/join';
 	import { statusLabel } from '$lib/status';
@@ -57,6 +67,7 @@
 	const run = $derived(on === 'run');
 	const MARK = 10;
 	const TEXT_X = 12;
+	const CACHED_TAG = 'cached';
 
 	/** A frame `pad` units outside the node's outline: the selection and focus marks. */
 	function frame(x: number, y: number, pad: number): string {
@@ -74,6 +85,13 @@
 		onselect(id);
 	}
 </script>
+
+{#snippet line(node: DagNode, text: string)}
+	{@const fitted = fitDagLine(text, DAG_LINE_CHARS - (node.task.cache ? CACHED_TAG.length + 1 : 0))}
+	<text x={node.x + TEXT_X} y={node.y + 44} class="dag-line"
+		>{#if fitted !== text}<title>{text}</title>{/if}{fitted}</text
+	>
+{/snippet}
 
 {#if tasks.length === 0}
 	<p class="p-4 text-sm text-ink-muted">No tasks.</p>
@@ -162,7 +180,7 @@
 					{/if}
 					<text x={textX} y={node.y + 22} class="dag-id">{node.task.id}</text>
 					{#if state}
-						<text x={node.x + TEXT_X} y={node.y + 44} class="dag-line">{state.line}</text>
+						{@render line(node, state.line)}
 					{:else if node.task.orkflow}
 						<!-- A composed task: it runs another Orkflow as a child run. -->
 						<text
@@ -172,7 +190,7 @@
 							class="dag-tag">orkflow {node.task.orkflow.name}@{node.task.orkflow.version}</text
 						>
 					{:else}
-						<text x={node.x + TEXT_X} y={node.y + 44} class="dag-line">{activityLabel(node.task) || '—'}</text>
+						{@render line(node, activityLabel(node.task) || '—')}
 					{/if}
 					{#if node.task.each}
 						<!-- A fan-out: one node, run as up to max_items items. -->
@@ -200,7 +218,7 @@
 							x={node.x + DAG_NODE_W - TEXT_X}
 							y={node.y + 44}
 							text-anchor="end"
-							class="dag-tag">cached</text
+							class="dag-tag">{CACHED_TAG}</text
 						>
 					{/if}
 				</a>

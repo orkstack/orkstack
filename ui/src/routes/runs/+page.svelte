@@ -206,7 +206,7 @@
 
 <ListFilter request={ListRunsRequestSchema} applied={data.applied} testid="run" {command} onapply={applyFilters} {clearHref}>
 	<div class="flex flex-col gap-1.5 text-sm">
-		<label class="font-medium text-ink" for="run-filter-size">Page size</label>
+		<label class="field-label mb-0" for="run-filter-size">Page size</label>
 		<div class="w-24"><Select id="run-filter-size" testid="run-filter-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
 	</div>
 </ListFilter>
