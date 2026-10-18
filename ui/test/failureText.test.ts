@@ -31,6 +31,14 @@ test('a child run failure drops its wrapper too', () => {
 	expect(plain).toEqual({ code: 'CHILD_RUN_FAILED', text: 'child run ork-1-2 (failing-block@0.1.0) failed' });
 });
 
+test("a fan-out item's failure keeps its item sentence, loses the wrapper inside it, and leads with the item's reason", () => {
+	const plain = plainFailure(
+		'item 3 of 6 failed: activity error (type: ExecuteTask, scheduledEventID: 66, startedEventID: 74, identity: sauroposeidon-475e1813): ' +
+			'CONTAINER_EXIT_NONZERO: task "convert": the container exited 1 (type: ActivityFailed, retryable: true)'
+	);
+	expect(plain).toEqual({ code: 'CONTAINER_EXIT_NONZERO', text: 'item 3 of 6 failed: task "convert": the container exited 1' });
+});
+
 test('a plain sentence is left alone', () => {
 	expect(plainFailure('item 3 of 6 failed: the container exited 1')).toEqual({
 		code: undefined,

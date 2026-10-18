@@ -419,6 +419,17 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 180_000 });
 	await expect(page.getByTestId('run-error')).toContainText('item 3 of 6 failed');
+	// The run's failure and the task's lead with the item's reason and keep
+	// the item sentence, with no word of the execution service's wrapper.
+	await expect(page.getByTestId('run-error-reason')).toHaveText('CONTAINER_EXIT_NONZERO');
+	await expect(page.getByTestId('run-error-message')).toHaveText('item 3 of 6 failed: task "convert": the container exited 1');
+	await expect(page.getByTestId('task-convert-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
+	await expect(page.getByTestId('task-convert-error-message')).toHaveText('item 3 of 6 failed: task "convert": the container exited 1');
+	for (const id of ['run-error', 'task-convert-error']) {
+		for (const word of ['activity error', 'scheduledEventID', 'identity:', '(type:']) {
+			await expect(page.getByTestId(id)).not.toContainText(word);
+		}
+	}
 
 	// Cell 3 is red: tinted with FAILED's own classes.
 	const cell = page.getByTestId('task-convert-item-3');
