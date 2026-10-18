@@ -60,7 +60,7 @@ export function timestampJson(timestamp: { seconds: bigint; nanos: number } | un
 // `--color-running-*` already mean an outcome on the very card being tinted,
 // so borrowing green or red for "these ran together" would say something about
 // how the task ended. A pin is an identity, not a state.
-const pinAccents = ['pin-a', 'pin-b', 'pin-c', 'pin-d', 'pin-e', 'pin-f'] as const;
+export const PIN_ACCENTS = ['pin-a', 'pin-b', 'pin-c', 'pin-d', 'pin-e', 'pin-f'] as const;
 
 /**
  * pinAccent maps a pin name onto one of a small set of accent tokens.
@@ -82,7 +82,7 @@ export function pinAccent(pin: string): string | undefined {
 	for (let i = 0; i < pin.length; i++) {
 		hash = Math.imul(hash ^ pin.charCodeAt(i), 0x01000193);
 	}
-	return pinAccents[(hash >>> 0) % pinAccents.length];
+	return PIN_ACCENTS[(hash >>> 0) % PIN_ACCENTS.length];
 }
 
 /** Storage names are data, not trusted response headers. Keep a download in the user's directory. */

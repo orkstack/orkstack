@@ -223,18 +223,27 @@ test('a link clicked as the run resolves still navigates', async ({ page, reques
 	const { runId, token } = await submitWithCallback(page);
 	await waitAwaiting(page);
 
-	// Only the Orkflow page reads its versions list, so holding that one RPC
-	// holds the navigation without touching anything the run page re-reads.
+	// The run page reads the versions list once, after it renders, and that
+	// read has settled before this hold exists; the hold sees only the
+	// navigation's read, so holding that one RPC holds the navigation without
+	// touching anything the run page re-reads. The `clicked` flag is a second
+	// guard: a read made before the click is continued untouched.
+	await expect(
+		page.locator('[data-testid="run-versions"][data-loaded="true"], [data-testid="run-versions-error"]')
+	).toBeVisible();
+	let clicked = false;
 	let held!: () => void;
 	const navigationHeld = new Promise<void>((resolve) => (held = resolve));
 	let release!: () => void;
 	const released = new Promise<void>((resolve) => (release = resolve));
 	await page.route('**/orkstack.v1.OrkflowService/ListOrkflowVersions', async (route) => {
+		if (!clicked) return route.continue();
 		held();
 		await released;
 		await route.continue();
 	});
 
+	clicked = true;
 	await page.getByTestId('pinned-orkflow-link').click();
 	await navigationHeld;
 	const res = await request.post(`${ENGINE}/v1/runs/${runId}/awaits/approval`, {

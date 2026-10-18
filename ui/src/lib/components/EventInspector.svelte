@@ -89,20 +89,20 @@
 			case EventType.RUN_STARTED:
 			case EventType.RUN_SUCCEEDED:
 			case EventType.RUN_CANCELED:
-				return 'text-info-700 border-info-200 bg-info-50';
+				return 'text-blue border-blue bg-blue-tint';
 			case EventType.TASK_SUCCEEDED:
 				return 'text-succeeded-fg border-succeeded-border bg-succeeded-bg';
 			case EventType.TASK_LOG:
-				return 'text-warning-700 border-warning-200 bg-warning-50';
+				return 'text-ink-secondary border-rule-strong bg-paper-sunken';
 			default:
-				return 'text-fg-muted border-border bg-surface-sunken';
+				return 'text-ink-muted border-rule bg-paper-sunken';
 		}
 	}
 </script>
 
-<section data-testid="event-inspector" class="rounded-lg border border-border bg-surface shadow-xs">
+<section data-testid="event-inspector" class="rounded-sm border border-rule bg-paper">
 	<div
-		class="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-t-lg border-b border-border bg-surface/95 px-3 py-2 text-xs backdrop-blur"
+		class="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-t-md border-b border-rule bg-paper/95 px-3 py-2 text-xs backdrop-blur"
 	>
 		{#each EVENT_FILTERS as chip (chip.id)}
 			<button
@@ -110,27 +110,27 @@
 				data-testid="event-filter-{chip.id}"
 				aria-pressed={filter === chip.id}
 				onclick={() => (filter = chip.id)}
-				class="rounded-full border px-2.5 py-0.5 transition-colors duration-150 {filter === chip.id
-					? 'border-brand-200 bg-brand-50 text-brand-700'
-					: 'border-border text-fg-muted hover:text-fg'}"
+				class="rounded-sm border px-2.5 py-0.5 transition-colors {filter === chip.id
+					? 'border-blue bg-blue-tint text-blue'
+					: 'border-rule text-ink-muted hover:text-ink'}"
 			>
 				{chip.label}
 			</button>
 		{/each}
-		<span class="ml-auto text-fg-muted" data-testid="event-count">
+		<span class="ml-auto text-ink-muted" data-testid="event-count">
 			{shown.length}{shown.length === events.length ? '' : ` of ${events.length}`} events
 		</span>
-		<span class="text-fg-muted" data-testid="event-last-seq">last #{lastSequence}</span>
+		<span class="text-ink-muted" data-testid="event-last-seq">last #{lastSequence}</span>
 	</div>
 
 	{#if dropped > 0}
 		<p
 			data-testid="event-dropped"
-			class="border-b border-warning-200 bg-warning-50 px-3 py-1.5 text-xs text-warning-700"
+			class="border-b border-rule-strong bg-paper-sunken px-3 py-1.5 text-xs text-ink-secondary"
 		>
 			Showing the last {cap} of {total} events; {dropped} earlier ones are no longer held here.
 			The whole stream is the run's history:
-			<code class="text-warning-800">orkctl run watch {runId} --json</code>
+			<code class="text-ink-secondary">orkctl run watch {runId} --json</code>
 		</p>
 	{/if}
 
@@ -141,16 +141,16 @@
 		class="max-h-[32rem] overflow-y-auto px-2 py-1.5 font-mono text-xs"
 	>
 		{#if events.length === 0 && streamBroken}
-			<p data-testid="event-log-offline" class="px-1 py-1 text-warning-700">
+			<p data-testid="event-log-offline" class="px-1 py-1 text-ink-secondary">
 				Not receiving events. The engine refused or dropped this page's websocket, so this
 				run cannot update live — reload to see its current state. If the engine serves the UI
 				from another origin, it needs
-				<code class="text-warning-800">ORK_WS_ALLOWED_ORIGINS</code> to include it.
+				<code class="text-ink-secondary">ORK_WS_ALLOWED_ORIGINS</code> to include it.
 			</p>
 		{:else if events.length === 0}
-			<p data-testid="event-log-waiting" class="px-1 py-1 text-fg-muted">Waiting for events…</p>
+			<p data-testid="event-log-waiting" class="px-1 py-1 text-ink-muted">Waiting for events…</p>
 		{:else if shown.length === 0}
-			<p data-testid="event-filter-empty" class="px-1 py-1 text-fg-muted">
+			<p data-testid="event-filter-empty" class="px-1 py-1 text-ink-muted">
 				No {filter} events in the {events.length} this page holds.
 			</p>
 		{:else}
@@ -159,7 +159,7 @@
 					type="button"
 					data-testid="event-show-earlier"
 					onclick={() => (windowSize += EVENT_WINDOW_STEP)}
-					class="mb-1 px-1 text-xs font-medium text-brand-700 hover:underline"
+					class="mb-1 px-1 text-xs font-medium text-blue hover:underline"
 				>
 					Show earlier ({Math.min(EVENT_WINDOW_STEP, drawn.earlier)} of {drawn.earlier} more)
 				</button>
@@ -169,19 +169,19 @@
 					data-testid="event-entry"
 					data-kind={eventTypeLabel(event.type)}
 					data-failure={isFailureEvent(event)}
-					class="grid grid-cols-[3.5rem_5.5rem_9.5rem_8rem_minmax(0,1fr)] items-baseline gap-2 rounded px-1 py-0.5 {isFailureEvent(
+					class="grid grid-cols-[3.5rem_5.5rem_9.5rem_8rem_minmax(0,1fr)] items-baseline gap-2 rounded-sm px-1 py-0.5 {isFailureEvent(
 						event
 					)
 						? 'bg-failed-bg'
 						: ''}"
 				>
-					<span class="text-right text-fg-muted tabular-nums">#{event.sequence.toString()}</span>
-					<span class="text-fg-muted tabular-nums">{fmtTime(event.timestamp)}</span>
-					<span class="justify-self-start rounded-full border px-2 py-0.5 {chipClasses(event)}">
+					<span class="text-right text-ink-muted tabular-nums">#{event.sequence.toString()}</span>
+					<span class="text-ink-muted tabular-nums">{fmtTime(event.timestamp)}</span>
+					<span class="stamp justify-self-start {chipClasses(event)}">
 						{eventTypeLabel(event.type)}
 					</span>
-					<span class="truncate text-fg-muted">{event.taskId ? `[${event.taskId}]` : ''}</span>
-					<span class="break-all text-fg-secondary">{event.message}</span>
+					<span class="truncate text-ink-muted">{event.taskId ? `[${event.taskId}]` : ''}</span>
+					<span class="break-all text-ink-secondary">{event.message}</span>
 				</div>
 			{/each}
 		{/if}

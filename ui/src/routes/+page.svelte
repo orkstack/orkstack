@@ -8,7 +8,8 @@
 	import FlakeIndex from '$lib/components/FlakeIndex.svelte';
 	import HoldBanner from '$lib/components/HoldBanner.svelte';
 	import Popover from '$lib/components/Popover.svelte';
-	import StatCard from '$lib/components/StatCard.svelte';
+	import CountCell from '$lib/components/CountCell.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import UsageCard from '$lib/components/UsageCard.svelte';
 	import { listHref, runWindowFilters, sinceInputValue } from '$lib/browsing';
@@ -27,6 +28,8 @@
 	import { fmtTimestamp } from '$lib/status';
 	import { shellQuote } from '$lib/runDetail';
 	import { afterNavigation } from '$lib/settle';
+	import { setTitleBlock } from '$lib/sheet.svelte';
+	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -82,9 +85,10 @@
 		return base;
 	});
 
+	const rateExplain = 'Runs that succeeded ÷ runs that finished in this window; a canceled run counts as finished.';
 	const rateNote = $derived(
 		stats?.successRateDefined
-			? 'succeeded ÷ finished (canceled counts as finished)'
+			? 'succeeded ÷ all finished'
 			: 'no run finished in this window'
 	);
 
@@ -140,6 +144,12 @@
 	const customLabel = $derived(data.window === 'custom' && data.sinceParam ? `Since ${fmtInstantMs(Date.parse(data.sinceParam))}` : 'Custom');
 	const customValid = $derived(!Number.isNaN(Date.parse(customSince)));
 	function applyCustom(event: SubmitEvent) { event.preventDefault(); if (!customValid) return; customOpen = false; void goto(windowHref('custom', new Date(customSince).toISOString())); }
+	const windowWord = $derived(data.window === 'custom' ? customLabel : `last ${data.window}`);
+	setTitleBlock(() => [
+		{ label: 'PAGE', value: 'Dashboard' },
+		{ label: 'NAMESPACE', value: answeredFor },
+		{ label: 'WINDOW', value: windowWord }
+	]);
 	const statsCli = $derived(`orkctl --namespace ${shellQuote(namespaceLabel(data.namespace))} stats --since ${shellQuote(data.window === 'custom' && data.sinceParam ? data.sinceParam : data.window)}`);
 </script>
 
@@ -149,87 +159,78 @@
 	<HoldBanner namespace={shown} hold={data.namespaceHold} testid="dashboard-hold-banner" />
 {/if}
 
-<div class="mb-6 flex flex-wrap items-baseline gap-3">
-	<h1 class="text-xl font-semibold tracking-tight text-fg" data-testid="dashboard-heading">
-		Dashboard
-	</h1>
-	<p class="text-sm text-fg-muted" data-testid="dashboard-namespace">
-		namespace <span class="font-mono text-fg-secondary">{answeredFor}</span>
+{#snippet facts()}
+	<p class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+		<span data-testid="dashboard-namespace">namespace <span class="font-mono text-ink">{answeredFor}</span></span>
+		{#if stats}
+			<span class="figure text-ink-secondary" data-testid="dashboard-window">
+				{fmtInstant(stats.windowSince)} → {fmtInstant(stats.windowUntil)}
+			</span>
+			<span class="text-xs text-ink-muted" data-testid="dashboard-computed-at">measured {fmtAge(stats.computedAt, now)}</span>
+		{/if}
 	</p>
-	{#if stats}
-		<p class="text-sm text-fg-muted" data-testid="dashboard-window">
-			{fmtInstant(stats.windowSince)} → {fmtInstant(stats.windowUntil)}
-		</p>
-		<p class="ml-auto text-xs text-fg-muted" data-testid="dashboard-computed-at">
-			measured {fmtAge(stats.computedAt, now)}
-		</p>
-	{/if}
-</div>
+{/snippet}
 
-<section class="mb-6 flex flex-wrap items-end gap-3" data-testid="dashboard-window-controls">
-	<span class="text-sm font-medium text-fg">Window</span>
-	<!-- One control, FOUR mutually exclusive choices: a connected group says
-		that plainly, where separate bordered links read as independent buttons
-		any number of which could be on. The active member is marked with
-		`aria-current="page"`, and `current:` — app.css's `&[aria-current='page']`
-		variant — gives it the same brand-50/brand-700 treatment the nav already
-		uses for "you are here".
+{#snippet windowControls()}
+	<section class="flex flex-wrap items-center gap-2" data-testid="dashboard-window-controls" aria-label="Window">
+		<span class="caps text-ink-muted">Window</span>
+		<!-- One control, FOUR mutually exclusive choices: a connected group says
+			that plainly, where separate bordered links read as independent buttons
+			any number of which could be on. The active member is marked with
+			`aria-current="page"`, and `current:` — app.css's `&[aria-current='page']`
+			variant — draws it the way the top bar draws "you are here".
 
-		The fourth member is a <button> and not an <a> because it has no address
-		to offer until a range has been typed: it opens the range picker and the
-		picker navigates. `aria-current` is valid on a button and the `current:`
-		variant keys off the attribute rather than the element, so the custom
-		window paints as current exactly like the presets — which is the point,
-		since a window in force with nothing marked was a control that hid its
-		own state. The group no longer clips its overflow: the popover hangs out
-		of it. -->
-	<div role="group" aria-label="Stats window" class="inline-flex h-9 rounded-md border border-border bg-surface shadow-xs">
-		{#each ['15m', '6h', '24h'] as preset (preset)}
-			<a
-				data-testid="dashboard-window-{preset}"
-				aria-current={data.window === preset ? 'page' : undefined}
-				href={windowHref(preset)}
-				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors duration-150 first:rounded-l-md hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
-			>{preset}</a>
-		{/each}
-		<Popover open={customOpen} onOpenChange={(open) => (customOpen = open)} align="end" testid="dashboard-window-custom-popover">
-			{#snippet trigger()}
-				<button
-					type="button"
-					data-testid="dashboard-window-custom"
-					aria-current={data.window === 'custom' ? 'page' : undefined}
-					aria-expanded={customOpen}
-					aria-haspopup="dialog"
-					onclick={() => (customOpen = !customOpen)}
-					class="inline-flex h-full items-center rounded-r-md px-3 text-sm font-medium text-fg-muted transition-colors duration-150 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
-				>{customLabel}</button>
-			{/snippet}
-			{#snippet content()}
-				<!-- No "until": GetStats takes a `since` and answers with the
-					`until` it used, which the header line states. An end this
-					request cannot carry would be a control that does nothing. -->
-				<form class="flex w-64 flex-col gap-2 text-sm" onsubmit={applyCustom}>
-					<label class="font-medium text-fg" for="dashboard-window-custom-since">Show runs created since</label>
-					<input
-						id="dashboard-window-custom-since"
-						data-testid="dashboard-window-custom-since"
-						type="datetime-local"
-						bind:value={customSince}
-						max={sinceInputValue(new Date(now).toISOString())}
-						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-					/>
+			The fourth member is a <button> and not an <a> because it has no address
+			to offer until a range has been typed: it opens the range picker and the
+			picker navigates. `aria-current` is valid on a button and the `current:`
+			variant keys off the attribute rather than the element, so the custom
+			window paints as current exactly like the presets — a window in force
+			with nothing marked would be a control that hid its own state. -->
+		<div role="group" aria-label="Stats window" class="inline-flex h-8 rounded-sm border border-rule-strong bg-paper">
+			{#each ['15m', '6h', '24h'] as preset (preset)}
+				<a
+					data-testid="dashboard-window-{preset}"
+					aria-current={data.window === preset ? 'page' : undefined}
+					href={windowHref(preset)}
+					class="figure inline-flex items-center border-r border-rule-strong px-3 text-sm text-ink-secondary transition-colors hover:bg-hover hover:text-ink current:bg-blue-tint current:font-semibold current:text-blue-strong"
+				>{preset}</a>
+			{/each}
+			<Popover open={customOpen} onOpenChange={(open) => (customOpen = open)} align="end" testid="dashboard-window-custom-popover">
+				{#snippet trigger()}
 					<button
-						type="submit"
-						data-testid="dashboard-window-custom-apply"
-						disabled={!customValid}
-						class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
-					>Apply</button>
-				</form>
-			{/snippet}
-		</Popover>
-	</div>
-	<div class="ml-auto"><CliEquivalent command={statsCli} testid="dashboard-cli" /></div>
-</section>
+						type="button"
+						data-testid="dashboard-window-custom"
+						aria-current={data.window === 'custom' ? 'page' : undefined}
+						aria-expanded={customOpen}
+						aria-haspopup="dialog"
+						onclick={() => (customOpen = !customOpen)}
+						class="inline-flex h-full items-center px-3 text-sm text-ink-secondary transition-colors hover:bg-hover hover:text-ink current:bg-blue-tint current:font-semibold current:text-blue-strong"
+					>{customLabel}</button>
+				{/snippet}
+				{#snippet content()}
+					<!-- No "until": GetStats takes a `since` and answers with the
+						`until` it used, which the header line states. An end this
+						request cannot carry would be a control that does nothing. -->
+					<form class="flex w-64 flex-col gap-2 text-sm" onsubmit={applyCustom}>
+						<label class="font-medium text-ink" for="dashboard-window-custom-since">Show runs created since</label>
+						<input
+							id="dashboard-window-custom-since"
+							data-testid="dashboard-window-custom-since"
+							type="datetime-local"
+							bind:value={customSince}
+							max={sinceInputValue(new Date(now).toISOString())}
+							class="field h-9 w-full px-3 text-sm"
+						/>
+						<button type="submit" data-testid="dashboard-window-custom-apply" disabled={!customValid} class="btn btn-primary">Apply</button>
+					</form>
+				{/snippet}
+			</Popover>
+		</div>
+		<CliEquivalent command={statsCli} testid="dashboard-cli" />
+	</section>
+{/snippet}
+
+<SheetHeader title="Dashboard" testid="dashboard-heading" meta={facts} actions={windowControls} />
 
 {#if data.error}
 	<ErrorPanel
@@ -241,169 +242,152 @@
 		onretry={retry}
 	/>
 {:else if stats}
-	<section class="mb-8">
-		<div class="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-7">
-			<StatCard
-				label="Running"
-				value={fmtCount(counts['running'])}
-				testid="stat-running"
-				tone="busy"
-			/>
-			<StatCard
-				label="Succeeded"
-				value={fmtCount(counts['succeeded'])}
-				testid="stat-succeeded"
-				tone="good"
-			/>
-			<StatCard label="Failed" value={fmtCount(counts['failed'])} testid="stat-failed" tone="bad" />
-			<StatCard label="Canceled" value={fmtCount(counts['canceled'])} testid="stat-canceled" />
-			<StatCard
-				label="Success rate"
-				value={successRate}
-				note={rateNote}
-				testid="stat-success-rate"
-				tone="good"
-			/>
-			<StatCard label="p50 duration" value={p50} note={coverageNote} testid="stat-p50" />
-			<StatCard label="p95 duration" value={p95} note={coverageNote} testid="stat-p95" />
-		</div>
+	<!-- The count band: the summary line of the registers below it, never a
+		row of hero numbers. Figures are ink at the title block's value size;
+		a status count carries its drawn mark, not a coloured number. -->
+	<section
+		aria-label="Run counts"
+		data-testid="dashboard-counts"
+		class="mb-8 grid grid-cols-12 border-y border-rule lg:grid-cols-7"
+	>
+		<CountCell label="Running" value={fmtCount(counts['running'])} testid="stat-running" status={Status.RUNNING} class="col-span-3 lg:col-span-1" />
+		<CountCell label="Succeeded" value={fmtCount(counts['succeeded'])} testid="stat-succeeded" status={Status.SUCCEEDED} class="col-span-3 lg:col-span-1" />
+		<CountCell label="Failed" value={fmtCount(counts['failed'])} testid="stat-failed" status={Status.FAILED} class="col-span-3 lg:col-span-1" />
+		<CountCell label="Canceled" value={fmtCount(counts['canceled'])} testid="stat-canceled" status={Status.CANCELED} class="col-span-3 lg:col-span-1" />
+		<CountCell label="Success rate" value={successRate} note={rateNote} testid="stat-success-rate" explain={rateExplain} class="col-span-4 lg:col-span-1 max-lg:border-t max-lg:border-l-0 max-lg:pl-0 max-lg:sm:pl-0" />
+		<CountCell label="p50 duration" value={p50} note={coverageNote} testid="stat-p50" class="col-span-4 lg:col-span-1 max-lg:border-t" />
+		<CountCell label="p95 duration" value={p95} note={coverageNote} testid="stat-p95" class="col-span-4 lg:col-span-1 max-lg:border-t" />
 	</section>
 
-	<div class="grid gap-6 lg:grid-cols-2">
-		<section>
-			<h2 class="mb-3 text-sm font-semibold text-fg">Pool health</h2>
-			<p class="mb-3 text-sm text-fg-muted">
-				Where a task of this namespace can run, and how many Orkers are serving each pool right
-				now.
-			</p>
-			{#if pools.length === 0}
-				<p
-					class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
-					data-testid="pools-empty"
-				>
-					No pool could be read for {shown}.
-				</p>
-			{:else}
-				<div class="space-y-2" data-testid="pool-list">
-					{#each pools as pool (pool.name)}
-						<div
-							class="rounded-lg border border-border bg-surface px-4 py-3 shadow-xs"
-							data-testid="pool-{pool.name}"
-						>
-							<div class="flex items-center justify-between gap-3">
-								<div class="font-mono text-sm text-fg">
-									{pool.name}
-									{#if pool.isDefault}<span
-											class="ml-2 rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-xs text-fg-secondary"
-											data-testid="pool-default-{pool.name}">default</span
-										>{/if}
-								</div>
-								<span
-									data-testid="pool-orkers-{pool.name}"
-									class="rounded-full border px-2.5 py-0.5 text-xs font-medium {pool.liveOrkerCount >
-									0
-										? 'border-succeeded-border bg-succeeded-bg text-succeeded-fg'
-										: 'border-warning-200 bg-warning-50 text-warning-700'}"
-								>
-									{pool.liveOrkerCount}
-									{pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}
-								</span>
-							</div>
-							<!-- Driven by the live Orker COUNT: an activity is an image,
-								so a pool carries no inventory of what it can run. -->
-							<div class="mt-1 text-xs text-fg-muted" data-testid="pool-serving-{pool.name}">
-								{#if pool.liveOrkerCount > 0}
-									serving now
-								{:else}
-									no Orker is serving this pool, so a task sent here would wait
-								{/if}
-							</div>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</section>
-
-		<section>
-			<h2 class="mb-3 text-sm font-semibold text-fg">Recent failures</h2>
-			<p class="mb-3 text-sm text-fg-muted">
-				Orkflows whose runs failed in this window, worst first.
-			</p>
-			{#if failures.length === 0}
-				<p
-					class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
-					data-testid="failures-empty"
-				>
-					No run failed in this window.
-				</p>
-			{:else}
-				<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
-					<table class="w-full min-w-[420px] border-collapse text-sm" data-testid="failure-table">
-						<thead class="bg-surface-sunken">
-							<tr>
-								<th class="h-10 px-4 pl-5 text-left text-xs font-medium text-fg-muted">Orkflow</th>
-								<th class="h-10 px-4 text-right text-xs font-medium text-fg-muted">Failed</th>
-								<th class="h-10 px-4 pr-5 text-right text-xs font-medium text-fg-muted">Finished</th
-								>
+	<section class="region mb-10 pt-3" aria-labelledby="dashboard-running-heading">
+		<h2 id="dashboard-running-heading" class="mb-3 text-md font-semibold text-ink">Running now</h2>
+		{#if running.length === 0}
+			<p class="text-sm text-ink-muted" data-testid="running-empty">Nothing is running in {shown}.</p>
+		{:else}
+			<div class="overflow-x-auto">
+				<table class="register min-w-[560px]" data-testid="running-list">
+					<thead>
+						<tr>
+							<th scope="col">Run</th>
+							<th scope="col">Orkflow</th>
+							<th scope="col">Started</th>
+							<th scope="col">Status</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each running as run (run.id)}
+							<tr class="transition-colors hover:bg-hover" data-testid="running-{run.id}">
+								<td><a class="link font-mono text-sm" href={withNamespace(`/runs/${run.id}`, data.namespace)}>{run.id}</a></td>
+								<td class="text-ink-secondary">{run.orkflowName}{#if run.orkflowVersion}<span class="font-mono">@{run.orkflowVersion}</span>{/if}</td>
+								<td class="figure text-xs text-ink-secondary">{fmtTimestamp(run.startedAt ?? run.createdAt)}</td>
+								<td><StatusPill status={run.status} testid="running-status-{run.id}" /></td>
 							</tr>
-						</thead>
-						<tbody>
-							{#each failures as failure (failure.orkflowName)}
-								<tr
-									class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
-									data-testid="failure-{failure.orkflowName}"
-								>
-									<td class="h-11 px-4 pl-5 align-middle">
-										<a
-											class="font-medium text-fg hover:text-brand-700"
-											href={listHref(
-												'/runs',
-												{ ns: namespaceLabel(data.namespace) },
-												{ filter: runWindowFilters(failure.orkflowName, '', '', '') }
-											)}>{failure.orkflowName}</a
-										>
-									</td>
-									<td class="h-11 px-4 text-right align-middle text-failed-fg tabular-nums"
-										>{failure.failed.toString()}</td
-									>
-									<td class="h-11 px-4 pr-5 text-right align-middle text-fg-muted tabular-nums"
-										>{failure.total.toString()}</td
-									>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-				<!-- The same failed runs, grouped by what failed and why. Fetched
-					only when opened; absent when nothing failed, because there is
-					nothing to fingerprint. -->
-				<FailureFingerprints
-					namespace={data.namespace}
-					window={data.window}
-					sinceParam={data.sinceParam}
-					computedAt={stats.computedAt}
-				/>
-			{/if}
-		</section>
-	</div>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
 
-	<!-- What the namespace RESERVED — and, with a budget, against it. Its
-		own request on its own timer: the card asks the budget's period when
-		there is one, which is a different question from this page's window. -->
-	<div class="mt-8">
-		<UsageCard
-			namespace={data.namespace}
-			budget={data.namespaceBudget}
-			window={data.window}
-			sinceParam={data.sinceParam}
-		/>
-	</div>
+	<section class="region mb-10 pt-3" aria-labelledby="dashboard-failures-heading">
+		<h2 id="dashboard-failures-heading" class="text-md font-semibold text-ink">Recent failures</h2>
+		<p class="mt-1 mb-3 text-sm text-ink-muted">Orkflows whose runs failed in this window, worst first.</p>
+		{#if failures.length === 0}
+			<p class="text-sm text-ink-muted" data-testid="failures-empty">No run failed in this window.</p>
+		{:else}
+			<div class="overflow-x-auto">
+				<table class="register min-w-[420px]" data-testid="failure-table">
+					<thead>
+						<tr>
+							<th scope="col">Orkflow</th>
+							<th scope="col" class="text-right">Failed</th>
+							<th scope="col" class="text-right">Finished</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each failures as failure (failure.orkflowName)}
+							<tr class="transition-colors hover:bg-hover" data-testid="failure-{failure.orkflowName}">
+								<td>
+									<a
+										class="link font-semibold"
+										href={listHref(
+											'/runs',
+											{ ns: namespaceLabel(data.namespace) },
+											{ filter: runWindowFilters(failure.orkflowName, '', '', '') }
+										)}>{failure.orkflowName}</a
+									>
+								</td>
+								<td class="figure text-right font-semibold text-red">{failure.failed.toString()}</td>
+								<td class="figure text-right text-ink-secondary">{failure.total.toString()}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+			<!-- The same failed runs, grouped by what failed and why. Fetched
+				only when opened; absent when nothing failed, because there is
+				nothing to fingerprint. -->
+			<FailureFingerprints
+				namespace={data.namespace}
+				window={data.window}
+				sinceParam={data.sinceParam}
+				computedAt={stats.computedAt}
+			/>
+		{/if}
+	</section>
+
+	<section class="region mb-10 pt-3" aria-labelledby="dashboard-pools-heading">
+		<h2 id="dashboard-pools-heading" class="text-md font-semibold text-ink">Pool health</h2>
+		<p class="mt-1 mb-3 text-sm text-ink-muted">
+			Where a task of this namespace can run, and how many Orkers are serving each pool right now.
+		</p>
+		{#if pools.length === 0}
+			<p class="text-sm text-ink-muted" data-testid="pools-empty">No pool could be read for {shown}.</p>
+		{:else}
+			<div class="overflow-x-auto">
+				<table class="register min-w-[480px]" data-testid="pool-list">
+					<thead>
+						<tr>
+							<th scope="col">Pool</th>
+							<th scope="col">Orkers</th>
+							<th scope="col">Serving</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each pools as pool (pool.name)}
+							<tr data-testid="pool-{pool.name}" class={pool.liveOrkerCount > 0 ? '' : 'bg-red-tint'}>
+								<td class="font-mono text-ink">
+									{pool.name}
+									{#if pool.isDefault}<span class="stamp ml-2 border-rule-strong text-ink-secondary" data-testid="pool-default-{pool.name}">default</span>{/if}
+								</td>
+								<td>
+									<span data-testid="pool-orkers-{pool.name}" class="figure {pool.liveOrkerCount > 0 ? 'text-ink' : 'font-semibold text-red-strong'}"
+										>{pool.liveOrkerCount}
+										{pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}</span
+									>
+								</td>
+								<!-- Driven by the live Orker COUNT: an activity is an image,
+									so a pool carries no inventory of what it can run. -->
+								<td class="text-sm {pool.liveOrkerCount > 0 ? 'text-ink-secondary' : 'severity-warning'}" data-testid="pool-serving-{pool.name}">
+									{#if pool.liveOrkerCount > 0}
+										serving now
+									{:else}
+										no Orker is serving this pool, so a task sent here would wait
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
 
 	<!-- The retries the success rate hides: a SUCCEEDED run that needed a
-		second attempt counts as a success in every card above. Fetched only
+		second attempt counts as a success in every count above. Fetched only
 		when opened, and rendered whenever the page has numbers — a namespace
 		that dispatched nothing says so inside it. -->
-	<section class="mt-8">
+	<section class="mb-10">
 		<FlakeIndex
 			namespace={data.namespace}
 			window={data.window}
@@ -412,34 +396,14 @@
 		/>
 	</section>
 
-	<section class="mt-8">
-		<h2 class="mb-3 text-sm font-semibold text-fg">Running now</h2>
-		{#if running.length === 0}
-			<p
-				class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
-				data-testid="running-empty"
-			>
-				Nothing is running in {shown}.
-			</p>
-		{:else}
-			<div class="space-y-2" data-testid="running-list">
-				{#each running as run (run.id)}
-					<a
-						href={withNamespace(`/runs/${run.id}`, data.namespace)}
-						class="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3 shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
-						data-testid="running-{run.id}"
-					>
-						<div>
-							<div class="font-mono text-sm text-fg">{run.id}</div>
-							<div class="text-xs text-fg-muted">
-								{run.orkflowName}{#if run.orkflowVersion}@{run.orkflowVersion}{/if} · started
-								{fmtTimestamp(run.startedAt ?? run.createdAt)}
-							</div>
-						</div>
-						<StatusPill status={run.status} testid="running-status-{run.id}" />
-					</a>
-				{/each}
-			</div>
-		{/if}
-	</section>
+	<!-- What the namespace RESERVED — and, with a budget, against it. Its
+		own request on its own timer: the register asks the budget's period
+		when there is one, which is a different question from this page's
+		window. -->
+	<UsageCard
+		namespace={data.namespace}
+		budget={data.namespaceBudget}
+		window={data.window}
+		sinceParam={data.sinceParam}
+	/>
 {/if}

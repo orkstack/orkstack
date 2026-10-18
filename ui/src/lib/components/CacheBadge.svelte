@@ -30,14 +30,14 @@
 		data-testid={testid}
 		data-outcome="hit"
 		title="No container ran: this task's result was reused from an identical earlier run."
-		class="inline-flex items-center gap-1 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-brand-700 leading-4"
+		class="stamp border-blue bg-blue-tint text-blue-strong"
 	>
 		{cacheOutcomeLabel(cache?.outcome)}
-		<span class="text-fg-muted">from</span>
+		<span class="font-normal tracking-normal text-ink-secondary normal-case">from</span>
 		<a
 			data-testid="{testid}-source"
 			href={cacheSourceHref(namespace, cache?.source)}
-			class="font-mono hover:underline">{cache?.source?.runId}</a
+			class="font-mono tracking-normal normal-case underline-offset-2 hover:underline">{cache?.source?.runId}</a
 		>
 	</span>
 {:else if outcome === 'miss'}
@@ -45,7 +45,7 @@
 		data-testid={testid}
 		data-outcome="miss"
 		title={missReasonSentence(cache?.missReason ?? '', cache?.missDetail ?? '')}
-		class="inline-flex items-center rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-fg-muted leading-4"
+		class="stamp border-rule-strong bg-paper text-ink-secondary"
 		>{cacheOutcomeLabel(cache?.outcome)}</span
 	>
 {:else if outcome === 'bypassed'}
@@ -53,7 +53,7 @@
 		data-testid={testid}
 		data-outcome="bypassed"
 		title="The run was submitted with Ignore cached results (--no-cache): the container ran and its memo was refreshed."
-		class="inline-flex items-center rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-fg-muted leading-4"
+		class="stamp border-rule-strong bg-paper text-ink-secondary"
 		>{cacheOutcomeLabel(cache?.outcome)}</span
 	>
 {:else if outcome === 'unreported'}
@@ -61,7 +61,7 @@
 		data-testid={testid}
 		data-outcome="unreported"
 		title="the Orker that ran this task predates caching"
-		class="inline-flex items-center rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-fg-muted leading-4"
+		class="stamp border-rule-strong bg-paper text-ink-secondary"
 		>Cache not reported</span
 	>
 {/if}

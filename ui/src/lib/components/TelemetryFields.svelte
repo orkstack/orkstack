@@ -59,7 +59,7 @@
 </script>
 
 <label class="flex flex-col gap-1.5 text-sm">
-	<span class="font-medium text-fg">Telemetry sink (blank = deployment default)</span>
+	<span class="field-label mb-0">Telemetry sink <span class="field-hint">(blank = deployment default)</span></span>
 	{#if sinksError}
 		<!-- ListTelemetrySinks failed; fall back to a plain text field
 		     rather than blocking the rest of the form on it. -->
@@ -67,7 +67,7 @@
 			data-testid="{idPrefix}-telemetry-sink{testIdSuffix}"
 			bind:value={sink}
 			placeholder="default"
-			class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			class="field h-9 px-3 font-mono"
 		/>
 	{:else}
 		<Select
@@ -79,7 +79,7 @@
 	{/if}
 </label>
 <label class="flex flex-col gap-1.5 text-sm">
-	<span class="font-medium text-fg">Task logs</span>
+	<span class="field-label mb-0">Task logs</span>
 	<Select
 		testid="{idPrefix}-task-logs{testIdSuffix}"
 		value={taskLogs}
@@ -88,24 +88,24 @@
 	/>
 </label>
 <label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
-	<span class="font-medium text-fg">Telemetry attributes (one key=value per line)</span>
+	<span class="field-label mb-0">Telemetry attributes <span class="field-hint">(one key=value per line)</span></span>
 	<textarea
 		data-testid="{idPrefix}-telemetry-attributes{testIdSuffix}"
 		bind:value={attributesText}
 		rows="3"
 		placeholder="team=payments"
-		class="rounded-md border border-border bg-surface px-3 py-2 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+		class="field px-3 py-2 font-mono text-xs"
 	></textarea>
 	{#if attributesHint}
-		<span class="text-xs text-fg-muted">{attributesHint}</span>
+		<span class="text-xs text-ink-muted">{attributesHint}</span>
 	{/if}
 	{#if attributesError}
 		{#if attributesErrorTestId}
-			<span class="text-xs text-danger-700" data-testid={attributesErrorTestId}
+			<span class="severity-error text-xs" data-testid={attributesErrorTestId}
 				>{attributesError}</span
 			>
 		{:else}
-			<span class="text-xs text-danger-700">{attributesError}</span>
+			<span class="severity-error text-xs">{attributesError}</span>
 		{/if}
 	{/if}
 </label>

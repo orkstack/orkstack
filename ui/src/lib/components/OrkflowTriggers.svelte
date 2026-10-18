@@ -231,23 +231,23 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 	pins its own at creation, so one blanket claim here would be false for every
 	row that chose differently. The pin is stated per row instead.
 -->
-<p class="mb-2 text-sm text-fg-secondary" data-testid="triggers-scope">
+<p class="mb-2 max-w-prose text-sm text-ink-secondary" data-testid="triggers-scope">
 	A trigger lets an outside caller start one run of
-	<span class="font-medium text-fg">{name}</span>
-	in namespace <span class="font-medium text-fg">{namespaceLabel(namespace)}</span> over plain
+	<span class="font-medium text-ink">{name}</span>
+	in namespace <span class="font-medium text-ink">{namespaceLabel(namespace)}</span> over plain
 	HTTP, by posting to
 	<code class="font-mono text-xs">/v1/triggers/&lt;id&gt;</code> with its bearer token. The orkflow,
 	the namespace and the version come from the trigger itself and never from the request, so a token
 	cannot be redirected at anything else. Each trigger pins its own version when it is created — or
 	follows the current pointer — and says which on its row below.
 </p>
-<p class="mb-5 text-xs text-fg-muted" data-testid="triggers-origin-note">
+<p class="mb-5 max-w-prose text-xs text-ink-muted" data-testid="triggers-origin-note">
 	The commands below address <span class="font-mono">{invokeOrigin}</span>, the address this page
 	was opened at. If the engine's API is published somewhere else, invoke that address instead.
 </p>
 
-<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs">
-	<h2 class="text-sm font-semibold text-fg">Create trigger</h2>
+<section class="region mb-8 pt-3">
+	<h2 class="text-md font-semibold text-ink">Create trigger</h2>
 	<form
 		class="mt-3 space-y-4"
 		data-testid="trigger-create-form"
@@ -257,7 +257,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 		}}
 	>
 		<div class="flex flex-col gap-1.5">
-			<label for="trigger-create-version" class="text-sm font-medium text-fg">Version</label>
+			<label for="trigger-create-version" class="text-sm font-medium text-ink">Version</label>
 			<Select
 				id="trigger-create-version"
 				testid="trigger-create-version"
@@ -266,7 +266,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 				disabled={creating}
 				onchange={(next) => (selectedVersion = next)}
 			/>
-			<p class="text-xs text-fg-muted" data-testid="trigger-create-version-mode">
+			<p class="text-xs text-ink-muted" data-testid="trigger-create-version-mode">
 				{chosenVersion
 					? `Pinned to ${chosenVersion}. It keeps starting that version after the current pointer moves.`
 					: `Unpinned. Each invoke starts whichever version is current${currentLabel ? ` (${currentLabel} now)` : ''}.`}
@@ -274,8 +274,8 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 		</div>
 
 		<div class="flex flex-col gap-1.5">
-			<label for="trigger-create-name" class="text-sm font-medium text-fg">
-				Name <span class="font-normal text-fg-muted">(optional — how an automation document refers to it)</span>
+			<label for="trigger-create-name" class="text-sm font-medium text-ink">
+				Name <span class="font-normal text-ink-muted">(optional — how an automation document refers to it)</span>
 			</label>
 			<input
 				id="trigger-create-name"
@@ -285,20 +285,20 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 				maxlength={200}
 				title="lowercase letters, digits and hyphens, starting with a letter"
 				placeholder="github-deploy"
-				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				class="field h-9 w-full px-3 text-sm"
 			/>
 		</div>
 
 		<div class="flex flex-col gap-1.5">
-			<label for="trigger-create-description" class="text-sm font-medium text-fg">
-				Description <span class="font-normal text-fg-muted">(optional)</span>
+			<label for="trigger-create-description" class="text-sm font-medium text-ink">
+				Description <span class="font-normal text-ink-muted">(optional)</span>
 			</label>
 			<input
 				id="trigger-create-description"
 				data-testid="trigger-create-description"
 				bind:value={description}
 				placeholder="what calls this — nightly kickoff, deploy hook, …"
-				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				class="field h-9 w-full px-3 text-sm"
 			/>
 		</div>
 
@@ -310,7 +310,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 			type="submit"
 			data-testid="trigger-create-submit"
 			disabled={creating}
-			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+			class="btn border-ink"
 		>
 			{creating ? 'Creating…' : 'Create trigger'}
 		</button>
@@ -319,10 +319,10 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 	{#if shownSecret}
 		<div
 			data-testid="trigger-secret-once"
-			class="mt-4 rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800"
+			class="note mt-4 border-ink p-3 text-sm"
 		>
-			<p class="font-medium">Copy this bearer token now. It will not be shown again.</p>
-			<p class="mt-1 text-xs">
+			<p class="font-semibold">Copy this bearer token now. It will not be shown again.</p>
+			<p class="mt-1 text-xs text-ink-secondary">
 				Only a salted digest of it is stored, so no listing and no support bundle can disclose it.
 				Rotating a token is delete then create.
 			</p>
@@ -333,7 +333,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 				<div class="mt-3 flex items-center justify-between gap-3">
 					<p class="text-xs">
 						<span data-testid="trigger-secret-id" class="font-mono">{shownTrigger.id}</span>
-						<span class="block text-warning-800/80">{scopeOf(shownTrigger)}</span>
+						<span class="block text-ink-secondary">{scopeOf(shownTrigger)}</span>
 					</p>
 					<CliEquivalent
 						command={curlWithToken(shownTrigger.id, shownSecret)}
@@ -356,7 +356,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 		onretry={reload}
 	/>
 {:else if triggers.length === 0}
-	<p data-testid="triggers-empty" class="text-sm text-fg-muted">
+	<p data-testid="triggers-empty" class="text-sm text-ink-muted">
 		No triggers start {name} in namespace {namespaceLabel(namespace)}. Create one above to give an
 		external caller a way in.
 	</p>
@@ -366,26 +366,26 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 		is absolutely positioned, and the horizontally scrollable table wrapper
 		this page's other lists use would clip it.
 	-->
-	<ul class="space-y-3" data-testid="trigger-list">
+	<ul class="border-t-2 border-ink" data-testid="trigger-list">
 		{#each triggers as trigger (trigger.id)}
 			<li
 				data-testid="trigger-{trigger.id}"
-				class="rounded-lg border border-border bg-surface p-4 shadow-xs"
+				class="border-b border-rule py-3"
 			>
 				<div class="flex items-start justify-between gap-4">
 					<div class="min-w-0">
-						<p class="font-mono text-sm font-medium break-all text-fg">{trigger.id}</p>
+						<p class="font-mono text-sm font-medium break-all text-ink">{trigger.id}</p>
 						<p class="mt-1 text-sm" data-testid="trigger-name-{trigger.id}">
-							{#if trigger.name}<span class="font-mono font-medium text-fg">{trigger.name}</span
-								>{:else}<span class="text-fg-muted">unnamed</span>{/if}
+							{#if trigger.name}<span class="font-mono font-medium text-ink">{trigger.name}</span
+								>{:else}<span class="text-ink-muted">unnamed</span>{/if}
 						</p>
-						<p class="mt-1 text-sm text-fg-secondary" data-testid="trigger-scope-{trigger.id}">
+						<p class="mt-1 text-sm text-ink-secondary" data-testid="trigger-scope-{trigger.id}">
 							{scopeOf(trigger)}
 						</p>
 						{#if trigger.description}
-							<p class="mt-1 text-sm text-fg-secondary">{trigger.description}</p>
+							<p class="mt-1 text-sm text-ink-secondary">{trigger.description}</p>
 						{/if}
-						<p class="mt-1 text-xs text-fg-muted">Created {fmtTimestamp(trigger.createdAt)}</p>
+						<p class="mt-1 text-xs text-ink-muted">Created {fmtTimestamp(trigger.createdAt)}</p>
 					</div>
 					<div class="flex shrink-0 items-center gap-2">
 						<CliEquivalent
@@ -397,7 +397,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 							type="button"
 							data-testid="edit-trigger-{trigger.id}"
 							onclick={() => startEdit(trigger)}
-							class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none"
+							class="btn btn-sm"
 						>
 							Edit
 						</button>
@@ -408,7 +408,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 								deleting = trigger.id;
 								deleteError = '';
 							}}
-							class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50 focus-visible:ring-2 focus-visible:ring-danger-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none"
+							class="btn btn-sm border-red text-red-strong hover:bg-red-tint"
 						>
 							Delete
 						</button>
@@ -437,10 +437,10 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 	>
 		{#snippet body()}
 			<p>
-				A later invoke of <span class="font-mono text-fg">{deleting}</span> returns 404 on every
+				A later invoke of <span class="font-mono text-ink">{deleting}</span> returns 404 on every
 				replica, and its bearer token authenticates nothing afterwards.
 			</p>
-			<p class="mt-2 text-fg-muted">
+			<p class="mt-2 text-ink-muted">
 				Runs it already started are untouched. There is no rotation: a caller that still needs a way
 				in gets a new trigger, with a new id and a new token.
 			</p>
@@ -451,7 +451,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 {#if editing}
 	<Dialog title="Edit trigger {editing.id}" testid="trigger-edit-dialog" onclose={() => (editing = null)} widthClass="max-w-xl">
 		{#snippet body()}
-			<p class="mb-3 text-sm text-fg-secondary">
+			<p class="mb-3 text-sm text-ink-secondary">
 				Editing keeps this trigger's URL and token. Its orkflow cannot change.
 			</p>
 			<form
@@ -462,8 +462,8 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 				}}
 			>
 				<div class="flex flex-col gap-1.5">
-					<label for="trigger-edit-name" class="text-sm font-medium text-fg">
-						Name <span class="font-normal text-fg-muted">(empty makes it unnamed)</span>
+					<label for="trigger-edit-name" class="text-sm font-medium text-ink">
+						Name <span class="font-normal text-ink-muted">(empty makes it unnamed)</span>
 					</label>
 					<input
 						id="trigger-edit-name"
@@ -472,11 +472,11 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 						pattern={SCOPE_SLUG_PATTERN}
 						maxlength={200}
 						title="lowercase letters, digits and hyphens, starting with a letter"
-						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+						class="field h-9 w-full px-3 text-sm"
 					/>
 				</div>
 				<div class="flex flex-col gap-1.5">
-					<label for="trigger-edit-version" class="text-sm font-medium text-fg">Version</label>
+					<label for="trigger-edit-version" class="text-sm font-medium text-ink">Version</label>
 					<Select
 						id="trigger-edit-version"
 						testid="trigger-edit-version"
@@ -487,12 +487,12 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 					/>
 				</div>
 				<div class="flex flex-col gap-1.5">
-					<label for="trigger-edit-description" class="text-sm font-medium text-fg">Description</label>
+					<label for="trigger-edit-description" class="text-sm font-medium text-ink">Description</label>
 					<input
 						id="trigger-edit-description"
 						data-testid="trigger-edit-description"
 						bind:value={editDescription}
-						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+						class="field h-9 w-full px-3 text-sm"
 					/>
 				</div>
 				{#if editError}
@@ -503,7 +503,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 						type="submit"
 						data-testid="trigger-edit-submit"
 						disabled={saving}
-						class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-50"
+						class="btn btn-primary"
 					>
 						{saving ? 'Saving…' : 'Save'}
 					</button>

@@ -2,8 +2,8 @@
 	// The Admin area's own sub-navigation.
 	//
 	// Every route under here carries `?ns=` like any other page — the
-	// namespace switcher stays visible on all of them — but only Pools and
-	// Automation RESPECT it (an automation document describes exactly one
+	// namespace switcher stays visible on all of them — but only Pools, Cache
+	// and Automation RESPECT it (an automation document describes exactly one
 	// namespace, and the page plans, exports and applies in the switcher's). Namespaces, Releases, Activities, Webhooks, Retention (the deployment MAXIMUM;
 	// a namespace's own run retention lives on the Namespaces page), Image
 	// policy (the deployment FLOOR; a namespace's own signer lives on the
@@ -17,6 +17,7 @@
 	// the page is read once and settles it.
 	import { navigating, page } from '$app/state';
 	import { withNamespace } from '$lib/namespace';
+	import { OPERATE_PAGES } from '$lib/navigation';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -37,20 +38,7 @@
 		navigating.to !== null && navigating.to.url.pathname.startsWith('/admin')
 	);
 
-	const tabs = [
-		{ id: 'overview', href: '/admin', label: 'Overview' },
-		{ id: 'namespaces', href: '/admin/namespaces', label: 'Namespaces' },
-		{ id: 'pools', href: '/admin/pools', label: 'Pools' },
-		{ id: 'releases', href: '/admin/releases', label: 'Releases' },
-		{ id: 'activities', href: '/admin/activities', label: 'Activities' },
-		{ id: 'webhooks', href: '/admin/webhooks', label: 'Webhooks' },
-		{ id: 'automation', href: '/admin/automation', label: 'Automation' },
-		{ id: 'retention', href: '/admin/retention', label: 'Retention' },
-		{ id: 'usage', href: '/admin/usage', label: 'Usage' },
-		{ id: 'cache', href: '/admin/cache', label: 'Cache' },
-		{ id: 'image-policy', href: '/admin/image-policy', label: 'Image policy' },
-		{ id: 'audit', href: '/admin/audit', label: 'Audit' }
-	];
+	const tabs = OPERATE_PAGES;
 
 	// "overview" only ever matches the exact `/admin` path: every other tab's
 	// href is a PREFIX of it (`/admin/namespaces` starts with `/admin`), so a
@@ -63,32 +51,47 @@
 			: (tabs.find((t) => t.id !== 'overview' && page.url.pathname.startsWith(t.href))?.id ??
 					'overview')
 	);
+
+	// On a narrow screen the strip scrolls inside its own frame, so the page
+	// you are on may sit past its right edge; bring its tab into the frame
+	// (the strip only — the page itself never scrolls for it).
+	let strip = $state<HTMLElement | undefined>();
+	$effect(() => {
+		const tab = strip?.querySelector<HTMLElement>(`[data-testid="admin-tab-${current}"]`);
+		if (!strip || !tab || strip.scrollWidth <= strip.clientWidth) return;
+		const left = tab.offsetLeft;
+		if (left < strip.scrollLeft || left + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) {
+			strip.scrollLeft = left - (strip.clientWidth - tab.offsetWidth) / 2;
+		}
+	});
 </script>
 
-<svelte:head><title>Admin — OrkStack</title></svelte:head>
-
-<div class="mb-6">
-	<h1 class="text-xl font-semibold tracking-tight text-fg">Admin</h1>
-	<p class="mt-1 text-sm text-fg-muted">
-		Manage namespaces, watch pool health, and read what this deployment is made of.
-	</p>
-</div>
-
-<nav class="mb-6 flex gap-1 border-b border-border" aria-label="Admin views" data-testid="admin-nav">
-	{#each tabs as tab (tab.id)}
-		<a
-			href={link(tab.href)}
-			data-testid="admin-tab-{tab.id}"
-			aria-current={current === tab.id ? 'page' : undefined}
-			class="-mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium text-fg-muted transition-colors duration-150 hover:text-fg current:border-brand-600 current:text-fg"
-		>
-			{tab.label}
-		</a>
-	{/each}
+<!--
+	The Operate pages as the sheet's first row: tracked-caps tabs on a 1.5 px
+	rule. On a narrow screen the strip scrolls inside its own frame, never the page.
+-->
+<nav
+	bind:this={strip}
+	class="relative mb-6 overflow-x-auto border-b-(length:--rule-region) border-ink"
+	aria-label="Admin views"
+	data-testid="admin-nav"
+>
+	<div class="flex w-max gap-1">
+		{#each tabs as tab (tab.id)}
+			<a
+				href={link(tab.href)}
+				data-testid="admin-tab-{tab.id}"
+				aria-current={current === tab.id ? 'page' : undefined}
+				class="caps -mb-px border-b-2 border-transparent px-3 py-2.5 whitespace-nowrap text-ink-muted transition-colors hover:text-ink current:border-blue current:text-ink"
+			>
+				{tab.label}
+			</a>
+		{/each}
+	</div>
 </nav>
 
 {#if navigatingWithinAdmin}
-	<p class="mb-4 text-sm text-fg-muted" data-testid="admin-nav-loading">Loading…</p>
+	<p class="mb-4 text-sm text-ink-muted" data-testid="admin-nav-loading">Loading…</p>
 {/if}
 
 {@render children()}

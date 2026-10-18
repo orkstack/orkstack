@@ -45,7 +45,9 @@
 	import { EventType } from '$lib/gen/orkstack/v1/run_pb';
 	import { ListDeliveriesRequestSchema, type Delivery, type ListDeliveriesResponse, type Webhook } from '$lib/gen/orkstack/v1/webhook_service_pb';
 	import type { FieldFilter } from '$lib/listFilter';
-	import { fmtTimestamp, statusClasses } from '$lib/status';
+	import { fmtTimestamp } from '$lib/status';
+	import { stampClass } from '$lib/statusMarks';
+	import ScopeNote from './ScopeNote.svelte';
 
 	interface Props {
 		coordinates: DeliveryCoordinates;
@@ -124,20 +126,20 @@
 			redelivering = false;
 		}
 	}
-	const outcomeClasses = (ok: boolean) => statusClasses(ok ? Status.SUCCEEDED : Status.FAILED);
+	const outcomeClasses = (ok: boolean) => stampClass(ok ? Status.SUCCEEDED : Status.FAILED);
 </script>
 
-<section id="deliveries" class="mt-8" data-testid="deliveries">
+<section id="deliveries" class="region mt-10 pt-3" data-testid="deliveries">
 	<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-		<h2 class="text-sm font-semibold text-fg">Deliveries</h2>
+		<h2 class="text-md font-semibold text-ink">Deliveries</h2>
 		<CliEquivalent testid="deliveries-cli" command={deliveriesCliCommand(c)} label="orkctl webhook deliveries for this listing" />
 	</div>
-	<p class="mb-4 text-sm text-fg-muted" data-testid="deliveries-scope">
+	<ScopeNote testid="deliveries-scope">
 		{DELIVERIES_CAPTION}
 		{deliveriesNamespaceScope(c.filters)}{#if response},
 			<span class="font-mono text-xs" data-testid="deliveries-window">{resolvedSince} to {resolvedUntil}</span>{/if}.
 		The page's namespace selector does not filter this panel.
-	</p>
+	</ScopeNote>
 
 	<ListFilter
 		request={ListDeliveriesRequestSchema}
@@ -151,103 +153,103 @@
 	{#if error}
 		<ErrorPanel testid="deliveries-error" subject="the delivery records" message={error} busy={retrying} onretry={retry} />
 	{:else if deliveries.length === 0}
-		<p class="text-sm text-fg-muted" data-testid="deliveries-empty">
+		<p class="text-sm text-ink-muted" data-testid="deliveries-empty">
 			{#if c.filters.length > 0 && c.page === 1}No deliveries match these filters.{:else}No deliveries in this window{c.page > 1 ? ' past the previous page' : ''}.{/if}
 		</p>
 		{#if c.page > 1}
 			<Pagination testid="deliveries" noun="delivery record" page={c.page} count={0} {previousHref} {firstHref} />
 		{/if}
 	{:else}
-		<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
-			<table class="w-full min-w-[900px] text-left text-sm" data-testid="deliveries-table">
-				<thead class="bg-surface-sunken text-xs text-fg-muted">
+		<div class="overflow-x-auto border-t-2 border-ink">
+			<table class="register min-w-[900px]" data-testid="deliveries-table">
+				<thead>
 					<tr>
-						<th class="p-3 font-medium">When</th>
-						<th class="p-3 font-medium">Webhook</th>
-						<th class="p-3 font-medium">Event</th>
-						<th class="p-3 font-medium">Run</th>
-						<th class="p-3 font-medium">Task</th>
-						<th class="p-3 font-medium">Outcome</th>
-						<th class="p-3 font-medium">Attempts</th>
-						<th class="p-3 font-medium">Last</th>
+						<th scope="col">When</th>
+						<th scope="col">Webhook</th>
+						<th scope="col">Event</th>
+						<th scope="col">Run</th>
+						<th scope="col">Task</th>
+						<th scope="col">Outcome</th>
+						<th scope="col" class="text-right">Attempts</th>
+						<th scope="col">Last</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each deliveries as d (d.id)}
 						<tr
 							id="delivery-{d.id}"
-							class="cursor-pointer border-t border-border-subtle align-top hover:bg-surface-hover"
+							class="cursor-pointer align-top transition-colors hover:bg-hover {d.delivered ? '' : 'bg-red-tint'}"
 							data-testid="delivery-{d.id}"
 							aria-expanded={expanded.includes(d.id)}
 							onclick={() => toggle(d.id)}
 						>
-							<td class="p-3 text-xs whitespace-nowrap text-fg-secondary" title={instantMs(d.createdAt)}>{fmtTimestamp(d.createdAt)}</td>
-							<td class="p-3 font-mono text-xs">{d.webhookId}</td>
-							<td class="p-3 font-mono text-xs" data-testid="delivery-event-{d.id}">{eventName(d.event)}</td>
-							<td class="p-3 font-mono text-xs">
+							<td class="figure text-xs whitespace-nowrap text-ink-secondary" title={instantMs(d.createdAt)}>{fmtTimestamp(d.createdAt)}</td>
+							<td class="font-mono text-xs">{d.webhookId}</td>
+							<td class="font-mono text-xs" data-testid="delivery-event-{d.id}">{eventName(d.event)}</td>
+							<td class="font-mono text-xs">
 								<a
 									href="/runs/{encodeURIComponent(d.runId)}?ns={encodeURIComponent(d.namespace)}"
-									class="text-brand-700 hover:underline"
+									class="link"
 									onclick={(event) => event.stopPropagation()}>{d.runId}</a
 								>
 							</td>
-							<td class="p-3 font-mono text-xs">{d.taskId || '-'}</td>
-							<td class="p-3">
+							<td class="font-mono text-xs">{d.taskId || '-'}</td>
+							<td>
 								<span
 									data-testid="delivery-outcome-{d.id}"
-									class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 tracking-wide whitespace-nowrap {outcomeClasses(d.delivered)}"
+									class={outcomeClasses(d.delivered)}
 									>{d.delivered ? 'delivered' : 'failed'}</span
 								>
-								{#if d.redeliveryOf}<span class="ml-1 text-[11px] text-fg-muted" data-testid="delivery-is-redelivery-{d.id}">redelivery</span>{/if}
+								{#if d.redeliveryOf}<span class="ml-1 text-2xs text-ink-muted" data-testid="delivery-is-redelivery-{d.id}">redelivery</span>{/if}
 							</td>
-							<td class="p-3 text-xs tabular-nums" data-testid="delivery-attempt-count-{d.id}">{d.attempts.length}</td>
-							<td class="p-3 font-mono text-xs" data-testid="delivery-last-{d.id}">{lastAttemptLabel(d)}</td>
+							<td class="figure text-right text-xs" data-testid="delivery-attempt-count-{d.id}">{d.attempts.length}</td>
+							<td class="font-mono text-xs" data-testid="delivery-last-{d.id}">{lastAttemptLabel(d)}</td>
 						</tr>
 						{#if expanded.includes(d.id)}
-							<tr class="border-t border-border-subtle bg-surface-sunken" data-testid="delivery-detail-{d.id}">
-								<td colspan="8" class="p-4">
+							<tr class="bg-paper-sunken" data-testid="delivery-detail-{d.id}">
+								<td colspan="8" class="px-4 py-3">
 									<dl class="grid gap-x-6 gap-y-1.5 text-xs sm:grid-cols-[auto_1fr]">
-										<dt class="font-medium text-fg-muted">Delivery</dt>
+										<dt class="caps text-ink-muted">Delivery</dt>
 										<dd class="font-mono break-all">{d.id}</dd>
-										<dt class="font-medium text-fg-muted">URL</dt>
+										<dt class="caps text-ink-muted">URL</dt>
 										<dd class="break-all">{d.url}</dd>
-										<dt class="font-medium text-fg-muted">Signature</dt>
+										<dt class="caps text-ink-muted">Signature</dt>
 										<dd class="font-mono break-all" data-testid="delivery-signature-{d.id}">{d.signature || 'unsigned'}</dd>
-										<dt class="font-medium text-fg-muted">Body</dt>
+										<dt class="caps text-ink-muted">Body</dt>
 										<dd data-testid="delivery-body-{d.id}">
 											sha256 <span class="font-mono break-all" data-testid="delivery-sha256-{d.id}">{d.bodySha256}</span>,
 											{d.bodyBytes} bytes — body not stored; the run is readable on its page.
 										</dd>
 										{#if d.taskId}
-											<dt class="font-medium text-fg-muted">Task</dt>
+											<dt class="caps text-ink-muted">Task</dt>
 											<dd class="font-mono">{d.taskId}{d.attempt ? `, attempt ${d.attempt}` : ''}</dd>
 										{/if}
 										{#if d.redeliveryOf}
-											<dt class="font-medium text-fg-muted">Redelivery of</dt>
+											<dt class="caps text-ink-muted">Redelivery of</dt>
 											<dd>
 												<a
 													data-testid="delivery-redelivery-of-{d.id}"
-													class="font-mono text-brand-700 hover:underline"
+													class="link font-mono"
 													href={deliveriesHref(c, { filters: runDeliveriesFilters(d.runId, d.webhookId), cursor: '', page: 1 }, `delivery-${d.redeliveryOf}`)}
 													>{d.redeliveryOf}</a
 												>
 											</dd>
 										{/if}
-										<dt class="font-medium text-fg-muted">Event at / queued / settled</dt>
+										<dt class="caps text-ink-muted">Event at / queued / settled</dt>
 										<dd class="font-mono">{instantMs(d.eventAt)} / {instantMs(d.createdAt)} / {instantMs(d.settledAt)}</dd>
 									</dl>
 									<table class="mt-3 w-full text-left text-xs" data-testid="delivery-attempts-{d.id}">
-										<thead class="text-fg-muted">
-											<tr><th class="py-1 pr-3">#</th><th class="py-1 pr-3">At</th><th class="py-1 pr-3">Status</th><th class="py-1 pr-3">Duration</th><th class="py-1 pr-3">Backoff</th><th class="py-1">Error</th></tr>
+										<thead class="caps text-ink-muted">
+											<tr class="border-b border-ink"><th class="py-1 pr-3 font-semibold">#</th><th class="py-1 pr-3 font-semibold">At</th><th class="py-1 pr-3 font-semibold">Status</th><th class="py-1 pr-3 font-semibold">Duration</th><th class="py-1 pr-3 font-semibold">Backoff</th><th class="py-1 font-semibold">Error</th></tr>
 										</thead>
 										<tbody>
 											{#each d.attempts as a (a.number)}
-												<tr class="border-t border-border-subtle" data-testid="delivery-attempt-{d.id}-{a.number}">
-													<td class="py-1 pr-3 tabular-nums">{a.number}</td>
+												<tr class="border-t border-rule" data-testid="delivery-attempt-{d.id}-{a.number}">
+													<td class="py-1 pr-3 figure">{a.number}</td>
 													<td class="py-1 pr-3 font-mono">{instantMs(a.at)}</td>
 													<td class="py-1 pr-3 font-mono">{a.statusCode || '-'}</td>
-													<td class="py-1 pr-3 tabular-nums">{millis(a.duration)}</td>
-													<td class="py-1 pr-3 tabular-nums">{a.backoff && (Number(a.backoff.seconds) || a.backoff.nanos) ? millis(a.backoff) : '-'}</td>
+													<td class="py-1 pr-3 figure">{millis(a.duration)}</td>
+													<td class="py-1 pr-3 figure">{a.backoff && (Number(a.backoff.seconds) || a.backoff.nanos) ? millis(a.backoff) : '-'}</td>
 													<td class="py-1 break-all">{a.error || '-'}</td>
 												</tr>
 											{/each}
@@ -261,13 +263,13 @@
 												confirming = d;
 												redeliverError = '';
 											}}
-											class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs hover:bg-surface-hover"
+											class="btn btn-sm"
 											>Redeliver</button
 										>
 										{#if results[d.id]}
 											<span
 												data-testid="redeliver-result-{d.id}"
-												class="text-xs {results[d.id].delivered ? 'text-success-700' : 'text-danger-700'}">{results[d.id].text}</span
+												class="text-xs {results[d.id].delivered ? 'text-ink' : 'text-red-strong'}">{results[d.id].text}</span
 											>
 										{/if}
 									</div>

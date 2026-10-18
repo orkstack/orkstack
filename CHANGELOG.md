@@ -23,6 +23,72 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- The UI is redrawn as a drawing office (stage 1 of 4: the shell). A slim
+  top bar replaces the sidebar, with two modes — **Build** (Runs, Orkflows,
+  Apply) and **Operate** (the Admin pages) — and a row along the bottom edge
+  states what each page is. **Ctrl+K** (**⌘K** on macOS) opens a command
+  palette that jumps to any page, run or Orkflow and switches the namespace
+  or the appearance; it never writes (docs/UI_CLI_PARITY.md, "Navigation and
+  the command palette"). Light and dark are designed together and follow the
+  system unless one is chosen; a browser that refuses storage now follows
+  the system too instead of painting light. Statuses are stamps that differ
+  by drawn mark as well as colour, every focus ring is one solid 2 px line,
+  and the faces are the self-hosted Archivo Narrow and Spline Sans Mono
+  (55 KB preloaded, down from 89 KB). Every colour, size, radius, shadow and
+  motion is a token in `ui/src/tokens.css`; a test refuses a raw value
+  anywhere else.
+- The run page, the Runs page and compare are redrawn (stage 2 of 4). A run
+  opens on its drawing: the DAG on a grid, each node drawn by its status and a
+  link that selects its task, or — past 80 tasks — a task map with one cell
+  per task and per fan-out item, readable and keyboard-operable at 4,000
+  tasks (arrows, Home/End, PageUp/Down, F for the next failure, Enter to
+  select). The DAG is drawn up to 80 tasks, on request up to 300, and never
+  above, where a selected task's neighbourhood is drawn instead; the Orkflow
+  page's DAG follows the same bound. Beside it, the versions of the run's
+  Orkflow (this run's, the current one and the newest), and a failed run's
+  reason in a dashed red outline with the commands that reproduce it. A run
+  whose definition or versions cannot be read still shows everything else,
+  with the reason. The Runs page updates the statuses it shows every 15 s
+  without reordering, and marks a run whose status changed since this
+  browser last saw it until it is opened (docs/UI_CLI_PARITY.md,
+  "Changed-run marks"); the command palette lists the changed runs, selects
+  a task by id on a run page, and opens the run's actions behind their
+  confirmations. A closed popover no longer listens to the page, so a run
+  page of 4,000 tasks becomes interactive about 0.4 s sooner.
+- The dashboard, the Orkflows pages and Apply are redrawn (stage 3 of 4).
+  The dashboard's numbers are one ruled line of counts — each status count
+  beside its drawn mark, never a coloured figure — above its registers:
+  running now, recent failures, pool health, stability and usage. The
+  Orkflows list adds each Orkflow's definition digest and labels, and its
+  only link is the name. An Orkflow's page opens with **Submit a run** and
+  **View runs** in its header, its DAG beside the versions it has (the one
+  shown, the current one and the newest), and a bottom row naming the
+  version shown, its digest and whether it is current; the command palette
+  on that page opens Submit a run…, switches tabs and jumps to a task's row.
+  Apply puts Validate and Apply in its header and lists the examples as a
+  ruled list. Validation errors and warnings are told apart by a filled or an
+  outlined mark as well as by their words.
+- The Operate pages are redrawn (stage 4 of 4), and every page of the UI is
+  now drawn only in the shared tokens. Each Admin page opens with its own
+  heading under the Operate tabs and says once, as a note, what it covers:
+  the deployment, the namespace selected or every namespace (Cache, like
+  Pools and Automation, is the selected namespace's). Lists are ruled
+  registers, forms are ruled field blocks with each label above its control,
+  and destructive actions are quiet red behind their confirmations. The
+  overview's facts read like the bottom row, and its links are an index of
+  every Operate page with what it governs and how far it reaches. A held
+  namespace sits on a red tint with its reason in red; budgets, counts and
+  digests are set as figures; failed webhook deliveries and refused audit
+  records are tinted red; the audit trail says each principal was asserted.
+  On a narrow screen the Operate tabs scroll inside their own row and bring
+  the page you are on into view.
+- The redrawn UI's last pass: a DAG node's second line now fits its node — a
+  long error code keeps its whole name and drops the duration beside it (the
+  task's card still has it), and anything longer ends in an ellipsis with the
+  full line on hover; on a narrow screen the bottom row's second cell is as
+  wide as its value, so a run's status reads in full; and the Runs and
+  Orkflows pages label their page size the way every other form field is
+  labelled.
 - **BREAKING:** every Orkflow begins with `apiVersion: orkstack/v1` and
   `kind: Orkflow`. A document without them is refused at validate, apply and
   plan, naming the two lines to add. The header is not part of the definition:

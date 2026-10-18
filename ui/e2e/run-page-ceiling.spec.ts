@@ -22,6 +22,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { taskMapCellCenter } from './uiHelpers';
 
 // The run detail page at the task ceiling (spec E7, the run-page case of
 // T7): the deployment's default engine.orkflow_max_tasks is the largest size
@@ -132,11 +133,48 @@ test.afterAll(async () => {
 	await killStarted();
 });
 
+// Opening, timed: milliseconds from navigation to the header, to every card,
+// and to interactive.
+interface Opening {
+	header: number;
+	cards: number;
+	interactive: number;
+}
+
+// The drift guard beside the gate: the UI revamp's stages are each held to the
+// MEDIAN of five opens of the same run against one baseline, because a single
+// open's run-to-run spread on one tree (~500 ms) is as large as the drift it
+// would have to see. The extra opens happen after the gated first open and
+// assert nothing; their medians are written for a stage to quote.
+const EXTRA_OPENS = 4;
+const openings: Record<string, Opening[]> = {};
+
+function median(values: number[]): number {
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+function medianOf(phase: string): Opening {
+	const all = openings[phase] ?? [];
+	return {
+		header: median(all.map((o) => o.header)),
+		cards: median(all.map((o) => o.cards)),
+		interactive: median(all.map((o) => o.interactive))
+	};
+}
+
 // measureRunPage opens a run's page and times it to interactive: its header,
 // every one of its task cards drawn, the last of them in view, and the page
 // answering a click (the last card's Inspect opens). It returns the
-// milliseconds from navigation.
-async function measureRunPage(page: Page, runId: string, tasks: number, phase: string): Promise<number> {
+// milliseconds from navigation, and records the opening under its phase.
+async function measureRunPage(
+	page: Page,
+	runId: string,
+	tasks: number,
+	phase: string,
+	screenshot = true
+): Promise<number> {
 	const started = Date.now();
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
 	await expect(page.getByTestId('run-status')).toBeVisible({ timeout: 60_000 });
@@ -156,10 +194,22 @@ async function measureRunPage(page: Page, runId: string, tasks: number, phase: s
 		`${phase}: run page of ${runId} (${tasks} tasks) interactive ${elapsed} ms after navigation ` +
 			`(header ${header} ms, every card ${cards} ms)`
 	);
+	(openings[phase] ??= []).push({ header, cards, interactive: elapsed });
 	// The viewport, not the full page: a page of thousands of cards is taller
 	// than a screenshot may be.
-	await page.screenshot({ path: outPath(`screenshot-run-page-gated-${phase}.png`) });
+	if (screenshot) await page.screenshot({ path: outPath(`screenshot-run-page-gated-${phase}.png`) });
 	return elapsed;
+}
+
+// cardInViewport: the card's box ends inside the viewport, below the bar and
+// above the title block.
+async function cardInViewport(page: Page, testid: string): Promise<boolean> {
+	return page.evaluate((id) => {
+		const card = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();
+		const top = document.querySelector('header')!.getBoundingClientRect().bottom;
+		const bottom = document.querySelector('[data-testid="title-block"]')!.getBoundingClientRect().top;
+		return card.top >= top - 1 && card.bottom <= bottom + 1;
+	}, testid);
 }
 
 // E7: the run page of the gated-size flat-short run is interactive within
@@ -187,6 +237,7 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 
 	const live = await measureRunPage(page, run, GATED_TASKS, 'live');
 	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+	for (let i = 0; i < EXTRA_OPENS; i++) await measureRunPage(page, run, GATED_TASKS, 'live', false);
 
 	await rpc('RunService/CancelRun', { runId: run, reason: 'run-page-ceiling e2e: gated-size render measured' });
 	// Finished means its last snapshot: the run reads CANCELED as soon as the
@@ -210,6 +261,40 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 	);
 	const finished = await measureRunPage(page, run, GATED_TASKS, 'finished');
 	await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
+	for (let i = 0; i < EXTRA_OPENS; i++) await measureRunPage(page, run, GATED_TASKS, 'finished', false);
+	const medians = { opens: 1 + EXTRA_OPENS, live: medianOf('live'), finished: medianOf('finished') };
+	writeFileSync(outPath('medians.json'), JSON.stringify(medians, null, 2) + '\n');
+	note(
+		`medians of ${medians.opens} opens (quoted, not gated): ` +
+			`live header ${medians.live.header} ms, cards ${medians.live.cards} ms, interactive ${medians.live.interactive} ms; ` +
+			`finished header ${medians.finished.header} ms, cards ${medians.finished.cards} ms, interactive ${medians.finished.interactive} ms`
+	);
+
+	// The task map at the ceiling, outside the timed span (UI revamp, stage
+	// 2): the run opens on its map, which drew every task's cell; from the
+	// top of the page, selecting the middle and the last cell selects that
+	// task and lands its card between the bar and the title block — where the
+	// card-height estimate behind the scroll is most wrong.
+	await page.evaluate(() => window.scrollTo(0, 0));
+	const map = page.getByTestId('task-map');
+	await expect(map).toHaveAttribute('data-painted', 'true');
+	await expect(map).toHaveAttribute('data-cells', String(GATED_TASKS));
+	note(`task map: ${await map.getAttribute('data-cells')} cells painted`);
+	await page.screenshot({ path: outPath('screenshot-task-map-gated-light.png') });
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await page.screenshot({ path: outPath('screenshot-task-map-gated-dark.png') });
+	await page.emulateMedia({ colorScheme: 'light' });
+	for (const index of [Math.floor(GATED_TASKS / 2), GATED_TASKS - 1]) {
+		const id = `t${index}`;
+		const at = await taskMapCellCenter(page, index);
+		await page.mouse.click(at.x, at.y);
+		await expect(page).toHaveURL(new RegExp(`task=${id}\\b`));
+		await expect(map).toHaveAttribute('data-selected', id);
+		await expect(page.getByTestId(`task-${id}`)).toHaveAttribute('data-selected', 'true');
+		await expect.poll(() => cardInViewport(page, `task-${id}`)).toBe(true);
+		note(`task map: cell ${index} selected ${id}, its card inside the viewport`);
+		await page.evaluate(() => window.scrollTo(0, 0));
+	}
 
 	// The output-maximal rows, quoted only.
 	const definition = await rpc<{ orkflow?: { definitionDigest?: string } }>('OrkflowService/GetOrkflow', {

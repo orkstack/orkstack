@@ -1,402 +1,449 @@
+/*
+ * The app's stylesheet: Tailwind, the two self-hosted faces, the tokens and
+ * their registration, then the base layer and a handful of primitives.
+ *
+ * No value is written here. Every colour, size, radius, shadow and motion
+ * lives in ./tokens.css (ui/test/tokens.test.ts refuses a raw value anywhere
+ * else); this file only says which token each element takes.
+ */
 @import 'tailwindcss';
-@import '@fontsource-variable/inter/wght.css';
-@import '@fontsource-variable/jetbrains-mono/wght.css';
+@import '@fontsource-variable/archivo-narrow/wght.css';
+@import '@fontsource-variable/spline-sans-mono/wght.css';
+@import './tokens.css';
+@import './tailwind-tokens.css';
 
-@theme {
-	/* ---------- Fonts ---------- */
-	--font-sans:
-		'Inter Variable', Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
-		sans-serif;
-	--font-mono:
-		'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas,
-		monospace;
-
-	/* ---------- Neutral scale (cool gray; overrides Tailwind's gray) ---------- */
-	--color-gray-50: #f9fafb;
-	--color-gray-100: #f2f4f7;
-	--color-gray-200: #eaecf0;
-	--color-gray-300: #d0d5dd;
-	--color-gray-400: #98a2b3;
-	--color-gray-500: #667085;
-	--color-gray-600: #475467;
-	--color-gray-700: #344054;
-	--color-gray-800: #182230;
-	--color-gray-900: #101828;
-	--color-gray-950: #0c111d;
-
-	/* ---------- Surfaces ---------- */
-	--color-canvas: #f6f7f9; /* page background */
-	--color-surface: #ffffff; /* cards, tables, sidebar, inputs */
-	--color-surface-raised: #ffffff; /* popovers, dialogs (same fill, larger shadow) */
-	--color-surface-sunken: #f2f4f7; /* table headers, disabled inputs, inline code */
-	--color-surface-hover: #f9fafb; /* row/item hover */
-
-	/* ---------- Borders ---------- */
-	--color-border: #eaecf0; /* default: cards, tables, inputs */
-	--color-border-subtle: #f2f4f7; /* row dividers, inner separators */
-	--color-border-strong: #d0d5dd; /* input hover, focused-but-not-brand */
-
-	/* ---------- Text ---------- */
-	--color-fg: #101828; /* primary            17.4:1 on white */
-	--color-fg-secondary: #475467; /* body on cards       7.4:1 on white */
-	--color-fg-muted: #667085; /* labels, meta        5.0:1 on white, 4.8:1 on canvas */
-	--color-fg-placeholder: #667085;
-	--color-fg-inverse: #ffffff;
-
-	/* ---------- Brand (desaturated indigo) ---------- */
-	--color-brand-50: #eef0fb;
-	--color-brand-100: #dfe3f7;
-	--color-brand-200: #c3caef;
-	--color-brand-300: #9aa5e0;
-	--color-brand-400: #7681d7;
-	--color-brand-500: #6470d3; /* focus ring color only */
-	--color-brand-600: #4f5bc9; /* primary buttons, active nav icon; white text 5.7:1 */
-	--color-brand-700: #414cae; /* hover; links; text on brand-50 6.4:1 */
-	--color-brand-800: #353e8e; /* active/pressed */
-	--color-brand-900: #2a3170;
-
-	/* ---------- Semantic (used by banners/forms; statuses alias these) ---------- */
-	--color-success-50: #ecfdf3;
-	--color-success-200: #abefc6;
-	--color-success-300: #75e0a7;
-	--color-success-600: #079455;
-	--color-success-700: #067647;
-	--color-success-800: #085d3a;
-
-	--color-danger-50: #fef3f2;
-	--color-danger-200: #fecdca;
-	--color-danger-300: #fda29b;
-	--color-danger-500: #f04438;
-	--color-danger-600: #d92d20;
-	--color-danger-700: #b42318;
-	--color-danger-800: #912018;
-
-	--color-warning-50: #fffaeb;
-	--color-warning-200: #fedf89;
-	--color-warning-300: #fec84b;
-	--color-warning-600: #dc6803;
-	--color-warning-700: #b54708;
-	--color-warning-800: #93370d;
-
-	--color-info-50: #eff8ff;
-	--color-info-200: #b2ddff;
-	--color-info-300: #84caff;
-	--color-info-600: #1570ef;
-	--color-info-700: #175cd3;
-	--color-info-800: #1849a9;
-
-	/* ---------- Run / task status (bg, fg, border, solid) ---------- */
-	--color-pending-bg: #f2f4f7;
-	--color-pending-fg: #344054;
-	--color-pending-border: #d0d5dd;
-	--color-pending-solid: #667085;
-
-	--color-running-bg: #eff8ff;
-	--color-running-fg: #175cd3;
-	--color-running-border: #b2ddff;
-	--color-running-solid: #1570ef;
-
-	/* AWAITING: a task waiting to be resolved from outside its run. */
-	--color-awaiting-bg: #f4f3ff;
-	--color-awaiting-fg: #5925dc;
-	--color-awaiting-border: #d9d6fe;
-	--color-awaiting-solid: #7a5af8;
-
-	--color-succeeded-bg: #ecfdf3;
-	--color-succeeded-fg: #067647;
-	--color-succeeded-border: #abefc6;
-	--color-succeeded-solid: #079455;
-
-	--color-failed-bg: #fef3f2;
-	--color-failed-fg: #b42318;
-	--color-failed-border: #fecdca;
-	--color-failed-solid: #d92d20;
-
-	--color-canceled-bg: #fffaeb;
-	--color-canceled-fg: #b54708;
-	--color-canceled-border: #fedf89;
-	--color-canceled-solid: #dc6803;
-
-	--color-skipped-bg: #ffffff;
-	--color-skipped-fg: #667085;
-	--color-skipped-border: #d0d5dd;
-	--color-skipped-solid: #98a2b3;
-
-	--color-unspecified-bg: #fafaf9; /* warm neutral, deliberately "off" */
-	--color-unspecified-fg: #57534e;
-	--color-unspecified-border: #d6d3d1;
-	--color-unspecified-solid: #a8a29e;
-
-	/* ---------- Console (the one dark surface) ---------- */
-	--color-console-bg: #0c111d;
-	--color-console-header: #131a2b;
-	--color-console-border: #1f2a3d;
-	--color-console-fg: #e6eaf0; /* stdout   15.6:1 */
-	--color-console-muted: #8b96a8; /* gutter, ENDED, counts  6.1:1 */
-	--color-console-stderr: #fda29b; /* 9.4:1 */
-	--color-console-notice: #fec84b; /* 11.8:1 */
-	--color-console-live: #75e0a7; /* 11.0:1 */
-
-	/* ---------- Radius ---------- */
-	--radius-sm: 0.25rem; /* 4px  inline code, small chips */
-	--radius-md: 0.375rem; /* 6px  buttons, inputs, nav items */
-	--radius-lg: 0.5rem; /* 8px  cards, tables, panels, DAG nodes */
-	--radius-xl: 0.75rem; /* 12px dialogs only */
-	--radius-full: 9999px; /* pills, dots */
-
-	/* ---------- Shadow ---------- */
-	--shadow-xs: 0 1px 2px 0 rgb(16 24 40 / 0.05);
-	--shadow-sm: 0 1px 3px 0 rgb(16 24 40 / 0.08), 0 1px 2px -1px rgb(16 24 40 / 0.06);
-	--shadow-md: 0 4px 8px -2px rgb(16 24 40 / 0.1), 0 2px 4px -2px rgb(16 24 40 / 0.06);
-	--shadow-lg: 0 20px 24px -4px rgb(16 24 40 / 0.08), 0 8px 8px -4px rgb(16 24 40 / 0.03);
-
-	/* ---------- Motion ---------- */
-	--ease-standard: cubic-bezier(0.2, 0, 0, 1);
-	--animate-pulse-dot: pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-	--animate-dialog-in: dialog-in 200ms cubic-bezier(0.2, 0, 0, 1) both;
-	--animate-fade-in: fade-in 150ms linear both;
-	--animate-nav-progress: nav-progress 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-
-/* ---------- Pin identity accents ----------
- *
- * A pin is a GROUP of tasks held on one Orker, not a state, so it gets its
- * own family rather than borrowing the status palette: `--color-succeeded-*`
- * and `--color-failed-*` already mean an outcome on the very task card being
- * tinted, and a green or red edge there would say something about how the
- * task ended. Each accent is a mid-chroma line over a near-white fill, with
- * hues spaced around the wheel and kept clear of the succeeded green and the
- * failed red. Neither is ever the only signal: the pin's name is written
- * beside it.
- *
- * These sit in a plain `:root` and NOT in `@theme` above, because the run
- * page picks one at runtime and reads it with `var()` from an inline style.
- * Tailwind drops `@theme` variables no generated utility references, so a
- * token here that never appears as a literal class name would be tree-shaken
- * out of the stylesheet and every `var()` would silently fall back to
- * `currentColor`. A plain custom property is always emitted. (`ui/e2e/
- * run-page-pins.spec.ts` asserts the computed border colour for exactly this
- * reason — the first cut of this block was inside `@theme` and painted the
- * foreground colour.)
- */
-:root {
-	--color-pin-a-line: #7681d7; /* indigo (brand-400) */
-	--color-pin-a-fill: #f4f5fc;
-	--color-pin-b-line: #b15fc0; /* orchid */
-	--color-pin-b-fill: #fbf4fc;
-	--color-pin-c-line: #2e9c9c; /* teal */
-	--color-pin-c-fill: #f0fafa;
-	--color-pin-d-line: #c77c2b; /* amber-brown */
-	--color-pin-d-fill: #fdf7f0;
-	--color-pin-e-line: #5d84c4; /* steel blue */
-	--color-pin-e-fill: #f3f7fc;
-	--color-pin-f-line: #8b8f5e; /* olive */
-	--color-pin-f-fill: #f8f8f2;
-}
-
-/* ---------- Dark theme ----------
- *
- * One selector, no media query: `theme.ts` always resolves the reader's
- * choice ("system" included) to a real `data-theme="light"` or `"dark"`
- * before paint (see the inline script in app.html for the first paint, and
- * `applyTheme`/`watchSystemTheme` for every later change, OS included). CSS
- * therefore only ever has to answer one question — is `data-theme` "dark" —
- * not "dark, or unset-but-the-OS-prefers-dark".
- *
- * Every token above that has a light-mode reason to differ gets a dark-mode
- * line here. Radius, shadow shape, motion and the fonts are unchanged; the
- * console tokens are unchanged too, because they are the one surface this
- * design already renders dark in EITHER page theme — nothing to invert. The
- * raw --color-gray-* scale is also left alone: it is used only where
- * something must stay whatever it already was regardless of theme (the
- * wordmark's mark, a modal scrim) rather than as a themed surface.
- */
-:root[data-theme='dark'] {
-	color-scheme: dark;
-
-	--color-canvas: #0a0d15;
-	--color-surface: #12151f;
-	--color-surface-raised: #171b27;
-	--color-surface-sunken: #0d0f17;
-	--color-surface-hover: #1b1f2c;
-
-	--color-border: #242938;
-	--color-border-subtle: #1a1e2a;
-	--color-border-strong: #3a415a;
-
-	--color-fg: #edeff4;
-	--color-fg-secondary: #b7bccb;
-	--color-fg-muted: #868da0;
-	--color-fg-placeholder: #7a8296; /* placeholder        4.7:1 on surface */
-	--color-fg-inverse: #0a0d15;
-
-	--color-brand-50: #181c36;
-	--color-brand-100: #20254a;
-	--color-brand-200: #2e3570;
-	--color-brand-300: #4048a0;
-	--color-brand-400: #4f5bc0;
-	--color-brand-500: #838de0; /* focus ring color only */
-	--color-brand-600: #5865c6; /* primary buttons, active nav icon */
-	--color-brand-700: #6f7bdb; /* hover; links; text on brand-50 */
-	--color-brand-800: #4650ae; /* active/pressed */
-	--color-brand-900: #c4caf5;
-
-	--color-success-50: #0f2a1e;
-	--color-success-200: #1f6b45;
-	--color-success-300: #2f8f5c;
-	--color-success-600: #34c97c;
-	--color-success-700: #5fe29a;
-	--color-success-800: #8fefbb;
-
-	--color-danger-50: #2e1416;
-	--color-danger-200: #6b2320;
-	--color-danger-300: #8f2e29;
-	--color-danger-500: #e24c40;
-	--color-danger-600: #f0574a;
-	--color-danger-700: #ff9c93;
-	--color-danger-800: #ffc4bd;
-
-	--color-warning-50: #2c1f09;
-	--color-warning-200: #6b4a12;
-	--color-warning-300: #8f631a;
-	--color-warning-600: #e8940f;
-	--color-warning-700: #ffc46b;
-	--color-warning-800: #ffdca0;
-
-	--color-info-50: #10233b;
-	--color-info-200: #2c5490;
-	--color-info-300: #3a6bb0;
-	--color-info-600: #4c9aff;
-	--color-info-700: #7eb8ff;
-	--color-info-800: #acd3ff;
-
-	--color-pending-bg: #1a1e29;
-	--color-pending-fg: #b7bccb;
-	--color-pending-border: #3a415a;
-	--color-pending-solid: #8890a3;
-
-	--color-running-bg: #14233d;
-	--color-running-fg: #7eb8ff;
-	--color-running-border: #2c5490;
-	--color-running-solid: #4c9aff;
-
-	--color-awaiting-bg: #1f1a3d;
-	--color-awaiting-fg: #bdb4fe;
-	--color-awaiting-border: #4a3d8f;
-	--color-awaiting-solid: #9b8afb;
-
-	--color-succeeded-bg: #0f2a1e;
-	--color-succeeded-fg: #6fe0a0;
-	--color-succeeded-border: #1f6b45;
-	--color-succeeded-solid: #3fcb80;
-
-	--color-failed-bg: #351617;
-	--color-failed-fg: #ff9c93;
-	--color-failed-border: #7a2a28;
-	--color-failed-solid: #f0564a;
-
-	--color-canceled-bg: #332108;
-	--color-canceled-fg: #ffc46b;
-	--color-canceled-border: #7a5417;
-	--color-canceled-solid: #e8940f;
-
-	--color-skipped-bg: #12151f;
-	--color-skipped-fg: #868da0;
-	--color-skipped-border: #3a415a;
-	--color-skipped-solid: #6b7288;
-
-	--color-unspecified-bg: #1c1a17;
-	--color-unspecified-fg: #b8afa4;
-	--color-unspecified-border: #4a4238;
-	--color-unspecified-solid: #8c8175;
-
-	/* Tailwind's own orange/violet, used only by the failure-category badges
-	   (FailurePanel via $lib/activity.ts) that this design otherwise leaves
-	   unthemed. Overridden here so those two badges stay legible dark chips
-	   instead of Tailwind's light-mode pastels. */
-	--color-orange-50: #2c1a0c;
-	--color-orange-200: #7a4a1f;
-	--color-orange-700: #ffb373;
-	--color-violet-50: #201a3b;
-	--color-violet-200: #4a3f8f;
-	--color-violet-700: #c3b8ff;
-
-	--shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
-	--shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
-	--shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.4);
-	--shadow-lg: 0 20px 24px -4px rgb(0 0 0 / 0.55), 0 8px 8px -4px rgb(0 0 0 / 0.3);
-
-	/* Pin accents: the lines lift so they read against a dark card, and the
-	   fills invert to a barely-there wash of the same hue rather than the
-	   near-whites above, which would blow a hole in the surface. */
-	--color-pin-a-line: #9aa5e0;
-	--color-pin-a-fill: #171a2a;
-	--color-pin-b-line: #d08ede;
-	--color-pin-b-fill: #241a28;
-	--color-pin-c-line: #5fc4c4;
-	--color-pin-c-fill: #122223;
-	--color-pin-d-line: #e0a463;
-	--color-pin-d-fill: #241d13;
-	--color-pin-e-line: #8fadd9;
-	--color-pin-e-fill: #151d29;
-	--color-pin-f-line: #b4b884;
-	--color-pin-f-fill: #1d1f16;
-}
-
-@keyframes pulse-dot {
-	0%,
-	100% {
-		opacity: 1;
-	}
-	50% {
-		opacity: 0.35;
-	}
-}
-@keyframes dialog-in {
-	from {
-		opacity: 0;
-		transform: translateY(4px) scale(0.98);
-	}
-	to {
-		opacity: 1;
-		transform: none;
-	}
-}
-@keyframes nav-progress {
-	from {
-		transform: translateX(-100%);
-	}
-	to {
-		transform: translateX(250%);
-	}
-}
-@keyframes fade-in {
-	from {
-		opacity: 0;
-	}
-	to {
-		opacity: 1;
-	}
-}
+/* The current page in a navigation: a selector, not a value. */
+@custom-variant current (&[aria-current='page']);
 
 @layer base {
 	html {
-		color-scheme: light;
+		/* WCAG 2.4.11: a focused control is never hidden under the sticky top
+		   bar or the title block. */
+		scroll-padding-top: var(--spacing-bar);
+		scroll-padding-bottom: var(--spacing-titleblock);
+		scrollbar-color: var(--color-rule-strong) transparent;
+		accent-color: var(--color-blue);
 	}
 	body {
-		@apply bg-canvas text-fg antialiased;
-		font-feature-settings: 'cv11', 'ss01';
+		background-color: var(--color-paper);
+		color: var(--color-ink);
+		font-family: var(--font-sans);
+		font-weight: var(--font-weight-body);
+		font-size: var(--text-base);
+		line-height: var(--text-base--line-height);
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
+		caret-color: var(--color-blue);
 	}
 	::selection {
-		background: var(--color-brand-100);
+		background-color: var(--color-blue-tint);
+		color: var(--color-ink);
 	}
 	code,
 	kbd,
 	pre,
 	samp {
-		@apply font-mono;
+		font-family: var(--font-mono);
+	}
+	a {
+		text-underline-offset: var(--underline-offset);
+	}
+	/* One focus indicator for every control: a solid line in the focus
+	   colour, at least 3:1 on every ground (tokenContrast.test.ts). */
+	:focus-visible {
+		outline: var(--rule-frame) solid var(--color-focus);
+		outline-offset: var(--rule-frame);
+	}
+	::placeholder {
+		color: var(--color-ink-placeholder);
+		opacity: 1;
+	}
+	h1,
+	h2,
+	h3 {
+		text-wrap: balance;
 	}
 }
 
-/* Nav "current page" variant used in the sidebar recipe */
-@custom-variant current (&[aria-current='page']);
+@layer components {
+	/* Tracked caps: table heads, title-block labels, section heads. */
+	.caps {
+		font-size: var(--text-2xs);
+		line-height: var(--text-2xs--line-height);
+		font-weight: var(--font-weight-semibold);
+		letter-spacing: var(--tracking-caps);
+		text-transform: uppercase;
+	}
+
+	/* A figure: ids, digests, counts, durations. */
+	.figure {
+		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.link {
+		color: var(--color-blue);
+		text-decoration-line: underline;
+		text-decoration-color: color-mix(in oklab, var(--color-blue) 40%, transparent);
+		text-underline-offset: var(--underline-offset);
+	}
+	.link:hover {
+		text-decoration-color: currentColor;
+	}
+
+	/* Buttons. One ink-filled primary per sheet; quiet for the rest. */
+	.btn {
+		display: inline-flex;
+		height: calc(var(--spacing) * 9);
+		align-items: center;
+		justify-content: center;
+		gap: calc(var(--spacing) * 1.5);
+		border: var(--rule-hair) solid var(--color-rule-strong);
+		border-radius: var(--radius-sm);
+		background-color: var(--color-paper);
+		padding-inline: calc(var(--spacing) * 3.5);
+		font-size: var(--text-sm);
+		line-height: var(--text-sm--line-height);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-ink);
+		white-space: nowrap;
+		transition-property: color, background-color, border-color;
+		transition-duration: var(--duration-fast);
+		transition-timing-function: var(--ease-out);
+	}
+	.btn:hover {
+		background-color: var(--color-hover);
+	}
+	.btn:disabled,
+	.btn[aria-disabled='true'] {
+		pointer-events: none;
+		opacity: var(--opacity-disabled);
+	}
+	.btn-primary {
+		border-color: var(--color-ink);
+		background-color: var(--color-ink);
+		color: var(--color-on-ink);
+	}
+	.btn-primary:hover {
+		border-color: var(--color-ink-secondary);
+		background-color: var(--color-ink-secondary);
+	}
+	.btn-danger {
+		border-color: var(--color-red);
+		background-color: var(--color-red);
+		color: var(--color-on-ink);
+	}
+	.btn-danger:hover {
+		border-color: var(--color-red-strong);
+		background-color: var(--color-red-strong);
+	}
+	.btn-sm {
+		height: calc(var(--spacing) * 7);
+		padding-inline: calc(var(--spacing) * 2.5);
+		font-size: var(--text-xs);
+		line-height: var(--text-xs--line-height);
+	}
+	/* A square icon button, at least 24 px (WCAG 2.5.8). */
+	.btn-icon {
+		width: calc(var(--spacing) * 8);
+		height: calc(var(--spacing) * 8);
+		padding: 0;
+		border-color: transparent;
+		background-color: transparent;
+		color: var(--color-ink-secondary);
+	}
+	.btn-icon:hover {
+		color: var(--color-ink);
+	}
+
+	/* Inputs, textareas and Select triggers. */
+	.field {
+		border: var(--rule-hair) solid var(--color-rule-strong);
+		border-radius: var(--radius-sm);
+		background-color: var(--color-paper);
+		color: var(--color-ink);
+	}
+
+	/* A form's field block: a caps label above its control, and an optional
+	   hint in the label's own line set in plain case. */
+	.field-label {
+		display: block;
+		margin-bottom: calc(var(--spacing) * 1.5);
+		font-size: var(--text-2xs);
+		line-height: var(--text-2xs--line-height);
+		font-weight: var(--font-weight-semibold);
+		letter-spacing: var(--tracking-caps);
+		text-transform: uppercase;
+		color: var(--color-ink-secondary);
+	}
+	.field-hint {
+		font-size: var(--text-xs);
+		font-weight: var(--font-weight-normal);
+		letter-spacing: var(--tracking-normal);
+		text-transform: none;
+		color: var(--color-ink-muted);
+	}
+
+	/* A hairline-ruled table: caps heads on the sunken ground. */
+	.register {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: var(--text-sm);
+		line-height: var(--text-sm--line-height);
+	}
+	.register th {
+		border-bottom: var(--rule-region) solid var(--color-ink);
+		background-color: var(--color-paper-sunken);
+		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+		text-align: left;
+		font-size: var(--text-2xs);
+		line-height: var(--text-2xs--line-height);
+		font-weight: var(--font-weight-semibold);
+		letter-spacing: var(--tracking-caps);
+		text-transform: uppercase;
+		color: var(--color-ink-muted);
+	}
+	.register td {
+		border-bottom: var(--rule-hair) solid var(--color-rule);
+		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+	}
+	/* A register that reflows below 640 px: each row becomes a small grid of
+	   its own cells — two columns, the cells placed by the page's max-sm:
+	   utilities — so nothing it says hides behind a sideways scroll. The page
+	   keeps the heads for assistive technology only (max-sm:sr-only). */
+	.register-stacked,
+	.register-stacked tbody {
+		@variant max-sm {
+			display: block;
+		}
+	}
+	.register-stacked tr {
+		@variant max-sm {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			column-gap: calc(var(--spacing) * 3);
+			row-gap: var(--spacing);
+			align-items: center;
+			border-bottom: var(--rule-hair) solid var(--color-rule);
+			padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+		}
+	}
+	.register-stacked td {
+		@variant max-sm {
+			min-width: 0;
+			border-bottom: 0;
+			padding: 0;
+		}
+	}
+
+	/* A drawing's frame: the region rule all round. */
+	.frame {
+		border: var(--rule-region) solid var(--color-ink);
+	}
+	/* A heavier rule above a region of a page. */
+	.region {
+		border-top: var(--rule-region) solid var(--color-ink);
+	}
+	/* The drafting grid: only ever behind the DAG. It scrolls with what is
+	   drawn on it. */
+	.drafting-grid {
+		background-color: var(--color-paper);
+		background-image:
+			linear-gradient(var(--color-grid-major) var(--rule-hair), transparent var(--rule-hair)),
+			linear-gradient(90deg, var(--color-grid-major) var(--rule-hair), transparent var(--rule-hair)),
+			linear-gradient(var(--color-grid) var(--rule-hair), transparent var(--rule-hair)),
+			linear-gradient(90deg, var(--color-grid) var(--rule-hair), transparent var(--rule-hair));
+		background-size:
+			var(--grid-pitch-major) var(--grid-pitch-major),
+			var(--grid-pitch-major) var(--grid-pitch-major),
+			var(--grid-pitch-minor) var(--grid-pitch-minor),
+			var(--grid-pitch-minor) var(--grid-pitch-minor);
+		background-attachment: local;
+	}
+
+	/* A disclosure button's chevron, drawn on the button itself (no element:
+	   a run page holds one per task card), pointing down once expanded. */
+	.btn-disclosure::before {
+		content: '';
+		flex: none;
+		width: calc(var(--spacing) * 1.5);
+		height: calc(var(--spacing) * 1.5);
+		margin-inline: calc(var(--spacing) * 0.5);
+		border-right: var(--rule-region) solid var(--color-ink-muted);
+		border-bottom: var(--rule-region) solid var(--color-ink-muted);
+		transform: rotate(-45deg);
+	}
+	.btn-disclosure[aria-expanded='true']::before {
+		transform: rotate(45deg);
+	}
+
+	/* A run's task card the reader selected (the map, the DAG, the palette).
+	   Inset, because a card skipped by content-visibility clips paint
+	   outside its box. */
+	.task-card[data-selected='true'] {
+		outline: var(--rule-frame) solid var(--color-blue);
+		outline-offset: calc(var(--rule-frame) * -1);
+	}
+
+	/* A caveat that is not an alarm. The NOTE label is markup beside it. */
+	.note {
+		border: var(--rule-hair) solid var(--color-rule);
+		border-radius: var(--radius-sm);
+		background-color: var(--color-paper-sunken);
+		color: var(--color-ink);
+	}
+
+	/* A confirmation ("Applied x@y"): ink, after a drawn check mark. */
+	.confirm::before {
+		content: '';
+		display: inline-block;
+		width: calc(var(--spacing) * 1.5);
+		height: calc(var(--spacing) * 2.5);
+		margin-right: calc(var(--spacing) * 2);
+		border-right: var(--rule-region) solid var(--color-ink);
+		border-bottom: var(--rule-region) solid var(--color-ink);
+		transform: translateY(-15%) rotate(45deg);
+		vertical-align: middle;
+	}
+
+	/* Severity: red ink, told apart by the mark before it — filled for an
+	   error, outlined for a warning — and by the word beside it. */
+	.severity-error,
+	.severity-warning {
+		color: var(--color-red-strong);
+	}
+	.severity-error::before,
+	.severity-warning::before {
+		content: '';
+		display: inline-block;
+		width: calc(var(--spacing) * 2);
+		height: calc(var(--spacing) * 2);
+		margin-right: calc(var(--spacing) * 1.5);
+		border: var(--rule-region) solid var(--color-red);
+		vertical-align: middle;
+	}
+	.severity-error::before {
+		background-color: var(--color-red);
+	}
+
+	/* The status stamp: a 1 px frame, tracked caps, and a drawn mark before
+	   the word. The mark is CSS only — no element — because a run page holds
+	   thousands of stamps. Statuses differ by mark shape, never by hue alone
+	   (WCAG 1.4.1); $lib/statusMarks.ts names the mark of each status. */
+	.stamp {
+		display: inline-flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		border-width: var(--rule-hair);
+		border-style: solid;
+		border-radius: var(--radius-sm);
+		padding: 0 calc(var(--spacing) * 1.5);
+		font-size: var(--text-2xs);
+		line-height: var(--text-2xs--line-height);
+		font-weight: var(--font-weight-semibold);
+		letter-spacing: var(--tracking-caps);
+		text-transform: uppercase;
+		white-space: nowrap;
+	}
+	.mark-square::before,
+	.mark-cross::before,
+	.mark-strike::before,
+	.mark-hatch::before,
+	.mark-hollow::before,
+	.mark-dotted::before {
+		content: '';
+		flex: none;
+		width: calc(var(--spacing) * 2);
+		height: calc(var(--spacing) * 2);
+		border: var(--rule-hair) solid currentColor;
+	}
+	/* SUCCEEDED: a solid filled square. */
+	.mark-square::before {
+		border-color: var(--color-succeeded-solid);
+		background-color: var(--color-succeeded-solid);
+	}
+	/* FAILED: red, crossed through in paper. */
+	.mark-cross::before {
+		border-color: var(--color-failed-solid);
+		background-color: var(--color-failed-solid);
+		background-image:
+			linear-gradient(45deg, transparent 38%, var(--color-paper) 38% 62%, transparent 62%),
+			linear-gradient(-45deg, transparent 38%, var(--color-paper) 38% 62%, transparent 62%);
+	}
+	/* CANCELED: an outline struck once. */
+	.mark-strike::before {
+		border-color: var(--color-canceled-solid);
+		background-image: linear-gradient(
+			-45deg,
+			transparent 40%,
+			var(--color-canceled-solid) 40% 60%,
+			transparent 60%
+		);
+	}
+	/* SKIPPED: hatched, with a dashed outline. */
+	.mark-hatch::before {
+		border-style: dashed;
+		border-color: var(--color-skipped-solid);
+		background-image: repeating-linear-gradient(
+			45deg,
+			var(--color-skipped-solid) 0 25%,
+			transparent 25% 50%
+		);
+	}
+	/* PENDING: hollow, a solid outline. */
+	.mark-hollow::before {
+		border-color: var(--color-pending-solid);
+	}
+	/* UNSPECIFIED: hollow, a dotted outline. */
+	.mark-dotted::before {
+		border-style: dotted;
+		border-color: var(--color-unspecified-solid);
+	}
+	/* RUNNING and AWAITING draw their mark as the stamp's one inner span:
+	   a filled dot that pulses, and a ring that waits. */
+	.mark-dot,
+	.mark-ring {
+		flex: none;
+		width: calc(var(--spacing) * 2);
+		height: calc(var(--spacing) * 2);
+		border-radius: var(--radius-full);
+		border: var(--rule-region) solid var(--color-blue);
+	}
+	.mark-dot {
+		background-color: var(--color-blue);
+	}
+
+	/* Forced colours drop background images and recolour fills; a border in
+	   CanvasText keeps each mark a visible shape, and the word beside it
+	   always says which status it is. */
+	@media (forced-colors: active) {
+		.mark-square::before,
+		.mark-cross::before,
+		.mark-strike::before,
+		.mark-hatch::before,
+		.mark-hollow::before,
+		.mark-dotted::before,
+		.mark-dot,
+		.mark-ring {
+			border-color: CanvasText;
+		}
+		.mark-square::before,
+		.mark-cross::before,
+		.mark-dot {
+			background-color: CanvasText;
+		}
+	}
+
+	/* A keyboard shortcut. */
+	.kbd {
+		display: inline-flex;
+		align-items: center;
+		border: var(--rule-hair) solid var(--color-rule-strong);
+		border-radius: var(--radius-xs);
+		padding: 0 var(--spacing);
+		font-family: var(--font-mono);
+		font-size: var(--text-2xs);
+		line-height: var(--text-2xs--line-height);
+		color: var(--color-ink-muted);
+	}
+}

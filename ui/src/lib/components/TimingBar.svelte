@@ -34,13 +34,13 @@
 	}
 
 	const segments = $derived([
-		{ key: 'wait', label: 'Wait', q: timing.wait, color: 'bg-warning-300' },
-		{ key: 'run', label: 'Run', q: timing.run, color: 'bg-brand-600' }
+		{ key: 'wait', label: 'Wait', q: timing.wait, color: 'bg-ink-muted' },
+		{ key: 'run', label: 'Run', q: timing.run, color: 'bg-ink' }
 	]);
 </script>
 
 <div class="flex min-w-48 flex-1 flex-col gap-1" data-testid="task-{taskId}-timing">
-	<div class="flex h-2 w-full max-w-md overflow-hidden rounded-full bg-surface-sunken" aria-hidden="true">
+	<div class="flex h-2 w-full max-w-md overflow-hidden border border-rule-faint bg-paper-sunken" aria-hidden="true">
 		{#each segments as segment (segment.key)}
 			<div
 				data-testid="task-{taskId}-{segment.key}-segment"
@@ -50,7 +50,7 @@
 			></div>
 		{/each}
 	</div>
-	<div class="flex flex-wrap items-center gap-x-1.5 text-xs text-fg-muted">
+	<div class="flex flex-wrap items-center gap-x-1.5 text-xs text-ink-muted">
 		{#each segments as segment, i (segment.key)}
 			{#if i > 0}<span aria-hidden="true">·</span>{/if}
 			<span
@@ -61,7 +61,7 @@
 			>
 				{segment.label}
 				{formatQuantity(segment.q)}{#if reason(segment.q)}
-					<span class="text-fg-muted"> ({reason(segment.q)})</span>{/if}
+					<span class="text-ink-muted"> ({reason(segment.q)})</span>{/if}
 			</span>
 		{/each}
 		{#if timing.preContract && timing.total.kind === 'value'}
@@ -77,7 +77,7 @@
 	.timing-hatched {
 		background-image: repeating-linear-gradient(
 			45deg,
-			var(--color-border-strong) 0 3px,
+			var(--color-rule-strong) 0 3px,
 			transparent 3px 6px
 		);
 	}

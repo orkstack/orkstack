@@ -28,17 +28,17 @@ export function verdictWord(v: InterfaceVerdict): 'compatible' | 'breaking' | 'u
 	}
 }
 
-const chipBase = 'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium';
+const chipBase = 'stamp';
 
-/** breaking: danger tokens; unknown: muted; compatible: info. */
+/** breaking: revision red; unknown: muted ink; compatible: plain ink on paper. */
 export function verdictChipClass(v: InterfaceVerdict): string {
 	switch (v) {
 		case InterfaceVerdict.BREAKING:
-			return `${chipBase} border-danger-200 bg-danger-50 text-danger-700`;
+			return `${chipBase} border-red bg-red-tint text-red-strong`;
 		case InterfaceVerdict.UNKNOWN:
-			return `${chipBase} border-border bg-surface-sunken text-fg-muted`;
+			return `${chipBase} border-rule bg-paper-sunken text-ink-muted`;
 		case InterfaceVerdict.COMPATIBLE:
-			return `${chipBase} border-info-200 bg-info-50 text-info-700`;
+			return `${chipBase} border-rule-strong bg-paper text-ink`;
 		default:
 			return chipBase;
 	}

@@ -14,6 +14,8 @@
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ScopeNote from '$lib/components/ScopeNote.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
 	import { errorMessage } from '$lib/client';
 	import { automationClient } from '$lib/clients/automation';
 	import { namespaceClient } from '$lib/clients/namespaces';
@@ -261,29 +263,31 @@
 	}
 
 	const inputClass =
-		'h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none';
-	const buttonClass =
-		'inline-flex h-9 items-center justify-center rounded-md px-3.5 text-sm font-medium shadow-xs transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50';
-	const primary = `${buttonClass} bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800`;
-	const secondary = `${buttonClass} border border-border bg-surface text-fg hover:border-border-strong hover:bg-surface-hover`;
+		'field h-9 w-full px-3 text-sm';
+	const primary = 'btn btn-primary';
+	const secondary = 'btn';
 </script>
 
 <svelte:head><title>Admin — Automation — OrkStack</title></svelte:head>
 
-<p class="mb-5 text-sm text-fg-muted" data-testid="automation-scope">
+<SheetHeader title="Automation">
+	{#snippet meta()}Namespace <span class="font-mono font-semibold text-ink">{namespaceLabel(namespace)}</span>{/snippet}
+</SheetHeader>
+
+<ScopeNote testid="automation-scope">
 	An automation document declares one namespace's settings, schedules, triggers and webhooks by
 	name. OrkStack does not store the document — keep it in Git — and nothing here runs on its own:
 	a plan writes nothing, and Apply sends the plan's steps to the same services the rest of Admin
 	uses. This page works in namespace
-	<span class="font-medium text-fg">{namespaceLabel(namespace)}</span>.
-</p>
+	<span class="font-medium text-ink">{namespaceLabel(namespace)}</span>.
+</ScopeNote>
 
-<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs">
-	<div class="flex items-center justify-between gap-3">
-		<h2 class="text-sm font-semibold text-fg">Export</h2>
+<section class="region mb-10 pt-3">
+	<div class="flex flex-wrap items-center justify-between gap-3">
+		<h2 class="text-md font-semibold text-ink">Export</h2>
 		<CliEquivalent command={automationExportCli(namespaceLabel(namespace))} testid="automation-export-cli" />
 	</div>
-	<p class="mt-1 text-xs text-fg-muted">
+	<p class="mt-1 max-w-prose text-sm text-ink-secondary">
 		The document {namespaceLabel(namespace)}'s current automation would be applied from — the way to
 		start reviewing a namespace managed by hand.
 	</p>
@@ -309,13 +313,15 @@
 	{#if exported}
 		<pre
 			data-testid="automation-export-yaml"
-			class="mt-3 max-h-96 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg">{exported.yaml}</pre>
+			class="mt-3 max-h-96 overflow-auto border border-rule bg-paper-sunken p-3 font-mono text-xs text-ink">{exported.yaml}</pre>
 		{#if exported.unmanaged.length > 0}
 			<div
 				data-testid="automation-unmanaged"
-				class="mt-3 rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800"
+				class="note mt-3 flex gap-3 p-3 text-sm text-ink-secondary"
 			>
-				<p class="font-medium">
+				<span class="caps shrink-0 pt-0.5 text-ink-muted">Note</span>
+				<div class="min-w-0">
+				<p class="font-semibold text-ink">
 					{exported.unmanaged.length} object{exported.unmanaged.length === 1 ? ' has' : 's have'} no name
 					and {exported.unmanaged.length === 1 ? 'is' : 'are'} outside every document.
 				</p>
@@ -330,14 +336,15 @@
 						</li>
 					{/each}
 				</ul>
+				</div>
 			</div>
 		{/if}
 	{/if}
 </section>
 
-<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs">
-	<div class="flex items-center justify-between gap-3">
-		<h2 class="text-sm font-semibold text-fg">Document</h2>
+<section class="region mb-10 pt-3">
+	<div class="flex flex-wrap items-center justify-between gap-3">
+		<h2 class="text-md font-semibold text-ink">Document</h2>
 		<CliEquivalent command={automationPlanCli(namespaceLabel(namespace), prune)} testid="automation-plan-cli" />
 	</div>
 	<textarea
@@ -347,10 +354,10 @@
 		rows="16"
 		spellcheck="false"
 		placeholder={automationPlaceholder(namespaceLabel(namespace))}
-		class="mt-3 w-full rounded-md border border-border bg-surface p-3 font-mono text-xs text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+		class="field mt-3 w-full p-3 font-mono text-xs"
 	></textarea>
 	<div class="mt-3 flex flex-wrap items-center gap-4">
-		<label class="text-sm text-fg-secondary">
+		<label class="text-sm font-semibold text-ink-secondary">
 			Import a file
 			<input
 				type="file"
@@ -360,7 +367,7 @@
 				onchange={importFile}
 			/>
 		</label>
-		<label class="flex items-center gap-1.5 text-sm text-fg">
+		<label class="flex items-center gap-1.5 text-sm text-ink">
 			<input type="checkbox" data-testid="automation-prune" bind:checked={prune} />
 			Delete named objects this document does not declare
 		</label>
@@ -385,19 +392,19 @@
 {#if stale}
 	<p
 		data-testid="automation-stale"
-		class="mb-4 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
+		class="severity-warning mb-4 border border-red px-3 py-2 text-sm"
 	>
 		The namespace changed since this plan was made. Review the new plan; nothing was written.
 	</p>
 {/if}
 
 {#if plan}
-	<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs" data-testid="automation-plan-section">
-		<h2 class="text-sm font-semibold text-fg">
+	<section class="region mb-10 pt-3" data-testid="automation-plan-section">
+		<h2 class="text-md font-semibold text-ink">
 			Plan{plan.namespace ? ` — namespace ${plan.namespace}` : ''}
 		</h2>
 		{#if changed}
-			<p class="mt-2 text-xs text-warning-800" data-testid="automation-plan-outdated">
+			<p class="severity-warning mt-2 text-xs" data-testid="automation-plan-outdated">
 				The document or Prune changed since this plan was made. Plan again before applying.
 			</p>
 		{/if}
@@ -405,9 +412,9 @@
 			<ul class="mt-3 space-y-1" data-testid="automation-issues">
 				{#each plan.issues as issue, index (index)}
 					<li
-						class="rounded-md px-2 py-1 font-mono text-xs {issue.severity === ValidationSeverity.WARNING
-							? 'bg-warning-50 text-warning-800'
-							: 'bg-danger-50 text-danger-700'}"
+						class="font-mono text-xs {issue.severity === ValidationSeverity.WARNING
+							? 'severity-warning'
+							: 'severity-error'}"
 					>
 						{severityLabel(issue.severity)}
 						{issue.field ? `${issue.field}: ` : ''}{issue.message}
@@ -416,44 +423,44 @@
 			</ul>
 		{/if}
 		{#if steps.length > 0}
-			<div class="mt-3 overflow-x-auto">
-				<table class="w-full min-w-[720px] text-left text-sm" data-testid="automation-plan-table">
-					<thead class="bg-surface-sunken text-xs text-fg-muted">
+			<div class="mt-3 overflow-x-auto border-t-2 border-ink">
+				<table class="register min-w-[720px]" data-testid="automation-plan-table">
+					<thead>
 						<tr>
-							<th class="p-2">Action</th>
-							<th class="p-2">Kind</th>
-							<th class="p-2">Name</th>
-							<th class="p-2">What</th>
-							<th class="p-2">Outcome</th>
+							<th scope="col">Action</th>
+							<th scope="col">Kind</th>
+							<th scope="col">Name</th>
+							<th scope="col">What</th>
+							<th scope="col">Outcome</th>
 						</tr>
 					</thead>
 					<tbody>
 						{#each steps as step, index (index)}
-							<tr class="border-t border-border-subtle align-top" data-testid="automation-step-{index}">
-								<td class="p-2 font-mono text-xs whitespace-nowrap" data-testid="automation-step-action-{index}">
+							<tr class="align-top" data-testid="automation-step-{index}">
+								<td class="font-mono text-xs whitespace-nowrap" data-testid="automation-step-action-{index}">
 									{automationActionSymbol(step.action)}
 									{automationActionWord(step.action)}
 								</td>
-								<td class="p-2 text-xs">{automationKindSlug(step.kind)}</td>
-								<td class="p-2 font-mono text-xs">{step.name || '—'}</td>
-								<td class="p-2 text-xs">
+								<td class="text-xs">{automationKindSlug(step.kind)}</td>
+								<td class="font-mono text-xs">{step.name || '—'}</td>
+								<td class="text-xs">
 									<p class="font-mono">{step.summary}</p>
-									{#if step.id}<p class="font-mono text-fg-muted">{step.id}</p>{/if}
+									{#if step.id}<p class="font-mono text-ink-muted">{step.id}</p>{/if}
 									{#each step.changes as change (change.field)}
-										<p class="font-mono text-fg-secondary">{changeLine(step, change)}</p>
+										<p class="font-mono text-ink-secondary">{changeLine(step, change)}</p>
 									{/each}
 									{#each step.notes as note, n (n)}
-										<p class="text-fg-muted">note: {note}</p>
+										<p class="text-ink-muted">note: {note}</p>
 									{/each}
 								</td>
-								<td class="p-2 text-xs" data-testid="automation-step-outcome-{index}">
+								<td class="text-xs" data-testid="automation-step-outcome-{index}">
 									{#if outcomes[index]}
 										<span
 											class={outcomes[index].label === 'failed'
-												? 'text-danger-700'
+												? 'severity-error'
 												: outcomes[index].label === 'not run'
-													? 'text-fg-muted'
-													: 'text-success-700'}
+													? 'text-ink-muted'
+													: 'text-ink'}
 										>
 											{outcomes[index].label}{outcomes[index].message ? ` ${outcomes[index].message}` : ''}
 										</span>
@@ -466,17 +473,17 @@
 			</div>
 		{/if}
 		{#each unmanagedSections as kind (kind)}
-			<p class="mt-2 text-xs text-fg-muted" data-testid="automation-unmanaged-section-{automationKindSlug(kind)}">
+			<p class="mt-2 text-xs text-ink-muted" data-testid="automation-unmanaged-section-{automationKindSlug(kind)}">
 				({automationSectionKey(kind)}: not managed by this document)
 			</p>
 		{/each}
 		{#if plan.planDigest}
-			<p class="mt-3 text-sm text-fg" data-testid="automation-plan-summary">Plan: {planCounts(steps)}</p>
-			<p class="mt-1 font-mono text-xs text-fg-muted" data-testid="automation-plan-digest">
+			<p class="mt-3 text-sm font-semibold text-ink" data-testid="automation-plan-summary">Plan: {planCounts(steps)}</p>
+			<p class="mt-1 font-mono text-xs text-ink-muted" data-testid="automation-plan-digest">
 				Plan digest: {plan.planDigest}
 			</p>
 			{#if actionable.length === 0}
-				<p class="mt-2 text-sm text-fg" data-testid="automation-no-changes">No changes.</p>
+				<p class="mt-2 text-sm text-ink" data-testid="automation-no-changes">No changes.</p>
 			{/if}
 		{/if}
 
@@ -484,7 +491,7 @@
 			<div class="mt-4 space-y-3">
 				{#each secretSteps as step (step.name)}
 					<div class="flex flex-col gap-1.5">
-						<label class="text-sm font-medium text-fg" for="automation-secret-env-{step.name}">
+						<label class="field-label mb-0" for="automation-secret-env-{step.name}">
 							Signing secret for {step.name} (the CLI reads ${step.secretEnv})
 						</label>
 						<input
@@ -532,12 +539,12 @@
 {#if disclosed.length > 0}
 	<section
 		data-testid="automation-secrets-once"
-		class="mb-6 rounded-md border border-warning-200 bg-warning-50 p-4 text-sm text-warning-800"
+		class="note mb-10 border-ink p-4 text-sm text-ink-secondary"
 	>
-		<p class="font-medium">Copy these now. They will not be shown again.</p>
+		<p class="font-semibold text-ink">Copy these now. They will not be shown again.</p>
 		<ul class="mt-3 space-y-3">
 			{#each disclosed as secret (secret.id)}
-				<li data-testid="automation-secret-{secret.name}">
+				<li class="border-t border-rule pt-3" data-testid="automation-secret-{secret.name}">
 					<div class="flex items-start justify-between gap-3">
 						<div class="min-w-0">
 							<p class="text-xs">
@@ -579,14 +586,14 @@
 		{#snippet body()}
 			<p>{planCounts(steps)}</p>
 			{#if deletions.length > 0}
-				<p class="mt-2 font-medium text-danger-700">These will be deleted:</p>
+				<p class="mt-2 font-medium text-red-strong">These will be deleted:</p>
 				<ul class="mt-1 space-y-0.5 font-mono text-xs" data-testid="automation-apply-deletions">
 					{#each deletions as step (step.id)}
 						<li>{automationKindSlug(step.kind)} {step.name} {step.id}</li>
 					{/each}
 				</ul>
 			{/if}
-			<p class="mt-2 text-fg-muted">
+			<p class="mt-2 text-ink-muted">
 				The plan is made again before anything is written; if the namespace changed since, nothing is
 				written and the new plan is shown.
 			</p>

@@ -13,6 +13,8 @@
 	import { navigating, page } from '$app/state';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ScopeNote from '$lib/components/ScopeNote.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
 	import { errorMessage } from '$lib/client';
 	import { systemClient } from '$lib/clients/system';
 	import {
@@ -110,11 +112,13 @@
 
 <svelte:head><title>Admin — Maximum run retention — OrkStack</title></svelte:head>
 
-<p class="mb-4 text-sm text-fg-muted" data-testid="retention-scope-caption">
+<SheetHeader title="Maximum run retention" />
+
+<ScopeNote testid="retention-scope-caption">
 	The maximum any namespace may keep a finished run, and what a namespace that sets none
 	inherits. Deployment-wide: the namespace selector above does not scope it. Per-namespace values
 	are set on <code>/admin/namespaces</code>.
-</p>
+</ScopeNote>
 
 {#if data.retentionError}
 	<ErrorPanel
@@ -126,26 +130,26 @@
 		onretry={retry}
 	/>
 {:else if busy}
-	<p class="text-sm text-fg-muted" data-testid="retention-loading">
+	<p class="text-sm text-ink-muted" data-testid="retention-loading">
 		Loading maximum run retention…
 	</p>
 {:else if !data.retention}
-	<p class="text-sm text-fg-muted" data-testid="retention-empty">
+	<p class="text-sm text-ink-muted" data-testid="retention-empty">
 		The engine returned no retention policy.
 	</p>
 {:else}
-	<section class="mb-8" data-testid="retention-info">
-		<div class="overflow-hidden rounded-lg border border-border bg-surface shadow-xs">
-			<dl class="divide-y divide-border-subtle text-sm">
-				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-fg-muted">Maximum run retention</dt>
-					<dd class="text-fg" data-testid="retention-current">
+	<section class="mb-10" data-testid="retention-info">
+		<!-- The policy in the title block's anatomy: caps label over value. -->
+		<dl class="grid border-t-(length:--rule-frame) border-b border-ink sm:grid-cols-[minmax(14rem,1fr)_3fr]">
+				<div class="border-b border-rule px-3 py-2 sm:border-r sm:border-b-0">
+					<dt class="caps text-ink-muted">Maximum run retention</dt>
+					<dd class="figure mt-0.5 text-lg font-semibold text-ink" data-testid="retention-current">
 						{fmtDuration(data.retention.policy?.maxRunRetention)}
 					</dd>
 				</div>
-				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-fg-muted">Enforcement</dt>
-					<dd class="text-fg" data-testid="retention-enforcement">
+				<div class="px-3 py-2">
+					<dt class="caps text-ink-muted">Enforcement</dt>
+					<dd class="mt-1 text-sm text-ink" data-testid="retention-enforcement">
 						{#if data.retention.namespaceRetentionEnforced}
 							Enforced per namespace
 						{:else}
@@ -154,16 +158,15 @@
 						{/if}
 					</dd>
 				</div>
-			</dl>
-		</div>
-		<p class="mt-2 text-xs text-fg-muted">
+		</dl>
+		<p class="mt-2 text-xs text-ink-muted">
 			Stored with the deployment, so every replica answers the same — see
 			<code>orkctl admin retention get</code>.
 		</p>
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface p-5 shadow-xs">
-		<h2 class="mb-3 text-sm font-semibold text-fg">Change the maximum</h2>
+	<section class="region pt-3">
+		<h2 class="mb-3 text-md font-semibold text-ink">Change the maximum</h2>
 		<form
 			class="flex flex-wrap items-end gap-3"
 			onsubmit={(e) => {
@@ -171,39 +174,40 @@
 				void submitSet();
 			}}
 		>
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">New maximum (hours)</span>
+			<label class="text-sm">
+				<span class="field-label">New maximum (hours)</span>
 				<input
 					data-testid="retention-set-hours"
 					bind:value={hours}
 					inputmode="decimal"
 					placeholder="168"
-					class="h-9 w-32 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="field figure h-9 w-32 px-3"
 				/>
 			</label>
 			<button
 				type="submit"
 				data-testid="retention-set-submit"
 				disabled={setBusy}
-				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+				class="btn btn-primary"
 			>
 				{setBusy ? 'Setting…' : 'Set retention'}
 			</button>
 		</form>
 		{#if setError}
 			<p
-				class="mt-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700"
+				class="mt-3 max-w-prose border border-red bg-red-tint px-3 py-2 text-sm text-red-strong"
+				role="alert"
 				data-testid="retention-set-error"
 			>
 				{setError}
 			</p>
 		{/if}
 		{#if setSuccess}
-			<p class="mt-3 text-sm text-succeeded-fg" data-testid="retention-set-success">
+			<p class="confirm mt-3 text-sm text-ink" role="status" data-testid="retention-set-success">
 				{setSuccess}
 			</p>
 		{/if}
-		<p class="mt-3 text-xs text-fg-muted">
+		<p class="mt-3 max-w-prose text-xs text-ink-muted">
 			Namespaces that set no run retention follow the new maximum at once; a namespace whose own
 			value is above it must be lowered first. Lowering it asks for confirmation.
 		</p>
@@ -231,13 +235,13 @@
 		{#snippet body()}
 			<p data-testid="retention-lower-consequence">{lowerConsequence(fmtDuration(current), next)}</p>
 			<label class="mt-3 flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">Type <code>{next}</code> to confirm</span>
+				<span class="font-medium text-ink">Type <code>{next}</code> to confirm</span>
 				<input
 					data-testid="retention-lower-typed"
 					bind:value={confirmTyped}
 					inputmode="decimal"
 					autocomplete="off"
-					class="h-9 w-32 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					class="field figure h-9 w-32 px-3"
 				/>
 			</label>
 		{/snippet}

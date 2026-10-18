@@ -123,7 +123,7 @@
 </script>
 
 <div class="mt-3" data-testid="task-{taskId}-each">
-	<p class="text-xs text-fg-secondary" data-testid="task-{taskId}-each-summary">{summary}</p>
+	<p class="text-xs text-ink-secondary" data-testid="task-{taskId}-each-summary">{summary}</p>
 	{#if items.length > 0}
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<div
@@ -145,12 +145,12 @@
 					aria-pressed={selected === item.index}
 					title={itemAriaLabel(item)}
 					onclick={() => onSelect(selected === item.index ? undefined : item.index)}
-					class="relative inline-flex h-7 min-w-7 items-center justify-center rounded-sm border px-1 font-mono text-[10px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 {STATUS_CLASSES[
+					class="relative inline-flex h-7 min-w-7 items-center justify-center rounded-sm border px-1 font-mono text-2xs leading-none {STATUS_CLASSES[
 						item.status
-					]} {selected === item.index ? 'ring-2 ring-brand-500' : ''}"
+					]} {selected === item.index ? 'ring-2 ring-blue' : ''}"
 				>{item.index}{#if isCachedItem(item)}<span
 							aria-hidden="true"
-							class="absolute top-0 right-0 size-1.5 rounded-bl-sm bg-brand-600"
+							class="absolute top-0 right-0 size-1.5 rounded-bl-sm bg-ink"
 						></span>{/if}</button>
 			{/each}
 		</div>
@@ -159,9 +159,9 @@
 	{#if current}
 		{@const run = current.run}
 		{@const live = current.status === Status.RUNNING ? liveOf(current.index) : undefined}
-		<div class="mt-3 rounded-md border border-border-subtle bg-surface-sunken p-3" data-testid="task-{taskId}-item-panel">
-			<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
-				<span class="font-mono font-medium text-fg" data-testid="task-{taskId}-item-panel-label">{itemLabel(taskId, current.index)}</span>
+		<div class="mt-3 rounded-sm bg-paper-sunken p-3" data-testid="task-{taskId}-item-panel">
+			<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
+				<span class="font-mono font-medium text-ink" data-testid="task-{taskId}-item-panel-label">{itemLabel(taskId, current.index)}</span>
 				<span data-testid="task-{taskId}-item-panel-status">{itemStatusText(current)}</span>
 				<span data-testid="task-{taskId}-item-panel-attempt">Attempt {current.attempt}</span>
 				<CacheBadge cache={run?.cache} {namespace} testid="task-{taskId}-item-panel-cache" />
@@ -177,12 +177,12 @@
 						data-live={line.kind}
 						data-stale={line.stale}
 						title={line.title}
-						class={line.stale ? 'font-medium text-warning-700' : ''}>{line.text}</span
+						class={line.stale ? 'font-medium text-ink-secondary' : ''}>{line.text}</span
 					>
 				{/if}
 			</div>
 			{#if current.message && !run?.error?.message}
-				<p class="mt-1 text-xs break-words text-fg-secondary">{current.message}</p>
+				<p class="mt-1 text-xs break-words text-ink-secondary">{current.message}</p>
 			{/if}
 			<div class="mt-2 flex flex-wrap items-center gap-2" data-testid="task-{taskId}-item-panel-cli">
 				<CliEquivalent command={cli('logs', current.index)} testid="task-{taskId}-item-panel-cli-logs" label="Copy this item's logs CLI" />
@@ -233,15 +233,15 @@
 						{#if record.artifact}
 							{@const key = `${record.taskId}:${record.item}:${record.kind}:${record.artifact.name}`}
 							<li class="flex flex-wrap items-center gap-2">
-								<span class="font-mono break-all text-fg">{record.artifact.name}</span>
-								<span class="text-fg-muted">{record.artifact.sizeBytes} bytes</span>
+								<span class="font-mono break-all text-ink">{record.artifact.name}</span>
+								<span class="text-ink-muted">{record.artifact.sizeBytes} bytes</span>
 								<ArtifactProvenance {runId} {namespace} {taskId} kind={record.kind} name={record.artifact.name} item={current.index} />
 								<button
 									type="button"
 									data-testid="download-artifact-{taskId}-item-{current.index}-{record.artifact.name}"
 									onclick={() => onDownload(record)}
 									disabled={downloading === key}
-									class="ml-auto font-medium text-brand-700 hover:underline disabled:opacity-50"
+									class="ml-auto font-medium text-blue hover:underline disabled:opacity-50"
 									>{downloading === key ? 'Downloading…' : 'Download'}</button
 								>
 							</li>

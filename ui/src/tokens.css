@@ -1,0 +1,336 @@
+/*
+ * OrkStack design tokens — every value the UI is drawn with, in one file.
+ *
+ * The world is an engineering drawing office: drafting paper for the ground,
+ * a deep blue-black ink, ONE drafting blue for selection, links and live
+ * work, and ONE revision-cloud red reserved for failure and attention.
+ * Hairline rules divide rows; heavier rules divide regions. Dark is
+ * ink-toned paper with pale rules, never a cyan-on-navy blueprint.
+ *
+ * Plain, portable CSS on purpose: no @import, no url(), no Tailwind
+ * at-rules, and no selector but :root, :root[data-theme='light'],
+ * :root[data-theme='dark'] and @keyframes (ui/test/tokens.test.ts,
+ * "portability"), so anything — the app through app.css and
+ * tailwind-tokens.css, the Astro site, a plain HTML page — can import it.
+ *
+ * Three blocks, in this order:
+ *   1. :root — theme-invariant: type, radii, spacing, rules, motion, and the
+ *      aliases that point at a theme colour by var();
+ *   2. :root, :root[data-theme='light'] — light colours and shadows;
+ *   3. :root[data-theme='dark'] — the SAME names, dark values.
+ * Two blocks rather than light-dark(): the page always carries a resolved
+ * data-theme before its first paint (app.html), and a spec reads token
+ * strings by name and expects light and dark to differ.
+ *
+ * Contrast floors are not promises here; ui/test/tokenContrast.test.ts
+ * checks every text token on every ground, in both themes.
+ */
+
+/* ------------------------------------------------------------------ */
+/* 1. Theme-invariant                                                  */
+/* ------------------------------------------------------------------ */
+:root {
+	/* Fonts: a narrow humanist sans for labels and prose; a mono for ids,
+	   digests, logs, figures and commands — never as a costume. Both are
+	   self-hosted variable faces (@fontsource-variable, imported by app.css). */
+	--font-sans:
+		'Archivo Narrow Variable', 'Arial Narrow', 'Roboto Condensed', ui-sans-serif, system-ui,
+		sans-serif;
+	--font-mono:
+		'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+	/* Type scale (rem, with its own line height). 2xs is the tracked-caps
+	   size of table heads and title-block labels. */
+	--text-2xs: 0.6875rem;
+	--text-2xs--line-height: 1rem;
+	--text-xs: 0.75rem;
+	--text-xs--line-height: 1rem;
+	--text-sm: 0.8125rem;
+	--text-sm--line-height: 1.25rem;
+	--text-base: 0.875rem;
+	--text-base--line-height: 1.375rem;
+	--text-md: 0.9375rem;
+	--text-md--line-height: 1.5rem;
+	--text-lg: 1.125rem;
+	--text-lg--line-height: 1.5rem;
+	--text-xl: 1.375rem;
+	--text-xl--line-height: 1.75rem;
+	--text-2xl: 1.75rem;
+	--text-2xl--line-height: 2.125rem;
+
+	--font-weight-normal: 400;
+	/* Body text sits a touch above regular so the narrow strokes hold on paper. */
+	--font-weight-body: 450;
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+	--font-weight-bold: 700;
+
+	--tracking-tight: -0.01em;
+	--tracking-normal: 0em;
+	--tracking-caps: 0.12em;
+
+	--leading-none: 1;
+	--leading-tight: 1.2;
+	--leading-normal: 1.45;
+
+	/* Where a link's underline sits below the baseline. */
+	--underline-offset: 0.18em;
+	/* A control that cannot be used right now. */
+	--opacity-disabled: 0.5;
+
+	/* Radii: drawings are square-cornered; a radius is a softened corner,
+	   never a pill (full is for dots only). */
+	--radius-none: 0;
+	--radius-xs: 1px;
+	--radius-sm: 2px;
+	--radius-md: 3px;
+	--radius-full: 9999px;
+	--radius-cloud: 18px;
+
+	/* Spacing: the base unit every p-*, gap-*, h-* multiplies, and the named
+	   layout measures of the shell. */
+	--spacing: 0.25rem;
+	--spacing-gutter: 1rem;
+	--spacing-sheet: 1.5rem;
+	--spacing-bar: 2.75rem;
+	--spacing-titleblock: 4rem;
+	--spacing-aside: 22.5rem;
+	--spacing-drawing: clamp(15rem, 42vh, 30rem);
+
+	/* Rule widths: hairline between rows, region between areas, frame
+	   around a drawing and above the title block. */
+	--rule-hair: 1px;
+	--rule-region: 1.5px;
+	--rule-frame: 2px;
+	/* A failed node's outline on the DAG: the drawing's heaviest line. */
+	--rule-alarm: 3px;
+
+	/* The drafting grid behind the DAG, and nowhere else: an 8 px minor grid
+	   under a 40 px major one. */
+	--grid-pitch-minor: 8px;
+	--grid-pitch-major: 40px;
+
+	/* A task the run never started, drawn faded on the DAG. */
+	--opacity-faded: 0.45;
+
+	/* Motion: exponential ease-out from an already-visible default. */
+	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-linear: linear;
+	--duration-fast: 120ms;
+	--duration-base: 200ms;
+	--duration-draw: 600ms;
+	--animate-live-dot: live-dot 1.6s var(--ease-out) infinite;
+	--animate-nav-progress: nav-progress 1.2s var(--ease-out) infinite;
+	--animate-overlay-in: overlay-in var(--duration-fast) var(--ease-out) both;
+	--animate-cloud-draw: cloud-draw var(--duration-draw) var(--ease-out) both;
+
+	/* Status — the drawing convention is line type and fill; only the two
+	   accents carry hue (blue: live or waiting on the outside world; red:
+	   failed). Every status also differs by its drawn mark and its word. */
+	--color-pending-bg: var(--color-paper);
+	--color-pending-fg: var(--color-ink-secondary);
+	--color-pending-border: var(--color-rule-strong);
+	--color-pending-solid: var(--color-ink-muted);
+
+	--color-running-bg: var(--color-blue-tint);
+	--color-running-fg: var(--color-blue);
+	--color-running-border: var(--color-blue);
+	--color-running-solid: var(--color-blue);
+
+	--color-awaiting-bg: var(--color-blue-tint);
+	--color-awaiting-fg: var(--color-blue-strong);
+	--color-awaiting-border: var(--color-blue);
+	--color-awaiting-solid: var(--color-blue);
+
+	--color-succeeded-bg: var(--color-paper-sunken);
+	--color-succeeded-fg: var(--color-ink);
+	--color-succeeded-border: var(--color-mark);
+	--color-succeeded-solid: var(--color-mark);
+
+	--color-failed-bg: var(--color-red-tint);
+	--color-failed-fg: var(--color-red);
+	--color-failed-border: var(--color-red);
+	--color-failed-solid: var(--color-red);
+
+	--color-canceled-bg: var(--color-paper-sunken);
+	--color-canceled-fg: var(--color-ink-secondary);
+	--color-canceled-border: var(--color-ink-muted);
+	--color-canceled-solid: var(--color-ink-muted);
+
+	--color-skipped-bg: var(--color-paper);
+	--color-skipped-fg: var(--color-ink-muted);
+	--color-skipped-border: var(--color-rule-strong);
+	--color-skipped-solid: var(--color-rule-strong);
+
+	--color-unspecified-bg: var(--color-paper);
+	--color-unspecified-fg: var(--color-ink-muted);
+	--color-unspecified-border: var(--color-rule-strong);
+	--color-unspecified-solid: var(--color-rule-strong);
+
+	/* --color-fg is the one permanent alias: run-page-pins.spec.ts reads it
+	   by name, and it has always meant "the ink". */
+	--color-fg: var(--color-ink);
+}
+
+/* ------------------------------------------------------------------ */
+/* 2. Light: drafting paper, blue-black ink                            */
+/* ------------------------------------------------------------------ */
+:root,
+:root[data-theme='light'] {
+	color-scheme: light;
+
+	/* Grounds */
+	--color-paper: #fbfbf8;
+	--color-paper-sunken: #f3f3ee;
+	--color-sheet: #fefefc;
+	--color-hover: #eff0ee;
+	--color-scrim: rgb(20 33 61 / 0.42);
+
+	/* Ink */
+	--color-ink: #14213d;
+	--color-ink-secondary: #3a4661;
+	--color-ink-muted: #5d6a85;
+	--color-ink-placeholder: #5d6a85;
+	--color-on-ink: #fbfbf8;
+	/* The filled mark of a finished task: lighter than the ink so a map of
+	   thousands of them is not a black field, still 3:1 on every ground. */
+	--color-mark: #6b7690;
+
+	/* Rules */
+	--color-rule: rgb(20 33 61 / 0.16);
+	--color-rule-faint: rgb(20 33 61 / 0.09);
+	--color-rule-strong: rgb(20 33 61 / 0.62);
+
+	/* The DAG canvas's grid, and nowhere else */
+	--color-grid: #e6e9ef;
+	--color-grid-major: #c8cfdc;
+
+	/* Drafting blue */
+	--color-blue: #2b59c3;
+	--color-blue-strong: #1f4596;
+	--color-blue-tint: #e8ecf5;
+
+	/* Revision-cloud red */
+	--color-red: #c2362b;
+	--color-red-strong: #9e2a21;
+	--color-red-tint: #fde9e6;
+
+	--color-focus: #2b59c3;
+
+	/* Pins: identity, never status — six coloured-pencil hues, each line
+	   at least 3:1 on paper and on its own fill. The pin's name is always
+	   written beside it. */
+	--color-pin-a-line: #4a6bb0;
+	--color-pin-a-fill: #f3f5f9;
+	--color-pin-b-line: #7c5aa3;
+	--color-pin-b-fill: #f6f3f9;
+	--color-pin-c-line: #2c7a74;
+	--color-pin-c-fill: #f1f7f5;
+	--color-pin-d-line: #94661c;
+	--color-pin-d-fill: #f9f5ec;
+	--color-pin-e-line: #586c82;
+	--color-pin-e-fill: #f3f4f6;
+	--color-pin-f-line: #6a6f2e;
+	--color-pin-f-fill: #f5f6ee;
+
+	/* Shadows: overlays only, ink-tinted, an offset and a soft blur. */
+	--shadow-overlay: 0 8px 24px -6px rgb(20 33 61 / 0.22), 0 2px 6px -2px rgb(20 33 61 / 0.12);
+	--shadow-lift: 0 -6px 14px -10px rgb(20 33 61 / 0.32);
+}
+
+/* ------------------------------------------------------------------ */
+/* 3. Dark: ink-toned paper, pale rules                                */
+/* ------------------------------------------------------------------ */
+:root[data-theme='dark'] {
+	color-scheme: dark;
+
+	--color-paper: #13161c;
+	--color-paper-sunken: #0f1217;
+	--color-sheet: #1a1e26;
+	--color-hover: #1d222b;
+	--color-scrim: rgb(5 6 9 / 0.6);
+
+	--color-ink: #e7e5dc;
+	--color-ink-secondary: #c3c2ba;
+	--color-ink-muted: #9ba0ab;
+	--color-ink-placeholder: #9ba0ab;
+	--color-on-ink: #13161c;
+	--color-mark: #8f95a2;
+
+	--color-rule: rgb(231 229 220 / 0.14);
+	--color-rule-faint: rgb(231 229 220 / 0.08);
+	--color-rule-strong: rgb(231 229 220 / 0.5);
+
+	--color-grid: rgb(231 229 220 / 0.06);
+	--color-grid-major: rgb(231 229 220 / 0.11);
+
+	--color-blue: #86a4ec;
+	--color-blue-strong: #a9c0f5;
+	--color-blue-tint: #1c2741;
+
+	--color-red: #ef7b6e;
+	--color-red-strong: #f6a196;
+	--color-red-tint: #3a1f1d;
+
+	--color-focus: #86a4ec;
+
+	--color-pin-a-line: #8fa6dc;
+	--color-pin-a-fill: #191e2a;
+	--color-pin-b-line: #b49bd4;
+	--color-pin-b-fill: #1d1a26;
+	--color-pin-c-line: #74b8ae;
+	--color-pin-c-fill: #152020;
+	--color-pin-d-line: #d0a466;
+	--color-pin-d-fill: #211c15;
+	--color-pin-e-line: #9aabbf;
+	--color-pin-e-fill: #191c21;
+	--color-pin-f-line: #b0b47c;
+	--color-pin-f-fill: #1c1e16;
+
+	--shadow-overlay: 0 10px 28px -6px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.45);
+	--shadow-lift: 0 -6px 16px -10px rgb(0 0 0 / 0.7);
+}
+
+/* ------------------------------------------------------------------ */
+/* Keyframes                                                           */
+/* ------------------------------------------------------------------ */
+@keyframes live-dot {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.35;
+	}
+}
+
+@keyframes nav-progress {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(250%);
+	}
+}
+
+@keyframes overlay-in {
+	from {
+		opacity: 0;
+		transform: translateY(3px) scale(0.985);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* The cloud's outline is drawn with pathLength="1", so one dash of length 1
+   offset by 1 is the undrawn outline. */
+@keyframes cloud-draw {
+	from {
+		stroke-dashoffset: 1;
+	}
+	to {
+		stroke-dashoffset: 0;
+	}
+}

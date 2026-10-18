@@ -31,11 +31,11 @@
 	const caveats = $derived(planCaveats(plan, assumeFailed));
 
 	const OUTCOME_CLASSES: Record<PlanOutcome, string> = {
-		[PlanOutcome.UNSPECIFIED]: 'border-border bg-surface text-fg-muted',
-		[PlanOutcome.RUNS]: 'border-brand-200 bg-brand-50 text-brand-700',
+		[PlanOutcome.UNSPECIFIED]: 'border-rule-strong bg-paper text-ink-muted',
+		[PlanOutcome.RUNS]: 'border-blue bg-blue-tint text-blue-strong',
 		[PlanOutcome.SKIPPED]: 'border-dashed border-skipped-border bg-skipped-bg text-skipped-fg',
 		[PlanOutcome.FAILS]: 'border-failed-border bg-failed-bg text-failed-fg',
-		[PlanOutcome.UNREACHED]: 'border-dashed border-danger-200 bg-surface text-danger-700',
+		[PlanOutcome.UNREACHED]: 'border-dashed border-red bg-paper text-red-strong',
 		[PlanOutcome.AWAITS]: 'border-awaiting-border bg-awaiting-bg text-awaiting-fg',
 		// The request's assumption, not a prediction: drawn dashed, in the
 		// failure palette.
@@ -44,42 +44,42 @@
 </script>
 
 <section class="space-y-3" data-testid="run-plan-result">
-	<p class="text-sm text-fg" data-testid="run-plan-summary">{planSummary(plan)}</p>
+	<p class="text-sm text-ink" data-testid="run-plan-summary">{planSummary(plan)}</p>
 	{#if failure}
 		<p
-			class="rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
+			class="severity-error border border-red bg-red-tint px-3 py-2 text-sm"
 			data-testid="run-plan-fails"
 		>
 			{failure}
 		</p>
 	{/if}
-	<div class="overflow-x-auto rounded-md border border-border">
-		<table class="w-full border-collapse text-xs" data-testid="run-plan-table">
-			<thead class="bg-surface-sunken">
+	<div class="overflow-x-auto border-t-2 border-ink">
+		<table class="register text-xs" data-testid="run-plan-table">
+			<thead>
 				<tr>
-					<th class="h-8 w-14 px-3 text-left font-medium text-fg-muted">Wave</th>
-					<th class="h-8 px-3 text-left font-medium text-fg-muted">Task</th>
-					<th class="h-8 px-3 text-left font-medium text-fg-muted">Outcome</th>
-					<th class="h-8 px-3 text-left font-medium text-fg-muted">Detail</th>
+					<th class="w-14">Wave</th>
+					<th>Task</th>
+					<th>Outcome</th>
+					<th>Detail</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each rows as row (row.taskId)}
-					<tr class="border-t border-border-subtle" data-testid="run-plan-row-{row.taskId}">
-						<td class="px-3 py-2 align-top font-mono text-fg-secondary" data-testid="run-plan-row-{row.taskId}-wave"
+					<tr data-testid="run-plan-row-{row.taskId}">
+						<td class="align-top font-mono text-ink-secondary" data-testid="run-plan-row-{row.taskId}-wave"
 							>{planWaveLabel(row)}</td
 						>
-						<td class="px-3 py-2 align-top font-mono text-fg">{row.taskId}</td>
-						<td class="px-3 py-2 align-top">
+						<td class="align-top font-mono text-ink">{row.taskId}</td>
+						<td class="align-top">
 							<span
 								data-testid="run-plan-row-{row.taskId}-outcome"
-								class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] leading-4 font-medium whitespace-nowrap {OUTCOME_CLASSES[
+								class="stamp {OUTCOME_CLASSES[
 									row.outcome
 								]}">{planOutcomeWord(row.outcome)}</span
 							>
 						</td>
 						<td
-							class="px-3 py-2 align-top font-mono break-all text-fg-secondary"
+							class="align-top font-mono break-all text-ink-secondary"
 							data-testid="run-plan-row-{row.taskId}-detail">{planDetail(row, plan)}</td
 						>
 					</tr>
@@ -88,6 +88,6 @@
 		</table>
 	</div>
 	{#each caveats as caveat, i (i)}
-		<p class="text-xs text-fg-muted" data-testid="run-plan-caveat">{caveat}</p>
+		<p class="text-xs text-ink-muted" data-testid="run-plan-caveat">{caveat}</p>
 	{/each}
 </section>

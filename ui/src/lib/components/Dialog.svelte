@@ -13,6 +13,7 @@
 	import type { Snippet } from 'svelte';
 	import { dismissOnOutsideOrEscape } from '$lib/dismiss';
 	import { focusTrap } from '$lib/focusTrap';
+	import Icon from './Icon.svelte';
 
 	interface Props {
 		title: string;
@@ -32,29 +33,28 @@
 	// then keeps Tab inside and hands the focus back to the opener on close.
 </script>
 
-<div
-	class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4 animate-fade-in motion-reduce:animate-none"
->
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
 	<div
 		data-testid={testid}
+		data-overlay
 		role="dialog"
 		aria-modal="true"
 		aria-label={title}
 		tabindex="-1"
 		use:dismissOnOutsideOrEscape={onclose}
 		use:focusTrap={{ focusContainer: true }}
-		class="flex max-h-[85vh] w-full {widthClass} flex-col rounded-xl border border-border bg-surface-raised p-6 shadow-lg animate-dialog-in focus:outline-none motion-reduce:animate-none"
+		class="flex max-h-[85vh] w-full {widthClass} flex-col rounded-md border-(length:--rule-region) border-ink bg-sheet p-6 text-ink shadow-overlay animate-overlay-in focus:outline-none motion-reduce:animate-none"
 	>
-		<div class="flex shrink-0 items-start justify-between gap-4">
-			<h2 class="text-base font-semibold text-fg">{title}</h2>
+		<div class="flex shrink-0 items-start justify-between gap-4 border-b border-rule pb-3">
+			<h2 class="text-lg font-semibold text-ink">{title}</h2>
 			<button
 				type="button"
 				data-testid="{testid}-close"
 				aria-label="Close"
 				onclick={() => onclose()}
-				class="-mt-1 -mr-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-lg leading-none text-fg-muted transition-colors duration-150 hover:bg-surface-hover hover:text-fg focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
+				class="btn btn-icon -mt-1 -mr-2"
 			>
-				×
+				<Icon name="close" />
 			</button>
 		</div>
 		<!--
@@ -63,6 +63,6 @@
 			window, or a form whose advanced options and CLI popover are both
 			open). shrink-0 above keeps the header pinned while this scrolls.
 		-->
-		<div class="mt-2 overflow-y-auto text-sm text-fg-secondary">{@render body()}</div>
+		<div class="mt-3 overflow-y-auto text-sm text-ink-secondary">{@render body()}</div>
 	</div>
 </div>

@@ -38,11 +38,13 @@ declare module 'bun:test' {
 // The filesystem reads the unit tests make: activityInterface.test.ts reads
 // the first-party images' Dockerfiles, so the UI is tested against the label a
 // real image ships rather than a copy that can drift from it, and
-// e2eProcessHygiene.test.ts lists and reads the e2e sources, and
-// vocabulary.test.ts walks the user-facing sources.
+// e2eProcessHygiene.test.ts lists and reads the e2e sources,
+// vocabulary.test.ts walks the user-facing sources, and testidBaseline.test.ts
+// rewrites its fixture on request.
 declare module 'node:fs' {
 	export function readFileSync(path: string, encoding: 'utf8'): string;
 	export function readdirSync(path: string, options?: { recursive?: boolean }): string[];
+	export function writeFileSync(path: string, data: string): void;
 }
 
 // Bun's built-in YAML 1.2 reader: authoredSchemas.test.ts reads the shipped

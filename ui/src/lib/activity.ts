@@ -78,17 +78,21 @@ const CATEGORY_BLURB: Record<FailureCategory, string> = {
 	[FailureCategory.CANCELLED]: 'The attempt was cancelled and is never retried automatically.'
 };
 
-// Colour carries the same distinction the categories do, and nothing more:
-// rose for "the workload failed", amber for "something took it away", and
-// violet for "this one will never succeed as written" — the category a reader
-// must not mistake for a transient blip.
+// The drawing office has one alarm colour, so the categories are told apart
+// the way a drawing tells line types apart — by fill and outline — and always
+// by the label beside them, never by colour alone:
+//   ACTIVITY_FAILED       red outline on a red tint: the workload failed;
+//   INFRASTRUCTURE_ERROR  red outline on clean paper: something took it away;
+//   CONTRACT_VIOLATION    solid red: it will never succeed as written, the
+//                         one a reader must not mistake for a transient blip;
+//   TIMED_OUT, CANCELLED, UNSPECIFIED  ink on the sunken ground or paper.
 const CATEGORY_CLASSES: Record<FailureCategory, string> = {
-	[FailureCategory.UNSPECIFIED]: 'border-border bg-surface-sunken text-fg-secondary',
-	[FailureCategory.ACTIVITY_FAILED]: 'border-danger-200 bg-danger-50 text-danger-700',
-	[FailureCategory.INFRASTRUCTURE_ERROR]: 'border-orange-200 bg-orange-50 text-orange-700',
-	[FailureCategory.CONTRACT_VIOLATION]: 'border-violet-200 bg-violet-50 text-violet-700',
-	[FailureCategory.TIMED_OUT]: 'border-warning-200 bg-warning-50 text-warning-700',
-	[FailureCategory.CANCELLED]: 'border-border bg-surface-sunken text-fg-muted'
+	[FailureCategory.UNSPECIFIED]: 'border-rule bg-paper-sunken text-ink-secondary',
+	[FailureCategory.ACTIVITY_FAILED]: 'border-red bg-red-tint text-red-strong',
+	[FailureCategory.INFRASTRUCTURE_ERROR]: 'border-red bg-paper text-red-strong',
+	[FailureCategory.CONTRACT_VIOLATION]: 'border-red-strong bg-red-strong text-on-ink',
+	[FailureCategory.TIMED_OUT]: 'border-rule-strong bg-paper-sunken text-ink-secondary',
+	[FailureCategory.CANCELLED]: 'border-rule bg-paper text-ink-muted'
 };
 
 export function failureCategoryLabel(category: FailureCategory | undefined): string {

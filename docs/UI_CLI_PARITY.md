@@ -99,6 +99,34 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   controls are a presentation of declared inputs, not a schema language (see
   "Baseline operator flows").
 
+### Navigation and the command palette
+
+The UI is arranged in two modes. **Build** is the dashboard, Runs, Orkflows
+and Apply — the surfaces an author reads every day; **Operate** is every
+page under Admin. Runs, Orkflows and Apply stay one click away from any
+Operate page, and every link carries the namespace in the picker.
+
+**Ctrl+K** (**⌘K** on macOS and iOS, and only that there: Ctrl+K stays a
+text-editing key) opens the command palette from anywhere, a text field
+included, except while another dialog, menu or list is open, which keeps the
+keystroke and its own state. The palette jumps to any page of either mode, to
+an Orkflow or a run found by name, to a run by its id (it navigates and lets
+the run page say whether the run exists; it never looks a run up itself), to
+the runs and Orkflows recently opened in this browser (ids and names only,
+never inputs), and switches the namespace or the appearance. The page you
+are on adds its own commands: a run page selects a task by id and offers the
+run's actions; an Orkflow page offers Submit a run…, its other tabs and a
+jump to any task's row in its task list. It never writes:
+a command that changes something opens the same dialog as the page's own
+button, with its confirmation and its CLI equivalent. It is the browser's
+presentation of navigation, so it has no `orkctl` twin; every action it
+reaches keeps the one it already has.
+
+Each page states what it is in a row along the bottom edge — its name (or an
+Orkflow, a version, a digest and a status), the namespace, and on Operate
+pages what its figures cover. It never shows a run id: a run's id is its
+page's heading.
+
 ## Filtering lists
 
 Every list whose collection grows with use takes one structured filter,
@@ -582,6 +610,30 @@ URL keeps `since=` as an ISO instant because that is what `orkctl stats
 `?window=custom` without a valid `since` shows the error panel rather than
 snapping back to `24h`, which would disagree with the address bar.
 
+#### Changed-run marks
+
+The Runs page marks a run whose status changed since this browser last saw
+it, and keeps the mark until the run is opened. It is a per-browser
+presentation of the statuses `orkctl run list` prints, not a capability: what
+was seen lives in this browser's `localStorage` only (at most 500 runs per
+namespace), nothing is written to the deployment, and another browser or
+person sees its own marks. A browser that refuses storage marks nothing.
+
+- The first visit to a namespace's list marks nothing. A run listed with a
+  status other than the one this browser last saw is marked, on the ground
+  of its new status, with a drawn delta in its RUN cell whose accessible name
+  says what it was ("Changed since you last looked; it was running"); a run
+  that failed after the last visit is marked as "failed while you were
+  away".
+- Opening a run's page counts as seeing it, and so does watching its status
+  change there. **Mark all seen** (on the page, and in the command palette,
+  which also lists the changed runs) clears every mark.
+- While the page is visible it re-reads the same listing every 15 s and
+  updates the status of the rows already shown in place; it never reorders
+  or inserts rows, and offers runs that appeared above as "N newer runs —
+  show". A listing row is `RUNNING` while a task waits on an approval, so a
+  run that starts waiting is not marked.
+
 ### Task attempts
 
 Temporal keeps only a task's final outcome, so `TaskRun.attempt` and
@@ -783,8 +835,8 @@ identical[; {n} field(s) unavailable].` and one footnote per unavailable side.
 Digests are never abbreviated; exit status is 0 whenever the RPC succeeded.
 UI: **Compare** on the run page pre-selects the Orkflow's newest other
 SUCCEEDED run and opens `/runs/{from}/compare?to={to}`, a deep-linkable page
-with a swap link, the same table (only differing cells tinted), summary and
-footnotes.
+with a swap link, the same table (each differing pair's TO side marked as the
+change, its FROM side quiet), summary and footnotes.
 
 ### Artifact retrieval
 
@@ -1110,7 +1162,7 @@ filter and `--limit`, never a window), `webhook delivery ID`, `webhook
 redeliver ID` (exit 1 when the receiver did not accept it). UI: the
 **Deliveries** panel on Admin → Webhooks — a caption with the resolved window
 and scope, the filter form (`deliveryFilter` in the URL) with its CLI
-equivalent, a delivered/failed pill, attempts and last
+equivalent, a delivered/failed stamp, attempts and last
 status, an expanded row with the signature, body digest and byte count ("body
 not stored") and the attempt timeline, a per-webhook **Deliveries** link
 (`deliveryFilter=webhook_id=<id>`), and
@@ -1199,8 +1251,8 @@ CLI: `orker list [--filter F…]` (`--filter pool=build`), `orker get ID`
 drain ID [--reason] [--timeout] [--watch]` — a client-side loop: exit 0
 drained, 4 timed out naming what remains, 1 unreachable, uncordoned or
 restarted. Orker commands ignore `--namespace`. UI: **Admin → Pools**, the
-filter form over the pool cards (`pool list [--filter F…]`), a
-per-pool **Show Orkers** disclosure with a state pill (`ready`, `cordoned`,
+filter form over the pool register (`pool list [--filter F…]`), a
+per-pool **Show Orkers** disclosure with a state stamp (`ready`, `cordoned`,
 `unreachable`), tasks, pins, last seen and open pins linking to their runs;
 **Cordon** through a dialog that requires a reason and shows a server error in
 place; one-click **Uncordon**.
@@ -1254,7 +1306,7 @@ clients show it verbatim. Operator semantics are in [DEPLOY.md](DEPLOY.md).
 | Policy | CLI | UI | Refusal |
 | --- | --- | --- | --- |
 | Hold and cap | `--hold REASON`, `--release-hold`, `--max-running N` | Hold and Max running columns; Hold… / Release hold; a hold banner on Orkflows, the dashboard and the submit dialog, with submit disabled | `failed_precondition` `NAMESPACE_HELD` / `MAX_RUNNING_REACHED`, with the reason and the fix |
-| Budget | `--budget-cpu-seconds`, `--budget-gib-seconds`, `--budget-period`, `--budget-enforce[=false]`, `--clear-budget`; `stats usage` | Budget column and fields; dashboard Usage card; Admin → Usage ([STATS.md](STATS.md) §8) | `BUDGET_EXCEEDED` / `BUDGET_UNMEASURABLE`, with usage, budget, period and fix |
+| Budget | `--budget-cpu-seconds`, `--budget-gib-seconds`, `--budget-period`, `--budget-enforce[=false]`, `--clear-budget`; `stats usage` | Budget column and fields; dashboard Usage section; Admin → Usage ([STATS.md](STATS.md) §8) | `BUDGET_EXCEEDED` / `BUDGET_UNMEASURABLE`, with usage, budget, period and fix |
 | Secret sources | `--allow-secret PATTERN…`, `--clear-allowed-secrets` | Allowed secrets column, one per line, `unrestricted` caption | `invalid_argument` at apply/validate/submit naming the task, secret and list; the Orker's own floor refuses with `SECRET_NOT_PERMITTED` before pulling |
 | Required signer | `--require-signed-by cosign:KEY`, `--clear-require-signed-by` | Signed by column and a signer select | see image policy below |
 
@@ -1318,7 +1370,7 @@ issues, warnings kept after apply.
 
 Failure fingerprints (`stats failures`, the dashboard's **Fingerprints**
 disclosure), the flake index (`stats flakes`, the **Stability** disclosure
-and the run page's retry history), usage (`stats usage`, the **Usage** card
+and the run page's retry history), usage (`stats usage`, the **Usage** section
 and Admin → Usage) and cache statistics are specified, numbers and parity
 both, in [STATS.md](STATS.md).
 

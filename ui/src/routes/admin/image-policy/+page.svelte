@@ -14,6 +14,8 @@
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ScopeNote from '$lib/components/ScopeNote.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
 	import { errorMessage } from '$lib/client';
 	import { systemClient } from '$lib/clients/system';
 	import {
@@ -139,15 +141,17 @@
 	}
 
 	const inputClass =
-		'rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none';
+		'field px-3';
 </script>
 
 <svelte:head><title>Admin — Image policy — OrkStack</title></svelte:head>
 
-<p class="mb-4 text-sm text-fg-muted" data-testid="image-policy-scope-caption">
+<SheetHeader title="Image policy" />
+
+<ScopeNote testid="image-policy-scope-caption">
 	Deployment-wide: the namespace selector above does not scope it. A namespace may tighten this on
 	<code>/admin/namespaces</code> and never loosen it.
-</p>
+</ScopeNote>
 
 {#if data.imagePolicyError}
 	<ErrorPanel
@@ -159,20 +163,20 @@
 		onretry={retry}
 	/>
 {:else if busy}
-	<p class="text-sm text-fg-muted" data-testid="image-policy-loading">Loading image policy…</p>
+	<p class="text-sm text-ink-muted" data-testid="image-policy-loading">Loading image policy…</p>
 {:else}
-	<section class="mb-8" data-testid="image-policy-info">
-		<div class="overflow-hidden rounded-lg border border-border bg-surface shadow-xs">
-			<dl class="divide-y divide-border-subtle text-sm">
-				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-fg-muted">Require digest</dt>
-					<dd class="text-fg" data-testid="image-policy-require-digest">
+	<section class="mb-10" data-testid="image-policy-info">
+		<div class="border-t-(length:--rule-frame) border-b border-ink">
+			<dl class="divide-y divide-rule text-sm">
+				<div class="grid gap-x-4 px-3 py-2 sm:grid-cols-[12rem_1fr]">
+					<dt class="caps pt-0.5 text-ink-muted">Require digest</dt>
+					<dd class="text-ink" data-testid="image-policy-require-digest">
 						{policy?.requireDigest ? 'Yes' : 'No'}
 					</dd>
 				</div>
-				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-fg-muted">Allowed registries</dt>
-					<dd class="font-mono text-xs text-fg" data-testid="image-policy-allowed-registries">
+				<div class="grid gap-x-4 px-3 py-2 sm:grid-cols-[12rem_1fr]">
+					<dt class="caps pt-0.5 text-ink-muted">Allowed registries</dt>
+					<dd class="font-mono text-xs text-ink" data-testid="image-policy-allowed-registries">
 						{#if policy?.allowedRegistries.length}
 							{#each policy.allowedRegistries as registry (registry)}
 								<div>{registry}</div>
@@ -182,9 +186,9 @@
 						{/if}
 					</dd>
 				</div>
-				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-fg-muted">Signing keys</dt>
-					<dd class="font-mono text-xs text-fg" data-testid="image-policy-signing-keys">
+				<div class="grid gap-x-4 px-3 py-2 sm:grid-cols-[12rem_1fr]">
+					<dt class="caps pt-0.5 text-ink-muted">Signing keys</dt>
+					<dd class="font-mono text-xs text-ink" data-testid="image-policy-signing-keys">
 						{#if keyNames.length}
 							{#each keyNames as name (name)}
 								<div data-testid="image-policy-signing-key-{name}">
@@ -196,9 +200,9 @@
 						{/if}
 					</dd>
 				</div>
-				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-fg-muted">Updated</dt>
-					<dd class="text-fg" data-testid="image-policy-updated">
+				<div class="grid gap-x-4 px-3 py-2 sm:grid-cols-[12rem_1fr]">
+					<dt class="caps pt-0.5 text-ink-muted">Updated</dt>
+					<dd class="text-ink" data-testid="image-policy-updated">
 						{policy?.updatedAt
 							? fmtTimestamp(policy.updatedAt)
 							: 'Never — no policy stored; every image is permitted'}
@@ -206,17 +210,17 @@
 				</div>
 			</dl>
 		</div>
-		<p class="mt-2 text-xs text-fg-muted">
+		<p class="mt-2 max-w-prose text-xs text-ink-muted">
 			Stored with the deployment, so every replica answers the same — see
 			<code>orkctl admin image-policy get</code>. Refused at validate, apply and submit, and by the
 			Orker before it pulls; a run keeps the policy it was submitted under.
 		</p>
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface p-5 shadow-xs">
-		<h2 class="mb-3 text-sm font-semibold text-fg">Change the policy</h2>
+	<section class="region pt-3">
+		<h2 class="mb-3 text-md font-semibold text-ink">Change the policy</h2>
 		<form
-			class="grid gap-4 sm:grid-cols-2"
+			class="grid max-w-3xl gap-4 sm:grid-cols-2"
 			data-testid="image-policy-form"
 			onsubmit={(e) => {
 				e.preventDefault();
@@ -229,14 +233,14 @@
 					data-testid="image-policy-form-require-digest"
 					bind:checked={requireDigest}
 				/>
-				<span class="font-medium text-fg">Require digest</span>
-				<span class="text-xs text-fg-muted"
+				<span class="font-medium text-ink">Require digest</span>
+				<span class="text-xs text-ink-muted"
 					>— refuse a <code>uses:</code> written as a mutable tag; catalog names are exempt</span
 				>
 			</label>
 			<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
-				<span class="font-medium text-fg"
-					>Allowed registries (one prefix per line, blank = unrestricted)</span
+				<span class="field-label mb-0"
+					>Allowed registries <span class="field-hint">(one prefix per line, blank = unrestricted)</span></span
 				>
 				<textarea
 					data-testid="image-policy-form-allowed-registries"
@@ -248,18 +252,18 @@
 				></textarea>
 			</label>
 			<div class="flex flex-col gap-1.5 text-sm sm:col-span-2">
-				<span class="font-medium text-fg">Signing keys</span>
+				<span class="field-label mb-0">Signing keys</span>
 				{#if formKeyNames.length === 0}
-					<span class="text-xs text-fg-muted">No keys.</span>
+					<span class="text-xs text-ink-muted">No keys.</span>
 				{/if}
 				{#each formKeyNames as name (name)}
-					<div class="flex items-center gap-3 font-mono text-xs">
+					<div class="flex items-center gap-3 border-b border-rule py-1 font-mono text-xs">
 						<span>{name}</span>
 						<button
 							type="button"
 							data-testid="image-policy-form-remove-key-{name}"
 							onclick={() => removeKey(name)}
-							class="rounded-md border border-border px-2 py-0.5 font-sans text-xs text-fg-secondary hover:bg-surface-sunken"
+							class="btn btn-sm border-red font-sans text-red-strong"
 						>
 							Remove
 						</button>
@@ -267,7 +271,7 @@
 				{/each}
 			</div>
 			<label class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">Add signing key — name</span>
+				<span class="field-label mb-0">Add signing key — name</span>
 				<input
 					data-testid="image-policy-form-key-name"
 					bind:value={newKeyName}
@@ -276,7 +280,7 @@
 				/>
 			</label>
 			<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
-				<span class="font-medium text-fg">Public key (PEM, cosign.pub)</span>
+				<span class="field-label mb-0">Public key <span class="field-hint">(PEM, cosign.pub)</span></span>
 				<textarea
 					data-testid="image-policy-form-key-pem"
 					bind:value={newKeyPem}
@@ -291,7 +295,7 @@
 					type="button"
 					data-testid="image-policy-form-add-key"
 					onclick={addKey}
-					class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs hover:bg-surface-sunken"
+					class="btn"
 				>
 					Add key
 				</button>
@@ -299,7 +303,7 @@
 					type="submit"
 					data-testid="image-policy-form-submit"
 					disabled={setBusy}
-					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+					class="btn btn-primary"
 				>
 					{setBusy ? 'Saving…' : 'Save'}
 				</button>
@@ -307,7 +311,8 @@
 		</form>
 		{#if formError}
 			<p
-				class="mt-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700"
+				class="mt-3 max-w-3xl border border-red bg-red-tint px-3 py-2 text-sm text-red-strong"
+				role="alert"
 				data-testid="image-policy-form-error"
 			>
 				{formError}
@@ -315,18 +320,19 @@
 		{/if}
 		{#if setError}
 			<p
-				class="mt-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700"
+				class="mt-3 max-w-3xl border border-red bg-red-tint px-3 py-2 text-sm text-red-strong"
+				role="alert"
 				data-testid="image-policy-set-error"
 			>
 				{setError}
 			</p>
 		{/if}
 		{#if setSuccess}
-			<p class="mt-3 text-sm text-succeeded-fg" data-testid="image-policy-set-success">
+			<p class="confirm mt-3 text-sm text-ink" role="status" data-testid="image-policy-set-success">
 				{setSuccess}
 			</p>
 		{/if}
-		<p class="mt-3 text-xs text-fg-muted">
+		<p class="mt-3 max-w-prose text-xs text-ink-muted">
 			A list that would exclude an activity of the engine's catalog is refused, and so is removing a
 			key a namespace still names. Definitions already stored are re-checked at their next submit.
 		</p>
