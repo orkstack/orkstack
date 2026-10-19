@@ -124,22 +124,22 @@ fi
 actions_enabled="$(gh api "$api/actions/permissions" --jq '.enabled // false' 2>/dev/null)"
 [ "$actions_enabled" = true ] && ok "Actions are enabled" || bad "Actions are disabled"
 
-nightly="$(gh api "$api/actions/workflows/nightly.yml" --jq '.state // ""' 2>/dev/null)"
+nightly="$(gh api "$api/actions/workflows/nightly.yml" 2>/dev/null | jq -r '.state // ""' 2>/dev/null)"
 if [ "$nightly" = active ]; then
 	ok "nightly.yml is active"
 else
 	warn "nightly.yml is ${nightly:-missing}; GitHub disables a schedule after 60 days without activity: gh workflow enable nightly.yml"
 fi
 
-check_proof="$(gh api "$api/commits/origin/main/check-runs" --jq '[.check_runs[] | select(.name=="proof" and .app.id==15368 and .conclusion=="success")] | length' 2>/dev/null)"
-if [ "${check_proof:-0}" -gt 0 ]; then
+check_proof="$(gh api "$api/commits/origin/main/check-runs" 2>/dev/null | jq '[.check_runs[]? | select(.name=="proof" and .app.id==15368 and .conclusion=="success")] | length' 2>/dev/null || echo 0)"
+if [ "${check_proof:-0}" -gt 0 ] 2>/dev/null; then
 	ok "the GitHub Actions app has reported a successful proof check"
 else
 	warn "no successful proof check from app 15368 yet; the first run creates it"
 fi
 
 rulesets="$(gh api "$api/rulesets" 2>/dev/null || echo '[]')"
-mode_var="$(gh api "$api/actions/variables/MERGE_GATE_MODE" --jq '.value' 2>/dev/null || true)"
+mode_var="$(gh api "$api/actions/variables/MERGE_GATE_MODE" 2>/dev/null | jq -r '.value // ""' 2>/dev/null || true)"
 if [ "$QUEUE" = 1 ]; then
 	if [ "${mode_var:-}" = queue ]; then
 		ok "MERGE_GATE_MODE=queue agrees with the queue mode"
