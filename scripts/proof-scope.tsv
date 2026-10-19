@@ -50,6 +50,7 @@ scripts/proof-observability.sh	observability
 # a full proof runs them in, never what a full proof runs.
 scripts/proof-slow-tests.txt	none
 scripts/proof-test-costs.tsv	none
+scripts/proof-ui-costs.tsv	none
 scripts/**	full
 deploy/observability/**	observability
 deploy/**	full

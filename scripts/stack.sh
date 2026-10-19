@@ -276,11 +276,11 @@ write_run_config() {
 }
 
 cmd_up() {
-	say "== infrastructure (Temporal, MinIO) =="
+	say "== infrastructure (Temporal, SeaweedFS) =="
 	"${COMPOSE[@]}" up -d
 	wait_for "temporal" 60 docker exec orkstack-temporal-1 \
 		temporal operator cluster health --address 127.0.0.1:7233
-	wait_for "minio" 60 curl -sf http://localhost:9000/minio/health/live
+	wait_for "object store (SeaweedFS)" 60 sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9000/); [ "$code" = 200 ] || [ "$code" = 403 ]'
 
 	say "== binaries =="
 	make build >/dev/null
@@ -291,7 +291,7 @@ cmd_up() {
 	# and stores the orkflow catalogue through it, the Orker writes task
 	# artifacts through it, and the default is local (./.data/artifacts). Set
 	# it on one process only and the stack splits its brain: artifacts in
-	# MinIO, archived runs on local disk, and `make reset` wiping the volume
+	# the object store, archived runs on local disk, and `make reset` wiping the volume
 	# leaves runs that a fresh engine still lists.
 	local backend="${ORK_ARTIFACT_BACKEND:-s3}"
 	# The UI is served from one port and the engine listens on another, so every
@@ -352,7 +352,7 @@ cmd_up() {
 	say "  UI             $UI_URL"
 	say "  Engine API     $ENGINE_URL"
 	say "  Temporal UI    http://localhost:8233"
-	say "  MinIO console  http://localhost:9001  (orkstack / orkstack-secret)"
+	say "  SeaweedFS filer  http://localhost:8888  (S3 API: http://localhost:9000)"
 	say ""
 	say "  logs           $RUN_DIR/{ork,orker,ui}.log"
 	say "  stop           make down"

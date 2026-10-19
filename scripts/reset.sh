@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Return this machine to a vanilla OrkStack: no processes, no Temporal
-# history, no MinIO objects, no build output.
+# history, no object-store data, no build output.
 #
 #   scripts/reset.sh          ask first
 #   scripts/reset.sh --force  do not ask (CI, scripts)
@@ -8,7 +8,7 @@
 # What it destroys, and what that costs:
 #   - Temporal's sqlite volume: every run's history, and every worker
 #     deployment version registered against it.
-#   - MinIO's volume: every artifact, every archived run, and the orkflow
+#   - the object store's volume: every artifact, every archived run, and the orkflow
 #     catalogue itself — an applied orkflow lives in the bucket, so after
 #     this the engine boots with nothing to run.
 #   - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results.
@@ -31,7 +31,7 @@ say() { printf '%s\n' "$*"; }
 if [ "$force" -ne 1 ]; then
 	say "This deletes ALL local OrkStack state:"
 	say "  - Temporal history and worker deployment versions (docker volume)"
-	say "  - MinIO objects: artifacts, archived runs, and the orkflow catalogue"
+	say "  - object-store data: artifacts, archived runs, and the orkflow catalogue"
 	say "  - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results"
 	say ""
 	say "The repository itself is untouched."
@@ -56,7 +56,7 @@ rm -rf "$REPO/bin" "$REPO/.run" "$REPO/ui/build" "$REPO/ui/.svelte-kit" "$REPO/u
 # The local-filesystem store. This is the one that bites: the default backend
 # is local (artifacts.DefaultLocalDir = ./.data/artifacts, pkg/artifacts/config.go),
 # so any process started without ORK_ARTIFACT_BACKEND archives runs and stores
-# the orkflow catalogue HERE, not in MinIO. Wiping only the docker volume
+# the orkflow catalogue HERE, not in the object store. Wiping only the docker volume
 # leaves those behind, and a fresh engine then lists runs that no longer exist
 # anywhere else. The path is read from the same env var the binaries read.
 rm -rf "$REPO/${ORK_ARTIFACT_DIR:-.data/artifacts}" "$REPO/.data"

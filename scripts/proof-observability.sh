@@ -5,7 +5,7 @@
 # not a screenshot or an eyeball check.
 #
 # scripts/proof.sh invokes this with ORK_PROOF_DIR already set and its own
-# prerequisites already probed (docker, Temporal, MinIO, the local registry
+# prerequisites already probed (docker, Temporal, SeaweedFS, the local registry
 # and its images, the observability profile's own four services) — this
 # script does not re-check any of that; it only assumes ORK_PROOF_DIR is set
 # and writable, per §11.2 ("prerequisites probed BEFORE any output file is

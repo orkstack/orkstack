@@ -98,7 +98,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the components and data flow.
 ## Quickstart (dev)
 
 ```bash
-make up             # Temporal, MinIO, a registry, engine, orker and UI, health-checked
+make up             # Temporal, SeaweedFS, a registry, engine, orker and UI, health-checked
 ./bin/orkctl apply examples/hello.ork.yaml
 ./bin/orkctl run plan hello-ork     # which tasks would run; starts nothing
 ./bin/orkctl run submit hello-ork --watch
@@ -115,11 +115,11 @@ needs to run.
 - UI: http://localhost:5173
 - Engine API: http://localhost:8080
 - Temporal UI: http://localhost:8233
-- MinIO console: http://localhost:9001 (`orkstack` / `orkstack-secret`)
+- SeaweedFS filer: http://localhost:8888 (S3 API on http://localhost:9000)
 
 `make status` shows what is running, `make logs` tails the engine, Orker and
 UI logs, and `make reset` returns the machine to a vanilla state — it deletes
-Temporal history, every MinIO object (artifacts, archived runs, and the
+Temporal history, every object-store object (artifacts, archived runs, and the
 Orkflow catalogue), the local artifact store and all build output. The
 repository itself is untouched.
 
@@ -219,6 +219,7 @@ gitignored; the commit or pull request quotes it. No proof, no done.
 | [docs/ORKFLOW_SCHEDULES.md](./docs/ORKFLOW_SCHEDULES.md) | Schedules on Temporal Schedules: specs, fires, backfill, overlap |
 | [docs/AUTOMATION.md](./docs/AUTOMATION.md) | Automation documents: a namespace's settings, schedules, triggers and webhooks as YAML |
 | [docs/schemas/](./docs/schemas/) | JSON Schemas of the authored documents (generated) |
+| [docs/PROOFS.md](./docs/PROOFS.md) | Proofs and CI: the tiers, the plan and its shards, the job graph, artifacts and recovery procedures |
 | [docs/DEPLOY.md](./docs/DEPLOY.md) | Topology, configuration, releases and rollback, operations, telemetry |
 | [docs/STORAGE.md](./docs/STORAGE.md) | What is persisted where: the object-store key layout and its invariants |
 | [docs/STATS.md](./docs/STATS.md) | Where stats, failure fingerprints, flakes, usage and cache numbers come from |

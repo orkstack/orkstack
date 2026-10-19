@@ -1,0 +1,65 @@
+version: 2
+
+# Every dependency update is a pull request that must pass the proof
+# (AGENTS.md §11.1, docs/PROOFS.md). Pin exact versions and image digests;
+# never float a tag at runtime.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker-root:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: docker
+    directory: /images
+    schedule:
+      interval: weekly
+    groups:
+      docker-images:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+    groups:
+      docker-deploy:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: bun
+    directory: /ui
+    schedule:
+      interval: weekly
+    groups:
+      bun:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"

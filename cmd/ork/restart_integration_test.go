@@ -210,25 +210,24 @@ func requireMinIO(t *testing.T) artifacts.Config {
 	t.Helper()
 	cfg := artifacts.ConfigFromEnv()
 	cfg.Backend = artifacts.BackendS3
-	endpoint, err := url.Parse(cfg.S3Endpoint)
-	if err != nil {
-		infraAbsent(t, "MinIO endpoint %q is not a URL: %v; run `make infra-up`", cfg.S3Endpoint, err)
+	if _, err := url.Parse(cfg.S3Endpoint); err != nil {
+		infraAbsent(t, "object store endpoint %q is not a URL: %v; run `make infra-up`", cfg.S3Endpoint, err)
 	}
-	health := endpoint.JoinPath("/minio/health/live").String()
+	health := strings.TrimRight(cfg.S3Endpoint, "/") + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, health, nil)
 	if err != nil {
-		infraAbsent(t, "MinIO is not reachable at %s: %v; run `make infra-up`", health, err)
+		infraAbsent(t, "object store (SeaweedFS) is not reachable at %s: %v; run `make infra-up`", health, err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		infraAbsent(t, "MinIO is not reachable at %s: %v; run `make infra-up`", health, err)
+		infraAbsent(t, "object store (SeaweedFS) is not reachable at %s: %v; run `make infra-up`", health, err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		infraAbsent(t, "MinIO health %s returned %d; run `make infra-up`", health, resp.StatusCode)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusForbidden {
+		infraAbsent(t, "object store health %s returned %d; run `make infra-up`", health, resp.StatusCode)
 	}
 	return cfg
 }

@@ -1,0 +1,95 @@
+name: proof-host
+description: Turn a runner into a proof host — the Linux host.docker.internal setup, the SeaweedFS/registry stack, and the optional CLIs.
+
+inputs:
+  cosign:
+    description: Install the cosign CLI (the integration gate's image-policy test)
+    required: false
+    default: "false"
+  temporal-cli:
+    description: Install the temporal CLI from the compose service's own image (ui/e2e/admin.spec.ts)
+    required: false
+    default: "false"
+  cleanup-disk:
+    description: Remove the runner's preinstalled SDKs to free disk
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Disk
+      shell: bash
+      run: |
+        if [ "${{ inputs.cleanup-disk }}" = "true" ]; then
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
+        fi
+        df -h / | tee -a "$GITHUB_STEP_SUMMARY"
+
+    # The README's "Linux hosts" setup, variant A, as the spike measured it:
+    # the host name resolves inside containers through the daemon's DNS.
+    # The Orker never adds --add-host (AGENTS.md §6, §11.1).
+    - name: host.docker.internal
+      shell: bash
+      run: |
+        set -euo pipefail
+        if getent hosts host.docker.internal >/dev/null; then
+          echo "host.docker.internal already resolves"; exit 0
+        fi
+        echo '172.17.0.1 host.docker.internal' | sudo tee -a /etc/hosts
+        sudo mkdir -p /etc/systemd/resolved.conf.d
+        printf '[Resolve]\nDNSStubListenerExtra=172.17.0.1\n' | sudo tee /etc/systemd/resolved.conf.d/20-docker-dns.conf
+        echo '{"dns":["172.17.0.1"]}' | sudo tee /etc/docker/daemon.json
+        sudo systemctl restart systemd-resolved
+        sudo systemctl restart docker
+        docker run --rm alpine:3.20 getent hosts host.docker.internal
+
+    # About 20 jobs a run each need the stack's images; Docker Hub allows 100
+    # anonymous pulls an hour per address. One job saves them, every job loads
+    # them (plan §3.3). A miss pulls normally.
+    - name: Stack image cache
+      uses: actions/cache@v6
+      with:
+        path: /tmp/orkstack-stack-images.tar
+        key: stack-images-${{ hashFiles('deploy/docker-compose.yml', 'images/*/Dockerfile') }}
+        restore-keys: stack-images-
+    - name: Load the stack images
+      shell: bash
+      run: |
+        if [ -f /tmp/orkstack-stack-images.tar ]; then
+          docker load -i /tmp/orkstack-stack-images.tar
+        fi
+
+    - name: SeaweedFS and registry
+      shell: bash
+      run: |
+        set -euo pipefail
+        docker compose -f deploy/docker-compose.yml up -d --wait seaweedfs registry
+        # 403 is a healthy answer from the S3 server to an unsigned request.
+        code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9000/)"
+        [ "$code" = 200 ] || [ "$code" = 403 ]
+        curl -sf -o /dev/null "http://${ORK_LOCAL_REGISTRY:-localhost:5001}/v2/"
+
+    - name: Save the stack images
+      if: always()
+      shell: bash
+      run: |
+        if [ ! -f /tmp/orkstack-stack-images.tar ]; then
+          docker compose -f deploy/docker-compose.yml config --images | sort -u |
+            xargs -r docker save -o /tmp/orkstack-stack-images.tar || true
+        fi
+
+    - name: cosign
+      if: inputs.cosign == 'true'
+      uses: sigstore/cosign-installer@v3
+
+    - name: temporal CLI
+      if: inputs.temporal-cli == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        image="$(docker compose -f deploy/docker-compose.yml config --images | grep temporalio/temporal | head -n1)"
+        id="$(docker create "$image")"
+        sudo docker cp "$id:/usr/local/bin/temporal" /usr/local/bin/temporal
+        docker rm "$id" >/dev/null
+        temporal --version

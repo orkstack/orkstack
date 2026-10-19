@@ -765,7 +765,7 @@ operations may include `copy`, `checksum`, `gzip`, `gunzip`, `tar`, `untar`, and
 ## 10. Developer experience and contract testing
 
 Local development should be excellent. One command starts the whole local
-stack (Temporal, MinIO, a registry, engine, Orker, and UI, health-checked):
+stack (Temporal, SeaweedFS, a registry, engine, Orker, and UI, health-checked):
 
 ```bash
 make up
@@ -902,17 +902,22 @@ Every code change follows this order:
    image's interface label, regenerate `docs/schemas/` with
    `go run ./internal/schemas/cmd/genschemas`; `TestSchemas_AreGenerated`
    refuses a stale schema.
-3. Write a behavior test that fails for the right reason.
-4. Implement until it passes.
-5. Run `make lint test`; for Temporal or storage changes, run the affected
+3. Dependencies are pinned: an exact module version, or an image digest,
+   never a floating tag at runtime; a toolchain version is an exact line in
+   `go.mod` or the workflow. Update by pull request that proves the change —
+   `.github/dependabot.yml` opens them, and an update never merges on a green
+   unit run alone. A new dependency follows the same rule as any other change.
+4. Write a behavior test that fails for the right reason.
+5. Implement until it passes.
+6. Run `make lint test`; for Temporal or storage changes, run the affected
    integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
-6. Produce the change's evidence with
+7. Produce the change's evidence with
    `make proof-feature TESTS='PKG:REGEX …' SPECS='FILE …'`, naming the tests
    and specs that prove it, and quote it as a feature proof (§11.2).
-7. Commit with a Conventional Commit.
-8. Merge through §11.3. The full proof of the merged tree is what makes the
+8. Commit with a Conventional Commit.
+9. Merge through §11.3. The full proof of the merged tree is what makes the
    change done.
 
 Unit tests are pure and table-driven. Temporal workflow tests use
@@ -921,7 +926,7 @@ Integration tests use `-tags=integration`, `make infra-up`, and `infraAbsent`; a
 missing prerequisite skips, and becomes a failure under `ORK_REQUIRE_INFRA=1`
 (`make test-integration` sets it). Browser end-to-end tests live in `ui/e2e`
 (Playwright, `cd ui && bun run test`) and drive the built UI against a real
-engine, Orker, Temporal, and MinIO; the activity fixtures live in
+engine, Orker, Temporal, and the dev object store; the activity fixtures live in
 `test/fixtures` and `test/tools` holds helpers those suites build. Do not use
 sleeps for synchronization; use deadlines or test helpers. A skip is never a
 pass: a harness must probe its prerequisites itself and fail, not skip, once
@@ -959,7 +964,7 @@ are pushed once per proof under `ORK_TEST_IMAGE_TAG`; tests and specs only
 resolve that tag. A test never asserts on host-wide state: it counts
 containers by `label=ork.orker=` or `label=ork.run=`, never with an unfiltered
 `docker ps`. What cannot be owned is shared, and every test must tolerate it:
-the Docker daemon, CPU and memory, the MinIO and registry servers (isolated by
+the Docker daemon, CPU and memory, the SeaweedFS and registry servers (isolated by
 bucket and tag), and the host's network interfaces.
 
 Playwright specs are not yet isolated that far. A proof runs spec files one at
@@ -1070,7 +1075,7 @@ and it runs everything: lint; build; unit; `go vet -tags=integration`; the
 first-party activity images, built and pushed from this tree under a tag of
 the proof's own (`ORK_TEST_IMAGE_TAG`); every test of every package whose
 integration build differs from its unit build, against real Temporal and
-MinIO with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run on those
+SeaweedFS with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run on those
 images; the UI type-check and unit suites; every Playwright spec; and the
 observability gate, whenever the tree differs from `main` in a telemetry
 path. That diff-conditioned observability gate is the only diff-conditioned
@@ -1112,7 +1117,7 @@ was stopped before its verdict leaves no README and no `proof.json`. Each
 proof runs its own Temporal: the image and arguments of the `temporal` service
 in `deploy/docker-compose.yml`, on a free port, labelled with the proof and
 stopped when the proof exits. A later proof stops any such container whose
-owning proof process is gone. Each proof uses the MinIO and registry of
+owning proof process is gone. Each proof uses the SeaweedFS and registry of
 `make infra-up`, isolated by image tag and, for the Go suites, by bucket, and
 runs in its own process group with its own binaries. The README names the
 commit, the tree, the base and merge base, the activity image digests, and

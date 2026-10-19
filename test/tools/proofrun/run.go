@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -172,12 +174,14 @@ type runner struct {
 	dirs     map[string]string
 	jobDir   string
 
-	mu     sync.Mutex
-	c      *collector
-	events io.Writer
-	log    io.Writer
-	done   int
-	total  int
+	mu         sync.Mutex
+	progressMu sync.Mutex
+	c          *collector
+	events     io.Writer
+	log        io.Writer
+	progress   io.Writer
+	done       int
+	total      int
 }
 
 // jobResult is what one process reported.
@@ -284,7 +288,8 @@ func (r *runner) runJob(ctx context.Context, j job, slot int) jobResult {
 	local := newCollector()
 	var raw bytes.Buffer
 	readDone := make(chan error, 1)
-	go func() { readDone <- readEvents(convOut, local, label, &raw, logFile) }()
+	progress := r.progressWriter()
+	go func() { readDone <- readEvents(convOut, local, label, &raw, logFile, progress) }()
 
 	runErr := cmd.Start()
 	_ = pw.Close()
@@ -380,60 +385,179 @@ func (r *runner) logf(format string, args ...any) {
 	fmt.Fprintf(r.log, format+"\n", args...)
 }
 
-// cmdIntegration is `proofrun integration`: compile, list, plan, run, ledger.
-func cmdIntegration(args []string) int {
+// progressWriter is a writer that serialises the proofrun: lines a shard's
+// log carries, so a cancelled job's log still says which test was running.
+func (r *runner) progressWriter() io.Writer {
+	if r.progress == nil {
+		return nil
+	}
+	return lockedWriter{w: r.progress, mu: &r.progressMu}
+}
+
+type lockedWriter struct {
+	w  io.Writer
+	mu *sync.Mutex
+}
+
+func (l lockedWriter) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(b)
+}
+
+// integrationPlanOptions is `proofrun integration`'s invocation.
+type integrationPlanOptions struct {
+	out, binDir                           string
+	jobs, shards, uiShards                int
+	nsPrefix, costsFile, allowFile        string
+	selectFile, only                      string
+	planOnly                              bool
+	planFile                              string
+	shard                                 int
+	matrixOut                             string
+	nightlyFile, nightlyMode, nightlyBase string
+	tier, proofID                         string
+	baseCommit, mergeBase                 string
+	observabilityRequired                 bool
+	printProgress                         bool
+	ci                                    bool
+	listsChanged                          string
+	prNumber                              int
+	prHead, prBase, prContains            string
+	pr                                    *prRecord
+}
+
+func integrationFlags() (*flag.FlagSet, *integrationPlanOptions) {
+	o := &integrationPlanOptions{}
 	fs := flag.NewFlagSet("integration", flag.ContinueOnError)
-	out := fs.String("out", "", "directory for the ledger, plan, events and per-job logs (required)")
-	binDir := fs.String("bin", "", "directory to compile test binaries into (default <out>/bin/test)")
-	jobs := fs.Int("jobs", envInt("PROOF_JOBS", 4), "test processes at a time (PROOF_JOBS)")
-	nsPrefix := fs.String("namespace-prefix", "", "each slot k runs with ORK_TEMPORAL_NAMESPACE=<prefix>-w<k>")
-	costsFile := fs.String("costs", "scripts/proof-test-costs.tsv", "measured per-test durations")
-	allowFile := fs.String("allow", "scripts/proof-allowed-skips.txt", "allowed skips")
-	selectFile := fs.String("select", "", "a feature selection (proofrun select): run only its integration tests")
-	only := fs.String("run", "", "run only the tests matching this regexp (by hand; never a proof)")
-	planOnly := fs.Bool("plan-only", false, "compile, list and plan, print the estimated duration, run nothing")
+	fs.StringVar(&o.out, "out", "", "directory for the ledger, plan, events and per-job logs (required)")
+	fs.StringVar(&o.binDir, "bin", "", "directory to compile test binaries into, or a directory of binaries the plan shipped (default <out>/bin/test)")
+	fs.IntVar(&o.jobs, "jobs", envInt("PROOF_JOBS", 4), "test processes at a time (PROOF_JOBS)")
+	fs.StringVar(&o.nsPrefix, "namespace-prefix", "", "each slot k runs with ORK_TEMPORAL_NAMESPACE=<prefix>-w<k>")
+	fs.StringVar(&o.costsFile, "costs", "scripts/proof-test-costs.tsv", "measured per-test durations")
+	fs.StringVar(&o.allowFile, "allow", "scripts/proof-allowed-skips.txt", "allowed skips")
+	fs.StringVar(&o.selectFile, "select", "", "a feature selection (proofrun select): run only its integration tests")
+	fs.StringVar(&o.only, "run", "", "run only the tests matching this regexp (by hand; never a proof)")
+	fs.BoolVar(&o.planOnly, "plan-only", false, "compile, list and plan, write integration-plan.json, run nothing")
+	fs.StringVar(&o.planFile, "plan", "", "run the shard a plan names, with no re-planning")
+	fs.IntVar(&o.shard, "shard", 0, "with -plan: run only this shard (1-based)")
+	fs.IntVar(&o.shards, "shards", 1, "with -plan-only: split the planned jobs into this many shards")
+	fs.StringVar(&o.matrixOut, "matrix-out", "", "with -plan-only: write the shard indices as a JSON array")
+	fs.StringVar(&o.nightlyFile, "nightly", "scripts/proof-nightly-tests.txt", "the nightly list")
+	fs.StringVar(&o.nightlyMode, "nightly-mode", nightlyInclude, "include (default), defer (leave out entries the base also lists) or only")
+	fs.StringVar(&o.nightlyBase, "nightly-base", "", "the base's copy of the nightly list (required with -nightly-mode defer)")
+	fs.StringVar(&o.tier, "tier", tierFull, "full, nightly, release or feature")
+	fs.StringVar(&o.proofID, "proof-id", "", "the proof's id: the plan's image tag and namespace prefix")
+	fs.StringVar(&o.baseCommit, "base-commit", "", "the commit the proof diffs against")
+	fs.StringVar(&o.mergeBase, "merge-base", "", "the merge base of -base-commit and HEAD (computed when absent)")
+	fs.BoolVar(&o.observabilityRequired, "observability-required", false, "the tree changes a telemetry path")
+	fs.BoolVar(&o.printProgress, "print-progress", false, "print proofrun: start/outcome lines as tests run")
+	fs.BoolVar(&o.ci, "ci", false, "this plan is a CI proof's (parts_expected is the job graph, not local)")
+	fs.StringVar(&o.listsChanged, "lists-changed", "", "JSON file of gate-file changes (proofrun touches -gate-files)")
+	fs.IntVar(&o.prNumber, "pr-number", 0, "pull request number")
+	fs.StringVar(&o.prHead, "pr-head-sha", "", "the pull request's head")
+	fs.StringVar(&o.prBase, "pr-base-sha", "", "the pull request's base")
+	fs.StringVar(&o.prContains, "pr-contains-base", "", "the merge commit's second parent contains the first (true or false)")
+	fs.IntVar(&o.uiShards, "ui-shards", 0, "how many UI shards the plan part wrote (recorded in parts_expected)")
+	return fs, o
+}
+
+// cmdIntegration is `proofrun integration`: compile, list, plan and run, or
+// plan once and run one shard of it (`-plan`), or plan only (`-plan-only`).
+func cmdIntegration(args []string) int {
+	fs, o := integrationFlags()
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *out == "" || *jobs < 1 {
-		fmt.Fprintln(os.Stderr, "proofrun integration: -out is required and -jobs must be at least 1")
+	if o.prNumber > 0 {
+		o.pr = &prRecord{Number: o.prNumber, HeadSHA: o.prHead, BaseSHA: o.prBase, ContainsBase: o.prContains == "true"}
+	}
+	if o.out == "" || o.jobs < 1 || o.shards < 1 {
+		fmt.Fprintln(os.Stderr, "proofrun integration: -out is required, -jobs and -shards must be at least 1")
 		return 2
 	}
-	patterns := fs.Args()
+	switch o.nightlyMode {
+	case nightlyInclude, nightlyDefer, nightlyOnly:
+	default:
+		fmt.Fprintln(os.Stderr, "proofrun integration: -nightly-mode must be include, defer or only")
+		return 2
+	}
+	if o.nightlyMode == nightlyDefer && o.nightlyBase == "" {
+		fmt.Fprintln(os.Stderr, "proofrun integration: -nightly-mode defer requires -nightly-base: a proof defers only the entries its base also lists")
+		return 2
+	}
+	switch o.tier {
+	case tierFull, tierNightly, tierRelease, tierFeature:
+	default:
+		fmt.Fprintln(os.Stderr, "proofrun integration: -tier must be full, nightly, release or feature")
+		return 2
+	}
+	if o.planFile != "" {
+		if o.planOnly || o.shard < 1 {
+			fmt.Fprintln(os.Stderr, "proofrun integration: -plan runs one shard: give -shard K (1-based) and no -plan-only")
+			return 2
+		}
+		return runShard(o)
+	}
+	if o.shard > 0 {
+		fmt.Fprintln(os.Stderr, "proofrun integration: -shard runs a plan: give -plan FILE")
+		return 2
+	}
+	return planAndMaybeRun(o, fs.Args())
+}
+
+// planAndMaybeRun compiles and lists the packages, writes the plan, and runs
+// it unless -plan-only.
+func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
-	if *binDir == "" {
-		*binDir = filepath.Join(*out, "bin", "test")
+	binDir := o.binDir
+	if binDir == "" {
+		binDir = filepath.Join(o.out, "bin", "test")
 	}
-	allow, err := readAllowlist(*allowFile)
+	allow, err := readAllowlist(o.allowFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 		return 2
 	}
-	measured, err := readCosts(*costsFile)
+	measured, err := readCosts(o.costsFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 		return 2
 	}
 	var onlyRE *regexp.Regexp
-	if *only != "" {
-		if onlyRE, err = regexp.Compile(*only); err != nil {
+	if o.only != "" {
+		if onlyRE, err = regexp.Compile(o.only); err != nil {
 			fmt.Fprintln(os.Stderr, "proofrun integration: -run:", err)
 			return 2
 		}
 	}
-
-	// Which packages, and which of their tests.
-	var pkgs []pkgInfo
-	var chosen map[string][]string
-	whole := map[string]bool{}
-	if *selectFile != "" {
-		var sel selection
-		if err := readJSON(*selectFile, &sel); err != nil {
+	var sel *selection
+	if o.selectFile != "" {
+		sel = &selection{}
+		if err := readJSON(o.selectFile, sel); err != nil {
 			fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 			return 2
 		}
+	}
+	nightly, err := readNightlyList(o.nightlyFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 2
+	}
+	var nightlyBase []nightlyEntry
+	if o.nightlyMode == nightlyDefer || o.nightlyBase != "" {
+		if nightlyBase, err = readNightlyList(o.nightlyBase); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+			return 2
+		}
+	}
+
+	var pkgs []pkgInfo
+	var chosen map[string][]string
+	whole := map[string]bool{}
+	if sel != nil {
 		chosen = map[string][]string{}
 		var names []string
 		for p, ps := range sel.Integration {
@@ -448,7 +572,8 @@ func cmdIntegration(args []string) int {
 		sort.Strings(names)
 		if len(names) == 0 {
 			fmt.Fprintln(stdout, "proofrun integration: the selection runs no integration test")
-			return writeLedgerAndReport(*out, ledger{Suite: "integration", Problems: []string{}})
+			plan := &integrationPlan{Format: planFormat, Tier: tierFeature, Expected: []testRef{}, Jobs: []job{}, Shards: []planShard{}, Packages: []planPackage{}, Problems: []string{}}
+			return writePlan(*o, plan, measured, nightly, nightlyBase, nil)
 		}
 		dirs, err := packageDirs("integration", names)
 		if err != nil {
@@ -464,13 +589,13 @@ func cmdIntegration(args []string) int {
 			return 2
 		}
 	}
-	if err := os.MkdirAll(filepath.Join(*out, "integration"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(o.out, "integration"), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 		return 1
 	}
 
 	started := time.Now()
-	bins, err := compile(pkgs, *binDir, stdout)
+	bins, err := compile(pkgs, binDir, stdout)
 	if err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
@@ -480,8 +605,10 @@ func cmdIntegration(args []string) int {
 	listed := map[string]map[string]bool{}
 	run := map[string][]string{}
 	dirs := map[string]string{}
-	var expected []testKey
+	var packages []planPackage
 	var problems []string
+	var unlisted []testKey
+	root, _ := repoRoot()
 	for _, p := range pkgs {
 		dirs[p.ImportPath] = p.Dir
 		names, err := list(bins[p.ImportPath], p.Dir)
@@ -501,43 +628,457 @@ func cmdIntegration(args []string) int {
 			if onlyRE != nil && !onlyRE.MatchString(n) {
 				continue
 			}
-			expected = append(expected, testKey{p.ImportPath, n})
 			if !listed[p.ImportPath][n] {
 				problems = append(problems, fmt.Sprintf("%s.%s was selected, and its test binary does not list it", p.ImportPath, n))
+				unlisted = append(unlisted, testKey{p.ImportPath, n})
 				continue
 			}
 			run[p.ImportPath] = append(run[p.ImportPath], n)
 		}
+		var sha string
+		if b, err := os.ReadFile(bins[p.ImportPath]); err == nil {
+			sum := sha256.Sum256(b)
+			sha = hex.EncodeToString(sum[:])
+		}
+		rel := p.Dir
+		if root != "" {
+			if r, err := filepath.Rel(root, p.Dir); err == nil {
+				rel = r
+			}
+		}
+		packages = append(packages, planPackage{
+			ImportPath: p.ImportPath, Dir: rel, Binary: filepath.Base(bins[p.ImportPath]),
+			BinarySHA256: sha, Listed: names,
+		})
 		fmt.Fprintf(stdout, "listed %s: %d tests, running %d\n", p.ImportPath, len(names), len(run[p.ImportPath]))
 	}
+	problems = append(nightlyProblems(nightly, listed), problems...)
 
-	planned := plan(run, measured)
-	if err := writeJSON(filepath.Join(*out, "integration-plan.json"), planned); err != nil {
-		fmt.Fprintln(stdout, err)
-		return 1
+	// The test sets: expected = run ∪ deferred, and the mode decides both.
+	deferred := map[testKey]nightlyEntry{}
+	switch {
+	case o.nightlyMode == nightlyDefer:
+		if sel == nil {
+			deferred = deferredSet(nightly, nightlyBase)
+		}
+	case o.nightlyMode == nightlyOnly && sel == nil:
+		// expected is the nightly list's tests only; everything else is out of tier.
 	}
-	fmt.Fprintf(stdout, "planned %d jobs on %d slots; estimated %.0fs of work, %.0fs on %d slots (before contention)\n",
-		len(planned), *jobs, totalCost(planned), makespan(planned, *jobs), *jobs)
-	if *planOnly {
+	runSet := map[testKey]bool{}
+	for p, names := range run {
+		for _, n := range names {
+			k := testKey{p, n}
+			if _, def := deferred[k]; def {
+				continue
+			}
+			runSet[k] = true
+		}
+	}
+	if o.nightlyMode == nightlyOnly && sel == nil {
+		runSet = map[testKey]bool{}
+		for _, e := range nightly {
+			if listed[e.Package][e.Test] {
+				runSet[e.key()] = true
+			}
+		}
+	}
+	runTests := map[string][]string{}
+	for p := range run {
+		runTests[p] = nil
+	}
+	for p, names := range run {
+		for _, n := range names {
+			if runSet[testKey{p, n}] {
+				runTests[p] = append(runTests[p], n)
+			}
+		}
+	}
+	kinds := map[string]map[string]string{}
+	for _, p := range pkgs {
+		kinds[p.ImportPath] = testKinds(p.Dir)
+	}
+	jobs := plan(runTests, measured, kinds)
+	shards := splitShards(jobs, o.shards, o.jobs)
+	plan := &integrationPlan{
+		Format: planFormat, Tier: o.tier, ProofID: o.proofID,
+		BaseRef: mainBranch, BaseCommit: o.baseCommit, MergeBase: o.mergeBase,
+		ObservabilityRequired: o.observabilityRequired, PR: o.pr,
+		AllowedSkips: fileRef{File: o.allowFile},
+		Packages:     packages, Jobs: jobs, Shards: shards,
+		RequestedShards: o.shards, SlotsPerShard: o.jobs, Problems: problems,
+	}
+	if ref, err := fileSHA256(o.allowFile); err == nil {
+		plan.AllowedSkips.SHA256 = ref
+	}
+	if code := writePlan(*o, plan, measured, nightly, nightlyBase, nil); code != 0 {
+		return code
+	}
+	for _, s := range shards {
+		fmt.Fprintf(stdout, "  shard %d: %d jobs, estimated %.0fs, makespan %.0fs\n", s.Index, len(s.Jobs), s.EstimatedSeconds, s.EstimatedMakespan)
+	}
+	fmt.Fprintf(stdout, "planned %d jobs on %d shards (%d slots each); estimated %.0fs of work, floor %.0fs\n",
+		len(jobs), len(shards), o.jobs, totalCost(jobs), floorSeconds(jobs))
+	if o.planOnly {
+		if o.matrixOut != "" {
+			idx := make([]int, len(shards))
+			for i := range idx {
+				idx[i] = i + 1
+			}
+			b, _ := json.Marshal(idx)
+			if err := os.WriteFile(o.matrixOut, append(b, '\n'), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+				return 1
+			}
+		}
 		return 0
 	}
-
-	events, err := os.Create(filepath.Join(*out, "integration.events.jsonl"))
+	events, err := os.Create(filepath.Join(o.out, "integration.events.jsonl"))
 	if err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
 	defer events.Close()
 	r := &runner{
-		slots: *jobs, nsPrefix: *nsPrefix, baseEnv: os.Environ(), bins: bins, dirs: dirs,
-		jobDir: filepath.Join(*out, "integration"), c: newCollector(), events: events, log: stdout,
+		slots: o.jobs, nsPrefix: o.nsPrefix, baseEnv: os.Environ(), bins: bins, dirs: dirs,
+		jobDir: filepath.Join(o.out, "integration"), c: newCollector(), events: events, log: stdout,
+		progress: nil,
 	}
-	r.runAll(context.Background(), planned)
-
+	if o.printProgress {
+		r.progress = stdout
+	}
+	r.runAll(context.Background(), jobs)
+	var expected []testKey
+	for _, e := range plan.Expected {
+		expected = append(expected, testKey{e.Package, e.Test})
+	}
 	l := buildLedger("integration", expected, listed, r.c, allow)
+	for _, k := range unlisted {
+		l.Tests = append(l.Tests, entry{Package: k.Package, Test: k.Test, Outcome: outcomeNone,
+			Reason: "it was selected, and its test binary does not list it"})
+		l.Summary.Expected++
+		l.Summary.NoOutcome++
+	}
 	l.Problems = append(problems, l.Problems...)
+	l.PlanSHA256, _ = fieldSHA256(filepath.Join(o.out, "integration-plan.json"))
 	fmt.Fprintf(stdout, "integration phase took %.0fs\n", time.Since(started).Seconds())
-	return writeLedgerAndReport(*out, l)
+	return writeLedgerAndReport(o.out, l)
+}
+
+// writePlan records the expected set and every input's hash, then writes the
+// plan to <out>/integration-plan.json.
+func writePlan(o integrationPlanOptions, p *integrationPlan, measured costs, nightly, nightlyBase []nightlyEntry, _ []testKey) int {
+	p.Expected = []testRef{}
+	p.Deferred = []deferredRef{}
+	p.Unmeasured = []unmeasuredRef{}
+	runSet := map[testKey]bool{}
+	for _, j := range p.Jobs {
+		for _, t := range j.Tests {
+			runSet[testKey{j.Package, t}] = true
+		}
+	}
+	deferred := map[testKey]nightlyEntry{}
+	if o.nightlyMode == nightlyDefer && o.selectFile == "" {
+		deferred = deferredSet(nightly, nightlyBase)
+	}
+	var keys []testKey
+	if o.nightlyMode == nightlyOnly && o.selectFile == "" {
+		for _, e := range nightly {
+			if runSet[e.key()] {
+				keys = append(keys, e.key())
+			}
+		}
+	} else {
+		for _, j := range p.Jobs {
+			for _, t := range j.Tests {
+				keys = append(keys, testKey{j.Package, t})
+			}
+		}
+	}
+	sort.SliceStable(keys, func(i, j int) bool {
+		if keys[i].Package != keys[j].Package {
+			return keys[i].Package < keys[j].Package
+		}
+		return keys[i].Test < keys[j].Test
+	})
+	for k, e := range deferred {
+		if runSet[k] {
+			continue
+		}
+		p.Deferred = append(p.Deferred, deferredRef{Package: k.Package, Test: k.Test, Entry: e.Text})
+		keys = append(keys, k)
+	}
+	sort.SliceStable(keys, func(i, j int) bool {
+		if keys[i].Package != keys[j].Package {
+			return keys[i].Package < keys[j].Package
+		}
+		return keys[i].Test < keys[j].Test
+	})
+	p.Expected = sortedTestRefs(keys)
+	sort.SliceStable(p.Deferred, func(i, j int) bool {
+		if p.Deferred[i].Package != p.Deferred[j].Package {
+			return p.Deferred[i].Package < p.Deferred[j].Package
+		}
+		return p.Deferred[i].Test < p.Deferred[j].Test
+	})
+	for _, k := range keys {
+		if _, ok := measured[k]; ok {
+			continue
+		}
+		kind := "integration"
+		for _, pkg := range p.Packages {
+			if pkg.ImportPath == k.Package && testKindsFor(pkg.Dir)[k.Test] == "unit" {
+				kind = "unit"
+			}
+		}
+		p.Unmeasured = append(p.Unmeasured, unmeasuredRef{Package: k.Package, Test: k.Test, Kind: kind})
+	}
+	if o.nightlyMode == nightlyOnly && o.selectFile == "" {
+		p.OutOfTier = 0
+		for _, pkg := range p.Packages {
+			for _, t := range pkg.Listed {
+				if !runSet[testKey{pkg.ImportPath, t}] {
+					p.OutOfTier++
+				}
+			}
+		}
+	}
+	p.Tree, _ = workingTreeHash(mustRepoRoot())
+	p.Commit = strings.TrimSpace(mustGit("rev-parse", "HEAD"))
+	p.Nightly = nightlyRef{
+		File: o.nightlyFile, Mode: o.nightlyMode,
+		Entries: entryLines(nightly), BaseCommit: o.baseCommit,
+		BaseEntries: entryLines(nightlyBase),
+	}
+	p.Nightly.SHA256, _ = fileSHA256(o.nightlyFile)
+	if o.nightlyBase != "" {
+		p.Nightly.BaseSHA256, _ = fileSHA256(o.nightlyBase)
+	}
+	p.Costs = fileRef{File: o.costsFile}
+	p.Costs.SHA256, _ = fileSHA256(o.costsFile)
+	p.PartsExpected = partsExpected(o.tier, !o.ci, len(p.Shards), 0, o.observabilityRequired)
+	if o.ci {
+		uiShards := o.uiShards
+		p.PartsExpected = partsExpected(o.tier, false, len(p.Shards), uiShards, o.observabilityRequired)
+	}
+	if o.listsChanged != "" {
+		_ = readJSON(o.listsChanged, &p.ListsChanged)
+	}
+	if o.mergeBase == "" && o.baseCommit != "" {
+		if mb, err := gitOut("merge-base", o.baseCommit, "HEAD"); err == nil {
+			p.MergeBase = strings.TrimSpace(mb)
+		}
+	}
+	if err := writeJSON(filepath.Join(o.out, "integration-plan.json"), p); err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 1
+	}
+	return 0
+}
+
+func testKindsFor(dir string) map[string]string { return testKinds(dir) }
+
+// runShard runs one shard of a written plan.
+func runShard(o *integrationPlanOptions) int {
+	plan, err := readPlan(o.planFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 2
+	}
+	root, err := repoRoot()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 2
+	}
+	tree, err := workingTreeHash(root)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 2
+	}
+	if plan.Tree != "" && tree != plan.Tree {
+		fmt.Fprintf(os.Stderr, "proofrun integration: this plan was made for tree %s, and this checkout is %s\n", plan.Tree, tree)
+		return 2
+	}
+	if o.shard > len(plan.Shards) {
+		fmt.Fprintf(os.Stderr, "proofrun integration: -shard %d, and the plan holds %d shards\n", o.shard, len(plan.Shards))
+		return 2
+	}
+	if err := os.MkdirAll(filepath.Join(o.out, "integration"), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 1
+	}
+	jobs := plan.shardJobs(o.shard)
+	if len(jobs) == 0 {
+		fmt.Fprintf(os.Stderr, "proofrun integration: shard %d holds no job\n", o.shard)
+		return 2
+	}
+	binDir := o.binDir
+	if binDir == "" {
+		binDir = filepath.Join(o.out, "bin", "test")
+	}
+	allow, err := readAllowlist(o.allowFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 2
+	}
+	var pkgs []pkgInfo
+	seen := map[string]bool{}
+	for _, j := range jobs {
+		if seen[j.Package] {
+			continue
+		}
+		seen[j.Package] = true
+		pk := plan.pkg(j.Package)
+		if pk == nil {
+			fmt.Fprintf(os.Stderr, "proofrun integration: the plan holds a job for %s and no package for it\n", j.Package)
+			return 2
+		}
+		pkgs = append(pkgs, pkgInfo{ImportPath: pk.ImportPath, Dir: filepath.Join(root, pk.Dir)})
+	}
+	bins := map[string]string{}
+	binaries := map[string]binaryRecord{}
+	if st, err := os.Stat(binDir); err == nil && st.IsDir() {
+		if _, err := os.Stat(filepath.Join(binDir, plan.pkg(pkgs[0].ImportPath).Binary)); err == nil {
+			for _, p := range pkgs {
+				pk := plan.pkg(p.ImportPath)
+				bin := filepath.Join(binDir, pk.Binary)
+				sha, err := fileSHA256(bin)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "proofrun integration: shipped binary %s: %v\n", bin, err)
+					return 2
+				}
+				if pk.BinarySHA256 != "" && sha != pk.BinarySHA256 {
+					fmt.Fprintf(os.Stderr, "proofrun integration: shipped binary %s hashes to %s, and the plan says %s\n", bin, sha, pk.BinarySHA256)
+					return 2
+				}
+				bins[p.ImportPath] = bin
+			}
+		}
+	}
+	if len(bins) == 0 {
+		var err error
+		bins, err = compile(pkgs, binDir, stdout)
+		if err != nil {
+			fmt.Fprintln(stdout, err)
+			return 1
+		}
+	}
+	listed := map[string]map[string]bool{}
+	dirs := map[string]string{}
+	for _, p := range pkgs {
+		dirs[p.ImportPath] = p.Dir
+		names, err := list(bins[p.ImportPath], p.Dir)
+		if err != nil {
+			fmt.Fprintln(stdout, err)
+			return 1
+		}
+		pk := plan.pkg(p.ImportPath)
+		if !slicesEqual(names, pk.Listed) {
+			missing, extra := listingDiff(pk.Listed, names)
+			if len(missing) > 0 {
+				fmt.Fprintf(os.Stderr, "proofrun integration: binary %s misses %s, which the plan listed\n", p.ImportPath, strings.Join(missing, ", "))
+			}
+			if len(extra) > 0 {
+				fmt.Fprintf(os.Stderr, "proofrun integration: binary %s lists %s, which the plan did not\n", p.ImportPath, strings.Join(extra, ", "))
+			}
+			return 2
+		}
+		listed[p.ImportPath] = map[string]bool{}
+		for _, n := range names {
+			listed[p.ImportPath][n] = true
+		}
+		sha, _ := fileSHA256(bins[p.ImportPath])
+		lsha := sha256String(strings.Join(names, "\n"))
+		binaries[p.ImportPath] = binaryRecord{SHA256: sha, ListingSHA256: lsha}
+		if pk.BinarySHA256 != "" && sha != pk.BinarySHA256 {
+			fmt.Fprintf(stdout, "note: a binary compiled here hashes to %s; the plan's compile hashed to %s (separate compiles need not agree)\n", sha, pk.BinarySHA256)
+		}
+	}
+	events, err := os.Create(filepath.Join(o.out, "integration.events.jsonl"))
+	if err != nil {
+		fmt.Fprintln(stdout, err)
+		return 1
+	}
+	defer events.Close()
+	r := &runner{
+		slots: o.jobs, nsPrefix: o.nsPrefix, baseEnv: os.Environ(), bins: bins, dirs: dirs,
+		jobDir: filepath.Join(o.out, "integration"), c: newCollector(), events: events, log: stdout,
+	}
+	if o.printProgress {
+		r.progress = stdout
+	}
+	started := time.Now()
+	r.runAll(context.Background(), jobs)
+	shardSet := map[testKey]bool{}
+	for _, j := range jobs {
+		for _, t := range j.Tests {
+			shardSet[testKey{j.Package, t}] = true
+		}
+	}
+	var expected []testKey
+	for _, e := range plan.Expected {
+		if shardSet[testKey{e.Package, e.Test}] {
+			expected = append(expected, testKey{e.Package, e.Test})
+		}
+	}
+	l := buildLedger("integration", expected, listed, r.c, allow)
+	l.Shard = o.shard
+	l.PlanSHA256, _ = fieldSHA256(o.planFile)
+	l.Binaries = binaries
+	fmt.Fprintf(stdout, "shard %d of %d took %.0fs\n", o.shard, len(plan.Shards), time.Since(started).Seconds())
+	return writeLedgerAndReport(o.out, l)
+}
+
+func listingDiff(want, got []string) (missing, extra []string) {
+	w := map[string]bool{}
+	g := map[string]bool{}
+	for _, s := range want {
+		w[s] = true
+	}
+	for _, s := range got {
+		g[s] = true
+	}
+	for _, s := range want {
+		if !g[s] {
+			missing = append(missing, s)
+		}
+	}
+	for _, s := range got {
+		if !w[s] {
+			extra = append(extra, s)
+		}
+	}
+	return missing, extra
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sha256String(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func fieldSHA256(file string) (string, error) {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func mustRepoRoot() string {
+	r, _ := repoRoot()
+	return r
 }
 
 // writeLedgerAndReport writes <suite>-tests.json and prints its verdict.
@@ -609,7 +1150,7 @@ func cmdUnit(args []string) int {
 		return 1
 	}
 	c := newCollector()
-	readErr := readEvents(goOut, c, "unit", events, stdout)
+	readErr := readEvents(goOut, c, "unit", events, stdout, nil)
 	runErr := cmd.Wait()
 
 	l := buildLedger("unit", expected, listed, c, allow)

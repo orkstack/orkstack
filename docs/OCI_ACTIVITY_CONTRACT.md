@@ -1001,10 +1001,10 @@ respect is a bug in the limit. 4 MiB leaves ~60× headroom over the worst
 legal case.
 
 **Conditional `PutObject` is a deployment requirement, not a property of
-"S3-compatible".** AWS S3, MinIO (≥ `RELEASE.2023-02-17T17-52-43Z`),
+"S3-compatible".** AWS S3, SeaweedFS (documented as atomic cluster-wide),
 Cloudflare R2, LocalStack and Ceph RGW (unversioned simple PUT) support
 `If-None-Match: *`; Google Cloud Storage's XML API, Backblaze B2's S3 endpoint
-and Garage do not (vendor documentation; only MinIO is exercised by the test
+and Garage do not (vendor documentation; SeaweedFS is exercised by the test
 suite). A production deployment requires a store that implements it, returning
 412 on conflict, on non-multipart writes.
 
@@ -1992,10 +1992,12 @@ Each rule below was forced by an observed failure, not a preference. They are
 kept so nobody "simplifies" one back; the tests named in the sections above
 hold the tree to them.
 
-- **14.1 Conditional create works on the pinned MinIO**, but a sequential
+- **14.1 Conditional create works on the pinned dev store**, but a sequential
   probe proves only the `412` mapping, not atomicity — hence §5.3's concurrent
-  two-writer boot probe, and a pinned MinIO tag in `deploy/docker-compose.yml`
-  so the conditional-write boundary cannot move underneath it.
+  two-writer boot probe, and an object-store image pinned by digest in
+  `deploy/docker-compose.yml` so the conditional-write boundary cannot move
+  underneath it. The dev store is SeaweedFS, which documents the conditional
+  create as atomic cluster-wide; an update is a PR that runs the proof.
 - **14.2 The artifact store cannot hold a commit record.** A by-name `Stat` on
   the local backend fails (`malformed physical object key`) and a second `Put`
   of the same name with different bytes creates a second object instead of

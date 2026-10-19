@@ -65,7 +65,11 @@ func TestRepositoryNeverKillsByNameOrPattern(t *testing.T) {
 	}
 	patternKill := regexp.MustCompile(`\b(pkill|killall|pgrep)\b|xargs\s+kill`)
 	var files []string
-	for _, glob := range []string{"scripts/*.sh", "images/*/*.sh", "Makefile", "images/Makefile", "*.md", "docs/*.md", "deploy/*.md", "deploy/*/*.md"} {
+	for _, glob := range []string{
+		"scripts/*.sh", "scripts/github/*", "images/*/*.sh", "Makefile", "images/Makefile",
+		"*.md", "docs/*.md", "deploy/*.md", "deploy/*/*.md",
+		".github/workflows/*.yml", ".github/actions/*/action.yml", ".github/*.md",
+	} {
 		m, err := filepath.Glob(filepath.Join(root, glob))
 		if err != nil {
 			t.Fatal(err)

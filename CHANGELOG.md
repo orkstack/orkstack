@@ -10,6 +10,27 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- The proof runs sharded in CI: `proofrun integration -plan-only` writes one
+  plan, `-plan … -shard K` runs one shard of it, and `proofrun merge` merges
+  every part into one `proof.json` with the same eligibility rules a local
+  proof uses. A merge-queue or pull-request run of `.github/workflows/proof.yml`
+  is the merge gate; `proof` is its single required check (docs/PROOFS.md).
+- A nightly tier and a pre-release gate: `make proof-nightly` runs the
+  deferred scale and soak tests, `make proof-release` runs every gate with
+  observability, and `release.yml` tags only after `proofrun verify -release`
+  accepts the proof for the exact commit. `make release-tag` is the local
+  equivalent.
+- `make check`, the fast contributor path: build, vet, lint and the unit
+  suites with `-short`, with no Docker.
+- `scripts/github-merge-gate.sh` and `make github-merge-gate`: the
+  one-command enablement of the required `proof` check, in queue-less mode by
+  default; it refuses until the repository is public.
+- `docs/PROOFS.md`, the reference for the tiers, the plan and sharding, the CI
+  job graph, the artifacts and the recovery procedures.
+- `.github/dependabot.yml`, grouped weekly updates for Go modules, Docker,
+  GitHub Actions and the UI's bun dependencies; every update is a pull request
+  that runs the proof.
+
 - JSON Schemas for the authored documents, generated from the parsers:
   `docs/schemas/orkflow.v1.json`, `docs/schemas/automation.v1.json`, and
   `docs/schemas/orkstack.v1.json`, which selects one by `apiVersion` and
@@ -22,6 +43,15 @@ include breaking changes, and each is marked **BREAKING**.
   (`string|object|array`).
 
 ### Changed
+
+- A local full, release or nightly proof now writes one `local` part and
+  merges it with `proofrun merge`, the same verdict path the CI proof job
+  runs over many parts.
+- The development object store is **SeaweedFS**, pinned by digest in
+  `deploy/docker-compose.yml`, because MinIO stopped publishing images and
+  moved to a closed product. SeaweedFS performs the atomic conditional
+  `PutObject` the commit protocol needs; the S3 integration suite proves it.
+  MinIO is no longer the recommended or the development store.
 
 - The UI is redrawn as a drawing office (stage 1 of 4: the shell). A slim
   top bar replaces the sidebar, with two modes — **Build** (Runs, Orkflows,

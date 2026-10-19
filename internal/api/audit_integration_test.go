@@ -128,22 +128,21 @@ func TestAudit_UnwritableStoreDoesNotFailWrite(t *testing.T) {
 
 func requireAuditMinIO(t *testing.T, cfg artifacts.Config) {
 	t.Helper()
-	base, err := url.Parse(cfg.S3Endpoint)
-	if err != nil {
-		infraAbsent(t, "MinIO endpoint %q is unusable: %v", cfg.S3Endpoint, err)
+	if _, err := url.Parse(cfg.S3Endpoint); err != nil {
+		infraAbsent(t, "object store endpoint %q is unusable: %v", cfg.S3Endpoint, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.JoinPath("/minio/health/live").String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cfg.S3Endpoint, "/")+"/", nil)
 	if err != nil {
-		infraAbsent(t, "MinIO health request: %v", err)
+		infraAbsent(t, "object store health request: %v", err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		infraAbsent(t, "MinIO not reachable at %s (%v); run `make infra-up`", cfg.S3Endpoint, err)
+		infraAbsent(t, "object store (SeaweedFS) not reachable at %s (%v); run `make infra-up`", cfg.S3Endpoint, err)
 	}
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusForbidden {
 		infraAbsent(t, "MinIO health returned %d; run `make infra-up`", resp.StatusCode)
 	}
 }

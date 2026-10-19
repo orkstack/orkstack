@@ -6,8 +6,10 @@
 //
 //	go test -tags=integration ./pkg/artifacts/... -count=1
 //
-// The tests skip (never fail) when MinIO is unreachable, unless
-// ORK_REQUIRE_INFRA is set — see infraAbsent in infra_required_test.go.
+// The tests skip (never fail) when the dev object store is unreachable,
+// unless ORK_REQUIRE_INFRA is set — see infraAbsent in
+// infra_required_test.go. The dev store is SeaweedFS; the same tests run
+// against any S3-compatible store that supports conditional PutObject.
 package artifacts_test
 
 import (
@@ -37,10 +39,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-const (
-	minioHealthURL = "/minio/health/live"
-	skipReason     = "MinIO not reachable at %s (%v); run `make infra-up`"
-)
+const skipReason = "object storage not reachable at %s (%v); run `make infra-up`"
 
 // s3TestConfig mirrors deploy/docker-compose.yml, overridable via ORK_S3_* env.
 func s3TestConfig() artifacts.Config {
@@ -49,13 +48,9 @@ func s3TestConfig() artifacts.Config {
 	return cfg
 }
 
-func requireMinIO(t *testing.T, cfg artifacts.Config) {
+func requireObjectStore(t *testing.T, cfg artifacts.Config) {
 	t.Helper()
-	base, err := url.Parse(cfg.S3Endpoint)
-	if err != nil {
-		infraAbsent(t, skipReason, cfg.S3Endpoint, err)
-	}
-	health := base.JoinPath(minioHealthURL).String()
+	health := strings.TrimRight(cfg.S3Endpoint, "/") + "/"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -69,16 +64,21 @@ func requireMinIO(t *testing.T, cfg artifacts.Config) {
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode != http.StatusOK {
+	// SeaweedFS answers 403 to an unsigned root request; 200 is a store that
+	// allows it. Either proves the S3 server is listening.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusForbidden {
 		infraAbsent(t, skipReason, health, fmt.Errorf("health status %d", resp.StatusCode))
 	}
-	t.Logf("MinIO health %s -> %d", health, resp.StatusCode)
+	t.Logf("object store health %s -> %d", health, resp.StatusCode)
 }
+
+// requireMinIO is the historical name; the dev store is SeaweedFS now.
+func requireMinIO(t *testing.T, cfg artifacts.Config) { requireObjectStore(t, cfg) }
 
 func newS3Store(t *testing.T) (artifacts.Store, artifacts.Config) {
 	t.Helper()
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 
 	st, err := artifacts.New(cfg)
 	if err != nil {

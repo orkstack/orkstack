@@ -10,6 +10,14 @@ contract. This file is the quick checklist.
   host, do the one-time `host.docker.internal` setup in the README's "Linux
   hosts" first.
 
+## The fast path
+`make check` runs the build, vet, lint and the unit suites with `-short`; it
+needs no Docker and no Temporal, and takes about two minutes. Run it on every
+change. `make proof-feature` adds your change's evidence; `make proof` is the
+full merge gate and is never needed locally before you open a pull request —
+CI runs it. See [docs/PROOFS.md](./docs/PROOFS.md) for the tiers, what CI
+runs, and how to read its result.
+
 ## The loop
 1. Cross-process type change? Edit `proto/`, run `make proto`, commit generated
    code in the same change.

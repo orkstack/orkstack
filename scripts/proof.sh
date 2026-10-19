@@ -5,6 +5,14 @@
 #   scripts/proof.sh [NAME]                     full proof    -> proof/NAME/
 #   scripts/proof.sh --tier feature [--base REF] [--tests PKG:REGEX]... \
 #                    [--specs FILE]... [NAME]   feature proof -> proof/NAME-feature/
+#   scripts/proof.sh --tier nightly|release [NAME]
+#   scripts/proof.sh --part PART --plan FILE ...  one CI part -> proof/<id>-part-PART-aN/
+#
+# A full, release or nightly proof runs its gates on one host and then writes
+# one part (`local`) and merges it with `proofrun merge`, the same verdict the
+# CI proof job runs over many parts. A --part invocation is one part of a CI
+# proof: plan, build, fast, integration:K, ui-e2e:K, activity-fixture:A or
+# observability. See docs/PROOFS.md.
 #
 # The FULL proof is the merge gate (§11.3) and runs everything: lint, build,
 # unit, vet-integration, this tree's activity images pushed under a tag of the
@@ -80,6 +88,16 @@ BASE_GIVEN=""
 TESTS=()
 SPECS=()
 NAME=""
+PART=""
+PLAN=""
+UI_PLAN=""
+LAYOUTS=""
+PROOF_ID=""
+ATTEMPT=1
+BASE_COMMIT=""
+SHARDS=""
+UI_SHARDS=""
+BASE_COMMIT_GIVEN=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--tier) [ $# -ge 2 ] || invalid "--tier needs a value"; TIER="$2"; shift 2 ;;
@@ -90,6 +108,24 @@ while [ $# -gt 0 ]; do
 	--tests=*) TESTS+=("${1#*=}"); shift ;;
 	--specs) [ $# -ge 2 ] || invalid "--specs needs a file"; SPECS+=("$2"); shift 2 ;;
 	--specs=*) SPECS+=("${1#*=}"); shift ;;
+	--part) [ $# -ge 2 ] || invalid "--part needs a name"; PART="$2"; shift 2 ;;
+	--part=*) PART="${1#*=}"; shift ;;
+	--plan) [ $# -ge 2 ] || invalid "--plan needs a file"; PLAN="$2"; shift 2 ;;
+	--plan=*) PLAN="${1#*=}"; shift ;;
+	--ui-plan) [ $# -ge 2 ] || invalid "--ui-plan needs a file"; UI_PLAN="$2"; shift 2 ;;
+	--ui-plan=*) UI_PLAN="${1#*=}"; shift ;;
+	--layouts) [ $# -ge 2 ] || invalid "--layouts needs a directory"; LAYOUTS="$2"; shift 2 ;;
+	--layouts=*) LAYOUTS="${1#*=}"; shift ;;
+	--proof-id) [ $# -ge 2 ] || invalid "--proof-id needs a value"; PROOF_ID="$2"; shift 2 ;;
+	--proof-id=*) PROOF_ID="${1#*=}"; shift ;;
+	--attempt) [ $# -ge 2 ] || invalid "--attempt needs a number"; ATTEMPT="$2"; shift 2 ;;
+	--attempt=*) ATTEMPT="${1#*=}"; shift ;;
+	--base-commit) [ $# -ge 2 ] || invalid "--base-commit needs a sha"; BASE_COMMIT="$2"; BASE_COMMIT_GIVEN=1; shift 2 ;;
+	--base-commit=*) BASE_COMMIT="${1#*=}"; BASE_COMMIT_GIVEN=1; shift ;;
+	--shards) [ $# -ge 2 ] || invalid "--shards needs a number"; SHARDS="$2"; shift 2 ;;
+	--shards=*) SHARDS="${1#*=}"; shift ;;
+	--ui-shards) [ $# -ge 2 ] || invalid "--ui-shards needs a number"; UI_SHARDS="$2"; shift 2 ;;
+	--ui-shards=*) UI_SHARDS="${1#*=}"; shift ;;
 	-h | --help) usage; exit 0 ;;
 	-*) invalid "unknown option $1 (see --help)" ;;
 	*)
@@ -100,9 +136,12 @@ while [ $# -gt 0 ]; do
 	esac
 done
 case "$TIER" in
-full | feature) ;;
-*) invalid "--tier must be full or feature, not '$TIER'" ;;
+full | feature | nightly | release) ;;
+*) invalid "--tier must be full, feature, nightly or release, not '$TIER'" ;;
 esac
+if [ -n "$PART" ] && [ "$TIER" = feature ]; then
+	invalid "--part is a full, release or nightly proof's part; a feature proof runs on one host"
+fi
 if [ "$TIER" = full ] && { [ ${#TESTS[@]} -gt 0 ] || [ ${#SPECS[@]} -gt 0 ]; }; then
 	invalid "--tests and --specs name a feature proof's evidence; the full proof runs everything"
 fi
@@ -119,8 +158,16 @@ for tool in git go; do
 		exit 77
 	fi
 done
-git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null || invalid "--base $BASE is not a commit"
-BASE_COMMIT="$(git rev-parse "$BASE^{commit}")"
+if [ -n "$BASE_COMMIT" ]; then
+	git rev-parse --verify --quiet "$BASE_COMMIT^{commit}" >/dev/null || invalid "--base-commit $BASE_COMMIT is not a commit"
+	BASE_COMMIT="$(git rev-parse "$BASE_COMMIT^{commit}")"
+	git merge-base --is-ancestor "$BASE_COMMIT" HEAD || invalid "--base-commit $BASE_COMMIT is not an ancestor of HEAD: the proof must test a tree that lands"
+	BASE="$(git rev-parse --abbrev-ref "$BASE_COMMIT" 2>/dev/null || echo main)"
+	[ "$BASE" = "HEAD" ] && BASE=main
+else
+	git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null || invalid "--base $BASE is not a commit"
+	BASE_COMMIT="$(git rev-parse "$BASE^{commit}")"
+fi
 MERGE_BASE="$(git merge-base "$BASE_COMMIT" HEAD)" || invalid "no merge base between $BASE and HEAD"
 
 if [ -z "$NAME" ]; then
@@ -131,8 +178,13 @@ fi
 if [ "$TIER" = feature ] && [[ "$NAME" != *-feature ]]; then
 	NAME="$NAME-feature"
 fi
-DIR="$REPO/proof/$NAME"
-[ -e "$DIR" ] && invalid "proof/$NAME already exists: a proof never reuses a directory, so yesterday's output can never be mistaken for today's"
+if [ -n "$PART" ]; then
+	PART_SLUG="${PART//:/-}"
+	DIR="$REPO/proof/$NAME-part-$PART_SLUG-a$ATTEMPT"
+else
+	DIR="$REPO/proof/$NAME"
+fi
+[ -e "$DIR" ] && invalid "proof/$(basename "$DIR") already exists: a proof never reuses a directory, so yesterday's output can never be mistaken for today's"
 
 PROOF_JOBS="${PROOF_JOBS:-4}"
 PROOF_UI_WORKERS="${PROOF_UI_WORKERS:-1}"
@@ -141,7 +193,14 @@ PROOF_TEMPORAL="${PROOF_TEMPORAL:-own}"
 [[ "$PROOF_UI_WORKERS" =~ ^[1-9][0-9]*$ ]] || invalid "PROOF_UI_WORKERS must be a positive integer"
 case "$PROOF_TEMPORAL" in own | shared) ;; *) invalid "PROOF_TEMPORAL must be own or shared" ;; esac
 REGISTRY="${ORK_LOCAL_REGISTRY:-localhost:5001}"
-PROOF_ID="pr-$(printf '%s' "$DIR" | sha256sum | cut -c1-12)"
+if [ -z "$PROOF_ID" ]; then
+	PROOF_ID="pr-$(printf '%s' "$DIR" | sha256sum | cut -c1-12)"
+fi
+SHARDS="${SHARDS:-1}"
+UI_SHARDS="${UI_SHARDS:-1}"
+[[ "$SHARDS" =~ ^[1-9][0-9]*$ ]] || invalid "--shards must be a positive integer"
+[[ "$UI_SHARDS" =~ ^[1-9][0-9]*$ ]] || invalid "--ui-shards must be a positive integer"
+[[ "$ATTEMPT" =~ ^[1-9][0-9]*$ ]] || invalid "--attempt must be a positive integer"
 IMAGE_TAG_OWN=1
 if [ -n "${ORK_TEST_IMAGE_TAG:-}" ]; then
 	IMAGE_TAG="$ORK_TEST_IMAGE_TAG"
@@ -158,6 +217,15 @@ if ! go build -o "$PR" ./test/tools/proofrun; then
 	rm -rf "$PR_TMP"
 	say "proof: cannot build test/tools/proofrun"
 	exit 1
+fi
+
+# One part of a CI proof: its own host, its own gates, a part.json for the
+# proof job's merger. It never decides a verdict (docs/PROOFS.md).
+if [ -n "$PART" ]; then
+	# shellcheck source=scripts/proof-part.sh
+	. "$REPO/scripts/proof-part.sh"
+	part_main "$PART"
+	exit $?
 fi
 
 ALL_GATES="temporal binaries lint build unit vet-integration images integration activity-fixture ui-check ui-unit ui-e2e observability"
@@ -203,6 +271,15 @@ else
 	1) ;;
 	*) invalid "cannot tell whether the tree touches a telemetry path" ;;
 	esac
+	if [ "$TIER" = nightly ]; then
+		# The nightly tier runs the deferred tests and nothing else.
+		RUN=()
+		RUN[integration]=1
+	fi
+	if [ "$TIER" = release ]; then
+		# The pre-release gate runs every gate, observability included.
+		RUN[observability]=1
+	fi
 fi
 if [ -n "${PROOF_GATES:-}" ]; then
 	# A full proof runs exactly the gates named (and the setup they need); a
@@ -232,6 +309,11 @@ fi
 
 # ---- prerequisites, decided before a single file is written (exit 77) -------
 tcp_open() { (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null; }
+store_health() {
+	local code
+	code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9000/ 2>/dev/null)"
+	[ "$code" = 200 ] || [ "$code" = 403 ]
+}
 missing=""
 need() { # <what> <command...>
 	if ! "${@:2}" >/dev/null 2>&1; then
@@ -246,7 +328,7 @@ manifest() { # <activity> -> 0 when REGISTRY holds it under IMAGE_TAG
 if runs temporal || runs images || runs activity-fixture; then
 	need "curl on PATH" command -v curl
 	need "a docker daemon (docker info)" docker info
-	need "MinIO on 127.0.0.1:9000 (make infra-up)" curl -sf -o /dev/null http://127.0.0.1:9000/minio/health/live
+	need "the dev object store on 127.0.0.1:9000 (SeaweedFS; make infra-up)" store_health
 	need "the local registry on $REGISTRY (make infra-up)" curl -sf -o /dev/null "http://$REGISTRY/v2/"
 fi
 if runs temporal; then
@@ -515,8 +597,15 @@ fi
 if runs ui-check; then run_bg ui-check ui-check.log in_ui bun run check; fi
 if runs ui-unit; then run_bg ui-unit ui-unit.log in_ui bun test test/; fi
 if runs integration; then
-	integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID")
+	git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
+	integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress)
+	case "$TIER" in
+	full) integ_args+=(-nightly-mode defer -nightly-base "$DIR/nightly-base.txt") ;;
+	release) integ_args+=(-nightly-mode include) ;;
+	nightly) integ_args+=(-nightly-mode only) ;;
+	esac
 	if [ "$TIER" = feature ]; then integ_args+=(-select "$DIR/selection.json"); fi
+	if { [ -n "$OBS_PATHS" ] && [ "$TIER" = full ]; } || [ "$TIER" = release ]; then integ_args+=(-observability-required); fi
 	# A skip is not a pass: ORK_REQUIRE_INFRA turns every prerequisite skip
 	# into a failure now that the prerequisites were probed above, and the
 	# ledger fails any skip scripts/proof-allowed-skips.txt does not name.
@@ -548,6 +637,8 @@ ui_e2e_locked() {
 		say "playwright test --list failed"
 		return 1
 	fi
+	"$PR" ui-plan -list "$DIR/ui-e2e-list.json" -costs scripts/proof-ui-costs.tsv \
+		-shards 1 -out "$DIR/ui-plan.json" >>"$DIR/ui-e2e.log" 2>&1 || { say "proofrun ui-plan failed"; return 1; }
 	(cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
 		PLAYWRIGHT_JSON_OUTPUT_FILE="$DIR/ui-e2e-report.json" \
 		PLAYWRIGHT_JSON_OUTPUT_NAME="$DIR/ui-e2e-report.json" \
@@ -592,10 +683,28 @@ if [ -f "$DIR/images.tsv" ]; then
 	if [ -n "$IMAGE_TAG_OWN" ]; then record_args+=(-image-tag-own); fi
 fi
 if [ -n "${PROOF_GATES:-}" ]; then record_args+=(-gates-override "$PROOF_GATES"); fi
-if [ "$TIER" = full ] && [ -n "$OBS_PATHS" ]; then record_args+=(-observability-required); fi
-if [ "$TIER" = feature ]; then record_args+=(-select "$DIR/selection.json"); fi
+if { [ "$TIER" = full ] && [ -n "$OBS_PATHS" ]; } || [ "$TIER" = release ]; then record_args+=(-observability-required); fi
 
 README="$DIR/README.md"
+if [ "$TIER" != feature ]; then
+	# The full, release and nightly tiers have one verdict path: one part,
+	# merged by the same code the CI proof job runs over many (plan §2.7).
+	mkdir -p "$DIR/parts/local-a1"
+	record_args+=(-part local -attempt 1 -out-dir "$DIR/parts/local-a1" -plan "$DIR/integration-plan.json")
+	if [ -f "$DIR/ui-plan.json" ]; then record_args+=(-ui-plan "$DIR/ui-plan.json"); fi
+	"$PR" record "${record_args[@]}" >"$DIR/.part-record.txt" 2>&1
+	record_status=$?
+	merge_args=(-plan "$DIR/integration-plan.json" -parts "$DIR/parts" -out "$DIR" -name "$NAME")
+	if [ -f "$DIR/ui-plan.json" ]; then merge_args+=(-ui-plan "$DIR/ui-plan.json"); fi
+	"$PR" merge "${merge_args[@]}" >"$DIR/.merge.txt" 2>&1
+	status=$?
+	[ "$record_status" -eq 0 ] || status=1
+	[ "$status" -le 1 ] || status=1
+	say
+	say "proof: $(tail -n1 "$README") -> $README"
+	exit "$status"
+fi
+record_args+=(-select "$DIR/selection.json")
 VERDICT="$DIR/.verdict.md"
 "$PR" record "${record_args[@]}" >"$VERDICT"
 status=$?

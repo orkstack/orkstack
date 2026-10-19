@@ -50,6 +50,9 @@ type selection struct {
 	Notes        []string                 `json:"notes"`
 	Errors       []string                 `json:"errors"`
 	SlowSource   string                   `json:"slow_list_source"`
+	// RefusedFull names the paths whose scope rule is full: CI can tell
+	// "this needs the full proof" apart from missing evidence (plan §2.1).
+	RefusedFull []string `json:"refused_full"`
 }
 
 // pathScope is how one changed path was classified.
@@ -390,6 +393,7 @@ func selectInto(sel *selection, in selectInput) error {
 		for _, a := range rule.Actions {
 			switch a {
 			case actFull:
+				sel.RefusedFull = append(sel.RefusedFull, cp.Path)
 				sel.Errors = append(sel.Errors, fmt.Sprintf("%s: this path changes how every suite runs; run make proof", cp.Path))
 			case actGo:
 				if strings.HasSuffix(cp.Path, ".go") {

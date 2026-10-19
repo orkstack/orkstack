@@ -129,7 +129,7 @@ func (c *collector) add(ev event, job string) {
 // copies each line to raw when raw is not nil. A line that is not a JSON
 // object is kept as package output: test2json passes such lines through only
 // when its input was not a test binary's.
-func readEvents(r io.Reader, c *collector, job string, raw io.Writer, text io.Writer) error {
+func readEvents(r io.Reader, c *collector, job string, raw io.Writer, text io.Writer, progress io.Writer) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
 	for sc.Scan() {
@@ -146,6 +146,14 @@ func readEvents(r io.Reader, c *collector, job string, raw io.Writer, text io.Wr
 		}
 		if text != nil && ev.Action == "output" {
 			_, _ = io.WriteString(text, ev.Output)
+		}
+		if progress != nil && ev.Test != "" && !strings.Contains(ev.Test, "/") {
+			switch ev.Action {
+			case "run":
+				fmt.Fprintf(progress, "proofrun: start %s %s\n", ev.Package, ev.Test)
+			case "pass", "fail", "skip":
+				fmt.Fprintf(progress, "proofrun: outcome %s %s %s %.2f\n", ev.Action, ev.Package, ev.Test, ev.Elapsed)
+			}
 		}
 		c.add(ev, job)
 	}
@@ -205,12 +213,22 @@ func parseAllowlist(r io.Reader, name string) ([]allowedSkip, error) {
 	return out, sc.Err()
 }
 
+// binaryRecord is one compiled test binary's digest and listing digest, as a
+// shard records them (plan §2.4).
+type binaryRecord struct {
+	SHA256        string `json:"sha256"`
+	ListingSHA256 string `json:"listing_sha256"`
+}
+
 // ledger is the checked result of one suite.
 type ledger struct {
-	Suite    string   `json:"suite"`
-	Tests    []entry  `json:"tests"`
-	Problems []string `json:"problems"`
-	Summary  summary  `json:"summary"`
+	Suite      string                  `json:"suite"`
+	Shard      int                     `json:"shard,omitempty"`
+	PlanSHA256 string                  `json:"plan_sha256,omitempty"`
+	Binaries   map[string]binaryRecord `json:"binaries,omitempty"`
+	Tests      []entry                 `json:"tests"`
+	Problems   []string                `json:"problems"`
+	Summary    summary                 `json:"summary"`
 }
 
 type summary struct {
@@ -221,6 +239,7 @@ type summary struct {
 	Skip         int `json:"skip"`
 	NoOutcome    int `json:"no_outcome"`
 	SubtestSkips int `json:"subtest_skips"`
+	Deferred     int `json:"deferred"`
 }
 
 // ok reports whether the suite is evidence: every expected test reported a

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -130,4 +132,63 @@ func writeGates(w io.Writer, sel *selection) {
 	fmt.Fprintf(w, "activity_fixture=%s\n", yes(sel.Gates.Fixture))
 	fmt.Fprintf(w, "observability=%s\n", yes(sel.Gates.Observability))
 	fmt.Fprintf(w, "specs=%s\n", specs)
+}
+
+// cmdEvidenceArgs turns a pull request body's `Proof-tests:` and
+// `Proof-specs:` lines into the arguments a feature proof takes, one per
+// line, so a shell reads them without eval. A malformed line is exit 2.
+func cmdEvidenceArgs(args []string) int {
+	fs := flag.NewFlagSet("evidence-args", flag.ContinueOnError)
+	body := fs.String("body", "", "a file holding the pull request body or the commit message")
+	if err := fs.Parse(args); err != nil || *body == "" || fs.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "proofrun evidence-args -body FILE")
+		return 2
+	}
+	f, err := os.Open(*body)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun evidence-args:", err)
+		return 2
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 1<<20), 4<<20)
+	var out []string
+	n := 0
+	for sc.Scan() {
+		n++
+		line := strings.TrimSpace(sc.Text())
+		switch {
+		case strings.HasPrefix(line, "Proof-tests:"):
+			v := strings.TrimSpace(strings.TrimPrefix(line, "Proof-tests:"))
+			pkg, re, ok := strings.Cut(v, ":")
+			if !ok || strings.TrimSpace(pkg) == "" || strings.TrimSpace(re) == "" {
+				fmt.Fprintf(os.Stderr, "proofrun evidence-args: line %d: want Proof-tests: <package>:<regexp>\n", n)
+				return 2
+			}
+			if _, err := regexp.Compile(re); err != nil {
+				fmt.Fprintf(os.Stderr, "proofrun evidence-args: line %d: %v\n", n, err)
+				return 2
+			}
+			out = append(out, "--tests", v)
+		case strings.HasPrefix(line, "Proof-specs:"):
+			v := strings.TrimSpace(strings.TrimPrefix(line, "Proof-specs:"))
+			if v == "" {
+				fmt.Fprintf(os.Stderr, "proofrun evidence-args: line %d: Proof-specs: names no file\n", n)
+				return 2
+			}
+			if st, err := os.Stat(v); err != nil || st.IsDir() {
+				fmt.Fprintf(os.Stderr, "proofrun evidence-args: line %d: %s is not a file\n", n, v)
+				return 2
+			}
+			out = append(out, "--specs", v)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun evidence-args:", err)
+		return 2
+	}
+	for _, s := range out {
+		fmt.Println(s)
+	}
+	return 0
 }

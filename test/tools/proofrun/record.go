@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -57,6 +58,21 @@ type proofRecord struct {
 	MergeEligible  bool     `json:"merge_eligible"`
 	Ineligible     []string `json:"ineligible_reasons"`
 	EvidenceFailed []string `json:"evidence_without_a_pass,omitempty"`
+
+	// Merged proofs: the parts they were built from, the reruns GitHub caused,
+	// and the plan, lists and gaps the merger recorded (plan §2.6).
+	Parts             []string           `json:"parts,omitempty"`
+	Reruns            []rerunRecord      `json:"reruns,omitempty"`
+	Plan              *planSummary       `json:"plan,omitempty"`
+	UIPlan            *uiPlanSummary     `json:"ui_plan,omitempty"`
+	Quarantined       []string           `json:"quarantined,omitempty"`
+	Quarantine        *quarantineRecord  `json:"quarantine,omitempty"`
+	Nightly           *nightlyRecord     `json:"nightly,omitempty"`
+	HostSpeedFailures []hostSpeedFailure `json:"host_speed_failures,omitempty"`
+	BinaryDigestNotes []string           `json:"binary_digest_notes,omitempty"`
+	ListsChanged      []listChange       `json:"lists_changed,omitempty"`
+	PR                *prRecord          `json:"pr,omitempty"`
+	CI                *ciRecord          `json:"ci,omitempty"`
 }
 
 // mainBranch is the branch a merge candidate fast-forwards, and the only base
@@ -91,7 +107,9 @@ func readGates(file string) ([]gateRecord, error) {
 
 // verdict decides a record's result and merge eligibility.
 func verdict(r *proofRecord, status int, observabilityRequired bool, ledgersOK map[string]bool) {
-	r.Ineligible = []string{}
+	// A merger seeds Ineligible with its own rules before this runs; they are
+	// never discarded, so each condition is written once (plan §2.6 rule 12).
+	r.Ineligible = append([]string{}, r.Ineligible...)
 	ran := map[string]string{}
 	pass := status == 0
 	for _, g := range r.Gates {
@@ -188,7 +206,12 @@ func cmdRecord(args []string) int {
 	fs := flag.NewFlagSet("record", flag.ContinueOnError)
 	var r proofRecord
 	dir := fs.String("dir", "", "the proof directory")
-	fs.StringVar(&r.Tier, "tier", "full", "full or feature")
+	part := fs.String("part", "", "write this part's part.json (full, release and nightly always do)")
+	attempt := fs.Int("attempt", 1, "this part's attempt (1-based)")
+	planFile := fs.String("plan", "", "the integration plan the part read")
+	uiPlanFile := fs.String("ui-plan", "", "the UI plan the part read")
+	outDir := fs.String("out-dir", "", "where part.json goes (default -dir)")
+	fs.StringVar(&r.Tier, "tier", "full", "full, release, nightly or feature")
 	fs.StringVar(&r.Name, "name", "", "proof name")
 	fs.StringVar(&r.Commit, "commit", "", "HEAD")
 	fs.StringVar(&r.Branch, "branch", "", "branch")
@@ -211,9 +234,17 @@ func cmdRecord(args []string) int {
 	obsRequired := fs.Bool("observability-required", false, "the tree changed a telemetry path")
 	selFile := fs.String("select", "", "the feature selection")
 	status := fs.Int("status", 0, "the proof script's own status")
-	if err := fs.Parse(args); err != nil || *dir == "" {
-		fmt.Fprintln(os.Stderr, "proofrun record -dir DIR ...")
+	if err := fs.Parse(args); err != nil || *dir == "" || *attempt < 1 {
+		fmt.Fprintln(os.Stderr, "proofrun record -dir DIR -tier TIER ...")
 		return 2
+	}
+	// The full, release and nightly tiers have one verdict path: the merger.
+	// Their record writes a part, always, locally too (plan §2.7).
+	if r.Tier != tierFeature && *part == "" {
+		*part = "local"
+	}
+	if *outDir == "" {
+		*outDir = *dir
 	}
 	gates, err := readGates(filepath.Join(*dir, "gates.tsv"))
 	if err != nil {
@@ -225,17 +256,20 @@ func cmdRecord(args []string) int {
 		r.Gates = []gateRecord{}
 	}
 	ledgers := map[string]any{}
+	ledgerFiles := map[string]string{}
 	ledgersOK := map[string]bool{}
 	for _, name := range []string{"unit", "integration"} {
 		var l ledger
 		if readJSON(filepath.Join(*dir, name+"-tests.json"), &l) == nil {
 			ledgers[name] = map[string]any{"summary": l.Summary, "problems": len(l.Problems)}
+			ledgerFiles[name] = name + "-tests.json"
 			ledgersOK[name] = l.ok()
 		}
 	}
 	var ul uiLedger
 	if readJSON(filepath.Join(*dir, "ui-e2e-tests.json"), &ul) == nil {
 		ledgers["ui-e2e"] = map[string]any{"listed": ul.Listed, "pass": ul.Pass, "problems": len(ul.Problems)}
+		ledgerFiles["ui-e2e"] = "ui-e2e-tests.json"
 		ledgersOK["ui-e2e"] = len(ul.Problems) == 0
 		r.GuardRetries, r.GuardCeiling = &ul.GuardRetries, &ul.GuardRetryCeiling
 	}
@@ -262,6 +296,46 @@ func cmdRecord(args []string) int {
 			r.Images = digests
 		}
 	}
+	if *part != "" {
+		rec := partRecord{
+			Part: *part, Attempt: *attempt, Tier: r.Tier, Name: r.Name, Commit: r.Commit,
+			Branch: r.Branch, Tree: r.Tree, TreeEnd: r.TreeEnd, CleanStart: r.CleanStart,
+			CleanEnd: r.CleanEnd, BaseRef: r.BaseRef, BaseCommit: r.BaseCommit,
+			MergeBase: r.MergeBase, Gates: r.Gates, Temporal: temporalRecord(r.Temporal),
+			Images: imageDigests(r.Images), ImageTag: r.ImageTag, ImageTagOwn: r.ImageTagOwn,
+			ProofJobs: r.ProofJobs, UIWorkers: r.UIWorkers,
+			GuardRetries: r.GuardRetries, GuardCeiling: r.GuardCeiling,
+			Runner: currentRunner(), Ledgers: ledgerFiles,
+		}
+		rec.PlanSHA256, _ = fieldSHA256(*planFile)
+		rec.UIPlanSHA256, _ = fieldSHA256(*uiPlanFile)
+		if err := os.MkdirAll(*outDir, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		for _, f := range ledgerFiles {
+			if filepath.Clean(*dir) == filepath.Clean(*outDir) {
+				continue
+			}
+			if b, err := os.ReadFile(filepath.Join(*dir, f)); err == nil {
+				if err := os.WriteFile(filepath.Join(*outDir, f), b, 0o644); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+			}
+		}
+		if err := writeJSON(filepath.Join(*outDir, "part.json"), rec); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		readme := fmt.Sprintf("# PART — NOT EVIDENCE ON ITS OWN\n\n- part: %s\n- attempt: %d\n- tier: %s\n- tree: %s\n\nThe merger decides this proof's result and merge eligibility.\n", rec.Part, rec.Attempt, rec.Tier, rec.Tree)
+		_ = os.WriteFile(filepath.Join(*outDir, "README.md"), []byte(readme), 0o644)
+		fmt.Printf("part %s attempt %d -> %s\n", rec.Part, rec.Attempt, filepath.Join(*outDir, "part.json"))
+		if *status != 0 {
+			return 1
+		}
+		return 0
+	}
 	if *selFile != "" {
 		var sel selection
 		if err := readJSON(*selFile, &sel); err != nil {
@@ -280,6 +354,29 @@ func cmdRecord(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func imageDigests(v any) map[string]string {
+	m, _ := v.(map[string]string)
+	return m
+}
+
+// currentRunner records the host a part ran on.
+func currentRunner() runnerRecord {
+	r := runnerRecord{OS: runtime.GOOS}
+	r.CPUs = runtime.NumCPU()
+	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(line, "MemTotal:") {
+				f := strings.Fields(line)
+				if len(f) >= 2 {
+					kb, _ := strconv.Atoi(f[1])
+					r.MemMB = kb / 1024
+				}
+			}
+		}
+	}
+	return r
 }
 
 // writeVerdict is the README's closing section. The full tier's result
@@ -303,9 +400,9 @@ func writeVerdict(w io.Writer, r *proofRecord) {
 	}
 	fmt.Fprintln(w)
 	switch {
-	case r.Tier == "full" && r.Result == "pass":
+	case r.Tier != "feature" && r.Result == "pass":
 		fmt.Fprintln(w, "Result: **PASS**")
-	case r.Tier == "full":
+	case r.Tier != "feature":
 		fmt.Fprintln(w, "Result: **FAIL**")
 	case r.Result == "pass":
 		fmt.Fprintln(w, "Result: **FEATURE PASS — not merge evidence**")
@@ -318,12 +415,22 @@ func writeVerdict(w io.Writer, r *proofRecord) {
 // refuses unless the proof is a full, passing, merge-eligible proof of
 // exactly HEAD's tree, the worktree is clean, HEAD's first parent is the main
 // branch's current tip, and the proof's own base was that same tip.
+//
+// -release is the pre-release gate: a passing release proof of the exact
+// commit the tag names (or HEAD, before the tag exists). -nightly requires a
+// passing nightly proof of main's tip while main's nightly list is non-empty.
 func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	dir := fs.String("proof", "", "the proof directory")
+	release := fs.Bool("release", false, "verify a pre-release proof for a tag")
+	tag := fs.String("tag", "", "with -release: the tag the proof must cover")
+	nightlyDir := fs.String("nightly", "", "a passing nightly proof of main's tip")
 	if err := fs.Parse(args); err != nil || *dir == "" || fs.NArg() > 0 {
-		fmt.Fprintln(os.Stderr, "proofrun verify -proof proof/<name>")
+		fmt.Fprintln(os.Stderr, "proofrun verify -proof proof/<name> [-release -tag vX.Y.Z] [-nightly DIR]")
 		return 2
+	}
+	if *release {
+		return verifyRelease(*dir, *tag)
 	}
 	var r proofRecord
 	if err := readJSON(filepath.Join(*dir, "proof.json"), &r); err != nil {
@@ -337,6 +444,7 @@ func cmdVerify(args []string) int {
 	mainTip := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", mainBranch+"^{commit}"))
 	status := mustGit("status", "--porcelain", "--untracked-files=all")
 	problems := verifyProblems(r, head, parent, mainTip, status, mainBranch)
+	problems = append(problems, verifyNightlyProblems(*nightlyDir, mainTip)...)
 	if len(problems) > 0 {
 		fmt.Printf("merge-check: %s is not merge evidence for HEAD:\n", *dir)
 		for _, p := range problems {
@@ -346,6 +454,87 @@ func cmdVerify(args []string) int {
 	}
 	fmt.Printf("merge-check: %s is a full, passing, merge-eligible proof of tree %s; HEAD^1 is %s's tip. Fast-forward with git merge --ff-only.\n", *dir, head, mainBranch)
 	return 0
+}
+
+// verifyRelease is the tag precondition: a passing release proof, of the exact
+// commit the tag names (or of HEAD, before the tag is created), clean.
+func verifyRelease(dir, tag string) int {
+	var r proofRecord
+	if err := readJSON(filepath.Join(dir, "proof.json"), &r); err != nil {
+		fmt.Printf("release-check: %v\n", err)
+		return 1
+	}
+	problems := []string{}
+	if r.Tier != tierRelease {
+		problems = append(problems, "it is a "+orDash(r.Tier)+" proof; a tag needs the release tier")
+	}
+	if r.Result != "pass" {
+		problems = append(problems, "its result is "+orDash(r.Result))
+	}
+	target := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", "HEAD^{commit}"))
+	if tag != "" {
+		if t := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", tag+"^{commit}")); t != "" {
+			target = t
+		}
+	}
+	tree := ""
+	if target != "" {
+		tree = strings.TrimSpace(mustGit("rev-parse", target+"^{tree}"))
+	}
+	if r.Commit == "" || r.Commit != target {
+		problems = append(problems, fmt.Sprintf("it proved commit %s, and the tag is %s", orDash(short(r.Commit)), orDash(short(target))))
+	}
+	if r.Tree != tree {
+		problems = append(problems, fmt.Sprintf("it proved tree %s, and the commit's tree is %s", orDash(short(r.Tree)), orDash(short(tree))))
+	}
+	if !r.CleanStart || !r.CleanEnd || r.Tree != r.TreeEnd {
+		problems = append(problems, "the tree was not clean at the proof's start and end")
+	}
+	if len(problems) > 0 {
+		fmt.Printf("release-check: %s cannot tag %s:\n", dir, orDash(tag))
+		for _, p := range problems {
+			fmt.Println("  -", p)
+		}
+		return 1
+	}
+	fmt.Printf("release-check: %s is a passing release proof of %s (tree %s).\n", dir, short(r.Commit), r.Tree)
+	return 0
+}
+
+// verifyNightlyProblems is interim rule A's mechanical check: while main's
+// nightly list is non-empty, a merge needs a passing nightly proof of main's
+// tip tree.
+func verifyNightlyProblems(nightlyDir, mainTip string) []string {
+	if mainTip == "" {
+		return nil
+	}
+	list := mustGit("show", mainBranch+":scripts/proof-nightly-tests.txt")
+	entries, err := parseNightlyList(strings.NewReader(list), "scripts/proof-nightly-tests.txt")
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	if nightlyDir == "" {
+		return []string{fmt.Sprintf("%s's nightly list holds %d test(s): name a passing nightly proof of its tip with NIGHTLY=proof/<name>", mainBranch, len(entries))}
+	}
+	var r proofRecord
+	if err := readJSON(filepath.Join(nightlyDir, "proof.json"), &r); err != nil {
+		return []string{fmt.Sprintf("the nightly proof %s is unreadable: %v", nightlyDir, err)}
+	}
+	var p []string
+	if r.Tier != tierNightly {
+		p = append(p, "the nightly proof is tier "+orDash(r.Tier))
+	}
+	if r.Result != "pass" {
+		p = append(p, "the nightly proof did not pass")
+	}
+	mainTree := strings.TrimSpace(mustGit("rev-parse", mainTip+"^{tree}"))
+	if r.Tree != mainTree {
+		p = append(p, fmt.Sprintf("the nightly proof measured tree %s, and %s's tip tree is %s", orDash(short(r.Tree)), mainBranch, orDash(short(mainTree))))
+	}
+	if !r.CleanStart || !r.CleanEnd || r.Tree != r.TreeEnd {
+		p = append(p, "the nightly proof's tree was not clean")
+	}
+	return p
 }
 
 func verifyProblems(r proofRecord, headTree, parent, mainTip, status, mainRef string) []string {
@@ -438,6 +627,7 @@ func cmdCosts(args []string) int {
 	from := fs.String("from", "", "a full proof's directory")
 	costsOut := fs.String("costs-out", "scripts/proof-test-costs.tsv", "where to write the cost ledger")
 	slowOut := fs.String("slow-out", "scripts/proof-slow-tests.txt", "where to write the slow list")
+	uiCostsOut := fs.String("ui-costs-out", "scripts/proof-ui-costs.tsv", "where to write the spec files' measured walls")
 	threshold := fs.Float64("threshold", slowThreshold, "seconds at which a test is slow")
 	if err := fs.Parse(args); err != nil || *from == "" {
 		fmt.Fprintln(os.Stderr, "proofrun costs -from proof/<name>")
@@ -447,8 +637,8 @@ func cmdCosts(args []string) int {
 	var r proofRecord
 	source := filepath.Base(*from)
 	if readJSON(filepath.Join(*from, "proof.json"), &r) == nil {
-		if r.Tier != "full" {
-			fmt.Fprintln(os.Stderr, "proofrun costs: only a full proof measures every test; this is a "+r.Tier+" proof")
+		if r.Tier == "feature" {
+			fmt.Fprintln(os.Stderr, "proofrun costs: only a full, release or nightly proof measures tests in full; this is a "+r.Tier+" proof")
 			return 2
 		}
 		source = fmt.Sprintf("proof/%s (commit %s)", r.Name, short(r.Commit))
@@ -490,6 +680,18 @@ func cmdCosts(args []string) int {
 	writeSlowList(sf, lines, *threshold, source)
 	_ = sf.Close()
 	fmt.Printf("wrote %s and %s from %s (%d tests)\n", *costsOut, *slowOut, source, len(lines))
+	if files, why := uiFilesFrom(*from); len(files) > 0 {
+		uf, err := os.Create(*uiCostsOut)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		writeUICosts(uf, files, source)
+		_ = uf.Close()
+		fmt.Printf("wrote %s from %s (%d spec files)\n", *uiCostsOut, source, len(files))
+	} else {
+		fmt.Printf("left %s as it is: %s\n", *uiCostsOut, why)
+	}
 	return 0
 }
 

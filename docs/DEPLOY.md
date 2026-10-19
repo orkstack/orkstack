@@ -43,7 +43,7 @@ the built binaries (`cmd/orkctl/tworeplica_read_integration_test.go`,
      Orker pool 1      Orker pool 2         …           Orker pool M
            └────────────────┴───────────┬────┴────────────────┘
                                         │
-                              one S3 / MinIO bucket
+                              one S3-compatible bucket
                     definitions · artifacts · finished runs
 ```
 
@@ -370,13 +370,13 @@ then the variable it becomes.
 | `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run |
 | `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration; a full iteration starts the next one at once (a backlog drains without waiting for the interval) |
 | `storage.dir` | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
-| `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
+| `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3-compatible endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `storage.s3.region` | `ORK_S3_REGION` | `us-east-1` | both | — |
 | `storage.s3.bucket` | `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts, archived runs and task logs |
 | `storage.s3.access_key` | `ORK_S3_ACCESS_KEY` | `orkstack` | both | the dev credential from `deploy/docker-compose.yml`. Supply a real one |
 | `storage.s3.secret_key` | `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
 | `storage.s3.session_token` | `ORK_S3_SESSION_TOKEN` | *(empty)* | both | for temporary credentials |
-| `storage.s3.path_style` | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
+| `storage.s3.path_style` | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing; the dev store needs it, AWS S3 does not |
 | `engine.stats_cache_ttl` | `ORK_STATS_CACHE_TTL` | `5s` | `ork` | how long one `GetStats`, `GetFailureBreakdown`, `GetFlakeIndex` or `GetCacheStats` answer is reused; `0` switches the cache off (`docs/STATS.md`) |
 | `engine.usage_cache_ttl` | `ORK_USAGE_CACHE_TTL` | `5m` | `ork` | how long one usage measurement (`orkctl stats usage`, the dashboard Usage section, and an enforced budget's admission check) is reused; `0` switches the cache off, which makes every submit into an enforced namespace measure (`docs/STATS.md`, "Usage") |
 | `telemetry.log_format` | `ORK_LOG_FORMAT` | `text` | both | process log encoding: `text` or `json` |
@@ -543,18 +543,23 @@ and every `orker`:
 
 ```bash
 export ORK_ARTIFACT_BACKEND=s3
-export ORK_S3_ENDPOINT="https://s3.internal.example"   # or http://minio:9000
+export ORK_S3_ENDPOINT="https://s3.internal.example"   # or http://localhost:9000
 export ORK_S3_BUCKET=orkstack-artifacts
 export ORK_S3_REGION=us-east-1
 export ORK_S3_ACCESS_KEY=…        # never the docker-compose dev credentials
 export ORK_S3_SECRET_KEY=…
-export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
+export ORK_S3_PATH_STYLE=true     # the dev store needs path style; AWS S3 does not
 ```
 
 The store must support conditional `PutObject` (`If-None-Match`/`If-Match`):
 commits, Orkflow pointers and registry documents are arbitrated by it, and
-every Orker probes it at boot and refuses to start on a store that cannot. What lives under which key, who writes it and what
-removes it is `docs/STORAGE.md`.
+every Orker probes it at boot and refuses to start on a store that cannot. Any
+S3-compatible store with that primitive works; the production default is AWS
+S3. The local development stack uses **SeaweedFS** (Apache-2.0, pinned by
+digest in `deploy/docker-compose.yml`, S3 API on `localhost:9000`), because
+MinIO stopped publishing images and Garage cannot do conditional writes. What
+lives under which key, who writes it and what removes it is
+`docs/STORAGE.md`.
 
 ### Live task logs: where they are, what bounds them, how long they stay
 
@@ -662,7 +667,7 @@ permanent, so a retired run stays listable and readable.
 
 On S3 a run's four run-scoped prefixes are emptied concurrently, one
 `DeleteObjects` request per listing page (up to 1000 keys), so the store must
-support `DeleteObjects` (AWS S3 and MinIO do). A key the store refuses fails
+support `DeleteObjects` (AWS S3 and SeaweedFS do). A key the store refuses fails
 that run's cleanup — it is not marked cleaned and a later pass retries it.
 
 **A backlog drains without waiting.** `ORK_CLEANUP_BATCH_SIZE` bounds one
@@ -720,7 +725,7 @@ its `{seq}.ovl` overlays name them, so a rule that expired one would make the
 run's live state at those events unreadable (§5, "Snapshot overlays").
 
 ```bash
-# MinIO: expire task logs after 30 days.
+# SeaweedFS or AWS S3: expire task logs after 30 days.
 mc ilm rule add local/orkstack-artifacts --prefix "metadata/logs/" --expire-days 30
 
 # AWS S3: the same rule.
@@ -737,7 +742,7 @@ listing and still billed. Add one bucket-wide rule that collects them; it
 touches no complete object:
 
 ```bash
-# MinIO needs no rule: it removes incomplete uploads itself, after
+# SeaweedFS needs no rule: it removes incomplete uploads itself, after
 # `stale_uploads_expiry` (24h by default; `mc admin config get local api`).
 
 # AWS S3
