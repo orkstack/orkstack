@@ -307,6 +307,7 @@ func readParts(dir string) (map[string]map[int]partReading, map[string]bool, err
 }
 
 func normalizePartName(s string) string {
+	s = strings.TrimPrefix(s, "part-")
 	for _, prefix := range []string{"integration-", "ui-e2e-", "activity-fixture-"} {
 		if strings.HasPrefix(s, prefix) {
 			return strings.TrimSuffix(prefix, "-") + ":" + strings.TrimPrefix(s, prefix)
@@ -456,6 +457,9 @@ func (m *merger) merge(name string) {
 	m.mergeIntegration()
 	m.mergeUnit()
 	m.mergeUI()
+	if m.ui != nil {
+		proof.GuardRetries, proof.GuardCeiling = &m.ui.GuardRetries, &m.ui.GuardRetryCeiling
+	}
 	m.mergeGates(expected)
 	m.proof.Parts = append([]string{}, expected...)
 	m.proof.Reruns = m.reruns
