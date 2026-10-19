@@ -194,33 +194,73 @@ type jobResult struct {
 // with tests it had not started yet runs those tests again in a fresh
 // process, so one crash cannot hide the outcomes of the tests behind it; the
 // test that was running when it died is recorded as failed and never re-run.
+//
+// Heavy jobs (a measured cost at or above heavyTestSeconds) run on one slot,
+// one at a time; the light jobs keep the other slots busy. They share one
+// Temporal and one object store, and their own load moves the soak tests'
+// GetRun latency thresholds, so they must never overlap each other. With one
+// slot there is nothing to overlap: jobs run in plan order.
 func (r *runner) runAll(ctx context.Context, jobs []job) {
 	r.total = len(jobs)
-	free := make(chan int, r.slots)
-	for i := 1; i <= r.slots; i++ {
-		free <- i
+	if r.slots == 1 {
+		for _, j := range jobs {
+			r.runOne(ctx, j, 1)
+		}
+		return
+	}
+
+	var heavy, light []job
+	for _, j := range jobs {
+		if j.Heavy {
+			heavy = append(heavy, j)
+		} else {
+			light = append(light, j)
+		}
+	}
+	lightWorkers := r.slots
+	if len(heavy) > 0 {
+		lightWorkers = r.slots - 1
 	}
 	var wg sync.WaitGroup
-	for _, j := range jobs {
-		slot := <-free
+	if len(heavy) > 0 {
 		wg.Add(1)
-		go func(j job, slot int) {
+		go func() {
 			defer wg.Done()
-			defer func() { free <- slot }()
-			for {
-				res := r.runJob(ctx, j, slot)
-				rest := r.settle(j, res)
-				if len(rest) == 0 {
-					break
-				}
-				j = job{ID: j.ID, Package: j.Package, Tests: rest, Cost: j.Cost, Known: j.Known, Timeout: j.Timeout, Attempt: j.Attempt + 1}
+			for _, j := range heavy {
+				r.runOne(ctx, j, r.slots)
 			}
-			r.mu.Lock()
-			r.done++
-			r.mu.Unlock()
-		}(j, slot)
+		}()
 	}
+	ch := make(chan job)
+	for slot := 1; slot <= lightWorkers; slot++ {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			for j := range ch {
+				r.runOne(ctx, j, slot)
+			}
+		}(slot)
+	}
+	for _, j := range light {
+		ch <- j
+	}
+	close(ch)
 	wg.Wait()
+}
+
+// runOne runs one job, re-running in a fresh process the tests behind a crash.
+func (r *runner) runOne(ctx context.Context, j job, slot int) {
+	for {
+		res := r.runJob(ctx, j, slot)
+		rest := r.settle(j, res)
+		if len(rest) == 0 {
+			break
+		}
+		j = job{ID: j.ID, Package: j.Package, Tests: rest, Cost: j.Cost, Known: j.Known, Heavy: j.Heavy, Timeout: j.Timeout, Attempt: j.Attempt + 1}
+	}
+	r.mu.Lock()
+	r.done++
+	r.mu.Unlock()
 }
 
 // jobLabel names one process of a job.

@@ -126,3 +126,25 @@ func TestPlan_AnUnmeasuredUnitFileTestCostsTheUnitDefault(t *testing.T) {
 		t.Errorf("unmeasured unit test = %+v, want cost 30, alone, 30m timeout", j)
 	}
 }
+
+func TestPlan_AMeasuredHeavyTestRunsAlone(t *testing.T) {
+	jobs := plan(map[string][]string{"p": {"TestSoak", "TestQuick"}},
+		costs{{"p", "TestSoak"}: 200, {"p", "TestQuick"}: 5},
+		map[string]map[string]string{"p": {}})
+	byTest := map[string]job{}
+	for _, j := range jobs {
+		byTest[j.Tests[0]] = j
+	}
+	if !byTest["TestSoak"].Heavy {
+		t.Error("a measured 200 s test is not marked heavy")
+	}
+	if byTest["TestQuick"].Heavy {
+		t.Error("a 5 s test is marked heavy")
+	}
+	// An unmeasured test is conservative in cost but never heavy: it would
+	// otherwise serialise hundreds of new unit tests behind each other.
+	unmeasured := plan(map[string][]string{"p": {"TestNew"}}, costs{}, map[string]map[string]string{"p": {"TestNew": "integration"}})
+	if unmeasured[0].Heavy {
+		t.Error("an unmeasured test is marked heavy")
+	}
+}

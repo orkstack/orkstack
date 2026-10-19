@@ -37,6 +37,10 @@ const (
 	minJobTimeout = 10 * time.Minute
 	// unknownTimeout bounds a job whose test was never measured.
 	unknownTimeout = 30 * time.Minute
+	// heavyTestSeconds is the measured duration at which a job runs alone:
+	// the soak and chaos tests share Temporal and the object store, and their
+	// latency thresholds were measured without another heavy test beside them.
+	heavyTestSeconds = 120.0
 )
 
 // costs maps a test to its measured seconds.
@@ -90,6 +94,11 @@ type job struct {
 	TimeoutSeconds float64 `json:"timeout_seconds"`
 	// Shard is the 1-based shard that runs the job.
 	Shard int `json:"shard"`
+	// Heavy marks a job whose measured cost is at or above heavyTestSeconds.
+	// Heavy jobs run one at a time even on a multi-slot shard: they share one
+	// Temporal and one object store, and their own load moves the GetRun
+	// latency thresholds the soak tests hold (plan §2.3, §3.6).
+	Heavy bool `json:"heavy,omitempty"`
 	// Attempt counts the processes this job's tests needed: a crash runs the
 	// tests it had not started in a fresh process (attempt 2, 3, ...).
 	Attempt int `json:"-"`
@@ -124,7 +133,7 @@ func plan(tests map[string][]string, measured costs, kinds map[string]map[string
 				}
 				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: cost})
 			case s >= slowThreshold:
-				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: s, Known: true})
+				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: s, Known: true, Heavy: s >= heavyTestSeconds})
 			default:
 				if len(batch) > 0 && batchCost+s > batchTarget {
 					flush()
