@@ -109,7 +109,25 @@ tests' seconds plus the gap before each test, which is where page start,
 per-file fixtures and `beforeAll` land. It passes each shard a file list;
 Playwright's own `--shard` is never used.
 
-### 2.3 Running a shard
+### 2.3 Heavy tests
+
+A job whose measured cost is at least 120 s, or an unmeasured
+`TestIntegration_Soak*` test, is **heavy**. A heavy job runs alone:
+
+- in CI, `splitShards` gives each heavy job a shard of its own, so it has its
+  own Temporal and object store;
+- locally, the runner runs every heavy job first, one at a time, and starts no
+  ordinary job until the heavy phase is over — the local equivalent of a CI
+  heavy shard. The soaks' GetRun latency thresholds are absolute wall-clock
+  bounds, and measuring them with three other integration jobs on the machine
+  is meaningless.
+
+The cost is real: a local full proof's wall clock is the heavy tests one
+after another plus the ordinary tests. That is the price of measuring a soak
+on a quiet machine, and the merge gate does not trade a soak threshold for
+speed. `proof.json`'s plan records each job's `heavy` flag.
+
+### 2.4 Running a shard
 
 ```bash
 proofrun integration -plan plan.json -shard K -out DIR -jobs 3 \

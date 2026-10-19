@@ -85,6 +85,27 @@ func TestSplitShards_ClampsToTheNumberOfJobs(t *testing.T) {
 	}
 }
 
+func TestSplitShards_HeavyJobsGetTheirOwnShard(t *testing.T) {
+	jobs := testJobs(500, 400, 30, 25, 20)
+	jobs[0].Heavy, jobs[1].Heavy = true, true
+	got := splitShards(jobs, 3, 4)
+	heavyShards := 0
+	for _, s := range got {
+		if len(s.Jobs) == 1 && (s.Jobs[0] == jobs[0].ID || s.Jobs[0] == jobs[1].ID) {
+			heavyShards++
+		}
+	}
+	if heavyShards != 2 {
+		t.Fatalf("shards = %+v, want each heavy job alone", got)
+	}
+	// n is a floor: with three heavy jobs and n=1 the plan grows.
+	three := testJobs(500, 400, 300, 10, 5)
+	three[0].Heavy, three[1].Heavy, three[2].Heavy = true, true, true
+	if got := splitShards(three, 1, 4); len(got) != 4 {
+		t.Errorf("%d shards, want 3 heavy + 1 light", len(got))
+	}
+}
+
 func TestSplitShards_TheFloorIsTheLongestJob(t *testing.T) {
 	jobs := testJobs(548, 300, 200, 100)
 	for _, n := range []int{1, 2, 4, 10} {

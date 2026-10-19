@@ -195,20 +195,13 @@ type jobResult struct {
 // process, so one crash cannot hide the outcomes of the tests behind it; the
 // test that was running when it died is recorded as failed and never re-run.
 //
-// Heavy jobs (a measured cost at or above heavyTestSeconds) run on one slot,
-// one at a time; the light jobs keep the other slots busy. They share one
-// Temporal and one object store, and their own load moves the soak tests'
-// GetRun latency thresholds, so they must never overlap each other. With one
-// slot there is nothing to overlap: jobs run in plan order.
+// Heavy jobs (a measured cost at or above heavyTestSeconds, or an unmeasured
+// TestIntegration_Soak*) run first, one at a time, and no ordinary job starts
+// until they are done: a soak measures a quiet machine, which is the local
+// equivalent of a CI heavy shard's own Temporal. The ordinary jobs then fill
+// every slot. The added local wall clock is recorded in docs/PROOFS.md.
 func (r *runner) runAll(ctx context.Context, jobs []job) {
 	r.total = len(jobs)
-	if r.slots == 1 {
-		for _, j := range jobs {
-			r.runOne(ctx, j, 1)
-		}
-		return
-	}
-
 	var heavy, light []job
 	for _, j := range jobs {
 		if j.Heavy {
@@ -217,22 +210,12 @@ func (r *runner) runAll(ctx context.Context, jobs []job) {
 			light = append(light, j)
 		}
 	}
-	lightWorkers := r.slots
-	if len(heavy) > 0 {
-		lightWorkers = r.slots - 1
-	}
-	var wg sync.WaitGroup
-	if len(heavy) > 0 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for _, j := range heavy {
-				r.runOne(ctx, j, r.slots)
-			}
-		}()
+	for _, j := range heavy {
+		r.runOne(ctx, j, 1)
 	}
 	ch := make(chan job)
-	for slot := 1; slot <= lightWorkers; slot++ {
+	var wg sync.WaitGroup
+	for slot := 1; slot <= r.slots; slot++ {
 		wg.Add(1)
 		go func(slot int) {
 			defer wg.Done()
