@@ -136,7 +136,7 @@ func plan(tests map[string][]string, measured costs, kinds map[string]map[string
 					cost = unmeasuredUnitCost
 				}
 				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: cost,
-					Heavy: strings.HasPrefix(name, heavySoakPrefix)})
+					Heavy: heavyByName(name)})
 			case s >= slowThreshold:
 				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: s, Known: true, Heavy: s >= heavyTestSeconds})
 			default:
@@ -158,6 +158,21 @@ func plan(tests map[string][]string, measured costs, kinds map[string]map[string
 		jobs[i].Shard = 1
 	}
 	return jobs
+}
+
+// heavyByName reports whether an unmeasured test is a scale or chaos test by
+// construction, so the cost file's 300 s default never schedules it beside
+// ordinary work. A measured test uses its own cost instead.
+func heavyByName(name string) bool {
+	if strings.HasPrefix(name, heavySoakPrefix) {
+		return true
+	}
+	for _, fragment := range []string{"Chaos", "ThreeThousand", "SnapshotOverlay", "ATaskCeiling", "AnItemCeiling"} {
+		if strings.Contains(name, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // jobTimeout is max(10m, 3x the measured cost), or 30m for a test never
