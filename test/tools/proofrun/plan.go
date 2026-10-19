@@ -40,7 +40,11 @@ const (
 	// heavyTestSeconds is the measured duration at which a job runs alone:
 	// the soak and chaos tests share Temporal and the object store, and their
 	// latency thresholds were measured without another heavy test beside them.
+	// A test named TestIntegration_Soak* is heavy even when it is unmeasured:
+	// it is a scale test by construction, and its 300 s default says nothing
+	// about the load its own run puts on the shared Temporal.
 	heavyTestSeconds = 120.0
+	heavySoakPrefix  = "TestIntegration_Soak"
 )
 
 // costs maps a test to its measured seconds.
@@ -131,7 +135,8 @@ func plan(tests map[string][]string, measured costs, kinds map[string]map[string
 				if kinds[p][name] == "unit" {
 					cost = unmeasuredUnitCost
 				}
-				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: cost})
+				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: cost,
+					Heavy: strings.HasPrefix(name, heavySoakPrefix)})
 			case s >= slowThreshold:
 				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: s, Known: true, Heavy: s >= heavyTestSeconds})
 			default:

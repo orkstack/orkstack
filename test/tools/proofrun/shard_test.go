@@ -147,4 +147,8 @@ func TestPlan_AMeasuredHeavyTestRunsAlone(t *testing.T) {
 	if unmeasured[0].Heavy {
 		t.Error("an unmeasured test is marked heavy")
 	}
+	soak := plan(map[string][]string{"p": {"TestIntegration_SoakFanOut"}}, costs{}, map[string]map[string]string{"p": {"TestIntegration_SoakFanOut": "integration"}})
+	if !soak[0].Heavy {
+		t.Error("an unmeasured TestIntegration_Soak* test is not marked heavy")
+	}
 }
