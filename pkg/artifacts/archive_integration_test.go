@@ -810,12 +810,14 @@ func TestS3RunArchive_OriginIndexAgainstMinIO(t *testing.T) {
 	t.Logf("EVIDENCE origin_row=%s", key)
 }
 
-// TestS3RunArchive_RecentPagingAgainstMinIO is the newest-first family's
-// paging-safety test against real object storage: page one of a namespace
-// reads its page and boundary instant rather than the namespace, and paging
-// by the (time, id) cursor visits every run exactly once, in exactly the
-// order the full scan of the run index answers — ties included.
-func TestS3RunArchive_RecentPagingAgainstMinIO(t *testing.T) {
+// TestS3RunArchive_RecentPaging is the newest-first family's paging-safety
+// test against real object storage: page one of a namespace reads its page
+// and boundary instant rather than the namespace, and paging visits every run
+// exactly once, in exactly the order the full scan of the run index answers —
+// ties included. The cursor carries the last entry's exact recent key, so a
+// store that treats StartAfter as a prefix (SeaweedFS) cannot skip the
+// boundary instant's remaining ties.
+func TestS3RunArchive_RecentPaging(t *testing.T) {
 	archive, cfg := newS3RunArchive(t)
 	ctx := context.Background()
 	client := newRawS3Client(t, cfg)
@@ -865,6 +867,13 @@ func TestS3RunArchive_RecentPagingAgainstMinIO(t *testing.T) {
 			}
 			last := got[len(got)-1]
 			q.BeforeTime, q.BeforeRunID = last.Time, last.RunID
+			if q.Recent {
+				key, err := artifacts.RunRecentIndexKeyForEntry(last)
+				if err != nil {
+					t.Fatalf("recent key for %s: %v", last.RunID, err)
+				}
+				q.BeforeKey = key
+			}
 		}
 	}
 
@@ -874,8 +883,10 @@ func TestS3RunArchive_RecentPagingAgainstMinIO(t *testing.T) {
 	if scanned := archive.IndexKeysScanned() - before; scanned > limit+ties+1 {
 		t.Errorf("page one scanned %d index keys, want at most %d", scanned, limit+ties+1)
 	}
-	if len(first) != limit {
-		t.Fatalf("page one holds %d runs, want %d", len(first), limit)
+	// A page may exceed Limit by the boundary instant's ties: it is cut only
+	// after a whole instant has been read, so none are lost to the cursor.
+	if len(first) < limit || len(first) > limit+ties {
+		t.Fatalf("page one holds %d runs, want %d or up to %d with the boundary instant's ties", len(first), limit, limit+ties)
 	}
 
 	for _, q := range []artifacts.RunQuery{
