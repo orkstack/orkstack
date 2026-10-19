@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,12 @@ func TestIntegration_ReplacementOrkerReapsLabelledOrphan(t *testing.T) {
 	defer store.Close()
 	workRoot, err := os.MkdirTemp("../../.data/work", proof.WorkRootPattern("phase2-reap"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	// The Orker hands this path to the container runtime as a bind mount, and
+	// Docker requires an absolute source. A relative root works on some
+	// daemons and is refused on others (CI's Docker 28).
+	if workRoot, err = filepath.Abs(workRoot); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(workRoot) })
@@ -74,6 +81,9 @@ func TestIntegration_ReplacementOrkerReapsUnderTheDefaultIdentity(t *testing.T) 
 
 	workRoot, err := os.MkdirTemp("../../.data/work", proof.WorkRootPattern("phase2-default-reap"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if workRoot, err = filepath.Abs(workRoot); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(workRoot) })
