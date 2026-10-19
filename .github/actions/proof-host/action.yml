@@ -51,8 +51,8 @@ runs:
       uses: actions/cache@v6
       with:
         path: /tmp/orkstack-stack-images.tar
-        key: stack-images-${{ hashFiles('deploy/docker-compose.yml', 'images/*/Dockerfile') }}
-        restore-keys: stack-images-
+        key: stack-images-v2-${{ hashFiles('deploy/docker-compose.yml', 'images/*/Dockerfile') }}
+        restore-keys: stack-images-v2-
     - name: Load the stack images
       shell: bash
       run: |
@@ -74,9 +74,17 @@ runs:
       if: always()
       shell: bash
       run: |
+        set -euo pipefail
         if [ ! -f /tmp/orkstack-stack-images.tar ]; then
-          docker compose -f deploy/docker-compose.yml config --images | sort -u |
-            xargs -r docker save -o /tmp/orkstack-stack-images.tar || true
+          # Only the services this action starts. The observability profile's
+          # images are pulled by the observability job that starts them; a
+          # `config --images` list including them made docker save fail on a
+          # reference that was never pulled, and `|| true` hid it.
+          mapfile -t images < <(docker compose -f deploy/docker-compose.yml config --images temporal seaweedfs registry | sort -u)
+          for image in "${images[@]}"; do
+            docker image inspect "$image" >/dev/null 2>&1 || docker pull --quiet "$image"
+          done
+          docker save -o /tmp/orkstack-stack-images.tar "${images[@]}"
         fi
 
     - name: cosign
