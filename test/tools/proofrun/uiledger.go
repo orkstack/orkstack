@@ -56,9 +56,10 @@ type pwTest struct {
 }
 
 type pwResult struct {
-	Status    string  `json:"status"`
-	Duration  float64 `json:"duration"`
-	StartTime string  `json:"startTime,omitempty"`
+	Status    string   `json:"status"`
+	Duration  float64  `json:"duration"`
+	StartTime string   `json:"startTime,omitempty"`
+	Error     *pwError `json:"error,omitempty"`
 }
 
 type uiEntry struct {

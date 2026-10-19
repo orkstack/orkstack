@@ -1,0 +1,11 @@
+# Assertions whose pass depends on the host's speed. A miss on a runner below
+# the reference CPU count is recorded in proof.json's host_speed_failures and
+# known_gaps and in the README as a known gap; it is never a silent shard
+# failure and never a widened local bound (docs/PROOFS.md).
+#
+# Columns are TAB-separated: kind, name, bound (seconds), reference CPUs, note.
+# kind=ui names a Playwright spec path under ui/; kind=test names a package,
+# a test and its threshold.
+# kind	name	bound	reference_cpus	note
+ui	e2e/run-page-ceiling.spec.ts	5	16	the run page at the gated task size is interactive within 5 s
+ui	e2e/each-fan-out.spec.ts	5	16	the run page and the item list at the gated size are interactive within 5 s

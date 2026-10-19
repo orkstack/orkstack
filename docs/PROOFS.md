@@ -207,8 +207,11 @@ ledger `problems` line, or both:
     file's wall, and stays at or under the network-change ceiling per host;
 11. every gate of the tier ran and passed;
 12. `verdict()` decides the result and merge eligibility;
-13. a runner-size failure is recorded in `host_speed_failures[]`, never
-    excused.
+13. a UI spec named in `scripts/proof-host-speed.tsv` that misses its bound on
+    a runner below the reference CPU count is recorded in
+    `host_speed_failures[]` and `known_gaps[]`, printed under the README's
+    "Known gaps: runner size", and does not fail the proof; on the reference
+    host the same miss is a failure.
 
 ### 3.2 Reruns
 
@@ -319,6 +322,10 @@ Any other missing part needs a new run of the same tree.
 - **The merge queue needs an organization-owned repository.** The queue-less
   mode is the default: `proof` runs the real proof on the pull request, and
   `strict_required_status_checks_policy` makes the tested tree the landed tree.
+- **Runner-size known gaps.** A UI spec's wall-clock budget (5 s at the gated
+  sizes) cannot hold on a 2-vCPU runner. `scripts/proof-host-speed.tsv` names
+  those specs and their reference CPU count; a miss below it is recorded with
+  its measured message, never turned into a wider local bound.
 - **The dev object store is SeaweedFS, pinned by digest.** MinIO stopped
   publishing images and moved to a closed product; Garage cannot do the
   conditional write the commit protocol needs. SeaweedFS documents

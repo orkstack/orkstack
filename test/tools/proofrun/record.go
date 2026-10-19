@@ -69,6 +69,7 @@ type proofRecord struct {
 	Quarantine        *quarantineRecord  `json:"quarantine,omitempty"`
 	Nightly           *nightlyRecord     `json:"nightly,omitempty"`
 	HostSpeedFailures []hostSpeedFailure `json:"host_speed_failures,omitempty"`
+	KnownGaps         []string           `json:"known_gaps,omitempty"`
 	BinaryDigestNotes []string           `json:"binary_digest_notes,omitempty"`
 	ListsChanged      []listChange       `json:"lists_changed,omitempty"`
 	PR                *prRecord          `json:"pr,omitempty"`

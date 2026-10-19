@@ -91,6 +91,7 @@ func (f *mergeFixture) basePart(part string) partRecord {
 		CleanStart: true, CleanEnd: true, BaseRef: mainBranch, BaseCommit: "base1",
 		ImageTag: f.plan.ProofID, ImageTagOwn: true, PlanSHA256: f.planSHA,
 		UIPlanSHA256: sha256File(f.uiPlanPath),
+		Runner:       runnerRecord{OS: "linux", CPUs: 16},
 	}
 	if isStackPart(part) {
 		r.Temporal.Mode = "own"
@@ -193,7 +194,7 @@ func (f *mergeFixture) writeJobs(attempt int, job githubJob) {
 	}
 }
 
-func (f *mergeFixture) merge() (proofRecord, int) {
+func (f *mergeFixture) merge(extra ...string) (proofRecord, int) {
 	f.t.Helper()
 	quiet(f.t)
 	args := []string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out, "-name", "test"}
@@ -203,6 +204,7 @@ func (f *mergeFixture) merge() (proofRecord, int) {
 	if f.jobsDir != "" {
 		args = append(args, "-jobs", f.jobsDir)
 	}
+	args = append(args, extra...)
 	code := cmdMerge(args)
 	var r proofRecord
 	if err := readJSON(filepath.Join(f.out, "proof.json"), &r); err != nil {
@@ -402,5 +404,68 @@ func TestMerge_DeferredTestsAreRecordedNotRun(t *testing.T) {
 	}
 	if !found || l.Summary.Deferred != 1 {
 		t.Errorf("the deferred test is not in the merged ledger: %+v", l.Summary)
+	}
+}
+
+func TestMerge_ARunnerSizeUISpecIsAKnownGap(t *testing.T) {
+	f := newMergeFixture(t, tierFull, true)
+	f.writeCI()
+	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
+	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	ui := f.basePart("ui-e2e:1")
+	ui.Gates = []gateRecord{{Gate: "ui-e2e", Result: "fail"}}
+	ui.Runner = runnerRecord{OS: "linux", CPUs: 2}
+	problem := "a.spec.ts › t [chromium] failed (Expected: < 5000, Received: 8123)"
+	f.writePart(ui, map[string]any{
+		"ui-e2e-tests.json": uiLedger{
+			Suite: "ui-e2e", Listed: 1, GuardRetryCeiling: 3,
+			Tests:    []uiEntry{{File: "a.spec.ts", Title: "t", Project: "chromium", Outcome: outcomeFail, Seconds: 8.1}},
+			Files:    []uiFileEntry{{File: "a.spec.ts", Shard: 1, Tests: 1, Seconds: 8.1, WallSeconds: 8.1}},
+			Problems: []string{problem},
+		},
+	})
+	host := filepath.Join(f.dir, "host-speed.tsv")
+	if err := os.WriteFile(host, []byte("ui\te2e/a.spec.ts\t5\t16\tthe gated size is interactive within 5 s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, code := f.merge("-host-speed", host)
+	if code != 0 || r.Result != "pass" || !r.MergeEligible {
+		t.Fatalf("code %d, result %s eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
+	}
+	if len(r.HostSpeedFailures) != 1 || r.HostSpeedFailures[0].RunnerCPUs != 2 || r.HostSpeedFailures[0].ReferenceCPUs != 16 {
+		t.Fatalf("host_speed_failures = %+v", r.HostSpeedFailures)
+	}
+	if len(r.KnownGaps) != 1 || !strings.Contains(r.KnownGaps[0], "8123") {
+		t.Fatalf("known_gaps = %v", r.KnownGaps)
+	}
+	b, _ := os.ReadFile(filepath.Join(f.out, "README.md"))
+	if !strings.Contains(string(b), "Known gaps: runner size") {
+		t.Errorf("README lacks the known-gaps section:\n%s", b)
+	}
+}
+
+func TestMerge_AnUnlistedUISpecFailureStillFails(t *testing.T) {
+	f := newMergeFixture(t, tierFull, true)
+	f.writeCI()
+	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
+	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	ui := f.basePart("ui-e2e:1")
+	ui.Gates = []gateRecord{{Gate: "ui-e2e", Result: "fail"}}
+	ui.Runner = runnerRecord{OS: "linux", CPUs: 2}
+	f.writePart(ui, map[string]any{
+		"ui-e2e-tests.json": uiLedger{
+			Suite: "ui-e2e", Listed: 1, GuardRetryCeiling: 3,
+			Tests:    []uiEntry{{File: "a.spec.ts", Title: "t", Project: "chromium", Outcome: outcomeFail, Seconds: 8.1}},
+			Files:    []uiFileEntry{{File: "a.spec.ts", Shard: 1, Tests: 1, Seconds: 8.1, WallSeconds: 8.1}},
+			Problems: []string{"a.spec.ts › t [chromium] failed (a real regression)"},
+		},
+	})
+	host := filepath.Join(f.dir, "host-speed.tsv")
+	if err := os.WriteFile(host, []byte("ui\te2e/other.spec.ts\t5\t16\tnot this one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, code := f.merge("-host-speed", host)
+	if code == 0 || r.Result != "fail" || r.MergeEligible {
+		t.Fatalf("an unlisted UI failure passed: code %d, %+v", code, r.Ineligible)
 	}
 }

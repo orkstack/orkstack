@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -205,6 +206,7 @@ func cmdMerge(args []string) int {
 	m := &merger{
 		plan: plan, uiPlan: uiP, planSHA: planSHA, uiPlanSHA: uiPlanSHA, parts: parts, absent: absent,
 		attempts: attempts, hostSpeed: readHostSpeed(*hostSpeedFile),
+		excusedUIGate: map[string]bool{},
 	}
 	m.merge(*name)
 	proof := m.proof
@@ -238,22 +240,25 @@ func cmdMerge(args []string) int {
 
 // merger accumulates the merged proof.
 type merger struct {
-	plan        *integrationPlan
-	uiPlan      *uiPlan
-	planSHA     string
-	uiPlanSHA   string
-	parts       map[string]map[int]partReading
-	absent      map[string]bool
-	attempts    map[string]map[int]githubJob
-	hostSpeed   map[testKey]hostBound
-	problems    []string
-	ineligible  []string
-	reruns      []rerunRecord
-	proof       *proofRecord
-	unit        *ledger
-	integration *ledger
-	ui          *uiLedger
-	notes       []string
+	plan              *integrationPlan
+	uiPlan            *uiPlan
+	planSHA           string
+	uiPlanSHA         string
+	parts             map[string]map[int]partReading
+	absent            map[string]bool
+	attempts          map[string]map[int]githubJob
+	hostSpeed         hostSpeedTable
+	problems          []string
+	ineligible        []string
+	reruns            []rerunRecord
+	proof             *proofRecord
+	unit              *ledger
+	integration       *ledger
+	ui                *uiLedger
+	notes             []string
+	hostSpeedFailures []hostSpeedFailure
+	knownGaps         []string
+	excusedUIGate     map[string]bool
 }
 
 // partReading is one part attempt's on-disk result.
@@ -480,6 +485,8 @@ func (m *merger) merge(name string) {
 	}
 	proof.ListsChanged = p.ListsChanged
 	proof.PR = p.PR
+	proof.HostSpeedFailures = m.hostSpeedFailures
+	proof.KnownGaps = m.knownGaps
 	proof.Quarantine = &quarantineRecord{BaseSHA256: p.Quarantine.BaseSHA256}
 	proof.Nightly = &nightlyRecord{SHA256: p.Nightly.SHA256, BaseCommit: p.Nightly.BaseCommit, BaseSHA256: p.Nightly.BaseSHA256}
 	proof.Ledgers = map[string]any{}
@@ -725,9 +732,26 @@ func (m *merger) mergeIntegration() {
 			if err := readJSON(filepath.Join(reading.Dir, "integration-tests.json"), &shard); err != nil {
 				continue
 			}
+			cpus := reading.Record.Runner.CPUs
+			gapsHere := 0
 			for _, p := range shard.Problems {
+				if bound, ok := m.hostSpeed.specForProblem(p); ok && cpus > 0 && cpus < bound.ReferenceCPUs {
+					m.hostSpeedFailures = append(m.hostSpeedFailures, hostSpeedFailure{
+						Part: part, Test: p, Kind: "ui", Bound: bound.Bound,
+						RunnerCPUs: cpus, ReferenceCPUs: bound.ReferenceCPUs, Message: p,
+					})
+					m.knownGaps = append(m.knownGaps, fmt.Sprintf("%s: %s on a %d-CPU runner (bound %.0fs, reference %d CPUs)",
+						part, p, cpus, bound.Bound, bound.ReferenceCPUs))
+					gapsHere++
+					continue
+				}
 				l.Problems = append(l.Problems, part+": "+p)
 				m.problems = append(m.problems, part+": "+p)
+			}
+			if gapsHere > 0 && gapsHere == len(shard.Problems) {
+				// The part's only defects are runner-size misses of a declared
+				// bound: record them, and do not turn its gate red.
+				m.excusedUIGate[part] = true
 			}
 			for _, e := range shard.Tests {
 				k := testKey{e.Package, e.Test}
@@ -914,9 +938,26 @@ func (m *merger) mergeUI() {
 			if err := readJSON(filepath.Join(reading.Dir, "ui-e2e-tests.json"), &shard); err != nil {
 				continue
 			}
+			cpus := reading.Record.Runner.CPUs
+			gapsHere := 0
 			for _, p := range shard.Problems {
+				if bound, ok := m.hostSpeed.specForProblem(p); ok && cpus > 0 && cpus < bound.ReferenceCPUs {
+					m.hostSpeedFailures = append(m.hostSpeedFailures, hostSpeedFailure{
+						Part: part, Test: p, Kind: "ui", Bound: bound.Bound,
+						RunnerCPUs: cpus, ReferenceCPUs: bound.ReferenceCPUs, Message: p,
+					})
+					m.knownGaps = append(m.knownGaps, fmt.Sprintf("%s: %s on a %d-CPU runner (bound %.0fs, reference %d CPUs)",
+						part, p, cpus, bound.Bound, bound.ReferenceCPUs))
+					gapsHere++
+					continue
+				}
 				l.Problems = append(l.Problems, part+": "+p)
 				m.problems = append(m.problems, part+": "+p)
+			}
+			if gapsHere > 0 && gapsHere == len(shard.Problems) {
+				// The part's only defects are runner-size misses of a declared
+				// bound: record them, and do not turn its gate red.
+				m.excusedUIGate[part] = true
 			}
 			for _, e := range shard.Tests {
 				k := e.File + "\x00" + e.Title + "\x00" + e.Project
@@ -995,7 +1036,8 @@ func (m *merger) mergeGates(expected []string) {
 				continue
 			}
 			for _, g := range reading.Record.Gates {
-				if g.Result != "pass" {
+				excused := g.Gate == "ui-e2e" && m.excusedUIGate[part]
+				if g.Result != "pass" && !excused {
 					got[g.Gate] = "fail"
 				} else if got[g.Gate] == "" {
 					got[g.Gate] = "pass"
@@ -1058,12 +1100,34 @@ func (m *merger) orderedReadings(part string) []partReading {
 // hostBound is one assertion whose result depends on the host's speed.
 type hostBound struct {
 	Test          string
+	Spec          string
 	Bound         float64
 	ReferenceCPUs int
+	Note          string
 }
 
-func readHostSpeed(file string) map[testKey]hostBound {
-	out := map[testKey]hostBound{}
+// hostSpeedTable is scripts/proof-host-speed.tsv: UI specs whose budget is a
+// wall clock on the reference host, and tests whose threshold is. A spec
+// miss on a runner below the reference CPU count is a known gap, not a
+// shard failure (the user's M5 decision).
+type hostSpeedTable struct {
+	Specs map[string]hostBound
+	Tests map[testKey]hostBound
+}
+
+func (t hostSpeedTable) specForProblem(problem string) (hostBound, bool) {
+	for spec, bound := range t.Specs {
+		base := path.Base(spec)
+		if strings.HasPrefix(problem, spec+" › ") || strings.HasPrefix(problem, base+" › ") ||
+			strings.Contains(problem, spec+" › ") {
+			return bound, true
+		}
+	}
+	return hostBound{}, false
+}
+
+func readHostSpeed(file string) hostSpeedTable {
+	out := hostSpeedTable{Specs: map[string]hostBound{}, Tests: map[testKey]hostBound{}}
 	if file == "" {
 		return out
 	}
@@ -1082,9 +1146,27 @@ func readHostSpeed(file string) map[testKey]hostBound {
 		if len(f) < 4 {
 			continue
 		}
-		bound, _ := strconv.ParseFloat(f[2], 64)
-		cpus, _ := strconv.Atoi(f[3])
-		out[testKey{f[0], f[1]}] = hostBound{Test: f[1], Bound: bound, ReferenceCPUs: cpus}
+		switch f[0] {
+		case "ui":
+			bound, _ := strconv.ParseFloat(f[2], 64)
+			cpus, _ := strconv.Atoi(f[3])
+			note := ""
+			if len(f) > 4 {
+				note = f[4]
+			}
+			out.Specs[f[1]] = hostBound{Spec: f[1], Bound: bound, ReferenceCPUs: cpus, Note: note}
+		case "test":
+			if len(f) < 5 {
+				continue
+			}
+			bound, _ := strconv.ParseFloat(f[3], 64)
+			cpus, _ := strconv.Atoi(f[4])
+			note := ""
+			if len(f) > 5 {
+				note = f[5]
+			}
+			out.Tests[testKey{f[1], f[2]}] = hostBound{Test: f[2], Bound: bound, ReferenceCPUs: cpus, Note: note}
+		}
 	}
 	return out
 }
@@ -1131,6 +1213,14 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) {
 			fmt.Fprintf(&b, "- %s attempt %d, after attempt %v was lost by GitHub (%s); %d tests had passed, %d had started and not finished: %s\n",
 				rr.Part, rr.Attempt, rr.EarlierAttempts, rr.Reason, rr.LostAttempt.PassedBeforeLoss,
 				len(rr.LostAttempt.Unfinished), strings.Join(rr.LostAttempt.Unfinished, ", "))
+		}
+		fmt.Fprintln(&b)
+	}
+	if len(r.HostSpeedFailures) > 0 {
+		fmt.Fprintf(&b, "## Known gaps: runner size\n\n")
+		for _, f := range r.HostSpeedFailures {
+			fmt.Fprintf(&b, "- %s: %s — bound %.0fs on %d CPUs, runner has %d; recorded, not merge-blocking\n",
+				f.Part, f.Message, f.Bound, f.ReferenceCPUs, f.RunnerCPUs)
 		}
 		fmt.Fprintln(&b)
 	}
