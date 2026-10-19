@@ -95,6 +95,7 @@ LAYOUTS=""
 PROOF_ID=""
 ATTEMPT=1
 BASE_COMMIT=""
+MERGE_BASE=""
 SHARDS=""
 UI_SHARDS=""
 BASE_COMMIT_GIVEN=""
@@ -158,17 +159,29 @@ for tool in git go; do
 		exit 77
 	fi
 done
-if [ -n "$BASE_COMMIT" ]; then
-	git rev-parse --verify --quiet "$BASE_COMMIT^{commit}" >/dev/null || invalid "--base-commit $BASE_COMMIT is not a commit"
-	BASE_COMMIT="$(git rev-parse "$BASE_COMMIT^{commit}")"
-	git merge-base --is-ancestor "$BASE_COMMIT" HEAD || invalid "--base-commit $BASE_COMMIT is not an ancestor of HEAD: the proof must test a tree that lands"
-	BASE="$(git rev-parse --abbrev-ref "$BASE_COMMIT" 2>/dev/null || echo main)"
-	[ "$BASE" = "HEAD" ] && BASE=main
+if [ -n "$PART" ] && [ "$PART" != plan ]; then
+	# Only the plan part reads history. Every other part takes the base and
+	# merge base the plan recorded; on a shallow CI checkout neither commit
+	# exists locally, and checking them would refuse a correct part.
+	[ -n "$BASE_COMMIT" ] || invalid "--part $PART needs --base-commit (the plan's base_commit)"
 else
-	git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null || invalid "--base $BASE is not a commit"
-	BASE_COMMIT="$(git rev-parse "$BASE^{commit}")"
+	if [ -n "$BASE_COMMIT" ]; then
+		git rev-parse --verify --quiet "$BASE_COMMIT^{commit}" >/dev/null || invalid "--base-commit $BASE_COMMIT is not a commit"
+		BASE_COMMIT="$(git rev-parse "$BASE_COMMIT^{commit}")"
+		git merge-base --is-ancestor "$BASE_COMMIT" HEAD || invalid "--base-commit $BASE_COMMIT is not an ancestor of HEAD: the proof must test a tree that lands"
+		BASE="$(git rev-parse --abbrev-ref "$BASE_COMMIT" 2>/dev/null || echo main)"
+		[ "$BASE" = "HEAD" ] && BASE=main
+	else
+		git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null || invalid "--base $BASE is not a commit"
+		BASE_COMMIT="$(git rev-parse "$BASE^{commit}")"
+	fi
+	if [ -z "$MERGE_BASE" ]; then
+		MERGE_BASE="$(git merge-base "$BASE_COMMIT" HEAD)" || invalid "no merge base between $BASE_COMMIT and HEAD"
+	fi
 fi
-MERGE_BASE="$(git merge-base "$BASE_COMMIT" HEAD)" || invalid "no merge base between $BASE and HEAD"
+if [ -n "$PART" ] && [ "$PART" != plan ]; then
+	BASE="${BASE:-main}"
+fi
 
 if [ -z "$NAME" ]; then
 	NAME="$(git branch --show-current 2>/dev/null | tr '/' '-')"

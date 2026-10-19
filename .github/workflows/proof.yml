@@ -58,34 +58,21 @@ env:
   ORK_LOCAL_REGISTRY: localhost:5001
 
 jobs:
-  plan:
+  base:
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 15
     permissions:
       contents: read
     outputs:
-      int_matrix: ${{ steps.plan.outputs.int_matrix }}
-      ui_matrix: ${{ steps.plan.outputs.ui_matrix }}
-      observability: ${{ steps.plan.outputs.observability }}
-      proof_id: ${{ steps.plan.outputs.proof_id }}
-      plan_artifact: plan-a${{ github.run_attempt }}
+      sha: ${{ steps.base.outputs.base }}
+      pr_head: ${{ steps.base.outputs.pr_head }}
+      pr_base: ${{ steps.base.outputs.pr_base }}
+      contains_base: ${{ steps.base.outputs.contains_base }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v7
-        timeout-minutes: 5
-        with:
-          go-version: "1.27.x"
-      - uses: oven-sh/setup-bun@v2
-        timeout-minutes: 5
-        with:
-          bun-version: latest
-      - name: bun install
-        timeout-minutes: 5
-        working-directory: ui
-        run: bun install --frozen-lockfile
       - name: base
         id: base
         timeout-minutes: 3
@@ -117,17 +104,47 @@ jobs:
             echo "contains_base=true" >>"$GITHUB_OUTPUT"
           fi
           echo "base=$base" >>"$GITHUB_OUTPUT"
+
+  plan:
+    needs: base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    outputs:
+      int_matrix: ${{ steps.plan.outputs.int_matrix }}
+      ui_matrix: ${{ steps.plan.outputs.ui_matrix }}
+      observability: ${{ steps.plan.outputs.observability }}
+      proof_id: ${{ steps.plan.outputs.proof_id }}
+      plan_artifact: plan-a${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.x"
+      - uses: oven-sh/setup-bun@v2
+        timeout-minutes: 5
+        with:
+          bun-version: latest
+      - name: bun install
+        timeout-minutes: 5
+        working-directory: ui
+        run: bun install --frozen-lockfile
       - name: plan
         id: plan
         timeout-minutes: 15
         shell: bash
         env:
           PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}
-          BASE: ${{ steps.base.outputs.base }}
+          BASE: ${{ needs.base.outputs.sha }}
           PROOF_PR_NUMBER: ${{ github.event.pull_request.number }}
-          PROOF_PR_HEAD: ${{ steps.base.outputs.pr_head }}
-          PROOF_PR_BASE: ${{ steps.base.outputs.pr_base }}
-          PROOF_PR_CONTAINS_BASE: ${{ steps.base.outputs.contains_base }}
+          PROOF_PR_HEAD: ${{ needs.base.outputs.pr_head }}
+          PROOF_PR_BASE: ${{ needs.base.outputs.pr_base }}
+          PROOF_PR_CONTAINS_BASE: ${{ needs.base.outputs.contains_base }}
         run: |
           set -euo pipefail
           scripts/proof.sh --part plan --tier "$TIER" --proof-id "$PROOF_ID" \
@@ -147,6 +164,7 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
 
   build:
+    needs: base
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:
@@ -166,7 +184,9 @@ jobs:
       - name: build
         timeout-minutes: 20
         shell: bash
-        run: scripts/proof.sh --part build --tier "$TIER" --proof-id "$PROOF_ID" "$PROOF_NAME"
+        run: |
+          scripts/proof.sh --part build --tier "$TIER" --proof-id "$PROOF_ID" \
+            --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7
         if: always()
         timeout-minutes: 5
@@ -176,6 +196,7 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
 
   fast:
+    needs: base
     if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
@@ -202,7 +223,9 @@ jobs:
         shell: bash
         env:
           PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}
-        run: scripts/proof.sh --part fast --tier "$TIER" --proof-id "$PROOF_ID" "$PROOF_NAME"
+        run: |
+          scripts/proof.sh --part fast --tier "$TIER" --proof-id "$PROOF_ID" \
+            --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7
         if: always()
         timeout-minutes: 5
@@ -212,7 +235,7 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
 
   integration:
-    needs: [plan, build]
+    needs: [base, plan, build]
     if: ${{ github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
@@ -253,7 +276,8 @@ jobs:
         run: |
           scripts/proof.sh --part "integration:${{ matrix.shard }}" --tier "$TIER" --proof-id "$PROOF_ID" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
-            --layouts "$RUNNER_TEMP/ci/build/layouts" "$PROOF_NAME"
+            --layouts "$RUNNER_TEMP/ci/build/layouts" \
+            --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7
         if: always()
         timeout-minutes: 5
@@ -263,7 +287,7 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   ui-e2e:
-    needs: [plan, build]
+    needs: [base, plan, build]
     if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -315,7 +339,8 @@ jobs:
         run: |
           scripts/proof.sh --part "ui-e2e:${{ matrix.shard }}" --tier "$TIER" --proof-id "$PROOF_ID" \
             --ui-plan "$RUNNER_TEMP/ci/plan/ui-plan.json" \
-            --layouts "$RUNNER_TEMP/ci/build/layouts" "$PROOF_NAME"
+            --layouts "$RUNNER_TEMP/ci/build/layouts" \
+            --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7
         if: always()
         timeout-minutes: 5
@@ -325,7 +350,7 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   activity-fixture:
-    needs: build
+    needs: [base, build]
     if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 65
@@ -357,7 +382,8 @@ jobs:
         shell: bash
         run: |
           scripts/proof.sh --part "activity-fixture:${{ matrix.activity }}" --tier "$TIER" --proof-id "$PROOF_ID" \
-            --layouts "$RUNNER_TEMP/ci/build/layouts" "$PROOF_NAME"
+            --layouts "$RUNNER_TEMP/ci/build/layouts" \
+            --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7
         if: always()
         timeout-minutes: 5
@@ -367,7 +393,7 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   observability:
-    needs: [plan, build]
+    needs: [base, plan, build]
     if: ${{ needs.plan.outputs.observability == 'true' || inputs.tier == 'release' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 65
@@ -394,7 +420,8 @@ jobs:
         shell: bash
         run: |
           scripts/proof.sh --part observability --tier "$TIER" --proof-id "$PROOF_ID" \
-            --layouts "$RUNNER_TEMP/ci/build/layouts" "$PROOF_NAME"
+            --layouts "$RUNNER_TEMP/ci/build/layouts" \
+            --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7
         if: always()
         timeout-minutes: 5
@@ -406,7 +433,7 @@ jobs:
   proof:
     # A skipped required job reports success: `always()` and nothing else.
     if: always()
-    needs: [plan, build, fast, integration, ui-e2e, activity-fixture, observability]
+    needs: [base, plan, build, fast, integration, ui-e2e, activity-fixture, observability]
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:
