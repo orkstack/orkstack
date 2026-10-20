@@ -37,14 +37,6 @@ const (
 	minJobTimeout = 10 * time.Minute
 	// unknownTimeout bounds a job whose test was never measured.
 	unknownTimeout = 30 * time.Minute
-	// heavyTestSeconds is the measured duration at which a job runs alone:
-	// the soak and chaos tests share Temporal and the object store, and their
-	// latency thresholds were measured without another heavy test beside them.
-	// A test named TestIntegration_Soak* is heavy even when it is unmeasured:
-	// it is a scale test by construction, and its 300 s default says nothing
-	// about the load its own run puts on the shared Temporal.
-	heavyTestSeconds = 120.0
-	heavySoakPrefix  = "TestIntegration_Soak"
 )
 
 // costs maps a test to its measured seconds.
@@ -138,7 +130,7 @@ func plan(tests map[string][]string, measured costs, kinds map[string]map[string
 				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: cost,
 					Heavy: heavyByName(name)})
 			case s >= slowThreshold:
-				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: s, Known: true, Heavy: s >= heavyTestSeconds})
+				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: s, Known: true, Heavy: heavyByName(name)})
 			default:
 				if len(batch) > 0 && batchCost+s > batchTarget {
 					flush()
@@ -160,20 +152,24 @@ func plan(tests map[string][]string, measured costs, kinds map[string]map[string
 	return jobs
 }
 
-// heavyByName reports whether an unmeasured test is a scale or chaos test by
-// construction, so the cost file's 300 s default never schedules it beside
-// ordinary work. A measured test uses its own cost instead.
-func heavyByName(name string) bool {
-	if strings.HasPrefix(name, heavySoakPrefix) {
-		return true
-	}
-	for _, fragment := range []string{"Chaos", "ThreeThousand", "SnapshotOverlay", "ATaskCeiling", "AnItemCeiling"} {
-		if strings.Contains(name, fragment) {
-			return true
-		}
-	}
-	return false
+// heavyTests are the tests whose assertions are absolute wall-clock or
+// throughput bounds, named explicitly. They run alone so the bound is measured
+// on a quiet machine. A test that is merely slow — a 300 s pin or chaos run —
+// is not heavy: duration says nothing about what it asserts, and serialising
+// every slow test turned the plan into hours of one-slot work. A test that
+// needs isolation for another reason is added here with that reason.
+var heavyTests = map[string]bool{
+	// The six the user moved to the nightly tier, each with GetRun latency,
+	// snapshot-byte or E7/E4 thresholds measured on a quiet host.
+	"TestIntegration_SoakTasks":                             true,
+	"TestIntegration_ThreeThousandTaskDefinitionRuns":       true,
+	"TestIntegration_SnapshotOverlayBytesForAThousandTasks": true,
+	"TestIntegration_SoakItemCeilingWithStage7Defaults":     true,
+	"TestIntegration_SoakFanOutMaxParallel":                 true,
+	"TestIntegration_SoakFanOut":                            true,
 }
+
+func heavyByName(name string) bool { return heavyTests[name] }
 
 // jobTimeout is max(10m, 3x the measured cost), or 30m for a test never
 // measured: generous enough that load never trips it, tight enough that a hung

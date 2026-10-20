@@ -111,11 +111,15 @@ Playwright's own `--shard` is never used.
 
 ### 2.3 Heavy tests
 
-A job whose measured cost is at least 120 s, or an unmeasured
-`TestIntegration_Soak*` test, is **heavy**. A heavy job runs alone:
+A **heavy** job is one whose assertions are absolute wall-clock or
+throughput bounds — the six scale tests the user approved for the nightly
+tier, named in the planner's `heavyTests`. Duration alone does not make a
+test heavy: a 300 s pin or chaos test is measured by what it asserts, not by
+how long it takes, and it keeps running four-wide. A heavy job runs alone:
 
-- in CI, `splitShards` gives each heavy job a shard of its own, so it has its
-  own Temporal and object store;
+- in CI, `splitShards` puts the heavy jobs in heavy-only shards (at most half
+  the requested count, one heavy test at a time), each with its own Temporal
+  and object store;
 - locally, the runner runs every heavy job first, one at a time, and starts no
   ordinary job until the heavy phase is over — the local equivalent of a CI
   heavy shard. The soaks' GetRun latency thresholds are absolute wall-clock

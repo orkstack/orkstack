@@ -166,28 +166,38 @@ func TestPlan_AnUnmeasuredUnitFileTestCostsTheUnitDefault(t *testing.T) {
 	}
 }
 
-func TestPlan_AMeasuredHeavyTestRunsAlone(t *testing.T) {
-	jobs := plan(map[string][]string{"p": {"TestSoak", "TestQuick"}},
-		costs{{"p", "TestSoak"}: 200, {"p", "TestQuick"}: 5},
+func TestPlan_OnlyWallClockSensitiveScaleTestsAreHeavy(t *testing.T) {
+	jobs := plan(map[string][]string{"p": {
+		"TestIntegration_SoakTasks", "TestIntegration_APinTakes300Seconds", "TestQuick",
+	}},
+		costs{
+			{"p", "TestIntegration_SoakTasks"}:           200,
+			{"p", "TestIntegration_APinTakes300Seconds"}: 300,
+			{"p", "TestQuick"}:                           5,
+		},
 		map[string]map[string]string{"p": {}})
 	byTest := map[string]job{}
 	for _, j := range jobs {
 		byTest[j.Tests[0]] = j
 	}
-	if !byTest["TestSoak"].Heavy {
-		t.Error("a measured 200 s test is not marked heavy")
+	if !byTest["TestIntegration_SoakTasks"].Heavy {
+		t.Error("the soak, which asserts latency bounds, is not marked heavy")
+	}
+	if byTest["TestIntegration_APinTakes300Seconds"].Heavy {
+		t.Error("a merely slow 300 s test is marked heavy; it must run four-wide")
 	}
 	if byTest["TestQuick"].Heavy {
 		t.Error("a 5 s test is marked heavy")
 	}
-	// An unmeasured test is conservative in cost but never heavy: it would
-	// otherwise serialise hundreds of new unit tests behind each other.
+	// An unmeasured test outside the six is not heavy either.
 	unmeasured := plan(map[string][]string{"p": {"TestNew"}}, costs{}, map[string]map[string]string{"p": {"TestNew": "integration"}})
 	if unmeasured[0].Heavy {
-		t.Error("an unmeasured test is marked heavy")
+		t.Error("an unmeasured ordinary test is marked heavy")
 	}
-	soak := plan(map[string][]string{"p": {"TestIntegration_SoakFanOut"}}, costs{}, map[string]map[string]string{"p": {"TestIntegration_SoakFanOut": "integration"}})
-	if !soak[0].Heavy {
-		t.Error("an unmeasured TestIntegration_Soak* test is not marked heavy")
+	for _, name := range []string{"TestIntegration_SoakFanOut", "TestIntegration_SoakFanOutMaxParallel", "TestIntegration_ThreeThousandTaskDefinitionRuns", "TestIntegration_SnapshotOverlayBytesForAThousandTasks", "TestIntegration_SoakItemCeilingWithStage7Defaults"} {
+		j := plan(map[string][]string{"p": {name}}, costs{}, map[string]map[string]string{"p": {name: "integration"}})
+		if !j[0].Heavy {
+			t.Errorf("%s is not marked heavy", name)
+		}
 	}
 }
