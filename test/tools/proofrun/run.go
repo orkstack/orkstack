@@ -434,6 +434,7 @@ type integrationPlanOptions struct {
 	jobs, shards, uiShards                int
 	nsPrefix, costsFile, allowFile        string
 	selectFile, only                      string
+	quarantineFile, quarantineBase        string
 	planOnly                              bool
 	planFile                              string
 	shard                                 int
@@ -459,6 +460,8 @@ func integrationFlags() (*flag.FlagSet, *integrationPlanOptions) {
 	fs.StringVar(&o.nsPrefix, "namespace-prefix", "", "each slot k runs with ORK_TEMPORAL_NAMESPACE=<prefix>-w<k>")
 	fs.StringVar(&o.costsFile, "costs", "scripts/proof-test-costs.tsv", "measured per-test durations")
 	fs.StringVar(&o.allowFile, "allow", "scripts/proof-allowed-skips.txt", "allowed skips")
+	fs.StringVar(&o.quarantineFile, "quarantine", "scripts/proof-quarantine.txt", "the quarantine list")
+	fs.StringVar(&o.quarantineBase, "quarantine-base", "", "the base's copy of the quarantine list (only entries it carries excuse)")
 	fs.StringVar(&o.selectFile, "select", "", "a feature selection (proofrun select): run only its integration tests")
 	fs.StringVar(&o.only, "run", "", "run only the tests matching this regexp (by hand; never a proof)")
 	fs.BoolVar(&o.planOnly, "plan-only", false, "compile, list and plan, write integration-plan.json, run nothing")
@@ -675,7 +678,15 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		})
 		fmt.Fprintf(stdout, "listed %s: %d tests, running %d\n", p.ImportPath, len(names), len(run[p.ImportPath]))
 	}
+	checkedOn := time.Now().UTC()
+	quarantine, qProblems, qExpiring, err := quarantineProof(o.quarantineFile, o.quarantineBase, listed, allow, checkedOn)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 2
+	}
+	printQuarantineWarnings(stdout, qExpiring)
 	problems = append(nightlyProblems(nightly, listed), problems...)
+	problems = append(qProblems, problems...)
 
 	// The test sets: expected = run ∪ deferred, and the mode decides both.
 	deferred := map[testKey]nightlyEntry{}
@@ -727,11 +738,18 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		BaseRef: mainBranch, BaseCommit: o.baseCommit, MergeBase: o.mergeBase,
 		ObservabilityRequired: o.observabilityRequired, PR: o.pr,
 		AllowedSkips: fileRef{File: o.allowFile},
+		Quarantine:   quarantineRef{File: o.quarantineFile},
 		Packages:     packages, Jobs: jobs, Shards: shards,
 		RequestedShards: o.shards, SlotsPerShard: o.jobs, Problems: problems,
 	}
 	if ref, err := fileSHA256(o.allowFile); err == nil {
 		plan.AllowedSkips.SHA256 = ref
+	}
+	if ref, err := fileSHA256(o.quarantineFile); err == nil {
+		plan.Quarantine.SHA256 = ref
+	}
+	if ref, err := fileSHA256(o.quarantineBase); err == nil {
+		plan.Quarantine.BaseSHA256 = ref
 	}
 	if code := writePlan(*o, plan, measured, nightly, nightlyBase, nil); code != 0 {
 		return code
@@ -774,7 +792,7 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 	for _, e := range plan.Expected {
 		expected = append(expected, testKey{e.Package, e.Test})
 	}
-	l := buildLedger("integration", expected, listed, r.c, allow)
+	l := buildLedgerQ("integration", expected, listed, r.c, allow, quarantine)
 	for _, k := range unlisted {
 		l.Tests = append(l.Tests, entry{Package: k.Package, Test: k.Test, Outcome: outcomeNone,
 			Reason: "it was selected, and its test binary does not list it"})
@@ -1016,6 +1034,13 @@ func runShard(o *integrationPlanOptions) int {
 			fmt.Fprintf(stdout, "note: a binary compiled here hashes to %s; the plan's compile hashed to %s (separate compiles need not agree)\n", sha, pk.BinarySHA256)
 		}
 	}
+	checkedOn := time.Now().UTC()
+	quarantine, qProblems, qExpiring, err := quarantineProof(o.quarantineFile, o.quarantineBase, listed, allow, checkedOn)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 2
+	}
+	printQuarantineWarnings(stdout, qExpiring)
 	events, err := os.Create(filepath.Join(o.out, "integration.events.jsonl"))
 	if err != nil {
 		fmt.Fprintln(stdout, err)
@@ -1043,7 +1068,8 @@ func runShard(o *integrationPlanOptions) int {
 			expected = append(expected, testKey{e.Package, e.Test})
 		}
 	}
-	l := buildLedger("integration", expected, listed, r.c, allow)
+	l := buildLedgerQ("integration", expected, listed, r.c, allow, quarantine)
+	l.Problems = append(qProblems, l.Problems...)
 	l.Shard = o.shard
 	l.PlanSHA256, _ = fieldSHA256(o.planFile)
 	l.Binaries = binaries
@@ -1127,6 +1153,8 @@ func cmdUnit(args []string) int {
 	fs := flag.NewFlagSet("unit", flag.ContinueOnError)
 	out := fs.String("out", "", "directory for the ledger and events (required)")
 	allowFile := fs.String("allow", "scripts/proof-allowed-skips.txt", "allowed skips")
+	quarantineFile := fs.String("quarantine", "scripts/proof-quarantine.txt", "the quarantine list")
+	quarantineBase := fs.String("quarantine-base", "", "the base's copy of the quarantine list (only entries it carries excuse)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -1154,6 +1182,13 @@ func cmdUnit(args []string) int {
 		return 1
 	}
 	listed, expected := parseJSONListing(listOut)
+	checkedOn := time.Now().UTC()
+	quarantine, qProblems, qExpiring, err := quarantineProof(*quarantineFile, *quarantineBase, listed, allow, checkedOn)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun unit:", err)
+		return 2
+	}
+	printQuarantineWarnings(stdout, qExpiring)
 
 	events, err := os.Create(filepath.Join(*out, "unit.events.jsonl"))
 	if err != nil {
@@ -1176,7 +1211,8 @@ func cmdUnit(args []string) int {
 	readErr := readEvents(goOut, c, "unit", events, stdout, nil)
 	runErr := cmd.Wait()
 
-	l := buildLedger("unit", expected, listed, c, allow)
+	l := buildLedgerQ("unit", expected, listed, c, allow, quarantine)
+	l.Problems = append(qProblems, l.Problems...)
 	if readErr != nil {
 		l.Problems = append(l.Problems, "reading go test -json: "+readErr.Error())
 	}

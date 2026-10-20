@@ -174,6 +174,10 @@ endif
 test-integration: ## Run every integration suite as concurrent test processes, PROOF_JOBS at a time, with a ledger (needs: make infra-up && make -C images push)
 	@scripts/integration.sh
 
+.PHONY: cli-reference
+cli-reference: ## Regenerate docs/CLI.md from the Cobra tree
+	ORK_WRITE_CLI_REFERENCE=1 go test ./cmd/orkctl -run '^TestCLIReference_IsGenerated$$' -count=1
+
 ## ---- evidence (AGENTS.md §11.2) ----
 .PHONY: proof
 proof: ## The full proof, the merge gate: every gate, every test, every spec -> proof/<NAME>/ (gitignored)
@@ -221,4 +225,8 @@ proof-clean: ## List the buckets and work roots failed tests kept; REMOVE=1 remo
 .PHONY: proof-slow-list
 proof-slow-list: ## Regenerate scripts/proof-test-costs.tsv and scripts/proof-slow-tests.txt from a full proof: FROM=proof/<name>
 	go run ./test/tools/proofrun costs -from $(FROM)
+
+.PHONY: proof-flakes
+proof-flakes: ## Derive per-test flake rates from the proof ledgers: FROM='proof/*' [REPO=.]
+	go run ./test/tools/proofrun flakes -from '$(or $(FROM),proof/*)' $(if $(REPO),-repo $(REPO))
 

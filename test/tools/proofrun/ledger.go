@@ -19,11 +19,16 @@ import (
 
 // Outcomes a ledger entry can carry. "none" is the absence of any outcome: the
 // test was listed and asked for, and nothing reported it.
+// "quarantined-fail" is a recorded failure whose failing leaves are all
+// named by a current quarantine entry the base also carries; it never counts
+// as a pass, and it changes neither the verdict nor merge eligibility while
+// the entry is current.
 const (
-	outcomePass = "pass"
-	outcomeFail = "fail"
-	outcomeSkip = "skip"
-	outcomeNone = "none"
+	outcomePass            = "pass"
+	outcomeFail            = "fail"
+	outcomeSkip            = "skip"
+	outcomeNone            = "none"
+	outcomeQuarantinedFail = "quarantined-fail"
 )
 
 // event is one test2json record (go doc cmd/test2json).
@@ -56,6 +61,12 @@ type entry struct {
 	Reason string `json:"reason,omitempty"`
 	// AllowedSkip is the allowlist's reason when the outcome is an allowed skip.
 	AllowedSkip string `json:"allowed_skip,omitempty"`
+	// Quarantine is the entry's owner, review date and reason when the
+	// outcome is quarantined-fail.
+	Quarantine string `json:"quarantine,omitempty"`
+	// Failures names the failing leaf subtests of a parent that failed, so a
+	// ledger row says what actually failed.
+	Failures []string `json:"failures,omitempty"`
 }
 
 // collector accumulates outcomes from test2json events.
@@ -66,6 +77,11 @@ type collector struct {
 	order []testKey
 	// subSkips are skipped subtests: a skip anywhere is a skip.
 	subSkips []testKey
+	// failedSubs are failing subtests, in arrival order. A parent's own
+	// t.Error is not distinguishable from a child's in test2json, so the
+	// collector records the leaves it can see and the builder excuses a
+	// top-level failure only when every failing leaf is quarantined.
+	failedSubs []testKey
 	// packageOutput keeps a package's own output (no Test), for diagnosis
 	// when a binary dies before any test starts.
 	packageOutput map[string]*strings.Builder
@@ -107,8 +123,11 @@ func (c *collector) add(ev event, job string) {
 		}
 	case "pass", "fail", "skip":
 		if strings.Contains(ev.Test, "/") {
-			if ev.Action == "skip" {
+			switch ev.Action {
+			case "skip":
 				c.subSkips = append(c.subSkips, k)
+			case "fail":
+				c.failedSubs = append(c.failedSubs, k)
 			}
 			return
 		}
@@ -235,6 +254,7 @@ type summary struct {
 	Expected     int `json:"expected"`
 	Pass         int `json:"pass"`
 	Fail         int `json:"fail"`
+	Quarantined  int `json:"quarantined"`
 	AllowedSkip  int `json:"allowed_skip"`
 	Skip         int `json:"skip"`
 	NoOutcome    int `json:"no_outcome"`
@@ -254,7 +274,24 @@ func (l ledger) ok() bool { return len(l.Problems) == 0 }
 // stale, and a stale allowance is a failure, because it would silently allow
 // the next test that happens to take its name.
 func buildLedger(suite string, expected []testKey, listed map[string]map[string]bool, c *collector, allow []allowedSkip) ledger {
+	return buildLedgerQ(suite, expected, listed, c, allow, nil)
+}
+
+// buildLedgerQ is buildLedger with the quarantine entries that excuse a
+// failure in this proof. A top-level failure is recorded as
+// quarantined-fail only when it has failing leaf subtests and every one of
+// them names a current entry; a parent's own assertion is not distinguishable
+// from a child's in test2json, which is the limitation PROOFS.md states.
+func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string]bool, c *collector, allow []allowedSkip,
+	quarantine map[testKey]quarantineEntry,
+) ledger {
 	l := ledger{Suite: suite, Problems: []string{}}
+	excused := map[testKey]quarantineEntry{}
+	for k, q := range quarantine {
+		if q.Suite == suite || q.Suite == "any" {
+			excused[k] = q
+		}
+	}
 	allowed := map[testKey]allowedSkip{}
 	for _, a := range allow {
 		if a.Suite != suite && a.Suite != "any" {
@@ -287,6 +324,16 @@ func buildLedger(suite string, expected []testKey, listed map[string]map[string]
 		case outcomePass:
 			l.Summary.Pass++
 		case outcomeFail:
+			leaves := failingLeaves(c, k)
+			for _, leaf := range leaves {
+				e.Failures = append(e.Failures, leaf.Test)
+			}
+			if q, ok := quarantineFor(leaves, excused); ok {
+				e.Outcome = outcomeQuarantinedFail
+				e.Quarantine = fmt.Sprintf("%s, review by %s: %s", q.Owner, q.ReviewBy, q.Reason)
+				l.Summary.Quarantined++
+				break
+			}
 			l.Summary.Fail++
 			why := "failed"
 			if e.Reason != "" {
@@ -322,6 +369,47 @@ func buildLedger(suite string, expected []testKey, listed map[string]map[string]
 			"%s skipped; a skip is never a pass — fix the prerequisite, or allow it in scripts/proof-allowed-skips.txt with its reason", k))
 	}
 	return l
+}
+
+// failingLeaves returns the failing subtests of top that have no failing
+// descendant.
+func failingLeaves(c *collector, top testKey) []testKey {
+	var leaves []testKey
+	for _, k := range c.failedSubs {
+		if k.Package != top.Package || !strings.HasPrefix(k.Test, top.Test+"/") {
+			continue
+		}
+		leaf := true
+		for _, other := range c.failedSubs {
+			if other.Package == k.Package && strings.HasPrefix(other.Test, k.Test+"/") {
+				leaf = false
+				break
+			}
+		}
+		if leaf {
+			leaves = append(leaves, k)
+		}
+	}
+	return leaves
+}
+
+// quarantineFor excuses a failure when it has failing leaves and every one
+// is named by a current entry.
+func quarantineFor(leaves []testKey, entries map[testKey]quarantineEntry) (quarantineEntry, bool) {
+	if len(leaves) == 0 {
+		return quarantineEntry{}, false
+	}
+	var first quarantineEntry
+	for i, leaf := range leaves {
+		e, ok := entries[leaf]
+		if !ok {
+			return quarantineEntry{}, false
+		}
+		if i == 0 {
+			first = e
+		}
+	}
+	return first, true
 }
 
 func orDash(s string) string {

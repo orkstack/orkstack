@@ -597,9 +597,17 @@ STACK_ENV=(
 # ---- P1: the fast gates, alone ----------------------------------------------------
 # The unit suites run with nothing else on the host's CPU from this proof:
 # mocked-environment tests can be load-sensitive.
+#
+# The gate lists are anchored to the base (AGENTS.md §11.2): an entry the
+# change itself adds, or removes, excuses nothing until the base carries it.
+git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
+git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 if runs lint; then run lint lint.log make lint; fi
 if runs build; then run build build.log go build ./...; fi
-if runs unit; then run unit unit.log env ORK_PROOF_DIR="$DIR/artifacts" "$PR" unit -out "$DIR"; fi
+if runs unit; then
+	run unit unit.log env ORK_PROOF_DIR="$DIR/artifacts" "$PR" unit -out "$DIR" \
+		-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt"
+fi
 if runs vet-integration; then run vet-integration vet-integration.log go vet -tags=integration ./...; fi
 
 # ---- P2/P3: integration, with the Docker-only and UI-only gates beside it ---------
@@ -610,8 +618,7 @@ fi
 if runs ui-check; then run_bg ui-check ui-check.log in_ui bun run check; fi
 if runs ui-unit; then run_bg ui-unit ui-unit.log in_ui bun test test/; fi
 if runs integration; then
-	git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
-	integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress)
+	integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt")
 	case "$TIER" in
 	full) integ_args+=(-nightly-mode defer -nightly-base "$DIR/nightly-base.txt") ;;
 	release) integ_args+=(-nightly-mode include) ;;

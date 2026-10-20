@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // A CI proof is many parts, each on its own host. `proofrun merge` is the only
@@ -488,6 +489,21 @@ func (m *merger) merge(name string) {
 	proof.HostSpeedFailures = m.hostSpeedFailures
 	proof.KnownGaps = m.knownGaps
 	proof.Quarantine = &quarantineRecord{BaseSHA256: p.Quarantine.BaseSHA256}
+	if entries, err := readQuarantine(p.Quarantine.File); err == nil && len(entries) > 0 {
+		proof.Quarantine.CheckedOn = time.Now().UTC().Format("2006-01-02")
+		outcomes := map[testKey]string{}
+		for _, l := range []*ledger{m.unit, m.integration} {
+			if l == nil {
+				continue
+			}
+			for _, e := range l.Tests {
+				outcomes[testKey{e.Package, e.Test}] = e.Outcome
+			}
+		}
+		for _, e := range entries {
+			proof.Quarantined = append(proof.Quarantined, fmt.Sprintf("%s.%s: %s", e.Package, e.Test, orDash(outcomes[e.key()])))
+		}
+	}
 	proof.Nightly = &nightlyRecord{SHA256: p.Nightly.SHA256, BaseCommit: p.Nightly.BaseCommit, BaseSHA256: p.Nightly.BaseSHA256}
 	proof.Ledgers = map[string]any{}
 	if m.unit != nil {
@@ -1206,6 +1222,13 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) {
 			fmt.Fprintf(&b, "- %s attempt %d, after attempt %v was lost by GitHub (%s); %d tests had passed, %d had started and not finished: %s\n",
 				rr.Part, rr.Attempt, rr.EarlierAttempts, rr.Reason, rr.LostAttempt.PassedBeforeLoss,
 				len(rr.LostAttempt.Unfinished), strings.Join(rr.LostAttempt.Unfinished, ", "))
+		}
+		fmt.Fprintln(&b)
+	}
+	if len(r.Quarantined) > 0 {
+		fmt.Fprintf(&b, "## Quarantined\n\n")
+		for _, q := range r.Quarantined {
+			fmt.Fprintf(&b, "- %s\n", q)
 		}
 		fmt.Fprintln(&b)
 	}

@@ -245,6 +245,7 @@ part_main() { # <part>
 		fi
 		OBSERVABILITY_REQUIRED="$obs"
 		git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
+		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 		local mode=defer
 		[ "$TIER" = release ] && mode=include
 		[ "$TIER" = nightly ] && mode=only
@@ -253,6 +254,7 @@ part_main() { # <part>
 			-matrix-out "$DIR/int-matrix.json" -tier "$TIER" -proof-id "$PROOF_ID"
 			-base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -ui-shards "$UI_SHARDS"
 			-nightly-mode "$mode" -nightly-base "$DIR/nightly-base.txt"
+			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt"
 			-observability-required="$OBSERVABILITY_REQUIRED"
 		)
 		[ -n "${PROOF_PR_NUMBER:-}" ] && plan_args+=(-pr-number "$PROOF_PR_NUMBER" -pr-head-sha "${PROOF_PR_HEAD:-}" -pr-base-sha "${PROOF_PR_BASE:-}" -pr-contains-base "${PROOF_PR_CONTAINS_BASE:-false}")
@@ -278,7 +280,9 @@ part_main() { # <part>
 	fast)
 		part_run lint lint.log make lint || true
 		part_run build build.log go build ./... || true
-		part_run unit unit.log env ORK_PROOF_DIR="$DIR/artifacts" "$PR" unit -out "$DIR" || true
+		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
+		part_run unit unit.log env ORK_PROOF_DIR="$DIR/artifacts" "$PR" unit -out "$DIR" \
+			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" || true
 		part_run vet-integration vet-integration.log go vet -tags=integration ./... || true
 		(cd "$REPO/ui" && bun run check >"$DIR/ui-check.log" 2>&1) && printf 'ui-check\tpass\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv" || printf 'ui-check\tfail\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv"
 		(cd "$REPO/ui" && bun test test/ >"$DIR/ui-unit.log" 2>&1) && printf 'ui-unit\tpass\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv" || printf 'ui-unit\tfail\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv"
@@ -291,8 +295,10 @@ part_main() { # <part>
 		part_run binaries binaries.log part_binaries || true
 		part_run images images.log part_push_images || true
 		PART_IMAGES=1
+		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 		part_run integration integration.log env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 \
 			"$PR" integration -plan "$PLAN" -shard "$k" -out "$DIR" -jobs "$PROOF_JOBS" \
+			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" \
 			-namespace-prefix "$PROOF_ID-s$k" -print-progress || true
 		;;
 	ui-e2e:*)

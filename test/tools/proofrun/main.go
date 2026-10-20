@@ -45,6 +45,7 @@ var subcommands = []subcommand{
 	{"ui-plan", "split the Playwright spec files by measured wall", cmdUIPlan},
 	{"record", "write a part.json (or a feature proof.json)", cmdRecord},
 	{"merge", "merge a proof's parts into one proof.json", cmdMerge},
+	{"flakes", "derive per-test flake rates from proof ledgers", cmdFlakes},
 	{"verify", "refuse a merge or a tag whose proof does not cover it", cmdVerify},
 	{"temporal-args", "the temporal service's image and arguments", cmdTemporalArgs},
 	{"costs", "regenerate the cost ledgers and the slow list", cmdCosts},
