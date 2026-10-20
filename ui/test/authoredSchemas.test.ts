@@ -24,18 +24,6 @@ function compile(name: string) {
 const validators = Object.fromEntries(NAMES.map((name) => [name, compile(name)]));
 
 const HEADER = `apiVersion: ${API_VERSION}\nkind: Orkflow\n`;
-// internal/dsl.preambleLine: blank, a comment, a directive, or "---" alone or with a comment.
-const preamble = (line: string) => {
-	const t = line.replace(/[ \t\r\n]+$/, '');
-	return t === '' || t.trimStart().startsWith('#') || t.startsWith('%') || t === '---' || t.startsWith('--- #');
-};
-function addHeader(src: string): string {
-	const lines = src.split(/(?<=\n)/);
-	let i = 0;
-	while (i < lines.length && preamble(lines[i])) i++;
-	return lines.slice(0, i).join('') + HEADER + lines.slice(i).join('');
-}
-
 function expectValid(label: string, doc: unknown, kindSchema: string) {
 	for (const name of ['orkstack.v1.json', kindSchema]) {
 		const validate = validators[name];
@@ -79,26 +67,14 @@ test('every shipped document validates against the dispatcher and its kind', () 
 	expectValid('ORKFLOW_PLACEHOLDER', Bun.YAML.parse(ORKFLOW_PLACEHOLDER), 'orkflow.v1.json');
 	expectValid("automationPlaceholder('default')", Bun.YAML.parse(automationPlaceholder('default')), 'automation.v1.json');
 	count += 2;
-	// The pre-header vectors cover every feature; they are stored as written
-	// before the header existed, so it is inserted where OrkStack shows it.
-	for (const file of readdirSync(`${repo}/internal/dsl/testdata/pre-header`).filter((f) => f.endsWith('.yaml')).sort()) {
-		const withHeader = addHeader(read(`internal/dsl/testdata/pre-header/${file}`));
-		expectValid(`pre-header/${file}`, Bun.YAML.parse(withHeader), 'orkflow.v1.json');
+	// Two headered vectors cover what no example does: every feature in one
+	// document, and present-but-empty inputs:/with:. TestCompile_SchemaVectorsCompile
+	// compiles them, so a vector the compiler refuses cannot sit here.
+	for (const file of readdirSync(`${repo}/internal/dsl/testdata/schema-vectors`).filter((f) => f.endsWith('.ork.yaml')).sort()) {
+		expectValid(`schema-vectors/${file}`, Bun.YAML.parse(read(`internal/dsl/testdata/schema-vectors/${file}`)), 'orkflow.v1.json');
 		count++;
 	}
 	expect(count > 25).toBe(true);
-});
-
-test('the directive vector gets its header after ---', () => {
-	const withHeader = addHeader(read('internal/dsl/testdata/pre-header/directive.yaml'));
-	expect(withHeader.split('\n').slice(0, 6)).toEqual([
-		'# OrkStack orkflow DSL',
-		'%YAML 1.1',
-		'---',
-		'# A document with a directive and a document start marker.',
-		'apiVersion: orkstack/v1',
-		'kind: Orkflow'
-	]);
 });
 
 const ork = (body: string) => Bun.YAML.parse(HEADER + 'name: x\n' + body);

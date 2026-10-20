@@ -1,4 +1,6 @@
-# Present, empty with: and inputs: are kept as present.
+apiVersion: orkstack/v1
+kind: Orkflow
+# Present but empty with: and inputs: are kept as present.
 name: empty-structs
 version: "0.1.0"
 inputs: {}

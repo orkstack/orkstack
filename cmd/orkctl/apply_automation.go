@@ -310,11 +310,10 @@ func (r *applyRun) validateOrkflows(inputs []applyInput) error {
 			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_NEW
 		case err != nil:
 			return rpcError("read "+in.path, err)
-		case bytes.Equal(dsl.VersionedSource([]byte(stored.Msg.GetOrkflow().GetSourceYaml())), dsl.VersionedSource(in.source)):
+		case bytes.Equal([]byte(stored.Msg.GetOrkflow().GetSourceYaml()), in.source):
 			// The store's own source rule (pkg/artifacts.SameStoredOrkflow):
-			// GetOrkflow returns the shown form, whose versioned source is
-			// the stored one's, so this says identical exactly when the
-			// apply would be a no-op on the source.
+			// GetOrkflow returns the stored source verbatim, so this says
+			// identical exactly when the apply would be a no-op on the source.
 			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_IDENTICAL
 		default:
 			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_CONFLICTING
@@ -402,14 +401,8 @@ func (r *applyRun) checkRefusals() {
 		}
 		if doc.GetStored() == orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_CONFLICTING {
 			wf := doc.GetValidated().GetOrkflow()
-			advice := "bump version: or drop it"
-			if dsl.HeaderOutOfForm(string(r.sources[doc.GetFile()])) {
-				advice = fmt.Sprintf("if only the header changed, write %q and %q as the file's first two lines "+
-					"(after any leading comments); otherwise bump version: or drop it",
-					"apiVersion: "+dsl.APIVersion, "kind: "+dsl.KindOrkflow)
-			}
 			r.refusals = append(r.refusals, fmt.Sprintf("%s: version %s of %s is stored with different source; "+
-				"ApplyOrkflow would refuse it — %s", doc.GetFile(), wf.GetVersion(), wf.GetName(), advice))
+				"ApplyOrkflow would refuse it — bump version: or drop it", doc.GetFile(), wf.GetVersion(), wf.GetName()))
 		}
 	}
 	for _, doc := range r.report.GetAutomation() {

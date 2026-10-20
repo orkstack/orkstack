@@ -620,8 +620,7 @@ tasks:
 
 // TestCompile_UnpinnedVersionNamesTheBytesItStores is the derived version's
 // whole contract: it is the sha256 of the source the document is stored with,
-// less only the two header lines when they are its first YAML lines
-// (dsl.VersionedSource) — the very bytes the store compares.
+// header included — the very bytes the store compares.
 //
 // The second half is not decoration. A version names ONE stored document, and
 // the store decides "this apply is what is already there" by comparing what it
@@ -664,21 +663,27 @@ tasks:
 
 	// And the version IS those bytes' hash, so nothing else has to agree with
 	// the compiler about what "the same document" means — it can measure it.
-	sum := sha256.Sum256(dsl.VersionedSource([]byte(first.GetSourceYaml())))
+	sum := sha256.Sum256([]byte(first.GetSourceYaml()))
 	if want := hex.EncodeToString(sum[:]); first.GetVersion() != want {
 		t.Errorf("version %q does not name the stored source (sha256 %q)",
 			first.GetVersion(), want)
 	}
 
 	// Every change to those bytes is a new version, including the ones a
-	// compiler could dismiss as cosmetic: a comment is part of the document
-	// its author reads, and an edit that adds one has to be storable.
+	// compiler could dismiss as cosmetic and the ones that only move the
+	// header: a comment is part of the document its author reads, and an edit
+	// that adds or moves one has to be storable.
+	withComment := "# remind me why this exists\n" + doc
+	headerAfter := "# one\n# two\n" + dsl.OrkflowHeader + "name: unpinned\ndescription: hash me\ntasks:\n  - id: a\n    uses: shell\n    with: {command: \"echo 1\"}\n"
+	headerFirst := dsl.OrkflowHeader + "# one\n# two\nname: unpinned\ndescription: hash me\ntasks:\n  - id: a\n    uses: shell\n    with: {command: \"echo 1\"}\n"
 	for what, edited := range map[string]string{
-		"a comment":         "# remind me why this exists\n" + doc,
+		"a comment":         withComment,
 		"whitespace":        strings.ReplaceAll(doc, "description: hash me", "description:   hash me"),
 		"an edited command": strings.ReplaceAll(doc, "echo 1", "echo 2"),
 		"a reordered mapping": strings.Replace(doc, "name: unpinned\ndescription: hash me",
 			"description: hash me\nname: unpinned", 1),
+		"the header after comments": headerAfter,
+		"the header first":          headerFirst,
 	} {
 		changed, err := dsl.Compile([]byte(edited))
 		if err != nil {
@@ -687,56 +692,10 @@ tasks:
 		if changed.GetVersion() == first.GetVersion() {
 			t.Errorf("%s did not change the version %q", what, first.GetVersion())
 		}
-		sum := sha256.Sum256(dsl.VersionedSource([]byte(changed.GetSourceYaml())))
+		sum := sha256.Sum256([]byte(changed.GetSourceYaml()))
 		if want := hex.EncodeToString(sum[:]); changed.GetVersion() != want {
 			t.Errorf("%s: version %q does not name the stored source (sha256 %q)",
 				what, changed.GetVersion(), want)
-		}
-	}
-
-	// The header as the document's first two YAML lines is left out, above or
-	// below the leading comments: moving it there keeps the version.
-	const body = "# one\n# two\nname: unpinned\ndescription: hash me\ntasks:\n  - id: a\n    uses: shell\n    with: {command: \"echo 1\"}\n"
-	below := strings.Replace(body, "name:", dsl.OrkflowHeader+"name:", 1)
-	base, err := dsl.Compile([]byte(below))
-	if err != nil {
-		t.Fatalf("Compile (header below the comments): %v", err)
-	}
-	if sum := sha256.Sum256([]byte(body)); base.GetVersion() != hex.EncodeToString(sum[:]) {
-		t.Errorf("header below the comments: version %q is not the header-less text's hash", base.GetVersion())
-	}
-	for what, placed := range map[string]string{
-		"above the comments": dsl.OrkflowHeader + body,
-		"among the comments": strings.Replace(body, "# two", strings.TrimSuffix(dsl.OrkflowHeader, "\n")+"\n# two", 1),
-		"below, in CRLF":     strings.ReplaceAll(below, "\n", "\r\n"),
-	} {
-		wf, err := dsl.Compile([]byte(placed))
-		if err != nil {
-			t.Fatalf("Compile (header %s): %v", what, err)
-		}
-		if what == "below, in CRLF" {
-			if sum := sha256.Sum256([]byte(strings.ReplaceAll(body, "\n", "\r\n"))); wf.GetVersion() != hex.EncodeToString(sum[:]) {
-				t.Errorf("header %s: version %q is not the header-less text's hash", what, wf.GetVersion())
-			}
-			continue
-		}
-		if wf.GetVersion() != base.GetVersion() {
-			t.Errorf("header %s: version %q, want %q", what, wf.GetVersion(), base.GetVersion())
-		}
-	}
-	// Any other form of the header is hashed with the rest.
-	for what, placed := range map[string]string{
-		"after name:": strings.Replace(body, "description:", dsl.OrkflowHeader+"description:", 1),
-		"quoted":      strings.Replace(body, "name:", "apiVersion: \"orkstack/v1\"\nkind: Orkflow\nname:", 1),
-		"reordered":   strings.Replace(body, "name:", "kind: Orkflow\napiVersion: orkstack/v1\nname:", 1),
-		"commented":   strings.Replace(body, "name:", "apiVersion: orkstack/v1\nkind: Orkflow # x\nname:", 1),
-	} {
-		wf, err := dsl.Compile([]byte(placed))
-		if err != nil {
-			t.Fatalf("Compile (header %s): %v", what, err)
-		}
-		if sum := sha256.Sum256([]byte(placed)); wf.GetVersion() != hex.EncodeToString(sum[:]) {
-			t.Errorf("header %s: version %q is not the whole source's hash", what, wf.GetVersion())
 		}
 	}
 }

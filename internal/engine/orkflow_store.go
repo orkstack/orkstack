@@ -11,7 +11,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -170,7 +169,7 @@ func (s *MemoryOrkflowStore) Put(
 		return nil, false, fmt.Errorf(
 			"engine: orkflow %q version %q in namespace %q is already stored with different "+
 				"content; %s: %w",
-			wf.GetName(), wf.GetVersion(), namespace, dsl.VersionExistsAdvice(wf.GetSourceYaml()), artifacts.ErrVersionExists)
+			wf.GetName(), wf.GetVersion(), namespace, "a version is immutable, so publish a new version", artifacts.ErrVersionExists)
 	}
 	versions[wf.GetVersion()] = stored
 	s.latest[namespace][wf.GetName()] = wf.GetVersion()

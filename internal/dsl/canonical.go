@@ -363,7 +363,7 @@ const derivedVersionSeparator = 0x1F
 
 // DerivedVersion is the version of a document that pins none (§4.4):
 //
-//	hex(sha256(VersionedSource(sourceYAML) ‖ 0x1F ‖ canonicalImages(wf)))
+//	hex(sha256(sourceYAML ‖ 0x1F ‖ canonicalImages(wf)))
 //
 // It is assigned AFTER image resolution, and this is the whole point. Compile
 // stamps a provisional sourceHash, and the applier replaces it here once the
@@ -374,19 +374,17 @@ const derivedVersionSeparator = 0x1F
 // new version.
 //
 // This does NOT re-open the question hash.go settles — "two notions of 'the
-// same document' in one system is one too many". The versioned source — the
-// bytes the store compares, less only the two header lines written first —
-// is hashed in FULL here, so a comment-only edit mints a new version, and
-// adding the header to a document applied before it was required names the
-// version that document already had. The resolution is not a second notion of
-// the document but a second input to what runs.
+// same document' in one system is one too many". The source is hashed in FULL
+// here, header included, so a comment-only edit mints a new version, and
+// adding or moving the header changes it like any other edit. The resolution
+// is not a second notion of the document but a second input to what runs.
 func DerivedVersion(sourceYAML []byte, wf *orkstackv1.Orkflow) (string, error) {
 	images, err := canonicalImages(wf)
 	if err != nil {
 		return "", err
 	}
 	h := sha256.New()
-	h.Write(VersionedSource(sourceYAML))
+	h.Write(sourceYAML)
 	h.Write([]byte{derivedVersionSeparator})
 	h.Write(images)
 	return hex.EncodeToString(h.Sum(nil)), nil

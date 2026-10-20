@@ -63,6 +63,10 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- **BREAKING**: an unpinned Orkflow's derived version, and so its digest, now
+  covers the whole source, header included, and applying a pinned version
+  again with only its header moved or reformatted is refused like any other
+  edit. Versions stored without the header are no longer shown with one.
 - A local full, release or nightly proof now writes one `local` part and
   merges it with `proofrun merge`, the same verdict path the CI proof job
   runs over many parts.
@@ -158,11 +162,7 @@ include breaking changes, and each is marked **BREAKING**.
   labelled.
 - **BREAKING:** every Orkflow begins with `apiVersion: orkstack/v1` and
   `kind: Orkflow`. A document without them is refused at validate, apply and
-  plan, naming the two lines to add. The header is not part of the definition:
-  digests, derived versions and memo keys are unchanged, a version stored
-  before this release still reads, runs and diffs, and applying it again with
-  the two lines added as its first YAML lines, above or below its comments, is
-  a no-op (docs/DSL.md, "The document header").
+  plan, naming the two lines to add (docs/DSL.md, "The document header").
 - **BREAKING:** `orkctl apply` decides what a file is by its `kind:`
   (`Orkflow` or `Automation`) and refuses a file with neither, before anything
   is sent.
@@ -176,7 +176,7 @@ include breaking changes, and each is marked **BREAKING**.
   are refused, naming the path (docs/JSON.md, "Data written in an authored
   document"). A document that compiled before either compiles to the same
   definition or is refused; none changes silently.
-- A stored Orkflow version is shown with its header wherever OrkStack shows its
+- An Orkflow version is shown exactly as stored wherever OrkStack shows its
   YAML (`orkctl orkflow get --json`, `edit`, `diff`, the UI). Evidence bundles
   keep the source verbatim.
 - The `custom-image` (0.2.0) and `each-fan-out` (0.3.0) examples write their

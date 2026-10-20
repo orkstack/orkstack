@@ -1,7 +1,9 @@
-# A pre-header document that pins its version and uses every feature.
+apiVersion: orkstack/v1
+kind: Orkflow
+# A vector that pins its version and uses every feature.
 name: every-feature
 version: "1.0.0"
-description: Every feature a definition can carry, written before the header.
+description: Every feature a definition can carry.
 labels:
   team: platform
 inputs:

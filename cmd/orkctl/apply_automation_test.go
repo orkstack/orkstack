@@ -209,7 +209,7 @@ func TestApply_RefusesAFileWithNoKindBeforeAnyRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "hello.ork.yaml")
-	if err := os.WriteFile(path, dsl.VersionedSource(raw), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Replace(string(raw), dsl.OrkflowHeader, "", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mark := len(f.requests())
@@ -230,7 +230,7 @@ func TestApply_AMixedDirectoryWithAHeaderlessFileWritesNothing(t *testing.T) {
 	dir := filepath.Join(a.dir, "mixed")
 	a.write(t, "mixed/deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
 	a.write(t, "mixed/automation.ork.yaml", cliAutomationDoc)
-	bad := a.write(t, "mixed/legacy.ork.yaml", string(dsl.VersionedSource([]byte(orkflowSource(t, "legacy", "1.0.0")))))
+	bad := a.write(t, "mixed/legacy.ork.yaml", strings.Replace(orkflowSource(t, "legacy", "1.0.0"), dsl.OrkflowHeader, "", 1))
 	mark := len(a.requests())
 	out := a.run("apply", dir, "-n", "payments").requireExit(t, exitError)
 	if !strings.Contains(out.stderr, bad+": no apiVersion or kind") {
@@ -262,40 +262,16 @@ func TestApply_AMixedDirectoryAppliesOrkflowsThenAutomation(t *testing.T) {
 	}
 }
 
-// TestApply_DryRunComparesTheVersionedSource: --dry-run's identical check is
-// the store's own source rule, so moving the header among the leading lines
-// is identical, and any other header form is a conflict whose refusal says
-// where the two lines go.
-func TestApply_DryRunComparesTheVersionedSource(t *testing.T) {
+// TestApply_DryRunAHeaderOnlyChangeIsAConflict: the header is part of the
+// source, so moving it under a pinned version is a conflict like any other
+// edit, and the refusal gives the plain advice.
+func TestApply_DryRunAHeaderOnlyChangeIsAConflict(t *testing.T) {
 	a := newAutomationFixture(t)
-	legacy := string(dsl.VersionedSource([]byte(orkflowSource(t, "pinned", "3.0.0"))))
-	below, ok := dsl.AddHeader(legacy)
-	if !ok {
-		t.Fatal("AddHeader refused the example")
-	}
-	a.run("apply", a.write(t, "below.ork.yaml", below), "-n", "payments").requireExit(t, exitOK)
+	headered := orkflowSource(t, "pinned", "3.0.0")
+	a.run("apply", a.write(t, "line1.ork.yaml", headered), "-n", "payments").requireExit(t, exitOK)
 
-	onLine1 := a.write(t, "line1.ork.yaml", dsl.OrkflowHeader+legacy)
-	out := a.run("apply", onLine1, "-n", "payments", "--dry-run").requireExit(t, exitOK)
-	out.requireContains(t, "Dry run: nothing was written.")
-	if strings.Contains(out.stdout, "stored with different source") {
-		t.Fatalf("the header on line 1 was not identical:\n%s", out.stdout)
-	}
-	mark := len(a.requests())
-	a.run("apply", onLine1, "-n", "payments", "--check").requireExit(t, exitOK)
-	a.run("apply", onLine1, "-n", "payments", "--prune").requireExit(t, exitOK)
-	if writes := a.writes(mark); len(writes) != 0 {
-		t.Fatalf("an identical document wrote: %v", writes)
-	}
-
-	afterName := a.write(t, "after.ork.yaml", strings.Replace(legacy, "\nversion:", "\n"+strings.TrimSuffix(dsl.OrkflowHeader, "\n")+"\nversion:", 1))
-	refused := a.run("apply", afterName, "-n", "payments", "--dry-run").requireExit(t, exitError)
-	refused.requireContains(t, "stored with different source",
-		`ApplyOrkflow would refuse it — if only the header changed, write "apiVersion: orkstack/v1" and "kind: Orkflow" as the file's first two lines (after any leading comments); otherwise bump version: or drop it`)
-
-	edited := a.write(t, "edited.ork.yaml", strings.Replace(below, "description:", "description: changed —", 1))
-	today := a.run("apply", edited, "-n", "payments", "--dry-run").requireExit(t, exitError)
-	today.requireContains(t, "ApplyOrkflow would refuse it — bump version: or drop it")
+	refused := a.run("apply", a.write(t, "moved.ork.yaml", "# moved above the header\n"+headered), "-n", "payments", "--dry-run").requireExit(t, exitError)
+	refused.requireContains(t, "stored with different source", "ApplyOrkflow would refuse it — bump version: or drop it")
 }
 
 func TestApply_DirectoryExpandsOrkYamlLexicallyAndNonRecursively(t *testing.T) {

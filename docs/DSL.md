@@ -47,30 +47,15 @@ A document without the header is refused at validate, apply and plan
 `apiVersion` is refused naming `orkstack/v1`; another `kind` is refused naming
 the kinds there are, and `kind: Automation` says where that document goes.
 
-Write the two lines exactly as above, as the document's first YAML lines.
-Comments may stand above or below them; OrkStack writes them after the leading
-comments when it shows a document, and that is the recommended place. The
-compiler accepts the two keys anywhere at the top level, quoted or not.
+Write the two lines as the document's first YAML lines. Comments may stand
+above or below them; the compiler accepts the two keys anywhere at the top
+level, quoted or not.
 
-The header is not part of the definition. It does not enter the compiled
-Orkflow or its definition digest, and no memo key sees it. A derived version,
-and the check that decides whether an apply repeats a stored version, leave out
-exactly these two lines when they are the document's first YAML lines. Written
-any other way (later in the document, quoted, in the other order, with a
-comment after them), they count like any other line.
-
-**A version applied before the header was required** is stored without it and
-stays exactly as stored: it reads, runs and diffs as before, and a run's
-evidence bundle carries its source verbatim. Wherever OrkStack shows its YAML —
-`orkctl orkflow get --json`, `orkctl orkflow edit`, `orkctl orkflow diff`, the
-version and diff pages — it shows it with the two lines added after its leading
-comments. Applying that document, or your file with the two lines added as its
-first YAML lines (above or below its comments), is the stored version, pinned
-or derived: nothing is written. Any other change is a new document, as always.
-When a pinned version's re-apply is refused and its header is written another
-way, the refusal also says where the two lines go. A stored version whose YAML
-is a flow mapping, or has anything but comments before its first key, is shown
-as stored; add the header when you next apply it.
+The header is part of the source. A derived version, the check that decides
+whether an apply repeats a stored version, and the digest of an unpinned
+document all cover it, so moving or reformatting it is an edit like any other:
+an unpinned document gets a new version, and a pinned one is refused as a
+rewrite.
 
 ### What an Orkflow does not declare
 
@@ -202,13 +187,11 @@ orkctl apply deploy.ork.yaml     # edited file:    a new version
 
 `version:` is optional. When a document pins none, the compiler derives one
 from the source itself: the sha256 of the bytes that version is stored with,
-not counting its two header lines when they are its first YAML lines — so
-adding the header to a document applied before it was required names the
-version that document already had. So editing and applying produces a new version without anybody inventing
-a number, and re-applying an unchanged file produces the same version and
-writes nothing. A version names the document a reader opens, comments
-included — a comment-only edit is a new version, because what is stored
-changed.
+the header included. So editing and applying produces a new version without
+anybody inventing a number, and re-applying an unchanged file produces the same
+version and writes nothing. A version names the document a reader opens,
+comments and header included — a comment-only edit, or a moved header, is a
+new version, because what is stored changed.
 
 Pinning one takes that decision back: the number is yours, and applying a
 **changed** document under a version that is already stored is refused
@@ -1678,8 +1661,8 @@ How each node reads:
     the two lines; a missing one is refused naming the line to add; another
     `apiVersion` names `orkstack/v1` (field `apiVersion`); another `kind`
     names the kinds there are, and `kind: Automation` says where an
-    automation document goes (field `kind`). A version stored before this
-    rule is never re-checked: no read path compiles a stored source.
+    automation document goes (field `kind`). No read path compiles a stored
+    source, so the rule applies when a document is applied, never again.
 46. `inputs`, every `tasks[i].with` and every `tasks[i].await.schema` are
     authored data, converted to JSON by the strict mapping (`docs/JSON.md`,
     "Data written in an authored document"): each is a mapping (or absent, or
