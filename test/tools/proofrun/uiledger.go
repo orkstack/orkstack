@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -89,14 +90,16 @@ type uiFileEntry struct {
 }
 
 type uiLedger struct {
-	Suite             string        `json:"suite"`
-	Tests             []uiEntry     `json:"tests"`
-	Problems          []string      `json:"problems"`
-	Listed            int           `json:"listed"`
-	Pass              int           `json:"pass"`
-	GuardRetries      int           `json:"network_change_retries"`
-	GuardRetryCeiling int           `json:"network_change_retry_ceiling"`
-	Files             []uiFileEntry `json:"files,omitempty"`
+	Suite             string             `json:"suite"`
+	Tests             []uiEntry          `json:"tests"`
+	Problems          []string           `json:"problems"`
+	Listed            int                `json:"listed"`
+	Pass              int                `json:"pass"`
+	GuardRetries      int                `json:"network_change_retries"`
+	GuardRetryCeiling int                `json:"network_change_retry_ceiling"`
+	Files             []uiFileEntry      `json:"files,omitempty"`
+	HostSpeedFailures []hostSpeedFailure `json:"host_speed_failures,omitempty"`
+	KnownGaps         []string           `json:"known_gaps,omitempty"`
 }
 
 // flattenPW walks a report into "file › describe › title [project]" keys.
@@ -137,9 +140,15 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 					case "flaky":
 						e.Outcome = outcomeFail
 						e.Detail = "flaky: it failed before it passed"
+						if msg := t.Results[0].Error; msg != nil && msg.Message != "" {
+							e.Detail = "flaky: " + strings.ReplaceAll(msg.Message, "\n", "; ")
+						}
 					default:
 						e.Outcome = outcomeFail
 						e.Detail = t.Results[len(t.Results)-1].Status
+						if msg := t.Results[len(t.Results)-1].Error; msg != nil && msg.Message != "" {
+							e.Detail = strings.ReplaceAll(msg.Message, "\n", "; ")
+						}
 					}
 				} else if t.Status == "skipped" {
 					e.Outcome = outcomeSkip
@@ -305,6 +314,7 @@ func cmdUILedger(args []string) int {
 	config := fs.String("config", "ui/playwright.config.ts", "where NETWORK_CHANGE_RETRY_CEILING is declared")
 	out := fs.String("out", "", "the proof directory")
 	shard := fs.Int("shard", 1, "which shard of the UI plan this run is, recorded in files[].shard")
+	hostSpeed := fs.String("host-speed", "scripts/proof-host-speed.tsv", "declared runner-size budgets")
 	if err := fs.Parse(args); err != nil || *listFile == "" || *reportFile == "" || *out == "" {
 		fmt.Fprintln(os.Stderr, "proofrun ui-ledger -list FILE -report FILE -log FILE -out DIR")
 		return 2
@@ -334,6 +344,25 @@ func cmdUILedger(args []string) int {
 	for i := range l.Files {
 		l.Files[i].Shard = *shard
 	}
+	// A declared runner-size miss exits the shard cleanly and is recorded in
+	// this part's ledger: the merge job turns it into a known gap. Only a
+	// failure of an undeclared budget stays a shard failure.
+	cpus := runtime.NumCPU()
+	declared := readHostSpeed(*hostSpeed)
+	var kept []string
+	for _, p := range l.Problems {
+		if bound, ok := declared.specForProblem(p); ok && cpus > 0 && cpus < bound.ReferenceCPUs {
+			l.HostSpeedFailures = append(l.HostSpeedFailures, hostSpeedFailure{
+				Test: p, Kind: "ui", Bound: bound.Bound, RunnerCPUs: cpus,
+				ReferenceCPUs: bound.ReferenceCPUs, Message: p,
+			})
+			l.KnownGaps = append(l.KnownGaps, p)
+			fmt.Printf("ui-e2e known gap: %s on a %d-CPU runner (bound %.0fs, reference %d CPUs)\n", p, cpus, bound.Bound, bound.ReferenceCPUs)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	l.Problems = kept
 	if err := writeJSON(filepath.Join(*out, "ui-e2e-tests.json"), l); err != nil {
 		fmt.Println(err)
 		return 1

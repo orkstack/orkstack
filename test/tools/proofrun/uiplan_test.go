@@ -335,3 +335,42 @@ func TestCosts_ARoundTripThroughTheUICostsFile(t *testing.T) {
 		t.Error("a row with no seconds was accepted")
 	}
 }
+
+func TestUILedger_ADeclaredRunnerSizeMissExitsCleanly(t *testing.T) {
+	quiet(t)
+	dir := t.TempDir()
+	listed := listingOf(map[string]int{"e2e/a.spec.ts": 1})
+	report := fixtureReport(uiTestSpec{"e2e/a.spec.ts", "t0", 0, 8})
+	report.Suites[0].Specs[0].Tests[0].Status = "unexpected"
+	report.Suites[0].Specs[0].Tests[0].Results[0].Status = "failed"
+	report.Suites[0].Specs[0].Tests[0].Results[0].Error = &pwError{Message: "Expected: < 5000\nReceived: 8123"}
+	for name, v := range map[string]any{"list.json": listed, "report.json": report} {
+		if err := writeJSON(filepath.Join(dir, name), v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := filepath.Join(dir, "playwright.config.ts")
+	if err := os.WriteFile(cfg, []byte("const NETWORK_CHANGE_RETRY_CEILING = 3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	host := filepath.Join(dir, "host-speed.tsv")
+	// One CPU above this host's, so the miss is below the reference.
+	if err := os.WriteFile(host, []byte("ui\te2e/a.spec.ts\t5\t999\tdeclared budget\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := cmdUILedger([]string{"-list", filepath.Join(dir, "list.json"), "-report", filepath.Join(dir, "report.json"),
+		"-config", cfg, "-out", dir, "-host-speed", host})
+	if code != 0 {
+		t.Fatalf("exit %d, want 0 for a declared runner-size miss", code)
+	}
+	var l uiLedger
+	if err := readJSON(filepath.Join(dir, "ui-e2e-tests.json"), &l); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Problems) != 0 || len(l.KnownGaps) != 1 || len(l.HostSpeedFailures) != 1 {
+		t.Fatalf("ledger = %+v", l)
+	}
+	if !strings.Contains(l.KnownGaps[0], "8123") {
+		t.Errorf("known gap lacks the measured number: %q", l.KnownGaps[0])
+	}
+}

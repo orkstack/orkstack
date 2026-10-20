@@ -732,26 +732,9 @@ func (m *merger) mergeIntegration() {
 			if err := readJSON(filepath.Join(reading.Dir, "integration-tests.json"), &shard); err != nil {
 				continue
 			}
-			cpus := reading.Record.Runner.CPUs
-			gapsHere := 0
 			for _, p := range shard.Problems {
-				if bound, ok := m.hostSpeed.specForProblem(p); ok && cpus > 0 && cpus < bound.ReferenceCPUs {
-					m.hostSpeedFailures = append(m.hostSpeedFailures, hostSpeedFailure{
-						Part: part, Test: p, Kind: "ui", Bound: bound.Bound,
-						RunnerCPUs: cpus, ReferenceCPUs: bound.ReferenceCPUs, Message: p,
-					})
-					m.knownGaps = append(m.knownGaps, fmt.Sprintf("%s: %s on a %d-CPU runner (bound %.0fs, reference %d CPUs)",
-						part, p, cpus, bound.Bound, bound.ReferenceCPUs))
-					gapsHere++
-					continue
-				}
 				l.Problems = append(l.Problems, part+": "+p)
 				m.problems = append(m.problems, part+": "+p)
-			}
-			if gapsHere > 0 && gapsHere == len(shard.Problems) {
-				// The part's only defects are runner-size misses of a declared
-				// bound: record them, and do not turn its gate red.
-				m.excusedUIGate[part] = true
 			}
 			for _, e := range shard.Tests {
 				k := testKey{e.Package, e.Test}
@@ -937,6 +920,16 @@ func (m *merger) mergeUI() {
 			var shard uiLedger
 			if err := readJSON(filepath.Join(reading.Dir, "ui-e2e-tests.json"), &shard); err != nil {
 				continue
+			}
+			for _, gap := range shard.KnownGaps {
+				m.knownGaps = append(m.knownGaps, part+": "+gap)
+			}
+			for _, f := range shard.HostSpeedFailures {
+				f.Part = part
+				if f.RunnerCPUs == 0 {
+					f.RunnerCPUs = reading.Record.Runner.CPUs
+				}
+				m.hostSpeedFailures = append(m.hostSpeedFailures, f)
 			}
 			cpus := reading.Record.Runner.CPUs
 			gapsHere := 0

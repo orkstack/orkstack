@@ -211,7 +211,9 @@ ledger `problems` line, or both:
     a runner below the reference CPU count is recorded in
     `host_speed_failures[]` and `known_gaps[]`, printed under the README's
     "Known gaps: runner size", and does not fail the proof; on the reference
-    host the same miss is a failure.
+    host the same miss is a failure. The UI shard writes the declared miss in
+    its own ledger and exits 0, so a runner-size miss never turns a shard red;
+    only an undeclared miss does.
 
 ### 3.2 Reruns
 
