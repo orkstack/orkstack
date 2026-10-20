@@ -85,24 +85,42 @@ func TestSplitShards_ClampsToTheNumberOfJobs(t *testing.T) {
 	}
 }
 
-func TestSplitShards_HeavyJobsGetTheirOwnShard(t *testing.T) {
-	jobs := testJobs(500, 400, 30, 25, 20)
-	jobs[0].Heavy, jobs[1].Heavy = true, true
-	got := splitShards(jobs, 3, 4)
-	heavyShards := 0
+func TestSplitShards_HeavyJobsStayOffTheLightShards(t *testing.T) {
+	jobs := testJobs(500, 400, 300, 200, 100, 90, 30, 25, 20, 10)
+	for i := 0; i < 6; i++ {
+		jobs[i].Heavy = true
+	}
+	got := splitShards(jobs, 10, 4)
+	heavy, light := 0, 0
 	for _, s := range got {
-		if len(s.Jobs) == 1 && (s.Jobs[0] == jobs[0].ID || s.Jobs[0] == jobs[1].ID) {
-			heavyShards++
+		isHeavy := false
+		for _, id := range s.Jobs {
+			for i := range jobs {
+				if jobs[i].ID == id && jobs[i].Heavy {
+					isHeavy = true
+				}
+			}
+		}
+		if isHeavy {
+			heavy++
+			for _, id := range s.Jobs {
+				for i := range jobs {
+					if jobs[i].ID == id && !jobs[i].Heavy {
+						t.Fatalf("light job %s shares heavy shard %d: %+v", id, s.Index, got)
+					}
+				}
+			}
+		} else {
+			light++
 		}
 	}
-	if heavyShards != 2 {
-		t.Fatalf("shards = %+v, want each heavy job alone", got)
+	if heavy != 5 || light != 4 {
+		t.Errorf("%d heavy and %d light shards, want 5 and 4 (light shards clamp to the light jobs): %+v", heavy, light, got)
 	}
-	// n is a floor: with three heavy jobs and n=1 the plan grows.
-	three := testJobs(500, 400, 300, 10, 5)
-	three[0].Heavy, three[1].Heavy, three[2].Heavy = true, true, true
-	if got := splitShards(three, 1, 4); len(got) != 4 {
-		t.Errorf("%d shards, want 3 heavy + 1 light", len(got))
+	// A one-shard plan keeps one heavy and one light shard when both exist.
+	got = splitShards(jobs, 1, 4)
+	if len(got) != 2 {
+		t.Errorf("%d shards for a one-shard plan with both kinds, want 2", len(got))
 	}
 }
 

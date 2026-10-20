@@ -2,14 +2,14 @@ package main
 
 import "sort"
 
-// splitShards deals plan()'s jobs into shards. Each heavy job gets a shard
-// of its own — its own Temporal on CI, and a quiet machine locally — and the
-// light jobs fill the remaining shards, longest first, each into the least
-// loaded, a tie going to the lowest index. The requested n is a floor: with
-// more heavy jobs than n, the plan grows so every heavy job stays alone.
-// Jobs arrive longest first already; they are sorted again with plan()'s own
-// tie breaks so any input order gives the same shards. Each job's Shard is set
-// (1-based).
+// splitShards deals plan()'s jobs into shards. Heavy jobs fill heavy-only
+// shards, up to half the requested count, one heavy test at a time inside a
+// shard; light jobs fill the rest, longest first, each into the least loaded,
+// a tie going to the lowest index. A heavy shard therefore never measures a
+// soak with ordinary work on the same Temporal, and the plan does not grow to
+// one shard per heavy test. Jobs arrive longest first already; they are
+// sorted again with plan()'s own tie breaks so any input order gives the same
+// shards. Each job's Shard is set (1-based).
 func splitShards(jobs []job, n int, slots int) []planShard {
 	sortJobs(jobs)
 	if len(jobs) == 0 {
@@ -23,16 +23,33 @@ func splitShards(jobs []job, n int, slots int) []planShard {
 			lightIdx = append(lightIdx, i)
 		}
 	}
-	shards := make([]planShard, 0, n)
-	for _, i := range heavyIdx {
-		idx := len(shards) + 1
-		jobs[i].Shard = idx
-		shards = append(shards, planShard{
-			Index: idx, Jobs: []string{jobs[i].ID}, EstimatedSeconds: jobs[i].Cost,
-			EstimatedMakespan: makespan([]job{jobs[i]}, slots),
-		})
+	heavyShards := n / 2
+	if heavyShards < 1 && len(heavyIdx) > 0 {
+		heavyShards = 1
 	}
-	lightShards := n - len(heavyIdx)
+	if heavyShards > len(heavyIdx) {
+		heavyShards = len(heavyIdx)
+	}
+	shards := make([]planShard, 0, n)
+	for i := 0; i < heavyShards; i++ {
+		shards = append(shards, planShard{Index: len(shards) + 1, Jobs: []string{}})
+	}
+	for _, i := range heavyIdx {
+		k := 0
+		for s := 1; s < heavyShards; s++ {
+			if shards[s].EstimatedSeconds < shards[k].EstimatedSeconds {
+				k = s
+			}
+		}
+		jobs[i].Shard = shards[k].Index
+		shards[k].Jobs = append(shards[k].Jobs, jobs[i].ID)
+		shards[k].EstimatedSeconds += jobs[i].Cost
+	}
+	for s := 0; s < heavyShards; s++ {
+		// Heavy tests run one at a time, so the shard's wall is their sum.
+		shards[s].EstimatedMakespan = shards[s].EstimatedSeconds
+	}
+	lightShards := n - heavyShards
 	if lightShards > len(lightIdx) {
 		lightShards = len(lightIdx)
 	}
@@ -54,7 +71,7 @@ func splitShards(jobs []job, n int, slots int) []planShard {
 		shards[k].Jobs = append(shards[k].Jobs, jobs[i].ID)
 		shards[k].EstimatedSeconds += jobs[i].Cost
 	}
-	for s := range shards {
+	for s := firstLight; s < len(shards); s++ {
 		var own []job
 		for _, j := range jobs {
 			if j.Shard == shards[s].Index {
