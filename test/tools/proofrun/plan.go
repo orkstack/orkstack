@@ -90,10 +90,10 @@ type job struct {
 	TimeoutSeconds float64 `json:"timeout_seconds"`
 	// Shard is the 1-based shard that runs the job.
 	Shard int `json:"shard"`
-	// Heavy marks a job whose measured cost is at or above heavyTestSeconds.
-	// Heavy jobs run one at a time even on a multi-slot shard: they share one
-	// Temporal and one object store, and their own load moves the GetRun
-	// latency thresholds the soak tests hold (plan §2.3, §3.6).
+	// Heavy marks a test whose assertions are absolute wall-clock or
+	// throughput bounds. Heavy jobs run one at a time even on a multi-slot
+	// shard: they share one Temporal and one object store, and their own load
+	// moves the GetRun latency thresholds they hold (plan §2.3, §3.6).
 	Heavy bool `json:"heavy,omitempty"`
 	// Attempt counts the processes this job's tests needed: a crash runs the
 	// tests it had not started in a fresh process (attempt 2, 3, ...).
@@ -153,20 +153,27 @@ func plan(tests map[string][]string, measured costs, kinds map[string]map[string
 }
 
 // heavyTests are the tests whose assertions are absolute wall-clock or
-// throughput bounds, named explicitly. They run alone so the bound is measured
-// on a quiet machine. A test that is merely slow — a 300 s pin or chaos run —
-// is not heavy: duration says nothing about what it asserts, and serialising
-// every slow test turned the plan into hours of one-slot work. A test that
-// needs isolation for another reason is added here with that reason.
+// throughput bounds, named explicitly. A test that asserts such a bound is
+// heavy whether or not it is slow — the reduced-ceiling copies of a moved
+// soak run the same E4/E7 harness and are heavy for that reason. A test that
+// is merely slow, or that waits on a deadline for progress, is not: duration
+// says nothing about what it asserts, and serialising every slow test turned
+// the plan into hours of one-slot work. A test that needs isolation for
+// another reason is added here with that reason.
 var heavyTests = map[string]bool{
 	// The six the user moved to the nightly tier, each with GetRun latency,
 	// snapshot-byte or E7/E4 thresholds measured on a quiet host.
-	"TestIntegration_SoakTasks":                             true,
-	"TestIntegration_ThreeThousandTaskDefinitionRuns":       true,
-	"TestIntegration_SnapshotOverlayBytesForAThousandTasks": true,
-	"TestIntegration_SoakItemCeilingWithStage7Defaults":     true,
-	"TestIntegration_SoakFanOutMaxParallel":                 true,
-	"TestIntegration_SoakFanOut":                            true,
+	"TestIntegration_SoakTasks":                              true,
+	"TestIntegration_ThreeThousandTaskDefinitionRuns":        true,
+	"TestIntegration_SnapshotOverlayBytesForAThousandTasks":  true,
+	"TestIntegration_SoakItemCeilingByReferenceWithOverlays": true,
+	"TestIntegration_SoakFanOutMaxParallel":                  true,
+	"TestIntegration_SoakFanOut":                             true,
+	// Their merge-gate equivalents: the reduced-ceiling copies run the same
+	// E4/E7 thresholds through the soak helpers.
+	"TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling":      true,
+	"TestIntegration_AnItemCeilingRunCarriesOnAtAReducedCeiling":     true,
+	"TestIntegration_AFanOutAtAReducedItemCeilingMeetsItsThresholds": true,
 }
 
 func heavyByName(name string) bool { return heavyTests[name] }

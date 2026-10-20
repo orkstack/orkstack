@@ -57,9 +57,11 @@ telemetry path. A release proof runs the observability gate unconditionally.
 Integration tests run as separate processes, `PROOF_JOBS` at a time (default
 4). Playwright spec files run on `PROOF_UI_WORKERS` workers (default and
 today's only safe value: 1). A **heavy** test — one whose assertions are
-absolute wall-clock or throughput bounds — runs alone, in its own CI shard or
-first on a local host. A test is heavy by what it asserts, not by how long it
-takes.
+bounds — runs alone, in its own CI shard or first on a local host. A test is
+heavy by what it asserts, not by how long it takes: the reduced-ceiling copies
+of a moved soak run the same E4/E7 thresholds and are heavy, while a test that
+merely waits on a deadline for progress is not. A new test that asserts such a
+bound is added to `heavyTests` in `test/tools/proofrun/plan.go`.
 
 ## 3. How `proofrun select` picks evidence
 

@@ -72,6 +72,12 @@ include breaking changes, and each is marked **BREAKING**.
   tier and the pre-release gate instead of every merge proof. The merge gate
   runs reduced-ceiling versions through the same helpers, and a failure of a
   deferred test is a failing `main`.
+- The reduced-ceiling copies of the moved soaks run alone as heavy tests,
+  like the soaks they replace: they assert the same absolute GetRun latency
+  and replay bounds, and one run four-wide beside ordinary work missed its
+  p95 bound. A full proof plans them as heavy from
+  `test/tools/proofrun/plan.go`; a test that merely waits on a deadline for
+  progress stays light (docs/PROOFS.md, "The gates").
 - `make check` skips the unit suite's scale tests under `-short`, so the fast
   path measures 34 s warm on the development host (59 s at 2 CPUs).
 - `AGENTS.md` §11 is rules again, with the procedure, artifacts and recovery

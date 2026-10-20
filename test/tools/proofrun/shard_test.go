@@ -189,12 +189,21 @@ func TestPlan_OnlyWallClockSensitiveScaleTestsAreHeavy(t *testing.T) {
 	if byTest["TestQuick"].Heavy {
 		t.Error("a 5 s test is marked heavy")
 	}
-	// An unmeasured test outside the six is not heavy either.
+	// An unmeasured test outside the heavy set is not heavy either.
 	unmeasured := plan(map[string][]string{"p": {"TestNew"}}, costs{}, map[string]map[string]string{"p": {"TestNew": "integration"}})
 	if unmeasured[0].Heavy {
 		t.Error("an unmeasured ordinary test is marked heavy")
 	}
-	for _, name := range []string{"TestIntegration_SoakFanOut", "TestIntegration_SoakFanOutMaxParallel", "TestIntegration_ThreeThousandTaskDefinitionRuns", "TestIntegration_SnapshotOverlayBytesForAThousandTasks", "TestIntegration_SoakItemCeilingWithStage7Defaults"} {
+	for _, name := range []string{
+		"TestIntegration_SoakFanOut",
+		"TestIntegration_SoakFanOutMaxParallel",
+		"TestIntegration_ThreeThousandTaskDefinitionRuns",
+		"TestIntegration_SnapshotOverlayBytesForAThousandTasks",
+		"TestIntegration_SoakItemCeilingByReferenceWithOverlays",
+		"TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling",
+		"TestIntegration_AnItemCeilingRunCarriesOnAtAReducedCeiling",
+		"TestIntegration_AFanOutAtAReducedItemCeilingMeetsItsThresholds",
+	} {
 		j := plan(map[string][]string{"p": {name}}, costs{}, map[string]map[string]string{"p": {name: "integration"}})
 		if !j[0].Heavy {
 			t.Errorf("%s is not marked heavy", name)

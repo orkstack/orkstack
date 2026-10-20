@@ -195,11 +195,11 @@ type jobResult struct {
 // process, so one crash cannot hide the outcomes of the tests behind it; the
 // test that was running when it died is recorded as failed and never re-run.
 //
-// Heavy jobs (a measured cost at or above heavyTestSeconds, or an unmeasured
-// TestIntegration_Soak*) run first, one at a time, and no ordinary job starts
-// until they are done: a soak measures a quiet machine, which is the local
-// equivalent of a CI heavy shard's own Temporal. The ordinary jobs then fill
-// every slot. The added local wall clock is recorded in docs/PROOFS.md.
+// Heavy jobs (tests whose assertions are absolute wall-clock or throughput
+// bounds) run first, one at a time, and no ordinary job starts until they are
+// done: a soak measures a quiet machine, which is the local equivalent of a
+// CI heavy shard's own Temporal. The ordinary jobs then fill every slot. The
+// added local wall clock is recorded in docs/PROOFS.md.
 func (r *runner) runAll(ctx context.Context, jobs []job) {
 	r.total = len(jobs)
 	var heavy, light []job
