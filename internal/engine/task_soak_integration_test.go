@@ -924,3 +924,41 @@ func TestIntegration_SoakTasks(t *testing.T) {
 		}
 	})
 }
+
+// TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling proves the
+// last AGENTS.md §11 bullet's behaviour without the full-size soak: the
+// flat-short shape runs at a deployment ceiling of 1,000 tasks, through the
+// soak's own helpers, so every E7 threshold and its closed form is checked.
+// A small run that never carried on would pass those thresholds without
+// exercising generations, so it also asserts at least two generations, a
+// definition passed by reference and snapshot overlays. The full ceilings
+// are the nightly tier's (scripts/proof-nightly-tests.txt).
+func TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling(t *testing.T) {
+	const n = 1000
+	ctx, cancel := context.WithTimeout(context.Background(), taskSoakShapeTimeout)
+	defer cancel()
+	// The E7 thresholds are absolute wall-clock bounds, so this run measures
+	// under the same host-wide lock the full soak holds.
+	holdLock(t, ctx, taskSoakLock())
+	var shape taskSoakShape
+	for _, candidate := range taskSoakShapes {
+		if candidate.name == "flat-short" {
+			shape = candidate
+		}
+	}
+	e, metrics := startTaskSoak(t, ctx, shape, n)
+	rec := soakTaskRun(t, ctx, e, metrics, shape, n)
+	if rec.GenerationCount < 2 {
+		rec.Missed = append(rec.Missed, fmt.Sprintf("the run used %d generations; a reduced ceiling must still carry on at least once",
+			rec.GenerationCount))
+	}
+	if !rec.ByReference {
+		rec.Missed = append(rec.Missed, "the run did not pass its definition by reference")
+	}
+	if !rec.Overlays {
+		rec.Missed = append(rec.Missed, "the run did not write snapshot overlays")
+	}
+	t.Logf("reduced task ceiling: %d tasks at the deployment ceiling, %d generations, definition by reference %t, overlays %t",
+		n, rec.GenerationCount, rec.ByReference, rec.Overlays)
+	reportTaskSoak(t, rec)
+}

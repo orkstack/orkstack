@@ -339,6 +339,9 @@ func predictedPeak(r *flatStageRun, tasks int) int64 {
 // worst case). With one task more, (b) fails RUN_HISTORY_LIMIT in generation
 // 0 at the guard check right after that dispatch, before any hold.
 func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	installGuardProbe(t)
 	limit, budget := ceilingDefaults()
 	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight)))
@@ -389,6 +392,9 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 // the worst one (7.4): every later one starts from the same base with fewer
 // tasks PENDING.
 func TestHistoryGuard_CompletionsLandingDuringThePassNeverTripTheGuard(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	installGuardProbe(t)
 	limit, budget := ceilingDefaults()
 	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight)))

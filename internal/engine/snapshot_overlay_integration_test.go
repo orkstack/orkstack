@@ -318,3 +318,67 @@ func TestIntegration_SnapshotOverlayBytesForAThousandTasks(t *testing.T) {
 			overlaid.Bytes, overlaid.Overlays, baseline.Bytes)
 	}
 }
+
+// overlayBytes is what one overlay-bytes run wrote.
+type overlayBytes struct {
+	Bytes, FullBytes, OverlayBytes, Fulls, Overlays int64
+	Generations                                     int
+	Seconds                                         float64
+}
+
+// measureOverlayBytes runs tasks plain tasks that start together, with
+// policy (nil means full snapshots), and counts the event-snapshot bytes the
+// store writes.
+func measureOverlayBytes(t *testing.T, ctx context.Context, label string, tasks int, policy *engine.OverlayPolicy) overlayBytes {
+	t.Helper()
+	s := newChaosStack(t, ctx, "E6-reduced/"+label)
+	counting := &countingStore{SnapshotStore: s.store}
+	s.startReplica("engine", replicaOptions{store: counting})
+	s.startProjection(nil)
+	s.startOrker("orker", instant)
+	budget := engine.DefaultContinuationBudget(engine.DefaultContinuationEvents, engine.DefaultContinuationBytes,
+		engine.DefaultContinuationRestoreTimeout)
+	plan := s.plan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes, &budget)
+	plan.SnapshotOverlay = policy
+	runID := s.newRunID()
+	started := time.Now()
+	s.start(runID, compile(t, overlayFlatDocument("e6-reduced-"+label, tasks)), nil, plan)
+	stream := s.openStream(s.reader, runID, 0)
+	if status, err := s.wait(runID, 20*time.Minute); status != enums.WORKFLOW_EXECUTION_STATUS_COMPLETED {
+		t.Fatalf("the %s run ended %v: %v", label, status, err)
+	}
+	elapsed := time.Since(started)
+	s.requireOneRunRead(runID, stream, orkstackv1.Status_STATUS_SUCCEEDED, "")
+	return overlayBytes{Bytes: counting.total(), FullBytes: counting.fullBytes.Load(), OverlayBytes: counting.overlayBytes.Load(),
+		Fulls: counting.fulls.Load(), Overlays: counting.overlays.Load(), Generations: len(s.chain(runID)),
+		Seconds: elapsed.Seconds()}
+}
+
+// TestIntegration_SnapshotOverlaysWriteLessThanFullSnapshots is the merge
+// gate's overlay-bytes check: at 400 tasks, above the 256 rows from which
+// overlays engage, the same flat stage writes overlays and under half the
+// bytes of the same run with full snapshots, and the overlay run reads as
+// one run. The absolute bound at 1,000 tasks is the nightly tier's
+// (scripts/proof-nightly-tests.txt).
+func TestIntegration_SnapshotOverlaysWriteLessThanFullSnapshots(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	const tasks = 400
+	policy := engine.DefaultOverlayPolicy()
+	var baseline, overlaid overlayBytes
+	t.Run("baseline", func(t *testing.T) { baseline = measureOverlayBytes(t, ctx, "baseline", tasks, nil) })
+	t.Run("overlays", func(t *testing.T) { overlaid = measureOverlayBytes(t, ctx, "overlays", tasks, &policy) })
+	if t.Failed() {
+		return
+	}
+	ratio := float64(overlaid.Bytes) / float64(max(1, baseline.Bytes))
+	proof.WriteJSON(t, "snapshot-overlay", fmt.Sprintf("bytes-%d-tasks.json", tasks), map[string]any{
+		"tasks": tasks, "baseline": baseline, "overlays": overlaid, "ratio": ratio,
+	})
+	t.Logf("reduced overlay bytes: %d tasks wrote %d bytes with full snapshots and %d bytes in %d overlays (ratio %.3f)",
+		tasks, baseline.Bytes, overlaid.Bytes, overlaid.Overlays, ratio)
+	if overlaid.Overlays == 0 || ratio >= 0.5 {
+		t.Fatalf("the overlay run wrote %d bytes in %d overlays against the baseline's %d (ratio %.3f): want overlays and under half",
+			overlaid.Bytes, overlaid.Overlays, baseline.Bytes, ratio)
+	}
+}

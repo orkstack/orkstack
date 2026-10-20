@@ -427,6 +427,9 @@ func checkpointSize(t testing.TB, run *orkstackv1.Run) int64 {
 // artifact-maximal rows do not, and at 4,000 tasks the largest average inline
 // output that fits is recorded for the task ceiling's later evidence.
 func TestContinuation_CheckpointSizesAtTheCeilings(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	limit := DefaultContinuationBytes
 	small := func() *orkstackv1.Payload { return smallOutput(t) }
 	results := map[string]any{"cap_bytes": limit}

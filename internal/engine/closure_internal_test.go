@@ -216,6 +216,9 @@ func TestNewRunState_AtTheGatedSizeUnderTheDeadlockBudget(t *testing.T) {
 // open pins' members' closures (it has none); and every entry closureOf
 // computed over the run is at most T(T−1)/2, spread over the passes.
 func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	n := int(DefaultOrkflowMaxTasks)
 	wf := &orkstackv1.Orkflow{Name: "join-chain", Version: "v1", Namespace: "team-a"}
 	wf.Tasks = append(wf.Tasks, &orkstackv1.Task{Id: "t0", Image: &orkstackv1.ImageRef{Reference: "alpine"}})

@@ -853,6 +853,9 @@ func TestRunWorkflow_ChildResultCarriesOnlyDeclaredOutputs(t *testing.T) {
 }
 
 func TestRunWorkflow_TopLevelResultIsCompact(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	// 1,000 synthetic tasks: the result the run completes with must not grow
 	// with them (AGENTS.md §2.2; it used to be 1.5 KB per task).
 	var doc strings.Builder

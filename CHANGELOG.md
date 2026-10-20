@@ -27,10 +27,24 @@ include breaking changes, and each is marked **BREAKING**.
   default; it refuses until the repository is public.
 - `docs/PROOFS.md`, the reference for the tiers, the plan and sharding, the CI
   job graph, the artifacts and the recovery procedures.
+- `proofrun flakes` and `make proof-flakes`, which derive per-test flake rates
+  from the proof ledgers, and `scripts/proof-quarantine.txt`, a dated,
+  owned list of known flakes. A quarantined test still runs; its failure is
+  recorded as `quarantined-fail` and never as a pass.
+- `docs/CLI.md`, the `orkctl` command and flag reference generated from the
+  Cobra tree, and `make cli-reference` to regenerate it.
+- Documentation drift checks in the unit suites: every reason constant, DSL
+  key, DSL rule number, `orkctl` invocation, `make` target, repo-relative
+  link, workflow job and `proofrun` flag the docs use must exist, and every
+  workflow job, gate list and `proofrun` flag must be named in
+  `docs/PROOFS.md`.
 - `.github/dependabot.yml`, grouped weekly updates for Go modules, Docker,
   GitHub Actions and the UI's bun dependencies; every update is a pull request
   that runs the proof.
 
+- The feature proof warns when a user-facing source change has no
+  documentation change and when there is no CHANGELOG.md `[Unreleased]`
+  entry; `.github/pull_request_template.md` asks for both.
 - JSON Schemas for the authored documents, generated from the parsers:
   `docs/schemas/orkflow.v1.json`, `docs/schemas/automation.v1.json`, and
   `docs/schemas/orkstack.v1.json`, which selects one by `apiVersion` and
@@ -52,6 +66,18 @@ include breaking changes, and each is marked **BREAKING**.
   moved to a closed product. SeaweedFS performs the atomic conditional
   `PutObject` the commit protocol needs; the S3 integration suite proves it.
   MinIO is no longer the recommended or the development store.
+- The six scale and soak tests the user approved (the 4,000-task soak, the
+  3,000-task by-reference definition, the 1,000-task overlay bytes, the
+  item-ceiling soak and the two 10,000-item fan-outs) now run in the nightly
+  tier and the pre-release gate instead of every merge proof. The merge gate
+  runs reduced-ceiling versions through the same helpers, and a failure of a
+  deferred test is a failing `main`.
+- `make check` skips the unit suite's scale tests under `-short`, so the fast
+  path measures 34 s warm on the development host (59 s at 2 CPUs).
+- `AGENTS.md` §11 is rules again, with the procedure, artifacts and recovery
+  steps in `docs/PROOFS.md`; a change that alters behaviour updates the
+  reference doc that describes it, and a user-visible change adds its
+  CHANGELOG entry, in the same change.
 
 - The UI is redrawn as a drawing office (stage 1 of 4: the shell). A slim
   top bar replaces the sidebar, with two modes — **Build** (Runs, Orkflows,
