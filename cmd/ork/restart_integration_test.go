@@ -72,7 +72,7 @@ tasks:
 // start engine B, and read the orkflow back from engine B.
 func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T) {
 	temporal := requireTemporal(t)
-	cfg := requireMinIO(t)
+	cfg := requireObjectStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
@@ -204,9 +204,9 @@ func requireTemporal(t *testing.T) string {
 	return address
 }
 
-// requireMinIO returns the S3 config, skipping when the object store is not up
+// requireObjectStore returns the S3 config, skipping when the object store is not up
 // (failing instead under ORK_REQUIRE_INFRA; see infraAbsent).
-func requireMinIO(t *testing.T) artifacts.Config {
+func requireObjectStore(t *testing.T) artifacts.Config {
 	t.Helper()
 	cfg := artifacts.ConfigFromEnv()
 	cfg.Backend = artifacts.BackendS3

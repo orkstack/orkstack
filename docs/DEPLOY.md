@@ -2209,9 +2209,9 @@ its budget, and until its hold starts nothing stops it dispatching, so the
 first generation is the worst. With L the cluster's event limit, F, p and f
 the reserve's fixed, per-pending and per-in-flight terms (96, 8 and 16), G the
 continuation budget's events (8,192), B a generation's base — the bootstrap's
-worst case (`RestoreHistoryBound`, 1,478 at the defaults, since from Stage 5
-generation 0 too reads its definition from the store) plus 24 for generation
-0's own start — and d, c and u the measured events of one plain task's
+worst case (`RestoreHistoryBound`, 1,478 at the defaults, because generation 0
+too reads its definition from the store) plus 24 for generation 0's own start
+— and d, c and u the measured events of one plain task's
 dispatch (14), completion (12) and the part of a completion recorded when it
 lands before the run collects it (5):
 
@@ -2322,7 +2322,10 @@ overlay and its base — and verifies the base against that digest.
   every overlay write and every projection of an event re-reads its base
   (several MiB for a run of thousands of rows) besides the overlay, so the
   write traffic still drops while read traffic can rise above one full read
-  per event. The saving quoted for overlays — snapshot bytes written for a
+  per event. At the 4,000-task ceiling a saved state averages about 2,368 B
+  per task, so a base is about 9.5 MB; the 8-entry cap therefore binds before
+  the 128 MiB one, and at most eight large runs' bases stay cached per engine
+  replica. The saving quoted for overlays — snapshot bytes written for a
   1,000-task run falling about tenfold — is for a cache that holds the run's
   base; plan engine memory for the decoded bases (a few times their bytes).
   That figure comes from the overlay bytes test at 1,000 tasks, which runs in

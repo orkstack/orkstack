@@ -313,23 +313,22 @@ func TestSchemaCompleteness(t *testing.T) {
 			t.Errorf("Schema variable %q is not documented in docs/DEPLOY.md's configuration table", v.Env)
 		}
 	}
-
 	// The two known env-only families must both stay out of Schema and be
-	// documented as such; lenient because the phrasing is documentation
-	// prose, not a contract this test should be brittle against.
+	// documented as such. A reworded DEPLOY.md that drops the phrase would
+	// otherwise switch this check off silently.
 	data, err := os.ReadFile("../../docs/DEPLOY.md")
 	if err != nil {
 		t.Fatalf("read docs/DEPLOY.md: %v", err)
 	}
 	lower := strings.ToLower(string(data))
 	if !strings.Contains(lower, "environment only") && !strings.Contains(lower, "environment-only") {
-		t.Log("docs/DEPLOY.md does not use the phrase \"environment only\"; skipping the env-only-family documentation check")
-	} else {
-		for _, family := range []string{"OTEL_BSP_", "OTEL_BLRP_"} {
-			for env := range schemaEnvs {
-				if strings.HasPrefix(env, family) {
-					t.Errorf("%s is documented as environment-only but present in Schema (%s)", family, env)
-				}
+		t.Errorf("docs/DEPLOY.md no longer says \"environment only\"; the env-only-family documentation check cannot run")
+		return
+	}
+	for _, family := range []string{"OTEL_BSP_", "OTEL_BLRP_"} {
+		for env := range schemaEnvs {
+			if strings.HasPrefix(env, family) {
+				t.Errorf("%s is documented as environment-only but present in Schema (%s)", family, env)
 			}
 		}
 	}

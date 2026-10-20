@@ -161,7 +161,7 @@ type recordsHarness struct {
 func startRecordsHarness(t *testing.T, ctx context.Context, fail bool, subscriberStatus int, events ...string) *recordsHarness {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	temporalClient := scopedCluster(t, ctx)
 	pool := uniquePool("delivery-records")
 	queue, err := task.QueueForPool(pool, "")

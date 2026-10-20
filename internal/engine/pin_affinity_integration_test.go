@@ -298,7 +298,7 @@ type pinDeployment struct {
 // Proof 1 just showed healthy.
 func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *testing.T) {
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	requirePinAffinityDocker(t)
 
 	address := temporalAddress()

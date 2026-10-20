@@ -31,7 +31,8 @@ import (
 // this same RunWorkflow interpreter, over the child's compiled definition —
 // and waits for it. Everything the child needs was decided at the parent's
 // submit and rides RunPlan.Children; workflow code renders the child's input,
-// sets the child plan's origin, starts it, and reads its declared outputs.
+// copies the run-tree limits onto the child's start plan, starts it, and reads
+// its declared outputs.
 
 const (
 	// Reason codes on a composed task's TaskRun.error.
@@ -375,14 +376,10 @@ func (s *runState) failComposed(ctx workflow.Context, id, code string, category 
 	return temporal.NewNonRetryableApplicationError(message, categoryTypeFor(category), nil)
 }
 
-// startChild requests one composed task's child run and returns its result
-// future once the start is confirmed. It is called from the main loop for a
-// ready task classify decided to run.
 // childStartPlan is the plan a child run starts with: the planned one, with
-// exactly its origin set. The run-tree limits travel once per tree, on the
-// top-level plan, and are copied into each child's START plan here —
-// deterministic, from this run's own argument. A recorded parent's plan has
-// none, so its child starts are byte-identical; a grandchild inherits
+// exactly its origin set and the run-tree limits copied here. The limits
+// travel once per tree, on the top-level plan; a recorded parent's plan has
+// none, so its child starts are byte-identical, and a grandchild inherits
 // through its parent's copy. Never on the nested plan the parent carries:
 // that would cost every composed task its bytes inside the 256 KiB plan.
 func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
@@ -394,6 +391,10 @@ func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
 	childPlan.SnapshotOverlay = s.plan.SnapshotOverlay
 	return childPlan
 }
+
+// startChild requests one composed task's child run and returns its result
+// future once the start is confirmed. It is called from the main loop for a
+// ready task classify decided to run.
 
 func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow.Future, error) {
 	c := s.children[id]

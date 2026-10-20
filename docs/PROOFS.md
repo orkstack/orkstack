@@ -331,6 +331,15 @@ route, and a row in `scripts/proof-nightly-tests.txt` with
 or a covering test that is itself on the list fails the plan. The §11 coverage
 map stays green.
 
+**Keep §11's coverage map current.** `scripts/proof-section11-coverage.tsv`
+maps every claim of `AGENTS.md` §11's required-coverage list to the tests or
+fixture check that prove it, with a `known-gap:` row where nothing end to end
+does. `TestSection11Coverage` (in `test/tools/proofrun`) checks that the
+bullets match, that every named test is declared with the kind the map claims,
+that every claim has non-unit evidence running in the merge gate or a known
+gap, and that every known gap is named in §12. A new §11 bullet, a moved test
+or a closed gap fails it.
+
 **Add a scope row.** A new top-level path needs a row in
 `scripts/proof-scope.tsv`; a test refuses an unmapped path.
 
@@ -471,6 +480,22 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
 - **A tag pushed by hand is outside both paths.** `make release-tag` and the
   `tag` job are the only paths that check a release proof; GitHub itself does
   not refuse a hand-pushed tag.
+- **§11 1b**: no test kills an Orker after its container exits but before
+  anything is committed. The kill tests stop it with a container running, and
+  the adoption tests stop it after `commit.json`; the gap between them is a
+  known gap, not a pass.
+- **§11 1c**: no test kills an Orker while an artifact upload is in flight.
+  The upload-failure unit test names the artifact, but it is not an Orker
+  termination.
+- **§11 2b-orker**: no integration test faults the Orker's own object store
+  during upload or commit. The failure classification is unit-tested; the kill
+  tests stop the Orker, not the store.
+- **§11 3h**: no integration test deletes an upstream artifact between a
+  task's staging and its dispatch. The unit test names the missing item; the
+  run through a real Orker is the gap.
+- **§11 3i-retry**: no test asserts how a failed image pull is retried against
+  the task's retry policy. The stats test proves `IMAGE_PULL_FAILED`; the
+  retry count is the gap.
 - **§11 3j**: no run moves an image tag between two attempts. The digest is
   pinned at apply, so a moved tag never reaches a stored version; the claim is
   a known gap rather than a test.

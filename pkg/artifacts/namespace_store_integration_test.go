@@ -23,7 +23,7 @@ import (
 
 func TestNamespaceStore_PutGetListAndDeleteRespectOrkflowOwnership(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	store, err := artifacts.NewS3NamespaceStore(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewS3NamespaceStore: %v", err)
@@ -152,7 +152,7 @@ func TestNamespaceStore_PutGetListAndDeleteRespectOrkflowOwnership(t *testing.T)
 // once, updated_at on every write — and a caller cannot dictate either.
 func TestNamespaceStore_StampsCreatedAndUpdatedItself(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
 	if err != nil {
@@ -229,7 +229,7 @@ func TestNamespaceStore_StampsCreatedAndUpdatedItself(t *testing.T) {
 // first's.
 func TestNamespaceStore_ConditionalWritesArbitrateBetweenTwoWriters(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	store, err := artifacts.NewS3NamespaceStore(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewS3NamespaceStore: %v", err)
@@ -316,7 +316,7 @@ func TestNamespaceStore_ConditionalWritesArbitrateBetweenTwoWriters(t *testing.T
 // S3-backed store rather than called directly.
 func TestNamespaceStore_RoundTripsATelemetryPolicyAndRefusesAReservedKey(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	store, err := artifacts.NewS3NamespaceStore(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewS3NamespaceStore: %v", err)
@@ -372,7 +372,7 @@ func TestNamespaceStore_RoundTripsATelemetryPolicyAndRefusesAReservedKey(t *test
 // is refused and leaves the stored document as it was.
 func TestNamespaceStore_RoundTripsHoldAndMaxRunningAndStampsSinceItself(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
 	if err != nil {
@@ -467,7 +467,7 @@ func TestNamespaceStore_RoundTripsHoldAndMaxRunningAndStampsSinceItself(t *testi
 // the stored document left as it was.
 func TestNamespaceStore_RoundTripsAllowedSecretsInOrderAndRefusesABadOne(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
 	if err != nil {
@@ -544,7 +544,7 @@ func getObject(t *testing.T, ctx context.Context, client *s3.Client, bucket, key
 // document unchanged, and a write with no budget clears it.
 func TestNamespaceStore_RoundTripsABudget(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
 	if err != nil {
@@ -607,7 +607,7 @@ func TestNamespaceStore_RoundTripsABudget(t *testing.T) {
 // while ListNames still answers.
 func TestNamespaceStore_ListNamesIsSortedByNameAndReadsNoDocument(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	raw := newRawS3Client(t, cfg)
 	cfg.S3Bucket = "orkstack-ns-names-" + strings.ToLower(uniqueToken(t))

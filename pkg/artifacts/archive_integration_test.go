@@ -31,7 +31,7 @@ import (
 func newS3RunArchive(t *testing.T) (*artifacts.S3RunArchive, artifacts.Config) {
 	t.Helper()
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 
 	archive, err := artifacts.NewS3RunArchive(context.Background(), cfg)
 	if err != nil {
@@ -659,7 +659,7 @@ func TestS3RunArchive_KeyOrderPagingIsOnePassOverTheIndex(t *testing.T) {
 // and nothing else — no GetObject of a marker or of a body.
 func TestS3RunArchive_ListObjectReferencesReadsMarkerKeysOnly(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 
 	var mu sync.Mutex

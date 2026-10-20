@@ -22,7 +22,7 @@ import (
 // the shared bucket would refuse images in every other suite that reads it.
 func TestImagePolicyStore_GetIsNotFoundUntilWrittenThenRoundTrips(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	raw := newRawS3Client(t, cfg)
 	cfg.S3Bucket = "orkstack-image-policy-" + strings.ToLower(uniqueToken(t))

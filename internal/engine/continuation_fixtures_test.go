@@ -14,9 +14,9 @@ import (
 )
 
 // recordedWithTheWriter reports whether a committed fixture was recorded
-// under a plan that carries the writer's fields — Stage 2's continued and
+// under a plan that carries the writer's fields — the continued and
 // in-flight-cap fixtures, the cancel-before-dispatch fixture recorded
-// through a switch, Stage 5's definition-by-reference fixture and Stage 6's
+// through a switch, the definition-by-reference fixture and the
 // snapshot-overlay fixture — so it is
 // not one of the histories that predate the writer, which the premise and
 // negative tests over every fixture are about.

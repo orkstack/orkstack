@@ -289,7 +289,7 @@ func evidenceAdoptionProbeWorkflow(ctx workflow.Context, in *orkstackv1.ExecuteT
 func startCommitE2E(t *testing.T) *commitE2E {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	requireDockerForCommitE2E(t)
 
 	orkflows := newDurableOrkflowStore(t)

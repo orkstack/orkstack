@@ -33,7 +33,7 @@ func TestIntegration_AVersionStoredBeforeTheHeaderReadsRunsDiffsAndReappliesAsAN
 	address := temporalAddress()
 	requireTemporal(t, address)
 	cfg := artifacts.ConfigFromEnv()
-	requireMinIOForIdempotency(t, cfg)
+	requireObjectStoreForIdempotency(t, cfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()

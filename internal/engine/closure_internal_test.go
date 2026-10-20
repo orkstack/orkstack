@@ -200,7 +200,7 @@ func TestNewRunState_AtTheGatedSizeUnderTheDeadlockBudget(t *testing.T) {
 			t.Fatalf("%s: newRunState at %d tasks took %s, over %s", shape, n, best, bound)
 		}
 	}
-	proof.WriteJSON(t, "stage7", "new-run-state.json", map[string]any{"tasks": n, "ms": timings})
+	proof.WriteJSON(t, "task-ceiling", "new-run-state.json", map[string]any{"tasks": n, "ms": timings})
 }
 
 // TestReadyLoop_JoinChainClosureCost: a chain of the gated size whose tasks
@@ -210,11 +210,15 @@ func TestNewRunState_AtTheGatedSizeUnderTheDeadlockBudget(t *testing.T) {
 // needs the chain's root, which succeeds, so none_failed admits it and its
 // condition, which reads its whole closure, is evaluated (a none_failed task
 // whose every need was skipped is skipped by its join, before any
-// condition). Run under the 1 s deadlock detector, its largest pass's
-// workflow code (outside the event writes, which yield) stays within 20 ms;
-// the closure entries the run holds between passes never exceed T plus its
-// open pins' members' closures (it has none); and every entry closureOf
-// computed over the run is at most T(T−1)/2, spread over the passes.
+// condition). It asserts three things: every task's condition is evaluated
+// exactly once (conditions == T); closureOf computes at most T(T−1)/2
+// entries over the run and at least T(T−1)/2 − T, spread over the passes;
+// and the run holds at most T closure entries between passes (it has no open
+// pin to add its members' closures). Run under the 1 s deadlock detector, its
+// largest pass's workflow code (outside the event writes, which yield) stays
+// within 20 ms, which is logged as evidence rather than asserted: the pass's
+// work is bounded by the entry counts above, and a loaded host moves wall
+// clock without a code change.
 func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
@@ -272,7 +276,7 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 	t.Logf("E7 join chain of %d tasks: %d passes, largest pass %.2f ms (bound %s), closure entries computed %d "+
 		"(bound %d), most retained between passes %d (bound %d)",
 		n, passes, float64(worst.Microseconds())/1000, bound, probe.closureEntries, total, probe.maxRetained, n)
-	proof.WriteJSON(t, "stage7", "join-chain-closure.json", map[string]any{
+	proof.WriteJSON(t, "task-ceiling", "join-chain-closure.json", map[string]any{
 		"tasks": n, "passes": passes, "largest_pass_ms": float64(worst.Microseconds()) / 1000,
 		"closure_entries_computed": probe.closureEntries, "closure_entries_bound": total,
 		"max_retained_entries": probe.maxRetained,

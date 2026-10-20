@@ -38,6 +38,11 @@ include breaking changes, and each is marked **BREAKING**.
   link, workflow job and `proofrun` flag the docs use must exist, and every
   workflow job, gate list and `proofrun` flag must be named in
   `docs/PROOFS.md`.
+- `scripts/proof-section11-coverage.tsv` and `TestSection11Coverage`: every
+  claim of `AGENTS.md` §11's required-coverage list is mapped to the tests or
+  fixture check that prove it, and the test fails when a claim loses its
+  merge-gate evidence, a named test is not declared with its claimed kind, or
+  a known gap is not named in `docs/PROOFS.md`.
 - `.github/dependabot.yml`, grouped weekly updates for Go modules, Docker,
   GitHub Actions and the UI's bun dependencies; every update is a pull request
   that runs the proof.

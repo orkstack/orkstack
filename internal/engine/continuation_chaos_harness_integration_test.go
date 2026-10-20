@@ -200,7 +200,7 @@ type chaosStack struct {
 func newChaosStack(t *testing.T, ctx context.Context, scenario string) *chaosStack {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	local, err := artifacts.NewLocalRunArchive(t.TempDir())
 	if err != nil {
 		t.Fatalf("local run archive: %v", err)

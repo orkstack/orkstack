@@ -30,12 +30,12 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// requireMinIO skips when the dev object store is not up, matching the
+// requireObjectStore skips when the dev object store is not up, matching the
 // artifact suite's behaviour: integration tests skip, they never fail, when
 // the infrastructure is absent — unless ORK_REQUIRE_INFRA says the caller has
 // already checked it is up, and a skip would therefore be an opt-out rather
 // than a fact (see infraAbsent).
-func requireMinIO(t *testing.T, cfg artifacts.Config) {
+func requireObjectStore(t *testing.T, cfg artifacts.Config) {
 	t.Helper()
 	if _, err := url.Parse(cfg.S3Endpoint); err != nil {
 		infraAbsent(t, "object store endpoint %q is unusable: %v", cfg.S3Endpoint, err)
@@ -187,7 +187,7 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 
 	cfg := artifacts.ConfigFromEnv()
 	cfg.Backend = artifacts.BackendS3
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

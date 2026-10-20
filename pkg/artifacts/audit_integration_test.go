@@ -66,7 +66,7 @@ func cleanupAuditDays(t *testing.T, client *s3.Client, bucket string, days ...ti
 
 func TestS3AuditStore_PutIsCreateOnly(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3AuditStore(ctx, cfg)
 	if err != nil {
@@ -128,7 +128,7 @@ func readS3(t *testing.T, client *s3.Client, bucket, key string) string {
 // and a window of more than AuditScanMaxObjects unmatched records refuses.
 func TestAudit_S3ListAcrossDaysWithCursor(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3AuditStore(ctx, cfg)
 	if err != nil {
@@ -227,7 +227,7 @@ func TestAudit_S3ListAcrossDaysWithCursor(t *testing.T) {
 // listing is decided on the decoded bodies exactly as the RPC decides it.
 func TestAuditStore_FiltersOverRealRecords(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3AuditStore(ctx, cfg)
 	if err != nil {

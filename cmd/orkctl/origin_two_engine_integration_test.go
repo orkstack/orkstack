@@ -43,7 +43,7 @@ func newOriginStack(ctx context.Context, t *testing.T, label string) *originStac
 	requireTemporal(t, address)
 	artifactCfg := artifacts.ConfigFromEnv()
 	artifactCfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 
 	partition := fmt.Sprintf("ork-origin-%s-%d-%d", label, os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	temporalClient := dialIsolatedNamespace(ctx, t, address, partition)

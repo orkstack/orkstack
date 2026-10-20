@@ -20,7 +20,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 )
 
-// Stage 5's chaos scenarios (T5, C33–C36): a definition passed by reference
+// The definition-by-reference chaos scenarios (T5, C33–C36): a definition passed by reference
 // under a corrupted object, a lost store, a lost frontend and a cancel.
 
 // nthFirstRead wants the n-th read at offset 0 the replica makes: a run

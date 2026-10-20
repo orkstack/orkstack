@@ -72,9 +72,6 @@ func requireObjectStore(t *testing.T, cfg artifacts.Config) {
 	t.Logf("object store health %s -> %d", health, resp.StatusCode)
 }
 
-// requireMinIO is the historical name; the dev store is SeaweedFS now.
-func requireMinIO(t *testing.T, cfg artifacts.Config) { requireObjectStore(t, cfg) }
-
 func newS3Store(t *testing.T) (artifacts.Store, artifacts.Config) {
 	t.Helper()
 	cfg := s3TestConfig()

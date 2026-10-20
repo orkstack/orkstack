@@ -107,7 +107,7 @@ const (
 // another: each drives one Temporal with a run whose every generation is
 // tens of thousands of events, and a live GetRun reads the current
 // generation's whole history (reader.go scanExecution), so two side by side
-// measure each other's load. Both soaks of the second Stage 4 full proof
+// measure each other's load. Both soaks of an early full proof
 // (proof/can-stage4-2) ran together and each missed a GetRun p95 threshold;
 // the first full proof's, also together, met them. Every other test still
 // runs beside them.
@@ -252,7 +252,7 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 ) *eachSoak {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
 	if err != nil {
 		t.Fatalf("run archive: %v", err)
@@ -279,7 +279,7 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 	})
 	// With this build's capabilities, as cmd/ork's projection worker polls:
 	// a run that writes snapshot overlays needs every projection process to
-	// read them (Stage 7's defaults turn them on).
+	// read them (the task-ceiling defaults turn them on).
 	s.startCapableProjection("soak-projection")
 
 	// The list's own real Orker, on a pool of its own.

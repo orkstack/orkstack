@@ -64,7 +64,7 @@ type awaitStackOptions struct {
 func newAwaitStack(t *testing.T, opts awaitStackOptions) *awaitStack {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	address := temporalAddress()
 	if conn, err := net.DialTimeout("tcp", address, 2*time.Second); err != nil {
 		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)

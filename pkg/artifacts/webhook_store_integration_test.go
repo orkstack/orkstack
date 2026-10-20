@@ -23,7 +23,7 @@ import (
 // deployment-wide.
 func TestIntegration_S3WebhookStoreRoundTripsScope(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 
 	store, err := artifacts.NewS3WebhookStore(ctx, cfg)
@@ -124,7 +124,7 @@ func TestIntegration_S3WebhookStoreRoundTripsScope(t *testing.T) {
 // wires over this store hands the dispatcher that secret.
 func TestIntegration_S3WebhookStoreListForDeliveryCarriesTheSecretAndListDoesNot(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 
 	store, err := artifacts.NewS3WebhookStore(ctx, cfg)
@@ -218,7 +218,7 @@ func TestIntegration_S3WebhookStoreListForDeliveryCarriesTheSecretAndListDoesNot
 // never recreate a subscription deleted between its read and its write.
 func TestIntegration_S3WebhookStoreUpdateKeepsSecretAndID(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3WebhookStore(ctx, cfg)
 	if err != nil {

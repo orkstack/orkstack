@@ -15,8 +15,8 @@ import (
 )
 
 // The helpers below build continuation objects the way a switch writes them
-// (spec 2.7), so Stage 1's readers can be tested against chains before any
-// writer exists. They are test-only on purpose: the writer is Stage 2's.
+// (spec 2.7), so the readers can be tested against chains before any
+// writer exists. They are test-only on purpose: the writer is production code.
 
 // gzipForTest compresses data as one gzip member.
 func gzipForTest(t testing.TB, data []byte) []byte {

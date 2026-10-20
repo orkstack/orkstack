@@ -78,7 +78,7 @@ func seedFlakeCorpus(ctx context.Context, t *testing.T, replicas int) *flakeCorp
 	requireTemporal(t, address)
 	artifactCfg := artifacts.ConfigFromEnv()
 	artifactCfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 
 	partition := fmt.Sprintf("ork-flake-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	t.Logf("partition %s", partition)

@@ -148,7 +148,7 @@ func TestLoadConfig_ContinuationIsOnByDefault(t *testing.T) {
 // by reference shares the continuation copy's bound, so an explicit true
 // without engine.continuation.enabled is refused at boot, naming both keys;
 // an unset key boots with continuation off whatever the built-in default
-// (today's false, or Stage 7's true), its effective value false; and an
+// (today's false, or the task-ceiling defaults' true), its effective value false; and an
 // unset key with continuation on takes the built-in default.
 func TestLoadConfig_DefinitionByReferenceNeedsContinuation(t *testing.T) {
 	t.Run("an explicit true with continuation off is refused", func(t *testing.T) {
@@ -213,7 +213,7 @@ func TestLoadConfig_SnapshotOverlays(t *testing.T) {
 	}
 }
 
-// TestDefaults_DefinitionByReferenceAndOverlaysOn: from Stage 7 both flags
+// TestDefaults_DefinitionByReferenceAndOverlaysOn: from the task-ceiling release both flags
 // are on by default (spec 7.3): an unset deployment boots with a definition
 // too large for a start passed by reference (continuation is on by default)
 // and with snapshot overlays, and the generated defaults say so.

@@ -91,7 +91,7 @@ func (b *syncBuffer) String() string {
 func newCordonDeployment(t *testing.T, ctx context.Context, name string, pools ...string) *cordonDeployment {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	requirePinAffinityDocker(t)
 
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)

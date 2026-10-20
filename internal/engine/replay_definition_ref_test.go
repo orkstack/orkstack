@@ -15,7 +15,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Stage 5's replay fixture (testdata/history/README.md): generation 0 of a
+// The definition-by-reference replay fixture (testdata/history/README.md): generation 0 of a
 // run whose definition travels by reference, recorded on a real cluster
 // with its gate's marker and its definition's chunk markers, and the
 // definition object the recording read back from MinIO.

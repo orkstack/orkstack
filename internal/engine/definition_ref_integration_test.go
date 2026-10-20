@@ -32,7 +32,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Stage 5's integration evidence (E5): a definition passed by reference on a
+// The definition-by-reference integration evidence (E5): a definition passed by reference on a
 // real cluster with its object in MinIO.
 
 // The definition-by-reference fixture (testdata/history/README.md).
@@ -102,7 +102,7 @@ func chunksPerWorkflowTask(t *testing.T, h *historypb.History) (most, total int)
 	return most, total
 }
 
-// TestIntegration_RecordDefinitionRefHistory records Stage 5's replay
+// TestIntegration_RecordDefinitionRefHistory records the definition-by-reference replay
 // fixture from a REAL run on a real cluster, by a versioned worker, with its
 // definition object in MinIO: generation 0 of a run whose definition travels
 // by reference, read in 1 KiB chunks two per workflow task
@@ -246,7 +246,7 @@ func wideDefinitionDoc(name string, chains, length, noteBytes int) string {
 // replays every generation.
 func TestIntegration_ThreeThousandTaskDefinitionRuns(t *testing.T) {
 	// About 16 minutes on an idle dev cluster: every event of a 3,000-row
-	// run writes its whole snapshot, which Stage 6's overlays shrink.
+	// run writes its whole snapshot, which overlays shrink.
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
 	s := newChaosStack(t, ctx, "E5/three-thousand")

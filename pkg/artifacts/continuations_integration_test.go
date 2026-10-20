@@ -21,7 +21,7 @@ import (
 // is (spec 1.2).
 func TestIntegration_S3WriteContinuationIsCreateIfAbsent(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestIntegration_S3WriteContinuationIsCreateIfAbsent(t *testing.T) {
 // missing object as ErrNotFound (spec 1.2).
 func TestIntegration_S3ReadContinuationRange(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
 	if err != nil {

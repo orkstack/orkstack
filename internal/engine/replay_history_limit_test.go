@@ -277,7 +277,7 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 // fixture's run start — and every child start it recorded — passed exactly
 // four arguments, so RunWorkflow's fifth parameter (the carry of a run that
 // continued as new) decodes as nil for each of them and none can enter the
-// carried path — except the one carried generation Stage 2 recorded
+// carried path — except the one carried generation the recorded history has
 // (run-continued-g1-v1.json), which a continue-as-new started with five; the
 // command-half replay tests then prove every one replays against the
 // five-parameter RunWorkflow.

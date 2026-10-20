@@ -24,7 +24,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Stage 6's integration evidence (E6): snapshot overlays on a real cluster
+// The snapshot-overlay integration evidence (E6): snapshot overlays on a real cluster
 // with their objects in MinIO.
 
 // The snapshot-overlay fixture (testdata/history/README.md), and its
@@ -108,7 +108,7 @@ func publishedURIs(t *testing.T, h *historypb.History) []publishedURI {
 	return out
 }
 
-// TestIntegration_RecordSnapshotOverlayHistory records Stage 6's replay
+// TestIntegration_RecordSnapshotOverlayHistory records the snapshot-overlay replay
 // fixture from a REAL run on a real cluster, by a versioned worker, with its
 // snapshots in MinIO: plain tasks and a fan-out whose plan carries the
 // overlay policy, so the history holds the lazy snapshot-overlay marker and

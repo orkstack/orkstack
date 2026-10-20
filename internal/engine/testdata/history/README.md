@@ -325,7 +325,7 @@ task.
   It never skips: without `ORK_RECORD_GOLDEN_HISTORY` it records into the
   proof directory and replays what it recorded.
 
-Like Stage 2's fixtures it was recorded with the writer's plan fields, so the
+Like the continued-run fixtures it was recorded with the writer's plan fields, so the
 premise and negative tests about the histories that predate the writer pass
 it by (`recordedWithTheWriter`).
 

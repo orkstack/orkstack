@@ -148,7 +148,7 @@ func TestIntegration_S3LogStore_LatestAttemptScansKeysOnly(t *testing.T) {
 func newS3LogStore(t *testing.T) (*artifacts.S3LogStore, artifacts.Config) {
 	t.Helper()
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 
 	store, err := artifacts.NewS3LogStore(context.Background(), cfg)
 	if err != nil {

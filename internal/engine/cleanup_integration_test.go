@@ -336,7 +336,7 @@ func cleanupTemporalClient(t *testing.T, ctx context.Context, address, namespace
 func privateCleanupBucket(t *testing.T, ctx context.Context) (artifacts.Config, *s3.Client) {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	raw := newRawS3ClientForCommitE2E(t, cfg)
 	cfg.S3Bucket = fmt.Sprintf("orkstack-cleanup-%d-%d", os.Getpid(), time.Now().UnixNano())
 	if _, err := raw.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(cfg.S3Bucket)}); err != nil {

@@ -107,7 +107,7 @@ func TestPlanSize_LargestAwaitAndComposeCounts(t *testing.T) {
 	}
 	t.Logf("E7 one run plan holds %d awaits with a callback (one more: %s)", awaits, short(awaitErr))
 	t.Logf("E7 one run tree holds %d minimal composed tasks (one more: %s)", composed, short(composeErr))
-	proof.WriteJSON(t, "stage7", "plan-counts.json", map[string]any{
+	proof.WriteJSON(t, "task-ceiling", "plan-counts.json", map[string]any{
 		"awaits_with_callback": awaits, "minimal_composed_tasks": composed,
 		"await_refusal": short(awaitErr), "compose_refusal": short(composeErr),
 	})

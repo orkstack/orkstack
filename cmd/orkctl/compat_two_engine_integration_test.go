@@ -41,7 +41,7 @@ func startCompatStack(ctx context.Context, t *testing.T) *compatStack {
 	requireTemporal(t, address)
 	artifactCfg := artifacts.ConfigFromEnv()
 	artifactCfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 
 	namespace := isolatedNamespace()
 	t.Logf("namespace %s", namespace)

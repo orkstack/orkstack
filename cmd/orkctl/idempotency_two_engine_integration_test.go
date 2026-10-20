@@ -85,7 +85,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 
 	artifactCfg := artifacts.ConfigFromEnv()
 	artifactCfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
@@ -554,11 +554,11 @@ func idempotencyTaskQueue() string {
 	return fmt.Sprintf("ork-idem-%d", os.Getpid())
 }
 
-// requireMinIOForIdempotency skips when the dev object store is absent, so the
+// requireObjectStoreForIdempotency skips when the dev object store is absent, so the
 // suite reports "skipped", never a false failure, without infrastructure — and
 // fails instead under ORK_REQUIRE_INFRA, where the absence IS the failure
 // (see infraAbsent).
-func requireMinIOForIdempotency(t *testing.T, cfg artifacts.Config) {
+func requireObjectStoreForIdempotency(t *testing.T, cfg artifacts.Config) {
 	t.Helper()
 	if _, err := url.Parse(cfg.S3Endpoint); err != nil {
 		infraAbsent(t, "object store endpoint %q is unusable: %v", cfg.S3Endpoint, err)

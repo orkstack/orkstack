@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,4 +153,58 @@ func TestLocalCommitCrashHelper(t *testing.T) {
 	}
 	fmt.Println("READY")
 	select {}
+}
+
+// TestS3CommitStore_WireContractOverTheDouble pins what the SDK puts on the
+// wire for a commit: a path-style conditional PutObject, If-None-Match: *, the
+// documented content type, and exactly one object at the commit key whatever
+// the refused writers did.
+func TestS3CommitStore_WireContractOverTheDouble(t *testing.T) {
+	d := newS3Double(t)
+	store, err := NewS3CommitStore(context.Background(), d.config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := CommitKey("default", "run-wire", "build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uri := s3URI(d.bucket, key)
+	winner := sampleCommit()
+	winner.RunId = "run-wire"
+	winner.TaskId = "build"
+	if _, err := store.Create(context.Background(), uri, winner); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	headers := d.headers[key]
+	if got := headers.Get("If-None-Match"); got != "*" {
+		t.Fatalf("If-None-Match = %q, want *", got)
+	}
+	if got := headers.Get("Content-Type"); got != CommitContentType {
+		t.Fatalf("Content-Type = %q, want %q", got, CommitContentType)
+	}
+	body, ok := d.object(key)
+	if !ok {
+		t.Fatalf("no object at %s", key)
+	}
+	want, err := MarshalCommit(winner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != string(want) {
+		t.Fatal("the stored bytes are not the bytes MarshalCommit produced")
+	}
+	loser := sampleCommit()
+	loser.RunId = "run-other"
+	if _, err := store.Create(context.Background(), uri, loser); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("second Create = %v, want ErrPreconditionFailed", err)
+	}
+	again, _ := d.object(key)
+	if string(again) != string(want) {
+		t.Fatal("the refused writer replaced the stored bytes")
+	}
+}
+
+func s3URI(bucket, key string) string {
+	return (&url.URL{Scheme: "s3", Host: bucket, Path: "/" + key}).String()
 }

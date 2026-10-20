@@ -38,7 +38,7 @@ import (
 func newS3OrkflowStore(t *testing.T) (*artifacts.S3OrkflowStore, artifacts.Config) {
 	t.Helper()
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	store, err := artifacts.NewS3OrkflowStore(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewS3OrkflowStore: %v", err)

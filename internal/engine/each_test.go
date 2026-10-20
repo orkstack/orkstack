@@ -582,12 +582,6 @@ func TestRunWorkflow_EachExpansionRefusalsFailBeforeDispatch(t *testing.T) {
 	}
 }
 
-// Named aliases of the table above, so `go test -run` finds each scenario by
-// name.
-func TestRunWorkflow_EachTooManyItemsFailsBeforeDispatch(t *testing.T) {
-	TestRunWorkflow_EachExpansionRefusalsFailBeforeDispatch(t)
-}
-
 func TestRunWorkflow_EachItemFailureFailsTheNodeAndCancelsTheRest(t *testing.T) {
 	var h *eachHarness
 	var started sync.WaitGroup

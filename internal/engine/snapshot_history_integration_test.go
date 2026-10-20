@@ -69,7 +69,7 @@ func TestIntegration_SnapshotExternalizationHistoryGrowth(t *testing.T) {
 	if cfg.Backend != artifacts.BackendS3 {
 		infraAbsent(t, "history measurement requires ORK_ARTIFACT_BACKEND=s3, got %q", cfg.Backend)
 	}
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
 	if err != nil {
 		infraAbsent(t, "open snapshot store: %v", err)

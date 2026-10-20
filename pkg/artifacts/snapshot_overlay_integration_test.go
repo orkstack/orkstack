@@ -17,7 +17,7 @@ import (
 // and a full snapshot of the same run is a valid base for it.
 func TestIntegration_S3WritesAndReadsASnapshotOverlay(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
 	if err != nil {

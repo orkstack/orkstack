@@ -254,8 +254,8 @@ func TestLoadDefinition_NeverPanicsOnAMalformedPlan(t *testing.T) {
 	}
 }
 
-// TestContinuationChunkReads_AreTheCheckpointAndDefinitionOnly is the A4b
-// compliance test, extended with A4c: the only copy of large bytes into
+// TestContinuationChunkReads_AreTheCheckpointAndDefinitionOnly is the saved-state
+// compliance test, extended with the copy budget: the only copy of large bytes into
 // history is a generation's bootstrap. It parses internal/engine and follows
 // every reference to ActivityReadContinuationChunk up the call graph: it is
 // scheduled by readChunkBefore alone, which only readBootstrapObject calls,

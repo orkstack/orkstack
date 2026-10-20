@@ -349,7 +349,7 @@ func TestIntegration_TaskOutcomeWebhookFiresWhenTheTaskCommits(t *testing.T) {
 // actually cancels an in-flight activity, so this needs a real Orker.
 func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t *testing.T) {
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	requireDockerForCommitE2E(t)
 	pinned := pinnedAlpineForCommitE2E(t)
 
@@ -594,7 +594,7 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 // run in another, while an unscoped one observes both.
 func TestIntegration_ScopedWebhookReceivesOnlyItsNamespace(t *testing.T) {
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	temporalClient := scopedCluster(t, ctx)
@@ -708,7 +708,7 @@ func TestIntegration_ScopedWebhookReceivesOnlyItsNamespace(t *testing.T) {
 // over the same bucket — delivers to it.
 func TestIntegration_ScopedWebhookRegisteredOnOneReplicaMatchesOnAnother(t *testing.T) {
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	temporalClient := scopedCluster(t, ctx)

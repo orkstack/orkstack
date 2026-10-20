@@ -50,7 +50,7 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 	const tick = orker.DefaultHeartbeatInterval
 
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	requireDockerForCommitE2E(t)
 
 	orkflows := newDurableOrkflowStore(t)

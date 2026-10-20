@@ -22,7 +22,7 @@ import (
 
 func TestS3MemoStore_PutGetListDeleteAndLastWriterWins(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	store, err := artifacts.NewS3MemoStore(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewS3MemoStore: %v", err)

@@ -73,7 +73,7 @@ func invalidSavedState(format string, args ...any) error {
 // run's state, and the switch writes its checkpoint over s.snapshot() with
 // items included (spec 2.7 step 5). A checkpoint short of an item row is
 // therefore never what a writer meant, and adopting it would restore a
-// fan-out with an item no row tracks. Stage 2's writer must keep both facts.
+// fan-out with an item no row tracks. The writer that produces a checkpoint must keep both facts.
 func CheckpointRun(parts ...*orkstackv1.RunCheckpointPart) (*orkstackv1.Run, error) {
 	if len(parts) == 0 || parts[0] == nil || parts[0].GetHeader() == nil {
 		return nil, invalidSavedState("it has no run header")
