@@ -53,6 +53,10 @@ type selection struct {
 	// RefusedFull names the paths whose scope rule is full: CI can tell
 	// "this needs the full proof" apart from missing evidence (plan §2.1).
 	RefusedFull []string `json:"refused_full"`
+	// DocsWarning lists user-facing paths changed with no documentation
+	// change, and a missing CHANGELOG entry. It is a warning, never a
+	// refusal, and never touches merge eligibility (plan §8.4).
+	DocsWarning []string `json:"docs_warning,omitempty"`
 }
 
 // pathScope is how one changed path was classified.
@@ -62,6 +66,7 @@ type pathScope struct {
 	Rule    string   `json:"rule"`
 	Line    int      `json:"rule_line"`
 	Actions []string `json:"actions"`
+	Docs    bool     `json:"docs,omitempty"`
 }
 
 // pkgSelection is what runs of one integration package.
@@ -238,6 +243,34 @@ func cmdSelect(args []string) int {
 	return 0
 }
 
+// docsWarning lists the user-facing changes with no documentation change,
+// and a missing CHANGELOG entry. It never adds an error and never touches
+// merge eligibility (plan §8.4).
+func docsWarning(paths []pathScope) []string {
+	var userFacing, docsChanged, changelogChanged bool
+	for _, p := range paths {
+		if strings.HasPrefix(p.Path, "docs/") || p.Path == "README.md" || p.Path == "CONTRIBUTING.md" ||
+			p.Path == "AGENTS.md" || p.Path == "ARCHITECTURE.md" || p.Path == "examples/README.md" ||
+			(strings.HasPrefix(p.Path, "images/") && strings.HasSuffix(p.Path, "/README.md")) {
+			docsChanged = true
+		}
+		if p.Path == "CHANGELOG.md" {
+			changelogChanged = true
+		}
+		if p.Docs && !strings.HasSuffix(p.Path, "_test.go") {
+			userFacing = true
+		}
+	}
+	var out []string
+	if userFacing && !docsChanged {
+		out = append(out, "a user-facing source file changed with no documentation change: update the reference doc that describes it, or say why it needs none (AGENTS.md §11.1)")
+	}
+	if userFacing && !changelogChanged {
+		out = append(out, "no CHANGELOG.md [Unreleased] entry: a user-visible change adds one (AGENTS.md §11.1)")
+	}
+	return out
+}
+
 // computeSelection runs against the repository in the working directory.
 func computeSelection(o selectOptions) (*selection, error) {
 	sel := &selection{Tier: "feature", BaseRef: o.Base, Integration: map[string]*pkgSelection{},
@@ -329,6 +362,7 @@ func computeSelection(o selectOptions) (*selection, error) {
 	if err := selectInto(sel, in); err != nil {
 		return nil, err
 	}
+	sel.DocsWarning = docsWarning(sel.Paths)
 	return sel, nil
 }
 
@@ -385,7 +419,7 @@ func selectInto(sel *selection, in selectInput) error {
 			sel.Paths = append(sel.Paths, pathScope{Path: cp.Path, Status: cp.Status, Rule: "(none)"})
 			continue
 		}
-		sel.Paths = append(sel.Paths, pathScope{Path: cp.Path, Status: cp.Status, Rule: rule.Pattern, Line: rule.Line, Actions: rule.Actions})
+		sel.Paths = append(sel.Paths, pathScope{Path: cp.Path, Status: cp.Status, Rule: rule.Pattern, Line: rule.Line, Actions: rule.Actions, Docs: rule.Docs})
 		if strings.HasPrefix(cp.Path, "ui/") || strings.HasPrefix(cp.Path, "proto/") {
 			sel.Gates.UICheck = true
 			sel.Gates.UIUnit = true

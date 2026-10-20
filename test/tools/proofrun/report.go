@@ -110,6 +110,13 @@ func cmdFeatureReport(args []string) int {
 }
 
 func featureReport(w io.Writer, sel *selection, o outcomes, specs map[string]string) {
+	if len(sel.DocsWarning) > 0 {
+		fmt.Fprintf(w, "## Documentation\n\n")
+		for _, warning := range sel.DocsWarning {
+			fmt.Fprintf(w, "WARNING: %s\n", warning)
+		}
+		fmt.Fprintln(w)
+	}
 	fmt.Fprintf(w, "## Scope\n\n")
 	fmt.Fprintf(w, "- base: `%s` = %s\n- merge base: %s\n", sel.BaseRef, sel.BaseCommit, sel.MergeBase)
 	fmt.Fprintf(w, "- selection inputs, verbatim: `--base %s`", sel.BaseRef)

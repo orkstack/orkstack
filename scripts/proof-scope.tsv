@@ -42,16 +42,16 @@ Makefile	full
 images/Makefile	full
 buf.yaml	full
 buf.gen.yaml	full
-.github/**	full
+.github/**	full	docs
 internal/testsupport/**	full
-test/tools/proofrun/**	full
+test/tools/proofrun/**	full	docs
 scripts/proof-observability.sh	observability
 # Measurements: they change which tests a feature proof defers and the order
 # a full proof runs them in, never what a full proof runs.
 scripts/proof-slow-tests.txt	none
 scripts/proof-test-costs.tsv	none
 scripts/proof-ui-costs.tsv	none
-scripts/**	full
+scripts/**	full	docs
 deploy/observability/**	observability
 deploy/**	full
 
@@ -60,18 +60,21 @@ internal/telemetry/**.go	observability,go
 internal/telemetry/**	observability
 cmd/ork/**	go	temporal
 cmd/orker/**	go	temporal
-cmd/orkctl/**	go	temporal
+cmd/orkctl/**	go	temporal,docs
 internal/engine/**	go	temporal
-internal/orker/**	go	temporal
-internal/api/**	go	temporal
+internal/orker/**	go	temporal,docs
+internal/api/**	go	temporal,docs
 internal/archive/**	go	temporal
 internal/task/**	go	temporal
-pkg/artifacts/**	go	temporal
+pkg/artifacts/**	go	temporal,docs
 cmd/**	go
+internal/dsl/**	go	docs
+internal/automation/**	go	docs
+internal/config/**	go	docs
 internal/**	go
 pkg/**	go
 gen/go/**	go
-proto/**	proto
+proto/**	proto	docs
 
 # ---- UI --------------------------------------------------------------------
 ui/e2e/*.spec.ts	spec
@@ -90,7 +93,7 @@ ui/vite.config.ts	all-specs
 ui/tsconfig.json	ui
 
 # ---- activity images, examples, test tools ---------------------------------
-images/**	images
+images/**	images	docs
 test/fixtures/**	images
 examples/**.go	examples,go
 examples/**	examples

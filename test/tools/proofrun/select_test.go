@@ -424,3 +424,28 @@ func TestSelect_DeletedTestsAreListedAsRemoved(t *testing.T) {
 }
 
 func keys2(m map[string]*pkgSelection) []string { return sortedKeys(m) }
+
+func TestSelect_UserFacingChangeWithoutDocsWarns(t *testing.T) {
+	paths := []pathScope{{Path: "cmd/orkctl/root.go", Docs: true}}
+	warnings := docsWarning(paths)
+	if len(warnings) != 2 || !strings.Contains(warnings[0], "no documentation change") ||
+		!strings.Contains(warnings[1], "CHANGELOG") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	withDocs := append(paths, pathScope{Path: "docs/CLI.md"}, pathScope{Path: "CHANGELOG.md"})
+	if got := docsWarning(withDocs); len(got) != 0 {
+		t.Errorf("a change with docs and a CHANGELOG entry warned: %v", got)
+	}
+	if got := docsWarning([]pathScope{{Path: "cmd/orkctl/root_test.go", Docs: true}}); len(got) != 0 {
+		t.Errorf("a test-only change warned: %v", got)
+	}
+}
+
+func TestFeatureReport_PrintsTheDocsWarning(t *testing.T) {
+	var b strings.Builder
+	featureReport(&b, &selection{DocsWarning: []string{"no CHANGELOG.md [Unreleased] entry"}}, outcomes{}, nil)
+	got := b.String()
+	if !strings.HasPrefix(got, "## Documentation") || !strings.Contains(got, "WARNING: no CHANGELOG.md") {
+		t.Fatalf("report = %q", got)
+	}
+}

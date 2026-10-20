@@ -2720,15 +2720,23 @@ func (s *runState) routeForTask(t *orkstackv1.Task) (task.Route, error) {
 	}
 	queue, err := s.plan.Route(pool)
 	if err != nil {
-		reason := "INVALID_POOL"
+		reason := ReasonInvalidPool
 		if errors.Is(err, task.ErrReservedQueue) {
-			reason = "RESERVED_QUEUE"
+			reason = ReasonReservedQueue
 		}
 		return task.Route{}, temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("task %q: %v", t.GetId(), err), reason, err)
 	}
 	return task.Route{Pool: pool, Queue: queue}, nil
 }
+
+// The failure codes routeForTask reports. Their values are part of the
+// client-visible contract: a run that cannot route a pool says which rule it
+// broke, and docs/DSL.md documents both.
+const (
+	ReasonInvalidPool   = "INVALID_POOL"
+	ReasonReservedQueue = "RESERVED_QUEUE"
+)
 
 // queueForTask is the queue a task's activity is scheduled on.
 func (s *runState) queueForTask(t *orkstackv1.Task) (string, error) {

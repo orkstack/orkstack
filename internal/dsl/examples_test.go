@@ -372,6 +372,40 @@ func TestExamples_AreIndexed(t *testing.T) {
 			}
 		}
 	}
+
+	// Every file under examples/ is indexed, inside an indexed directory, or
+	// examples/README.md itself. A new examples/foo.yaml or a loose file in
+	// an unindexed directory fails here, not on a reader's missing link.
+	indexed := map[string]bool{}
+	for _, w := range want {
+		indexed[w] = true
+	}
+	err := filepath.WalkDir(filepath.Join("..", "..", "examples"), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(filepath.Join("..", ".."), path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "examples/README.md" || indexed[rel] {
+			return nil
+		}
+		for prefix := range indexed {
+			if strings.HasSuffix(prefix, "/") && strings.HasPrefix(rel, prefix) {
+				return nil
+			}
+		}
+		t.Errorf("%s is not indexed: add it to examples/README.md's table (and docs/ORKFLOW_PATTERNS.md's Examples index)", rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestExamples_ComputeTasksDeclareNoNetwork(t *testing.T) {

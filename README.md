@@ -219,6 +219,7 @@ gitignored; the commit or pull request quotes it. No proof, no done.
 | [docs/ORKFLOW_SCHEDULES.md](./docs/ORKFLOW_SCHEDULES.md) | Schedules on Temporal Schedules: specs, fires, backfill, overlap |
 | [docs/AUTOMATION.md](./docs/AUTOMATION.md) | Automation documents: a namespace's settings, schedules, triggers and webhooks as YAML |
 | [docs/schemas/](./docs/schemas/) | JSON Schemas of the authored documents (generated) |
+| [docs/CLI.md](./docs/CLI.md) | The `orkctl` command and flag reference (generated from the Cobra tree) |
 | [docs/PROOFS.md](./docs/PROOFS.md) | Proofs and CI: the tiers, the plan and its shards, the job graph, artifacts and recovery procedures |
 | [docs/DEPLOY.md](./docs/DEPLOY.md) | Topology, configuration, releases and rollback, operations, telemetry |
 | [docs/STORAGE.md](./docs/STORAGE.md) | What is persisted where: the object-store key layout and its invariants |

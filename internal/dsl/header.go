@@ -70,6 +70,11 @@ var (
 		` — add them at the top, after any leading comments (docs/DSL.md, "The document header")`
 )
 
+// Rule 45: the document begins with `apiVersion: orkstack/v1` and
+// `kind: Orkflow`, checked before any other rule; a version stored before
+// this rule is never re-checked, because no read path compiles a stored
+// source.
+//
 // checkHeader refuses a document that is not an Orkflow of this apiVersion.
 // It reads the root mapping's top-level keys, taking the first occurrence of
 // each; a duplicate is refused later by the struct decode. It runs before
