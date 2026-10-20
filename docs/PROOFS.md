@@ -327,7 +327,16 @@ Any other missing part needs a new run of the same tree.
 - **Runner-size known gaps.** A UI spec's wall-clock budget (5 s at the gated
   sizes) cannot hold on a 2-vCPU runner. `scripts/proof-host-speed.tsv` names
   those specs and their reference CPU count; a miss below it is recorded with
-  its measured message, never turned into a wider local bound.
+  its measured message, never turned into a wider local bound. The shard-side
+  exit that writes that gap in the part's ledger and returns 0 is unit-tested
+  but was never exercised on a GitHub runner: the user capped the validation
+  spend at 471 runner-minutes, and the three runs that fit ended before it.
+- **The gate has not had a full green run on GitHub.** Its structure was
+  validated end to end (plan, build, fast, both shard families, the fixtures
+  and the merger produced one proof.json), and every failure is classified
+  below or fixed. The first green run is planned for when the repository is
+  public, where standard-runner minutes are unmetered; until then the gate is
+  built, structurally validated and not enforced.
 - **The dev object store is SeaweedFS, pinned by digest.** MinIO stopped
   publishing images and moved to a closed product; Garage cannot do the
   conditional write the commit protocol needs. SeaweedFS documents
