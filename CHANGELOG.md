@@ -20,8 +20,9 @@ include breaking changes, and each is marked **BREAKING**.
   observability, and `release.yml` tags only after `proofrun verify -release`
   accepts the proof for the exact commit. `make release-tag` is the local
   equivalent.
-- `make check`, the fast contributor path: build, vet, lint and the unit
-  suites with `-short`, with no Docker.
+- `make check`, the fast contributor path with no Docker: `make lint`,
+  `go vet -tags=integration ./...` and the unit suites with `-short`, keeping
+  the test cache.
 - `scripts/github-merge-gate.sh` and `make github-merge-gate`: the
   one-command enablement of the required `proof` check, in queue-less mode by
   default; it refuses until the repository is public.
@@ -194,6 +195,42 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- A UI runner-size miss is excused only on a CI `ui-e2e` part, only for a
+  failure of the bound's own timing assertion, and only when the base's copy
+  of `scripts/proof-host-speed.tsv` already carries the row; a skip, a missing
+  outcome or any other failure of those specs fails the proof.
+- `proofrun verify -release` and the nightly check behind
+  `make merge-check NIGHTLY=` refuse a proof that broke an identity rule (a
+  shared Temporal, an outside image tag, `PROOF_GATES`, a digest mismatch):
+  `proof.json` records `eligible_but_for_tier`, and both require it. The CI
+  `proof` job judges release and nightly proofs the same way.
+- `make github-merge-gate`: `APPLY=1 QUEUE=1` works from scratch and `APPLY=1`
+  switches back, with `MERGE_GATE_MODE` checked against the applied ruleset
+  rather than the requested mode, and the variable now reaches `proof.yml`.
+  The "a proof check has passed" precondition is a refusal that asks GitHub
+  about a real commit, CODEOWNERS must name an account with write access, and
+  `--verify-landed` reads the proof the pattern download wrote.
+- The workflows pin every action to an exact release of its latest major, Go
+  (1.27.3), Bun (1.4.3) and cosign (v2.6.5) to exact versions, and pass
+  workflow inputs through `env:` instead of splicing them into a shell.
+  `release.yml` validates the version in a first `validate` job, on every
+  dispatch. `ci.yml`'s `check` runs on every push, as documented, and the
+  nightly `flakes` job waits for that night's proof.
+- The CI `proof` job records each part job's steps, check-run annotations and
+  log, so the merger recognises a lost runner, and its summary carries the
+  seven-day quarantine warnings.
+- A feature selection names the slow list's tests it leaves out of the
+  regression set `slow_omitted` (formerly `deferred_slow`), so "deferred"
+  means only a nightly-listed test.
+- `orkctl activity build`'s help named a `--no-push` flag that does not exist;
+  it is `--push=false`.
+- A task whose pool the run could not route (`INVALID_POOL`,
+  `RESERVED_QUEUE`) is recorded `FAILED` with that code as its error, instead
+  of staying `RUNNING` with no error while its run failed.
+- The generations test no longer depends on the order the scheduler finishes
+  a stage's parallel tasks in, so its `flat stages` and pin subtests stop
+  flaking at 2 CPUs (0 failures in 500 runs); the pin subtest's quarantine
+  entry is removed.
 - `examples/http-post.ork.yaml` built its JSON body by splicing the message
   into a string, so a quote or a backslash in it posted malformed JSON. It now
   writes the body as a YAML mapping (version 0.3.0).

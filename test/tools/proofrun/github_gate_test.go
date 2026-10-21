@@ -55,6 +55,40 @@ if [ -n "$input" ]; then
 	printf '%s\t%s\t%s\n' "$head" "$input" "$sum" >>"$GH_INPUTS"
 fi
 
+# GitHub's commits endpoint takes a SHA or a branch; a remote-tracking name
+# such as origin/main is not a ref there, and the real API refuses it.
+case "$*" in
+*"/commits/origin/"*)
+	printf '{"message":"No commit found for SHA: origin","status":"422"}\n'
+	exit 1
+	;;
+esac
+
+# gh run download -p PATTERN -D DIR puts every matching artifact of the run in
+# a directory of its own name; the artifacts live under FAKE_RUN_ARTIFACTS.
+if [ "${1:-}" = run ] && [ "${2:-}" = download ]; then
+	pattern="" dest=""
+	prev=""
+	for arg in "$@"; do
+		case "$prev" in
+		-p) pattern="$arg" ;;
+		-D) dest="$arg" ;;
+		esac
+		prev="$arg"
+	done
+	[ -n "$pattern" ] && [ -n "$dest" ] && [ -d "${FAKE_RUN_ARTIFACTS:-/nonexistent}" ] || exit 1
+	n=0
+	for dir in "$FAKE_RUN_ARTIFACTS"/*/; do
+		name="$(basename "$dir")"
+		if [[ "$name" == $pattern ]]; then
+			mkdir -p "$dest/$name" && cp -R "$dir." "$dest/$name/"
+			n=$((n + 1))
+		fi
+	done
+	[ "$n" -gt 0 ] || exit 1
+	exit 0
+fi
+
 found=0
 response=""
 status=0
@@ -98,6 +132,15 @@ case "$*" in
 "rev-parse main^{tree}")
 	printf '%s\n' "${FAKE_LOCAL_TREE:-}"
 	;;
+"rev-parse origin/main")
+	printf '%s\n' "${FAKE_ORIGIN_SHA:-}"
+	;;
+"rev-parse "*"^{tree}")
+	printf '%s\n' "${FAKE_LANDED_TREE:-}"
+	;;
+"show origin/main:.github/CODEOWNERS")
+	printf '%s' "${FAKE_CODEOWNERS_BODY:-}"
+	;;
 "rev-parse "*)
 	printf '%s\n' "${FAKE_GIT_DEFAULT:-}"
 	;;
@@ -117,6 +160,7 @@ esac
 
 const gateGoStub = `#!/usr/bin/env bash
 # The gate runs the proof workflow test; a stub keeps it from recursing.
+printf '%s\n' "$*" >>"$GO_LOG"
 exit "${FAKE_GO_STATUS:-0}"
 `
 
@@ -130,6 +174,7 @@ type gateSandbox struct {
 	ghLog    string
 	ghInputs string
 	gitLog   string
+	goLog    string
 	rows     []string
 	env      map[string]string
 }
@@ -153,6 +198,7 @@ func newGateSandbox(t *testing.T) *gateSandbox {
 		ghLog:    filepath.Join(dir, "gh.log"),
 		ghInputs: filepath.Join(dir, "gh.inputs"),
 		gitLog:   filepath.Join(dir, "git.log"),
+		goLog:    filepath.Join(dir, "go.log"),
 		env: map[string]string{
 			"APPLY":                  "0",
 			"QUEUE":                  "0",
@@ -161,6 +207,8 @@ func newGateSandbox(t *testing.T) *gateSandbox {
 			"FAKE_LOCAL_TREE":        "tree-main",
 			"FAKE_PROOF_YML_EXISTS":  "1",
 			"FAKE_CODEOWNERS_EXISTS": "1",
+			"FAKE_CODEOWNERS_BODY":   "# gate files\n/scripts/proof.sh @owner\n/.github/ @owner @o/gate-team\n",
+			"FAKE_ORIGIN_SHA":        "sha-main",
 			"FAKE_GO_STATUS":         "0",
 		},
 	}
@@ -215,6 +263,7 @@ func (s *gateSandbox) childEnv(extra map[string]string) []string {
 		"GH_LOG":    s.ghLog,
 		"GH_INPUTS": s.ghInputs,
 		"GIT_LOG":   s.gitLog,
+		"GO_LOG":    s.goLog,
 	}
 	for k, v := range s.env {
 		over[k] = v
@@ -385,6 +434,14 @@ type gateState struct {
 	nightly    string // active
 	rulesets   string // []
 	modeValue  string // unset (the variable does not exist)
+	// mainRules is the body of the existing main-proof-gate ruleset (id 11),
+	// read when rulesets lists it; empty is the committed queue-less body.
+	mainRules string
+	// ownerPermission is @owner's permission on o/r: admin unless set.
+	ownerPermission string
+	// mainChecks is the check-runs answer for main's tip: a successful proof
+	// from app 15368 unless set.
+	mainChecks string
 }
 
 // postedFile resolves a recorded body path. The gate passes the committed
@@ -422,9 +479,21 @@ func gateCheckable(t *testing.T, st gateState) *gateSandbox {
 		st.visibility, st.ownerType))
 	s.answer("api repos/o/r/actions/permissions --jq .enabled // false", `{"enabled":true}`)
 	s.answer("api repos/o/r/actions/workflows/nightly.yml", fmt.Sprintf(`{"state":%q}`, st.nightly))
-	s.answer("api repos/o/r/commits/origin/main/check-runs",
-		`{"check_runs":[{"name":"proof","app":{"id":15368},"conclusion":"success","details_url":"https://github.com/o/r/actions/runs/7"}]}`)
+	if st.mainChecks == "" {
+		st.mainChecks = `{"check_runs":[{"name":"proof","app":{"id":15368},"conclusion":"success","details_url":"https://github.com/o/r/actions/runs/7"}]}`
+	}
+	s.answer("api repos/o/r/commits/sha-main/check-runs?check_name=proof", st.mainChecks)
+	if st.ownerPermission == "" {
+		st.ownerPermission = "admin"
+	}
+	s.answer("api repos/o/r/collaborators/owner/permission --jq .permission // \"\"", fmt.Sprintf(`{"permission":%q}`, st.ownerPermission))
+	s.answer("api -H Accept: application/vnd.github.v3.repository+json orgs/o/teams/gate-team/repos/o/r --jq .permissions.push // false",
+		`{"permissions":{"push":false}}`)
 	s.answer("api repos/o/r/rulesets", st.rulesets)
+	if st.mainRules == "" {
+		st.mainRules = string(gateCommitted(t, gateMainRuleset))
+	}
+	s.answer("api repos/o/r/rulesets/11", st.mainRules)
 	if st.modeValue == "" {
 		s.answerStatus("api repos/o/r/actions/variables/MERGE_GATE_MODE", "", 1)
 	} else {
@@ -505,7 +574,7 @@ func TestGitHubMergeGate_AppliesTheQueueLessModeOnAUserOwnedPublicRepository(t *
 }
 
 func TestGitHubMergeGate_RefusesTheQueueOnAUserOwnedRepository(t *testing.T) {
-	s := gateCheckable(t, gateState{modeValue: "queue"})
+	s := gateCheckable(t, gateState{})
 	out, code := s.run(map[string]string{"APPLY": "1", "QUEUE": "1"})
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1\n%s", code, out)
@@ -521,15 +590,258 @@ func TestGitHubMergeGate_RefusesTheQueueOnAUserOwnedRepository(t *testing.T) {
 	gateRefuseWrites(t, s)
 }
 
+// existingMainGate is a rulesets listing holding main-proof-gate as id 11.
+const existingMainGate = `[{"name":"main-proof-gate","id":11}]`
+
+// gateQueueRules is the main ruleset as the queue mode applies it.
+func gateQueueRules(t *testing.T) string {
+	t.Helper()
+	var main, queue map[string]any
+	if err := json.Unmarshal(gateCommitted(t, gateMainRuleset), &main); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(gateCommitted(t, gateQueueRuleset), &queue); err != nil {
+		t.Fatal(err)
+	}
+	main["rules"] = append(main["rules"].([]any), queue["rules"].([]any)...)
+	b, err := json.Marshal(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// The variable is judged against what is applied — main-proof-gate's
+// merge_queue rule — whatever mode the invocation asks for.
 func TestGitHubMergeGate_RefusesAModeVariableThatDisagreesWithTheRuleset(t *testing.T) {
-	s := gateCheckable(t, gateState{modeValue: "queue"})
+	for _, c := range []struct {
+		name  string
+		st    func(t *testing.T) gateState
+		extra map[string]string
+		want  string
+	}{
+		{"variable set, no ruleset", func(*testing.T) gateState { return gateState{modeValue: "queue"} },
+			nil, "MERGE_GATE_MODE=queue, and main-proof-gate has no merge_queue rule"},
+		{"variable set, queue-less ruleset", func(*testing.T) gateState {
+			return gateState{modeValue: "queue", rulesets: existingMainGate}
+		}, nil, "MERGE_GATE_MODE=queue, and main-proof-gate has no merge_queue rule"},
+		{"variable set, queue requested, queue-less ruleset", func(*testing.T) gateState {
+			return gateState{ownerType: "Organization", modeValue: "queue", rulesets: existingMainGate}
+		}, map[string]string{"QUEUE": "1"}, "main-proof-gate has no merge_queue rule"},
+		{"queue applied, variable unset", func(t *testing.T) gateState {
+			return gateState{ownerType: "Organization", rulesets: existingMainGate, mainRules: gateQueueRules(t)}
+		}, map[string]string{"QUEUE": "1"}, "main-proof-gate has a merge_queue rule, and MERGE_GATE_MODE is unset"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := gateCheckable(t, c.st(t))
+			gateAcceptsWrites(s, "")
+			extra := map[string]string{"APPLY": "1"}
+			for k, v := range c.extra {
+				extra[k] = v
+			}
+			out, code := s.run(extra)
+			if code != 1 {
+				t.Fatalf("exit = %d, want 1\n%s", code, out)
+			}
+			fails := gateFailures(out)
+			if len(fails) != 1 || !strings.Contains(fails[0], c.want) {
+				t.Errorf("want only %q, got:\n%s", c.want, strings.Join(fails, "\n"))
+			}
+			gateRefuseWrites(t, s)
+		})
+	}
+}
+
+// gateCallIndex is the position of the first gh call containing every part,
+// or -1.
+func gateCallIndex(calls []string, parts ...string) int {
+	for i, call := range calls {
+		all := true
+		for _, p := range parts {
+			if !strings.Contains(call, p) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return i
+		}
+	}
+	return -1
+}
+
+// The first queue apply starts with no variable and no ruleset: it must
+// succeed, post the queue rule, and set the variable after the ruleset.
+func TestGitHubMergeGate_AppliesTheQueueFromScratch(t *testing.T) {
+	s := gateCheckable(t, gateState{ownerType: "Organization"})
+	gateAcceptsWrites(s, "")
+	out, code := s.run(map[string]string{"APPLY": "1", "QUEUE": "1"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	calls := s.ghCalls()
+	ruleset := gateCallIndex(calls, "--method POST", "repos/o/r/rulesets")
+	variable := gateCallIndex(calls, "--method POST", "actions/variables", "name=MERGE_GATE_MODE", "value=queue")
+	if ruleset < 0 || variable < 0 {
+		t.Fatalf("the queue apply did not post the ruleset (%d) and set the variable (%d):\n%s", ruleset, variable, strings.Join(calls, "\n"))
+	}
+	if variable < ruleset {
+		t.Error("the variable was set before the queue rule: pull requests would skip containment with no queue")
+	}
+	queued := false
+	for _, p := range s.posts() {
+		body, err := os.ReadFile(p.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		queued = queued || bytes.Contains(body, []byte(`"merge_queue"`))
+	}
+	if !queued {
+		t.Errorf("no posted body carries merge_queue:\n%s", s.postedSummary())
+	}
+}
+
+// Leaving the queue: APPLY=1 alone removes the queue rule and the variable,
+// the variable first.
+func TestGitHubMergeGate_SwitchesBackToQueueLess(t *testing.T) {
+	s := gateCheckable(t, gateState{
+		ownerType: "Organization", modeValue: "queue",
+		rulesets: existingMainGate, mainRules: gateQueueRules(t),
+	})
+	gateAcceptsWrites(s, existingMainGate)
+	out, code := s.run(map[string]string{"APPLY": "1"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	calls := s.ghCalls()
+	del := gateCallIndex(calls, "--method DELETE", "actions/variables/MERGE_GATE_MODE")
+	put := gateCallIndex(calls, "--method PUT", "repos/o/r/rulesets/11")
+	if del < 0 || put < 0 {
+		t.Fatalf("switching back did not delete the variable (%d) and update the ruleset (%d):\n%s", del, put, strings.Join(calls, "\n"))
+	}
+	if put < del {
+		t.Error("the queue rule was removed before the variable: pull requests would skip containment with no queue")
+	}
+	argv, _ := gateFindPosted(t, s, gateMainRuleset)
+	if !strings.Contains(argv, "rulesets/11") {
+		t.Errorf("the queue-less body went to %q, not ruleset 11", argv)
+	}
+}
+
+// Precondition 5: a failing workflow test refuses, and the gate runs exactly
+// that test.
+func TestGitHubMergeGate_RefusesWhenTheWorkflowTestFails(t *testing.T) {
+	s := gateCheckable(t, gateState{})
+	out, code := s.run(map[string]string{"FAKE_GO_STATUS": "1"})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+	fails := gateFailures(out)
+	if len(fails) != 1 || !strings.Contains(fails[0], "TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests failed") {
+		t.Errorf("want only the workflow-test failure, got:\n%s", strings.Join(fails, "\n"))
+	}
+	want := "test ./test/tools/proofrun -run ^TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests$ -count=1"
+	if got := gateLogLines(t, s.goLog); len(got) != 1 || got[0] != want {
+		t.Errorf("go was run as %q, want %q", got, want)
+	}
+}
+
+// Precondition 6 is a refusal, and it asks GitHub about a real ref: main's
+// tip, or the newest successful proof run's head.
+func TestGitHubMergeGate_RefusesBeforeTheProofCheckHasEverPassed(t *testing.T) {
+	// Main's tip has only another app's "proof", and no run ever succeeded.
+	s := gateCheckable(t, gateState{mainChecks: `{"check_runs":[{"name":"proof","app":{"id":99},"conclusion":"success"}]}`})
+	s.answer("api repos/o/r/actions/workflows/proof.yml/runs?status=success&per_page=1 --jq *", `{"workflow_runs":[]}`)
 	out, code := s.run(nil)
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1\n%s", code, out)
 	}
 	fails := gateFailures(out)
-	if len(fails) != 1 || !strings.Contains(fails[0], "MERGE_GATE_MODE=queue") {
-		t.Errorf("want only the mode disagreement, got:\n%s", strings.Join(fails, "\n"))
+	if len(fails) != 1 || !strings.Contains(fails[0], "no successful proof check") {
+		t.Errorf("want only the missing proof check, got:\n%s", strings.Join(fails, "\n"))
+	}
+	if gateCallIndex(s.ghCalls(), "commits/sha-main/check-runs") < 0 {
+		t.Error("the gate never asked about main's tip by its SHA")
+	}
+
+	// The newest successful proof run's head (a validate/full push) counts.
+	s = gateCheckable(t, gateState{mainChecks: `{"check_runs":[]}`})
+	s.answer("api repos/o/r/actions/workflows/proof.yml/runs?status=success&per_page=1 --jq *", `{"workflow_runs":[{"head_sha":"sha-validate"}]}`)
+	s.answer("api repos/o/r/commits/sha-validate/check-runs?check_name=proof",
+		`{"check_runs":[{"name":"proof","app":{"id":15368},"conclusion":"success"}]}`)
+	out, code = s.run(nil)
+	if code != 0 {
+		t.Fatalf("with a successful validate run: exit = %d, want 0\n%s", code, out)
+	}
+}
+
+// Precondition 10: CODEOWNERS must name an account that can approve.
+func TestGitHubMergeGate_RefusesCodeOwnersWithoutWriteAccess(t *testing.T) {
+	s := gateCheckable(t, gateState{ownerPermission: "read"})
+	out, code := s.run(nil)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+	fails := gateFailures(out)
+	if len(fails) != 1 || !strings.Contains(fails[0], "names no account with write access") {
+		t.Errorf("want only the CODEOWNERS refusal, got:\n%s", strings.Join(fails, "\n"))
+	}
+	// With code-owner review off it is a warning.
+	s = gateCheckable(t, gateState{ownerPermission: "read"})
+	out, code = s.run(map[string]string{"CODEOWNER_REVIEW": "0"})
+	if code != 0 || !strings.Contains(out, "warn: CODEOWNERS at origin/main names no account with write access") {
+		t.Errorf("CODEOWNER_REVIEW=0: exit = %d, want 0 and a warning\n%s", code, out)
+	}
+	// A writer passes, and the gate names it.
+	s = gateCheckable(t, gateState{ownerPermission: "write"})
+	out, code = s.run(nil)
+	if code != 0 || !strings.Contains(out, "names an account with write access: @owner") {
+		t.Errorf("a writer: exit = %d, want 0 naming @owner\n%s", code, out)
+	}
+}
+
+// --verify-landed reads proof.json from the directory the pattern download
+// created, the run's last attempt, and compares its tree.
+func TestGitHubMergeGate_VerifyLandedReadsTheDownloadedProof(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		attempts map[string]string // artifact dir -> tree
+		code     int
+		want     string
+	}{
+		{"one attempt", map[string]string{"proof-7-a1": "tree-landed"}, 0, "proof run 7 (proof-7-a1) measured tree tree-landed"},
+		{"the last attempt decides", map[string]string{"proof-7-a1": "tree-old", "proof-7-a2": "tree-landed"}, 0, "(proof-7-a2)"},
+		{"a different tree", map[string]string{"proof-7-a1": "tree-other"}, 1, "measured tree tree-other, and sha-landed's tree is tree-landed"},
+		{"no artifact", map[string]string{}, 1, "left no proof-7-a* artifact"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newGateSandbox(t)
+			s.answer("auth status", "")
+			s.answer("repo view --json owner --jq .owner.login", `{"owner":{"login":"o"}}`)
+			s.answer("repo view --json name --jq .name", `{"name":"r"}`)
+			s.answer("api repos/o/r/commits/sha-landed/check-runs --jq *",
+				`{"check_runs":[{"name":"proof","app":{"id":15368},"details_url":"https://github.com/o/r/actions/runs/7/job/9"}]}`)
+			arts := filepath.Join(s.dir, "artifacts")
+			if err := os.MkdirAll(arts, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for dir, tree := range c.attempts {
+				if err := os.MkdirAll(filepath.Join(arts, dir), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(arts, dir, "proof.json"), []byte(fmt.Sprintf(`{"tree":%q}`, tree)), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, code := s.run(map[string]string{
+				"FAKE_GIT_DEFAULT":   "sha-landed",
+				"FAKE_LANDED_TREE":   "tree-landed",
+				"FAKE_RUN_ARTIFACTS": arts,
+			}, "--verify-landed", "sha-landed")
+			if code != c.code || !strings.Contains(out, c.want) {
+				t.Errorf("exit = %d, want %d with %q\n%s", code, c.code, c.want, out)
+			}
+		})
 	}
 }
 
@@ -670,7 +982,8 @@ func TestGitHubMergeGate_AppliesNoTagRuleset(t *testing.T) {
 		t.Fatalf("queue-less exit = %d, want 0\n%s", code, out)
 	}
 
-	queue := gateCheckable(t, gateState{ownerType: "Organization", modeValue: "queue"})
+	// From scratch: no variable and no ruleset yet, as on the first apply.
+	queue := gateCheckable(t, gateState{ownerType: "Organization"})
 	gateAcceptsWrites(queue, "")
 	out, code = queue.run(map[string]string{"APPLY": "1", "QUEUE": "1"})
 	if code != 0 {

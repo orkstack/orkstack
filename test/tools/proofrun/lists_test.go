@@ -251,3 +251,60 @@ func TestRepositoryQuarantine_NamesListedTests(t *testing.T) {
 		}
 	}
 }
+
+func TestQuarantine_AnEntryWithinSevenDaysOfItsDateWarns(t *testing.T) {
+	const p = "example.com/p"
+	entries := []quarantineEntry{
+		{Suite: "unit", Package: p, Test: "TestSoon", ReviewBy: "2026-10-28"},
+		{Suite: "unit", Package: p, Test: "TestToday", ReviewBy: "2026-10-21"},
+		{Suite: "unit", Package: p, Test: "TestLater", ReviewBy: "2026-10-29"},
+		{Suite: "unit", Package: p, Test: "TestExpired", ReviewBy: "2026-10-20"},
+	}
+	on := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	var got []string
+	for _, e := range quarantineExpiring(entries, on) {
+		got = append(got, e.Test)
+	}
+	if strings.Join(got, ",") != "TestSoon,TestToday" {
+		t.Errorf("warned for %v, want TestSoon and TestToday (seven days and the day itself)", got)
+	}
+	var b strings.Builder
+	printQuarantineWarnings(&b, quarantineExpiring(entries, on))
+	if !strings.Contains(b.String(), "WARNING: quarantine entry for example.com/p.TestSoon expires on 2026-10-28 and stops excusing its failure") {
+		t.Errorf("warning = %q", b.String())
+	}
+}
+
+func TestNightlyProblems_ScopedRunSkipsUncompiledPackages(t *testing.T) {
+	const engine, arts = "github.com/orkstack/orkstack/internal/engine", "github.com/orkstack/orkstack/pkg/artifacts"
+	listed := map[string]map[string]bool{arts: {"TestA": true, "TestB": true}}
+	entry := func(pkg, test string, covering ...string) nightlyEntry {
+		return nightlyEntry{Package: pkg, Test: test, Covering: covering, Line: 7}
+	}
+	tests := []struct {
+		name     string
+		entries  []nightlyEntry
+		complete bool
+		want     string // substring of the one expected problem; empty means none
+	}{
+		{"scoped run skips an uncompiled package", []nightlyEntry{entry(engine, "TestIntegration_X", "TestY")}, false, ""},
+		{"complete run refuses a non-integration package", []nightlyEntry{entry(engine, "TestIntegration_X", "TestY")}, true, "not an integration package of this proof"},
+		{"scoped run still refuses a stale entry in a compiled package", []nightlyEntry{entry(arts, "TestGone", "TestA")}, false, "remove the stale entry"},
+		{"scoped run still refuses a bad covering test", []nightlyEntry{entry(arts, "TestA", "TestMissing")}, false, "is not a listed test of that package"},
+		{"complete run accepts a valid compiled entry", []nightlyEntry{entry(arts, "TestA", "TestB")}, true, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nightlyProblems(tc.entries, listed, tc.complete)
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("want no problem, got %q", got)
+				}
+				return
+			}
+			if len(got) != 1 || !strings.Contains(got[0], tc.want) {
+				t.Fatalf("want one problem containing %q, got %q", tc.want, got)
+			}
+		})
+	}
+}

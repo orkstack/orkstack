@@ -1,7 +1,9 @@
 name: release
 
-# The pre-release gate. `gate` runs the release tier: every gate, the scale
-# and soak tests included, observability always. `tag` creates the release tag
+# The pre-release gate. `validate` refuses a version that is not
+# vMAJOR.MINOR.PATCH before anything else runs. `gate` runs the release tier:
+# every gate, the scale and soak tests included, observability always. `tag`
+# creates the release tag
 # only after `proofrun verify -release` accepts that proof for the exact
 # commit. Nothing here dispatches itself; the user runs it.
 
@@ -21,12 +23,41 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-${{ inputs.version }}
-  cancel-in-progress: false
+# No workflow-level concurrency: it would be decided from the raw input before
+# anything validated it. Each job below takes a group named from the version
+# `validate` accepted, so two dispatches of one version run one after the
+# other.
 
 jobs:
+  # First, and on every dispatch, `tag: false` included: nothing runs for a
+  # version that is not vMAJOR.MINOR.PATCH.
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: validate the version
+        id: version
+        timeout-minutes: 1
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version $VERSION is not vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+
   gate:
+    needs: validate
+    concurrency:
+      group: release-gate-${{ needs.validate.outputs.version }}
+      cancel-in-progress: false
     permissions:
       contents: read
       actions: read
@@ -39,53 +70,54 @@ jobs:
       ui_shards: 5
 
   tag:
-    needs: gate
+    needs: [validate, gate]
     if: ${{ inputs.tag }}
+    concurrency:
+      group: release-tag-${{ needs.validate.outputs.version }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: write
       actions: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
         with:
+          ref: ${{ github.sha }}
+          # The one checkout that keeps its credential: it pushes the tag.
           persist-credentials: true
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.x"
-      - uses: actions/download-artifact@v8
+          go-version: "1.27.3"
+      - uses: actions/download-artifact@v8.0.2
         timeout-minutes: 3
         with:
           name: proof-${{ github.run_id }}-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci/proof
-      - name: validate the version
-        timeout-minutes: 1
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "version $VERSION is not vMAJOR.MINOR.PATCH" >&2
-            exit 1
-          fi
       - name: verify the release proof
         timeout-minutes: 5
         shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          go run ./test/tools/proofrun verify -release -tag "${{ inputs.version }}" -proof "$RUNNER_TEMP/ci/proof"
+          set -euo pipefail
+          go run ./test/tools/proofrun verify -release -tag "$VERSION" -proof "$RUNNER_TEMP/ci/proof"
       - name: tag
         timeout-minutes: 5
         shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           commit="$(jq -r .commit "$RUNNER_TEMP/ci/proof/proof.json")"
           tree="$(jq -r .tree "$RUNNER_TEMP/ci/proof/proof.json")"
           result="$(jq -r .result "$RUNNER_TEMP/ci/proof/proof.json")"
-          git tag -a "${{ inputs.version }}" -m "OrkStack ${{ inputs.version }}
-          proof: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          git tag -a "$VERSION" -m "OrkStack $VERSION
+          proof: $RUN_URL
           commit: $commit
           tree: $tree
           result: $result"
-          git push origin "${{ inputs.version }}"
+          git push origin "refs/tags/$VERSION"

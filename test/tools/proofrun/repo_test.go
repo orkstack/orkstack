@@ -96,3 +96,49 @@ func TestRepositoryNeverKillsByNameOrPattern(t *testing.T) {
 		t.Errorf("kills by name or pattern:\n  %s", strings.Join(offenders, "\n  "))
 	}
 }
+
+// The identity a verdict judges reaches part.json only through the flags the
+// scripts pass `proofrun record`: a script that stopped passing -temporal,
+// -image-tag-own or -gates-override would make a shared Temporal, an outside
+// tag or a PROOF_GATES run look like a clean one. Each flag the scripts pass
+// must also be one record defines.
+func TestRepositoryProofScripts_PassRecordItsIdentityFlags(t *testing.T) {
+	root := mustRepoRoot()
+	recordFlags := subcommandFlags(t, "record")
+	flagRE := regexp.MustCompile(`(?:^|[\s(])-([a-z][a-z0-9-]*)`)
+	for _, c := range []struct {
+		file, start, end string
+		want             []string
+	}{
+		{"scripts/proof.sh", "record_args=(", "README=", []string{`-temporal "$PROOF_TEMPORAL"`, "-image-tag-own", `-gates-override "$PROOF_GATES"`, "-clean-start=", "-tree-start", "-base-commit"}},
+		{"scripts/proof-part.sh", "part_record() {", "\n}\n", []string{"-temporal own", "-image-tag-own", "-clean-start=", "-tree-start", "-base-commit", "-part", "-attempt"}},
+	} {
+		b, err := os.ReadFile(filepath.Join(root, c.file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(b)
+		i := strings.Index(text, c.start)
+		if i < 0 {
+			t.Errorf("%s: no %q", c.file, c.start)
+			continue
+		}
+		j := strings.Index(text[i:], c.end)
+		if j < 0 {
+			t.Errorf("%s: no end of the record arguments", c.file)
+			continue
+		}
+		block := text[i : i+j]
+		for _, w := range c.want {
+			if !strings.Contains(block, w) {
+				t.Errorf("%s's record arguments lack %s", c.file, w)
+			}
+		}
+		for _, m := range flagRE.FindAllStringSubmatch(block, -1) {
+			// One-letter words are the shell's own tests ([ -f … ], [ -n … ]).
+			if len(m[1]) > 1 && !recordFlags[m[1]] {
+				t.Errorf("%s passes record -%s, which record does not define", c.file, m[1])
+			}
+		}
+	}
+}

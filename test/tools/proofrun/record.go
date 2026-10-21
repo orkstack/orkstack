@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -49,15 +50,19 @@ type proofRecord struct {
 		Image   string `json:"image,omitempty"`
 		Address string `json:"address,omitempty"`
 	} `json:"temporal"`
-	ProofJobs      int      `json:"proof_jobs"`
-	UIWorkers      int      `json:"proof_ui_workers"`
-	GuardRetries   *int     `json:"network_change_retries,omitempty"`
-	GuardCeiling   *int     `json:"network_change_retry_ceiling,omitempty"`
-	GatesOverride  string   `json:"proof_gates_override,omitempty"`
-	Result         string   `json:"result"`
-	MergeEligible  bool     `json:"merge_eligible"`
-	Ineligible     []string `json:"ineligible_reasons"`
-	EvidenceFailed []string `json:"evidence_without_a_pass,omitempty"`
+	ProofJobs     int      `json:"proof_jobs"`
+	UIWorkers     int      `json:"proof_ui_workers"`
+	GuardRetries  *int     `json:"network_change_retries,omitempty"`
+	GuardCeiling  *int     `json:"network_change_retry_ceiling,omitempty"`
+	GatesOverride string   `json:"proof_gates_override,omitempty"`
+	Result        string   `json:"result"`
+	MergeEligible bool     `json:"merge_eligible"`
+	Ineligible    []string `json:"ineligible_reasons"`
+	// EligibleButForTier says that the only ineligible reason is the tier's
+	// own ("only a full proof is merge evidence"): every identity and
+	// completeness rule held. A release tag needs it (verify -release).
+	EligibleButForTier bool     `json:"eligible_but_for_tier"`
+	EvidenceFailed     []string `json:"evidence_without_a_pass,omitempty"`
 
 	// Merged proofs: the parts they were built from, the reruns GitHub caused,
 	// and the plan, lists and gaps the merger recorded (plan §2.6).
@@ -72,8 +77,10 @@ type proofRecord struct {
 	KnownGaps         []string           `json:"known_gaps,omitempty"`
 	BinaryDigestNotes []string           `json:"binary_digest_notes,omitempty"`
 	ListsChanged      []listChange       `json:"lists_changed,omitempty"`
-	PR                *prRecord          `json:"pr,omitempty"`
-	CI                *ciRecord          `json:"ci,omitempty"`
+	// QuarantineWarnings are the entries within seven days of their date.
+	QuarantineWarnings []string  `json:"quarantine_warnings,omitempty"`
+	PR                 *prRecord `json:"pr,omitempty"`
+	CI                 *ciRecord `json:"ci,omitempty"`
 }
 
 // mainBranch is the branch a merge candidate fast-forwards, and the only base
@@ -132,8 +139,10 @@ func verdict(r *proofRecord, status int, observabilityRequired bool, ledgersOK m
 	if pass {
 		r.Result = "pass"
 	}
+	tierOnly := 0
 	if r.Tier != "full" {
-		r.Ineligible = append(r.Ineligible, "tier "+r.Tier+": only a full proof is merge evidence")
+		r.Ineligible = append(r.Ineligible, tierIneligible(r.Tier))
+		tierOnly = 1
 	}
 	if !pass {
 		r.Ineligible = append(r.Ineligible, "the proof did not pass")
@@ -176,6 +185,13 @@ func verdict(r *proofRecord, status int, observabilityRequired bool, ledgersOK m
 		r.Ineligible = append(r.Ineligible, "network-change retries above the ceiling")
 	}
 	r.MergeEligible = len(r.Ineligible) == 0
+	r.EligibleButForTier = len(r.Ineligible) == tierOnly
+}
+
+// tierIneligible is the one reason a passing release or nightly proof is not
+// merge evidence; verdict counts it apart, so nothing matches its text.
+func tierIneligible(tier string) string {
+	return "tier " + tier + ": only a full proof is merge evidence"
 }
 
 // evidenceFailures lists the feature evidence that has no pass. A skip, even
@@ -438,6 +454,9 @@ func cmdVerify(args []string) int {
 		fmt.Printf("merge-check: %v\n", err)
 		return 1
 	}
+	for _, w := range r.QuarantineWarnings {
+		fmt.Printf("merge-check: %s\n", w)
+	}
 	if len(r.ListsChanged) > 0 {
 		fmt.Printf("merge-check: this proof's change edits the gate's own files:\n")
 		for _, c := range r.ListsChanged {
@@ -465,19 +484,13 @@ func cmdVerify(args []string) int {
 }
 
 // verifyRelease is the tag precondition: a passing release proof, of the exact
-// commit the tag names (or of HEAD, before the tag is created), clean.
+// commit the tag names (or of HEAD, before the tag is created), clean, whose
+// every identity and eligibility rule held.
 func verifyRelease(dir, tag string) int {
 	var r proofRecord
 	if err := readJSON(filepath.Join(dir, "proof.json"), &r); err != nil {
 		fmt.Printf("release-check: %v\n", err)
 		return 1
-	}
-	problems := []string{}
-	if r.Tier != tierRelease {
-		problems = append(problems, "it is a "+orDash(r.Tier)+" proof; a tag needs the release tier")
-	}
-	if r.Result != "pass" {
-		problems = append(problems, "its result is "+orDash(r.Result))
 	}
 	target := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", "HEAD^{commit}"))
 	if tag != "" {
@@ -489,15 +502,7 @@ func verifyRelease(dir, tag string) int {
 	if target != "" {
 		tree = strings.TrimSpace(mustGit("rev-parse", target+"^{tree}"))
 	}
-	if r.Commit == "" || r.Commit != target {
-		problems = append(problems, fmt.Sprintf("it proved commit %s, and the tag is %s", orDash(short(r.Commit)), orDash(short(target))))
-	}
-	if r.Tree != tree {
-		problems = append(problems, fmt.Sprintf("it proved tree %s, and the commit's tree is %s", orDash(short(r.Tree)), orDash(short(tree))))
-	}
-	if !r.CleanStart || !r.CleanEnd || r.Tree != r.TreeEnd {
-		problems = append(problems, "the tree was not clean at the proof's start and end")
-	}
+	problems := releaseProofProblems(r, target, tree)
 	if len(problems) > 0 {
 		fmt.Printf("release-check: %s cannot tag %s:\n", dir, orDash(tag))
 		for _, p := range problems {
@@ -509,6 +514,43 @@ func verifyRelease(dir, tag string) int {
 	return 0
 }
 
+// releaseProofProblems is verify -release's rule, pure: tier release, a pass,
+// the exact target commit and its tree, clean, and no ineligible reason but
+// the release tier's own. A shared Temporal, an outside image tag, a
+// PROOF_GATES override, parts that ran other image digests: each is an
+// ineligible reason verdict() or the merger recorded, so each refuses a tag.
+func releaseProofProblems(r proofRecord, target, tree string) []string {
+	var problems []string
+	if r.Tier != tierRelease {
+		problems = append(problems, "it is a "+orDash(r.Tier)+" proof; a tag needs the release tier")
+	}
+	if r.Result != "pass" {
+		problems = append(problems, "its result is "+orDash(r.Result))
+	}
+	if r.Commit == "" || r.Commit != target {
+		problems = append(problems, fmt.Sprintf("it proved commit %s, and the tag is %s", orDash(short(r.Commit)), orDash(short(target))))
+	}
+	if r.Tree == "" || r.Tree != tree {
+		problems = append(problems, fmt.Sprintf("it proved tree %s, and the commit's tree is %s", orDash(short(r.Tree)), orDash(short(tree))))
+	}
+	if !r.CleanStart || !r.CleanEnd || r.Tree != r.TreeEnd {
+		problems = append(problems, "the tree was not clean at the proof's start and end")
+	}
+	if !r.EligibleButForTier {
+		var reasons []string
+		for _, reason := range r.Ineligible {
+			if reason != tierIneligible(r.Tier) {
+				reasons = append(reasons, reason)
+			}
+		}
+		if len(reasons) == 0 {
+			reasons = []string{"its proof.json does not record that every identity rule held (eligible_but_for_tier)"}
+		}
+		problems = append(problems, "it is not eligible evidence: "+strings.Join(reasons, "; "))
+	}
+	return problems
+}
+
 // verifyNightlyProblems is interim rule A's mechanical check: while main's
 // nightly list is non-empty, a merge needs a passing nightly proof of main's
 // tip tree.
@@ -517,8 +559,19 @@ func verifyNightlyProblems(nightlyDir, mainTip string) []string {
 		return nil
 	}
 	list := mustGit("show", mainBranch+":scripts/proof-nightly-tests.txt")
-	entries, err := parseNightlyList(strings.NewReader(list), "scripts/proof-nightly-tests.txt")
-	if err != nil || len(entries) == 0 {
+	mainTree := strings.TrimSpace(mustGit("rev-parse", mainTip+"^{tree}"))
+	return nightlyProofProblems(list, nightlyDir, mainTree)
+}
+
+// nightlyProofProblems is verifyNightlyProblems, pure over main's list text,
+// the nightly proof's directory and main's tip tree.
+func nightlyProofProblems(list, nightlyDir, mainTree string) []string {
+	entries, err := parseNightlyList(strings.NewReader(list), mainBranch+":scripts/proof-nightly-tests.txt")
+	if err != nil {
+		// An unreadable list is not an empty one: it fails closed.
+		return []string{fmt.Sprintf("%s's nightly list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
+	}
+	if len(entries) == 0 {
 		return nil
 	}
 	if nightlyDir == "" {
@@ -535,8 +588,16 @@ func verifyNightlyProblems(nightlyDir, mainTip string) []string {
 	if r.Result != "pass" {
 		p = append(p, "the nightly proof did not pass")
 	}
-	mainTree := strings.TrimSpace(mustGit("rev-parse", mainTip+"^{tree}"))
-	if r.Tree != mainTree {
+	if !r.EligibleButForTier {
+		var reasons []string
+		for _, reason := range r.Ineligible {
+			if reason != tierIneligible(r.Tier) {
+				reasons = append(reasons, reason)
+			}
+		}
+		p = append(p, "the nightly proof is not eligible evidence: "+orDash(strings.Join(reasons, "; ")))
+	}
+	if r.Tree == "" || r.Tree != mainTree {
 		p = append(p, fmt.Sprintf("the nightly proof measured tree %s, and %s's tip tree is %s", orDash(short(r.Tree)), mainBranch, orDash(short(mainTree))))
 	}
 	if !r.CleanStart || !r.CleanEnd || r.Tree != r.TreeEnd {
@@ -632,46 +693,42 @@ func cmdTemporalArgs(args []string) int {
 
 func cmdCosts(args []string) int {
 	fs := flag.NewFlagSet("costs", flag.ContinueOnError)
-	from := fs.String("from", "", "a full proof's directory")
-	costsOut := fs.String("costs-out", "scripts/proof-test-costs.tsv", "where to write the cost ledger")
+	var from multiFlag
+	fs.Var(&from, "from", "a full, release or nightly proof's directory, or a merged CI proof's (repeatable; a later source is newer)")
+	costsOut := fs.String("costs-out", "scripts/proof-test-costs.tsv", "where to write the cost ledger (its committed rows are kept where no source measured)")
 	slowOut := fs.String("slow-out", "scripts/proof-slow-tests.txt", "where to write the slow list")
 	uiCostsOut := fs.String("ui-costs-out", "scripts/proof-ui-costs.tsv", "where to write the spec files' measured walls")
 	threshold := fs.Float64("threshold", slowThreshold, "seconds at which a test is slow")
-	if err := fs.Parse(args); err != nil || *from == "" {
-		fmt.Fprintln(os.Stderr, "proofrun costs -from proof/<name>")
+	if err := fs.Parse(args); err != nil || len(from) == 0 {
+		fmt.Fprintln(os.Stderr, "proofrun costs -from proof/<name> [-from proof/<newer>]...")
 		return 2
 	}
-	var lines []costLine
-	var r proofRecord
-	source := filepath.Base(*from)
-	if readJSON(filepath.Join(*from, "proof.json"), &r) == nil {
-		if r.Tier == "feature" {
-			fmt.Fprintln(os.Stderr, "proofrun costs: only a full, release or nightly proof measures tests in full; this is a "+r.Tier+" proof")
-			return 2
-		}
-		source = fmt.Sprintf("proof/%s (commit %s)", r.Name, short(r.Commit))
-	}
-	var l ledger
-	if err := readJSON(filepath.Join(*from, "integration-tests.json"), &l); err == nil {
-		lines = costsFromLedger(l)
-	} else {
-		f, err := os.Open(filepath.Join(*from, "integration.log"))
+	var sources []costSource
+	for _, dir := range from {
+		src, err := readCostSource(dir)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "proofrun costs: neither integration-tests.json nor integration.log:", err)
-			return 2
-		}
-		defer f.Close()
-		if lines, err = costsFromGoTestLog(f); err != nil {
 			fmt.Fprintln(os.Stderr, "proofrun costs:", err)
 			return 2
 		}
-		if source == filepath.Base(*from) {
-			source = "proof/" + source + readmeCommit(filepath.Join(*from, "README.md"))
-		}
+		sources = append(sources, src)
 	}
+	committed, err := readCosts(*costsOut)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun costs:", err)
+		return 2
+	}
+	lines, notes := mergeCosts(committed, sources)
 	if len(lines) == 0 {
 		fmt.Fprintln(os.Stderr, "proofrun costs: no measured test")
 		return 2
+	}
+	var names []string
+	for _, src := range sources {
+		names = append(names, src.name)
+	}
+	source := strings.Join(names, "; ")
+	for _, n := range notes {
+		fmt.Println("note:", n)
 	}
 	cf, err := os.Create(*costsOut)
 	if err != nil {
@@ -679,6 +736,9 @@ func cmdCosts(args []string) int {
 		return 2
 	}
 	writeCosts(cf, append([]costLine{}, lines...), source)
+	for _, n := range notes {
+		fmt.Fprintf(cf, "# note: %s\n", n)
+	}
 	_ = cf.Close()
 	sf, err := os.Create(*slowOut)
 	if err != nil {
@@ -688,19 +748,152 @@ func cmdCosts(args []string) int {
 	writeSlowList(sf, lines, *threshold, source)
 	_ = sf.Close()
 	fmt.Printf("wrote %s and %s from %s (%d tests)\n", *costsOut, *slowOut, source, len(lines))
-	if files, why := uiFilesFrom(*from); len(files) > 0 {
+	// The UI costs come from the newest source with a Playwright ledger.
+	for i := len(sources) - 1; i >= 0; i-- {
+		files, why := uiFilesFrom(sources[i].dir)
+		if len(files) == 0 {
+			fmt.Printf("%s: %s\n", sources[i].name, why)
+			continue
+		}
 		uf, err := os.Create(*uiCostsOut)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
 		}
-		writeUICosts(uf, files, source)
+		writeUICosts(uf, files, sources[i].name)
 		_ = uf.Close()
-		fmt.Printf("wrote %s from %s (%d spec files)\n", *uiCostsOut, source, len(files))
-	} else {
-		fmt.Printf("left %s as it is: %s\n", *uiCostsOut, why)
+		fmt.Printf("wrote %s from %s (%d spec files)\n", *uiCostsOut, sources[i].name, len(files))
+		return 0
 	}
+	fmt.Printf("left %s as it is: no source has a Playwright ledger with file walls\n", *uiCostsOut)
 	return 0
+}
+
+// costSource is one proof a costs refresh reads: what it measured, and what
+// its plan listed.
+type costSource struct {
+	dir, name string
+	measured  []costLine
+	// listed is every test the source's plan lists (packages[].listed); for
+	// a format-1 plan, or none, the source's ledger entries.
+	listed   map[testKey]bool
+	fallback bool
+}
+
+// readCostSource reads one source directory: a local proof, or a merged CI
+// proof whose plan is under parts/.
+func readCostSource(dir string) (costSource, error) {
+	src := costSource{dir: dir, name: filepath.Base(dir), listed: map[testKey]bool{}}
+	var r proofRecord
+	if readJSON(filepath.Join(dir, "proof.json"), &r) == nil {
+		if r.Tier == tierFeature {
+			return src, fmt.Errorf("%s: only a full, release or nightly proof measures tests in full; this is a %s proof", dir, r.Tier)
+		}
+		src.name = fmt.Sprintf("proof/%s (commit %s)", r.Name, short(r.Commit))
+	}
+	var l ledger
+	if err := readJSON(filepath.Join(dir, "integration-tests.json"), &l); err == nil {
+		src.measured = costsFromLedger(l)
+		for _, e := range l.Tests {
+			if e.Outcome != "deferred" {
+				src.listed[testKey{e.Package, e.Test}] = true
+			}
+		}
+	} else {
+		f, err := os.Open(filepath.Join(dir, "integration.log"))
+		if err != nil {
+			return src, fmt.Errorf("%s: neither integration-tests.json nor integration.log: %v", dir, err)
+		}
+		defer f.Close()
+		if src.measured, err = costsFromGoTestLog(f); err != nil {
+			return src, err
+		}
+		for _, c := range src.measured {
+			src.listed[testKey{c.Package, c.Test}] = true
+		}
+		if src.name == filepath.Base(dir) {
+			src.name = "proof/" + src.name + readmeCommit(filepath.Join(dir, "README.md"))
+		}
+	}
+	if listed, ok := planListing(dir); ok {
+		src.listed = listed
+	} else {
+		src.fallback = true
+	}
+	return src, nil
+}
+
+// planListing reads a source's format-2 plan (beside it, or in a merged CI
+// proof's parts/) and returns every test its packages list. A format-1 plan
+// (a bare array of jobs) or no plan lists nothing.
+func planListing(dir string) (map[testKey]bool, bool) {
+	candidates := []string{filepath.Join(dir, "integration-plan.json")}
+	if more, err := filepath.Glob(filepath.Join(dir, "parts", "*", "integration-plan.json")); err == nil {
+		candidates = append(candidates, more...)
+	}
+	for _, file := range candidates {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		if t := strings.TrimSpace(string(b)); strings.HasPrefix(t, "[") {
+			return nil, false
+		}
+		var p integrationPlan
+		if json.Unmarshal(b, &p) != nil || p.Format != planFormat {
+			continue
+		}
+		listed := map[testKey]bool{}
+		for _, pk := range p.Packages {
+			for _, t := range pk.Listed {
+				listed[testKey{pk.ImportPath, t}] = true
+			}
+		}
+		return listed, true
+	}
+	return nil, false
+}
+
+// mergeCosts is the costs refresh (plan §2.1, costs): per test, the newest
+// source that measured it wins; a test some source's plan lists and no source
+// measured keeps its committed row; a committed test no source lists is
+// dropped, because it no longer exists. So a nightly proof alone rewrites only
+// the rows it measured.
+func mergeCosts(committed costs, sources []costSource) ([]costLine, []string) {
+	var notes []string
+	measured := map[testKey]float64{}
+	listed := map[testKey]bool{}
+	for _, src := range sources {
+		for _, c := range src.measured {
+			measured[testKey{c.Package, c.Test}] = c.Seconds
+		}
+		for k := range src.listed {
+			listed[k] = true
+		}
+		if src.fallback {
+			notes = append(notes, src.name+" has no format-2 plan: the tests it lists are its ledger's entries")
+		}
+	}
+	var out []costLine
+	for k := range listed {
+		if s, ok := measured[k]; ok {
+			out = append(out, costLine{k.Package, k.Test, s})
+		} else if s, ok := committed[k]; ok {
+			out = append(out, costLine{k.Package, k.Test, s})
+		}
+	}
+	for k, s := range measured {
+		if !listed[k] {
+			out = append(out, costLine{k.Package, k.Test, s})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Package != out[j].Package {
+			return out[i].Package < out[j].Package
+		}
+		return out[i].Test < out[j].Test
+	})
+	return out, notes
 }
 
 // readmeCommit finds "- commit: <sha>" in a proof README written before

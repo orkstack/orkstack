@@ -65,6 +65,9 @@ type listChange struct {
 	File    string   `json:"file"`
 	Added   []string `json:"added"`
 	Removed []string `json:"removed"`
+	// Error says the gate files could not be listed at all; it is never read
+	// as "no gate file changed".
+	Error string `json:"error,omitempty"`
 }
 type prRecord struct {
 	Number       int    `json:"number"`
@@ -107,11 +110,14 @@ type planShard struct {
 }
 
 type integrationPlan struct {
-	Format                int             `json:"format"`
-	Tree                  string          `json:"tree"`
-	Commit                string          `json:"commit"`
-	Tier                  string          `json:"tier"`
-	ProofID               string          `json:"proof_id"`
+	Format  int    `json:"format"`
+	Tree    string `json:"tree"`
+	Commit  string `json:"commit"`
+	Tier    string `json:"tier"`
+	ProofID string `json:"proof_id"`
+	// CheckedOn is the proof's start date (UTC, YYYY-MM-DD): every quarantine
+	// review-by date is judged against it, by every part and by the merger.
+	CheckedOn             string          `json:"checked_on"`
 	BaseRef               string          `json:"base_ref"`
 	BaseCommit            string          `json:"base_commit"`
 	MergeBase             string          `json:"merge_base"`
@@ -121,6 +127,7 @@ type integrationPlan struct {
 	Nightly               nightlyRef      `json:"nightly"`
 	AllowedSkips          fileRef         `json:"allowed_skips"`
 	Quarantine            quarantineRef   `json:"quarantine"`
+	HostSpeed             quarantineRef   `json:"host_speed"`
 	PartsExpected         []string        `json:"parts_expected"`
 	Packages              []planPackage   `json:"packages"`
 	Expected              []testRef       `json:"expected"`

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -92,5 +94,38 @@ func TestTouches_GateFilesAreTheOnesCodeownersMustCover(t *testing.T) {
 		if isGateFile(p) {
 			t.Errorf("%s is a gate file", p)
 		}
+	}
+}
+
+// The host-speed table excuses a failure too, so a change to it is itemised
+// row by row like the other excusing lists (R2-M1).
+func TestTouches_TheHostSpeedTableIsItemisedRowByRow(t *testing.T) {
+	const table = "scripts/proof-host-speed.tsv"
+	row := "ui\te2e/a.spec.ts\tt\tlessThan 5000\t5\t16\tnote"
+	changes := gateFileChanges([]changedPath{{Path: table}}, func(string) (string, string) {
+		return "# header\n" + row + "\n", "# header\n" + strings.Replace(row, "\t5\t", "\t9\t", 1) + "\n"
+	})
+	if len(changes) != 1 || len(changes[0].Added) != 1 || len(changes[0].Removed) != 1 ||
+		!strings.Contains(changes[0].Added[0], "\t9\t") || changes[0].Removed[0] != row {
+		t.Errorf("changes = %+v, want the loosened row added and the base's row removed", changes)
+	}
+}
+
+// A failure to list the gate files is written as an error entry, never as
+// an empty list a caller would read as "no gate file changed".
+func TestTouches_AFailureIsAnErrorEntryNotAnEmptyList(t *testing.T) {
+	quiet(t)
+	var b strings.Builder
+	prev := os.Stderr
+	devnull, _ := os.Open(os.DevNull)
+	os.Stderr = devnull
+	code := touchesGateFiles(&b, "no-such-ref-for-this-test")
+	os.Stderr = prev
+	var got []listChange
+	if err := json.Unmarshal([]byte(b.String()), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, b.String())
+	}
+	if code != 1 || len(got) != 1 || !strings.Contains(got[0].Error, "is not a commit") {
+		t.Errorf("exit %d, %+v", code, got)
 	}
 }

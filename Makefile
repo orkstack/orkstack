@@ -151,11 +151,10 @@ fmt: ## Format Go code
 	gofmt -w $$(find . -name '*.go' -not -path './gen/*')
 
 .PHONY: check
-check: ## The fast contributor path: build, vet, lint and the unit suites with -short; no Docker, no Temporal
-	go build ./...
-	go vet ./...
-	@test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './gen/*'))" || (echo "gofmt needed:"; gofmt -l $$(find . -name '*.go' -not -path './gen/*'); exit 1)
-	go test -short ./... -count=1
+check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integration suites, unit tests (-short, test cache kept)
+	$(MAKE) lint
+	go vet -tags=integration ./...
+	go test -short ./...
 
 .PHONY: merge-check
 merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree (AGENTS.md §11.3)

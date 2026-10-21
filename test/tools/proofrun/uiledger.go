@@ -315,6 +315,8 @@ func cmdUILedger(args []string) int {
 	out := fs.String("out", "", "the proof directory")
 	shard := fs.Int("shard", 1, "which shard of the UI plan this run is, recorded in files[].shard")
 	hostSpeed := fs.String("host-speed", "scripts/proof-host-speed.tsv", "declared runner-size budgets")
+	hostSpeedBase := fs.String("host-speed-base", "", "the base's copy of the host-speed table (only rows it carries excuse)")
+	part := fs.String("part", "local", "the part this ledger belongs to: only a CI ui-e2e:K part may excuse a runner-size miss")
 	if err := fs.Parse(args); err != nil || *listFile == "" || *reportFile == "" || *out == "" {
 		fmt.Fprintln(os.Stderr, "proofrun ui-ledger -list FILE -report FILE -log FILE -out DIR")
 		return 2
@@ -344,25 +346,44 @@ func cmdUILedger(args []string) int {
 	for i := range l.Files {
 		l.Files[i].Shard = *shard
 	}
-	// A declared runner-size miss exits the shard cleanly and is recorded in
-	// this part's ledger: the merge job turns it into a known gap. Only a
-	// failure of an undeclared budget stays a shard failure.
+	// A declared runner-size miss of a CI UI shard exits the shard cleanly and
+	// is recorded in this part's ledger; the merger re-derives every one of
+	// them and never takes the shard's word for it. Only a failed timing
+	// assertion of a bound the base also declares is excused here; a skip, a
+	// missing outcome or any other failure stays a shard failure, and the
+	// local part never excuses at all (hostspeed.go).
+	tree, err := readHostSpeed(*hostSpeed)
+	if err != nil {
+		fmt.Println("ui-e2e ledger:", err)
+		return 1
+	}
+	base, err := readHostSpeed(*hostSpeedBase)
+	if err != nil {
+		fmt.Println("ui-e2e ledger: the base's host-speed table excuses nothing:", err)
+		base = emptyHostSpeed()
+	}
+	declared := anchoredHostSpeed(tree, base)
 	cpus := runtime.NumCPU()
-	declared := readHostSpeed(*hostSpeed)
+	excused := map[string]hostSpeedFailure{}
+	for _, e := range l.Tests {
+		if f, ok := declared.uiRunnerSizeMiss(*part, cpus, e); ok {
+			excused[f.Message] = f
+		}
+	}
 	var kept []string
 	for _, p := range l.Problems {
-		if bound, ok := declared.specForProblem(p); ok && cpus > 0 && cpus < bound.ReferenceCPUs {
-			l.HostSpeedFailures = append(l.HostSpeedFailures, hostSpeedFailure{
-				Test: p, Kind: "ui", Bound: bound.Bound, RunnerCPUs: cpus,
-				ReferenceCPUs: bound.ReferenceCPUs, Message: p,
-			})
+		if f, ok := excused[p]; ok {
+			l.HostSpeedFailures = append(l.HostSpeedFailures, f)
 			l.KnownGaps = append(l.KnownGaps, p)
-			fmt.Printf("ui-e2e known gap: %s on a %d-CPU runner (bound %.0fs, reference %d CPUs)\n", p, cpus, bound.Bound, bound.ReferenceCPUs)
+			fmt.Printf("ui-e2e known gap: %s on a %d-CPU runner (bound %.0fs, reference %d CPUs)\n", p, cpus, f.Bound, f.ReferenceCPUs)
 			continue
 		}
 		kept = append(kept, p)
 	}
 	l.Problems = kept
+	if l.Problems == nil {
+		l.Problems = []string{}
+	}
 	if err := writeJSON(filepath.Join(*out, "ui-e2e-tests.json"), l); err != nil {
 		fmt.Println(err)
 		return 1

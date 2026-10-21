@@ -4,6 +4,7 @@
 #   make github-merge-gate                 check only (default)
 #   make github-merge-gate APPLY=1         apply the queue-less mode
 #   make github-merge-gate APPLY=1 QUEUE=1 also apply the merge queue
+#                                          (APPLY=1 alone switches back)
 #   make github-merge-gate CODEOWNER_REVIEW=0   leave code-owner review out
 #   scripts/github-merge-gate.sh --verify-landed SHA
 #
@@ -28,7 +29,7 @@ while [ $# -gt 0 ]; do
 	--check) MODE=check; shift ;;
 	--apply) MODE=apply; shift ;;
 	--verify-landed) VERIFY_LANDED="$2"; shift 2 ;;
-	-h | --help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	-h | --help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
@@ -63,11 +64,17 @@ if [ -n "$VERIFY_LANDED" ]; then
 	run_id="$(gh api "$api/commits/$sha/check-runs" --jq '[.check_runs[] | select(.name=="proof" and .app.id==15368)][0].details_url // ""' 2>/dev/null |
 		sed -E 's#.*/runs/([0-9]+).*#\1#')"
 	[ -n "$run_id" ] || { bad "no proof check run on $sha"; exit 1; }
-	gh run download "$run_id" -R "$repo" -n "proof-$run_id-a1" -D "$tmp" 2>/dev/null ||
-		gh run download "$run_id" -R "$repo" -D "$tmp" 2>/dev/null || true
-	got="$(jq -r .tree "$tmp/proof.json" 2>/dev/null)"
+	# A pattern download puts each artifact in a directory of its own name;
+	# the run's last attempt is the proof that decided the check.
+	gh run download "$run_id" -R "$repo" -p "proof-$run_id-a*" -D "$tmp" 2>/dev/null || true
+	proof_dir="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -name "proof-$run_id-a*" 2>/dev/null | sort -V | tail -n1)"
+	if [ -z "$proof_dir" ] && [ -f "$tmp/proof.json" ]; then
+		proof_dir="$tmp"
+	fi
+	[ -n "$proof_dir" ] && [ -f "$proof_dir/proof.json" ] || { bad "proof run $run_id left no proof-$run_id-a* artifact with a proof.json"; exit 1; }
+	got="$(jq -r .tree "$proof_dir/proof.json" 2>/dev/null)"
 	if [ "$got" = "$tree" ]; then
-		ok "proof run $run_id measured tree $tree, which is $sha's tree"
+		ok "proof run $run_id ($(basename "$proof_dir")) measured tree $tree, which is $sha's tree"
 		exit 0
 	fi
 	bad "proof run $run_id measured tree ${got:-<none>}, and $sha's tree is $tree"
@@ -107,12 +114,34 @@ if git cat-file -e origin/main:.github/workflows/proof.yml 2>/dev/null; then
 else
 	bad "origin/main has no .github/workflows/proof.yml"
 fi
+# Precondition 10: CODEOWNERS exists and names an account that can approve,
+# that is, one with write access. Otherwise the owner-review ruleset blocks
+# every pull request that touches a gate file.
+owners_fail() { if [ "$CODEOWNER_REVIEW" = 1 ]; then bad "$* (CODEOWNER_REVIEW=0 leaves code-owner review out)"; else warn "$*; code-owner review is off"; fi; }
 if git cat-file -e origin/main:.github/CODEOWNERS 2>/dev/null; then
 	ok "origin/main holds .github/CODEOWNERS"
-elif [ "$CODEOWNER_REVIEW" = 1 ]; then
-	bad "origin/main has no .github/CODEOWNERS, and code-owner review is on (CODEOWNER_REVIEW=0 leaves it out)"
+	writers=""
+	for owner in $(git show origin/main:.github/CODEOWNERS 2>/dev/null | sed -e 's/#.*//' | tr -s ' \t' '\n' | grep '^@' | sort -u); do
+		who="${owner#@}"
+		case "$who" in
+		*/*)
+			# A team: its permission on this repository.
+			push="$(gh api -H 'Accept: application/vnd.github.v3.repository+json' "orgs/${who%%/*}/teams/${who#*/}/repos/$repo" --jq '.permissions.push // false' 2>/dev/null || true)"
+			[ "$push" = true ] && writers="$writers $owner"
+			;;
+		*)
+			perm="$(gh api "$api/collaborators/$who/permission" --jq '.permission // ""' 2>/dev/null || true)"
+			case "$perm" in admin | maintain | write) writers="$writers $owner" ;; esac
+			;;
+		esac
+	done
+	if [ -n "$writers" ]; then
+		ok "CODEOWNERS names an account with write access:$writers"
+	else
+		owners_fail "CODEOWNERS at origin/main names no account with write access to $repo"
+	fi
 else
-	warn "origin/main has no .github/CODEOWNERS; code-owner review is off"
+	owners_fail "origin/main has no .github/CODEOWNERS"
 fi
 
 if go test ./test/tools/proofrun -run '^TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests$' -count=1 >/dev/null 2>&1; then
@@ -131,27 +160,54 @@ else
 	warn "nightly.yml is ${nightly:-missing}; GitHub disables a schedule after 60 days without activity: gh workflow enable nightly.yml"
 fi
 
-check_proof="$(gh api "$api/commits/origin/main/check-runs" 2>/dev/null | jq '[.check_runs[]? | select(.name=="proof" and .app.id==15368 and .conclusion=="success")] | length' 2>/dev/null || echo 0)"
+# Precondition 6: the GitHub Actions app has reported a successful `proof`
+# check on some commit: main's tip, or the head of the newest successful run
+# of proof.yml (a pull request's head, or a validate/full push). A required
+# check with an integration_id needs that report first. GitHub's commits
+# endpoint takes a SHA or a branch, never a remote-tracking name.
+proof_success() { # <sha>
+	gh api "$api/commits/$1/check-runs?check_name=proof" 2>/dev/null |
+		jq '[.check_runs[]? | select(.name=="proof" and .app.id==15368 and .conclusion=="success")] | length' 2>/dev/null || echo 0
+}
+main_sha="$(git rev-parse origin/main 2>/dev/null)"
+check_proof=0
+[ -n "$main_sha" ] && check_proof="$(proof_success "$main_sha")"
+if ! [ "${check_proof:-0}" -gt 0 ] 2>/dev/null; then
+	run_sha="$(gh api "$api/actions/workflows/proof.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)"
+	[ -n "$run_sha" ] && check_proof="$(proof_success "$run_sha")"
+fi
 if [ "${check_proof:-0}" -gt 0 ] 2>/dev/null; then
-	ok "the GitHub Actions app has reported a successful proof check"
+	ok "the GitHub Actions app (15368) has reported a successful proof check"
 else
-	warn "no successful proof check from app 15368 yet; the first run creates it"
+	bad "no successful proof check from the GitHub Actions app (15368) yet: run proof.yml once (a validate/full/** push or a pull request with ci:proof) before requiring it"
 fi
 
 rulesets="$(gh api "$api/rulesets" 2>/dev/null || echo '[]')"
 mode_var="$(gh api "$api/actions/variables/MERGE_GATE_MODE" 2>/dev/null | jq -r '.value // ""' 2>/dev/null || true)"
-if [ "$QUEUE" = 1 ]; then
-	if [ "${mode_var:-}" = queue ]; then
-		ok "MERGE_GATE_MODE=queue agrees with the queue mode"
-	else
-		bad "MERGE_GATE_MODE is ${mode_var:-unset}; the queue mode sets it to queue"
+# The variable must agree with what is applied now — the existing
+# main-proof-gate ruleset's merge_queue rule — never with the requested mode:
+# the apply below changes both, in the order that is never looser than either
+# mode (docs/PROOFS.md §10, "Enable the merge gate").
+main_id="$(jq -r '[.[]? | select(.name == "main-proof-gate") | .id][0] // ""' <<<"$rulesets" 2>/dev/null || true)"
+applied_queue=false
+if [ -n "$main_id" ]; then
+	if gh api "$api/rulesets/$main_id" 2>/dev/null | jq -e '[.rules[]? | select(.type == "merge_queue")] | length > 0' >/dev/null 2>&1; then
+		applied_queue=true
 	fi
+fi
+if [ "$applied_queue" = true ] && [ "${mode_var:-}" = queue ]; then
+	ok "MERGE_GATE_MODE=queue agrees with main-proof-gate's merge_queue rule"
+elif [ "$applied_queue" = false ] && [ "${mode_var:-}" != queue ]; then
+	ok "MERGE_GATE_MODE is ${mode_var:-unset}, and no merge_queue rule is applied: queue-less"
+elif [ "$applied_queue" = true ]; then
+	bad "main-proof-gate has a merge_queue rule, and MERGE_GATE_MODE is ${mode_var:-unset}: pull requests would refuse what the queue lands. Fix: gh variable set MERGE_GATE_MODE --body queue"
 else
-	if [ -z "${mode_var:-}" ]; then
-		ok "MERGE_GATE_MODE is unset: queue-less"
-	else
-		bad "MERGE_GATE_MODE=${mode_var}, and this invocation asks for the queue-less mode"
-	fi
+	bad "MERGE_GATE_MODE=${mode_var}, and main-proof-gate has no merge_queue rule: pull requests would skip the containment check with no queue to land them. Fix: gh variable delete MERGE_GATE_MODE"
+fi
+want_queue=false
+[ "$QUEUE" = 1 ] && want_queue=true
+if [ "$want_queue" != "$applied_queue" ]; then
+	echo "      this invocation asks for the $([ "$want_queue" = true ] && echo queue || echo queue-less) mode; APPLY=1 switches to it"
 fi
 
 if [ "$fail" -ne 0 ]; then
@@ -197,6 +253,29 @@ apply_ruleset() { # <name> <body>
 	fi
 }
 
+# Never looser than either mode in between: leaving the queue, the variable
+# goes first (pull requests check containment again while the queue still
+# lands); entering it, the variable goes last (the queue lands before pull
+# requests stop checking).
+unset_mode_var() {
+	if [ -n "${mode_var:-}" ]; then
+		gh api --method DELETE "$api/actions/variables/MERGE_GATE_MODE" >/dev/null || { bad "deleting MERGE_GATE_MODE failed"; exit 1; }
+	fi
+	ok "MERGE_GATE_MODE unset: queue-less"
+}
+set_mode_var() {
+	if [ -z "${mode_var:-}" ]; then
+		gh api --method POST "$api/actions/variables" -f name=MERGE_GATE_MODE -f value=queue >/dev/null ||
+			{ bad "setting MERGE_GATE_MODE failed"; exit 1; }
+	elif [ "$mode_var" != queue ]; then
+		gh api --method PATCH "$api/actions/variables/MERGE_GATE_MODE" -f name=MERGE_GATE_MODE -f value=queue >/dev/null ||
+			{ bad "setting MERGE_GATE_MODE failed"; exit 1; }
+	fi
+	ok "MERGE_GATE_MODE=queue"
+}
+
+[ "$QUEUE" = 1 ] || unset_mode_var
+
 apply_ruleset main-proof-gate "$body" || { bad "applying main-proof-gate failed; read the API's answer above"; exit 1; }
 
 if [ "$CODEOWNER_REVIEW" = 1 ]; then
@@ -206,16 +285,7 @@ if [ "$CODEOWNER_REVIEW" = 1 ]; then
 	apply_ruleset gate-files-owner-review scripts/github/ruleset-owners.json || { bad "applying gate-files-owner-review failed"; exit 1; }
 fi
 
-if [ "$QUEUE" = 1 ]; then
-	gh api --method POST "$api/actions/variables" \
-		-f name=MERGE_GATE_MODE -f value=queue >/dev/null 2>&1 ||
-		gh api --method PATCH "$api/actions/variables/MERGE_GATE_MODE" -f value=queue >/dev/null ||
-		{ bad "setting MERGE_GATE_MODE failed"; exit 1; }
-	ok "MERGE_GATE_MODE=queue"
-else
-	gh api --method DELETE "$api/actions/variables/MERGE_GATE_MODE" >/dev/null 2>&1 || true
-	ok "MERGE_GATE_MODE unset: queue-less"
-fi
+[ "$QUEUE" = 1 ] && set_mode_var
 
 echo
 echo "github-merge-gate: applied. Run --verify-landed SHA once after the first merge through the gate."

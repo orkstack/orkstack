@@ -43,6 +43,9 @@ func cmdTouches(args []string) int {
 		fmt.Fprintln(os.Stderr, "proofrun touches -base REF (-action ACTION | -gate-files)")
 		return 2
 	}
+	if *gateFiles {
+		return touchesGateFiles(os.Stdout, *base)
+	}
 	scope, err := readScope(*scopeFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun touches:", err)
@@ -63,22 +66,6 @@ func cmdTouches(args []string) int {
 		fmt.Fprintln(os.Stderr, "proofrun touches:", err)
 		return 2
 	}
-	if *gateFiles {
-		changes := gateFileChanges(paths, func(path string) (before, after string) {
-			before = string(gitShow(strings.TrimSpace(mb), path))
-			if data, err := os.ReadFile(path); err == nil {
-				after = string(data)
-			}
-			return before, after
-		})
-		b, err := json.MarshalIndent(changes, "", "  ")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "proofrun touches:", err)
-			return 2
-		}
-		fmt.Println(string(b))
-		return 0
-	}
 	hit := touching(scope, paths, *action)
 	for _, p := range hit {
 		fmt.Println(p)
@@ -87,6 +74,53 @@ func cmdTouches(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// touchesGateFiles writes the -gate-files JSON. A failure to compute it is
+// written as one entry carrying the error, and exits 1, so a caller that
+// keeps the output never reads "no gate file changed" into a failure (plan
+// §6.4).
+func touchesGateFiles(w io.Writer, base string) int {
+	changes, err := gateFilesSince(base)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun touches:", err)
+		changes = []listChange{{Error: err.Error()}}
+	}
+	if changes == nil {
+		changes = []listChange{}
+	}
+	b, mErr := json.MarshalIndent(changes, "", "  ")
+	if mErr != nil {
+		fmt.Fprintln(os.Stderr, "proofrun touches:", mErr)
+		return 2
+	}
+	fmt.Fprintln(w, string(b))
+	if err != nil {
+		return 1
+	}
+	return 0
+}
+
+func gateFilesSince(base string) ([]listChange, error) {
+	bc, err := gitOut("rev-parse", "--verify", "--quiet", base+"^{commit}")
+	if err != nil {
+		return nil, fmt.Errorf("base %q is not a commit", base)
+	}
+	mb, err := gitOut("merge-base", strings.TrimSpace(bc), "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("no merge base of %s and HEAD: %v", base, err)
+	}
+	paths, err := diffPaths(strings.TrimSpace(mb))
+	if err != nil {
+		return nil, err
+	}
+	return gateFileChanges(paths, func(path string) (before, after string) {
+		before = string(gitShow(strings.TrimSpace(mb), path))
+		if data, err := os.ReadFile(path); err == nil {
+			after = string(data)
+		}
+		return before, after
+	}), nil
 }
 
 // gateFilePatterns are the files that decide what a proof runs or excuses
@@ -113,13 +147,14 @@ var gateFilePatterns = []string{
 	"ui/playwright.config.ts",
 }
 
-// excusingLists are the three lists that excuse a test; a change to one is
-// reported with the rows it adds and removes, so a reader sees exactly which
-// allowance moved.
+// excusingLists are the lists that excuse a test or a failure; a change to
+// one is reported with the rows it adds and removes, so a reader sees exactly
+// which allowance moved.
 var excusingLists = []string{
 	"scripts/proof-nightly-tests.txt",
 	"scripts/proof-quarantine.txt",
 	"scripts/proof-allowed-skips.txt",
+	"scripts/proof-host-speed.tsv",
 }
 
 // isGateFile reports whether path is one of gateFilePatterns. A pattern

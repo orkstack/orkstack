@@ -840,6 +840,11 @@ execution, and none ever reaches a container.
 | **User-provided source** | `orkctl activity build <path\|git-url> --tag <ref>` builds and pushes, printing the pinned reference to paste into `uses:`. | Real registry index digest |
 | **Embedded fallback** (builtins only) | An **OCI image layout** shipped with the Orker at `ORK_ORKER_IMAGE_LAYOUT` (default `/var/lib/orkstack/images`), used only when a pull of an already-pinned digest fails. | Real registry index digest, carried inside the layout |
 
+`orkctl activity build` pushes by default (`--push`); `--push=false` builds
+only, an image you can smoke-test but cannot pin. `--platform
+linux/amd64,linux/arm64` builds for each platform named, and `--file` names a
+Dockerfile other than the context's own.
+
 There is no *unpushed* local image: a never-pushed build has a local config ID,
 not a registry manifest digest, and it does not transfer to a second Orker.
 Making every build path push keeps AGENTS.md §5's immutable reference

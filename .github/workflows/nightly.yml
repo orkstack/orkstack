@@ -34,23 +34,25 @@ jobs:
   flakes:
     # The flake budget's evidence (docs/PROOFS.md §6.1): same-tree flips and
     # suspect failures across the last 30 days of proofs. It never edits a
-    # list; it reports.
-    if: ${{ github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch' }}
+    # list; it reports. It waits for `nightly`, whatever its result, so the
+    # window it reads includes tonight's proof; a red nightly is evidence too.
+    needs: nightly
+    if: ${{ always() && (github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         timeout-minutes: 3
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.x"
+          go-version: "1.27.3"
       - name: download the proofs of the last 30 days
         timeout-minutes: 15
         shell: bash
@@ -60,12 +62,12 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/ci/flakes" "$RUNNER_TEMP/ci/zips"
           since="$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)"
-          gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" --paginate \
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --paginate \
             --jq ".artifacts[] | select(.created_at >= \"$since\") | select(.name | startswith(\"proof-\")) | \"\(.id) \(.name)\"" |
           while read -r id name; do
             [ -n "$id" ] || continue
             mkdir -p "$RUNNER_TEMP/ci/flakes/$name"
-            gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" >"$RUNNER_TEMP/ci/zips/$name.zip" || continue
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$RUNNER_TEMP/ci/zips/$name.zip" || continue
             unzip -qo "$RUNNER_TEMP/ci/zips/$name.zip" -d "$RUNNER_TEMP/ci/flakes/$name" || true
           done
       - name: flakes
@@ -76,7 +78,7 @@ jobs:
           go run ./test/tools/proofrun flakes -from "$RUNNER_TEMP/ci/flakes/*" -repo . \
             -out "$RUNNER_TEMP/ci/flakes.tsv" -md "$RUNNER_TEMP/ci/flakes.md"
           cat "$RUNNER_TEMP/ci/flakes.md" >>"$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         timeout-minutes: 5
         with:
           name: flakes-${{ github.run_id }}-a${{ github.run_attempt }}

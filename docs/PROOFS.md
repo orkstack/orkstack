@@ -92,7 +92,9 @@ The selection is:
 - **the regression set**: in every integration package whose test binary
   depends on a changed package — through its imports or a binary its suite
   builds — every test declared in an integration-tagged file, except the slow
-  list's (`scripts/proof-slow-tests.txt`).
+  list's (`scripts/proof-slow-tests.txt`). Those are recorded in the
+  selection's `slow_omitted` and the README says "left out: on the slow list";
+  they are never called deferred, a word that belongs to the nightly tier.
 
 The regression set is never evidence. Every changed package with a change
 outside its tests and its comments needs at least one evidence test whose
@@ -148,12 +150,32 @@ and passes each shard a file list. Playwright's own `--shard` is never used.
 ## 5. The CI job graph
 
 `.github/workflows/proof.yml` is one graph behind the full, nightly and release
-tiers. It triggers on `pull_request`, `merge_group`, a push to
+tiers. It triggers on `pull_request` (opened, synchronize, reopened,
+ready_for_review — never `labeled`), `merge_group`, a push to
 `validate/full/**`, `workflow_dispatch` and `workflow_call`.
+
+```mermaid
+flowchart LR
+  base --> plan & build & fast
+  plan --> integration & ui_e2e["ui-e2e"] & observability
+  build --> integration & ui_e2e & activity_fixture["activity-fixture"] & observability
+  base & plan & build & fast & integration & ui_e2e & activity_fixture & observability --> proof
+  nightly["nightly.yml › nightly"] -. calls .-> callee["proof.yml"]
+  gate["release.yml › gate"] -. calls .-> callee
+  validate["release.yml › validate"] --> gate --> tag["release.yml › tag"]
+  nightly --> flakes["nightly.yml › flakes"]
+```
+
+Every job checks out `github.sha` — the merge commit on a pull request, the
+group's head on a merge group, the pushed commit, or the chosen branch's tip
+on a dispatch or a call — so every part tests one commit, and the merger
+checks the tree anyway. Every job but `proof` carries the same guard: on a
+pull request it runs only when the pull request is not a draft and, while the
+repository is private, carries the `ci:proof` label.
 
 | Job | Runs | Uploads |
 |---|---|---|
-| `proof.yml` › `base` | decides the base, the tree and the feature evidence a pull request names | the base files |
+| `proof.yml` › `base` | decides the base: a pull request's first parent, which must be an ancestor of its head ("update this branch") unless `MERGE_GATE_MODE` is `queue`; a merge group's base; a validate push's first parent; a dispatch's input | nothing; job outputs |
 | `proof.yml` › `plan` | compiles and lists the packages; writes both plans; decides observability | the plans, the listing, the base lists |
 | `proof.yml` › `build` | builds every activity image once as an OCI layout and records its digests | the layouts and `images.tsv` |
 | `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit | one part |
@@ -163,26 +185,38 @@ tiers. It triggers on `pull_request`, `merge_group`, a push to
 | `proof.yml` › `observability` | when the plan says it is due, or always for release | one part |
 | `proof.yml` › `proof` | `if: always()`; downloads every part and GitHub's job records; runs `proofrun merge`; writes the summary | the merged `proof.json` and ledgers |
 
-`proof` is the single required check. It passes only when the merged
-`proof.json` says `result: pass` and, for a full proof, `merge_eligible:
-true`. A skipped required job reports success, which is why `proof` runs on
-`always()` and nothing else.
+`proof` is the single required check. Its last step judges each tier by its
+own rule: a full proof must say `result: pass` and `merge_eligible: true`; a
+release proof must pass `proofrun verify -release -proof DIR` against the
+commit the job checked out, the rule the `tag` job applies; a nightly proof
+must say `result: pass`. A skipped required job reports success, which is why
+`proof` runs on `always()` and nothing else, and why on a draft, or without
+`ci:proof` while private, it fails with the reason instead of skipping.
 
 `ci.yml` holds no required check:
 
 | Job | Runs |
 |---|---|
-| `ci.yml` › `check` | `make check` on every pull request and every push to `validate/**`: no Docker, no Temporal |
-| `ci.yml` › `feature` | the feature tier on every pull-request push once the repository is public; with the `ci:feature` label while it is private, and by dispatch |
+| `ci.yml` › `check` | `make check` on every push and every pull request: no Docker, no Temporal |
+| `ci.yml` › `feature` | the feature tier on every pull-request push once the repository is public; with the `ci:feature` label while it is private; on a push to `validate/feature/**`; and by dispatch |
 
 `nightly.yml` holds two jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and
-suspect failures (`proofrun flakes`); it edits no list. `release.yml` holds
-two: `release.yml` › `gate` runs the release tier, and `release.yml` › `tag`
-runs only with `tag: true`, refuses a version that is not
-`vMAJOR.MINOR.PATCH`, and runs only after `proofrun verify -release` accepts a
-passing release proof of the exact commit.
+suspect failures (`proofrun flakes`); it edits no list. `flakes` waits for
+`nightly`, whatever its result, so its window includes that night's proof.
+`release.yml` holds three: `release.yml` › `validate` runs first on every
+dispatch and refuses a version that is not `vMAJOR.MINOR.PATCH`;
+`release.yml` › `gate` runs the release tier; and `release.yml` › `tag` runs
+only with `tag: true`, and creates and pushes the tag only after `proofrun
+verify -release` accepts a passing release proof of the exact commit. Both
+take a concurrency group named from the validated version, so two dispatches
+of one version run one after the other.
+
+No `run:` step splices a workflow input or an event field into its shell; each
+reaches the step through `env:`. Every action is pinned to an exact release of
+its latest major, and Go, Bun and cosign to exact versions; Dependabot moves
+them, one pull request and one proof at a time.
 
 The composite action `.github/actions/proof-host` installs the host setup a
 stack part needs: Docker images cached, the Temporal CLI, cosign, and the
@@ -197,7 +231,18 @@ The required `proof` check has two modes:
   request, whose branch must contain `main`'s tip, under the strict policy.
   GitHub lands exactly the tree it tested.
 - **merge queue (optional, organization-owned repositories):** `proof` runs on
-  the merge group, and the queue lands that tree.
+  the merge group, and the queue lands that tree. The repository variable
+  `MERGE_GATE_MODE=queue`, which only the enablement script sets, lifts the
+  pull request's containment check, because there the merge group is what
+  lands. It never makes `proof` trivial.
+
+A proof binds a **tree, not a commit**. GitHub does not document which commit
+a merge queue lands, and a merge commit made at merge time is not the commit a
+pull request's proof tested; what both modes guarantee is that the landed
+commit's tree is the tree the proof measured. `proof.json` records the tree,
+and `scripts/github-merge-gate.sh --verify-landed SHA` checks the first merge
+through either mode by downloading that run's `proof-<run_id>-a<n>` and
+comparing its `tree` with `SHA^{tree}`.
 
 A required check and the merge queue are GitHub settings, not repository
 files. `scripts/github-merge-gate.sh` (`make github-merge-gate`) is the
@@ -206,20 +251,59 @@ owner can carry the rulesets. **Until then the gate is not enforced**: `main`
 moves only by `AGENTS.md` §11.3's local path. An organization owner is needed
 only for the optional queue.
 
-The nightly job runs the deferred tests on a schedule. While the nightly
-workflow does not run on GitHub, `make proof-nightly` runs on `main`'s tip
+The nightly job runs the deferred tests on a schedule (05:17 UTC). A failed
+scheduled run is noticed through GitHub's standard workflow-failure
+notification; nothing opens an issue. While the nightly workflow does not run
+on GitHub, interim rule A applies: `make proof-nightly` runs on `main`'s tip
 after every merge that moves `main`, and passes before the next merge starts
 and before every tag. `make merge-check PROOF=… NIGHTLY=…` refuses a merge
 when `main`'s list is non-empty and no passing nightly proof of `main`'s tree
-is given. A red nightly or release proof is a failing `main`: fix or revert
-the change that broke it, and never edit a list, a threshold or a measurement
+is given. On the GitHub merge path `merge-check` does not run, so there rule A
+is a process rule: the merge stage runs `make proof-nightly` itself and quotes
+it. A red nightly or release proof is a failing `main`: fix or revert the
+change that broke it, and never edit a list, a threshold or a measurement
 file to make it pass.
+
+**Calibration.** The soaks' thresholds were measured on a 16-core host, and a
+public runner has 4 vCPU, so the first public nightlies are calibration runs:
+a threshold missed on runner size alone is reported and the nightly's layout
+changes (one shape per job, or a larger runner); a threshold or a measured
+default never changes without the user's approval; and until three
+consecutive public nightlies have passed, rule A's local `make proof-nightly`
+continues.
+
+**The 60-day rule.** GitHub disables a public repository's scheduled
+workflows after 60 days with no repository activity. `make github-merge-gate`
+reports `nightly.yml`'s state, and `gh workflow enable nightly.yml` is the
+fix.
 
 The pre-release gate is the release tier. A tag pushed by hand is outside
 both paths; `make release-tag` and the `tag` job are the only sanctioned
-paths.
+paths, and no tag ruleset backs them: on a User-owned repository GitHub
+refuses the Actions app as a bypass actor, and without it a ruleset would
+block `release.yml`'s own push.
 
 ## 7. Artifacts, `proof.json` and the ledgers
+
+Retention is chosen from `github.event.repository.private`:
+
+| Artifact | Contents | Retention (private / public) |
+|---|---|---|
+| `plan-a<n>` | `integration-plan.json`, `ui-plan.json`, the Playwright listing, the base lists, `part.json` | 1 d / 7 d |
+| `part-build-a<n>` | the OCI layouts, `images.tsv`, `part.json` | 1 d / 7 d |
+| `part-fast-a<n>` | `unit-tests.json`, the gates' logs; the unit log and events only when the unit gate failed | 1 d / 7 d |
+| `part-integration-<k>-a<n>` | the shard's ledger, `part.json`, gates, `integration/*.log`, events, its `artifacts/` | 1 d / 14 d |
+| `part-ui-e2e-<k>-a<n>` | ledger, logs, screenshots, the traces of failed tests | 1 d / 14 d |
+| `part-activity-fixture-<A>-a<n>`, `part-observability-a<n>` | logs, `part.json` | 1 d / 14 d |
+| `proof-<run_id>-a<n>` | the merged proof (below) | 30 d / 90 d |
+| `feature-proof-<run_id>-a<n>` (`ci.yml` › `feature`) | the feature proof directory | 14 d |
+| `flakes-<run_id>-a<n>` (`nightly.yml` › `flakes`) | `flakes.tsv`, `flakes.md` | 30 d |
+
+`plan` and `build` publish their artifact names as job outputs, and every job
+that downloads them reads the names from `needs.*.outputs`, so a "Re-run job"
+of one shard finds what attempt 1 uploaded — while it exists. Past the
+retention above, a re-run fails at its download step, and the remedy is a new
+run.
 
 The merged artifact `proof-<run_id>-a<n>` carries `proof.json`, the merged
 `unit-tests.json`, `integration-tests.json` and `ui-e2e-tests.json`, both
@@ -346,7 +430,9 @@ gap, and that every known gap is named in §12. A new §11 bullet, a moved test
 or a closed gap fails it.
 
 **Add a scope row.** A new top-level path needs a row in
-`scripts/proof-scope.tsv`; a test refuses an unmapped path.
+`scripts/proof-scope.tsv`: `TestRepositoryScopeTable_MapsEveryTrackedPath`
+fails for any tracked path no row matches, and a case in
+`TestRepositoryScopeTable` pins the row the new path must land on.
 
 **Recover from a lost runner.** Confirm GitHub annotated the runner lost, then
 "Re-run job" on that job, on the same day, while the plan and build artifacts
@@ -367,9 +453,38 @@ by tree, never by commit. A feature proof uses `validate/feature/<name>`.
 **Run the nightly proof after a merge** and pass it to the next
 `make merge-check PROOF=… NIGHTLY=…`.
 
-**Enable the merge gate.** Once the repository is public:
-`make github-merge-gate APPLY=1`. It checks the owner, the default branch and
-the workflow's presence, and refuses loudly otherwise. It is not run from a
+**Run the release gate.** Dispatch `release.yml` from `main` with `version`
+set and `tag: false`; `release.yml` › `validate` refuses a malformed version
+before any job starts, and `release.yml` › `gate` runs the release tier on the
+chosen branch's tip. Locally, `make proof-release` on a clean tree.
+
+**Tag a release.** Either dispatch `release.yml` with `tag: true` — the `tag`
+job checks out the proved commit, runs `proofrun verify -release -tag vX.Y.Z
+-proof DIR` on the gate's artifact, and only then creates the annotated tag
+and pushes it — or, locally, `make release-tag VERSION=vX.Y.Z
+PROOF=proof/<release>`, which applies the same check to `HEAD`, tags it and
+does not push. Neither path stops a person with write access from pushing a
+`v*` tag by hand (§12).
+
+**Enable the merge gate.** Once the repository is public, run
+`make github-merge-gate` (check mode, read-only) and then
+`make github-merge-gate APPLY=1`. Check mode refuses unless: you are an
+administrator; the repository is public; for `QUEUE=1`, it is owned by an
+organization; `origin/main` is local `main`'s tree and holds `proof.yml`;
+`TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests` passes; the
+GitHub Actions app has reported a successful `proof` check on `main`'s tip or
+on the head of the newest successful `proof.yml` run (a `validate/full/**`
+push does it); merge commits are allowed; Actions are enabled;
+`.github/CODEOWNERS` names an account with write access (a warning with
+`CODEOWNER_REVIEW=0`); and `MERGE_GATE_MODE` agrees with the applied
+`main-proof-gate` ruleset's `merge_queue` rule. A disabled `nightly.yml` is a
+warning. The apply creates or updates the rulesets by name; every body is
+unverified against the API until then, so read the API's answer before
+anything else. `APPLY=1 QUEUE=1` adds the merge queue and then sets
+`MERGE_GATE_MODE=queue`; `APPLY=1` alone, later, unsets the variable first
+and then removes the queue rule, so neither switch is ever looser than either
+mode. After the first merge through a mode, run
+`scripts/github-merge-gate.sh --verify-landed SHA` once. It is not run from a
 private repository.
 
 **Stop or clean up a proof.** `make proof-stop PROOF=proof/<name>` stops the
@@ -383,7 +498,7 @@ one only once the process its name records is gone.
 
 | Target | Does |
 |---|---|
-| `make check` | build, vet, lint and the unit suites with `-short`; no Docker |
+| `make check` | `make lint` (`go vet ./...` and gofmt), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept; no Docker |
 | `make proof` | the full proof, the merge gate |
 | `make proof-ui` | the same; the full proof already runs the UI suites |
 | `make proof-feature` | a feature proof of this branch |
@@ -408,17 +523,17 @@ one only once the process its name records is gone.
 | `scripts/proof-test-costs.tsv` | package, test, seconds | an unmeasured test gets the conservative default |
 | `scripts/proof-slow-tests.txt` | package, test | a slow test is left out of a feature proof's regression set |
 | `scripts/proof-ui-costs.tsv` | spec file, wall seconds | an unmeasured spec gets 160 s |
-| `scripts/proof-host-speed.tsv` | spec, bound, reference CPUs | a miss below the reference is recorded, never a wider bound |
+| `scripts/proof-host-speed.tsv` | kind, spec or package, test title or name, assertion, bound, reference CPUs, note | a malformed row fails the merge; only a row the base carries identically excuses, and only its declared assertion's miss on a CI UI part (§12) |
 
 ### 11.3 `proofrun`
 
 | Subcommand | Flags |
 |---|---|
 | `unit` | `-out FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE` |
-| `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N` |
+| `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
 | `feature-report` | `-dir DIR`, `-select FILE` |
-| `ui-ledger` | `-report FILE`, `-list FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-host-speed FILE` |
+| `ui-ledger` | `-report FILE`, `-list FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE` |
 | `record` | `-dir DIR`, `-tier TIER`, `-name S`, `-commit SHA`, `-branch S`, `-tree-start SHA`, `-tree-end SHA`, `-clean-start BOOL`, `-clean-end BOOL`, `-base-ref REF`, `-base-commit SHA`, `-merge-base SHA`, `-jobs N`, `-ui-workers N`, `-temporal MODE`, `-temporal-image IMAGE`, `-temporal-address ADDR`, `-image-tag TAG`, `-images FILE`, `-image-tag-own`, `-gates-override S`, `-observability-required`, `-part NAME`, `-attempt N`, `-out-dir DIR`, `-plan FILE`, `-ui-plan FILE`, `-select FILE`, `-status N` |
 | `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL` |
@@ -446,11 +561,13 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
   sharding, with the integration suite at 3,693 s and Playwright at 1,598 s.
 - The sharded CI graph's reference: ten integration shards, five UI shards and
   four activity-fixture shards, about 306–426 runner-minutes.
-- `make check` measured on the 16-core development host: **34 s warm** with a
-  full module and test cache, and **59 s** pinned to 2 CPUs (`taskset -c 0-1`)
-  when the known quarantined pin subtest failed; the check itself completed.
-  A cold cache recompiles the suites and is the number the `ci.yml` › `check`
-  job records on a runner.
+- `make check` (lint, `go vet -tags=integration ./...`, `go test -short ./...`),
+  measured 2026-10-21 on a quiet 16-core host: with a warm build and test
+  cache, 11 s at 16 CPUs and 7 s at 2 CPUs (`taskset -c 0-1`), since unchanged
+  packages come from the test cache; with a cold build cache, 120 s at 16 CPUs
+  and 377 s at 4 CPUs (`taskset -c 0-3`). A cold cache recompiles the suites
+  and is the number the `ci.yml` › `check` job records on a runner, so a
+  2-vCPU runner's cold `check` takes longer than the two-minute warm target.
 - A CI runner is 2 vCPU / 8 GB; `PROOF_JOBS=2`, ten integration shards and
   five UI shards fit the budget.
 
@@ -469,9 +586,38 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
   repository. Until then the gate is built, structurally validated and not
   enforced.
 - **Runner-size known gaps.** A UI spec's 5 s wall-clock budget cannot hold on
-  a 2-vCPU runner. `scripts/proof-host-speed.tsv` names those specs and their
-  reference CPU count; a miss below it is recorded with its measured message,
-  never turned into a wider local bound.
+  a 2-vCPU runner. `scripts/proof-host-speed.tsv` names each such test by its
+  spec file and title, with the one assertion whose failure is its
+  runner-size miss, its bound and its reference CPU count. The assertion is
+  either `lessThan MS` (Playwright's `toBeLessThan` or `toBeLessThanOrEqual`
+  with `Expected` exactly MS: the bound's own timing miss) or `visibleWithin
+  MS LOCATOR` (a `toBeVisible` on exactly that locator that timed out after
+  exactly MS: the page never drew within the spec's own wait). A miss is a
+  recorded known gap (`host_speed_failures`, `known_gaps`, the README's
+  "Known gaps: runner size"), not a merge-blocking failure, only when all of
+  these hold: the outcome is `failed`; the failure is exactly the row's
+  assertion; the part is a CI `ui-e2e:K` shard whose runner has fewer CPUs
+  than the row's reference; and the base's copy of the table carries the same
+  row (a row a change adds, or a bound it loosens, excuses nothing). A skip, a
+  missing outcome, any other failure of the same test (another locator's
+  visibility timeout included), and every miss on a local proof still fail
+  the proof; the merger re-derives each excusal and never takes a shard's
+  word for one. A miss is never turned into a wider local bound. Both
+  class-B misses below are declared rows.
+- **The validation run's class-B results** (run 39345074409, recorded in
+  `host_speed_failures` and `known_gaps`): `each-fan-out.spec.ts` measured
+  7,006 ms against its declared 5,000 ms budget at the gated size on a 2-vCPU
+  runner; `run-page-ceiling.spec.ts` never reached its 5 s budget, because
+  the run page did not become visible within 60 s there.
+- **Rule A on the GitHub merge path is a process rule.** `make merge-check …
+  NIGHTLY=…` runs only on the local path; once merges go through GitHub,
+  nothing there checks for a passing nightly proof of `main`'s tip, and the
+  merge stage runs `make proof-nightly` and quotes it by hand.
+- **"Before the next merge starts" is enforced when the next merge ends.**
+  `merge-check NIGHTLY=` refuses at the end; a full proof started while
+  `main`'s tip lacks a passing nightly proof only warns. A proof may therefore
+  run beside a nightly that later fails; it is then refused at `merge-check`,
+  never merged.
 - **The observability gate has not run on GitHub.** The first release run,
   which always runs it, is its calibration.
 - **`nightly.yml` (both jobs), `release.yml`, `workflow_call` and the flakes

@@ -172,7 +172,9 @@ then `ORK_NAMESPACE`, then the one saved by `orkctl namespace use`, then
 `default`. Namespaces themselves are managed with
 `orkctl namespace create|list|get|update|delete|use`; a namespace also carries
 a `default_pool` and an `allowed_pools` list, which decide and bound where its
-tasks run (see `pool` below).
+tasks run (see `pool` below). They are set with
+`orkctl namespace create|update NS --default-pool POOL --allow-pool POOL`
+(`--allow-pool` repeats; none means unrestricted).
 
 ### `version`
 
@@ -213,6 +215,7 @@ orkctl orkflow compat deploy 1.4.0      # what promoting 1.4.0 breaks (inputs: a
 orkctl orkflow callers deploy           # what starts or composes deploy, and what it pins
 orkctl orkflow edit deploy              # $EDITOR round trip, applied as a new version
 orkctl orkflow edit deploy --version 1.3.0   # start from an older version
+orkctl orkflow edit deploy --editor "code --wait"   # instead of $ORK_EDITOR, $VISUAL, $EDITOR
 ```
 
 Until somebody promotes, an orkflow runs its **most recently applied** version.

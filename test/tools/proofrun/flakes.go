@@ -242,6 +242,18 @@ func flakeRates(runs []flakeRun, window, minRuns int) []flakeRate {
 // another proof. A proof whose base commit the repository does not have is
 // skipped, never guessed at.
 func markSuspects(runs []flakeRun, repo string) {
+	markSuspectsWith(runs,
+		func(base, commit string) (map[string]bool, string, error) { return changedDirs(repo, base, commit) },
+		func(pkg string) (map[string]bool, error) { return testDeps(repo, pkg) })
+}
+
+// markSuspectsWith is markSuspects over a change reader (the directories a
+// proof's change touched, relative to the repository, and its base's tree)
+// and a dependency reader (the repository-relative directories a test
+// package's binary imports), so a test can drive it.
+func markSuspectsWith(runs []flakeRun, changedOf func(base, commit string) (map[string]bool, string, error),
+	depsOf func(pkg string) (map[string]bool, error),
+) {
 	passedOnTree := map[string]bool{}
 	for _, r := range runs {
 		if r.outcome == outcomePass {
@@ -258,7 +270,7 @@ func markSuspects(runs []flakeRun, repo string) {
 		if err := readJSON(filepath.Join(proof, "proof.json"), &p); err != nil || p.BaseCommit == "" || p.Commit == "" {
 			continue
 		}
-		changed, baseTree, err := changedDirs(repo, p.BaseCommit, p.Commit)
+		changed, baseTree, err := changedOf(p.BaseCommit, p.Commit)
 		if err != nil {
 			continue
 		}
@@ -271,7 +283,7 @@ func markSuspects(runs []flakeRun, repo string) {
 			}
 			deps, ok := depsCache[runs[i].pkg]
 			if !ok {
-				deps, _ = testDeps(repo, runs[i].pkg)
+				deps, _ = depsOf(runs[i].pkg)
 				depsCache[runs[i].pkg] = deps
 			}
 			if len(deps) == 0 {
@@ -317,22 +329,48 @@ func changedDirs(repo, base, commit string) (map[string]bool, string, error) {
 	return dirs, strings.TrimSpace(string(tree)), nil
 }
 
-// testDeps is the test package and the directories its test binary imports.
+// testDeps is the test package and the directories its test binary imports,
+// relative to repo as changedDirs names them (the repository's root is "");
+// a directory outside the repository (the standard library, a module) is left
+// out, because no change of the repository can touch it.
 func testDeps(repo, pkg string) (map[string]bool, error) {
-	out, err := exec.Command("go", "list", "-deps", "-test", "-f", "{{.Dir}}", pkg).Output()
+	cmd := exec.Command("go", "list", "-deps", "-test", "-f", "{{.Dir}}", pkg)
+	cmd.Dir = repo
+	out, err := cmd.Output()
 	if err != nil {
 		// A test-only package path ("file › title" for a UI ledger) is not a
 		// Go package; it has no dependency edge by this rule.
 		return nil, err
 	}
-	dirs := map[string]bool{}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			dirs[line] = true
-		}
+	root, err := filepath.Abs(repo)
+	if err != nil {
+		return nil, err
 	}
-	return dirs, nil
+	if top, err := exec.Command("git", "-C", root, "rev-parse", "--show-toplevel").Output(); err == nil {
+		root = strings.TrimSpace(string(top))
+	}
+	return repoRelativeDirs(root, string(out)), nil
+}
+
+// repoRelativeDirs turns go list's absolute directories into the
+// repository-relative form a diff names, dropping any outside root.
+func repoRelativeDirs(root, list string) map[string]bool {
+	dirs := map[string]bool{}
+	for _, line := range strings.Split(list, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		rel, err := filepath.Rel(root, line)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+			continue
+		}
+		if rel == "." {
+			rel = ""
+		}
+		dirs[rel] = true
+	}
+	return dirs
 }
 
 type flakeReportText struct {

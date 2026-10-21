@@ -246,12 +246,15 @@ part_main() { # <part>
 		OBSERVABILITY_REQUIRED="$obs"
 		git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
+		git show "$BASE_COMMIT:scripts/proof-host-speed.tsv" >"$DIR/host-speed-base.txt" 2>/dev/null || : >"$DIR/host-speed-base.txt"
 		local mode=defer
 		[ "$TIER" = release ] && mode=include
 		[ "$TIER" = nightly ] && mode=only
-		# The gate files this change edits (plan §6.4): visibility only.
+		# The gate files this change edits (plan §6.4). A failure is written
+		# into the file as an error entry, never as "no gate file changed",
+		# and makes the proof ineligible.
 		if ! "$PR" touches -base "$BASE_COMMIT" -gate-files >"$DIR/lists-changed.json" 2>"$DIR/lists-changed.log"; then
-			echo '[]' >"$DIR/lists-changed.json"
+			part_say "WARNING: the gate files this change edits could not be listed: $(cat "$DIR/lists-changed.log")"
 		fi
 		local plan_args=(
 			-plan-only -ci -out "$DIR" -lists-changed "$DIR/lists-changed.json" -jobs "$PROOF_JOBS" -shards "$SHARDS"
@@ -259,6 +262,7 @@ part_main() { # <part>
 			-base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -ui-shards "$UI_SHARDS"
 			-nightly-mode "$mode" -nightly-base "$DIR/nightly-base.txt"
 			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt"
+			-host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt"
 			-observability-required="$OBSERVABILITY_REQUIRED"
 		)
 		[ -n "${PROOF_PR_NUMBER:-}" ] && plan_args+=(-pr-number "$PROOF_PR_NUMBER" -pr-head-sha "${PROOF_PR_HEAD:-}" -pr-base-sha "${PROOF_PR_BASE:-}" -pr-contains-base "${PROOF_PR_CONTAINS_BASE:-false}")
@@ -338,7 +342,8 @@ part_main() { # <part>
 		) >>"$DIR/ui-e2e.log" 2>&1 || true
 		part_run ui-e2e ui-e2e-ledger.log "$PR" ui-ledger -list "$DIR/ui-e2e-list.json" \
 			-report "$DIR/ui-e2e-report.json" -log "$DIR/ui-e2e.log" \
-			-config "$REPO/ui/playwright.config.ts" -out "$DIR" -shard "$k" || true
+			-config "$REPO/ui/playwright.config.ts" -out "$DIR" -shard "$k" -part "$PART" \
+			-host-speed scripts/proof-host-speed.tsv -host-speed-base "$(dirname "$UI_PLAN")/host-speed-base.txt" || true
 		;;
 	activity-fixture:*)
 		local a="${PART#activity-fixture:}"

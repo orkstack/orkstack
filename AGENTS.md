@@ -1204,8 +1204,9 @@ proof passed on. There are two paths to that.
 full proof. By default it runs on the pull request, whose branch must contain
 `main`'s tip, under the strict policy, and GitHub lands exactly the tree it
 tested; with the optional merge queue it runs on the merge group, and the
-queue lands that tree. An optional code-owner ruleset requires the
-maintainer's review for a change to the gate's own files.
+queue lands that tree. A code-owner ruleset, which the enablement applies
+unless it is told not to (`CODEOWNER_REVIEW=0`), requires the maintainer's
+review for a change to the gate's own files.
 
 **(b) Locally.** Branch from `main`'s tip and merge the feature branch, or
 several branches to share one proof, with `--no-ff`. When both sides changed a

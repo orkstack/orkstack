@@ -29,7 +29,7 @@ pinned reference to paste into `uses:`.
 
 The push is what mints a real registry manifest digest. A locally built,
 never-pushed image has none — a local image ID is not a manifest digest and
-does not transfer to a second Orker — so `--no-push` produces an image you
+does not transfer to a second Orker — so `--push=false` produces an image you
 can smoke-test but cannot pin.
 
 This wraps the ordinary container toolchain and adds no privileged path: a

@@ -100,8 +100,12 @@ func parseNightlyList(r io.Reader, name string) ([]nightlyEntry, error) {
 // nightlyProblems checks the tree's list against the packages' listings: a
 // listed test its compiled package does not list is stale, and a covering
 // test must be a listed test of the same package and not itself on the list.
-// An entry whose package no plan package compiles is checked by nothing here.
-func nightlyProblems(entries []nightlyEntry, listed map[string]map[string]bool) []string {
+// An entry whose package no plan package compiles is checked by nothing here
+// in a scoped run (complete false: a selection, -run or explicit package
+// patterns), which compiles only some integration packages. A complete run
+// plans every integration package, so there such an entry is a stale or
+// mistyped package and a problem.
+func nightlyProblems(entries []nightlyEntry, listed map[string]map[string]bool, complete bool) []string {
 	var problems []string
 	on := map[testKey]bool{}
 	for _, e := range entries {
@@ -110,6 +114,9 @@ func nightlyProblems(entries []nightlyEntry, listed map[string]map[string]bool) 
 	for _, e := range entries {
 		names, compiled := listed[e.Package]
 		if !compiled {
+			if !complete {
+				continue
+			}
 			problems = append(problems, fmt.Sprintf("nightly list line %d names package %s, which is not an integration package of this proof", e.Line, e.Package))
 			continue
 		}
@@ -361,10 +368,16 @@ func quarantineProof(treeFile, baseFile string, listed map[string]map[string]boo
 		quarantineExpiring(tree, checkedOn), nil
 }
 
+// quarantineWarning is the WARNING every proof's README, the proof job's
+// summary and merge-check print for an entry within seven days of its date.
+func quarantineWarning(e quarantineEntry) string {
+	return fmt.Sprintf("WARNING: quarantine entry for %s expires on %s and stops excusing its failure: fix it, or renew it with the user's approval",
+		e.key(), e.ReviewBy)
+}
+
 // printQuarantineWarnings says which entries stop excusing soon.
 func printQuarantineWarnings(w io.Writer, entries []quarantineEntry) {
 	for _, e := range entries {
-		fmt.Fprintf(w, "WARNING: quarantine entry for %s expires on %s and stops excusing its failure: fix it, or renew it with the user's approval\n",
-			e.key(), e.ReviewBy)
+		fmt.Fprintln(w, quarantineWarning(e))
 	}
 }

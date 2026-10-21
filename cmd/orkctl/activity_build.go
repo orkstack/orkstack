@@ -21,7 +21,7 @@ import (
 // not transfer to a second Orker. So an unpushed image cannot be named by
 // `uses:` in any deployment with more than one Orker, and pretending otherwise
 // would produce an Orkflow that runs on the machine that built it and nowhere
-// else. `--push` therefore defaults to on, and `--no-push` is available for a
+// else. `--push` therefore defaults to on, and `--push=false` is available for a
 // local smoke test whose result is explicitly not usable as a pin.
 func newActivityBuildCommand(g *globalFlags) *cobra.Command {
 	var (
@@ -37,7 +37,7 @@ func newActivityBuildCommand(g *globalFlags) *cobra.Command {
 			"pinned reference to paste into `uses:`.\n\n" +
 			"The push is what mints a real registry manifest digest. A locally built,\n" +
 			"never-pushed image has none — a local image ID is not a manifest digest and\n" +
-			"does not transfer to a second Orker — so `--no-push` produces an image you\n" +
+			"does not transfer to a second Orker — so `--push=false` produces an image you\n" +
 			"can smoke-test but cannot pin.\n\n" +
 			"This wraps the ordinary container toolchain and adds no privileged path: a\n" +
 			"first-party image is built exactly the way any third-party image is.",
@@ -64,7 +64,7 @@ func newActivityBuildCommand(g *globalFlags) *cobra.Command {
 			if !push {
 				fmt.Fprintf(out, "\nBuilt %s locally.\n", tag)
 				fmt.Fprintln(out, "NOT pushed, so it has no registry manifest digest and cannot be "+
-					"pinned by `uses:`. Re-run without --no-push to publish it.")
+					"pinned by `uses:`. Re-run without --push=false to publish it.")
 				return nil
 			}
 			if err := runDocker(cmd, out, "push", tag); err != nil {

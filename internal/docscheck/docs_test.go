@@ -311,7 +311,8 @@ func TestRepositoryNeverKillsByNameOrPattern(t *testing.T) {
 
 // TestDocs_EnumerationsAreCacheVisible: a drift test that runs git reads an
 // index go test's cache cannot see, so it must open the index file itself
-// first. None does today; this keeps a future one honest.
+// first. TestRepositoryScopeTable_MapsEveryTrackedPath does; this keeps it,
+// and any future one, honest.
 func TestDocs_EnumerationsAreCacheVisible(t *testing.T) {
 	root := repoRoot(t)
 	files := []string{
@@ -319,6 +320,7 @@ func TestDocs_EnumerationsAreCacheVisible(t *testing.T) {
 		filepath.Join(root, "internal/docscheck/reasons_test.go"),
 		filepath.Join(root, "cmd/orkctl/cli_reference_test.go"),
 		filepath.Join(root, "test/tools/proofrun/docs_test.go"),
+		filepath.Join(root, "test/tools/proofrun/scope_test.go"),
 	}
 	gitExec := regexp.MustCompile(`exec\.Command\("git"`)
 	for _, file := range files {

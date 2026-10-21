@@ -1363,8 +1363,11 @@ run started while it was on has finished: an older release cannot read a
 `{seq}.ovl` snapshot, so its reads of such a run's live state, and its
 publishes of the run's events, would fail. The check: the plan of such a run
 carries `snapshot_overlay` (`temporal workflow show` on a running run, its
-first event's fourth input), and only runs created before the flag went off
-can; confirm, as for R3, that none is still running. A finished run's archive
+first event's fourth input, which
+`TestDeployR4_TheOverlayFlagIsInTheFirstEventsFourthInput` in
+`internal/engine/replay_snapshot_overlay_test.go` checks against a recorded
+history), and only runs created before the flag went off can; confirm, as for
+R3, that none is still running. A finished run's archive
 body is always full — its last snapshot is never an overlay — so it stays
 readable on any release.
 

@@ -5,9 +5,10 @@ contract. This file is the quick checklist.
 
 ## Fast checks (no Docker, under two minutes)
 
-`make check` runs the build, `go vet`, gofmt and the unit suites with
-`-short`, which skips the scale tests and the tests that compile binaries.
-Every proof runs those. Run it before every push. For the UI:
+`make check` runs `make lint` (`go vet` and gofmt), `go vet -tags=integration`
+over the integration suites, and the unit suites with `-short`, which skips
+the scale tests and the tests that compile binaries; it keeps the test cache.
+Every proof runs those, without `-short`. Run it before every push. For the UI:
 `cd ui && bun run check && bun run test:unit`.
 
 A failure of a test listed in `scripts/proof-quarantine.txt` is that known
@@ -20,8 +21,8 @@ Linux host, do the one-time `host.docker.internal` setup in the README's
 
 ## What CI runs on your pull request
 
-- **`check`** — `make check`, on every push, with `DOCKER_HOST` pointing at
-  nothing to prove the fast path needs no Docker.
+- **`check`** — `make check`, on every push and every pull request, with
+  `DOCKER_HOST` pointing at nothing to prove the fast path needs no Docker.
 - **`feature`** — the feature tier: the fast gates, the tests and specs that
   prove your change, and its regression set. Name evidence the selection
   cannot find in your PR description:
@@ -35,8 +36,9 @@ Linux host, do the one-time `host.docker.internal` setup in the README's
   to a path only the full proof covers (`scripts/`, `.github/`, the Makefiles,
   `test/tools/proofrun/`, …) skips this job; the `proof` check proves it.
   While the repository is private, `feature` runs only with the `ci:feature`
-  label or by dispatch, to keep metered minutes for the merge gate; it runs
-  on every pull-request push once the repository is public.
+  label, on a push to `validate/feature/**`, or by dispatch, to keep metered
+  minutes for the merge gate; it runs on every pull-request push once the
+  repository is public.
 - **`proof`** — the full proof, split across runners, the only required
   check. Read the result from the `proof-<run>-a<attempt>` artifact's
   `proof.json` (`result`, `merge_eligible`, `ineligible_reasons`); the job

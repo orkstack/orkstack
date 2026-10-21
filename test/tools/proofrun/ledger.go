@@ -85,6 +85,10 @@ type collector struct {
 	// packageOutput keeps a package's own output (no Test), for diagnosis
 	// when a binary dies before any test starts.
 	packageOutput map[string]*strings.Builder
+	// pkgEnds is each package's own terminal action (pass, fail or skip): a
+	// package that never reported one died, failed to build, or failed
+	// outside any test.
+	pkgEnds map[string]string
 }
 
 func newCollector() *collector {
@@ -92,12 +96,17 @@ func newCollector() *collector {
 		results:       map[testKey]*entry{},
 		started:       map[testKey]bool{},
 		packageOutput: map[string]*strings.Builder{},
+		pkgEnds:       map[string]string{},
 	}
 }
 
 // add records one event. job names the process that produced it.
 func (c *collector) add(ev event, job string) {
 	if ev.Test == "" {
+		switch ev.Action {
+		case "pass", "fail", "skip":
+			c.pkgEnds[ev.Package] = ev.Action
+		}
 		if ev.Action == "output" {
 			b := c.packageOutput[ev.Package]
 			if b == nil {

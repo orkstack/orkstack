@@ -340,6 +340,7 @@ func (r *runner) runJob(ctx context.Context, j job, slot int) jobResult {
 		r.c.started[k] = true
 	}
 	r.c.subSkips = append(r.c.subSkips, local.subSkips...)
+	r.c.failedSubs = append(r.c.failedSubs, local.failedSubs...)
 	n := 0
 	for _, t := range j.Tests {
 		if local.started[testKey{j.Package, t}] {
@@ -435,6 +436,7 @@ type integrationPlanOptions struct {
 	nsPrefix, costsFile, allowFile        string
 	selectFile, only                      string
 	quarantineFile, quarantineBase        string
+	hostSpeedFile, hostSpeedBase          string
 	planOnly                              bool
 	planFile                              string
 	shard                                 int
@@ -462,6 +464,8 @@ func integrationFlags() (*flag.FlagSet, *integrationPlanOptions) {
 	fs.StringVar(&o.allowFile, "allow", "scripts/proof-allowed-skips.txt", "allowed skips")
 	fs.StringVar(&o.quarantineFile, "quarantine", "scripts/proof-quarantine.txt", "the quarantine list")
 	fs.StringVar(&o.quarantineBase, "quarantine-base", "", "the base's copy of the quarantine list (only entries it carries excuse)")
+	fs.StringVar(&o.hostSpeedFile, "host-speed", "scripts/proof-host-speed.tsv", "the host-speed table, hashed into the plan")
+	fs.StringVar(&o.hostSpeedBase, "host-speed-base", "", "the base's copy of the host-speed table, hashed into the plan (only rows it carries excuse)")
 	fs.StringVar(&o.selectFile, "select", "", "a feature selection (proofrun select): run only its integration tests")
 	fs.StringVar(&o.only, "run", "", "run only the tests matching this regexp (by hand; never a proof)")
 	fs.BoolVar(&o.planOnly, "plan-only", false, "compile, list and plan, write integration-plan.json, run nothing")
@@ -497,6 +501,12 @@ func cmdIntegration(args []string) int {
 	}
 	if o.prNumber > 0 {
 		o.pr = &prRecord{Number: o.prNumber, HeadSHA: o.prHead, BaseSHA: o.prBase, ContainsBase: o.prContains == "true"}
+	}
+	if o.pr != nil && !o.pr.ContainsBase {
+		// A pull request's merge commit must contain its base: otherwise the
+		// tree tested is not the one that would land (plan §3.2).
+		fmt.Fprintf(os.Stderr, "proofrun integration: pull request %d's tested commit does not contain its base %s: update the branch and run again\n", o.pr.Number, orDash(o.pr.BaseSHA))
+		return 2
 	}
 	if o.out == "" || o.jobs < 1 || o.shards < 1 {
 		fmt.Fprintln(os.Stderr, "proofrun integration: -out is required, -jobs and -shards must be at least 1")
@@ -535,6 +545,10 @@ func cmdIntegration(args []string) int {
 // planAndMaybeRun compiles and lists the packages, writes the plan, and runs
 // it unless -plan-only.
 func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
+	// Only a run that plans every integration package can say a nightly
+	// entry names no integration package: a selection, -run or explicit
+	// package patterns (scripts/integration.sh) compile a subset.
+	complete := o.selectFile == "" && o.only == "" && len(patterns) == 0
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
@@ -678,14 +692,14 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		})
 		fmt.Fprintf(stdout, "listed %s: %d tests, running %d\n", p.ImportPath, len(names), len(run[p.ImportPath]))
 	}
-	checkedOn := time.Now().UTC()
+	checkedOn := todayUTC()
 	quarantine, qProblems, qExpiring, err := quarantineProof(o.quarantineFile, o.quarantineBase, listed, allow, checkedOn)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 		return 2
 	}
 	printQuarantineWarnings(stdout, qExpiring)
-	problems = append(nightlyProblems(nightly, listed), problems...)
+	problems = append(nightlyProblems(nightly, listed, complete), problems...)
 	problems = append(qProblems, problems...)
 
 	// The test sets: expected = run ∪ deferred, and the mode decides both.
@@ -737,19 +751,9 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		Format: planFormat, Tier: o.tier, ProofID: o.proofID,
 		BaseRef: mainBranch, BaseCommit: o.baseCommit, MergeBase: o.mergeBase,
 		ObservabilityRequired: o.observabilityRequired, PR: o.pr,
-		AllowedSkips: fileRef{File: o.allowFile},
-		Quarantine:   quarantineRef{File: o.quarantineFile},
-		Packages:     packages, Jobs: jobs, Shards: shards,
+		Packages: packages, Jobs: jobs, Shards: shards,
 		RequestedShards: o.shards, SlotsPerShard: o.jobs, Problems: problems,
-	}
-	if ref, err := fileSHA256(o.allowFile); err == nil {
-		plan.AllowedSkips.SHA256 = ref
-	}
-	if ref, err := fileSHA256(o.quarantineFile); err == nil {
-		plan.Quarantine.SHA256 = ref
-	}
-	if ref, err := fileSHA256(o.quarantineBase); err == nil {
-		plan.Quarantine.BaseSHA256 = ref
+		CheckedOn: checkedOn.Format("2006-01-02"),
 	}
 	if code := writePlan(*o, plan, measured, nightly, nightlyBase, nil); code != 0 {
 		return code
@@ -801,6 +805,12 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 	}
 	l.Problems = append(problems, l.Problems...)
 	l.PlanSHA256, _ = fieldSHA256(filepath.Join(o.out, "integration-plan.json"))
+	// The local part records each binary's listing as a shard does, so the
+	// merger checks a local proof's listings too (rule 7).
+	l.Binaries = map[string]binaryRecord{}
+	for _, pk := range packages {
+		l.Binaries[pk.ImportPath] = binaryRecord{SHA256: pk.BinarySHA256, ListingSHA256: pk.ListingSHA256}
+	}
 	fmt.Fprintf(stdout, "integration phase took %.0fs\n", time.Since(started).Seconds())
 	return writeLedgerAndReport(o.out, l)
 }
@@ -896,13 +906,30 @@ func writePlan(o integrationPlanOptions, p *integrationPlan, measured costs, nig
 	}
 	p.Costs = fileRef{File: o.costsFile}
 	p.Costs.SHA256, _ = fileSHA256(o.costsFile)
+	// Every input that decides what runs or what is excused is pinned by its
+	// hash, so the merger can refuse a proof judged on other bytes.
+	p.AllowedSkips = fileRef{File: o.allowFile}
+	p.AllowedSkips.SHA256, _ = fileSHA256(o.allowFile)
+	p.Quarantine = quarantineRef{File: o.quarantineFile}
+	p.Quarantine.SHA256, _ = fileSHA256(o.quarantineFile)
+	p.Quarantine.BaseSHA256, _ = fileSHA256(o.quarantineBase)
+	p.HostSpeed = quarantineRef{File: o.hostSpeedFile}
+	p.HostSpeed.SHA256, _ = fileSHA256(o.hostSpeedFile)
+	p.HostSpeed.BaseSHA256, _ = fileSHA256(o.hostSpeedBase)
 	p.PartsExpected = partsExpected(o.tier, !o.ci, len(p.Shards), 0, o.observabilityRequired)
 	if o.ci {
 		uiShards := o.uiShards
 		p.PartsExpected = partsExpected(o.tier, false, len(p.Shards), uiShards, o.observabilityRequired)
 	}
+	if p.CheckedOn == "" {
+		p.CheckedOn = time.Now().UTC().Format("2006-01-02")
+	}
 	if o.listsChanged != "" {
-		_ = readJSON(o.listsChanged, &p.ListsChanged)
+		if err := readJSON(o.listsChanged, &p.ListsChanged); err != nil {
+			// An unreadable list of gate-file changes is recorded as such,
+			// never as "no gate file changed" (plan §6.4).
+			p.ListsChanged = []listChange{{Error: "the gate-file changes are unreadable: " + err.Error()}}
+		}
 	}
 	if o.mergeBase == "" && o.baseCommit != "" {
 		if mb, err := gitOut("merge-base", o.baseCommit, "HEAD"); err == nil {
@@ -930,12 +957,12 @@ func runShard(o *integrationPlanOptions) int {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 		return 2
 	}
-	tree, err := workingTreeHash(root)
+	tree, err := checkoutTree(root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 		return 2
 	}
-	if plan.Tree != "" && tree != plan.Tree {
+	if plan.Tree == "" || tree != plan.Tree {
 		fmt.Fprintf(os.Stderr, "proofrun integration: this plan was made for tree %s, and this checkout is %s\n", plan.Tree, tree)
 		return 2
 	}
@@ -1034,7 +1061,13 @@ func runShard(o *integrationPlanOptions) int {
 			fmt.Fprintf(stdout, "note: a binary compiled here hashes to %s; the plan's compile hashed to %s (separate compiles need not agree)\n", sha, pk.BinarySHA256)
 		}
 	}
-	checkedOn := time.Now().UTC()
+	// A shard judges every quarantine date on the proof's start date, the
+	// plan's, so every part and the merger decide alike.
+	checkedOn, err := time.Parse("2006-01-02", plan.CheckedOn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "proofrun integration: the plan records no start date (checked_on %q): quarantine dates cannot be judged\n", plan.CheckedOn)
+		return 2
+	}
 	quarantine, qProblems, qExpiring, err := quarantineProof(o.quarantineFile, o.quarantineBase, listed, allow, checkedOn)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
@@ -1076,6 +1109,11 @@ func runShard(o *integrationPlanOptions) int {
 	fmt.Fprintf(stdout, "shard %d of %d took %.0fs\n", o.shard, len(plan.Shards), time.Since(started).Seconds())
 	return writeLedgerAndReport(o.out, l)
 }
+
+// checkoutTree is the tree a shard compares with its plan's: the working
+// tree's hash. Tests replace it, because other work may change the checkout
+// a test runs in while it runs.
+var checkoutTree = workingTreeHash
 
 func listingDiff(want, got []string) (missing, extra []string) {
 	w := map[string]bool{}
@@ -1182,7 +1220,7 @@ func cmdUnit(args []string) int {
 		return 1
 	}
 	listed, expected := parseJSONListing(listOut)
-	checkedOn := time.Now().UTC()
+	checkedOn := todayUTC()
 	quarantine, qProblems, qExpiring, err := quarantineProof(*quarantineFile, *quarantineBase, listed, allow, checkedOn)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun unit:", err)
@@ -1216,10 +1254,38 @@ func cmdUnit(args []string) int {
 	if readErr != nil {
 		l.Problems = append(l.Problems, "reading go test -json: "+readErr.Error())
 	}
-	if runErr != nil {
+	if runErr != nil && !unitExitExcused(l, c.pkgEnds, listed) {
 		l.Problems = append(l.Problems, "go test exited: "+runErr.Error())
 	}
 	return writeLedgerAndReport(*out, l)
+}
+
+// unitExitExcused reports whether go test's non-zero exit says nothing the
+// ledger does not: every failing test is a quarantined failure, and every
+// package reported its own terminal event, failing only where a quarantined
+// test failed. A build failure, a TestMain or package-level failure, or a
+// crash keeps the exit a problem (plan §2.1, `unit`).
+func unitExitExcused(l ledger, pkgEnds map[string]string, listed map[string]map[string]bool) bool {
+	if l.Summary.Quarantined == 0 || l.Summary.Fail > 0 || l.Summary.NoOutcome > 0 {
+		return false
+	}
+	quarantined := map[string]bool{}
+	for _, e := range l.Tests {
+		if e.Outcome == outcomeQuarantinedFail {
+			quarantined[e.Package] = true
+		}
+	}
+	for pkg := range listed {
+		if _, ok := pkgEnds[pkg]; !ok {
+			return false
+		}
+	}
+	for pkg, end := range pkgEnds {
+		if end == outcomeFail && !quarantined[pkg] {
+			return false
+		}
+	}
+	return true
 }
 
 // parseJSONListing reads `go test -json -list .*` output.
@@ -1244,6 +1310,13 @@ func parseJSONListing(out []byte) (map[string]map[string]bool, []testKey) {
 		}
 	}
 	return listed, expected
+}
+
+// todayUTC is the proof's date: a quarantine review-by date is judged against
+// a date, never a time of day, so every part and the merger agree.
+func todayUTC() time.Time {
+	t, _ := time.Parse("2006-01-02", time.Now().UTC().Format("2006-01-02"))
+	return t
 }
 
 func envInt(name string, def int) int {

@@ -20,8 +20,10 @@ runs:
   steps:
     - name: Disk
       shell: bash
+      env:
+        CLEANUP_DISK: ${{ inputs.cleanup-disk }}
       run: |
-        if [ "${{ inputs.cleanup-disk }}" = "true" ]; then
+        if [ "$CLEANUP_DISK" = "true" ]; then
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
         fi
         df -h / | tee -a "$GITHUB_STEP_SUMMARY"
@@ -48,7 +50,7 @@ runs:
     # anonymous pulls an hour per address. One job saves them, every job loads
     # them (plan §3.3). A miss pulls normally.
     - name: Stack image cache
-      uses: actions/cache@v6
+      uses: actions/cache@v6.1.0
       with:
         path: /tmp/orkstack-stack-images.tar
         key: stack-images-v2-${{ hashFiles('deploy/docker-compose.yml', 'images/*/Dockerfile') }}
@@ -89,7 +91,13 @@ runs:
 
     - name: cosign
       if: inputs.cosign == 'true'
-      uses: sigstore/cosign-installer@v3
+      uses: sigstore/cosign-installer@v4.1.2
+      with:
+        # The CLI the image-policy interop test was proven with locally.
+        # Installer v4 defaults to cosign v3, whose new bundle format is not
+        # the signature layout OrkStack verifies; moving to it is its own
+        # change with its own proof.
+        cosign-release: v2.6.5
 
     - name: temporal CLI
       if: inputs.temporal-cli == 'true'

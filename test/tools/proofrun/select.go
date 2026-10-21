@@ -74,12 +74,15 @@ type pkgSelection struct {
 	Whole      string            `json:"whole,omitempty"`
 	Evidence   map[string]string `json:"evidence"`
 	Regression []string          `json:"regression"`
-	Deferred   []deferredTest    `json:"deferred_slow"`
-	Declared   int               `json:"declared_integration_tests"`
-	Why        string            `json:"why"`
+	// SlowOmitted are the slow list's tests left out of the regression set.
+	// "Deferred" means one thing only: a nightly-listed test the full tier
+	// did not run (plan §2.2, review finding m8).
+	SlowOmitted []slowOmittedTest `json:"slow_omitted"`
+	Declared    int               `json:"declared_integration_tests"`
+	Why         string            `json:"why"`
 }
 
-type deferredTest struct {
+type slowOmittedTest struct {
 	Test    string  `json:"test"`
 	Seconds float64 `json:"seconds"`
 }
@@ -247,7 +250,8 @@ func cmdSelect(args []string) int {
 // and a missing CHANGELOG entry. It never adds an error and never touches
 // merge eligibility (plan §8.4).
 func docsWarning(paths []pathScope) []string {
-	var userFacing, docsChanged, changelogChanged bool
+	var docsChanged, changelogChanged bool
+	var userFacing []string
 	for _, p := range paths {
 		if strings.HasPrefix(p.Path, "docs/") || p.Path == "README.md" || p.Path == "CONTRIBUTING.md" ||
 			p.Path == "AGENTS.md" || p.Path == "ARCHITECTURE.md" || p.Path == "examples/README.md" ||
@@ -258,14 +262,16 @@ func docsWarning(paths []pathScope) []string {
 			changelogChanged = true
 		}
 		if p.Docs && !strings.HasSuffix(p.Path, "_test.go") {
-			userFacing = true
+			userFacing = append(userFacing, p.Path)
 		}
 	}
+	sort.Strings(userFacing)
+	userFacing = dedupe(userFacing)
 	var out []string
-	if userFacing && !docsChanged {
-		out = append(out, "a user-facing source file changed with no documentation change: update the reference doc that describes it, or say why it needs none (AGENTS.md §11.1)")
+	if len(userFacing) > 0 && !docsChanged {
+		out = append(out, "user-facing source files changed with no documentation change: update the reference doc that describes each, or say why it needs none (AGENTS.md §11.1): "+strings.Join(userFacing, ", "))
 	}
-	if userFacing && !changelogChanged {
+	if len(userFacing) > 0 && !changelogChanged {
 		out = append(out, "no CHANGELOG.md [Unreleased] entry: a user-visible change adds one (AGENTS.md §11.1)")
 	}
 	return out
@@ -749,7 +755,7 @@ func selectInto(sel *selection, in selectInput) error {
 	for _, ip := range integPkgs {
 		dir := relDir(ip.ImportPath)
 		_, integDecl := declared(dir)
-		ps := &pkgSelection{Evidence: map[string]string{}, Regression: []string{}, Deferred: []deferredTest{}, Declared: len(integDecl)}
+		ps := &pkgSelection{Evidence: map[string]string{}, Regression: []string{}, SlowOmitted: []slowOmittedTest{}, Declared: len(integDecl)}
 		for t, why := range integEvidence[ip.ImportPath] {
 			ps.Evidence[t] = why
 		}
@@ -774,7 +780,7 @@ func selectInto(sel *selection, in selectInput) error {
 					continue
 				}
 				if s, slow := in.slow[testKey{ip.ImportPath, t}]; slow && ps.Whole == "" {
-					ps.Deferred = append(ps.Deferred, deferredTest{Test: t, Seconds: s.Seconds})
+					ps.SlowOmitted = append(ps.SlowOmitted, slowOmittedTest{Test: t, Seconds: s.Seconds})
 					continue
 				}
 				ps.Regression = append(ps.Regression, t)
@@ -802,7 +808,7 @@ func selectInto(sel *selection, in selectInput) error {
 		if _, ok := sel.Integration[p]; ok {
 			continue
 		}
-		ps := &pkgSelection{Evidence: map[string]string{}, Regression: []string{}, Deferred: []deferredTest{}, Why: "it holds evidence tests"}
+		ps := &pkgSelection{Evidence: map[string]string{}, Regression: []string{}, SlowOmitted: []slowOmittedTest{}, Why: "it holds evidence tests"}
 		for t, why := range tests {
 			ps.Evidence[t] = why
 		}

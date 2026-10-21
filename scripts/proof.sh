@@ -602,6 +602,14 @@ STACK_ENV=(
 # change itself adds, or removes, excuses nothing until the base carries it.
 git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
 git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
+git show "$BASE_COMMIT:scripts/proof-host-speed.tsv" >"$DIR/host-speed-base.txt" 2>/dev/null || : >"$DIR/host-speed-base.txt"
+# The gate files this change edits, and the rows its excusing lists add or
+# remove (plan §6.4), computed whatever gates run. A failure is written into
+# the file as an error entry, never as "no gate file changed", and makes the
+# proof ineligible.
+if ! "$PR" touches -base "$BASE_COMMIT" -gate-files >"$DIR/lists-changed.json" 2>"$DIR/lists-changed.log"; then
+	say "WARNING: the gate files this change edits could not be listed: $(cat "$DIR/lists-changed.log")"
+fi
 if runs lint; then run lint lint.log make lint; fi
 if runs build; then run build build.log go build ./...; fi
 if runs unit; then
@@ -618,12 +626,7 @@ fi
 if runs ui-check; then run_bg ui-check ui-check.log in_ui bun run check; fi
 if runs ui-unit; then run_bg ui-unit ui-unit.log in_ui bun test test/; fi
 if runs integration; then
-	# The gate files this change edits, and the rows its excusing lists add or
-	# remove (plan §6.4). Visibility only: nothing is refused for it.
-	if ! "$PR" touches -base "$BASE_COMMIT" -gate-files >"$DIR/lists-changed.json" 2>"$DIR/lists-changed.log"; then
-		echo '[]' >"$DIR/lists-changed.json"
-	fi
-	integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -lists-changed "$DIR/lists-changed.json")
+	integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" -lists-changed "$DIR/lists-changed.json")
 	case "$TIER" in
 	full) integ_args+=(-nightly-mode defer -nightly-base "$DIR/nightly-base.txt") ;;
 	release) integ_args+=(-nightly-mode include) ;;
@@ -669,7 +672,8 @@ ui_e2e_locked() {
 		PLAYWRIGHT_JSON_OUTPUT_NAME="$DIR/ui-e2e-report.json" \
 		"$pw" test --workers "$PROOF_UI_WORKERS" --reporter=list,json "${SPEC_ARGS[@]}") || code=1
 	"$PR" ui-ledger -list "$DIR/ui-e2e-list.json" -report "$DIR/ui-e2e-report.json" \
-		-log "$DIR/ui-e2e.log" -config "$REPO/ui/playwright.config.ts" -out "$DIR" || code=1
+		-log "$DIR/ui-e2e.log" -config "$REPO/ui/playwright.config.ts" -out "$DIR" \
+		-part local -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" || code=1
 	return "$code"
 }
 if runs ui-e2e; then run ui-e2e ui-e2e.log ui_e2e; fi
