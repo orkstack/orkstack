@@ -66,6 +66,33 @@ func (s *recordingLogStore) LatestLogAttempt(context.Context, string, string, ar
 	return 0, artifacts.ErrNotFound
 }
 
+// paceAnchorStore is a recordingLogStore that also records, for every upload,
+// the instant the sink paced it from: its lastFlush, read inside PutLogChunk,
+// which the sink calls holding its own lock right after setting it. The gaps
+// between those instants are the pace itself. A stamp the store takes on
+// arrival is not: it lags its anchor by the chunk's copy and by however long
+// the goroutine waited for a CPU, so two stamps can sit closer than the pace
+// the sink kept.
+type paceAnchorStore struct {
+	*recordingLogStore
+	sink    *logChunkSink
+	anchors []time.Time
+}
+
+func (s *paceAnchorStore) PutLogChunk(ctx context.Context, chunk artifacts.LogChunk) error {
+	anchor := s.sink.lastFlush // the sink holds its lock across this call
+	s.mu.Lock()
+	s.anchors = append(s.anchors, anchor)
+	s.mu.Unlock()
+	return s.recordingLogStore.PutLogChunk(ctx, chunk)
+}
+
+func (s *paceAnchorStore) paceAnchors() []time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]time.Time(nil), s.anchors...)
+}
+
 func (s *recordingLogStore) stored() []artifacts.LogChunk {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -314,26 +341,27 @@ func TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask(t *testing.T) {
 // plus one line.
 func TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace(t *testing.T) {
 	const interval = 20 * time.Millisecond
-	store := &recordingLogStore{}
+	store := &paceAnchorStore{recordingLogStore: &recordingLogStore{}}
 	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes:    1,
 		FlushInterval: interval,
 		MaxBytes:      64 << 20,
 		MaxLineBytes:  1 << 20,
 	})
+	store.sink = sink
 
 	line := strings.Repeat("y", 1023) // 1 KiB with the newline
 	for i := 0; i < 4096; i++ {       // 4 MiB, four times the chunk cap
 		sink.Write(line)
 	}
 	beforeClose := store.stored()
-	stamps := store.uploadTimes()
+	stamps := store.paceAnchors()
 	if len(beforeClose) < 3 {
 		t.Fatalf("4 MiB produced %d chunks before Close; traffic past the cap was not uploaded while it ran", len(beforeClose))
 	}
 	for i := 1; i < len(stamps); i++ {
 		gap := stamps[i].Sub(stamps[i-1])
-		if gap+2*time.Millisecond < interval {
+		if gap < interval {
 			t.Fatalf("uploads %d and %d were only %s apart, want at least %s: the cap bypassed pacing", i, i+1, gap, interval)
 		}
 	}

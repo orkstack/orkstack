@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -518,11 +519,118 @@ func TestS3RunArchive_MarkerWritesDoNotScaleSerially(t *testing.T) {
 		evidence = append(evidence, fmt.Sprintf("objects=%d concurrent=%s serial=%s speedup=%.1fx",
 			s.objects, s.concurrent.Round(time.Millisecond), s.serial.Round(time.Millisecond), speedup))
 	}
-	// The speedup is evidence, not a bound: on a 2-vCPU runner the concurrent
-	// and serial forms can measure the same wall clock. What this test holds
-	// is durability — every marker above is present — and the code's bound is
-	// archiveRefWriteConcurrency, which the source pins.
+	// The wall-clock speedup is evidence: on a 2-vCPU runner the concurrent
+	// and serial forms can measure the same wall clock. The bound is asserted
+	// on the work instead, where host speed cannot move it: PutRun overlaps
+	// exactly archiveRefWriteConcurrency marker writes, never more.
 	t.Logf("EVIDENCE s3_marker_write_scaling %s", strings.Join(evidence, " | "))
+	requireMarkerWritesOverlapToTheirBound(t, cfg, client)
+}
+
+// markerBarrier is an S3 HTTP client that holds every reference-marker PUT
+// until want of them are in flight at once, then lets them all through, and
+// records the most it ever saw in flight. Writes issued one at a time never
+// open it: the first waits out the timeout, which the test reports as a
+// failure. Every other request passes untouched.
+type markerBarrier struct {
+	next    s3.HTTPClient
+	want    int
+	timeout time.Duration
+
+	mu                    sync.Mutex
+	inFlight, most, total int
+	open                  chan struct{}
+	opened, timedOut      bool
+}
+
+func (b *markerBarrier) release(timedOut bool) {
+	if !b.opened {
+		b.opened, b.timedOut = true, timedOut
+		close(b.open)
+	}
+}
+
+func (b *markerBarrier) Do(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodPut || !strings.Contains(req.URL.Path, "/"+artifacts.RunObjectRefNamespace+"/") {
+		return b.next.Do(req)
+	}
+	b.mu.Lock()
+	b.inFlight++
+	b.total++
+	b.most = max(b.most, b.inFlight)
+	if b.inFlight >= b.want {
+		b.release(false)
+	}
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.inFlight--
+		b.mu.Unlock()
+	}()
+	deadline := time.NewTimer(b.timeout)
+	defer deadline.Stop()
+	select {
+	case <-b.open:
+	case <-deadline.C:
+		b.mu.Lock()
+		b.release(true)
+		b.mu.Unlock()
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	}
+	return b.next.Do(req)
+}
+
+// requireMarkerWritesOverlapToTheirBound runs one PutRun of three times the
+// bound's markers through a markerBarrier: the barrier opens only when
+// archiveRefWriteConcurrency writes are in flight together, and the most in
+// flight is exactly that bound. Every marker is then present.
+func requireMarkerWritesOverlapToTheirBound(t *testing.T, cfg artifacts.Config, client *s3.Client) {
+	t.Helper()
+	want := artifacts.ArchiveRefWriteConcurrency
+	barrier := &markerBarrier{want: want, timeout: 30 * time.Second, open: make(chan struct{})}
+	archive, err := artifacts.NewS3RunArchiveWithOptions(context.Background(), cfg, func(o *s3.Options) {
+		barrier.next = o.HTTPClient
+		o.HTTPClient = barrier
+	})
+	if err != nil {
+		t.Fatalf("NewS3RunArchiveWithOptions: %v", err)
+	}
+	objects := 3 * want
+	objectIDs := make([]string, 0, objects)
+	for i := 0; i < objects; i++ {
+		objectIDs = append(objectIDs, fmt.Sprintf("objects/b-%s%04d/%s", uniqueToken(t)[:6], i, strings.Repeat("cd", 32)))
+	}
+	runID := archiveTestRun(t, "-overlap")
+	cleanupArchivedRun(t, cfg, runID)
+	if err := archive.PutRun(context.Background(), artifacts.RunRecord{
+		RunID: runID, Namespace: "default", Orkflow: "cleanup", Status: "succeeded",
+		Time: time.Now().UTC(), ObjectIDs: objectIDs, JSONL: []byte(runID + "\n"),
+	}); err != nil {
+		t.Fatalf("PutRun(%d objects) through the barrier: %v", objects, err)
+	}
+	barrier.mu.Lock()
+	most, total, timedOut := barrier.most, barrier.total, barrier.timedOut
+	barrier.mu.Unlock()
+	if total != objects {
+		t.Fatalf("PutRun issued %d marker writes for %d objects", total, objects)
+	}
+	if timedOut || most != want {
+		t.Fatalf("PutRun had at most %d marker writes in flight (barrier timed out: %t), want exactly %d",
+			most, timedOut, want)
+	}
+	for _, objectID := range objectIDs {
+		key, err := artifacts.RunObjectRefKey(objectID, runID)
+		if err != nil {
+			t.Fatalf("RunObjectRefKey: %v", err)
+		}
+		if _, err := client.HeadObject(context.Background(), &s3.HeadObjectInput{
+			Bucket: aws.String(cfg.S3Bucket), Key: aws.String(key),
+		}); err != nil {
+			t.Fatalf("marker %q missing after the overlapped PutRun: %v", key, err)
+		}
+	}
+	t.Logf("EVIDENCE s3_marker_write_overlap objects=%d most_in_flight=%d bound=%d", objects, most, want)
 }
 
 // The key-order page contract is what makes one cleanup iteration enumerate the

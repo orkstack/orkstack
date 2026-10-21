@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,8 +27,8 @@ import (
 // Two more §11 claims, proven end to end through a real Orker (AGENTS.md §11,
 // docs/PROOFS.md §12):
 //
-//	3h  an upstream artifact deleted between a task's staging and its
-//	    dispatch: the task fails INPUT_ARTIFACT_UNAVAILABLE, after exactly the
+//	3h  an upstream artifact deleted after its producer committed and before
+//	    its consumer was dispatched: the task fails INPUT_ARTIFACT_UNAVAILABLE, after exactly the
 //	    attempts its policy allows for that reason's category, and the run
 //	    ends FAILED with a terminal event;
 //	3i  an image the registry cannot serve to this host: IMAGE_PULL_FAILED,
@@ -36,29 +38,35 @@ import (
 // validation run's feature push removes only the kill file
 // (internal/engine/orker_kill_integration_test.go).
 
-// waitForTaskState polls the run until taskID reaches want (or, with code set,
-// until the run is terminal with that code), failing after within.
-func waitForTaskState(t *testing.T, s *chaosStack, runID, taskID string, want orkstackv1.Status, within time.Duration) *orkstackv1.TaskRun {
+// containerPhases are the §7.1 phases an attempt passes through only once it
+// has a container: one created ("create"), run ("run") or exited ("exit").
+var containerPhases = []string{"create", "run", "exit"}
+
+// requireNoContainerRan fails unless the attempt's phases are recorded and
+// none of them is a container's: the attempt ended before the Orker created
+// one. An exit code cannot say this — a record that never ran a container
+// and one whose container exited 0 both carry 0.
+func requireNoContainerRan(t *testing.T, record *orkstackv1.TaskAttempt) {
 	t.Helper()
-	deadline := time.Now().Add(within)
-	for {
-		run, err := s.reader.GetRun(s.ctx, runID)
-		if err == nil {
-			if row := taskRunOfRun(run, taskID); row != nil && row.GetStatus() == want {
-				return row
-			}
+	if len(record.GetPhases()) == 0 {
+		t.Fatalf("attempt %d records no phases; it cannot show that no container ran", record.GetAttempt())
+	}
+	for _, span := range record.GetPhases() {
+		if slices.Contains(containerPhases, span.GetPhase()) {
+			t.Fatalf("attempt %d passed through the container phase %q (phases %v); want none to have run",
+				record.GetAttempt(), span.GetPhase(), record.GetPhases())
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("task %s never reached %v within %s", taskID, want, within)
-		}
-		time.Sleep(200 * time.Millisecond)
+	}
+	if record.GetExitCode() != 0 {
+		t.Fatalf("attempt %d reports exit code %d with no container", record.GetAttempt(), record.GetExitCode())
 	}
 }
 
 // TestIntegration_AnUnavailableInputArtifactFailsTheTaskExplicitly: §11 3h.
 // Task "produce" writes an artifact. The gate is an await, and while it is
 // open the test deletes produce's artifact object from the stack's store —
-// between consume's staging and its dispatch. The resolution then lets
+// after the producer committed and before the consumer was dispatched. The
+// resolution then lets
 // consume run: its staging finds nothing, it fails
 // INPUT_ARTIFACT_UNAVAILABLE, the policy retries it exactly once more, and the
 // run ends FAILED with that reason.
@@ -119,7 +127,7 @@ tasks:
 	s.start(runID, wf, nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 
-	waitForTaskState(t, s, runID, "produce", orkstackv1.Status_STATUS_SUCCEEDED, 3*time.Minute)
+	stream.waitFor(t, 3*time.Minute, "produce's success", taskEvent("produce", orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED))
 	// The artifact the commit references is exactly what consume's staging
 	// fetches, so read it from produce's commit — a deterministic key, no
 	// dependence on when the projection wrote the snapshot.
@@ -139,7 +147,7 @@ tasks:
 		t.Fatal("produce's commit references no artifact")
 	}
 	artifact := produced.Commit.GetArtifacts()[0]
-	waitForTaskState(t, s, runID, "gate", orkstackv1.Status_STATUS_AWAITING, 2*time.Minute)
+	stream.waitFor(t, 2*time.Minute, "the gate's await", taskEvent("gate", orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING))
 	s.transcript.step("produce committed %s; the gate is open, so consume has not staged", artifact.GetUri())
 
 	if err := stores.store.Delete(ctx, artifact.GetUri()); err != nil {
@@ -183,10 +191,11 @@ tasks:
 		if record.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED ||
 			record.GetError().GetCode() != "INPUT_ARTIFACT_UNAVAILABLE" ||
 			record.GetError().GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR ||
-			record.GetExitCode() != 0 {
-			t.Fatalf("consume attempt %d = %v %v exit %d, want INPUT_ARTIFACT_UNAVAILABLE, exit 0 (no container ran)",
-				record.GetAttempt(), record.GetOutcome(), record.GetError(), record.GetExitCode())
+			!record.GetError().GetRetryable() {
+			t.Fatalf("consume attempt %d = %v %v (retryable %v), want a retryable INPUT_ARTIFACT_UNAVAILABLE",
+				record.GetAttempt(), record.GetOutcome(), record.GetError(), record.GetError().GetRetryable())
 		}
+		requireNoContainerRan(t, record)
 		if !strings.Contains(record.GetError().GetMessage(), "report.txt") {
 			t.Fatalf("consume attempt %d's message %q does not name the artifact", record.GetAttempt(), record.GetError().GetMessage())
 		}
@@ -219,7 +228,8 @@ func requireRegistry(t *testing.T, registry string) {
 
 // pushForeignPlatformIndex publishes a real, complete image — every blob
 // present — whose only platform is one no Orker here runs (linux/s390x),
-// behind an OCI index, and returns the tag and the index digest. The Orker's
+// behind an OCI index, and returns the tag — v1-<pid>-<n>, this process's
+// own — and the index digest. The Orker's
 // `docker pull` of that digest finds no manifest for its own platform and
 // fails: IMAGE_PULL_FAILED at run time, never a registry that is merely
 // unreachable.
@@ -264,10 +274,17 @@ func pushForeignPlatformIndex(ctx context.Context, t *testing.T, registry, repos
 		do(http.MethodPut, location.String(), "application/octet-stream", blob, http.StatusCreated)
 		return sum
 	}
+	// pushManifest puts a manifest under reference, or under its own digest
+	// when reference is empty, so the only tag this test creates is the one
+	// carrying its process token.
 	pushManifest := func(reference, mediaType string, body []byte) string {
 		t.Helper()
+		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(body))
+		if reference == "" {
+			reference = digest
+		}
 		do(http.MethodPut, base+"/manifests/"+reference, mediaType, body, http.StatusCreated)
-		return fmt.Sprintf("sha256:%x", sha256.Sum256(body))
+		return digest
 	}
 
 	// An empty tar, gzipped, is a valid layer.
@@ -288,19 +305,27 @@ func pushForeignPlatformIndex(ctx context.Context, t *testing.T, registry, repos
 		`"config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":%q,"size":%d},`+
 		`"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":%q,"size":%d}]}`,
 		configDigest, len(config), layerDigest, layer.Len()))
-	manifestDigest := pushManifest("s390x", "application/vnd.oci.image.manifest.v1+json", manifest)
+	manifestDigest := pushManifest("", "application/vnd.oci.image.manifest.v1+json", manifest)
 	index := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[`+
 		`{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"size":%d,"platform":{"architecture":"s390x","os":"linux"}}]}`,
 		manifestDigest, len(manifest)))
-	indexDigest := pushManifest("v1", "application/vnd.oci.image.index.v1+json", index)
-	return fmt.Sprintf("%s/%s:v1", registry, repository), indexDigest
+	// The tag carries this process's token (AGENTS.md §11.1: a test pushes
+	// only tags of its own), and a per-process counter.
+	reference := fmt.Sprintf("v1-%d-%d", os.Getpid(), foreignIndexPushes.Add(1))
+	indexDigest := pushManifest(reference, "application/vnd.oci.image.index.v1+json", index)
+	return fmt.Sprintf("%s/%s:%s", registry, repository, reference), indexDigest
 }
+
+// foreignIndexPushes numbers this process's foreign-platform index tags.
+var foreignIndexPushes atomic.Int64
 
 // TestIntegration_AFailedImagePullFailsTheTaskPerItsPolicy: §11 3i-retry. The
 // task's image is a foreign-platform index the registry serves happily and no
 // Orker here can run. The pull fails IMAGE_PULL_FAILED — InfrastructureError,
-// retryable — so the task runs exactly the two attempts its retry: allows, and
-// the run ends FAILED with that reason and the pull's own message.
+// retryable — so the task runs exactly the two attempts its retry: allows,
+// neither creates a container, each attempt's message names the pinned digest
+// and the platform mismatch the pull reported, and the run ends FAILED with
+// that reason.
 func TestIntegration_AFailedImagePullFailsTheTaskPerItsPolicy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -357,9 +382,18 @@ func TestIntegration_AFailedImagePullFailsTheTaskPerItsPolicy(t *testing.T) {
 		if record.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED ||
 			record.GetError().GetCode() != "IMAGE_PULL_FAILED" ||
 			record.GetError().GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR ||
-			!record.GetError().GetRetryable() || record.GetExitCode() != 0 {
-			t.Fatalf("attempt %d = %v %v retryable %t exit %d, want IMAGE_PULL_FAILED INFRASTRUCTURE_ERROR retryable, exit 0",
-				record.GetAttempt(), record.GetOutcome(), record.GetError(), record.GetError().GetRetryable(), record.GetExitCode())
+			!record.GetError().GetRetryable() {
+			t.Fatalf("attempt %d = %v %v retryable %t, want IMAGE_PULL_FAILED INFRASTRUCTURE_ERROR retryable",
+				record.GetAttempt(), record.GetOutcome(), record.GetError(), record.GetError().GetRetryable())
+		}
+		requireNoContainerRan(t, record)
+		// The pull's own message: the digest the Orker pulled, and the
+		// platform it could not find in that index.
+		message := record.GetError().GetMessage()
+		if !strings.Contains(message, digest) || !(strings.Contains(message, "no matching manifest") ||
+			strings.Contains(message, "platform")) {
+			t.Fatalf("attempt %d's message %q names neither the pinned digest %s and the platform mismatch",
+				record.GetAttempt(), message, digest)
 		}
 	}
 	if n := commitObjectCount(t, s.cfg, runID); n != 0 {

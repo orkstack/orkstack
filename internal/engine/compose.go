@@ -395,7 +395,6 @@ func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
 // startChild requests one composed task's child run and returns its result
 // future once the start is confirmed. It is called from the main loop for a
 // ready task classify decided to run.
-
 func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow.Future, error) {
 	c := s.children[id]
 	if c.err != nil {

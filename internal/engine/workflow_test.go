@@ -136,10 +136,6 @@ func newHarnessShared(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshot
 		continuations: map[string]int{},
 	}
 	h.env.SetTestTimeout(60 * time.Second)
-	// A replay harness processes a recorded history in one workflow task; on
-	// a loaded 2-vCPU runner that can exceed the SDK's 1 s default. The
-	// detector stays on; the production budget test still pins 1 s.
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: 10 * time.Second})
 	h.env.RegisterActivityWithOptions((&eachCounter{h: h, real: engine.NewEachActivities(h.values)}).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems})
 	// The two compose activities, over the same in-memory store, so a run

@@ -859,20 +859,57 @@ func (s *chaosStack) wait(runID string, within time.Duration) (enums.WorkflowExe
 type streamCollector struct {
 	mu     sync.Mutex
 	events []*orkstackv1.Event
-	done   chan error
+	// grew is closed, and replaced, each time an event arrives, so a waiter
+	// wakes on the stream itself rather than on a clock.
+	grew chan struct{}
+	done chan error
 }
 
 func (s *chaosStack) openStream(reader *engine.TemporalRunReader, runID string, from int64) *streamCollector {
-	c := &streamCollector{done: make(chan error, 1)}
+	c := &streamCollector{grew: make(chan struct{}), done: make(chan error, 1)}
 	go func() {
 		c.done <- reader.StreamEvents(s.ctx, runID, from, func(event *orkstackv1.Event) error {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			c.events = append(c.events, event)
+			close(c.grew)
+			c.grew = make(chan struct{})
 			return nil
 		})
 	}()
 	return c
+}
+
+// waitFor blocks until the stream has delivered an event matching want and
+// returns it, failing when the stream ends without one or within passes.
+func (c *streamCollector) waitFor(t *testing.T, within time.Duration, what string, want func(*orkstackv1.Event) bool) *orkstackv1.Event {
+	t.Helper()
+	deadline := time.NewTimer(within)
+	defer deadline.Stop()
+	seen, ended := 0, false
+	for {
+		c.mu.Lock()
+		for ; seen < len(c.events); seen++ {
+			if want(c.events[seen]) {
+				e := c.events[seen]
+				c.mu.Unlock()
+				return e
+			}
+		}
+		grew := c.grew
+		c.mu.Unlock()
+		if ended {
+			t.Fatalf("the stream ended after %d events without %s", seen, what)
+		}
+		select {
+		case <-grew:
+		case err := <-c.done:
+			c.done <- err // result() still reads how the stream ended
+			ended = true  // one more look at what arrived before the end
+		case <-deadline.C:
+			t.Fatalf("the stream delivered no %s within %s (%d events)", what, within, seen)
+		}
+	}
 }
 
 // result waits for the stream to end and returns what it saw.

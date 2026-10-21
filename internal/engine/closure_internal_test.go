@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -163,6 +164,43 @@ func soakShape(shape string, n int) *orkstackv1.Orkflow {
 	return wf
 }
 
+// passClock is the clock a ready-loop pass's cost is bounded on: the CPU time
+// of the workflow goroutine's own thread where the platform has one
+// (threadCPU), the wall clock otherwise. Its first reading locks the calling
+// goroutine — the workflow's, since every probe callback runs on it — to its
+// thread, so every later reading is that goroutine's. A pass whose code
+// regresses costs more CPU on any host; a host loaded by other processes
+// delays the pass without adding to its CPU time, which is what moved the
+// wall-clock form of these bounds (plan F19).
+type passClock struct {
+	started  bool
+	cpu      bool
+	wallBase time.Time
+}
+
+func (c *passClock) now() time.Duration {
+	if !c.started {
+		c.started = true
+		runtime.LockOSThread()
+		_, c.cpu = threadCPU()
+		c.wallBase = time.Now()
+	}
+	if c.cpu {
+		if d, ok := threadCPU(); ok {
+			return d
+		}
+	}
+	return time.Since(c.wallBase)
+}
+
+// kind names what now measures, for a failure message.
+func (c *passClock) kind() string {
+	if c.cpu {
+		return "thread CPU time"
+	}
+	return "wall clock"
+}
+
 // gatedSizeBound scales a wall-clock bound under the race detector.
 func gatedSizeBound(bound time.Duration) time.Duration {
 	if raceBuild {
@@ -216,9 +254,7 @@ func TestNewRunState_AtTheGatedSizeUnderTheDeadlockBudget(t *testing.T) {
 // and the run holds at most T closure entries between passes (it has no open
 // pin to add its members' closures). Run under the 1 s deadlock detector, its
 // largest pass's workflow code (outside the event writes, which yield) stays
-// within 20 ms, which is logged as evidence rather than asserted: the pass's
-// work is bounded by the entry counts above, and a loaded host moves wall
-// clock without a code change.
+// within 20 ms of its thread's CPU time (passClock; the wall clock is logged).
 func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
@@ -239,25 +275,33 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 		t.Fatalf("the chain's last task: %d B, %d required ancestors (%v); want rule 44 to accept it", size, required, err)
 	}
 
+	// Each pass's workflow code, outside its event writes, timed twice: on
+	// the pass clock, which the bound is asserted on, and on the wall clock,
+	// which is logged as evidence.
 	probe := &readyLoopProbe{}
-	var segment time.Time
-	var current, worst time.Duration
+	clock := &passClock{}
+	var segment, current, worst time.Duration
+	var wallSegment time.Time
+	var wallCurrent, wallWorst time.Duration
 	passes := 0
 	probe.pass = func() {
 		if passes > 0 {
-			current += time.Since(segment)
+			current += clock.now() - segment
 			worst = max(worst, current)
+			wallCurrent += time.Since(wallSegment)
+			wallWorst = max(wallWorst, wallCurrent)
 		}
 		passes++
-		current = 0
-		segment = time.Now()
+		current, wallCurrent = 0, 0
+		segment, wallSegment = clock.now(), time.Now()
 	}
 	probe.emit = func(start bool) {
 		if start {
-			current += time.Since(segment)
+			current += clock.now() - segment
+			wallCurrent += time.Since(wallSegment)
 			return
 		}
-		segment = time.Now()
+		segment, wallSegment = clock.now(), time.Now()
 	}
 	readyLoopProbeForTest = probe
 	defer func() { readyLoopProbeForTest = nil }()
@@ -273,11 +317,13 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 	}
 	total := n * (n - 1) / 2
 	bound := gatedSizeBound(20 * time.Millisecond)
-	t.Logf("E7 join chain of %d tasks: %d passes, largest pass %.2f ms (bound %s), closure entries computed %d "+
-		"(bound %d), most retained between passes %d (bound %d)",
-		n, passes, float64(worst.Microseconds())/1000, bound, probe.closureEntries, total, probe.maxRetained, n)
+	t.Logf("E7 join chain of %d tasks: %d passes, largest pass %.2f ms of %s (bound %s; %.2f ms wall clock), "+
+		"closure entries computed %d (bound %d), most retained between passes %d (bound %d)",
+		n, passes, float64(worst.Microseconds())/1000, clock.kind(), bound, float64(wallWorst.Microseconds())/1000,
+		probe.closureEntries, total, probe.maxRetained, n)
 	proof.WriteJSON(t, "task-ceiling", "join-chain-closure.json", map[string]any{
 		"tasks": n, "passes": passes, "largest_pass_ms": float64(worst.Microseconds()) / 1000,
+		"largest_pass_clock": clock.kind(), "largest_pass_wall_ms": float64(wallWorst.Microseconds()) / 1000,
 		"closure_entries_computed": probe.closureEntries, "closure_entries_bound": total,
 		"max_retained_entries": probe.maxRetained,
 	})
@@ -291,10 +337,9 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 	if probe.maxRetained > n {
 		t.Fatalf("the run held %d closure entries between passes, over T = %d", probe.maxRetained, n)
 	}
-	// The bound is logged as evidence, not asserted: the pass's work is
-	// bounded by the entry counts above, and a loaded host moves wall clock
-	// without a code change.
-	_ = bound
+	if worst > bound {
+		t.Fatalf("the largest pass's workflow code took %s of %s, over %s", worst, clock.kind(), bound)
+	}
 }
 
 // TestPinMemberClosures_ReleasedWhenThePinCloses: an opened pin's members'

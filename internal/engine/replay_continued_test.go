@@ -182,7 +182,6 @@ func reexecute(t *testing.T, runID string, started time.Time, args []any, result
 	out := &reexecution{inputs: map[string]map[string]any{}, events: map[int64]map[string]any{}}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: 10 * time.Second})
 	// The recorded execution's own start, so a deadline rendered in an
 	// event's message is the recorded one.
 	env.SetStartTime(started)

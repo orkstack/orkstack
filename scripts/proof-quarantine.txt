@@ -15,4 +15,3 @@
 # entry past its review-by date stops excusing. Never re-run a failing test
 # until green: a second run is the same-tree flip this list exists to count,
 # not a remedy.
-unit	github.com/orkstack/orkstack/internal/engine	TestContinuation_GenerationsReproduceTheUnswitchedRun/a_pin_with_an_unpinned_need	Daniel Santos <danlsgiga@gmail.com>	2026-10-19	2026-11-18	reported flaky by the ContinueAsNew Stage 6 review: the switched and unswitched streams differed in the order one stage's parallel tasks completed; 6 failures in 500 runs at 2 CPUs (taskset -c 0-1 go test ./internal/engine -run '^TestContinuation_GenerationsReproduceTheUnswitchedRun$/^a_pin_with_an_unpinned_need$' -count=500, 2026-10-19), 0 in 200 at 16 CPUs on 2026-10-18; the run still switches, and the test is fixed or renewed before the review date

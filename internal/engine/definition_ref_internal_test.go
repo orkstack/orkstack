@@ -169,16 +169,18 @@ func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 		return mergeDefinitionPart(&merged, index, part)
 	}}
 	batch := int(DefaultContinuationChunksPerTask * DefaultContinuationChunkBytes)
+	// Bounded on the decode thread's CPU time (passClock), as the restore is.
+	clock := &passClock{}
 	var worst time.Duration
 	for off := 0; off < len(data); off += batch {
 		end := min(len(data), off+batch)
-		begin := time.Now()
+		begin := clock.now()
 		for chunk := off; chunk < end; chunk += int(DefaultContinuationChunkBytes) {
 			if err := decoder.feed(data[chunk:min(end, chunk+int(DefaultContinuationChunkBytes))]); err != nil {
 				t.Fatal(err)
 			}
 		}
-		worst = max(worst, time.Since(begin))
+		worst = max(worst, clock.now()-begin)
 	}
 	if !proto.Equal(merged, planned) {
 		t.Fatal("the batches did not decode the definition")
@@ -188,7 +190,7 @@ func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 		bound *= raceSlowdown
 	}
 	if worst > bound {
-		t.Fatalf("the slowest batch decoded in %s, over %s", worst, bound)
+		t.Fatalf("the slowest batch decoded in %s of %s, over %s", worst, clock.kind(), bound)
 	}
 	t.Logf("a %d-byte definition (%d parts) loaded and ran in %s; slowest batch decode %s (bound %s)",
 		ref.SizeBytes, len(ref.Parts), elapsed, worst, bound)

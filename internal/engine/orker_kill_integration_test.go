@@ -26,7 +26,9 @@ import (
 // The three §11 kill tests (AGENTS.md §11, docs/PROOFS.md §12):
 //
 //	1b  an Orker killed after its container exits, before its first upload;
-//	1c  an Orker killed while an artifact upload is in flight;
+//	1c  an Orker killed during its artifact uploads: one artifact uploaded
+//	    whole, the next held at the store's Put, before any of its bytes
+//	    are transmitted;
 //	2b  the Orker's own object store failing for a window during upload and
 //	    commit — never a silent success, and the retry per the task's policy.
 //
@@ -339,9 +341,11 @@ func TestIntegration_AnOrkerKilledAfterItsContainerExitsRetriesElsewhere(t *test
 
 // TestIntegration_AnOrkerKilledDuringArtifactUploadRetriesElsewhere: §11 1c.
 // The task writes two artifacts. Orker A uploads the first whole and is killed
-// while the second upload is in flight; nothing is committed. The retry on
-// Orker B completes, and every object the one commit references is complete,
-// with the bytes and size it records.
+// while the second upload is held at the store's Put — after the Orker began
+// it and before any of its bytes are transmitted, so no partial object is
+// left in the bucket; nothing is committed. The retry on Orker B completes,
+// and every object the one commit references is complete, with the bytes and
+// size it records.
 func TestIntegration_AnOrkerKilledDuringArtifactUploadRetriesElsewhere(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -359,7 +363,8 @@ func TestIntegration_AnOrkerKilledDuringArtifactUploadRetriesElsewhere(t *testin
 		func(stores *realOrkerStores, ctx context.Context, artifact string, r io.Reader, opts artifacts.PutOptions) (artifacts.ArtifactRef, error) {
 			// The Orker uploads a task's artifacts concurrently, so "the
 			// first upload" is the first call, whatever its name: let it
-			// complete, then hold the second one in flight.
+			// complete, then hold the second one at the Put, before it
+			// transmits a byte.
 			mu.Lock()
 			calls++
 			n := calls
@@ -383,7 +388,7 @@ func TestIntegration_AnOrkerKilledDuringArtifactUploadRetriesElsewhere(t *testin
 
 	select {
 	case artifact := <-f.entered:
-		f.s.transcript.step("Orker A is holding the upload of %q with one upload already complete", artifact)
+		f.s.transcript.step("Orker A is holding the upload of %q before transmission, with one upload already complete", artifact)
 	case <-time.After(3 * time.Minute):
 		t.Fatal("Orker A never reached the second artifact upload")
 	}
@@ -406,7 +411,7 @@ func TestIntegration_AnOrkerKilledDuringArtifactUploadRetriesElsewhere(t *testin
 	if strings.Join(names, ",") != "a.txt,b.txt" {
 		t.Fatalf("the commit's artifacts are %v, want a.txt and b.txt", names)
 	}
-	t.Logf("§11 1c: A died mid-upload (a.txt complete, b.txt in flight); attempt 2 on %s ran the container again; "+
+	t.Logf("§11 1c: A died mid-upload (a.txt complete, b.txt held before transmission); attempt 2 on %s ran the container again; "+
 		"the one commit's every object is complete and hashes to what it records", f.idB)
 }
 
@@ -503,7 +508,12 @@ func TestIntegration_AnOrkerCommitDuringAStorageOutageNeverSucceedsSilently(t *t
 				t.Fatalf("%d attempt records, want 3 (two refused and retried, one committed)", len(records))
 			}
 			refusedAttempts := 0
+			seen := map[int32]bool{}
 			for _, record := range records {
+				if seen[record.GetAttempt()] {
+					t.Fatalf("attempt %d has two records", record.GetAttempt())
+				}
+				seen[record.GetAttempt()] = true
 				switch record.GetAttempt() {
 				case 1, 2:
 					if record.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED ||
@@ -518,6 +528,8 @@ func TestIntegration_AnOrkerCommitDuringAStorageOutageNeverSucceedsSilently(t *t
 					if record.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED {
 						t.Fatalf("attempt 3 = %v, want SUCCEEDED once the window closed", record.GetOutcome())
 					}
+				default:
+					t.Fatalf("an attempt record numbered %d; want exactly attempts 1, 2 and 3", record.GetAttempt())
 				}
 			}
 			if refusedAttempts != 2 {

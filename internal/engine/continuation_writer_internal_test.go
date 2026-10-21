@@ -562,16 +562,19 @@ func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 	decoder := &partDecoder{refs: carry.GetCheckpoint().GetParts(), decode: func(_ int, plain []byte) error {
 		return proto.Unmarshal(plain, &orkstackv1.RunCheckpointPart{})
 	}}
+	// The decode is bounded on its thread's CPU time (passClock), so a host
+	// loaded by other processes cannot move it; a slower decode still does.
+	clock := &passClock{}
 	var worst time.Duration
 	for off := 0; off < len(data); off += int(DefaultContinuationChunksPerTask * DefaultContinuationChunkBytes) {
 		end := min(len(data), off+int(DefaultContinuationChunksPerTask*DefaultContinuationChunkBytes))
-		begin := time.Now()
+		begin := clock.now()
 		for chunk := off; chunk < end; chunk += int(DefaultContinuationChunkBytes) {
 			if err := decoder.feed(data[chunk:min(end, chunk+int(DefaultContinuationChunkBytes))]); err != nil {
 				t.Fatal(err)
 			}
 		}
-		worst = max(worst, time.Since(begin))
+		worst = max(worst, clock.now()-begin)
 	}
 	// The spec's bound is for the production build. The race detector's
 	// instrumentation slows this CPU-bound decode several times over, so
@@ -582,7 +585,7 @@ func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 		bound *= raceSlowdown
 	}
 	if worst > bound {
-		t.Fatalf("the slowest batch decoded in %s, over %s", worst, bound)
+		t.Fatalf("the slowest batch decoded in %s of %s, over %s", worst, clock.kind(), bound)
 	}
 	if !raceBuild {
 		proof.WriteJSON(t, "continuation", "restore-deadlock-budget.json", map[string]any{

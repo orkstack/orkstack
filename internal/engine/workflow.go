@@ -1099,7 +1099,7 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 	// queue" well defined from any one member.
 	queue, err := s.queueForTask(s.tasks[id])
 	if err != nil {
-		return false, err
+		return false, s.refuseRoute(runCtx, id, err)
 	}
 
 	p.opened = true
@@ -1686,7 +1686,7 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	// pool names the Orkers the activity really goes to.
 	queue, err := s.queueForTask(t)
 	if err != nil {
-		return nil, err
+		return nil, s.refuseRoute(ctx, id, err)
 	}
 	pool := s.poolForTask(t)
 	taskRun.Pool = pool
@@ -2728,6 +2728,32 @@ func (s *runState) routeForTask(t *orkstackv1.Task) (task.Route, error) {
 			fmt.Sprintf("task %q: %v", t.GetId(), err), reason, err)
 	}
 	return task.Route{Pool: pool, Queue: queue}, nil
+}
+
+// refuseRoute records a task its run's plan cannot route as FAILED, with
+// routeForTask's code (INVALID_POOL or RESERVED_QUEUE) as the task's own
+// machine-readable reason, and returns err for the run to fail with. Nothing
+// was dispatched, so the row has no scheduled_at and the stream no event for
+// the task: only the row changes, and the row is a local activity's input,
+// which history does not persist, so no command moves and a replay takes this
+// same path. A fan-out records the same codes through failExpansion.
+func (s *runState) refuseRoute(ctx workflow.Context, id string, err error) error {
+	code, message := ReasonInvalidPool, err.Error()
+	var applicationErr *temporal.ApplicationError
+	if errors.As(err, &applicationErr) {
+		code, message = applicationErr.Type(), applicationErr.Message()
+	}
+	taskRun := s.taskRuns[id]
+	taskRun.Status = orkstackv1.Status_STATUS_FAILED
+	taskRun.ScheduledAt = nil
+	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
+	taskRun.Error = &orkstackv1.Error{
+		Code:     code,
+		Message:  message,
+		Details:  fmt.Sprintf("task %q", id),
+		Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
+	}
+	return err
 }
 
 // The failure codes routeForTask reports. Their values are part of the
