@@ -74,11 +74,12 @@ type prRecord struct {
 }
 
 type planPackage struct {
-	ImportPath   string   `json:"import_path"`
-	Dir          string   `json:"dir"`
-	Binary       string   `json:"binary"`
-	BinarySHA256 string   `json:"binary_sha256"`
-	Listed       []string `json:"listed"`
+	ImportPath    string   `json:"import_path"`
+	Dir           string   `json:"dir"`
+	Binary        string   `json:"binary"`
+	BinarySHA256  string   `json:"binary_sha256"`
+	ListingSHA256 string   `json:"listing_sha256,omitempty"`
+	Listed        []string `json:"listed"`
 }
 
 type testRef struct {

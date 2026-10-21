@@ -33,32 +33,33 @@ type runnerRecord struct {
 // partRecord is one part's result. It holds the identity fields proof.json
 // carries, plus the part's own gates, ledgers and runner.
 type partRecord struct {
-	Part         string                  `json:"part"`
-	Attempt      int                     `json:"attempt"`
-	PlanSHA256   string                  `json:"plan_sha256"`
-	UIPlanSHA256 string                  `json:"ui_plan_sha256,omitempty"`
-	Runner       runnerRecord            `json:"runner"`
-	Tier         string                  `json:"tier"`
-	Name         string                  `json:"name"`
-	Commit       string                  `json:"commit"`
-	Branch       string                  `json:"branch,omitempty"`
-	Tree         string                  `json:"tree"`
-	TreeEnd      string                  `json:"tree_end"`
-	CleanStart   bool                    `json:"clean_start"`
-	CleanEnd     bool                    `json:"clean_end"`
-	BaseRef      string                  `json:"base_ref,omitempty"`
-	BaseCommit   string                  `json:"base_commit,omitempty"`
-	MergeBase    string                  `json:"merge_base,omitempty"`
-	Gates        []gateRecord            `json:"gates"`
-	Temporal     temporalRecord          `json:"temporal"`
-	Images       map[string]string       `json:"image_digests,omitempty"`
-	ImageTag     string                  `json:"image_tag,omitempty"`
-	ImageTagOwn  bool                    `json:"image_tag_own"`
-	ProofJobs    int                     `json:"proof_jobs,omitempty"`
-	UIWorkers    int                     `json:"proof_ui_workers,omitempty"`
-	GuardRetries *int                    `json:"network_change_retries,omitempty"`
-	GuardCeiling *int                    `json:"network_change_retry_ceiling,omitempty"`
-	Binaries     map[string]binaryRecord `json:"binaries,omitempty"`
+	Part          string                  `json:"part"`
+	Attempt       int                     `json:"attempt"`
+	PlanSHA256    string                  `json:"plan_sha256"`
+	UIPlanSHA256  string                  `json:"ui_plan_sha256,omitempty"`
+	Runner        runnerRecord            `json:"runner"`
+	Tier          string                  `json:"tier"`
+	Name          string                  `json:"name"`
+	Commit        string                  `json:"commit"`
+	Branch        string                  `json:"branch,omitempty"`
+	Tree          string                  `json:"tree"`
+	TreeEnd       string                  `json:"tree_end"`
+	CleanStart    bool                    `json:"clean_start"`
+	CleanEnd      bool                    `json:"clean_end"`
+	BaseRef       string                  `json:"base_ref,omitempty"`
+	BaseCommit    string                  `json:"base_commit,omitempty"`
+	MergeBase     string                  `json:"merge_base,omitempty"`
+	Gates         []gateRecord            `json:"gates"`
+	Temporal      temporalRecord          `json:"temporal"`
+	Images        map[string]string       `json:"image_digests,omitempty"`
+	ImageTag      string                  `json:"image_tag,omitempty"`
+	ImageTagOwn   bool                    `json:"image_tag_own"`
+	ProofJobs     int                     `json:"proof_jobs,omitempty"`
+	UIWorkers     int                     `json:"proof_ui_workers,omitempty"`
+	GatesOverride string                  `json:"proof_gates_override,omitempty"`
+	GuardRetries  *int                    `json:"network_change_retries,omitempty"`
+	GuardCeiling  *int                    `json:"network_change_retry_ceiling,omitempty"`
+	Binaries      map[string]binaryRecord `json:"binaries,omitempty"`
 	// Ledgers names the files this part wrote, relative to its directory.
 	Ledgers map[string]string `json:"ledgers,omitempty"`
 }
@@ -205,7 +206,8 @@ func cmdMerge(args []string) int {
 	}
 	attempts := readGithubAttempts(*jobsDir)
 	m := &merger{
-		plan: plan, uiPlan: uiP, planSHA: planSHA, uiPlanSHA: uiPlanSHA, parts: parts, absent: absent,
+		plan: plan, planPath: *planFile, uiPlan: uiP, planSHA: planSHA, uiPlanSHA: uiPlanSHA,
+		parts: parts, absent: absent,
 		attempts: attempts, hostSpeed: readHostSpeed(*hostSpeedFile),
 		excusedUIGate: map[string]bool{},
 	}
@@ -242,6 +244,7 @@ func cmdMerge(args []string) int {
 // merger accumulates the merged proof.
 type merger struct {
 	plan              *integrationPlan
+	planPath          string
 	uiPlan            *uiPlan
 	planSHA           string
 	uiPlanSHA         string
@@ -440,7 +443,6 @@ func (m *merger) merge(name string) {
 		CleanStart: true, CleanEnd: true, BaseRef: mainBranch, BaseCommit: p.BaseCommit,
 		MergeBase: p.MergeBase, Gates: []gateRecord{}, Ineligible: []string{},
 	}
-	proof.Temporal.Mode = "own"
 	m.proof = proof
 	if proof.Name == "" {
 		proof.Name = filepath.Base("proof")
@@ -452,6 +454,9 @@ func (m *merger) merge(name string) {
 		m.mergePart(part)
 	}
 	buildImages := m.buildImages()
+	m.carryPartIdentity()
+	m.checkAllowlist()
+	m.checkNightlyAnchorFiles()
 	for part, got := range m.parts {
 		for attempt, reading := range got {
 			if reading.Record == nil {
@@ -710,12 +715,52 @@ func (m *merger) checkIdentity(part string, attempt int, r *partRecord, buildIma
 }
 
 func partUsesImages(part string) bool {
-	return part == "build" || part == "observability" || strings.HasPrefix(part, "integration:") ||
+	return part == "build" || part == "observability" || part == "local" || strings.HasPrefix(part, "integration:") ||
 		strings.HasPrefix(part, "ui-e2e:") || strings.HasPrefix(part, "activity-fixture:")
 }
 
 func isStackPart(part string) bool {
-	return strings.HasPrefix(part, "integration:") || strings.HasPrefix(part, "ui-e2e:") || part == "observability"
+	return part == "local" || strings.HasPrefix(part, "integration:") || strings.HasPrefix(part, "ui-e2e:") ||
+		part == "observability"
+}
+
+// carryPartIdentity folds the parts' own identity into the merged proof, so
+// verdict() judges one layout by the same rules as the other: a local
+// one-part proof reports the Temporal it ran and the image tag its part
+// recorded, never a mode this function invents (plan §2.6 rules 4 and 5).
+// checkIdentity still refuses a stack part that is not its own Temporal and a
+// tag that is not the plan's; this only makes the merged record say what
+// happened.
+func (m *merger) carryPartIdentity() {
+	proof := m.proof
+	if proof.Temporal.Mode == "" {
+		proof.Temporal.Mode = "own"
+	}
+	for _, part := range m.plan.PartsExpected {
+		for _, reading := range m.orderedReadings(part) {
+			r := reading.Record
+			if r == nil {
+				continue
+			}
+			if isStackPart(part) && r.Temporal.Mode != "" && r.Temporal.Mode != "own" {
+				proof.Temporal.Mode = r.Temporal.Mode
+				proof.Temporal.Image = r.Temporal.Image
+				proof.Temporal.Address = r.Temporal.Address
+			}
+			if proof.ImageTag == "" && r.ImageTag != "" {
+				proof.ImageTag, proof.ImageTagOwn = r.ImageTag, r.ImageTagOwn
+			}
+			if proof.GatesOverride == "" && r.GatesOverride != "" {
+				proof.GatesOverride = r.GatesOverride
+			}
+			if proof.ProofJobs == 0 {
+				proof.ProofJobs = r.ProofJobs
+			}
+			if proof.UIWorkers == 0 {
+				proof.UIWorkers = r.UIWorkers
+			}
+		}
+	}
 }
 
 func (m *merger) buildImages() map[string]string {
@@ -725,6 +770,21 @@ func (m *merger) buildImages() map[string]string {
 		}
 	}
 	return nil
+}
+
+// checkAllowlist re-checks the allowed-skips file against the plan's hash
+// (plan §2.6 rule 8): shards applied the list the plan read, so a tree whose
+// copy changed after the plan was made is not the proof's evidence.
+func (m *merger) checkAllowlist() {
+	ref := m.plan.AllowedSkips
+	if ref.File == "" || ref.SHA256 == "" {
+		return
+	}
+	if got := sha256File(ref.File); got != ref.SHA256 {
+		m.problems = append(m.problems, fmt.Sprintf(
+			"the allowed-skips list %s is not the one the plan read (plan sha256 %s, tree %s)",
+			ref.File, short(ref.SHA256), short(got)))
+	}
 }
 
 func (m *merger) mergeIntegration() {
@@ -752,6 +812,7 @@ func (m *merger) mergeIntegration() {
 				l.Problems = append(l.Problems, part+": "+p)
 				m.problems = append(m.problems, part+": "+p)
 			}
+			m.checkShardListing(part, shard)
 			for _, e := range shard.Tests {
 				k := testKey{e.Package, e.Test}
 				if prev, dup := seen[k]; dup && prev != part {
@@ -765,6 +826,7 @@ func (m *merger) mergeIntegration() {
 					e.Job = part + " " + orDash(e.Job)
 				}
 				byKey[k] = e
+				m.recordIntegrationHostSpeed(part, reading, e)
 			}
 		}
 	}
@@ -817,6 +879,53 @@ func (m *merger) mergeIntegration() {
 	m.checkDeferredAnchor()
 }
 
+// checkShardListing holds rule 7: a shard's listing of every binary it
+// compiled equals the plan's. A binary digest difference stays a note, never a
+// failure — separate compiles need not agree byte for byte — but the tests a
+// binary reports decide which tests the shard was asked for, so a listing that
+// differs means the plan and the shard disagree about the suite itself.
+func (m *merger) checkShardListing(part string, shard ledger) {
+	for _, pk := range m.plan.Packages {
+		got, ok := shard.Binaries[pk.ImportPath]
+		if !ok || got.ListingSHA256 == "" || pk.ListingSHA256 == "" {
+			continue
+		}
+		if got.ListingSHA256 != pk.ListingSHA256 {
+			m.problems = append(m.problems, fmt.Sprintf(
+				"shard %s listed %s differently from the plan (listing sha256 %s, plan %s)",
+				part, pk.ImportPath, short(got.ListingSHA256), short(pk.ListingSHA256)))
+		}
+	}
+}
+
+// recordIntegrationHostSpeed records a failing integration test named in
+// -host-speed on a part whose runner is below the bound's reference CPU count
+// (plan §2.6 rule 13). The failure still counts: result and merge_eligible are
+// decided by rules 1-12 alone, and this only makes the runner-size class of a
+// failure readable from proof.json and the README.
+func (m *merger) recordIntegrationHostSpeed(part string, reading partReading, e entry) {
+	if e.Outcome != outcomeFail || reading.Record == nil {
+		return
+	}
+	bound, ok := m.hostSpeed.Tests[testKey{e.Package, e.Test}]
+	if !ok {
+		return
+	}
+	cpus := reading.Record.Runner.CPUs
+	if cpus <= 0 || cpus >= bound.ReferenceCPUs {
+		return
+	}
+	message := fmt.Sprintf("%s failed on a %d-CPU runner (bound %.0fs, reference %d CPUs)", e.Test, cpus, bound.Bound, bound.ReferenceCPUs)
+	if bound.Note != "" {
+		message += ": " + bound.Note
+	}
+	m.hostSpeedFailures = append(m.hostSpeedFailures, hostSpeedFailure{
+		Part: part, Test: e.Package + "." + e.Test, Kind: "integration", Bound: bound.Bound,
+		RunnerCPUs: cpus, ReferenceCPUs: bound.ReferenceCPUs, Message: message,
+	})
+	m.knownGaps = append(m.knownGaps, part+": "+message)
+}
+
 func isDeferred(list []deferredRef, k testKey) bool {
 	for _, d := range list {
 		if d.Package == k.Package && d.Test == k.Test {
@@ -840,6 +949,32 @@ func countOutcome(l *ledger, e entry) {
 		}
 	case outcomeNone:
 		l.Summary.NoOutcome++
+	}
+}
+
+// checkNightlyAnchorFiles re-checks the two nightly lists the plan carries
+// against the files they came from (plan §2.6 rule 8): the tree's list from
+// the checkout, and the base's copy from the plan artifact beside the plan. A
+// hash that differs means the merger is not reading the plan's evidence, so
+// the proof is refused rather than judged on different bytes.
+func (m *merger) checkNightlyAnchorFiles() {
+	p := m.plan
+	if p.Nightly.File != "" && p.Nightly.SHA256 != "" {
+		if got := sha256File(p.Nightly.File); got != p.Nightly.SHA256 {
+			m.problems = append(m.problems, fmt.Sprintf(
+				"the nightly list %s is not the one the plan read (plan sha256 %s, tree %s)",
+				p.Nightly.File, short(p.Nightly.SHA256), short(got)))
+		}
+	}
+	if p.Nightly.BaseSHA256 == "" || m.planPath == "" {
+		return
+	}
+	baseFile := filepath.Join(filepath.Dir(m.planPath), "nightly-base.txt")
+	got := sha256File(baseFile)
+	if got != p.Nightly.BaseSHA256 {
+		m.problems = append(m.problems, fmt.Sprintf(
+			"the base's nightly list in the plan artifact is not the one the plan hashed (plan sha256 %s, %s %s)",
+			short(p.Nightly.BaseSHA256), baseFile, orDash(short(got))))
 	}
 }
 
@@ -1229,6 +1364,26 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) {
 		fmt.Fprintf(&b, "## Quarantined\n\n")
 		for _, q := range r.Quarantined {
 			fmt.Fprintf(&b, "- %s\n", q)
+		}
+		fmt.Fprintln(&b)
+	}
+	if len(r.ListsChanged) > 0 {
+		fmt.Fprintf(&b, "## This change edits the gate's own files\n\n")
+		for _, c := range r.ListsChanged {
+			fmt.Fprintf(&b, "- `%s` — changed", c.File)
+			if len(c.Added) > 0 {
+				fmt.Fprintf(&b, "; %d row(s) added", len(c.Added))
+			}
+			if len(c.Removed) > 0 {
+				fmt.Fprintf(&b, "; %d row(s) removed", len(c.Removed))
+			}
+			fmt.Fprintln(&b)
+			for _, added := range c.Added {
+				fmt.Fprintf(&b, "  - added: `%s`\n", added)
+			}
+			for _, removed := range c.Removed {
+				fmt.Fprintf(&b, "  - removed: `%s`\n", removed)
+			}
 		}
 		fmt.Fprintln(&b)
 	}

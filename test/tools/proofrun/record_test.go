@@ -125,7 +125,7 @@ func TestVerdict(t *testing.T) {
 		{name: "a base other than main", mutate: func(r *proofRecord) { r.BaseRef = "HEAD" }, result: "pass", reason: "the full proof diffed against HEAD, not main"},
 		{name: "no base recorded", mutate: func(r *proofRecord) { r.BaseRef = "" }, result: "pass", reason: "the full proof diffed against -, not main"},
 		{name: "an incomplete ledger", ledgers: map[string]bool{"integration": false}, result: "fail", reason: "the integration ledger is incomplete"},
-		{name: "a feature proof", mutate: func(r *proofRecord) { r.Tier = "feature" }, result: "pass", reason: "a feature proof is never merge evidence"},
+		{name: "a feature proof", mutate: func(r *proofRecord) { r.Tier = "feature" }, result: "pass", reason: "only a full proof is merge evidence"},
 		{name: "failed evidence", mutate: func(r *proofRecord) { r.Tier = "feature"; r.EvidenceFailed = []string{"x"} }, result: "fail", reason: "the proof did not pass"},
 	}
 	for _, c := range cases {

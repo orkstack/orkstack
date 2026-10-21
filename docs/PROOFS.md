@@ -117,6 +117,8 @@ once and writes `integration-plan.json`, format 2:
 - `expected`: the tests the proof runs plus the deferred ones, each once;
 - `deferred`: the nightly entries both the tree's and the base's list carry;
 - `unmeasured`: tests with no costs row;
+- `packages[].listing_sha256`: the hash of each package's `-test.list` output,
+  which every shard's own listing must equal;
 - `jobs`: one job per test, with its package, estimated seconds, timeout and
   heavy flag;
 - `shards`: the jobs of each shard and its makespan;
@@ -170,14 +172,17 @@ true`. A skipped required job reports success, which is why `proof` runs on
 
 | Job | Runs |
 |---|---|
-| `ci.yml` › `check` | `make check` on every push: no Docker, no Temporal |
+| `ci.yml` › `check` | `make check` on every pull request and every push to `validate/**`: no Docker, no Temporal |
 | `ci.yml` › `feature` | the feature tier on every pull-request push once the repository is public; with the `ci:feature` label while it is private, and by dispatch |
 
-`nightly.yml` holds one job, `nightly.yml` › `nightly`, scheduled at 05:17
-UTC on the default branch. `release.yml` holds two: `release.yml` › `gate`
-runs the release tier, and `release.yml` › `tag` runs only with `tag: true`
-and only after `proofrun verify -release` accepts a passing release proof of
-the exact commit.
+`nightly.yml` holds two jobs, scheduled at 05:17 UTC on the default branch:
+`nightly.yml` › `nightly` runs the nightly tier, and `nightly.yml` › `flakes`
+downloads the last 30 days of proof artifacts and reports same-tree flips and
+suspect failures (`proofrun flakes`); it edits no list. `release.yml` holds
+two: `release.yml` › `gate` runs the release tier, and `release.yml` › `tag`
+runs only with `tag: true`, refuses a version that is not
+`vMAJOR.MINOR.PATCH`, and runs only after `proofrun verify -release` accepts a
+passing release proof of the exact commit.
 
 The composite action `.github/actions/proof-host` installs the host setup a
 stack part needs: Docker images cached, the Temporal CLI, cosign, and the
@@ -425,7 +430,7 @@ one only once the process its name records is gone.
 | `layout-digests` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
 | `evidence-args` | `-body FILE` |
 | `free-port` | none |
-| `touches` | `-base REF`, `-action NAME`, `-scope FILE` |
+| `touches` | `-base REF`, `-action NAME`, `-gate-files`, `-scope FILE` |
 | `gates` | `-select FILE` |
 
 ### 11.4 The scripts
@@ -469,8 +474,8 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
   never turned into a wider local bound.
 - **The observability gate has not run on GitHub.** The first release run,
   which always runs it, is its calibration.
-- **`nightly.yml`, `release.yml`, `workflow_call` and the flakes job have
-  not run on GitHub yet.** Their YAML passes `actionlint`.
+- **`nightly.yml` (both jobs), `release.yml`, `workflow_call` and the flakes
+  job have not run on GitHub yet.** Their YAML passes `actionlint`.
 - **The nightly soaks' thresholds were measured on a 16-core host.** A
   threshold missed on a 4-vCPU public runner is reported as a calibration
   result, never silently changed.
@@ -480,22 +485,6 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
 - **A tag pushed by hand is outside both paths.** `make release-tag` and the
   `tag` job are the only paths that check a release proof; GitHub itself does
   not refuse a hand-pushed tag.
-- **§11 1b**: no test kills an Orker after its container exits but before
-  anything is committed. The kill tests stop it with a container running, and
-  the adoption tests stop it after `commit.json`; the gap between them is a
-  known gap, not a pass.
-- **§11 1c**: no test kills an Orker while an artifact upload is in flight.
-  The upload-failure unit test names the artifact, but it is not an Orker
-  termination.
-- **§11 2b-orker**: no integration test faults the Orker's own object store
-  during upload or commit. The failure classification is unit-tested; the kill
-  tests stop the Orker, not the store.
-- **§11 3h**: no integration test deletes an upstream artifact between a
-  task's staging and its dispatch. The unit test names the missing item; the
-  run through a real Orker is the gap.
-- **§11 3i-retry**: no test asserts how a failed image pull is retried against
-  the task's retry policy. The stats test proves `IMAGE_PULL_FAILED`; the
-  retry count is the gap.
 - **§11 3j**: no run moves an image tag between two attempts. The digest is
   pinned at apply, so a moved tag never reaches a stored version; the claim is
   a known gap rather than a test.

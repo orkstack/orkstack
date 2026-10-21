@@ -93,6 +93,16 @@ include breaking changes, and each is marked **BREAKING**.
   steps in `docs/PROOFS.md`; a change that alters behaviour updates the
   reference doc that describes it, and a user-visible change adds its
   CHANGELOG entry, in the same change.
+- A proof's `proof.json` now carries `lists_changed`: every gate file the
+  change edits, with the rows its nightly, quarantine and allowed-skips lists
+  add or remove. It is printed by the proof README, the proof job's summary
+  and `make merge-check PROOF=`. Nothing is refused for it; it makes a change
+  to the gate's own files impossible to miss.
+- A local full proof is judged by the same identity rules as CI: the Temporal
+  it ran, whether the activity-image tag was its own, and whether
+  `PROOF_GATES` chose the gates are read from its part, so
+  `PROOF_TEMPORAL=shared`, an outside `ORK_TEST_IMAGE_TAG` and a
+  `PROOF_GATES` override all make it ineligible locally too.
 
 - The UI is redrawn as a drawing office (stage 1 of 4: the shell). A slim
   top bar replaces the sidebar, with two modes — **Build** (Runs, Orkflows,

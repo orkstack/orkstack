@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -153,5 +154,100 @@ func TestBuildLedgerQ_AnUnquarantinedTopLevelFailureIsNeverExcused(t *testing.T)
 	l := buildLedgerQ("unit", []testKey{{p, "TestPlain"}}, listed, c, nil, q)
 	if l.Summary.Fail != 1 || l.Summary.Quarantined != 0 {
 		t.Errorf("summary = %+v", l.Summary)
+	}
+}
+
+// declaredGoTests is every top-level Test a package declares, parsed from its
+// test files without compiling anything. The repository lists are facts of the
+// tree, so `make check` checks them against the tree.
+func declaredGoTests(t *testing.T, root, pkg string) map[string]bool {
+	t.Helper()
+	dir := filepath.Join(root, strings.TrimPrefix(pkg, modulePath+"/"))
+	files, err := readDirGo(dir)
+	if err != nil {
+		t.Errorf("read %s: %v", pkg, err)
+		return map[string]bool{}
+	}
+	out := map[string]bool{}
+	for _, f := range files {
+		if !strings.HasSuffix(f.Name, "_test.go") {
+			continue
+		}
+		for _, name := range parseGo(f).Tests {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// TestRepositoryNightlyList_CoveringTestsExistAndAreNotListed holds the
+// committed nightly list to the tree: every moved test is declared by its
+// package, every covering merge-gate test exists there too, and no covering
+// test is itself on the list (plan §4).
+func TestRepositoryNightlyList_CoveringTestsExistAndAreNotListed(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := readNightlyList(filepath.Join(root, "scripts/proof-nightly-tests.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("the nightly list names no test; if the tier is gone, say so in PROOFS.md")
+	}
+	on := map[testKey]bool{}
+	for _, e := range entries {
+		on[e.key()] = true
+	}
+	for _, e := range entries {
+		declared := declaredGoTests(t, root, e.Package)
+		if !declared[e.Test] {
+			t.Errorf("nightly list line %d names %s.%s, which its package does not declare", e.Line, e.Package, e.Test)
+		}
+		for _, covering := range e.Covering {
+			if !declared[covering] {
+				t.Errorf("nightly list line %d: covering test %s.%s is not declared by that package", e.Line, e.Package, covering)
+			}
+			if on[testKey{e.Package, covering}] {
+				t.Errorf("nightly list line %d: covering test %s.%s is itself on the nightly list", e.Line, e.Package, covering)
+			}
+		}
+	}
+}
+
+// TestRepositoryQuarantine_NamesListedTests checks the committed quarantine
+// list's names and structure, never its dates: a date is a fact of the
+// calendar, so only a proof judges it (plan §6.3).
+func TestRepositoryQuarantine_NamesListedTests(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := readQuarantine(filepath.Join(root, "scripts/proof-quarantine.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	allows, err := readAllowlist(filepath.Join(root, "scripts/proof-allowed-skips.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[testKey]bool{}
+	for _, a := range allows {
+		allowed[testKey{a.Package, a.Test}] = true
+	}
+	for _, e := range entries {
+		if allowed[testKey{e.Package, e.Test}] {
+			t.Errorf("quarantine entry %s.%s is also an allowed skip", e.Package, e.Test)
+			continue
+		}
+		if e.Suite == "ui-e2e" {
+			continue // a Playwright spec title, checked by the UI listing in a proof
+		}
+		top := strings.SplitN(e.Test, "/", 2)[0]
+		declared := declaredGoTests(t, root, e.Package)
+		if !declared[top] {
+			t.Errorf("quarantine entry %s.%s: %s declares no such test", e.Package, e.Test, e.Package)
+		}
 	}
 }

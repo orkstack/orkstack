@@ -512,3 +512,260 @@ func TestMerge_AnUnlistedUISpecFailureStillFails(t *testing.T) {
 		t.Fatalf("an unlisted UI failure passed: code %d, %+v", code, r.Ineligible)
 	}
 }
+
+// writeLocalWith is writeLocal with one part record edited first, for the
+// identity rules verdict() applies to a local proof as it does to CI.
+func (f *mergeFixture) writeLocalWith(mutate func(*partRecord), integration ledger) {
+	f.t.Helper()
+	rec := f.basePart("local")
+	rec.Gates = fullGateRecords()
+	rec.Images = map[string]string{"activity-shell": "sha256:aaa"}
+	if mutate != nil {
+		mutate(&rec)
+	}
+	f.writePart(rec, map[string]any{
+		"integration-tests.json": integration,
+		"unit-tests.json":        unitLedger(),
+		"ui-e2e-tests.json":      uiLedgerFixture(),
+	})
+}
+
+func TestMerge_EveryStackPartRanItsOwnTemporal(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	f.writeLocalWith(func(r *partRecord) { r.Temporal = temporalRecord{Mode: "shared", Address: "localhost:7233"} },
+		ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	r, _ := f.merge()
+	if r.MergeEligible {
+		t.Fatal("a local proof on a shared Temporal is merge-eligible")
+	}
+	joined := strings.Join(r.Ineligible, "\n")
+	if !strings.Contains(joined, "Temporal was shared, not its own") {
+		t.Errorf("ineligible = %v", r.Ineligible)
+	}
+	if r.Temporal.Mode != "shared" {
+		t.Errorf("the merged proof says Temporal %q, want the part's shared", r.Temporal.Mode)
+	}
+}
+
+func TestMerge_TheImageTagIsThePlansOwn(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	f.writeLocalWith(func(r *partRecord) { r.ImageTag, r.ImageTagOwn = "borrowed-tag", false },
+		ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	r, _ := f.merge()
+	if r.MergeEligible {
+		t.Fatal("a local proof on an outside image tag is merge-eligible")
+	}
+	joined := strings.Join(r.Ineligible, "\n")
+	if !strings.Contains(joined, "activity images were tag \"borrowed-tag\" (own: false)") ||
+		!strings.Contains(joined, "ORK_TEST_IMAGE_TAG was supplied from outside") {
+		t.Errorf("ineligible = %v", r.Ineligible)
+	}
+}
+
+func TestMerge_AProofGatesOverrideIsIneligible(t *testing.T) {
+	// Naming every gate does not make the override invisible: the part records
+	// that PROOF_GATES chose them, and the merged proof is ineligible whatever
+	// it names.
+	f := newMergeFixture(t, tierFull, false)
+	f.writeLocalWith(func(r *partRecord) { r.GatesOverride = strings.Join(fullGates, ",") },
+		ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	r, code := f.merge()
+	if code != 0 || r.Result != "pass" {
+		t.Fatalf("code %d, result %s: every gate ran and passed", code, r.Result)
+	}
+	if r.MergeEligible {
+		t.Fatal("a proof whose gates PROOF_GATES chose is merge-eligible")
+	}
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "PROOF_GATES="+strings.Join(fullGates, ",")+" chose the gates") {
+		t.Errorf("ineligible = %v", r.Ineligible)
+	}
+}
+
+func TestMerge_ImageDigestsAreIdenticalAcrossParts(t *testing.T) {
+	f := newMergeFixture(t, tierFull, true)
+	f.writeCI()
+	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
+	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	// The second shard ran an image whose digest is not the build's.
+	rec := f.basePart("integration:2")
+	rec.Gates = []gateRecord{{Gate: "integration", Result: "pass"}}
+	rec.Images = map[string]string{"activity-shell": "sha256:bbb"}
+	f.writePart(rec, map[string]any{"integration-tests.json": ledger{Suite: "integration", Tests: []entry{passEntry("TestB")}}})
+	r, _ := f.merge()
+	if r.MergeEligible {
+		t.Fatal("parts that ran different image digests are merge-eligible")
+	}
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "activity-shell resolved to sha256:bbb") {
+		t.Errorf("ineligible = %v", r.Ineligible)
+	}
+}
+
+func TestMerge_ShardListingsMatchThePlan(t *testing.T) {
+	f := newMergeFixture(t, tierFull, true)
+	f.plan.Packages[0].ListingSHA256 = "plan-listing"
+	if err := writeJSON(f.planPath, f.plan); err != nil {
+		t.Fatal(err)
+	}
+	f.planSHA, _ = fieldSHA256(f.planPath)
+	f.writeCI()
+	// The shard compiled the package and its listing differs from the plan's.
+	rec := f.basePart("integration:1")
+	rec.Gates = []gateRecord{{Gate: "integration", Result: "pass"}}
+	rec.Images = map[string]string{"activity-shell": "sha256:aaa"}
+	f.writePart(rec, map[string]any{
+		"integration-tests.json": ledger{
+			Suite: "integration", Tests: []entry{passEntry("TestA")},
+			Binaries: map[string]binaryRecord{mPkg: {SHA256: "sha", ListingSHA256: "other-listing"}},
+		},
+	})
+	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	r, _ := f.merge()
+	if r.MergeEligible {
+		t.Fatal("a shard whose listing differs from the plan is merge-eligible")
+	}
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "listed "+mPkg+" differently from the plan") {
+		t.Errorf("ineligible = %v", r.Ineligible)
+	}
+}
+
+func TestMerge_AQuarantinedFailureIsRecordedAndDoesNotFailTheProof(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	quarantined := passEntry("TestB")
+	quarantined.Outcome = "quarantined-fail"
+	quarantined.Quarantine = "unit " + mPkg + " TestB Daniel Santos 2026-10-19 2026-11-18 known flake"
+	if err := writeJSON(filepath.Join(f.dir, "quarantine.txt"), map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	f.plan.Quarantine = quarantineRef{File: filepath.Join(f.dir, "quarantine-empty.txt"), SHA256: ""}
+	if err := os.WriteFile(filepath.Join(f.dir, "quarantine-empty.txt"),
+		[]byte("integration\t"+mPkg+"\tTestB\tDaniel Santos <danlsgiga@gmail.com>\t2026-10-19\t2026-11-18\tknown flake\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(f.planPath, f.plan); err != nil {
+		t.Fatal(err)
+	}
+	f.planSHA, _ = fieldSHA256(f.planPath)
+	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), quarantined}})
+	r, code := f.merge()
+	if code != 0 || r.Result != "pass" || !r.MergeEligible {
+		t.Fatalf("code %d, result %s eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
+	}
+	if len(r.Quarantined) != 1 || !strings.Contains(r.Quarantined[0], "quarantined-fail") {
+		t.Fatalf("quarantined = %v, want the entry and its quarantined-fail outcome", r.Quarantined)
+	}
+	b, _ := os.ReadFile(filepath.Join(f.out, "README.md"))
+	if !strings.Contains(string(b), "## Quarantined") {
+		t.Errorf("the README does not list the quarantined test:\n%s", b)
+	}
+}
+
+func TestMerge_RecordsHostSpeedFailuresWithoutChangingTheVerdict(t *testing.T) {
+	f := newMergeFixture(t, tierFull, true)
+	f.writeCI()
+	// Shard 1 ran on 2 CPUs and its only test failed a bound declared for 16.
+	rec := f.basePart("integration:1")
+	rec.Gates = []gateRecord{{Gate: "integration", Result: "fail"}}
+	rec.Images = map[string]string{"activity-shell": "sha256:aaa"}
+	rec.Runner = runnerRecord{OS: "linux", CPUs: 2}
+	failed := passEntry("TestA")
+	failed.Outcome = outcomeFail
+	f.writePart(rec, map[string]any{
+		"integration-tests.json": ledger{
+			Suite: "integration", Tests: []entry{failed},
+			Problems: []string{mPkg + ".TestA failed (job m-001)"},
+		},
+	})
+	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	host := filepath.Join(f.dir, "host-speed.tsv")
+	if err := os.WriteFile(host, []byte("test\t"+mPkg+"\tTestA\t60\t16\tthe stage completes within 60 s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, code := f.merge("-host-speed", host)
+	if code == 0 || r.Result != "fail" || r.MergeEligible {
+		t.Fatalf("a failing bound passed: code %d, result %s, %v", code, r.Result, r.Ineligible)
+	}
+	if len(r.HostSpeedFailures) != 1 || r.HostSpeedFailures[0].Kind != "integration" ||
+		r.HostSpeedFailures[0].RunnerCPUs != 2 || r.HostSpeedFailures[0].ReferenceCPUs != 16 {
+		t.Fatalf("host_speed_failures = %+v", r.HostSpeedFailures)
+	}
+	if len(r.KnownGaps) == 0 || !strings.Contains(strings.Join(r.KnownGaps, " "), "2-CPU runner") {
+		t.Errorf("known_gaps = %v", r.KnownGaps)
+	}
+}
+
+func TestMerge_ADeferredEntryTheBaseListLacksFailsTheProof(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	f.plan.Nightly = nightlyRef{Mode: nightlyDefer,
+		Entries:     []string{mPkg + "\tTestB"},
+		BaseEntries: nil,
+	}
+	f.plan.Deferred = []deferredRef{{Package: mPkg, Test: "TestB", Entry: mPkg + "\tTestB\tTestA\t2026-10-18 Daniel Santos\tsoak"}}
+	if err := writeJSON(f.planPath, f.plan); err != nil {
+		t.Fatal(err)
+	}
+	f.planSHA, _ = fieldSHA256(f.planPath)
+	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA")}})
+	r, _ := f.merge()
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"),
+		"TestB was deferred, but the base's nightly list does not carry it") {
+		t.Errorf("ineligible = %v", r.Ineligible)
+	}
+}
+
+func TestMerge_ATamperedBaseListFailsTheProof(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	baseFile := filepath.Join(f.dir, "nightly-base.txt")
+	if err := os.WriteFile(baseFile, []byte(mPkg+"\tTestB\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.plan.Nightly = nightlyRef{Mode: nightlyDefer,
+		Entries:     []string{mPkg + "\tTestB"},
+		BaseEntries: []string{mPkg + "\tTestB"},
+		BaseSHA256:  "not-the-hash-of-what-is-here",
+	}
+	f.plan.Deferred = []deferredRef{{Package: mPkg, Test: "TestB", Entry: mPkg + "\tTestB\tTestA\t2026-10-18 Daniel Santos\tsoak"}}
+	if err := writeJSON(f.planPath, f.plan); err != nil {
+		t.Fatal(err)
+	}
+	f.planSHA, _ = fieldSHA256(f.planPath)
+	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA")}})
+	r, _ := f.merge()
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "base's nightly list in the plan artifact is not the one the plan hashed") {
+		t.Errorf("ineligible = %v", r.Ineligible)
+	}
+}
+
+func TestMerge_TheAllowedSkipListMustBeThePlans(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	allow := filepath.Join(f.dir, "allowed-skips.txt")
+	if err := os.WriteFile(allow, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.plan.AllowedSkips = fileRef{File: allow, SHA256: "a-hash-of-other-bytes"}
+	if err := writeJSON(f.planPath, f.plan); err != nil {
+		t.Fatal(err)
+	}
+	f.planSHA, _ = fieldSHA256(f.planPath)
+	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	r, _ := f.merge()
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "is not the one the plan read") {
+		t.Errorf("ineligible = %v", r.Ineligible)
+	}
+}
+
+func TestMerge_AGateThatDidNotRunIsIneligible(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	rec := f.basePart("local")
+	rec.Gates = fullGateRecords()
+	rec.Gates = rec.Gates[1:] // drop "lint"
+	rec.Images = map[string]string{"activity-shell": "sha256:aaa"}
+	f.writePart(rec, map[string]any{
+		"integration-tests.json": ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}},
+		"unit-tests.json":        unitLedger(),
+		"ui-e2e-tests.json":      uiLedgerFixture(),
+	})
+	r, _ := f.merge()
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "gate lint did not run") {
+		t.Errorf("ineligible = %v", r.Ineligible)
+	}
+}

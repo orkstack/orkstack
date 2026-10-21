@@ -154,6 +154,17 @@ func section11DocGaps(doc string) map[string]bool {
 	return out
 }
 
+// section11KillTests are the three §11 kill tests (1b, 1c and 2b-orker) of
+// internal/engine/orker_kill_integration_test.go. They inject their fault
+// through hooked stores rather than living in a file named "chaos", so they
+// are named here: the map's note calls them kill tests (plan §7.2), and the
+// chaos kind is about what the test does, not what its file is called.
+var section11KillTests = map[string]bool{
+	"TestIntegration_AnOrkerKilledAfterItsContainerExitsRetriesElsewhere":    true,
+	"TestIntegration_AnOrkerKilledDuringArtifactUploadRetriesElsewhere":      true,
+	"TestIntegration_AnOrkerCommitDuringAStorageOutageNeverSucceedsSilently": true,
+}
+
 // section11Lookup answers whether a test is declared in its package and in
 // which file.
 type section11Lookup func(pkg, test string) (unit, integration bool, file string, err error)
@@ -219,7 +230,8 @@ func checkSection11(mapText, agentsText, docText string, nightly, quarantine map
 					badEvidence = true
 					continue
 				}
-				if item.Kind == "chaos" && !strings.Contains(strings.ToLower(file), "chaos") && !strings.Contains(item.topTest(), "Chaos") {
+				if item.Kind == "chaos" && !strings.Contains(strings.ToLower(file), "chaos") &&
+					!strings.Contains(item.topTest(), "Chaos") && !section11KillTests[item.topTest()] {
 					problems = append(problems, fmt.Sprintf("%s: chaos:%s.%s is not a chaos test: %s injects no fault by its name",
 						row.key(), item.Package, item.Test, file))
 					badEvidence = true
@@ -395,6 +407,28 @@ func TestSection11Coverage_AKnownGapIsInProofsDoc(t *testing.T) {
 		func(string) (string, error) { return "", nil })
 	if len(problems) != 1 || !strings.Contains(problems[0], "not named in docs/PROOFS.md") {
 		t.Fatalf("problems = %v, want the missing §11 line", problems)
+	}
+}
+
+func TestSection11Coverage_C6KillTestsAreChaosWithoutAChaosFileName(t *testing.T) {
+	lookup := func(pkg, test string) (bool, bool, string, error) {
+		return false, true, "orker_kill_integration_test.go", nil
+	}
+	problems := checkSection11(
+		section11FixtureMap("chaos:github.com/orkstack/orkstack/pkg.TestIntegration_AnOrkerKilledAfterItsContainerExitsRetriesElsewhere", ""),
+		section11FixtureAgents, "", nil, nil, lookup,
+		func(string) (string, error) { return "", nil })
+	if len(problems) != 0 {
+		t.Fatalf("problems = %v, want a kill test accepted as chaos evidence", problems)
+	}
+	// Only the named kill tests are exempt: another test in the same file is
+	// still refused for claiming to be chaos without a chaos name.
+	problems = checkSection11(
+		section11FixtureMap("chaos:github.com/orkstack/orkstack/pkg.TestIntegration_AnOrkerIsBusy", ""),
+		section11FixtureAgents, "", nil, nil, lookup,
+		func(string) (string, error) { return "", nil })
+	if len(problems) != 1 || !strings.Contains(problems[0], "is not a chaos test") {
+		t.Fatalf("problems = %v, want the chaos-name refusal", problems)
 	}
 }
 

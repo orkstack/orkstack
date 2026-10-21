@@ -249,8 +249,12 @@ part_main() { # <part>
 		local mode=defer
 		[ "$TIER" = release ] && mode=include
 		[ "$TIER" = nightly ] && mode=only
+		# The gate files this change edits (plan §6.4): visibility only.
+		if ! "$PR" touches -base "$BASE_COMMIT" -gate-files >"$DIR/lists-changed.json" 2>"$DIR/lists-changed.log"; then
+			echo '[]' >"$DIR/lists-changed.json"
+		fi
 		local plan_args=(
-			-plan-only -ci -out "$DIR" -jobs "$PROOF_JOBS" -shards "$SHARDS"
+			-plan-only -ci -out "$DIR" -lists-changed "$DIR/lists-changed.json" -jobs "$PROOF_JOBS" -shards "$SHARDS"
 			-matrix-out "$DIR/int-matrix.json" -tier "$TIER" -proof-id "$PROOF_ID"
 			-base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -ui-shards "$UI_SHARDS"
 			-nightly-mode "$mode" -nightly-base "$DIR/nightly-base.txt"

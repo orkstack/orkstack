@@ -618,7 +618,12 @@ fi
 if runs ui-check; then run_bg ui-check ui-check.log in_ui bun run check; fi
 if runs ui-unit; then run_bg ui-unit ui-unit.log in_ui bun test test/; fi
 if runs integration; then
-	integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt")
+	# The gate files this change edits, and the rows its excusing lists add or
+	# remove (plan §6.4). Visibility only: nothing is refused for it.
+	if ! "$PR" touches -base "$BASE_COMMIT" -gate-files >"$DIR/lists-changed.json" 2>"$DIR/lists-changed.log"; then
+		echo '[]' >"$DIR/lists-changed.json"
+	fi
+	integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -lists-changed "$DIR/lists-changed.json")
 	case "$TIER" in
 	full) integ_args+=(-nightly-mode defer -nightly-base "$DIR/nightly-base.txt") ;;
 	release) integ_args+=(-nightly-mode include) ;;

@@ -59,6 +59,17 @@ jobs:
         with:
           name: proof-${{ github.run_id }}-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci/proof
+      - name: validate the version
+        timeout-minutes: 1
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version $VERSION is not vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
       - name: verify the release proof
         timeout-minutes: 5
         shell: bash

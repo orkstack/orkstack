@@ -674,7 +674,7 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		}
 		packages = append(packages, planPackage{
 			ImportPath: p.ImportPath, Dir: rel, Binary: filepath.Base(bins[p.ImportPath]),
-			BinarySHA256: sha, Listed: names,
+			BinarySHA256: sha, ListingSHA256: sha256String(strings.Join(names, "\n")), Listed: names,
 		})
 		fmt.Fprintf(stdout, "listed %s: %d tests, running %d\n", p.ImportPath, len(names), len(run[p.ImportPath]))
 	}

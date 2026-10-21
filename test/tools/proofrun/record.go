@@ -133,7 +133,7 @@ func verdict(r *proofRecord, status int, observabilityRequired bool, ledgersOK m
 		r.Result = "pass"
 	}
 	if r.Tier != "full" {
-		r.Ineligible = append(r.Ineligible, "tier "+r.Tier+": a feature proof is never merge evidence")
+		r.Ineligible = append(r.Ineligible, "tier "+r.Tier+": only a full proof is merge evidence")
 	}
 	if !pass {
 		r.Ineligible = append(r.Ineligible, "the proof did not pass")
@@ -304,7 +304,7 @@ func cmdRecord(args []string) int {
 			CleanEnd: r.CleanEnd, BaseRef: r.BaseRef, BaseCommit: r.BaseCommit,
 			MergeBase: r.MergeBase, Gates: r.Gates, Temporal: temporalRecord(r.Temporal),
 			Images: imageDigests(r.Images), ImageTag: r.ImageTag, ImageTagOwn: r.ImageTagOwn,
-			ProofJobs: r.ProofJobs, UIWorkers: r.UIWorkers,
+			ProofJobs: r.ProofJobs, UIWorkers: r.UIWorkers, GatesOverride: r.GatesOverride,
 			GuardRetries: r.GuardRetries, GuardCeiling: r.GuardCeiling,
 			Runner: currentRunner(), Ledgers: ledgerFiles,
 		}
@@ -437,6 +437,13 @@ func cmdVerify(args []string) int {
 	if err := readJSON(filepath.Join(*dir, "proof.json"), &r); err != nil {
 		fmt.Printf("merge-check: %v\n", err)
 		return 1
+	}
+	if len(r.ListsChanged) > 0 {
+		fmt.Printf("merge-check: this proof's change edits the gate's own files:\n")
+		for _, c := range r.ListsChanged {
+			fmt.Printf("  - %s (%d added, %d removed)\n", c.File, len(c.Added), len(c.Removed))
+		}
+		fmt.Println()
 	}
 	head := strings.TrimSpace(mustGit("rev-parse", "HEAD^{tree}"))
 	parent := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", "HEAD^1"))
