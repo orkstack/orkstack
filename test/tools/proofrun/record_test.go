@@ -283,3 +283,35 @@ func TestRecordRequiresTheLedgerOfEveryGateThatRan(t *testing.T) {
 		t.Errorf("record = %+v", r)
 	}
 }
+
+// A full, release or nightly record writes a part and leaves the verdict to
+// the merger, locally and in CI (round 4 M1).
+func TestRecord_TheFullTiersWriteOnlyAPart(t *testing.T) {
+	for _, tier := range []string{tierFull, tierRelease, tierNightly} {
+		t.Run(tier, func(t *testing.T) {
+			dir := t.TempDir()
+			out := filepath.Join(dir, "parts", "local-a1")
+			if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("unit\tpass\t3\tunit.log\tproofrun unit\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			prev := os.Stdout
+			devnull, _ := os.Open(os.DevNull)
+			os.Stdout = devnull
+			code := cmdRecord([]string{"-dir", dir, "-tier", tier, "-attempt", "1", "-tree-start", "t", "-tree-end", "t", "-clean-start", "-clean-end", "-out-dir", out})
+			os.Stdout = prev
+			if code != 0 {
+				t.Fatalf("exit %d, want 0", code)
+			}
+			var rec partRecord
+			if err := readJSON(filepath.Join(out, "part.json"), &rec); err != nil {
+				t.Fatalf("no part.json: %v", err)
+			}
+			if rec.Part != "local" || rec.Tier != tier {
+				t.Errorf("part %+v, want part local of tier %s", rec, tier)
+			}
+			if _, err := os.Stat(filepath.Join(out, "proof.json")); !os.IsNotExist(err) {
+				t.Errorf("a %s record wrote proof.json; the merger decides the verdict", tier)
+			}
+		})
+	}
+}

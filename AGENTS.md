@@ -1061,8 +1061,8 @@ is a change's evidence on its branch and never merge evidence. The **nightly
 tier** runs only the tests `scripts/proof-nightly-tests.txt` lists, and is
 never merge evidence. The pre-release gate is the full tier with nothing
 deferred, and it runs the observability gate unconditionally. A release tag
-requires one of the exact commit. docs/PROOFS.md is the reference for what
-each tier runs.
+requires a passing pre-release proof of the exact commit. docs/PROOFS.md is
+the reference for what each tier runs.
 
 **Rules for every proof.**
 

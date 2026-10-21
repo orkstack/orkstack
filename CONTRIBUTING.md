@@ -42,9 +42,10 @@ Linux host, do the one-time `host.docker.internal` setup in the README's
   `proof.json` (`result`, `merge_eligible`, `ineligible_reasons`); the job
   summary is written from it. It proves exactly the tree that lands, so a
   branch that does not contain `main`'s tip is asked to update.
-- **`review`** — once the gate is enforced, a change to the gate's own files
-  (the lists under `scripts/proof-*`, `.github/`, `test/tools/proofrun/`, …)
-  needs the maintainer's approval.
+
+Once the gate is enforced, a change to the gate's own files (the lists under
+`scripts/proof-*`, `.github/`, `test/tools/proofrun/`, …) needs the
+maintainer's approval. That is GitHub's code-owner ruleset, not a CI job.
 
 **You never need to run the full proof locally.** CI runs it. `make proof`
 keeps working, and is equivalent, for maintainers who merge locally.

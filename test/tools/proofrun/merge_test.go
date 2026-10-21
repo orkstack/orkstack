@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -227,6 +228,48 @@ func TestMerge_ALocalProofPasses(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(f.out, "README.md"))
 	if !strings.HasSuffix(string(b), "Result: **PASS**\n") {
 		t.Errorf("README does not close with the full tier's result line:\n%s", b)
+	}
+}
+
+func TestMerge_ALocalProofIsOnePart(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	r, code := f.merge()
+	if code != 0 || len(r.Parts) != 1 || r.Parts[0] != "local" {
+		t.Fatalf("exit %d, parts %v: a local proof is exactly one part, local", code, r.Parts)
+	}
+}
+
+func TestProof_ALocalOnePartProofAndAOneShardCIProofAgree(t *testing.T) {
+	local := newMergeFixture(t, tierFull, false)
+	local.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	lp, lcode := local.merge()
+
+	sharded := newMergeFixture(t, tierFull, true)
+	sharded.writeCI()
+	sharded.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
+	sharded.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	sp, scode := sharded.merge()
+
+	if lcode != scode || lp.Result != sp.Result || lp.MergeEligible != sp.MergeEligible {
+		t.Fatalf("local exit %d result %s eligible %v; CI exit %d result %s eligible %v",
+			lcode, lp.Result, lp.MergeEligible, scode, sp.Result, sp.MergeEligible)
+	}
+	if !reflect.DeepEqual(lp.Ineligible, sp.Ineligible) {
+		t.Errorf("ineligible reasons differ: local %v, CI %v", lp.Ineligible, sp.Ineligible)
+	}
+	if !reflect.DeepEqual(lp.Ledgers, sp.Ledgers) {
+		t.Errorf("ledgers differ: local %v, CI %v", lp.Ledgers, sp.Ledgers)
+	}
+	strip := func(gates []gateRecord) []gateRecord {
+		out := append([]gateRecord{}, gates...)
+		for i := range out {
+			out[i].Log = ""
+		}
+		return out
+	}
+	if !reflect.DeepEqual(strip(lp.Gates), strip(sp.Gates)) {
+		t.Errorf("gates differ: local %v, CI %v", lp.Gates, sp.Gates)
 	}
 }
 

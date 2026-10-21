@@ -188,3 +188,6 @@ include breaking changes, and each is marked **BREAKING**.
   into a string, so a quote or a backslash in it posted malformed JSON. It now
   writes the body as a YAML mapping (version 0.3.0).
 - The `http` activity no longer appends a newline to a string body.
+- A run archive's newest-first listing could skip runs that shared the
+  boundary instant of a page. Each page now includes the whole instant, so
+  no run is missed between pages.
