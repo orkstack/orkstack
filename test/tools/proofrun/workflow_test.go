@@ -35,6 +35,8 @@ type wfStep struct {
 	With    map[string]any `yaml:"with"`
 	Env     map[string]any `yaml:"env"`
 	Timeout any            `yaml:"timeout-minutes"`
+	// ContinueOnError is read only so that a rule can refuse it.
+	ContinueOnError any `yaml:"continue-on-error"`
 }
 
 func (s wfStep) label(i int) string {
@@ -57,6 +59,8 @@ type wfJob struct {
 	Concurrency map[string]any    `yaml:"concurrency"`
 	Outputs     map[string]string `yaml:"outputs"`
 	Steps       []wfStep          `yaml:"steps"`
+	// ContinueOnError is read only so that a rule can refuse it.
+	ContinueOnError any `yaml:"continue-on-error"`
 }
 
 func (j *wfJob) needs() []string {
@@ -255,14 +259,60 @@ func expectEachMutationRefused(t *testing.T, file string, rule func(*wfFile) []s
 
 // ---- the required check -------------------------------------------------------
 
-// The guard every proof.yml job but `proof` carries (plan §3.2): a draft runs
-// nothing heavy, and while the repository is private a pull request needs the
-// ci:proof label.
-var draftGuardParts = []string{
-	"github.event_name != 'pull_request'",
-	"!github.event.pull_request.draft",
-	"github.event.repository.private == false",
-	"contains(github.event.pull_request.labels.*.name, 'ci:proof')",
+// proofGuard is the guard every proof.yml job but `proof` carries (plan §3.2):
+// a draft runs nothing heavy, and while the repository is private a pull
+// request needs the ci:proof label. A job's `if:` is the guard in parentheses
+// alone, or a condition ANDed with it: `<prefix> && (<guard>)`, the prefix
+// holding no `||` outside parentheses (which would bind looser than the AND).
+const proofGuard = `github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))`
+
+// normalizeIf strips the expression delimiters and collapses whitespace.
+func normalizeIf(cond string) string {
+	c := strings.TrimSpace(cond)
+	if strings.HasPrefix(c, "${{") && strings.HasSuffix(c, "}}") {
+		c = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(c, "${{"), "}}"))
+	}
+	return strings.Join(strings.Fields(c), " ")
+}
+
+// topLevelOr reports whether an expression has `||` outside every
+// parenthesis and quoted string, and whether its parentheses balance.
+func topLevelOr(expr string) (or, balanced bool) {
+	depth, quoted := 0, false
+	for i := 0; i < len(expr); i++ {
+		switch c := expr[i]; {
+		case c == '\'':
+			quoted = !quoted
+		case quoted:
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth < 0 {
+				return or, false
+			}
+		case c == '|' && depth == 0 && i+1 < len(expr) && expr[i+1] == '|':
+			or = true
+		}
+	}
+	return or, depth == 0 && !quoted
+}
+
+// guardProblem is why a job's `if:` is not the proof guard, or "".
+func guardProblem(cond string) string {
+	c := normalizeIf(cond)
+	g := "(" + proofGuard + ")"
+	if c == g {
+		return ""
+	}
+	if !strings.HasSuffix(c, " && "+g) {
+		return "is not the guard, nor a condition ANDed with it as `<prefix> && (<guard>)`"
+	}
+	prefix := strings.TrimSuffix(c, " && "+g)
+	if or, balanced := topLevelOr(prefix); or || !balanced {
+		return "has a prefix with an unparenthesized `||`, which binds looser than the AND with the guard"
+	}
+	return ""
 }
 
 func proofCheckProblems(w *wfFile) []string {
@@ -326,11 +376,8 @@ func proofCheckProblems(w *wfFile) []string {
 			continue
 		}
 		job := w.Jobs[name]
-		for _, part := range draftGuardParts {
-			if !strings.Contains(job.If, part) {
-				p = append(p, fmt.Sprintf("jobs.%s.if lacks the draft and ci:proof guard (%s)", name, part))
-				break
-			}
+		if why := guardProblem(job.If); why != "" {
+			p = append(p, fmt.Sprintf("jobs.%s.if %s: %q", name, why, job.If))
 		}
 		if strings.Contains(job.If, "github.event_name == 'merge_group'") {
 			p = append(p, fmt.Sprintf("jobs.%s narrows itself to merge_group: the pull request's proof would be trivial", name))
@@ -409,6 +456,18 @@ func TestWorkflows_TheProofCheckRefusesEachWeakening(t *testing.T) {
 		{"integration only on merge_group", func(w *wfFile) {
 			w.Jobs["integration"].If += " && github.event_name == 'merge_group'"
 		}},
+		{"a guard OR-ed in front", func(w *wfFile) {
+			w.Jobs["fast"].If = "${{ inputs.tier == 'x' || (" + proofGuard + ") }}"
+		}},
+		{"a prefix whose || binds looser than the guard", func(w *wfFile) {
+			w.Jobs["fast"].If = "${{ inputs.tier == 'x' || inputs.tier == 'y' && (" + proofGuard + ") }}"
+		}},
+		{"the guard's draft and label terms swapped", func(w *wfFile) {
+			w.Jobs["plan"].If = "${{ (github.event_name != 'pull_request' || (github.event.repository.private == false || (!github.event.pull_request.draft && contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}"
+		}},
+		{"the guard ANDed with a looser branch", func(w *wfFile) {
+			w.Jobs["build"].If = "${{ (" + proofGuard + ") || github.event_name == 'push' }}"
+		}},
 		{"a checkout without ref", func(w *wfFile) { delete(firstCheckout(w, "integration").With, "ref") }},
 		{"a checkout of the head ref", func(w *wfFile) {
 			firstCheckout(w, "plan").With["ref"] = "${{ github.event.pull_request.head.sha }}"
@@ -434,35 +493,155 @@ func TestWorkflows_ProofDoesNotTriggerOnLabels(t *testing.T) {
 	}
 }
 
-// TestWorkflows_TheVerdictJudgesEachTierByItsOwnRule: a full proof must be
-// merge-eligible; a release proof is judged by `proofrun verify -release`,
-// the rule the tag applies; a nightly by its result.
-func TestWorkflows_TheVerdictJudgesEachTierByItsOwnRule(t *testing.T) {
-	steps := loadWorkflow(t, "proof.yml").Jobs["proof"].Steps
-	if len(steps) == 0 {
-		t.Fatal("jobs.proof has no steps")
-	}
-	last := steps[len(steps)-1]
-	if last.If != "" {
-		t.Errorf("the verdict step runs under %q; it must run whenever the job does", last.If)
-	}
-	for _, want := range []string{
-		`.result == "pass" and .merge_eligible == true`,
-		"proofrun verify -release -proof",
-		`nightly)`,
-		`.result == "pass" and .eligible_but_for_tier == true`,
-		"exit 1",
-	} {
-		if !strings.Contains(last.Run, want) {
-			t.Errorf("the verdict step lacks %q:\n%s", want, last.Run)
+// verdictArms parses the verdict step's `case "$tier" in` into its arms, keyed
+// by pattern. ok is false when the step has no such case.
+func verdictArms(run string) (arms map[string]string, ok bool) {
+	arms = map[string]string{}
+	armStart := regexp.MustCompile(`^\s*(full|release|nightly|\*)\)\s*$`)
+	in, cur := false, ""
+	for _, line := range strings.Split(run, "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case !in && t == `case "$tier" in`:
+			in, ok = true, true
+		case !in:
+		case t == "esac":
+			return arms, ok
+		case cur == "" && armStart.MatchString(line):
+			cur = strings.TrimSuffix(t, ")")
+			arms[cur] = ""
+		case cur != "" && t == ";;":
+			cur = ""
+		case cur != "":
+			arms[cur] += line + "\n"
 		}
 	}
-	if strings.Contains(last.Run, `else .result == "pass" end`) {
-		t.Error("the verdict step still judges release by its result alone")
+	return arms, ok
+}
+
+// verdictProblems holds the last step of `proof` to the plan's per-tier rule:
+// a full proof must be merge-eligible, a release proof is judged by `proofrun
+// verify -release`, the rule the tag applies, a nightly by its result and
+// eligible_but_for_tier, and any other tier fails. The step runs whenever the
+// job does and is never allowed to continue past a failure.
+func verdictProblems(w *wfFile) []string {
+	proof, ok := w.Jobs["proof"]
+	if !ok || len(proof.Steps) == 0 {
+		return []string{"jobs.proof has no steps"}
 	}
-	if strings.Contains(last.Run, `jq -e '.result == "pass"' `) {
-		t.Error("the verdict step judges a tier by its result alone")
+	last := proof.Steps[len(proof.Steps)-1]
+	var p []string
+	if last.Name != "verdict" {
+		return append(p, fmt.Sprintf("the last step of jobs.proof is %q, want the verdict", last.Name))
 	}
+	if last.If != "" {
+		p = append(p, fmt.Sprintf("the verdict step runs under %q; it must run whenever the job does", last.If))
+	}
+	if last.ContinueOnError != nil {
+		p = append(p, "the verdict step sets continue-on-error")
+	}
+	if !strings.Contains(last.Run, "set -euo pipefail") {
+		p = append(p, "the verdict step does not run under set -euo pipefail")
+	}
+	if !strings.Contains(last.Run, `tier="$(jq -r .tier "$proof/proof.json")"`) {
+		p = append(p, "the verdict step does not read the tier from proof.json")
+	}
+	arms, ok := verdictArms(last.Run)
+	if !ok {
+		return append(p, `the verdict step has no case "$tier" in`)
+	}
+	want := map[string][]string{
+		"full":    {`jq -e '.result == "pass" and .merge_eligible == true' "$proof/proof.json"`},
+		"release": {`go run ./test/tools/proofrun verify -release -proof "$proof"`},
+		"nightly": {`jq -e '.result == "pass" and .eligible_but_for_tier == true' "$proof/proof.json"`},
+		"*":       {"exit 1"},
+	}
+	for arm, body := range arms {
+		if _, known := want[arm]; !known {
+			p = append(p, fmt.Sprintf("the verdict case has an unexpected arm %q", arm))
+		}
+		for _, bad := range []string{"|| true", "|| :", "exit 0"} {
+			if strings.Contains(body, bad) {
+				p = append(p, fmt.Sprintf("the verdict's %s arm contains %q: it cannot fail", arm, bad))
+			}
+		}
+	}
+	for arm, parts := range want {
+		body, present := arms[arm]
+		if !present {
+			p = append(p, fmt.Sprintf("the verdict case has no %s arm", arm))
+			continue
+		}
+		for _, part := range parts {
+			if !strings.Contains(body, part) {
+				p = append(p, fmt.Sprintf("the verdict's %s arm lacks %q", arm, part))
+			}
+		}
+	}
+	if strings.Contains(arms["full"], "eligible_but_for_tier") {
+		p = append(p, "the verdict's full arm accepts a proof that is merge-ineligible but for its tier")
+	}
+	return p
+}
+
+func TestWorkflows_TheVerdictJudgesEachTierByItsOwnRule(t *testing.T) {
+	verdict := func(w *wfFile) *wfStep {
+		steps := w.Jobs["proof"].Steps
+		return &steps[len(steps)-1]
+	}
+	// swap rewrites within one arm only, so a mutation cannot be satisfied by
+	// the same text sitting in another arm.
+	swap := func(w *wfFile, arm, from, to string) {
+		v := verdict(w)
+		arms, _ := verdictArms(v.Run)
+		body, ok := arms[arm]
+		if !ok || !strings.Contains(body, from) {
+			t.Fatalf("the verdict's %s arm has no %q to weaken", arm, from)
+		}
+		v.Run = strings.Replace(v.Run, body, strings.Replace(body, from, to, 1), 1)
+	}
+	expectEachMutationRefused(t, "proof.yml", verdictProblems, []mutation{
+		{"verdict under a condition", func(w *wfFile) { verdict(w).If = "success()" }},
+		{"verdict continues on error", func(w *wfFile) { verdict(w).ContinueOnError = true }},
+		{"verdict not last", func(w *wfFile) {
+			job := w.Jobs["proof"]
+			job.Steps = append(job.Steps, wfStep{Name: "after", Run: "true"})
+		}},
+		{"full judged by its result alone", func(w *wfFile) {
+			swap(w, "full", ` and .merge_eligible == true`, ``)
+		}},
+		{"full's merge_eligible moved to the nightly arm", func(w *wfFile) {
+			swap(w, "full", `.result == "pass" and .merge_eligible == true`, `.result == "pass"`)
+			swap(w, "nightly", `.eligible_but_for_tier == true`, `.merge_eligible == true and .eligible_but_for_tier == true`)
+		}},
+		{"full accepts a tier-ineligible proof", func(w *wfFile) {
+			swap(w, "full", `.merge_eligible == true`, `.merge_eligible == true or .eligible_but_for_tier == true`)
+		}},
+		{"release judged by its result", func(w *wfFile) {
+			swap(w, "release", `go run ./test/tools/proofrun verify -release -proof "$proof"`, `jq -e '.result == "pass"' "$proof/proof.json"`)
+		}},
+		{"release without -release", func(w *wfFile) {
+			swap(w, "release", `verify -release -proof`, `verify -proof`)
+		}},
+		{"nightly judged by its result alone", func(w *wfFile) {
+			swap(w, "nightly", ` and .eligible_but_for_tier == true`, ``)
+		}},
+		{"nightly without a failing exit", func(w *wfFile) {
+			swap(w, "nightly", `jq -e '`, `jq '`)
+		}},
+		{"unknown tier passes", func(w *wfFile) { swap(w, "*", "exit 1", "exit 0") }},
+		{"a verdict that cannot fail", func(w *wfFile) {
+			swap(w, "full", `"$proof/proof.json"`, `"$proof/proof.json" || true`)
+		}},
+		{"a tier read from elsewhere", func(w *wfFile) {
+			v := verdict(w)
+			v.Run = strings.Replace(v.Run, `tier="$(jq -r .tier "$proof/proof.json")"`, `tier=full`, 1)
+		}},
+		{"no case", func(w *wfFile) {
+			v := verdict(w)
+			v.Run = strings.Replace(v.Run, `case "$tier" in`, `case "$other" in`, 1)
+		}},
+	})
 }
 
 // TestWorkflows_TheSummaryCarriesTheQuarantineWarnings: the seven-day
@@ -568,6 +747,42 @@ func TestWorkflows_JobRecordsCarryWhatTheMergerClassifies(t *testing.T) {
 		t.Errorf("a lost runner's record is classified %v (%s), want lost", class, why)
 	}
 
+	// The log is best effort: GitHub keeps none for a job whose runner it lost,
+	// so a missing one must not read as an unreadable record.
+	for _, s := range loadWorkflow(t, "proof.yml").Jobs["proof"].Steps {
+		if s.Name != "job records" {
+			continue
+		}
+		if strings.Contains(s.Run, "log: the API call failed") {
+			t.Error("a failed log fetch sets read_error; a runner-lost job has no log")
+		}
+		if !strings.Contains(s.Run, `annotations: the API call failed`) || !strings.Contains(s.Run, `unreadable: listing attempt`) {
+			t.Error("the job listing or the annotations fetch no longer sets read_error")
+		}
+		// Annotations are fetched as one JSON string per message and slurped, so
+		// a multi-line message stays one element.
+		m := regexp.MustCompile(`check-runs/\$check/annotations" --jq '([^']+)'`).FindStringSubmatch(s.Run)
+		if m == nil || !strings.Contains(s.Run, `jq -s . "$work/ann-lines"`) || strings.Contains(s.Run, "jq -R") {
+			t.Fatalf("the annotations are not fetched as JSON strings:\n%s", s.Run)
+		}
+		page := `[{"path":".github","annotation_level":"failure","message":"lost communication\nwith the server"},{"message":"second"}]`
+		lines := exec.Command(jq, "-r", m[1])
+		lines.Stdin = strings.NewReader(page)
+		out, err := lines.Output()
+		if err != nil {
+			t.Fatalf("the annotation filter failed: %v", err)
+		}
+		slurp := exec.Command(jq, "-c", "-s", ".")
+		slurp.Stdin = strings.NewReader(string(out))
+		arr, err := slurp.Output()
+		if err != nil {
+			t.Fatalf("slurping the annotations failed: %v", err)
+		}
+		if got := strings.TrimSpace(string(arr)); got != `["lost communication\nwith the server","second"]` {
+			t.Errorf("annotations = %s, want one element per message", got)
+		}
+	}
+
 	j = decode("annotations: the API call failed")
 	if j.ReadError == "" {
 		t.Fatal("a failed fetch leaves no read_error")
@@ -597,6 +812,226 @@ func TestWorkflows_EveryPartsProofStepIsOneTheMergerKnows(t *testing.T) {
 	if seen == 0 {
 		t.Fatal("no step runs scripts/proof.sh --part")
 	}
+}
+
+// ---- a red part cannot turn green ------------------------------------------------
+
+func setsContinueOnError(v any) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return v != nil // an expression, or any word but a literal false
+}
+
+// continueOnErrorProblems refuses `continue-on-error` anywhere: a job or a
+// step that continues past its failure turns a red proof into a green required
+// check, and nothing in these workflows has a reason to.
+func continueOnErrorProblems(file string, w *wfFile, extra ...wfStep) []string {
+	var p []string
+	for _, name := range w.jobNames() {
+		job := w.Jobs[name]
+		if setsContinueOnError(job.ContinueOnError) {
+			p = append(p, fmt.Sprintf("%s › %s sets continue-on-error", file, name))
+		}
+		for i, s := range job.Steps {
+			if setsContinueOnError(s.ContinueOnError) {
+				p = append(p, fmt.Sprintf("%s › %s %s sets continue-on-error", file, name, s.label(i)))
+			}
+		}
+	}
+	for i, s := range extra {
+		if setsContinueOnError(s.ContinueOnError) {
+			p = append(p, fmt.Sprintf("%s %s sets continue-on-error", file, s.label(i)))
+		}
+	}
+	return p
+}
+
+func TestWorkflows_NothingContinuesOnError(t *testing.T) {
+	for _, file := range allWorkflows {
+		expectNoProblems(t, file, continueOnErrorProblems(file, loadWorkflow(t, file)))
+	}
+	expectNoProblems(t, "the proof-host action", continueOnErrorProblems("the proof-host action", &wfFile{}, proofHostSteps(t)...))
+
+	stepNamed := func(w *wfFile, job, name string) *wfStep {
+		for i := range w.Jobs[job].Steps {
+			if w.Jobs[job].Steps[i].Name == name {
+				return &w.Jobs[job].Steps[i]
+			}
+		}
+		t.Fatalf("jobs.%s has no step %q", job, name)
+		return nil
+	}
+	rule := func(file string) func(*wfFile) []string {
+		return func(w *wfFile) []string { return continueOnErrorProblems(file, w) }
+	}
+	expectEachMutationRefused(t, "proof.yml", rule("proof.yml"), []mutation{
+		{"the proof job continues on error", func(w *wfFile) { w.Jobs["proof"].ContinueOnError = true }},
+		{"a shard job continues on error", func(w *wfFile) { w.Jobs["integration"].ContinueOnError = "${{ true }}" }},
+		{"the merge step continues", func(w *wfFile) { stepNamed(w, "proof", "merge").ContinueOnError = true }},
+		{"the verdict step continues", func(w *wfFile) { stepNamed(w, "proof", "verdict").ContinueOnError = true }},
+		{"the job records step continues", func(w *wfFile) { stepNamed(w, "proof", "job records").ContinueOnError = true }},
+		{"the parts download continues", func(w *wfFile) {
+			for i := range w.Jobs["proof"].Steps {
+				if st := &w.Jobs["proof"].Steps[i]; st.With["pattern"] != nil {
+					st.ContinueOnError = true
+				}
+			}
+		}},
+		{"a shard's proof step continues", func(w *wfFile) { stepNamed(w, "integration", "integration shard").ContinueOnError = true }},
+	})
+	expectEachMutationRefused(t, "release.yml", rule("release.yml"), []mutation{
+		{"the tag job continues", func(w *wfFile) { w.Jobs["tag"].ContinueOnError = true }},
+		{"the release verify continues", func(w *wfFile) { stepNamed(w, "tag", "verify the release proof").ContinueOnError = true }},
+	})
+}
+
+// uploadProblems: a stuck or failing shard must still upload its part, so the
+// merger reads what it left; that is every upload step running `if: always()`.
+func uploadProblems(file string, w *wfFile) []string {
+	var p []string
+	seen := 0
+	for _, name := range w.jobNames() {
+		for i, s := range w.Jobs[name].Steps {
+			if !strings.HasPrefix(s.Uses, "actions/upload-artifact@") {
+				continue
+			}
+			seen++
+			if c := strings.TrimSpace(s.If); c != "always()" && c != "${{ always() }}" {
+				p = append(p, fmt.Sprintf("%s › %s %s runs under %q, want always()", file, name, s.label(i), s.If))
+			}
+		}
+	}
+	if seen == 0 {
+		p = append(p, file+" uploads nothing")
+	}
+	return p
+}
+
+func TestWorkflows_EveryProofUploadRunsEvenWhenTheJobFailed(t *testing.T) {
+	for _, file := range []string{"proof.yml", "ci.yml"} {
+		expectNoProblems(t, file, uploadProblems(file, loadWorkflow(t, file)))
+	}
+	uploadIn := func(w *wfFile, job string) *wfStep {
+		for i := range w.Jobs[job].Steps {
+			if strings.HasPrefix(w.Jobs[job].Steps[i].Uses, "actions/upload-artifact@") {
+				return &w.Jobs[job].Steps[i]
+			}
+		}
+		t.Fatalf("jobs.%s uploads nothing", job)
+		return nil
+	}
+	rule := func(w *wfFile) []string { return uploadProblems("proof.yml", w) }
+	expectEachMutationRefused(t, "proof.yml", rule, []mutation{
+		{"a shard's upload without if", func(w *wfFile) { uploadIn(w, "integration").If = "" }},
+		{"the plan's upload without if", func(w *wfFile) { uploadIn(w, "plan").If = "" }},
+		{"the proof job's upload on success only", func(w *wfFile) { uploadIn(w, "proof").If = "success()" }},
+		{"the fast part's upload on failure only", func(w *wfFile) { uploadIn(w, "fast").If = "failure()" }},
+	})
+}
+
+// partIdentityProblems holds every step that runs a CI part to what the merger
+// requires of that part (merge.go checkIdentity): a part that uses the images
+// records the plan hash, so its step passes --plan, its job needs `plan` and
+// downloads the plan artifact to where --plan reads it; a UI part also records
+// the UI plan hash (--ui-plan). partUsesImages is the merger's own predicate.
+func partIdentityProblems(w *wfFile) []string {
+	var p []string
+	partRE := regexp.MustCompile(`--part\s+"?([^"\s\\]+)"?`)
+	seen := 0
+	for _, name := range w.jobNames() {
+		job := w.Jobs[name]
+		for i, s := range job.Steps {
+			if !strings.Contains(s.Run, "scripts/proof.sh --part") {
+				continue
+			}
+			m := partRE.FindStringSubmatch(s.Run)
+			if m == nil {
+				p = append(p, fmt.Sprintf("jobs.%s %s names no part", name, s.label(i)))
+				continue
+			}
+			seen++
+			part := strings.NewReplacer("${{ matrix.shard }}", "1", "${{ matrix.activity }}", "shell").Replace(m[1])
+			if !partUsesImages(part) {
+				continue
+			}
+			where := fmt.Sprintf("jobs.%s %s (part %s)", name, s.label(i), part)
+			if !strings.Contains(s.Run, `--plan "$RUNNER_TEMP/ci/plan/integration-plan.json"`) {
+				p = append(p, where+" passes no --plan: the merger finds no plan hash and the proof is ineligible")
+			}
+			if strings.HasPrefix(part, "ui-e2e:") && !strings.Contains(s.Run, `--ui-plan "$RUNNER_TEMP/ci/plan/ui-plan.json"`) {
+				p = append(p, where+" passes no --ui-plan: the merger finds no UI plan hash")
+			}
+			if !contains(job.needs(), "plan") {
+				p = append(p, fmt.Sprintf("jobs.%s does not need plan, whose artifact its --plan reads", name))
+			}
+			downloaded := false
+			for _, d := range job.Steps {
+				if strings.HasPrefix(d.Uses, "actions/download-artifact@") &&
+					withString(d, "name") == "${{ needs.plan.outputs.plan_artifact }}" &&
+					withString(d, "path") == "${{ runner.temp }}/ci/plan" {
+					downloaded = true
+				}
+			}
+			if !downloaded {
+				p = append(p, fmt.Sprintf("jobs.%s never downloads the plan artifact to $RUNNER_TEMP/ci/plan", name))
+			}
+		}
+	}
+	if seen == 0 {
+		p = append(p, "no step runs scripts/proof.sh --part")
+	}
+	return p
+}
+
+func TestWorkflows_EveryImageUsingPartPassesThePlanTheMergerRequires(t *testing.T) {
+	// The merger's predicate agrees with the parts this workflow runs.
+	for part, want := range map[string]bool{"build": true, "observability": true, "integration:1": true,
+		"ui-e2e:1": true, "activity-fixture:shell": true, "plan": false, "fast": false} {
+		if partUsesImages(part) != want {
+			t.Errorf("partUsesImages(%q) = %v, want %v: update this test with merge.go", part, !want, want)
+		}
+	}
+	stepOf := func(w *wfFile, job, contains string) *wfStep {
+		for i := range w.Jobs[job].Steps {
+			if strings.Contains(w.Jobs[job].Steps[i].Run, contains) {
+				return &w.Jobs[job].Steps[i]
+			}
+		}
+		t.Fatalf("jobs.%s has no step running %q", job, contains)
+		return nil
+	}
+	drop := func(job, part, flag string) mutation {
+		return mutation{"no " + flag + " on " + job, func(w *wfFile) {
+			s := stepOf(w, job, "--part "+part)
+			var kept []string
+			for _, line := range strings.Split(s.Run, "\n") {
+				if !strings.Contains(line, flag+" ") {
+					kept = append(kept, line)
+				}
+			}
+			s.Run = strings.Join(kept, "\n")
+		}}
+	}
+	expectEachMutationRefused(t, "proof.yml", partIdentityProblems, []mutation{
+		drop("build", "build", "--plan"),
+		drop("integration", `"integration:`, "--plan"),
+		drop("ui-e2e", `"ui-e2e:`, "--plan"),
+		drop("ui-e2e", `"ui-e2e:`, "--ui-plan"),
+		drop("activity-fixture", `"activity-fixture:`, "--plan"),
+		drop("observability", "observability", "--plan"),
+		{"activity-fixture does not need plan", func(w *wfFile) { w.Jobs["activity-fixture"].Needs = []any{"base", "build"} }},
+		{"observability never downloads the plan", func(w *wfFile) {
+			job := w.Jobs["observability"]
+			var kept []wfStep
+			for _, s := range job.Steps {
+				if withString(s, "name") != "${{ needs.plan.outputs.plan_artifact }}" {
+					kept = append(kept, s)
+				}
+			}
+			job.Steps = kept
+		}},
+	})
 }
 
 // ---- timeouts ------------------------------------------------------------------
@@ -723,10 +1158,6 @@ func credentialProblems(file string, w *wfFile) []string {
 				continue
 			}
 			checkouts++
-			// release.yml's tag job is the one checkout that pushes.
-			if file == "release.yml" && name == "tag" {
-				continue
-			}
 			if withString(s, "persist-credentials") != "false" {
 				p = append(p, fmt.Sprintf("%s › %s %s does not set persist-credentials: false", file, name, s.label(i)))
 			}
@@ -899,6 +1330,54 @@ func TestWorkflows_CheckRunsOnEveryPush(t *testing.T) {
 	})
 }
 
+// featureBaseProblems: the feature proof diffs from the commit the change
+// branched from, whatever shape a validate/feature push has, so the checkout
+// holds the history a merge-base needs.
+func featureBaseProblems(w *wfFile) []string {
+	feature, ok := w.Jobs["feature"]
+	if !ok {
+		return []string{"ci.yml has no feature job"}
+	}
+	var p []string
+	for _, s := range feature.Steps {
+		if isCheckout(s) && withString(s, "fetch-depth") != "0" {
+			p = append(p, fmt.Sprintf("the feature checkout has fetch-depth %q, and a merge-base needs the history (0)", withString(s, "fetch-depth")))
+		}
+		if s.Name != "base" {
+			continue
+		}
+		if !strings.Contains(s.Run, `git merge-base HEAD origin/main`) {
+			p = append(p, "the feature base is not the merge base with origin/main")
+		}
+		if strings.Contains(s.Run, "base=\"$(git rev-parse HEAD^1)\"\n          echo") {
+			p = append(p, "the feature base is HEAD^1, which a non-merge push does not satisfy")
+		}
+		return p
+	}
+	return append(p, "the feature job has no base step")
+}
+
+func TestWorkflows_TheFeatureBaseIsTheMergeBase(t *testing.T) {
+	expectEachMutationRefused(t, "ci.yml", featureBaseProblems, []mutation{
+		{"HEAD^1 as the base", func(w *wfFile) {
+			for i := range w.Jobs["feature"].Steps {
+				if s := &w.Jobs["feature"].Steps[i]; s.Name == "base" {
+					s.Run = `set -euo pipefail
+          base="$(git rev-parse HEAD^1)"
+          echo "base=$base" >>"$GITHUB_OUTPUT"`
+				}
+			}
+		}},
+		{"a shallow checkout", func(w *wfFile) {
+			for i := range w.Jobs["feature"].Steps {
+				if isCheckout(w.Jobs["feature"].Steps[i]) {
+					w.Jobs["feature"].Steps[i].With["fetch-depth"] = 2
+				}
+			}
+		}},
+	})
+}
+
 // TestWorkflows_TheFlakesJobReadsTonightsProof: `flakes` waits for `nightly`,
 // whatever its result, so the window it reads includes that night's proof.
 func TestWorkflows_TheFlakesJobReadsTonightsProof(t *testing.T) {
@@ -983,6 +1462,28 @@ func releaseProblems(w *wfFile) []string {
 	if !strings.Contains(check.Run, "exit 1") || !strings.Contains(check.Run, `version=$VERSION" >>"$GITHUB_OUTPUT"`) {
 		p = append(p, "jobs.validate does not refuse, or does not publish, the version")
 	}
+	// A tag is created from main and nowhere else: validate refuses a tagging
+	// dispatch on any other ref, and the tag job runs only on main's ref.
+	var refuse *wfStep
+	for i := range validate.Steps {
+		if strings.Contains(validate.Steps[i].Run, "refs/heads/main") {
+			refuse = &validate.Steps[i]
+		}
+	}
+	if refuse == nil {
+		p = append(p, "jobs.validate never refuses a tagging dispatch off refs/heads/main")
+	} else {
+		if envString(*refuse, "REF") != "${{ github.ref }}" || envString(*refuse, "WANT_TAG") != "${{ inputs.tag }}" {
+			p = append(p, "jobs.validate's main check does not read github.ref and inputs.tag from its env")
+		}
+		if !strings.Contains(refuse.Run, "exit 1") || !strings.Contains(refuse.Run, `"$WANT_TAG" = true`) ||
+			!strings.Contains(refuse.Run, `"$REF" != refs/heads/main`) {
+			p = append(p, "jobs.validate's main check does not fail a tagging dispatch off main")
+		}
+	}
+	if tag, ok := w.Jobs["tag"]; ok && !strings.Contains(tag.If, "github.ref == 'refs/heads/main'") {
+		p = append(p, fmt.Sprintf("jobs.tag.if = %q does not require github.ref == 'refs/heads/main'", tag.If))
+	}
 	// Concurrency comes from the validated value, never the raw input.
 	if w.Concurrency != nil {
 		p = append(p, "release.yml has a workflow-level concurrency group, decided before validation")
@@ -1016,8 +1517,32 @@ func TestWorkflows_ReleaseValidatesTheVersionFirst(t *testing.T) {
 		{"workflow-level concurrency", func(w *wfFile) {
 			w.Concurrency = map[string]any{"group": "release-${{ inputs.version }}"}
 		}},
+		{"no refusal of a tag off main", func(w *wfFile) {
+			v := w.Jobs["validate"]
+			v.Steps = v.Steps[:1]
+		}},
+		{"the refusal never fails", func(w *wfFile) {
+			for i := range w.Jobs["validate"].Steps {
+				s := &w.Jobs["validate"].Steps[i]
+				if strings.Contains(s.Run, "refs/heads/main") {
+					s.Run = strings.Replace(s.Run, "exit 1", "exit 0", 1)
+				}
+			}
+		}},
+		{"the refusal reads the ref only on tag false", func(w *wfFile) {
+			for i := range w.Jobs["validate"].Steps {
+				s := &w.Jobs["validate"].Steps[i]
+				if strings.Contains(s.Run, "refs/heads/main") {
+					s.Env["WANT_TAG"] = "false"
+				}
+			}
+		}},
+		{"the tag job on any ref", func(w *wfFile) { w.Jobs["tag"].If = "${{ inputs.tag }}" }},
 	})
 }
+
+// gitTagRE matches `git tag`, with or without `-c key=value` options before it.
+var gitTagRE = regexp.MustCompile(`git( -c '?[^ ]+'?)* tag\b`)
 
 func tagProblems(w *wfFile) []string {
 	tag, ok := w.Jobs["tag"]
@@ -1030,12 +1555,16 @@ func tagProblems(w *wfFile) []string {
 		if verifyAt < 0 && strings.Contains(s.Run, "proofrun verify -release") {
 			verifyAt = i
 		}
-		touches := strings.Contains(s.Run, "git tag") || strings.Contains(s.Run, "git push")
+		touches := gitTagRE.MatchString(s.Run) || strings.Contains(s.Run, "git push")
 		if touches && (verifyAt < 0 || i <= verifyAt) {
 			p = append(p, fmt.Sprintf("%s touches a tag before the proof is verified", s.label(i)))
 		}
-		if tagAt < 0 && strings.Contains(s.Run, "git tag") {
+		if tagAt < 0 && gitTagRE.MatchString(s.Run) {
 			tagAt = i
+			// A runner has no committer identity: an annotated tag needs one.
+			if !strings.Contains(s.Run, "user.name=") || !strings.Contains(s.Run, "user.email=") {
+				p = append(p, fmt.Sprintf("%s creates an annotated tag with no explicit committer identity", s.label(i)))
+			}
 		}
 		if strings.Contains(s.Run, "git push") {
 			pushAt = i
@@ -1054,6 +1583,14 @@ func tagProblems(w *wfFile) []string {
 		if isCheckout(s) && withString(s, "ref") != "${{ github.sha }}" {
 			p = append(p, fmt.Sprintf("%s checks out %q, not the commit the gate proved", s.label(i), withString(s, "ref")))
 		}
+		// Repository code runs in this job (`go run`): no checkout leaves the
+		// token on disk for it, and only the step that pushes is handed it.
+		if isCheckout(s) && withString(s, "persist-credentials") != "false" {
+			p = append(p, fmt.Sprintf("%s persists credentials while the proof is verified", s.label(i)))
+		}
+		if i != pushAt && (envString(s, "GH_TOKEN") != "" || envString(s, "GITHUB_TOKEN") != "") {
+			p = append(p, fmt.Sprintf("%s is handed a token and does not push", s.label(i)))
+		}
 	}
 	return p
 }
@@ -1063,6 +1600,12 @@ func tagProblems(w *wfFile) []string {
 // release proof of the commit it checked out; no earlier step touches a tag.
 func TestWorkflows_TheTagJobVerifiesTheReleaseProofFirst(t *testing.T) {
 	expectEachMutationRefused(t, "release.yml", tagProblems, []mutation{
+		{"a tag without a committer identity", func(w *wfFile) {
+			for i := range w.Jobs["tag"].Steps {
+				s := &w.Jobs["tag"].Steps[i]
+				s.Run = strings.ReplaceAll(s.Run, "git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' tag", "git tag")
+			}
+		}},
 		{"a push before verify", func(w *wfFile) {
 			job := w.Jobs["tag"]
 			job.Steps = append([]wfStep{{Name: "early", Run: "git push origin v0.0.0"}}, job.Steps...)
@@ -1086,6 +1629,14 @@ func TestWorkflows_TheTagJobVerifiesTheReleaseProofFirst(t *testing.T) {
 			}
 		}},
 		{"checkout of the branch tip", func(w *wfFile) { delete(w.Jobs["tag"].Steps[0].With, "ref") }},
+		{"a checkout that keeps the token", func(w *wfFile) { w.Jobs["tag"].Steps[0].With["persist-credentials"] = true }},
+		{"the verify step handed the token", func(w *wfFile) {
+			for i := range w.Jobs["tag"].Steps {
+				if s := &w.Jobs["tag"].Steps[i]; strings.Contains(s.Run, "proofrun verify -release") {
+					s.Env["GH_TOKEN"] = "${{ github.token }}"
+				}
+			}
+		}},
 	})
 }
 
@@ -1094,7 +1645,7 @@ func TestWorkflows_TheTagJobVerifiesTheReleaseProofFirst(t *testing.T) {
 // untrustedInShell names the expressions a `run:` may never splice into its
 // script: a workflow input or event field is text a person typed, and the
 // shell would read it as code. They reach a step through `env:`.
-var untrustedInShell = regexp.MustCompile(`\$\{\{\s*(inputs\.|github\.event\.|github\.head_ref)`)
+var untrustedInShell = regexp.MustCompile(`\$\{\{\s*(inputs\.|github\.event\.|github\.event_name|github\.head_ref|github\.base_ref|github\.ref_name|github\.actor)`)
 
 func TestWorkflows_RunStepsNeverInterpolateInputs(t *testing.T) {
 	check := func(where string, steps []wfStep) {
@@ -1111,8 +1662,11 @@ func TestWorkflows_RunStepsNeverInterpolateInputs(t *testing.T) {
 		}
 	}
 	check("the proof-host action", proofHostSteps(t))
-	if untrustedInShell.FindString(`run: echo "${{ inputs.version }}"`) == "" {
-		t.Error("the pattern misses an interpolated input")
+	for _, expr := range []string{"inputs.version", "github.event.pull_request.title", "github.event_name", "github.head_ref",
+		"github.base_ref", "github.ref_name", "github.actor"} {
+		if untrustedInShell.FindString(`run: echo "${{ `+expr+` }}"`) == "" {
+			t.Errorf("the pattern misses an interpolated %s", expr)
+		}
 	}
 }
 

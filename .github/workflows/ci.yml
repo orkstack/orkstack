@@ -4,7 +4,8 @@ name: ci
 # here; the merge gate is `proof.yml`'s `proof` job (docs/PROOFS.md).
 #
 #   check    build, vet, lint and the unit suites with -short: no Docker,
-#            under two minutes.
+#            under two minutes warm; cold, 377 s was measured at four CPUs
+#            and about twice that is estimated at two (docs/PROOFS.md §11.5).
 #   feature  the feature proof of this change, on a public repository or with
 #            the ci:feature label (a private repository keeps its metered
 #            minutes for the merge gate).
@@ -23,11 +24,12 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
         with:
           persist-credentials: false
       - uses: actions/setup-go@v7.0.0
@@ -35,7 +37,8 @@ jobs:
         with:
           go-version: "1.27.3"
       - name: check
-        timeout-minutes: 10
+        # Cold, two vCPUs: estimated at about 750 s, so 25 minutes is a margin of two.
+        timeout-minutes: 25
         # Pointing DOCKER_HOST at nothing proves the fast path needs no Docker.
         run: DOCKER_HOST=unix:///nonexistent make check
 
@@ -50,7 +53,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         timeout-minutes: 3
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v7.0.0
         timeout-minutes: 5
@@ -75,7 +78,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base="$(git rev-parse HEAD^1)"
+          # The commit the change branched from, whatever shape the pushed
+          # commit has; on main itself (nothing to diff) its first parent.
+          base="$(git merge-base HEAD origin/main)"
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then
+            base="$(git rev-parse HEAD^1)"
+          fi
           echo "base=$base" >>"$GITHUB_OUTPUT"
       - name: body
         id: body

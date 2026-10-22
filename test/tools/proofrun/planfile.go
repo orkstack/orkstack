@@ -117,29 +117,33 @@ type integrationPlan struct {
 	ProofID string `json:"proof_id"`
 	// CheckedOn is the proof's start date (UTC, YYYY-MM-DD): every quarantine
 	// review-by date is judged against it, by every part and by the merger.
-	CheckedOn             string          `json:"checked_on"`
-	BaseRef               string          `json:"base_ref"`
-	BaseCommit            string          `json:"base_commit"`
-	MergeBase             string          `json:"merge_base"`
-	ObservabilityRequired bool            `json:"observability_required"`
-	PR                    *prRecord       `json:"pr,omitempty"`
-	Costs                 fileRef         `json:"costs"`
-	Nightly               nightlyRef      `json:"nightly"`
-	AllowedSkips          fileRef         `json:"allowed_skips"`
-	Quarantine            quarantineRef   `json:"quarantine"`
-	HostSpeed             quarantineRef   `json:"host_speed"`
-	PartsExpected         []string        `json:"parts_expected"`
-	Packages              []planPackage   `json:"packages"`
-	Expected              []testRef       `json:"expected"`
-	Deferred              []deferredRef   `json:"deferred"`
-	OutOfTier             int             `json:"out_of_tier"`
-	Unmeasured            []unmeasuredRef `json:"unmeasured"`
-	Jobs                  []job           `json:"jobs"`
-	Shards                []planShard     `json:"shards"`
-	RequestedShards       int             `json:"requested_shards"`
-	SlotsPerShard         int             `json:"slots_per_shard"`
-	Problems              []string        `json:"problems"`
-	ListsChanged          []listChange    `json:"lists_changed"`
+	CheckedOn             string        `json:"checked_on"`
+	BaseRef               string        `json:"base_ref"`
+	BaseCommit            string        `json:"base_commit"`
+	MergeBase             string        `json:"merge_base"`
+	ObservabilityRequired bool          `json:"observability_required"`
+	PR                    *prRecord     `json:"pr,omitempty"`
+	Costs                 fileRef       `json:"costs"`
+	Nightly               nightlyRef    `json:"nightly"`
+	AllowedSkips          fileRef       `json:"allowed_skips"`
+	Quarantine            quarantineRef `json:"quarantine"`
+	HostSpeed             quarantineRef `json:"host_speed"`
+	PartsExpected         []string      `json:"parts_expected"`
+	// Complete says the plan covers every integration package: no -select, no
+	// -run and no package patterns narrowed it. The merger requires it of the
+	// full, nightly and release tiers.
+	Complete        bool            `json:"complete"`
+	Packages        []planPackage   `json:"packages"`
+	Expected        []testRef       `json:"expected"`
+	Deferred        []deferredRef   `json:"deferred"`
+	OutOfTier       int             `json:"out_of_tier"`
+	Unmeasured      []unmeasuredRef `json:"unmeasured"`
+	Jobs            []job           `json:"jobs"`
+	Shards          []planShard     `json:"shards"`
+	RequestedShards int             `json:"requested_shards"`
+	SlotsPerShard   int             `json:"slots_per_shard"`
+	Problems        []string        `json:"problems"`
+	ListsChanged    []listChange    `json:"lists_changed"`
 }
 
 // readPlan reads a format-2 plan. A format-1 plan (a bare array of jobs,

@@ -106,6 +106,12 @@ if [ "$found" -ne 1 ]; then
 	exit 1
 fi
 
+# A status of 404 is what gh prints for a missing resource.
+if [ "$status" = 404 ]; then
+	echo "gh: Not Found (HTTP 404)" >&2
+	exit 1
+fi
+
 expr=""
 prev=""
 for arg in "$@"; do
@@ -134,6 +140,10 @@ case "$*" in
 	;;
 "rev-parse origin/main")
 	printf '%s\n' "${FAKE_ORIGIN_SHA:-}"
+	;;
+"rev-parse --verify --quiet "*"^2^{commit}")
+	[ -n "${FAKE_PARENT2:-}" ] || exit 1
+	printf '%s\n' "$FAKE_PARENT2"
 	;;
 "rev-parse "*"^{tree}")
 	printf '%s\n' "${FAKE_LANDED_TREE:-}"
@@ -495,7 +505,7 @@ func gateCheckable(t *testing.T, st gateState) *gateSandbox {
 	}
 	s.answer("api repos/o/r/rulesets/11", st.mainRules)
 	if st.modeValue == "" {
-		s.answerStatus("api repos/o/r/actions/variables/MERGE_GATE_MODE", "", 1)
+		s.answerStatus("api repos/o/r/actions/variables/MERGE_GATE_MODE", "", 404)
 	} else {
 		s.answer("api repos/o/r/actions/variables/MERGE_GATE_MODE", fmt.Sprintf(`{"value":%q}`, st.modeValue))
 	}
@@ -628,9 +638,12 @@ func TestGitHubMergeGate_RefusesAModeVariableThatDisagreesWithTheRuleset(t *test
 		{"variable set, queue requested, queue-less ruleset", func(*testing.T) gateState {
 			return gateState{ownerType: "Organization", modeValue: "queue", rulesets: existingMainGate}
 		}, map[string]string{"QUEUE": "1"}, "main-proof-gate has no merge_queue rule"},
-		{"queue applied, variable unset", func(t *testing.T) gateState {
+		{"queue applied, variable unset, check only", func(t *testing.T) gateState {
 			return gateState{ownerType: "Organization", rulesets: existingMainGate, mainRules: gateQueueRules(t)}
-		}, map[string]string{"QUEUE": "1"}, "main-proof-gate has a merge_queue rule, and MERGE_GATE_MODE is unset"},
+		}, map[string]string{"QUEUE": "1", "APPLY": "0"}, "main-proof-gate has a merge_queue rule, and MERGE_GATE_MODE is unset"},
+		{"queue applied, variable unset, queue-less apply", func(t *testing.T) gateState {
+			return gateState{ownerType: "Organization", rulesets: existingMainGate, mainRules: gateQueueRules(t)}
+		}, nil, "main-proof-gate has a merge_queue rule, and MERGE_GATE_MODE is unset"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := gateCheckable(t, c.st(t))
@@ -1146,5 +1159,112 @@ func TestCodeowners_CoverTheGateFiles(t *testing.T) {
 		if !covered[pattern] {
 			t.Errorf("gate file %q has no CODEOWNERS line", pattern)
 		}
+	}
+}
+
+// A queue apply that stopped between the ruleset and the variable leaves the
+// queue rule applied and the variable unset; APPLY=1 QUEUE=1 finishes it, the
+// variable last.
+func TestGitHubMergeGate_QueueApplyRepairsAHalfAppliedQueue(t *testing.T) {
+	s := gateCheckable(t, gateState{ownerType: "Organization", rulesets: existingMainGate, mainRules: gateQueueRules(t)})
+	gateAcceptsWrites(s, existingMainGate)
+	out, code := s.run(map[string]string{"APPLY": "1", "QUEUE": "1"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	calls := s.ghCalls()
+	put := gateCallIndex(calls, "--method PUT", "repos/o/r/rulesets/11")
+	set := gateCallIndex(calls, "--method POST", "actions/variables", "name=MERGE_GATE_MODE", "value=queue")
+	if put < 0 || set < 0 || set < put {
+		t.Errorf("want the ruleset updated (%d) and then the variable set (%d):\n%s", put, set, strings.Join(calls, "\n"))
+	}
+}
+
+// An API error is not "absent": the gate fails closed on it and writes nothing.
+func TestGitHubMergeGate_AnApiErrorIsNotAnAbsentResource(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		break_ func(s *gateSandbox)
+		want   string
+	}{
+		{"the rulesets list fails", func(s *gateSandbox) {
+			s.answerStatus("api repos/o/r/rulesets", "", 1)
+		}, "cannot read the rulesets"},
+		{"the variable read fails", func(s *gateSandbox) {
+			s.answerStatus("api repos/o/r/actions/variables/MERGE_GATE_MODE", "", 1)
+		}, "cannot read the MERGE_GATE_MODE variable"},
+		{"the main ruleset read fails", func(s *gateSandbox) {
+			s.answerStatus("api repos/o/r/rulesets/11", "", 1)
+		}, "cannot read ruleset 11"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := gateCheckable(t, gateState{rulesets: existingMainGate})
+			gateAcceptsWrites(s, existingMainGate)
+			// Earlier rows win: put the failing row first.
+			probe := newGateSandbox(t)
+			c.break_(probe)
+			s.rows = append(probe.rows[:len(probe.rows):len(probe.rows)], s.rows...)
+			// The probe wrote its response files under its own dir; they are empty.
+			out, code := s.run(map[string]string{"APPLY": "1"})
+			if code != 1 || !strings.Contains(out, c.want) {
+				t.Fatalf("exit = %d, want 1 with %q\n%s", code, c.want, out)
+			}
+			gateRefuseWrites(t, s)
+		})
+	}
+}
+
+// The lookup that decides between POST and PUT must not swallow an error: a
+// failed list would POST a duplicate ruleset.
+func TestGitHubMergeGate_ApplyDoesNotPostWhenTheNameLookupFails(t *testing.T) {
+	s := gateCheckable(t, gateState{})
+	s.answerStatus("api repos/o/r/rulesets --jq *", "", 1)
+	s.answer("api --method POST repos/o/r/rulesets --input *", "")
+	s.answer("api --method PUT repos/o/r/rulesets/* --input *", "")
+	out, code := s.run(map[string]string{"APPLY": "1"})
+	if code != 1 || !strings.Contains(out, "cannot list the rulesets to find main-proof-gate") {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	gateRefuseWrites(t, s)
+}
+
+// The queue-less mode lands a GitHub-made merge commit with no check run of
+// its own; --verify-landed reads the run on its second parent, the pull
+// request head, and compares the merge commit's tree.
+func TestGitHubMergeGate_VerifyLandedFindsTheProofOnThePullRequestHead(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		parent2 string
+		code    int
+		want    string
+	}{
+		{"a merge commit", "sha-head", 0, "carries no proof check run; read the pull request head sha-head"},
+		{"a commit that is not a merge", "", 1, "no proof check run on sha-landed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newGateSandbox(t)
+			s.answer("auth status", "")
+			s.answer("repo view --json owner --jq .owner.login", `{"owner":{"login":"o"}}`)
+			s.answer("repo view --json name --jq .name", `{"name":"r"}`)
+			s.answer("api repos/o/r/commits/sha-landed/check-runs --jq *", `{"check_runs":[]}`)
+			s.answer("api repos/o/r/commits/sha-head/check-runs --jq *",
+				`{"check_runs":[{"name":"proof","app":{"id":15368},"details_url":"https://github.com/o/r/actions/runs/7/job/9"}]}`)
+			arts := filepath.Join(s.dir, "artifacts", "proof-7-a1")
+			if err := os.MkdirAll(arts, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(arts, "proof.json"), []byte(`{"tree":"tree-landed"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, code := s.run(map[string]string{
+				"FAKE_GIT_DEFAULT":   "sha-landed",
+				"FAKE_LANDED_TREE":   "tree-landed",
+				"FAKE_PARENT2":       c.parent2,
+				"FAKE_RUN_ARTIFACTS": filepath.Join(s.dir, "artifacts"),
+			}, "--verify-landed", "sha-landed")
+			if code != c.code || !strings.Contains(out, c.want) {
+				t.Errorf("exit = %d, want %d with %q\n%s", code, c.code, c.want, out)
+			}
+		})
 	}
 }

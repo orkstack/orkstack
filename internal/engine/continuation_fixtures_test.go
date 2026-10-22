@@ -23,7 +23,11 @@ import (
 func recordedWithTheWriter(path string) bool {
 	return strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") ||
 		strings.Contains(path, "cancel-before-dispatch") || strings.Contains(path, "definition-ref") ||
-		strings.Contains(path, "snapshot-overlay")
+		strings.Contains(path, "snapshot-overlay") ||
+		// A refused route fails the run at its first dispatch, before any idle
+		// point: nothing in it can switch, so the switch tests have nothing to
+		// see in it (its own gate has its own negative test).
+		strings.Contains(path, "refused-route")
 }
 
 // committedFixtures is every committed history fixture's path.

@@ -167,6 +167,7 @@ jobs:
             echo "proof_id=$PROOF_ID"
           } >>"$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7.0.2
+        if: always()
         timeout-minutes: 5
         with:
           name: plan-a${{ github.run_attempt }}
@@ -174,7 +175,7 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
 
   build:
-    needs: base
+    needs: [base, plan]
     if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
@@ -194,11 +195,17 @@ jobs:
           go-version: "1.27.3"
       - uses: docker/setup-buildx-action@v4.4.1
         timeout-minutes: 3
+      - uses: actions/download-artifact@v8.0.2
+        timeout-minutes: 3
+        with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: ${{ runner.temp }}/ci/plan
       - name: build
         timeout-minutes: 20
         shell: bash
         run: |
           scripts/proof.sh --part build --tier "$TIER" --proof-id "$PROOF_ID" \
+            --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
@@ -251,7 +258,7 @@ jobs:
 
   integration:
     needs: [base, plan, build]
-    if: ${{ github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof'))) }}
+    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     permissions:
@@ -357,6 +364,7 @@ jobs:
           PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}
         run: |
           scripts/proof.sh --part "ui-e2e:${{ matrix.shard }}" --tier "$TIER" --proof-id "$PROOF_ID" \
+            --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --ui-plan "$RUNNER_TEMP/ci/plan/ui-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
@@ -369,7 +377,7 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   activity-fixture:
-    needs: [base, build]
+    needs: [base, plan, build]
     if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 65
@@ -396,6 +404,11 @@ jobs:
       - uses: actions/download-artifact@v8.0.2
         timeout-minutes: 3
         with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: ${{ runner.temp }}/ci/plan
+      - uses: actions/download-artifact@v8.0.2
+        timeout-minutes: 3
+        with:
           name: ${{ needs.build.outputs.build_artifact }}
           path: ${{ runner.temp }}/ci/build
       - name: activity fixture
@@ -403,6 +416,7 @@ jobs:
         shell: bash
         run: |
           scripts/proof.sh --part "activity-fixture:${{ matrix.activity }}" --tier "$TIER" --proof-id "$PROOF_ID" \
+            --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
@@ -436,6 +450,11 @@ jobs:
       - uses: actions/download-artifact@v8.0.2
         timeout-minutes: 3
         with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: ${{ runner.temp }}/ci/plan
+      - uses: actions/download-artifact@v8.0.2
+        timeout-minutes: 3
+        with:
           name: ${{ needs.build.outputs.build_artifact }}
           path: ${{ runner.temp }}/ci/build
       - name: observability
@@ -443,6 +462,7 @@ jobs:
         shell: bash
         run: |
           scripts/proof.sh --part observability --tier "$TIER" --proof-id "$PROOF_ID" \
+            --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
@@ -496,7 +516,6 @@ jobs:
           name: ${{ needs.plan.outputs.plan_artifact }}
           path: ${{ runner.temp }}/ci/parts/${{ needs.plan.outputs.plan_artifact }}
       - uses: actions/download-artifact@v8.0.2
-        continue-on-error: true
         timeout-minutes: 3
         with:
           pattern: part-*
@@ -510,8 +529,9 @@ jobs:
           # GitHub's record of every attempt's jobs, in the shape proofrun
           # merge reads (merge.go, githubAttempt): each job's steps, its
           # check run's annotations (where GitHub says it lost the runner),
-          # its log when it did not succeed, and read_error when any of those
-          # could not be fetched, so the merger fails that job closed.
+          # its log when it did not succeed (best effort), and read_error when
+          # the job listing or the annotations could not be fetched, so the
+          # merger fails that job closed.
           set -uo pipefail
           dir="$RUNNER_TEMP/ci/jobs"
           work="$RUNNER_TEMP/ci/jobs-work"
@@ -535,14 +555,17 @@ jobs:
               if [ "$status" = completed ]; then
                 if [ -z "$check" ]; then
                   err="no check run"
-                elif ! gh api --paginate "$repo/check-runs/$check/annotations" --jq '.[].message' >"$work/ann-lines"; then
+                elif ! gh api --paginate "$repo/check-runs/$check/annotations" --jq '.[].message | tojson' >"$work/ann-lines" ||
+                  ! jq -s . "$work/ann-lines" >"$work/ann"; then
+                  # One JSON string per message, so a multi-line message stays whole.
                   err="annotations: the API call failed"
-                else
-                  jq -R . "$work/ann-lines" | jq -s . >"$work/ann"
+                  echo '[]' >"$work/ann"
                 fi
+                # Best effort: GitHub keeps no log for a job whose runner it lost,
+                # and that job is classified from its annotations, not its log.
                 case "$conclusion" in
                 success | skipped) ;;
-                *) gh api "$repo/actions/jobs/$id/logs" >"$work/log" || err="${err:+$err; }log: the API call failed" ;;
+                *) gh api "$repo/actions/jobs/$id/logs" >"$work/log" 2>/dev/null || : >"$work/log" ;;
                 esac
               fi
               jq -c --rawfile log "$work/log" --slurpfile ann "$work/ann" --arg err "$err" '

@@ -753,7 +753,7 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		ObservabilityRequired: o.observabilityRequired, PR: o.pr,
 		Packages: packages, Jobs: jobs, Shards: shards,
 		RequestedShards: o.shards, SlotsPerShard: o.jobs, Problems: problems,
-		CheckedOn: checkedOn.Format("2006-01-02"),
+		CheckedOn: checkedOn.Format("2006-01-02"), Complete: complete,
 	}
 	if code := writePlan(*o, plan, measured, nightly, nightlyBase, nil); code != 0 {
 		return code
@@ -1254,7 +1254,7 @@ func cmdUnit(args []string) int {
 	if readErr != nil {
 		l.Problems = append(l.Problems, "reading go test -json: "+readErr.Error())
 	}
-	if runErr != nil && !unitExitExcused(l, c.pkgEnds, listed) {
+	if runErr != nil && !unitExitExcused(l, c.pkgEnds, listed, c.packageOutput) {
 		l.Problems = append(l.Problems, "go test exited: "+runErr.Error())
 	}
 	return writeLedgerAndReport(*out, l)
@@ -1265,7 +1265,13 @@ func cmdUnit(args []string) int {
 // package reported its own terminal event, failing only where a quarantined
 // test failed. A build failure, a TestMain or package-level failure, or a
 // crash keeps the exit a problem (plan §2.1, `unit`).
-func unitExitExcused(l ledger, pkgEnds map[string]string, listed map[string]map[string]bool) bool {
+//
+// A package's terminal fail must be explained by its quarantined leaves alone:
+// its own output (what no test printed) is only what a failed test run
+// prints, the lines "FAIL", "exit status N" and the "FAIL <pkg> <time>"
+// summary. A "PASS" line (a TestMain that exited non-zero after a passing
+// run), or any other line, is a failure nothing in the ledger explains.
+func unitExitExcused(l ledger, pkgEnds map[string]string, listed map[string]map[string]bool, pkgOutput map[string]*strings.Builder) bool {
 	if l.Summary.Quarantined == 0 || l.Summary.Fail > 0 || l.Summary.NoOutcome > 0 {
 		return false
 	}
@@ -1281,11 +1287,38 @@ func unitExitExcused(l ledger, pkgEnds map[string]string, listed map[string]map[
 		}
 	}
 	for pkg, end := range pkgEnds {
-		if end == outcomeFail && !quarantined[pkg] {
+		if end != outcomeFail {
+			continue
+		}
+		if !quarantined[pkg] || !plainTestFailureOutput(pkgOutput[pkg]) {
 			return false
 		}
 	}
 	return true
+}
+
+var plainFailureLine = regexp.MustCompile(`^(FAIL|exit status [0-9]+|FAIL\s+\S+\s+\S+)$`)
+
+// plainTestFailureOutput reports whether a package's own output is only what
+// go test prints when tests fail: at least one FAIL line, and nothing else.
+func plainTestFailureOutput(b *strings.Builder) bool {
+	if b == nil {
+		return false
+	}
+	sawFail := false
+	for _, line := range strings.Split(b.String(), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !plainFailureLine.MatchString(line) {
+			return false
+		}
+		if strings.HasPrefix(line, "FAIL") {
+			sawFail = true
+		}
+	}
+	return sawFail
 }
 
 // parseJSONListing reads `go test -json -list .*` output.

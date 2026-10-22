@@ -36,6 +36,7 @@ part_require() {
 		part_need "docker on PATH" command -v docker
 		part_need "docker buildx (make -C images oci)" docker buildx version
 		part_need "make on PATH" command -v make
+		part_need "an integration plan (--plan)" test -f "$PLAN"
 		;;
 	fast)
 		part_need "go on PATH" command -v go
@@ -61,16 +62,19 @@ part_require() {
 		part_need "flock on PATH (the Playwright gate's host lock)" command -v flock
 		part_need "the dev object store on 127.0.0.1:9000 (SeaweedFS; make infra-up)" part_store_health
 		part_need "the local registry on $REGISTRY (make infra-up)" curl -sf -o /dev/null "http://$REGISTRY/v2/"
+		part_need "an integration plan (--plan)" test -f "$PLAN"
 		part_need "a UI plan (--ui-plan)" test -f "$UI_PLAN"
 		part_need "a layout directory (--layouts)" test -d "$LAYOUTS"
 		;;
 	activity-fixture:*)
+		part_need "an integration plan (--plan)" test -f "$PLAN"
 		part_need "docker on PATH" command -v docker
 		part_need "the dev object store on 127.0.0.1:9000 (SeaweedFS; make infra-up)" part_store_health
 		part_need "the local registry on $REGISTRY (make infra-up)" curl -sf -o /dev/null "http://$REGISTRY/v2/"
 		part_need "a layout directory (--layouts)" test -d "$LAYOUTS"
 		;;
 	observability)
+		part_need "an integration plan (--plan)" test -f "$PLAN"
 		part_need "docker on PATH" command -v docker
 		part_need "docker compose" docker compose version
 		part_need "jq on PATH" command -v jq

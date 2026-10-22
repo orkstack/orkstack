@@ -41,6 +41,70 @@ func TestAutomationSchema_EveryKeyIsInAutomationDoc(t *testing.T) {
 	}
 }
 
+// TestAutomationSchema_EveryKeyIsInItsOwnSection: a generic key such as
+// `orkflow`, `version`, `description` or `url` is also documented in the
+// section of the entry it belongs to, not merely somewhere in the document.
+func TestAutomationSchema_EveryKeyIsInItsOwnSection(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "AUTOMATION.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	paths := schemaKeys(automationSchemaTree(t))
+	if len(paths) < 20 {
+		t.Fatalf("the schema walk found %d key paths", len(paths))
+	}
+	var missing []string
+	for path := range paths {
+		parts := strings.Split(path, ".")
+		section, leaf := parts[0], parts[len(parts)-1]
+		if len(parts) == 1 && section != "settings" {
+			continue // a top-level key: the whole-document check covers it
+		}
+		if leaf == "*" {
+			continue
+		}
+		text, ok := docSection(doc, section)
+		if !ok {
+			t.Fatalf("docs/AUTOMATION.md has no ### `%s` section", section)
+		}
+		if len(parts) > 1 && !keyIsDocumented(text, leaf) {
+			missing = append(missing, path)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("docs/AUTOMATION.md does not document these keys in their own section: %v", missing)
+	}
+	// The check bites: a key of another section is not found in this one.
+	if text, _ := docSection(doc, "triggers"); keyIsDocumented(text, "secret_env") {
+		t.Error("docSection(triggers) holds a webhook key: sections are not separated")
+	}
+}
+
+// docSection is the text of the `### \`name\“ heading up to the next heading.
+func docSection(doc, name string) (string, bool) {
+	lines := strings.Split(doc, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "### `"+name+"`") {
+			start = i + 1
+			break
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	end := len(lines)
+	for i := start; i < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "#") {
+			end = i
+			break
+		}
+	}
+	return strings.Join(lines[start:end], "\n"), true
+}
+
 func keyIsDocumented(doc, key string) bool {
 	if strings.Contains(doc, "`"+key+"`") {
 		return true

@@ -189,7 +189,13 @@ repository is private, carries the `ci:proof` label.
 own rule: a full proof must say `result: pass` and `merge_eligible: true`; a
 release proof must pass `proofrun verify -release -proof DIR` against the
 commit the job checked out, the rule the `tag` job applies; a nightly proof
-must say `result: pass`. A skipped required job reports success, which is why
+must say `result: pass` and `eligible_but_for_tier: true`, a pass with every
+identity rule held and its tier the only thing it is not. The last step reads
+the tier from `proof.json` and dispatches on it, so the full branch alone
+requires `merge_eligible`, and any other tier fails. No job or step of these
+workflows sets `continue-on-error`, and every `upload-artifact` step of
+`proof.yml` runs `if: always()`, so a stuck shard still leaves its part. A
+skipped required job reports success, which is why
 `proof` runs on `always()` and nothing else, and why on a draft, or without
 `ci:proof` while private, it fails with the reason instead of skipping.
 
@@ -206,10 +212,12 @@ downloads the last 30 days of proof artifacts and reports same-tree flips and
 suspect failures (`proofrun flakes`); it edits no list. `flakes` waits for
 `nightly`, whatever its result, so its window includes that night's proof.
 `release.yml` holds three: `release.yml` › `validate` runs first on every
-dispatch and refuses a version that is not `vMAJOR.MINOR.PATCH`;
+dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, and refuses
+`tag: true` from any ref but `main`;
 `release.yml` › `gate` runs the release tier; and `release.yml` › `tag` runs
 only with `tag: true`, and creates and pushes the tag only after `proofrun
-verify -release` accepts a passing release proof of the exact commit. Both
+verify -release` accepts a passing release proof of the exact commit. Its
+checkout keeps no credential; only the step that pushes is given the token. Both
 take a concurrency group named from the validated version, so two dispatches
 of one version run one after the other.
 
@@ -242,7 +250,11 @@ pull request's proof tested; what both modes guarantee is that the landed
 commit's tree is the tree the proof measured. `proof.json` records the tree,
 and `scripts/github-merge-gate.sh --verify-landed SHA` checks the first merge
 through either mode by downloading that run's `proof-<run_id>-a<n>` and
-comparing its `tree` with `SHA^{tree}`.
+comparing its `tree` with `SHA^{tree}`. Pass the commit that landed on `main`.
+In the queue-less mode that is a merge commit GitHub made, and it carries no
+check run: the `proof` run is on the pull request's head, its second parent,
+which the script reads when the landed commit has none. The merge commit's tree
+equals the head's merged tree, because the branch contains `main`'s tip.
 
 A required check and the merge queue are GitHub settings, not repository
 files. `scripts/github-merge-gate.sh` (`make github-merge-gate`) is the
@@ -339,6 +351,41 @@ A part's `part.json` holds its identity (`part`, `attempt`, `tier`, `tree`,
 `tree_end`, `clean_start`, `clean_end`, `base_commit`, `image_tag`), its
 gates, the plan hashes it read, its runner, its image digests and its ledger
 names. It carries no verdict.
+
+### 7.1 What the merger re-derives
+
+`proofrun merge` trusts nothing a shard wrote as a verdict:
+
+- **Ledger entries.** It re-derives each entry's verdict. An entry that is not
+  a pass needs a problem naming it, an excusal the merger derived itself, a
+  quarantine it re-checked, or an allowed skip found in the allow-list whose
+  hash is the plan's. A shard's own problem lines excuse nothing.
+- **The plan.** It must be complete (no `-select`, `-run` or package patterns)
+  and its tier and nightly mode must be the pair `full`/`defer`,
+  `release`/`include` or `nightly`/`only`.
+- **The parts.** The merger recomputes the expected parts and flags and
+  ignores unexpected ones. It requires the UI plan when `ui-e2e` parts are
+  expected. A corrupt `part.json` or unreadable events count as a result, so
+  the part fails closed. Two directories for one part attempt are refused.
+  Reusable-workflow `X / job` prefixes are stripped when GitHub's job names are
+  matched to parts.
+- **Identity.** Every image-using part (`build`, `integration`, `ui-e2e`,
+  `activity-fixture`, `observability`, `local`) must record the plan hash, the
+  image tag and the image digests, so each CI step that runs one passes
+  `--plan`; `ui-e2e` and `local` parts also record the UI plan hash
+  (`--ui-plan`). A `build` part with no digests is ineligible.
+- **Host speed.** An excused `visibleWithin` miss must be that locator's own
+  timeout with the element not found or hidden, never a strict-mode violation,
+  another error, or a test timeout.
+- **Unit gate.** A quarantined-only unit exit is dropped only when the
+  package's own output is a plain test failure.
+- **Lost runners.** The lost-runner match reads every check-run annotation of
+  the job; GitHub's system annotations cannot be told apart by path. A failure
+  seen in the attempt's events or log always wins over it.
+
+`make merge-check PROOF=…` refuses a proof whose quarantine `checked_on` is
+more than 30 days old (the merged artifact's private retention), and refuses
+when it cannot tell `main`'s nightly list absent from unreadable.
 
 ## 8. Reading a failed proof
 
@@ -480,8 +527,11 @@ push does it); merge commits are allowed; Actions are enabled;
 `main-proof-gate` ruleset's `merge_queue` rule. A disabled `nightly.yml` is a
 warning. The apply creates or updates the rulesets by name; every body is
 unverified against the API until then, so read the API's answer before
-anything else. `APPLY=1 QUEUE=1` adds the merge queue and then sets
-`MERGE_GATE_MODE=queue`; `APPLY=1` alone, later, unsets the variable first
+anything else. The script fails closed on an API error: only a 404 reads as
+"no such ruleset" or "variable unset", and a failed read or name lookup stops
+the apply instead of posting a duplicate. `APPLY=1 QUEUE=1` adds the merge queue and then sets
+`MERGE_GATE_MODE=queue` (it also finishes a half-applied queue, the rule
+present and the variable unset); `APPLY=1` alone, later, unsets the variable first
 and then removes the queue rule, so neither switch is ever looser than either
 mode. After the first merge through a mode, run
 `scripts/github-merge-gate.sh --verify-landed SHA` once. It is not run from a

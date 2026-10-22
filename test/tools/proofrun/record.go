@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // proof.json is the machine-readable record of a proof (AGENTS.md §11.2):
@@ -324,8 +325,17 @@ func cmdRecord(args []string) int {
 			GuardRetries: r.GuardRetries, GuardCeiling: r.GuardCeiling,
 			Runner: currentRunner(), Ledgers: ledgerFiles,
 		}
-		rec.PlanSHA256, _ = fieldSHA256(*planFile)
-		rec.UIPlanSHA256, _ = fieldSHA256(*uiPlanFile)
+		// A plan the part names and cannot hash is an error, never an empty
+		// hash the merger would read as "no plan was read".
+		var hashErr error
+		if rec.PlanSHA256, hashErr = fieldSHA256(*planFile); hashErr != nil && *planFile != "" {
+			fmt.Fprintln(os.Stderr, "proofrun record: -plan:", hashErr)
+			return 2
+		}
+		if rec.UIPlanSHA256, hashErr = fieldSHA256(*uiPlanFile); hashErr != nil && *uiPlanFile != "" {
+			fmt.Fprintln(os.Stderr, "proofrun record: -ui-plan:", hashErr)
+			return 2
+		}
 		if err := os.MkdirAll(*outDir, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
@@ -558,9 +568,24 @@ func verifyNightlyProblems(nightlyDir, mainTip string) []string {
 	if mainTip == "" {
 		return nil
 	}
-	list := mustGit("show", mainBranch+":scripts/proof-nightly-tests.txt")
-	mainTree := strings.TrimSpace(mustGit("rev-parse", mainTip+"^{tree}"))
-	return nightlyProofProblems(list, nightlyDir, mainTree)
+	const listPath = "scripts/proof-nightly-tests.txt"
+	// Absent and unreadable are different: a main with no nightly list needs
+	// no nightly proof, a git error is a refusal.
+	ls, err := gitOut("ls-tree", "--name-only", mainTip, "--", listPath)
+	if err != nil {
+		return []string{fmt.Sprintf("whether %s carries a nightly list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
+	}
+	list := ""
+	if strings.TrimSpace(ls) != "" {
+		if list, err = gitOut("show", mainTip+":"+listPath); err != nil {
+			return []string{fmt.Sprintf("%s's nightly list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
+		}
+	}
+	tree, err := gitOut("rev-parse", mainTip+"^{tree}")
+	if err != nil {
+		return []string{fmt.Sprintf("%s's tip tree cannot be read: %v", mainBranch, err)}
+	}
+	return nightlyProofProblems(list, nightlyDir, strings.TrimSpace(tree))
 }
 
 // nightlyProofProblems is verifyNightlyProblems, pure over main's list text,
@@ -606,8 +631,34 @@ func nightlyProofProblems(list, nightlyDir, mainTree string) []string {
 	return p
 }
 
+// maxQuarantineAgeDays is how old a proof's quarantine check date may be: the
+// merged proof artifact's private retention (docs/PROOFS.md §7), so a proof
+// older than the artifact that carries it is not judged by a stale review-by
+// date.
+const maxQuarantineAgeDays = 30
+
+// quarantineAgeProblem refuses a proof whose quarantine list was checked more
+// than maxQuarantineAgeDays before today. time.Now is allowed here, in verify,
+// and never in the merger.
+func quarantineAgeProblem(r proofRecord, today time.Time) string {
+	if r.Quarantine == nil || r.Quarantine.CheckedOn == "" {
+		return ""
+	}
+	on, err := time.Parse("2006-01-02", r.Quarantine.CheckedOn)
+	if err != nil {
+		return fmt.Sprintf("its quarantine check date %q is not a date", r.Quarantine.CheckedOn)
+	}
+	if age := int(today.Sub(on).Hours() / 24); age > maxQuarantineAgeDays {
+		return fmt.Sprintf("its quarantine list was checked on %s, %d days ago (more than %d): prove the candidate again", r.Quarantine.CheckedOn, age, maxQuarantineAgeDays)
+	}
+	return ""
+}
+
 func verifyProblems(r proofRecord, headTree, parent, mainTip, status, mainRef string) []string {
 	var p []string
+	if msg := quarantineAgeProblem(r, todayUTC()); msg != "" {
+		p = append(p, msg)
+	}
 	if r.Tier != "full" {
 		p = append(p, "it is a "+orDash(r.Tier)+" proof; only a full proof gates a merge")
 	}

@@ -2730,14 +2730,45 @@ func (s *runState) routeForTask(t *orkstackv1.Task) (task.Route, error) {
 	return task.Route{Pool: pool, Queue: queue}, nil
 }
 
-// refuseRoute records a task its run's plan cannot route as FAILED, with
-// routeForTask's code (INVALID_POOL or RESERVED_QUEUE) as the task's own
-// machine-readable reason, and returns err for the run to fail with. Nothing
-// was dispatched, so the row has no scheduled_at and the stream no event for
-// the task: only the row changes, and the row is a local activity's input,
-// which history does not persist, so no command moves and a replay takes this
-// same path. A fan-out records the same codes through failExpansion.
+// RefusedRouteChange is the workflow.GetVersion change id of refuseRoute's
+// record of a task whose pool its run's plan cannot route (INVALID_POOL,
+// RESERVED_QUEUE).
+//
+// Before it, the refusal returned the error and touched nothing: the row was
+// left PENDING (a pin's opening) or RUNNING (a dispatch), and the run's
+// failure path recorded it — fail() cancelled a PENDING row with a TASK_LOG,
+// a failure handler's run recorded a RUNNING one through
+// recordRefusedDispatch. Recording the row FAILED here, with TASK_FAILED, is a
+// different command sequence (an event is a command), so it is asked LAZILY,
+// only where the refusal first happens: a run that never refuses a route
+// records no marker, and a history recorded before the gate replays its
+// DefaultVersion branch, which is the old one. A carried generation answers
+// from its carry (version).
+const RefusedRouteChange = "refused-route-task-failed"
+
+// refusedRouteGateDisabledForTest is a TEST-ONLY switch, the precedent of
+// historyGuardLookaheadDisabledForTest: when set, refuseRoute takes the
+// DefaultVersion branch WITHOUT asking its version, so a recorder can write a
+// history in the shape of the builds before the gate, and a negative replay
+// test proves the committed fixtures can only replay because of it. Never set
+// in production code.
+var refusedRouteGateDisabledForTest = false
+
+// refuseRoute handles a task its run's plan cannot route, and returns err for
+// the run to fail with.
+//
+// From RefusedRouteChange 1 it records the task FAILED, with routeForTask's
+// code (INVALID_POOL or RESERVED_QUEUE) as the task's own machine-readable
+// reason, a contract violation, finished_at from the workflow's clock and no
+// scheduled_at (nothing was dispatched), and emits TASK_FAILED, as
+// failExpansion does for a fan-out, so the stream and the snapshot agree. The
+// row is terminal, so neither fail() (cancelInFlight) nor failWithHandlers
+// (recordRefusedDispatch) nor settleHandlerDispatch records it a second time.
+// Before RefusedRouteChange it returned err alone and left the row as it was.
 func (s *runState) refuseRoute(ctx workflow.Context, id string, err error) error {
+	if refusedRouteGateDisabledForTest || s.version(ctx, RefusedRouteChange, 1) < 1 {
+		return err
+	}
 	code, message := ReasonInvalidPool, err.Error()
 	var applicationErr *temporal.ApplicationError
 	if errors.As(err, &applicationErr) {
@@ -2753,6 +2784,13 @@ func (s *runState) refuseRoute(ctx workflow.Context, id string, err error) error
 		Details:  fmt.Sprintf("task %q", id),
 		Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
 	}
+	ectx := s.eventContext(ctx)
+	if emitErr := s.emit(ectx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
+		orkstackv1.Status_STATUS_FAILED, message); emitErr != nil {
+		workflow.GetLogger(ctx).Error("emit refused route failed",
+			"run_id", s.runID, "task_id", id, "error", emitErr)
+	}
+	s.closePinFor(ectx, id)
 	return err
 }
 

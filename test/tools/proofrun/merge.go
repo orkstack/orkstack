@@ -218,8 +218,18 @@ func cmdMerge(args []string) int {
 			return 2
 		}
 	}
-	planSHA, _ := fieldSHA256(*planFile)
-	uiPlanSHA, _ := fieldSHA256(*uiPlanFile)
+	planSHA, err := fieldSHA256(*planFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun merge: -plan:", err)
+		return 2
+	}
+	uiPlanSHA := ""
+	if *uiPlanFile != "" {
+		if uiPlanSHA, err = fieldSHA256(*uiPlanFile); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun merge: -ui-plan:", err)
+			return 2
+		}
+	}
 	parts, absent, decodeErr := readParts(*partsDir)
 	if decodeErr != nil {
 		fmt.Fprintln(os.Stderr, "proofrun merge:", decodeErr)
@@ -254,20 +264,33 @@ func cmdMerge(args []string) int {
 		fmt.Fprintln(os.Stderr, "proofrun merge:", err)
 		return 2
 	}
-	if m.unit != nil {
-		_ = writeJSON(filepath.Join(*out, "unit-tests.json"), m.unit)
+	for name, v := range map[string]any{"unit-tests.json": m.unit, "integration-tests.json": m.integration, "ui-e2e-tests.json": m.ui} {
+		if isNilLedger(v) {
+			continue
+		}
+		if err := writeJSON(filepath.Join(*out, name), v); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun merge:", err)
+			return 2
+		}
 	}
-	if m.integration != nil {
-		_ = writeJSON(filepath.Join(*out, "integration-tests.json"), m.integration)
+	if err := writeMergeREADME(filepath.Join(*out, "README.md"), proof, m); err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun merge:", err)
+		return 2
 	}
-	if m.ui != nil {
-		_ = writeJSON(filepath.Join(*out, "ui-e2e-tests.json"), m.ui)
-	}
-	writeMergeREADME(filepath.Join(*out, "README.md"), proof, m)
 	if proof.Result != "pass" {
 		return 1
 	}
 	return 0
+}
+
+func isNilLedger(v any) bool {
+	switch l := v.(type) {
+	case *ledger:
+		return l == nil
+	case *uiLedger:
+		return l == nil
+	}
+	return v == nil
 }
 
 // merger accumulates the merged proof.
@@ -296,6 +319,9 @@ type merger struct {
 	excusedUIGate     map[string]bool
 	digestNotes       []string
 	warnings          []string
+	// allow is the allowed-skips list, parsed from the file whose hash is the
+	// plan's; empty when that file is not the plan's.
+	allow []allowedSkip
 }
 
 // partReading is one part attempt's on-disk result.
@@ -305,6 +331,9 @@ type partReading struct {
 	// Failed and Unfinished are what the attempt's events show: a test that
 	// failed, and a test that started and never finished.
 	Failed, Unfinished bool
+	// Corrupt says the attempt left a part.json that cannot be parsed, or
+	// events that cannot be read: it is a result, never "no failure seen".
+	Corrupt bool
 }
 
 // readParts scans -parts. A directory with a part.json is a completed attempt;
@@ -328,6 +357,8 @@ func readParts(dir string) (map[string]map[int]partReading, map[string]bool, err
 		p := filepath.Join(dir, e.Name())
 		var rec partRecord
 		has := readJSON(filepath.Join(p, "part.json"), &rec) == nil
+		_, statErr := os.Stat(filepath.Join(p, "part.json"))
+		corrupt := !has && statErr == nil
 		part, attempt := "", 0
 		if has {
 			part, attempt = rec.Part, rec.Attempt
@@ -341,8 +372,15 @@ func readParts(dir string) (map[string]map[int]partReading, map[string]bool, err
 		if out[part] == nil {
 			out[part] = map[int]partReading{}
 		}
-		reading := partReading{Dir: p}
-		reading.Failed, reading.Unfinished = attemptEvents(p)
+		if prev, dup := out[part][attempt]; dup {
+			return nil, nil, fmt.Errorf("%s and %s both claim part %s attempt %d", filepath.Base(prev.Dir), e.Name(), part, attempt)
+		}
+		reading := partReading{Dir: p, Corrupt: corrupt}
+		var evErr error
+		reading.Failed, reading.Unfinished, evErr = attemptEvents(p)
+		if evErr != nil {
+			reading.Corrupt = true
+		}
 		if has {
 			reading.Record = &rec
 		}
@@ -363,10 +401,13 @@ func normalizePartName(s string) string {
 
 // attemptEvents reports whether an attempt's events show a test that failed,
 // and whether one started and never finished (plan §2.6 rule 2).
-func attemptEvents(dir string) (failed, unfinished bool) {
+func attemptEvents(dir string) (failed, unfinished bool, err error) {
 	f, err := os.Open(filepath.Join(dir, "integration.events.jsonl"))
+	if os.IsNotExist(err) {
+		return false, false, nil
+	}
 	if err != nil {
-		return false, false
+		return true, false, err
 	}
 	defer f.Close()
 	started := map[string]bool{}
@@ -394,7 +435,10 @@ func attemptEvents(dir string) (failed, unfinished bool) {
 			unfinished = true
 		}
 	}
-	return failed, unfinished
+	if err := sc.Err(); err != nil {
+		return true, unfinished, err
+	}
+	return failed, unfinished, nil
 }
 
 // readGithubAttempts reads -jobs: one JSON file per run attempt. A file that
@@ -438,7 +482,12 @@ func readGithubAttempts(dir string) (map[string]map[int]githubJob, []string) {
 
 var jobPartRE = regexp.MustCompile(`(?i)^(integration|ui-e2e|activity-fixture)\s*\(([^)]+)\)$`)
 
+// reusableWorkflowPrefix is what GitHub puts before a job of a reusable
+// workflow: "gate / integration (3)".
+var reusableWorkflowPrefix = regexp.MustCompile(`^.* / `)
+
 func partFromJobName(name string) string {
+	name = reusableWorkflowPrefix.ReplaceAllString(strings.TrimSpace(name), "")
 	if mm := jobPartRE.FindStringSubmatch(strings.TrimSpace(name)); mm != nil {
 		return strings.ToLower(mm[1]) + ":" + mm[2]
 	}
@@ -479,6 +528,9 @@ const (
 func classify(j *githubJob, reading partReading) (attemptClass, string) {
 	if reading.Record != nil {
 		return attemptResult, "it left its part.json"
+	}
+	if reading.Corrupt {
+		return attemptResult, "its part.json or its events cannot be read: it fails closed"
 	}
 	if reading.Failed {
 		return attemptResult, "its events record a failing test"
@@ -584,23 +636,33 @@ func (m *merger) merge(name string) {
 	if proof.Name == "" {
 		proof.Name = filepath.Base("proof")
 	}
-	expected := p.PartsExpected
+	m.checkPlanShape()
+	expected := m.expectedParts()
+	m.dropUnexpectedParts(expected)
 	// Every expected part has its last attempt, and only a lost runner may
 	// have been run again (rule 1 and rule 2).
 	for _, part := range expected {
 		m.mergePart(part)
 	}
 	buildImages := m.buildImages()
+	if len(buildImages) == 0 && containsString(expected, "build") {
+		m.ineligible = append(m.ineligible, "the build part recorded no activity image digests: the parts' digests cannot be compared with it")
+	}
 	m.carryPartIdentity()
 	m.checkAllowlist()
 	m.checkNightlyAnchorFiles()
 	m.checkHostSpeedAnchor()
-	for part, got := range m.parts {
-		for attempt, reading := range got {
-			if reading.Record == nil {
-				continue
+	for _, part := range sortedPartKeys(m.parts) {
+		got := m.parts[part]
+		attempts := make([]int, 0, len(got))
+		for a := range got {
+			attempts = append(attempts, a)
+		}
+		sort.Ints(attempts)
+		for _, attempt := range attempts {
+			if reading := got[attempt]; reading.Record != nil {
+				m.checkIdentity(part, attempt, reading.Record, buildImages)
 			}
-			m.checkIdentity(part, attempt, reading.Record, buildImages)
 		}
 	}
 	m.mergeIntegration()
@@ -692,6 +754,78 @@ func (m *merger) merge(name string) {
 	}
 	proof.Ineligible = append(proof.Ineligible, m.ineligible...)
 	verdict(proof, status, p.ObservabilityRequired, ledgersOK)
+}
+
+// tierNightlyMode is the nightly mode each tier's plan must carry.
+var tierNightlyMode = map[string]string{tierFull: nightlyDefer, tierRelease: nightlyInclude, tierNightly: nightlyOnly}
+
+// checkPlanShape refuses a plan that is not the whole suite of its tier: a
+// selection, -run or package patterns narrowed it, or its (tier, nightly
+// mode) pair is not the one the tier runs, or it names no tree or image tag
+// the parts could be compared with.
+func (m *merger) checkPlanShape() {
+	p := m.plan
+	want, known := tierNightlyMode[p.Tier]
+	switch {
+	case !known:
+		m.problems = append(m.problems, fmt.Sprintf("the plan's tier is %q: the merger judges only the full, nightly and release tiers", p.Tier))
+	case p.Nightly.Mode != want:
+		m.problems = append(m.problems, fmt.Sprintf("the plan is tier %s with nightly mode %s, and that tier runs mode %s", p.Tier, orDash(p.Nightly.Mode), want))
+	}
+	if !p.Complete {
+		m.problems = append(m.problems, "the plan is not complete: a selection, -run or package patterns narrowed it, and only a plan of every package is a proof")
+	}
+	if p.Tree == "" {
+		m.ineligible = append(m.ineligible, "the plan records no tree: no part can be compared with it")
+	}
+	if p.ProofID == "" {
+		m.ineligible = append(m.ineligible, "the plan records no proof id: the parts' image tag cannot be compared with it")
+	}
+}
+
+// expectedParts recomputes the parts a proof of this plan's shape must leave,
+// never trusting the plan's own list; a plan whose list differs is a problem.
+func (m *merger) expectedParts() []string {
+	p := m.plan
+	local := len(p.PartsExpected) == 1 && p.PartsExpected[0] == "local"
+	uiShards := 0
+	if m.uiPlan != nil {
+		uiShards = len(m.uiPlan.Shards)
+	}
+	want := partsExpected(p.Tier, local, len(p.Shards), uiShards, p.ObservabilityRequired)
+	if !slicesEqual(want, p.PartsExpected) {
+		m.problems = append(m.problems, fmt.Sprintf("the plan expects parts %v, and its shape (tier %s, %d shards, %d UI shards) expects %v",
+			p.PartsExpected, p.Tier, len(p.Shards), uiShards, want))
+	}
+	if !local && p.Tier != tierNightly && m.uiPlan == nil {
+		m.problems = append(m.problems, "the proof expects ui-e2e parts and was given no UI plan")
+	}
+	return want
+}
+
+// dropUnexpectedParts flags every part the plan does not expect (a gate, UI
+// or integration part beyond the plan) and ignores it, so its ledgers and
+// gates add nothing to the merge.
+func (m *merger) dropUnexpectedParts(expected []string) {
+	ok := map[string]bool{}
+	for _, e := range expected {
+		ok[e] = true
+	}
+	for _, part := range sortedPartKeys(m.parts) {
+		if !ok[part] {
+			m.problems = append(m.problems, fmt.Sprintf("part %s is not one the plan expects: its result is ignored", part))
+			delete(m.parts, part)
+		}
+	}
+}
+
+func sortedPartKeys(parts map[string]map[int]partReading) []string {
+	out := make([]string, 0, len(parts))
+	for k := range parts {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func containsString(list []string, s string) bool {
@@ -935,13 +1069,28 @@ func (m *merger) checkIdentity(part string, attempt int, r *partRecord, buildIma
 	if r.BaseCommit != p.BaseCommit {
 		add("it diffed against %s, and the plan's base is %s", orDash(short(r.BaseCommit)), orDash(short(p.BaseCommit)))
 	}
-	if m.planSHA != "" && r.PlanSHA256 != "" && r.PlanSHA256 != m.planSHA {
+	if partUsesImages(part) {
+		// A part that ran the images read the plan: an absent hash is not a
+		// match (it is what a part that read no plan records).
+		switch {
+		case r.PlanSHA256 == "" || m.planSHA == "":
+			add("it recorded no plan hash (part %s, merge %s): it cannot be tied to this plan", orDash(short(r.PlanSHA256)), orDash(short(m.planSHA)))
+		case r.PlanSHA256 != m.planSHA:
+			add("it read plan %s, and this merge reads %s", short(r.PlanSHA256), short(m.planSHA))
+		}
+		if len(r.Images) == 0 {
+			add("it recorded no activity image digests")
+		}
+	} else if m.planSHA != "" && r.PlanSHA256 != "" && r.PlanSHA256 != m.planSHA {
 		add("it read plan %s, and this merge reads %s", short(r.PlanSHA256), short(m.planSHA))
+	}
+	if (strings.HasPrefix(part, "ui-e2e:") || part == "local") && m.uiPlan != nil && p.Tier != tierNightly && r.UIPlanSHA256 != m.uiPlanSHA {
+		add("it read UI plan %s, and this merge reads %s", orDash(short(r.UIPlanSHA256)), orDash(short(m.uiPlanSHA)))
 	}
 	if isStackPart(part) && r.Temporal.Mode != "own" {
 		add("Temporal was %s, not its own", orDash(r.Temporal.Mode))
 	}
-	if partUsesImages(part) && (r.ImageTag != p.ProofID || !r.ImageTagOwn) {
+	if partUsesImages(part) && (r.ImageTag == "" || r.ImageTag != p.ProofID || !r.ImageTagOwn) {
 		add("activity images were tag %q (own: %v), and the plan's id is %q", r.ImageTag, r.ImageTagOwn, p.ProofID)
 	}
 	if buildImages != nil && part != "build" {
@@ -951,7 +1100,7 @@ func (m *merger) checkIdentity(part string, attempt int, r *partRecord, buildIma
 			}
 		}
 	}
-	if part != "build" && len(r.Images) > 0 && buildImages != nil && len(r.Images) != len(buildImages) {
+	if part != "build" && len(r.Images) > 0 && len(buildImages) > 0 && len(r.Images) != len(buildImages) {
 		add("%d activity images, and the build laid out %d", len(r.Images), len(buildImages))
 	}
 }
@@ -978,7 +1127,7 @@ func (m *merger) carryPartIdentity() {
 	if proof.Temporal.Mode == "" {
 		proof.Temporal.Mode = "own"
 	}
-	for _, part := range m.plan.PartsExpected {
+	for _, part := range sortedPartKeys(m.parts) {
 		for _, reading := range m.orderedReadings(part) {
 			r := reading.Record
 			if r == nil {
@@ -1030,7 +1179,14 @@ func (m *merger) checkAllowlist() {
 		m.problems = append(m.problems, fmt.Sprintf(
 			"the allowed-skips list %s is not the one the plan read (plan sha256 %s, tree %s)",
 			orDash(ref.File), short(ref.SHA256), orDash(short(got))))
+		return
 	}
+	allow, err := readAllowlist(ref.File)
+	if err != nil {
+		m.problems = append(m.problems, "the allowed-skips list cannot be parsed: "+err.Error())
+		return
+	}
+	m.allow = allow
 }
 
 // checkHostSpeedAnchor decides which host-speed rows may excuse a UI
@@ -1124,6 +1280,10 @@ func (m *merger) mergeIntegration() {
 					m.problems = append(m.problems, msg)
 				default:
 					msg := fmt.Sprintf("%s reported %s with outcome %q, which no ledger writes", part, k, e.Outcome)
+					l.Problems = append(l.Problems, msg)
+					m.problems = append(m.problems, msg)
+				}
+				if msg := m.unexplainedEntry("integration", part, e, shard.Problems); msg != "" {
 					l.Problems = append(l.Problems, msg)
 					m.problems = append(m.problems, msg)
 				}
@@ -1252,6 +1412,47 @@ func (m *merger) recordIntegrationHostSpeed(part string, reading partReading, e 
 		RunnerCPUs: cpus, ReferenceCPUs: bound.ReferenceCPUs, Message: message,
 	})
 	m.knownGaps = append(m.knownGaps, part+": "+message)
+}
+
+// unexplainedEntry is the merger's own verdict on one shard ledger entry,
+// never the shard's word for it: a pass is a pass; quarantined-fail is
+// re-checked against the anchored lists (checkQuarantine); a skip needs an
+// allowed-skip the merger finds in the allowed-skips list it parsed itself,
+// naming the same reason; and every other outcome (fail, none, anything no
+// ledger writes) is a problem. It returns "" when the entry is explained, and
+// otherwise the problem, unless the shard's own lines already name the entry.
+func (m *merger) unexplainedEntry(suite, part string, e entry, shardProblems []string) string {
+	k := testKey{e.Package, e.Test}
+	var why string
+	switch e.Outcome {
+	case outcomePass, outcomeQuarantinedFail:
+		return ""
+	case outcomeSkip:
+		a, ok := m.allowedSkipFor(suite, k)
+		if ok && e.AllowedSkip != "" && e.AllowedSkip == a.Reason {
+			return ""
+		}
+		why = "skipped, and the allowed-skips list the plan read has no entry for it with that reason: a skip is never a pass"
+	case "deferred":
+		return "" // mergeIntegration refuses a shard's deferred entry itself
+	default:
+		why = fmt.Sprintf("has outcome %q, which is not a pass", orDash(e.Outcome))
+	}
+	if problemNames(shardProblems, k.String()) {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s %s", part, k, why)
+}
+
+// allowedSkipFor finds the allowed-skips entry for a top-level test in the
+// list the merger parsed (only a list whose hash is the plan's is trusted).
+func (m *merger) allowedSkipFor(suite string, k testKey) (allowedSkip, bool) {
+	for _, a := range m.allow {
+		if (a.Suite == suite || a.Suite == "any") && a.Package == k.Package && a.Test == k.Test {
+			return a, true
+		}
+	}
+	return allowedSkip{}, false
 }
 
 func isDeferred(list []deferredRef, k testKey) bool {
@@ -1388,6 +1589,12 @@ func (m *merger) mergeUnit() {
 				m.problems = append(m.problems, "part fast left no unit ledger")
 				return
 			}
+			for _, e := range l.Tests {
+				if msg := m.unexplainedEntry("unit", part, e, l.Problems); msg != "" {
+					l.Problems = append(l.Problems, msg)
+					m.problems = append(m.problems, msg)
+				}
+			}
 			m.unit = &l
 			return
 		}
@@ -1401,6 +1608,10 @@ func (m *merger) mergeUI() {
 	}
 	l := &uiLedger{Suite: "ui-e2e", Problems: []string{}, Tests: []uiEntry{}}
 	seen := map[string]string{}
+	planned := map[string]bool{}
+	for _, t := range m.uiPlan.Tests {
+		planned[t.File+"\x00"+t.Title+"\x00"+t.Project] = true
+	}
 	files := map[string]uiFileEntry{}
 	maxRetries := 0
 	uiParts := m.partNames("ui-e2e:")
@@ -1444,6 +1655,7 @@ func (m *merger) mergeUI() {
 				m.knownGaps = append(m.knownGaps, fmt.Sprintf("%s: %s on a %d-CPU runner (bound %.0fs, reference %d CPUs)",
 					part, f.Message, f.RunnerCPUs, f.Bound, f.ReferenceCPUs))
 			}
+			problemsBefore := len(m.problems)
 			for _, f := range shard.HostSpeedFailures {
 				if mine, ok := excusable[f.Message]; ok {
 					record(mine)
@@ -1453,17 +1665,41 @@ func (m *merger) mergeUI() {
 				l.Problems = append(l.Problems, msg)
 				m.problems = append(m.problems, msg)
 			}
-			gapsHere := 0
-			for _, p := range shard.Problems {
-				if f, ok := excusable[p]; ok {
+			// Every excusal is the merger's own: re-derived from the entry, the
+			// runner and the base-anchored table, whether or not the shard
+			// wrote a problem line for it.
+			excusedEntry := map[string]bool{}
+			for _, e := range shard.Tests {
+				if f, ok := excusable[uiFailedProblem(e)]; ok {
 					record(f)
-					gapsHere++
+					excusedEntry[uiKey(e)] = true
+				}
+			}
+			for _, p := range shard.Problems {
+				if _, ok := excusable[p]; ok {
 					continue
 				}
 				l.Problems = append(l.Problems, part+": "+p)
 				m.problems = append(m.problems, part+": "+p)
 			}
-			if gapsHere > 0 && gapsHere == len(shard.Problems) {
+			for _, e := range shard.Tests {
+				k := e.File + "\x00" + e.Title + "\x00" + e.Project
+				if !planned[k] {
+					msg := fmt.Sprintf("%s reported %s, which the UI plan does not list", part, uiKey(e))
+					l.Problems = append(l.Problems, msg)
+					m.problems = append(m.problems, msg)
+				}
+				// The shard's problem lines are not the verdict: an entry that
+				// is not a pass needs a line naming it, or an excusal derived
+				// above, or it is a problem the merger writes itself.
+				if e.Outcome == outcomePass || excusedEntry[uiKey(e)] || problemNames(shard.Problems, uiKey(e)) {
+					continue
+				}
+				msg := fmt.Sprintf("%s: %s has outcome %q, and the shard's ledger names no problem for it", part, uiKey(e), orDash(e.Outcome))
+				l.Problems = append(l.Problems, msg)
+				m.problems = append(m.problems, msg)
+			}
+			if len(excusedEntry) > 0 && len(m.problems) == problemsBefore {
 				// The part's only defects are runner-size misses of a declared
 				// bound: record them, and do not turn its gate red.
 				m.excusedUIGate[part] = true
@@ -1515,6 +1751,18 @@ func (m *merger) mergeUI() {
 	m.ui = l
 }
 
+// problemNames reports whether a problem line begins with key, the way every
+// ledger writes one: "<name> failed ...", "<name> skipped ...", "<name> has no
+// outcome".
+func problemNames(problems []string, key string) bool {
+	for _, p := range problems {
+		if strings.HasPrefix(p, key+" ") || p == key {
+			return true
+		}
+	}
+	return false
+}
+
 func shardNum(part string) int {
 	if i := strings.LastIndex(part, ":"); i >= 0 {
 		n, _ := strconv.Atoi(part[i+1:])
@@ -1539,7 +1787,7 @@ func (m *merger) mergeGates(expected []string) {
 	got := map[string]string{}
 	seconds := map[string]float64{}
 	logs := map[string]string{}
-	for part := range m.parts {
+	for _, part := range sortedPartKeys(m.parts) {
 		for _, reading := range m.resultReadings(part) {
 			if reading.Record == nil {
 				continue
@@ -1637,7 +1885,7 @@ func (m *merger) planFileDir(name string) string {
 
 // writeMergeREADME writes the merged README: identity, parts, reruns, known
 // gaps and the verdict lines.
-func writeMergeREADME(file string, r *proofRecord, m *merger) {
+func writeMergeREADME(file string, r *proofRecord, m *merger) error {
 	var b strings.Builder
 	first := "FULL PROOF"
 	switch r.Tier {
@@ -1727,7 +1975,5 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) {
 	}
 	fmt.Fprintln(&b)
 	writeVerdict(&b, r)
-	if err := os.WriteFile(file, []byte(b.String()), 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, "proofrun merge:", err)
-	}
+	return os.WriteFile(file, []byte(b.String()), 0o644)
 }

@@ -3,7 +3,7 @@
 Read [AGENTS.md](./AGENTS.md) first — it is the authoritative engineering
 contract. This file is the quick checklist.
 
-## Fast checks (no Docker, under two minutes)
+## Fast checks (no Docker, under two minutes warm)
 
 `make check` runs `make lint` (`go vet` and gofmt), `go vet -tags=integration`
 over the integration suites, and the unit suites with `-short`, which skips
@@ -11,8 +11,8 @@ the scale tests and the tests that compile binaries; it keeps the test cache.
 Every proof runs those, without `-short`. Run it before every push. For the UI:
 `cd ui && bun run check && bun run test:unit`.
 
-A failure of a test listed in `scripts/proof-quarantine.txt` is that known
-flake: tell its owner if it is new to you. Never re-run a failing test until it
+When a test is listed in `scripts/proof-quarantine.txt`, its failure is that
+known flake: tell its owner if it is new to you. Never re-run a failing test until it
 passes; a second run is the flip the list exists to count, not a remedy.
 
 Start infra only when touching Temporal or storage: `make infra-up`. On a

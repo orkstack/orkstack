@@ -40,6 +40,20 @@ bad() { printf 'FAIL: %s\n' "$*"; fail=1; }
 ok() { printf 'ok:   %s\n' "$*"; }
 warn() { printf 'warn: %s\n' "$*"; }
 
+# gh_read <args…>: gh's answer in GH_OUT. Status 0 is an answer, 44 is a 404
+# (the resource is absent), anything else is an error that is never to be read
+# as "absent": a caller fails closed on it.
+GH_OUT=""
+gh_read() {
+	local errf rc
+	errf="$(mktemp)"
+	GH_OUT="$(gh "$@" 2>"$errf")"
+	rc=$?
+	if [ "$rc" -ne 0 ] && grep -q 'HTTP 404' "$errf"; then rc=44; fi
+	rm -f "$errf"
+	return "$rc"
+}
+
 for tool in gh git jq go; do
 	command -v "$tool" >/dev/null 2>&1 || { bad "$tool is not on PATH"; echo "github-merge-gate: cannot check"; exit 1; }
 done
@@ -57,13 +71,32 @@ api="repos/$repo"
 if [ -n "$VERIFY_LANDED" ]; then
 	# The first merge through either mode: prove that the artifact's tree is
 	# the landed commit's tree.
+	# Pass the commit that landed on main. The queue-less mode lands a
+	# GitHub-made merge commit that carries no check run (the run is on the pull
+	# request's head, its second parent), so the head is read when the landed
+	# commit has none; the merge commit's tree equals the head's merged tree.
 	sha="$(git rev-parse "$VERIFY_LANDED")"
 	tree="$(git rev-parse "$sha^{tree}")"
 	tmp="$(mktemp -d)"
 	trap 'rm -rf "$tmp"' EXIT
-	run_id="$(gh api "$api/commits/$sha/check-runs" --jq '[.check_runs[] | select(.name=="proof" and .app.id==15368)][0].details_url // ""' 2>/dev/null |
-		sed -E 's#.*/runs/([0-9]+).*#\1#')"
-	[ -n "$run_id" ] || { bad "no proof check run on $sha"; exit 1; }
+	proof_run_of() { # <sha> -> the run id in RUN_ID; status 1 on an API error
+		gh_read api "$api/commits/$1/check-runs" --jq '[.check_runs[] | select(.name=="proof" and .app.id==15368)][0].details_url // ""' || return 1
+		RUN_ID="$(printf '%s\n' "$GH_OUT" | sed -E 's#.*/runs/([0-9]+).*#\1#')"
+		case "$RUN_ID" in *[!0-9]*) RUN_ID="" ;; esac
+		return 0
+	}
+	RUN_ID=""
+	proof_run_of "$sha" || { bad "cannot read the check runs of $sha"; exit 1; }
+	run_id="$RUN_ID"
+	from="$sha"
+	if [ -z "$run_id" ]; then
+		if head_sha="$(git rev-parse --verify --quiet "$sha^2^{commit}")" && [ -n "$head_sha" ]; then
+			proof_run_of "$head_sha" || { bad "cannot read the check runs of $head_sha"; exit 1; }
+			run_id="$RUN_ID"
+			from="$head_sha"
+		fi
+	fi
+	[ -n "$run_id" ] || { bad "no proof check run on $sha, nor on its pull request head (its second parent)"; exit 1; }
 	# A pattern download puts each artifact in a directory of its own name;
 	# the run's last attempt is the proof that decided the check.
 	gh run download "$run_id" -R "$repo" -p "proof-$run_id-a*" -D "$tmp" 2>/dev/null || true
@@ -74,6 +107,7 @@ if [ -n "$VERIFY_LANDED" ]; then
 	[ -n "$proof_dir" ] && [ -f "$proof_dir/proof.json" ] || { bad "proof run $run_id left no proof-$run_id-a* artifact with a proof.json"; exit 1; }
 	got="$(jq -r .tree "$proof_dir/proof.json" 2>/dev/null)"
 	if [ "$got" = "$tree" ]; then
+		[ "$from" = "$sha" ] || ok "$sha carries no proof check run; read the pull request head $from"
 		ok "proof run $run_id ($(basename "$proof_dir")) measured tree $tree, which is $sha's tree"
 		exit 0
 	fi
@@ -182,8 +216,21 @@ else
 	bad "no successful proof check from the GitHub Actions app (15368) yet: run proof.yml once (a validate/full/** push or a pull request with ci:proof) before requiring it"
 fi
 
-rulesets="$(gh api "$api/rulesets" 2>/dev/null || echo '[]')"
-mode_var="$(gh api "$api/actions/variables/MERGE_GATE_MODE" 2>/dev/null | jq -r '.value // ""' 2>/dev/null || true)"
+# A 404 is "absent"; any other error is not, and fails closed.
+rulesets='[]'
+if gh_read api "$api/rulesets"; then
+	rulesets="$GH_OUT"
+elif [ $? -ne 44 ]; then
+	bad "cannot read the rulesets of $repo: $GH_OUT"
+fi
+mode_var=""
+mode_read=ok
+if gh_read api "$api/actions/variables/MERGE_GATE_MODE"; then
+	mode_var="$(jq -r '.value // ""' <<<"$GH_OUT" 2>/dev/null)"
+elif [ $? -ne 44 ]; then
+	mode_read=failed
+	bad "cannot read the MERGE_GATE_MODE variable: a read that failed is not 'unset'"
+fi
 # The variable must agree with what is applied now — the existing
 # main-proof-gate ruleset's merge_queue rule — never with the requested mode:
 # the apply below changes both, in the order that is never looser than either
@@ -191,16 +238,24 @@ mode_var="$(gh api "$api/actions/variables/MERGE_GATE_MODE" 2>/dev/null | jq -r 
 main_id="$(jq -r '[.[]? | select(.name == "main-proof-gate") | .id][0] // ""' <<<"$rulesets" 2>/dev/null || true)"
 applied_queue=false
 if [ -n "$main_id" ]; then
-	if gh api "$api/rulesets/$main_id" 2>/dev/null | jq -e '[.rules[]? | select(.type == "merge_queue")] | length > 0' >/dev/null 2>&1; then
-		applied_queue=true
+	if gh_read api "$api/rulesets/$main_id"; then
+		jq -e '[.rules[]? | select(.type == "merge_queue")] | length > 0' >/dev/null 2>&1 <<<"$GH_OUT" && applied_queue=true
+	else
+		bad "cannot read ruleset $main_id (main-proof-gate): $GH_OUT"
 	fi
 fi
-if [ "$applied_queue" = true ] && [ "${mode_var:-}" = queue ]; then
+if [ "$mode_read" = failed ]; then
+	: # already reported; no comparison can be trusted
+elif [ "$applied_queue" = true ] && [ "${mode_var:-}" = queue ]; then
 	ok "MERGE_GATE_MODE=queue agrees with main-proof-gate's merge_queue rule"
 elif [ "$applied_queue" = false ] && [ "${mode_var:-}" != queue ]; then
 	ok "MERGE_GATE_MODE is ${mode_var:-unset}, and no merge_queue rule is applied: queue-less"
+elif [ "$applied_queue" = true ] && [ "$MODE" = apply ] && [ "$QUEUE" = 1 ]; then
+	# A half-applied queue (the rule landed, the variable did not): this very
+	# apply finishes it, rule first and variable last.
+	warn "main-proof-gate has a merge_queue rule and MERGE_GATE_MODE is ${mode_var:-unset}: a half-applied queue; this apply sets the variable"
 elif [ "$applied_queue" = true ]; then
-	bad "main-proof-gate has a merge_queue rule, and MERGE_GATE_MODE is ${mode_var:-unset}: pull requests would refuse what the queue lands. Fix: gh variable set MERGE_GATE_MODE --body queue"
+	bad "main-proof-gate has a merge_queue rule, and MERGE_GATE_MODE is ${mode_var:-unset}: pull requests would refuse what the queue lands. Fix: gh variable set MERGE_GATE_MODE --body queue, or APPLY=1 QUEUE=1"
 else
 	bad "MERGE_GATE_MODE=${mode_var}, and main-proof-gate has no merge_queue rule: pull requests would skip the containment check with no queue to land them. Fix: gh variable delete MERGE_GATE_MODE"
 fi
@@ -243,7 +298,9 @@ fi
 
 apply_ruleset() { # <name> <body>
 	local name="$1" body="$2" id
-	id="$(gh api "$api/rulesets" --jq ".[] | select(.name == \"$name\") | .id" 2>/dev/null | head -n1)"
+	# A failed lookup must not read as "no such ruleset": that would POST a duplicate.
+	gh_read api "$api/rulesets" --jq "[.[] | select(.name == \"$name\") | .id][0] // empty" || { bad "cannot list the rulesets to find $name: $GH_OUT"; return 1; }
+	id="$GH_OUT"
 	if [ -n "$id" ]; then
 		gh api --method PUT "$api/rulesets/$id" --input "$body" >/dev/null || return 1
 		ok "updated ruleset $name"

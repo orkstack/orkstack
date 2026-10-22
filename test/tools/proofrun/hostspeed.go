@@ -231,7 +231,7 @@ func (b hostBound) miss(detail string) (float64, bool) {
 
 var (
 	ansiEscape     = regexp.MustCompile("\x1b\\[[0-9;]*m")
-	pwBoundMatcher = regexp.MustCompile(`expect\(received\)\.toBeLessThan(?:OrEqual)?\(expected\)`)
+	pwBoundMatcher = regexp.MustCompile(`^(?:Error: )?(?:[^;]*; ; )?expect\(received\)\.toBeLessThan(?:OrEqual)?\(expected\)`)
 	pwExpected     = regexp.MustCompile(`Expected:\s*<=?\s*([0-9]+(?:\.[0-9]+)?)`)
 	pwReceived     = regexp.MustCompile(`Received:\s*([0-9]+(?:\.[0-9]+)?)`)
 )
@@ -248,7 +248,7 @@ func timingMiss(detail string, boundSeconds float64) (float64, bool) {
 // timeout, a thrown error — is not a timing miss.
 func lessThanMiss(detail string, ms float64) (float64, bool) {
 	d := ansiEscape.ReplaceAllString(detail, "")
-	if strings.HasPrefix(d, "flaky:") || !pwBoundMatcher.MatchString(d) {
+	if strings.HasPrefix(d, "flaky:") || strings.HasPrefix(d, "Test timeout") || !pwBoundMatcher.MatchString(d) {
 		return 0, false
 	}
 	exp := pwExpected.FindStringSubmatch(d)
@@ -265,10 +265,13 @@ func lessThanMiss(detail string, ms float64) (float64, bool) {
 }
 
 var (
-	pwVisibleMatcher = regexp.MustCompile(`expect\(locator\)\.toBeVisible\(\) failed`)
-	pwOldVisible     = regexp.MustCompile(`Timed out ([0-9]+)ms waiting for expect\(locator\)\.toBeVisible\(\)`)
+	pwVisibleMatcher = regexp.MustCompile(`^(?:Error: )?expect\(locator\)\.toBeVisible\(\) failed`)
+	pwOldVisible     = regexp.MustCompile(`^(?:Error: )?Timed out ([0-9]+)ms waiting for expect\(locator\)\.toBeVisible\(\)`)
 	pwLocatorLine    = regexp.MustCompile(`(?:^|; )Locator:\s+(.*?)\s*(?:;|$)`)
 	pwTimeoutLine    = regexp.MustCompile(`(?:^|; )Timeout:\s+([0-9]+)ms\s*(?:;|$)`)
+	pwErrorLine      = regexp.MustCompile(`(?:^|; )Error:\s+(.*?)\s*(?:;|$)`)
+	pwHiddenCause    = regexp.MustCompile(`(?:^|; )Received:\s+(?:hidden|<element\(s\) not found>)\s*(?:;|$)|unexpected value "hidden"`)
+	pwStrictMode     = regexp.MustCompile(`strict mode violation|resolved to [0-9]+ elements`)
 )
 
 // visibleWithinMiss reports whether a Playwright failure detail (newlines
@@ -276,29 +279,45 @@ var (
 // locator, timing out after exactly ms: Playwright 1.5x prints
 // "expect(locator).toBeVisible() failed; ; Locator: L; Expected: visible;
 // Timeout: Nms; Error: element(s) not found", and older releases "Timed out
-// Nms waiting for expect(locator).toBeVisible(); ; Locator: L". A `.not`
-// assertion, another locator, another timeout or a timeout that did not fire
-// is not this miss.
+// Nms waiting for expect(locator).toBeVisible(); ; Locator: L; Expected:
+// visible; Received: <element(s) not found>". Playwright prints the Timeout
+// line on every expect failure, so the detail must BEGIN with that assertion
+// (a test timeout that carries the pending expect does not), carry a positive
+// timeout cause (the element was not found, or was hidden), and have no other
+// error after it: a strict-mode violation or any other error is a different
+// failure. A `.not` assertion, another locator, another timeout or a timeout
+// that did not fire is not this miss.
 func visibleWithinMiss(detail string, ms float64, locator string) bool {
 	d := ansiEscape.ReplaceAllString(detail, "")
-	if strings.HasPrefix(d, "flaky:") || strings.Contains(d, ".not.toBeVisible") {
+	if strings.Contains(d, ".not.toBeVisible") || pwStrictMode.MatchString(d) {
 		return false
 	}
 	loc := pwLocatorLine.FindStringSubmatch(d)
-	if loc == nil || loc[1] != locator {
+	if loc == nil || loc[1] != locator || !strings.Contains(d, "Expected: visible") {
 		return false
 	}
 	var timeout string
 	switch {
 	case pwVisibleMatcher.MatchString(d):
 		t := pwTimeoutLine.FindStringSubmatch(d)
-		if t == nil || !strings.Contains(d, "Expected: visible") {
+		if t == nil {
 			return false
 		}
 		timeout = t[1]
+		cause := false
+		rest := pwVisibleMatcher.ReplaceAllString(d, "")
+		for _, e := range pwErrorLine.FindAllStringSubmatch(rest, -1) {
+			if e[1] != "element(s) not found" {
+				return false
+			}
+			cause = true
+		}
+		if !cause && !pwHiddenCause.MatchString(d) {
+			return false
+		}
 	default:
 		t := pwOldVisible.FindStringSubmatch(d)
-		if t == nil {
+		if t == nil || !pwHiddenCause.MatchString(d) {
 			return false
 		}
 		timeout = t[1]

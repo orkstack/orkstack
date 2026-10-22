@@ -25,6 +25,7 @@ func pinFailure() []event {
 	const p = "example.com/p"
 	return []event{
 		ev("run", p, "TestPin", 0), ev("run", p, "TestPin/a_pin", 0), ev("fail", p, "TestPin/a_pin", 1), ev("fail", p, "TestPin", 1),
+		{Action: "output", Package: p, Output: "FAIL\n"}, {Action: "output", Package: p, Output: "FAIL\texample.com/p\t0.011s\n"},
 		{Action: "fail", Package: p},
 		ev("run", "example.com/q", "TestQ", 0), ev("pass", "example.com/q", "TestQ", 0),
 		{Action: "pass", Package: "example.com/q"},
@@ -39,7 +40,7 @@ func TestUnit_OnlyQuarantinedFailuresDoNotFailTheRun(t *testing.T) {
 	}
 	// go test exits 1 because a test failed; every failure is quarantined, so
 	// the exit says nothing the ledger does not, and is dropped.
-	if !unitExitExcused(l, c.pkgEnds, listed) {
+	if !unitExitExcused(l, c.pkgEnds, listed, c.packageOutput) {
 		t.Error("an exit caused only by a quarantined failure still fails the run")
 	}
 }
@@ -51,7 +52,23 @@ func TestUnit_ABuildFailureBesideAQuarantinedFailureStillFails(t *testing.T) {
 		"a build failure": append(pinFailure(), event{Action: "fail", Package: "example.com/broken"}),
 		// A package whose binary died (or a TestMain that failed) never
 		// reported its own terminal event.
-		"a package with no terminal event": pinFailure()[:7],
+		"a package with no terminal event": pinFailure()[:9],
+		// A TestMain that exits non-zero after the run prints PASS, not FAIL:
+		// the package's fail is not explained by its quarantined leaf.
+		"a TestMain exit": func() []event {
+			e := pinFailure()
+			e[4] = event{Action: "output", Package: "example.com/p", Output: "PASS\n"}
+			return e
+		}(),
+		"a package with output no failed test prints": func() []event {
+			e := pinFailure()
+			e[4] = event{Action: "output", Package: "example.com/p", Output: "FAIL\npanic in TestMain\n"}
+			return e
+		}(),
+		"a package whose output is missing": func() []event {
+			e := pinFailure()
+			return append(e[:4], e[6:]...)
+		}(),
 		// A package-level failure outside any test, beside the quarantined one.
 		"a package-level failure": func() []event {
 			e := pinFailure()
@@ -62,7 +79,7 @@ func TestUnit_ABuildFailureBesideAQuarantinedFailureStillFails(t *testing.T) {
 	for name, events := range cases {
 		t.Run(name, func(t *testing.T) {
 			l, c := unitRun(events, listed)
-			if unitExitExcused(l, c.pkgEnds, listed) {
+			if unitExitExcused(l, c.pkgEnds, listed, c.packageOutput) {
 				t.Error("the exit was dropped beside a failure the ledger does not explain")
 			}
 		})
@@ -70,7 +87,7 @@ func TestUnit_ABuildFailureBesideAQuarantinedFailureStillFails(t *testing.T) {
 	// An ordinary failure is never excused, quarantine or not.
 	l, c := unitRun(append(pinFailure(), ev("run", "example.com/q", "TestR", 0), ev("fail", "example.com/q", "TestR", 1)),
 		map[string]map[string]bool{"example.com/p": {"TestPin": true}, "example.com/q": {"TestQ": true, "TestR": true}})
-	if unitExitExcused(l, c.pkgEnds, nil) {
+	if unitExitExcused(l, c.pkgEnds, nil, c.packageOutput) {
 		t.Error("an unquarantined failure was excused")
 	}
 }

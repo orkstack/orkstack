@@ -26,6 +26,13 @@ include breaking changes, and each is marked **BREAKING**.
 - `scripts/github-merge-gate.sh` and `make github-merge-gate`: the
   one-command enablement of the required `proof` check, in queue-less mode by
   default; it refuses until the repository is public.
+- The CI workflows are held by tests to fail closed: no job or step sets
+  `continue-on-error`, every `proof.yml` upload runs `if: always()`, the
+  verdict is judged per tier, `release.yml` refuses a tag off `main` and keeps
+  no credential on its checkout, and `scripts/github-merge-gate.sh` treats an
+  API error as an error rather than as an absent ruleset or variable;
+  `--verify-landed` reads the proof on a landed merge commit's pull request
+  head.
 - `docs/PROOFS.md`, the reference for the tiers, the plan and sharding, the CI
   job graph, the artifacts and the recovery procedures.
 - `proofrun flakes` and `make proof-flakes`, which derive per-test flake rates
@@ -195,6 +202,8 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The proof merger no longer trusts a shard ledger's problem lines: a UI, integration or unit entry that is not a pass fails unless a quarantine, an allowed skip or a runner-size excusal that the merger itself derives explains it; the plan must be complete and of the tier's nightly mode; unexpected parts, duplicate part attempts, missing plan or image identity and corrupt part records fail closed; `merge-check` refuses a proof whose quarantine check is over 30 days old.
+- The CI proof's `build`, `ui-e2e`, `activity-fixture` and `observability` parts now read the plan artifact and pass `--plan`, so they record the plan hash the merger requires; `release.yml` sets an explicit committer identity on the tag.
 - A UI runner-size miss is excused only on a CI `ui-e2e` part, only for a
   failure of the bound's own timing assertion, and only when the base's copy
   of `scripts/proof-host-speed.tsv` already carries the row; a skip, a missing
@@ -225,8 +234,10 @@ include breaking changes, and each is marked **BREAKING**.
 - `orkctl activity build`'s help named a `--no-push` flag that does not exist;
   it is `--push=false`.
 - A task whose pool the run could not route (`INVALID_POOL`,
-  `RESERVED_QUEUE`) is recorded `FAILED` with that code as its error, instead
-  of staying `RUNNING` with no error while its run failed.
+  `RESERVED_QUEUE`) is recorded `FAILED` with that code as its own error, and
+  its stream carries a `TASK_FAILED` event, so the run's failure handlers and
+  cancellation no longer record it a second time; before, it stayed `RUNNING`
+  with no error while its run failed. Runs already in flight replay unchanged.
 - The generations test no longer depends on the order the scheduler finishes
   a stage's parallel tasks in, so its `flat stages` and pin subtests stop
   flaking at 2 CPUs (0 failures in 500 runs); the pin subtest's quarantine

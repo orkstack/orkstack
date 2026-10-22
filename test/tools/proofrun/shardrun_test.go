@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,6 +43,34 @@ func twoShardPlan(pkg planPackage) *integrationPlan {
 // shard's ledger (if any).
 func runShardOf(t *testing.T, p *integrationPlan, k int, extra ...string) (int, ledger) {
 	t.Helper()
+	code, l, _ := runShardOfStderr(t, p, k, extra...)
+	return code, l
+}
+
+// captureStderr runs f and returns what it wrote to os.Stderr.
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := os.Stderr
+	os.Stderr = w
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	func() {
+		defer func() { os.Stderr = prev; _ = w.Close() }()
+		f()
+	}()
+	return <-done
+}
+
+// runShardOfStderr is runShardOf, with what the shard wrote to stderr.
+func runShardOfStderr(t *testing.T, p *integrationPlan, k int, extra ...string) (int, ledger, string) {
+	t.Helper()
 	quiet(t)
 	dir := t.TempDir()
 	planFile := filepath.Join(dir, "integration-plan.json")
@@ -50,10 +79,11 @@ func runShardOf(t *testing.T, p *integrationPlan, k int, extra ...string) (int, 
 	}
 	out := filepath.Join(dir, "out")
 	args := append([]string{"-plan", planFile, "-shard", itoa(k), "-out", out, "-jobs", "1", "-allow", "", "-quarantine", ""}, extra...)
-	code := cmdIntegration(args)
+	var code int
+	stderr := captureStderr(t, func() { code = cmdIntegration(args) })
 	var l ledger
 	_ = readJSON(filepath.Join(out, "integration-tests.json"), &l)
-	return code, l
+	return code, l, stderr
 }
 
 // shippedScript writes an executable "binary" that lists names, as a
@@ -74,14 +104,26 @@ func shippedScript(t *testing.T, dir, name string, names ...string) string {
 func TestIntegrationShard_RefusesAnotherTree(t *testing.T) {
 	pkg := planPackage{ImportPath: fakeSuite, Dir: fakeDir, Binary: "fake.test", Listed: fakeListing}
 	stubTree(t, "this-checkout")
-	if code, _ := runShardOf(t, twoShardPlan(pkg), 1); code != 2 {
-		t.Errorf("a plan of another tree: exit %d, want 2", code)
+	code, _, stderr := runShardOfStderr(t, twoShardPlan(pkg), 1)
+	if code != 2 || !strings.Contains(stderr, "this plan was made for tree plan-tree, and this checkout is this-checkout") {
+		t.Errorf("a plan of another tree: exit %d, stderr %q", code, stderr)
 	}
 	// A plan that names no tree is refused too: it fails closed.
 	p := twoShardPlan(pkg)
 	p.Tree = ""
-	if code, _ := runShardOf(t, p, 1); code != 2 {
-		t.Errorf("a plan with no tree: exit %d, want 2", code)
+	code, _, stderr = runShardOfStderr(t, p, 1)
+	if code != 2 || !strings.Contains(stderr, "this plan was made for tree , and this checkout is this-checkout") {
+		t.Errorf("a plan with no tree: exit %d, stderr %q", code, stderr)
+	}
+	// The positive control: the same plan on its own tree is not refused.
+	stubTree(t, "plan-tree")
+	bins := t.TempDir()
+	bin := shippedScript(t, bins, "fake.test", fakeListing...)
+	sha, _ := fileSHA256(bin)
+	pkg.BinarySHA256 = sha
+	code, _, stderr = runShardOfStderr(t, twoShardPlan(pkg), 1, "-bin", bins)
+	if code == 2 || strings.Contains(stderr, "this plan was made for tree") {
+		t.Errorf("the plan on its own tree was refused: exit %d, stderr %q", code, stderr)
 	}
 }
 
@@ -91,18 +133,36 @@ func TestIntegrationShard_RefusesABinaryWhoseListingDiffers(t *testing.T) {
 	bin := shippedScript(t, bins, "fake.test", append(append([]string{}, fakeListing...), "TestAddedSincePlan")...)
 	sha, _ := fileSHA256(bin)
 	pkg := planPackage{ImportPath: fakeSuite, Dir: fakeDir, Binary: "fake.test", BinarySHA256: sha, Listed: fakeListing}
-	if code, _ := runShardOf(t, twoShardPlan(pkg), 1, "-bin", bins); code != 2 {
-		t.Errorf("a binary that lists a test the plan did not: exit %d, want 2", code)
+	code, _, stderr := runShardOfStderr(t, twoShardPlan(pkg), 1, "-bin", bins)
+	if code != 2 || !strings.Contains(stderr, "TestAddedSincePlan") {
+		t.Errorf("a binary that lists a test the plan did not: exit %d, stderr %q", code, stderr)
+	}
+	// The positive control: a shipped script listing exactly the plan's tests.
+	good := t.TempDir()
+	gbin := shippedScript(t, good, "fake.test", fakeListing...)
+	gsha, _ := fileSHA256(gbin)
+	pkg.BinarySHA256 = gsha
+	code, _, stderr = runShardOfStderr(t, twoShardPlan(pkg), 1, "-bin", good)
+	if code == 2 || strings.Contains(stderr, "TestAddedSincePlan") {
+		t.Errorf("a shipped script that lists the plan's tests was refused: exit %d, stderr %q", code, stderr)
 	}
 }
 
 func TestIntegrationShard_RefusesAShippedBinaryWhoseDigestDiffers(t *testing.T) {
 	stubTree(t, "plan-tree")
 	bins := t.TempDir()
-	shippedScript(t, bins, "fake.test", fakeListing...)
+	bin := shippedScript(t, bins, "fake.test", fakeListing...)
 	pkg := planPackage{ImportPath: fakeSuite, Dir: fakeDir, Binary: "fake.test", BinarySHA256: bytesSHA256([]byte("the plan's compile")), Listed: fakeListing}
-	if code, _ := runShardOf(t, twoShardPlan(pkg), 1, "-bin", bins); code != 2 {
-		t.Errorf("a shipped binary of another digest: exit %d, want 2", code)
+	code, _, stderr := runShardOfStderr(t, twoShardPlan(pkg), 1, "-bin", bins)
+	if code != 2 || !strings.Contains(stderr, "shipped binary") {
+		t.Errorf("a shipped binary of another digest: exit %d, stderr %q", code, stderr)
+	}
+	// The positive control: the same script with the digest the plan hashed.
+	sha, _ := fileSHA256(bin)
+	pkg.BinarySHA256 = sha
+	code, _, stderr = runShardOfStderr(t, twoShardPlan(pkg), 1, "-bin", bins)
+	if code == 2 || strings.Contains(stderr, "shipped binary") {
+		t.Errorf("a shipped script of the plan's digest was refused: exit %d, stderr %q", code, stderr)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -27,6 +29,8 @@ func TestTimingMiss_IsOnlyTheBoundsOwnAssertion(t *testing.T) {
 		{"a test timeout", "Test timeout of 30000ms exceeded.", 5, 0, false},
 		{"a flaky result", "flaky: " + timingDetail, 5, 0, false},
 		{"no detail", "", 5, 0, false},
+		{"a test timeout ahead of the matcher", "Test timeout of 30000ms exceeded.; ; " + timingDetail, 5, 0, false},
+		{"the matcher not at the start", "Test timeout of 30000ms exceeded.; " + timingDetail, 5, 0, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -120,8 +124,8 @@ func TestRepositoryHostSpeed_NamesRealSpecTests(t *testing.T) {
 		flat := strings.ReplaceAll(string(src), "_", "")
 		switch b.Assertion.Kind {
 		case "lessThan":
-			if !strings.Contains(flat, "toBeLessThan") {
-				t.Errorf("line %d: %s asserts no bound with toBeLessThan[OrEqual]", b.Line, b.Name)
+			if !specAssertsBound(string(src), b.Assertion.MS) {
+				t.Errorf("line %d: %s has no toBeLessThan[OrEqual](%g): the row's bound is not one the spec asserts", b.Line, b.Name, b.Assertion.MS)
 			}
 		case "visibleWithin":
 			want := fmt.Sprintf("%s).toBeVisible({ timeout: %g })", b.Assertion.Locator, b.Assertion.MS)
@@ -156,6 +160,16 @@ func TestVisibleWithinMiss_IsOnlyThatLocatorsTimeout(t *testing.T) {
 		{"the timing bound", timingDetail, false},
 		{"a test timeout", "Test timeout of 1800000ms exceeded.", false},
 		{"a flaky result", "flaky: " + visibleFailure(runStatus, "60000"), false},
+		{"a strict mode violation", "Error: expect(locator).toBeVisible() failed; ; Locator: " + runStatus + "; Expected: visible; Error: strict mode violation: " + runStatus + " resolved to 2 elements; Timeout: 60000ms", false},
+		{"resolved to two elements", visibleFailure(runStatus, "60000") + "; resolved to 2 elements", false},
+		{"a test timeout carrying the pending expect", "Test timeout of 1800000ms exceeded.; Error: " + visibleFailure(runStatus, "60000"), false},
+		{"another error after the timeout line", "Error: expect(locator).toBeVisible() failed; ; Locator: " + runStatus + "; Expected: visible; Timeout: 60000ms; Error: page.goto: net::ERR_CONNECTION_REFUSED", false},
+		{"no timeout cause", "Error: expect(locator).toBeVisible() failed; ; Locator: " + runStatus + "; Expected: visible; Timeout: 60000ms", false},
+		{"hidden at the timeout", "Error: expect(locator).toBeVisible() failed; ; Locator: " + runStatus + "; Expected: visible; Received: hidden; Timeout: 60000ms", true},
+		{"an unexpected hidden value", "Error: expect(locator).toBeVisible() failed; ; Locator: " + runStatus + "; Expected: visible; Timeout: 60000ms; Error: unexpected value \"hidden\"", false},
+		{"not anchored at the start", "prefix; " + visibleFailure(runStatus, "60000"), false},
+		{"old wording without Expected: visible", "Error: Timed out 60000ms waiting for expect(locator).toBeVisible(); ; Locator: " + runStatus + "; Received: <element(s) not found>", false},
+		{"old wording with no cause", "Error: Timed out 60000ms waiting for expect(locator).toBeVisible(); ; Locator: " + runStatus + "; Expected: visible", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -163,5 +177,47 @@ func TestVisibleWithinMiss_IsOnlyThatLocatorsTimeout(t *testing.T) {
 				t.Errorf("visibleWithinMiss = %v, want %v", got, c.ok)
 			}
 		})
+	}
+}
+
+var (
+	specLessThanArg = regexp.MustCompile(`\.toBeLessThan(?:OrEqual)?\(\s*([A-Za-z_][A-Za-z0-9_]*|[0-9][0-9_]*(?:\.[0-9]+)?)\s*\)`)
+	specConstNumber = regexp.MustCompile(`(?m)^\s*(?:export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*number\s*)?=\s*([0-9][0-9_]*(?:\.[0-9]+)?)\s*;`)
+)
+
+// specAssertsBound reports whether the spec source asserts toBeLessThan[OrEqual]
+// of exactly ms, directly or through a numeric const it declares.
+func specAssertsBound(src string, ms float64) bool {
+	consts := map[string]float64{}
+	for _, m := range specConstNumber.FindAllStringSubmatch(src, -1) {
+		if v, err := strconv.ParseFloat(strings.ReplaceAll(m[2], "_", ""), 64); err == nil {
+			consts[m[1]] = v
+		}
+	}
+	for _, m := range specLessThanArg.FindAllStringSubmatch(src, -1) {
+		arg := m[1]
+		v, ok := consts[arg]
+		if !ok {
+			var err error
+			if v, err = strconv.ParseFloat(strings.ReplaceAll(arg, "_", ""), 64); err != nil {
+				continue
+			}
+		}
+		if v == ms {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSpecAssertsBound_TiesARowToTheSpecsOwnBound(t *testing.T) {
+	src := "const BUDGET_MS = 5_000;\nconst OTHER = 60_000;\nexpect(x, 'm').toBeLessThanOrEqual(BUDGET_MS);\nexpect(y).toBeLessThan(250)\n"
+	for ms, want := range map[float64]bool{5000: true, 250: true, 60000: false, 9000: false} {
+		if got := specAssertsBound(src, ms); got != want {
+			t.Errorf("bound %g: %v, want %v", ms, got, want)
+		}
+	}
+	if specAssertsBound("expect(x).toBeLessThan(UNDECLARED)", 5000) {
+		t.Error("an undeclared name was read as a bound")
 	}
 }

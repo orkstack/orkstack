@@ -73,18 +73,15 @@ func newMergeFixture(t *testing.T, tier string, ci bool) *mergeFixture {
 		Shards: []planShard{{Index: 1, Jobs: []string{"m-001"}}, {Index: 2, Jobs: []string{"m-002"}}},
 		Packages: []planPackage{{ImportPath: mPkg, Dir: ".", Binary: "m.test", Listed: []string{"TestA", "TestB"},
 			ListingSHA256: mListing, BinarySHA256: "planbin"}},
-		Nightly:   nightlyRef{Mode: nightlyInclude},
+		Nightly:   nightlyRef{Mode: tierNightlyMode[tier], SHA256: emptySHA, BaseSHA256: emptySHA},
+		Complete:  true,
 		CheckedOn: "2026-10-21",
 		// Every anchor is pinned, as writePlan pins it: the lists are absent
 		// in the fixture, which hashes as empty.
 		AllowedSkips: fileRef{File: "", SHA256: emptySHA},
 		Quarantine:   quarantineRef{File: filepath.Join(dir, "quarantine.txt"), SHA256: emptySHA, BaseSHA256: emptySHA},
 	}
-	if ci {
-		f.plan.PartsExpected = []string{"plan", "build", "fast", "integration:1", "integration:2", "ui-e2e:1", "activity-fixture:shell"}
-	} else {
-		f.plan.PartsExpected = []string{"local"}
-	}
+	f.plan.PartsExpected = partsExpected(tier, !ci, 2, 1, false)
 	f.hostSpeed = filepath.Join(dir, "host-speed.tsv")
 	f.plan.HostSpeed = quarantineRef{File: f.hostSpeed, SHA256: emptySHA, BaseSHA256: emptySHA}
 	f.planPath = filepath.Join(dir, "integration-plan.json")
@@ -134,6 +131,9 @@ func (f *mergeFixture) basePart(part string) partRecord {
 	}
 	if isStackPart(part) {
 		r.Temporal.Mode = "own"
+	}
+	if partUsesImages(part) {
+		r.Images = map[string]string{"activity-shell": "sha256:aaa"}
 	}
 	return r
 }
@@ -197,10 +197,14 @@ func (f *mergeFixture) writeCI() {
 	f.writePart(fast, map[string]any{"unit-tests.json": unitLedger()})
 	ui := f.basePart("ui-e2e:1")
 	ui.Gates = []gateRecord{{Gate: "ui-e2e", Result: "pass"}}
+	ui.Images = map[string]string{"activity-shell": "sha256:aaa"}
 	f.writePart(ui, map[string]any{"ui-e2e-tests.json": uiLedgerFixture()})
-	fix := f.basePart("activity-fixture:shell")
-	fix.Gates = []gateRecord{{Gate: "activity-fixture", Result: "pass"}}
-	f.writePart(fix, nil)
+	for _, a := range fixtureActivities {
+		fix := f.basePart("activity-fixture:" + a)
+		fix.Gates = []gateRecord{{Gate: "activity-fixture", Result: "pass"}}
+		fix.Images = map[string]string{"activity-shell": "sha256:aaa"}
+		f.writePart(fix, nil)
+	}
 }
 
 func (f *mergeFixture) writeShard(n int, tests []entry, problems []string, attempt int) {
@@ -360,6 +364,7 @@ func TestMerge_AllowedSkipsBehave(t *testing.T) {
 	allowed := passEntry("TestB")
 	allowed.Outcome, allowed.AllowedSkip = outcomeSkip, "opt-in recorder"
 	f := newMergeFixture(t, tierFull, false)
+	f.pinAllowlist("integration\t" + mPkg + "\tTestB\topt-in recorder\n")
 	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), allowed}})
 	if r, code := f.merge(); code != 0 || !r.MergeEligible {
 		t.Fatalf("an allowed skip failed the proof: code %d, %v", code, r.Ineligible)
@@ -703,6 +708,15 @@ func TestMerge_ATamperedBaseListFailsTheProof(t *testing.T) {
 	}
 }
 
+// pinAllowlist writes the allowed-skips list and pins its hash in the plan.
+func (f *mergeFixture) pinAllowlist(text string) {
+	f.t.Helper()
+	file := f.writeFile("allowed-skips.txt", text)
+	sha, _ := fileSHA256(file)
+	f.plan.AllowedSkips = fileRef{File: file, SHA256: sha}
+	f.save()
+}
+
 func TestMerge_TheAllowedSkipListMustBeThePlans(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
 	allow := filepath.Join(f.dir, "allowed-skips.txt")
@@ -816,6 +830,7 @@ func TestMerge_ADeferredEntryOutsideThePlanFailsTheProof(t *testing.T) {
 			return []entry{passEntry("TestA"), d}
 		}, "only the merger writes deferred entries"},
 		{"the plan defers outside defer mode", func(f *mergeFixture) []entry {
+			f.plan.Nightly.Mode = nightlyInclude
 			f.plan.Deferred = []deferredRef{{Package: mPkg, Test: "TestB", Entry: nightlyLine("TestB")}}
 			f.save()
 			return []entry{passEntry("TestA")}
@@ -1193,6 +1208,11 @@ func mergeUIShard(t *testing.T, f *mergeFixture, cpus int, gate string, shard ui
 
 func TestMerge_OnlyTheBoundsOwnTimingMissIsAKnownGap(t *testing.T) {
 	timingProblem := "a.spec.ts › t [chromium] failed (" + timingDetail + ")"
+	loosenedDetail := "Error: live run page; ; expect(received).toBeLessThanOrEqual(expected); ; Expected: <= 9000; Received:    9500"
+	loosenedProblem := "a.spec.ts › t [chromium] failed (" + loosenedDetail + ")"
+	if _, ok := timingMiss(loosenedDetail, 9); !ok {
+		t.Fatal("the 9000 detail is not a timing miss of a 9 s bound: the case would not test the anchor")
+	}
 	otherDetail := "Error: expect(locator).toBeVisible() failed; ; Locator: getByRole('heading')"
 	cases := []struct {
 		name       string
@@ -1226,7 +1246,7 @@ func TestMerge_OnlyTheBoundsOwnTimingMissIsAKnownGap(t *testing.T) {
 			shard: uiShardLedger(outcomeFail, timingDetail, []string{timingProblem}), gate: "fail", want: timingProblem},
 		{name: "a bound the change loosens", ci: true, cpus: 2,
 			tree: strings.Replace(hostRow, "lessThan 5000\t5\t", "lessThan 9000\t9\t", 1), base: hostRow,
-			shard: uiShardLedger(outcomeFail, strings.Replace(timingDetail, "5000", "9000", 1), []string{"x"}), gate: "fail", want: "x"},
+			shard: uiShardLedger(outcomeFail, loosenedDetail, []string{loosenedProblem}), gate: "fail", want: loosenedProblem},
 		{name: "a runner at the reference", ci: true, cpus: 16, tree: hostRow, base: hostRow,
 			shard: uiShardLedger(outcomeFail, timingDetail, []string{timingProblem}), gate: "fail", want: timingProblem},
 	}
@@ -1368,7 +1388,7 @@ func mergeTwoUIShards(t *testing.T, a, b *uiLedger) (proofRecord, int, *mergeFix
 	t.Helper()
 	f := newMergeFixture(t, tierFull, true)
 	f.uiPlan = twoUIShards()
-	f.plan.PartsExpected = append(f.plan.PartsExpected, "ui-e2e:2")
+	f.plan.PartsExpected = partsExpected(tierFull, false, 2, 2, false)
 	f.save()
 	f.writeCI()
 	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)

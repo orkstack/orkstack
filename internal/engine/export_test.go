@@ -139,6 +139,14 @@ func DisableHistoryGuardLookaheadForTest() (restore func()) {
 	return func() { historyGuardLookaheadDisabledForTest = false }
 }
 
+// DisableRefusedRouteGateForTest sets the test-only switch that makes a
+// refused route behave as the builds before refused-route-task-failed did,
+// WITHOUT asking its version, and returns the function that clears it.
+func DisableRefusedRouteGateForTest() (restore func()) {
+	refusedRouteGateDisabledForTest = true
+	return func() { refusedRouteGateDisabledForTest = false }
+}
+
 // SetSnapshotBaseHookForTest makes every snapshot write that moves a run's
 // overlay base hand the new base to f, and returns the function that clears
 // it.
