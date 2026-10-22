@@ -295,8 +295,15 @@ func TestReadParts_RefusesTwoDirectoriesForOneAttempt(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 	quiet(t)
-	if code := cmdMerge([]string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out}); code != 2 {
-		t.Errorf("merge exit %d, want 2", code)
+	if code := cmdMerge([]string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out}); code != 1 {
+		t.Errorf("merge exit %d, want 1", code)
+	}
+	var proof proofRecord
+	if err := readJSON(filepath.Join(f.out, "proof.json"), &proof); err != nil {
+		t.Fatalf("a duplicate claim wrote no proof.json: %v", err)
+	}
+	if proof.Result != "fail" || proof.MergeEligible || !strings.Contains(strings.Join(proof.Ineligible, "\n"), "both claim part integration:1 attempt 1") {
+		t.Errorf("proof.json = result %q eligible %v reasons %v", proof.Result, proof.MergeEligible, proof.Ineligible)
 	}
 }
 
@@ -388,6 +395,16 @@ func TestVerify_AProofWhoseQuarantineCheckIsOlderThanItsArtifactIsRefused(t *tes
 			t.Errorf("%s: refused = %v, want %v", name, got, c.want)
 		}
 	}
+	for _, tier := range []string{"full", "release"} {
+		for name, r := range map[string]proofRecord{
+			"no quarantine record": {Tier: tier},
+			"an empty date":        {Tier: tier, Quarantine: &quarantineRecord{}},
+		} {
+			if quarantineAgeProblem(r, today) == "" {
+				t.Errorf("a %s proof with %s is not refused", tier, name)
+			}
+		}
+	}
 	old := proofRecord{Tier: "full", Result: "pass", MergeEligible: true, Tree: "t1", BaseCommit: "m1",
 		Quarantine: &quarantineRecord{CheckedOn: "2020-01-01"}}
 	if p := strings.Join(verifyProblems(old, "t1", "m1", "m1", "", "main"), "\n"); !strings.Contains(p, "prove the candidate again") {
@@ -445,5 +462,30 @@ func TestRecord_APlanItCannotHashIsAnError(t *testing.T) {
 	args := []string{"-dir", dir, "-tier", "full", "-part", "local", "-plan", filepath.Join(dir, "absent.json")}
 	if code := cmdRecord(args); code != 2 {
 		t.Errorf("exit %d, want 2", code)
+	}
+}
+
+// A listed test the report never reached is a ledger entry whose file, title
+// and project are the listing's own: the merger then adds nothing to the
+// shard's "has no outcome" line (review round 4).
+func TestMerge_AListedUITestWithNoOutcomeIsOnlyThatProblem(t *testing.T) {
+	listed := pwReport{Suites: []pwSuite{{Title: "a.spec.ts", File: "a.spec.ts", Specs: []pwSpec{
+		{Title: "t", Tests: []pwTest{{ProjectName: "chromium"}}},
+	}}}}
+	l := buildUILedger(listed, pwReport{}, 0, 3)
+	if len(l.Tests) != 1 || l.Tests[0].File != "a.spec.ts" || l.Tests[0].Title != "t" || l.Tests[0].Project != "chromium" {
+		t.Fatalf("the entry is %+v, want a.spec.ts / t / chromium", l.Tests)
+	}
+	l.Files = []uiFileEntry{{File: "a.spec.ts", Shard: 1, Tests: 1}}
+	f := newMergeFixture(t, tierFull, true)
+	r, code := mergeUIShard(t, f, 16, "fail", l)
+	all := joined(r)
+	if code != 1 || !strings.Contains(all, "a.spec.ts › t [chromium] has no outcome") {
+		t.Fatalf("code %d: %v", code, r.Ineligible)
+	}
+	for _, spurious := range []string{"does not list", "names no problem"} {
+		if strings.Contains(all, spurious) {
+			t.Errorf("the merger adds %q:\n%s", spurious, all)
+		}
 	}
 }

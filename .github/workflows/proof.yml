@@ -158,12 +158,13 @@ jobs:
         run: |
           set -euo pipefail
           scripts/proof.sh --part plan --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
             --base-commit "$BASE" --shards "$INT_SHARDS" --ui-shards "$UI_SHARDS" "$PROOF_NAME"
           dir="proof/$PROOF_NAME-part-plan-a$GITHUB_RUN_ATTEMPT"
           {
             echo "int_matrix=$(cat "$dir/int-matrix.json")"
             echo "ui_matrix=$(cat "$dir/ui-matrix.json")"
-            echo "observability=$(grep -q 'observability' "$dir/observability-paths.txt" 2>/dev/null && echo true || echo false)"
+            echo "observability=$(jq -r '.observability_required // false' "$dir/integration-plan.json")"
             echo "proof_id=$PROOF_ID"
           } >>"$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7.0.2
@@ -205,6 +206,7 @@ jobs:
         shell: bash
         run: |
           scripts/proof.sh --part build --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
@@ -247,6 +249,7 @@ jobs:
           PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}
         run: |
           scripts/proof.sh --part fast --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
@@ -299,6 +302,7 @@ jobs:
           PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}
         run: |
           scripts/proof.sh --part "integration:${{ matrix.shard }}" --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
@@ -364,6 +368,7 @@ jobs:
           PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}
         run: |
           scripts/proof.sh --part "ui-e2e:${{ matrix.shard }}" --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --ui-plan "$RUNNER_TEMP/ci/plan/ui-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
@@ -416,6 +421,7 @@ jobs:
         shell: bash
         run: |
           scripts/proof.sh --part "activity-fixture:${{ matrix.activity }}" --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
@@ -462,6 +468,7 @@ jobs:
         shell: bash
         run: |
           scripts/proof.sh --part observability --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"

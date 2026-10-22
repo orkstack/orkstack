@@ -1034,6 +1034,153 @@ func TestWorkflows_EveryImageUsingPartPassesThePlanTheMergerRequires(t *testing.
 	})
 }
 
+// attemptProblems holds every step that runs a CI part to naming its run
+// attempt explicitly: the uploads and the plan step's directory carry
+// $GITHUB_RUN_ATTEMPT, so a part that kept proof.sh's default of 1 would, on a
+// lost-runner rerun, write -a1 where the upload looks for -a2.
+func attemptProblems(w *wfFile) []string {
+	var p []string
+	seen := 0
+	for _, name := range w.jobNames() {
+		for i, s := range w.Jobs[name].Steps {
+			if !strings.Contains(s.Run, "scripts/proof.sh --part") {
+				continue
+			}
+			seen++
+			if !strings.Contains(s.Run, `--attempt "$GITHUB_RUN_ATTEMPT"`) {
+				p = append(p, fmt.Sprintf(`jobs.%s %s does not pass --attempt "$GITHUB_RUN_ATTEMPT"`, name, s.label(i)))
+			}
+		}
+	}
+	if seen == 0 {
+		p = append(p, "no step runs scripts/proof.sh --part")
+	}
+	return p
+}
+
+func TestWorkflows_EveryPartStepPassesItsRunAttempt(t *testing.T) {
+	stepOf := func(w *wfFile, job, contains string) *wfStep {
+		for i := range w.Jobs[job].Steps {
+			if strings.Contains(w.Jobs[job].Steps[i].Run, contains) {
+				return &w.Jobs[job].Steps[i]
+			}
+		}
+		t.Fatalf("jobs.%s has no step running %q", job, contains)
+		return nil
+	}
+	dropAttempt := func(job, part string) mutation {
+		return mutation{"no --attempt on " + job, func(w *wfFile) {
+			s := stepOf(w, job, "--part "+part)
+			s.Run = strings.ReplaceAll(s.Run, `--attempt "$GITHUB_RUN_ATTEMPT"`, "")
+		}}
+	}
+	expectEachMutationRefused(t, "proof.yml", attemptProblems, []mutation{
+		dropAttempt("plan", "plan"),
+		dropAttempt("build", "build"),
+		dropAttempt("fast", "fast"),
+		dropAttempt("integration", `"integration:`),
+		dropAttempt("ui-e2e", `"ui-e2e:`),
+		dropAttempt("activity-fixture", `"activity-fixture:`),
+		dropAttempt("observability", "observability"),
+		{"a fixed attempt", func(w *wfFile) {
+			s := stepOf(w, "build", "--part build")
+			s.Run = strings.ReplaceAll(s.Run, `--attempt "$GITHUB_RUN_ATTEMPT"`, "--attempt 1")
+		}},
+	})
+}
+
+// observabilityProblems pins how the plan job decides whether the
+// observability job runs: from the plan's own record of what it requires, the
+// field the merger reads. observability-paths.txt lists touched telemetry
+// paths, which never contain the word "observability", so grepping it for the
+// word skips the job the merger then expects.
+func observabilityProblems(w *wfFile) []string {
+	var p []string
+	job := w.Jobs["plan"]
+	if job == nil {
+		return []string{"proof.yml has no plan job"}
+	}
+	found := false
+	for i, s := range job.Steps {
+		for _, line := range strings.Split(s.Run, "\n") {
+			if !strings.Contains(line, "observability=") {
+				continue
+			}
+			found = true
+			if strings.Contains(line, "observability-paths.txt") {
+				p = append(p, fmt.Sprintf("jobs.plan %s decides from observability-paths.txt, a list of paths", s.label(i)))
+			}
+			if !strings.Contains(line, `jq -r '.observability_required // false' "$dir/integration-plan.json"`) {
+				p = append(p, fmt.Sprintf("jobs.plan %s does not read observability_required from the plan", s.label(i)))
+			}
+		}
+	}
+	if !found {
+		p = append(p, "jobs.plan sets no observability output")
+	}
+	return p
+}
+
+func TestWorkflows_TheObservabilityPartFollowsThePlansRecord(t *testing.T) {
+	expectEachMutationRefused(t, "proof.yml", observabilityProblems, []mutation{
+		{"revert to grepping the paths file", func(w *wfFile) {
+			for i := range w.Jobs["plan"].Steps {
+				s := &w.Jobs["plan"].Steps[i]
+				s.Run = strings.ReplaceAll(s.Run,
+					`$(jq -r '.observability_required // false' "$dir/integration-plan.json")`,
+					`$(grep -q 'observability' "$dir/observability-paths.txt" 2>/dev/null && echo true || echo false)`)
+			}
+		}},
+		{"read another plan field", func(w *wfFile) {
+			for i := range w.Jobs["plan"].Steps {
+				s := &w.Jobs["plan"].Steps[i]
+				s.Run = strings.ReplaceAll(s.Run, ".observability_required", ".tier")
+			}
+		}},
+		{"no observability output", func(w *wfFile) {
+			for i := range w.Jobs["plan"].Steps {
+				s := &w.Jobs["plan"].Steps[i]
+				s.Run = strings.ReplaceAll(s.Run, "observability=", "obs=")
+			}
+		}},
+	})
+}
+
+// workflowFilesOnDisk lists every workflow and composite action under
+// .github, as paths relative to it.
+func workflowFilesOnDisk(t *testing.T) []string {
+	t.Helper()
+	root := filepath.Join("..", "..", "..", ".github")
+	var out []string
+	for _, pattern := range []string{"workflows/*.yml", "workflows/*.yaml", "actions/*/action.yml", "actions/*/action.yaml"} {
+		m, err := filepath.Glob(filepath.Join(root, pattern))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range m {
+			rel, _ := filepath.Rel(root, f)
+			out = append(out, filepath.ToSlash(rel))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// The rules above run over allWorkflows and the composite action; a workflow
+// added to .github without being listed would escape every one of them.
+func TestWorkflows_TheRulesCoverEveryWorkflowOnDisk(t *testing.T) {
+	var covered []string
+	for _, f := range allWorkflows {
+		covered = append(covered, "workflows/"+f)
+	}
+	covered = append(covered, "actions/proof-host/action.yml")
+	sort.Strings(covered)
+	if got := workflowFilesOnDisk(t); strings.Join(got, "\n") != strings.Join(covered, "\n") {
+		t.Errorf("the workflow rules cover\n  %s\nbut .github holds\n  %s\nadd the new file to allWorkflows (and its rules) or remove it",
+			strings.Join(covered, "\n  "), strings.Join(got, "\n  "))
+	}
+}
+
 // ---- timeouts ------------------------------------------------------------------
 
 // timeoutProblems holds every job to the plan's rule (§2.6 rule 2, §3.2): a

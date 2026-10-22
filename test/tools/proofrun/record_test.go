@@ -92,7 +92,8 @@ func TestComposeTemporal(t *testing.T) {
 }
 
 func passingFull() proofRecord {
-	r := proofRecord{Tier: "full", Tree: "t1", TreeEnd: "t1", CleanStart: true, CleanEnd: true, ImageTag: "pr-abc", ImageTagOwn: true, BaseRef: "main", BaseCommit: "m1"}
+	r := proofRecord{Tier: "full", Tree: "t1", TreeEnd: "t1", CleanStart: true, CleanEnd: true, ImageTag: "pr-abc", ImageTagOwn: true, BaseRef: "main", BaseCommit: "m1",
+		Quarantine: &quarantineRecord{CheckedOn: todayUTC().Format("2006-01-02")}}
 	r.Temporal.Mode = "own"
 	for _, g := range fullGates {
 		r.Gates = append(r.Gates, gateRecord{Gate: g, Result: "pass"})

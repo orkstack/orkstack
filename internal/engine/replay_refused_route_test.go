@@ -41,12 +41,9 @@ func refusedRouteFixture(shape string, legacy bool) string {
 func requireRefusedRouteFixture(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); err != nil {
-		const hint = "record it with ORK_RECORD_GOLDEN_HISTORY=1 go test -tags=integration ./internal/engine/ " +
-			"-run TestIntegration_RecordRefusedRouteHistories"
-		if os.Getenv("ORK_REQUIRE_REFUSED_ROUTE_FIXTURE") != "" {
-			t.Fatalf("the refused-route fixture %s is missing (%v); %s", path, err, hint)
-		}
-		t.Skipf("%s is not recorded (%v): %s", path, err, hint)
+		t.Fatalf("the committed refused-route fixture %s is missing (%v); record it with "+
+			"ORK_RECORD_GOLDEN_HISTORY=1 go test -tags=integration ./internal/engine/ "+
+			"-run TestIntegration_RecordRefusedRouteHistories", path, err)
 	}
 }
 

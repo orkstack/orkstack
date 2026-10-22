@@ -232,8 +232,24 @@ func cmdMerge(args []string) int {
 	}
 	parts, absent, decodeErr := readParts(*partsDir)
 	if decodeErr != nil {
+		// Two directories claiming one attempt is a proof that cannot be
+		// merged, not an invocation error: record why, so the verdict step
+		// reads a failing proof.json and not an absent one.
 		fmt.Fprintln(os.Stderr, "proofrun merge:", decodeErr)
-		return 2
+		failed := proofRecord{
+			Tier: plan.Tier, Name: *name, Commit: plan.Commit, Result: "fail",
+			Ineligible: []string{"the parts cannot be merged: " + decodeErr.Error()},
+			Gates:      []gateRecord{},
+		}
+		if err := os.MkdirAll(*out, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun merge:", err)
+			return 2
+		}
+		if err := writeJSON(filepath.Join(*out, "proof.json"), failed); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun merge:", err)
+			return 2
+		}
+		return 1
 	}
 	attempts, unreadable := readGithubAttempts(*jobsDir)
 	hostSpeed, err := readHostSpeed(*hostSpeedFile)

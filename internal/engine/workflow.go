@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -2752,7 +2753,7 @@ const RefusedRouteChange = "refused-route-task-failed"
 // history in the shape of the builds before the gate, and a negative replay
 // test proves the committed fixtures can only replay because of it. Never set
 // in production code.
-var refusedRouteGateDisabledForTest = false
+var refusedRouteGateDisabledForTest atomic.Bool
 
 // refuseRoute handles a task its run's plan cannot route, and returns err for
 // the run to fail with.
@@ -2766,7 +2767,7 @@ var refusedRouteGateDisabledForTest = false
 // (recordRefusedDispatch) nor settleHandlerDispatch records it a second time.
 // Before RefusedRouteChange it returned err alone and left the row as it was.
 func (s *runState) refuseRoute(ctx workflow.Context, id string, err error) error {
-	if refusedRouteGateDisabledForTest || s.version(ctx, RefusedRouteChange, 1) < 1 {
+	if refusedRouteGateDisabledForTest.Load() || s.version(ctx, RefusedRouteChange, 1) < 1 {
 		return err
 	}
 	code, message := ReasonInvalidPool, err.Error()

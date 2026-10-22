@@ -1,6 +1,10 @@
 package engine
 
-import "go.temporal.io/sdk/workflow"
+import (
+	"sync/atomic"
+
+	"go.temporal.io/sdk/workflow"
+)
 
 // CancelBeforeDispatchChange is the workflow.GetVersion change id of the
 // check that ends a canceled run before it dispatches, skips or opens
@@ -25,13 +29,13 @@ const CancelBeforeDispatchChange = "cancel-before-dispatch"
 // eachDispatchDescending: when set, the check is skipped WITHOUT asking its
 // version, so a negative replay test proves the committed fixture can only
 // replay because of it. Never set in production code.
-var cancelBeforeDispatchDisabledForTest = false
+var cancelBeforeDispatchDisabledForTest atomic.Bool
 
 // canceledBeforeDispatch reports whether the run must end canceled instead
 // of starting more work: its context is canceled and the run was recorded
 // by a build that checks.
 func (s *runState) canceledBeforeDispatch(ctx workflow.Context) bool {
-	if ctx.Err() == nil || cancelBeforeDispatchDisabledForTest {
+	if ctx.Err() == nil || cancelBeforeDispatchDisabledForTest.Load() {
 		return false
 	}
 	return s.version(ctx, CancelBeforeDispatchChange, 1) >= 1

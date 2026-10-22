@@ -23,11 +23,17 @@ import (
 func recordedWithTheWriter(path string) bool {
 	return strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") ||
 		strings.Contains(path, "cancel-before-dispatch") || strings.Contains(path, "definition-ref") ||
-		strings.Contains(path, "snapshot-overlay") ||
-		// A refused route fails the run at its first dispatch, before any idle
-		// point: nothing in it can switch, so the switch tests have nothing to
-		// see in it (its own gate has its own negative test).
-		strings.Contains(path, "refused-route")
+		strings.Contains(path, "snapshot-overlay")
+}
+
+// isRefusedRouteHistory reports whether a committed fixture is one of the
+// refused-route histories. A refused route fails the run at its first
+// dispatch, before any idle point: nothing in it can switch, so the two
+// switch tests have nothing to see in it (its own gate has its own negative
+// test). It carries no writer fields, so the plan-without-budget test still
+// covers it.
+func isRefusedRouteHistory(path string) bool {
+	return strings.Contains(path, "refused-route")
 }
 
 // committedFixtures is every committed history fixture's path.
@@ -53,7 +59,7 @@ func committedFixtures(t *testing.T) []string {
 func TestContinuation_RestoreEqualsLiveStateAtEveryIdlePoint(t *testing.T) {
 	defer engine.ContinueAtEveryIdleForTest()()
 	for _, path := range committedFixtures(t) {
-		if recordedWithTheWriter(path) {
+		if recordedWithTheWriter(path) || isRefusedRouteHistory(path) {
 			continue // this stage's own fixtures already continue
 		}
 		t.Run(filepath.Base(path), func(t *testing.T) {

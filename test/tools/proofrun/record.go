@@ -642,6 +642,11 @@ const maxQuarantineAgeDays = 30
 // and never in the merger.
 func quarantineAgeProblem(r proofRecord, today time.Time) string {
 	if r.Quarantine == nil || r.Quarantine.CheckedOn == "" {
+		// A merge gate's proof always records when its quarantine list was
+		// checked; an absent date cannot be judged, so it is not fresh.
+		if r.Tier == "full" || r.Tier == "release" {
+			return "it records no quarantine check date: prove the candidate again"
+		}
 		return ""
 	}
 	on, err := time.Parse("2006-01-02", r.Quarantine.CheckedOn)

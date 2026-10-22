@@ -172,7 +172,7 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 // buildUILedger checks a report against the listing.
 func buildUILedger(list, report pwReport, guardRetries, ceiling int) uiLedger {
 	l := uiLedger{Suite: "ui-e2e", Problems: []string{}, GuardRetries: guardRetries, GuardRetryCeiling: ceiling}
-	listedKeys, _ := flattenPW(list)
+	listedKeys, listed := flattenPW(list)
 	_, got := flattenPW(report)
 	l.Listed = len(listedKeys)
 	for _, e := range report.Errors {
@@ -181,12 +181,10 @@ func buildUILedger(list, report pwReport, guardRetries, ceiling int) uiLedger {
 	for _, k := range listedKeys {
 		e, ok := got[k]
 		if !ok {
-			e = uiEntry{Outcome: outcomeNone}
-			parts := strings.SplitN(k, " › ", 2)
-			e.File = parts[0]
-			if len(parts) > 1 {
-				e.Title = parts[1]
-			}
+			// The listing names the test's file, title and project; the key's
+			// "[project]" suffix is not part of the title.
+			le := listed[k]
+			e = uiEntry{File: le.File, Title: le.Title, Project: le.Project, Outcome: outcomeNone}
 		}
 		switch e.Outcome {
 		case outcomePass:

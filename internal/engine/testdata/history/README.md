@@ -431,5 +431,6 @@ build before it, and must keep replaying through the `DefaultVersion` branch.
   marker differs)
 - behaviour: `TestRunWorkflow_ARefusedRouteIsRecordedOnceInTheRowAndTheStream`
 - recorder: `TestIntegration_RecordRefusedRouteHistories`
-  (`refused_route_integration_test.go`); `ORK_REQUIRE_REFUSED_ROUTE_FIXTURE`.
-  It never skips.
+  (`refused_route_integration_test.go`). It never skips. The fixtures are
+  committed, so the replay tests above fail, never skip, when one is missing;
+  only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes them).

@@ -2500,6 +2500,21 @@ canceled at a dispatch point. A history recorded before the check replays its
 `run-cancel-before-dispatch-v1.json` guards it, with its command, payload and
 negative tests.
 
+**A refused route is a versioned change.** A task whose pool the run's plan
+cannot route (`INVALID_POOL`, `RESERVED_QUEUE`) is now recorded `FAILED`, with
+that code as its own reason and a `TASK_FAILED` event, so the stream and the
+snapshot agree with the run's failure. It records the `refused-route-task-failed`
+version, asked lazily where the first refusal happens: a run that never refuses
+a route records no marker. A history recorded before the gate replays its
+`DefaultVersion` branch, which returned the error alone and left the row as the
+old failure path recorded it; version 1 is the new path. The fixtures
+`run-refused-route-{plain,pinned,handler}-v1.json` (a plain dispatch, a pin's
+opening, and a definition with an `any_failed` handler) and
+`run-refused-route-legacy-{plain,pinned,handler}-v1.json` (the same three,
+recorded with the gate off) guard it with command, behaviour and negative
+tests (`internal/engine/testdata/history/README.md`); a missing fixture fails
+those tests, it never skips them.
+
 If any of them fails, current code no longer produces what the recorded build
 did. Either restore it (`workflow.GetVersion` for a deliberate command-stream
 change), or — if the contract genuinely changed and no old run can still be in

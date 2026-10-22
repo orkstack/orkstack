@@ -562,7 +562,7 @@ func TestContinuedHistory_CatchesASwitchWithoutItsGate(t *testing.T) {
 	defer engine.ForceContinuationForTest(budget, limit)()
 	caught := 0
 	for _, path := range committedFixtures(t) {
-		if recordedWithTheWriter(path) {
+		if recordedWithTheWriter(path) || isRefusedRouteHistory(path) {
 			continue
 		}
 		recorded := loadHistoryFile(t, path)

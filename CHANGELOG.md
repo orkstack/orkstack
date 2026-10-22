@@ -202,6 +202,9 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The CI proof passes each part its run attempt, so a lost-runner rerun can
+  produce an eligible proof, and runs the observability part whenever the plan
+  requires it.
 - The proof merger no longer trusts a shard ledger's problem lines: a UI, integration or unit entry that is not a pass fails unless a quarantine, an allowed skip or a runner-size excusal that the merger itself derives explains it; the plan must be complete and of the tier's nightly mode; unexpected parts, duplicate part attempts, missing plan or image identity and corrupt part records fail closed; `merge-check` refuses a proof whose quarantine check is over 30 days old.
 - The CI proof's `build`, `ui-e2e`, `activity-fixture` and `observability` parts now read the plan artifact and pass `--plan`, so they record the plan hash the merger requires; `release.yml` sets an explicit committer identity on the tag.
 - A UI runner-size miss is excused only on a CI `ui-e2e` part, only for a
