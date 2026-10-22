@@ -12,12 +12,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -182,6 +184,19 @@ type runner struct {
 	progress   io.Writer
 	done       int
 	total      int
+
+	// failFast stops the run at the first test failure no quarantine entry
+	// excuses: the processes still running are asked to end, no job starts
+	// after it, and every test it left unfinished or never ran is recorded
+	// as having no outcome, with the reason. excused is the quarantine set
+	// that applies to this suite.
+	failFast bool
+	excused  map[testKey]quarantineEntry
+	// cancel and stopReason are set by runAll; stopReason is the first reason
+	// the run was stopped (a failure under failFast, or a signal) and stays
+	// empty while it runs on.
+	cancel     context.CancelFunc
+	stopReason string
 }
 
 // jobResult is what one process reported.
@@ -202,6 +217,24 @@ type jobResult struct {
 // added local wall clock is recorded in docs/PROOFS.md.
 func (r *runner) runAll(ctx context.Context, jobs []job) {
 	r.total = len(jobs)
+	parent := ctx
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	r.mu.Lock()
+	r.cancel = cancel
+	r.mu.Unlock()
+	if parent.Err() != nil {
+		r.stop("proofrun was stopped by a signal")
+	}
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-parent.Done():
+			r.stop("proofrun was stopped by a signal")
+		case <-finished:
+		}
+	}()
 	var heavy, light []job
 	for _, j := range jobs {
 		if j.Heavy {
@@ -234,6 +267,12 @@ func (r *runner) runAll(ctx context.Context, jobs []job) {
 // runOne runs one job, re-running in a fresh process the tests behind a crash.
 func (r *runner) runOne(ctx context.Context, j job, slot int) {
 	for {
+		if reason := r.stopped(); reason != "" {
+			// Nothing of this job has started (or only the tests behind a
+			// crash remain): record that, and run nothing.
+			r.settle(j, jobResult{})
+			break
+		}
 		res := r.runJob(ctx, j, slot)
 		rest := r.settle(j, res)
 		if len(rest) == 0 {
@@ -281,6 +320,10 @@ func (r *runner) runJob(ctx context.Context, j job, slot int) jobResult {
 		"-test.timeout=" + j.Timeout.String(),
 	}
 	cmd := exec.CommandContext(jctx, r.bins[j.Package], args...)
+	// A cancelled run (a timeout, a failure under fail-fast, a signal) asks
+	// the test binary to end, and kills it only if it has not after the delay.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 15 * time.Second
 	cmd.Dir = r.dirs[j.Package]
 	cmd.Env = append([]string{}, r.baseEnv...)
 	if r.nsPrefix != "" {
@@ -309,6 +352,9 @@ func (r *runner) runJob(ctx context.Context, j job, slot int) jobResult {
 	_ = pr.Close()
 
 	local := newCollector()
+	if r.failFast {
+		local.onFail = r.onFailure(local)
+	}
 	var raw bytes.Buffer
 	readDone := make(chan error, 1)
 	progress := r.progressWriter()
@@ -367,6 +413,23 @@ func (r *runner) settle(j job, res jobResult) []string {
 		if ok && e.Outcome != outcomeNone {
 			continue
 		}
+		if r.stopReason != "" {
+			// The run was stopped: this test did not finish, or never started.
+			// It has no outcome, which fails the ledger; it is never a pass.
+			if !ok {
+				e = &entry{Package: j.Package, Test: t}
+				r.c.results[k] = e
+				r.c.order = append(r.c.order, k)
+			}
+			e.Job = jobLabel(j)
+			e.Outcome = outcomeNone
+			if r.c.started[k] {
+				e.Reason = "not finished: it was running when the run was stopped (" + r.stopReason + ")"
+			} else {
+				e.Reason = "not run: the run was stopped before it started (" + r.stopReason + ")"
+			}
+			continue
+		}
 		switch {
 		case r.c.started[k]:
 			// It was running when the process ended without reporting it:
@@ -379,6 +442,9 @@ func (r *runner) settle(j job, res jobResult) []string {
 			e.Outcome = outcomeFail
 			e.Job = jobLabel(j)
 			e.Reason = fmt.Sprintf("its test binary ended while it ran (%s); see %s.log", exitText(res.exitErr), jobLabel(j))
+			if r.failFast {
+				r.stopLocked(fmt.Sprintf("fail-fast: %s failed", k))
+			}
 		case res.exitErr != nil && res.started > 0:
 			rest = append(rest, t)
 		case res.exitErr != nil:
@@ -386,6 +452,9 @@ func (r *runner) settle(j job, res jobResult) []string {
 				Reason: fmt.Sprintf("its test binary ended before starting it (%s); see %s.log", exitText(res.exitErr), jobLabel(j))}
 			r.c.results[k] = e
 			r.c.order = append(r.c.order, k)
+			if r.failFast {
+				r.stopLocked(fmt.Sprintf("fail-fast: %s failed", k))
+			}
 		default:
 			e = &entry{Package: j.Package, Test: t, Job: jobLabel(j), Outcome: outcomeNone,
 				Reason: "no outcome: the process exited 0 without running it (does -test.run match it?)"}
@@ -393,7 +462,56 @@ func (r *runner) settle(j job, res jobResult) []string {
 			r.c.order = append(r.c.order, k)
 		}
 	}
+	if r.stopReason != "" {
+		// A crash stopped the run: the tests that would have run again in a
+		// fresh process are recorded as not run instead.
+		for _, t := range rest {
+			k := testKey{j.Package, t}
+			e := &entry{Package: j.Package, Test: t, Job: jobLabel(j), Outcome: outcomeNone,
+				Reason: "not run: the run was stopped before it started (" + r.stopReason + ")"}
+			r.c.results[k] = e
+			r.c.order = append(r.c.order, k)
+		}
+		return nil
+	}
 	return rest
+}
+
+// onFailure is the collector hook under failFast: a top-level test that failed
+// stops the run unless every failing leaf of it is quarantined, the same
+// excuse the ledger gives it (a quarantined failure does not fail the proof,
+// so it must not stop it).
+func (r *runner) onFailure(local *collector) func(testKey) {
+	return func(k testKey) {
+		if _, ok := quarantineFor(failingLeaves(local, k), r.excused); ok {
+			return
+		}
+		r.stop(fmt.Sprintf("fail-fast: %s failed", k))
+	}
+}
+
+// stop ends the run, once: the reason of the first call is the one recorded.
+func (r *runner) stop(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stopLocked(reason)
+}
+
+// stopLocked is stop under r.mu.
+func (r *runner) stopLocked(reason string) {
+	if r.stopReason != "" || r.cancel == nil {
+		return
+	}
+	r.stopReason = reason
+	fmt.Fprintf(r.log, "proofrun: stopping: %s\n", reason)
+	r.cancel()
+}
+
+// stopped is the reason the run was stopped, or "" while it runs on.
+func (r *runner) stopped() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stopReason
 }
 
 func exitText(err error) string {
@@ -446,6 +564,7 @@ type integrationPlanOptions struct {
 	baseCommit, mergeBase                 string
 	observabilityRequired                 bool
 	printProgress                         bool
+	failFast                              bool
 	ci                                    bool
 	listsChanged                          string
 	prNumber                              int
@@ -482,6 +601,7 @@ func integrationFlags() (*flag.FlagSet, *integrationPlanOptions) {
 	fs.StringVar(&o.mergeBase, "merge-base", "", "the merge base of -base-commit and HEAD (computed when absent)")
 	fs.BoolVar(&o.observabilityRequired, "observability-required", false, "the tree changes a telemetry path")
 	fs.BoolVar(&o.printProgress, "print-progress", false, "print proofrun: start/outcome lines as tests run")
+	fs.BoolVar(&o.failFast, "fail-fast", false, "stop at the first test failure no quarantine entry excuses: end the running processes, start no more, and record every unfinished or unstarted test as having no outcome (the ledger still fails the proof)")
 	fs.BoolVar(&o.ci, "ci", false, "this plan is a CI proof's (parts_expected is the job graph, not local)")
 	fs.StringVar(&o.listsChanged, "lists-changed", "", "JSON file of gate-file changes (proofrun touches -gate-files)")
 	fs.IntVar(&o.prNumber, "pr-number", 0, "pull request number")
@@ -786,12 +906,14 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 	r := &runner{
 		slots: o.jobs, nsPrefix: o.nsPrefix, baseEnv: os.Environ(), bins: bins, dirs: dirs,
 		jobDir: filepath.Join(o.out, "integration"), c: newCollector(), events: events, log: stdout,
-		progress: nil,
+		progress: nil, failFast: o.failFast, excused: excusedFor("integration", quarantine),
 	}
 	if o.printProgress {
 		r.progress = stdout
 	}
-	r.runAll(context.Background(), jobs)
+	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	r.runAll(ctx, jobs)
+	stopSignals()
 	var expected []testKey
 	for _, e := range plan.Expected {
 		expected = append(expected, testKey{e.Package, e.Test})
@@ -1083,12 +1205,15 @@ func runShard(o *integrationPlanOptions) int {
 	r := &runner{
 		slots: o.jobs, nsPrefix: o.nsPrefix, baseEnv: os.Environ(), bins: bins, dirs: dirs,
 		jobDir: filepath.Join(o.out, "integration"), c: newCollector(), events: events, log: stdout,
+		failFast: o.failFast, excused: excusedFor("integration", quarantine),
 	}
 	if o.printProgress {
 		r.progress = stdout
 	}
 	started := time.Now()
-	r.runAll(context.Background(), jobs)
+	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	r.runAll(ctx, jobs)
+	stopSignals()
 	shardSet := map[testKey]bool{}
 	for _, j := range jobs {
 		for _, t := range j.Tests {

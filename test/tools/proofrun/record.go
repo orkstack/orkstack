@@ -21,6 +21,15 @@ import (
 // may gate a merge — with every reason it may not. Workflow scripts read it;
 // nothing should grep the README.
 
+// A gate's result is pass or fail; a proof that stopped at the first failing
+// gate (scripts/proof.sh, PROOF_FAIL_FAST) also records the gates it stopped
+// while they ran and the ones it never started. Neither is a pass: a proof
+// with one is a failing proof, and its Command column says why.
+const (
+	gateStopped    = "stopped"
+	gateNotStarted = "not-started"
+)
+
 type gateRecord struct {
 	Gate    string  `json:"gate"`
 	Result  string  `json:"result"`
@@ -294,6 +303,9 @@ func cmdRecord(args []string) int {
 	// A gate that ran without leaving its ledger proved nothing about which
 	// tests ran.
 	for _, g := range r.Gates {
+		if g.Result == gateNotStarted {
+			continue
+		}
 		switch g.Gate {
 		case "unit", "integration", "ui-e2e":
 			if _, ok := ledgersOK[g.Gate]; !ok {

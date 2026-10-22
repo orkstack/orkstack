@@ -201,9 +201,13 @@ func cmdMerge(args []string) int {
 	ciAttempt := fs.Int("ci-attempt", 0, "the CI run attempt")
 	ciEvent := fs.String("ci-event", "", "the CI event")
 	ciURL := fs.String("ci-url", "", "the CI run URL")
+	stopped := fs.Bool("stopped", false, "a local proof stopped at a failing gate before it wrote -plan: judge it a failure from its local part alone")
 	if err := fs.Parse(args); err != nil || *planFile == "" || *partsDir == "" || *out == "" || fs.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, "proofrun merge -plan FILE -parts DIR -out DIR [-ui-plan FILE] [-jobs DIR] -name NAME")
 		return 2
+	}
+	if _, statErr := os.Stat(*planFile); *stopped && os.IsNotExist(statErr) {
+		return mergeStoppedProof(*partsDir, *out, *name)
 	}
 	plan, err := readPlan(*planFile)
 	if err != nil {
@@ -297,6 +301,62 @@ func cmdMerge(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// mergeStoppedProof is the verdict of a local proof that stopped at a failing
+// gate before `proofrun integration` planned anything: there is no plan to
+// merge against, and no result could make it pass. It writes the failing
+// proof.json and README from the local part alone — the gates that failed,
+// the ones stopped, and the ones never started — so a stopped proof leaves
+// the same evidence a finished failing one does. It never writes a pass and
+// never a merge-eligible proof.
+func mergeStoppedProof(partsDir, out, name string) int {
+	parts, _, err := readParts(partsDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun merge:", err)
+		return 2
+	}
+	m := &merger{parts: parts, excusedUIGate: map[string]bool{}}
+	proof := &proofRecord{Name: name, Gates: []gateRecord{}, Ledgers: map[string]any{}}
+	m.proof = proof
+	reasons := []string{"the proof stopped at a failing gate before its integration plan was written, so no test of the integration or UI suites ran"}
+	if readings := m.resultReadings("local"); len(readings) == 1 {
+		rec := readings[0].Record
+		proof.Tier, proof.Commit, proof.Branch = rec.Tier, rec.Commit, rec.Branch
+		proof.Tree, proof.TreeEnd, proof.CleanStart, proof.CleanEnd = rec.Tree, rec.TreeEnd, rec.CleanStart, rec.CleanEnd
+		proof.BaseRef, proof.BaseCommit, proof.MergeBase = rec.BaseRef, rec.BaseCommit, rec.MergeBase
+		proof.Gates = rec.Gates
+		proof.Temporal.Mode, proof.Temporal.Image, proof.Temporal.Address = rec.Temporal.Mode, rec.Temporal.Image, rec.Temporal.Address
+		proof.ProofJobs, proof.UIWorkers, proof.GatesOverride = rec.ProofJobs, rec.UIWorkers, rec.GatesOverride
+		proof.ImageTag, proof.ImageTagOwn = rec.ImageTag, rec.ImageTagOwn
+		for _, g := range rec.Gates {
+			switch g.Result {
+			case "pass":
+			case gateStopped, gateNotStarted:
+				reasons = append(reasons, "gate "+g.Gate+" was "+strings.ReplaceAll(g.Result, "-", " ")+": "+orDash(g.Command))
+			default:
+				reasons = append(reasons, "gate "+g.Gate+" failed")
+			}
+		}
+		proof.Parts = []string{"local"}
+	} else {
+		reasons = append(reasons, "the proof left no readable local part, so none of its gates is known")
+	}
+	proof.Ineligible = reasons
+	verdict(proof, 1, false, nil)
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun merge:", err)
+		return 2
+	}
+	if err := writeJSON(filepath.Join(out, "proof.json"), proof); err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun merge:", err)
+		return 2
+	}
+	if err := writeMergeREADME(filepath.Join(out, "README.md"), proof, m); err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun merge:", err)
+		return 2
+	}
+	return 1
 }
 
 func isNilLedger(v any) bool {
@@ -1803,6 +1863,7 @@ func (m *merger) mergeGates(expected []string) {
 	got := map[string]string{}
 	seconds := map[string]float64{}
 	logs := map[string]string{}
+	why := map[string]string{}
 	for _, part := range sortedPartKeys(m.parts) {
 		for _, reading := range m.resultReadings(part) {
 			if reading.Record == nil {
@@ -1810,10 +1871,19 @@ func (m *merger) mergeGates(expected []string) {
 			}
 			for _, g := range reading.Record.Gates {
 				excused := g.Gate == "ui-e2e" && m.excusedUIGate[part]
-				if g.Result != "pass" && !excused {
+				switch {
+				case g.Result == "pass" || excused:
+					if got[g.Gate] == "" {
+						got[g.Gate] = "pass"
+					}
+				case g.Result == gateStopped || g.Result == gateNotStarted:
+					// A failing gate outranks a stopped one: it is the cause.
+					if got[g.Gate] == "" || got[g.Gate] == "pass" {
+						got[g.Gate] = g.Result
+						why[g.Gate] = g.Command
+					}
+				default:
 					got[g.Gate] = "fail"
-				} else if got[g.Gate] == "" {
-					got[g.Gate] = "pass"
 				}
 				seconds[g.Gate] += g.Seconds
 				if logs[g.Gate] == "" {
@@ -1823,11 +1893,13 @@ func (m *merger) mergeGates(expected []string) {
 		}
 	}
 	for g := range required {
-		if got[g] == "" {
+		switch got[g] {
+		case "":
 			m.problems = append(m.problems, "gate "+g+" did not run")
-			continue
-		}
-		if got[g] != "pass" {
+		case "pass":
+		case gateStopped, gateNotStarted:
+			m.problems = append(m.problems, "gate "+g+" was "+strings.ReplaceAll(got[g], "-", " ")+": "+orDash(why[g]))
+		default:
 			m.problems = append(m.problems, "gate "+g+" failed")
 		}
 	}
@@ -1837,7 +1909,11 @@ func (m *merger) mergeGates(expected []string) {
 	}
 	sort.Strings(names)
 	for _, g := range names {
-		m.proof.Gates = append(m.proof.Gates, gateRecord{Gate: g, Result: got[g], Seconds: seconds[g], Log: logs[g]})
+		rec := gateRecord{Gate: g, Result: got[g], Seconds: seconds[g], Log: logs[g]}
+		if got[g] == gateStopped || got[g] == gateNotStarted {
+			rec.Command = why[g]
+		}
+		m.proof.Gates = append(m.proof.Gates, rec)
 	}
 	if len(expected) > 0 {
 		m.proof.Parts = expected
@@ -1986,10 +2062,32 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) error {
 		fmt.Fprintln(&b)
 	}
 	fmt.Fprintf(&b, "## Gates\n\n")
+	var early []gateRecord
 	for _, g := range r.Gates {
-		fmt.Fprintf(&b, "- **%s**: %s in %.0fs — `%s`\n", g.Gate, g.Result, g.Seconds, g.Log)
+		switch g.Result {
+		case gateStopped:
+			early = append(early, g)
+			fmt.Fprintf(&b, "- **%s**: stopped after %.0fs — %s — `%s`\n", g.Gate, g.Seconds, g.Command, g.Log)
+		case gateNotStarted:
+			early = append(early, g)
+			fmt.Fprintf(&b, "- **%s**: not started — %s\n", g.Gate, g.Command)
+		default:
+			fmt.Fprintf(&b, "- **%s**: %s in %.0fs — `%s`\n", g.Gate, g.Result, g.Seconds, g.Log)
+		}
 	}
 	fmt.Fprintln(&b)
+	if len(early) > 0 {
+		fmt.Fprintf(&b, "## Stopped early\n\nA gate failed, and the proof stopped the gates that were still running and started none after it (scripts/proof.sh, `PROOF_FAIL_FAST`; docs/PROOFS.md says how to read this). A stopped proof is a failed proof, and the failed gate's log says why:\n\n")
+		for _, g := range r.Gates {
+			if g.Result == "fail" {
+				fmt.Fprintf(&b, "- failed: **%s** — `%s`\n", g.Gate, g.Log)
+			}
+		}
+		for _, g := range early {
+			fmt.Fprintf(&b, "- %s: **%s** — %s\n", strings.ReplaceAll(g.Result, "-", " "), g.Gate, g.Command)
+		}
+		fmt.Fprintln(&b)
+	}
 	writeVerdict(&b, r)
 	return os.WriteFile(file, []byte(b.String()), 0o644)
 }

@@ -71,6 +71,13 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- A local proof now fails fast. `scripts/proof.sh` runs lint, build, unit,
+  vet and the UI type-check and unit suites first, one after another, and
+  starts the long gates only if they pass; when a gate fails it stops the
+  gates still running (`proofrun integration -fail-fast`, `SIGTERM` to the
+  recorded pids), starts no other, and writes the failing verdict, recording
+  each gate it stopped or never started. `PROOF_FAIL_FAST=0` runs every gate
+  as before (docs/PROOFS.md §2.2).
 - **BREAKING**: an unpinned Orkflow's derived version, and so its digest, now
   covers the whole source, header included, and applying a pinned version
   again with only its header moved or reformatted is refused like any other

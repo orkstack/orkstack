@@ -89,6 +89,9 @@ type collector struct {
 	// package that never reported one died, failed to build, or failed
 	// outside any test.
 	pkgEnds map[string]string
+	// onFail, when set, is called with every top-level test that reports a
+	// failure, as it reports it (proofrun's -fail-fast).
+	onFail func(testKey)
 }
 
 func newCollector() *collector {
@@ -150,6 +153,9 @@ func (c *collector) add(ev event, job string) {
 		e.Outcome = ev.Action
 		e.Seconds = ev.Elapsed
 		e.Reason = ""
+		if ev.Action == "fail" && c.onFail != nil {
+			c.onFail(k)
+		}
 	}
 }
 
@@ -291,16 +297,22 @@ func buildLedger(suite string, expected []testKey, listed map[string]map[string]
 // quarantined-fail only when it has failing leaf subtests and every one of
 // them names a current entry; a parent's own assertion is not distinguishable
 // from a child's in test2json, which is the limitation PROOFS.md states.
+// excusedFor is the quarantine entries that excuse a failure of suite.
+func excusedFor(suite string, quarantine map[testKey]quarantineEntry) map[testKey]quarantineEntry {
+	out := map[testKey]quarantineEntry{}
+	for k, q := range quarantine {
+		if q.Suite == suite || q.Suite == "any" {
+			out[k] = q
+		}
+	}
+	return out
+}
+
 func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string]bool, c *collector, allow []allowedSkip,
 	quarantine map[testKey]quarantineEntry,
 ) ledger {
 	l := ledger{Suite: suite, Problems: []string{}}
-	excused := map[testKey]quarantineEntry{}
-	for k, q := range quarantine {
-		if q.Suite == suite || q.Suite == "any" {
-			excused[k] = q
-		}
-	}
+	excused := excusedFor(suite, quarantine)
 	allowed := map[testKey]allowedSkip{}
 	for _, a := range allow {
 		if a.Suite != suite && a.Suite != "any" {

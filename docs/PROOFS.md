@@ -47,7 +47,13 @@ parts. There is one verdict implementation.
 
 ### 2.1 The gates
 
-A full proof runs: lint; build; unit; `go vet -tags=integration`; the activity
+A local proof runs its gates in this order: the **fast gates**, alone and one
+after another — lint, build, unit, `go vet -tags=integration`, then the UI
+type-check and unit suites (after one `svelte-kit sync`, which both read);
+then the setup the long gates need (the proof's own Temporal, the activity
+images, the binaries); then the integration suite with the activity contract
+fixture beside it, the only two gates that overlap; then Playwright; then the
+observability gate. A full proof runs: lint; build; unit; `go vet -tags=integration`; the activity
 images, built once from this tree; every integration test whose package's
 integration build differs from its unit build, against real Temporal and the
 S3-compatible store; the activity contract fixture; the UI type-check, unit
@@ -62,6 +68,44 @@ heavy by what it asserts, not by how long it takes: the reduced-ceiling copies
 of a moved soak run the same E4/E7 thresholds and are heavy, while a test that
 merely waits on a deadline for progress is not. A new test that asserts such a
 bound is added to `heavyTests` in `test/tools/proofrun/plan.go`.
+
+### 2.2 Fail fast
+
+A proof is never rerun, so a local proof that has failed a gate can never
+become eligible, and everything after that failure only costs time. By default
+(`PROOF_FAIL_FAST=1`) `scripts/proof.sh` therefore stops at the first failing
+gate, in every tier it runs on one host (feature, full, nightly and release):
+
+- a failure in a fast gate (or in the Temporal, images or binaries setup)
+  starts no other gate, and nothing long has begun;
+- while the integration suite and the activity fixture run, a failure of
+  either stops the other: the script sends `SIGTERM` to the command pid it
+  recorded for that gate (never a name or a pattern), waits up to a minute, and
+  only then kills what is left of that pid's process tree;
+- `proofrun integration -fail-fast` (passed by the script) stops at the first
+  failed test no quarantine entry excuses: it ends the running test processes,
+  starts no more, and still writes the whole ledger. A test it ended is
+  recorded `none` with "not finished", a test it never started with "not
+  run", each naming the failure; neither is a pass, and the ledger fails the
+  proof. `proofrun integration` ends the same way on `SIGTERM` or `SIGINT`,
+  which is how the script stops it;
+- Playwright and the observability gate start only while nothing has failed.
+
+The verdict is still written, and it is a failure: `proof.json` has `result:
+fail` and `merge_eligible: false`, the README names the failed gate and has a
+"Stopped early" section, and the script exits `1`. A gate that was running
+when the proof stopped is recorded `stopped` (`stopped: <gate> failed`); a gate
+that never began is recorded `not-started` (`not started: <gate> failed`).
+Neither is a pass, and `proofrun merge` lists each in `ineligible_reasons`.
+When the proof stopped before `proofrun integration` wrote its plan, there is
+no plan to merge against: the script runs `proofrun merge -stopped`, which
+writes the failing `proof.json` and README from the `local` part alone.
+
+`PROOF_FAIL_FAST=0` runs every gate to its end, in the same order. It changes
+no eligibility rule: a proof whose gates all pass is identical either way.
+Unit tests are not part of this: the unit suite runs to its end whatever fails
+in it. CI parts (`scripts/proof-part.sh`) are unchanged, each part being one
+job.
 
 ## 3. How `proofrun select` picks evidence
 
@@ -401,6 +445,12 @@ when it cannot tell `main`'s nightly list absent from unreadable.
    (start a new run).
 5. For a gate, the merged README's gate line names the part and log; download
    that part's artifact.
+6. A local proof that stopped early (§2.2) lists a **Stopped early** section:
+   the gate that **failed** is the cause, so read its log; the gates marked
+   `stopped` or `not-started` ended or never began because of it and say
+   nothing about the tree. Fix the failure and run a new proof; this one can
+   not become eligible. Their integration ledger rows read `not finished` or
+   `not run`, never `pass`.
 
 Only a part GitHub annotated as a **lost runner** may run again, and only
 "Re-run job" on that job. "Re-run all jobs" and "Re-run failed jobs" give some
@@ -580,13 +630,13 @@ one only once the process its name records is gone.
 | Subcommand | Flags |
 |---|---|
 | `unit` | `-out FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE` |
-| `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-host-speed FILE`, `-host-speed-base FILE` |
+| `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
 | `feature-report` | `-dir DIR`, `-select FILE` |
 | `ui-ledger` | `-report FILE`, `-list FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE` |
 | `record` | `-dir DIR`, `-tier TIER`, `-name S`, `-commit SHA`, `-branch S`, `-tree-start SHA`, `-tree-end SHA`, `-clean-start BOOL`, `-clean-end BOOL`, `-base-ref REF`, `-base-commit SHA`, `-merge-base SHA`, `-jobs N`, `-ui-workers N`, `-temporal MODE`, `-temporal-image IMAGE`, `-temporal-address ADDR`, `-image-tag TAG`, `-images FILE`, `-image-tag-own`, `-gates-override S`, `-observability-required`, `-part NAME`, `-attempt N`, `-out-dir DIR`, `-plan FILE`, `-ui-plan FILE`, `-select FILE`, `-status N` |
-| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL` |
+| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped` |
 | `flakes` | `-from GLOB`, `-repo DIR`, `-window N`, `-out FILE`, `-md FILE`, `-min-runs N` |
 | `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S` |
 | `temporal-args` | `-compose FILE` |

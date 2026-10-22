@@ -1160,10 +1160,13 @@ diff-conditioned part of the full proof, and its base is not a choice: the
 full tier refuses `--base`, a full proof whose recorded base is not `main` is
 not merge-eligible, and `merge-check PROOF=` requires that base to be
 `main`'s current tip. Concurrency is how the full proof is fast, never a
-reason to run less: integration tests run as separate processes, `PROOF_JOBS`
-at a time (default 4), beside the fixture and the UI type-check and unit
-suites, and Playwright spec files run on `PROOF_UI_WORKERS` workers (default
-and today's only safe value: 1). The unit and integration ledgers, and the
+reason to run less: the fast gates (lint, build, unit, vet and the UI
+type-check and unit suites) run first and alone, and a failure there or in any
+later gate stops a local proof (`PROOF_FAIL_FAST`, docs/PROOFS.md §2.2), which
+still writes its failing verdict; integration tests run as separate processes,
+`PROOF_JOBS` at a time (default 4), beside the activity fixture, and
+Playwright spec files run on `PROOF_UI_WORKERS` workers (default and today's
+only safe value: 1). The unit and integration ledgers, and the
 Playwright ledger, list every test that `go test -list` and
 `playwright test --list` report, with the job that ran it, its outcome and its
 duration. A listed test without an outcome fails the gate. In the full tier,

@@ -50,7 +50,9 @@ Once the gate is enforced, a change to the gate's own files (the lists under
 maintainer's approval. That is GitHub's code-owner ruleset, not a CI job.
 
 **You never need to run the full proof locally.** CI runs it. `make proof`
-keeps working, and is equivalent, for maintainers who merge locally.
+keeps working, and is equivalent, for maintainers who merge locally. A local
+proof runs the fast gates first and stops at its first failing gate, still
+writing a failing verdict (`PROOF_FAIL_FAST=0` runs every gate to its end).
 
 Everything else — tiers, sharding, artifacts, reading a failed proof,
 procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
