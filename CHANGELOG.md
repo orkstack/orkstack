@@ -11,7 +11,8 @@ include breaking changes, and each is marked **BREAKING**.
 ### Changed
 
 - The proof is faster on one host, running the same tests: integration tests
-  run `PROOF_JOBS=6` at a time by default (was 4), the activity contract
+  keep `PROOF_JOBS=4` (6 was measured: clean but for one 50 s engine-boot
+  stall on a fresh bucket, so it stays an operator's choice), the activity contract
   fixture starts after the heavy tests rather than beside them and runs its
   four images in parallel, and the Playwright suite runs spec files
   `PROOF_UI_WORKERS=2` at a time (was 1); the two spec files that assert a render

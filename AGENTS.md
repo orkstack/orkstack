@@ -1174,8 +1174,10 @@ reason to run less: the fast gates (lint, build, unit, vet and the UI
 type-check and unit suites) run first and alone, and a failure there or in any
 later gate stops a local proof (`PROOF_FAIL_FAST`, docs/PROOFS.md §2.2), which
 still writes its failing verdict; integration tests run as separate processes,
-`PROOF_JOBS` at a time (default 6), with the activity fixture beside them
-once the heavy tests have run alone, and
+`PROOF_JOBS` at a time (default 4: six ran 270 of 277 jobs clean, then one
+engine boot stalled 50 s on its fresh bucket's first read while the store grew
+and removed per-bucket volumes, which a merge gate cannot afford), with the
+activity fixture beside them once the heavy tests have run alone, and
 Playwright spec files run on `PROOF_UI_WORKERS` workers (default 2: measured
 clean; at 3 a load-sensitive spec failed in each of three runs). The
 unit and integration ledgers, and the

@@ -64,8 +64,10 @@ and every Playwright spec; and the observability gate when the tree changes a
 telemetry path. A release proof runs the observability gate unconditionally.
 
 Integration tests run as separate processes, `PROOF_JOBS` at a time (default
-6: on a 16-core host the ordinary jobs keep every slot busy, so the phase's
-wall is their total work divided by the slots). Playwright spec files run on
+4; the ordinary jobs keep every slot busy, so the phase's wall is their total
+work divided by the slots, but at 6 on a 16-core host one engine boot in 277
+jobs stalled 50 s on its fresh bucket's first read while SeaweedFS grew and
+removed per-bucket volumes, and a merge gate is never rerun). Playwright spec files run on
 `PROOF_UI_WORKERS` workers (default 2 — measured clean on a 16-core host,
 while at 3 one load-sensitive spec failed in each of three runs): the browser
 runs in a network
