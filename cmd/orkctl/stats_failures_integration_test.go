@@ -60,7 +60,7 @@ func seedFailureCorpus(ctx context.Context, t *testing.T, replicas int) *failure
 	requireTemporal(t, address)
 	artifactCfg := artifacts.ConfigFromEnv()
 	artifactCfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 	registry := testRegistry()
 	requireRegistry(t, registry)
 

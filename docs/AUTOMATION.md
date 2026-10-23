@@ -292,11 +292,10 @@ it.
 Nothing is written until every document has been read, validated and planned:
 
 1. Each Orkflow document is validated, and its compiled name and version
-   looked up: **new**, **identical** (stored with
-   the same source, not counting the two header lines written first — so a
-   version stored before the header existed is identical to its file with them
-   added; `docs/DSL.md`, "The document header") or
-   **conflicting** (stored with different source — an error).
+   looked up: **new**, **identical** (stored with the same source bytes,
+   header included, so a moved header is a change like any other;
+   `docs/DSL.md`, "The document header") or **conflicting** (stored with
+   different source — an error).
 2. Each automation document is planned, told which Orkflow versions this
    invocation stores first.
 3. The invocation is **refused** — everything printed, exit 1, nothing

@@ -128,6 +128,9 @@ func TestRunArchive_ARecentPageReadsThePageNotTheNamespace(t *testing.T) {
 // first with ties by id descending — exactly the full scan's order — under
 // every filter decided from the key, and reads no body to decide them.
 func TestRunArchive_RecentPagingVisitsEveryRunOnceInTheFullScansOrder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	for name, archive := range recentBackends(t) {
 		t.Run(name, func(t *testing.T) {
 			seedRecent(t, archive, 600)

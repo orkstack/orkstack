@@ -96,7 +96,7 @@ func waitForPoller(t *testing.T, ctx context.Context, c client.Client, ns, queue
 // short, the same submit is accepted.
 func TestIntegration_EngineIdentityAdvertisesCapabilities(t *testing.T) {
 	temporal := requireTemporal(t)
-	cfg := requireMinIO(t)
+	cfg := requireObjectStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")

@@ -1,6 +1,10 @@
 package engine
 
-import "go.temporal.io/sdk/workflow"
+import (
+	"sync/atomic"
+
+	"go.temporal.io/sdk/workflow"
+)
 
 // HistoryGuardLookaheadChange is the workflow.GetVersion change id of the
 // guard's lookahead at a dispatch.
@@ -25,7 +29,7 @@ const HistoryGuardLookaheadChange = "run-history-guard-lookahead"
 // of eachDispatchDescending: when set, the lookahead is skipped WITHOUT
 // asking its version, so a negative replay test proves the committed fixture
 // can only replay because of it. Never set in production code.
-var historyGuardLookaheadDisabledForTest = false
+var historyGuardLookaheadDisabledForTest atomic.Bool
 
 // historyExhaustedBefore is historyExhausted at a dispatch that will record
 // a command of up to nextBytes: the run stops RUN_HISTORY_LIMIT now when it
@@ -34,7 +38,7 @@ func (s *runState) historyExhaustedBefore(ctx workflow.Context, inFlight map[str
 	if err := s.historyExhausted(ctx, inFlight); err != nil {
 		return err
 	}
-	if nextBytes <= 0 || s.guardOff || historyGuardDisabledForTest || historyGuardLookaheadDisabledForTest {
+	if nextBytes <= 0 || s.guardOff || historyGuardDisabledForTest || historyGuardLookaheadDisabledForTest.Load() {
 		return nil
 	}
 	limit := s.historyLimit()

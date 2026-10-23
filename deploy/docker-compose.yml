@@ -1,4 +1,4 @@
-# OrkStack local infrastructure: Temporal dev-server, MinIO (S3) and a
+# OrkStack local infrastructure: Temporal dev-server, SeaweedFS (S3) and a
 # registry. The application processes (ork, orker, ui) are not containers here;
 # `make up` (scripts/stack.sh) starts them on the host against this stack, or
 # run them by hand with `make run-ork`, `make run-orker`, `bun dev`.
@@ -9,12 +9,14 @@
 # a style preference (§4.6). The durable commit protocol depends on behaviour
 # that changed INSIDE these images:
 #
-#   minio/minio       conditional PutObject (If-None-Match: *) is the
+#   seaweedfs         conditional PutObject (If-None-Match: *) is the
 #                     arbitration point of the whole commit protocol (§5.3).
-#                     It has existed since RELEASE.2023-02-17T17-52-43Z, so a
-#                     floating tag that rolled BACKWARDS past that point would
-#                     turn create-if-absent into a silent overwrite — which is
-#                     the one failure §5 exists to prevent.
+#                     SeaweedFS documents the conditional create as atomic
+#                     cluster-wide. It is pinned by digest; a floating image
+#                     that lost the conditional write would turn
+#                     create-if-absent into a silent overwrite — the one
+#                     failure §5 exists to prevent. Updates arrive as PRs
+#                     that must pass the proof; no tag is ever floated.
 #   temporalio/temporal
 #                     workflow versioning and replay behaviour.
 #
@@ -43,36 +45,30 @@ services:
       timeout: 5s
       retries: 20
 
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: orkstack
-      MINIO_ROOT_PASSWORD: orkstack-secret
+  # The dev object store. MinIO stopped publishing images and moved to the
+  # closed AIStor; Garage cannot do conditional writes; SeaweedFS is
+  # Apache-2.0, maintained, and documents If-None-Match creates as atomic
+  # cluster-wide — the arbitration point of the commit protocol (§5.3).
+  # Pin the multi-arch index digest; an update is a PR that runs the proof.
+  #
+  # `weed mini` runs master, volume, filer and S3 in one process. The S3 API
+  # listens on 8333; 9000 stays the published port so ORK_S3_ENDPOINT and
+  # every documented default are unchanged. `-bucket` creates the dev bucket.
+  seaweedfs:
+    image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts"]
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # MinIO console
+      - "9000:8333"   # S3 API, on the documented port
+      - "9333:9333"   # master
+      - "8888:8888"   # filer
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # 403 is a healthy answer too: it proves the S3 server is listening.
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ | grep -qE '200|403'"]
       interval: 5s
       timeout: 5s
       retries: 20
-
-  # Creates the default artifact bucket on startup, then exits.
-  minio-setup:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
-    depends_on:
-      minio:
-        condition: service_started
-    entrypoint: >
-      /bin/sh -c "
-      until (mc alias set local http://minio:9000 orkstack orkstack-secret) do echo 'waiting for minio'; sleep 1; done;
-      mc mb --ignore-existing local/orkstack-artifacts;
-      mc anonymous set download local/orkstack-artifacts;
-      echo 'bucket ready';
-      "
 
   # The local registry (§4.6). It exists because there is no such thing as an
   # unpushed image in this design: a locally built, never-pushed image has NO
@@ -175,7 +171,7 @@ services:
       - prometheus
 
 volumes:
-  minio-data:
+  seaweedfs-data:
   registry-data:
   loki-data:
   tempo-data:

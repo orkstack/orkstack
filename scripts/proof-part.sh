@@ -1,0 +1,378 @@
+#!/usr/bin/env bash
+# proof-part.sh — one part of a CI proof, run by `scripts/proof.sh --part NAME`.
+#
+# It is sourced by proof.sh after the part's directory, proof id and flags are
+# known, and never runs on its own. Each part is its own proof host: its own
+# Temporal, its own image tag, its own gates.tsv, and a part.json the proof
+# job merges with the others (docs/PROOFS.md).
+#
+# A part never decides a verdict. `proofrun merge` does, from every part.
+
+part_say() { printf '%s\n' "$*"; }
+
+part_store_health() {
+	local code
+	code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9000/ 2>/dev/null)"
+	[ "$code" = 200 ] || [ "$code" = 403 ]
+}
+
+part_need() { # <what> <command...>
+	if ! "${@:2}" >/dev/null 2>&1; then
+		printf '  - %s\n' "$1" >>"$PART_MISSING"
+	fi
+}
+
+part_require() {
+	: >"$PART_MISSING"
+	case "$PART" in
+	plan)
+		part_need "git on PATH" command -v git
+		part_need "go on PATH" command -v go
+		part_need "bun on PATH" command -v bun
+		part_need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"
+		part_need "ui/node_modules/.bin/playwright" test -x "$REPO/ui/node_modules/.bin/playwright"
+		;;
+	build)
+		part_need "docker on PATH" command -v docker
+		part_need "docker buildx (make -C images oci)" docker buildx version
+		part_need "make on PATH" command -v make
+		part_need "an integration plan (--plan)" test -f "$PLAN"
+		;;
+	fast)
+		part_need "go on PATH" command -v go
+		part_need "bun on PATH" command -v bun
+		part_need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"
+		part_need "make on PATH" command -v make
+		;;
+	integration:*)
+		part_need "docker on PATH" command -v docker
+		part_need "docker compose" docker compose version
+		part_need "cosign on PATH (image-policy interop test)" command -v cosign
+		part_need "the dev object store on 127.0.0.1:9000 (SeaweedFS; make infra-up)" part_store_health
+		part_need "the local registry on $REGISTRY (make infra-up)" curl -sf -o /dev/null "http://$REGISTRY/v2/"
+		part_need "a layout directory (--layouts)" test -d "$LAYOUTS"
+		part_need "an integration plan (--plan)" test -f "$PLAN"
+		;;
+	ui-e2e:*)
+		part_need "docker on PATH" command -v docker
+		part_need "docker compose" docker compose version
+		part_need "bun on PATH" command -v bun
+		part_need "the temporal CLI on PATH (ui/e2e/admin.spec.ts)" command -v temporal
+		part_need "jq on PATH (the shard's file list)" command -v jq
+		part_need "flock on PATH (the Playwright gate's host lock)" command -v flock
+		part_need "the dev object store on 127.0.0.1:9000 (SeaweedFS; make infra-up)" part_store_health
+		part_need "the local registry on $REGISTRY (make infra-up)" curl -sf -o /dev/null "http://$REGISTRY/v2/"
+		part_need "an integration plan (--plan)" test -f "$PLAN"
+		part_need "a UI plan (--ui-plan)" test -f "$UI_PLAN"
+		part_need "a layout directory (--layouts)" test -d "$LAYOUTS"
+		;;
+	activity-fixture:*)
+		part_need "an integration plan (--plan)" test -f "$PLAN"
+		part_need "docker on PATH" command -v docker
+		part_need "the dev object store on 127.0.0.1:9000 (SeaweedFS; make infra-up)" part_store_health
+		part_need "the local registry on $REGISTRY (make infra-up)" curl -sf -o /dev/null "http://$REGISTRY/v2/"
+		part_need "a layout directory (--layouts)" test -d "$LAYOUTS"
+		;;
+	observability)
+		part_need "an integration plan (--plan)" test -f "$PLAN"
+		part_need "docker on PATH" command -v docker
+		part_need "docker compose" docker compose version
+		part_need "jq on PATH" command -v jq
+		part_need "flock on PATH" command -v flock
+		part_need "the dev object store on 127.0.0.1:9000 (SeaweedFS; make infra-up)" part_store_health
+		part_need "the OTel Collector on 127.0.0.1:4318 (make infra-up-observability)" \
+			curl -s -o /dev/null http://127.0.0.1:4318/v1/logs
+		part_need "Loki on 127.0.0.1:3100 (make infra-up-observability)" curl -sf -o /dev/null http://127.0.0.1:3100/ready
+		part_need "Tempo on 127.0.0.1:3200 (make infra-up-observability)" curl -sf -o /dev/null http://127.0.0.1:3200/ready
+		part_need "Prometheus on 127.0.0.1:9090 (make infra-up-observability)" curl -sf -o /dev/null http://127.0.0.1:9090/-/ready
+		;;
+	esac
+	if [ -s "$PART_MISSING" ]; then
+		part_say "proof: prerequisites absent, nothing measured, nothing written:"
+		cat "$PART_MISSING"
+		return 77
+	fi
+	return 0
+}
+
+part_tree_hash() {
+	local idx
+	idx="$(mktemp)"
+	rm -f "$idx"
+	GIT_INDEX_FILE="$idx" git read-tree HEAD &&
+		GIT_INDEX_FILE="$idx" git add -A . &&
+		GIT_INDEX_FILE="$idx" git write-tree
+	rm -f "$idx"
+}
+part_is_clean() { [ -z "$(git status --porcelain --untracked-files=all)" ]; }
+
+part_proc_start() { sed -E 's/^.*\) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'; }
+
+part_run() { # <gate> <log> <command...>
+	local gate="$1" logname="$2" logfile="$DIR/$2"
+	shift 2
+	part_say "== $gate: $*"
+	local started=$SECONDS result=pass code=0
+	"$@" >"$logfile" 2>&1 || code=$?
+	[ "$code" -eq 0 ] || result=fail
+	printf '%s\t%s\t%s\t%s\t%s\n' "$gate" "$result" "$((SECONDS - started))" "$logname" "$*" >>"$DIR/gates.tsv"
+	if [ "$result" = pass ]; then
+		part_say "   $gate: pass ($((SECONDS - started))s) -> $logfile"
+	else
+		part_say "   $gate: FAIL exit $code ($((SECONDS - started))s) -> $logfile"
+		tail -n 40 "$logfile" | sed 's/^/      /'
+	fi
+	return "$code"
+}
+
+part_record() { # <status>
+	local status="$1" args
+	args=(
+		-dir "$DIR" -part "$PART" -attempt "$ATTEMPT" -tier "$TIER" -name "$NAME"
+		-commit "$(git rev-parse HEAD)" -branch "$(git branch --show-current 2>/dev/null)"
+		-tree-start "$TREE_START" -tree-end "$TREE_END"
+		-clean-start="$CLEAN_START" -clean-end="$CLEAN_END"
+		-base-ref "$BASE" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE"
+		-jobs "$PROOF_JOBS" -ui-workers "$PROOF_UI_WORKERS"
+		-status "$status"
+	)
+	[ -n "$PLAN" ] && args+=(-plan "$PLAN")
+	[ -n "$UI_PLAN" ] && args+=(-ui-plan "$UI_PLAN")
+	[ -f "$DIR/images.tsv" ] && args+=(-image-tag "$PROOF_ID" -images "$DIR/images.tsv" -image-tag-own)
+	[ -n "$PART_TEMPORAL_RAN" ] && args+=(-temporal own -temporal-image "$TEMPORAL_IMAGE" -temporal-address "$TEMPORAL_ADDRESS")
+	[ "$OBSERVABILITY_REQUIRED" = 1 ] && args+=(-observability-required)
+	"$PR" record "${args[@]}"
+}
+
+part_start_temporal() {
+	local args port i
+	mapfile -t args < <("$PR" temporal-args -compose deploy/docker-compose.yml)
+	[ ${#args[@]} -ge 1 ] || { part_say "no temporal service image in deploy/docker-compose.yml"; return 1; }
+	TEMPORAL_IMAGE="${args[0]}"
+	TEMPORAL_NAME="orkstack-proof-$PROOF_ID-temporal"
+	part_say "starting $TEMPORAL_NAME: ${args[*]}"
+	docker run -d --rm --name "$TEMPORAL_NAME" \
+		--label "orkstack.proof=$PROOF_ID" \
+		--label "orkstack.proof.owner=$(hostname):$$:$(part_proc_start $$)" \
+		-p 127.0.0.1::7233 "${args[@]}" || return 1
+	PART_TEMPORAL_RAN=1
+	port="$(docker port "$TEMPORAL_NAME" 7233/tcp | head -n1 | awk -F: '{print $NF}')"
+	[ -n "$port" ] || { part_say "no published port for $TEMPORAL_NAME"; return 1; }
+	TEMPORAL_ADDRESS="127.0.0.1:$port"
+	for i in $(seq 1 240); do
+		if docker exec "$TEMPORAL_NAME" temporal operator cluster health --address 127.0.0.1:7233 2>/dev/null | grep -q SERVING; then
+			part_say "Temporal $TEMPORAL_IMAGE serving at $TEMPORAL_ADDRESS"
+			return 0
+		fi
+		sleep 0.5
+	done
+	part_say "$TEMPORAL_NAME never reported SERVING within 120s"
+	docker logs "$TEMPORAL_NAME" 2>&1 | tail -n 40
+	return 1
+}
+
+part_binaries() {
+	local pkg
+	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller; do
+		go build -o "$DIR/bin/$(basename "$pkg")" "$pkg" || return 1
+	done
+}
+
+part_push_images() {
+	"$PR" push-layout -layouts "$LAYOUTS" -registry "$REGISTRY" -namespace orkstack -tag "$PROOF_ID" -out "$DIR/images.tsv" || return 1
+	local a ref digest
+	while IFS=$'\t' read -r a ref digest; do
+		docker pull "$ref" >/dev/null || return 1
+	done <"$DIR/images.tsv"
+}
+
+part_cleanup() {
+	local code=$?
+	trap '' TERM INT HUP
+	if [ -n "$PART_TEMPORAL_RAN" ]; then docker stop "$TEMPORAL_NAME" >/dev/null 2>&1; fi
+	if [ -n "$PART_IMAGES" ]; then
+		local a
+		for a in $(make -s -C "$REPO/images" print-activities 2>/dev/null); do
+			docker image rm "$REGISTRY/orkstack/activity-$a:$PROOF_ID" >/dev/null 2>&1
+		done
+	fi
+	kill -TERM -- -$$ 2>/dev/null
+	exit "$code"
+}
+
+part_main() { # <part>
+	PART="$1"
+	case "$PART" in
+	plan | build | fast | observability | integration:[0-9]* | ui-e2e:[0-9]* | activity-fixture:shell | activity-fixture:json | activity-fixture:git | activity-fixture:template) ;;
+	*) part_say "proof: unknown part '$PART'"; return 2 ;;
+	esac
+	PART_MISSING="$(mktemp)"
+	part_require || { local rc=$?; rm -f "$PART_MISSING"; return "$rc"; }
+	rm -f "$PART_MISSING"
+	trap part_cleanup EXIT
+	trap 'part_say "proof: part stopped by a signal"; exit 143' TERM INT HUP
+
+	mkdir -p "$DIR/artifacts" "$DIR/bin"
+	mv "$PR" "$DIR/bin/proofrun"
+	PR="$DIR/bin/proofrun"
+	printf '%s %s %s %s\n' "$$" "$$" "$(part_proc_start $$)" "$PROOF_ID" >"$DIR/proof.pid"
+
+	PART_TEMPORAL_RAN=""
+	TEMPORAL_IMAGE=""
+	TEMPORAL_ADDRESS=""
+	TEMPORAL_NAME=""
+	TREE_START="$(part_tree_hash)"
+	CLEAN_START=false
+	if part_is_clean; then CLEAN_START=true; fi
+	git status --short --untracked-files=all >"$DIR/worktree-start.txt" 2>&1
+	: >"$DIR/gates.tsv"
+	START_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	part_say "proof: part $PART attempt $ATTEMPT of $TIER -> $DIR (id $PROOF_ID, tree $TREE_START$([ "$CLEAN_START" = true ] || echo ', NOT clean'))"
+
+	OBSERVABILITY_REQUIRED=0
+	[ "$TIER" = release ] && OBSERVABILITY_REQUIRED=1
+	STACK_ENV=(
+		ORK_PROOF_ID="$PROOF_ID"
+		ORK_PROOF_DIR="$DIR/artifacts"
+		ORK_TEST_BIN_DIR="$DIR/bin"
+		ORK_TEST_IMAGE_TAG="$PROOF_ID"
+		ORK_TEST_REGISTRY="$REGISTRY"
+	)
+	PART_IMAGES=""
+
+	case "$PART" in
+	plan)
+		local obs=0
+		[ "$TIER" = release ] && obs=1
+		if [ "$obs" = 0 ] && "$PR" touches -base "$BASE_COMMIT" -action observability >"$DIR/observability-paths.txt" 2>/dev/null; then
+			obs=1
+		fi
+		OBSERVABILITY_REQUIRED="$obs"
+		git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
+		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
+		git show "$BASE_COMMIT:scripts/proof-host-speed.tsv" >"$DIR/host-speed-base.txt" 2>/dev/null || : >"$DIR/host-speed-base.txt"
+		local mode=defer
+		[ "$TIER" = release ] && mode=include
+		[ "$TIER" = nightly ] && mode=only
+		# The gate files this change edits (plan §6.4). A failure is written
+		# into the file as an error entry, never as "no gate file changed",
+		# and makes the proof ineligible.
+		if ! "$PR" touches -base "$BASE_COMMIT" -gate-files >"$DIR/lists-changed.json" 2>"$DIR/lists-changed.log"; then
+			part_say "WARNING: the gate files this change edits could not be listed: $(cat "$DIR/lists-changed.log")"
+		fi
+		local plan_args=(
+			-plan-only -ci -out "$DIR" -lists-changed "$DIR/lists-changed.json" -jobs "$PROOF_JOBS" -shards "$SHARDS"
+			-matrix-out "$DIR/int-matrix.json" -tier "$TIER" -proof-id "$PROOF_ID"
+			-base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -ui-shards "$UI_SHARDS"
+			-nightly-mode "$mode" -nightly-base "$DIR/nightly-base.txt"
+			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt"
+			-host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt"
+			-observability-required="$OBSERVABILITY_REQUIRED"
+		)
+		[ -n "${PROOF_PR_NUMBER:-}" ] && plan_args+=(-pr-number "$PROOF_PR_NUMBER" -pr-head-sha "${PROOF_PR_HEAD:-}" -pr-base-sha "${PROOF_PR_BASE:-}" -pr-contains-base "${PROOF_PR_CONTAINS_BASE:-false}")
+		part_run plan plan.log "$PR" integration "${plan_args[@]}" || true
+		if [ -f "$DIR/integration-plan.json" ]; then
+			PLAN="$DIR/integration-plan.json"
+			(cd "$REPO/ui" && "$REPO/ui/node_modules/.bin/playwright" test --list --reporter=json >"$DIR/ui-list.json") >>"$DIR/plan.log" 2>&1 || true
+			if [ -s "$DIR/ui-list.json" ]; then
+				part_run ui-plan ui-plan.log "$PR" ui-plan -list "$DIR/ui-list.json" -costs scripts/proof-ui-costs.tsv \
+					-shards "$UI_SHARDS" -out "$DIR/ui-plan.json" -matrix-out "$DIR/ui-matrix.json" || true
+				UI_PLAN="$DIR/ui-plan.json"
+			fi
+		fi
+		;;
+	build)
+		PART_IMAGES=1
+		part_run images images.log make -C images oci TAG="$PROOF_ID" OUT="$DIR/layouts" || true
+		if [ -d "$DIR/layouts" ]; then
+			part_run images-digests images-digests.log "$PR" layout-digests -layouts "$DIR/layouts" \
+				-registry "$REGISTRY" -namespace orkstack -tag "$PROOF_ID" -out "$DIR/images.tsv" || true
+		fi
+		;;
+	fast)
+		part_run lint lint.log make lint || true
+		part_run build build.log go build ./... || true
+		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
+		part_run unit unit.log env ORK_PROOF_DIR="$DIR/artifacts" "$PR" unit -out "$DIR" \
+			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" || true
+		part_run vet-integration vet-integration.log go vet -tags=integration ./... || true
+		(cd "$REPO/ui" && bun run check >"$DIR/ui-check.log" 2>&1) && printf 'ui-check\tpass\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv" || printf 'ui-check\tfail\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv"
+		(cd "$REPO/ui" && bun test test/ >"$DIR/ui-unit.log" 2>&1) && printf 'ui-unit\tpass\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv" || printf 'ui-unit\tfail\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv"
+		;;
+	integration:*)
+		local k="${PART#integration:}"
+		PART_TEMPORAL_RAN=""
+		part_run temporal temporal.log part_start_temporal || true
+		STACK_ENV+=(ORK_TEMPORAL_ADDRESS="$TEMPORAL_ADDRESS")
+		part_run binaries binaries.log part_binaries || true
+		part_run images images.log part_push_images || true
+		PART_IMAGES=1
+		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
+		part_run integration integration.log env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 \
+			"$PR" integration -plan "$PLAN" -shard "$k" -out "$DIR" -jobs "$PROOF_JOBS" \
+			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" \
+			-namespace-prefix "$PROOF_ID-s$k" -print-progress || true
+		;;
+	ui-e2e:*)
+		local k="${PART#ui-e2e:}"
+		PART_TEMPORAL_RAN=""
+		part_run temporal temporal.log part_start_temporal || true
+		STACK_ENV+=(ORK_TEMPORAL_ADDRESS="$TEMPORAL_ADDRESS")
+		part_run binaries binaries.log part_binaries || true
+		part_run images images.log part_push_images || true
+		PART_IMAGES=1
+		local -a files=()
+		mapfile -t files < <(jq -r --argjson k "$k" '.shards[] | select(.index == $k) | .files[]' "$UI_PLAN")
+		if [ ${#files[@]} -eq 0 ]; then
+			part_say "proof: UI shard $k holds no file"
+			TREE_END="$(part_tree_hash)"; CLEAN_END=false; part_is_clean && CLEAN_END=true
+			part_record 1
+			return 1
+		fi
+		local -a rel=()
+		local f
+		for f in "${files[@]}"; do rel+=("${f#ui/}"); done
+		(
+			cd "$REPO/ui"
+			env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+				"$REPO/ui/node_modules/.bin/playwright" test --list --reporter=json "${rel[@]}" >"$DIR/ui-e2e-list.json"
+		) >"$DIR/ui-e2e.log" 2>&1 || true
+		(
+			cd "$REPO/ui"
+			env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+				PLAYWRIGHT_JSON_OUTPUT_FILE="$DIR/ui-e2e-report.json" \
+				PLAYWRIGHT_JSON_OUTPUT_NAME="$DIR/ui-e2e-report.json" \
+				"$REPO/ui/node_modules/.bin/playwright" test --workers "$PROOF_UI_WORKERS" --reporter=list,json "${rel[@]}"
+		) >>"$DIR/ui-e2e.log" 2>&1 || true
+		part_run ui-e2e ui-e2e-ledger.log "$PR" ui-ledger -list "$DIR/ui-e2e-list.json" \
+			-report "$DIR/ui-e2e-report.json" -log "$DIR/ui-e2e.log" \
+			-config "$REPO/ui/playwright.config.ts" -out "$DIR" -shard "$k" -part "$PART" \
+			-host-speed scripts/proof-host-speed.tsv -host-speed-base "$(dirname "$UI_PLAN")/host-speed-base.txt" || true
+		;;
+	activity-fixture:*)
+		local a="${PART#activity-fixture:}"
+		PART_TEMPORAL_RAN=""
+		part_run images images.log part_push_images || true
+		PART_IMAGES=1
+		part_run activity-fixture activity-fixture.log make -C images contract ACTIVITY="$a" TAG="$PROOF_ID" REGISTRY="$REGISTRY" || true
+		;;
+	observability)
+		PART_TEMPORAL_RAN=""
+		part_run temporal temporal.log part_start_temporal || true
+		STACK_ENV+=(ORK_TEMPORAL_ADDRESS="$TEMPORAL_ADDRESS")
+		part_run binaries binaries.log part_binaries || true
+		part_run images images.log part_push_images || true
+		PART_IMAGES=1
+		part_run observability observability.log env "${STACK_ENV[@]}" scripts/proof-observability.sh || true
+		;;
+	esac
+
+	local code=0
+	if grep -q $'\tfail\t' "$DIR/gates.tsv" 2>/dev/null; then code=1; fi
+	TREE_END="$(part_tree_hash)"
+	CLEAN_END=false
+	if part_is_clean; then CLEAN_END=true; fi
+	part_record "$code" || true
+	part_say "proof: part $PART -> $DIR/part.json (gates: $(wc -l <"$DIR/gates.tsv" 2>/dev/null || echo 0))"
+	return "$code"
+}

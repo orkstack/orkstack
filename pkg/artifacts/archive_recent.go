@@ -3,6 +3,7 @@ package artifacts
 import (
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -71,6 +72,17 @@ func RunRecentIndexKey(rec RunRecord) (string, error) {
 		orkflow, status, runID), nil
 }
 
+// RunRecentIndexKeyForEntry renders the recent key a scanned entry came from
+// verbatim. It is the exact cursor for the next newest-first page: an instant
+// prefix is not, because some S3 implementations start after the whole
+// prefix and skip the instant's remaining ties.
+func RunRecentIndexKeyForEntry(entry RunIndexEntry) (string, error) {
+	return RunRecentIndexKey(RunRecord{
+		RunID: entry.RunID, Namespace: entry.Namespace,
+		Orkflow: entry.Orkflow, Status: entry.Status, Time: entry.Time,
+	})
+}
+
 // ParseRunRecentIndexKey reverses RunRecentIndexKey; a foreign key is
 // ok=false, so a scan can skip it.
 func ParseRunRecentIndexKey(key string) (RunIndexEntry, bool) {
@@ -130,6 +142,9 @@ func (q RunQuery) recentScan() (prefix, startAfter string, err error) {
 		return "", "", fmt.Errorf("artifacts: run query: namespace: %w", err)
 	}
 	prefix = RunRecentIndexNamespace + "/" + namespace + "/"
+	if q.BeforeKey != "" && strings.HasPrefix(q.BeforeKey, prefix) && q.BeforeKey > startAfter {
+		startAfter = q.BeforeKey
+	}
 	for _, bound := range []time.Time{q.Until, q.BeforeTime} {
 		if bound.IsZero() {
 			continue
@@ -180,6 +195,18 @@ func (w *recentWalk) add(key string) (done bool) {
 	return false
 }
 
-// page orders the collected entries newest first, ties by run id descending,
-// and cuts the page.
-func (w *recentWalk) page() []RunIndexEntry { return w.q.finish(w.entries) }
+// page orders the collected entries newest first, ties by run id descending.
+// It does not cut at Limit: add() stops only after a whole instant has been
+// read, so a page may exceed Limit by the boundary instant's ties. Cutting
+// them would lose runs the next page cannot resume into, because a store's
+// StartAfter is an instant prefix at best and may be a directory boundary.
+func (w *recentWalk) page() []RunIndexEntry {
+	entries := append([]RunIndexEntry{}, w.entries...)
+	sort.SliceStable(entries, func(i, j int) bool {
+		if !entries[i].Time.Equal(entries[j].Time) {
+			return entries[i].Time.After(entries[j].Time)
+		}
+		return entries[i].RunID > entries[j].RunID
+	})
+	return entries
+}

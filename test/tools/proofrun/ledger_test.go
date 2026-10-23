@@ -96,13 +96,13 @@ func TestPlan(t *testing.T) {
 		measured[testKey{a, name}] = 9
 	}
 	listing := append([]string{"TestSlow", "TestNew", "TestTen"}, fast...)
-	jobs := plan(map[string][]string{a: listing, b: {"TestQuick"}}, measured)
+	jobs := plan(map[string][]string{a: listing, b: {"TestQuick"}}, measured, map[string]map[string]string{a: {"TestNew": "unit"}})
 	var got []string
 	for _, j := range jobs {
 		got = append(got, fmt.Sprintf("%s:%s(%d)", j.Package[len("ex.com/"):], j.Tests[0], len(j.Tests)))
 	}
 	// Longest first: the slow test; the first batch, closed before it passed
-	// 150s (16 x 9s); the never-measured test (assumed 30s, alone); the rest
+	// 150s (16 x 9s); the never-measured unit test (assumed 30s, alone); the rest
 	// of the batch (4 x 9s); the 10s test, which is slow and so alone; and
 	// the other package's batch.
 	want := []string{"a:TestSlow(1)", "a:TestFast00(16)", "a:TestFast16(4)", "a:TestNew(1)", "a:TestTen(1)", "b:TestQuick(1)"}

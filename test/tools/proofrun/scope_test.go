@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -147,4 +150,90 @@ func TestRepositoryScopeTable(t *testing.T) {
 	if !table.temporalFacing("internal/engine") || table.temporalFacing("internal/dsl") {
 		t.Error("temporalFacing disagrees with the table")
 	}
+
+	// Plan §10.1's cases: the CI, gate and documentation files this item
+	// added, each with the row that must own it.
+	for _, c := range []struct {
+		path     string
+		actions  string
+		temporal bool
+		docs     bool
+	}{
+		{".github/actions/proof-host/action.yml", "full", false, true},
+		{".github/workflows/proof.yml", "full", false, true},
+		{".github/pull_request_template.md", "none", false, false},
+		{".github/CODEOWNERS", "full", false, true},
+		{"internal/dsl/testdata/schema-vectors/every-feature.ork.yaml", "go", false, true},
+		{"scripts/proof-nightly-tests.txt", "full", false, true},
+		{"scripts/proof-quarantine.txt", "full", false, true},
+		{"scripts/proof-section11-coverage.tsv", "full", false, true},
+		{"scripts/proof-host-speed.tsv", "full", false, true},
+		{"scripts/proof-ui-costs.tsv", "none", false, false},
+		{"scripts/github-merge-gate.sh", "full", false, true},
+		{"docs/PROOFS.md", "none", false, false},
+		{"internal/docscheck/links_test.go", "go", false, false},
+		{"cmd/orkctl/root.go", "go", true, true},
+	} {
+		r := table.match(c.path)
+		if r == nil {
+			t.Errorf("%s is unmapped, want %q", c.path, c.actions)
+			continue
+		}
+		if got := strings.Join(r.Actions, ","); got != c.actions || r.Temporal != c.temporal || r.Docs != c.docs {
+			t.Errorf("%s -> %q (temporal %v, docs %v; row %d %s), want %q (temporal %v, docs %v)",
+				c.path, got, r.Temporal, r.Docs, r.Line, r.Pattern, c.actions, c.temporal, c.docs)
+		}
+	}
+}
+
+// TestRepositoryScopeTable_MapsEveryTrackedPath is the mechanical form of "a
+// new top-level path needs a scope row": every tracked path matches a row, so
+// a feature proof never meets an unmapped path it could have been told about.
+// It opens the index first, so go test's cache keys on it and a cached pass
+// never hides a newly tracked file (plan §2.8, §8.3).
+func TestRepositoryScopeTable_MapsEveryTrackedPath(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+		}
+		return string(out)
+	}
+	index := strings.TrimSpace(git("rev-parse", "--git-path", "index"))
+	if !filepath.IsAbs(index) {
+		index = filepath.Join(root, index)
+	}
+	f, err := os.Open(index)
+	if err != nil {
+		t.Fatalf("opening the index so the test cache keys on it: %v", err)
+	}
+	f.Close()
+
+	table, err := readScope(filepath.Join(root, "scripts", "proof-scope.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := strings.Split(strings.TrimRight(git("ls-files", "-z"), "\x00"), "\x00")
+	if len(paths) < 100 {
+		t.Fatalf("git ls-files listed %d paths; the check would be vacuous", len(paths))
+	}
+	var unmapped []string
+	for _, p := range paths {
+		if p != "" && table.match(p) == nil {
+			unmapped = append(unmapped, p)
+		}
+	}
+	sort.Strings(unmapped)
+	if len(unmapped) > 0 {
+		t.Errorf("%d tracked path(s) match no row of scripts/proof-scope.tsv; add a row (docs/PROOFS.md, \"Add a scope row\"):\n  %s",
+			len(unmapped), strings.Join(unmapped, "\n  "))
+	}
+	t.Logf("%d tracked paths, every one mapped", len(paths)-len(unmapped))
 }

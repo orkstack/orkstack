@@ -24,10 +24,15 @@ const (
 	slowThreshold = 10.0
 	// batchTarget is how much measured work one batch process carries.
 	batchTarget = 150.0
-	// unknownCost is what a test with no measurement is assumed to take when
-	// ordering jobs. It runs in a process of its own, so a new slow test can
-	// never stretch a batch.
-	unknownCost = 30.0
+	// unmeasuredCost is what a test with no measurement, declared in an
+	// integration-tagged file, is assumed to take: the conservative default,
+	// above all but a handful of measured integration tests. It runs in a
+	// process of its own, so a new slow test can never stretch a batch.
+	unmeasuredCost = 300.0
+	// unmeasuredUnitCost is the same for a test declared in a file the unit
+	// build compiles too: the integration binary lists those, and they are
+	// fast as a rule.
+	unmeasuredUnitCost = 30.0
 	// minJobTimeout is the floor of every job's -test.timeout.
 	minJobTimeout = 10 * time.Minute
 	// unknownTimeout bounds a job whose test was never measured.
@@ -81,13 +86,24 @@ type job struct {
 	Cost    float64       `json:"estimated_seconds"`
 	Known   bool          `json:"measured"`
 	Timeout time.Duration `json:"-"`
+	// TimeoutSeconds is Timeout as the plan file records it.
+	TimeoutSeconds float64 `json:"timeout_seconds"`
+	// Shard is the 1-based shard that runs the job.
+	Shard int `json:"shard"`
+	// Heavy marks a test whose assertions are absolute wall-clock or
+	// throughput bounds. Heavy jobs run one at a time even on a multi-slot
+	// shard: they share one Temporal and one object store, and their own load
+	// moves the GetRun latency thresholds they hold (plan §2.3, §3.6).
+	Heavy bool `json:"heavy,omitempty"`
 	// Attempt counts the processes this job's tests needed: a crash runs the
 	// tests it had not started in a fresh process (attempt 2, 3, ...).
 	Attempt int `json:"-"`
 }
 
-// plan builds the jobs for tests (package -> names in listing order).
-func plan(tests map[string][]string, measured costs) []job {
+// plan builds the jobs for tests (package -> names in listing order). kinds
+// says, per package and test, whether an unmeasured test is a unit test
+// ("unit") or an integration test (anything else), which decides its cost.
+func plan(tests map[string][]string, measured costs, kinds map[string]map[string]string) []job {
 	var jobs []job
 	pkgs := make([]string, 0, len(tests))
 	for p := range tests {
@@ -107,9 +123,14 @@ func plan(tests map[string][]string, measured costs) []job {
 			s, known := measured[testKey{p, name}]
 			switch {
 			case !known:
-				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: unknownCost})
+				cost := unmeasuredCost
+				if kinds[p][name] == "unit" {
+					cost = unmeasuredUnitCost
+				}
+				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: cost,
+					Heavy: heavyByName(name)})
 			case s >= slowThreshold:
-				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: s, Known: true})
+				jobs = append(jobs, job{Package: p, Tests: []string{name}, Cost: s, Known: true, Heavy: heavyByName(name)})
 			default:
 				if len(batch) > 0 && batchCost+s > batchTarget {
 					flush()
@@ -120,22 +141,42 @@ func plan(tests map[string][]string, measured costs) []job {
 		}
 		flush()
 	}
-	sort.SliceStable(jobs, func(i, j int) bool {
-		if jobs[i].Cost != jobs[j].Cost {
-			return jobs[i].Cost > jobs[j].Cost
-		}
-		if jobs[i].Package != jobs[j].Package {
-			return jobs[i].Package < jobs[j].Package
-		}
-		return jobs[i].Tests[0] < jobs[j].Tests[0]
-	})
+	sortJobs(jobs)
 	for i := range jobs {
 		jobs[i].ID = fmt.Sprintf("%s-%03d", path.Base(jobs[i].Package), i+1)
 		jobs[i].Timeout = jobTimeout(jobs[i])
+		jobs[i].TimeoutSeconds = jobs[i].Timeout.Seconds()
 		jobs[i].Attempt = 1
+		jobs[i].Shard = 1
 	}
 	return jobs
 }
+
+// heavyTests are the tests whose assertions are absolute wall-clock or
+// throughput bounds, named explicitly. A test that asserts such a bound is
+// heavy whether or not it is slow — the reduced-ceiling copies of a moved
+// soak run the same E4/E7 harness and are heavy for that reason. A test that
+// is merely slow, or that waits on a deadline for progress, is not: duration
+// says nothing about what it asserts, and serialising every slow test turned
+// the plan into hours of one-slot work. A test that needs isolation for
+// another reason is added here with that reason.
+var heavyTests = map[string]bool{
+	// The six the user moved to the nightly tier, each with GetRun latency,
+	// snapshot-byte or E7/E4 thresholds measured on a quiet host.
+	"TestIntegration_SoakTasks":                              true,
+	"TestIntegration_ThreeThousandTaskDefinitionRuns":        true,
+	"TestIntegration_SnapshotOverlayBytesForAThousandTasks":  true,
+	"TestIntegration_SoakItemCeilingByReferenceWithOverlays": true,
+	"TestIntegration_SoakFanOutMaxParallel":                  true,
+	"TestIntegration_SoakFanOut":                             true,
+	// Their merge-gate equivalents: the reduced-ceiling copies run the same
+	// E4/E7 thresholds through the soak helpers.
+	"TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling":      true,
+	"TestIntegration_AnItemCeilingRunCarriesOnAtAReducedCeiling":     true,
+	"TestIntegration_AFanOutAtAReducedItemCeilingMeetsItsThresholds": true,
+}
+
+func heavyByName(name string) bool { return heavyTests[name] }
 
 // jobTimeout is max(10m, 3x the measured cost), or 30m for a test never
 // measured: generous enough that load never trips it, tight enough that a hung

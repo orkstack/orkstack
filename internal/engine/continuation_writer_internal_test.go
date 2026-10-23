@@ -427,6 +427,9 @@ func checkpointSize(t testing.TB, run *orkstackv1.Run) int64 {
 // artifact-maximal rows do not, and at 4,000 tasks the largest average inline
 // output that fits is recorded for the task ceiling's later evidence.
 func TestContinuation_CheckpointSizesAtTheCeilings(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	limit := DefaultContinuationBytes
 	small := func() *orkstackv1.Payload { return smallOutput(t) }
 	results := map[string]any{"cap_bytes": limit}
@@ -559,16 +562,19 @@ func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 	decoder := &partDecoder{refs: carry.GetCheckpoint().GetParts(), decode: func(_ int, plain []byte) error {
 		return proto.Unmarshal(plain, &orkstackv1.RunCheckpointPart{})
 	}}
+	// The decode is bounded on its thread's CPU time (passClock), so a host
+	// loaded by other processes cannot move it; a slower decode still does.
+	clock := &passClock{}
 	var worst time.Duration
 	for off := 0; off < len(data); off += int(DefaultContinuationChunksPerTask * DefaultContinuationChunkBytes) {
 		end := min(len(data), off+int(DefaultContinuationChunksPerTask*DefaultContinuationChunkBytes))
-		begin := time.Now()
+		begin := clock.now()
 		for chunk := off; chunk < end; chunk += int(DefaultContinuationChunkBytes) {
 			if err := decoder.feed(data[chunk:min(end, chunk+int(DefaultContinuationChunkBytes))]); err != nil {
 				t.Fatal(err)
 			}
 		}
-		worst = max(worst, time.Since(begin))
+		worst = max(worst, clock.now()-begin)
 	}
 	// The spec's bound is for the production build. The race detector's
 	// instrumentation slows this CPU-bound decode several times over, so
@@ -579,7 +585,7 @@ func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 		bound *= raceSlowdown
 	}
 	if worst > bound {
-		t.Fatalf("the slowest batch decoded in %s, over %s", worst, bound)
+		t.Fatalf("the slowest batch decoded in %s of %s, over %s", worst, clock.kind(), bound)
 	}
 	if !raceBuild {
 		proof.WriteJSON(t, "continuation", "restore-deadlock-budget.json", map[string]any{

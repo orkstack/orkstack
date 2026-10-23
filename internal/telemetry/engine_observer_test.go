@@ -249,6 +249,17 @@ func TestObserveEvent_NilRunDoesNotPanic(t *testing.T) {
 	observer.ObserveEvent(context.Background(),
 		runEvent("run-5", orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED, ""),
 		nil)
+
+	for _, sm := range collect(t, reader).ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "ork.runs" && m.Name != "ork.tasks" {
+				continue
+			}
+			if sum, ok := m.Data.(metricdata.Sum[int64]); ok && len(sum.DataPoints) != 0 {
+				t.Errorf("%s recorded %d points for a nil run, want 0", m.Name, len(sum.DataPoints))
+			}
+		}
+	}
 }
 
 func TestObserveEvent_TaskLogLogsAtDebugWithNoMetric(t *testing.T) {

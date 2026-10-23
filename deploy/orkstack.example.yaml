@@ -51,7 +51,7 @@ storage:
     # access_key: orkstack           # the docker-compose dev credential; supply a real one
     # secret_key: orkstack-secret    # as above — or {file: /run/secrets/ork_s3_secret_key}
     # session_token: ""              # for temporary credentials
-    # path_style: true               # MinIO needs path-style addressing; AWS S3 does not
+    # path_style: true               # the dev store needs path-style addressing; AWS S3 does not
 
 engine:
   # http_addr: :8080

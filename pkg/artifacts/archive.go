@@ -184,6 +184,12 @@ type RunQuery struct {
 	// it is one prefix. An OriginID without OriginKind is ErrInvalidRunKey.
 	OriginKind orkstackv1.RunOriginKind
 	OriginID   string
+	// BeforeKey is the exact recent-family key after which a newest-first
+	// page resumes. A caller that knows the last entry's key sets it so the
+	// store's StartAfter is a full key rather than an instant prefix, which
+	// some S3 implementations treat as a directory and skip whole (SeaweedFS
+	// does). BeforeTime/BeforeRunID remain the semantic cursor.
+	BeforeKey string
 	// BeforeTime/BeforeRunID continue after a newest-first cursor. Filtering
 	// happens during the index scan, before finish applies Limit and before an
 	// engine hydrates any run bodies.

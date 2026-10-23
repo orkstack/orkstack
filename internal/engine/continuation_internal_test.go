@@ -289,7 +289,7 @@ func TestEndUnrestorable_IgnoresASwitchSnapshotThatFailsVerification(t *testing.
 	}
 }
 
-// TestEndUnrestorable_CanceledRunEndsCanceled: the cancel path Stage 2's
+// TestEndUnrestorable_CanceledRunEndsCanceled: the cancel path the
 // bootstrap takes (RUN_CANCELED) ends the run CANCELED, never as a
 // RUN_STATE_* code.
 func TestEndUnrestorable_CanceledRunEndsCanceled(t *testing.T) {

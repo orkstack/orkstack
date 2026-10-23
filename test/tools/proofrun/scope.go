@@ -42,8 +42,11 @@ type scopeRule struct {
 	// Temporal marks a Temporal- or storage-facing package: its evidence must
 	// include an integration test.
 	Temporal bool
-	Line     int
-	re       *regexp.Regexp
+	// Docs marks a user-facing source row: a change to it should come with a
+	// documentation change, and the feature proof warns when it does not.
+	Docs bool
+	Line int
+	re   *regexp.Regexp
 }
 
 // scopeTable is the ordered rule list; the first matching row wins.
@@ -91,6 +94,8 @@ func parseScope(r io.Reader, name string) (scopeTable, error) {
 				switch strings.TrimSpace(flag) {
 				case "temporal":
 					rule.Temporal = true
+				case "docs":
+					rule.Docs = true
 				default:
 					return nil, fmt.Errorf("%s:%d: unknown flag %q", name, n, flag)
 				}

@@ -29,7 +29,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Stage 6's replay fixture (testdata/history/README.md): a run of plain
+// The snapshot-overlay replay fixture (testdata/history/README.md): a run of plain
 // tasks and a fan-out whose plan carries the overlay policy, recorded on a
 // real cluster with its gate's marker and WriteSnapshotOrOverlay markers from
 // both write sites, and every full snapshot and overlay it wrote.
@@ -441,5 +441,37 @@ tasks:
 		if h.overlayBases[0] != (engine.SnapshotBase{}) || !h.overlayWrites[0].Full {
 			t.Fatalf("generation %d's first write was handed %+v and wrote %+v", i, h.overlayBases[0], h.overlayWrites[0])
 		}
+	}
+}
+
+// TestDeployR4_TheOverlayFlagIsInTheFirstEventsFourthInput checks the one
+// checkable claim of docs/DEPLOY.md §4's R4 rollback instruction: `temporal
+// workflow show` on such a run carries `snapshot_overlay` in its first event's
+// fourth input, the RunPlan. A run recorded before the flag carries none.
+func TestDeployR4_TheOverlayFlagIsInTheFirstEventsFourthInput(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"a run started with overlays on", snapshotOverlayHistory, true},
+		{"a run started before the flag", "testdata/history/run-continued-g0-v1.json", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorded := loadHistoryFile(t, tc.path)
+			attrs := recorded.GetEvents()[0].GetWorkflowExecutionStartedEventAttributes()
+			payloads := attrs.GetInput().GetPayloads()
+			if len(payloads) < 4 {
+				t.Fatalf("%s's first event carries %d inputs, want the plan as the fourth", tc.path, len(payloads))
+			}
+			plan := map[string]any{}
+			if err := json.Unmarshal(payloads[3].GetData(), &plan); err != nil {
+				t.Fatalf("decode the plan: %v", err)
+			}
+			_, ok := plan["snapshot_overlay"]
+			if ok != tc.want {
+				t.Fatalf("the first event's fourth input carries snapshot_overlay = %v, want %v", ok, tc.want)
+			}
+		})
 	}
 }

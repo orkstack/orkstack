@@ -107,7 +107,7 @@ const (
 // another: each drives one Temporal with a run whose every generation is
 // tens of thousands of events, and a live GetRun reads the current
 // generation's whole history (reader.go scanExecution), so two side by side
-// measure each other's load. Both soaks of the second Stage 4 full proof
+// measure each other's load. Both soaks of an early full proof
 // (proof/can-stage4-2) ran together and each missed a GetRun p95 threshold;
 // the first full proof's, also together, met them. Every other test still
 // runs beside them.
@@ -252,7 +252,7 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 ) *eachSoak {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
 	if err != nil {
 		t.Fatalf("run archive: %v", err)
@@ -279,7 +279,7 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 	})
 	// With this build's capabilities, as cmd/ork's projection worker polls:
 	// a run that writes snapshot overlays needs every projection process to
-	// read them (Stage 7's defaults turn them on).
+	// read them (the task-ceiling defaults turn them on).
 	s.startCapableProjection("soak-projection")
 
 	// The list's own real Orker, on a pool of its own.
@@ -841,17 +841,16 @@ func soakPaddedDocument(name string, items, maxParallel int) string {
 	return first + "\ndescription: \"" + strings.Repeat(hex.EncodeToString(note[:]), 300_000/64) + "\"\n" + rest
 }
 
-// TestIntegration_SoakItemCeilingWithStage7Defaults: E4's fan-out at the
-// item ceiling (ORK_SOAK_ITEMS, default the built-in maximum), with Stage 7's
-// defaults — its definition, padded over a start payload, passed by
-// reference, and snapshot overlays on — meets E4's thresholds (spec T7,
-// AGENTS.md §11's item-ceiling clause).
-func TestIntegration_SoakItemCeilingWithStage7Defaults(t *testing.T) {
+// TestIntegration_SoakItemCeilingByReferenceWithOverlays: E4's fan-out at
+// the item ceiling (ORK_SOAK_ITEMS, default the built-in maximum), with its
+// definition, padded over a start payload, passed by reference and snapshot
+// overlays on — meets E4's thresholds (AGENTS.md §11's item-ceiling clause).
+func TestIntegration_SoakItemCeilingByReferenceWithOverlays(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
 	defer cancel()
 	items := soakItems(t)
 	soakAlone(t, ctx)
-	e := startEachSoakWith(t, ctx, fmt.Sprintf("soak-%d-stage7", items), items, func(s *chaosStack, cfg *api.Config) {
+	e := startEachSoakWith(t, ctx, fmt.Sprintf("soak-%d-by-reference", items), items, func(s *chaosStack, cfg *api.Config) {
 		cfg.DefinitionByReference, cfg.DefinitionObjects, cfg.SnapshotOverlays = true, s.store, true
 	})
 	e.document = soakPaddedDocument
@@ -859,7 +858,7 @@ func TestIntegration_SoakItemCeilingWithStage7Defaults(t *testing.T) {
 		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
 	}
 	var plan engine.RunPlan
-	rec, _ := e.soakRun(t, ctx, "stage7", 0, func(runID string) {
+	rec, _ := e.soakRun(t, ctx, "by-reference", 0, func(runID string) {
 		_, histories := e.histories(runID)
 		first := histories[0].GetEvents()[0].GetWorkflowExecutionStartedEventAttributes()
 		if err := converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], &plan); err != nil {
@@ -867,14 +866,102 @@ func TestIntegration_SoakItemCeilingWithStage7Defaults(t *testing.T) {
 		}
 	})
 	if plan.Definition == nil || plan.SnapshotOverlay == nil {
-		rec.Missed = append(rec.Missed, fmt.Sprintf("the run did not start with Stage 7's defaults: definition by reference %t, overlays %t",
+		rec.Missed = append(rec.Missed, fmt.Sprintf("the run did not start with its definition by reference and overlays: definition by reference %t, overlays %t",
 			plan.Definition != nil, plan.SnapshotOverlay != nil))
 	}
 	var objectBytes int64
 	if plan.Definition != nil {
 		objectBytes = plan.Definition.SizeBytes
 	}
-	t.Logf("E7 item ceiling with Stage 7's defaults: definition by reference %t (%d B object), overlays %t",
+	t.Logf("E7 item ceiling by reference with overlays: definition by reference %t (%d B object), overlays %t",
 		plan.Definition != nil, objectBytes, plan.SnapshotOverlay != nil)
 	reportSoak(t, rec)
+}
+
+// reducedItems is the size the merge gate checks the item-ceiling
+// behaviour at. The full 10,000-item runs are the nightly tier's
+// (scripts/proof-nightly-tests.txt); at 2,000 the run completed in one
+// generation, and 4,000 crosses into a second while the padded document
+// still travels by reference and every E4 threshold still holds.
+const reducedItems = 4000
+
+// startReducedItemCeiling starts one item-ceiling deployment at
+// reducedItems, with the definition passed by reference and overlays on.
+// It holds the same host-wide lock the full item soaks hold, because E4's
+// thresholds are absolute wall-clock bounds.
+func startReducedItemCeiling(t *testing.T, ctx context.Context, scenario string) *eachSoak {
+	t.Helper()
+	soakAlone(t, ctx)
+	e := startEachSoakWith(t, ctx, scenario, reducedItems, func(s *chaosStack, cfg *api.Config) {
+		cfg.DefinitionByReference, cfg.DefinitionObjects, cfg.SnapshotOverlays = true, s.store, true
+	})
+	e.document = soakPaddedDocument
+	for i := 1; i <= soakRealOrkers; i++ {
+		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
+	}
+	return e
+}
+
+// decodeRunPlan reads the plan a run started from, so a test can assert
+// what the submitting engine decided rather than what it hoped it decided.
+func decodeRunPlan(t *testing.T, e *eachSoak, runID string) *engine.RunPlan {
+	t.Helper()
+	plan := &engine.RunPlan{}
+	_, histories := e.histories(runID)
+	first := histories[0].GetEvents()[0].GetWorkflowExecutionStartedEventAttributes()
+	if err := converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], plan); err != nil {
+		t.Fatalf("decode the run's plan: %v", err)
+	}
+	return plan
+}
+
+// TestIntegration_AnItemCeilingRunCarriesOnAtAReducedCeiling proves the
+// last AGENTS.md §11 bullet's item half without the 10,000-item soak: the
+// padded document runs at an item ceiling of 2,000 through the soak's own
+// helpers, so every E4 threshold is checked, and it asserts at least two
+// generations, a definition passed by reference and overlays.
+func TestIntegration_AnItemCeilingRunCarriesOnAtAReducedCeiling(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
+	defer cancel()
+	e := startReducedItemCeiling(t, ctx, "reduced-item-ceiling")
+	var plan *engine.RunPlan
+	rec, _ := e.soakRun(t, ctx, "reduced-ceiling", 0, func(runID string) {
+		plan = decodeRunPlan(t, e, runID)
+	})
+	if rec.GenerationCount < 2 {
+		rec.Missed = append(rec.Missed, fmt.Sprintf("the run used %d generations; a reduced ceiling must still carry on at least once",
+			rec.GenerationCount))
+	}
+	if plan.Definition == nil {
+		rec.Missed = append(rec.Missed, "the run did not pass its definition by reference")
+	}
+	if plan.SnapshotOverlay == nil {
+		rec.Missed = append(rec.Missed, "the run did not write snapshot overlays")
+	}
+	t.Logf("reduced item ceiling: %d items, %d generations, definition by reference %t, overlays %t",
+		reducedItems, rec.GenerationCount, plan.Definition != nil, plan.SnapshotOverlay != nil)
+	reportSoak(t, rec)
+}
+
+// TestIntegration_AFanOutAtAReducedItemCeilingMeetsItsThresholds keeps both
+// fan-out shapes' E4 thresholds in the merge gate at 2,000 items: the
+// unbounded fan-out (row 6) and max_parallel 64 (row 5), sequentially on one
+// deployment under one soak lock. The 10,000-item runs themselves are the
+// nightly tier's.
+func TestIntegration_AFanOutAtAReducedItemCeilingMeetsItsThresholds(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
+	defer cancel()
+	soakAlone(t, ctx)
+	e := startEachSoak(t, ctx, "reduced-fan-out", reducedItems)
+	for i := 1; i <= soakRealOrkers; i++ {
+		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
+	}
+	t.Run("unbounded", func(t *testing.T) {
+		rec, _ := e.soakRun(t, ctx, "reduced-fan-out", 0, nil)
+		reportSoak(t, rec)
+	})
+	t.Run("max-parallel-64", func(t *testing.T) {
+		rec, _ := e.soakRun(t, ctx, "reduced-max-parallel", 64, nil)
+		reportSoak(t, rec)
+	})
 }

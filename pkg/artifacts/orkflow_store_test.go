@@ -348,48 +348,30 @@ func TestResolveByName_ReturnsOneVersionPerNameOrderedByName(t *testing.T) {
 	}
 }
 
-// TestSameStoredOrkflow_TreatsAHeaderOnlyAdditionAsTheStoredDocument: the
-// store's identity rule is the versioned source on both sides, so a version
-// stored before the header existed is the same document as its source with
-// the two lines written as its first YAML lines — and nothing else is.
-func TestSameStoredOrkflow_TreatsAHeaderOnlyAdditionAsTheStoredDocument(t *testing.T) {
-	const legacy = "# one\n# two\nname: hello-ork\nversion: \"0.1.0\"\ntasks: []\n"
+// TestSameStoredOrkflow_ComparesTheWholeSource: the store's identity rule is
+// the raw source bytes on both sides, so moving the header is a different
+// document like any other edit, and nothing else is.
+func TestSameStoredOrkflow_ComparesTheWholeSource(t *testing.T) {
 	with := func(source string) *orkstackv1.Orkflow {
 		wf := helloOrkflow(t, "0.1.0")
 		wf.SourceYaml = source
 		return wf
 	}
-	added, ok := dsl.AddHeader(legacy)
-	if !ok {
-		t.Fatal("AddHeader refused the legacy source")
+	const body = "name: hello-ork\nversion: \"0.1.0\"\ntasks: []\n"
+	onLine1 := dsl.OrkflowHeader + body
+	below := "# one\n" + dsl.OrkflowHeader + body
+	if !SameStoredOrkflow(with(onLine1), with(onLine1)) {
+		t.Fatal("the same source compares as different")
 	}
-	above := dsl.OrkflowHeader + legacy
-	between := "# one\n" + dsl.OrkflowHeader + "# two\nname: hello-ork\nversion: \"0.1.0\"\ntasks: []\n"
-	for what, pair := range map[string][2]string{
-		"AddHeader":                   {legacy, added},
-		"the header on line 1":        {legacy, above},
-		"the header between comments": {legacy, between},
-		"below against above":         {added, above},
-	} {
-		for _, order := range [][2]string{pair, {pair[1], pair[0]}} {
-			if !SameStoredOrkflow(with(order[0]), with(order[1])) {
-				t.Errorf("%s: %q and %q are not the same document", what, order[0], order[1])
-			}
-		}
+	if SameStoredOrkflow(with(onLine1), with(below)) || SameStoredOrkflow(with(below), with(onLine1)) {
+		t.Error("a moved header compares as the stored document")
 	}
-	for what, other := range map[string]string{
-		"a comment added with the header": "# three\n" + added,
-		"the header after name:":          strings.Replace(legacy, "version:", dsl.OrkflowHeader+"version:", 1),
-		"a quoted header":                 strings.Replace(legacy, "name:", "apiVersion: \"orkstack/v1\"\nkind: Orkflow\nname:", 1),
-		"a reordered header":              strings.Replace(legacy, "name:", "kind: Orkflow\napiVersion: orkstack/v1\nname:", 1),
-	} {
-		if SameStoredOrkflow(with(legacy), with(other)) || SameStoredOrkflow(with(other), with(legacy)) {
-			t.Errorf("%s compares as the stored document", what)
-		}
+	if SameStoredOrkflow(with(onLine1), with("# a comment\n"+onLine1)) {
+		t.Error("a comment added above the header compares as the stored document")
 	}
-	changed := with(added)
+	changed := with(onLine1)
 	changed.Description = "another description"
-	if SameStoredOrkflow(with(legacy), changed) {
+	if SameStoredOrkflow(with(onLine1), changed) {
 		t.Error("a different field compares as the stored document")
 	}
 }

@@ -24,7 +24,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Stage 6's chaos scenarios (T6, C37–C39): a run that writes snapshot
+// The snapshot-overlay chaos scenarios (T6, C37–C39): a run that writes snapshot
 // overlays, on real Temporal and real MinIO, with its objects damaged or one
 // of its publishes dropped.
 

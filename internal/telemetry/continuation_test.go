@@ -97,9 +97,17 @@ func TestEngineObserver_RecordsContinuationInstruments(t *testing.T) {
 }
 
 // TestEngineObserver_ContinuationRecordsAreNilSafe: a nil observer records
-// nothing and never panics.
+// nothing, through any reader, and never panics.
 func TestEngineObserver_ContinuationRecordsAreNilSafe(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	var buf bytes.Buffer
+	_ = newTestEngineObserver(t, reader, &buf, false)
+
 	var o *EngineObserver
 	o.RecordContinuationWrite(context.Background(), "ns", "checkpoint", "written", 1, 1, 1)
 	o.RecordContinuationRestore(context.Background(), "ns", "restored", 1, true, 1)
+
+	if got := continuationSeries(t, reader); len(got) != 0 {
+		t.Fatalf("a nil observer recorded %v", got)
+	}
 }

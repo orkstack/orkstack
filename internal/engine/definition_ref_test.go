@@ -370,7 +370,7 @@ func TestRunWorkflow_CancelDuringDefinitionLoadEndsCanceled(t *testing.T) {
 }
 
 // TestContinuation_CapCountsTheDefinition: each generation's copy is the
-// definition plus the checkpoint, under one cap (A4c). A switch whose
+// definition plus the checkpoint, under one cap. A switch whose
 // checkpoint alone fits but whose sum with the definition does not is never
 // taken — the run carries on in its current history — and a carried
 // generation whose plan's cap the sum exceeds is refused RUN_STATE_CORRUPT

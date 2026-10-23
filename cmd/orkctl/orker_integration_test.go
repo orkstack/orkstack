@@ -46,7 +46,7 @@ func newOrkerStack(t *testing.T, replicas int) *orkerStack {
 	requireTemporal(t, address)
 	artifactCfg := artifacts.ConfigFromEnv()
 	artifactCfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	t.Cleanup(cancel)

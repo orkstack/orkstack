@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path"
 	"path/filepath"
@@ -245,12 +246,12 @@ func TestSelect_NamedIntegrationEvidenceAndTheRegressionSet(t *testing.T) {
 	if got, want := evidenceNames(sel, pEngine), []string{"TestIntegration_Uses"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("engine evidence = %v, want %v", got, want)
 	}
-	// The slow test is deferred and named; the evidence is not repeated.
+	// The slow test is left out and named; the evidence is not repeated.
 	if got, want := regressionNames(sel, pEngine), []string{"TestIntegration_Fast"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("engine regression = %v, want %v", got, want)
 	}
-	if d := sel.Integration[pEngine].Deferred; len(d) != 1 || d[0].Test != "TestIntegration_Slow" || d[0].Seconds != 120 {
-		t.Errorf("engine deferred = %v", d)
+	if d := sel.Integration[pEngine].SlowOmitted; len(d) != 1 || d[0].Test != "TestIntegration_Slow" || d[0].Seconds != 120 {
+		t.Errorf("engine slow-omitted = %v", d)
 	}
 	// orkctl links no engine, but runs cmd/ork, which does: a binary edge.
 	if got, want := regressionNames(sel, pOrkctl), []string{"TestIntegration_CLI", "TestIntegration_Examples", "TestIntegration_Signs"}; !reflect.DeepEqual(got, want) {
@@ -302,8 +303,8 @@ func TestSelect_AChangedTestIsItsOwnEvidenceAndRunsEvenWhenSlow(t *testing.T) {
 	if got := evidenceNames(sel, pEngine); !reflect.DeepEqual(got, []string{"TestIntegration_Slow"}) {
 		t.Errorf("evidence = %v", got)
 	}
-	if d := sel.Integration[pEngine].Deferred; len(d) != 0 {
-		t.Errorf("a changed slow test was deferred: %v", d)
+	if d := sel.Integration[pEngine].SlowOmitted; len(d) != 0 {
+		t.Errorf("a changed slow test was left out: %v", d)
 	}
 	if got := sel.Integration[pEngine].run(); !reflect.DeepEqual(got, []string{"TestIntegration_Fast", "TestIntegration_Slow", "TestIntegration_Uses"}) {
 		t.Errorf("run = %v", got)
@@ -424,3 +425,79 @@ func TestSelect_DeletedTestsAreListedAsRemoved(t *testing.T) {
 }
 
 func keys2(m map[string]*pkgSelection) []string { return sortedKeys(m) }
+
+func TestSelect_UserFacingChangeWithoutDocsWarns(t *testing.T) {
+	paths := []pathScope{{Path: "cmd/orkctl/root.go", Docs: true}}
+	warnings := docsWarning(paths)
+	if len(warnings) != 2 || !strings.Contains(warnings[0], "no documentation change") ||
+		!strings.Contains(warnings[0], "cmd/orkctl/root.go") || !strings.Contains(warnings[1], "CHANGELOG") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	withDocs := append(paths, pathScope{Path: "docs/CLI.md"}, pathScope{Path: "CHANGELOG.md"})
+	if got := docsWarning(withDocs); len(got) != 0 {
+		t.Errorf("a change with docs and a CHANGELOG entry warned: %v", got)
+	}
+	if got := docsWarning([]pathScope{{Path: "cmd/orkctl/root_test.go", Docs: true}}); len(got) != 0 {
+		t.Errorf("a test-only change warned: %v", got)
+	}
+}
+
+// The warning names every user-facing path that changed without a doc
+// change, so a reviewer sees which ones (plan §8.4), and none that did not.
+func TestSelect_TheDocsWarningListsEveryUndocumentedPath(t *testing.T) {
+	paths := []pathScope{
+		{Path: "internal/dsl/parse.go", Docs: true},
+		{Path: "cmd/orkctl/root.go", Docs: true},
+		{Path: "cmd/orkctl/root_test.go", Docs: true},
+		{Path: "internal/engine/run.go"},
+	}
+	warnings := docsWarning(paths)
+	if len(warnings) == 0 || !strings.HasSuffix(warnings[0], ": cmd/orkctl/root.go, internal/dsl/parse.go") {
+		t.Fatalf("warnings = %v, want the two user-facing paths, sorted", warnings)
+	}
+	for _, not := range []string{"root_test.go", "internal/engine/run.go"} {
+		if strings.Contains(warnings[0], not) {
+			t.Errorf("the warning names %s, which needs no doc: %q", not, warnings[0])
+		}
+	}
+	var b strings.Builder
+	featureReport(&b, &selection{DocsWarning: warnings}, outcomes{}, nil)
+	if !strings.Contains(b.String(), "WARNING: user-facing source files changed with no documentation change") ||
+		!strings.Contains(b.String(), "cmd/orkctl/root.go, internal/dsl/parse.go") {
+		t.Errorf("the README does not list the paths:\n%s", b.String())
+	}
+}
+
+func TestSelect_SlowListTestsAreSlowOmittedNotDeferred(t *testing.T) {
+	sel := fakeSelect(t, []change{engineChange}, []string{"internal/engine:TestIntegration_Uses"}, nil)
+	sel.SlowSource = "proof/x (commit abc)"
+	if d := sel.Integration[pEngine].SlowOmitted; len(d) != 1 || d[0].Test != "TestIntegration_Slow" {
+		t.Fatalf("slow_omitted = %+v", d)
+	}
+	b, err := json.Marshal(sel.Integration[pEngine])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"slow_omitted":[{"test":"TestIntegration_Slow"`) || strings.Contains(string(b), "deferred") {
+		t.Errorf("the selection JSON does not carry slow_omitted alone: %s", b)
+	}
+	var r strings.Builder
+	featureReport(&r, sel, outcomes{}, nil)
+	got := r.String()
+	if !strings.Contains(got, "left out: on the slow list (120s in proof/x (commit abc)): TestIntegration_Slow") {
+		t.Errorf("the README lacks the slow-list wording:\n%s", got)
+	}
+	// "deferred" means only a nightly-listed test the full tier did not run.
+	if strings.Contains(got, "deferred") {
+		t.Errorf("the feature README says deferred:\n%s", got)
+	}
+}
+
+func TestFeatureReport_PrintsTheDocsWarning(t *testing.T) {
+	var b strings.Builder
+	featureReport(&b, &selection{DocsWarning: []string{"no CHANGELOG.md [Unreleased] entry"}}, outcomes{}, nil)
+	got := b.String()
+	if !strings.HasPrefix(got, "## Documentation") || !strings.Contains(got, "WARNING: no CHANGELOG.md") {
+		t.Fatalf("report = %q", got)
+	}
+}

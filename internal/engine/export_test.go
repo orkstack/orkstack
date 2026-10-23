@@ -127,16 +127,24 @@ func ForceContinuationForTest(budget ContinuationBudget, limit HistoryLimit) (re
 // canceled run dispatch as builds before the cancel-before-dispatch check
 // did, WITHOUT asking its version, and returns the function that clears it.
 func DisableCancelBeforeDispatchForTest() (restore func()) {
-	cancelBeforeDispatchDisabledForTest = true
-	return func() { cancelBeforeDispatchDisabledForTest = false }
+	cancelBeforeDispatchDisabledForTest.Store(true)
+	return func() { cancelBeforeDispatchDisabledForTest.Store(false) }
 }
 
 // DisableHistoryGuardLookaheadForTest sets the test-only switch that skips
 // the guard's lookahead at a dispatch WITHOUT asking its version, and returns
 // the function that clears it.
 func DisableHistoryGuardLookaheadForTest() (restore func()) {
-	historyGuardLookaheadDisabledForTest = true
-	return func() { historyGuardLookaheadDisabledForTest = false }
+	historyGuardLookaheadDisabledForTest.Store(true)
+	return func() { historyGuardLookaheadDisabledForTest.Store(false) }
+}
+
+// DisableRefusedRouteGateForTest sets the test-only switch that makes a
+// refused route behave as the builds before refused-route-task-failed did,
+// WITHOUT asking its version, and returns the function that clears it.
+func DisableRefusedRouteGateForTest() (restore func()) {
+	refusedRouteGateDisabledForTest.Store(true)
+	return func() { refusedRouteGateDisabledForTest.Store(false) }
 }
 
 // SetSnapshotBaseHookForTest makes every snapshot write that moves a run's

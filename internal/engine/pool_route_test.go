@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"go.temporal.io/sdk/temporal"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 )
@@ -234,9 +236,11 @@ func TestRunState_ReportsThePoolTheWorkWasDispatchedTo(t *testing.T) {
 // whatever queue is at hand.
 func TestRunState_APoolWithNoRouteFailsTheRun(t *testing.T) {
 	s := &runState{plan: RunPlan{Namespace: "default", Routes: map[string]string{task.DefaultPool: task.DefaultQueue}}}
-	if queue, err := s.queueForTask(&orkstackv1.Task{Id: "crunch", Pool: "gpu"}); err == nil {
-		t.Errorf("queueForTask(pool: gpu) = %q, want the run to fail on an unplanned pool", queue)
+	queue, err := s.queueForTask(&orkstackv1.Task{Id: "crunch", Pool: "gpu"})
+	if err == nil {
+		t.Fatalf("queueForTask(pool: gpu) = %q, want the run to fail on an unplanned pool", queue)
 	}
+	requireRouteFailure(t, err, ReasonInvalidPool)
 
 	// And a plan that routes onto the engine's own queue is refused, whatever
 	// wrote it: an Orker polling ork-engine-events would take the engine's
@@ -244,11 +248,26 @@ func TestRunState_APoolWithNoRouteFailsTheRun(t *testing.T) {
 	reserved := &runState{plan: RunPlan{Namespace: "default", Routes: map[string]string{
 		task.DefaultPool: task.EngineEventQueue,
 	}}}
-	_, err := reserved.queueForTask(&orkstackv1.Task{Id: "crunch"})
+	_, err = reserved.queueForTask(&orkstackv1.Task{Id: "crunch"})
 	if err == nil {
 		t.Fatalf("queueForTask on a plan routed to %q succeeded; it must be refused", task.EngineEventQueue)
 	}
 	if !strings.Contains(err.Error(), task.EngineEventQueue) {
 		t.Errorf("error %q does not name the reserved queue %q", err, task.EngineEventQueue)
+	}
+	requireRouteFailure(t, err, ReasonReservedQueue)
+}
+
+// requireRouteFailure asserts err is the non-retryable ApplicationError a
+// failed route ends the task with, typed with reason: the run's failure code
+// is that type, never something parsed out of the message.
+func requireRouteFailure(t *testing.T, err error, reason string) {
+	t.Helper()
+	var appErr *temporal.ApplicationError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("error %v (%T) is not an ApplicationError", err, err)
+	}
+	if appErr.Type() != reason || !appErr.NonRetryable() {
+		t.Fatalf("ApplicationError type %q non-retryable %v, want %q non-retryable", appErr.Type(), appErr.NonRetryable(), reason)
 	}
 }

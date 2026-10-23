@@ -568,6 +568,12 @@ func reserveWalks(t *testing.T, ctx workflow.Context) {
 				return
 			}
 		}
+		// The walk is CPU-bound; yield once a seed so Temporal's deadlock
+		// detector sees progress instead of a starved host. The detector is
+		// never disabled.
+		if err := workflow.Sleep(ctx, time.Millisecond); err != nil {
+			t.Fatalf("seed %d: yield: %v", seed, err)
+		}
 	}
 }
 

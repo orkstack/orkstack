@@ -31,7 +31,7 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// The server facts the continue-as-new design relies on (spec Stage 1, T1
+// The server facts the continue-as-new design relies on (T1
 // contract), proved against the real cluster with a probe workflow of its own
 // type in a private namespace. Each item is logged, and the transcript is
 // written under ORK_PROOF_DIR (continuation-contract/server-contract.json).

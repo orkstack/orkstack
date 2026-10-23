@@ -113,7 +113,7 @@ func newScheduleStack(ctx context.Context, t *testing.T, label string, replicas 
 	requireTemporal(t, address)
 	artifactCfg := artifacts.ConfigFromEnv()
 	artifactCfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 
 	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
 	if base == "" {

@@ -41,7 +41,7 @@ func TestMain(m *testing.M) {
 // belongs to this process — never the shared development bucket.
 func TestIntegration_ThisBinaryOwnsItsObjectStore(t *testing.T) {
 	cfg := artifacts.ConfigFromEnv()
-	requireMinIOForIdempotency(t, cfg)
+	requireObjectStoreForIdempotency(t, cfg)
 
 	if cfg.S3Bucket == artifacts.DefaultS3Bucket {
 		t.Fatalf("ORK_S3_BUCKET is the shared development bucket %q; every engine boot here would read every earlier run's namespaces and Orkflows", cfg.S3Bucket)

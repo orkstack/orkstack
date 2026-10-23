@@ -84,7 +84,7 @@ cover: ## Run tests with coverage -> coverage.out
 
 ## ---- whole stack ----
 .PHONY: up
-up: ## Start everything: Temporal, MinIO, engine, orker and the UI
+up: ## Start everything: Temporal, SeaweedFS, engine, orker and the UI
 	@scripts/stack.sh up
 
 .PHONY: down
@@ -100,7 +100,7 @@ logs: ## Tail the engine, orker and UI logs
 	@tail -f .run/ork.log .run/orker.log .run/ui.log
 
 .PHONY: reset
-reset: ## Wipe ALL local state — Temporal history, MinIO objects, build output
+reset: ## Wipe ALL local state — Temporal history, object-store data, build output
 	@scripts/reset.sh
 
 .PHONY: reset-force
@@ -109,9 +109,9 @@ reset-force: ## reset without the confirmation prompt
 
 ## ---- infra ----
 .PHONY: infra-up
-infra-up: ## Start Temporal + MinIO
+infra-up: ## Start Temporal + SeaweedFS (the dev S3 store)
 	$(COMPOSE) up -d
-	@echo "Temporal UI: http://localhost:8233  |  MinIO console: http://localhost:9001"
+	@echo "Temporal UI: http://localhost:8233  |  SeaweedFS filer: http://localhost:8888"
 
 .PHONY: infra-down
 infra-down: ## Stop infrastructure
@@ -122,9 +122,9 @@ infra-logs: ## Tail infrastructure logs
 	$(COMPOSE) logs -f
 
 .PHONY: infra-up-observability
-infra-up-observability: ## Start Temporal + MinIO + the observability profile: collector, Loki, Tempo, Prometheus, Grafana
+infra-up-observability: ## Start Temporal + SeaweedFS + the observability profile: collector, Loki, Tempo, Prometheus, Grafana
 	$(COMPOSE) --profile observability up -d
-	@echo "Temporal UI: http://localhost:8233  |  MinIO console: http://localhost:9001  |  Grafana: http://localhost:3000"
+	@echo "Temporal UI: http://localhost:8233  |  SeaweedFS filer: http://localhost:8888  |  Grafana: http://localhost:3000"
 	@echo "Point ork/orker at it: see docs/DEPLOY.md, \"Telemetry\", for the OTEL_*/ORK_ADMIN_ADDR env recipe."
 
 .PHONY: infra-down-observability
@@ -150,12 +150,18 @@ lint: ## Run go vet + gofmt check
 fmt: ## Format Go code
 	gofmt -w $$(find . -name '*.go' -not -path './gen/*')
 
+.PHONY: check
+check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integration suites, unit tests (-short, test cache kept)
+	$(MAKE) lint
+	go vet -tags=integration ./...
+	go test -short ./...
+
 .PHONY: merge-check
 merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree (AGENTS.md §11.3)
 	go vet -tags=integration ./...
 	@echo "merge-check OK: the tree builds, passes lint and unit tests, and its integration suites compile"
 ifneq ($(strip $(PROOF)),)
-	go run ./test/tools/proofrun verify -proof $(PROOF)
+	go run ./test/tools/proofrun verify -proof $(PROOF) $(if $(NIGHTLY),-nightly $(NIGHTLY))
 else
 	@echo "NOTE: COMPILE, not run. Without PROOF=proof/<name> this gate needs no"
 	@echo "      infrastructure, and an integration test can be red while it is green."
@@ -166,6 +172,10 @@ endif
 .PHONY: test-integration
 test-integration: ## Run every integration suite as concurrent test processes, PROOF_JOBS at a time, with a ledger (needs: make infra-up && make -C images push)
 	@scripts/integration.sh
+
+.PHONY: cli-reference
+cli-reference: ## Regenerate docs/CLI.md from the Cobra tree
+	ORK_WRITE_CLI_REFERENCE=1 go test ./cmd/orkctl -run '^TestCLIReference_IsGenerated$$' -count=1
 
 ## ---- evidence (AGENTS.md §11.2) ----
 .PHONY: proof
@@ -180,9 +190,28 @@ proof-feature: ## A feature proof of this branch, never merge evidence: TESTS='P
 proof-ui: ## Alias of proof: the full proof already runs the UI type-check, unit and Playwright suites
 	@scripts/proof.sh $(NAME)
 
+.PHONY: proof-nightly
+proof-nightly: ## The nightly tier: only the deferred scale and soak tests, on one host -> proof/<NAME>-nightly/
+	@scripts/proof.sh --tier nightly $(if $(NAME),$(NAME),nightly)
+
+.PHONY: proof-release
+proof-release: ## The pre-release gate: every gate, observability always -> proof/<NAME>-release/
+	@scripts/proof.sh --tier release $(if $(NAME),$(NAME),release)
+
+.PHONY: release-tag
+release-tag: ## Tag HEAD only after a passing release proof of it: VERSION=vX.Y.Z PROOF=proof/<name>
+	@test -n "$(VERSION)" || (echo "release-tag needs VERSION=vX.Y.Z"; exit 2)
+	@test -n "$(PROOF)" || (echo "release-tag needs PROOF=proof/<name>"; exit 2)
+	go run ./test/tools/proofrun verify -release -tag $(VERSION) -proof $(PROOF)
+	@git tag -a $(VERSION) -m "OrkStack $(VERSION) — proof $(PROOF), tree $$(git rev-parse HEAD^{tree})"
+
 .PHONY: proof-observability
 proof-observability: ## Only the observability gate, with what it needs (needs: make infra-up-observability); never merge-eligible
 	@PROOF_GATES=observability scripts/proof.sh $(NAME)
+
+.PHONY: github-merge-gate
+github-merge-gate: ## Check (APPLY=1 applies) the required proof check; not enforced until the repository is public
+	@APPLY=$(or $(APPLY),0) QUEUE=$(or $(QUEUE),0) CODEOWNER_REVIEW=$(or $(CODEOWNER_REVIEW),1) scripts/github-merge-gate.sh
 
 .PHONY: proof-stop
 proof-stop: ## Stop one proof and everything it started: PROOF=proof/<name>
@@ -195,3 +224,8 @@ proof-clean: ## List the buckets and work roots failed tests kept; REMOVE=1 remo
 .PHONY: proof-slow-list
 proof-slow-list: ## Regenerate scripts/proof-test-costs.tsv and scripts/proof-slow-tests.txt from a full proof: FROM=proof/<name>
 	go run ./test/tools/proofrun costs -from $(FROM)
+
+.PHONY: proof-flakes
+proof-flakes: ## Derive per-test flake rates from the proof ledgers: FROM='proof/*' [REPO=.]
+	go run ./test/tools/proofrun flakes -from '$(or $(FROM),proof/*)' $(if $(REPO),-repo $(REPO))
+

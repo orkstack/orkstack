@@ -1,0 +1,140 @@
+name: release
+
+# The pre-release gate. `validate` refuses a version that is not
+# vMAJOR.MINOR.PATCH before anything else runs. `gate` runs the release tier:
+# every gate, the scale and soak tests included, observability always. `tag`
+# creates the release tag
+# only after `proofrun verify -release` accepts that proof for the exact
+# commit. Nothing here dispatches itself; the user runs it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "the tag to create, vX.Y.Z"
+        required: true
+        type: string
+      tag:
+        description: "create and push the tag after the gate passes"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# No workflow-level concurrency: it would be decided from the raw input before
+# anything validated it. Each job below takes a group named from the version
+# `validate` accepted, so two dispatches of one version run one after the
+# other.
+
+jobs:
+  # First, and on every dispatch, `tag: false` included: nothing runs for a
+  # version that is not vMAJOR.MINOR.PATCH.
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: validate the version
+        id: version
+        timeout-minutes: 1
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version $VERSION is not vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+      - name: refuse a tag off main
+        timeout-minutes: 1
+        shell: bash
+        env:
+          WANT_TAG: ${{ inputs.tag }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$WANT_TAG" = true ] && [ "$REF" != refs/heads/main ]; then
+            echo "a tag is created only from a dispatch on main; this one ran on $REF" >&2
+            exit 1
+          fi
+
+  gate:
+    needs: validate
+    concurrency:
+      group: release-gate-${{ needs.validate.outputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    uses: ./.github/workflows/proof.yml
+    with:
+      tier: release
+      base: main
+      int_shards: 14
+      ui_shards: 5
+
+  tag:
+    needs: [validate, gate]
+    if: ${{ inputs.tag && github.ref == 'refs/heads/main' }}
+    concurrency:
+      group: release-tag-${{ needs.validate.outputs.version }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          ref: ${{ github.sha }}
+          # No checkout keeps a credential: the proof is verified (and repository
+          # code run) before the push step is handed the token.
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - uses: actions/download-artifact@v8.0.2
+        timeout-minutes: 3
+        with:
+          name: proof-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci/proof
+      - name: verify the release proof
+        timeout-minutes: 5
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          go run ./test/tools/proofrun verify -release -tag "$VERSION" -proof "$RUNNER_TEMP/ci/proof"
+      - name: tag
+        timeout-minutes: 5
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          commit="$(jq -r .commit "$RUNNER_TEMP/ci/proof/proof.json")"
+          tree="$(jq -r .tree "$RUNNER_TEMP/ci/proof/proof.json")"
+          result="$(jq -r .result "$RUNNER_TEMP/ci/proof/proof.json")"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' tag -a "$VERSION" -m "OrkStack $VERSION
+          proof: $RUN_URL
+          commit: $commit
+          tree: $tree
+          result: $result"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          git push origin "refs/tags/$VERSION"

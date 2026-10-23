@@ -92,7 +92,8 @@ func TestComposeTemporal(t *testing.T) {
 }
 
 func passingFull() proofRecord {
-	r := proofRecord{Tier: "full", Tree: "t1", TreeEnd: "t1", CleanStart: true, CleanEnd: true, ImageTag: "pr-abc", ImageTagOwn: true, BaseRef: "main", BaseCommit: "m1"}
+	r := proofRecord{Tier: "full", Tree: "t1", TreeEnd: "t1", CleanStart: true, CleanEnd: true, ImageTag: "pr-abc", ImageTagOwn: true, BaseRef: "main", BaseCommit: "m1",
+		Quarantine: &quarantineRecord{CheckedOn: todayUTC().Format("2006-01-02")}}
 	r.Temporal.Mode = "own"
 	for _, g := range fullGates {
 		r.Gates = append(r.Gates, gateRecord{Gate: g, Result: "pass"})
@@ -125,7 +126,7 @@ func TestVerdict(t *testing.T) {
 		{name: "a base other than main", mutate: func(r *proofRecord) { r.BaseRef = "HEAD" }, result: "pass", reason: "the full proof diffed against HEAD, not main"},
 		{name: "no base recorded", mutate: func(r *proofRecord) { r.BaseRef = "" }, result: "pass", reason: "the full proof diffed against -, not main"},
 		{name: "an incomplete ledger", ledgers: map[string]bool{"integration": false}, result: "fail", reason: "the integration ledger is incomplete"},
-		{name: "a feature proof", mutate: func(r *proofRecord) { r.Tier = "feature" }, result: "pass", reason: "a feature proof is never merge evidence"},
+		{name: "a feature proof", mutate: func(r *proofRecord) { r.Tier = "feature" }, result: "pass", reason: "only a full proof is merge evidence"},
 		{name: "failed evidence", mutate: func(r *proofRecord) { r.Tier = "feature"; r.EvidenceFailed = []string{"x"} }, result: "fail", reason: "the proof did not pass"},
 	}
 	for _, c := range cases {
@@ -281,5 +282,37 @@ func TestRecordRequiresTheLedgerOfEveryGateThatRan(t *testing.T) {
 	}
 	if r.Result != "fail" || !strings.Contains(strings.Join(r.Ineligible, "\n"), "the unit ledger is incomplete") {
 		t.Errorf("record = %+v", r)
+	}
+}
+
+// A full, release or nightly record writes a part and leaves the verdict to
+// the merger, locally and in CI (round 4 M1).
+func TestRecord_TheFullTiersWriteOnlyAPart(t *testing.T) {
+	for _, tier := range []string{tierFull, tierRelease, tierNightly} {
+		t.Run(tier, func(t *testing.T) {
+			dir := t.TempDir()
+			out := filepath.Join(dir, "parts", "local-a1")
+			if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("unit\tpass\t3\tunit.log\tproofrun unit\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			prev := os.Stdout
+			devnull, _ := os.Open(os.DevNull)
+			os.Stdout = devnull
+			code := cmdRecord([]string{"-dir", dir, "-tier", tier, "-attempt", "1", "-tree-start", "t", "-tree-end", "t", "-clean-start", "-clean-end", "-out-dir", out})
+			os.Stdout = prev
+			if code != 0 {
+				t.Fatalf("exit %d, want 0", code)
+			}
+			var rec partRecord
+			if err := readJSON(filepath.Join(out, "part.json"), &rec); err != nil {
+				t.Fatalf("no part.json: %v", err)
+			}
+			if rec.Part != "local" || rec.Tier != tier {
+				t.Errorf("part %+v, want part local of tier %s", rec, tier)
+			}
+			if _, err := os.Stat(filepath.Join(out, "proof.json")); !os.IsNotExist(err) {
+				t.Errorf("a %s record wrote proof.json; the merger decides the verdict", tier)
+			}
+		})
 	}
 }

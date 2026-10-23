@@ -80,7 +80,7 @@ var _ engine.RunReadClient = (*countingReadClient)(nil)
 // the gate is shut the run is live with no ExecuteTask pending.
 func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *testing.T) {
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	requireDockerForCommitE2E(t)
 
 	orkflows := newDurableOrkflowStore(t)

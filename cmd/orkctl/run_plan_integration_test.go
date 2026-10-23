@@ -134,7 +134,7 @@ func startPlanCluster(ctx context.Context, t *testing.T, withOrker bool) *planCl
 	requireTemporal(t, address)
 	artifactCfg := artifacts.ConfigFromEnv()
 	artifactCfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 
 	namespace := isolatedNamespace()
 	t.Logf("namespace %s", namespace)

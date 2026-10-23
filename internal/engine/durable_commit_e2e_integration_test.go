@@ -289,7 +289,7 @@ func evidenceAdoptionProbeWorkflow(ctx workflow.Context, in *orkstackv1.ExecuteT
 func startCommitE2E(t *testing.T) *commitE2E {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	requireDockerForCommitE2E(t)
 
 	orkflows := newDurableOrkflowStore(t)
@@ -729,6 +729,32 @@ func runningContainerCountForCommitE2E(t *testing.T, orkerID string) int {
 		t.Fatalf("docker ps: %v", err)
 	}
 	return len(strings.Fields(string(out)))
+}
+
+// awaitRunningContainersForCommitE2E waits, until the deadline, for exactly
+// want of THIS test's Orker's containers to be running. A task reaches the
+// Orker before its container starts — staging, image resolution and
+// `docker create` come first — so a count taken the moment the task arrived
+// can read 0 on a loaded host; the deadline, not the moment, is the bound.
+func awaitRunningContainersForCommitE2E(t *testing.T, ctx context.Context, orkerID string, want int, within time.Duration) {
+	t.Helper()
+	deadline := time.NewTimer(within)
+	defer deadline.Stop()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		n := runningContainerCountForCommitE2E(t, orkerID)
+		if n == want {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline.C:
+			t.Fatalf("Orker %s has %d containers running after %s, want %d", orkerID, n, within, want)
+		case <-ctx.Done():
+			t.Fatalf("Orker %s: %v while waiting for %d running containers (have %d)", orkerID, ctx.Err(), want, n)
+		}
+	}
 }
 
 func newRawS3ClientForCommitE2E(t *testing.T, cfg artifacts.Config) *s3.Client {

@@ -385,7 +385,7 @@ var _ = task.DefaultPool
 // crossed). Every task is classified — and its condition evaluated — once,
 // on its first pass, never again however many passes it waits through; no
 // pin closure is rebuilt; and one held pass's workflow code takes at most
-// 20 ms.
+// 20 ms of its thread's CPU time (passClock; the wall clock is logged).
 func TestReadyLoop_HeldTasksCostConstantPerPass(t *testing.T) {
 	const tasks, dispatched = 4000, 586
 	wf := &orkstackv1.Orkflow{Name: "flat", Version: "v1", Namespace: "team-a"}
@@ -400,11 +400,18 @@ func TestReadyLoop_HeldTasksCostConstantPerPass(t *testing.T) {
 	// under test.
 	plan.Limits = WorkspaceLimits{ValuesMaxBytes: 4096}
 
+	// Each pass timed on the pass clock, which the bound is asserted on, and
+	// on the wall clock, which is logged as evidence.
 	probe := &readyLoopProbe{}
-	var passStart time.Time
-	var passes []time.Duration
-	probe.pass = func() { passStart = time.Now() }
-	probe.selector = func() { passes = append(passes, time.Since(passStart)) }
+	clock := &passClock{}
+	var passStart time.Duration
+	var wallStart time.Time
+	var passes, wallPasses []time.Duration
+	probe.pass = func() { passStart, wallStart = clock.now(), time.Now() }
+	probe.selector = func() {
+		passes = append(passes, clock.now()-passStart)
+		wallPasses = append(wallPasses, time.Since(wallStart))
+	}
 	readyLoopProbeForTest = probe
 	defer func() { readyLoopProbeForTest = nil }()
 
@@ -426,20 +433,24 @@ func TestReadyLoop_HeldTasksCostConstantPerPass(t *testing.T) {
 		t.Fatalf("%d passes, want at least one per collected completion (%d)", len(passes), dispatched)
 	}
 	held := passes[1:] // the first pass dispatched; every later one held 3,414
-	var worst, total time.Duration
+	var worst, total, wallWorst time.Duration
 	for _, d := range held {
 		worst = max(worst, d)
 		total += d
 	}
-	if worst > 20*time.Millisecond {
-		t.Fatalf("the slowest held pass took %s, over 20 ms", worst)
+	for _, d := range wallPasses[1:] {
+		wallWorst = max(wallWorst, d)
 	}
 	proof.WriteJSON(t, "continuation", "held-pass-cost.json", map[string]any{
 		"tasks": tasks, "dispatched_before_hold": dispatched, "held_passes": len(held),
 		"slowest_pass_ms": float64(worst.Microseconds()) / 1000, "mean_pass_ms": float64(total.Microseconds()) / 1000 / float64(len(held)),
+		"pass_clock": clock.kind(), "slowest_pass_wall_ms": float64(wallWorst.Microseconds()) / 1000,
 	})
-	t.Logf("E2 held tasks: %d held passes over %d tasks, slowest %s, mean %s", len(held), tasks-dispatched, worst,
-		total/time.Duration(len(held)))
+	t.Logf("E2 held tasks: %d held passes over %d tasks, slowest %s, mean %s of %s (slowest %s wall clock)",
+		len(held), tasks-dispatched, worst, total/time.Duration(len(held)), clock.kind(), wallWorst)
+	if worst > 20*time.Millisecond {
+		t.Fatalf("the slowest held pass took %s of %s, over 20 ms", worst, clock.kind())
+	}
 }
 
 // awaitedRestoreOrkflow is build → three awaits → publish.

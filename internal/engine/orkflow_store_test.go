@@ -384,30 +384,31 @@ func TestMemoryOrkflowStore_ConditionalPromotionRefusesAMovedPointer(t *testing.
 	}
 }
 
-// TestMemoryOrkflowStore_AHeaderOnlyReapplyIsANoOp: the in-memory store uses
-// the durable store's identity rule (artifacts.SameStoredOrkflow) and words
-// its refusal through dsl.VersionExistsAdvice.
-func TestMemoryOrkflowStore_AHeaderOnlyReapplyIsANoOp(t *testing.T) {
+// TestMemoryOrkflowStore_AnySourceChangeIsRefused: the in-memory store uses
+// the durable store's identity rule (artifacts.SameStoredOrkflow), which
+// compares the raw source bytes, header included, and words its refusal with
+// the plain advice.
+func TestMemoryOrkflowStore_AnySourceChangeIsRefused(t *testing.T) {
 	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
-	const legacy = "# stored before the header\nname: hello-ork\nversion: \"0.1.0\"\ntasks: []\n"
+	const body = "name: hello-ork\nversion: \"0.1.0\"\ntasks: []\n"
 	put := func(source string) (*orkstackv1.Orkflow, bool, error) {
 		wf := orkflowFixture("hello-ork", "0.1.0", time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC))
 		wf.SourceYaml = source
 		return store.Put(ctx, wf, artifacts.NoHeadExpectation())
 	}
-	if _, created, err := put(legacy); err != nil || !created {
-		t.Fatalf("put legacy: created=%v, %v", created, err)
+	if _, created, err := put(dsl.OrkflowHeader + body); err != nil || !created {
+		t.Fatalf("put: created=%v, %v", created, err)
 	}
-	stored, created, err := put(dsl.OrkflowHeader + legacy)
-	if err != nil || created {
-		t.Fatalf("a header-on-line-1 re-apply: created=%v, %v; want a no-op", created, err)
-	}
-	if stored.GetSourceYaml() != legacy {
-		t.Fatalf("the no-op returned %q, want the stored source", stored.GetSourceYaml())
-	}
-	_, _, err = put(strings.Replace(legacy, "version:", dsl.OrkflowHeader+"version:", 1))
-	if !errors.Is(err, artifacts.ErrVersionExists) || !strings.Contains(err.Error(), dsl.VersionExistsAdvice("name: x\n"+dsl.OrkflowHeader)) {
-		t.Fatalf("a header after name: = %v, want ErrVersionExists with the header sentence", err)
+	for what, source := range map[string]string{
+		"a comment added":  "# a comment\n" + dsl.OrkflowHeader + body,
+		"the header moved": "# moved\n" + dsl.OrkflowHeader + body,
+		"the header below": strings.Replace(dsl.OrkflowHeader+body, "version:", dsl.OrkflowHeader+"version:", 1),
+	} {
+		_, _, err := put(source)
+		if !errors.Is(err, artifacts.ErrVersionExists) ||
+			!strings.Contains(err.Error(), "a version is immutable, so publish a new version") {
+			t.Fatalf("%s = %v, want ErrVersionExists with the plain advice", what, err)
+		}
 	}
 }

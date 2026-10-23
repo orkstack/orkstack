@@ -29,7 +29,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Stage 2's replay fixtures (testdata/history/README.md): a run recorded
+// The continued-run replay fixtures (testdata/history/README.md): a run recorded
 // across a switch — generation 0, which crossed its budget while its
 // fan-out refilled, held at its hold line and switched with its await open,
 // and generation 1, which read its saved state back and finished — and a
@@ -562,7 +562,7 @@ func TestContinuedHistory_CatchesASwitchWithoutItsGate(t *testing.T) {
 	defer engine.ForceContinuationForTest(budget, limit)()
 	caught := 0
 	for _, path := range committedFixtures(t) {
-		if recordedWithTheWriter(path) {
+		if recordedWithTheWriter(path) || isRefusedRouteHistory(path) {
 			continue
 		}
 		recorded := loadHistoryFile(t, path)

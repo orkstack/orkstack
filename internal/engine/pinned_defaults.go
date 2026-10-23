@@ -3,11 +3,13 @@ package engine
 import "time"
 
 // Every default a run's plan pins lives in this file, and nowhere else in
-// internal/engine refers to one. Its only readers are internal/api (at
-// submit, onto the plan) and cmd/ork (boot checks): workflow code reads the
-// number the plan carries, never the constant, so a release that changes a
-// default moves only new runs — on an unversioned fleet as on a pinned one —
-// and a recorded history replays its own crossing points.
+// internal/engine refers to one. Its readers are internal/api (at submit,
+// onto the plan), cmd/ork (boot checks), and internal/config (the defaults it
+// exposes); local_task.go reads DefaultItemInputFloorBytes directly, the one
+// named exemption. Workflow code reads the number the plan carries, never the
+// constant, so a release that changes a default moves only new runs — on an
+// unversioned fleet as on a pinned one — and a recorded history replays its
+// own crossing points.
 
 // DefaultHistoryMaxEvents is engine.history.max_events' default: the
 // Temporal server's default per-execution history event limit.
@@ -46,9 +48,8 @@ var DefaultHistoryReserve = HistoryReserve{
 // submit like the history reserve.
 
 // DefaultContinuationEnabled is engine.continuation.enabled's default: on,
-// since the continuation chaos scenarios (C1–C31) proved the writer, in a
-// release after the one that first contained it — the order a rollback
-// relies on (docs/DEPLOY.md §4).
+// proved by the continuation chaos suite, in a release after the one that
+// first contained it — the order a rollback relies on (docs/DEPLOY.md §4).
 const DefaultContinuationEnabled = true
 
 // DefaultContinuationEvents is engine.continuation.events' default: a

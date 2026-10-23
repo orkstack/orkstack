@@ -35,7 +35,7 @@ func lastPlan(t *testing.T, starter *fakeStarter) engine.RunPlan {
 }
 
 // TestSnapshotOverlay_OffMeansNoPolicy: with engine.snapshot_overlays off —
-// on by default from Stage 7 (cmd/ork TestDefaults_DefinitionByReferenceAndOverlaysOn),
+// on by default in the release that introduced them (cmd/ork TestDefaults_DefinitionByReferenceAndOverlaysOn),
 // so off only where a deployment turns it off — no plan carries a policy,
 // however large the run, and the fleet is never asked.
 func TestSnapshotOverlay_OffMeansNoPolicy(t *testing.T) {

@@ -402,6 +402,9 @@ func TestAuditQuery_KeepSeesTheRecord(t *testing.T) {
 }
 
 func TestAuditStore_ScanBudgetRefuses(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	base := time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC)
 	for name, store := range newAuditStores(t) {
 		t.Run(name, func(t *testing.T) {

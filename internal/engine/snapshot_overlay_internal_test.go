@@ -22,7 +22,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Stage 6's unit evidence (T6): snapshot overlays, written by
+// The snapshot-overlay unit evidence (T6): snapshot overlays, written by
 // WriteSnapshotOrOverlay from both snapshot write sites, read back by
 // materializeSnapshot.
 
@@ -867,4 +867,71 @@ func childStartPlanForTest(t *testing.T, policy *OverlayPolicy) RunPlan {
 	t.Helper()
 	s := buildRunState("ork-parent", flatDefinition(t, 1), nil, overlayPlan(t, policy))
 	return s.childStartPlan(&ChildRunPlan{RunID: "ork-child", Plan: RunPlan{Namespace: "default"}})
+}
+
+// TestSnapshotBaseCache_HoldsEightBasesOrItsByteBudget pins the cache's two
+// bounds and their encoded-byte accounting: the default is 8 bases or 128 MiB,
+// the count evicts first once the writer has more runs than it holds, bytes
+// are counted, and a base larger than the whole byte bound is returned but
+// never kept.
+func TestSnapshotBaseCache_HoldsEightBasesOrItsByteBudget(t *testing.T) {
+	runBytes := func(id string) []byte {
+		t.Helper()
+		data, err := proto.Marshal(&orkstackv1.Run{Id: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+
+	def := NewSnapshotBaseCache()
+	if def.maxEntries != snapshotBaseCacheEntries || def.maxBytes != snapshotBaseCacheBytes {
+		t.Fatalf("the default cache is %d entries / %d bytes, want %d / %d",
+			def.maxEntries, def.maxBytes, snapshotBaseCacheEntries, snapshotBaseCacheBytes)
+	}
+	if snapshotBaseCacheEntries != 8 || snapshotBaseCacheBytes != 128<<20 {
+		t.Fatalf("the documented bounds are %d entries / %d bytes, want 8 / 128 MiB",
+			snapshotBaseCacheEntries, snapshotBaseCacheBytes)
+	}
+
+	byCount := newSnapshotBaseCache(2, 1<<20)
+	for _, id := range []string{"a", "b"} {
+		byCount.put("s3://test/"+id, id, runBytes(id))
+	}
+	byCount.get("s3://test/a", "a")
+	byCount.put("s3://test/c", "c", runBytes("c"))
+	if byCount.get("s3://test/a", "a") == nil || byCount.get("s3://test/c", "c") == nil {
+		t.Fatal("the least recently used base was not the one evicted")
+	}
+	if byCount.get("s3://test/b", "b") != nil {
+		t.Fatal("the cache kept three bases over its two-entry bound")
+	}
+	if byCount.len() != 2 {
+		t.Fatalf("the cache holds %d bases, want 2", byCount.len())
+	}
+
+	a := runBytes("a")
+	b := runBytes("b")
+	byBytes := newSnapshotBaseCache(10, int64(len(a)+len(b)-1))
+	byBytes.put("s3://test/a", "a", a)
+	byBytes.put("s3://test/b", "b", b)
+	if byBytes.len() != 1 || byBytes.size() != int64(len(b)) {
+		t.Fatalf("the byte budget kept %d bases / %d bytes, want 1 / %d", byBytes.len(), byBytes.size(), len(b))
+	}
+	tooBig, err := proto.Marshal(&orkstackv1.Run{Id: strings.Repeat("x", int(byBytes.maxBytes))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := byBytes.put("s3://test/big", "big", tooBig); got == nil {
+		t.Fatal("a base over the whole byte bound was not decoded for its caller")
+	}
+	if byBytes.get("s3://test/big", "big") != nil {
+		t.Fatal("a base over the byte bound was kept")
+	}
+	if byBytes.len() != 1 {
+		t.Fatalf("a base over the byte bound evicted the ones it cannot share the cache with: %d entries", byBytes.len())
+	}
+	if got := byCount.put("s3://test/a", "a", runBytes("a")); got == nil || got.GetId() != "a" {
+		t.Fatal("a hit did not return the cached base")
+	}
 }

@@ -43,7 +43,7 @@ the built binaries (`cmd/orkctl/tworeplica_read_integration_test.go`,
      Orker pool 1      Orker pool 2         …           Orker pool M
            └────────────────┴───────────┬────┴────────────────┘
                                         │
-                              one S3 / MinIO bucket
+                              one S3-compatible bucket
                     definitions · artifacts · finished runs
 ```
 
@@ -345,7 +345,7 @@ then the variable it becomes.
 | `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` |
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
 | `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Default 1000. Lowers it, or raises it up to the built-in 10,000; above 1,000 it needs `engine.continuation.enabled` (refused at boot otherwise, naming both keys). Checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value. A submit that needs more than 1,000 items is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs a release older than the one that raised the maximum; a draining older build does not block it (§5, "Engine capabilities and the fleet check"). Before rolling back below that release, lower it to 1,000 and wait for such runs (§4) |
-| `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `4000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, apply and plan, and again at submit, so lowering it refuses new runs of an Orkflow applied above the new value. A deployment lowers or raises it. The default is the largest size the task soak measured (its per-generation history, snapshot, in-flight, workflow-code, read-latency and run-page thresholds, with plain tasks and small outputs); above it a deployment runs unmeasured, and the boot warns naming the measured size. Independently, a stage of more than X plain tasks that start together may stop `RUN_HISTORY_LIMIT` in its first history, explicitly, and the boot warns when this is above X. X is a size to stay within, not a promise: at or below it a flat stage of plain tasks cannot reach that limit before it carries on, and other limits still apply. X is 4,222 at the defaults and moves with `engine.history.max_events`, `engine.continuation.events`, `engine.continuation.bytes`, `engine.continuation.restore_timeout` and `engine.run_max_in_flight`; §5, "Task ceiling and the flat-stage bound", gives its closed form. With `engine.continuation.enabled` off a run has one history: an unset key defaults to the smaller of 4,000 and `engine.history.max_events / 50` (1,024 at the default limit; the boot logs the effective value), and an explicit value above that quotient is refused at boot, naming the three keys |
+| `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `4000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, apply and plan, and again at submit, so lowering it refuses new runs of an Orkflow applied above the new value. A deployment lowers or raises it. The default is the largest size the task soak measured (its per-generation history, snapshot, in-flight, workflow-code, read-latency and run-page thresholds, with plain tasks and small outputs); above it a deployment runs unmeasured, and the boot warns naming the measured size. The task soak runs in the nightly and pre-release proofs, not in every merge proof (docs/PROOFS.md). Independently, a stage of more than X plain tasks that start together may stop `RUN_HISTORY_LIMIT` in its first history, explicitly, and the boot warns when this is above X. X is a size to stay within, not a promise: at or below it a flat stage of plain tasks cannot reach that limit before it carries on, and other limits still apply. X is 4,222 at the defaults and moves with `engine.history.max_events`, `engine.continuation.events`, `engine.continuation.bytes`, `engine.continuation.restore_timeout` and `engine.run_max_in_flight`; §5, "Task ceiling and the flat-stage bound", gives its closed form. With `engine.continuation.enabled` off a run has one history: an unset key defaults to the smaller of 4,000 and `engine.history.max_events / 50` (1,024 at the default limit; the boot logs the effective value), and an explicit value above that quotient is refused at boot, naming the three keys |
 | `engine.history.max_events` | `ORK_HISTORY_MAX_EVENTS` | `51200` | `ork` | the cluster's per-execution history event limit. A run stops `RUN_HISTORY_LIMIT` before reaching it, counting what its own failure path still needs, instead of being terminated by the cluster with no reason. **Set it to the cluster's real limit if an operator changed it:** a value above the real limit defeats the guard, and one below stops runs early. Even at the default, a run that would finish just under the limit with much work still pending now stops `RUN_HISTORY_LIMIT`, because its failure path's reserve is kept back: 16 events per running task, 8 per pending task, 24 per open await, 12 per open pin, 48 per failure handler, plus 96 — about 8,100 for a 1,000-task flat stage. At least 100; anything else is refused at boot. Read at submit, so a change applies to new runs |
 | `engine.history.max_bytes` | `ORK_HISTORY_MAX_BYTES` | `50 MiB` | `ork` | the same, for history size. Before each dispatch the run also counts that dispatch's own command (a task's input, up to `engine.limits.values_max_bytes`), so it never records one its failure path could not follow. The reserve assumes completion results of ≤ 8 KiB each; a run whose failure path lands many larger results at once can still reach the cluster's size limit and be terminated by the cluster; this is the guard's one known gap, and such a run is still reported `RUN_HISTORY_LIMIT` (the reader maps the cluster's history-limit termination, "Workflow history count/size exceeds limit.", to it), never `RUN_TERMINATED`. At least 64 KiB; anything else is refused at boot. Read at submit, so a change applies to new runs. Both limits are carried once per run tree, on the top-level run's plan (about 0.4 KB), so a run whose plan is already within that much of its 256 KiB bound is refused at submit (`FAILED_PRECONDITION`, naming the size) |
 | `engine.continuation.enabled` | `ORK_CONTINUATION_ENABLED` | `true` | `ork` | runs carry on into a fresh history once theirs has grown past the budget below, at their next moment with nothing running, so a large or long-lived run is bounded per history rather than stopped `RUN_HISTORY_LIMIT` (see §5, "A run that pauses new tasks", and §2, "Runs that span several executions"). On by default since the release after the one that first carried runs on (§4, "Rolling back"). The three keys below are validated only when this is true, so a deployment that lowers `engine.history.max_events` below 32,768 or `engine.history.max_bytes` below 40 MiB must lower `engine.continuation.events` or `.bytes` with it, or turn this off: it is refused at boot otherwise, naming the keys. Read at submit, so a change applies to new runs |
@@ -370,13 +370,13 @@ then the variable it becomes.
 | `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run |
 | `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration; a full iteration starts the next one at once (a backlog drains without waiting for the interval) |
 | `storage.dir` | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
-| `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
+| `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3-compatible endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `storage.s3.region` | `ORK_S3_REGION` | `us-east-1` | both | — |
 | `storage.s3.bucket` | `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts, archived runs and task logs |
 | `storage.s3.access_key` | `ORK_S3_ACCESS_KEY` | `orkstack` | both | the dev credential from `deploy/docker-compose.yml`. Supply a real one |
 | `storage.s3.secret_key` | `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
 | `storage.s3.session_token` | `ORK_S3_SESSION_TOKEN` | *(empty)* | both | for temporary credentials |
-| `storage.s3.path_style` | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
+| `storage.s3.path_style` | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing; the dev store needs it, AWS S3 does not |
 | `engine.stats_cache_ttl` | `ORK_STATS_CACHE_TTL` | `5s` | `ork` | how long one `GetStats`, `GetFailureBreakdown`, `GetFlakeIndex` or `GetCacheStats` answer is reused; `0` switches the cache off (`docs/STATS.md`) |
 | `engine.usage_cache_ttl` | `ORK_USAGE_CACHE_TTL` | `5m` | `ork` | how long one usage measurement (`orkctl stats usage`, the dashboard Usage section, and an enforced budget's admission check) is reused; `0` switches the cache off, which makes every submit into an enforced namespace measure (`docs/STATS.md`, "Usage") |
 | `telemetry.log_format` | `ORK_LOG_FORMAT` | `text` | both | process log encoding: `text` or `json` |
@@ -543,18 +543,23 @@ and every `orker`:
 
 ```bash
 export ORK_ARTIFACT_BACKEND=s3
-export ORK_S3_ENDPOINT="https://s3.internal.example"   # or http://minio:9000
+export ORK_S3_ENDPOINT="https://s3.internal.example"   # or http://localhost:9000
 export ORK_S3_BUCKET=orkstack-artifacts
 export ORK_S3_REGION=us-east-1
 export ORK_S3_ACCESS_KEY=…        # never the docker-compose dev credentials
 export ORK_S3_SECRET_KEY=…
-export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
+export ORK_S3_PATH_STYLE=true     # the dev store needs path style; AWS S3 does not
 ```
 
 The store must support conditional `PutObject` (`If-None-Match`/`If-Match`):
 commits, Orkflow pointers and registry documents are arbitrated by it, and
-every Orker probes it at boot and refuses to start on a store that cannot. What lives under which key, who writes it and what
-removes it is `docs/STORAGE.md`.
+every Orker probes it at boot and refuses to start on a store that cannot. Any
+S3-compatible store with that primitive works; the production default is AWS
+S3. The local development stack uses **SeaweedFS** (Apache-2.0, pinned by
+digest in `deploy/docker-compose.yml`, S3 API on `localhost:9000`), because
+MinIO stopped publishing images and Garage cannot do conditional writes. What
+lives under which key, who writes it and what removes it is
+`docs/STORAGE.md`.
 
 ### Live task logs: where they are, what bounds them, how long they stay
 
@@ -662,7 +667,7 @@ permanent, so a retired run stays listable and readable.
 
 On S3 a run's four run-scoped prefixes are emptied concurrently, one
 `DeleteObjects` request per listing page (up to 1000 keys), so the store must
-support `DeleteObjects` (AWS S3 and MinIO do). A key the store refuses fails
+support `DeleteObjects` (AWS S3 and SeaweedFS do). A key the store refuses fails
 that run's cleanup — it is not marked cleaned and a later pass retries it.
 
 **A backlog drains without waiting.** `ORK_CLEANUP_BATCH_SIZE` bounds one
@@ -720,7 +725,7 @@ its `{seq}.ovl` overlays name them, so a rule that expired one would make the
 run's live state at those events unreadable (§5, "Snapshot overlays").
 
 ```bash
-# MinIO: expire task logs after 30 days.
+# SeaweedFS or AWS S3: expire task logs after 30 days.
 mc ilm rule add local/orkstack-artifacts --prefix "metadata/logs/" --expire-days 30
 
 # AWS S3: the same rule.
@@ -737,7 +742,7 @@ listing and still billed. Add one bucket-wide rule that collects them; it
 touches no complete object:
 
 ```bash
-# MinIO needs no rule: it removes incomplete uploads itself, after
+# SeaweedFS needs no rule: it removes incomplete uploads itself, after
 # `stale_uploads_expiry` (24h by default; `mc admin config get local api`).
 
 # AWS S3
@@ -1358,8 +1363,11 @@ run started while it was on has finished: an older release cannot read a
 `{seq}.ovl` snapshot, so its reads of such a run's live state, and its
 publishes of the run's events, would fail. The check: the plan of such a run
 carries `snapshot_overlay` (`temporal workflow show` on a running run, its
-first event's fourth input), and only runs created before the flag went off
-can; confirm, as for R3, that none is still running. A finished run's archive
+first event's fourth input, which
+`TestDeployR4_TheOverlayFlagIsInTheFirstEventsFourthInput` in
+`internal/engine/replay_snapshot_overlay_test.go` checks against a recorded
+history), and only runs created before the flag went off can; confirm, as for
+R3, that none is still running. A finished run's archive
 body is always full — its last snapshot is never an overlay — so it stays
 readable on any release.
 
@@ -2181,6 +2189,9 @@ tasks, all plain tasks with small outputs — met every threshold below. What
 - the run page of a flat run at 4,000 tasks interactive within 5 s, live and
   finished.
 
+These measurements come from the task soak, which runs in the nightly and
+pre-release proofs, not in every merge proof (docs/PROOFS.md).
+
 The read path measured is `GetRun`, the event stream and the run page. Two
 other readers of the same snapshot are not thresholded: a `ListRuns` page of
 archived runs reads one whole archive body per listed run (several MB at
@@ -2201,9 +2212,9 @@ its budget, and until its hold starts nothing stops it dispatching, so the
 first generation is the worst. With L the cluster's event limit, F, p and f
 the reserve's fixed, per-pending and per-in-flight terms (96, 8 and 16), G the
 continuation budget's events (8,192), B a generation's base — the bootstrap's
-worst case (`RestoreHistoryBound`, 1,478 at the defaults, since from Stage 5
-generation 0 too reads its definition from the store) plus 24 for generation
-0's own start — and d, c and u the measured events of one plain task's
+worst case (`RestoreHistoryBound`, 1,478 at the defaults, because generation 0
+too reads its definition from the store) plus 24 for generation 0's own start
+— and d, c and u the measured events of one plain task's
 dispatch (14), completion (12) and the part of a completion recorded when it
 lands before the run collects it (5):
 
@@ -2314,9 +2325,15 @@ overlay and its base — and verifies the base against that digest.
   every overlay write and every projection of an event re-reads its base
   (several MiB for a run of thousands of rows) besides the overlay, so the
   write traffic still drops while read traffic can rise above one full read
-  per event. The saving quoted for overlays — snapshot bytes written for a
+  per event. At the 4,000-task ceiling a saved state averages about 2,368 B
+  per task, so a base is about 9.5 MB; the 8-entry cap therefore binds before
+  the 128 MiB one, and at most eight large runs' bases stay cached per engine
+  replica. The saving quoted for overlays — snapshot bytes written for a
   1,000-task run falling about tenfold — is for a cache that holds the run's
   base; plan engine memory for the decoded bases (a few times their bytes).
+  That figure comes from the overlay bytes test at 1,000 tasks, which runs in
+  the nightly and pre-release proofs, not in every merge proof
+  (docs/PROOFS.md).
 - **The fleet check.** Overlays are written only by runs whose submit found
   every `ork` process polling `ork-engine-events` — every one, whatever its
   build, because that channel is unversioned and any process may project any
@@ -2482,6 +2499,21 @@ canceled at a dispatch point. A history recorded before the check replays its
 `DefaultVersion` branch, which dispatched the task. The fixture
 `run-cancel-before-dispatch-v1.json` guards it, with its command, payload and
 negative tests.
+
+**A refused route is a versioned change.** A task whose pool the run's plan
+cannot route (`INVALID_POOL`, `RESERVED_QUEUE`) is now recorded `FAILED`, with
+that code as its own reason and a `TASK_FAILED` event, so the stream and the
+snapshot agree with the run's failure. It records the `refused-route-task-failed`
+version, asked lazily where the first refusal happens: a run that never refuses
+a route records no marker. A history recorded before the gate replays its
+`DefaultVersion` branch, which returned the error alone and left the row as the
+old failure path recorded it; version 1 is the new path. The fixtures
+`run-refused-route-{plain,pinned,handler}-v1.json` (a plain dispatch, a pin's
+opening, and a definition with an `any_failed` handler) and
+`run-refused-route-legacy-{plain,pinned,handler}-v1.json` (the same three,
+recorded with the gate off) guard it with command, behaviour and negative
+tests (`internal/engine/testdata/history/README.md`); a missing fixture fails
+those tests, it never skips them.
 
 If any of them fails, current code no longer produces what the recorded build
 did. Either restore it (`workflow.GetVersion` for a deliberate command-stream

@@ -23,3 +23,7 @@ func SetTriggerUpdateHookForTest(s *S3TriggerStore, hook func()) { s.beforeCondi
 
 // SetWebhookUpdateHookForTest is SetTriggerUpdateHookForTest for webhooks.
 func SetWebhookUpdateHookForTest(s *S3WebhookStore, hook func()) { s.beforeConditionalPut = hook }
+
+// ArchiveRefWriteConcurrency is archiveRefWriteConcurrency, for the external
+// test that observes PutRun reach exactly that many marker writes at once.
+const ArchiveRefWriteConcurrency = archiveRefWriteConcurrency

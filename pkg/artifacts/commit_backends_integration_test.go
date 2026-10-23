@@ -17,7 +17,7 @@ import (
 
 func TestS3CommitStoreConditionalTwoWriterProbe(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3CommitStore(ctx, cfg)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestS3CommitStoreConditionalTwoWriterProbe(t *testing.T) {
 
 func TestS3CommitStoreExactlyOneWriterAndStoredBytesWin(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	store, err := artifacts.NewS3CommitStore(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)

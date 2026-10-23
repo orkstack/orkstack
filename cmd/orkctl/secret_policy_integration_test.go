@@ -64,7 +64,7 @@ func newSecretStack(ctx context.Context, t *testing.T, label string) *secretStac
 	requireTemporal(t, address)
 	cfg := artifacts.ConfigFromEnv()
 	cfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, cfg)
+	requireObjectStoreForIdempotency(t, cfg)
 
 	partition := fmt.Sprintf("ork-secrets-%s-%d-%d", label, os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	t.Logf("partition %s", partition)

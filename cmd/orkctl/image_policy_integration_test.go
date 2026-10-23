@@ -65,7 +65,7 @@ func newPolicyStack(ctx context.Context, t *testing.T, label string) *policyStac
 	requireTemporal(t, address)
 	cfg := artifacts.ConfigFromEnv()
 	cfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, cfg)
+	requireObjectStoreForIdempotency(t, cfg)
 	shared := localcatalog.Registry()
 
 	s := &policyStack{

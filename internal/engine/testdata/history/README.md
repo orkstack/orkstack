@@ -325,7 +325,7 @@ task.
   It never skips: without `ORK_RECORD_GOLDEN_HISTORY` it records into the
   proof directory and replays what it recorded.
 
-Like Stage 2's fixtures it was recorded with the writer's plan fields, so the
+Like the continued-run fixtures it was recorded with the writer's plan fields, so the
 premise and negative tests about the histories that predate the writer pass
 it by (`recordedWithTheWriter`).
 
@@ -413,3 +413,24 @@ leaf (`{seq}.pb`, `{seq}.ovl`).
 It was recorded with the writer's plan fields, so the premise and negative
 tests about the histories that predate the writer pass it by
 (`recordedWithTheWriter`).
+
+### `run-refused-route-{plain,pinned,handler}-v1.json` and `run-refused-route-legacy-*-v1.json` — a task whose pool the plan cannot route
+
+A hand-wired plan with no route for a task's pool (`INVALID_POOL`), reached
+three ways: a plain dispatch, a pin's opening, and a definition with an
+`any_failed` handler. The gated fixtures are recorded by today's code: they
+carry the lazy `refused-route-task-failed` marker (`refuseRoute`,
+`workflow.go`) and the `TASK_FAILED` event the refused task now emits. The
+`legacy` fixtures are recorded with the gate switched off
+(`DisableRefusedRouteGateForTest`), which is the command sequence of every
+build before it, and must keep replaying through the `DefaultVersion` branch.
+
+- command: `TestRunWorkflow_ReplaysCommittedRefusedRouteHistories`
+- negative: `TestRefusedRouteHistories_CatchTheGateRemoved` (plain and pinned;
+  with a handler the old path already emitted the same commands, only the
+  marker differs)
+- behaviour: `TestRunWorkflow_ARefusedRouteIsRecordedOnceInTheRowAndTheStream`
+- recorder: `TestIntegration_RecordRefusedRouteHistories`
+  (`refused_route_integration_test.go`). It never skips. The fixtures are
+  committed, so the replay tests above fail, never skip, when one is missing;
+  only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes them).

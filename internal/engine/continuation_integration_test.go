@@ -60,7 +60,7 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 ) *canStack {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	var c client.Client
 	if versioned {
 		c = dialVersioningCluster(t, ctx, versioningNamespace())
@@ -470,7 +470,7 @@ func encodeHistory(t *testing.T, h *historypb.History) []byte {
 	return append(encoded, '\n')
 }
 
-// TestIntegration_RecordContinuedRunHistories records Stage 2's three replay
+// TestIntegration_RecordContinuedRunHistories records the three replay
 // fixtures from REAL runs on a real cluster, by a versioned worker, with the
 // run's continuation objects in MinIO: a run that crosses its budget while
 // its fan-out refills (no natural idle point), holds at its hold line,

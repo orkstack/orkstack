@@ -749,13 +749,11 @@ func TestCanonicalOrkflow_JoinEmittedOnlyWhenSet(t *testing.T) {
 	}
 }
 
-// TestDerivedVersion_AddingTheHeaderKeepsTheVersion: the header written as a
-// document's first YAML lines is left out of the derived version, so a
-// document applied before the header was required names the same version
-// with the two lines added — after its comments, above them on line 1, and
-// behind a byte order mark. The expectation is the base formula, computed
-// inline.
-func TestDerivedVersion_AddingTheHeaderKeepsTheVersion(t *testing.T) {
+// TestDerivedVersion_TheHeaderIsPartOfTheVersion: the header is part of the
+// source, so moving or reformatting it changes the derived version like any
+// other edit. The expectation is the base formula, computed inline, over the
+// source as written.
+func TestDerivedVersion_TheHeaderIsPartOfTheVersion(t *testing.T) {
 	wf := goldenOrkflow(t)
 	images, err := canonicalImages(wf)
 	if err != nil {
@@ -768,28 +766,22 @@ func TestDerivedVersion_AddingTheHeaderKeepsTheVersion(t *testing.T) {
 		h.Write(images)
 		return hex.EncodeToString(h.Sum(nil))
 	}
-	const legacy = "# golden\n# a pre-header document\nname: golden\ntasks: []\n"
-	const bom = "\xEF\xBB\xBF"
-	added, ok := AddHeader(legacy)
-	if !ok {
-		t.Fatal("AddHeader refused the legacy document")
-	}
-	bomAdded, ok := AddHeader(bom + legacy)
-	if !ok {
-		t.Fatal("AddHeader refused the byte-order-marked legacy document")
-	}
-	for _, tc := range []struct{ what, source, legacy string }{
-		{"AddHeader", added, legacy},
-		{"the header on line 1", OrkflowHeader + legacy, legacy},
-		{"a byte order mark, AddHeader", bomAdded, bom + legacy},
-		{"a byte order mark, the header on line 1", bom + OrkflowHeader + legacy, bom + legacy},
-	} {
-		got, err := DerivedVersion([]byte(tc.source), wf)
+	const body = "name: golden\ntasks: []\n"
+	with := OrkflowHeader + body
+	moved := "# a leading comment\n" + OrkflowHeader + body
+	bare := body
+	got := map[string]string{}
+	for name, source := range map[string]string{"with the header": with, "the header after a comment": moved, "without the header": bare} {
+		version, err := DerivedVersion([]byte(source), wf)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := base(tc.legacy); got != want {
-			t.Errorf("%s: derived %q, want the legacy document's %q", tc.what, got, want)
+		if want := base(source); version != want {
+			t.Errorf("%s: derived %q, want the raw source's %q", name, version, want)
 		}
+		got[name] = version
+	}
+	if got["with the header"] == got["the header after a comment"] || got["with the header"] == got["without the header"] {
+		t.Fatalf("the header's position did not change the version: %v", got)
 	}
 }

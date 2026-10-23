@@ -404,7 +404,7 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 	// zero-item fan-out dispatches nothing and needs no route.
 	if count > 0 {
 		if _, err := s.queueForTask(t); err != nil {
-			code, message := "INVALID_POOL", err.Error()
+			code, message := ReasonInvalidPool, err.Error()
 			var applicationErr *temporal.ApplicationError
 			if errors.As(err, &applicationErr) {
 				code, message = applicationErr.Type(), applicationErr.Message()

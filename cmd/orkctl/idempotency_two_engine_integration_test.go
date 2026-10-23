@@ -85,7 +85,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 
 	artifactCfg := artifacts.ConfigFromEnv()
 	artifactCfg.Backend = artifacts.BackendS3
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
@@ -554,33 +554,32 @@ func idempotencyTaskQueue() string {
 	return fmt.Sprintf("ork-idem-%d", os.Getpid())
 }
 
-// requireMinIOForIdempotency skips when the dev object store is absent, so the
+// requireObjectStoreForIdempotency skips when the dev object store is absent, so the
 // suite reports "skipped", never a false failure, without infrastructure — and
 // fails instead under ORK_REQUIRE_INFRA, where the absence IS the failure
 // (see infraAbsent).
-func requireMinIOForIdempotency(t *testing.T, cfg artifacts.Config) {
+func requireObjectStoreForIdempotency(t *testing.T, cfg artifacts.Config) {
 	t.Helper()
-	base, err := url.Parse(cfg.S3Endpoint)
-	if err != nil {
-		infraAbsent(t, "MinIO endpoint %q is unusable: %v", cfg.S3Endpoint, err)
+	if _, err := url.Parse(cfg.S3Endpoint); err != nil {
+		infraAbsent(t, "object store endpoint %q is unusable: %v", cfg.S3Endpoint, err)
 	}
-	health := base.JoinPath("/minio/health/live").String()
+	health := strings.TrimRight(cfg.S3Endpoint, "/") + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, health, nil)
 	if err != nil {
-		infraAbsent(t, "MinIO health request: %v", err)
+		infraAbsent(t, "object store health request: %v", err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		infraAbsent(t, "MinIO not reachable at %s (%v); run `make infra-up`", health, err)
+		infraAbsent(t, "object store (SeaweedFS) not reachable at %s (%v); run `make infra-up`", health, err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		infraAbsent(t, "MinIO health %s returned %d; run `make infra-up`", health, resp.StatusCode)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusForbidden {
+		infraAbsent(t, "object store health %s returned %d; run `make infra-up`", health, resp.StatusCode)
 	}
-	t.Logf("MinIO health %s -> %d", health, resp.StatusCode)
+	t.Logf("object store health %s -> %d", health, resp.StatusCode)
 }
 
 // writeIdempotencyTranscript records the transcript under ORK_PROOF_DIR when

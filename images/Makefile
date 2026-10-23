@@ -13,6 +13,11 @@
 #   make push      push to REGISTRY, which is what produces a real index digest.
 #   make layout    export the OCI image layouts the embedded fallback reads.
 #   make release   every step, in that order — the full §4.6 delivery.
+#   make oci       build every image ONCE as an OCI image layout under OUT, with
+#                  no registry and no daemon tag: what a CI proof's build part
+#                  ships, and `proofrun push-layout` copies byte for byte.
+#   make contract  run the contract fixtures on REGISTRY/…:TAG as they are, with
+#                  no build (ACTIVITY= runs one); `make test` builds, then runs it.
 #
 # The local registry is `registry:3` from deploy/docker-compose.yml on port
 # 5001; `push`, `layout` and `release` need it running.
@@ -84,12 +89,39 @@ release: layout ## The full §4.6 delivery: build, push, and export layouts
 print-activities: ## Print the first-party activity names, for scripts
 	@echo $(ACTIVITIES)
 
-.PHONY: test
-test: image-shell image-json image-git image-template ## Run the contract fixtures
-	bash ../test/fixtures/bash_activity_contract.sh '$(call ref,shell)'
-	@for a in json git template; do \
-	  bash ../test/fixtures/first_party_contract.sh "$$a" "$(REGISTRY)/$(NAMESPACE)/activity-$$a:$(TAG)" || exit $$?; \
+.PHONY: oci
+oci: ## Build every image once as an OCI image layout into OUT/activity-<name>/: no push, no daemon tag
+	$(if $(strip $(OUT)),,$(error make oci needs OUT=<directory> for the layouts (absolute, or relative to images/)))
+	@mkdir -p '$(abspath $(OUT))'
+	@for a in $(ACTIVITIES); do \
+	  echo "building activity-$$a -> $(abspath $(OUT))/activity-$$a"; \
+	  rm -rf "$(abspath $(OUT))/activity-$$a"; \
+	  docker buildx build $(DOCKER_BUILD_FLAGS) --provenance=false --sbom=false \
+	    --output "type=oci,dest=$(abspath $(OUT))/activity-$$a,tar=false" \
+	    "activity-$$a" || exit 1; \
 	done
+
+# The activities the contract fixtures cover: shell is the bash fixture's
+# reference image; json, git and template have a first-party fixture each.
+CONTRACT_ACTIVITIES := shell json git template
+
+.PHONY: contract
+contract: ## Run the contract fixtures on REGISTRY/NAMESPACE/activity-*:TAG with no build; ACTIVITY= runs one
+	$(if $(filter-out $(CONTRACT_ACTIVITIES),$(ACTIVITY)),$(error ACTIVITY must be one of $(CONTRACT_ACTIVITIES), not $(ACTIVITY)))
+	@for a in $(or $(ACTIVITY),$(CONTRACT_ACTIVITIES)); do \
+	  ref="$(REGISTRY)/$(NAMESPACE)/activity-$$a:$(TAG)"; \
+	  docker image inspect "$$ref" >/dev/null 2>&1 || \
+	    { echo "$$ref is not in the docker daemon: build it (make test) or docker pull it; make contract never builds"; exit 1; }; \
+	  if [ "$$a" = shell ]; then \
+	    bash ../test/fixtures/bash_activity_contract.sh "$$ref" || exit $$?; \
+	  else \
+	    bash ../test/fixtures/first_party_contract.sh "$$a" "$$ref" || exit $$?; \
+	  fi; \
+	done
+
+.PHONY: test
+test: image-shell image-json image-git image-template ## Build the fixtures' images, then run the contract fixtures on them
+	$(MAKE) contract
 
 .PHONY: clean
 clean: ## Remove locally built image tags and exported layouts

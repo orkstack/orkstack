@@ -71,7 +71,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// The registry and the orkflow store live in the bucket. That is not a
 	// convenience here: it is what lets a replica answer for a namespace it
 	// never created, so a run without MinIO would be measuring something else.
-	requireMinIOForIdempotency(t, artifactCfg)
+	requireObjectStoreForIdempotency(t, artifactCfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()

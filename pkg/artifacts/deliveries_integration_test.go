@@ -55,7 +55,7 @@ func cleanupDeliveryDays(t *testing.T, client *s3.Client, bucket string, days ..
 
 func TestIntegration_S3DeliveryStorePutIsCreateOnly(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3DeliveryStore(ctx, cfg)
 	if err != nil {
@@ -92,7 +92,7 @@ func TestIntegration_S3DeliveryStorePutIsCreateOnly(t *testing.T) {
 
 func TestIntegration_S3DeliveryStoreGetIsOnePrefixList(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3DeliveryStore(ctx, cfg)
 	if err != nil {
@@ -128,7 +128,7 @@ func TestIntegration_S3DeliveryStoreGetIsOnePrefixList(t *testing.T) {
 
 func TestIntegration_S3DeliveryStoreListsNewestFirstAcrossDaysWithCursor(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3DeliveryStore(ctx, cfg)
 	if err != nil {
@@ -222,7 +222,7 @@ func deliveryKeep(t *testing.T, texts ...string) func(artifacts.DeliveryKeyField
 // body only for a record it returns (BodiesRead counts every GetObject).
 func TestDeliveryStore_FilteredListingReadsOnlyMatchingBodies(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3DeliveryStore(ctx, cfg)
 	if err != nil {

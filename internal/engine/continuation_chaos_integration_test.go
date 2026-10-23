@@ -52,7 +52,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The continuation chaos suite: ContinueAsNew Stage 3's scenarios C1–C31
+// The continuation chaos suite: the continue-as-new scenarios C1–C31
 // (specs/continue-as-new T3), against real Temporal and real MinIO, with the
 // table TC's settings. Each scenario writes its transcript, the figures E3
 // quotes and its runs' workflow log lines under
@@ -254,9 +254,9 @@ func TestIntegration_ContinuationChaosC2_OrkerKilledMidHoldRetriesElsewhere(t *t
 	}
 	hold := s.logs.wait(t, ctx, logQuiesce, runID, 2*time.Minute)
 	s.transcript.step("hold reached at %v events with slow running on %s", hold.Fields["history_events"], idA)
-	if n := runningContainerCountForCommitE2E(t, idA); n != 1 {
-		t.Fatalf("Orker A has %d containers running at the hold, want slow's one", n)
-	}
+	// slow's container runs for 20 s; on a loaded host it may still be
+	// starting when the hold is logged, so wait for it rather than sample.
+	awaitRunningContainersForCommitE2E(t, ctx, idA, 1, 15*time.Second)
 
 	killedAt := time.Now()
 	proxyA.Cut()
@@ -1656,7 +1656,7 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 	// cluster's index lists both runs: a poll in the first moments after the
 	// middle run's submit can find it not yet indexed, which is the index's
 	// lag on a fresh start, not a chain that went invisible (a feature proof
-	// of Stage 7 read count 1 a tenth of a second after the submit).
+	// of the task-ceiling defaults read count 1 a tenth of a second after the submit).
 	indexed := time.Now().Add(30 * time.Second)
 	for {
 		count, err := reader.RunningCount(ctx, ns, 3)

@@ -7,8 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The Playwright ledger is the UI suite's equivalent of the Go ledgers: the
@@ -54,8 +57,10 @@ type pwTest struct {
 }
 
 type pwResult struct {
-	Status   string  `json:"status"`
-	Duration float64 `json:"duration"`
+	Status    string   `json:"status"`
+	Duration  float64  `json:"duration"`
+	StartTime string   `json:"startTime,omitempty"`
+	Error     *pwError `json:"error,omitempty"`
 }
 
 type uiEntry struct {
@@ -64,17 +69,37 @@ type uiEntry struct {
 	Project string  `json:"project"`
 	Outcome string  `json:"outcome"`
 	Seconds float64 `json:"seconds"`
-	Detail  string  `json:"detail,omitempty"`
+	// Start is when the test began, in seconds from the earliest test of the
+	// report; zero for a test the report has no start time for.
+	Start  float64 `json:"start"`
+	Detail string  `json:"detail,omitempty"`
+
+	// abs and endAbs are the test's first start and last end as Unix seconds,
+	// zero when the report carries no start time.
+	abs, endAbs float64
+}
+
+// uiFileEntry is one spec file's measured cost: its tests' seconds, and its
+// wall, which adds the gap before each of its tests (plan §1.3 F15).
+type uiFileEntry struct {
+	File        string  `json:"file"`
+	Shard       int     `json:"shard"`
+	Tests       int     `json:"tests"`
+	Seconds     float64 `json:"seconds"`
+	WallSeconds float64 `json:"wall_seconds"`
 }
 
 type uiLedger struct {
-	Suite             string    `json:"suite"`
-	Tests             []uiEntry `json:"tests"`
-	Problems          []string  `json:"problems"`
-	Listed            int       `json:"listed"`
-	Pass              int       `json:"pass"`
-	GuardRetries      int       `json:"network_change_retries"`
-	GuardRetryCeiling int       `json:"network_change_retry_ceiling"`
+	Suite             string             `json:"suite"`
+	Tests             []uiEntry          `json:"tests"`
+	Problems          []string           `json:"problems"`
+	Listed            int                `json:"listed"`
+	Pass              int                `json:"pass"`
+	GuardRetries      int                `json:"network_change_retries"`
+	GuardRetryCeiling int                `json:"network_change_retry_ceiling"`
+	Files             []uiFileEntry      `json:"files,omitempty"`
+	HostSpeedFailures []hostSpeedFailure `json:"host_speed_failures,omitempty"`
+	KnownGaps         []string           `json:"known_gaps,omitempty"`
 }
 
 // flattenPW walks a report into "file › describe › title [project]" keys.
@@ -96,6 +121,14 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 						ms += res.Duration
 					}
 					e.Seconds = ms / 1000
+					if first, err := time.Parse(time.RFC3339Nano, t.Results[0].StartTime); err == nil {
+						last := t.Results[len(t.Results)-1]
+						e.abs = float64(first.UnixNano()) / 1e9
+						e.endAbs = e.abs + ms/1000
+						if lastStart, err := time.Parse(time.RFC3339Nano, last.StartTime); err == nil {
+							e.endAbs = float64(lastStart.UnixNano())/1e9 + last.Duration/1000
+						}
+					}
 					switch t.Status {
 					case "expected":
 						e.Outcome = outcomePass
@@ -107,9 +140,15 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 					case "flaky":
 						e.Outcome = outcomeFail
 						e.Detail = "flaky: it failed before it passed"
+						if msg := t.Results[0].Error; msg != nil && msg.Message != "" {
+							e.Detail = "flaky: " + strings.ReplaceAll(msg.Message, "\n", "; ")
+						}
 					default:
 						e.Outcome = outcomeFail
 						e.Detail = t.Results[len(t.Results)-1].Status
+						if msg := t.Results[len(t.Results)-1].Error; msg != nil && msg.Message != "" {
+							e.Detail = strings.ReplaceAll(msg.Message, "\n", "; ")
+						}
 					}
 				} else if t.Status == "skipped" {
 					e.Outcome = outcomeSkip
@@ -133,7 +172,7 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 // buildUILedger checks a report against the listing.
 func buildUILedger(list, report pwReport, guardRetries, ceiling int) uiLedger {
 	l := uiLedger{Suite: "ui-e2e", Problems: []string{}, GuardRetries: guardRetries, GuardRetryCeiling: ceiling}
-	listedKeys, _ := flattenPW(list)
+	listedKeys, listed := flattenPW(list)
 	_, got := flattenPW(report)
 	l.Listed = len(listedKeys)
 	for _, e := range report.Errors {
@@ -142,12 +181,10 @@ func buildUILedger(list, report pwReport, guardRetries, ceiling int) uiLedger {
 	for _, k := range listedKeys {
 		e, ok := got[k]
 		if !ok {
-			e = uiEntry{Outcome: outcomeNone}
-			parts := strings.SplitN(k, " › ", 2)
-			e.File = parts[0]
-			if len(parts) > 1 {
-				e.Title = parts[1]
-			}
+			// The listing names the test's file, title and project; the key's
+			// "[project]" suffix is not part of the title.
+			le := listed[k]
+			e = uiEntry{File: le.File, Title: le.Title, Project: le.Project, Outcome: outcomeNone}
 		}
 		switch e.Outcome {
 		case outcomePass:
@@ -161,12 +198,68 @@ func buildUILedger(list, report pwReport, guardRetries, ceiling int) uiLedger {
 		}
 		l.Tests = append(l.Tests, e)
 	}
+	setStarts(l.Tests)
+	l.Files = fileWalls(l.Tests)
 	if guardRetries > ceiling {
 		l.Problems = append(l.Problems, fmt.Sprintf(
 			"network churn above ceiling; evidence taken on a noisy host: the network-change guard repeated %d navigations, the ceiling is %d",
 			guardRetries, ceiling))
 	}
 	return l
+}
+
+// setStarts gives each timed entry its start in seconds from the earliest.
+func setStarts(entries []uiEntry) {
+	var min float64
+	for _, e := range entries {
+		if e.abs > 0 && (min == 0 || e.abs < min) {
+			min = e.abs
+		}
+	}
+	for i := range entries {
+		if entries[i].abs > 0 {
+			entries[i].Start = entries[i].abs - min
+		}
+	}
+}
+
+// fileWalls computes each spec file's wall. Tests are taken in start order,
+// and the gap before a test, its start minus the end of the latest-ending
+// test before it (never negative, none for the first), is the file of the
+// test that follows it. Page start, per-file fixtures and beforeAll happen in
+// those gaps, so a file costs more than the sum of its tests.
+func fileWalls(entries []uiEntry) []uiFileEntry {
+	byFile := map[string]*uiFileEntry{}
+	var timed []uiEntry
+	for _, e := range entries {
+		f := byFile[e.File]
+		if f == nil {
+			f = &uiFileEntry{File: e.File}
+			byFile[e.File] = f
+		}
+		f.Tests++
+		f.Seconds += e.Seconds
+		f.WallSeconds += e.Seconds
+		if e.abs > 0 {
+			timed = append(timed, e)
+		}
+	}
+	sort.SliceStable(timed, func(i, j int) bool { return timed[i].abs < timed[j].abs })
+	var latestEnd float64
+	for i, e := range timed {
+		if i > 0 && e.abs > latestEnd {
+			byFile[e.File].WallSeconds += e.abs - latestEnd
+		}
+		if e.endAbs > latestEnd {
+			latestEnd = e.endAbs
+		}
+	}
+	out := make([]uiFileEntry, 0, len(byFile))
+	for _, f := range byFile {
+		out = append(out, *f)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].File < out[j].File })
+	return out
 }
 
 func firstLine(s string) string {
@@ -218,6 +311,10 @@ func cmdUILedger(args []string) int {
 	logFile := fs.String("log", "", "the run's log, where the guard prints its repeats")
 	config := fs.String("config", "ui/playwright.config.ts", "where NETWORK_CHANGE_RETRY_CEILING is declared")
 	out := fs.String("out", "", "the proof directory")
+	shard := fs.Int("shard", 1, "which shard of the UI plan this run is, recorded in files[].shard")
+	hostSpeed := fs.String("host-speed", "scripts/proof-host-speed.tsv", "declared runner-size budgets")
+	hostSpeedBase := fs.String("host-speed-base", "", "the base's copy of the host-speed table (only rows it carries excuse)")
+	part := fs.String("part", "local", "the part this ledger belongs to: only a CI ui-e2e:K part may excuse a runner-size miss")
 	if err := fs.Parse(args); err != nil || *listFile == "" || *reportFile == "" || *out == "" {
 		fmt.Fprintln(os.Stderr, "proofrun ui-ledger -list FILE -report FILE -log FILE -out DIR")
 		return 2
@@ -244,6 +341,47 @@ func cmdUILedger(args []string) int {
 		}
 	}
 	l := buildUILedger(list, report, retries, ceiling)
+	for i := range l.Files {
+		l.Files[i].Shard = *shard
+	}
+	// A declared runner-size miss of a CI UI shard exits the shard cleanly and
+	// is recorded in this part's ledger; the merger re-derives every one of
+	// them and never takes the shard's word for it. Only a failed timing
+	// assertion of a bound the base also declares is excused here; a skip, a
+	// missing outcome or any other failure stays a shard failure, and the
+	// local part never excuses at all (hostspeed.go).
+	tree, err := readHostSpeed(*hostSpeed)
+	if err != nil {
+		fmt.Println("ui-e2e ledger:", err)
+		return 1
+	}
+	base, err := readHostSpeed(*hostSpeedBase)
+	if err != nil {
+		fmt.Println("ui-e2e ledger: the base's host-speed table excuses nothing:", err)
+		base = emptyHostSpeed()
+	}
+	declared := anchoredHostSpeed(tree, base)
+	cpus := runtime.NumCPU()
+	excused := map[string]hostSpeedFailure{}
+	for _, e := range l.Tests {
+		if f, ok := declared.uiRunnerSizeMiss(*part, cpus, e); ok {
+			excused[f.Message] = f
+		}
+	}
+	var kept []string
+	for _, p := range l.Problems {
+		if f, ok := excused[p]; ok {
+			l.HostSpeedFailures = append(l.HostSpeedFailures, f)
+			l.KnownGaps = append(l.KnownGaps, p)
+			fmt.Printf("ui-e2e known gap: %s on a %d-CPU runner (bound %.0fs, reference %d CPUs)\n", p, cpus, f.Bound, f.ReferenceCPUs)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	l.Problems = kept
+	if l.Problems == nil {
+		l.Problems = []string{}
+	}
 	if err := writeJSON(filepath.Join(*out, "ui-e2e-tests.json"), l); err != nil {
 		fmt.Println(err)
 		return 1

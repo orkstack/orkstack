@@ -26,7 +26,7 @@ import (
 // A chain fixture is a run that continued as new: closed generations, each
 // with its history ending in CONTINUED_AS_NEW and its event segment in the
 // store, and a current generation started from a carry that names them, a
-// checkpoint and a switch snapshot. It is what a Stage 2 writer produces,
+// checkpoint and a switch snapshot. It is what the writer produces,
 // built here so the readers can be proven before any writer exists.
 
 const (

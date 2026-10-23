@@ -68,7 +68,7 @@ type eachE2E struct {
 func startEachE2E(t *testing.T, withDocker bool) *eachE2E {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	if withDocker {
 		requireDockerForCommitE2E(t)
 	}

@@ -56,7 +56,7 @@ func TestShapeMaxTasks_ClosedForm(t *testing.T) {
 	deepBytes := shapeMaxTasksBytes(limit, budget, 15, 256<<10)
 	t.Logf("E7 closed form at the defaults: events flat %d, deep %d; bytes flat (16 KiB dispatches) %d, deep (256 KiB) %d",
 		flatEvents, deepEvents, flatBytes, deepBytes)
-	proof.WriteJSON(t, "stage7", "closed-form.json", map[string]any{
+	proof.WriteJSON(t, "task-ceiling", "closed-form.json", map[string]any{
 		"events": map[string]int64{"flat": flatEvents, "staged": ShapeMaxTasks(limit, budget, 250), "deep": deepEvents, "chain": ShapeMaxTasks(limit, budget, 1)},
 		"bytes":  map[string]int64{"flat_16KiB": flatBytes, "deep_256KiB": deepBytes},
 	})

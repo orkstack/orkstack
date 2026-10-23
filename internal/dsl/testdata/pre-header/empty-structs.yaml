@@ -1,8 +1,0 @@
-# Present, empty with: and inputs: are kept as present.
-name: empty-structs
-version: "0.1.0"
-inputs: {}
-tasks:
-  - id: say
-    uses: busybox:1.36
-    with: {}

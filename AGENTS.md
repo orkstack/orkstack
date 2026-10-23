@@ -390,7 +390,9 @@ shape — a flat stage with long and with short tasks, a staged DAG and deep
 chains of plain tasks with small outputs — completed within the measured
 per-generation history, snapshot, in-flight, workflow-code, read-latency and
 run-page thresholds; it is the largest measured value, is not raised without
-re-running that evidence, and above it a deployment runs unmeasured, warned at
+re-running that evidence — that evidence is the task soak, a deferred test
+(§11), so a change that raises the default quotes a feature proof naming it —
+and above it a deployment runs unmeasured, warned at
 boot. With continuation off a run has one history: the default is then at
 most the declared history event limit divided by 50, and an explicit value
 above that is refused at boot. A planned definition above 256 KiB travels by
@@ -765,7 +767,7 @@ operations may include `copy`, `checksum`, `gzip`, `gunzip`, `tar`, `untar`, and
 ## 10. Developer experience and contract testing
 
 Local development should be excellent. One command starts the whole local
-stack (Temporal, MinIO, a registry, engine, Orker, and UI, health-checked):
+stack (Temporal, SeaweedFS, a registry, engine, Orker, and UI, health-checked):
 
 ```bash
 make up
@@ -790,6 +792,9 @@ dispatcher, renderer and workspace, against a run's recorded bytes or local
 files. It writes nothing to the deployment; a local run is a new logical
 activity with its own idempotency key, and its external side effects are
 real.
+
+`make check` is the contributor's fast path; CI runs every proof
+(docs/PROOFS.md).
 
 ## 11. Reliability, observability, and evidence
 
@@ -866,7 +871,37 @@ includes:
   ceiling complete across generations with their definition passed by
   reference and snapshot overlays on, each generation within the measured
   share of the cluster's history limits and replaying within the deadlock
-  detector's budget, and every run within its in-flight cap.
+  detector's budget, and every run within its in-flight cap. The merge
+  gate proves this with the ceiling lowered below its default, at a size
+  where the definition still passes by reference, overlays are written
+  and the run carries on across at least two generations. The default
+  ceilings themselves, and the overlay saving at a thousand tasks, are
+  proven only by the deferred tests (below).
+
+Scale and soak tests leave the per-merge proof only through
+`scripts/proof-nightly-tests.txt`. Each entry names the test, the merge-gate
+tests that cover the same behaviour at a smaller size or by another route, and
+the date the user approved it. A test is listed only when such tests exist,
+and the list changes only with the user's approval. Every other test, and every
+scenario above, except as the last bullet states, stays in the merge
+gate. A full proof records each listed test as `deferred`, never as passed.
+It defers only the entries its base's list also carries: an entry the change
+itself adds is run, and recorded as it ran. The deferred tests run in the
+nightly tier and in the pre-release gate, and a release tag requires a passing
+pre-release proof of the exact commit it names.
+
+Until the nightly workflow runs on GitHub, `make proof-nightly` runs on
+`main`'s tip after every merge that moves `main`, and passes before the next
+merge starts and before every tag.
+
+A failing nightly or pre-release proof is a failing `main`: fix it, or revert
+the change that broke it, before anything else merges, and never edit a list,
+a threshold or a measurement file to make it pass. A change that raises a
+default the deferred tests measured (`engine.orkflow_max_tasks`, the fan-out
+item maximum, or a continuation, history or in-flight default) quotes a
+feature proof that names those tests with `--tests`. A regression that only a
+deferred test can see is found by the next nightly run rather than at merge.
+That is the accepted cost (2026-10-15).
 
 Every execution must eventually reach either a correct durable state or an
 explicit actionable failure. There is no documented third state such as stuck,
@@ -891,6 +926,9 @@ SDK; activity logs remain stdout/stderr.
 
 Every code change follows this order:
 
+0. `make check` is the fast path: build, vet, lint and the unit suites with
+   `-short`, with no Docker and no Temporal. Run it before every push; CI
+   runs it on every pull request.
 1. For a process-boundary change, edit `proto/` first and run `make proto`.
 2. For a new configuration setting: add it to `internal/config`'s `Schema`
    (its default bound to the code constant, `internal/config/config.go`),
@@ -902,18 +940,32 @@ Every code change follows this order:
    image's interface label, regenerate `docs/schemas/` with
    `go run ./internal/schemas/cmd/genschemas`; `TestSchemas_AreGenerated`
    refuses a stale schema.
-3. Write a behavior test that fails for the right reason.
-4. Implement until it passes.
-5. Run `make lint test`; for Temporal or storage changes, run the affected
+3. Dependencies are pinned: an exact module version, or an image digest,
+   never a floating tag at runtime; a toolchain version is an exact line in
+   `go.mod` or the workflow. Update by pull request that proves the change —
+   `.github/dependabot.yml` opens them, and an update never merges on a green
+   unit run alone. A new dependency follows the same rule as any other change.
+4. Write a behavior test that fails for the right reason.
+5. Implement until it passes.
+6. Run `make lint test`; for Temporal or storage changes, run the affected
    integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
-6. Produce the change's evidence with
+7. Documentation is part of the change. A change that alters behaviour users
+   or operators see — DSL keys and rules, CLI commands and flags, API fields,
+   error reasons, configuration, the activity contract, storage layout, proof
+   and CI behaviour — updates the reference doc that describes it, and
+   deletes the text it makes false, in the same change. A user-visible change
+   adds its entry under CHANGELOG.md's `[Unreleased]` section (Keep a
+   Changelog 1.1.0), a breaking change marked **BREAKING**. Specs and design
+   documents still never go in the repository. A change is not done while a
+   doc describes the old behaviour.
+8. Produce the change's evidence with
    `make proof-feature TESTS='PKG:REGEX …' SPECS='FILE …'`, naming the tests
    and specs that prove it, and quote it as a feature proof (§11.2).
-7. Commit with a Conventional Commit.
-8. Merge through §11.3. The full proof of the merged tree is what makes the
-   change done.
+9. Commit with a Conventional Commit.
+10. Merge through §11.3. The full proof of the merged tree is what makes the
+    change done.
 
 Unit tests are pure and table-driven. Temporal workflow tests use
 `WorkflowTestSuite` / `TestWorkflowEnvironment` with mocked activities.
@@ -921,7 +973,7 @@ Integration tests use `-tags=integration`, `make infra-up`, and `infraAbsent`; a
 missing prerequisite skips, and becomes a failure under `ORK_REQUIRE_INFRA=1`
 (`make test-integration` sets it). Browser end-to-end tests live in `ui/e2e`
 (Playwright, `cd ui && bun run test`) and drive the built UI against a real
-engine, Orker, Temporal, and MinIO; the activity fixtures live in
+engine, Orker, Temporal, and the dev object store; the activity fixtures live in
 `test/fixtures` and `test/tools` holds helpers those suites build. Do not use
 sleeps for synchronization; use deadlines or test helpers. A skip is never a
 pass: a harness must probe its prerequisites itself and fail, not skip, once
@@ -959,7 +1011,7 @@ are pushed once per proof under `ORK_TEST_IMAGE_TAG`; tests and specs only
 resolve that tag. A test never asserts on host-wide state: it counts
 containers by `label=ork.orker=` or `label=ork.run=`, never with an unfiltered
 `docker ps`. What cannot be owned is shared, and every test must tolerate it:
-the Docker daemon, CPU and memory, the MinIO and registry servers (isolated by
+the Docker daemon, CPU and memory, the SeaweedFS and registry servers (isolated by
 bucket and tag), and the host's network interfaces.
 
 Playwright specs are not yet isolated that far. A proof runs spec files one at
@@ -980,52 +1032,80 @@ window also observes, in that window, that the system was making progress, so
 a slow host cannot make it pass.
 
 Run integration suites through `scripts/integration.sh`, which
-`make test-integration` and both proof tiers use. It compiles each package's
-test binary once, runs its tests as separate processes in the package's
-directory, `PROOF_JOBS` at a time (`PROOF_JOBS=1` runs them one after
-another), and writes a ledger that is checked as §11.2 describes. By hand,
-`go test -tags=integration -p 1 ./internal/engine -run '^TestX$'` still works
-against `make infra-up`; set a unique `ORK_TEMPORAL_NAMESPACE` whenever
-anything else may be running, and the same namespace and queues only for a
-deliberate two-replica test. Set `ORK_ORKER_QUEUE` consistently on both
-binaries when a private task channel is needed.
+`make test-integration` and the proofs use; docs/PROOFS.md §2 gives its
+mechanics and the by-hand `go test -tags=integration` recipe.
 
-Stop only what you started, by its PID. Never kill by name or pattern:
-`/bin/ork$` and `/bin/orker$` match every worktree's dev stack and every
-running proof on the host. A proof runs in its own session and process group,
-with its own binaries under `proof/<name>/bin/` and its own Temporal container;
-`scripts/proof-stop.sh proof/<name>` (`make proof-stop PROOF=proof/<name>`)
-stops exactly those. `make down` stops this worktree's dev stack: the process
-groups `make up` recorded, and any process whose executable is this
-worktree's `bin/ork` or `bin/orker`, identified by `/proc/<pid>/exe`, never by
-its name. What failed
-tests keep for their post-mortem (buckets, work roots) is listed, and removed
-on request, by `scripts/proof-clean.sh`, which removes one only once the
-process its name records is gone.
+Stop only what you started, by its PID. Never stop a process by its name or a
+pattern: `/bin/ork$` and `/bin/orker$` match every worktree's dev stack and
+every running proof on the host. `make down` stops this worktree's dev stack
+(the process groups `make up` recorded, and any process whose executable is
+this worktree's `bin/ork` or `bin/orker`, identified by `/proc/<pid>/exe`,
+never by its name). `scripts/proof-stop.sh proof/<name>` stops a proof you
+started, and `scripts/proof-clean.sh` lists and removes what a failed proof
+kept; docs/PROOFS.md §10 says how.
 
 ### 11.2 Evidence
 
 No proof, no done. A change is finished when its behavior has been observed,
 not when its code reads right. A change is **done** when it is on `main` and a
-full proof passed on the exact tree `main` then points at (§11.3).
-`scripts/proof.sh` produces evidence in one of two tiers. Every proof names
-its tier in its directory name, the first line of its README, its result line
-and `proof.json`. `proof.json` also records the commit; the tree hash of the
-working tree, staged and untracked files included; whether that tree was
-clean, and identical, when the proof started and when it ended; and whether
-the proof is merge-eligible, with each reason it is not.
+full proof passed on the exact tree `main` then points at (§11.3) — the
+`proof` check of the pull request (or merge group) that landed it, or a local
+`make proof` — and when every reference doc that describes what changed says
+the new thing, with a CHANGELOG.md `[Unreleased]` entry for a user-visible
+change. Done is judged by the merge gate, and a deferred test's regression is
+a failing `main`, found by the nightly or the pre-release proof. A feature
+proof means "ready for the merge proof", never "done".
+
+**The four tiers.** A **full proof** is the merge gate. A **feature proof**
+is a change's evidence on its branch and never merge evidence. The **nightly
+tier** runs only the tests `scripts/proof-nightly-tests.txt` lists, and is
+never merge evidence. The pre-release gate is the full tier with nothing
+deferred, and it runs the observability gate unconditionally. A release tag
+requires a passing pre-release proof of the exact commit. docs/PROOFS.md is
+the reference for what each tier runs.
+
+**Rules for every proof.**
+
+- Never rerun a failing test, and never partially rerun a shard that produced
+  a result. Only a part whose runner GitHub annotated as lost may run again,
+  and `proof.json` records it; any other second attempt makes the proof
+  ineligible.
+- Never edit the costs file, the slow list, the nightly list, the quarantine
+  list or the allowed skips to get a proof through. The nightly and
+  quarantine lists change only with the user's approval.
+- A new top-level path needs a `scripts/proof-scope.tsv` row, and a path the
+  table does not map refuses the feature tier.
+- Read `proof.json`, never the README, for a verdict.
+- A quarantined test still runs; its failure is recorded as
+  `quarantined-fail`, never as a pass, and its entry carries an owner, a
+  reason and a review date. An entry excuses nothing until `main` carries it,
+  and nothing once its review date has passed.
+- While the interim rule holds, `make merge-check` refuses a merge until a
+  nightly proof of `main`'s tip has passed (`NIGHTLY=`).
+- A release tag is created only through `make release-tag` or `release.yml`,
+  and both refuse without a passing pre-release proof of the exact commit.
+- A skip is never a pass. The ledgers list every test the binaries report; a
+  listed test without an outcome, an unlisted test, and an allowance naming
+  no test all fail the gate.
+- Evidence is never committed; the commit or pull request quotes it, and for
+  a queue merge the `proof` job's summary and artifact are the quote. A
+  browser-only behaviour is proven by a Playwright spec and its screenshots.
+- A proof directory is never reused, and a proof creates it only after its
+  arguments and prerequisites are checked. Exit status: `0` pass, `1` a gate
+  failed, `2` an invalid invocation, `77` a missing prerequisite.
 
 **Feature proof** (`make proof-feature`;
 `scripts/proof.sh --tier feature [--base REF] [--tests PKG:REGEX]... [--specs FILE]...`)
-is the evidence for a change on its branch. It supports the claim "ready for
-the merge proof", never "done". Its directory is `proof/<name>-feature/`. Its
-change set is the diff from the merge base with `--base` (default `main`) to
-the working tree, untracked files included. Every changed path must match a
-rule in `scripts/proof-scope.tsv`. A path that no rule matches, or whose rule
-is `full` (`go.mod`, `go.sum`, the Makefiles, `buf.yaml`, `buf.gen.yaml`,
-`.github/`, `deploy/` other than the generated defaults, the example
-configuration and the observability profile, `scripts/` other than the
-observability gate and the two measurement files, `internal/testsupport/`, and
+is the evidence for a change on its branch. Its directory is
+`proof/<name>-feature/`. Its change set is the diff from the merge base with
+`--base` (default `main`) to the working tree, untracked files included.
+Every changed path must match a rule in `scripts/proof-scope.tsv`. A path that
+no rule matches, or whose rule is `full` (`go.mod`, `go.sum`, the Makefiles,
+`buf.yaml`, `buf.gen.yaml`, `.github/`, `deploy/` other than the generated
+defaults, the example configuration and the observability profile, `scripts/`
+other than the observability gate and the three measurement files
+(`scripts/proof-slow-tests.txt`, `scripts/proof-test-costs.tsv` and
+`scripts/proof-ui-costs.tsv`), `internal/testsupport/`, and
 `test/tools/proofrun/`), refuses the feature tier. A feature proof always runs
 lint, build, the unit suites and `go vet -tags=integration`, and it runs the UI
 type-check and unit suites when `ui/` or `proto/` changed or a spec runs. It
@@ -1066,92 +1146,92 @@ exercises changed, it says that no spec ran for them. Its result line reads
 `Result: **FEATURE PASS — not merge evidence**`.
 
 **Full proof** (`make proof`; `make proof-ui` is the same) is the merge gate,
-and it runs everything: lint; build; unit; `go vet -tags=integration`; the
-first-party activity images, built and pushed from this tree under a tag of
-the proof's own (`ORK_TEST_IMAGE_TAG`); every test of every package whose
-integration build differs from its unit build, against real Temporal and
-MinIO with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run on those
-images; the UI type-check and unit suites; every Playwright spec; and the
-observability gate, whenever the tree differs from `main` in a telemetry
-path. That diff-conditioned observability gate is the only diff-conditioned
-part of the full proof, and its base is not a choice: the full tier refuses
-`--base`, a full proof whose recorded base is not `main` is not
-merge-eligible, and `merge-check PROOF=` requires that base to be `main`'s
-current tip. Concurrency is how the full proof is fast, never a reason to
-run less: integration tests run as separate processes, `PROOF_JOBS` at a
-time (default 4), beside the fixture and the UI type-check and unit suites,
-and Playwright spec files run on `PROOF_UI_WORKERS` workers (default and
-today's only safe value: 1). The unit and integration ledgers, and the
+and it runs everything except the tests `scripts/proof-nightly-tests.txt`
+lists, which its integration ledger records as `deferred` with their list
+entry: lint; build; unit; `go vet -tags=integration`; the first-party activity
+images, built and pushed from this tree under a tag of the proof's own
+(`ORK_TEST_IMAGE_TAG`); every test of every package whose integration build
+differs from its unit build, except the deferred ones, against real Temporal
+and SeaweedFS with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run
+on those images; the UI type-check and unit suites; every Playwright spec;
+and the observability gate, whenever the tree differs from `main` in a
+telemetry path. That diff-conditioned observability gate is the only
+diff-conditioned part of the full proof, and its base is not a choice: the
+full tier refuses `--base`, a full proof whose recorded base is not `main` is
+not merge-eligible, and `merge-check PROOF=` requires that base to be
+`main`'s current tip. Concurrency is how the full proof is fast, never a
+reason to run less: the fast gates (lint, build, unit, vet and the UI
+type-check and unit suites) run first and alone, and a failure there or in any
+later gate stops a local proof (`PROOF_FAIL_FAST`, docs/PROOFS.md §2.2), which
+still writes its failing verdict; integration tests run as separate processes,
+`PROOF_JOBS` at a time (default 4), beside the activity fixture, and
+Playwright spec files run on `PROOF_UI_WORKERS` workers (default and today's
+only safe value: 1). The unit and integration ledgers, and the
 Playwright ledger, list every test that `go test -list` and
 `playwright test --list` report, with the job that ran it, its outcome and its
-duration. A listed test without an outcome fails the gate.
-A skip also fails it, unless `scripts/proof-allowed-skips.txt` names the test
-and the reason (an opt-in recorder, a helper subprocess); an allowed-skip
-entry that names no listed test fails it too. A test whose binary crashed
-while it ran is recorded as failed and never re-run; the tests behind it run
-in a fresh process. A full proof is merge-eligible only if every gate ran and
-passed, the ledgers are complete, the tree was clean and unchanged from start
-to end, the proof ran its own Temporal, the activity image tag was its own,
-and the network-change guard stayed within its ceiling. `PROOF_GATES`,
-`PROOF_TEMPORAL=shared` and an externally set `ORK_TEST_IMAGE_TAG` each make
-it ineligible. `PROOF_JOBS` and `PROOF_UI_WORKERS` do not: whatever the
-concurrency, the ledgers show that every listed test ran and passed, and more
-concurrency can only add load, which fails a test explicitly rather than
-passing one falsely, because each negative window carries its positive
-control. The full tier's result lines stay
-`Result: **PASS**` and `Result: **FAIL**`; scripts read `proof.json`.
-
-Both tiers exit 0 on pass, 1 when a gate failed, 2 on an invalid invocation
-(an unknown base, an existing proof directory, missing evidence, a pattern
-that matches nothing, a path the scope table refuses), and 77 when a
-prerequisite is absent. Arguments and prerequisites are checked before any
-output file is opened, so a refusal never leaves a file that reads like
-evidence. A proof creates its own directory and refuses one that already
-exists, so yesterday's output can never be mistaken for today's; a proof that
-was stopped before its verdict leaves no README and no `proof.json`. Each
-proof runs its own Temporal: the image and arguments of the `temporal` service
-in `deploy/docker-compose.yml`, on a free port, labelled with the proof and
-stopped when the proof exits. A later proof stops any such container whose
-owning proof process is gone. Each proof uses the MinIO and registry of
-`make infra-up`, isolated by image tag and, for the Go suites, by bucket, and
-runs in its own process group with its own binaries. The README names the
-commit, the tree, the base and merge base, the activity image digests, and
-each gate's outcome. Screenshots and transcripts land beside the logs, and
-integration tests that record a transcript or measurement write it under
-`ORK_PROOF_DIR`, which the script sets. The UI e2e gate reports how many
-navigations the network-change guard repeated; above the ceiling in
-`ui/playwright.config.ts` (3 while the browser shares the host's network
-namespace) the gate fails, because that evidence was taken on a host too noisy
-to trust.
+duration. A listed test without an outcome fails the gate. In the full tier,
+`deferred` is a recorded outcome, not a missing one. It is legal only for a
+test the nightly list names, and in every other tier it fails the gate. A skip
+also fails it, unless `scripts/proof-allowed-skips.txt` names the test and the
+reason (an opt-in recorder, a helper subprocess); an allowed-skip entry that
+names no listed test fails it too. A test whose binary crashed while it ran is
+recorded as failed and never re-run; the tests behind it run in a fresh
+process. A full proof is merge-eligible only if every gate ran and passed, the
+ledgers are complete (their `deferred` entries match exactly the entries that
+both the base's list and the tree's list carry), the tree was clean and
+unchanged from start to end, the proof ran its own Temporal, the activity
+image tag was its own, and the network-change guard stayed within its ceiling.
+A local proof is one plan and one part; a CI proof is one plan, every part of
+the same tree, one build's image digests in every part, and each stack part
+its own Temporal. `PROOF_GATES`, `PROOF_TEMPORAL=shared` and an externally set
+`ORK_TEST_IMAGE_TAG` each make it ineligible. `PROOF_JOBS` and
+`PROOF_UI_WORKERS` do not: whatever the concurrency, the ledgers show that
+every listed test ran and passed, and more concurrency can only add load,
+which fails a test explicitly rather than passing one falsely, because each
+negative window carries its positive control. The full tier's result lines
+stay `Result: **PASS**` and `Result: **FAIL**`; scripts read `proof.json`.
 
 `proof/` is gitignored and evidence is never committed. The repository keeps
 the reproduction (the test, spec, or script), and the commit message or pull
-request quotes the evidence: the proof directory name and tier, the tree hash,
-the gates that ran, and the lines that support each claim. A change to
-behavior that only a browser can show (rendering, live streams, an operator
-flow) is proven with a Playwright spec and its screenshots, never with a
-description; a feature proof names that spec with `--specs`.
+request quotes the evidence: the proof directory name and tier, the tree
+hash, the gates that ran, and the lines that support each claim. The failed
+proof's logs, ledgers, artifacts and recovery procedures are docs/PROOFS.md's
+§§ 7–10.
 
 ### 11.3 Merging
 
 `main` moves only by fast-forward, and only to a commit whose tree a full
-proof passed on. In a worktree, branch from `main`'s tip and merge the feature
-branch, or several branches to share one proof, with `--no-ff`. When both
-sides changed a file, resolve the union of behaviors against the merge base;
-do not take one side wholesale. Run `make merge-check` (build, lint, unit and
+proof passed on. There are two paths to that.
+
+**(a) GitHub, once the gate is enforced.** The required `proof` check is the
+full proof. By default it runs on the pull request, whose branch must contain
+`main`'s tip, under the strict policy, and GitHub lands exactly the tree it
+tested; with the optional merge queue it runs on the merge group, and the
+queue lands that tree. A code-owner ruleset, which the enablement applies
+unless it is told not to (`CODEOWNER_REVIEW=0`), requires the maintainer's
+review for a change to the gate's own files.
+
+**(b) Locally.** Branch from `main`'s tip and merge the feature branch, or
+several branches to share one proof, with `--no-ff`. When both sides changed a
+file, resolve the union of behaviors against the merge base; do not take one
+side wholesale. Run `make merge-check` (build, lint, unit and
 `go vet -tags=integration`), then `make proof` on that clean candidate. When
 the proof passes, amend the merge commit's message to quote it; the amend
 leaves the tree, which the proof is bound to, unchanged. Then run
 `make merge-check PROOF=proof/<name>` and fast-forward `main` with
-`git merge --ff-only`. `merge-check PROOF=` refuses unless the proof is a full,
-passing, merge-eligible proof of exactly the candidate's tree, the worktree is
-clean, and both the candidate's first parent and the base the proof diffed
-against are `main`'s current tip. If `main`
-moved during the proof, rebuild the candidate on the new tip and prove it
-again. Run one full proof at a time on a host until two concurrent full
-proofs have both passed there. Pushing is a separate step, taken only when the
-person asks.
+`git merge --ff-only`. `merge-check PROOF=` refuses unless the proof is a
+full, passing, merge-eligible proof of exactly the candidate's tree, the
+worktree is clean, and both the candidate's first parent and the base the
+proof diffed against are `main`'s current tip. If `main` moved during the
+proof, rebuild the candidate on the new tip and prove it again. Run one full
+proof at a time on a host until two concurrent full proofs have both passed
+there.
 
+Until the merge gate is enforced (docs/PROOFS.md §6), path (b) is the merge
+path, and a CI run of the candidate is additional evidence, never a substitute
+for (b)'s `merge-check PROOF=`. Enabling it is an outward-facing change,
+confirmed by the person first. Pushing is a separate step, taken only when the
+person asks.
 ## 12. Repository layout and engineering conventions
 
 ```text
@@ -1174,6 +1254,7 @@ internal/schemas/      JSON Schemas of the authored documents, generated from th
 internal/testsupport/  Test-only helpers shared by suites
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
+internal/docscheck/    Documentation drift checks (test-only)
 images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing
@@ -1183,9 +1264,11 @@ pkg/schedules/         Schedule id shape (the schedule itself lives in Temporal)
 ui/                    SvelteKit, Vite, Tailwind, and generated TS clients
 deploy/                Temporal, object-storage, and registry development stack
 examples/              Example Orkflows, automation documents, and custom images
-docs/                  Reference material (indexed in README.md)
+docs/                  Reference material (indexed in README.md; `CLI.md` is generated)
 test/                  Activity contract fixtures and test-only helper tools
-scripts/               Development helpers (`make up`, `make reset`)
+scripts/               Development helpers (`make up`, `make reset`) and the proof harness
+                       (`proof.sh`, the gate lists)
+.github/               CI: fast check, feature tier, sharded merge gate, nightly, release
 ```
 
 Use Go 1.27, one module `github.com/orkstack/orkstack`, `gofmt`, `go vet`, and
@@ -1219,9 +1302,10 @@ Agent ownership is split as follows:
 - CLI agents: `cmd/orkctl`;
 - UI agents: `ui/`;
 - artifact agents: `pkg/artifacts`;
-- coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`,
-  `internal/telemetry`, `internal/config`, `internal/listfilter` and
-  `internal/enumname` (engine and CLI agents share both), and this file.
+- coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`, `.github/`,
+  the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`,
+  `internal/listfilter` and `internal/enumname` (engine and CLI agents share
+  both), and this file.
 
 Use Conventional Commits such as `feat(engine): ...`, `fix(orker): ...`,
 `test(dsl): ...`, `docs: ...`, and `chore(proto): ...`. Keep commits scoped and

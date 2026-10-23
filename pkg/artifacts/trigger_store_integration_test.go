@@ -18,7 +18,7 @@ import (
 // reading the same bucket resolves a trigger it never created.
 func TestS3TriggerStore_RoundTripsARecordThatNeverHoldsThePlaintextSecret(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 
 	store, err := artifacts.NewS3TriggerStore(ctx, cfg)
@@ -101,7 +101,7 @@ func TestS3TriggerStore_RoundTripsARecordThatNeverHoldsThePlaintextSecret(t *tes
 // the re-read finds nothing and the update reports false.
 func TestIntegration_S3TriggerStoreUpdateNeverResurrects(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3TriggerStore(ctx, cfg)
 	if err != nil {
@@ -156,7 +156,7 @@ func TestIntegration_S3TriggerStoreUpdateNeverResurrects(t *testing.T) {
 // one name in one namespace is ErrNameTaken; another namespace may hold it.
 func TestIntegration_S3TriggerStoreNameIsUniqueInNamespace(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3TriggerStore(ctx, cfg)
 	if err != nil {

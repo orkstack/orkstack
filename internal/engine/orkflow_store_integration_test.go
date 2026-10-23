@@ -29,7 +29,7 @@ func s3Config() artifacts.Config {
 	return cfg
 }
 
-// requireMinIO, shared with the other integration suites in this package,
+// requireObjectStore, shared with the other integration suites in this package,
 // lives in archive_integration_test.go.
 
 // newDurableOrkflowStore builds the store the ork binary builds: orkflow
@@ -37,7 +37,7 @@ func s3Config() artifacts.Config {
 func newDurableOrkflowStore(t *testing.T) *artifacts.S3OrkflowStore {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	store, err := artifacts.NewS3OrkflowStore(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("open orkflow store: %v", err)

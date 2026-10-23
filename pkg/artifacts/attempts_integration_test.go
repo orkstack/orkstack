@@ -196,7 +196,7 @@ func TestIntegration_S3AttemptStore_PhasesRoundTrip(t *testing.T) {
 func newS3AttemptStore(t *testing.T) (*artifacts.S3AttemptStore, artifacts.Config) {
 	t.Helper()
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 
 	store, err := artifacts.NewS3AttemptStore(context.Background(), cfg)
 	if err != nil {

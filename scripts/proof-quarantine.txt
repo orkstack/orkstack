@@ -1,0 +1,17 @@
+# Tests whose failures are known, owned and dated (AGENTS.md §11.2,
+# docs/PROOFS.md §10). The list changes only with the user's approval, and it
+# is parsed as strictly as the allowed skips:
+#
+#   suite<TAB>package<TAB>test<TAB>owner<TAB>since<TAB>review-by<TAB>reason
+#
+# suite is unit, integration, ui-e2e or any. owner is "Name <address>". The
+# dates are ISO; review-by is at most 30 days after since. At most five entries
+# exist.
+#
+# A quarantined test still runs. Its failure is recorded as
+# `quarantined-fail`, never as a pass, and it never changes a proof's verdict
+# while the entry is current. An entry excuses nothing until the base also
+# carries it, so the change that adds one cannot excuse its own failure, and an
+# entry past its review-by date stops excusing. Never re-run a failing test
+# until green: a second run is the same-tree flip this list exists to count,
+# not a remedy.

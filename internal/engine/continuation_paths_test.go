@@ -813,6 +813,72 @@ type reproducedShape struct {
 	plan   func(engine.RunPlan) engine.RunPlan
 	setup  func(h *harness, generation int)
 	budget int64
+	// after fixes the order in which tasks that run at the same time
+	// complete: a task named here returns only once the task it maps to has
+	// succeeded in the run's stream (completionOrder).
+	after map[string]string
+}
+
+// completionOrder makes tasks that run at the same time complete in one
+// fixed order. The test environment runs every activity on its own
+// goroutine and hands the workflow their results in the order those
+// goroutines finish, so without it two runs of one definition may complete
+// a stage's tasks in different orders — and publish different streams —
+// for no reason of the engine's (plan F18). A task named in after returns
+// only once the task it waits for has a TASK_SUCCEEDED event in the current
+// generation's stream: the workflow has then already handled that result,
+// so the waiting task's result can only reach it later. The comparison
+// stays exact and ordered; only the order the mocks finish in is fixed.
+type completionOrder struct {
+	runID string
+	after map[string]string
+
+	mu  sync.Mutex
+	bus *engine.EventBus
+}
+
+// setup points the order at a generation's own stream; it runs before that
+// generation starts.
+func (o *completionOrder) setup(h *harness, _ int) {
+	o.mu.Lock()
+	o.bus = h.bus
+	o.mu.Unlock()
+}
+
+func (o *completionOrder) behavior(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	if first, ok := o.after[in.GetTaskId()]; ok {
+		if err := o.waitSucceeded(ctx, first); err != nil {
+			return nil, err
+		}
+	}
+	return itemBehavior(ctx, in)
+}
+
+// waitSucceeded blocks until taskID's TASK_SUCCEEDED is in the stream, or
+// fails the activity once a deadline far beyond the run's own length passes.
+func (o *completionOrder) waitSucceeded(ctx context.Context, taskID string) error {
+	o.mu.Lock()
+	bus := o.bus
+	o.mu.Unlock()
+	events, cancel, _ := bus.Subscribe(o.runID, 0)
+	defer cancel()
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case e, ok := <-events:
+			if !ok {
+				return fmt.Errorf("the stream closed before %s succeeded", taskID)
+			}
+			if e.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED && e.GetTaskId() == taskID {
+				return nil
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("%s never succeeded", taskID)
+		}
+	}
 }
 
 var rfc3339 = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z`)
@@ -876,11 +942,16 @@ func reproducedShapes(t *testing.T) []reproducedShape {
 	}
 	return []reproducedShape{
 		{name: "a chain", doc: continuationChainDocument, budget: 2},
-		{name: "flat stages", doc: flat, budget: 3},
+		{name: "flat stages", doc: flat, budget: 3, after: map[string]string{
+			"s0b": "s0a", "s0c": "s0b", "s1b": "s1a", "s1c": "s1b", "s2b": "s2a", "s2c": "s2b",
+		}},
 		{name: "a join with handlers", doc: guardHandlersDocument, budget: 1},
 		{name: "a composed task", doc: reproducedComposedDocument, plan: composed, budget: 1},
 		{name: "an await", doc: awaitAcrossDocument, setup: approveLater, budget: 2},
-		{name: "a pin with an unpinned need", doc: reproducedPinDocument, setup: withPins, budget: 2},
+		// fetch starts at once; prep, its pinned sibling, only once its pin
+		// has opened, so fetch is the one that waits.
+		{name: "a pin with an unpinned need", doc: reproducedPinDocument, setup: withPins, budget: 2,
+			after: map[string]string{"fetch": "prep"}},
 	}
 }
 
@@ -991,11 +1062,22 @@ func TestContinuation_GenerationsReproduceTheUnswitchedRun(t *testing.T) {
 			budget := engine.DefaultContinuationBudget(shape.budget, 1<<40, time.Hour)
 			continued.Continuation = &budget
 			setup := shape.setup
+			behavior := itemBehavior
+			if shape.after != nil {
+				order := &completionOrder{runID: "ork-reproduce", after: shape.after}
+				behavior = order.behavior
+				setup = func(h *harness, generation int) {
+					order.setup(h, generation)
+					if shape.setup != nil {
+						shape.setup(h, generation)
+					}
+				}
+			}
 
 			var suite testsuite.WorkflowTestSuite
 			logs := &lineLogger{}
 			suite.SetLogger(logs)
-			g := runGenerationsIn(t, &suite, "ork-reproduce", wf, input, continued, itemBehavior, setup)
+			g := runGenerationsIn(t, &suite, "ork-reproduce", wf, input, continued, behavior, setup)
 			if g.err != nil {
 				t.Fatalf("switched run failed: %v", g.err)
 			}
@@ -1005,7 +1087,7 @@ func TestContinuation_GenerationsReproduceTheUnswitchedRun(t *testing.T) {
 			if logs.count(logQuiesce) != 0 {
 				t.Fatal("a hold occurred: this test switches at natural idle points only")
 			}
-			one := runGenerations(t, "ork-reproduce", wf, input, unswitched, itemBehavior, setup)
+			one := runGenerations(t, "ork-reproduce", wf, input, unswitched, behavior, setup)
 			if one.err != nil || len(one.harnesses) != 1 {
 				t.Fatalf("unswitched run = %v over %d generations", one.err, len(one.harnesses))
 			}

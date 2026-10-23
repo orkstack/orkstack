@@ -37,8 +37,8 @@ var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // no member of. The two bounds are not one constant, and the reason is
 // layering rather than the compiler: the artifact store is a public package
 // and this one is not, so although the store imports this package for the
-// rules both must share (the slug rule, the document identity of
-// VersionedSource), it shares no slug constant with it. They are held
+// rules both must share (the slug rule, the source identity), it shares no
+// slug constant with it. They are held
 // together by measurement instead —
 // TestNamespaceName_RegistryAndCompilerAgree and
 // TestNamespacePools_AreExactlyThePoolsDispatchCanReach both carry a name at
@@ -97,9 +97,9 @@ func (o Options) catalog() Catalog {
 type document struct {
 	// APIVersion and Kind are the document header (docs/DSL.md, "The
 	// document header"). checkHeader reads them before this decode; they are
-	// decoded so KnownFields accepts them, and never compiled: the header is
-	// not part of the definition, so neither the compiled message nor its
-	// digest sees it.
+	// decoded so KnownFields accepts them. The compiled message has no field
+	// for them: a derived version covers the source, and so the header, while
+	// the definition digest covers the compiled message alone.
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
 
@@ -292,9 +292,9 @@ func DocumentPinsVersion(source []byte) (bool, error) {
 
 // Compile parses, validates, and compiles a DSL document. The returned
 // Orkflow carries the original source bytes in SourceYaml; when the document
-// does not pin `version`, Version is the sha256 of its versioned source (those
-// bytes less the two header lines written first), so a version always names
-// the source it is stored with (sourceHash).
+// does not pin `version`, Version is the sha256 of that source as written,
+// header included, so a version always names the source it is stored with
+// (sourceHash).
 func Compile(source []byte) (*orkstackv1.Orkflow, error) {
 	return CompileWithOptions(source, Options{})
 }

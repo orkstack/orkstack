@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -1099,7 +1100,7 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 	// queue" well defined from any one member.
 	queue, err := s.queueForTask(s.tasks[id])
 	if err != nil {
-		return false, err
+		return false, s.refuseRoute(runCtx, id, err)
 	}
 
 	p.opened = true
@@ -1686,7 +1687,7 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	// pool names the Orkers the activity really goes to.
 	queue, err := s.queueForTask(t)
 	if err != nil {
-		return nil, err
+		return nil, s.refuseRoute(ctx, id, err)
 	}
 	pool := s.poolForTask(t)
 	taskRun.Pool = pool
@@ -2720,15 +2721,87 @@ func (s *runState) routeForTask(t *orkstackv1.Task) (task.Route, error) {
 	}
 	queue, err := s.plan.Route(pool)
 	if err != nil {
-		reason := "INVALID_POOL"
+		reason := ReasonInvalidPool
 		if errors.Is(err, task.ErrReservedQueue) {
-			reason = "RESERVED_QUEUE"
+			reason = ReasonReservedQueue
 		}
 		return task.Route{}, temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("task %q: %v", t.GetId(), err), reason, err)
 	}
 	return task.Route{Pool: pool, Queue: queue}, nil
 }
+
+// RefusedRouteChange is the workflow.GetVersion change id of refuseRoute's
+// record of a task whose pool its run's plan cannot route (INVALID_POOL,
+// RESERVED_QUEUE).
+//
+// Before it, the refusal returned the error and touched nothing: the row was
+// left PENDING (a pin's opening) or RUNNING (a dispatch), and the run's
+// failure path recorded it — fail() cancelled a PENDING row with a TASK_LOG,
+// a failure handler's run recorded a RUNNING one through
+// recordRefusedDispatch. Recording the row FAILED here, with TASK_FAILED, is a
+// different command sequence (an event is a command), so it is asked LAZILY,
+// only where the refusal first happens: a run that never refuses a route
+// records no marker, and a history recorded before the gate replays its
+// DefaultVersion branch, which is the old one. A carried generation answers
+// from its carry (version).
+const RefusedRouteChange = "refused-route-task-failed"
+
+// refusedRouteGateDisabledForTest is a TEST-ONLY switch, the precedent of
+// historyGuardLookaheadDisabledForTest: when set, refuseRoute takes the
+// DefaultVersion branch WITHOUT asking its version, so a recorder can write a
+// history in the shape of the builds before the gate, and a negative replay
+// test proves the committed fixtures can only replay because of it. Never set
+// in production code.
+var refusedRouteGateDisabledForTest atomic.Bool
+
+// refuseRoute handles a task its run's plan cannot route, and returns err for
+// the run to fail with.
+//
+// From RefusedRouteChange 1 it records the task FAILED, with routeForTask's
+// code (INVALID_POOL or RESERVED_QUEUE) as the task's own machine-readable
+// reason, a contract violation, finished_at from the workflow's clock and no
+// scheduled_at (nothing was dispatched), and emits TASK_FAILED, as
+// failExpansion does for a fan-out, so the stream and the snapshot agree. The
+// row is terminal, so neither fail() (cancelInFlight) nor failWithHandlers
+// (recordRefusedDispatch) nor settleHandlerDispatch records it a second time.
+// Before RefusedRouteChange it returned err alone and left the row as it was.
+func (s *runState) refuseRoute(ctx workflow.Context, id string, err error) error {
+	if refusedRouteGateDisabledForTest.Load() || s.version(ctx, RefusedRouteChange, 1) < 1 {
+		return err
+	}
+	code, message := ReasonInvalidPool, err.Error()
+	var applicationErr *temporal.ApplicationError
+	if errors.As(err, &applicationErr) {
+		code, message = applicationErr.Type(), applicationErr.Message()
+	}
+	taskRun := s.taskRuns[id]
+	taskRun.Status = orkstackv1.Status_STATUS_FAILED
+	taskRun.ScheduledAt = nil
+	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
+	taskRun.Error = &orkstackv1.Error{
+		Code:     code,
+		Message:  message,
+		Details:  fmt.Sprintf("task %q", id),
+		Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
+	}
+	ectx := s.eventContext(ctx)
+	if emitErr := s.emit(ectx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
+		orkstackv1.Status_STATUS_FAILED, message); emitErr != nil {
+		workflow.GetLogger(ctx).Error("emit refused route failed",
+			"run_id", s.runID, "task_id", id, "error", emitErr)
+	}
+	s.closePinFor(ectx, id)
+	return err
+}
+
+// The failure codes routeForTask reports. Their values are part of the
+// client-visible contract: a run that cannot route a pool says which rule it
+// broke, and docs/DSL.md documents both.
+const (
+	ReasonInvalidPool   = "INVALID_POOL"
+	ReasonReservedQueue = "RESERVED_QUEUE"
+)
 
 // queueForTask is the queue a task's activity is scheduled on.
 func (s *runState) queueForTask(t *orkstackv1.Task) (string, error) {

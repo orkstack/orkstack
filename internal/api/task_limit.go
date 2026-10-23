@@ -22,6 +22,10 @@ func orkflowMaxTasksOf(configured int32) int32 {
 // operator what to change.
 const orkflowMaxTasksSetting = "engine.orkflow_max_tasks, ORK_ORKFLOW_MAX_TASKS"
 
+// Rule 43: the document declares at most the deployment's task ceiling,
+// counted as wf.Tasks (a fan-out and a composed task each count once), and
+// the check runs at validate, apply, plan and again at submit.
+//
 // checkTaskCeiling is validate, apply and plan's task-count check: the tasks
 // the document declares against the deployment's ceiling.
 //

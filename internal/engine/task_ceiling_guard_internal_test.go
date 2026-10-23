@@ -175,6 +175,14 @@ func (r *flatStageRun) stagePublish(_ context.Context, event *orkstackv1.Event, 
 		if r.mode == landInPass && r.dispatched == r.landAt {
 			r.stageLand(r.stageRunningIDs())
 		}
+		// A TASK_STARTED event means the task started; the activity's own
+		// goroutine may not have run yet under load. Counting it after the
+		// landing dispatch's own land makes the arrangement a function of the
+		// event order alone: the task starting at that dispatch is the one
+		// the closed form does not yet count as landed.
+		if id := event.GetTaskId(); id != "" {
+			r.running[id] = true
+		}
 		r.stageMaybeLand()
 	case orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED:
 		id := event.GetTaskId()
@@ -331,6 +339,9 @@ func predictedPeak(r *flatStageRun, tasks int) int64 {
 // worst case). With one task more, (b) fails RUN_HISTORY_LIMIT in generation
 // 0 at the guard check right after that dispatch, before any hold.
 func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	installGuardProbe(t)
 	limit, budget := ceilingDefaults()
 	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight)))
@@ -381,6 +392,9 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 // the worst one (7.4): every later one starts from the same base with fewer
 // tasks PENDING.
 func TestHistoryGuard_CompletionsLandingDuringThePassNeverTripTheGuard(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	installGuardProbe(t)
 	limit, budget := ceilingDefaults()
 	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight)))

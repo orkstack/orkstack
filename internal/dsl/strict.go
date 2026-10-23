@@ -39,6 +39,12 @@ func (e *AuthoredDataError) Error() string {
 	return fmt.Sprintf("line %d: %s: %s", e.Line, e.Path, e.Reason)
 }
 
+// Rule 46: authored data (`inputs`, every `tasks[i].with` and every
+// `tasks[i].await.schema`) is converted to JSON by this strict mapping: a
+// YAML plain scalar the readers resolve differently, a number JSON cannot
+// hold exactly, an ambiguous or duplicate key, and any tag, anchor, alias or
+// merge key are refused at the field path.
+//
 // AuthoredJSON converts one node of authored data into the JSON value it means,
 // or refuses it. path names the node for the error ("tasks[2].with.body").
 // The value is nil, bool, float64, string, []any or map[string]any.

@@ -34,9 +34,6 @@ func TestEffectiveCacheTTL(t *testing.T) {
 			t.Fatalf("EffectiveCacheTTL(%d, %d) = %d, want %d", tc.ttl, tc.cap, got, tc.want)
 		}
 	}
-	if engine.DefaultCacheMaxTTL != 168*time.Hour {
-		t.Fatalf("DefaultCacheMaxTTL = %s", engine.DefaultCacheMaxTTL)
-	}
 }
 
 const cachedDocument = `

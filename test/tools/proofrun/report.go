@@ -26,7 +26,7 @@ func printSelection(w io.Writer, sel *selection) {
 			fmt.Fprintf(w, "  integration %s: whole package (%s)\n", relDir(p), ps.Whole)
 			continue
 		}
-		fmt.Fprintf(w, "  integration %s: %d evidence, %d regression, %d slow deferred\n", relDir(p), len(ps.Evidence), len(ps.Regression), len(ps.Deferred))
+		fmt.Fprintf(w, "  integration %s: %d evidence, %d regression, %d slow-omitted\n", relDir(p), len(ps.Evidence), len(ps.Regression), len(ps.SlowOmitted))
 	}
 	for _, n := range sel.Notes {
 		fmt.Fprintf(w, "  note: %s\n", n)
@@ -110,6 +110,13 @@ func cmdFeatureReport(args []string) int {
 }
 
 func featureReport(w io.Writer, sel *selection, o outcomes, specs map[string]string) {
+	if len(sel.DocsWarning) > 0 {
+		fmt.Fprintf(w, "## Documentation\n\n")
+		for _, warning := range sel.DocsWarning {
+			fmt.Fprintf(w, "WARNING: %s\n", warning)
+		}
+		fmt.Fprintln(w)
+	}
 	fmt.Fprintf(w, "## Scope\n\n")
 	fmt.Fprintf(w, "- base: `%s` = %s\n- merge base: %s\n", sel.BaseRef, sel.BaseCommit, sel.MergeBase)
 	fmt.Fprintf(w, "- selection inputs, verbatim: `--base %s`", sel.BaseRef)
@@ -184,8 +191,8 @@ func featureReport(w io.Writer, sel *selection, o outcomes, specs map[string]str
 			}
 			fmt.Fprintf(w, "  - regression set: %d tests, %d without a pass (never evidence)\n", len(ps.Regression), fail)
 		}
-		for _, d := range ps.Deferred {
-			fmt.Fprintf(w, "  - deferred (slow list, %.0fs in %s): %s\n", d.Seconds, orDash(sel.SlowSource), d.Test)
+		for _, d := range ps.SlowOmitted {
+			fmt.Fprintf(w, "  - left out: on the slow list (%.0fs in %s): %s\n", d.Seconds, orDash(sel.SlowSource), d.Test)
 		}
 	}
 	for _, n := range sel.NotRun {
@@ -196,12 +203,12 @@ func featureReport(w io.Writer, sel *selection, o outcomes, specs map[string]str
 	if sel.AllSpecs != "" {
 		fmt.Fprintf(w, "Every spec ran: %s.\n", sel.AllSpecs)
 	} else if len(sel.Specs) == 0 {
-		fmt.Fprintf(w, "No spec ran; every spec is deferred to the merge proof.\n")
+		fmt.Fprintf(w, "No spec ran; every spec is left to the merge proof.\n")
 	} else {
 		for _, s := range sel.Specs {
 			fmt.Fprintf(w, "- %s — %s (%s)\n", s.File, orDash(specs[s.File]), s.Why)
 		}
-		fmt.Fprintf(w, "\nEvery other spec is deferred to the merge proof.\n")
+		fmt.Fprintf(w, "\nEvery other spec is left to the merge proof.\n")
 	}
 	if len(sel.Removed) > 0 {
 		fmt.Fprintf(w, "\n### Removed tests\n\n")

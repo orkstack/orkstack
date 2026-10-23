@@ -83,7 +83,7 @@ func TestS3LogStore_ItemScopedLatestAttempt(t *testing.T) {
 
 func TestS3CommitStore_ItemKeys(t *testing.T) {
 	cfg := s3TestConfig()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	ctx := context.Background()
 	store, err := artifacts.NewS3CommitStore(ctx, cfg)
 	if err != nil {

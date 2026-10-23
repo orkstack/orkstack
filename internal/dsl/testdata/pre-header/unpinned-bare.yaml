@@ -1,7 +1,0 @@
-name: unpinned-bare
-tasks:
-  - id: say
-    uses: shell
-    with:
-      op: eval
-      command: ["sh", "-c", "echo bare"]

@@ -56,7 +56,7 @@ namespace: ${NS}
 test.beforeAll(async () => {
 	mkdirSync(proof('..'), { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
-	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
+	if (!(await tcpOpen(9000))) throw new Error('the object store is not reachable on 127.0.0.1:9000');
 	for (const port of [18102, 14200]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
 	ensureActivityImages();
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
@@ -134,6 +134,9 @@ test('the header is required, shown and offered by every authoring surface', asy
 	await shot(page, 'document-header-source.png');
 
 	// 5. Admin → Automation offers the automation document's own header.
-	await page.goto(`${UI}/admin/automation`);
+	// The layout restores the remembered namespace from localStorage and may
+	// rewrite a bare URL before hydration; name the namespace instead of
+	// racing that restore (the behaviour is documented, the test was racy).
+	await page.goto(`${UI}/admin/automation?ns=default`);
 	await expect(page.getByTestId('automation-yaml')).toHaveAttribute('placeholder', automationPlaceholder('default'));
 });

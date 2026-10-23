@@ -41,6 +41,9 @@ tasks:
 // is dispatched exactly once across them, the next generation resuming at
 // the first item its predecessor never dispatched.
 func TestEach_TenThousandItemsSpanGenerations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
+	}
 	const items = 10000
 	plan := continuedPlan(500)
 	limit := engine.DefaultInFlightLimit(engine.DefaultRunMaxInFlight)

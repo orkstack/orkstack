@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -33,5 +35,97 @@ func TestTouching(t *testing.T) {
 	}
 	if got := touching(scope, paths[:1], actObservability); len(got) != 0 {
 		t.Errorf("got %v", got)
+	}
+}
+
+// §6.4's lists_changed, computed from the change set: every changed gate file
+// is named, and the three lists that excuse a test carry the rows added and
+// removed.
+func TestTouches_GateFilesListAddedAndRemovedRows(t *testing.T) {
+	const nightly = "scripts/proof-nightly-tests.txt"
+	base := "# a comment\n" +
+		"example.com/m\tTestSoak\tTestCover\t2026-10-18 Daniel Santos\tkept\n" +
+		"example.com/m\tTestOld\tTestCover\t2026-10-18 Daniel Santos\tremoved\n"
+	tree := "# a changed comment is not a row\n" +
+		"example.com/m\tTestSoak\tTestCover\t2026-10-18 Daniel Santos\tkept\n" +
+		"example.com/m\tTestNew\tTestCover\t2026-10-18 Daniel Santos\tadded\n"
+	paths := []changedPath{
+		{Path: nightly},
+		{Path: "scripts/proof-quarantine.txt"},
+		{Path: "internal/engine/a.go"},
+		{Path: "docs/PROOFS.md"},
+	}
+	changes := gateFileChanges(paths, func(path string) (string, string) {
+		switch path {
+		case nightly:
+			return base, tree
+		case "scripts/proof-quarantine.txt":
+			return "", "unit\texample.com/m\tTestX\tDaniel Santos <danlsgiga@gmail.com>\t2026-10-19\t2026-11-18\twhy\n"
+		}
+		return "", ""
+	})
+	if len(changes) != 2 {
+		t.Fatalf("changes = %+v, want only the two gate files of the diff", changes)
+	}
+	if changes[0].File != nightly || changes[1].File != "scripts/proof-quarantine.txt" {
+		t.Fatalf("changes = %+v", changes)
+	}
+	if got := strings.Join(changes[0].Added, "|"); !strings.Contains(got, "TestNew") || strings.Contains(got, "TestSoak") {
+		t.Errorf("added = %v", changes[0].Added)
+	}
+	if got := strings.Join(changes[0].Removed, "|"); !strings.Contains(got, "TestOld") || strings.Contains(got, "TestSoak") {
+		t.Errorf("removed = %v", changes[0].Removed)
+	}
+	if len(changes[1].Added) != 1 || !strings.Contains(changes[1].Added[0], "TestX") {
+		t.Errorf("a new quarantine row was not reported: %+v", changes[1])
+	}
+}
+
+func TestTouches_GateFilesAreTheOnesCodeownersMustCover(t *testing.T) {
+	for _, p := range []string{
+		"scripts/proof.sh", "scripts/proof-nightly-tests.txt", "scripts/github/ruleset-main.json",
+		".github/workflows/proof.yml", "test/tools/proofrun/merge.go", "Makefile", "ui/playwright.config.ts",
+	} {
+		if !isGateFile(p) {
+			t.Errorf("%s is not a gate file", p)
+		}
+	}
+	for _, p := range []string{"ui/src/routes/+page.svelte", "internal/engine/workflow.go", "docs/PROOFS.md"} {
+		if isGateFile(p) {
+			t.Errorf("%s is a gate file", p)
+		}
+	}
+}
+
+// The host-speed table excuses a failure too, so a change to it is itemised
+// row by row like the other excusing lists (R2-M1).
+func TestTouches_TheHostSpeedTableIsItemisedRowByRow(t *testing.T) {
+	const table = "scripts/proof-host-speed.tsv"
+	row := "ui\te2e/a.spec.ts\tt\tlessThan 5000\t5\t16\tnote"
+	changes := gateFileChanges([]changedPath{{Path: table}}, func(string) (string, string) {
+		return "# header\n" + row + "\n", "# header\n" + strings.Replace(row, "\t5\t", "\t9\t", 1) + "\n"
+	})
+	if len(changes) != 1 || len(changes[0].Added) != 1 || len(changes[0].Removed) != 1 ||
+		!strings.Contains(changes[0].Added[0], "\t9\t") || changes[0].Removed[0] != row {
+		t.Errorf("changes = %+v, want the loosened row added and the base's row removed", changes)
+	}
+}
+
+// A failure to list the gate files is written as an error entry, never as
+// an empty list a caller would read as "no gate file changed".
+func TestTouches_AFailureIsAnErrorEntryNotAnEmptyList(t *testing.T) {
+	quiet(t)
+	var b strings.Builder
+	prev := os.Stderr
+	devnull, _ := os.Open(os.DevNull)
+	os.Stderr = devnull
+	code := touchesGateFiles(&b, "no-such-ref-for-this-test")
+	os.Stderr = prev
+	var got []listChange
+	if err := json.Unmarshal([]byte(b.String()), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, b.String())
+	}
+	if code != 1 || len(got) != 1 || !strings.Contains(got[0].Error, "is not a commit") {
+		t.Errorf("exit %d, %+v", code, got)
 	}
 }

@@ -13,7 +13,7 @@ make infra-up-observability
 # or: docker compose -f deploy/docker-compose.yml --profile observability up -d
 ```
 
-This also starts Temporal, MinIO and the registry, as `make infra-up` does.
+This also starts Temporal, SeaweedFS and the registry, as `make infra-up` does.
 `make infra-down-observability` stops everything, including the profile.
 
 ## Point `ork` and `orker` at it

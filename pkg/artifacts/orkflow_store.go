@@ -19,7 +19,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // OrkflowStore is the system of record for orkflow definitions. Runs live in
@@ -386,12 +385,8 @@ func pinnedOrkflow(versions []*orkstackv1.Orkflow, version string) *orkstackv1.O
 	return nil
 }
 
-// SameStoredOrkflow reports whether storing incoming would store what stored holds:
-// the same document (dsl.VersionedSource of each side's source — the very bytes a
-// derived version hashes, so the two can never disagree), and every other field
-// equal but created_at. A version stored before the header existed is therefore
-// the same document as its source with the two header lines written first, above,
-// among or below its leading comments.
+// SameStoredOrkflow reports whether storing incoming would store what stored
+// holds: the same source bytes, and every other field equal but created_at.
 //
 // This is what makes a repeat a no-op instead of a rewrite. created_at is
 // excluded because it is stamped per apply: comparing it would make every
@@ -405,15 +400,14 @@ func pinnedOrkflow(versions []*orkstackv1.Orkflow, version string) *orkstackv1.O
 // the second would be silently dropped. Comparing everything is strictly
 // safer: it never treats a difference as a repeat.
 //
-// It is also the reason a DERIVED version covers the versioned source rather
-// than the document's semantic content (internal/dsl.sourceHash): this
-// comparison is what "the same document" means, so a derivation that ignored
-// comments would hand one version two documents and get the second refused
-// below, with no version left for the author to publish it under. The engine's
-// in-memory store calls this function too, so there is one rule.
+// It is also the reason a DERIVED version covers the whole source rather than
+// the document's semantic content (internal/dsl.sourceHash): this comparison
+// is what "the same document" means, so a derivation that ignored comments
+// would hand one version two documents and get the second refused below, with
+// no version left for the author to publish it under. The engine's in-memory
+// store calls this function too, so there is one rule.
 func SameStoredOrkflow(stored, incoming *orkstackv1.Orkflow) bool {
-	if !bytes.Equal(dsl.VersionedSource([]byte(stored.GetSourceYaml())),
-		dsl.VersionedSource([]byte(incoming.GetSourceYaml()))) {
+	if !bytes.Equal([]byte(stored.GetSourceYaml()), []byte(incoming.GetSourceYaml())) {
 		return false
 	}
 	a, b := proto.Clone(stored).(*orkstackv1.Orkflow), proto.Clone(incoming).(*orkstackv1.Orkflow)
@@ -695,7 +689,7 @@ func (s *S3OrkflowStore) settle(
 		"artifacts: orkflow %q version %q in namespace %q is already stored with different "+
 			"content (%s); %s: %w",
 		incoming.GetName(), incoming.GetVersion(), incoming.GetNamespace(),
-		s.uri(key), dsl.VersionExistsAdvice(incoming.GetSourceYaml()), ErrVersionExists)
+		s.uri(key), "a version is immutable, so publish a new version", ErrVersionExists)
 }
 
 // Get reads one orkflow version from one namespace. An empty version resolves

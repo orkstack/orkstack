@@ -40,8 +40,8 @@ import (
 )
 
 // The task soak (spec T7/E7): one Orkflow at the task ceiling, in each of
-// 7.4's shapes, submitted through the API with Stage 7's defaults — the task
-// ceiling raised to the soak's size, continuation on, the definition (over
+// the measured shapes, submitted through the API with the task-ceiling
+// defaults — the ceiling raised to the soak's size, continuation on, the definition (over
 // 256 KiB at this size) passed by reference and snapshot overlays on — on
 // real Temporal and real MinIO, run to completion across its generations,
 // measured against E7's thresholds and against the closed form (7.4).
@@ -281,7 +281,7 @@ func (h *latencyHandler) maxAndP99(ctx context.Context) (float64, float64, int) 
 	return ms(maxSeen), ms(p99), int(count)
 }
 
-// taskSoakGeneration is one generation as stage7-soak/<size>-<shape>.json
+// taskSoakGeneration is one generation as task-soak/<size>-<shape>.json
 // reports it, with the closed form's inputs measured from its history.
 type taskSoakGeneration struct {
 	Execution         string   `json:"execution"`
@@ -319,7 +319,7 @@ type closedFormView struct {
 	Predicted int64 `json:"predicted_peak"`
 }
 
-// taskSoakRecord is stage7-soak/<size>-<shape>.json.
+// taskSoakRecord is task-soak/<size>-<shape>.json.
 type taskSoakRecord struct {
 	Size                 int                  `json:"size"`
 	Shape                string               `json:"shape"`
@@ -568,11 +568,11 @@ func analyzeClosedForm(t *testing.T, h *historypb.History, tasks, dispatchedBefo
 // startTaskSoak starts one shape's deployment: an engine replica and a
 // projection worker that advertise this build's capabilities (so the
 // overlay check passes on its own evidence), in-process Orkers, a real one
-// for a flat shape, and the API at Stage 7's defaults.
+// for a flat shape, and the API at the task-ceiling defaults.
 func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int) (*eachSoak, *latencyHandler) {
 	t.Helper()
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
 	if err != nil {
 		t.Fatalf("run archive: %v", err)
@@ -815,7 +815,7 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 	// and travels by reference (spec 5.1), and above 256 rows a run writes
 	// overlays; every gated size is far above both.
 	if (!rec.ByReference && n >= 1000) || (!rec.Overlays && int64(n) > engine.DefaultOverlayMinRows) {
-		miss("the run did not start with Stage 7's defaults: definition by reference %t, overlays %t", rec.ByReference, rec.Overlays)
+		miss("the run did not start with the task-ceiling defaults: definition by reference %t, overlays %t", rec.ByReference, rec.Overlays)
 	}
 	if rec.PeakPendingTasks > int(rec.InFlightCap) {
 		miss("peak pending tasks %d > the in-flight cap %d", rec.PeakPendingTasks, rec.InFlightCap)
@@ -867,11 +867,11 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 	return rec
 }
 
-// reportTaskSoak writes stage7-soak/<size>-<shape>.json and fails the test
+// reportTaskSoak writes task-soak/<size>-<shape>.json and fails the test
 // for every threshold the run missed.
 func reportTaskSoak(t *testing.T, rec taskSoakRecord) {
 	t.Helper()
-	proof.WriteJSON(t, "stage7-soak", fmt.Sprintf("%d-%s.json", rec.Size, rec.Shape), rec)
+	proof.WriteJSON(t, "task-soak", fmt.Sprintf("%d-%s.json", rec.Size, rec.Shape), rec)
 	peaks := make([]string, len(rec.Generations))
 	for i, g := range rec.Generations {
 		peaks[i] = fmt.Sprintf("%d/%d", g.Peak, g.Predicted)
@@ -904,7 +904,7 @@ func taskSoakLock() string { return filepath.Join(os.TempDir(), "orkstack-task-s
 // (default the deployment's task ceiling) in each of 7.4's shapes — a flat
 // stage of long tasks, the same with short ones (completions land while the
 // run still dispatches), a staged DAG of 250 lanes and deep lanes of at most
-// 380 — completes SUCCEEDED across its generations with Stage 7's defaults,
+// 380 — completes SUCCEEDED across its generations with the task-ceiling defaults,
 // within E7's thresholds and the closed form. The four shapes run side by
 // side, each on a deployment and Temporal namespace of its own: one engine
 // dispatches a few tasks a second, so in sequence they would take over an
@@ -923,4 +923,42 @@ func TestIntegration_SoakTasks(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling proves the
+// last AGENTS.md §11 bullet's behaviour without the full-size soak: the
+// flat-short shape runs at a deployment ceiling of 1,000 tasks, through the
+// soak's own helpers, so every E7 threshold and its closed form is checked.
+// A small run that never carried on would pass those thresholds without
+// exercising generations, so it also asserts at least two generations, a
+// definition passed by reference and snapshot overlays. The full ceilings
+// are the nightly tier's (scripts/proof-nightly-tests.txt).
+func TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling(t *testing.T) {
+	const n = 1000
+	ctx, cancel := context.WithTimeout(context.Background(), taskSoakShapeTimeout)
+	defer cancel()
+	// The E7 thresholds are absolute wall-clock bounds, so this run measures
+	// under the same host-wide lock the full soak holds.
+	holdLock(t, ctx, taskSoakLock())
+	var shape taskSoakShape
+	for _, candidate := range taskSoakShapes {
+		if candidate.name == "flat-short" {
+			shape = candidate
+		}
+	}
+	e, metrics := startTaskSoak(t, ctx, shape, n)
+	rec := soakTaskRun(t, ctx, e, metrics, shape, n)
+	if rec.GenerationCount < 2 {
+		rec.Missed = append(rec.Missed, fmt.Sprintf("the run used %d generations; a reduced ceiling must still carry on at least once",
+			rec.GenerationCount))
+	}
+	if !rec.ByReference {
+		rec.Missed = append(rec.Missed, "the run did not pass its definition by reference")
+	}
+	if !rec.Overlays {
+		rec.Missed = append(rec.Missed, "the run did not write snapshot overlays")
+	}
+	t.Logf("reduced task ceiling: %d tasks at the deployment ceiling, %d generations, definition by reference %t, overlays %t",
+		n, rec.GenerationCount, rec.ByReference, rec.Overlays)
+	reportTaskSoak(t, rec)
 }

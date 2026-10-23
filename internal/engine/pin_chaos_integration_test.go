@@ -121,7 +121,7 @@ func newPinChaosCluster(t *testing.T, ctx context.Context, maxPins int32) *pinCh
 	requirePinChaosDocker(t)
 
 	cfg := s3Config()
-	requireMinIO(t, cfg)
+	requireObjectStore(t, cfg)
 
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	c := &pinChaosCluster{

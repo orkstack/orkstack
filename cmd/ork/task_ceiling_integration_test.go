@@ -28,8 +28,8 @@ func flatShellDoc(name string, n int) string {
 }
 
 // TestIntegration_EngineBootsAtTheRaisedTaskCeiling: the real ork binary at
-// Stage 7's defaults logs a task ceiling of the measured maximum with the
-// flat-stage bound, definitions by reference and snapshot overlays on, and
+// the task-ceiling defaults logs a task ceiling of the measured maximum with
+// the flat-stage bound, definitions by reference and snapshot overlays on, and
 // validates an Orkflow at the ceiling while refusing one task more; raised
 // above the measured maximum, and above the flat-stage bound of a long
 // restore timeout, it starts with both warnings (D2: warn only); with
@@ -37,7 +37,7 @@ func flatShellDoc(name string, n int) string {
 // to boot, naming the three keys.
 func TestIntegration_EngineBootsAtTheRaisedTaskCeiling(t *testing.T) {
 	temporal := requireTemporal(t)
-	_ = requireMinIO(t)
+	_ = requireObjectStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")

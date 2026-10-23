@@ -50,6 +50,13 @@ type selection struct {
 	Notes        []string                 `json:"notes"`
 	Errors       []string                 `json:"errors"`
 	SlowSource   string                   `json:"slow_list_source"`
+	// RefusedFull names the paths whose scope rule is full: CI can tell
+	// "this needs the full proof" apart from missing evidence (plan §2.1).
+	RefusedFull []string `json:"refused_full"`
+	// DocsWarning lists user-facing paths changed with no documentation
+	// change, and a missing CHANGELOG entry. It is a warning, never a
+	// refusal, and never touches merge eligibility (plan §8.4).
+	DocsWarning []string `json:"docs_warning,omitempty"`
 }
 
 // pathScope is how one changed path was classified.
@@ -59,6 +66,7 @@ type pathScope struct {
 	Rule    string   `json:"rule"`
 	Line    int      `json:"rule_line"`
 	Actions []string `json:"actions"`
+	Docs    bool     `json:"docs,omitempty"`
 }
 
 // pkgSelection is what runs of one integration package.
@@ -66,12 +74,15 @@ type pkgSelection struct {
 	Whole      string            `json:"whole,omitempty"`
 	Evidence   map[string]string `json:"evidence"`
 	Regression []string          `json:"regression"`
-	Deferred   []deferredTest    `json:"deferred_slow"`
-	Declared   int               `json:"declared_integration_tests"`
-	Why        string            `json:"why"`
+	// SlowOmitted are the slow list's tests left out of the regression set.
+	// "Deferred" means one thing only: a nightly-listed test the full tier
+	// did not run (plan §2.2, review finding m8).
+	SlowOmitted []slowOmittedTest `json:"slow_omitted"`
+	Declared    int               `json:"declared_integration_tests"`
+	Why         string            `json:"why"`
 }
 
-type deferredTest struct {
+type slowOmittedTest struct {
 	Test    string  `json:"test"`
 	Seconds float64 `json:"seconds"`
 }
@@ -235,6 +246,37 @@ func cmdSelect(args []string) int {
 	return 0
 }
 
+// docsWarning lists the user-facing changes with no documentation change,
+// and a missing CHANGELOG entry. It never adds an error and never touches
+// merge eligibility (plan §8.4).
+func docsWarning(paths []pathScope) []string {
+	var docsChanged, changelogChanged bool
+	var userFacing []string
+	for _, p := range paths {
+		if strings.HasPrefix(p.Path, "docs/") || p.Path == "README.md" || p.Path == "CONTRIBUTING.md" ||
+			p.Path == "AGENTS.md" || p.Path == "ARCHITECTURE.md" || p.Path == "examples/README.md" ||
+			(strings.HasPrefix(p.Path, "images/") && strings.HasSuffix(p.Path, "/README.md")) {
+			docsChanged = true
+		}
+		if p.Path == "CHANGELOG.md" {
+			changelogChanged = true
+		}
+		if p.Docs && !strings.HasSuffix(p.Path, "_test.go") {
+			userFacing = append(userFacing, p.Path)
+		}
+	}
+	sort.Strings(userFacing)
+	userFacing = dedupe(userFacing)
+	var out []string
+	if len(userFacing) > 0 && !docsChanged {
+		out = append(out, "user-facing source files changed with no documentation change: update the reference doc that describes each, or say why it needs none (AGENTS.md §11.1): "+strings.Join(userFacing, ", "))
+	}
+	if len(userFacing) > 0 && !changelogChanged {
+		out = append(out, "no CHANGELOG.md [Unreleased] entry: a user-visible change adds one (AGENTS.md §11.1)")
+	}
+	return out
+}
+
 // computeSelection runs against the repository in the working directory.
 func computeSelection(o selectOptions) (*selection, error) {
 	sel := &selection{Tier: "feature", BaseRef: o.Base, Integration: map[string]*pkgSelection{},
@@ -326,6 +368,7 @@ func computeSelection(o selectOptions) (*selection, error) {
 	if err := selectInto(sel, in); err != nil {
 		return nil, err
 	}
+	sel.DocsWarning = docsWarning(sel.Paths)
 	return sel, nil
 }
 
@@ -382,7 +425,7 @@ func selectInto(sel *selection, in selectInput) error {
 			sel.Paths = append(sel.Paths, pathScope{Path: cp.Path, Status: cp.Status, Rule: "(none)"})
 			continue
 		}
-		sel.Paths = append(sel.Paths, pathScope{Path: cp.Path, Status: cp.Status, Rule: rule.Pattern, Line: rule.Line, Actions: rule.Actions})
+		sel.Paths = append(sel.Paths, pathScope{Path: cp.Path, Status: cp.Status, Rule: rule.Pattern, Line: rule.Line, Actions: rule.Actions, Docs: rule.Docs})
 		if strings.HasPrefix(cp.Path, "ui/") || strings.HasPrefix(cp.Path, "proto/") {
 			sel.Gates.UICheck = true
 			sel.Gates.UIUnit = true
@@ -390,6 +433,7 @@ func selectInto(sel *selection, in selectInput) error {
 		for _, a := range rule.Actions {
 			switch a {
 			case actFull:
+				sel.RefusedFull = append(sel.RefusedFull, cp.Path)
 				sel.Errors = append(sel.Errors, fmt.Sprintf("%s: this path changes how every suite runs; run make proof", cp.Path))
 			case actGo:
 				if strings.HasSuffix(cp.Path, ".go") {
@@ -711,7 +755,7 @@ func selectInto(sel *selection, in selectInput) error {
 	for _, ip := range integPkgs {
 		dir := relDir(ip.ImportPath)
 		_, integDecl := declared(dir)
-		ps := &pkgSelection{Evidence: map[string]string{}, Regression: []string{}, Deferred: []deferredTest{}, Declared: len(integDecl)}
+		ps := &pkgSelection{Evidence: map[string]string{}, Regression: []string{}, SlowOmitted: []slowOmittedTest{}, Declared: len(integDecl)}
 		for t, why := range integEvidence[ip.ImportPath] {
 			ps.Evidence[t] = why
 		}
@@ -736,7 +780,7 @@ func selectInto(sel *selection, in selectInput) error {
 					continue
 				}
 				if s, slow := in.slow[testKey{ip.ImportPath, t}]; slow && ps.Whole == "" {
-					ps.Deferred = append(ps.Deferred, deferredTest{Test: t, Seconds: s.Seconds})
+					ps.SlowOmitted = append(ps.SlowOmitted, slowOmittedTest{Test: t, Seconds: s.Seconds})
 					continue
 				}
 				ps.Regression = append(ps.Regression, t)
@@ -764,7 +808,7 @@ func selectInto(sel *selection, in selectInput) error {
 		if _, ok := sel.Integration[p]; ok {
 			continue
 		}
-		ps := &pkgSelection{Evidence: map[string]string{}, Regression: []string{}, Deferred: []deferredTest{}, Why: "it holds evidence tests"}
+		ps := &pkgSelection{Evidence: map[string]string{}, Regression: []string{}, SlowOmitted: []slowOmittedTest{}, Why: "it holds evidence tests"}
 		for t, why := range tests {
 			ps.Evidence[t] = why
 		}

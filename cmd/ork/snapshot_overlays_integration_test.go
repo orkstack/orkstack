@@ -106,7 +106,7 @@ func markersOf(t *testing.T, h *historypb.History) map[string]int {
 // snapshot-overlay gate — and leaves it off a 3-row run's.
 func TestIntegration_EngineWritesSnapshotOverlaysWhenConfigured(t *testing.T) {
 	temporal := requireTemporal(t)
-	_ = requireMinIO(t)
+	_ = requireObjectStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")

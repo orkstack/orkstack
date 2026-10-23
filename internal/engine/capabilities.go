@@ -98,12 +98,11 @@ type CapabilityScope int
 
 const (
 	// ScopeWorkflow is the engine's workflow channel: the builds a run started
-	// now can land on (Stages 4 and 5: their risk is a workflow task decided by
-	// an older build).
+	// now can land on. Its risk is a workflow task decided by an older build.
 	ScopeWorkflow CapabilityScope = iota
 	// ScopeWorkflowAndEvents also reads every poller of the projection
-	// channel, whatever its build (Stage 6: the projection worker is
-	// unversioned, so any process polling it may take this run's publish).
+	// channel, whatever its build: the projection worker is unversioned, so
+	// any process polling it may take this run's publish.
 	ScopeWorkflowAndEvents
 )
 
