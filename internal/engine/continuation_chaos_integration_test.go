@@ -254,9 +254,9 @@ func TestIntegration_ContinuationChaosC2_OrkerKilledMidHoldRetriesElsewhere(t *t
 	}
 	hold := s.logs.wait(t, ctx, logQuiesce, runID, 2*time.Minute)
 	s.transcript.step("hold reached at %v events with slow running on %s", hold.Fields["history_events"], idA)
-	if n := runningContainerCountForCommitE2E(t, idA); n != 1 {
-		t.Fatalf("Orker A has %d containers running at the hold, want slow's one", n)
-	}
+	// slow's container runs for 20 s; on a loaded host it may still be
+	// starting when the hold is logged, so wait for it rather than sample.
+	awaitRunningContainersForCommitE2E(t, ctx, idA, 1, 15*time.Second)
 
 	killedAt := time.Now()
 	proxyA.Cut()
