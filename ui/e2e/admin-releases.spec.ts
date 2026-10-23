@@ -3,23 +3,29 @@ import { type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('admin-releases');
 
 // Admin → Releases (docs/DEPLOY.md §3), against real engines and Orkers
 // started with ORK_BUILD_ID, real Temporal (a private namespace) and real
@@ -80,7 +86,7 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
 
 const deploymentEnv = (build: string) => ({
 	...clusterEnv(TEMPORAL_NAMESPACE),
-	...s3Env,
+	...storeEnv(BUCKET),
 	ORK_DEPLOYMENT_NAME: DEPLOYMENT,
 	ORK_BUILD_ID: build
 });
@@ -179,6 +185,7 @@ function openGates(root: string): number {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	test.setTimeout(900_000);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
@@ -218,6 +225,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
 	for (const id of [ORKER_V1, ORKER_V2]) openGates(workRoot(id));
 	for (const child of mine.splice(0)) await stop(child);
+	removeBucket(BUCKET);
 });
 
 test('an unversioned deployment says versioning is off', async ({ page }) => {

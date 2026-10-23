@@ -3,25 +3,32 @@ import type { ChildProcess } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
 import { OP, addListFilter, selectOption } from './uiHelpers';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('orkflow-schedules');
 
 // Orkflow schedules, against a real engine, Orker, Temporal and MinIO: the
 // Schedules tab creates a schedule the cluster keeps (next fire times and
@@ -34,7 +41,7 @@ import { OP, addListFilter, selectOption } from './uiHelpers';
 const ENGINE = 'http://127.0.0.1:18094';
 const ENGINE_WS = 'ws://127.0.0.1:18094';
 const UI = 'http://127.0.0.1:14192';
-const TEMPORAL_NAMESPACE = `${process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-schedules'}-ui-schedules`;
+const TEMPORAL_NAMESPACE = `${temporalNamespace('schedules')}-ui-schedules`;
 const STAMP = Date.now().toString(36);
 const NS = `sched-${STAMP}`;
 const NAME = 'hello';
@@ -53,7 +60,7 @@ const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 function startOrker(): void {
 	orker = spawnLogged(out(`orker-${Date.now()}.log`), bin('orker'), [], {
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('orkflow-schedules')
 	});
 }
@@ -119,6 +126,7 @@ async function openTab(page: Page): Promise<void> {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -129,7 +137,7 @@ test.beforeAll(async () => {
 	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18094',
 		ORK_ADMIN_ADDR: '127.0.0.1:0',
 		ORK_WS_ALLOWED_ORIGINS: UI
@@ -148,6 +156,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 test('the Schedules tab creates a schedule and shows its next fire times', async ({ page }) => {

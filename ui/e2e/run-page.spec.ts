@@ -4,25 +4,32 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import {
 	activityRef,
+	bin,
 	catalogEnv,
 	clusterEnv,
 	containerHost,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-page');
 
 // The run detail page, in a browser, against the real stack.
 //
@@ -50,7 +57,7 @@ const ENGINE_WS = 'ws://127.0.0.1:18084';
 const UI_ORIGIN = 'http://127.0.0.1:14176';
 
 const TEMPORAL_NAMESPACE =
-	process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-run-page';
+	temporalNamespace('run-page');
 // The image every container task here runs. It is activity-shell rather than a
 // bare `alpine:3.20`, because an activity must write
 // /orkstack/output/values.json and a stock base image does not — an image that
@@ -389,6 +396,7 @@ test('per-task Inspect reveals that task alone, and Show events opens the event 
 });
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -441,13 +449,13 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18084',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('run-page')
 	});
 	await waitForEngine(ENGINE);
@@ -484,6 +492,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 	probeServer?.close();
 });
 

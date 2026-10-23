@@ -197,6 +197,11 @@ type runner struct {
 	// empty while it runs on.
 	cancel     context.CancelFunc
 	stopReason string
+	// heavyDone, when set, is a file written the moment the last heavy job
+	// has ended, before any ordinary job starts. scripts/proof.sh waits for
+	// it to start the activity fixture: a heavy test measures a quiet host,
+	// and the fixture's containers are the load it must not see.
+	heavyDone string
 }
 
 // jobResult is what one process reported.
@@ -246,6 +251,7 @@ func (r *runner) runAll(ctx context.Context, jobs []job) {
 	for _, j := range heavy {
 		r.runOne(ctx, j, 1)
 	}
+	r.markHeavyDone()
 	ch := make(chan job)
 	var wg sync.WaitGroup
 	for slot := 1; slot <= r.slots; slot++ {
@@ -262,6 +268,19 @@ func (r *runner) runAll(ctx context.Context, jobs []job) {
 	}
 	close(ch)
 	wg.Wait()
+}
+
+// markHeavyDone writes the heavy-phase marker, when one is wanted. It is
+// written whether or not the plan held a heavy job, so a waiter never waits on
+// a plan with none. A marker that cannot be written is logged and nothing
+// else: the gate that waits for it also ends its wait when this run ends.
+func (r *runner) markHeavyDone() {
+	if r.heavyDone == "" {
+		return
+	}
+	if err := os.WriteFile(r.heavyDone, []byte("heavy jobs done\n"), 0o644); err != nil {
+		r.logf("heavy-done marker: %v", err)
+	}
 }
 
 // runOne runs one job, re-running in a fresh process the tests behind a crash.
@@ -907,6 +926,7 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		slots: o.jobs, nsPrefix: o.nsPrefix, baseEnv: os.Environ(), bins: bins, dirs: dirs,
 		jobDir: filepath.Join(o.out, "integration"), c: newCollector(), events: events, log: stdout,
 		progress: nil, failFast: o.failFast, excused: excusedFor("integration", quarantine),
+		heavyDone: filepath.Join(o.out, "integration-heavy-done"),
 	}
 	if o.printProgress {
 		r.progress = stdout

@@ -2,24 +2,31 @@ import { expect, test, type Page } from './test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
 import { OP, addListFilter, selectOption } from './uiHelpers';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('browsing-operations');
 
 // A real browser path for URL-addressable list filters and dashboard windows.
 // It gives pagination enough data to issue an opaque cursor, then follows it
@@ -38,7 +45,7 @@ import { OP, addListFilter, selectOption } from './uiHelpers';
 // the second Next onwards.
 const ENGINE = 'http://127.0.0.1:18090';
 const UI = 'http://127.0.0.1:14184';
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-browsing';
+const TEMPORAL_NAMESPACE = temporalNamespace('browsing');
 // One namespace per execution: R1-R3 count every run of a status, of a
 // contains match or of a window across the whole namespace, and the shared
 // development archive keeps every earlier execution's finished runs there, so
@@ -86,6 +93,7 @@ function equals(field: string, value: string) {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(DIR, { recursive: true });
 	writeFileSync(out('session.txt'), `browsing operations\nnamespace=${NS}\nflow=${FLOW}\n`);
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
@@ -93,8 +101,8 @@ test.beforeAll(async () => {
 	for (const port of [18090, 14184]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
 	ensureActivityImages();
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
-	spawnLogged(out('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18090', ORK_WS_ALLOWED_ORIGINS: UI });
-	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('browsing-operations') });
+	spawnLogged(out('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18090', ORK_WS_ALLOWED_ORIGINS: UI });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('browsing-operations') });
 	await waitForEngine(ENGINE);
 	spawnLogged(out('ui.log'), 'node', ['build'], { HOST: '127.0.0.1', PORT: '14184', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: 'ws://127.0.0.1:18090' }, uiDir);
 	await waitFor('UI', async () => (await fetch(`${UI}/runs?ns=${NS}`)).ok);
@@ -108,7 +116,10 @@ test.beforeAll(async () => {
 	await waitFor('every failing run to be listed FAILED', async () => (await rpc<{ runs: unknown[] }>('RunService/ListRuns', { namespace: NS, filters: [equals('status', 'FAILED')], pageSize: 25 })).runs.length === FAILED_RUNS);
 });
 
-test.afterAll(async () => { await killStarted(); });
+test.afterAll(async () => {
+	await killStarted();
+	removeBucket(BUCKET);
+});
 
 /** The run rows on screen, by testid, in the order they render. */
 function rowIDs(page: Page) {

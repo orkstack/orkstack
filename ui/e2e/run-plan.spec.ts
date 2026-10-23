@@ -3,24 +3,30 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-plan');
 
 // The submit dialog's Plan action, in a browser, against the real stack.
 //
@@ -116,6 +122,7 @@ async function runsOfFlow(): Promise<number> {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -146,13 +153,13 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18417',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('run-plan')
 	});
 	await waitForEngine(ENGINE);
@@ -184,6 +191,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 test('Plan answers per draft, starts nothing, and a real run agrees with it', async ({ page }) => {

@@ -4,25 +4,27 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
+	openNamespaceEdit,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
 	tcpOpen,
-	uiDir,
-	repoRoot,
-	waitFor,
-	waitForEngine,
-	openNamespaceEdit,
-	bin,
 	temporalAddress,
-	temporalReachable
+	temporalReachable,
+	uiDir,
+	waitFor,
+	waitForEngine
 } from './harness';
 import { OP, addListFilter, adminNamespaceUrl, expectNamespace, selectNamespace } from './uiHelpers';
 
@@ -59,11 +61,11 @@ import { OP, addListFilter, adminNamespaceUrl, expectNamespace, selectNamespace 
 // non-default live pool to report on, and a live pool whose liveness comes
 // from polling alone rather than from anything it can answer. The engine and
 // its two Orkers (`main`, `gpu`) run against a bucket this run creates and
-// this run alone has ever written to (test/tools/bucket-ensure) — the
-// shared `orkstack-artifacts` bucket every other e2e spec in this module
-// writes to has accumulated a stamped namespace from every earlier run of
-// THIS spec too, and "default is the only namespace this deployment has"
-// cannot occur there a second time. Isolation per AGENTS.md §11.1: this
+// this run alone has ever written to (harness.ts ownBucket, as every spec
+// file now does) — a shared bucket would have accumulated a stamped namespace
+// from every earlier run of THIS spec, and "default is the only namespace
+// this deployment has" could not occur there a second time. Isolation per
+// AGENTS.md §11.1: this
 // spec's own Temporal namespace, which is a hard partition, so no
 // queue-level isolation is additionally required. Each Orker also gets its
 // OWN work root, because that is what its identity lock is keyed on and two
@@ -112,23 +114,8 @@ const GUARDED_NS = `admin-guarded-${STAMP}`;
 // This run's own bucket (see the topology note above): created fresh by
 // test/tools/bucket-ensure before either binary boots, and never
 // shared with another run of this spec.
-const BUCKET = process.env.ORK_S3_BUCKET_OVERRIDE ?? `orkstack-admin-${STAMP}`;
+const BUCKET = process.env.ORK_S3_BUCKET_OVERRIDE ?? ownBucket('admin');
 
-// bucketEnv builds the environment `test/tools/bucket-ensure` needs
-// for one action against THIS run's own bucket — shared between the create
-// call in beforeAll and the cleanup call in afterAll so the two can never
-// drift onto different credentials or a different bucket name.
-function bucketEnv(action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		ORK_BUCKET_ACTION: action,
-		ORK_S3_BUCKET: BUCKET,
-		ORK_S3_ENDPOINT: s3Env.ORK_S3_ENDPOINT,
-		ORK_S3_REGION: s3Env.ORK_S3_REGION,
-		ORK_S3_ACCESS_KEY: s3Env.ORK_S3_ACCESS_KEY,
-		ORK_S3_SECRET_KEY: s3Env.ORK_S3_SECRET_KEY
-	};
-}
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'admin')
@@ -260,10 +247,7 @@ test.beforeAll(async () => {
 	// idempotent, so a re-run against the same stamp is a no-op, and it is
 	// created BEFORE either binary boots so the namespace registry both of
 	// them open has never held anything but `default`.
-	execFileSync('go', ['run', './test/tools/bucket-ensure'], {
-		cwd: repoRoot,
-		env: bucketEnv('ensure')
-	});
+	ensureBucket(BUCKET);
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	const store = { ...s3Env, ORK_S3_BUCKET: BUCKET };
@@ -350,18 +334,13 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
-	// The symmetric half of the `bucket-ensure` call in beforeAll: this
-	// run's own bucket is removed once nothing needs it any more, rather
-	// than left to accumulate the way the shared `orkstack-artifacts`
-	// bucket does (see the topology note at the top of this file). Best
-	// effort and non-fatal — a cleanup failure here is a leaked resource to
-	// clean up by hand, never a reason to fail a suite that already proved
-	// everything it set out to prove.
+	// The symmetric half of ensureBucket in beforeAll: this run's own bucket
+	// is removed once nothing needs it any more (see the topology note at the
+	// top of this file). Best effort and non-fatal — a cleanup failure here is
+	// a leaked resource scripts/proof-clean.sh lists, never a reason to fail a
+	// suite that already proved everything it set out to prove.
 	try {
-		execFileSync('go', ['run', './test/tools/bucket-ensure'], {
-			cwd: repoRoot,
-			env: bucketEnv('cleanup')
-		});
+		removeBucket(BUCKET, note);
 		note(`removed this run's own bucket ${BUCKET}`);
 	} catch (err) {
 		note(`bucket cleanup for ${BUCKET} failed (leaked, not fatal): ${err}`);
@@ -372,10 +351,9 @@ test.afterAll(async () => {
 // inline BEFORE any click, and this is the one moment this bucket will ever
 // again have JUST `default` in it — every later test in this file adds a
 // namespace that outlives it. If this state is never proven here it is never
-// proven at all: the shared `orkstack-artifacts` bucket every other spec
-// writes to already carries a stamped namespace from an earlier run of THIS
-// spec, so the same check there would find the table non-empty from the very
-// first load.
+// proven at all: a bucket shared across runs would carry a stamped namespace
+// from an earlier run of THIS spec, so the same check there would find the
+// table non-empty from the very first load.
 test('default is undeletable when it is the only namespace this deployment has', async ({
 	page
 }) => {
@@ -1169,9 +1147,16 @@ test('the activity catalog is global and resolved, and an Orker outage is report
 
 	// A client-side navigation (not page.goto/page.reload) so the browser's
 	// own fetch is the one re-running `load` — the same reasoning as the
-	// pool-health test below.
+	// pool-health test below. The page must have ARRIVED at Namespaces before
+	// Activities is clicked: two clicks back to back, with the first
+	// navigation still in flight, are one navigation to the page already
+	// shown, whose `load` SvelteKit does not run again — and the card drawn
+	// from the dead Orker's last answer stays on screen. Seen once on a
+	// loaded host, with three spec files running beside this one.
 	await page.getByTestId('admin-tab-namespaces').click();
+	await expect(page).toHaveURL(/\/admin\/namespaces/);
 	await page.getByTestId('admin-tab-activities').click();
+	await expect(page).toHaveURL(/\/admin\/activities/);
 
 	// The partial answer, shown as partial: an unanswered probe is its OWN
 	// state, and it says nothing was measured rather than showing a zero.

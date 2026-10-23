@@ -57,10 +57,11 @@ type pwTest struct {
 }
 
 type pwResult struct {
-	Status    string   `json:"status"`
-	Duration  float64  `json:"duration"`
-	StartTime string   `json:"startTime,omitempty"`
-	Error     *pwError `json:"error,omitempty"`
+	ParallelIndex int      `json:"parallelIndex"`
+	Status        string   `json:"status"`
+	Duration      float64  `json:"duration"`
+	StartTime     string   `json:"startTime,omitempty"`
+	Error         *pwError `json:"error,omitempty"`
 }
 
 type uiEntry struct {
@@ -77,6 +78,10 @@ type uiEntry struct {
 	// abs and endAbs are the test's first start and last end as Unix seconds,
 	// zero when the report carries no start time.
 	abs, endAbs float64
+	// lane is the Playwright worker lane (the result's parallelIndex) the
+	// test ran in: the gap before a test is measured against the tests of
+	// its own lane only, so a wall stays a file's own with several workers.
+	lane int
 }
 
 // uiFileEntry is one spec file's measured cost: its tests' seconds, and its
@@ -102,6 +107,18 @@ type uiLedger struct {
 	KnownGaps         []string           `json:"known_gaps,omitempty"`
 }
 
+// mergeReports joins two JSON reports of one run made as two invocations:
+// the suites and errors of both, and the stats of the first that has any (a
+// proof reads start times from each result, never from the stats).
+func mergeReports(a, b pwReport) pwReport {
+	a.Suites = append(a.Suites, b.Suites...)
+	a.Errors = append(a.Errors, b.Errors...)
+	if a.Stats == nil {
+		a.Stats = b.Stats
+	}
+	return a
+}
+
 // flattenPW walks a report into "file › describe › title [project]" keys.
 func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 	tests = map[string]uiEntry{}
@@ -121,6 +138,7 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 						ms += res.Duration
 					}
 					e.Seconds = ms / 1000
+					e.lane = t.Results[0].ParallelIndex
 					if first, err := time.Parse(time.RFC3339Nano, t.Results[0].StartTime); err == nil {
 						last := t.Results[len(t.Results)-1]
 						e.abs = float64(first.UnixNano()) / 1e9
@@ -223,14 +241,17 @@ func setStarts(entries []uiEntry) {
 	}
 }
 
-// fileWalls computes each spec file's wall. Tests are taken in start order,
-// and the gap before a test, its start minus the end of the latest-ending
-// test before it (never negative, none for the first), is the file of the
-// test that follows it. Page start, per-file fixtures and beforeAll happen in
-// those gaps, so a file costs more than the sum of its tests.
+// fileWalls computes each spec file's wall. Within each worker lane, tests
+// are taken in start order, and the gap before a test — its start minus the
+// end of the latest-ending test before it in that lane (never negative, none
+// for the lane's first) — is the file of the test that follows it. Page
+// start, per-file fixtures and beforeAll happen in those gaps, so a file
+// costs more than the sum of its tests. Lanes are kept apart because with
+// several workers another lane's test is what usually ended last, and a
+// gap measured against it would be most of a file's beforeAll lost.
 func fileWalls(entries []uiEntry) []uiFileEntry {
 	byFile := map[string]*uiFileEntry{}
-	var timed []uiEntry
+	lanes := map[int][]uiEntry{}
 	for _, e := range entries {
 		f := byFile[e.File]
 		if f == nil {
@@ -241,17 +262,19 @@ func fileWalls(entries []uiEntry) []uiFileEntry {
 		f.Seconds += e.Seconds
 		f.WallSeconds += e.Seconds
 		if e.abs > 0 {
-			timed = append(timed, e)
+			lanes[e.lane] = append(lanes[e.lane], e)
 		}
 	}
-	sort.SliceStable(timed, func(i, j int) bool { return timed[i].abs < timed[j].abs })
-	var latestEnd float64
-	for i, e := range timed {
-		if i > 0 && e.abs > latestEnd {
-			byFile[e.File].WallSeconds += e.abs - latestEnd
-		}
-		if e.endAbs > latestEnd {
-			latestEnd = e.endAbs
+	for _, timed := range lanes {
+		sort.SliceStable(timed, func(i, j int) bool { return timed[i].abs < timed[j].abs })
+		var latestEnd float64
+		for i, e := range timed {
+			if i > 0 && e.abs > latestEnd {
+				byFile[e.File].WallSeconds += e.abs - latestEnd
+			}
+			if e.endAbs > latestEnd {
+				latestEnd = e.endAbs
+			}
 		}
 	}
 	out := make([]uiFileEntry, 0, len(byFile))
@@ -307,7 +330,11 @@ func countGuardRetries(log string) (int, error) {
 func cmdUILedger(args []string) int {
 	fs := flag.NewFlagSet("ui-ledger", flag.ContinueOnError)
 	listFile := fs.String("list", "", "`playwright test --list --reporter=json` output")
-	reportFile := fs.String("report", "", "the JSON reporter's output of the run")
+	var reportFiles []string
+	fs.Func("report", "the JSON reporter's output of the run; repeatable, when a proof ran the suite as several invocations (the parallel project, then the solo projects) that together are one run", func(v string) error {
+		reportFiles = append(reportFiles, v)
+		return nil
+	})
 	logFile := fs.String("log", "", "the run's log, where the guard prints its repeats")
 	config := fs.String("config", "ui/playwright.config.ts", "where NETWORK_CHANGE_RETRY_CEILING is declared")
 	out := fs.String("out", "", "the proof directory")
@@ -315,8 +342,8 @@ func cmdUILedger(args []string) int {
 	hostSpeed := fs.String("host-speed", "scripts/proof-host-speed.tsv", "declared runner-size budgets")
 	hostSpeedBase := fs.String("host-speed-base", "", "the base's copy of the host-speed table (only rows it carries excuse)")
 	part := fs.String("part", "local", "the part this ledger belongs to: only a CI ui-e2e:K part may excuse a runner-size miss")
-	if err := fs.Parse(args); err != nil || *listFile == "" || *reportFile == "" || *out == "" {
-		fmt.Fprintln(os.Stderr, "proofrun ui-ledger -list FILE -report FILE -log FILE -out DIR")
+	if err := fs.Parse(args); err != nil || *listFile == "" || len(reportFiles) == 0 || *out == "" {
+		fmt.Fprintln(os.Stderr, "proofrun ui-ledger -list FILE -report FILE [-report FILE]... -log FILE -out DIR")
 		return 2
 	}
 	var list, report pwReport
@@ -324,9 +351,13 @@ func cmdUILedger(args []string) int {
 		fmt.Println("ui-e2e ledger: the listing is unreadable:", err)
 		return 1
 	}
-	if err := readJSON(*reportFile, &report); err != nil {
-		fmt.Println("ui-e2e ledger: the report is unreadable:", err)
-		return 1
+	for _, f := range reportFiles {
+		var part pwReport
+		if err := readJSON(f, &part); err != nil {
+			fmt.Println("ui-e2e ledger: the report is unreadable:", err)
+			return 1
+		}
+		report = mergeReports(report, part)
 	}
 	ceiling, err := retryCeiling(*config)
 	if err != nil {

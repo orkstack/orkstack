@@ -180,3 +180,40 @@ func TestRunner_ASignalStopsTheRunAndLeavesACompleteLedger(t *testing.T) {
 		t.Errorf("problems do not say the tests were not run: %v", l.Problems)
 	}
 }
+
+// The heavy-done marker is written once the heavy jobs have ended and before
+// any ordinary job starts, and it is written for a plan with no heavy job at
+// all, so the gate that waits for it (scripts/proof.sh starts the activity
+// fixture on it) never waits on a plan that has none.
+func TestRunner_WritesTheHeavyDoneMarkerBeforeTheOrdinaryJobs(t *testing.T) {
+	quiet(t)
+	for _, tc := range []struct {
+		name string
+		jobs []job
+	}{
+		{"with a heavy job", []job{
+			{ID: "p-001", Package: "p", Tests: []string{"TestA"}},
+			{ID: "p-002", Package: "p", Tests: []string{"TestB"}, Heavy: true},
+		}},
+		{"without one", []job{{ID: "p-001", Package: "p", Tests: []string{"TestA"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			marker := filepath.Join(t.TempDir(), "integration-heavy-done")
+			r := &runner{slots: 2, c: newCollector(), log: &strings.Builder{}, heavyDone: marker}
+			// A cancelled context runs no process, so this exercises the
+			// scheduling order alone: the marker must still appear.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			r.runAll(ctx, tc.jobs)
+			if _, err := os.Stat(marker); err != nil {
+				t.Fatalf("heavy-done marker: %v", err)
+			}
+		})
+	}
+	t.Run("no path, no file", func(t *testing.T) {
+		r := &runner{slots: 1, c: newCollector(), log: &strings.Builder{}}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		r.runAll(ctx, nil) // must not panic or write anywhere
+	})
+}

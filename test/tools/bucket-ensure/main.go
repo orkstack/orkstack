@@ -10,23 +10,26 @@
 // idempotently against a bucket that is already gone) or "list" (print every
 // bucket's name; ORK_S3_BUCKET is not needed).
 //
-// WHY THIS EXISTS. `deploy/docker-compose.yml`'s `minio-setup` container makes
-// exactly one bucket, `orkstack-artifacts`, once, and every e2e spec in this
-// module shares it — which is right for most of them, and wrong for the one
-// assertion in ui/e2e/admin.spec.ts that needs a namespace registry with NOTHING in it
-// yet ("default is undeletable when it is the only namespace a deployment
-// has"). A shared bucket accumulates every earlier run's stamped namespaces
-// forever, so by the second time this proof has ever run, "only default"
-// cannot occur there again — not a flake, a permanent fact about the fixture.
+// WHY THIS EXISTS. The development stack makes exactly one bucket,
+// `orkstack-artifacts`, once, and every e2e spec file used to share it. A
+// shared bucket accumulates every earlier run's stamped namespaces, Orkflows
+// and deployment-wide documents forever: an engine boot there costs time
+// proportional to the bucket's whole history, two spec files running beside
+// each other read each other's retention, image policy, audit and webhooks,
+// and ui/e2e/admin.spec.ts's "default is undeletable when it is the only
+// namespace a deployment has" cannot occur there a second time — not a flake,
+// a permanent fact about the fixture.
 //
-// So that spec's engine and Orker run against a bucket of THIS RUN's
-// own, created here and never reused across runs (the caller names it with a
-// timestamp). CreateBucket is genuinely idempotent — BucketAlreadyOwnedByYou
-// and BucketAlreadyExists are both treated as success — so a second call
-// against the same name is a no-op. `ui/e2e/admin.spec.ts`'s own `afterAll`
+// So every spec file's engine and Orker run against a bucket of THAT FILE's
+// own (ui/e2e/harness.ts ownBucket, named like internal/testsupport/s3bucket's
+// so scripts/proof-clean.sh recognises a leftover), created here before they
+// boot and never reused across runs. CreateBucket is genuinely idempotent —
+// BucketAlreadyOwnedByYou and BucketAlreadyExists are both treated as success
+// — so a second call against the same name is a no-op. Each file's `afterAll`
 // runs this same binary with ORK_BUCKET_ACTION=cleanup once the browser
-// session that used the bucket has finished with it, so the bucket does not
-// simply accumulate the way the shared one would have.
+// session that used the bucket has finished with it. The binary is built once
+// per run (ui/e2e/global-setup.ts, a proof's binaries step) rather than
+// `go run` per call.
 //
 // It builds its own S3 client rather than importing pkg/artifacts, because
 // bucket lifecycle (create, empty, delete) is not part of the Store contract

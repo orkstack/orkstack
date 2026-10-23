@@ -1,23 +1,25 @@
 import { expect, test, type Page } from './test';
-import { execFileSync, type ChildProcess } from 'node:child_process';
+import { type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	clusterEnv,
+	ensureBucket,
 	noteTo,
+	openNamespaceEdit,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
 	tcpOpen,
-	uiDir,
-	repoRoot,
-	waitFor,
-	waitForEngine,
-	openNamespaceEdit,
-	bin,
 	temporalAddress,
-	temporalReachable
+	temporalReachable,
+	uiDir,
+	waitFor,
+	waitForEngine
 } from './harness';
 import { OP, addListFilter, adminNamespaceUrl } from './uiHelpers';
 
@@ -60,7 +62,7 @@ const UI_ORIGIN = `http://127.0.0.1:${UI_PORT}`;
 
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-audit-${STAMP}`;
-const BUCKET = `orkstack-audit-${STAMP}`;
+const BUCKET = ownBucket('audit');
 const NS = `audit-e2e-${STAMP}`;
 const EXTRA = [`audit-extra-a-${STAMP}`, `audit-extra-b-${STAMP}`];
 
@@ -77,17 +79,6 @@ const mine: ChildProcess[] = [];
 let engineProc: ChildProcess | undefined;
 let engineStarts = 0;
 
-function bucketEnv(action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		ORK_BUCKET_ACTION: action,
-		ORK_S3_BUCKET: BUCKET,
-		ORK_S3_ENDPOINT: s3Env.ORK_S3_ENDPOINT,
-		ORK_S3_REGION: s3Env.ORK_S3_REGION,
-		ORK_S3_ACCESS_KEY: s3Env.ORK_S3_ACCESS_KEY,
-		ORK_S3_SECRET_KEY: s3Env.ORK_S3_SECRET_KEY
-	};
-}
 
 function startEngine(): ChildProcess {
 	engineStarts++;
@@ -163,7 +154,7 @@ test.beforeAll(async () => {
 	for (const port of [Number(ENGINE_PORT), Number(UI_PORT)]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
-	execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('ensure') });
+	ensureBucket(BUCKET);
 
 	engineProc = startEngine();
 	await waitForEngine(ENGINE);
@@ -183,7 +174,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
 	for (const child of mine.splice(0)) await stop(child);
 	try {
-		execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('cleanup') });
+		removeBucket(BUCKET, note);
 		note(`removed this run's own bucket ${BUCKET}`);
 	} catch (err) {
 		note(`bucket cleanup for ${BUCKET} failed (leaked, not fatal): ${err}`);

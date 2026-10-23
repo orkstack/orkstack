@@ -18,17 +18,28 @@ export const handle: Handle = async ({ event, resolve }) => {
 		headers.delete('host');
 		headers.delete('content-length');
 		headers.delete('connection');
-		const upstream = await fetch(target, {
-			method: event.request.method,
-			headers,
-			body:
-				event.request.method === 'GET' || event.request.method === 'HEAD'
-					? undefined
-					: event.request.body,
-			signal: event.request.signal,
-			// Node requires duplex when forwarding a streaming request body.
-			duplex: 'half'
-		} as RequestInit & { duplex: 'half' });
+		let upstream: Response;
+		try {
+			upstream = await fetch(target, {
+				method: event.request.method,
+				headers,
+				body:
+					event.request.method === 'GET' || event.request.method === 'HEAD'
+						? undefined
+						: event.request.body,
+				signal: event.request.signal,
+				// Node requires duplex when forwarding a streaming request body.
+				duplex: 'half'
+			} as RequestInit & { duplex: 'half' });
+		} catch (err) {
+			// Node reports every failure to reach the engine as a bare
+			// "TypeError: fetch failed" and keeps the reason in `cause`. Say
+			// which engine and why, so a 500 on this proxy can be read from
+			// the server log; the error itself is rethrown unchanged.
+			const cause = err instanceof Error && err.cause !== undefined ? err.cause : err;
+			console.error(`engine proxy: ${event.request.method} ${target} failed: ${String(cause)}`);
+			throw err;
+		}
 		// undici has already decoded any content-encoding, so the upstream
 		// framing headers no longer describe the body we forward.
 		const responseHeaders = new Headers(upstream.headers);

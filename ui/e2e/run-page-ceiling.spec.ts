@@ -7,22 +7,29 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	repoRoot,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
 	temporalAddress,
+	temporalNamespace,
 	temporalReachable,
 	uiDir,
 	waitFor,
 	waitForEngine
 } from './harness';
 import { taskMapCellCenter } from './uiHelpers';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-page-ceiling');
 
 // The run detail page at the task ceiling (spec E7, the run-page case of
 // T7): the deployment's default engine.orkflow_max_tasks is the largest size
@@ -44,7 +51,7 @@ test.describe.configure({ mode: 'serial' });
 const ENGINE = 'http://127.0.0.1:18471';
 const ENGINE_WS = 'ws://127.0.0.1:18471';
 const UI_ORIGIN = 'http://127.0.0.1:14471';
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-run-page-ceiling';
+const TEMPORAL_NAMESPACE = temporalNamespace('run-page-ceiling');
 
 const STAMP = Date.now().toString(36);
 const GATED_ORKFLOW = `run-page-gated-${STAMP}`;
@@ -81,6 +88,7 @@ function gatedOrkflow(): string {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -107,11 +115,11 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18471',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged(outPath('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('run-page-ceiling') });
+	spawnLogged(outPath('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('run-page-ceiling') });
 	await waitForEngine(ENGINE);
 	spawnLogged(
 		outPath('ui.log'),
@@ -131,6 +139,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 // Opening, timed: milliseconds from navigation to the header, to every card,
@@ -314,7 +323,7 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 			String(GATED_TASKS),
 			String(OUTPUT_MAXIMAL_BYTES)
 		],
-		{ cwd: repoRoot, env: { ...process.env, ...s3Env } }
+		{ cwd: repoRoot, env: { ...process.env, ...storeEnv(BUCKET) } }
 	).toString();
 	note(archived.trim());
 	const outputMaximal = await measureRunPage(page, maximal, GATED_TASKS, 'output-maximal');

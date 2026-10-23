@@ -4,26 +4,29 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
+	bin,
 	catalogEnv,
 	clusterEnv,
 	cosignSign,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
+	openNamespaceEdit,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
+	repoRoot,
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
 	tcpOpen,
-	uiDir,
-	repoRoot,
-	waitFor,
-	waitForEngine,
-	openNamespaceEdit,
-	bin,
 	temporalAddress,
-	temporalReachable
+	temporalReachable,
+	uiDir,
+	waitFor,
+	waitForEngine
 } from './harness';
 import { adminNamespaceUrl } from './uiHelpers';
 
@@ -63,7 +66,7 @@ const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-image-policy-${STAMP}`;
 const PROD = `prod-${STAMP}`;
 const SANDBOX = `sandbox-${STAMP}`;
-const BUCKET = `orkstack-image-policy-${STAMP}`;
+const BUCKET = ownBucket('image-policy');
 const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'image-policy')
 	: path.join(uiDir, 'test-results', 'image-policy');
@@ -74,17 +77,6 @@ const OTHER_KEYS = out('keys-other');
 
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
-function bucketEnv(action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		ORK_BUCKET_ACTION: action,
-		ORK_S3_BUCKET: BUCKET,
-		ORK_S3_ENDPOINT: s3Env.ORK_S3_ENDPOINT,
-		ORK_S3_REGION: s3Env.ORK_S3_REGION,
-		ORK_S3_ACCESS_KEY: s3Env.ORK_S3_ACCESS_KEY,
-		ORK_S3_SECRET_KEY: s3Env.ORK_S3_SECRET_KEY
-	};
-}
 
 function orkctl(...args: string[]): string {
 	return execFileSync(bin('orkctl'), [...args, '--server', ENGINE], {
@@ -127,7 +119,7 @@ test.beforeAll(async () => {
 	note(cosignSign(['keygen', OTHER_KEYS]).trim());
 	note(cosignSign(['sign', '--key', path.join(KEYS, 'cosign.key'), activityRef('shell')]).trim());
 
-	execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('ensure') });
+	ensureBucket(BUCKET);
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	const store = { ...s3Env, ORK_S3_BUCKET: BUCKET };
@@ -158,7 +150,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
 	await killStarted();
 	try {
-		execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('cleanup') });
+		removeBucket(BUCKET, note);
 		note(`removed this run's own bucket ${BUCKET}`);
 	} catch (err) {
 		note(`bucket cleanup for ${BUCKET} failed (leaked, not fatal): ${err}`);

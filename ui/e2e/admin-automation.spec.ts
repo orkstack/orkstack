@@ -6,22 +6,28 @@ import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('admin-automation');
 
 // Admin → Automation, the Triggers tab's edit and the Webhooks page's edit, in
 // a browser, against the real engine, Orker, Temporal and MinIO
@@ -138,6 +144,7 @@ async function stopMine(): Promise<void> {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -161,12 +168,12 @@ test.beforeAll(async () => {
 		spawnLogged(out('engine.log'), bin('ork'), [], {
 			...catalogEnv,
 			...cluster,
-			...s3Env,
+			...storeEnv(BUCKET),
 			ORK_HTTP_ADDR: '127.0.0.1:18101',
 			ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 		})
 	);
-	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('admin-automation') }));
+	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('admin-automation') }));
 	mine.push(
 		spawnLogged(
 			out('ui.log'),
@@ -196,6 +203,7 @@ test.afterAll(async () => {
 	}
 	await stopMine();
 	await new Promise<void>((resolve) => (receiver ? receiver.close(() => resolve()) : resolve()));
+	removeBucket(BUCKET);
 });
 
 async function planDocument(page: import('@playwright/test').Page, yaml: string, prune = false) {

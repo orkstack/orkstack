@@ -2,23 +2,30 @@ import { expect, test, type Page } from './test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('interface-compat');
 
 // The interface compatibility gate in the browser
 // (docs/UI_CLI_PARITY.md "Interface compatibility").
@@ -38,7 +45,7 @@ const ENGINE = 'http://127.0.0.1:18307';
 const ENGINE_WS = 'ws://127.0.0.1:18307';
 const UI_ORIGIN = 'http://127.0.0.1:14307';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-interface-compat';
+const TEMPORAL_NAMESPACE = temporalNamespace('interface-compat');
 const NS = 'interface-compat';
 const STAMP = Date.now().toString(36);
 const BLOCK = `release-block-${STAMP}`;
@@ -161,6 +168,7 @@ type Catalog = { versions: { version: string; isCurrent?: boolean }[]; currentVe
 const catalog = (name: string) => rpc<Catalog>('OrkflowService/ListOrkflowVersions', { name, namespace: NS });
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -191,7 +199,7 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18307',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
@@ -242,6 +250,7 @@ test.afterAll(async () => {
 		// the schedule may never have been created; nothing to clean
 	}
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 test('the versions tab marks a breaking version against the current one', async ({ page }) => {

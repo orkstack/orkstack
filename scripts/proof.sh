@@ -37,9 +37,10 @@
 # proof/NAME stops exactly those. Nothing here kills by name or pattern.
 #
 # Environment:
-#   PROOF_JOBS=4        integration test processes at a time (1 = one after another)
-#   PROOF_UI_WORKERS=1  Playwright workers; stays 1 until the browser runs in
-#                       a network namespace of its own
+#   PROOF_JOBS=6        integration test processes at a time (1 = one after another)
+#   PROOF_UI_WORKERS=2  Playwright workers: spec files at a time (the browser
+#                       runs in a network namespace of its own, and every
+#                       file owns its ports, bucket and namespace)
 #   PROOF_GATES=a,b     run only these gates — debugging only, never merge-eligible
 #   PROOF_TEMPORAL=own  `shared` uses make infra-up's Temporal — debugging only,
 #                       never merge-eligible
@@ -203,8 +204,8 @@ else
 fi
 [ -e "$DIR" ] && invalid "proof/$(basename "$DIR") already exists: a proof never reuses a directory, so yesterday's output can never be mistaken for today's"
 
-PROOF_JOBS="${PROOF_JOBS:-4}"
-PROOF_UI_WORKERS="${PROOF_UI_WORKERS:-1}"
+PROOF_JOBS="${PROOF_JOBS:-6}"
+PROOF_UI_WORKERS="${PROOF_UI_WORKERS:-2}"
 PROOF_TEMPORAL="${PROOF_TEMPORAL:-own}"
 PROOF_FAIL_FAST="${PROOF_FAIL_FAST:-1}"
 [[ "$PROOF_JOBS" =~ ^[1-9][0-9]*$ ]] || invalid "PROOF_JOBS must be a positive integer"
@@ -440,6 +441,11 @@ on_exit() {
 	trap '' TERM INT HUP
 	if [ -n "$SAMPLER" ]; then kill "$SAMPLER" 2>/dev/null; fi
 	if [ -n "$TEMPORAL_STARTED" ]; then docker stop "$TEMPORAL_NAME" >/dev/null 2>&1; fi
+	# The Playwright suite's browser-server container (ui/e2e/browser-server.ts)
+	# carries this proof's id; its global teardown stops it, unless the runner
+	# was stopped first (fail-fast, a signal), in which case this does.
+	docker ps -q --filter "label=orkstack.proof=$PROOF_ID" --filter label=orkstack.e2e=browser-server 2>/dev/null |
+		xargs -r docker stop -t 5 >/dev/null 2>&1
 	# The daemon's copies of this proof's own activity-image tags. They are
 	# this proof's alone (pr-<hash of its directory>), and the registry keeps
 	# the pushed images, so a re-run against the tag still resolves them.
@@ -696,7 +702,7 @@ push_images() {
 }
 build_binaries() {
 	local pkg
-	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller; do
+	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run; do
 		go build -o "$DIR/bin/$(basename "$pkg")" "$pkg" || return 1
 		say "built $DIR/bin/$(basename "$pkg") from $pkg"
 	done
@@ -724,9 +730,25 @@ STACK_ENV=(
 # ---- P2: integration, with the Docker-only activity fixture beside it -----------
 # The only gates that run side by side. If either fails, the other is stopped
 # (wait_bg, stop_running_gates) and Playwright and observability never start.
+#
+# The fixture starts only once the integration runner has finished its HEAVY
+# jobs (proofrun writes integration-heavy-done between the heavy phase and the
+# ordinary one): a heavy test asserts absolute wall-clock bounds measured on a
+# quiet host, and the fixture's containers are exactly the load it must not
+# see. If the integration gate ends without the marker (it failed or was
+# stopped first), the wait ends with it. `exec` makes the fixture's own pid the
+# one run() recorded, so stop_running_gates reaches make and not a wrapper.
+fixture_after_heavy() {
+	if runs integration; then
+		while [ ! -e "$DIR/integration-heavy-done" ] && ! grep -q "^integration"$'\t' "$GATES_TSV"; do
+			sleep 2
+		done
+	fi
+	exec make -C images test TAG="$IMAGE_TAG" REGISTRY="$REGISTRY"
+}
 if [ -z "$FF_TRIGGER" ]; then
 	if runs activity-fixture; then
-		run_bg activity-fixture activity-fixture.log make -C images test TAG="$IMAGE_TAG" REGISTRY="$REGISTRY"
+		run_bg activity-fixture activity-fixture.log fixture_after_heavy
 	fi
 	if runs integration; then
 		integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" -lists-changed "$DIR/lists-changed.json")
@@ -749,11 +771,14 @@ if [ -z "$FF_TRIGGER" ]; then
 fi
 
 # ---- P4: Playwright ------------------------------------------------------------------
-# Spec files still listen on fixed ports, share the development bucket's
-# deployment-wide documents, and drive a browser in the host's network
-# namespace (AGENTS.md §11.1), so two proofs' specs must never overlap. A
-# host-wide lock enforces it: a second proof waits here, rather than running
-# beside the first and failing on a port, a document or a network change.
+# Spec files run PROOF_UI_WORKERS at a time: the browser runs in a network
+# namespace of its own (ui/e2e/browser-server.ts, started by the suite's
+# global setup from the image ui/e2e/browser-image.txt pins, pulled here when
+# the host lacks it), and every file owns its bucket and its Temporal
+# namespace. Each file still listens on FIXED ports and names fixed Orker
+# work roots, unique across files but not across proofs (AGENTS.md §11.1), so
+# two proofs' specs must never overlap: a host-wide lock enforces it, and a
+# second proof waits here rather than failing on a port.
 UI_LOCK="${XDG_RUNTIME_DIR:-/tmp}/orkstack-ui-e2e.lock"
 ui_e2e() {
 	{
@@ -765,8 +790,15 @@ ui_e2e() {
 		ui_e2e_locked
 	} 9>"$UI_LOCK"
 }
+browser_image() { grep -v '^#' "$REPO/ui/e2e/browser-image.txt" | grep -v '^$' | head -n1; }
 ui_e2e_locked() {
-	local pw="$REPO/ui/node_modules/.bin/playwright" code=0
+	local pw="$REPO/ui/node_modules/.bin/playwright" code=0 image
+	image="$(browser_image)"
+	if ! docker image inspect "$image" >/dev/null 2>&1; then
+		say "pulling the browser-server image $image"
+		docker pull "$image" >"$DIR/browser-image-pull.log" 2>&1 || { say "cannot pull $image: $DIR/browser-image-pull.log"; return 1; }
+	fi
+	say "browser server image: $image"
 	if ! (cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
 		"$pw" test --list --reporter=json "${SPEC_ARGS[@]}" >"$DIR/ui-e2e-list.json"); then
 		say "playwright test --list failed"
@@ -774,14 +806,37 @@ ui_e2e_locked() {
 	fi
 	"$PR" ui-plan -list "$DIR/ui-e2e-list.json" -costs scripts/proof-ui-costs.tsv \
 		-shards 1 -out "$DIR/ui-plan.json" >>"$DIR/ui-e2e.log" 2>&1 || { say "proofrun ui-plan failed"; return 1; }
-	(cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
-		PLAYWRIGHT_JSON_OUTPUT_FILE="$DIR/ui-e2e-report.json" \
-		PLAYWRIGHT_JSON_OUTPUT_NAME="$DIR/ui-e2e-report.json" \
-		"$pw" test --workers "$PROOF_UI_WORKERS" --reporter=list,json "${SPEC_ARGS[@]}") || code=1
-	"$PR" ui-ledger -list "$DIR/ui-e2e-list.json" -report "$DIR/ui-e2e-report.json" \
+	# With one worker everything runs in one invocation. With more, the
+	# parallel project runs first and the two solo projects — the spec files
+	# that assert a render budget, which only a quiet host can measure
+	# (ui/playwright.config.ts, `projects`) — run after it on one worker; the
+	# ledger reads both reports as one run.
+	local reports=()
+	if [ "$PROOF_UI_WORKERS" -gt 1 ]; then
+		playwright_run "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" --project chromium "${SPEC_ARGS[@]}" || code=1
+		reports+=(-report "$DIR/ui-e2e-report.json")
+		if [ "$code" -eq 0 ] || [ "$PROOF_FAIL_FAST" = 0 ]; then
+			playwright_run "$DIR/ui-e2e-report-solo.json" 1 --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling "${SPEC_ARGS[@]}" || code=1
+			reports+=(-report "$DIR/ui-e2e-report-solo.json")
+		fi
+	else
+		playwright_run "$DIR/ui-e2e-report.json" 1 "${SPEC_ARGS[@]}" || code=1
+		reports+=(-report "$DIR/ui-e2e-report.json")
+	fi
+	"$PR" ui-ledger -list "$DIR/ui-e2e-list.json" "${reports[@]}" \
 		-log "$DIR/ui-e2e.log" -config "$REPO/ui/playwright.config.ts" -out "$DIR" \
 		-part local -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" || code=1
 	return "$code"
+}
+# playwright_run <report> <workers> <playwright args...>: one invocation of the
+# suite, its JSON report at <report>, its list output appended to the gate's log.
+playwright_run() {
+	local report="$1" workers="$2"
+	shift 2
+	(cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+		PLAYWRIGHT_JSON_OUTPUT_FILE="$report" \
+		PLAYWRIGHT_JSON_OUTPUT_NAME="$report" \
+		"$REPO/ui/node_modules/.bin/playwright" test --workers "$workers" --reporter=list,json "$@")
 }
 step ui-e2e ui-e2e.log ui_e2e
 

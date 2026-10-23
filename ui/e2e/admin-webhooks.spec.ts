@@ -6,22 +6,28 @@ import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('admin-webhooks');
 
 // Admin → Webhooks with a scope, in a browser, against the real engine, Orker,
 // Temporal and MinIO (docs/UI_CLI_PARITY.md "Scoped subscriptions and task
@@ -136,6 +142,7 @@ async function stopMine(): Promise<void> {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -157,10 +164,10 @@ test.beforeAll(async () => {
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	mine.push(
 		spawnLogged(out('engine.log'), bin('ork'), [], {
-			...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18093', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+			...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18093', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 		})
 	);
-	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('admin-webhooks') }));
+	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('admin-webhooks') }));
 	mine.push(
 		spawnLogged(out('ui.log'), 'node', ['build'], {
 			HOST: '127.0.0.1', PORT: '14187', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
@@ -186,6 +193,7 @@ test.afterAll(async () => {
 	}
 	await stopMine();
 	await new Promise<void>((resolve) => (receiver ? receiver.close(() => resolve()) : resolve()));
+	removeBucket(BUCKET);
 });
 
 test('registers a scoped task-event webhook and the row states its scope', async ({ page }) => {

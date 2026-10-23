@@ -4,26 +4,33 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	containerHost,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
-	rpc as callEngine,
-	s3Env,
-	spawnLogged,
-	tcpOpen,
-	uiDir,
+	removeBucket,
 	repoRoot,
-	waitFor,
-	waitForEngine,
-	bin,
+	rpc as callEngine,
+	spawnLogged,
+	storeEnv,
+	tcpOpen,
 	temporalAddress,
-	temporalReachable
+	temporalNamespace,
+	temporalReachable,
+	uiDir,
+	waitFor,
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-page-timing');
 
 // Task timing on the run detail page, in a browser, against the real stack:
 // was this task slow, or was it waiting?
@@ -49,7 +56,7 @@ const ENGINE = 'http://127.0.0.1:18293';
 const ENGINE_WS = 'ws://127.0.0.1:18293';
 const UI_ORIGIN = 'http://127.0.0.1:14293';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-run-timing';
+const TEMPORAL_NAMESPACE = temporalNamespace('run-timing');
 const STAMP = Date.now().toString(36);
 const WAIT_ORKFLOW = `run-page-timing-${STAMP}`;
 const FLAKY_ORKFLOW = `run-page-timing-flaky-${STAMP}`;
@@ -88,7 +95,7 @@ function startOrker() {
 	orkerStarted = true;
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...clusterEnv(TEMPORAL_NAMESPACE),
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('run-page-timing')
 	});
 	note('orker started');
@@ -148,6 +155,7 @@ function msOf(value: string | null): number {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	// Appended, not overwritten: a failed test restarts the worker and this
 	// hook with it, and the transcript must keep what the failed test noted.
@@ -196,7 +204,7 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18293',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
@@ -217,6 +225,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 	await new Promise<void>((resolve) => (probeServer ? probeServer.close(() => resolve()) : resolve()));
 });
 

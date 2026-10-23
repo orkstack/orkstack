@@ -3,24 +3,31 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-page-pins');
 
 // Task pins on the run detail page, in a browser, against the real stack.
 //
@@ -49,7 +56,7 @@ const ENGINE = 'http://127.0.0.1:18092';
 const ENGINE_WS = 'ws://127.0.0.1:18092';
 const UI_ORIGIN = 'http://127.0.0.1:14186';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-run-pins';
+const TEMPORAL_NAMESPACE = temporalNamespace('run-pins');
 const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 
 const STAMP = Date.now().toString(36);
@@ -155,6 +162,7 @@ function cardAttr(page: Page, taskId: string, attribute: string): Promise<string
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -190,7 +198,7 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18092',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
@@ -201,7 +209,7 @@ test.beforeAll(async () => {
 	// orkflow has two.
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('run-page-pins'),
 		ORK_ORKER_MAX_PINS: '2'
 	});
@@ -237,6 +245,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 test('a pinned task states its pin and its orker, and one pin means one orker', async ({ page }) => {

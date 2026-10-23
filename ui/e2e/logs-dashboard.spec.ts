@@ -4,8 +4,11 @@ import { appendFileSync, createWriteStream, mkdirSync, writeFileSync } from 'nod
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { catalogEnv, ensureActivityImages, orkerEnv, killStarted, trackChild, bin, temporalAddress, temporalReachable } from './harness';
+import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild } from './harness';
 import { selectNamespace } from './uiHelpers';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('logs-dashboard');
 
 // The whole logs-dashboard story, in one browser session against the real
 // stack.
@@ -43,7 +46,7 @@ const ENGINE_B_WS = 'ws://127.0.0.1:18083';
 const UI_ORIGIN = 'http://127.0.0.1:14175';
 const B_PORT = '18083';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-logs-dashboard';
+const TEMPORAL_NAMESPACE = temporalNamespace('logs-dashboard');
 
 // Per-run ork namespaces, and per-run orkflow names inside them.
 //
@@ -319,6 +322,7 @@ async function lineNumbers(page: Page, taskId: string, prefix: string): Promise<
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -357,7 +361,7 @@ test.beforeAll(async () => {
 		ORK_ARTIFACT_BACKEND: 's3',
 		ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
 		ORK_S3_REGION: 'us-east-1',
-		ORK_S3_BUCKET: 'orkstack-artifacts',
+		ORK_S3_BUCKET: BUCKET,
 		ORK_S3_ACCESS_KEY: 'orkstack',
 		ORK_S3_SECRET_KEY: 'orkstack-secret',
 		ORK_S3_PATH_STYLE: 'true'
@@ -483,6 +487,7 @@ test.afterAll(async () => {
 		// way the run is over and nothing below depends on it.
 	}
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 // The live half: the pane follows while the task runs, keeps the
@@ -984,14 +989,14 @@ test('the recent-failures section expands into fingerprints that name the task a
 	// Reclaim the run's attempt records the way the cleanup worker does when
 	// retention ends. The archived run stays; the evidence of which image it
 	// ran does not.
-	const reclaimed = execFileSync('go', ['run', './test/tools/reclaim-run', ALPHA, failedRun], {
+	const reclaimed = execFileSync(bin('reclaim-run'), [ALPHA, failedRun], {
 		cwd: repoRoot,
 		env: {
 			...process.env,
 			ORK_ARTIFACT_BACKEND: 's3',
 			ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
 			ORK_S3_REGION: 'us-east-1',
-			ORK_S3_BUCKET: 'orkstack-artifacts',
+			ORK_S3_BUCKET: BUCKET,
 			ORK_S3_ACCESS_KEY: 'orkstack',
 			ORK_S3_SECRET_KEY: 'orkstack-secret',
 			ORK_S3_PATH_STYLE: 'true'
@@ -1103,14 +1108,14 @@ test("the dashboard's stability section names the task that retried, its rate an
 	// Reclaim the run's attempt records as the cleanup worker does when
 	// retention ends. The archived run stays; the evidence that it retried
 	// does not — and the dashboard must say so rather than call it clean.
-	const reclaimed = execFileSync('go', ['run', './test/tools/reclaim-run', ALPHA, retriedRun], {
+	const reclaimed = execFileSync(bin('reclaim-run'), [ALPHA, retriedRun], {
 		cwd: repoRoot,
 		env: {
 			...process.env,
 			ORK_ARTIFACT_BACKEND: 's3',
 			ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
 			ORK_S3_REGION: 'us-east-1',
-			ORK_S3_BUCKET: 'orkstack-artifacts',
+			ORK_S3_BUCKET: BUCKET,
 			ORK_S3_ACCESS_KEY: 'orkstack',
 			ORK_S3_SECRET_KEY: 'orkstack-secret',
 			ORK_S3_PATH_STYLE: 'true'

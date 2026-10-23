@@ -3,25 +3,32 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
-	rpc as callEngine,
-	s3Env,
-	spawnLogged,
-	tcpOpen,
-	uiDir,
+	removeBucket,
 	repoRoot,
-	waitFor,
-	waitForEngine,
-	bin,
+	rpc as callEngine,
+	spawnLogged,
+	storeEnv,
+	tcpOpen,
 	temporalAddress,
-	temporalReachable
+	temporalNamespace,
+	temporalReachable,
+	uiDir,
+	waitFor,
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-page-live');
 
 // Live attempt introspection on the run detail page, in a browser, against
 // the real stack: what is this running task doing right now?
@@ -47,7 +54,7 @@ const ENGINE = 'http://127.0.0.1:18311';
 const ENGINE_WS = 'ws://127.0.0.1:18311';
 const UI_ORIGIN = 'http://127.0.0.1:14311';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-run-live';
+const TEMPORAL_NAMESPACE = temporalNamespace('run-live');
 const STAMP = Date.now().toString(36);
 const ORKFLOW = `run-page-live-${STAMP}`;
 const ORKER_ID = 'orker-e2e-live';
@@ -74,7 +81,7 @@ function startOrker() {
 	orkerStarted = true;
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...clusterEnv(TEMPORAL_NAMESPACE),
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('run-page-live'),
 		ORK_ORKER_ID: ORKER_ID,
 		ORK_ORKER_HEARTBEAT_INTERVAL: '1s'
@@ -120,6 +127,7 @@ function bytesOf(text: string): number {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	appendFileSync(
 		outPath(TRANSCRIPT),
@@ -150,7 +158,7 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18311',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
@@ -170,6 +178,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 test('a running task shows what it is doing now: waiting, phase and bytes, cancelling', async ({ page }) => {

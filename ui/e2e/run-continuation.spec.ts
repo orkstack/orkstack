@@ -8,21 +8,28 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	repoRoot,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
 	temporalAddress,
+	temporalNamespace,
 	temporalReachable,
 	uiDir,
 	waitFor,
 	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-continuation');
 
 // A run that carries on into a fresh history, in a browser, against the real
 // stack (internal/engine/continuation.go; docs/DEPLOY.md §2, "Runs that span
@@ -51,7 +58,7 @@ const ENGINE = 'http://127.0.0.1:18663';
 const ENGINE_WS = 'ws://127.0.0.1:18663';
 const UI_ORIGIN = 'http://127.0.0.1:14663';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-continuation';
+const TEMPORAL_NAMESPACE = temporalNamespace('continuation');
 const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 
 const STAMP = Date.now().toString(36);
@@ -139,7 +146,7 @@ tasks:
 type Generations = { executions: number; continued: number; holds: number };
 
 function generations(runID: string): Generations {
-	const out = execFileSync('go', ['run', './test/tools/generations', '-run', runID, '-log', ENGINE_LOG], {
+	const out = execFileSync(bin('generations'), ['-run', runID, '-log', ENGINE_LOG], {
 		cwd: repoRoot,
 		env: { ...process.env, ...clusterEnv(TEMPORAL_NAMESPACE) },
 		encoding: 'utf8'
@@ -158,6 +165,7 @@ function holdLogged(runID: string): boolean {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -190,7 +198,7 @@ test.beforeAll(async () => {
 	spawnLogged(ENGINE_LOG, bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18663',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
 		ORK_HISTORY_MAX_EVENTS: '600',
@@ -202,7 +210,7 @@ test.beforeAll(async () => {
 	});
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('run-continuation')
 	});
 	await waitForEngine(ENGINE);
@@ -232,6 +240,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 test('a run that carries on into fresh histories reads as one run, live, to the end', async ({ page }) => {

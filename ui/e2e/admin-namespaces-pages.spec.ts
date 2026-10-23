@@ -1,24 +1,25 @@
 import { expect, test, type Page } from './test';
-import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	clusterEnv,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	openNamespaceEdit,
+	ownBucket,
 	proofOut,
-	repoRoot,
+	removeBucket,
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
 import { OP, addListFilter, selectOption } from './uiHelpers';
 
@@ -51,7 +52,7 @@ const UI_PORT = '14473';
 const UI_ORIGIN = `http://127.0.0.1:${UI_PORT}`;
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-ns-pages-${STAMP}`;
-const BUCKET = `orkstack-ns-pages-${STAMP}`;
+const BUCKET = ownBucket('ns-pages');
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'admin-namespaces-pages')
@@ -74,17 +75,6 @@ const PAYMENTS = ['a', 'ab', ...TENANTS.filter((_, i) => i % 2 === 0)];
 const HELD = 'tenant-05';
 const CREATED = 'zulu';
 
-function bucketEnv(action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		ORK_BUCKET_ACTION: action,
-		ORK_S3_BUCKET: BUCKET,
-		ORK_S3_ENDPOINT: s3Env.ORK_S3_ENDPOINT,
-		ORK_S3_REGION: s3Env.ORK_S3_REGION,
-		ORK_S3_ACCESS_KEY: s3Env.ORK_S3_ACCESS_KEY,
-		ORK_S3_SECRET_KEY: s3Env.ORK_S3_SECRET_KEY
-	};
-}
 
 test.describe.configure({ mode: 'serial' });
 
@@ -95,7 +85,7 @@ test.beforeAll(async () => {
 	for (const port of [Number(ENGINE_PORT), Number(UI_PORT)]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
-	execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('ensure') });
+	ensureBucket(BUCKET);
 
 	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...clusterEnv(TEMPORAL_NAMESPACE),
@@ -134,7 +124,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
 	await killStarted();
 	try {
-		execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('cleanup') });
+		removeBucket(BUCKET, note);
 		note(`removed this run's own bucket ${BUCKET}`);
 	} catch (err) {
 		note(`bucket cleanup for ${BUCKET} failed (leaked, not fatal): ${err}`);

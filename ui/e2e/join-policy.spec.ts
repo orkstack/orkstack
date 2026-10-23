@@ -2,25 +2,32 @@ import { expect, test, type Page } from './test';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	repoRoot,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('join-policy');
 
 // Join policies and failure handlers against a real engine, Orker, Temporal
 // and MinIO (docs/DSL.md "Joins and failure handlers"): the Orkflow page's DAG marks joins and
@@ -37,7 +44,7 @@ import {
 const ENGINE = 'http://127.0.0.1:18753';
 const ENGINE_WS = 'ws://127.0.0.1:18753';
 const UI = 'http://127.0.0.1:14753';
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-join-policy';
+const TEMPORAL_NAMESPACE = temporalNamespace('join-policy');
 const STAMP = Date.now().toString(36);
 const NS = `joins-${STAMP}`;
 const NAME = 'branch-and-recover';
@@ -66,6 +73,7 @@ function awaitVariant(): string {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -77,11 +85,11 @@ test.beforeAll(async () => {
 	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18753',
 		ORK_WS_ALLOWED_ORIGINS: UI
 	});
-	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('join-policy') });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('join-policy') });
 	spawnLogged(
 		out('ui.log'),
 		'node',
@@ -103,6 +111,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 async function openDialog(page: Page, name: string) {

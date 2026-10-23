@@ -2,25 +2,32 @@ import { expect, test, type Page } from './test';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	repoRoot,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('composed-orkflows');
 
 // Composed Orkflows against a real engine, Orker, Temporal and MinIO
 // (docs/DSL.md "Composition"): a composed task's card names its pinned child
@@ -34,7 +41,7 @@ import {
 const ENGINE = 'http://127.0.0.1:18631';
 const ENGINE_WS = 'ws://127.0.0.1:18631';
 const UI = 'http://127.0.0.1:14631';
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-composed-orkflows';
+const TEMPORAL_NAMESPACE = temporalNamespace('composed-orkflows');
 const STAMP = Date.now().toString(36);
 const NS = `compose-${STAMP}`;
 const PROOF_DIR = process.env.ORK_PROOF_DIR
@@ -94,6 +101,7 @@ tasks:
 `;
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -103,9 +111,9 @@ test.beforeAll(async () => {
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(out('engine.log'), bin('ork'), [], {
-		...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18631', ORK_WS_ALLOWED_ORIGINS: UI
+		...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18631', ORK_WS_ALLOWED_ORIGINS: UI
 	});
-	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('composed-orkflows') });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('composed-orkflows') });
 	spawnLogged(out('ui.log'), 'node', ['build'], {
 		HOST: '127.0.0.1', PORT: '14631', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
 	}, uiDir);
@@ -125,7 +133,10 @@ test.beforeAll(async () => {
 
 // Cleanup stops exactly the processes this spec started, by handle
 // (killStarted), never by name or pattern.
-test.afterAll(async () => { await killStarted(); });
+test.afterAll(async () => {
+	await killStarted();
+	removeBucket(BUCKET);
+});
 
 async function submit(name: string): Promise<string> {
 	const resp = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: name, namespace: NS });

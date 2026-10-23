@@ -4,8 +4,11 @@ import { createWriteStream, mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { catalogEnv, ensureActivityImages, killStarted, trackChild, bin, temporalAddress, temporalReachable } from './harness';
+import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild } from './harness';
 import { expectNamespace, selectNamespace } from './uiHelpers';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('namespaces-editor');
 
 // The UI is namespace-aware, and an orkflow can be edited,
 // versioned, promoted, rolled back and diffed without leaving the browser.
@@ -29,7 +32,7 @@ const ENGINE_WS = 'ws://127.0.0.1:18081';
 const UI_ORIGIN = 'http://127.0.0.1:14174';
 
 const TEMPORAL_NAMESPACE =
-	process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-namespaces-editor';
+	temporalNamespace('namespaces-editor');
 
 // Two OrkStack namespaces, fixed so the registry does not grow by two on every
 // run, plus a per-run orkflow name so the version lineage is always fresh.
@@ -198,6 +201,7 @@ const openVersions = (page: Page) =>
 	settle(page, 'version-list', 'versions-error', 'the Versions tab');
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
@@ -222,7 +226,7 @@ test.beforeAll(async () => {
 		ORK_ARTIFACT_BACKEND: 's3',
 		ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
 		ORK_S3_REGION: 'us-east-1',
-		ORK_S3_BUCKET: 'orkstack-artifacts',
+		ORK_S3_BUCKET: BUCKET,
 		ORK_S3_ACCESS_KEY: 'orkstack',
 		ORK_S3_SECRET_KEY: 'orkstack-secret',
 		ORK_S3_PATH_STYLE: 'true'
@@ -276,6 +280,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
 	await purgeOwnOrkflows().catch((err) => console.warn(`namespaces-editor cleanup: ${err}`));
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 // A namespace switcher scopes every page, the selection survives

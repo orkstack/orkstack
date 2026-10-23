@@ -3,26 +3,32 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
+	openNamespaceEdit,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	openNamespaceEdit,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
 import { adminNamespaceUrl } from './uiHelpers';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('secret-policy');
 
 // Tenant-scoped secret policy in a browser, against a real engine, Orker,
 // Temporal and MinIO:
@@ -91,6 +97,7 @@ const FETCH = orkflow('fetch', 'env:E2E_TOKEN', 'sha256sum /orkstack/input/secre
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -102,13 +109,13 @@ test.beforeAll(async () => {
 	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18317',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
 	spawnLogged(out('orker.log'), bin('orker'), [], {
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('secret-policy'),
 		ORK_ORKER_SECRET_ALLOW: 'env:E2E_*',
 		E2E_TOKEN: TOKEN
@@ -132,6 +139,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 	// The evidence must not leak what it proves is kept: neither the
 	// transcript nor any of the processes' logs may carry the minted token.
 	for (const file of ['transcript.txt', 'engine.log', 'orker.log', 'ui.log']) {

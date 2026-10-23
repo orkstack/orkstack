@@ -105,19 +105,27 @@ oci: ## Build every image once as an OCI image layout into OUT/activity-<name>/:
 # reference image; json, git and template have a first-party fixture each.
 CONTRACT_ACTIVITIES := shell json git template
 
+# Each activity's fixture is a target of its own, so `make -j` runs the four
+# beside each other (every fixture roots its workspaces in its own mktemp
+# directory and names no container, so they share nothing but the daemon).
+# CONTRACT_JOBS is how many run at once; `-O` keeps each one's output whole.
+CONTRACT_JOBS ?= 4
+
 .PHONY: contract
-contract: ## Run the contract fixtures on REGISTRY/NAMESPACE/activity-*:TAG with no build; ACTIVITY= runs one
+contract: ## Run the contract fixtures on REGISTRY/NAMESPACE/activity-*:TAG with no build, CONTRACT_JOBS at a time; ACTIVITY= runs one
 	$(if $(filter-out $(CONTRACT_ACTIVITIES),$(ACTIVITY)),$(error ACTIVITY must be one of $(CONTRACT_ACTIVITIES), not $(ACTIVITY)))
-	@for a in $(or $(ACTIVITY),$(CONTRACT_ACTIVITIES)); do \
-	  ref="$(REGISTRY)/$(NAMESPACE)/activity-$$a:$(TAG)"; \
-	  docker image inspect "$$ref" >/dev/null 2>&1 || \
-	    { echo "$$ref is not in the docker daemon: build it (make test) or docker pull it; make contract never builds"; exit 1; }; \
-	  if [ "$$a" = shell ]; then \
-	    bash ../test/fixtures/bash_activity_contract.sh "$$ref" || exit $$?; \
-	  else \
-	    bash ../test/fixtures/first_party_contract.sh "$$a" "$$ref" || exit $$?; \
-	  fi; \
-	done
+	@$(MAKE) -j$(CONTRACT_JOBS) -Otarget $(addprefix contract-,$(or $(ACTIVITY),$(CONTRACT_ACTIVITIES)))
+
+.PHONY: $(addprefix contract-,$(CONTRACT_ACTIVITIES))
+$(addprefix contract-,$(CONTRACT_ACTIVITIES)): contract-%: ## Run one activity's contract fixture on its image
+	@ref="$(REGISTRY)/$(NAMESPACE)/activity-$*:$(TAG)"; \
+	docker image inspect "$$ref" >/dev/null 2>&1 || \
+	  { echo "$$ref is not in the docker daemon: build it (make test) or docker pull it; make contract never builds"; exit 1; }; \
+	if [ "$*" = shell ]; then \
+	  bash ../test/fixtures/bash_activity_contract.sh "$$ref"; \
+	else \
+	  bash ../test/fixtures/first_party_contract.sh "$*" "$$ref"; \
+	fi
 
 .PHONY: test
 test: image-shell image-json image-git image-template ## Build the fixtures' images, then run the contract fixtures on them
