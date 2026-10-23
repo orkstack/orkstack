@@ -94,13 +94,16 @@ export default defineConfig({
 	// hand, `playwright test --project chromium-solo-each-fan-out` runs one.
 	//
 	// The run page at the task ceiling is the one spec still driven on the
-	// HOST's Chromium: through the connection its 4,000-task page did not draw
-	// its header within 60 s in two runs, where on the host it drew in about
-	// two (an observation, its cause not yet established; ORK_E2E_BROWSER=host
-	// against the container is the comparison to make). It runs alone, after
-	// every other file, and its tasks are `network: none`, so no interface of
-	// its own changes under it; a repeat the guard makes there still counts
-	// against the ceiling, as it should.
+	// HOST's Chromium. Measured alone on 2026-10-23 (ORK_CEILING_BROWSER):
+	// through the connection, four of five opens of the finished 4,000-task
+	// page matched the host (4.0–4.5 s to interactive, medians 4.28 s against
+	// 4.12 s) and one stalled, its header 41 s after navigation; in two earlier
+	// runs the same stall outlasted the spec's 60 s wait. The stall is in the
+	// connection's relay of one page's worth of requests, not in the page, and
+	// until it is understood the measurement is taken where it is steady. The
+	// spec runs alone, after every other file, and its tasks are
+	// `network: none`, so no interface of its own changes under it; a repeat
+	// the guard makes there still counts against the ceiling, as it should.
 	projects: [
 		{
 			name: 'chromium',
@@ -114,7 +117,9 @@ export default defineConfig({
 		},
 		{
 			name: 'chromium-solo-run-page-ceiling',
-			use: { browserName: 'chromium' },
+			// ORK_CEILING_BROWSER=container drives it through the isolated browser
+			// instead: the comparison that establishes the cause.
+			use: { browserName: 'chromium', ...(process.env.ORK_CEILING_BROWSER === 'container' ? isolatedBrowser : {}) },
 			testMatch: /run-page-ceiling\.spec\.ts$/
 		}
 	]
