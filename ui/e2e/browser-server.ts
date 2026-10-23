@@ -156,3 +156,13 @@ export function stopBrowserServer(container: string): void {
 		// Already gone: the daemon restarted, or a sweep took it.
 	}
 }
+
+// `bun e2e/browser-server.ts start <proof id>` starts a server and prints
+// `{"wsEndpoint":…,"container":…,"image":…}`; scripts/proof.sh runs it once
+// and hands the endpoint to both of a proof's invocations, stopping the
+// container itself when the gate ends. Under Playwright this module is only
+// imported, and import.meta.main is not set.
+if ((import.meta as { main?: boolean }).main && process.argv[2] === 'start') {
+	const server = startBrowserServer(process.argv[3] ?? `e2e-${process.pid}`);
+	console.log(JSON.stringify(server));
+}

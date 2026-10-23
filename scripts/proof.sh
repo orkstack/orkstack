@@ -815,12 +815,29 @@ ui_e2e_locked() {
 	# ledger reads both reports as one run.
 	local reports=()
 	if [ "$PROOF_UI_WORKERS" -gt 1 ]; then
+		# One browser server for both invocations, started here and stopped
+		# here; each invocation's global setup finds it in the environment
+		# (ui/e2e/global-setup.ts) and the second reuses the first's UI build
+		# by its inputs' hash (ui/e2e/build-hash.ts).
+		local server
+		if server="$(cd "$REPO/ui" && bun e2e/browser-server.ts start "$PROOF_ID" 2>>"$DIR/ui-e2e.log")"; then
+			BROWSER_WS="$(printf '%s' "$server" | sed -n 's/.*"wsEndpoint":"\([^"]*\)".*/\1/p')"
+			BROWSER_CONTAINER="$(printf '%s' "$server" | sed -n 's/.*"container":"\([^"]*\)".*/\1/p')"
+			say "browser server for both invocations: $BROWSER_WS (container ${BROWSER_CONTAINER:0:12})"
+		else
+			say "cannot start the browser server once for the gate: each invocation starts its own"
+			BROWSER_WS=""
+			BROWSER_CONTAINER=""
+		fi
 		playwright_run "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" --project chromium "${SPEC_ARGS[@]}" || code=1
 		reports+=(-report "$DIR/ui-e2e-report.json")
 		if [ "$code" -eq 0 ] || [ "$PROOF_FAIL_FAST" = 0 ]; then
 			playwright_run "$DIR/ui-e2e-report-solo.json" 1 --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling "${SPEC_ARGS[@]}" || code=1
 			reports+=(-report "$DIR/ui-e2e-report-solo.json")
 		fi
+		if [ -n "$BROWSER_CONTAINER" ]; then docker stop -t 5 "$BROWSER_CONTAINER" >/dev/null 2>&1; fi
+		BROWSER_WS=""
+		BROWSER_CONTAINER=""
 	else
 		playwright_run "$DIR/ui-e2e-report.json" 1 "${SPEC_ARGS[@]}" || code=1
 		reports+=(-report "$DIR/ui-e2e-report.json")
@@ -832,10 +849,13 @@ ui_e2e_locked() {
 }
 # playwright_run <report> <workers> <playwright args...>: one invocation of the
 # suite, its JSON report at <report>, its list output appended to the gate's log.
+BROWSER_WS=""
+BROWSER_CONTAINER=""
 playwright_run() {
 	local report="$1" workers="$2"
 	shift 2
 	(cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+		${BROWSER_WS:+ORK_E2E_BROWSER_WS="$BROWSER_WS"} ${BROWSER_CONTAINER:+ORK_E2E_BROWSER_CONTAINER="$BROWSER_CONTAINER"} \
 		PLAYWRIGHT_JSON_OUTPUT_FILE="$report" \
 		PLAYWRIGHT_JSON_OUTPUT_NAME="$report" \
 		"$REPO/ui/node_modules/.bin/playwright" test --workers "$workers" --reporter=list,json "$@")

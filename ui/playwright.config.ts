@@ -19,7 +19,10 @@ import path from 'node:path';
 // inside the proof directory, beside the transcripts the specs write there. In
 // ./test-results the next run wiped it, so a proof's failure could be read
 // only as its one line in ui-e2e.log and never explained. Only failures keep a
-// trace there: what a passing test proves is what its spec writes itself.
+// trace, under a proof and by hand alike: what a passing test proves is what
+// its spec writes itself, and zipping and carrying a passing test's trace
+// over the browser connection was cost for nothing (`--trace on` on the
+// command line records one when a passing test must be inspected).
 const proofDir = process.env.ORK_PROOF_DIR;
 
 // The browser server e2e/global-setup.ts started (e2e/browser-server.ts): a
@@ -75,7 +78,7 @@ export default defineConfig({
 	use: {
 		locale: hostIntl.locale,
 		timezoneId: hostIntl.timeZone,
-		trace: proofDir ? 'retain-on-failure' : 'on',
+		trace: 'retain-on-failure',
 		screenshot: 'only-on-failure',
 		video: 'off'
 	},

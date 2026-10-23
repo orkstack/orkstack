@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startBrowserServer } from './browser-server';
+import { BUILD_HASH_FILE, buildInputsHash } from './build-hash';
 
 // Everything every spec needs built, built ONCE per Playwright run rather than
 // in each spec's beforeAll (which was 39 vite builds and as many Go builds of
@@ -15,12 +16,17 @@ import { startBrowserServer } from './browser-server';
 //     Outside a proof they go to a temporary directory global-teardown.ts
 //     removes. Never the repository's bin/ (AGENTS.md §11.1).
 //   - the UI, `vite build` into ui/build, which every spec serves with
-//     `node build`;
+//     `node build` — rebuilt only when the hash of its inputs differs from
+//     the one the last build left beside it (build-hash.ts), so the second
+//     invocation of a proof's two, and a run by hand after no change, serve
+//     the build already there;
 //   - the browser server, in a container and so in a network namespace of
 //     its own (browser-server.ts says why), its endpoint exported as
 //     ORK_E2E_BROWSER_WS for playwright.config.ts to connect every worker
 //     to, and its container id as ORK_E2E_BROWSER_CONTAINER for
-//     global-teardown.ts to stop. ORK_E2E_BROWSER=host skips it and drives
+//     global-teardown.ts to stop. A server already named by the environment
+//     (scripts/proof.sh starts one for both of a proof's invocations) is used
+//     as it is and left running. ORK_E2E_BROWSER=host skips it and drives
 //     the host's own Chromium, for a developer without the image.
 //
 // It imports nothing from harness.ts on purpose: the harness holds per-worker
@@ -57,16 +63,30 @@ export default function globalSetup(): void {
 			execFileSync('go', ['build', '-o', target, pkg], { cwd: repoRoot, stdio: 'inherit' });
 		}
 	}
-	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
+	const buildDir = path.join(uiDir, 'build');
+	const hashFile = path.join(buildDir, BUILD_HASH_FILE);
+	const hash = buildInputsHash(uiDir);
+	const previous = existsSync(hashFile) ? readFileSync(hashFile, 'utf8').trim() : '';
+	if (previous === hash && existsSync(path.join(buildDir, 'index.js'))) {
+		console.log(`e2e: ui/build is this tree's own (inputs ${hash.slice(0, 12)}): not rebuilt`);
+	} else {
+		execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
+		if (!existsSync(path.join(buildDir, 'index.js'))) {
+			throw new Error('UI build output missing: ui/build/index.js');
+		}
+		writeFileSync(hashFile, hash + '\n');
 	}
 	if (process.env.ORK_E2E_BROWSER === 'host') {
 		console.log('e2e: ORK_E2E_BROWSER=host: driving the host\'s own Chromium, in the host\'s network namespace');
 		return;
 	}
+	if (process.env.ORK_E2E_BROWSER_WS) {
+		console.log(`e2e: browser server at ${process.env.ORK_E2E_BROWSER_WS} (started outside this run, left to its starter)`);
+		return;
+	}
 	const server = startBrowserServer(process.env.ORK_PROOF_ID ?? `e2e-${process.pid}`);
 	process.env.ORK_E2E_BROWSER_WS = server.wsEndpoint;
 	process.env.ORK_E2E_BROWSER_CONTAINER = server.container;
+	process.env.ORK_E2E_OWN_BROWSER_CONTAINER = server.container;
 	console.log(`e2e: browser server ${server.image} in container ${server.container.slice(0, 12)} at ${server.wsEndpoint}`);
 }

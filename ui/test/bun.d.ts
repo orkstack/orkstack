@@ -43,8 +43,19 @@ declare module 'bun:test' {
 // rewrites its fixture on request.
 declare module 'node:fs' {
 	export function readFileSync(path: string, encoding: 'utf8'): string;
+	/** Without an encoding: the file's bytes (e2e/build-hash.ts hashes them). */
+	export function readFileSync(path: string): Uint8Array;
 	export function readdirSync(path: string, options?: { recursive?: boolean }): string[];
 	export function writeFileSync(path: string, data: string): void;
+}
+
+// The hash e2e/build-hash.ts takes over the UI build's inputs; its test under
+// ui/test imports that module, so the one member it uses is declared here.
+declare module 'node:crypto' {
+	export function createHash(algorithm: 'sha256'): {
+		update(data: string | Uint8Array): void;
+		digest(encoding: 'hex'): string;
+	};
 }
 
 // Bun's built-in YAML 1.2 reader: authoredSchemas.test.ts reads the shipped

@@ -75,7 +75,10 @@ namespace of its own (`ui/e2e/browser-server.ts`, from the image
 `ui/e2e/browser-image.txt` pins; a proof pulls it when the host lacks it), and
 every spec file owns its bucket. The two spec files that assert a render budget
 run alone after the others, as `--project` runs on one worker, and the run page
-at the task ceiling runs on the host's Chromium (`ui/playwright.config.ts`). A **heavy** test — one whose assertions are
+at the task ceiling runs on the host's Chromium (`ui/playwright.config.ts`).
+The gate starts one browser server for both invocations, and the second reuses
+the first's UI build when the hash of the build's inputs
+(`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A **heavy** test — one whose assertions are
 bounds — runs alone, in its own CI shard or first on a local host. A test is
 heavy by what it asserts, not by how long it takes: the reduced-ceiling copies
 of a moved soak run the same E4/E7 thresholds and are heavy, while a test that

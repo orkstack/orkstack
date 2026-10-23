@@ -22,7 +22,10 @@ include breaking changes, and each is marked **BREAKING**.
   lacks it — so a container starting or stopping on the host no longer aborts
   a page load, and the navigation guard's ceiling is zero repeats; every spec
   file creates and removes a bucket of its own instead of sharing
-  `orkstack-artifacts`, and names a Temporal namespace of its own run; the
+  `orkstack-artifacts`, and names a Temporal namespace of its own run; the UI
+  build is reused when the hash of its inputs matches the last build's, the
+  browser server is started once per gate, a trace is kept only for a failing
+  test in every run (`--trace on` records one by hand); the
   helper tools specs ran with `go run` are built once
   per run. `ORK_E2E_BROWSER=host` drives the host's own Chromium instead
   (docs/PROOFS.md, AGENTS.md §11.1).
