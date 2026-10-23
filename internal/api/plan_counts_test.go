@@ -33,9 +33,20 @@ func largestSubmitted(t *testing.T, high int, build func(n int) string) (int, er
 		}
 		if _, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 			Yaml: build(n)})); err != nil {
+			if !sizeRefusal(err) {
+				t.Fatalf("%d: apply: %v, not a size refusal", n, err)
+			}
 			return err // a composition tree is bounded at apply too (rule 31)
 		}
 		_, err := svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "counted"}))
+		if err != nil && !sizeRefusal(err) {
+			// The search is a bisection over "too big", so only a size
+			// refusal may move its ceiling: any other error (a deadline
+			// under a loaded unit suite, say) would leave a ceiling that is
+			// not one, and the final try(high) would then pass. Such an
+			// error fails the test as itself.
+			t.Fatalf("%d: %v, not a size refusal", n, err)
+		}
 		return err
 	}
 	if err := try(high); err == nil {
@@ -54,6 +65,19 @@ func largestSubmitted(t *testing.T, high int, build func(n int) string) (int, er
 		}
 	}
 	return low, try(high)
+}
+
+// sizeRefusal is an error that means "this is too big": the run plan's or
+// the start definition's 256 KiB bound at submit, or the composition tree's
+// own bound at apply (rule 31).
+func sizeRefusal(err error) bool {
+	switch connect.CodeOf(err) {
+	case connect.CodeFailedPrecondition:
+		return strings.Contains(err.Error(), "the run's plan") || strings.Contains(err.Error(), "a run's start may carry")
+	case connect.CodeInvalidArgument:
+		return strings.Contains(err.Error(), "the Orkflows this document composes total")
+	}
+	return false
 }
 
 const leafYAML = `apiVersion: orkstack/v1
