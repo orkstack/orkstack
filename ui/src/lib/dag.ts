@@ -582,11 +582,11 @@ export function chooseDagDirection(tasks: Task[], frame: { width: number; height
 }
 
 /**
- * The drawing's direction a page was asked for in its address (`dag=lr`,
- * `dag=tb`, `dag=auto`), else left to right. A prototype switch while the
- * default is decided: nothing on the page links to it.
+ * The drawing's direction for a page: `auto` (chooseDagDirection, for the
+ * frame it is drawn in) unless the address asks for one — `dag=lr` or
+ * `dag=tb`, a reader's override that a shared link carries.
  */
 export function dagDirectionParam(url: URL): DagDirection | 'auto' {
 	const asked = url.searchParams.get('dag');
-	return asked === 'tb' ? 'TB' : asked === 'auto' ? 'auto' : 'LR';
+	return asked === 'lr' ? 'LR' : asked === 'tb' ? 'TB' : 'auto';
 }

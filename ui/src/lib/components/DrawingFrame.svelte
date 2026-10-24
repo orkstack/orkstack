@@ -177,7 +177,7 @@
 	const dagDirection = $derived.by((): DagDirection => {
 		if (direction !== 'auto') return direction;
 		const drawnTasks = near.length ? near : tasks;
-		if (!drawnTasks || frameBox.width <= 0 || frameBox.max <= 0) return 'LR';
+		if (!drawn || !drawnTasks || frameBox.width <= 0 || frameBox.max <= 0) return 'LR';
 		return chooseDagDirection(drawnTasks, { width: frameBox.width - 16, height: frameBox.max - MAP_CHROME });
 	});
 	const mapHeight = $derived.by(() => {

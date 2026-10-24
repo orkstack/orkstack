@@ -212,11 +212,11 @@ test('auto: wide stages stay left to right; a long chain, and a small DAG on a p
 	expect(chooseDagDirection([], PHONE)).toBe('LR');
 });
 
-test('the prototype switch reads dag=lr|tb|auto from the address, and defaults to left to right', () => {
+test('a page draws its DAG auto unless the address says dag=lr or dag=tb', () => {
 	const at = (q: string) => dagDirectionParam(new URL(`http://x/orkflows/a${q}`));
-	expect(at('')).toBe('LR');
-	expect(at('?dag=tb')).toBe('TB');
+	expect(at('')).toBe('auto');
 	expect(at('?dag=auto')).toBe('auto');
 	expect(at('?dag=lr')).toBe('LR');
-	expect(at('?dag=sideways')).toBe('LR');
+	expect(at('?dag=tb')).toBe('TB');
+	expect(at('?dag=sideways')).toBe('auto');
 });

@@ -28,8 +28,9 @@ import { DAG_STRESS, type StressTask } from '../test/dagStress';
 // stages, diamonds, long chains, joins and failure handlers, pins, a
 // fan-out, a composed task, an await, crossing-prone shapes and DAGs near the
 // run page's limit — applied as real Orkflows to a real engine and drawn on
-// the Orkflow page left to right (the default), top to bottom (`dag=tb`) and
-// as `dag=auto` chooses, in light and dark at 1440 and 390 px. Every task is
+// the Orkflow page as the Direction Rule chooses (the default, `auto`), left
+// to right (`dag=lr`) and top to bottom (`dag=tb`), in light and dark at 1440
+// and 390 px. Every task is
 // a box exactly once and no two boxes overlap, as dagLayout.test.ts proves
 // of the layout itself; here the browser's drawing is held to it, and a few
 // shapes are run so the run page's DAG and task map are held to it too. The
@@ -227,10 +228,10 @@ test('every shape is drawn whole, each task once and no box over another, left t
 		]) {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height });
 			for (const [shape, spec] of Object.entries(DAG_STRESS)) {
-				for (const dag of ['lr', 'tb', 'auto'] as const) {
-					// `auto` is photographed at 390 only, where it differs most.
-					if (dag === 'auto' && viewport.label !== '390') continue;
-					await page.goto(`${UI_ORIGIN}/orkflows/${nameOf(shape)}?ns=default&dag=${dag}`);
+				// `auto` is the default (the Direction Rule): what a page with no
+				// `dag=` draws.
+				for (const dag of ['auto', 'lr', 'tb'] as const) {
+					await page.goto(`${UI_ORIGIN}/orkflows/${nameOf(shape)}?ns=default${dag === 'auto' ? '' : `&dag=${dag}`}`);
 					const drawAll = page.getByTestId('dag-draw-all');
 					await expect(page.getByTestId('orkflow-dag').or(drawAll).first()).toBeVisible();
 					if (await drawAll.isVisible()) await drawAll.click();
@@ -243,6 +244,9 @@ test('every shape is drawn whole, each task once and no box over another, left t
 					expect(overlapping(boxes), `${shape}: no box over another`).toEqual([]);
 					await page.getByTestId('orkflow-drawing').screenshot({ path: out(`${shape}-${dag}-${theme}-${viewport.label}.png`) });
 					if (theme === 'light') note(`${shape} ${dag} at ${viewport.label}: drawn ${direction}, ${boxes.length} boxes`);
+					// The rule's two clear cases hold in the browser too.
+					if (dag === 'auto' && shape === 'parallel-1x50') expect(direction).toBe('LR');
+					if (dag === 'auto' && shape === 'chain-40') expect(direction).toBe('TB');
 				}
 			}
 		}

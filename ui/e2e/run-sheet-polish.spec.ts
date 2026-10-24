@@ -464,14 +464,20 @@ test('at 390 px the drawing starts within 220 px, and the secondary actions fold
 	await expect(page.getByTestId('run-id')).toHaveText(failedRun);
 	await expect(page.getByText(`ork-…${failedRun.slice(-6)}`, { exact: true })).toBeVisible();
 	for (const id of ['run-evidence', 'compare-run', 'export-run-json', 'events-toggle']) await expect(page.getByTestId(id)).toBeHidden();
-	// The scroll controls sit on the frame's top band, never over a node.
+	// On a phone the saga's DAG reads top to bottom (the Direction Rule).
+	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'TB');
+	await page.screenshot({ path: out('failed-run-390-first.png') });
+	// Read left to right, it scrolls sideways; the scroll controls sit on the
+	// frame's top band, never over a node.
+	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default&view=dag&dag=lr`);
+	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'LR');
 	const band = await page.evaluate(() => {
 		const panel = document.querySelector('[data-testid="run-dag"]')!.closest('[role="tabpanel"]')!.getBoundingClientRect();
 		const buttons = ['run-dag-scroll-left', 'run-dag-scroll-right'].map((id) => document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect());
 		return { panelTop: panel.top, bottoms: buttons.map((b) => b.bottom) };
 	});
 	for (const bottom of band.bottoms) expect(bottom).toBeLessThanOrEqual(band.panelTop + 0.5);
-	await page.screenshot({ path: out('failed-run-390-first.png') });
+	await page.screenshot({ path: out('failed-run-390-lr.png') });
 
 	await page.getByTestId('run-more').click();
 	for (const id of ['run-more-evidence', 'run-more-compare', 'run-more-export', 'run-more-events', 'run-more-stability']) {
