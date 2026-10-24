@@ -2,19 +2,23 @@
 # make site-media (site/media/run.sh), which wraps this tape once per theme
 # with the output paths and a terminal theme made from ui/src/tokens.css.
 # The setup is hidden: a neutral prompt in /work, where the container sees
-# only examples/ and a static orkctl. The runs land in the `examples`
-# namespace (ORK_NAMESPACE), the one the docs' examples use.
+# only examples/ and a static orkctl. The commands are the README's and
+# docs/GETTING_STARTED.md's, in the namespace they use (`default`), and the
+# apply is a first apply: run.sh refuses to record when each-fan-out is
+# already stored there.
 
 Set Shell "bash"
 Set FontSize 15
 Set Width 1200
-Set Height 720
+# Tall enough that the finished watch's last lines sit above a paused
+# video's controls band.
+Set Height 860
 Set Padding 24
 Set TypingSpeed 30ms
 Set CursorBlink false
 
 Hide
-Type "export PS1='$ ' ORK_NAMESPACE=examples && cd /work && clear"
+Type "export PS1='$ ' && cd /work && clear"
 Enter
 Sleep 500ms
 Show

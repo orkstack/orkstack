@@ -84,8 +84,10 @@ async function main() {
 	mkdirSync(publicMedia, { recursive: true });
 	mkdirSync(work, { recursive: true });
 
-	// The namespace and the two Orkflows. An apply of bytes already stored is
-	// a no-op, so this is safe to repeat.
+	// The namespace and the two Orkflows. An apply of bytes already stored,
+	// against the same image builds, is a no-op. After the images are rebuilt
+	// it is refused (a version is immutable and pins its images), and the
+	// capture stops with the server's error: capture on a fresh stack then.
 	try {
 		orkctl('namespace', 'get', NS);
 	} catch {

@@ -56,6 +56,14 @@ if "$REPO/bin/orkctl" --server "$ENGINE" orker list --json 2>/dev/null | grep -q
 	need "an Orker's id names this host ($(hostname)); restart the stack with ORK_ORKER_ID=orker-example make up"
 fi
 
+# The recording shows a first apply, in the namespace the quickstart uses. An
+# Orkflow version is immutable and pins the images it was applied against, so
+# a second apply after the images were rebuilt is refused: record on a stack
+# that has not stored each-fan-out yet.
+if "$REPO/bin/orkctl" --server "$ENGINE" -n default orkflow get each-fan-out >/dev/null 2>&1; then
+	need "each-fan-out is already stored in the default namespace, and the recording shows a first apply; record on a fresh stack (make reset, make infra-up, make -C images push, make up)"
+fi
+
 WORK="$SITE/.media-work"
 # The scratch directory goes whatever happens, so a failed run leaves no copy
 # of a binary or a half-made recording behind.

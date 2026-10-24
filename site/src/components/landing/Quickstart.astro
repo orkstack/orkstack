@@ -88,12 +88,20 @@ const demo = clip('cli-quickstart');
 		grid-template-columns: minmax(0, 1fr);
 		gap: calc(var(--spacing) * 8);
 	}
-	.quickstart-body :global(.clip) {
-		max-width: 75rem;
+	/* One measure: the commands and the recording both span the column. On a
+	   phone the recording shows its left columns, where the commands and the
+	   start of each line are, at a size that reads. */
+	@media (max-width: 639.98px) {
+		.quickstart-body :global(.clip .theme-pair) {
+			overflow: hidden;
+		}
+		.quickstart-body :global(.clip video) {
+			width: 210%;
+			max-width: none;
+		}
 	}
 	.terminal {
 		min-width: 0;
-		max-width: 52rem;
 		border: var(--rule-region) solid var(--color-ink);
 		background-color: var(--color-paper-sunken);
 	}
