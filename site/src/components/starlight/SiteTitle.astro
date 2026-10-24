@@ -1,0 +1,7 @@
+---
+// The docs' site title is the site's wordmark, linking to the landing page.
+import Wordmark from '../shared/Wordmark.astro';
+import { route } from '../../../site.config.mjs';
+---
+
+<Wordmark href={route()} />

@@ -19,6 +19,9 @@
 #             examples       the tests and specs that read the changed example
 #             tool           the tests and specs that run the changed test/tools tool
 #             observability  the observability gate
+#             site           the site gate (bun run check && bun run build in site/); it is
+#                            the whole evidence for a path that only the site reads, and a
+#                            row names it beside the actions the path already has
 #             none           nothing to prove (the unit gate still runs)
 #             full           refuse the feature tier
 #   flags     temporal       the package is Temporal- or storage-facing: its
@@ -26,13 +29,25 @@
 #
 # pattern	actions	flags
 
-# ---- documentation: nothing to prove ---------------------------------------
-docs/**	none
-**.md	none
+# ---- the site: the gate is the evidence ------------------------------------
+# site/ is a Bun project that renders the repository's markdown (docs/**, every
+# *.md), the examples, deploy/orkstack.defaults.yaml and docs/API.md (generated
+# from proto/**), and takes its whole style from ui/src/tokens.css. Its one
+# check, `bun run check && bun run build`, is the site gate. This row sits
+# above the documentation rows below so that **.md and .gitignore, which
+# match at any depth, never shadow a file of site/ and leave it unproven.
+site/**	site
+# Below, a row for a path the site reads carries `site` beside the actions it
+# already had, so a change to it runs the site gate and nothing else changes.
+
+# ---- documentation: nothing to prove but the site's build ------------------
+docs/**	none,site
+**.md	none,site
 LICENSE	none
 .gitignore	none
-# The unit gate's config-completeness tests cover the generated defaults.
-deploy/orkstack.defaults.yaml	none
+# The unit gate's config-completeness tests cover the generated defaults; the
+# site renders them as the configuration reference.
+deploy/orkstack.defaults.yaml	none,site
 deploy/orkstack.example.yaml	none
 
 # ---- how every suite runs: refuse the feature tier -------------------------
@@ -74,18 +89,24 @@ internal/config/**	go	docs
 internal/**	go
 pkg/**	go
 gen/go/**	go
-proto/**	proto	docs
+# The site renders docs/API.md, which is generated from proto/**.
+proto/**	proto,site	docs
 
 # ---- UI --------------------------------------------------------------------
 ui/e2e/*.spec.ts	spec
 # The Playwright harness, its config and the UI's dependencies: every spec.
 ui/e2e/**	all-specs
 ui/playwright.config.ts	all-specs
-ui/package.json	all-specs
+# The site installs the UI's fonts at the UI's versions (its drift check reads
+# ui/package.json) and imports the UI's icons (ui/src/lib/icons.ts); tokens.css
+# is its whole style. Each keeps the UI action it always had.
+ui/package.json	all-specs,site
 ui/bun.lock	all-specs
 ui/bunfig.toml	all-specs
 ui/.gitignore	none
 ui/test/**	ui-unit
+ui/src/tokens.css	ui,site
+ui/src/lib/icons.ts	ui,site
 ui/src/**	ui
 ui/static/**	ui
 ui/svelte.config.js	all-specs
@@ -95,6 +116,7 @@ ui/tsconfig.json	ui
 # ---- activity images, examples, test tools ---------------------------------
 images/**	images	docs
 test/fixtures/**	images
-examples/**.go	examples,go
-examples/**	examples
+# The site renders the examples.
+examples/**.go	examples,go,site
+examples/**	examples,site
 test/tools/**	tool

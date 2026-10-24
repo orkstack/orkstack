@@ -59,8 +59,8 @@ export type GetSystemInfoResponse = Message<"orkstack.v1.GetSystemInfoResponse">
   goVersion: string;
 
   /**
-   * deployment_name is the Worker Deployment both binaries of a release join.
-   * CONFIGURATION-DERIVED.
+   * deployment_name is the deployment both binaries of a release share
+   * (ORK_DEPLOYMENT_NAME). CONFIGURATION-DERIVED.
    *
    * @generated from field: string deployment_name = 3;
    */
@@ -76,8 +76,8 @@ export type GetSystemInfoResponse = Message<"orkstack.v1.GetSystemInfoResponse">
   buildId: string;
 
   /**
-   * versioning_active reports whether Worker Deployment Versioning is on for
-   * this process, which is exactly "both of the two fields above are set".
+   * versioning_active reports whether release versioning is on for this
+   * process, which is exactly "both of the two fields above are set".
    * DERIVED from configuration, not asked of the cluster: it says what this
    * replica registered as, not what the cluster currently routes.
    *
@@ -340,8 +340,8 @@ export type ReleaseBlocker = Message<"orkstack.v1.ReleaseBlocker"> & {
 
   /**
    * message is one complete sentence in OrkStack's words: what is wrong and
-   * what to start. It never names a channel, a session, or the cluster's own
-   * objects (AGENTS.md §7.1).
+   * what to start. It never names the cluster's own objects or mechanisms
+   * (AGENTS.md §7.1).
    *
    * @generated from field: string message = 3;
    */
@@ -357,9 +357,9 @@ export const ReleaseBlockerSchema: GenMessage<ReleaseBlocker> = /*@__PURE__*/
 
 /**
  * Release is one build of OrkStack — `ork` and `orker` released together
- * (AGENTS.md §7.2) — as the cluster routes it. No field names a Temporal
- * worker deployment, a version's routing internals, or a task queue, on the
- * rule that keeps "queue" out of Pool and "session" out of Pin (§7.1).
+ * (AGENTS.md §7.2) — as the cluster routes it. No field names the cluster's
+ * own objects or a version's routing internals: a release is OrkStack's word,
+ * as a pool and a pin are (§7.1).
  *
  * @generated from message orkstack.v1.Release
  */
@@ -657,8 +657,8 @@ export type RampReleaseResponse = Message<"orkstack.v1.RampReleaseResponse"> & {
   previousPercent: number;
 
   /**
-   * routing_confirmed is true when the engine's own channel reported the new
-   * routing before the reply. False means the change is RECORDED and the
+   * routing_confirmed is true when the cluster reported the new routing to
+   * the engine before the reply. False means the change is RECORDED and the
    * cluster had not yet applied it to dispatch within 10 s.
    *
    * @generated from field: bool routing_confirmed = 4;

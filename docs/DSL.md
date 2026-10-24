@@ -883,9 +883,9 @@ fails: the alternative would be restarting them somewhere with an empty
 and membership in a pin adds no edge to it: two tasks in a pin with no `needs:`
 edge between them run concurrently, on the same Orker, sharing
 `/orkstack/shared` concurrently — the author's own concurrency contract with
-their filesystem, exactly as it would be for two processes on one machine. This
-is the one place the familiar `workingDir` analogy misleads: Kestra serializes
-the tasks that share one working directory, and OrkStack's pin does not.
+their filesystem, exactly as it would be for two processes on one machine. A
+shared working directory does not serialize the tasks that use it: only
+`needs:` does.
 
 `/orkstack/shared` is an additive convenience, never a replacement for the
 commit protocol. It is visible only within one pin: an unpinned downstream

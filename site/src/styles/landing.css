@@ -1,0 +1,156 @@
+/*
+ * The landing page: the sheet's margins, the rhythm between sections, and
+ * the primitives its sections share (a section head, a register, a balloon,
+ * a "more" link). Tokens only.
+ */
+
+body.landing {
+	margin: 0;
+	background-color: var(--color-paper);
+	color: var(--color-ink);
+	font-family: var(--font-sans);
+	font-weight: var(--font-weight-body);
+	font-size: var(--text-md);
+	line-height: var(--text-md--line-height);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	caret-color: var(--color-blue);
+}
+.landing code,
+.landing kbd,
+.landing pre {
+	font-family: var(--font-mono);
+}
+.landing a {
+	text-underline-offset: var(--underline-offset);
+}
+.landing p a {
+	color: var(--color-blue);
+	text-decoration-color: color-mix(in oklab, var(--color-blue) 40%, transparent);
+}
+.landing p a:hover {
+	color: var(--color-blue-strong);
+	text-decoration-color: currentColor;
+}
+
+.skip-link {
+	position: absolute;
+	z-index: 50;
+	top: calc(var(--spacing) * 2);
+	left: calc(var(--spacing) * 2);
+	transform: translateY(-200%);
+}
+.skip-link:focus {
+	transform: none;
+}
+
+main {
+	display: block;
+	max-width: 90rem;
+	margin-inline: auto;
+	padding: var(--spacing-sheet) var(--spacing-gutter) calc(var(--spacing) * 24);
+}
+main:focus {
+	outline: none;
+}
+@media (min-width: 640px) {
+	main {
+		padding-inline: var(--spacing-sheet);
+	}
+}
+
+/* A section: a region of the sheet, opened by the 1.5 px ink rule as every
+   region of the UI is, with more space above its heading than below. */
+.block {
+	margin-top: calc(var(--spacing) * 24);
+	border-top: var(--rule-region) solid var(--color-ink);
+	padding-top: calc(var(--spacing) * 6);
+}
+.block-head {
+	max-width: 46rem;
+	margin-bottom: calc(var(--spacing) * 10);
+}
+.block-head h2 {
+	margin: 0;
+	font-size: clamp(var(--text-2xl), 1.6vw + 1.2rem, var(--text-2xl) * 1.5);
+	line-height: var(--leading-tight);
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: var(--tracking-tight);
+	text-wrap: balance;
+}
+.block-head p {
+	margin: calc(var(--spacing) * 4) 0 0;
+	color: var(--color-ink-secondary);
+	font-size: var(--text-lg);
+	line-height: calc(var(--text-lg--line-height) * 1.1);
+}
+.block-foot {
+	margin: calc(var(--spacing) * 5) 0 0;
+}
+
+/* A register: the UI's table. */
+.register {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-base);
+	line-height: var(--text-base--line-height);
+}
+.register thead th {
+	border-bottom: var(--rule-region) solid var(--color-ink);
+	background-color: var(--color-paper-sunken);
+	padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+	color: var(--color-ink-muted);
+	font-size: var(--text-2xs);
+	line-height: var(--text-2xs--line-height);
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: var(--tracking-caps);
+	text-transform: uppercase;
+	text-align: start;
+}
+.register tbody :is(th, td) {
+	border-bottom: var(--rule-hair) solid var(--color-rule);
+	padding: calc(var(--spacing) * 3);
+	vertical-align: top;
+}
+.register tbody td {
+	color: var(--color-ink-secondary);
+}
+
+/* A balloon: the drawing's item number, a circled figure in the ink. */
+.balloon {
+	display: inline-flex;
+	width: calc(var(--spacing) * 6);
+	height: calc(var(--spacing) * 6);
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border: var(--rule-region) solid var(--color-ink);
+	border-radius: var(--radius-full);
+	background-color: var(--color-paper);
+	color: var(--color-ink);
+	font-size: var(--text-xs);
+	line-height: var(--leading-none);
+	font-weight: var(--font-weight-bold);
+	font-variant-numeric: tabular-nums;
+}
+
+/* "Read more" in the UI's link colour, with its drawn arrow. */
+.more {
+	display: inline-flex;
+	align-items: center;
+	gap: calc(var(--spacing) * 1);
+	color: var(--color-blue);
+	font-size: var(--text-sm);
+	font-weight: var(--font-weight-semibold);
+	text-decoration-line: underline;
+	text-decoration-color: color-mix(in oklab, var(--color-blue) 40%, transparent);
+	text-underline-offset: var(--underline-offset);
+}
+.more:hover {
+	color: var(--color-blue-strong);
+	text-decoration-color: currentColor;
+}
+
+.landing-footer {
+	margin-top: calc(var(--spacing) * 10);
+}

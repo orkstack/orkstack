@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,7 +15,7 @@ func TestWriteGates(t *testing.T) {
 	sel.Gates.UICheck, sel.Gates.UIUnit = true, true
 	var b strings.Builder
 	writeGates(&b, sel)
-	want := "integration=yes\nui_check=yes\nui_unit=yes\nui_e2e=yes\nactivity_fixture=no\nobservability=no\nspecs=e2e/admin.spec.ts e2e/budgets.spec.ts\n"
+	want := "integration=yes\nui_check=yes\nui_unit=yes\nsite=no\nui_e2e=yes\nactivity_fixture=no\nobservability=no\nspecs=e2e/admin.spec.ts e2e/budgets.spec.ts\n"
 	if b.String() != want {
 		t.Errorf("got\n%s\nwant\n%s", b.String(), want)
 	}
@@ -21,6 +23,76 @@ func TestWriteGates(t *testing.T) {
 	writeGates(&b, &selection{Integration: map[string]*pkgSelection{pEngine: {Evidence: map[string]string{}}}, AllSpecs: "ui/e2e/harness.ts changed"})
 	if !strings.Contains(b.String(), "integration=no\n") || !strings.Contains(b.String(), "specs=ALL\n") || !strings.Contains(b.String(), "ui_e2e=yes\n") {
 		t.Errorf("got\n%s", b.String())
+	}
+}
+
+// gatesOutput runs `proofrun gates -select` over sel, as scripts/proof.sh
+// does, and returns its stdout.
+func gatesOutput(t *testing.T, sel *selection) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "selection.json")
+	if err := writeJSON(file, sel); err != nil {
+		t.Fatal(err)
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := os.Stdout
+	os.Stdout = w
+	code := cmdGates([]string{"-select", file})
+	os.Stdout = prev
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	_ = r.Close()
+	if code != 0 {
+		t.Fatalf("proofrun gates exited %d", code)
+	}
+	return string(out)
+}
+
+// scripts/proof.sh reads the gates from KEY=VALUE lines: the site gate is
+// `site=yes` for a selection that carries it, `site=no` for one that does not,
+// and the key is in the selection's JSON so a selection written by one process
+// is read by another.
+func TestGates_PrintTheSiteGate(t *testing.T) {
+	site := &selection{}
+	site.Gates.Site = true
+	if out := gatesOutput(t, site); !strings.Contains(out, "\nsite=yes\n") {
+		t.Errorf("a site selection printed\n%s", out)
+	}
+	if out := gatesOutput(t, &selection{}); !strings.Contains(out, "\nsite=no\n") {
+		t.Errorf("a selection without the site printed\n%s", out)
+	}
+	b, err := json.Marshal(site.Gates)
+	if err != nil || !strings.Contains(string(b), `"site":true`) {
+		t.Errorf("the selection's gates marshal as %s (%v)", b, err)
+	}
+	var back selection
+	if err := json.Unmarshal([]byte(`{"gates":{"site":true}}`), &back); err != nil || !back.Gates.Site {
+		t.Errorf("a selection written with gates.site reads back as %+v (%v)", back.Gates, err)
+	}
+}
+
+// The gate lines scripts/proof.sh reads are exactly the ones it has a case for
+// (plus specs): a gate printed here and unread there would be selected and never run.
+func TestGates_EveryPrintedGateIsOneProofShReads(t *testing.T) {
+	var sel selection
+	sel.Gates.UICheck, sel.Gates.UIUnit, sel.Gates.Site, sel.Gates.Fixture, sel.Gates.Observability = true, true, true, true, true
+	script := proofScript(t)
+	i := strings.Index(script, "integration | ui_check")
+	if i < 0 {
+		t.Fatal("proof.sh has no case arm reading the gate lines")
+	}
+	arm := script[i : i+strings.Index(script[i:], ")")]
+	for _, line := range strings.Split(strings.TrimSpace(gatesOutput(t, &sel)), "\n") {
+		key, _, _ := strings.Cut(line, "=")
+		if key == "specs" {
+			continue
+		}
+		if !strings.Contains(arm, key) {
+			t.Errorf("proofrun gates prints %s, which proof.sh's case arm %q does not read", key, arm)
+		}
 	}
 }
 

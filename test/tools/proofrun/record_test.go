@@ -101,6 +101,53 @@ func passingFull() proofRecord {
 	return r
 }
 
+// withoutGate is gates less every record of gate.
+func withoutGate(gates []gateRecord, gate string) []gateRecord {
+	var out []gateRecord
+	for _, g := range gates {
+		if g.Gate != gate {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// setGate gives the record of gate a result, in place.
+func setGate(gates []gateRecord, gate, result string) {
+	for i := range gates {
+		if gates[i].Gate == gate {
+			gates[i].Result = result
+		}
+	}
+}
+
+// The merge gate's gate list names the site, after the UI gates and before
+// Playwright: a full proof without a passing site gate is not merge-eligible.
+func TestFullGates_NameTheSiteGateAmongTheFastGates(t *testing.T) {
+	idx := map[string]int{}
+	for i, g := range fullGates {
+		if _, dup := idx[g]; dup {
+			t.Errorf("fullGates names %s twice", g)
+		}
+		idx[g] = i
+	}
+	site, ok := idx["site"]
+	if !ok {
+		t.Fatalf("fullGates = %v: no site gate", fullGates)
+	}
+	if site != idx["ui-unit"]+1 || idx["ui-e2e"] != len(fullGates)-1 {
+		t.Errorf("fullGates = %v: the site gate runs right after ui-unit, and ui-e2e stays last", fullGates)
+	}
+	// The nightly tier runs the deferred tests and nothing else.
+	r := passingFull()
+	r.Tier = "nightly"
+	r.Gates = []gateRecord{{Gate: "integration", Result: "pass"}}
+	verdict(&r, 0, false, map[string]bool{"integration": true})
+	if strings.Contains(strings.Join(r.Ineligible, "\n"), "gate site") {
+		t.Errorf("a nightly proof is held to the site gate: %v", r.Ineligible)
+	}
+}
+
 func TestVerdict(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -116,6 +163,8 @@ func TestVerdict(t *testing.T) {
 		{name: "a failed gate", mutate: func(r *proofRecord) { r.Gates[5].Result = "fail" }, result: "fail", reason: "the proof did not pass"},
 		{name: "the script's own failure", status: 1, result: "fail", reason: "the proof did not pass"},
 		{name: "a missing gate", mutate: func(r *proofRecord) { r.Gates = r.Gates[:len(r.Gates)-1] }, result: "pass", reason: "gate ui-e2e did not run"},
+		{name: "the site gate missing", mutate: func(r *proofRecord) { r.Gates = withoutGate(r.Gates, "site") }, result: "pass", reason: "gate site did not run"},
+		{name: "the site gate failed", mutate: func(r *proofRecord) { setGate(r.Gates, "site", "fail") }, result: "fail", reason: "the proof did not pass"},
 		{name: "observability required", obs: true, result: "pass", reason: "gate observability did not run"},
 		{name: "PROOF_GATES", mutate: func(r *proofRecord) { r.GatesOverride = "unit" }, result: "pass", reason: "PROOF_GATES=unit chose the gates"},
 		{name: "a dirty start", mutate: func(r *proofRecord) { r.CleanStart = false }, result: "pass", reason: "not clean when the proof started"},

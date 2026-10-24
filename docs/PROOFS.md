@@ -49,8 +49,8 @@ parts. There is one verdict implementation.
 
 A local proof runs its gates in this order: the **fast gates**, alone and one
 after another — lint, build, unit, `go vet -tags=integration`, then the UI
-type-check and unit suites (after one `svelte-kit sync`, which both read);
-then the setup the long gates need (the proof's own Temporal, the activity
+type-check and unit suites (after one `svelte-kit sync`, which both read), then
+the site gate; then the setup the long gates need (the proof's own Temporal, the activity
 images, the binaries); then the integration suite with the activity contract
 fixture beside it — the only two gates that overlap, and the fixture starts
 only once the integration runner has finished its heavy jobs
@@ -60,8 +60,25 @@ time; then the observability gate. A full proof runs: lint; build; unit; `go vet
 images, built once from this tree; every integration test whose package's
 integration build differs from its unit build, against real Temporal and the
 S3-compatible store; the activity contract fixture; the UI type-check, unit
-and every Playwright spec; and the observability gate when the tree changes a
-telemetry path. A release proof runs the observability gate unconditionally.
+and every Playwright spec; the site's check and build; and the observability
+gate when the tree changes a telemetry path. A release proof runs the
+observability gate unconditionally.
+
+The **site gate** runs `bun run check && bun run build` in `site/`, logged to
+`site.log`: the docs sync, the design-token drift check and `astro check`, then
+`astro build` with link validation and a post-build link check. The site
+renders the repository's markdown (`docs/`, every `*.md`), the example
+Orkflows, `deploy/orkstack.defaults.yaml` and `docs/API.md` (generated from
+`proto/`), and takes its whole style from `ui/src/tokens.css`, so a change to
+any of them can break it. It needs `bun` and `node` on PATH and
+`site/node_modules` (`cd site && bun install --frozen-lockfile`), as the UI
+gates need `ui/node_modules`; without them the proof exits `77` before it
+writes anything. The full and release tiers always run it, and `proofrun
+merge` requires it, so a full proof without a passing `site` gate is not
+merge-eligible. The nightly tier does not run it. The feature tier runs it
+when a changed path's scope row names `site` (§3). In CI it is part of the
+`fast` job, recorded beside the UI gates; that job and `ci.yml` › `feature`
+install the pinned Node and `site/node_modules` for it.
 
 Integration tests run as separate processes, `PROOF_JOBS` at a time (default
 4; the ordinary jobs keep every slot busy, so the phase's wall is their total
@@ -132,8 +149,9 @@ path no row matches, or a row whose action is `full`, refuses the feature tier
 `test/tools/proofrun/` change how every suite runs and need the full proof.
 
 The scope table's actions: `go`, `proto`, `ui`, `spec`, `ui-unit`,
-`all-specs`, `images`, `examples`, `tool`, `observability`, `none` and
-`full`. The `temporal` flag marks a package whose evidence must include an
+`all-specs`, `images`, `examples`, `tool`, `observability`, `site`, `none` and
+`full`. A row may name several: `docs/**` is `none,site`, `ui/src/tokens.css`
+is `ui,site`. The `temporal` flag marks a package whose evidence must include an
 integration test. A `docs` flag marks a row whose change should come with a
 documentation change; the proof prints a WARNING for a missing one and never
 fails on it.
@@ -147,8 +165,17 @@ The selection is:
   changes or `-specs` names; every spec when the Playwright harness or the UI's
   dependencies changed; the activity fixture when `images/` or `test/fixtures/`
   changed; the tests that read a changed example, and the examples spec; the
-  tests and specs that run a changed `test/tools/` tool; and the observability
-  gate when a telemetry path changed;
+  tests and specs that run a changed `test/tools/` tool; the observability
+  gate when a telemetry path changed; and the site gate when a changed path's
+  row names `site` — `site/`, `docs/` and every `*.md`, `examples/`,
+  `deploy/orkstack.defaults.yaml`, `proto/`, `ui/src/tokens.css`,
+  `ui/src/lib/icons.ts` and `ui/package.json`, which the site renders, imports
+  or takes its fonts and style from. A deleted path counts. The gate is that
+  path's whole evidence on that account: it asks for no Go test or spec, and a
+  path whose row also names `go` or `ui` keeps those requirements. The README
+  names the paths each gate ran for, under "Evidence for each changed package
+  and path". `proofrun gates -select` prints `site=yes` or `site=no` for the
+  script;
 - **the regression set**: in every integration package whose test binary
   depends on a changed package — through its imports or a binary its suite
   builds — every test declared in an integration-tagged file, except the slow
@@ -238,7 +265,7 @@ repository is private, carries the `ci:proof` label.
 | `proof.yml` › `base` | decides the base: a pull request's first parent, which must be an ancestor of its head ("update this branch") unless `MERGE_GATE_MODE` is `queue`; a merge group's base; a validate push's first parent; a dispatch's input | nothing; job outputs |
 | `proof.yml` › `plan` | compiles and lists the packages; writes both plans; decides observability | the plans, the listing, the base lists |
 | `proof.yml` › `build` | builds every activity image once as an OCI layout and records its digests | the layouts and `images.tsv` |
-| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit | one part |
+| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build | one part |
 | `proof.yml` › `integration` | one matrix entry per shard: its own Temporal, store, registry and images | one part per shard |
 | `proof.yml` › `ui-e2e` | one matrix entry per UI shard: its own stack and file list | one part per shard |
 | `proof.yml` › `activity-fixture` | one matrix entry per activity: `make -C images contract` | one part per activity |
@@ -266,6 +293,18 @@ skipped required job reports success, which is why
 | `ci.yml` › `check` | `make check` on every push and every pull request: no Docker, no Temporal |
 | `ci.yml` › `feature` | the feature tier on every pull-request push once the repository is public; with the `ci:feature` label while it is private; on a push to `validate/feature/**`; and by dispatch |
 
+`site.yml` is not part of the proof and holds no required check; it builds and
+publishes the site:
+
+| Job | Runs |
+|---|---|
+| `site.yml` › `build` | `bun run check && bun run build` in `site/` on every pull request that touches a path the site reads, and on a push to `main`; a pull request uploads the built site as its preview, a push to `main` uploads the Pages artifact |
+| `site.yml` › `deploy` | on `main` only (a push, or a dispatch from `main`), after `build`: publishes the Pages artifact. It holds the workflow's only write permissions (`pages`, `id-token`) and checks out and runs no repository code |
+
+The proof's site gate (§2.1) runs the same command, so a change that breaks the
+build is stopped before it merges; the workflow publishes only a build that
+passed.
+
 `nightly.yml` holds two jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and
@@ -283,8 +322,8 @@ of one version run one after the other.
 
 No `run:` step splices a workflow input or an event field into its shell; each
 reaches the step through `env:`. Every action is pinned to an exact release of
-its latest major, and Go, Bun and cosign to exact versions; Dependabot moves
-them, one pull request and one proof at a time.
+its latest major, and Go, Bun, Node and cosign to exact versions; Dependabot
+moves them, one pull request and one proof at a time.
 
 The composite action `.github/actions/proof-host` installs the host setup a
 stack part needs: Docker images cached, the Temporal CLI, cosign, and the

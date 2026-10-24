@@ -1,0 +1,94 @@
+---
+// Starlight's header, drawn as the site's top bar: the wordmark and the two
+// places on the left, Starlight's own search in the middle, the repository
+// and the appearance switch on the right. Starlight renders its mobile menu
+// toggle beside this on narrow screens.
+import Search from '@astrojs/starlight/components/Search.astro';
+import SiteTitle from './SiteTitle.astro';
+import ThemeSelect from './ThemeSelect.astro';
+import Icon from '../shared/Icon.astro';
+import { route, REPO } from '../../../site.config.mjs';
+
+// The docs are where every page here is: "Docs" is the current place
+// (aria-current="true") and "Examples" is too when the page is one of them.
+// Neither is "page": the sidebar marks the page itself.
+const id = Astro.locals.starlightRoute.id;
+const inExamples = id === 'docs/getting-started/examples' || id.startsWith('docs/getting-started/examples/');
+---
+
+<div class="sl-header">
+	<div class="sl-header-start">
+		<SiteTitle />
+		<nav class="topbar-links sl-header-places" aria-label="Primary">
+			<span class="topbar-rule" aria-hidden="true"></span>
+			<a class="topbar-link" href={route('docs')} aria-current={inExamples ? undefined : 'true'}>Docs</a>
+			<a class="topbar-link" href={route('docs/getting-started/examples')} aria-current={inExamples ? 'true' : undefined}
+				>Examples</a
+			>
+		</nav>
+	</div>
+	<div class="sl-flex print:hidden sl-header-search">
+		<Search />
+	</div>
+	<div class="sl-hidden md:sl-flex print:hidden sl-header-end">
+		<a class="sl-header-repo" href={REPO}>GitHub<Icon name="external" /></a>
+		<ThemeSelect />
+	</div>
+</div>
+
+<style>
+	.sl-header {
+		display: flex;
+		height: 100%;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--sl-nav-gap);
+	}
+	.sl-header-start {
+		display: flex;
+		min-width: 0;
+		align-items: center;
+		gap: calc(var(--spacing) * 2);
+	}
+	.sl-header-search {
+		flex: 1;
+		justify-content: flex-end;
+	}
+	.sl-header-end {
+		align-items: center;
+		gap: calc(var(--spacing) * 3);
+	}
+	.sl-header-repo {
+		display: inline-flex;
+		height: calc(var(--spacing) * 8);
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		border: var(--rule-hair) solid var(--color-rule-strong);
+		border-radius: var(--radius-sm);
+		padding-inline: calc(var(--spacing) * 2.5);
+		color: var(--color-ink);
+		font-size: var(--text-sm);
+		font-weight: var(--font-weight-medium);
+		text-decoration: none;
+		transition: background-color var(--duration-fast) var(--ease-out);
+	}
+	.sl-header-repo:hover {
+		background-color: var(--color-hover);
+	}
+	.sl-header-repo :global(svg) {
+		width: calc(var(--spacing) * 3.5);
+		height: calc(var(--spacing) * 3.5);
+	}
+	/* The two places fold away on a narrow screen, where Starlight's menu
+	   holds the sidebar and the appearance switch. */
+	@media (max-width: 49.99rem) {
+		.sl-header-places {
+			display: none;
+		}
+	}
+	@media (min-width: 50rem) {
+		.sl-header-search {
+			justify-content: center;
+		}
+	}
+</style>

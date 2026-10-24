@@ -43,6 +43,28 @@ func TestGlobRegexp(t *testing.T) {
 	}
 }
 
+// The site action names the rows whose paths the Astro site builds from; a row
+// may carry it beside the actions it already had.
+func TestParseScopeAcceptsTheSiteAction(t *testing.T) {
+	table, err := parseScope(strings.NewReader("site/**\tsite\ndocs/**\tnone,site\nproto/**\tproto,site\tdocs\n"), "t")
+	if err != nil {
+		t.Fatalf("parseScope refused the site action: %v", err)
+	}
+	for path, want := range map[string]string{
+		"site/package.json":         "site",
+		"docs/DSL.md":               "none,site",
+		"proto/orkstack/v1/a.proto": "proto,site",
+	} {
+		r := table.match(path)
+		if r == nil || strings.Join(r.Actions, ",") != want {
+			t.Errorf("%s -> %+v, want actions %q", path, r, want)
+		}
+	}
+	if !knownActions[actSite] || actSite != "site" {
+		t.Errorf("actSite = %q, known %v: the action's word is site", actSite, knownActions[actSite])
+	}
+}
+
 func TestParseScopeRefusesWhatItCannotRead(t *testing.T) {
 	for _, bad := range []string{
 		"cmd/**\n",              // no action
@@ -70,11 +92,12 @@ func TestRepositoryScopeTable(t *testing.T) {
 		temporal bool
 	}{
 		// documentation
-		{"docs/DSL.md", "none", false},
-		{"AGENTS.md", "none", false},
-		{"internal/engine/README.md", "none", false},
-		{"images/activity-shell/README.md", "none", false},
-		{"deploy/orkstack.defaults.yaml", "none", false},
+		{"docs/DSL.md", "none,site", false},
+		{"AGENTS.md", "none,site", false},
+		{"internal/engine/README.md", "none,site", false},
+		{"images/activity-shell/README.md", "none,site", false},
+		{"deploy/orkstack.defaults.yaml", "none,site", false},
+		{"deploy/orkstack.example.yaml", "none", false},
 		{".gitignore", "none", false},
 		// how every suite runs
 		{"go.mod", "full", false},
@@ -107,7 +130,7 @@ func TestRepositoryScopeTable(t *testing.T) {
 		{"internal/dsl/parse.go", "go", false},
 		{"pkg/logstream/frame.go", "go", false},
 		{"gen/go/orkstack/v1/run.pb.go", "go", false},
-		{"proto/orkstack/v1/run.proto", "proto", false},
+		{"proto/orkstack/v1/run.proto", "proto,site", false},
 		// telemetry
 		{"internal/telemetry/setup.go", "observability,go", false},
 		{"internal/telemetry/testdata/sinks.yaml", "observability", false},
@@ -121,15 +144,30 @@ func TestRepositoryScopeTable(t *testing.T) {
 		{"ui/e2e/test.ts", "all-specs", false},
 		{"ui/e2e/uiHelpers.ts", "all-specs", false},
 		{"ui/playwright.config.ts", "all-specs", false},
-		{"ui/package.json", "all-specs", false},
+		{"ui/package.json", "all-specs,site", false},
 		{"ui/bun.lock", "all-specs", false},
 		{"ui/test/flakes.test.ts", "ui-unit", false},
 		// images, examples, tools
 		{"images/activity-shell/entry.sh", "images", false},
 		{"test/fixtures/bash_activity_contract.sh", "images", false},
-		{"examples/hello.ork.yaml", "examples", false},
-		{"examples/custom-image/main.go", "examples,go", false},
+		{"examples/hello.ork.yaml", "examples,site", false},
+		{"examples/custom-image/main.go", "examples,go,site", false},
 		{"test/tools/cosign-sign/main.go", "tool", false},
+		// the site: its own rows sit above the broad ones, so no markdown,
+		// .gitignore or lockfile rule shadows a file of site/
+		{"site/package.json", "site", false},
+		{"site/bun.lock", "site", false},
+		{"site/astro.config.mjs", "site", false},
+		{"site/scripts/sync-docs.mjs", "site", false},
+		{"site/src/pages/index.astro", "site", false},
+		{"site/src/content/docs/index.md", "site", false},
+		{"site/README.md", "site", false},
+		{"site/.gitignore", "site", false},
+		// what the site renders or takes its style from
+		{"CHANGELOG.md", "none,site", false},
+		{"docs/API.md", "none,site", false},
+		{"ui/src/tokens.css", "ui,site", false},
+		{"ui/src/lib/icons.ts", "ui,site", false},
 		// fail closed
 		{"Dockerfile", "", false},
 		{"ui/README", "", false},
@@ -161,7 +199,7 @@ func TestRepositoryScopeTable(t *testing.T) {
 	}{
 		{".github/actions/proof-host/action.yml", "full", false, true},
 		{".github/workflows/proof.yml", "full", false, true},
-		{".github/pull_request_template.md", "none", false, false},
+		{".github/pull_request_template.md", "none,site", false, false},
 		{".github/CODEOWNERS", "full", false, true},
 		{"internal/dsl/testdata/schema-vectors/every-feature.ork.yaml", "go", false, true},
 		{"scripts/proof-nightly-tests.txt", "full", false, true},
@@ -170,7 +208,7 @@ func TestRepositoryScopeTable(t *testing.T) {
 		{"scripts/proof-host-speed.tsv", "full", false, true},
 		{"scripts/proof-ui-costs.tsv", "none", false, false},
 		{"scripts/github-merge-gate.sh", "full", false, true},
-		{"docs/PROOFS.md", "none", false, false},
+		{"docs/PROOFS.md", "none,site", false, false},
 		{"internal/docscheck/links_test.go", "go", false, false},
 		{"cmd/orkctl/root.go", "go", true, true},
 	} {

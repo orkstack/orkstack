@@ -1,0 +1,177 @@
+---
+// The local quickstart: the commands docs/GETTING_STARTED.md walks through,
+// in order, each one a target the Makefile defines or an orkctl command, and
+// a recording of them run on the real stack. The copy button is an
+// enhancement: without JavaScript the commands are plain, selectable text.
+// After Landpack's ContentCommand (MIT, see site/THIRD_PARTY.md).
+import Icon from '../shared/Icon.astro';
+import { clip } from '../../lib/media';
+import { route } from '../../../site.config.mjs';
+import { example } from '../../lib/example';
+import ThemeClip from '../shared/ThemeClip.astro';
+
+const steps = [
+	{ cmd: 'make infra-up', note: 'Temporal, SeaweedFS and a local registry, in Docker' },
+	{ cmd: 'make -C images push', note: 'build and push the first-party activity images' },
+	{ cmd: 'make up', note: 'build and start the engine, an Orker and the UI' },
+	{ cmd: `./bin/orkctl apply ${example.path}`, note: 'validate and store the Orkflow' },
+	{ cmd: `./bin/orkctl run plan ${example.name}`, note: 'what would run, starting nothing' },
+	{ cmd: `./bin/orkctl run submit ${example.name} --watch`, note: 'run it and follow it to the end' },
+];
+const all = steps.map((s) => s.cmd).join('\n');
+const demo = clip('cli-quickstart');
+---
+
+<section class="block quickstart" aria-labelledby="quickstart-title">
+	<header class="block-head">
+		<h2 id="quickstart-title">Run it on your machine</h2>
+		<p>
+			You need Docker, Go and Bun. From a clone of the repository, the whole stack and a first run take six
+			commands; <a href={route('docs/getting-started/install')}>Install and run locally</a> walks through each.
+		</p>
+	</header>
+	<div class="quickstart-body">
+		<div class="terminal">
+			<div class="terminal-bar">
+				<span class="caps">Shell</span>
+				<button type="button" class="copy" data-copy={all} hidden>
+					<Icon name="copy" /><span data-copy-label>Copy all</span>
+				</button>
+			</div>
+			<ol class="commands">
+				{
+					steps.map((s) => (
+						<li>
+							<code class="figure">
+								<span class="prompt" aria-hidden="true">
+									${' '}
+								</span>
+								{s.cmd}
+							</code>
+							<span class="note"># {s.note}</span>
+						</li>
+					))
+				}
+			</ol>
+			<span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
+		</div>
+		<ThemeClip clip={demo} />
+	</div>
+</section>
+
+<script>
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+		if (!navigator.clipboard) continue;
+		button.hidden = false;
+		const label = button.querySelector('[data-copy-label]');
+		const status = button.closest('.terminal')?.querySelector('[data-copy-status]');
+		button.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(button.dataset.copy ?? '');
+				if (label) label.textContent = 'Copied';
+				if (status) status.textContent = 'Commands copied to the clipboard';
+				setTimeout(() => {
+					if (label) label.textContent = 'Copy all';
+				}, 1600);
+			} catch {
+				if (status) status.textContent = 'Copying failed; select the commands instead';
+			}
+		});
+	}
+</script>
+
+<style>
+	/* The commands, then the recording, at one measure: wide enough that the
+	   terminal's text reads, narrow enough that the recording and its
+	   controls fit a laptop's viewport and its text stays under the body's. */
+	.quickstart-body {
+		display: grid;
+		max-width: 64rem;
+		grid-template-columns: minmax(0, 1fr);
+		gap: calc(var(--spacing) * 8);
+	}
+	/* On a phone the recording shows its left columns, where the commands and
+	   the start of each line are, at about the size of small text; the
+	   caption says how the run ended. The frame moves to the window, so the
+	   crop keeps its right edge. */
+	@media (max-width: 639.98px) {
+		.quickstart-body :global(.clip .theme-pair) {
+			overflow: hidden;
+			border: var(--rule-region) solid var(--color-ink);
+		}
+		.quickstart-body :global(.clip video) {
+			width: 270%;
+			max-width: none;
+			border: 0;
+		}
+	}
+	.terminal {
+		min-width: 0;
+		border: var(--rule-region) solid var(--color-ink);
+		background-color: var(--color-paper-sunken);
+	}
+	.terminal-bar {
+		display: flex;
+		height: calc(var(--spacing) * 10);
+		align-items: center;
+		justify-content: space-between;
+		border-bottom: var(--rule-hair) solid var(--color-rule);
+		background-color: var(--color-paper);
+		padding-inline: calc(var(--spacing) * 4);
+		color: var(--color-ink-muted);
+	}
+	.copy {
+		display: inline-flex;
+		height: calc(var(--spacing) * 7);
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		border: var(--rule-hair) solid var(--color-rule-strong);
+		border-radius: var(--radius-sm);
+		background-color: var(--color-paper);
+		padding-inline: calc(var(--spacing) * 2.5);
+		color: var(--color-ink);
+		font-family: var(--font-sans);
+		font-size: var(--text-sm);
+		font-weight: var(--font-weight-medium);
+		cursor: pointer;
+	}
+	.copy[hidden] {
+		display: none;
+	}
+	.copy:hover {
+		background-color: var(--color-hover);
+	}
+	.copy :global(svg) {
+		width: calc(var(--spacing) * 3.5);
+		height: calc(var(--spacing) * 3.5);
+	}
+	.commands {
+		margin: 0;
+		padding: calc(var(--spacing) * 4);
+		list-style: none;
+		overflow-x: auto;
+	}
+	.commands li {
+		display: flex;
+		flex-direction: column;
+		padding-block: calc(var(--spacing) * 1.5);
+	}
+	.commands code {
+		white-space: pre;
+		color: var(--color-ink);
+		font-size: var(--text-sm);
+		line-height: var(--text-sm--line-height);
+		font-weight: var(--font-weight-medium);
+	}
+	.prompt {
+		color: var(--color-ink-muted);
+		user-select: none;
+	}
+	.note {
+		padding-left: 2ch;
+		color: var(--color-ink-muted);
+		font-family: var(--font-mono);
+		font-size: var(--text-xs);
+		line-height: var(--text-xs--line-height);
+	}
+</style>

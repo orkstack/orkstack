@@ -1,0 +1,42 @@
+name: Bug report
+description: Something OrkStack does is not what its documentation says it does.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting. OrkStack is pre-release: stable, but breaking changes may be introduced until 1.0.
+        Please do not paste secrets, tokens, internal hostnames or personal data; redact them.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: The smallest Orkflow, command or steps that show it. An example from examples/ is ideal.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: The run's failure reason and explanation (`orkctl run get <run-id>`), its attempts (`orkctl run attempts <run-id>`), or the relevant log lines.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The commit you built from (`git rev-parse HEAD`), or `orkctl version`.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Docker version, and how you run Temporal and object storage (the local stack from make up, or your own).

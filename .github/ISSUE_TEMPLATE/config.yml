@@ -1,0 +1,8 @@
+# Questions, bugs and feature requests are GitHub issues, each with its own
+# form. A chat or discussion forum, if one is added later, is one more
+# contact_links entry here and one line in .github/SUPPORT.md.
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://orkstack.github.io/orkstack/docs/
+    about: Getting started, the DSL reference, deployment and troubleshooting.

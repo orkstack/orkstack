@@ -63,9 +63,17 @@ jobs:
         timeout-minutes: 5
         with:
           bun-version: "1.4.3"
+      - uses: actions/setup-node@v7.1.0
+        timeout-minutes: 3
+        with:
+          node-version: "26.12.0"
       - name: bun install
         timeout-minutes: 5
         working-directory: ui
+        run: bun install --frozen-lockfile
+      - name: bun install (site)
+        timeout-minutes: 3
+        working-directory: site
         run: bun install --frozen-lockfile
       - uses: ./.github/actions/proof-host
         timeout-minutes: 10

@@ -551,7 +551,7 @@ type TaskRun struct {
 	// Within a run, one pool name means one set of Orkers, so naming this pool
 	// on a task reaches exactly the Orkers this attempt reached. That holds
 	// under the per-deployment route override operators use to keep two stacks
-	// apart: an execution channel belonging to no pool reports as the built-in
+	// apart: a route belonging to no pool reports as the built-in
 	// "main", and a task that writes "main" follows the same override instead
 	// of escaping it. The override is an operator concern this contract does
 	// not expose, so this name is the routing request rather than a measurement
@@ -593,8 +593,8 @@ type TaskRun struct {
 	// moves: every member executes on the same Orker process for the pin's whole
 	// life, so a sibling's orker_id is this task's by construction. It stays
 	// empty only when no member of that pin ever reported one, in which case the
-	// failure's error.details carries the Temporal session's raw OS host name as
-	// an explicitly labelled best-effort lead, which is NOT an orker_id.
+	// failure's error.details carries the pin host's raw OS host name as an
+	// explicitly labelled best-effort lead, which is NOT an orker_id.
 	// Empty on a fan-out task's own row, whose items each carry their own.
 	OrkerId string `protobuf:"bytes,17,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
 	// scheduled_at is the instant the engine scheduled this task's activity —
@@ -1437,7 +1437,7 @@ func (x *TaskAttempt) GetCache() *CacheResult {
 // Run is one execution of an Orkflow.
 type Run struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // ork run id, ork-{timestamp}-{sequence} (also Temporal workflow id)
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // ork run id, ork-{timestamp}-{sequence}; opaque, nothing parses it
 	OrkflowName    string                 `protobuf:"bytes,2,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
 	OrkflowVersion string                 `protobuf:"bytes,3,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"`
 	Status         Status                 `protobuf:"varint,4,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`

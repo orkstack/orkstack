@@ -1,0 +1,293 @@
+/*
+ * Starlight, restyled through its supported surfaces only: its custom
+ * properties, mapped here onto ui/src/tokens.css, and plain CSS over its
+ * public markup. Starlight's own styles sit in cascade layers, so these
+ * unlayered rules win without !important. Its internals are never patched.
+ *
+ * The mapping is written once, theme-agnostic: tokens.css switches every
+ * token on :root[data-theme], so --sl-color-white is the ink in light and in
+ * dark alike, where Starlight's own palette inverts its grey scale per theme.
+ */
+
+:root {
+	/* Ink and paper */
+	--sl-color-white: var(--color-ink);
+	--sl-color-gray-1: var(--color-ink);
+	--sl-color-gray-2: var(--color-ink-secondary);
+	--sl-color-gray-3: var(--color-ink-muted);
+	--sl-color-gray-4: var(--color-mark);
+	--sl-color-gray-5: var(--color-rule);
+	--sl-color-gray-6: var(--color-paper-sunken);
+	--sl-color-gray-7: var(--color-paper-sunken);
+	--sl-color-black: var(--color-paper);
+
+	/* The one link and selection hue */
+	--sl-color-accent-low: var(--color-blue-tint);
+	--sl-color-accent: var(--color-blue);
+	--sl-color-accent-high: var(--color-blue-strong);
+
+	/* Starlight's named hues, for its asides and badges. The UI rations hue:
+	   red is failure and attention, green is running, blue is links; a note
+	   or tip is ink, never a colour. */
+	--sl-color-red-low: var(--color-red-tint);
+	--sl-color-red: var(--color-red);
+	--sl-color-red-high: var(--color-red-strong);
+	--sl-color-orange-low: var(--color-red-tint);
+	--sl-color-orange: var(--color-red);
+	--sl-color-orange-high: var(--color-red-strong);
+	--sl-color-green-low: var(--color-green-tint);
+	--sl-color-green: var(--color-green);
+	--sl-color-green-high: var(--color-green-strong);
+	--sl-color-blue-low: var(--color-paper-sunken);
+	--sl-color-blue: var(--color-rule-strong);
+	--sl-color-blue-high: var(--color-ink);
+	--sl-color-purple-low: var(--color-paper-sunken);
+	--sl-color-purple: var(--color-rule-strong);
+	--sl-color-purple-high: var(--color-ink);
+
+	--sl-color-text: var(--color-ink);
+	--sl-color-text-accent: var(--color-blue);
+	--sl-color-text-invert: var(--color-on-ink);
+	--sl-color-bg: var(--color-paper);
+	--sl-color-bg-nav: var(--color-paper);
+	--sl-color-bg-sidebar: var(--color-paper);
+	--sl-color-bg-inline-code: var(--color-paper-sunken);
+	--sl-color-bg-accent: var(--color-ink);
+	--sl-color-hairline-light: var(--color-rule-faint);
+	--sl-color-hairline: var(--color-rule);
+	--sl-color-hairline-shade: var(--color-ink);
+	--sl-color-backdrop-overlay: var(--color-scrim);
+
+	/* Flat at rest; a shadow means "this floats" (search, menus). */
+	--sl-shadow-sm: none;
+	--sl-shadow-md: var(--shadow-overlay);
+	--sl-shadow-lg: var(--shadow-overlay);
+
+	/* Faces and the heading scale */
+	--sl-font: var(--font-sans);
+	--sl-font-mono: var(--font-mono);
+	--sl-text-h1: var(--text-2xl);
+	--sl-text-h2: var(--text-xl);
+	--sl-text-h3: var(--text-lg);
+	--sl-text-h4: var(--text-md);
+	--sl-text-h5: var(--text-base);
+	--sl-text-code: var(--text-sm);
+	--sl-text-code-sm: var(--text-xs);
+	--sl-line-height-headings: var(--leading-tight);
+
+	/* The top bar is the UI's: 44 px under a region rule. */
+	--sl-nav-height: var(--spacing-bar);
+	--sl-nav-pad-y: 0;
+	--sl-menu-button-size: calc(var(--spacing) * 8);
+}
+
+@media (min-width: 50em) {
+	:root {
+		--sl-nav-height: var(--spacing-bar);
+		--sl-text-h1: var(--text-2xl);
+		--sl-text-h2: var(--text-xl);
+		--sl-text-h3: var(--text-lg);
+		--sl-text-h4: var(--text-md);
+	}
+}
+
+body {
+	font-weight: var(--font-weight-body);
+	caret-color: var(--color-blue);
+}
+
+/* The top bar: Starlight's header box carries the UI's region rule. */
+.page > .header {
+	border-bottom: var(--rule-region) solid var(--color-ink);
+	padding-block: 0;
+}
+
+/* -------------------------------------------------------------- sidebar */
+
+.sidebar-content {
+	font-size: var(--text-sm);
+}
+.sidebar-content .top-level > li > details > summary .group-label,
+.sidebar-content .large {
+	font-size: var(--text-2xs);
+	line-height: var(--text-2xs--line-height);
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: var(--tracking-caps);
+	text-transform: uppercase;
+	color: var(--color-ink-muted);
+}
+.sidebar-content a {
+	border-radius: var(--radius-sm);
+	color: var(--color-ink-secondary);
+}
+.sidebar-content a:hover {
+	background-color: var(--color-hover);
+	color: var(--color-ink);
+}
+/* The current page: semibold ink on the selection tint, the way the UI marks
+   the active option of a list. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+	background-color: var(--color-blue-tint);
+	color: var(--color-ink);
+	font-weight: var(--font-weight-semibold);
+}
+
+/* ------------------------------------------------------------- content */
+
+.sl-markdown-content {
+	font-size: var(--sl-text-body);
+}
+.sl-markdown-content :is(p, li) {
+	max-width: 72ch;
+}
+.content-panel + .content-panel {
+	border-top: var(--rule-hair) solid var(--color-rule);
+}
+h1#_top {
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: var(--tracking-tight);
+	text-wrap: balance;
+}
+.sl-markdown-content :is(h2, h3, h4, h5) {
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: var(--tracking-tight);
+	text-wrap: balance;
+}
+/* A region starts under a 1.5 px ink rule, as in the UI. Starlight wraps
+   each heading with its anchor link; the wrapper spans the column. */
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+	padding-top: calc(var(--spacing) * 4);
+	border-top: var(--rule-region) solid var(--color-ink);
+}
+.sl-markdown-content a {
+	color: var(--color-blue);
+	text-decoration-color: color-mix(in oklab, var(--color-blue) 40%, transparent);
+	text-underline-offset: var(--underline-offset);
+}
+.sl-markdown-content a:hover {
+	color: var(--color-blue-strong);
+	text-decoration-color: currentColor;
+}
+/* Inline code: the mono on the hover wash, a hairline, no margin of its own
+   so punctuation sits against it. */
+.sl-markdown-content :not(pre) > code {
+	margin: 0;
+	border: var(--rule-hair) solid var(--color-rule-faint);
+	border-radius: var(--radius-xs);
+	background-color: var(--color-hover);
+	padding: 0 0.2em;
+	font-size: 0.9em;
+}
+
+/* Tables are registers: tracked-caps heads on sunken paper under an ink
+   rule, hairlines between rows, no boxes. */
+.sl-markdown-content table {
+	border-collapse: collapse;
+	font-size: var(--text-sm);
+	line-height: var(--text-sm--line-height);
+}
+.sl-markdown-content :is(th, td) {
+	border: 0;
+	border-bottom: var(--rule-hair) solid var(--color-rule);
+	padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+	text-align: start;
+	vertical-align: top;
+}
+.sl-markdown-content th {
+	border-bottom: var(--rule-region) solid var(--color-ink);
+	background-color: var(--color-paper-sunken);
+	color: var(--color-ink-muted);
+	font-size: var(--text-2xs);
+	line-height: var(--text-2xs--line-height);
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: var(--tracking-caps);
+	text-transform: uppercase;
+}
+.sl-markdown-content tr:nth-child(2n) {
+	background-color: transparent;
+}
+
+.sl-markdown-content blockquote {
+	border-inline-start: var(--rule-hair) solid var(--color-rule-strong);
+	color: var(--color-ink-secondary);
+}
+
+/* A NOTE: sunken paper, a hairline, a square-ish corner. Asides keep their
+   label; only caution and danger take the attention red. */
+.starlight-aside {
+	border: var(--rule-hair) solid var(--color-rule);
+	border-radius: var(--radius-sm);
+	background-color: var(--color-paper-sunken);
+}
+.starlight-aside--caution,
+.starlight-aside--danger {
+	border-color: var(--color-red);
+	background-color: var(--color-red-tint);
+}
+
+.sl-markdown-content .theme-figure {
+	margin-inline: 0;
+}
+.sl-markdown-content .theme-figure img {
+	border: var(--rule-region) solid var(--color-ink);
+}
+.sl-markdown-content .theme-figure figcaption {
+	margin-top: calc(var(--spacing) * 2);
+	color: var(--color-ink-muted);
+	font-size: var(--text-sm);
+}
+
+/* Right-hand contents and the pagination links. */
+starlight-toc h2,
+mobile-starlight-toc .toggle {
+	font-size: var(--text-2xs);
+	line-height: var(--text-2xs--line-height);
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: var(--tracking-caps);
+	text-transform: uppercase;
+	color: var(--color-ink-muted);
+}
+starlight-toc a[aria-current='true'] {
+	color: var(--color-blue);
+}
+.pagination-links a {
+	border: var(--rule-hair) solid var(--color-rule-strong);
+	border-radius: var(--radius-sm);
+	box-shadow: none;
+}
+.pagination-links a:hover {
+	border-color: var(--color-ink);
+	background-color: var(--color-hover);
+}
+
+/* Search: the trigger is the UI's "Jump to…" button. */
+site-search > button {
+	border: var(--rule-hair) solid var(--color-rule-strong);
+	border-radius: var(--radius-sm);
+	background-color: var(--color-paper);
+	color: var(--color-ink-secondary);
+}
+site-search > button:hover {
+	border-color: var(--color-rule-strong);
+	background-color: var(--color-hover);
+	color: var(--color-ink);
+}
+site-search dialog {
+	border: var(--rule-region) solid var(--color-ink);
+	border-radius: var(--radius-md);
+	background-color: var(--color-sheet);
+}
+
+/* The narrow-screen menu button: drawn on the sheet, not floating above it. */
+.sl-menu-button {
+	border: var(--rule-hair) solid var(--color-rule-strong);
+	border-radius: var(--radius-sm);
+	background-color: var(--color-paper);
+	box-shadow: none;
+	color: var(--color-ink);
+}
+.sl-menu-button:hover {
+	background-color: var(--color-hover);
+}

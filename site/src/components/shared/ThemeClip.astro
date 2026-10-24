@@ -1,0 +1,58 @@
+---
+// A recording in both themes: two plain <video> elements, one shown per
+// theme (base.css, .theme-pair). Controls, a poster frame, muted, inline,
+// never autoplay, and nothing fetched before the visitor presses play.
+import type { Clip } from '../../lib/media';
+
+interface Props {
+	clip: Clip;
+	class?: string;
+}
+const { clip, class: className } = Astro.props;
+const views = [clip.light, clip.dark];
+---
+
+<figure class:list={['clip', className]}>
+	<div class="theme-pair">
+		{
+			views.map((v) =>
+				v.webm || v.mp4 ? (
+					<video controls muted playsinline preload="none" poster={v.poster} aria-label={clip.alt}>
+						{v.webm && <source src={v.webm} type="video/webm" />}
+						{v.mp4 && <source src={v.mp4} type="video/mp4" />}
+					</video>
+				) : (
+					<div class="clip-missing" role="img" aria-label={clip.alt} />
+				),
+			)
+		}
+	</div>
+	<figcaption>{clip.caption}</figcaption>
+</figure>
+
+<style>
+	.clip {
+		margin: 0;
+	}
+	/* The recording is 1200×860 and its last line sits on its bottom row. The
+	   box is 110 of its pixels taller, drawn in the terminal's own background
+	   (the VHS theme's is --color-paper-sunken too), and the recording sits at
+	   its top: a paused video's controls band falls on that strip, below the
+	   last line, at every width. */
+	video,
+	.clip-missing {
+		display: block;
+		width: 100%;
+		height: auto;
+		aspect-ratio: 1200 / 970;
+		object-fit: contain;
+		object-position: top;
+		border: var(--rule-region) solid var(--color-ink);
+		background-color: var(--color-paper-sunken);
+	}
+	figcaption {
+		margin-top: calc(var(--spacing) * 2);
+		color: var(--color-ink-muted);
+		font-size: var(--text-sm);
+	}
+</style>

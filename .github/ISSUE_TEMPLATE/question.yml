@@ -1,0 +1,15 @@
+name: Question
+description: Ask how to do something with OrkStack.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The documentation may already answer it: https://orkstack.github.io/orkstack/docs/ (Troubleshooting and FAQ is under Operating).
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you want to do, and what you have tried. Include the Orkflow or command if there is one, with secrets redacted.
+    validations:
+      required: true

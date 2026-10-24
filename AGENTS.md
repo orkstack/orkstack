@@ -981,14 +981,14 @@ they are present.
 
 Some suites have an activity container call a stub on the host at
 `host.docker.internal`; a Linux host with plain Docker Engine needs one-time
-host setup for that name (README, "Linux hosts"). It is host setup, never
+host setup for that name (CONTRIBUTING.md, "Linux hosts"). It is host setup, never
 Orker behavior: the Orker must not add `--add-host` or any host-network
 configuration to activity containers (§6). The observability gate's
 Prometheus reaches the admin listeners over that same default bridge:
 `scripts/proof-observability.sh` attaches its own Prometheus container to the
 bridge and binds that run's admin listeners to the bridge's gateway, for the
 gate only. That is proof and development setup, never a `deploy/` default or a
-production listener (README, "Linux hosts", says what it exposes).
+production listener (CONTRIBUTING.md, "Linux hosts", says what it exposes).
 
 Integration tests run concurrently: as separate processes within a proof, and
 beside other agents' proofs on the same host. Each integration test owns these
@@ -1118,8 +1118,8 @@ other than the observability gate and the three measurement files
 `scripts/proof-ui-costs.tsv`), `internal/testsupport/`, and
 `test/tools/proofrun/`), refuses the feature tier. A feature proof always runs
 lint, build, the unit suites and `go vet -tags=integration`, and it runs the UI
-type-check and unit suites when `ui/` or `proto/` changed or a spec runs. It
-then runs:
+type-check and unit suites when `ui/` or `proto/` changed or a spec runs, and
+the site's check and build when a path the site reads changed. It then runs:
 
 - the change's **evidence**: every test whose source the diff changes,
   including every test that reaches a changed or deleted helper, type,
@@ -1131,7 +1131,10 @@ then runs:
   fixture when `images/` or `test/fixtures/` changed; the tests that read a
   changed example, and the examples spec, when `examples/` changed; the tests
   and specs that run a changed `test/tools/` tool, found by searching their
-  sources; and the observability gate when a telemetry path changed;
+  sources; the observability gate when a telemetry path changed; and the site
+  gate when a changed path's scope row names `site` (the site itself, the
+  documentation and markdown, the examples, the generated defaults, `proto/`,
+  and the UI's design tokens, icons and dependencies);
 - the **regression set**: in every integration package whose test binary
   depends on a changed package — through its imports, or through a binary its
   suite builds (an `images/` change counts as a change to `internal/orker`) —
@@ -1163,17 +1166,18 @@ images, built and pushed from this tree under a tag of the proof's own
 (`ORK_TEST_IMAGE_TAG`); every test of every package whose integration build
 differs from its unit build, except the deferred ones, against real Temporal
 and SeaweedFS with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run
-on those images; the UI type-check and unit suites; every Playwright spec;
-and the observability gate, whenever the tree differs from `main` in a
-telemetry path. That diff-conditioned observability gate is the only
-diff-conditioned part of the full proof, and its base is not a choice: the
-full tier refuses `--base`, a full proof whose recorded base is not `main` is
-not merge-eligible, and `merge-check PROOF=` requires that base to be
-`main`'s current tip. Concurrency is how the full proof is fast, never a
-reason to run less: the fast gates (lint, build, unit, vet and the UI
-type-check and unit suites) run first and alone, and a failure there or in any
-later gate stops a local proof (`PROOF_FAIL_FAST`, docs/PROOFS.md §2.2), which
-still writes its failing verdict; integration tests run as separate processes,
+on those images; the UI type-check and unit suites; the site's check and
+build; every Playwright spec; and the observability gate, whenever the tree
+differs from `main` in a telemetry path. That diff-conditioned observability
+gate is the only diff-conditioned part of the full proof, and its base is not
+a choice: the full tier refuses `--base`, a full proof whose recorded base is
+not `main` is not merge-eligible, and `merge-check PROOF=` requires that base
+to be `main`'s current tip. Concurrency is how the full proof is fast, never a
+reason to run less: the fast gates (lint, build, unit, vet, the UI type-check
+and unit suites and the site's check and build) run first and alone, and a
+failure there or in any later gate stops a local proof (`PROOF_FAIL_FAST`,
+docs/PROOFS.md §2.2), which still writes its failing verdict; integration
+tests run as separate processes,
 `PROOF_JOBS` at a time (default 4: six ran 270 of 277 jobs clean, then one
 engine boot stalled 50 s on its fresh bucket's first read while the store grew
 and removed per-bucket volumes, which a merge gate cannot afford), with the
@@ -1269,6 +1273,7 @@ internal/testsupport/  Test-only helpers shared by suites
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/docscheck/    Documentation drift checks (test-only)
+internal/apidocs/      docs/API.md, the client-facing API reference, generated from the proto comments
 images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing
@@ -1276,6 +1281,8 @@ pkg/triggers/          Inbound trigger registry and token hashing
 pkg/webhooks/          Run-event webhook registry, signing, and delivery
 pkg/schedules/         Schedule id shape (the schedule itself lives in Temporal)
 ui/                    SvelteKit, Vite, Tailwind, and generated TS clients
+site/                  The landing page and docs site (Astro, Starlight): styled by ui/src/tokens.css,
+                       its docs ported from this repository's markdown on every build
 deploy/                Temporal, object-storage, and registry development stack
 examples/              Example Orkflows, automation documents, and custom images
 docs/                  Reference material (indexed in README.md; `CLI.md` is generated)
@@ -1309,12 +1316,24 @@ domain file both import. The UI builds one client per service, one module each
 under `ui/src/lib/clients/`, each importing only its own generated file, so a
 route loads only the schemas of the services it calls.
 
+The site (`site/`) takes its whole visual style from the UI's token file,
+`ui/src/tokens.css`: it imports that file as it is and keeps no copy of it, and
+it declares no colour or font of its own (`site/scripts/check-tokens.mjs`,
+run by the `site` gate, refuses one). A change to the UI's look changes the
+tokens, never the site, and reaches the site with no step of its own. A change
+that leaves the site, landing page or docs, looking different from the UI is
+not done. A UI change that alters what the site's screenshots show
+regenerates them with `make site-media` in the same change. The docs are this
+repository's markdown, ported on every build (`site/docs.manifest.json`): a
+new doc is added to the manifest, or excluded there with its reason, and no
+page is written by hand twice.
+
 Agent ownership is split as follows:
 
 - engine agents: `internal/engine`, `internal/api`, `cmd/ork`;
 - Orker/activity agents: `internal/orker`, `images/`, `cmd/orker`;
 - CLI agents: `cmd/orkctl`;
-- UI agents: `ui/`;
+- UI agents: `ui/` and `site/`;
 - artifact agents: `pkg/artifacts`;
 - coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`, `.github/`,
   the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`,

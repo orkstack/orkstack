@@ -72,6 +72,14 @@ func TestIntegration_Examples(t *testing.T) { _ = "examples/hello.ork.yaml" }
 	"examples/hello.ork.yaml":         "name: hello\n",
 	"images/activity-shell/entry.sh":  "#!/bin/sh\n",
 	"docs/DSL.md":                     "# DSL\n",
+	"README.md":                       "# OrkStack\n",
+	"deploy/orkstack.defaults.yaml":   "engine:\n  orkflow_max_tasks: 4000\n",
+	"proto/orkstack/v1/run.proto":     "syntax = \"proto3\";\n",
+	"site/package.json":               "{\"name\": \"orkstack-site\"}\n",
+	"site/src/pages/index.astro":      "<h1>OrkStack</h1>\n",
+	"ui/src/tokens.css":               ":root { --color-bg: #fff; }\n",
+	"ui/src/lib/icons.ts":             "export const ICONS = {};\n",
+	"ui/package.json":                 "{\"name\": \"ui\"}\n",
 }
 
 func fakeDeps() depIndex {
@@ -373,6 +381,11 @@ func TestSelect_DocsOnlyRunsNothingButTheFastGates(t *testing.T) {
 	if len(sel.Integration) != 0 || len(sel.Specs) != 0 || sel.Gates.UICheck || sel.Gates.Fixture {
 		t.Errorf("a docs change selected %+v", sel)
 	}
+	// The site renders the documentation, so its gate is the one fast gate a
+	// docs change adds.
+	if !sel.Gates.Site {
+		t.Error("a docs change must run the site gate: the site renders it")
+	}
 }
 
 func TestSelect_ToolChangeFindsItsUsersBySearch(t *testing.T) {
@@ -425,6 +438,181 @@ func TestSelect_DeletedTestsAreListedAsRemoved(t *testing.T) {
 }
 
 func keys2(m map[string]*pkgSelection) []string { return sortedKeys(m) }
+
+// ---- the site gate ----------------------------------------------------------
+
+// A change to the site itself runs the site gate and nothing else: the gate is
+// its evidence, so no Go test, spec or UI gate is asked for on its account.
+func TestSelect_ASiteChangeRunsTheSiteGateAndNeedsNoGoEvidence(t *testing.T) {
+	sel := fakeSelect(t, []change{{"site/src/pages/index.astro", "<h1>OrkStack, revised</h1>\n"}, {"site/package.json", "{\"name\": \"orkstack-site\", \"private\": true}\n"}}, nil, nil)
+	requireErrors(t, sel)
+	if !sel.Gates.Site {
+		t.Error("a change under site/ must run the site gate")
+	}
+	if sel.Gates.UICheck || sel.Gates.UIUnit || sel.Gates.Fixture || sel.Gates.Observability {
+		t.Errorf("a site change ran other gates: %+v", sel.Gates)
+	}
+	if len(sel.Integration) != 0 || len(sel.Specs) != 0 || len(sel.UnitEvidence) != 0 || sel.AllSpecs != "" {
+		t.Errorf("a site change asked for Go or Playwright evidence: %+v", sel)
+	}
+	// The README states which gate proves which paths.
+	var site *evidenceFor
+	for i := range sel.Evidence {
+		if strings.HasPrefix(sel.Evidence[i].Target, "site (") {
+			site = &sel.Evidence[i]
+		}
+	}
+	if site == nil {
+		t.Fatalf("no evidence entry for the site paths: %+v", sel.Evidence)
+	}
+	if want := "site (site/package.json, site/src/pages/index.astro)"; site.Target != want {
+		t.Errorf("evidence target = %q, want %q", site.Target, want)
+	}
+	if !reflect.DeepEqual(site.Evidence, []string{"the site gate"}) {
+		t.Errorf("site evidence = %v", site.Evidence)
+	}
+}
+
+// The design tokens are the UI's source and the site's whole style: a change
+// to them runs the site gate and keeps every UI requirement it always had.
+func TestSelect_TheTokensFileRunsTheSiteGateAndStillTheUIGates(t *testing.T) {
+	tokens := change{"ui/src/tokens.css", ":root { --color-bg: #eee; }\n"}
+	sel := fakeSelect(t, []change{tokens}, nil, nil)
+	requireErrors(t, sel, "ui/src changed (ui/src/tokens.css) and no spec proves it")
+	if !sel.Gates.Site {
+		t.Error("a tokens.css change must run the site gate")
+	}
+
+	sel = fakeSelect(t, []change{tokens}, nil, []string{"admin.spec.ts"})
+	requireErrors(t, sel)
+	if !sel.Gates.Site || !sel.Gates.UICheck || !sel.Gates.UIUnit {
+		t.Errorf("a tokens.css change must run the site gate and the UI type-check and unit suites: %+v", sel.Gates)
+	}
+	if got := specFiles(sel); !reflect.DeepEqual(got, []string{"ui/e2e/admin.spec.ts"}) {
+		t.Errorf("specs = %v", got)
+	}
+
+	// The rest of ui/src is not the site's input.
+	sel = fakeSelect(t, []change{{"ui/src/routes/page.svelte", "<p>bye</p>\n"}}, nil, []string{"admin.spec.ts"})
+	requireErrors(t, sel)
+	if sel.Gates.Site {
+		t.Error("a change to a UI page ran the site gate")
+	}
+}
+
+// Every input the site renders or takes its style from can break it, so a
+// change to any of them runs the gate. The change needs no Go evidence on that
+// account.
+func TestSelect_EveryInputOfTheSiteRunsTheSiteGate(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		change change
+		specs  []string
+	}{
+		{"a changed doc", change{"docs/DSL.md", "# DSL, revised\n"}, nil},
+		{"a new doc", change{"docs/NEW.md", "# New\n"}, nil},
+		{"a deleted doc", change{"docs/DSL.md", ""}, nil},
+		{"the root README", change{"README.md", "# OrkStack, revised\n"}, nil},
+		{"the generated defaults", change{"deploy/orkstack.defaults.yaml", "engine:\n  orkflow_max_tasks: 5000\n"}, nil},
+		{"a proto file", change{"proto/orkstack/v1/run.proto", "syntax = \"proto3\";\n// revised\n"}, nil},
+		{"an example", change{"examples/hello.ork.yaml", "name: hello\nversion: 2\n"}, nil},
+		{"the tokens", change{"ui/src/tokens.css", ":root { --color-bg: #eee; }\n"}, []string{"admin.spec.ts"}},
+		{"the icons", change{"ui/src/lib/icons.ts", "export const ICONS = { x: 1 };\n"}, []string{"admin.spec.ts"}},
+		{"the UI's dependencies", change{"ui/package.json", "{\"name\": \"ui\", \"private\": true}\n"}, nil},
+		{"the site", change{"site/package.json", "{\"name\": \"orkstack-site\", \"private\": true}\n"}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			sel := fakeSelect(t, []change{c.change}, nil, c.specs)
+			requireErrors(t, sel)
+			if !sel.Gates.Site {
+				t.Errorf("%s did not run the site gate (paths %+v)", c.change.path, sel.Paths)
+			}
+			if len(sel.UnitEvidence) != 0 {
+				t.Errorf("%s asked for Go unit evidence: %v", c.change.path, unitNames(sel))
+			}
+		})
+	}
+}
+
+// What the site does not read does not run its gate: a Go change, a UI page,
+// the Playwright harness, an activity image, a test tool.
+func TestSelect_NoSiteGateWhenNothingTheSiteReadsChanged(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		changes []change
+		tests   []string
+		specs   []string
+	}{
+		{"a Go change", []change{engineChange}, []string{"internal/engine:TestIntegration_Uses"}, nil},
+		{"a plain Go change", []change{{"internal/dsl/parse.go", "package dsl\n\nfunc Parse() int { return 2 }\n"}}, []string{"./internal/dsl:TestParse"}, nil},
+		{"a UI library file", []change{{"ui/src/lib/flakes.ts", "export const x = 2;\n"}, {"ui/test/flakes.test.ts", "test('flakes', () => { x; });\n"}}, nil, nil},
+		{"a UI page", []change{{"ui/src/routes/page.svelte", "<p>bye</p>\n"}}, nil, []string{"admin.spec.ts"}},
+		{"the Playwright harness", []change{{"ui/e2e/harness.ts", "export {};\n"}}, nil, nil},
+		{"an activity image", []change{{"images/activity-shell/entry.sh", "#!/bin/sh\nexit 0\n"}}, nil, nil},
+		{"a test tool", []change{{"test/tools/cosign-sign/main.go", "package main\n\nfunc main() { println() }\n"}}, nil, nil},
+		{"no change at all", nil, nil, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			sel := fakeSelect(t, c.changes, c.tests, c.specs)
+			requireErrors(t, sel)
+			if sel.Gates.Site {
+				t.Errorf("the site gate ran for %+v", sel.Paths)
+			}
+			for _, e := range sel.Evidence {
+				if strings.HasPrefix(e.Target, "site") {
+					t.Errorf("the README would name the site gate: %+v", e)
+				}
+			}
+		})
+	}
+}
+
+// A change to many paths does not make the README's evidence line unreadable:
+// it names the first few, and "Changed paths" above it lists them all.
+func TestSelect_ALongSiteEvidenceLineIsCut(t *testing.T) {
+	var changes []change
+	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"} {
+		changes = append(changes, change{"docs/" + n + ".md", "# " + n + "\n"})
+	}
+	sel := fakeSelect(t, changes, nil, nil)
+	requireErrors(t, sel)
+	var target string
+	for _, e := range sel.Evidence {
+		if strings.HasPrefix(e.Target, "site") {
+			target = e.Target
+		}
+	}
+	want := "site (docs/a.md, docs/b.md, docs/c.md, docs/d.md, docs/e.md, docs/f.md, docs/g.md, docs/h.md, and 2 more)"
+	if target != want {
+		t.Errorf("target = %q, want %q", target, want)
+	}
+	if len(sel.Paths) != 10 {
+		t.Errorf("the selection lists %d changed paths, want all 10", len(sel.Paths))
+	}
+}
+
+// The feature README says which gate ran for which paths.
+func TestSelect_TheFeatureReportNamesTheSiteGateForItsPaths(t *testing.T) {
+	sel := fakeSelect(t, []change{{"docs/DSL.md", "# DSL, revised\n"}, {"site/src/pages/index.astro", "<h1>OrkStack, revised</h1>\n"}}, nil, nil)
+	requireErrors(t, sel)
+	var b strings.Builder
+	featureReport(&b, sel, outcomes{}, nil)
+	got := b.String()
+	for _, want := range []string{
+		"- `M` docs/DSL.md — rule `docs/**` (scripts/proof-scope.tsv:",
+		"→ none, site",
+		"- **site (docs/DSL.md, site/src/pages/index.astro)**:\n  - the site gate — see the gates\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the README lacks %q:\n%s", want, got)
+		}
+	}
+	var term strings.Builder
+	printSelection(&term, sel)
+	if !strings.Contains(term.String(), "M   docs/DSL.md -> none,site") {
+		t.Errorf("the terminal selection does not show the site action:\n%s", term.String())
+	}
+}
 
 func TestSelect_UserFacingChangeWithoutDocsWarns(t *testing.T) {
 	paths := []pathScope{{Path: "cmd/orkctl/root.go", Docs: true}}

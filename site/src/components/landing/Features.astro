@@ -1,0 +1,190 @@
+---
+// Features as four registers, the way the UI sets a list: tracked-caps head,
+// a row per feature, hairlines between, a link to the page that holds the
+// detail. One or two sentences each, every one stated in the docs it links.
+import { route } from '../../../site.config.mjs';
+
+/** A row's text with `backticked` words set as code; nothing else is markup. */
+const html = (t: string) =>
+	t
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+const groups = [
+	{
+		name: 'Authoring',
+		rows: [
+			{
+				name: 'A DAG in YAML',
+				text: 'Tasks ordered only by `needs:`, with typed `inputs:`, templated `with:` and `condition:`, retries and timeouts. Independent tasks run in parallel.',
+				href: route('docs/authoring/dsl') + '#tasks',
+			},
+			{
+				name: 'Flow control in the DSL',
+				text: 'Fan out with `each:`, wait for a person or a system with `await:`, re-join branches with `join:`, reuse results with `cache:`, and compose Orkflows with `uses: orkflow:`.',
+				href: route('docs/authoring/dsl'),
+			},
+			{
+				name: 'Sagas',
+				text: 'Failure handlers run compensation in a failing run, and the run still ends FAILED with its original reason.',
+				href: route('docs/authoring/patterns') + '#undo-what-was-done-failure-handlers-and-sagas',
+			},
+			{
+				name: 'Plan before you run',
+				text: '`orkctl run plan` shows which tasks would run, which would be skipped and why, and starts nothing.',
+				href: route('docs/authoring/dsl') + '#planning-a-run-orkctl-run-plan',
+			},
+		],
+	},
+	{
+		name: 'Execution',
+		rows: [
+			{
+				name: 'Any OCI image',
+				text: 'An activity reads files, writes files, logs to stdout and stderr, and exits. No SDK, sidecar or callback.',
+				href: route('docs/activities/contract'),
+			},
+			{
+				name: 'Durable on Temporal',
+				text: 'Retries, timeouts, timers, signals, cancellation and replay come from Temporal. Cancellation reaches the container as SIGTERM, then SIGKILL.',
+				href: route('docs/concepts/architecture'),
+			},
+			{
+				name: 'Generic Orkers',
+				text: 'Any Orker of a pool runs any unpinned task. `pool:` selects which Orkers; `pin:` keeps a group of tasks on one Orker sharing `/orkstack/shared`.',
+				href: route('docs/authoring/dsl') + '#pins',
+			},
+			{
+				name: 'Pinned images',
+				text: 'Every image is resolved to a digest at apply, so a moved tag never changes a stored version. An image policy can require digests, registries and cosign signatures.',
+				href: route('docs/operating/deployment') + '#image-supply-chain-policy',
+			},
+		],
+	},
+	{
+		name: 'Data',
+		rows: [
+			{
+				name: 'Artifacts by reference',
+				text: 'Files move between tasks through object storage. The control plane carries references, never the bytes.',
+				href: route('docs/operating/storage'),
+			},
+			{
+				name: 'S3-compatible storage',
+				text: 'Any S3-compatible store with conditional writes. AWS S3 is the production default, the local stack runs SeaweedFS, and path-style addressing is a setting.',
+				href: route('docs/operating/configuration'),
+			},
+			{
+				name: 'No database',
+				text: 'Temporal holds execution and object storage holds everything else. OrkStack requires no database of its own.',
+				href: route('docs/concepts/product-boundary'),
+			},
+			{
+				name: 'JSON at runtime',
+				text: 'A task’s values, a run’s input and its output are always JSON; what you author stays YAML.',
+				href: route('docs/authoring/json'),
+			},
+		],
+	},
+	{
+		name: 'Operations',
+		rows: [
+			{
+				name: 'One contract, three surfaces',
+				text: 'The `orkctl` CLI, the web UI and the Connect API share one proto contract, with live events over WebSocket.',
+				href: route('docs/operating/ui-cli-parity'),
+			},
+			{
+				name: 'Starting runs',
+				text: 'Submit from the CLI, start from outside with a trigger, or on a schedule with backfill and manual fires.',
+				href: route('docs/starting-runs/schedules'),
+			},
+			{
+				name: 'Namespaces and releases',
+				text: 'Allowed pools, retention, holds, budgets and secret sources per namespace; `orkctl release` rolls a build out without breaking running runs.',
+				href: route('docs/operating/deployment'),
+			},
+			{
+				name: 'Evidence and telemetry',
+				text: 'Export a run’s evidence bundle and verify it offline. OpenTelemetry logs, metrics and traces, off by default.',
+				href: route('docs/operating/run-evidence'),
+			},
+		],
+	},
+];
+---
+
+<section class="block features" aria-labelledby="features-title">
+	<header class="block-head">
+		<h2 id="features-title">What you get</h2>
+	</header>
+	<div class="registers">
+		{
+			groups.map((g) => (
+				<table class="register">
+					<caption class="sr-only">{g.name}</caption>
+					<thead>
+						<tr>
+							<th scope="col" colspan="2">
+								{g.name}
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						{g.rows.map((r) => (
+							<tr>
+								<th scope="row">
+									<a href={r.href}>{r.name}</a>
+								</th>
+								<td set:html={html(r.text)} />
+							</tr>
+						))}
+					</tbody>
+				</table>
+			))
+		}
+	</div>
+</section>
+
+<style>
+	.registers {
+		display: grid;
+		gap: calc(var(--spacing) * 10) calc(var(--spacing) * 10);
+	}
+	@media (min-width: 1024px) {
+		.registers {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	.register tbody th {
+		width: 34%;
+		font-weight: var(--font-weight-semibold);
+		text-align: start;
+	}
+	.register :global(code) {
+		font-family: var(--font-mono);
+		font-size: 0.9em;
+		color: var(--color-ink);
+	}
+	.register tbody th a {
+		color: var(--color-ink);
+		text-decoration-line: underline;
+		text-decoration-color: var(--color-rule-strong);
+		text-underline-offset: var(--underline-offset);
+	}
+	.register tbody th a:hover {
+		color: var(--color-blue);
+		text-decoration-color: currentColor;
+	}
+	@media (max-width: 639.98px) {
+		.register tbody tr {
+			display: grid;
+		}
+		.register tbody th {
+			width: auto;
+			border-bottom: 0;
+			padding-bottom: 0;
+		}
+	}
+</style>

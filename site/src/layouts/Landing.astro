@@ -1,0 +1,55 @@
+---
+// The landing page's frame: head and metadata, the top bar, the page, and
+// the closing title block. Static HTML and CSS; the only scripts are the
+// pre-paint theme script and the small enhancements components carry.
+// After Landpack's BaseLayout and BaseHead (MIT, see site/THIRD_PARTY.md).
+import '../styles/site.css';
+import '../styles/landing.css';
+import ThemeScript from '../components/shared/ThemeScript.astro';
+import TopBar from '../components/shared/TopBar.astro';
+import TitleBlock from '../components/shared/TitleBlock.astro';
+import { SITE, REPO, BRANCH, route } from '../../site.config.mjs';
+
+interface Props {
+	title: string;
+	description: string;
+}
+const { title, description } = Astro.props;
+const canonical = new URL(Astro.url.pathname, SITE);
+const footer = [
+	{ label: 'Project', value: 'OrkStack' },
+	{ label: 'Status', value: 'Pre-release', stamp: true },
+	{ label: 'License', value: 'MIT', href: `${REPO}/blob/${BRANCH}/LICENSE` },
+	{ label: 'Source', value: 'GitHub', href: REPO },
+	{ label: 'Docs', value: 'Read the docs', href: route('docs') },
+];
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>{title}</title>
+		<meta name="description" content={description} />
+		<link rel="canonical" href={canonical} />
+		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}favicon.svg`} />
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="OrkStack" />
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content={description} />
+		<meta property="og:url" content={canonical} />
+		<meta name="twitter:card" content="summary" />
+		<ThemeScript />
+	</head>
+	<body class="landing">
+		<a class="skip-link btn" href="#main">Skip to content</a>
+		<TopBar current="home" />
+		<main id="main" tabindex="-1">
+			<slot />
+		</main>
+		<footer class="landing-footer">
+			<TitleBlock cells={footer} label="About OrkStack" />
+		</footer>
+	</body>
+</html>

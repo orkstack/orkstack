@@ -1,0 +1,16 @@
+---
+// The UI's wordmark: a title-block corner drawn in the ink, and the name in
+// tracked caps.
+interface Props {
+	href: string;
+	label?: string;
+}
+const { href, label = 'OrkStack, home' } = Astro.props;
+---
+
+<a href={href} class="wordmark" aria-label={label}>
+	<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+		<path d="M1.75 1.75h12.5v12.5H1.75zM1.75 10.25h12.5M8.75 10.25v4"></path>
+	</svg>
+	<span>OrkStack</span>
+</a>

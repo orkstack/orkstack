@@ -256,15 +256,15 @@ type GetSystemInfoResponse struct {
 	EngineVersion string `protobuf:"bytes,1,opt,name=engine_version,json=engineVersion,proto3" json:"engine_version,omitempty"`
 	// go_version is the toolchain the binary was compiled with. BUILD-DERIVED.
 	GoVersion string `protobuf:"bytes,2,opt,name=go_version,json=goVersion,proto3" json:"go_version,omitempty"`
-	// deployment_name is the Worker Deployment both binaries of a release join.
-	// CONFIGURATION-DERIVED.
+	// deployment_name is the deployment both binaries of a release share
+	// (ORK_DEPLOYMENT_NAME). CONFIGURATION-DERIVED.
 	DeploymentName string `protobuf:"bytes,3,opt,name=deployment_name,json=deploymentName,proto3" json:"deployment_name,omitempty"`
 	// build_id names this release inside that deployment; empty means the
 	// deployment is unversioned. CONFIGURATION-DERIVED, and the field that
 	// differs between two replicas mid-rollout.
 	BuildId string `protobuf:"bytes,4,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
-	// versioning_active reports whether Worker Deployment Versioning is on for
-	// this process, which is exactly "both of the two fields above are set".
+	// versioning_active reports whether release versioning is on for this
+	// process, which is exactly "both of the two fields above are set".
 	// DERIVED from configuration, not asked of the cluster: it says what this
 	// replica registered as, not what the cluster currently routes.
 	VersioningActive bool `protobuf:"varint,5,opt,name=versioning_active,json=versioningActive,proto3" json:"versioning_active,omitempty"`
@@ -839,8 +839,8 @@ type ReleaseBlocker struct {
 	// pool is set for POOL_NOT_SERVED and PINS_NOT_HOSTED, and empty otherwise.
 	Pool string `protobuf:"bytes,2,opt,name=pool,proto3" json:"pool,omitempty"`
 	// message is one complete sentence in OrkStack's words: what is wrong and
-	// what to start. It never names a channel, a session, or the cluster's own
-	// objects (AGENTS.md §7.1).
+	// what to start. It never names the cluster's own objects or mechanisms
+	// (AGENTS.md §7.1).
 	Message       string `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -898,9 +898,9 @@ func (x *ReleaseBlocker) GetMessage() string {
 }
 
 // Release is one build of OrkStack — `ork` and `orker` released together
-// (AGENTS.md §7.2) — as the cluster routes it. No field names a Temporal
-// worker deployment, a version's routing internals, or a task queue, on the
-// rule that keeps "queue" out of Pool and "session" out of Pin (§7.1).
+// (AGENTS.md §7.2) — as the cluster routes it. No field names the cluster's
+// own objects or a version's routing internals: a release is OrkStack's word,
+// as a pool and a pin are (§7.1).
 type Release struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// build_id is the release's identity: the ORK_BUILD_ID its binaries run
@@ -1335,8 +1335,8 @@ type RampReleaseResponse struct {
 	// percent before this call; empty and 0 when none was ramping.
 	PreviousBuildId string  `protobuf:"bytes,2,opt,name=previous_build_id,json=previousBuildId,proto3" json:"previous_build_id,omitempty"`
 	PreviousPercent float32 `protobuf:"fixed32,3,opt,name=previous_percent,json=previousPercent,proto3" json:"previous_percent,omitempty"`
-	// routing_confirmed is true when the engine's own channel reported the new
-	// routing before the reply. False means the change is RECORDED and the
+	// routing_confirmed is true when the cluster reported the new routing to
+	// the engine before the reply. False means the change is RECORDED and the
 	// cluster had not yet applied it to dispatch within 10 s.
 	RoutingConfirmed bool `protobuf:"varint,4,opt,name=routing_confirmed,json=routingConfirmed,proto3" json:"routing_confirmed,omitempty"`
 	// revision is the routing after the change.

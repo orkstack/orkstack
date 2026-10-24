@@ -1,0 +1,61 @@
+---
+// The UI's drawing frame: a 1.5 px ink frame with a paper patch at its top
+// left holding a caption in the mono ("each-fan-out @ 0.3.0 · 3 tasks").
+interface Props {
+	caption: string;
+	class?: string;
+	grid?: boolean;
+}
+const { caption, class: className, grid = false } = Astro.props;
+---
+
+<figure class:list={['frame', grid && 'frame-grid', className]}>
+	<figcaption class="frame-caption figure">{caption}</figcaption>
+	<div class="frame-body"><slot /></div>
+	<slot name="after" />
+</figure>
+
+<style>
+	.frame {
+		position: relative;
+		margin: 0;
+		border: var(--rule-region) solid var(--color-ink);
+		background-color: var(--color-paper);
+	}
+	.frame-caption {
+		position: absolute;
+		z-index: 1;
+		top: 0;
+		left: 0;
+		border-right: var(--rule-hair) solid var(--color-rule);
+		border-bottom: var(--rule-hair) solid var(--color-rule);
+		background-color: var(--color-paper);
+		padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+		color: var(--color-ink-secondary);
+		font-size: var(--text-xs);
+		line-height: var(--text-xs--line-height);
+	}
+	/* The caption patch sits on the frame's own top band, so it never covers
+	   what the frame holds (the UI keeps its frame controls off a node the
+	   same way). */
+	.frame-body {
+		overflow: hidden;
+		margin-top: calc(var(--text-xs--line-height) + var(--spacing) * 3);
+		border-top: var(--rule-hair) solid var(--color-rule);
+	}
+	/* The drafting grid, behind a drawing only: an 8 px minor grid under a
+	   40 px major one. */
+	.frame-grid .frame-body {
+		background-color: var(--color-paper);
+		background-image:
+			linear-gradient(var(--color-grid-major) var(--rule-hair), transparent var(--rule-hair)),
+			linear-gradient(90deg, var(--color-grid-major) var(--rule-hair), transparent var(--rule-hair)),
+			linear-gradient(var(--color-grid) var(--rule-hair), transparent var(--rule-hair)),
+			linear-gradient(90deg, var(--color-grid) var(--rule-hair), transparent var(--rule-hair));
+		background-size:
+			var(--grid-pitch-major) var(--grid-pitch-major),
+			var(--grid-pitch-major) var(--grid-pitch-major),
+			var(--grid-pitch-minor) var(--grid-pitch-minor),
+			var(--grid-pitch-minor) var(--grid-pitch-minor);
+	}
+</style>

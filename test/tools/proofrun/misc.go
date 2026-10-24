@@ -290,6 +290,7 @@ func writeGates(w io.Writer, sel *selection) {
 	fmt.Fprintf(w, "integration=%s\n", yes(integration))
 	fmt.Fprintf(w, "ui_check=%s\n", yes(sel.Gates.UICheck))
 	fmt.Fprintf(w, "ui_unit=%s\n", yes(sel.Gates.UIUnit))
+	fmt.Fprintf(w, "site=%s\n", yes(sel.Gates.Site))
 	fmt.Fprintf(w, "ui_e2e=%s\n", yes(specs != ""))
 	fmt.Fprintf(w, "activity_fixture=%s\n", yes(sel.Gates.Fixture))
 	fmt.Fprintf(w, "observability=%s\n", yes(sel.Gates.Observability))

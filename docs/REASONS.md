@@ -1,0 +1,251 @@
+# Error reasons
+
+Every terminal failure and every refusal carries a machine-readable reason and a human-readable message (AGENTS.md §15). This page has one row for each reason that the code declares as a named constant in `internal/task`, `internal/orker`, `internal/engine` and `internal/dsl`. It also has rows for the reasons that the engine writes inline as string literals, such as `RUN_FAILED`, and for the lowercase evidence tokens. Each reason is spelled exactly as the code spells it, so a client can match on it.
+
+Event types, the `Event*` constants in `pkg/webhooks`, are not failure reasons and are not listed.
+
+The **Category** column is the failure category the code assigns (see [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#81-the-five-categories), "§8.1"). Retry follows the category: `ActivityFailed` and `InfrastructureError` are retried under the task's `retry:` policy, and `ContractViolation`, `TimedOut` and `Cancelled` are not. Where a row states a retry outcome, the code or the contract states it. A dash means the code carries no failure category. Most dashes are refusals or cache misses, and `PANIC` is recorded but never reported as a reason.
+
+## Submit and admission
+
+A refusal here happens before a run ID is minted and before an idempotency key is claimed, so a refused submission leaves nothing behind ([DEPLOY.md](./DEPLOY.md#namespace-admission-hold-and-max_running), "Namespace admission"). The image policy is checked again at apply, and by the Orker when a task is dispatched.
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `NAMESPACE_HELD` | — | The namespace is on hold, so it accepts no new runs. A run accepted before the hold is not affected ([DEPLOY.md](./DEPLOY.md#namespace-admission-hold-and-max_running), "Namespace admission"). | Submit again after the hold is released with `orkctl namespace update NS --release-hold`. Releasing a hold starts nothing that was refused while it was set. |
+| `MAX_RUNNING_REACHED` | — | The namespace already has as many runs in flight as its `max_running` cap. The count comes from the cluster's execution index at submit ([DEPLOY.md](./DEPLOY.md#namespace-admission-hold-and-max_running), "Namespace admission"). | Wait for a run to finish and submit again, or raise the cap with `orkctl namespace update NS --max-running N`. |
+| `BUDGET_EXCEEDED` | — | An enforced budget is at or above its bound for cpu-seconds or GiB-seconds over its trailing period. Accepted runs are not touched ([DEPLOY.md](./DEPLOY.md#namespace-budgets-reserved-consumption-soft-or-enforced), "Namespace budgets"). | New runs are refused until the period's usage falls below the budget. Raise the budget with `--budget-cpu-seconds` or `--budget-gib-seconds` on `orkctl namespace update`, or stop enforcing it with `--budget-enforce=false`. |
+| `BUDGET_UNMEASURABLE` | — | An enforced budget cannot be measured. The period holds more finished runs than a usage read covers, or no archive or attempt store is configured ([DEPLOY.md](./DEPLOY.md#namespace-budgets-reserved-consumption-soft-or-enforced), "Namespace budgets"). | Shorten the period with `orkctl namespace update NS --budget-period D`, or stop enforcing with `--budget-enforce=false`. First check that `orkctl stats usage --since PERIOD` answers. A read that merely failed is reported as unavailable, so ask again. |
+| `IMAGE_NOT_PERMITTED` | ContractViolation, not retried | The image is outside the run's image policy. It is a mutable tag where the policy requires a digest, a registry outside its allow-list, or a signer with no usable key ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#47-image-policy-at-the-orker), "§4.7"). | Use an image by digest from a registry the policy allows. The operator sets the policy floor ([DEPLOY.md](./DEPLOY.md#image-supply-chain-policy), "Image supply-chain policy"). |
+| `IMAGE_NOT_SIGNED` | ContractViolation, not retried | The namespace requires a signature, and the registry has none for this digest ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#47-image-policy-at-the-orker), "§4.7"). | Sign the image digest with a key that the policy names ([DEPLOY.md](./DEPLOY.md#image-supply-chain-policy), "Image supply-chain policy"). |
+| `IMAGE_SIGNATURE_INVALID` | ContractViolation, not retried | Signatures exist for the digest, but none verifies with the named key over that digest ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#47-image-policy-at-the-orker), "§4.7"). | Sign the digest with the key that the policy names. A signature from another key, or over another digest, does not count. |
+| `IMAGE_SIGNATURE_UNAVAILABLE` | InfrastructureError, retried | The registry could not be asked for the signature, or the Orker has no registry client. This is never a pass. At apply and at submit the refusal is `unavailable` rather than this code ([DEPLOY.md](./DEPLOY.md#image-supply-chain-policy), "Image supply-chain policy"). | Retried under the task's policy. If it persists, check that the registry is reachable and that the registry credentials file is set: `ORK_REGISTRY_AUTH_FILE` for the engine, `ORK_ORKER_REGISTRY_AUTH_FILE` for the Orker. |
+| `INPUT_TOO_LARGE` | ContractViolation | The run's input is over 256 KiB, so it is refused at submit and at a schedule's fire. The same code is raised when a task's input would exceed the limit at dispatch ([DSL.md](./DSL.md#inputs), "Inputs"; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Pass a reference to large data, such as a URL or an object key, instead of its bytes. A deep chain that fails at dispatch is split into composed Orkflows ([DSL.md](./DSL.md#how-many-tasks-an-orkflow-may-declare), "How many tasks an Orkflow may declare"). |
+
+## The Orker and the container
+
+The Orker runs each task attempt, and an attempt reports at most one of these reasons. Three are boot refusals, marked below: the Orker refuses to start, so no task carries them.
+
+### Container, image and workspace
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `CONTAINER_EXIT_NONZERO` | ActivityFailed, retried | The container exited non-zero. Every non-zero status gives this reason, whatever the number. The message says when the kernel killed the container at its memory limit ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Read the attempt's stderr. The exit status alone does not say what failed. |
+| `CONTAINER_TIMEOUT` | TimedOut, not retried | The Orker stopped the container when the task's `timeout_seconds` ran out: SIGTERM, then SIGKILL after the grace period ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Read the attempt's stderr to see how far the run got. Raise `timeout_seconds` if the work legitimately takes longer. A timeout is not retried, because it would hit the same limit again ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#81-the-five-categories), "§8.1"). |
+| `RUNTIME_REFUSED` | InfrastructureError, retried | The container runtime returned an error from create or start, so the container never ran ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Retried. If it recurs, the fault is on the Orker's host, not in the workload. |
+| `WORKSPACE_NOT_BINDABLE` | InfrastructureError, not retried | The container runtime cannot bind the attempt's workspace path. This is a host misconfiguration, and a retry would fail the same way ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#31-layout), "§3.1"). | Make `ORK_ORKER_WORKDIR` a path that the container runtime can bind-mount. |
+| `WORKDIR_NOT_BINDABLE` | InfrastructureError, not retried. Boot refusal. | The boot probe found that `ORK_ORKER_WORKDIR` cannot be bind-mounted, so the Orker refuses to start ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#31-layout), "§3.1"). | Point `ORK_ORKER_WORKDIR` at a path that the container runtime can bind-mount, then start the Orker. |
+| `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError. Boot refusal. | The boot probe's own image is not present on the Orker and could not be pulled within the pull timeout. The Orker refuses to start, and the reason names the image rather than the work root ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Make the image available to the Orker, and raise the pull timeout if the pull is slow ([DEPLOY.md](./DEPLOY.md#1-configuration), "§1"). Then start the Orker. |
+| `WORKDIR_FAILED` | InfrastructureError, retried | The attempt's directory, a pin's directory, or an input file could not be created ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Retried. If it persists, check that the Orker's work root is writable. |
+| `IMAGE_PULL_FAILED` | InfrastructureError, retried | The pull failed or timed out, and the Orker has no verified copy of the image ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Retried. If it persists, check that the Orker can reach the registry and that the pinned digest exists there. The pull timeout is in [DEPLOY.md](./DEPLOY.md#1-configuration), "§1". |
+| `PANIC` | — | Not reported to a run. The Orker's attempt observer and its per-reason metrics record it when an attempt unwinds by a panic. The task's failure reaches the engine through the workers' own error path ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Nothing for a client to do. |
+
+### Cordons and pins
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `ORKER_CORDONED` | — | This Orker is cordoned, so it opens no new pin, and the pin's creation is retried on another host. If every pin host in the pool is cordoned, the task fails with an explicit pin-unavailable reason ([DEPLOY.md](./DEPLOY.md#removing-an-orker-safely-cordon-and-drain), "Removing an Orker safely"). | Nothing to do for one cordoned host. If every pin host is cordoned, uncordon one with `orkctl orker uncordon ID` ([CLI.md](./CLI.md#orkctl-orker-uncordon), "orkctl orker uncordon"). |
+| `ORKER_CORDON_INVALID` | ContractViolation, not retried | A cordon request was refused. Its reason is missing, longer than 256 bytes, not valid UTF-8, or contains a control character ([CLI.md](./CLI.md#orkctl-orker-cordon), "orkctl orker cordon"). | Give a cordon reason of at most 256 bytes with no control characters. |
+
+### Values, artifacts and outputs
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `VALUES_MISSING` | ContractViolation, not retried | The container exited 0 but wrote no `output/values.json` ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#34-outputvaluesjson), "§3.4"). | Write a result. A workload with no result writes `{}`. |
+| `VALUES_MALFORMED` | ContractViolation, not retried | `values.json` is not UTF-8 JSON, or its top level is not an object ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#34-outputvaluesjson), "§3.4"). | Write a JSON object at the top level. |
+| `VALUES_TOO_LARGE` | ContractViolation, not retried | `values.json` is over the values limit, 256 KiB by default ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#34-outputvaluesjson), "§3.4"). | Write less. A larger result is an artifact. |
+| `VALUES_CORRUPT` | ContractViolation, not retried | When a retry adopts an existing commit, the `values.json` fetched from storage does not match the digest the commit recorded ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#54-the-sequence), "§5.4"). | Not retried, because the stored result is not what was committed. Read the message and check the object store. |
+| `VALUES_REFETCH_FAILED` | InfrastructureError, retried | When a retry adopts an existing commit, the committed `values.json` could not be fetched ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#54-the-sequence), "§5.4"). | Retried. If it persists, check object storage. |
+| `ARTIFACT_NOT_A_FILE` | ContractViolation, not retried | An entry directly in `output/artifacts/` is a directory, symlink, device, socket or FIFO. Artifacts are regular files only ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#35-outputartifacts), "§3.5"). | Archive a directory into one regular file, such as `workspace.tar.gz`, and write that file. |
+| `ARTIFACT_LIMIT_EXCEEDED` | ContractViolation, not retried | There are more artifacts than the count limit, or one artifact is larger than the size limit ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#35-outputartifacts), "§3.5"). | Write fewer or smaller artifacts. The limits are in the same section. |
+| `ARTIFACT_NAME_NOT_UTF8` | ContractViolation, not retried | An artifact's file name is not valid UTF-8. The message gives the name's bytes in hex ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#35-outputartifacts), "§3.5"). | Rename the file to a valid UTF-8 name. |
+| `ARTIFACT_UPLOAD_FAILED` | InfrastructureError, retried | Object storage refused an artifact upload ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Retried. If it persists, check object storage. |
+| `OUTPUT_NOT_READABLE` | ContractViolation, not retried | The Orker cannot open a file that the workload wrote. The message names the file, its mode and its owner ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#31-layout), "§3.1"). | Make the files readable to the Orker. The fix is `umask 022`. The image does the same thing on every attempt, so the attempt is not retried. |
+
+### Inputs, rendering and secrets
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `EACH_ITEM_UNAVAILABLE` | ContractViolation, not retried | A fan-out item's array no longer resolves to the array, of the length, that the engine counted. This is reachable only if object storage stops honouring its digests ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Check object storage for the upstream array. |
+| `INPUT_ARTIFACT_UNAVAILABLE` | InfrastructureError, retried | An upstream artifact could not be fetched ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Retried. If it persists, check object storage. |
+| `INPUT_ARTIFACT_CORRUPT` | ContractViolation, not retried | The fetched bytes do not match the sha256 recorded for the upstream artifact ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#31-layout), "§3.1"). | Not retried, because the stored bytes are not what was recorded. Read the message and check object storage. |
+| `RENDER_FAILED` | ContractViolation, not retried | A template in the task could not be rendered. It is a template error, a key that is missing, `<no value>`, or an `env` name that the Orker does not allow ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Fix the template, or supply the input it reads. A template that reads an input nobody supplied fails here, rather than running with an empty string ([DSL.md](./DSL.md#inputs), "Inputs"). An `env` name must be on the Orker's allow-list, `ORK_ORKER_ENV_ALLOWLIST`. |
+| `SECRET_UNRESOLVED` | InfrastructureError, retried | A secret source could not be resolved on the Orker ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Retried. If it persists, check that the source exists and that the Orker can read it. |
+| `SECRET_SCHEME_FORBIDDEN` | ContractViolation, not retried | The Orker does not resolve that source scheme (`ORK_ORKER_SECRET_SCHEMES`), or the source's name is malformed ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Use a scheme that the Orker resolves, with a well-formed name ([DEPLOY.md](./DEPLOY.md#secrets-on-a-shared-pool), "Secrets on a shared pool"). |
+| `SECRET_NOT_PERMITTED` | ContractViolation, not retried | The source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor. The floor is checked at dispatch, before the image is pulled ([DEPLOY.md](./DEPLOY.md#secrets-on-a-shared-pool), "Secrets on a shared pool"). | Use a source that the floor allows, or ask the operator to widen the floor for this Orker. |
+
+### Resources, network and commits
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `RESOURCE_REQUEST_REFUSED` | ContractViolation, not retried | The request is above the Orker's cap, or it is zero, negative or not a finite number. Requests are refused, not clamped ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#93-resource-policy), "§9.3"). | Ask for less, within the cap, or ask the operator to raise `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`. |
+| `NETWORK_MODE_REFUSED` | ContractViolation, not retried | The task asks for a network mode other than `default` or `none` ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#91-forbidden-without-exception), "§9.1"). | Use `default` or `none`. No other mode is allowed. |
+| `COMMIT_READ_FAILED` | InfrastructureError, retried | The commit store could not be read at the start of the attempt. The container does not run ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#54-the-sequence), "§5.4"). | Retried. If it persists, check object storage. |
+| `COMMIT_WRITE_FAILED` | InfrastructureError, retried | A conditional write of the commit failed for a reason other than the object already existing. For a cached task's memo, this is the one failure that the memo step can cause ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#541-memoized-completion-cache), "§5.4.1"). | Retried. If it persists, check object storage. |
+| `COMMIT_SCHEMA_UNSUPPORTED` | ContractViolation, not retried | An existing commit has a `schema_version` that this Orker does not read. The Orker neither overwrites the commit nor runs the container again ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#54-the-sequence), "§5.4"). | Run the Orkers on a release that reads this schema. |
+| `COMMIT_IDENTITY_MISMATCH` | ContractViolation, not retried | An existing commit at this key differs from this attempt on one of seven identity fields. The check fails before the container starts ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#54-the-sequence), "§5.4"). | Nothing is overwritten. Start a new run if the work is still needed. |
+| `COMMIT_UNDECODABLE` | ContractViolation, not retried | The object at the commit's URI is not a readable commit, even after one reread within the attempt. The message names the URI and its size ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#54-the-sequence), "§5.4"). | Check object storage for the damaged object, using the URI in the message. |
+| `COMMIT_TOO_LARGE` | ContractViolation, not retried | The commit that this attempt would write is over its size limit. The check runs before any upload ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#54-the-sequence), "§5.4"). | Produce fewer outputs, since the commit records a reference for each one. |
+| `COMMIT_STORE_NOT_CONDITIONAL` | InfrastructureError, not retried. Boot refusal. | At boot, the Orker found that the object store does not support conditional writes, so it refuses to start. Without them a commit cannot stay immutable ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#53-the-store), "§5.3"). | Use an object store that supports conditional writes, then start the Orker. |
+
+## The engine and the run
+
+These codes come from the engine: how a run starts and ends, its tasks, its history, joins, pins, awaits, fan-out, composed tasks, declared outputs, routing and plan simulation. A composed task is never retried, and an awaited task has no retries ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"; [DSL.md](./DSL.md#awaited-tasks), "Awaited tasks").
+
+### Run start
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `RUN_START_FAILED` | — (status `FAILED`) | The run's start failed after its run ID was minted. The run is recorded FAILED with no task, pool, Orker, image or phase, and its message is the cause ([STATS.md](./STATS.md#6-failure-fingerprints), "§6"). | Read the message. No task ran, so there is nothing to cancel. Submit the run again. |
+| `INVALID_RUN` | — | The run's start refused a run with no run ID, with the message "run id is required". A client sees `RUN_FAILED` with that message, except for a run carried on by an older release, which reads as `RUN_STATE_UNSUPPORTED` ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Nothing for a client to act on. The submit path mints the run ID before the run starts (AGENTS.md §7). |
+| `INVALID_ORKFLOW` | — | The run's start refused an Orkflow with no tasks, with the message "orkflow has no tasks". A client sees `RUN_FAILED` with that message ([DSL.md](./DSL.md#top-level-fields), "Top-level fields"). | Add at least one task to the Orkflow, then apply it again. |
+
+### Run outcomes
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `RUN_FAILED` | — (the failing task's category applies) | The run failed. Its message is the cause, and its details name the failing task (`task "<id>"`). A fan-out's or a composed task's failure carries that node's sentence. A pin that lost its host ends the run with this code and the pin's message ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Read the message, then the failing task's own error, which carries its reason code and category. |
+| `RUN_CANCELED` | — (status `CANCELED`) | The run was cancelled, so its status is `CANCELED` and its message is "run canceled" ([CLI.md](./CLI.md#orkctl-run-cancel), "orkctl run cancel"). Cancelled work is not retried automatically ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#81-the-five-categories), "§8.1"). | Start a new run if the work is still needed. |
+| `RUN_TERMINATED` | — (status `CANCELED`) | The run was ended from outside its own execution. Its message is the termination reason, or "run terminated" when none was given. A cluster end at the run's history limit is reported as `RUN_HISTORY_LIMIT` instead ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Read the message for the reason. Start a new run if the work is still needed. |
+| `RUN_TIMED_OUT` | — (status `FAILED`) | The cluster ended the run's execution at a time limit, and the message is "run timed out". The start of a run sets no execution timeout of its own, so the limit that fired was set outside the start. The limits an author sets are per task and per pin ([DSL.md](./DSL.md#tasks), "Tasks"). | Start a new run if the work is still needed. |
+
+### Task outcomes
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `TASK_FAILED` | The error's category, if it has one | The default code for a task failure that carries no reason of its own. Its message holds the cause ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Read the message. |
+| `TASK_CANCELED` | Cancelled | The task was cancelled. Its status is `CANCELED`, so it did not fail, and it is not retried automatically ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#81-the-five-categories), "§8.1"). | Start a new run if the work is still needed. |
+| `TASK_OUTPUT_INVALID` | ContractViolation, not retried | The task's committed `values.json`, or an await's completion, could not be converted into the task's output ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Read the message, which gives the conversion error, and correct the values the task writes. |
+| `ACTIVITY_TIMEOUT` | TimedOut, not retried | The activity's own start-to-close limit ended it before the Orker reported a result. That limit is built from the task's timeout, its cancellation grace period and the run's transfer budget ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Not retried, as for `CONTAINER_TIMEOUT`. Read the attempt's stderr, and raise `timeout_seconds` if the work legitimately takes longer. |
+| `ORKER_HEARTBEAT_TIMEOUT` | InfrastructureError, retried | The Orker stopped heartbeating the activity, so it is taken to have died. That is a fact about the host, not the workload. The task is retried, which moves it to a live Orker ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#81-the-five-categories), "§8.1"). | Retried. If it keeps happening on one host, check that host. |
+
+### Run history and saved state
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `RUN_HISTORY_LIMIT` | InfrastructureError, not retried | The run would have exceeded its cluster's history limit, so it stopped explicitly instead of being terminated. Failure handlers run within the history kept back for them. The message says how much history was recorded and what was still running ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Read the message and the run's details: what was running, and which pins and awaits were open. A stage of tasks that all start together is the usual cause ([DSL.md](./DSL.md#how-many-tasks-an-orkflow-may-declare), "How many tasks an Orkflow may declare"). Split the Orkflow with composition, or ask the operator to review `engine.history.*` ([DEPLOY.md](./DEPLOY.md#1-configuration), "§1"). |
+| `RUN_STATE_UNSUPPORTED` | ContractViolation, not retried | The run carried on into a fresh history under a newer release, and this release cannot read its saved state. The run stops. Tasks that finished keep their outcome, and the rest are cancelled ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Roll the engines forward to a release that reads the saved state ([DEPLOY.md](./DEPLOY.md#4-rolling-back), "§4"). |
+| `RUN_STATE_CORRUPT` | ContractViolation, not retried | The run's saved state failed verification, by a hash, size, location, structure or row check, and was not used. The run has stopped ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Not retried, and the saved state is not repaired in place. If the work is still needed, start a new run. |
+| `RUN_STATE_UNAVAILABLE` | InfrastructureError, not retried | The run's saved state could not be read from object storage within its restore timeout. The run has stopped ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Check that object storage answers. If the work is still needed, start a new run. The restore timeout is `engine.continuation.restore_timeout` ([DEPLOY.md](./DEPLOY.md#1-configuration), "§1"). |
+| `RUN_DEFINITION_UNAVAILABLE` | InfrastructureError, not retried | The run's definition was passed by reference, because it was too large to travel with the start. It could not be read from object storage before the restore timeout, and the run has stopped ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Check that object storage answers. If the work is still needed, start a new run. |
+| `RUN_DEFINITION_CORRUPT` | ContractViolation, not retried | The definition passed by reference failed verification, or it is not the definition the run started with. It was not used, and the run has stopped ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Not retried. If the work is still needed, start a new run. |
+
+### Joins and conditions
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `CONDITION_FAILED` | ContractViolation | A task's `condition:` could not be evaluated. In an Orkflow that declares a failure handler, the task is recorded FAILED with this code, so its own `any_failed` handlers fire, and the run fails with the evaluation error. In any other Orkflow the task is CANCELED ([DSL.md](./DSL.md#joins-and-failure-handlers-join), "A broken condition"). | Read the message, which holds the evaluation error, and correct the `condition:`. |
+
+### Pins
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `PIN_UNAVAILABLE` | InfrastructureError, not retried | Every pin host of the pool stayed full, or cordoned, for the whole creation timeout of five minutes. Only the task whose readiness asked for the pin fails. It never reached an Orker, so its `scheduled_at` and `started_at` stay unset ([DSL.md](./DSL.md#pins), "Pins"). | A pool with no pin host is refused at submit, so this means saturation. Wait for a pinned run to finish, uncordon a host with `orkctl orker uncordon ID`, or raise `ORK_ORKER_MAX_PINS` on more of the pool's Orkers ([DEPLOY.md](./DEPLOY.md#1-configuration), "§1"). Then submit again. |
+| `PIN_HOST_LOST` | InfrastructureError, not retried | The host stopped heartbeating the pin before the pin's lifetime ended. Every member that was running is FAILED with this code, members not yet started are CANCELED, and a member that had already committed stays SUCCEEDED. A pin never moves to another Orker, because its tasks share one host's shared directory ([DSL.md](./DSL.md#pins), "Pins"). | Not retried. The shared directory was on the lost host, so start a new run if the work is still needed. |
+| `PIN_TIMEOUT` | TimedOut, not retried | The pin was open for at least its lifetime, which is its `timeout_seconds` or the derived sum of its members' limits. Members still running are stopped with it ([DSL.md](./DSL.md#pins), "Pins"). | Not retried. Raise the pinned tasks' `timeout_seconds` if the work legitimately needs longer, then start a new run. |
+| `INVALID_PIN` | — (not retried) | A task names a pin that the Orkflow does not declare. The compiler refuses such a document, so the code is reserved for a hand-built definition. The engine also uses it for a pinned task scheduled before its pin opens, an internal fault ([DSL.md](./DSL.md#pins), "Pins"). | Nothing for an author to do; apply does not produce it. |
+
+### Awaited tasks
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `AWAIT_TIMED_OUT` | TimedOut, not retried | Nobody resolved the awaited task before its deadline, so the task and the run failed. The deadline counts from when the task started waiting ([DSL.md](./DSL.md#awaited-tasks), "Awaited tasks"). | Resolve an await before its deadline. A process that needs longer is two runs ([DSL.md](./DSL.md#awaited-tasks), "Awaited tasks"). |
+| `AWAIT_REJECTED` | ActivityFailed, not retried | The awaited task was rejected with a reason. The run fails fast, after its failure handlers ([DSL.md](./DSL.md#awaited-tasks), "Awaited tasks"). | There is no retry for an await. Read the rejection reason in the task's message. A business "no" that should branch is a completion with a value, not a rejection. |
+
+### Fan-out
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `EACH_OVER_MISSING` | ContractViolation, not retried | The array that a fan-out reads is absent. For example, its `each.over` task did not succeed under a `none_failed` join ([DSL.md](./DSL.md#fan-out-each), "Fan-out (`each:`)"). | Read the array from an input, or from a task that always runs. |
+| `EACH_OVER_NOT_ARRAY` | ContractViolation, not retried | The value a fan-out reads is not a JSON array, or the committed `values.json` it reads is not JSON ([DSL.md](./DSL.md#fan-out-each), "Fan-out (`each:`)"). | Make the upstream task write a JSON array for the fan-out to read. |
+| `EACH_TOO_MANY_ITEMS` | ContractViolation, not retried | The array has more elements than the fan-out's `max_items`. The task fails before any item runs ([DSL.md](./DSL.md#fan-out-each), "Fan-out (`each:`)"). | Raise `max_items`, which may be from 1 to 10,000. The sum over one Orkflow is also capped by the deployment. |
+| `EACH_EXPANSION_FAILED` | InfrastructureError | The committed array could not be read, was larger than the values bound, or did not match its recorded digest ([DSL.md](./DSL.md#fan-out-each), "Fan-out (`each:`)"). | Read the message to see which of the three failed. For a read or digest failure, check object storage. For a size failure, make the array smaller. |
+| `INVALID_EACH` | — | A fan-out reached the engine in a form that the DSL would refuse. A document applied through the DSL does not produce it ([DSL.md](./DSL.md#fan-out-each), "Fan-out (`each:`)"). | Nothing for an author to do. |
+
+### Composed tasks
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `CHILD_RUN_FAILED` | The child's own category, not retried | The composed task's child run failed. The message names the child run, and the error carries the child's own category ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"). | Open the child run named in the message and read its failure. The child's own tasks carry their own retries. |
+| `CHILD_RUN_CANCELED` | Cancelled | The child run was cancelled on its own, which cancels the parent ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"). | Cancelled work is not retried automatically ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#81-the-five-categories), "§8.1"). Start a new run if the work is still needed. |
+| `CHILD_RUN_TERMINATED` | InfrastructureError | The child run was terminated from outside its own execution. The message carries the termination reason ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"). | Read the message. Start a new run if the work is still needed. |
+| `CHILD_START_FAILED` | InfrastructureError | The engine could not start the child run, so there is no child run to inspect ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"). | Read the message. Start a new run if the work is still needed. |
+| `CHILD_INPUT_RENDER_FAILED` | ContractViolation | The child's input could not be rendered from the composed task's `with:` ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"). | Fix the template in the composed task's `with:`. |
+| `CHILD_INPUT_TOO_LARGE` | ContractViolation | The child's input is over the values bound ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"). | Pass a reference to large data, such as a URL or an object key, instead of its bytes ([DSL.md](./DSL.md#inputs), "Inputs"). |
+| `CHILD_INPUT_UNAVAILABLE` | InfrastructureError | An upstream value that the child's input reads could not be read ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"). | Read the message. This is a storage read failure. Check object storage. |
+| `CHILD_VALUES_UNSTORED` | InfrastructureError | The child succeeded, but its declared outputs could not be stored as this task's values ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"). | Read the message. This is a storage fault, not a fault in the child's work. Check object storage. |
+| `INVALID_COMPOSITION` | ContractViolation | A composed task reached the engine in a form that the DSL would refuse. A document applied through the DSL does not produce it ([DSL.md](./DSL.md#composition-uses-orkflow), "Composition"). | Nothing for an author to do. |
+
+### Declared outputs
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `OUTPUTS_RENDER_FAILED` | ContractViolation | The run's declared `outputs:` could not be rendered. The run is `FAILED`, never `SUCCEEDED` without the outputs it declares ([DSL.md](./DSL.md#outputs), "Outputs"). | Fix the `outputs:` template. A template that reads a task that did not succeed fails, because that task contributes nothing. |
+| `OUTPUTS_TOO_LARGE` | ContractViolation | The run's outputs are over the deployment's values bound ([DSL.md](./DSL.md#outputs), "Outputs"). | Declare smaller outputs. Large data is an artifact, not a value. |
+| `OUTPUTS_UNAVAILABLE` | InfrastructureError | An upstream value that the outputs read could not be read ([DSL.md](./DSL.md#outputs), "Outputs"). | Read the message. This is a storage read failure. Check object storage. |
+
+### Routing and dispatch
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `INVALID_POOL` | — (not retried) | The run's plan has no route for the task's pool, so the task is refused before it is dispatched. The message names the task ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Start a new run once the pool is one that the namespace allows and a live Orker serves. |
+| `RESERVED_QUEUE` | — (not retried) | The task's pool resolves to a route that the engine keeps for its own work. No pool may use it ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Name a different pool. |
+| `INVALID_COMMIT_KEY` | — (not retried) | The namespace, the run ID or the task ID cannot compose a commit key, so the task is refused before dispatch. The message names the task and the cause ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#52-the-key), "§5.2"). | Rename the task so that its ID passes validation. Namespaces and task IDs are validated, never sanitised, so a bad name is refused rather than rewritten ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#52-the-key), "§5.2"). |
+
+### Plan simulation only
+
+These codes appear only in the output of `orkctl run plan`, which simulates a run without starting one. `RUN_FAILED` and `CONDITION_FAILED` also appear in simulated plans, with the meanings given above.
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `ASSUMED_FAILED` | — (plan simulation only) | A task that `orkctl run plan --assume-failed` assumed to fail. The message is "assumed to fail (assume_failed)". It is a planning outcome, never the error of a run ([DSL.md](./DSL.md#planning-a-run-orkctl-run-plan), "Planning a run"). | None. No run is started. |
+
+## The DSL at validate and apply
+
+These are refusals of an Orkflow document. They come from validate and apply, when `uses:` values are resolved. A failed resolution is an error, never a silent fallback to a tag ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#43-where-resolution-runs), "§4.3").
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `UNKNOWN_ACTIVITY` | — | A bare `uses:` name is neither a catalog key nor an image reference, since it has no `/`, `:` or `@`. The message lists the catalog keys ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#42-the-activity-catalog-engine-config), "§4.2"). | Use one of the listed keys, or a full image reference. |
+| `IMAGE_NOT_PINNED` | — (ContractViolation at the Orker) | A `uses:` value contains a template action. An image chosen at run time cannot be pinned at apply. The Orker reports the same code, as a ContractViolation, if a task reaches it without a digest ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#42-the-activity-catalog-engine-config), "§4.2"). | Write `uses:` as a literal image reference or a catalog key. |
+| `IMAGE_NOT_FOUND` | — | The registry answered 404 for the reference ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#43-where-resolution-runs), "§4.3"). | Check that the repository, and the tag or digest, exist in the registry that the reference names. |
+| `IMAGE_RESOLVE_UNAUTHORIZED` | — | The registry refused the manifest request with 401 or 403 ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#43-where-resolution-runs), "§4.3"). | Check that the engine's registry credentials file, `ORK_REGISTRY_AUTH_FILE`, can read the repository ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#45-registry-credentials), "§4.5"). |
+| `IMAGE_RESOLVE_UNAVAILABLE` | — | The registry answered with a server error, timed out, or could not be reached ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#43-where-resolution-runs), "§4.3"). | Apply again once the registry answers. |
+| `IMAGE_RESOLVE_UNSUPPORTED` | — | The reference does not parse, or the registry served a manifest or config that the resolver cannot read ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#43-where-resolution-runs), "§4.3"). | Use an image whose manifest and config the registry serves in a form that the resolver reads. |
+| `IMAGE_DIGEST_MISMATCH` | — (ContractViolation at the Orker) | The bytes that the registry served do not hash to the digest they were addressed by. This covers a pinned reference, a platform manifest, the config blob, and the content-digest header the registry sends. The Orker reports the same code, as a ContractViolation, when a pulled image does not match its pin ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#43-where-resolution-runs), "§4.3"). | Check the digest against the registry, and check that nothing between the engine and the registry rewrites responses. Apply does not fall back to a tag, so the reference stays unpinned until it resolves to a digest that verifies. |
+
+## Evidence bundles
+
+A member of an evidence bundle that is reclaimed, unrecorded or rejected carries one of five lowercase tokens as its `reason`. `orkctl run evidence verify` reports each one as a finding, not a failure, and exits 0 for it ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#verify), "verify").
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `definition_deleted` | — | The pinned definition was deleted from the Orkflow store. The run's definition digest still attests it ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | Nothing to repair in the bundle. `verify` lists the definition as reclaimed, with its recorded digest kept. |
+| `definition_digest_mismatch` | — | A document exists at the run's pinned coordinates, but it does not hash to the digest the run pinned. The bundle carries no bytes for it, and records the document's own digest ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | `verify` lists the definition as rejected. Compare the stored digest with the run's pinned digest, both of which the bundle records. |
+| `commit_missing` | — | The commit record was reclaimed by cleanup. Its recorded digest is preserved ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | `verify` lists the commit as reclaimed. Nothing to repair in the bundle. |
+| `object_missing` | — | The object was removed from the store by a lifecycle rule or by cleanup. Its recorded digest is preserved ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | `verify` lists the object as reclaimed. If the object should have been kept, check the bucket's lifecycle rules. |
+| `attempt_record_missing` | — | No attempt record exists, because the Orker died before filing one or cleanup reclaimed it ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | `verify` lists the attempt as unrecorded. The other attempts' records and logs are unaffected. |
+
+## Webhooks
+
+A webhook delivery does not carry a reason code. Each attempt records its HTTP status, which is 0 when the request never completed, and the transport error, if there was one. [`orkctl webhook deliveries`](./CLI.md#orkctl-webhook-deliveries) lists them. The `pkg/webhooks` package has no reason constants. Its `Event*` constants are event types, which this page does not list.
+
+## Cache memo misses
+
+A cached task whose memo cannot be used runs. Each reason below is a miss, not a failure, so the category is a dash. The task runs as though it had no memo ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#541-memoized-completion-cache), "§5.4.1"). The memo step fails an attempt only when its own commit write fails, with `COMMIT_WRITE_FAILED`, listed above.
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `MEMO_ABSENT` | — | No memo exists for this key. | None. The task runs and writes the memo ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#541-memoized-completion-cache), "§5.4.1"). |
+| `MEMO_UNREADABLE` | — | The memo could not be read: a store error, a corrupt memo, an unknown schema, or the 30-second lookup bound passed ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs. |
+| `MEMO_MISMATCH` | — | The memo stored at this key describes another key, namespace, scope, task or Orkflow ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs. |
+| `MEMO_EXPIRED` | — | The memoized result is older than the task's effective TTL ([DSL.md](./DSL.md#ttl-scope-and-bypass), "TTL, scope and bypass"). | None. The task runs. The task's `ttl_seconds` and the deployment's maximum TTL set the limit. |
+| `SOURCE_COMMIT_GONE` | — | The run that produced the memoized result was retired, and its commit is gone ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs. |
+| `SOURCE_COMMIT_CHANGED` | — | The source commit's stored bytes no longer hash to the digest the memo recorded ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs. |
+| `SOURCE_COMMIT_UNREADABLE` | — | The source commit could not be read or decoded ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs. |
+| `SOURCE_COMMIT_MISMATCH` | — | The source commit is not this task's result. Its namespace, task, run, time, image digest, exit status or Orkflow differs ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs. |
+| `SOURCE_OVER_LIMITS` | — | The memoized result does not fit this run's limits: values, artifact count or size, or commit size ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs. The limits are deployment configuration. |
+| `SOURCE_OBJECT_UNAVAILABLE` | — | The committed `values.json` is gone or corrupt, or an artifact object is gone ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs. |
+| `INPUT_UNHASHED` | — | An input reference carries no digest, so no key can be computed. No memo is written ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs without a memo. |
+| `MEMO_STORE_ABSENT` | — | The Orker has no memo store ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"). | None. The task runs without a memo. |
+

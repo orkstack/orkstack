@@ -1,0 +1,25 @@
+name: Feature request
+description: Something OrkStack could do that it does not do today.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Some things OrkStack deliberately does not do (loops, `continue_on_error`, exactly-once, a database of its own); the Limitations page says why: https://orkstack.github.io/orkstack/docs/operating/limitations/
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: How it could work, from the Orkflow, orkctl or UI side.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: A pattern, a custom image, a composed Orkflow, or anything else you used meanwhile.

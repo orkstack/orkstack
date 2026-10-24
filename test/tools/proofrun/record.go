@@ -98,8 +98,10 @@ type proofRecord struct {
 const mainBranch = "main"
 
 // fullGates is every gate the merge gate runs; observability joins it when
-// the tree changed a telemetry path.
-var fullGates = []string{"lint", "build", "unit", "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "ui-e2e"}
+// the tree changed a telemetry path. The site gate runs right after the UI's
+// fast gates (scripts/proof.sh), and ui-e2e stays last. The nightly tier is
+// held to the integration gate alone (merge.go).
+var fullGates = []string{"lint", "build", "unit", "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "site", "ui-e2e"}
 
 func readGates(file string) ([]gateRecord, error) {
 	f, err := os.Open(file)

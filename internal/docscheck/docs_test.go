@@ -216,7 +216,7 @@ func invocations(doc string) []string {
 }
 
 // TestReadme_DocsTableListsEveryDoc: every docs/*.md is a link target in
-// README's Docs table.
+// README's Docs section.
 func TestReadme_DocsTableListsEveryDoc(t *testing.T) {
 	root := repoRoot(t)
 	readme := readFile(t, filepath.Join(root, "README.md"))
@@ -247,6 +247,33 @@ func TestReadme_DocsTableListsEveryDoc(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		t.Fatalf("README's Docs table omits %v", missing)
+	}
+}
+
+// TestReadme_OrkflowIsTheShippedExample: the Orkflow the README shows is
+// examples/each-fan-out.ork.yaml from its apiVersion line on, byte for byte,
+// so the front page never shows a document the engine would not accept.
+func TestReadme_OrkflowIsTheShippedExample(t *testing.T) {
+	root := repoRoot(t)
+	readme := readFile(t, filepath.Join(root, "README.md"))
+	example := readFile(t, filepath.Join(root, "examples", "each-fan-out.ork.yaml"))
+	const fence = "```yaml\n"
+	start := strings.Index(readme, fence)
+	if start < 0 {
+		t.Fatal("README.md has no yaml code block")
+	}
+	block := readme[start+len(fence):]
+	end := strings.Index(block, "```")
+	if end < 0 {
+		t.Fatal("README.md's yaml code block is not closed")
+	}
+	block = block[:end]
+	at := strings.Index(example, "apiVersion:")
+	if at < 0 {
+		t.Fatal("examples/each-fan-out.ork.yaml has no apiVersion line")
+	}
+	if want := example[at:]; block != want {
+		t.Fatalf("README.md's Orkflow differs from examples/each-fan-out.ork.yaml from its apiVersion line on:\n--- README\n%s--- example\n%s", block, want)
 	}
 }
 

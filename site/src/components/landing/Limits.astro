@@ -1,0 +1,107 @@
+---
+// What OrkStack deliberately does not do. Each line names the limit, says
+// what to do instead, and links the page that states it.
+import { route } from '../../../site.config.mjs';
+
+const limits = [
+	{
+		no: 'No loops',
+		text: 'The graph stays a DAG. Repeat with a retry policy, a fan-out, a schedule or an awaited task.',
+		href: route('docs/authoring/patterns') + '#repeat-without-loops',
+	},
+	{
+		no: 'No continue_on_error',
+		text: 'A failure handler runs compensation, and the run still ends FAILED with its original reason.',
+		href: route('docs/authoring/dsl') + '#joins-and-failure-handlers-join',
+	},
+	{
+		no: 'No exactly-once',
+		text: 'Activities run at least once. A durably committed result is never run again; side effects outside it may repeat.',
+		href: route('docs/activities/contract'),
+	},
+	{
+		no: 'No SDK or sidecar',
+		text: 'An activity never calls OrkStack back. It reads files, writes files and exits.',
+		href: route('docs/activities/contract'),
+	},
+	{
+		no: 'No database',
+		text: 'Nothing beyond Temporal and object storage, and no record anyone edits to unstick a run.',
+		href: route('docs/concepts/product-boundary'),
+	},
+	{
+		no: 'No Temporal Cloud yet',
+		text: 'The engine connects to a cluster by address and namespace; the authentication and TLS a hosted cluster needs are not built.',
+		href: route('docs/operating/limitations'),
+	},
+	{
+		no: 'One runtime, two networks',
+		text: 'Docker is the only container runtime today, and a task’s network is default or none.',
+		href: route('docs/operating/limitations'),
+	},
+];
+---
+
+<section class="block limits" aria-labelledby="limits-title">
+	<header class="block-head">
+		<h2 id="limits-title">What OrkStack deliberately doesn’t do</h2>
+		<p>
+			Each of these is a decision, written down with its reason. The full list, with every bound and the setting
+			that moves it, is on <a href={route('docs/operating/limitations')}>Limitations</a>; how each guarantee is
+			tested is on <a href={route('docs/contributing/proven')}>How OrkStack is proven</a>.
+		</p>
+	</header>
+	<ul class="limit-list">
+		{
+			limits.map((l) => (
+				<li>
+					<a href={l.href} class="limit-name">
+						{l.no}
+					</a>
+					<p>{l.text}</p>
+				</li>
+			))
+		}
+	</ul>
+</section>
+
+<style>
+	.limit-list {
+		display: grid;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-top: var(--rule-region) solid var(--color-ink);
+	}
+	.limit-list li {
+		display: grid;
+		gap: calc(var(--spacing) * 1);
+		padding-block: calc(var(--spacing) * 4);
+		border-bottom: var(--rule-hair) solid var(--color-rule);
+	}
+	@media (min-width: 768px) {
+		.limit-list li {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 2.4fr);
+			gap: calc(var(--spacing) * 8);
+		}
+	}
+	.limit-name {
+		color: var(--color-ink);
+		font-size: var(--text-lg);
+		line-height: var(--text-lg--line-height);
+		font-weight: var(--font-weight-semibold);
+		text-decoration-line: underline;
+		text-decoration-color: var(--color-rule-strong);
+		text-underline-offset: var(--underline-offset);
+	}
+	.limit-name:hover {
+		color: var(--color-blue);
+		text-decoration-color: currentColor;
+	}
+	.limit-list p {
+		margin: 0;
+		color: var(--color-ink-secondary);
+		font-size: var(--text-md);
+		line-height: var(--text-md--line-height);
+	}
+</style>

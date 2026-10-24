@@ -180,7 +180,7 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
    * Within a run, one pool name means one set of Orkers, so naming this pool
    * on a task reaches exactly the Orkers this attempt reached. That holds
    * under the per-deployment route override operators use to keep two stacks
-   * apart: an execution channel belonging to no pool reports as the built-in
+   * apart: a route belonging to no pool reports as the built-in
    * "main", and a task that writes "main" follows the same override instead
    * of escaping it. The override is an operator concern this contract does
    * not expose, so this name is the routing request rather than a measurement
@@ -257,8 +257,8 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
    * moves: every member executes on the same Orker process for the pin's whole
    * life, so a sibling's orker_id is this task's by construction. It stays
    * empty only when no member of that pin ever reported one, in which case the
-   * failure's error.details carries the Temporal session's raw OS host name as
-   * an explicitly labelled best-effort lead, which is NOT an orker_id.
+   * failure's error.details carries the pin host's raw OS host name as an
+   * explicitly labelled best-effort lead, which is NOT an orker_id.
    * Empty on a fan-out task's own row, whose items each carry their own.
    *
    * @generated from field: string orker_id = 17;
@@ -756,7 +756,7 @@ export const TaskAttemptSchema: GenMessage<TaskAttempt> = /*@__PURE__*/
  */
 export type Run = Message<"orkstack.v1.Run"> & {
   /**
-   * ork run id, ork-{timestamp}-{sequence} (also Temporal workflow id)
+   * ork run id, ork-{timestamp}-{sequence}; opaque, nothing parses it
    *
    * @generated from field: string id = 1;
    */

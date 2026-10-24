@@ -1,0 +1,113 @@
+---
+// The landing page's top bar, the UI's own: the wordmark, the site's two
+// places in tracked caps, the repository, and the appearance switch. Below
+// 640 px the links fold into a Menu disclosure that needs no JavaScript.
+// Structure after Landpack's Nav (MIT, see site/THIRD_PARTY.md); the docs'
+// header (components/starlight/Header.astro) draws the same bar around
+// Starlight's search.
+import Wordmark from './Wordmark.astro';
+import ThemeSwitch from './ThemeSwitch.astro';
+import Icon from './Icon.astro';
+import { route, REPO } from '../../../site.config.mjs';
+
+interface Props {
+	current?: 'home' | 'docs';
+}
+const { current } = Astro.props;
+const links = [
+	{ href: route('docs'), label: 'Docs', current: current === 'docs' },
+	{ href: route('docs/getting-started/examples'), label: 'Examples', current: false },
+];
+---
+
+<header class="topbar">
+	<div class="topbar-inner">
+		<Wordmark href={route()} />
+		<nav class="topbar-links topbar-wide" aria-label="Primary">
+			<span class="topbar-rule" aria-hidden="true"></span>
+			{
+				links.map((l) => (
+					<a class="topbar-link" href={l.href} aria-current={l.current ? 'page' : undefined}>
+						{l.label}
+					</a>
+				))
+			}
+		</nav>
+		<div class="topbar-end">
+			<a class="btn btn-quiet topbar-wide" href={REPO}>
+				GitHub<Icon name="external" />
+			</a>
+			<ThemeSwitch />
+			<details class="topbar-menu">
+				<summary class="btn btn-quiet">
+					<Icon name="menu" />Menu
+				</summary>
+				<nav class="topbar-drawer" aria-label="Primary">
+					{links.map((l) => <a href={l.href}>{l.label}</a>)}
+					<a href={REPO}>GitHub</a>
+				</nav>
+			</details>
+		</div>
+	</div>
+</header>
+
+<style>
+	.btn-quiet {
+		height: calc(var(--spacing) * 8);
+		padding-inline: calc(var(--spacing) * 2.5);
+		font-size: var(--text-sm);
+		font-weight: var(--font-weight-medium);
+	}
+	.btn-quiet :global(svg) {
+		width: calc(var(--spacing) * 3.5);
+		height: calc(var(--spacing) * 3.5);
+	}
+	.topbar-menu {
+		position: relative;
+	}
+	.topbar-menu summary {
+		list-style: none;
+		cursor: pointer;
+	}
+	.topbar-menu summary::-webkit-details-marker {
+		display: none;
+	}
+	.topbar-drawer {
+		position: absolute;
+		right: 0;
+		top: calc(100% + var(--spacing) * 2);
+		display: flex;
+		min-width: 12rem;
+		flex-direction: column;
+		border: var(--rule-hair) solid var(--color-ink);
+		border-radius: var(--radius-md);
+		background-color: var(--color-sheet);
+		box-shadow: var(--shadow-overlay);
+		padding-block: calc(var(--spacing) * 1);
+		animation: var(--animate-overlay-in);
+	}
+	.topbar-drawer a {
+		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+		color: var(--color-ink);
+		font-size: var(--text-md);
+		text-decoration: none;
+	}
+	.topbar-drawer a:hover {
+		background-color: var(--color-hover);
+	}
+	@media (min-width: 640px) {
+		.topbar-menu {
+			display: none;
+		}
+	}
+	@media (max-width: 639.98px) {
+		.topbar-wide {
+			display: none;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.topbar-drawer {
+			animation: none;
+		}
+	}
+</style>

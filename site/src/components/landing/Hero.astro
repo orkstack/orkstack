@@ -1,0 +1,178 @@
+---
+// The first viewport is one drawing sheet: its main view is a real run of
+// the example Orkflow in the UI, and its title block carries the headline,
+// the two actions and the facts a visitor checks first. On a phone the sheet
+// reads in document order: the title, the actions, the view, the facts.
+import DrawingFrame from '../shared/DrawingFrame.astro';
+import ThemeShot from '../shared/ThemeShot.astro';
+import Icon from '../shared/Icon.astro';
+import { shot } from '../../lib/media';
+import { route, REPO } from '../../../site.config.mjs';
+import { example } from '../../lib/example';
+
+const hero = shot('ui-run-hero');
+const facts: { label: string; value: string; stamp?: boolean }[] = [
+	{ label: 'Status', value: 'Pre-release', stamp: true },
+	{ label: 'Runs on', value: 'A Temporal cluster' },
+	{ label: 'Activities', value: 'Any OCI image' },
+	{ label: 'Storage', value: 'S3-compatible' },
+	{ label: 'Database', value: 'None of its own' },
+	{ label: 'License', value: 'MIT' },
+];
+---
+
+<section class="sheet hero" aria-labelledby="hero-title">
+	<div class="hero-title">
+		<h1 id="hero-title">Durable workflows without workflow code.</h1>
+		<p class="hero-lede">
+			Author Orkflows in YAML and run any OCI image as a durable step on a fleet of generic workers, the
+			Orkers. Temporal keeps every run durable; OrkStack adds no SDK, no worker code and no database.
+		</p>
+		<div class="hero-actions">
+			<a class="btn btn-primary" href={route('docs/getting-started/install')}>Get started</a>
+			<a class="btn" href={REPO}>View on GitHub<Icon name="external" /></a>
+		</div>
+	</div>
+	<DrawingFrame class="hero-view" caption={`${example.name} @ ${example.version} · ${example.tasks} tasks`}>
+		<ThemeShot shot={hero} sizes="(min-width: 1280px) 1240px, 100vw" />
+	</DrawingFrame>
+	<dl class="hero-facts" aria-label="OrkStack in brief">
+		{
+			facts.map((f) => (
+				<div class="hero-fact">
+					<dt class="caps">{f.label}</dt>
+					<dd>{f.stamp ? <span class="stamp">{f.value}</span> : f.value}</dd>
+				</div>
+			))
+		}
+	</dl>
+</section>
+
+<style>
+	.hero {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-areas: 'title' 'view' 'facts';
+		gap: 0;
+		border: var(--rule-frame) solid var(--color-ink);
+	}
+	.hero-title {
+		grid-area: title;
+		padding: calc(var(--spacing) * 6) var(--spacing-gutter) calc(var(--spacing) * 6);
+	}
+	.hero-view {
+		grid-area: view;
+		border-width: var(--rule-region) 0;
+	}
+	.hero-facts {
+		grid-area: facts;
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		margin: 0;
+	}
+	h1 {
+		margin: 0;
+		max-width: 22ch;
+		font-size: clamp(var(--text-2xl) * 1.3, 2.6vw + 1rem, var(--text-2xl) * 1.9);
+		line-height: var(--leading-none);
+		font-weight: var(--font-weight-semibold);
+		letter-spacing: var(--tracking-tight);
+		text-wrap: balance;
+	}
+	.hero-lede {
+		margin: calc(var(--spacing) * 5) 0 0;
+		max-width: 58ch;
+		color: var(--color-ink-secondary);
+		font-size: var(--text-lg);
+		line-height: calc(var(--text-lg--line-height) * 1.1);
+	}
+	.hero-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: calc(var(--spacing) * 3);
+		margin-top: calc(var(--spacing) * 7);
+	}
+	.hero-fact {
+		display: flex;
+		flex-direction: column;
+		gap: calc(var(--spacing) * 0.5);
+		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+		border-bottom: var(--rule-hair) solid var(--color-rule);
+	}
+	.hero-fact:nth-child(odd) {
+		border-right: var(--rule-hair) solid var(--color-ink);
+	}
+	.hero-fact .caps {
+		color: var(--color-ink-muted);
+	}
+	.hero-fact dd {
+		margin: 0;
+		font-size: var(--text-md);
+		line-height: var(--text-md--line-height);
+		font-weight: var(--font-weight-semibold);
+	}
+
+	/* From 1024 px the sheet is drawn as one: the view across the top, and the
+	   title block along the bottom edge, the title cell first and twice as
+	   wide, the facts in two rows of three beside it. */
+	@media (min-width: 1024px) {
+		.hero {
+			grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+			grid-template-areas: 'view view' 'title facts';
+		}
+		.hero-view {
+			border-width: 0 0 var(--rule-frame);
+		}
+		/* The view is the run page's top: its heading, the DAG and the timing
+		   register, cut under them (about half the capture's height). It also
+		   gives way to what the first viewport leaves once the bar and the
+		   title block (about 20rem) are drawn, so the actions stay in view. */
+		.hero-view :global(.frame-body) {
+			aspect-ratio: 2400 / 745;
+			max-height: clamp(16rem, calc(100svh - 26rem), 40rem);
+		}
+		.hero-title {
+			padding: calc(var(--spacing) * 6) calc(var(--spacing) * 8);
+			border-right: var(--rule-frame) solid var(--color-ink);
+		}
+		.hero-lede {
+			margin-top: calc(var(--spacing) * 3);
+			font-size: var(--text-md);
+			line-height: var(--text-md--line-height);
+		}
+		.hero-facts {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			align-content: stretch;
+		}
+		.hero-fact {
+			justify-content: center;
+			border-right: var(--rule-hair) solid var(--color-ink);
+		}
+		.hero-fact:nth-child(3n) {
+			border-right: 0;
+		}
+		.hero-fact:nth-child(n + 4) {
+			border-bottom: 0;
+		}
+		.hero-fact:nth-child(-n + 3) {
+			border-bottom: var(--rule-hair) solid var(--color-ink);
+		}
+		.hero-actions {
+			margin-top: calc(var(--spacing) * 5);
+		}
+		.hero-fact {
+			padding-block: calc(var(--spacing) * 2);
+		}
+	}
+	/* On a phone a whole desktop page would be a thumbnail: the view shows
+	   its top left, the run's heading and its DAG, at a readable size. */
+	@media (max-width: 639.98px) {
+		.hero-view :global(.frame-body) {
+			aspect-ratio: 5 / 4;
+		}
+		.hero-view :global(.shot img) {
+			width: 230%;
+			max-width: none;
+		}
+	}
+</style>

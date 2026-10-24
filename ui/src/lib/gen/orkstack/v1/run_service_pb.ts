@@ -1496,8 +1496,8 @@ export type StreamTaskLogsRequest = Message<"orkstack.v1.StreamTaskLogsRequest">
    * know retries exist.
    *
    * With `follow`, 0 keeps meaning THE LATEST for as long as the stream is
-   * open, not merely when it opened. A Temporal activity retry is invisible in
-   * a task's status — the task stays RUNNING while try 2 starts under a new
+   * open, not merely when it opened. A retry is invisible in a task's
+   * status — the task stays RUNNING while try 2 starts under a new
    * key prefix — so a stream that resolved the attempt once would sit on a
    * dead attempt, delivering nothing, for the rest of the task's life, and say
    * it was live. When a later attempt appears the stream moves to it and

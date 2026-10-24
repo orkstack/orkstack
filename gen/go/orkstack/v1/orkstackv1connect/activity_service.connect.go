@@ -53,9 +53,9 @@ const (
 // ActivityServiceClient is a client for the orkstack.v1.ActivityService service.
 type ActivityServiceClient interface {
 	ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error)
-	// DescribeOrker is the pool-liveness probe (§6.5). It is dispatched as a
-	// Temporal activity on a pool's own channel, so it answers only when an
-	// Orker is actually polling that pool.
+	// DescribeOrker is the pool-liveness probe (§6.5). It is answered by an
+	// Orker of that pool, so it answers only when an Orker is actually polling
+	// that pool.
 	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
 	// ListOrkers is the fleet: one row per live Orker of the deployment,
 	// derived on read. Like Pool, nothing WRITES an Orker — the list comes
@@ -69,8 +69,8 @@ type ActivityServiceClient interface {
 	// drain loop relies on it (CordonOrker, a write, is the one that answers
 	// NOT_FOUND for that id).
 	//
-	// An orker_id EQUALS filter asks exactly that one Orker, on its own
-	// channel, and returns at most one row: it is what `orkctl orker get` and
+	// An orker_id EQUALS filter asks exactly that one Orker, and no other, and
+	// returns at most one row: it is what `orkctl orker get` and
 	// the drain loop send, so a drain costs one activity per poll and not one
 	// per Orker of the fleet. Every other filter is applied to the inventory;
 	// an unreachable row is kept under a pool, build_id or cordoned filter,
@@ -78,7 +78,7 @@ type ActivityServiceClient interface {
 	// equals, not-equals or in filter is INVALID_ARGUMENT before any read.
 	ListOrkers(context.Context, *connect.Request[v1.ListOrkersRequest]) (*connect.Response[v1.ListOrkersResponse], error)
 	// CordonOrker sets or clears ONE Orker's cordon: a process-local flag
-	// delivered over that Orker's own channel, lost when the process exits.
+	// delivered to that Orker alone, lost when the process exits.
 	// A cordoned Orker takes no new task and opens no new pin; everything
 	// already in flight on it is untouched. The response is the Orker's
 	// state AFTER the change, as the Orker itself reported it.
@@ -172,9 +172,9 @@ func (c *activityServiceClient) InspectActivity(ctx context.Context, req *connec
 // ActivityServiceHandler is an implementation of the orkstack.v1.ActivityService service.
 type ActivityServiceHandler interface {
 	ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error)
-	// DescribeOrker is the pool-liveness probe (§6.5). It is dispatched as a
-	// Temporal activity on a pool's own channel, so it answers only when an
-	// Orker is actually polling that pool.
+	// DescribeOrker is the pool-liveness probe (§6.5). It is answered by an
+	// Orker of that pool, so it answers only when an Orker is actually polling
+	// that pool.
 	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
 	// ListOrkers is the fleet: one row per live Orker of the deployment,
 	// derived on read. Like Pool, nothing WRITES an Orker — the list comes
@@ -188,8 +188,8 @@ type ActivityServiceHandler interface {
 	// drain loop relies on it (CordonOrker, a write, is the one that answers
 	// NOT_FOUND for that id).
 	//
-	// An orker_id EQUALS filter asks exactly that one Orker, on its own
-	// channel, and returns at most one row: it is what `orkctl orker get` and
+	// An orker_id EQUALS filter asks exactly that one Orker, and no other, and
+	// returns at most one row: it is what `orkctl orker get` and
 	// the drain loop send, so a drain costs one activity per poll and not one
 	// per Orker of the fleet. Every other filter is applied to the inventory;
 	// an unreachable row is kept under a pool, build_id or cordoned filter,
@@ -197,7 +197,7 @@ type ActivityServiceHandler interface {
 	// equals, not-equals or in filter is INVALID_ARGUMENT before any read.
 	ListOrkers(context.Context, *connect.Request[v1.ListOrkersRequest]) (*connect.Response[v1.ListOrkersResponse], error)
 	// CordonOrker sets or clears ONE Orker's cordon: a process-local flag
-	// delivered over that Orker's own channel, lost when the process exits.
+	// delivered to that Orker alone, lost when the process exits.
 	// A cordoned Orker takes no new task and opens no new pin; everything
 	// already in flight on it is untouched. The response is the Orker's
 	// state AFTER the change, as the Orker itself reported it.

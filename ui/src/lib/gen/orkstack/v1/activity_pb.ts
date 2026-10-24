@@ -1589,10 +1589,10 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
   runningTasks: number;
 
   /**
-   * open_pins is how many pins this Orker currently hosts: sessions it
-   * accepted and has not completed. Counted from the session creation
-   * activities in flight, so it is exact from the instant a pin is accepted,
-   * before its first member arrives. It never exceeds max_concurrent_pins.
+   * open_pins is how many pins this Orker currently hosts: pins it accepted
+   * and has not closed. Counted from the pin openings in flight, so it is
+   * exact from the instant a pin is accepted, before its first member
+   * arrives. It never exceeds max_concurrent_pins.
    *
    * @generated from field: int32 open_pins = 14;
    */
@@ -1649,9 +1649,9 @@ export const DescribeOrkerResultSchema: GenMessage<DescribeOrkerResult> = /*@__P
   messageDesc(file_orkstack_v1_activity, 21);
 
 /**
- * OpenPin is one pin this Orker currently hosts: a session it has accepted
- * and not yet completed. It names the run and the pin — never the session,
- * which is internal (AGENTS.md §7) — and says when the shared directory's
+ * OpenPin is one pin this Orker currently hosts: a pin it has accepted and
+ * not yet closed. It names the run and the pin, never the mechanism behind
+ * it (AGENTS.md §7), and says when the shared directory's
  * lease ends, which is the longest the pin can live even if nothing else
  * closes it (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
  *
@@ -1666,8 +1666,8 @@ export type OpenPin = Message<"orkstack.v1.OpenPin"> & {
   /**
    * pin is the name the author wrote in `pin:`. EMPTY until the pin's first
    * member attempt arrives: the Orker learns the name from
-   * ExecuteTaskInput.pin, and a session exists from the moment its creation
-   * is accepted, before any member has been dispatched to it.
+   * ExecuteTaskInput.pin, and a pin is open from the moment it is accepted,
+   * before any member has been dispatched to it.
    *
    * @generated from field: string pin = 2;
    */

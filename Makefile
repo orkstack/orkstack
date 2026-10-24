@@ -23,9 +23,10 @@ help: ## Show this help
 
 ## ---- codegen ----
 .PHONY: proto
-proto: ## Regenerate Go/TS from proto
+proto: ## Regenerate Go/TS and docs/API.md from proto
 	buf lint
 	buf generate
+	go run ./internal/apidocs/cmd/genapidocs
 
 .PHONY: config-defaults
 config-defaults: ## Regenerate deploy/orkstack.defaults.yaml from the code's defaults
@@ -36,6 +37,7 @@ tsgen: ## Install UI codegen deps and regenerate Go+TS clients from proto
 	cd ui && bun install
 	ui/node_modules/.bin/buf lint
 	ui/node_modules/.bin/buf generate
+	go run ./internal/apidocs/cmd/genapidocs
 
 .PHONY: tools
 tools: ## Install codegen + lint tooling
@@ -172,6 +174,18 @@ endif
 .PHONY: test-integration
 test-integration: ## Run every integration suite as concurrent test processes, PROOF_JOBS at a time, with a ledger (needs: make infra-up && make -C images push)
 	@scripts/integration.sh
+
+.PHONY: api-reference
+api-reference: ## Regenerate docs/API.md from the proto sources' comments
+	go run ./internal/apidocs/cmd/genapidocs
+
+.PHONY: site
+site: ## Check and build the site (site/): drift check, astro check, astro build, link checks -> site/dist
+	cd site && bun install --frozen-lockfile && bun run check && bun run build
+
+.PHONY: site-media
+site-media: ## Regenerate the site's screenshots and recordings from the running dev stack (needs: make infra-up, make -C images push, make up)
+	site/media/run.sh
 
 .PHONY: cli-reference
 cli-reference: ## Regenerate docs/CLI.md from the Cobra tree

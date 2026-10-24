@@ -1,0 +1,52 @@
+---
+// Appearance: follow the system, or choose light or dark. The UI's
+// ThemeSwitch, three pressed buttons in one group, sharing its choice with
+// every other switch on the page and with the docs (ThemeScript.astro).
+import Icon from './Icon.astro';
+
+const choices = [
+	{ theme: '', icon: 'monitor', label: 'Use system appearance' },
+	{ theme: 'light', icon: 'sun', label: 'Light appearance' },
+	{ theme: 'dark', icon: 'moon', label: 'Dark appearance' },
+] as const;
+---
+
+<div class="theme-switch" role="group" aria-label="Appearance" hidden data-theme-switch>
+	{
+		choices.map((c) => (
+			<button type="button" aria-label={c.label} title={c.label} aria-pressed="false" data-theme-choice={c.theme}>
+				<Icon name={c.icon} />
+			</button>
+		))
+	}
+</div>
+
+<script>
+	const key = 'starlight-theme';
+	const system = () => (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+	const load = () => {
+		try {
+			const v = localStorage.getItem(key);
+			return v === 'light' || v === 'dark' ? v : '';
+		} catch {
+			return '';
+		}
+	};
+	function apply(choice: string) {
+		document.documentElement.dataset.theme = choice || system();
+		try {
+			localStorage.setItem(key, choice);
+		} catch {}
+		for (const b of document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]')) {
+			b.setAttribute('aria-pressed', String(b.dataset.themeChoice === choice));
+		}
+	}
+	for (const s of document.querySelectorAll<HTMLElement>('[data-theme-switch]')) s.hidden = false;
+	for (const b of document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]')) {
+		b.addEventListener('click', () => apply(b.dataset.themeChoice ?? ''));
+	}
+	matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+		if (load() === '') apply('');
+	});
+	apply(load());
+</script>

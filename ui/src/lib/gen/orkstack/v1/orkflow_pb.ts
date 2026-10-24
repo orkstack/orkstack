@@ -60,8 +60,8 @@ export const RetryPolicySchema: GenMessage<RetryPolicy> = /*@__PURE__*/
 
 /**
  * Pin is a named group of tasks that execute on ONE Orker process and share
- * /orkstack/shared for the group's lifetime (docs/DSL.md "Pins"). It is the user-facing word; the Temporal session that
- * implements it is internal, as a queue is to a pool.
+ * /orkstack/shared for the group's lifetime (docs/DSL.md "Pins"). What
+ * implements it is internal, as a pool's routing is (AGENTS.md §7).
  *
  * @generated from message orkstack.v1.Pin
  */
@@ -183,7 +183,7 @@ export type Task = Message<"orkstack.v1.Task"> & {
    * wherever an operator has pointed the default, both spellings go there and
    * both are reported on the pool that answers for it. Within a run, one pool
    * name means one set of Orkers, in both directions. The engine maps a pool
-   * to its internal execution channel and nowhere else.
+   * to its internal route and nowhere else.
    *
    * @generated from field: string pool = 9;
    */

@@ -1,234 +1,168 @@
 <h1 align="center">OrkStack</h1>
 
 <p align="center">
-  A thin, Temporal-backed durable execution platform. Author <em>Orkflows</em>
-  in YAML and run any OCI image on a fleet of disposable workers
-  (<em>Orkers</em>), without a workload SDK.
+  Durable workflows without workflow code. Write an <em>Orkflow</em> in YAML,
+  and every step runs as an ordinary OCI container on Temporal, with no SDK
+  in your images.
+</p>
+
+<p align="center">
+  <a href="https://orkstack.github.io/orkstack/"><strong>Documentation</strong></a>
+  ·
+  <a href="./docs/GETTING_STARTED.md">Getting started</a>
+  ·
+  <a href="./examples/README.md">Examples</a>
+  ·
+  <a href="./CHANGELOG.md">Changelog</a>
 </p>
 
 ---
 
-> Status: pre-release; breaking changes are listed in
-> [CHANGELOG.md](./CHANGELOG.md).
+> **Status: pre-release.** Stable, but breaking changes may be introduced
+> until 1.0. Each one is listed in [CHANGELOG.md](./CHANGELOG.md), marked
+> **BREAKING**.
 
-## Why
+## What it is
 
-- **Durable orchestration on Temporal** — retries, timeouts, timers, signals
-  and replay come from Temporal; OrkStack adds no second state machine.
-- **OCI execution** — Orkers run ordinary container images through a stable
-  filesystem contract; workloads need no OrkStack SDK.
-- **Artifacts by reference** — files flow between tasks through local or
-  S3-compatible storage, never through the control plane.
-- **One contract, everywhere** — a single Connect/proto API powers the `ork`
-  engine, the `orkctl` CLI, and the browser UI, with realtime events over
-  WebSocket.
+OrkStack is a thin contract between three boring parts:
 
+| Part | Owns |
+|---|---|
+| **Temporal** | execution: scheduling, retries, timers, signals, durable state |
+| **Object storage** (S3-compatible) | data: artifacts, logs, immutable records |
+| **OCI containers** | computation: any image, run by a disposable worker (an *Orker*) |
+
+```text
+YAML Orkflow ──apply──> ork ──compile──> Temporal ──dispatch──> Orker
+                                                                  │
+                                                             OCI image
+                                                                  │
+                                                           object storage
 ```
-YAML Orkflow → ork engine (Temporal) → Orker → OCI image
-                      │                          │
-              orkctl / SvelteKit UI        object storage
+
+A task receives files, writes files, prints logs and exits. OrkStack adds no
+second state machine and no database of its own; the `ork` engine, the
+`orkctl` CLI and the browser UI share one Connect API.
+[ARCHITECTURE.md](./ARCHITECTURE.md) shows how a run flows through them.
+
+## An Orkflow
+
+[`examples/each-fan-out.ork.yaml`](./examples/each-fan-out.ork.yaml): compute
+a list in one task, convert each element as its own durable item, then merge
+the results.
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+name: each-fan-out
+version: "0.3.0"
+description: "List parts in a json task, convert each part as its own item, merge them."
+
+tasks:
+  - id: list
+    uses: json
+    network: none
+    with:
+      op: query
+      nullInput: true
+      vars:
+        parts: [{name: a}, {name: b}, {name: c}, {name: d}]
+      filter: '$vars.parts'
+
+  - id: convert
+    uses: shell
+    needs: [list]
+    each:
+      over: '{{ .tasks.list.output.result }}'
+      as: part
+      max_items: 50
+      max_parallel: 2
+    retry: { maximum_attempts: 2 }
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        # `sh` quotes the item's value for the shell (AGENTS.md §6).
+        printf '%s\n' {{ sh .each.part.name }} > /orkstack/output/artifacts/part.txt
+        echo converted {{ sh .each.part.name }} "({{ .each.index }} of {{ .each.count }})"
+
+  - id: merge
+    uses: shell
+    needs: [convert]
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        cat /orkstack/input/artifacts/convert/*/part.txt | tee /orkstack/output/artifacts/merged.txt
 ```
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the components and data flow.
+## Quickstart
 
-## Features
-
-**Authoring** ([DSL reference](./docs/DSL.md),
-[patterns](./docs/ORKFLOW_PATTERNS.md))
-
-- A DAG of tasks (`needs:`), typed `inputs:`, templated `with:` and
-  `condition`, retries and timeouts; immutable versions pinned by a SHA-256
-  definition digest.
-- `pool:` selects which Orkers run a task; `pin:` keeps a group of tasks on
-  one Orker sharing `/orkstack/shared`.
-- `each:` fans one task out over an array, one item per element.
-- `uses: orkflow:<name>@<version>` composes another Orkflow as a child run,
-  returning its declared `outputs:`.
-- `await:` pauses a task until it is resolved from outside (an approval, an
-  external completion, a one-time callback) or its deadline passes.
-- `cache:` reuses a prior successful result for identical inputs (a memo).
-- `join:` decides when a task may start from how its needs ended; failure
-  handlers run compensation in a failing run.
-- Images may declare their `with:` interface (`orkctl activity inspect`);
-  promoting a version that breaks the Orkflow's declared interface needs an
-  explicit acknowledgement (`orkctl orkflow compat`, `callers`).
-
-**Starting runs**
-
-- `orkctl run submit` (idempotency keys, `--origin-ref`), `run again`, and
-  `run plan` to see which tasks would run without starting anything.
-- Triggers: a bearer-token plain-HTTP starter
-  ([ORKFLOW_TRIGGERS.md](./docs/ORKFLOW_TRIGGERS.md)).
-- Schedules on Temporal Schedules: cron or interval, backfill, manual fire
-  ([ORKFLOW_SCHEDULES.md](./docs/ORKFLOW_SCHEDULES.md)).
-- Every run records its origin: what started it, a caller reference and the
-  asserted principal.
-
-**Operating** ([DEPLOY.md](./docs/DEPLOY.md))
-
-- Namespaces with allowed pools, run retention, admission (`hold`,
-  `max_running`), reserved cpu/memory budgets, allowed secret sources, a
-  required image signer and a telemetry policy.
-- A deployment image policy: require digests, allow registries, cosign keys.
-- Releases: `orkctl release status|ramp|promote|rollback|wait` rolls a new
-  build out without breaking running runs.
-- Orker fleet: `orkctl orker list|get|cordon|uncordon|drain`.
-- Declarative automation: one YAML document per namespace for its settings,
-  schedules, triggers and webhooks, applied with `orkctl apply` and exported
-  with `orkctl export` ([AUTOMATION.md](./docs/AUTOMATION.md)).
-- Webhooks scoped by namespace, Orkflow and task, with signed bodies,
-  delivery records and redelivery.
-- A control-plane audit trail (`orkctl admin audit`).
-- OpenTelemetry logs, metrics and traces, off by default, with named sinks
-  per namespace.
-
-**Inspecting** ([STATS.md](./docs/STATS.md),
-[RUN_EVIDENCE.md](./docs/RUN_EVIDENCE.md))
-
-- `orkctl run get|watch|logs|attempts|timing|inspect|diff|artifacts`: live
-  attempt state, per-phase timing, every retry, and run-to-run comparison.
-- Artifact provenance: whether a recorded artifact's bytes remain and which
-  archived runs recorded the same object.
-- `orkctl stats` with failure fingerprints, a flake index, reserved usage and
-  cache hit rates — all derived on read.
-- Evidence bundles: `orkctl run evidence export|verify`, verifiable offline.
-- `orkctl task run` replays one task locally against a run's recorded bytes;
-  `orkctl activity test` checks an image against the activity contract.
-
-## Quickstart (dev)
+You need Docker, Go and Bun ([what you need](./docs/GETTING_STARTED.md#what-you-need)).
 
 ```bash
-make up             # Temporal, SeaweedFS, a registry, engine, orker and UI, health-checked
-./bin/orkctl apply examples/hello.ork.yaml
-./bin/orkctl run plan hello-ork     # which tasks would run; starts nothing
-./bin/orkctl run submit hello-ork --watch
-make down           # stop everything (data is kept)
+make infra-up        # Temporal, SeaweedFS and a local registry
+make -C images push  # the first-party activity images, into that registry
+make up              # the engine, an Orker and the UI, health-checked
+./bin/orkctl apply examples/each-fan-out.ork.yaml
+./bin/orkctl run submit each-fan-out --watch
 ```
 
-An Orkflow is a YAML document that begins with `apiVersion: orkstack/v1` and
-`kind: Orkflow`; `examples/hello.ork.yaml` is a small one, and
-[docs/DSL.md](./docs/DSL.md) is the reference.
+Then open the UI at http://localhost:5173. `make down` stops everything and
+keeps the data. [Getting started](./docs/GETTING_STARTED.md) walks through
+each step.
 
-[`examples/README.md`](./examples/README.md) lists every example and what it
-needs to run.
+## What it does not do
 
-- UI: http://localhost:5173
-- Engine API: http://localhost:8080
-- Temporal UI: http://localhost:8233
-- SeaweedFS filer: http://localhost:8888 (S3 API on http://localhost:9000)
+- It never claims exactly-once execution: tasks run at least once, with a
+  stable idempotency key for systems that need one.
+- It has no SDK, no worker service to write, and no callback protocol: the
+  filesystem is the activity API.
+- It is not a visual designer, a scripting language or a connector catalogue.
 
-`make status` shows what is running, `make logs` tails the engine, Orker and
-UI logs, and `make reset` returns the machine to a vanilla state — it deletes
-Temporal history, every object-store object (artifacts, archived runs, and the
-Orkflow catalogue), the local artifact store and all build output. The
-repository itself is untouched.
-
-The individual steps are still there when you want them: `make tools`,
-`make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
-`make infra-up-observability` adds a local Grafana stack
-([deploy/observability](./deploy/observability/README.md)).
-To run the UI by hand, `cd ui && bun run dev`: its server proxies Connect calls
-to `ENGINE_API_URL` (default `http://127.0.0.1:8080`), and the browser opens
-WebSockets to `PUBLIC_ENGINE_WS_URL` (default the page's host on `:8080`).
-
-Configuration needs nothing for a laptop — `make up` runs on defaults alone.
-Past that, `ork` and `orker` read one shared YAML file (`--config PATH`), with
-`ORK_`/`OTEL_` environment variables overriding it; see
-[docs/DEPLOY.md](./docs/DEPLOY.md), "Configuration", and the generated
-[`deploy/orkstack.defaults.yaml`](./deploy/orkstack.defaults.yaml).
-
-### Linux hosts
-
-Docker Desktop (macOS, Windows) provides `host.docker.internal` inside
-containers; plain Docker Engine on Linux does not. Several integration and
-Playwright tests start a stub server on the host and have an activity
-container call it at that name, so on Linux run once:
-
-```bash
-# make the name resolve inside containers (containers use the host's
-# resolver on the docker0 gateway, which serves /etc/hosts)
-echo '172.17.0.1 host.docker.internal' | sudo tee -a /etc/hosts
-
-# if ufw is active with a default-deny input policy, let containers on the
-# default bridge reach host TCP ports
-sudo ufw allow in on docker0 from 172.17.0.0/16 proto tcp
-
-# verify
-docker run --rm alpine:3.20 getent hosts host.docker.internal
-```
-
-`172.17.0.1` is the gateway of Docker's default bridge; a host with a
-customized `docker0` uses its own gateway address.
-
-The same applies to the observability stack (`make infra-up-observability`).
-Its Prometheus container scrapes `ork` and `orker` at
-`host.docker.internal:9464` and `:9465`, but it sits on the compose network,
-and on Linux a listener on `127.0.0.1` cannot be reached from a container. To
-scrape a stack you run by hand:
-
-1. Bind each process's admin listener to the gateway: `ORK_ADMIN_ADDR=172.17.0.1:9464`
-   for `ork`, `172.17.0.1:9465` for `orker`.
-2. Enable the `prometheus` metrics exporter (`OTEL_METRICS_EXPORTER=prometheus`;
-   see `docs/DEPLOY.md` §1).
-3. Attach Prometheus to the default bridge:
-
-```bash
-docker network connect bridge "$(docker ps -q --filter label=com.docker.compose.service=prometheus)"
-```
-
-The observability proof gate (`scripts/proof-observability.sh`) does the same
-for its own run, and detaches Prometheus afterwards only if it attached it.
-
-This is development and proof setup only: never bind a deployment's admin
-listeners to the bridge gateway, and nothing in `deploy/` does. While a
-listener is bound there, every container on Docker's default bridge can reach
-it, and that includes the activity containers an Orker starts with network
-`default`. What they can reach is the admin surface of that `ork` or
-`orker`: `/metrics`, `/healthz`, `/readyz`, and, under
-`ORK_PPROF_ENABLED=true`, `/debug/pprof/` (profiles, goroutine stacks and the
-process's command line). It is not the Connect API,
-not Temporal and not object storage, but an activity needs none of it
-(AGENTS.md §15), so unbind it (unset `ORK_ADMIN_ADDR`, or set it back to
-`127.0.0.1:…`) when you are done. The proof gate binds there only for its own
-run, with its own `ork` and `orker`, and stops them when it ends.
-
-## Contributing
-
-Read [AGENTS.md](./AGENTS.md) (the engineering contract, including the
-repository layout in §12) and [CONTRIBUTING.md](./CONTRIBUTING.md). Every
-change ships with behavior tests and with evidence, in two tiers (AGENTS.md
-§11.2): on a branch, `make proof-feature TESTS=… SPECS=…` runs the fast gates
-plus the tests and specs that prove the change; to merge, `make proof` runs
-every gate, every test and every spec against the real stack on the merged
-tree (§11.3). Both keep their output under `proof/<name>/`, which is
-gitignored; the commit or pull request quotes it. No proof, no done.
+[LIMITATIONS.md](./docs/LIMITATIONS.md) lists every hard limit and deliberate
+omission, with its setting and its reason.
 
 ## Docs
 
-| Document | What it covers |
-|---|---|
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | Components, the engine's pieces, and how a run flows through them |
-| [AGENTS.md](./AGENTS.md) | The engineering contract: boundaries, vocabulary, invariants, evidence |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | The change checklist |
-| [docs/DSL.md](./docs/DSL.md) | The Orkflow DSL: every key, validation rule and runtime behaviour |
-| [docs/ORKFLOW_PATTERNS.md](./docs/ORKFLOW_PATTERNS.md) | The rules the shipped examples follow, and why |
-| [docs/OCI_ACTIVITY_CONTRACT.md](./docs/OCI_ACTIVITY_CONTRACT.md) | The normative engine↔Orker↔container contract: filesystem ABI, commit protocol, failure categories, security profile |
-| [docs/ACTIVITY_IMAGES.md](./docs/ACTIVITY_IMAGES.md) | The first-party images, the `op` convention, and writing your own |
-| [docs/JSON.md](./docs/JSON.md) | Why runtime data is JSON, and the enum dialect clients share |
-| [docs/ORKFLOW_TRIGGERS.md](./docs/ORKFLOW_TRIGGERS.md) | Inbound triggers: plain-HTTP run starters with bearer tokens |
-| [docs/ORKFLOW_SCHEDULES.md](./docs/ORKFLOW_SCHEDULES.md) | Schedules on Temporal Schedules: specs, fires, backfill, overlap |
-| [docs/AUTOMATION.md](./docs/AUTOMATION.md) | Automation documents: a namespace's settings, schedules, triggers and webhooks as YAML |
-| [docs/schemas/](./docs/schemas/) | JSON Schemas of the authored documents (generated) |
-| [docs/CLI.md](./docs/CLI.md) | The `orkctl` command and flag reference (generated from the Cobra tree) |
-| [docs/PROOFS.md](./docs/PROOFS.md) | Proofs and CI: the tiers, the plan and its shards, the job graph, artifacts and recovery procedures |
-| [docs/DEPLOY.md](./docs/DEPLOY.md) | Topology, configuration, releases and rollback, operations, telemetry |
-| [docs/STORAGE.md](./docs/STORAGE.md) | What is persisted where: the object-store key layout and its invariants |
-| [docs/STATS.md](./docs/STATS.md) | Where stats, failure fingerprints, flakes, usage and cache numbers come from |
-| [docs/RUN_EVIDENCE.md](./docs/RUN_EVIDENCE.md) | The run evidence bundle format and offline verification |
-| [docs/UI_CLI_PARITY.md](./docs/UI_CLI_PARITY.md) | The operator experience contract the UI and CLI share |
-| [examples/README.md](./examples/README.md) | Every example Orkflow and what it needs to run |
-| [deploy/observability/README.md](./deploy/observability/README.md) | The optional local Grafana/Loki/Tempo/Prometheus profile |
-| [internal/engine/testdata/history/README.md](./internal/engine/testdata/history/README.md) | The recorded histories that guard replay compatibility |
+The documentation is published at
+**[orkstack.github.io/orkstack](https://orkstack.github.io/orkstack/)**, built
+from these files.
+
+- **Start:** [Getting started](./docs/GETTING_STARTED.md) ·
+  [Examples](./examples/README.md) · [Architecture](./ARCHITECTURE.md)
+- **Authoring:** [Orkflow DSL](./docs/DSL.md) ·
+  [Patterns](./docs/ORKFLOW_PATTERNS.md) · [JSON and enums](./docs/JSON.md) ·
+  [Schemas](./docs/schemas/)
+- **Activities:** [OCI activity contract](./docs/OCI_ACTIVITY_CONTRACT.md) ·
+  [Activity images](./docs/ACTIVITY_IMAGES.md)
+- **Starting runs:** [Triggers](./docs/ORKFLOW_TRIGGERS.md) ·
+  [Schedules](./docs/ORKFLOW_SCHEDULES.md) ·
+  [Automation documents](./docs/AUTOMATION.md) · [Webhooks](./docs/WEBHOOKS.md)
+- **Operating:** [Deployment](./docs/DEPLOY.md) ·
+  [Production checklist](./docs/PRODUCTION_CHECKLIST.md) ·
+  [Security model](./docs/SECURITY_MODEL.md) ·
+  [Upgrading](./docs/UPGRADING.md) · [Limitations](./docs/LIMITATIONS.md) ·
+  [Troubleshooting](./docs/TROUBLESHOOTING.md) ·
+  [Storage](./docs/STORAGE.md) · [Stats](./docs/STATS.md) ·
+  [Run evidence](./docs/RUN_EVIDENCE.md) ·
+  [UI and CLI parity](./docs/UI_CLI_PARITY.md) ·
+  [Observability](./deploy/observability/README.md)
+- **Reference:** [orkctl](./docs/CLI.md) · [API](./docs/API.md) ·
+  [Error reasons](./docs/REASONS.md) · [Changelog](./CHANGELOG.md)
+- **Contributing:** [Contributing](./CONTRIBUTING.md) ·
+  [Engineering contract](./AGENTS.md) · [Proofs and CI](./docs/PROOFS.md) ·
+  [How OrkStack is proven](./docs/PROVEN.md) ·
+  [Replay fixtures](./internal/engine/testdata/history/README.md)
+
+## Contributing
+
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md), the
+engineering contract. Every change ships with behavior tests and with
+evidence: `make proof-feature` on a branch, and a full `make proof` of the
+merged tree before it lands. No proof, no done.
 
 ## License
 
