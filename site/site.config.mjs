@@ -9,10 +9,13 @@ export const BASE = '/orkstack';
 export const REPO = 'https://github.com/orkstack/orkstack';
 export const BRANCH = 'main';
 
+/** The base as a path prefix: '' at the root, '/orkstack' under a project. */
+export const BASE_PATH = BASE.replace(/\/+$/, '');
+
 /** A route under the base, always with a trailing slash. */
 export function route(path = '') {
 	const clean = path.replace(/^\/+|\/+$/g, '');
-	return clean ? `${BASE}/${clean}/` : `${BASE}/`;
+	return clean ? `${BASE_PATH}/${clean}/` : `${BASE_PATH}/`;
 }
 
 /** A repository path on GitHub: a file's blob, or a directory's tree. */

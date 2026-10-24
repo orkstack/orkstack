@@ -215,7 +215,8 @@ html {
 /* ------------------------------------------------- light and dark images */
 
 /* A pair of screenshots, one per theme: light unless the page is dark. With
-   JavaScript off there is no data-theme, and the system preference picks. */
+   JavaScript off the landing page carries no data-theme, and the system
+   preference picks. */
 .theme-figure img + img,
 .theme-pair > :nth-child(2) {
 	display: none;

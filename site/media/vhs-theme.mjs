@@ -4,7 +4,11 @@
 // nothing it prints is committed.
 import { readTokens, resolve } from '../scripts/tokens.mjs';
 
-const theme = process.argv[2] === 'dark' ? 'dark' : 'light';
+const theme = process.argv[2];
+if (theme !== 'light' && theme !== 'dark') {
+	console.error(`vhs-theme: want light or dark, got ${JSON.stringify(theme)}`);
+	process.exit(2);
+}
 const t = readTokens();
 const c = (name, fallback) => {
 	try {

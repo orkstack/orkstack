@@ -9,10 +9,10 @@
 		"sync": "node scripts/sync-docs.mjs",
 		"drift": "node scripts/check-tokens.mjs",
 		"dev": "node scripts/sync-docs.mjs && astro dev",
-		"check": "node --test test/ && node scripts/sync-docs.mjs && node scripts/check-tokens.mjs && astro check",
+		"check": "node --test 'test/**/*.test.mjs' && node scripts/sync-docs.mjs && node scripts/check-tokens.mjs && astro check",
 		"build": "node scripts/sync-docs.mjs && astro build && node scripts/check-links.mjs",
 		"preview": "astro preview",
-		"test": "node --test test/"
+		"test": "node --test 'test/**/*.test.mjs'"
 	},
 	"dependencies": {
 		"@astrojs/starlight": "0.42.7",

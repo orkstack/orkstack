@@ -550,6 +550,7 @@
 		"ui/DESIGN.md": "the UI's design system, for whoever designs the UI",
 		"site/PRODUCT.md": "the site's design brief, for whoever designs the site",
 		"site/DESIGN.md": "the site's design system, for whoever designs the site",
-		"site/THIRD_PARTY.md": "license notices for the site's vendored code"
+		"site/THIRD_PARTY.md": "license notices for the site's vendored code",
+		".github/SUPPORT.md": "a GitHub page for the repository; the landing page and the issue forms carry what it says"
 	}
 }

@@ -2,8 +2,10 @@
 // Paints the chosen theme before the first frame, on the landing page and in
 // the docs alike: one key (Starlight's own, "starlight-theme": "light",
 // "dark", or empty for the system) and one attribute (data-theme on <html>,
-// the attribute ui/src/tokens.css switches on). With JavaScript off nothing
-// is set, and the generated prefers-color-scheme block takes over.
+// the attribute ui/src/tokens.css switches on). With JavaScript off, the
+// landing page carries no data-theme and the generated prefers-color-scheme
+// block follows the system; Starlight renders its docs pages with
+// data-theme="dark" on the server, so with JavaScript off the docs are dark.
 ---
 
 <script is:inline>

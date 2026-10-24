@@ -7,7 +7,9 @@
 //   - the no-JavaScript dark theme: tokens.css switches theme on
 //     :root[data-theme], which only a script sets, so a visitor with
 //     JavaScript off would always see light. darkMediaCss() repeats the dark
-//     block under (prefers-color-scheme: dark) for a root with no data-theme;
+//     block under (prefers-color-scheme: dark) for a root with no data-theme
+//     (the landing page; Starlight server-renders data-theme="dark" on the
+//     docs, which therefore stay dark with JavaScript off);
 //   - the code-block theme Expressive Code needs as literal colours
 //     (codeTheme()), since it computes contrast and cannot read var();
 //   - the token names the drift check (check-tokens.mjs) holds the site's

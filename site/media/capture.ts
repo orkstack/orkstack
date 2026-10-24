@@ -116,16 +116,29 @@ async function main() {
 		// A run, caught while its fan-out is running.
 		const live = submit('each-fan-out');
 		await both((p) => p.goto(`${UI}/runs/${live}?ns=${NS}`));
-		await both((p) =>
-			p.locator('[data-testid^="task-convert-item-"][data-status="RUNNING"]').first().waitFor({ timeout: 120_000 }),
-		);
-		await shotPair(
-			'ui-run-hero',
-			'A run of each-fan-out in the OrkStack UI: the DAG of list, convert and merge, with convert’s items running, beside the run’s version and timing.',
-			'A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.',
-			pages,
-			(p) => p.screenshot(),
-		);
+		// Both themes must show the fan-out running, in the same capture: the
+		// alt text says so. A pair taken across the moment an item finishes is
+		// thrown away and taken again, on a fresh run if this one has ended.
+		const running = (p: Page) => p.locator('[data-testid^="task-convert-item-"][data-status="RUNNING"]');
+		let livePair: Buffer[] | undefined;
+		for (let tries = 0; tries < 4 && !livePair; tries++) {
+			if (tries > 0 && (await pages.light.getByTestId('run-status').innerText()).trim() !== 'RUNNING') {
+				const again = submit('each-fan-out');
+				await both((p) => p.goto(`${UI}/runs/${again}?ns=${NS}`));
+			}
+			await both((p) => running(p).first().waitFor({ timeout: 120_000 }));
+			const pair = await Promise.all(themes.map((t) => pages[t].screenshot()));
+			const still = await Promise.all(themes.map(async (t) => (await running(pages[t]).count()) > 0));
+			if (still.every(Boolean)) livePair = pair;
+		}
+		if (!livePair) throw new Error('could not capture the fan-out running in both themes at once');
+		manifest.items['ui-run-hero'] = {
+			alt: 'A run of each-fan-out in the OrkStack UI: the DAG of list, convert and merge, with convert’s items running, beside the run’s version and timing.',
+			caption: 'A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.',
+			light: await save('ui-run-hero', 'light', livePair[0]),
+			dark: await save('ui-run-hero', 'dark', livePair[1]),
+		};
+		console.log('  ui-run-hero');
 		manifest.items['ui-run-live'] = { ...manifest.items['ui-run-hero'] };
 
 		// The same run, finished.
@@ -201,7 +214,10 @@ async function main() {
 			await p.waitForTimeout(2500);
 			const video = p.video();
 			await rec.close();
-			const raw = await video!.path();
+			// Over a browser-server connection the recording lives on the
+			// server; saveAs copies it here (path() is local-only).
+			const raw = path.join(work, `video-${theme}.webm`);
+			await video!.saveAs(raw);
 			encode(raw, `e2e-demo-${theme}`);
 		}
 		manifest.items['e2e-demo'] = {

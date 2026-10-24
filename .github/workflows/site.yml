@@ -36,7 +36,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7.0.1
         timeout-minutes: 5
@@ -55,7 +55,7 @@ jobs:
         working-directory: site
         run: bun install --frozen-lockfile
       - name: check and build
-        timeout-minutes: 5
+        timeout-minutes: 10
         working-directory: site
         run: bun run check && bun run build
       - name: upload the preview

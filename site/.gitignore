@@ -8,3 +8,5 @@ dist/
 node_modules/
 # impeccable's working files (captures, reviews); never shipped.
 .impeccable/
+# make site-media's scratch directory (removed when it finishes).
+.media-work/

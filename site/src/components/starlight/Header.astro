@@ -8,6 +8,12 @@ import SiteTitle from './SiteTitle.astro';
 import ThemeSelect from './ThemeSelect.astro';
 import Icon from '../shared/Icon.astro';
 import { route, REPO } from '../../../site.config.mjs';
+
+// The docs are where every page here is: "Docs" is the current place
+// (aria-current="true") and "Examples" is too when the page is one of them.
+// Neither is "page": the sidebar marks the page itself.
+const id = Astro.locals.starlightRoute.id;
+const inExamples = id === 'docs/getting-started/examples' || id.startsWith('docs/getting-started/examples/');
 ---
 
 <div class="sl-header">
@@ -15,8 +21,10 @@ import { route, REPO } from '../../../site.config.mjs';
 		<SiteTitle />
 		<nav class="topbar-links sl-header-places" aria-label="Primary">
 			<span class="topbar-rule" aria-hidden="true"></span>
-			<a class="topbar-link" href={route('docs')} aria-current="page">Docs</a>
-			<a class="topbar-link" href={route('docs/getting-started/examples')}>Examples</a>
+			<a class="topbar-link" href={route('docs')} aria-current={inExamples ? undefined : 'true'}>Docs</a>
+			<a class="topbar-link" href={route('docs/getting-started/examples')} aria-current={inExamples ? 'true' : undefined}
+				>Examples</a
+			>
 		</nav>
 	</div>
 	<div class="sl-flex print:hidden sl-header-search">

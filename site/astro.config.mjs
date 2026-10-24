@@ -13,8 +13,10 @@ import { repoRoot, readTokens, codeTheme } from './scripts/tokens.mjs';
 const tokens = readTokens();
 
 const manifest = JSON.parse(readFileSync(new URL('./docs.manifest.json', import.meta.url), 'utf8'));
+// Written by scripts/sync-docs.mjs, which every script runs first.
 const examplesFile = new URL('./src/styles/generated/examples.json', import.meta.url);
-const examples = existsSync(examplesFile) ? JSON.parse(readFileSync(examplesFile, 'utf8')) : [];
+if (!existsSync(examplesFile)) throw new Error('src/styles/generated/examples.json is missing: run node scripts/sync-docs.mjs first');
+const examples = JSON.parse(readFileSync(examplesFile, 'utf8'));
 
 /**
  * @typedef {{ route: string, title: string, examples?: string }} ManifestPage
@@ -63,8 +65,8 @@ export default defineConfig({
 			},
 			sidebar: manifest.groups.map((/** @type {ManifestGroup} */ g) => ({ label: g.label, items: sidebarItems(g.pages) })),
 			expressiveCode: {
-				// Two themes generated from tokens.css; the site's data-theme
-				// picks one (src/styles/starlight.css covers no-JS visitors).
+				// Two themes generated from tokens.css; the page's data-theme
+				// picks one.
 				themes: [codeTheme('light', tokens), codeTheme('dark', tokens)],
 				themeCssSelector: (theme) => `[data-theme='${theme.type}']`,
 				useDarkModeMediaQuery: true,

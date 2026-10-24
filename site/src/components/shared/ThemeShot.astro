@@ -3,16 +3,17 @@
 // base.css (.theme-pair), each served as AVIF and WebP by Astro's image
 // pipeline. After Landpack's ThemeImage (MIT, see site/THIRD_PARTY.md),
 // switched on data-theme and the system preference instead of a class.
+// Both are lazy: the hidden one has no box, so a browser never fetches it,
+// where an eager pair would cost every visitor the other theme's image.
 import { Picture } from 'astro:assets';
 import type { Shot } from '../../lib/media';
 
 interface Props {
 	shot: Shot;
-	eager?: boolean;
 	sizes?: string;
 	class?: string;
 }
-const { shot, eager = false, sizes = '(min-width: 1280px) 1200px, 100vw', class: className } = Astro.props;
+const { shot, sizes = '(min-width: 1280px) 1200px, 100vw', class: className } = Astro.props;
 const widths = [640, 960, 1280, 1600];
 ---
 
@@ -25,8 +26,8 @@ const widths = [640, 960, 1280, 1600];
 				formats={['avif', 'webp']}
 				widths={widths.filter((w) => w <= shot.light!.width)}
 				sizes={sizes}
-				loading={eager ? 'eager' : 'lazy'}
-				fetchpriority={eager ? 'high' : undefined}
+				fallbackFormat="webp"
+				loading="lazy"
 			/>
 		) : (
 			<div class="shot-missing" role="img" aria-label={shot.alt} />
@@ -40,6 +41,7 @@ const widths = [640, 960, 1280, 1600];
 				formats={['avif', 'webp']}
 				widths={widths.filter((w) => w <= shot.dark!.width)}
 				sizes={sizes}
+				fallbackFormat="webp"
 				loading="lazy"
 			/>
 		) : (

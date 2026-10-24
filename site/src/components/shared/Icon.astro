@@ -1,8 +1,9 @@
 ---
-// One of the UI's own icons (ui/src/lib/icons.ts): authored SVG on a 16-unit
-// grid, one 1.5 stroke, drawn in currentColor and hidden from assistive
-// technology. The control it sits in carries the name.
-import { ICONS } from '../../../../ui/src/lib/icons';
+// One of the UI's own icons (ui/src/lib/icons.ts, read into icons.json by
+// scripts/sync-docs.mjs so the site never bundles the UI's TypeScript):
+// authored SVG on a 16-unit grid, one 1.5 stroke, drawn in currentColor and
+// hidden from assistive technology. The control it sits in carries the name.
+import ICONS from '../../styles/generated/icons.json';
 
 type Name = keyof typeof ICONS;
 interface Props {

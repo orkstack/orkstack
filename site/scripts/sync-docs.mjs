@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import GithubSlugger from 'github-slugger';
 import YAML from 'yaml';
-import { BASE, REPO, BRANCH, repoUrl } from '../site.config.mjs';
+import { BASE_PATH, REPO, BRANCH, repoUrl } from '../site.config.mjs';
 import { siteRoot, repoRoot, readTokens, darkMediaCss, resolve, codeTheme } from './tokens.mjs';
 
 const manifest = JSON.parse(readFileSync(path.join(siteRoot, 'docs.manifest.json'), 'utf8'));
@@ -220,21 +220,31 @@ for (const ex of exampleFiles) {
 
 // ------------------------------------------------------------ links
 
-const url = (r, anchor) => `${BASE}/${r}/${anchor ? `#${anchor}` : ''}`;
+const url = (r, anchor) => `${BASE_PATH}/${r}/${anchor ? `#${anchor}` : ''}`;
 
 function rewriteTarget(target, fromRel) {
 	if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('//')) return target;
 	// The site's own pages (site/content/) link by route, which the base
 	// prefixes; every repository doc links by repository path.
-	if (fromRel.startsWith('site/content/') && target.startsWith('/')) return BASE + target;
+	if (fromRel.startsWith('site/content/') && target.startsWith('/')) return BASE_PATH + target;
 	const hashAt = target.indexOf('#');
 	const pathPart = hashAt >= 0 ? target.slice(0, hashAt) : target;
-	const anchor = hashAt >= 0 ? decodeURIComponent(target.slice(hashAt + 1)) : '';
+	let anchor = '';
+	try {
+		anchor = hashAt >= 0 ? decodeURIComponent(target.slice(hashAt + 1)) : '';
+	} catch {
+		fail(`${fromRel}: link ${target} has a malformed anchor`);
+		return target;
+	}
 	let rel = fromRel;
 	if (pathPart) {
 		if (pathPart.startsWith('/')) rel = pathPart.slice(1);
 		else rel = path.posix.normalize(path.posix.join(path.posix.dirname(fromRel), pathPart));
 		rel = rel.replace(/\/$/, '');
+	}
+	if (rel === '..' || rel.startsWith('../') || path.posix.isAbsolute(rel)) {
+		fail(`${fromRel}: link to ${target} leaves the repository`);
+		return target;
 	}
 	const idx = sourceIndex.get(rel);
 	if (idx) {
@@ -285,25 +295,44 @@ function codeRanges(text) {
 }
 
 /**
- * Rewrite every link of a chunk that is not code. A link whose text is a
- * code span ([`DSL.md`](./DSL.md)), or wraps onto the next line, is still a
- * link; a link-shaped string inside a fence or a code span is an example,
- * and is kept.
+ * Rewrite every link of a chunk that is not code, in one pass, so the code
+ * ranges computed on the text stay true for every match: an inline link or
+ * image (whose text may be a code span, or wrap onto the next line), a
+ * reference definition, and an HTML href or src in either quote. A
+ * link-shaped string inside a fence or a code span is an example, and is
+ * kept; a footnote definition ([^1]:) is not a link.
  */
+const linkPattern = new RegExp(
+	[
+		// 1-3: [text](target "title")
+		/(!?\[(?:[^\]`]|`[^`]*`)*\]\()(<[^>]*>|[^)\s]+)((?:\s+"[^"]*")?\))/.source,
+		// 4-5: [label]: target, at the start of a line
+		/(^[ \t]*\[(?!\^)[^\]\n]+\]:[ \t]*)(\S+)/.source,
+		// 6-8: href="…" or src='…'
+		/((?:href|src)=(["']))(.*?)\7/.source,
+	].join('|'),
+	'gm',
+);
+
 function rewriteLinks(text, fromRel) {
 	const ranges = codeRanges(text);
 	const inCode = (at) => ranges.some(([a, b]) => at >= a && at < b);
-	return text
-		.replace(/(!?\[(?:[^\]`]|`[^`]*`)*\]\()(<[^>]*>|[^)\s]+)((?:\s+"[^"]*")?\))/g, (all, a, t, b, at) => {
-			if (inCode(at) || inCode(at + a.length)) return all;
-			const bare = t.startsWith('<') ? t.slice(1, -1) : t;
-			return a + rewriteTarget(bare, fromRel) + b;
-		})
-		.replace(/^(\s*\[[^\]\n]+\]:[ \t]*)(\S+)/gm, (all, a, t, at) => (inCode(at) ? all : a + rewriteTarget(t, fromRel)))
-		.replace(/((?:href|src)=")([^"]+)(")/g, (all, a, t, b, at) => (inCode(at) ? all : a + rewriteTarget(t, fromRel) + b));
+	return text.replace(linkPattern, (all, a1, t1, b1, a2, t2, a3, q3, t3, at) => {
+		if (a1 !== undefined) {
+			if (inCode(at) || inCode(at + a1.length)) return all;
+			const bare = t1.startsWith('<') ? t1.slice(1, -1) : t1;
+			return a1 + rewriteTarget(bare, fromRel) + b1;
+		}
+		if (inCode(at)) return all;
+		if (a2 !== undefined) return a2 + rewriteTarget(t2, fromRel);
+		return a3 + rewriteTarget(t3, fromRel) + q3;
+	});
 }
 
 // ------------------------------------------------------------ media
+
+const escapeHtml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const escapeAlt = (t) => String(t).replace(/[\\[\]]/g, (c) => `\\${c}`);
 
 const mediaManifestPath = path.join(mediaDir, 'manifest.json');
 const media = existsSync(mediaManifestPath) ? JSON.parse(readFileSync(mediaManifestPath, 'utf8')).items ?? {} : {};
@@ -321,21 +350,21 @@ function mediaFigure(name, outFile) {
 	if (item.webm || item.mp4) {
 		// A recording: plain <video> elements, one per theme, served from
 		// public/media as they are. No autoplay; nothing loads until played.
-		const src = (f) => `${BASE}/media/${f}`;
+		const src = (f) => `${BASE_PATH}/media/${f}`;
 		const video = (webm, mp4, poster) =>
 			[
-				`<video controls muted playsinline preload="none"${poster ? ` poster="${src(poster)}"` : ''} aria-label="${item.alt.replace(/"/g, '&quot;')}">`,
+				`<video controls muted playsinline preload="none"${poster ? ` poster="${src(poster)}"` : ''} aria-label="${escapeHtml(item.alt)}">`,
 				webm ? `<source src="${src(webm)}" type="video/webm" />` : '',
 				mp4 ? `<source src="${src(mp4)}" type="video/mp4" />` : '',
 				`</video>`,
 			].join('');
-		for (const f of [item.webm, item.mp4, item.webmDark, item.mp4Dark].filter(Boolean)) {
+		for (const f of [item.webm, item.mp4, item.poster, item.webmDark, item.mp4Dark, item.posterDark].filter(Boolean)) {
 			if (!existsSync(path.join(siteRoot, 'public', 'media', f))) fail(`media ${name}: public/media/${f} is missing (run make site-media)`);
 		}
 		return [
 			`<figure class="theme-figure theme-clip">`,
 			`<div class="theme-pair">${video(item.webm, item.mp4, item.poster)}${video(item.webmDark, item.mp4Dark, item.posterDark)}</div>`,
-			`<figcaption>${item.caption}</figcaption>`,
+			`<figcaption>${escapeHtml(item.caption)}</figcaption>`,
 			`</figure>`,
 		].join('\n');
 	}
@@ -344,10 +373,10 @@ function mediaFigure(name, outFile) {
 	return [
 		`<figure class="theme-figure">`,
 		'',
-		`![${item.alt}](${rel(item.light)})`,
-		`![${item.alt}](${rel(item.dark)})`,
+		`![${escapeAlt(item.alt)}](${rel(item.light)})`,
+		`![${escapeAlt(item.alt)}](${rel(item.dark)})`,
 		'',
-		`<figcaption>${item.caption}</figcaption>`,
+		`<figcaption>${escapeHtml(item.caption)}</figcaption>`,
 		`</figure>`,
 	].join('\n');
 }
@@ -452,7 +481,7 @@ for (const ex of exampleFiles) {
 	const outFile = outFileFor(ex.route);
 	const yaml = readFileSync(path.join(repoRoot, ex.rel), 'utf8').replace(/\n+$/, '');
 	const body = [
-		`[Examples](${BASE}/docs/getting-started/examples/) lists what this ${ex.kind === 'Automation' ? 'automation document' : 'Orkflow'} shows and what it needs to run; its comment header says the same. The file, as it is in the repository: [${ex.rel}](${repoUrl(ex.rel)}).`,
+		`[Examples](${BASE_PATH}/docs/getting-started/examples/) lists what this ${ex.kind === 'Automation' ? 'automation document' : 'Orkflow'} shows and what it needs to run; its comment header says the same. The file, as it is in the repository: [${ex.rel}](${repoUrl(ex.rel)}).`,
 		'',
 		'```yaml title="' + ex.rel + '"',
 		yaml,
@@ -486,6 +515,28 @@ const generated = path.join(siteRoot, 'src', 'styles', 'generated');
 mkdirSync(generated, { recursive: true });
 const tokens = readTokens();
 writeFileSync(path.join(generated, 'nojs-theme.css'), darkMediaCss(tokens));
+
+// The UI's icons (ui/src/lib/icons.ts) as data, so the site reads the UI's
+// one icon set without bundling the UI's TypeScript (whose tsconfig needs
+// the UI's generated .svelte-kit directory). Each entry is one line,
+// `name: ['d', …],`; anything else inside the object is refused.
+{
+	const rel = 'ui/src/lib/icons.ts';
+	const text = readFileSync(path.join(repoRoot, rel), 'utf8');
+	const body = /export const ICONS = \{\n([\s\S]*?)\n\} as const;/.exec(text);
+	if (!body) fail(`${rel}: no \`export const ICONS = { … } as const;\` object`);
+	const icons = {};
+	for (const line of body ? body[1].split('\n') : []) {
+		const m = /^\t([a-zA-Z]+): \[((?:'[^']*'(?:, )?)+)\],?$/.exec(line);
+		if (!m) {
+			fail(`${rel}: cannot read the icon line ${JSON.stringify(line)}`);
+			continue;
+		}
+		icons[m[1]] = [...m[2].matchAll(/'([^']*)'/g)].map((x) => x[1]);
+	}
+	if (body && Object.keys(icons).length === 0) fail(`${rel}: no icons read`);
+	writeFileSync(path.join(generated, 'icons.json'), JSON.stringify(icons, null, '\t') + '\n');
+}
 
 // The code themes the landing page's listing renders with (the docs get the
 // same two through Expressive Code, in astro.config.mjs).

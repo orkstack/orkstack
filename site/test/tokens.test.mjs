@@ -11,6 +11,7 @@ import { checkSources } from '../scripts/check-tokens.mjs';
 const fixture = `/* comment */
 :root {
 	--font-sans: 'A Face', sans-serif;
+	--font-mono: 'A Mono', monospace;
 	--color-fg: var(--color-ink);
 	--color-running-fg: var(--color-blue);
 }
@@ -89,9 +90,16 @@ test('the drift check refuses a colour, a face or a token name written outside t
 		['c.css', '.x { border: 1px solid red; }'],
 		['d.css', ".x { font-family: 'Inter', sans-serif; }"],
 		['e.css', '.x { color: var(--color-gone); }'],
+		['f.astro', '<rect fill="#fff" />'],
+		['g.ts', "const c = ['#abc'];"],
+		['h.css', '/* x */ .a { color: #fff; }'],
+		['i.css', '*, *::before { background: tomato; }'],
+		['j.css', '.x { color: RGB(1 2 3); }'],
+		['k.css', ".x { font: 600 1rem 'Inter'; }"],
+		['l.astro', '<path stroke="rebeccapurple" />'],
 	]);
 	const problems = checkSources(planted, t);
-	for (const file of ['a.css', 'b.css', 'c.css', 'd.css', 'e.css']) {
+	for (const file of ['a.css', 'b.css', 'c.css', 'd.css', 'e.css', 'f.astro', 'g.ts', 'h.css', 'i.css', 'j.css', 'k.css', 'l.astro']) {
 		assert.ok(problems.some((p) => p.startsWith(`${file}:1`)), `${file} not refused: ${problems.join('; ')}`);
 	}
 });
@@ -105,6 +113,9 @@ test('the drift check passes what the site legitimately writes', () => {
 			'.y { border: 1px solid var(--color-blue); background: color-mix(in oklab, var(--color-blue) 40%, transparent); }',
 			'.z { --local: 2; width: calc(var(--local) * 1rem); color: var(--sl-color-white); }',
 			'a[href="#tasks"] { color: var(--color-fg); }',
+			'.f { font: inherit; } .g { font: 600 1rem var(--font-mono); }',
+			'// a line comment may say #abc',
+			'<a href="#add">jump</a> <a href="https://example.test/x">x</a>',
 		].join('\n')],
 		['ok.astro', '<li style={`--line: ${n}`}>x</li>\n<style>.b { top: calc(var(--line) * 1px); }</style>'],
 	]);

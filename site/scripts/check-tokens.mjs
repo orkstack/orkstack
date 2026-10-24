@@ -13,26 +13,58 @@
 //   - the self-hosted faces the site installs are not the UI's exact versions;
 //   - a generated media file is over its budget.
 // tokens.css itself being missing fails in readTokens(), as does the build.
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { siteRoot, repoRoot, readTokens } from './tokens.mjs';
 
-// Colour literals. Hex colours only where a value can stand: after a colon,
-// a space, a comma or an opening parenthesis, so an anchor (#tasks) or a
-// numbered item in prose does not match.
-const hex = /(^|[\s:(,])#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b(?![-\w])/;
-const colourFn = /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/;
-const named =
-	/\b(?:color|background(?:-color)?|border(?:-[a-z]+)*-color|border(?:-(?:top|right|bottom|left|block|inline))?|fill|stroke|outline(?:-color)?|caret-color|accent-color|text-decoration-color|column-rule-color|box-shadow|text-shadow)\s*:\s*[^;{}]*\b(?:black|white|red|green|blue|gray|grey|silver|navy|maroon|purple|teal|olive|orange|yellow|pink|brown|cyan|magenta|lime|aqua|fuchsia)\b/;
-const fontFamily = /font-family\s*:\s*([^;}"]+)/g;
+// Colour literals. A hex colour wherever a value can stand: after a colon,
+// a space, a comma, an opening parenthesis or bracket, an equals sign or a
+// quote. An in-page anchor (href="#tasks") is removed before the test.
+const hex = /(^|[\s:(,=\["'])#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b(?![-\w])/;
+const colourFn = /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|device-cmyk)\(/i;
+// Every CSS named colour (CSS Color 4), in any case. transparent and
+// currentColor are not colours of their own and stay allowed.
+const colourNames = (
+	'aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown ' +
+	'burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan ' +
+	'darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid ' +
+	'darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet ' +
+	'deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ' +
+	'ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki ' +
+	'lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow ' +
+	'lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray ' +
+	'lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine ' +
+	'mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen ' +
+	'mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace ' +
+	'olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred ' +
+	'papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown royalblue ' +
+	'saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey ' +
+	'snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow ' +
+	'yellowgreen'
+).split(' ');
+const colourProps =
+	'(?:color|background(?:-color)?|border(?:-[a-z]+)*|outline(?:-color)?|fill|stroke|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?|box-shadow|text-shadow|scrollbar-color|stop-color|flood-color|lighting-color)';
+const named = new RegExp(`\\b${colourProps}\\s*:\\s*[^;{}]*\\b(?:${colourNames.join('|')})\\b`, 'i');
+const namedAttr = new RegExp(`\\b(?:fill|stroke|color|stop-color)=["'](?:${colourNames.join('|')})["']`, 'i');
+const fontFamily = /font-family\s*:\s*([^;}"]+)/gi;
+const fontShorthand = /(?:^|[\s;{])font\s*:\s*([^;}]+)/gi;
 const varRef = /var\(\s*(--[A-Za-z0-9_-]+)/g;
 const declared = /(^|[\s;{(])(--[A-Za-z0-9_-]+)\s*:/g;
 
 // Custom properties the site may read without declaring them: Starlight's
-// and Expressive Code's own (the site maps onto them), Shiki's dual-theme
-// variables, and the inline --line, --first-line style hooks set in markup.
+// and Expressive Code's own (the site maps onto them) and Shiki's dual-theme
+// variables.
 const foreign = /^--(?:sl-|__sl-|ec-|shiki-|astro-)/;
+
+/** A source with its comments blanked out, line breaks kept. */
+function stripComments(text) {
+	const blank = (m) => m.replace(/[^\n]/g, ' ');
+	return text
+		.replace(/\/\*[\s\S]*?\*\//g, blank)
+		.replace(/<!--[\s\S]*?-->/g, blank)
+		.replace(/(^|[^:"'\w])\/\/[^\n]*/g, (m, lead) => lead + blank(m.slice(lead.length)));
+}
 
 /**
  * The colour, face and token-name problems of a set of sources (path → text):
@@ -49,37 +81,33 @@ export function checkSources(sources, tokens, where = (f) => f) {
 		}
 	}
 	for (const [file, text] of sources) {
-		let inBlockComment = false;
-		text.split('\n').forEach((line, i) => {
-			// Comment-only lines (CSS, JS) may talk about colours freely.
-			const trimmed = line.trim();
-			if (inBlockComment) {
-				if (trimmed.includes('*/')) inBlockComment = false;
-				return;
-			}
-			if (trimmed.startsWith('/*')) {
-				if (!trimmed.includes('*/')) inBlockComment = true;
-				return;
-			}
-			if (trimmed.startsWith('//') || trimmed.startsWith('*')) return;
-			const at = `${where(file)}:${i + 1}`;
-			if (hex.test(line)) problems.push(`${at}: a hex colour; use a token from ui/src/tokens.css`);
-			if (colourFn.test(line.replace(/color-mix\(/g, ''))) problems.push(`${at}: a colour function; use a token from ui/src/tokens.css`);
-			// A token's name (var(--color-blue)) is not a colour written out.
-			const values = line.replace(/var\([^)]*\)/g, 'var()').replace(/--[A-Za-z0-9_-]+/g, '--x');
-			if (named.test(values)) problems.push(`${at}: a named colour; use a token from ui/src/tokens.css`);
-			for (const m of line.matchAll(fontFamily)) {
-				const v = m[1].trim();
-				if (!/^(?:var\(--font-(?:sans|mono)\)|inherit)$/.test(v)) {
-					problems.push(`${at}: font-family ${v}; use var(--font-sans) or var(--font-mono)`);
+		stripComments(text)
+			.split('\n')
+			.forEach((raw, i) => {
+				const line = raw.replace(/\b(?:href|id)=(["'])#[^"']*\1/g, '');
+				const at = `${where(file)}:${i + 1}`;
+				if (hex.test(line)) problems.push(`${at}: a hex colour; use a token from ui/src/tokens.css`);
+				if (colourFn.test(line.replace(/color-mix\(/gi, ''))) problems.push(`${at}: a colour function; use a token from ui/src/tokens.css`);
+				// A token's name (var(--color-blue)) is not a colour written out.
+				const values = line.replace(/var\([^)]*\)/g, 'var()').replace(/--[A-Za-z0-9_-]+/g, '--x');
+				if (named.test(values) || namedAttr.test(values)) problems.push(`${at}: a named colour; use a token from ui/src/tokens.css`);
+				for (const m of line.matchAll(fontFamily)) {
+					const v = m[1].trim();
+					if (!/^(?:var\(--font-(?:sans|mono)\)|inherit)$/.test(v)) {
+						problems.push(`${at}: font-family ${v}; use var(--font-sans) or var(--font-mono)`);
+					}
 				}
-			}
-			for (const m of line.matchAll(varRef)) {
-				const name = m[1];
-				if (tokens.names.has(name) || siteDeclared.has(name) || foreign.test(name)) continue;
-				problems.push(`${at}: var(${name}) is not a token of ui/src/tokens.css`);
-			}
-		});
+				for (const m of line.matchAll(fontShorthand)) {
+					if (!/var\(--font-(?:sans|mono)\)|^\s*inherit\s*$/.test(m[1])) {
+						problems.push(`${at}: the font shorthand names no face token; use var(--font-sans) or var(--font-mono)`);
+					}
+				}
+				for (const m of line.matchAll(varRef)) {
+					const name = m[1];
+					if (tokens.names.has(name) || siteDeclared.has(name) || foreign.test(name)) continue;
+					problems.push(`${at}: var(${name}) is not a token of ui/src/tokens.css`);
+				}
+			});
 	}
 	return problems;
 }
@@ -102,7 +130,8 @@ function main() {
 		}
 		return out;
 	};
-	const files = walk(srcRoot);
+	// The sources, and the config that maps Expressive Code onto the tokens.
+	const files = [...walk(srcRoot), path.join(siteRoot, 'astro.config.mjs')];
 	const rel = (f) => path.relative(repoRoot, f);
 
 	const sources = new Map(files.map((f) => [f, readFileSync(f, 'utf8')]));
@@ -130,21 +159,23 @@ function main() {
 		if (name === '--font-mono' && !/Spline Sans Mono Variable/.test(value)) problems.push('tokens.css --font-mono is no longer Spline Sans Mono: update the face the site installs');
 	}
 
-	// Media budget: what one page may make a visitor download.
-	const mediaDir = path.join(srcRoot, 'assets', 'media');
-	const budget = { image: 900 * 1024, video: 2.5 * 1024 * 1024, total: 16 * 1024 * 1024 };
-	if (existsSync(mediaDir)) {
-		let total = 0;
-		for (const name of readdirSync(mediaDir)) {
-			const size = statSync(path.join(mediaDir, name)).size;
+	// Media budget: what a page may make a visitor download. Screenshots live
+	// in src/assets/media (Astro re-encodes them), recordings and their poster
+	// frames in public/media (served as they are); both count.
+	const budget = { image: 900 * 1024, video: 2.5 * 1024 * 1024, total: 24 * 1024 * 1024 };
+	let total = 0;
+	for (const dir of [path.join(srcRoot, 'assets', 'media'), path.join(siteRoot, 'public', 'media')]) {
+		if (!existsSync(dir)) continue;
+		for (const name of readdirSync(dir)) {
+			const size = statSync(path.join(dir, name)).size;
 			total += size;
 			const kind = /\.(webm|mp4)$/.test(name) ? 'video' : /\.(png|webp|avif|jpg)$/.test(name) ? 'image' : null;
 			if (kind && size > budget[kind]) {
-				problems.push(`site/src/assets/media/${name} is ${(size / 1024).toFixed(0)} KiB, over the ${kind} budget of ${(budget[kind] / 1024).toFixed(0)} KiB`);
+				problems.push(`${rel(path.join(dir, name))} is ${(size / 1024).toFixed(0)} KiB, over the ${kind} budget of ${(budget[kind] / 1024).toFixed(0)} KiB`);
 			}
 		}
-		if (total > budget.total) problems.push(`site/src/assets/media totals ${(total / 1048576).toFixed(1)} MiB, over ${budget.total / 1048576} MiB`);
 	}
+	if (total > budget.total) problems.push(`the site's media total ${(total / 1048576).toFixed(1)} MiB, over ${budget.total / 1048576} MiB`);
 
 	if (problems.length) {
 		console.error(`check-tokens: ${problems.length} problem(s)\n  ${problems.join('\n  ')}`);
@@ -153,4 +184,5 @@ function main() {
 	console.log(`check-tokens: ${files.length} files hold to ui/src/tokens.css (${tokens.names.size} tokens)`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main();
+const self = realpathSync(fileURLToPath(import.meta.url));
+if (process.argv[1] && realpathSync(process.argv[1]) === self) main();
