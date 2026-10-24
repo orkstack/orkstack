@@ -1972,6 +1972,7 @@
 			<DrawingFrame
 				testid="run-drawing"
 				caption="{run.orkflowName} @ {run.orkflowVersion} · {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'}"
+				captionLead={run.orkflowName}
 				views={drawingViews}
 				{view}
 				onview={setView}
@@ -2242,17 +2243,20 @@
 						data-pin={task.pin || undefined}
 						data-pin-accent={accent}
 					>
-						<div class="flex items-center justify-between gap-4">
-							<div class="min-w-0">
+						<!-- Below 640 px the stamps wrap under the task rather than squeeze it. -->
+						<div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+							<div class="min-w-48 flex-1">
 								<a href={taskHref(task.id, task.attempt)} class="font-semibold break-all text-ink hover:text-blue hover:underline" data-testid="task-deep-link-{task.id}">{task.id}</a>
 								{#if task.message && !task.error}
 									<p class="text-xs break-words text-ink-secondary">{task.message}</p>
 								{/if}
 								<!-- Short values are a fact of the row, said on it in the mono. -->
 								{#if task.output && inlinePayload(task.output) !== null}
-									<p class="mt-0.5 flex min-w-0 items-baseline gap-2 text-xs">
-										<span class="caps text-ink-muted">Values</span>
-										<code data-testid="task-values-{task.id}" class="font-mono break-all text-ink-secondary">{inlinePayload(task.output)}</code>
+									<!-- A value breaks only at its spaces; one still too long for a
+									     phone scrolls inside its line rather than splitting a word. -->
+									<p class="mt-0.5 flex min-w-0 items-baseline gap-2 overflow-x-auto text-xs">
+										<span class="caps shrink-0 text-ink-muted">Values</span>
+										<code data-testid="task-values-{task.id}" class="font-mono break-normal text-ink-secondary">{inlinePayload(task.output)}</code>
 									</p>
 								{/if}
 							</div>

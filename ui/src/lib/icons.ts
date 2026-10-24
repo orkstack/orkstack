@@ -8,6 +8,7 @@ export const ICONS = {
 	search: ['M7 12.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11z', 'M11 11l3.5 3.5'],
 	menu: ['M2.5 4.5h11M2.5 8h11M2.5 11.5h11'],
 	chevronDown: ['M4.5 6.5 8 10l3.5-3.5'],
+	chevronUp: ['M4.5 9.5 8 6l3.5 3.5'],
 	chevronLeft: ['M9.5 4.5 6 8l3.5 3.5'],
 	chevronRight: ['M6.5 4.5 10 8l-3.5 3.5'],
 	copy: ['M5.5 5.5h7v7h-7z', 'M3.5 10.5v-7h7'],

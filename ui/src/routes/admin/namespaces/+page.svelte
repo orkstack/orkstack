@@ -942,7 +942,7 @@
 				sinks={data.telemetrySinks}
 				sinksError={data.telemetrySinksError}
 				idPrefix="ns-create"
-				attributesHint="Stamped on every signal of this namespace's runs. Blank sets none of its own."
+				attributesHint="Stamped on every trace, metric and log of this namespace's runs. Blank sets none of its own."
 				attributesError={createErrors.telemetryAttributes}
 				attributesErrorTestId="ns-create-error-telemetry-attributes"
 			/>
@@ -994,10 +994,13 @@
 		{/if}
 		{#if data.namespacesList.length > 0}
 			<div class="relative overflow-x-auto border-t-2 border-ink">
-				<table class="register min-w-[720px]" data-testid="namespace-list">
-					<thead>
+				<table class="register register-stacked register-pairs sm:min-w-[720px]" data-testid="namespace-list">
+					<thead class="max-sm:sr-only">
 						<tr>
 							<th scope="col">Name</th>
+							<!-- A row's actions sit beside its name, so the register's
+							     sideways scroll never takes them out of reach. -->
+							<th scope="col"><span class="sr-only">Actions</span></th>
 							<th scope="col">Description</th>
 							<th scope="col">Default pool</th>
 							<th scope="col">Allowed pools</th>
@@ -1007,68 +1010,22 @@
 							<th scope="col">Max running</th>
 							<th scope="col">Signed by</th>
 							<th scope="col">Budget</th>
-	<th scope="col">Telemetry sink</th>
+							<th scope="col">Telemetry sink</th>
 							<th scope="col">Task logs</th>
 							<th scope="col">Attrs</th>
 							<th scope="col">Updated</th>
-							<!-- The actions stay in view: the register scrolls sideways
-							     under a column pinned to its right edge. -->
-							<th scope="col" class="sticky right-0 border-l border-rule bg-paper-sunken"><span class="sr-only">Actions</span></th>
 						</tr>
 					</thead>
 					<tbody>
 						{#each data.namespacesList as ns (ns.name)}
 							<tr
-								class="group transition-colors {ns.hold ? 'bg-red-tint' : 'hover:bg-hover'}"
+								class="transition-colors {ns.hold ? 'bg-red-tint' : 'hover:bg-hover'}"
 								data-testid="namespace-row-{ns.name}"
 								data-held={ns.hold ? 'true' : 'false'}
 							>
-								<td class="font-mono font-semibold whitespace-nowrap text-ink">{ns.name}</td>
-								<td class="max-w-xs truncate text-ink-secondary"
-									>{ns.description || '—'}</td
-								>
-								<td class="text-ink-secondary"
-									>{ns.defaultPool || DEFAULT_POOL_NAME}</td
-								>
-								<td class="text-ink-secondary">
-									{ns.allowedPools.length > 0 ? ns.allowedPools.join(', ') : 'unrestricted'}
-								</td>
-								<td
-									class="max-w-xs truncate font-mono text-xs text-ink-secondary"
-									title={allowedSecretsLabel(ns.allowedSecrets)}
-									data-testid="namespace-allowed-secrets-{ns.name}">{allowedSecretsLabel(ns.allowedSecrets)}</td
-								>
-								<td class="text-ink-secondary" data-testid="namespace-run-retention-{ns.name}"
-									>{runRetentionLabel(ns.runRetention)}</td
-								>
-								<td
-									class="max-w-xs truncate {ns.hold ? 'severity-error font-semibold' : 'text-ink-secondary'}"
-									title={holdLabel(ns.hold)}
-									data-testid="namespace-hold-{ns.name}">{holdLabel(ns.hold)}</td
-								>
-								<td class="figure text-ink-secondary" data-testid="namespace-max-running-{ns.name}"
-									>{maxRunningLabel(ns.maxRunning)}</td
-								>
-								<td class="font-mono text-xs text-ink-secondary" data-testid="namespace-require-signed-by-{ns.name}"
-									>{ns.requireSignedBy || '—'}</td
-								>
-								<td class="figure text-xs whitespace-nowrap text-ink" data-testid="namespace-budget-{ns.name}"
-									>{budgetConfigLabel(ns.budget)}</td
-								>
-								<td class="text-ink-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
-									>{telemetrySinkLabel(ns.telemetry)}</td
-								>
-								<td class="text-ink-secondary" data-testid="namespace-task-logs-{ns.name}"
-									>{taskLogsLabel(ns.telemetry)}</td
-								>
-								<td class="figure text-ink-secondary" data-testid="namespace-telemetry-attribute-count-{ns.name}"
-									>{attributeCountLabel(ns.telemetry)}</td
-								>
-								<td class="figure text-xs text-ink-muted"
-									>{fmtTimestamp(ns.updatedAt)}</td
-								>
-								<td class="sticky right-0 border-l border-rule {ns.hold ? 'bg-red-tint' : 'bg-paper group-hover:bg-hover'}">
-									<div class="flex items-center justify-end gap-2">
+								<td class="font-mono font-semibold whitespace-nowrap text-ink max-sm:col-span-2">{ns.name}</td>
+								<td class="max-sm:col-span-2 max-sm:order-last">
+									<div class="flex items-center gap-2 sm:justify-start">
 										<button
 											type="button"
 											data-testid="namespace-edit-{ns.name}"
@@ -1125,10 +1082,53 @@
 										{/if}
 									</div>
 								</td>
+								<td data-label="Description" class="max-w-xs truncate text-ink-secondary"
+									>{ns.description || '—'}</td
+								>
+								<td data-label="Default pool" class="text-ink-secondary"
+									>{ns.defaultPool || DEFAULT_POOL_NAME}</td
+								>
+								<td data-label="Allowed pools" class="text-ink-secondary">
+									{ns.allowedPools.length > 0 ? ns.allowedPools.join(', ') : 'unrestricted'}
+								</td>
+								<td data-label="Allowed secrets"
+									class="max-w-xs truncate font-mono text-xs text-ink-secondary"
+									title={allowedSecretsLabel(ns.allowedSecrets)}
+									data-testid="namespace-allowed-secrets-{ns.name}">{allowedSecretsLabel(ns.allowedSecrets)}</td
+								>
+								<td data-label="Run retention" class="text-ink-secondary" data-testid="namespace-run-retention-{ns.name}"
+									>{runRetentionLabel(ns.runRetention)}</td
+								>
+								<td data-label="Hold"
+									class="max-w-xs truncate {ns.hold ? 'severity-error font-semibold' : 'text-ink-secondary'}"
+									title={holdLabel(ns.hold)}
+									data-testid="namespace-hold-{ns.name}">{holdLabel(ns.hold)}</td
+								>
+								<td data-label="Max running" class="figure text-ink-secondary" data-testid="namespace-max-running-{ns.name}"
+									>{maxRunningLabel(ns.maxRunning)}</td
+								>
+								<td data-label="Signed by" class="font-mono text-xs text-ink-secondary" data-testid="namespace-require-signed-by-{ns.name}"
+									>{ns.requireSignedBy || '—'}</td
+								>
+								<td data-label="Budget" class="figure text-xs whitespace-nowrap text-ink" data-testid="namespace-budget-{ns.name}"
+									>{budgetConfigLabel(ns.budget)}</td
+								>
+								<td data-label="Telemetry sink" class="text-ink-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
+									>{telemetrySinkLabel(ns.telemetry)}</td
+								>
+								<td data-label="Task logs" class="text-ink-secondary" data-testid="namespace-task-logs-{ns.name}"
+									>{taskLogsLabel(ns.telemetry)}</td
+								>
+								<td data-label="Attrs" class="figure text-ink-secondary" data-testid="namespace-telemetry-attribute-count-{ns.name}"
+									>{attributeCountLabel(ns.telemetry)}</td
+								>
+								<td data-label="Updated" class="figure text-xs text-ink-muted"
+									>{fmtTimestamp(ns.updatedAt)}</td
+								>
 							</tr>
 							{#if editingName === ns.name}
 								<tr>
-									<td colspan="15" class="border-b-(length:--rule-region) border-ink bg-paper-sunken px-4 py-4">
+									<td colspan="15" class="border-b-(length:--rule-region) border-ink bg-paper-sunken px-4 py-4 max-sm:col-span-2">
 										<form
 											data-testid="namespace-edit-form-{ns.name}"
 											class="grid max-w-4xl gap-4 sm:grid-cols-2"

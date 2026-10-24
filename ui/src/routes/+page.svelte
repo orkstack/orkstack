@@ -321,8 +321,8 @@
 									>
 								</td>
 								<!-- Stacked below 640 px, the figures say what they count. -->
-								<td class="figure text-right font-semibold text-red">{failure.failed.toString()}<span class="font-sans font-normal sm:hidden"> failed</span></td>
-								<td class="figure text-ink-secondary sm:text-right"><span class="font-sans sm:hidden">of </span>{failure.total.toString()}<span class="font-sans sm:hidden"> finished</span></td>
+								<td class="figure text-right font-semibold text-red" data-testid="failure-{failure.orkflowName}-failed">{failure.failed.toString()}<span class="font-sans font-normal sm:hidden">&nbsp;failed</span></td>
+								<td class="figure text-ink-secondary sm:text-right" data-testid="failure-{failure.orkflowName}-finished"><span class="font-sans sm:hidden">of&nbsp;</span>{failure.total.toString()}<span class="font-sans sm:hidden">&nbsp;finished</span></td>
 							</tr>
 						{/each}
 					</tbody>

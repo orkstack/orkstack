@@ -35,6 +35,8 @@
 		testid: string;
 		/** "order-saga @ 0.4.2 · 6 tasks" */
 		caption: string;
+		/** The part of the caption that may be shortened to fit ("order-saga"); the rest is kept whole. */
+		captionLead?: string;
 		/** The tabs, when there is more than the DAG; with none the frame shows only the DAG. */
 		views?: { id: DrawingView; label: string; testid: string }[];
 		view?: DrawingView;
@@ -74,6 +76,7 @@
 	let {
 		testid,
 		caption,
+		captionLead = undefined,
 		views = [],
 		view = 'dag',
 		onview,
@@ -106,18 +109,24 @@
 		view === 'dag' && !!tasks && (bound === 'draw' || (bound === 'on-request' && drawAll) || near.length > 0)
 	);
 	let panel = $state<HTMLDivElement | undefined>(undefined);
-	let hidden = $state({ left: false, right: false });
+	let hidden = $state({ left: false, right: false, up: false, down: false });
 
 	function measure(): void {
 		if (!panel) return;
-		const max = panel.scrollWidth - panel.clientWidth;
-		hidden = { left: panel.scrollLeft > 1, right: panel.scrollLeft < max - 1 };
+		const maxX = panel.scrollWidth - panel.clientWidth;
+		const maxY = panel.scrollHeight - panel.clientHeight;
+		hidden = {
+			left: panel.scrollLeft > 1,
+			right: panel.scrollLeft < maxX - 1,
+			up: panel.scrollTop > 1,
+			down: panel.scrollTop < maxY - 1
+		};
 	}
 
 	$effect(() => {
 		const el = panel;
 		if (!el || !drawn || typeof ResizeObserver === 'undefined') {
-			hidden = { left: false, right: false };
+			hidden = { left: false, right: false, up: false, down: false };
 			return;
 		}
 		const observer = new ResizeObserver(measure);
@@ -188,9 +197,11 @@
 		return g.scroll > 0 ? frameBox.max : MAP_CHROME + Math.max(g.height, 20);
 	});
 
-	function scrollBy(direction: 1 | -1): void {
+	function scrollBy(direction: 1 | -1, axis: 'x' | 'y' = 'x'): void {
 		const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-		panel?.scrollBy({ left: direction * panel.clientWidth * 0.75, behavior: still ? 'auto' : 'smooth' });
+		if (!panel) return;
+		const step = axis === 'x' ? { left: direction * panel.clientWidth * 0.75 } : { top: direction * panel.clientHeight * 0.75 };
+		panel.scrollBy({ ...step, behavior: still ? 'auto' : 'smooth' });
 	}
 
 	function onTabKey(event: KeyboardEvent, index: number): void {
@@ -201,6 +212,18 @@
 		document.getElementById(`${uid}-tab-${next.id}`)?.focus();
 	}
 </script>
+
+{#snippet scroller(testid: string, label: string, title: string, icon: 'chevronLeft' | 'chevronRight' | 'chevronUp' | 'chevronDown', more: boolean, go: () => void, last: boolean)}
+	<button
+		type="button"
+		data-testid={testid}
+		class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-muted aria-disabled:opacity-50 {last ? '' : 'border-r border-rule'}"
+		aria-label={label}
+		{title}
+		aria-disabled={!more}
+		onclick={() => more && go()}><Icon name={icon} /></button
+	>
+{/snippet}
 
 {#snippet note(text: string, testidValue: string, action?: Snippet)}
 	<div data-testid={testidValue} class="note m-4 flex max-w-prose flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2 text-sm">
@@ -220,13 +243,17 @@
 	bind:this={section}
 	data-testid={testid}
 	aria-label="Tasks of {orkflowLabel}"
-	class="frame relative isolate flex flex-col overflow-hidden max-h-drawing {view === 'dag' || mapHeight !== undefined ? '' : 'h-drawing'}"
+	class="frame relative isolate flex flex-col overflow-hidden max-h-drawing max-sm:max-h-drawing-tall {view === 'dag' || mapHeight !== undefined ? '' : 'h-drawing'}"
 	style:height={mapHeight !== undefined ? `${mapHeight}px` : undefined}
 >
 	<div
-		class="relative z-10 flex h-8 shrink-0 items-stretch self-start border-r border-b border-ink bg-paper {drawn && (hidden.left || hidden.right)
-			? 'max-w-[calc(100%-4rem)]'
-			: 'max-w-full'}"
+		class="relative z-10 flex h-8 shrink-0 items-stretch self-start border-r border-b border-ink bg-paper {!drawn
+			? 'max-w-full'
+			: (hidden.left || hidden.right) && (hidden.up || hidden.down)
+				? 'max-w-[calc(100%-8rem)]'
+				: hidden.left || hidden.right || hidden.up || hidden.down
+					? 'max-w-[calc(100%-4rem)]'
+					: 'max-w-full'}"
 	>
 		{#if views.length > 1}
 			<div role="tablist" aria-label="View" class="flex shrink-0">
@@ -248,7 +275,12 @@
 				{/each}
 			</div>
 		{/if}
-		<p class="flex min-w-0 items-center px-3 font-mono text-xs text-ink-secondary" title={caption}><span class="truncate">{caption}</span></p>
+		<!-- The Orkflow's name gives way; its version and task count never do. -->
+		<p class="flex min-w-0 items-center px-3 font-mono text-xs text-ink-secondary" title={caption}>
+			{#if captionLead && caption.startsWith(captionLead)}<span class="truncate">{captionLead}</span><span class="shrink-0 whitespace-pre"
+					>{caption.slice(captionLead.length)}</span
+				>{:else}<span class="truncate">{caption}</span>{/if}
+		</p>
 	</div>
 	<div
 		bind:this={panel}
@@ -293,26 +325,18 @@
 			{/if}
 		{/if}
 	</div>
-	{#if drawn && (hidden.left || hidden.right)}
+	{#if drawn && (hidden.left || hidden.right || hidden.up || hidden.down)}
+		<!-- A drawing that does not fit says so on the frame's top band, for
+		     each way it overflows: the pair for a way with more to show. -->
 		<div class="absolute top-0 right-0 z-10 flex h-8 border-b border-l border-ink bg-paper">
-			<button
-				type="button"
-				data-testid="{prefix}-scroll-left"
-				class="inline-flex size-8 items-center justify-center border-r border-rule text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-muted aria-disabled:opacity-50"
-				aria-label="Scroll the DAG left"
-				title="More of the DAG to the left"
-				aria-disabled={!hidden.left}
-				onclick={() => hidden.left && scrollBy(-1)}><Icon name="chevronLeft" /></button
-			>
-			<button
-				type="button"
-				data-testid="{prefix}-scroll-right"
-				class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-muted aria-disabled:opacity-50"
-				aria-label="Scroll the DAG right"
-				title="More of the DAG to the right"
-				aria-disabled={!hidden.right}
-				onclick={() => hidden.right && scrollBy(1)}><Icon name="chevronRight" /></button
-			>
+			{#if hidden.up || hidden.down}
+				{@render scroller(`${prefix}-scroll-up`, 'Scroll the DAG up', 'More of the DAG above', 'chevronUp', hidden.up, () => scrollBy(-1, 'y'), false)}
+				{@render scroller(`${prefix}-scroll-down`, 'Scroll the DAG down', 'More of the DAG below', 'chevronDown', hidden.down, () => scrollBy(1, 'y'), !(hidden.left || hidden.right))}
+			{/if}
+			{#if hidden.left || hidden.right}
+				{@render scroller(`${prefix}-scroll-left`, 'Scroll the DAG left', 'More of the DAG to the left', 'chevronLeft', hidden.left, () => scrollBy(-1), false)}
+				{@render scroller(`${prefix}-scroll-right`, 'Scroll the DAG right', 'More of the DAG to the right', 'chevronRight', hidden.right, () => scrollBy(1), true)}
+			{/if}
 		</div>
 	{/if}
 </section>

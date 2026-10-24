@@ -97,6 +97,9 @@
 	--spacing-titleblock: 4rem;
 	--spacing-aside: 22.5rem;
 	--spacing-drawing: clamp(15rem, 42vh, 30rem);
+	/* Below 640 px a DAG's frame may grow taller: a phone has the height a
+	   drawing needs and not the width, and a frame cut mid-box hides tasks. */
+	--spacing-drawing-tall: clamp(15rem, 65svh, 40rem);
 
 	/* Rule widths: hairline between rows, region between areas, frame
 	   around a drawing and above the title block. */

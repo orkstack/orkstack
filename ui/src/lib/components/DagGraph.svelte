@@ -24,6 +24,7 @@
 		DAG_NODE_W,
 		edgePath,
 		fitDagLine,
+		fitDagRef,
 		layoutDag,
 		type DagDirection,
 		type DagNode,
@@ -180,12 +181,19 @@
 					{#if state}
 						{@render line(node, state.line)}
 					{:else if node.task.orkflow}
-						<!-- A composed task: it runs another Orkflow as a child run. -->
+						<!-- A composed task: it runs another Orkflow as a child run. Its
+						     name gives way to fit the node; its version never does. -->
+						{@const ref = `orkflow ${node.task.orkflow.name}@${node.task.orkflow.version}`}
+						{@const shown = fitDagRef(
+							node.task.orkflow.name,
+							node.task.orkflow.version,
+							DAG_LINE_CHARS - (node.task.cache ? CACHED_TAG.length + 1 : 0)
+						)}
 						<text
 							data-testid={run ? `run-dag-node-${node.task.id}-orkflow` : `dag-node-${node.task.id}-orkflow`}
 							x={node.x + TEXT_X}
 							y={node.y + 44}
-							class="dag-tag">orkflow {node.task.orkflow.name}@{node.task.orkflow.version}</text
+							class="dag-tag">{#if shown !== ref}<title>{ref}</title>{/if}{shown}</text
 						>
 					{:else}
 						{@render line(node, activityLabel(node.task) || '—')}

@@ -453,8 +453,20 @@ test('at 390 px the drawing starts within 220 px, and the secondary actions fold
 	await expect(page.getByTestId('run-id')).toHaveText(failedRun);
 	await expect(page.getByText(`ork-…${failedRun.slice(-6)}`, { exact: true })).toBeVisible();
 	for (const id of ['run-evidence', 'compare-run', 'export-run-json', 'events-toggle']) await expect(page.getByTestId(id)).toBeHidden();
-	// On a phone the saga's DAG reads top to bottom (the Direction Rule).
+	// On a phone the saga's DAG reads top to bottom (the Direction Rule), in
+	// a frame tall enough for all of it — or, where it is not, one that says
+	// there is more below.
 	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'TB');
+	const phone = await page.evaluate(() => {
+		const panel = document.querySelector('[data-testid="run-dag"]')!.closest('[role="tabpanel"]')!.getBoundingClientRect();
+		const boxes = [...document.querySelectorAll('[data-testid="run-dag"] g.dag-node rect')].map((r) => r.getBoundingClientRect());
+		return { all: boxes.length, inside: boxes.filter((b) => b.top >= panel.top - 0.5 && b.bottom <= panel.bottom + 0.5).length };
+	});
+	note(`DAG at 390: ${phone.inside} of ${phone.all} boxes inside the frame`);
+	if (phone.inside < phone.all) await expect(page.getByTestId('run-dag-scroll-down')).toBeVisible();
+	else expect(phone.inside).toBe(6);
+	// The caption keeps its count whatever it shortens.
+	await expect(page.getByTestId('run-drawing')).toContainText('· 6 tasks');
 	await page.screenshot({ path: out('failed-run-390-first.png') });
 	// Read left to right, it scrolls sideways; the scroll controls sit on the
 	// frame's top band, never over a node.
@@ -523,6 +535,11 @@ test('at 320 px: the count band is 2 × 2, run ids shorten in the middle, the ti
 	expect(band.firstRow).toBe(2);
 	for (const l of band.labels) expect(l.lines, `${l.text} is one line`).toBe(1);
 	expect(band.cliOffWindowRow).toBeLessThanOrEqual(4);
+	// The stacked failures register says what its figures count, in words
+	// apart from the figures.
+	const finished = (await page.getByTestId(`failure-${SAGA}-finished`).innerText()).replace(/\u00a0/g, ' ');
+	expect(finished).toBe('of 1 finished');
+	expect((await page.getByTestId(`failure-${SAGA}-failed`).innerText()).replace(/\u00a0/g, ' ')).toBe('1 failed');
 	expect(await pastRightEdge(page)).toEqual([]);
 	await fullPageShot(page, out('dashboard-320.png'));
 
@@ -545,6 +562,22 @@ test('at 320 px: the count band is 2 × 2, run ids shorten in the middle, the ti
 	expect(cell.lines).toBeLessThanOrEqual(2);
 	expect(await pastRightEdge(page)).toEqual([]);
 	await page.screenshot({ path: out('run-320-first.png') });
+
+	// Admin → Namespaces stacks its register: the name whole on its own line,
+	// each fact under its words, the actions on the row's last line.
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	const nsRow = page.getByTestId('namespace-row-default');
+	await expect(nsRow).toBeVisible();
+	const stacked = await nsRow.evaluate((tr) => {
+		const name = tr.querySelector('td')!;
+		const edit = tr.querySelector('[data-testid="namespace-edit-default"]')!.getBoundingClientRect();
+		return { nameCut: name.scrollWidth > name.clientWidth + 1, editRight: edit.right, labelled: tr.querySelectorAll('td[data-label]').length };
+	});
+	expect(stacked.nameCut).toBe(false);
+	expect(stacked.editRight).toBeLessThanOrEqual(320);
+	expect(stacked.labelled).toBe(13);
+	expect(await pastRightEdge(page)).toEqual([]);
+	await fullPageShot(page, out('admin-namespaces-320.png'));
 });
 
 test('Admin → Namespaces leads with its registry, and Create namespace opens the form', async ({ page }) => {

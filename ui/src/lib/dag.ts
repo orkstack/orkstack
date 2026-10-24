@@ -110,6 +110,20 @@ export function fitDagLine(line: string, room: number = DAG_LINE_CHARS): string 
 	return `${fitted.slice(0, Math.max(room - 1, 0))}…`;
 }
 
+/**
+ * fitDagRef fits a composed task's line, `orkflow <name>@<version>`, into
+ * `room` characters: the name gives way (cut with an ellipsis) and the
+ * version stays whole, because which version a run pins is the point. The
+ * full reference stays in the node's title.
+ */
+export function fitDagRef(name: string, version: string, room: number = DAG_LINE_CHARS): string {
+	const whole = `orkflow ${name}@${version}`;
+	if (whole.length <= room) return whole;
+	const keep = room - `orkflow …@${version}`.length;
+	if (keep < 1) return fitDagLine(whole, room);
+	return `orkflow ${name.slice(0, keep)}…@${version}`;
+}
+
 // How many tasks a legible DAG holds. Up to DAG_DRAW_LIMIT it is drawn;
 // beyond, on request up to DAG_LEGIBLE_LIMIT; beyond that never laid out at
 // all (each node is a link, and 4,000 of them is no drawing a person reads).
@@ -562,8 +576,8 @@ export function neighbourhood(tasks: readonly Task[], id: string): Task[] {
  * drawing — scaled to the frame's width, never below DAG_MIN_SCALE — costs
  * a reader least to take in. The cost is the frames of it to scroll through,
  * a frame of sideways scrolling counting as two downward (a wheel and a page
- * move down), divided by the scale it is drawn at (text drawn at 0.6 is that
- * much harder to read). Left to right wins a tie, and anything within a tenth:
+ * move down), divided by the square of the scale it is drawn at (text drawn
+ * at 0.6 is 8 px, and every step below full size costs more than the last). Left to right wins a tie, and anything within a tenth:
  * it is the drawing's usual direction, and a reader should not see it turn
  * for a sliver. So wide parallel stages stay left to right everywhere, and a
  * long chain — or a small DAG on a phone — turns top to bottom.
@@ -574,7 +588,7 @@ export function chooseDagDirection(tasks: Task[], frame: { width: number; height
 		const s = Math.max(DAG_MIN_SCALE, Math.min(1, frame.width / l.width));
 		const wide = Math.max(1, (l.width * s) / frame.width);
 		const tall = Math.max(1, (l.height * s) / frame.height);
-		return (tall + 2 * (wide - 1)) / s;
+		return (tall + 2 * (wide - 1)) / (s * s);
 	};
 	const lr = cost(layoutDag(tasks, 'LR'));
 	const tb = cost(layoutDag(tasks, 'TB'));

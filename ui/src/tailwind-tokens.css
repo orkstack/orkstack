@@ -139,6 +139,7 @@
 	--spacing-titleblock: var(--spacing-titleblock);
 	--spacing-aside: var(--spacing-aside);
 	--spacing-drawing: var(--spacing-drawing);
+	--spacing-drawing-tall: var(--spacing-drawing-tall);
 
 	/* Shadows */
 	--shadow-overlay: var(--shadow-overlay);

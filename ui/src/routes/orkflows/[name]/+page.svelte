@@ -213,6 +213,7 @@
 				<DrawingFrame
 					testid="orkflow-drawing"
 					caption="{wf.name} @ {wf.version} · {wf.tasks.length} {wf.tasks.length === 1 ? 'task' : 'tasks'}"
+					captionLead={wf.name}
 					tasks={wf.tasks}
 					orkflowLabel="{wf.name}@{wf.version}"
 					direction={dagDirectionParam(page.url)}
