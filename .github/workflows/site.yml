@@ -1,0 +1,95 @@
+# The site: the landing page and the docs (site/), built and checked on every
+# pull request that could change them, and deployed to GitHub Pages on every
+# push to main.
+#
+# A pull request gets no live preview: Pages serves one deployment at a time,
+# so its preview is the built site, uploaded as the run's `site-<run_id>`
+# artifact (download it and open index.html). The deploy job runs only for
+# main, with the only write permissions in this file.
+name: site
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "site/**"
+      - "ui/src/tokens.css"
+      - "ui/src/lib/icons.ts"
+      - "ui/package.json"
+      - "docs/**"
+      - "**.md"
+      - "examples/**"
+      - "deploy/orkstack.defaults.yaml"
+      - "proto/**"
+      - "scripts/proof-section11-coverage.tsv"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2.2.0
+        timeout-minutes: 5
+        with:
+          bun-version: "1.4.3"
+      - uses: actions/setup-node@v7.1.0
+        timeout-minutes: 5
+        with:
+          node-version: "26.12.0"
+      - name: bun install
+        timeout-minutes: 5
+        working-directory: site
+        run: bun install --frozen-lockfile
+      - name: check and build
+        timeout-minutes: 5
+        working-directory: site
+        run: bun run check && bun run build
+      - name: upload the preview
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: site-${{ github.run_id }}
+          path: site/dist
+          retention-days: 7
+      - name: upload the Pages artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        timeout-minutes: 2
+        uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: site/dist
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/configure-pages@v6.0.0
+        timeout-minutes: 3
+      - id: deployment
+        uses: actions/deploy-pages@v5.0.1
+        timeout-minutes: 7

@@ -1,0 +1,15 @@
+/*
+ * The site's stylesheet, shared by the landing page and the docs.
+ *
+ * The site has no style of its own: every colour, face, size, radius, rule
+ * and duration is a token of ui/src/tokens.css, imported here as it is, so a
+ * change to the UI's look reaches the site with no step of its own. The
+ * generated file repeats the dark block for visitors with JavaScript off
+ * (scripts/tokens.mjs). scripts/check-tokens.mjs refuses a colour or a face
+ * written anywhere else under src/.
+ */
+@import '@fontsource-variable/archivo-narrow/wght.css';
+@import '@fontsource-variable/spline-sans-mono/wght.css';
+@import '../../../ui/src/tokens.css';
+@import './generated/nojs-theme.css';
+@import './base.css';

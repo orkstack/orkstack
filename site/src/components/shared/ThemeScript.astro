@@ -1,0 +1,21 @@
+---
+// Paints the chosen theme before the first frame, on the landing page and in
+// the docs alike: one key (Starlight's own, "starlight-theme": "light",
+// "dark", or empty for the system) and one attribute (data-theme on <html>,
+// the attribute ui/src/tokens.css switches on). With JavaScript off nothing
+// is set, and the generated prefers-color-scheme block takes over.
+---
+
+<script is:inline>
+	(() => {
+		let stored = '';
+		try {
+			stored = localStorage.getItem('starlight-theme') || '';
+		} catch {}
+		const system = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+		document.documentElement.dataset.theme = stored === 'light' || stored === 'dark' ? stored : system;
+		// Starlight's components call this to refresh their own picker; the
+		// site's switch replaces that picker, so there is nothing to refresh.
+		window.StarlightThemeProvider = { updatePickers() {} };
+	})();
+</script>

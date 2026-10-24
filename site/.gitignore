@@ -1,0 +1,10 @@
+# Generated on every build by scripts/sync-docs.mjs.
+src/content/docs/docs/
+src/styles/generated/
+public/favicon.svg
+# Astro's own output and caches.
+dist/
+.astro/
+node_modules/
+# impeccable's working files (captures, reviews); never shipped.
+.impeccable/

@@ -26,13 +26,14 @@ const (
 	actExamples      = "examples"      // the example tests and the examples spec
 	actTool          = "tool"          // the tests and specs that run this test/tools tool
 	actObservability = "observability" // the observability gate
+	actSite          = "site"          // the site gate: bun run check && bun run build in site/, for what the site renders
 	actNone          = "none"          // no evidence needed
 	actFull          = "full"          // refuse the feature tier
 )
 
 var knownActions = map[string]bool{
 	actGo: true, actUI: true, actSpec: true, actUIUnit: true, actAllSpecs: true, actProto: true,
-	actImages: true, actExamples: true, actTool: true, actObservability: true, actNone: true, actFull: true,
+	actImages: true, actExamples: true, actTool: true, actObservability: true, actSite: true, actNone: true, actFull: true,
 }
 
 // scopeRule is one row: a glob, the actions it triggers, and its flags.

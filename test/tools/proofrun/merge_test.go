@@ -181,6 +181,24 @@ func (f *mergeFixture) writeLocal(integration ledger) {
 	})
 }
 
+// fastGateRecords is what scripts/proof-part.sh's fast part records: every
+// fast gate of the full proof, passing.
+func fastGateRecords() []gateRecord {
+	var g []gateRecord
+	for _, name := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "site"} {
+		g = append(g, gateRecord{Gate: name, Result: "pass"})
+	}
+	return g
+}
+
+// writeFast writes the CI fast part with the gates it recorded.
+func (f *mergeFixture) writeFast(gates []gateRecord) {
+	f.t.Helper()
+	fast := f.basePart("fast")
+	fast.Gates = gates
+	f.writePart(fast, map[string]any{"unit-tests.json": unitLedger()})
+}
+
 func (f *mergeFixture) writeCI() {
 	f.t.Helper()
 	plan := f.basePart("plan")
@@ -189,12 +207,7 @@ func (f *mergeFixture) writeCI() {
 	build.Gates = []gateRecord{{Gate: "images", Result: "pass"}}
 	build.Images = map[string]string{"activity-shell": "sha256:aaa"}
 	f.writePart(build, nil)
-	fast := f.basePart("fast")
-	fast.Gates = []gateRecord{
-		{Gate: "lint", Result: "pass"}, {Gate: "build", Result: "pass"}, {Gate: "unit", Result: "pass"},
-		{Gate: "vet-integration", Result: "pass"}, {Gate: "ui-check", Result: "pass"}, {Gate: "ui-unit", Result: "pass"},
-	}
-	f.writePart(fast, map[string]any{"unit-tests.json": unitLedger()})
+	f.writeFast(fastGateRecords())
 	ui := f.basePart("ui-e2e:1")
 	ui.Gates = []gateRecord{{Gate: "ui-e2e", Result: "pass"}}
 	ui.Images = map[string]string{"activity-shell": "sha256:aaa"}
@@ -273,6 +286,92 @@ func TestMerge_ALocalProofPasses(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(f.out, "README.md"))
 	if !strings.HasSuffix(string(b), "Result: **PASS**\n") {
 		t.Errorf("README does not close with the full tier's result line:\n%s", b)
+	}
+}
+
+// The site gate is one of the merge gate's required gates, wherever the proof
+// ran it: a full or release proof whose gates lack a passing site gate is
+// refused, with a reason that names the gate.
+func TestMerge_AProofWithoutAPassingSiteGateIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		gates  func() []gateRecord
+		reason string
+		result string
+	}{
+		{"missing", func() []gateRecord { return withoutGate(fullGateRecords(), "site") }, "gate site did not run", "fail"},
+		{"failed", func() []gateRecord {
+			g := fullGateRecords()
+			setGate(g, "site", "fail")
+			return g
+		}, "gate site failed", "fail"},
+		{"stopped", func() []gateRecord {
+			g := fullGateRecords()
+			for i := range g {
+				if g[i].Gate == "site" {
+					g[i] = gateRecord{Gate: "site", Result: gateNotStarted, Log: "-", Command: "not started: unit failed"}
+				}
+			}
+			return g
+		}, "gate site was not started: not started: unit failed", "fail"},
+	} {
+		t.Run("local "+c.name, func(t *testing.T) {
+			f := newMergeFixture(t, tierFull, false)
+			f.writeLocalWith(func(r *partRecord) { r.Gates = c.gates() },
+				ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+			r, code := f.merge()
+			if code != 1 || r.Result != c.result || r.MergeEligible {
+				t.Fatalf("code %d, result %s, eligible %v: a proof without a passing site gate must not be merge-eligible", code, r.Result, r.MergeEligible)
+			}
+			if !strings.Contains(joined(r), c.reason) {
+				t.Errorf("ineligible = %v, want a reason containing %q", r.Ineligible, c.reason)
+			}
+		})
+	}
+	// A sharded proof: the fast part carries the site gate.
+	for _, c := range []struct {
+		name   string
+		gates  []gateRecord
+		reason string
+	}{
+		{"CI missing", withoutGate(fastGateRecords(), "site"), "gate site did not run"},
+		{"CI failed", func() []gateRecord { g := fastGateRecords(); setGate(g, "site", "fail"); return g }(), "gate site failed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newMergeFixture(t, tierFull, true)
+			f.writeCI()
+			f.writeFast(c.gates)
+			f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
+			f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+			r, code := f.merge()
+			if code != 1 || r.Result != "fail" || r.MergeEligible || !strings.Contains(joined(r), c.reason) {
+				t.Errorf("code %d, result %s, eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
+			}
+		})
+	}
+	t.Run("release", func(t *testing.T) {
+		f := newMergeFixture(t, tierRelease, false)
+		f.plan.Nightly.Mode = nightlyInclude
+		f.save()
+		f.writeLocalWith(func(r *partRecord) {
+			r.Gates = append(withoutGate(fullGateRecords(), "site"), gateRecord{Gate: "observability", Result: "pass"})
+		}, ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+		r, code := f.merge()
+		if code != 1 || !strings.Contains(joined(r), "gate site did not run") {
+			t.Errorf("code %d, result %s: %v", code, r.Result, r.Ineligible)
+		}
+	})
+}
+
+// The nightly tier runs the deferred tests and nothing else: it is not held to
+// the site gate, and a nightly proof that ran only the integration gate passes.
+func TestMerge_ANightlyProofIsNotHeldToTheSiteGate(t *testing.T) {
+	f := newMergeFixture(t, tierNightly, false)
+	f.writeLocalWith(func(r *partRecord) { r.Gates = []gateRecord{{Gate: "integration", Result: "pass"}} },
+		ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	r, _ := f.merge()
+	if strings.Contains(joined(r), "gate site") {
+		t.Errorf("a nightly proof is held to the site gate: %v", r.Ineligible)
 	}
 }
 

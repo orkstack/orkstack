@@ -36,6 +36,7 @@ type selection struct {
 	Gates struct {
 		UICheck       bool `json:"ui_check"`
 		UIUnit        bool `json:"ui_unit"`
+		Site          bool `json:"site"`
 		Fixture       bool `json:"activity_fixture"`
 		Observability bool `json:"observability"`
 	} `json:"gates"`
@@ -417,6 +418,7 @@ func selectInto(sel *selection, in selectInput) error {
 	var uiSource []string
 	examplesChanged := []string{}
 	toolsChanged := map[string]bool{}
+	var siteChanged []string
 
 	for _, cp := range in.paths {
 		rule := in.scope.match(cp.Path)
@@ -485,6 +487,12 @@ func selectInto(sel *selection, in selectInput) error {
 				}
 			case actObservability:
 				sel.Gates.Observability = true
+			case actSite:
+				// A deleted path counts: a page or a link the site renders
+				// can vanish with it. The gate is the evidence; it asks for
+				// no Go test on this account.
+				sel.Gates.Site = true
+				siteChanged = append(siteChanged, cp.Path)
 			case actNone:
 			}
 		}
@@ -909,6 +917,10 @@ func selectInto(sel *selection, in selectInput) error {
 	if sel.Gates.Observability {
 		sel.Evidence = append(sel.Evidence, evidenceFor{Target: "telemetry", Evidence: []string{"the observability gate"}})
 	}
+	if sel.Gates.Site {
+		sort.Strings(siteChanged)
+		sel.Evidence = append(sel.Evidence, evidenceFor{Target: siteTarget(dedupe(siteChanged)), Evidence: []string{"the site gate"}})
+	}
 	for _, tool := range tools {
 		needle := "test/tools/" + tool
 		var ev []string
@@ -971,6 +983,19 @@ func selectInto(sel *selection, in selectInput) error {
 		sel.UIUnitTests = []string{}
 	}
 	return nil
+}
+
+// siteTargetPaths is how many paths the README names beside the site gate.
+const siteTargetPaths = 8
+
+// siteTarget names the paths the site gate ran for. A long list is cut: the
+// README's "Changed paths" lists every path with the actions of its rule,
+// `site` among them.
+func siteTarget(paths []string) string {
+	if len(paths) <= siteTargetPaths {
+		return "site (" + strings.Join(paths, ", ") + ")"
+	}
+	return fmt.Sprintf("site (%s, and %d more)", strings.Join(paths[:siteTargetPaths], ", "), len(paths)-siteTargetPaths)
 }
 
 // binDepsOf returns what a main package links, loading it on demand.

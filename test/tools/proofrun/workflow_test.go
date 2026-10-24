@@ -109,7 +109,7 @@ func (w *wfFile) onTypes(event string) ([]string, bool) {
 	return out, true
 }
 
-var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml"}
+var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml", "site.yml"}
 
 func workflowPath(name string) string {
 	return filepath.Join("..", "..", "..", ".github", "workflows", name)
@@ -1787,6 +1787,115 @@ func TestWorkflows_TheTagJobVerifiesTheReleaseProofFirst(t *testing.T) {
 	})
 }
 
+// ---- the site ----------------------------------------------------------------------
+
+// writePermissions lists the permissions a job or workflow asks above read.
+func writePermissions(perms map[string]string) []string {
+	var out []string
+	for perm, lvl := range perms {
+		if permLevel(lvl) > 1 {
+			out = append(out, perm+": "+lvl)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// siteProblems holds site.yml to what its header promises. A pull request
+// builds the site with read-only permissions and publishes nothing; only a push
+// to main deploys, in the one job that holds write permissions, and that job
+// checks out and runs no repository code, since it holds the Pages and OIDC
+// tokens.
+func siteProblems(w *wfFile) []string {
+	var p []string
+	for _, trigger := range []string{"pull_request_target", "workflow_run", "issue_comment"} {
+		if _, ok := w.On[trigger]; ok {
+			p = append(p, "site.yml triggers on "+trigger+", which runs with the repository's permissions on a stranger's behalf")
+		}
+	}
+	if _, ok := w.On["pull_request"]; !ok {
+		p = append(p, "site.yml does not build pull requests")
+	}
+	if push, _ := w.On["push"].(map[string]any); fmt.Sprint(push["branches"]) != "[main]" {
+		p = append(p, fmt.Sprintf("site.yml's push trigger is %v, want branches: [main] alone", w.On["push"]))
+	}
+	if len(w.Permissions) != 1 || w.Permissions["contents"] != "read" {
+		p = append(p, fmt.Sprintf("site.yml's top-level permissions are %v, want contents: read alone", w.Permissions))
+	}
+	writers := 0
+	for _, name := range w.jobNames() {
+		job := w.Jobs[name]
+		for perm, lvl := range job.Permissions {
+			if permLevel(lvl) < 0 {
+				p = append(p, fmt.Sprintf("jobs.%s.permissions.%s = %q is not a level GitHub accepts", name, perm, lvl))
+			}
+		}
+		if len(writePermissions(job.Permissions)) == 0 {
+			continue
+		}
+		writers++
+		where := "jobs." + name
+		if got, want := strings.Join(writePermissions(job.Permissions), ", "), "id-token: write, pages: write"; got != want || len(job.Permissions) != 2 {
+			p = append(p, fmt.Sprintf("%s.permissions = %v, want exactly pages: write and id-token: write", where, job.Permissions))
+		}
+		cond := normalizeIf(job.If)
+		for _, want := range []string{"github.event_name != 'pull_request'", "github.ref == 'refs/heads/main'"} {
+			if !strings.Contains(cond, want) {
+				p = append(p, fmt.Sprintf("%s.if = %q lacks %q: a pull request or another branch must never deploy", where, job.If, want))
+			}
+		}
+		if or, balanced := topLevelOr(cond); or || !balanced {
+			p = append(p, fmt.Sprintf("%s.if = %q has a top-level ||, which would admit a run the other terms exclude", where, job.If))
+		}
+		if !contains(job.needs(), "build") {
+			p = append(p, where+" does not need build: it would publish what was never built")
+		}
+		for i, s := range job.Steps {
+			if isCheckout(s) || s.Run != "" {
+				p = append(p, fmt.Sprintf("%s %s runs repository code in the job that holds the Pages and OIDC tokens", where, s.label(i)))
+			}
+		}
+	}
+	if writers != 1 {
+		p = append(p, fmt.Sprintf("%d jobs of site.yml hold write permissions, want exactly the one that deploys", writers))
+	}
+	return p
+}
+
+func TestWorkflows_OnlyTheSiteDeployJobWritesAndItRunsNoRepositoryCode(t *testing.T) {
+	expectEachMutationRefused(t, "site.yml", siteProblems, []mutation{
+		{"a pull_request_target trigger", func(w *wfFile) { w.On["pull_request_target"] = map[string]any{} }},
+		{"no pull request build", func(w *wfFile) { delete(w.On, "pull_request") }},
+		{"a push to any branch", func(w *wfFile) { w.On["push"] = map[string]any{} }},
+		{"a push to main and another branch", func(w *wfFile) { w.On["push"] = map[string]any{"branches": []any{"main", "dev"}} }},
+		{"workflow-level contents: write", func(w *wfFile) { w.Permissions["contents"] = "write" }},
+		{"workflow-level pages: write", func(w *wfFile) { w.Permissions["pages"] = "write" }},
+		{"no workflow-level permissions", func(w *wfFile) { w.Permissions = nil }},
+		{"the build job writes pages", func(w *wfFile) { w.Jobs["build"].Permissions = map[string]string{"pages": "write"} }},
+		{"a misspelt level", func(w *wfFile) { w.Jobs["build"].Permissions = map[string]string{"contents": "reed"} }},
+		{"the deploy job also writes contents", func(w *wfFile) { w.Jobs["deploy"].Permissions["contents"] = "write" }},
+		{"the deploy job without id-token", func(w *wfFile) { delete(w.Jobs["deploy"].Permissions, "id-token") }},
+		{"the deploy job also reads contents", func(w *wfFile) { w.Jobs["deploy"].Permissions["contents"] = "read" }},
+		{"deploy on a pull request", func(w *wfFile) { w.Jobs["deploy"].If = "github.ref == 'refs/heads/main'" }},
+		{"deploy from any ref", func(w *wfFile) { w.Jobs["deploy"].If = "github.event_name != 'pull_request'" }},
+		{"deploy OR a dispatch", func(w *wfFile) {
+			w.Jobs["deploy"].If += " || github.event_name == 'workflow_dispatch'"
+		}},
+		{"deploy without build", func(w *wfFile) { w.Jobs["deploy"].Needs = nil }},
+		{"deploy checks out the repository", func(w *wfFile) {
+			job := w.Jobs["deploy"]
+			job.Steps = append([]wfStep{{Uses: "actions/checkout@v7.0.1"}}, job.Steps...)
+		}},
+		{"deploy runs a script", func(w *wfFile) {
+			job := w.Jobs["deploy"]
+			job.Steps = append(job.Steps, wfStep{Name: "after", Run: "./site/deploy.sh"})
+		}},
+		{"a second job that writes", func(w *wfFile) {
+			w.Jobs["announce"] = &wfJob{Permissions: map[string]string{"pages": "write", "id-token": "write"}, If: w.Jobs["deploy"].If, Needs: "build"}
+		}},
+	})
+}
+
 // ---- shells and pins ---------------------------------------------------------------
 
 // untrustedInShell names the expressions a `run:` may never splice into its
@@ -1822,52 +1931,106 @@ var (
 	exactVersion   = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+$`)
 )
 
-// TestWorkflows_ActionsAndToolchainsArePinnedExactly: no floating ref. Every
-// action is named by an exact release of its latest major (Dependabot moves
-// them, one pull request and one proof at a time), and every toolchain by an
-// exact version: the Go patch of go.mod's line, Bun's own release, cosign's.
-func TestWorkflows_ActionsAndToolchainsArePinnedExactly(t *testing.T) {
-	gomod := readRepoFileForPins(t, "go.mod")
-	goLine := regexp.MustCompile(`(?m)^go ([0-9]+\.[0-9]+)`).FindStringSubmatch(gomod)
+// pinKeys are the `with:` keys that name a toolchain; each is an exact version.
+var pinKeys = []string{"go-version", "bun-version", "node-version", "cosign-release"}
+
+// pinProblems holds steps to the pin rule: no floating ref. Every action is
+// named by an exact release, and every toolchain in pinKeys by an exact
+// version, Go's also on go.mod's minor line. seen counts the pins it judged by
+// key, so a caller can refuse a check that judged nothing.
+func pinProblems(where string, steps []wfStep, goMinor string, seen map[string]int) []string {
+	var p []string
+	for i, s := range steps {
+		if s.Uses != "" && !strings.HasPrefix(s.Uses, "./") {
+			seen["uses"]++
+			if !exactActionRef.MatchString(s.Uses) {
+				p = append(p, fmt.Sprintf("%s %s uses %q, not an exact vMAJOR.MINOR.PATCH release", where, s.label(i), s.Uses))
+			}
+		}
+		for _, key := range pinKeys {
+			v := withString(s, key)
+			if v == "" {
+				continue
+			}
+			seen[key]++
+			if !exactVersion.MatchString(v) {
+				p = append(p, fmt.Sprintf("%s %s pins %s %q, not an exact version", where, s.label(i), key, v))
+			}
+			if key == "go-version" && !strings.HasPrefix(v, goMinor+".") {
+				p = append(p, fmt.Sprintf("%s %s pins Go %s, and go.mod says go %s", where, s.label(i), v, goMinor))
+			}
+		}
+	}
+	return p
+}
+
+func goModMinor(t *testing.T) string {
+	t.Helper()
+	goLine := regexp.MustCompile(`(?m)^go ([0-9]+\.[0-9]+)`).FindStringSubmatch(readRepoFileForPins(t, "go.mod"))
 	if goLine == nil {
 		t.Fatal("go.mod has no go line")
 	}
+	return goLine[1]
+}
+
+// TestWorkflows_ActionsAndToolchainsArePinnedExactly: no floating ref. Every
+// action is named by an exact release of its latest major (Dependabot moves
+// them, one pull request and one proof at a time), and every toolchain by an
+// exact version: the Go patch of go.mod's line, Bun's own release, the Node
+// release the site is built on, cosign's.
+func TestWorkflows_ActionsAndToolchainsArePinnedExactly(t *testing.T) {
+	goMinor := goModMinor(t)
 	seen := map[string]int{}
-	check := func(where string, steps []wfStep) {
-		for i, s := range steps {
-			if s.Uses != "" && !strings.HasPrefix(s.Uses, "./") {
-				seen["uses"]++
-				if !exactActionRef.MatchString(s.Uses) {
-					t.Errorf("%s %s uses %q, not an exact vMAJOR.MINOR.PATCH release", where, s.label(i), s.Uses)
-				}
-			}
-			for _, key := range []string{"go-version", "bun-version", "cosign-release"} {
-				v := withString(s, key)
-				if v == "" {
-					continue
-				}
-				seen[key]++
-				if !exactVersion.MatchString(v) {
-					t.Errorf("%s %s pins %s %q, not an exact version", where, s.label(i), key, v)
-				}
-				if key == "go-version" && !strings.HasPrefix(v, goLine[1]+".") {
-					t.Errorf("%s %s pins Go %s, and go.mod says go %s", where, s.label(i), v, goLine[1])
-				}
-			}
-		}
-	}
 	for _, file := range allWorkflows {
 		w := loadWorkflow(t, file)
 		for _, name := range w.jobNames() {
-			check(file+" › "+name, w.Jobs[name].Steps)
+			expectNoProblems(t, file, pinProblems(file+" › "+name, w.Jobs[name].Steps, goMinor, seen))
 		}
 	}
-	check("the proof-host action", proofHostSteps(t))
-	for _, key := range []string{"uses", "go-version", "bun-version", "cosign-release"} {
+	expectNoProblems(t, "the proof-host action", pinProblems("the proof-host action", proofHostSteps(t), goMinor, seen))
+	for _, key := range append([]string{"uses"}, pinKeys...) {
 		if seen[key] == 0 {
 			t.Errorf("no step names %s: the pin check is vacuous", key)
 		}
 	}
+}
+
+func TestWorkflows_ThePinRuleRefusesFloatingRefsAndVersions(t *testing.T) {
+	goMinor := goModMinor(t)
+	stepUsing := func(w *wfFile, job, action string) *wfStep {
+		for i := range w.Jobs[job].Steps {
+			if strings.HasPrefix(w.Jobs[job].Steps[i].Uses, action+"@") {
+				return &w.Jobs[job].Steps[i]
+			}
+		}
+		t.Fatalf("jobs.%s uses no %s", job, action)
+		return nil
+	}
+	rule := func(file string) func(*wfFile) []string {
+		return func(w *wfFile) []string {
+			var p []string
+			for _, name := range w.jobNames() {
+				p = append(p, pinProblems(file+" › "+name, w.Jobs[name].Steps, goMinor, map[string]int{})...)
+			}
+			return p
+		}
+	}
+	expectEachMutationRefused(t, "site.yml", rule("site.yml"), []mutation{
+		{"node on a major", func(w *wfFile) { stepUsing(w, "build", "actions/setup-node").With["node-version"] = "26" }},
+		{"node on a wildcard", func(w *wfFile) { stepUsing(w, "build", "actions/setup-node").With["node-version"] = "26.x" }},
+		{"node on lts", func(w *wfFile) { stepUsing(w, "build", "actions/setup-node").With["node-version"] = "lts/*" }},
+		{"node on latest", func(w *wfFile) { stepUsing(w, "build", "actions/setup-node").With["node-version"] = "latest" }},
+		{"bun on latest", func(w *wfFile) { stepUsing(w, "build", "oven-sh/setup-bun").With["bun-version"] = "latest" }},
+		{"an action on a major", func(w *wfFile) { stepUsing(w, "build", "actions/checkout").Uses = "actions/checkout@v7" }},
+		{"an action on a branch", func(w *wfFile) { stepUsing(w, "deploy", "actions/deploy-pages").Uses = "actions/deploy-pages@main" }},
+		{"the pages upload on a branch", func(w *wfFile) {
+			stepUsing(w, "build", "actions/upload-pages-artifact").Uses = "actions/upload-pages-artifact@main"
+		}},
+	})
+	expectEachMutationRefused(t, "ci.yml", rule("ci.yml"), []mutation{
+		{"go on another minor line", func(w *wfFile) { stepUsing(w, "check", "actions/setup-go").With["go-version"] = "1.26.0" }},
+		{"go on a minor", func(w *wfFile) { stepUsing(w, "check", "actions/setup-go").With["go-version"] = goMinor }},
+	})
 }
 
 func readRepoFileForPins(t *testing.T, rel string) string {

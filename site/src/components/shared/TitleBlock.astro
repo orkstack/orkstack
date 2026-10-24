@@ -1,0 +1,34 @@
+---
+// A ruled band of facts, the UI's title block: a tracked-caps label over a
+// value in each cell, the first cell twice as wide. The values are facts the
+// repository states; nothing here is a figure for show.
+interface Cell {
+	label: string;
+	value: string;
+	href?: string;
+}
+interface Props {
+	cells: Cell[];
+	class?: string;
+	label?: string;
+}
+const { cells, class: className, label = 'Summary' } = Astro.props;
+---
+
+<dl class:list={['titleblock', className]} style={`--titleblock-cells: ${cells.length - 1}`} aria-label={label}>
+	{
+		cells.map((c) => (
+			<div class="titleblock-cell">
+				<dt class="caps">{c.label}</dt>
+				<dd class="titleblock-value">{c.href ? <a href={c.href}>{c.value}</a> : c.value}</dd>
+			</div>
+		))
+	}
+</dl>
+
+<style>
+	dl,
+	dd {
+		margin: 0;
+	}
+</style>

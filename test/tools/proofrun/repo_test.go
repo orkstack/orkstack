@@ -167,13 +167,13 @@ func at(text, prefix string) int {
 }
 
 // A failed full proof can never become eligible, so the script finds a
-// failure in the fast gates first: lint, build, unit, vet, and the two UI
-// gates run one after another, alone, before the Temporal, the images and the
-// binaries, and before any gate that takes hours. The UI gates both read
-// ui/.svelte-kit, which is generated once before either.
+// failure in the fast gates first: lint, build, unit, vet, the two UI gates
+// and the site gate run one after another, alone, before the Temporal, the
+// images and the binaries, and before any gate that takes hours. The UI gates
+// both read ui/.svelte-kit, which is generated once before either.
 func TestRepositoryProofScript_RunsTheFastGatesBeforeAnythingLong(t *testing.T) {
 	text := proofScript(t)
-	fast := []string{"step lint ", "step build ", "step unit ", "step vet-integration ", "step ui-check ", "step ui-unit "}
+	fast := []string{"step lint ", "step build ", "step unit ", "step vet-integration ", "step ui-check ", "step ui-unit ", "step site "}
 	long := []string{"step temporal ", "step images ", "step binaries ", "run_bg activity-fixture ", "run_bg integration ", "step ui-e2e ", "step observability "}
 	last := -1
 	for _, g := range fast {
@@ -182,7 +182,7 @@ func TestRepositoryProofScript_RunsTheFastGatesBeforeAnythingLong(t *testing.T) 
 			t.Fatalf("proof.sh has no line starting %q", g)
 		}
 		if i < last {
-			t.Errorf("%q comes before an earlier fast gate: the fast gates run in the order lint, build, unit, vet-integration, ui-check, ui-unit", g)
+			t.Errorf("%q comes before an earlier fast gate: the fast gates run in the order lint, build, unit, vet-integration, ui-check, ui-unit, site", g)
 		}
 		last = i
 	}
@@ -214,6 +214,52 @@ func TestRepositoryProofScript_RunsTheFastGatesBeforeAnythingLong(t *testing.T) 
 	if n := strings.Count(text, "\trun_bg "); n != 2 {
 		t.Errorf("%d run_bg call sites, want 2 (activity-fixture and integration)", n)
 	}
+}
+
+// The site gate is one of the fast gates: the full and release tiers list it,
+// the nightly tier resets the list and never adds it, the feature tier reads it
+// from the selection, and the proof's gate list (PROOF_GATES, the README's
+// "not run" lines, the stopped gates) knows it. The scripts' behaviour is
+// proved by sitegate_test.go; this holds the text those paths read.
+func TestRepositoryProofScript_ListsTheSiteGate(t *testing.T) {
+	text := proofScript(t)
+	allGates := regexp.MustCompile(`(?m)^ALL_GATES="([^"]*)"`).FindStringSubmatch(text)
+	if allGates == nil || !contains(strings.Fields(allGates[1]), "site") {
+		t.Errorf("ALL_GATES = %v: it lacks site", allGates)
+	}
+	full := regexp.MustCompile(`(?m)^\t+for g in ([a-z0-9 -]+); do RUN\[\$g\]=1; done$`).FindAllStringSubmatch(text, -1)
+	var tiered []string
+	for _, m := range full {
+		if strings.Contains(m[1], "ui-unit") {
+			tiered = strings.Fields(m[1])
+		}
+	}
+	if !contains(tiered, "site") {
+		t.Errorf("the full and release tiers run %v: no site gate", tiered)
+	}
+	if i, after := indexOf(tiered, "site"), indexOf(tiered, "ui-unit")+1; i != after {
+		t.Errorf("the tiers list site at %d, and the slot right after ui-unit is %d", i, after)
+	}
+	nightly := text[strings.Index(text, `if [ "$TIER" = nightly ]; then`):]
+	nightly = nightly[:strings.Index(nightly, "\n\tfi\n")]
+	if !strings.Contains(nightly, "RUN=()") || strings.Contains(nightly, "site") {
+		t.Errorf("the nightly tier's block is\n%s\nit resets the gates and adds the integration gate alone", nightly)
+	}
+	if !strings.Contains(text, "integration | ui_check | ui_unit | site | ui_e2e | activity_fixture | observability)") {
+		t.Error("the feature tier does not read the selection's site=yes")
+	}
+	if !strings.Contains(text, "in_site() {") || !strings.Contains(text, "step site site.log in_site bash -c 'bun run check && bun run build'") {
+		t.Error("the site gate is not `bun run check && bun run build` in site/, logged to site.log")
+	}
+}
+
+func indexOf(list []string, want string) int {
+	for i, s := range list {
+		if s == want {
+			return i
+		}
+	}
+	return -1
 }
 
 // Fail fast (PROOF_FAIL_FAST): on by default, switched off by 0, validated,
@@ -248,7 +294,7 @@ func TestRepositoryProofScript_FailsFast(t *testing.T) {
 	if i < 0 || !strings.Contains(text[i:i+300], `[ -z "$FF_TRIGGER" ] || return 0`) {
 		t.Error("step does not refuse to start a gate once the proof has stopped")
 	}
-	for _, g := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "ui-e2e", "observability", "temporal", "images", "binaries"} {
+	for _, g := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "site", "ui-e2e", "observability", "temporal", "images", "binaries"} {
 		if !strings.Contains(text, "step "+g+" ") {
 			t.Errorf("gate %s is not run through step: a stopped proof would still start it", g)
 		}

@@ -1,0 +1,75 @@
+---
+// Status and contributing: the honest state of the project, and where to
+// take part. The stability line is the user's decision of 2026-10-15, word
+// for word as the README and the versioning page state it.
+import { route, repoUrl, REPO } from '../../../site.config.mjs';
+
+const links = [
+	{ label: 'Changelog', href: route('docs/reference/changelog') },
+	{ label: 'Contributing', href: route('docs/contributing') },
+	{ label: 'How OrkStack is proven', href: route('docs/contributing/proven') },
+	{ label: 'Repository', href: REPO },
+	{ label: 'MIT license', href: repoUrl('LICENSE') },
+];
+---
+
+<section class="block status" aria-labelledby="status-title">
+	<header class="block-head">
+		<h2 id="status-title">Pre-release, and proven as it goes</h2>
+		<p>
+			OrkStack has not reached 1.0 and is not yet ready for production. It is stable, but breaking changes may
+			be introduced until 1.0, and every one is marked <strong>BREAKING</strong> in the changelog. No change
+			counts as done until the full proof passed on the exact tree that lands: every gate, with the integration
+			suites against a real Temporal cluster and object store.
+		</p>
+		<p>
+			Questions and bugs go to <a href={`${REPO}/issues`}>GitHub Issues</a>. Contributions follow the
+			contributing guide, and every pull request is proven before it merges.
+		</p>
+	</header>
+	<ul class="status-links">
+		{
+			links.map((l) => (
+				<li>
+					<a href={l.href}>{l.label}</a>
+				</li>
+			))
+		}
+	</ul>
+</section>
+
+<style>
+	.status-links {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-block: var(--rule-region) solid var(--color-ink);
+	}
+	.status-links li {
+		flex: 1 1 12rem;
+	}
+	.status-links li + li {
+		border-left: var(--rule-hair) solid var(--color-rule);
+	}
+	.status-links a {
+		display: block;
+		padding: calc(var(--spacing) * 4);
+		color: var(--color-ink);
+		font-size: var(--text-md);
+		font-weight: var(--font-weight-semibold);
+		text-decoration: none;
+		transition: background-color var(--duration-fast) var(--ease-out);
+	}
+	.status-links a:hover {
+		background-color: var(--color-hover);
+	}
+	@media (max-width: 639.98px) {
+		.status-links li + li {
+			border-left: 0;
+			border-top: var(--rule-hair) solid var(--color-rule);
+		}
+	}
+</style>

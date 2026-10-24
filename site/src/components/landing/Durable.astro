@@ -1,0 +1,94 @@
+---
+// Built on durable execution: short, and stated the way AGENTS.md states it.
+// Three owners as one register.
+import { route } from '../../../site.config.mjs';
+
+const owners = [
+	{
+		name: 'Temporal',
+		owns: 'Execution',
+		text: 'Run state, retries, timers, cancellation, signals, schedules and replay. Every run is one Temporal workflow of one generic, deterministic interpreter.',
+	},
+	{
+		name: 'Object storage',
+		owns: 'Data',
+		text: 'Artifacts, logs, immutable Orkflow definitions and each task’s committed result. Its records are written once, never a second state machine.',
+	},
+	{
+		name: 'OCI containers',
+		owns: 'Computation',
+		text: 'Any image, run by an Orker that turns files in into files out. Containers get no Temporal, storage or control-plane credentials unless you supply them as secrets.',
+	},
+];
+---
+
+<section class="block durable" aria-labelledby="durable-title">
+	<header class="block-head">
+		<h2 id="durable-title">Built on durable execution</h2>
+		<p>
+			OrkStack runs on Temporal rather than beside it: Temporal is the only source of execution truth, and
+			OrkStack adds no second state machine, scheduler or queue. It needs a Temporal cluster; the local stack
+			runs one. An activity runs at least once, and a stable idempotency key lets the systems it calls
+			deduplicate.
+		</p>
+	</header>
+	<table class="register owners">
+		<caption class="sr-only">Who owns what</caption>
+		<thead>
+			<tr>
+				<th scope="col">Owner</th>
+				<th scope="col">Owns</th>
+				<th scope="col">What that means</th>
+			</tr>
+		</thead>
+		<tbody>
+			{
+				owners.map((o) => (
+					<tr>
+						<th scope="row">{o.name}</th>
+						<td class="owns">{o.owns}</td>
+						<td>{o.text}</td>
+					</tr>
+				))
+			}
+		</tbody>
+	</table>
+	<p class="block-foot">
+		<a class="more" href={route('docs/concepts/product-boundary')}>Product boundary and invariants</a>
+	</p>
+</section>
+
+<style>
+	.owners tbody th {
+		width: 22%;
+		font-weight: var(--font-weight-semibold);
+		text-align: start;
+	}
+	.owns {
+		width: 16%;
+		font-family: var(--font-sans);
+		color: var(--color-ink-muted);
+		font-size: var(--text-2xs);
+		line-height: var(--text-2xs--line-height);
+		font-weight: var(--font-weight-semibold);
+		letter-spacing: var(--tracking-caps);
+		text-transform: uppercase;
+	}
+	@media (max-width: 639.98px) {
+		.owners thead {
+			display: none;
+		}
+		.owners tbody tr {
+			display: grid;
+			grid-template-columns: auto 1fr;
+		}
+		.owners tbody th,
+		.owners .owns {
+			width: auto;
+			border-bottom: 0;
+		}
+		.owners tbody td:last-child {
+			grid-column: 1 / -1;
+		}
+	}
+</style>

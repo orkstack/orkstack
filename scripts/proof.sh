@@ -18,8 +18,8 @@
 # unit, vet-integration, this tree's activity images pushed under a tag of the
 # proof's own, every test of every integration package (as separate processes,
 # PROOF_JOBS at a time), the activity contract fixture on those images, the UI
-# type-check, unit and Playwright suites, and the observability gate whenever
-# the tree differs from main (the branch it merges into) in a telemetry path.
+# type-check, unit and Playwright suites, the site's check and build, and the
+# observability gate whenever the tree differs from main in a telemetry path.
 #
 # The FEATURE proof is a branch's evidence, never merge evidence: the fast
 # gates, the change's evidence (the tests and specs that prove it) and its
@@ -250,7 +250,7 @@ if [ -n "$PART" ]; then
 	exit $?
 fi
 
-ALL_GATES="temporal binaries lint build unit vet-integration images integration activity-fixture ui-check ui-unit ui-e2e observability"
+ALL_GATES="temporal binaries lint build unit vet-integration images integration activity-fixture ui-check ui-unit site ui-e2e observability"
 declare -A RUN=()
 SPEC_ARGS=()
 OBS_PATHS=""
@@ -275,7 +275,7 @@ if [ "$TIER" = feature ]; then
 	for g in lint build unit vet-integration; do RUN[$g]=1; done
 	while IFS='=' read -r key value; do
 		case "$key" in
-		integration | ui_check | ui_unit | ui_e2e | activity_fixture | observability)
+		integration | ui_check | ui_unit | site | ui_e2e | activity_fixture | observability)
 			if [ "$value" = yes ]; then RUN[${key//_/-}]=1; fi
 			;;
 		specs)
@@ -286,7 +286,7 @@ if [ "$TIER" = feature ]; then
 		esac
 	done < <("$PR" gates -select "$SEL_TMP")
 else
-	for g in lint build unit vet-integration images integration activity-fixture ui-check ui-unit ui-e2e; do RUN[$g]=1; done
+	for g in lint build unit vet-integration images integration activity-fixture ui-check ui-unit site ui-e2e; do RUN[$g]=1; done
 	OBS_PATHS="$("$PR" touches -base "$BASE" -action observability)"
 	case $? in
 	0) RUN[observability]=1 ;;
@@ -371,9 +371,17 @@ fi
 if runs integration; then
 	need "the cosign CLI on PATH (image-policy interop test)" command -v cosign
 fi
-if runs ui-check || runs ui-unit || runs ui-e2e; then
+if runs ui-check || runs ui-unit || runs ui-e2e || runs site; then
 	need "bun on PATH" command -v bun
+fi
+if runs ui-check || runs ui-unit || runs ui-e2e; then
 	need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"
+fi
+if runs site; then
+	# The site's scripts (docs sync, token drift check, link check) and astro
+	# itself are Node programs that bun starts.
+	need "node on PATH (the site's scripts and astro run on it)" command -v node
+	need "site/node_modules (cd site && bun install --frozen-lockfile)" test -d "$REPO/site/node_modules"
 fi
 if runs ui-e2e; then
 	need "flock on PATH (the Playwright gate's host lock)" command -v flock
@@ -588,12 +596,12 @@ wait_bg() {
 }
 
 # ---- P1: the fast gates, one after another, before anything long ---------------
-# Lint, build, unit, vet, and the two UI gates run alone and in this order,
-# before the Temporal, the images and the binaries the long gates need, and
-# before any of them starts: a failure here is known in minutes, and the proof
-# stops with nothing long started. The unit suites also run with nothing else
-# on the host's CPU from this proof: mocked-environment tests can be
-# load-sensitive.
+# Lint, build, unit, vet, the two UI gates and the site gate run alone and in
+# this order, before the Temporal, the images and the binaries the long gates
+# need, and before any of them starts: a failure here is known in minutes, and
+# the proof stops with nothing long started. The unit suites also run with
+# nothing else on the host's CPU from this proof: mocked-environment tests can
+# be load-sensitive.
 #
 # The gate lists are anchored to the base (AGENTS.md §11.2): an entry the
 # change itself adds, or removes, excuses nothing until the base carries it.
@@ -608,6 +616,7 @@ if ! "$PR" touches -base "$BASE_COMMIT" -gate-files >"$DIR/lists-changed.json" 2
 	say "WARNING: the gate files this change edits could not be listed: $(cat "$DIR/lists-changed.log")"
 fi
 in_ui() { (cd "$REPO/ui" && "$@"); }
+in_site() { (cd "$REPO/site" && "$@"); }
 step lint lint.log make lint
 step build build.log go build ./...
 step unit unit.log env ORK_PROOF_DIR="$DIR/artifacts" "$PR" unit -out "$DIR" \
@@ -623,6 +632,11 @@ if [ -z "$FF_TRIGGER" ] && { runs ui-check || runs ui-unit; }; then
 fi
 step ui-check ui-check.log in_ui bun run check
 step ui-unit ui-unit.log in_ui bun test test/
+# The site renders the repository's markdown, the examples, the generated
+# defaults and API reference, and takes its style from ui/src/tokens.css; one
+# command checks it (the docs sync, the token drift check, astro check) and
+# builds it (link validation included). It needs no Temporal and no Docker.
+step site site.log in_site bash -c 'bun run check && bun run build'
 
 # ---- P0: Temporal, images, binaries ---------------------------------------------
 TEMPORAL_ADDRESS="127.0.0.1:7233"

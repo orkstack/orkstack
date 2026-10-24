@@ -1,6 +1,7 @@
 <!--
-Thanks for the change. CI's `proof` check is the merge gate; docs/PROOFS.md
-says what it runs and how to read it. You never need the full proof locally.
+Thanks for the change. CONTRIBUTING.md is the checklist. CI's `proof` check
+is the merge gate; docs/PROOFS.md says what each proof tier runs and how to
+read it. You never need the full proof locally.
 -->
 
 ## What changed

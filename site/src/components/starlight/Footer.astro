@@ -1,0 +1,28 @@
+---
+// Starlight's footer (its edit link and pagination), then the page's facts
+// as the UI's title block: where the page comes from in the repository.
+import Default from '@astrojs/starlight/components/Footer.astro';
+import TitleBlock from '../shared/TitleBlock.astro';
+import { REPO, BRANCH } from '../../../site.config.mjs';
+
+const { editUrl } = Astro.locals.starlightRoute;
+const edit = editUrl?.href ?? '';
+const prefix = `${REPO}/edit/${BRANCH}/`;
+const source = edit.startsWith(prefix) ? edit.slice(prefix.length) : '';
+const cells = [
+	source
+		? { label: 'Source', value: source, href: `${REPO}/blob/${BRANCH}/${source}` }
+		: { label: 'Source', value: 'this site' },
+	{ label: 'Status', value: 'Pre-release' },
+	{ label: 'License', value: 'MIT', href: `${REPO}/blob/${BRANCH}/LICENSE` },
+];
+---
+
+<Default {...Astro.props}><slot /></Default>
+<TitleBlock cells={cells} class="docs-titleblock" label="About this page" />
+
+<style>
+	:global(.docs-titleblock) {
+		margin-top: calc(var(--spacing) * 10);
+	}
+</style>

@@ -42,6 +42,8 @@ part_require() {
 		part_need "go on PATH" command -v go
 		part_need "bun on PATH" command -v bun
 		part_need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"
+		part_need "node on PATH (the site's scripts and astro run on it)" command -v node
+		part_need "site/node_modules (cd site && bun install --frozen-lockfile)" test -d "$REPO/site/node_modules"
 		part_need "make on PATH" command -v make
 		;;
 	integration:*)
@@ -298,6 +300,8 @@ part_main() { # <part>
 		part_run vet-integration vet-integration.log go vet -tags=integration ./... || true
 		(cd "$REPO/ui" && bun run check >"$DIR/ui-check.log" 2>&1) && printf 'ui-check\tpass\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv" || printf 'ui-check\tfail\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv"
 		(cd "$REPO/ui" && bun test test/ >"$DIR/ui-unit.log" 2>&1) && printf 'ui-unit\tpass\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv" || printf 'ui-unit\tfail\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv"
+		# The site's check and build, recorded as the UI gates are.
+		(cd "$REPO/site" && bun run check && bun run build) >"$DIR/site.log" 2>&1 && printf 'site\tpass\t0\tsite.log\tbun run check && bun run build\n' >>"$DIR/gates.tsv" || printf 'site\tfail\t0\tsite.log\tbun run check && bun run build\n' >>"$DIR/gates.tsv"
 		;;
 	integration:*)
 		local k="${PART#integration:}"

@@ -1,0 +1,28 @@
+---
+// One of the UI's own icons (ui/src/lib/icons.ts): authored SVG on a 16-unit
+// grid, one 1.5 stroke, drawn in currentColor and hidden from assistive
+// technology. The control it sits in carries the name.
+import { ICONS } from '../../../../ui/src/lib/icons';
+
+type Name = keyof typeof ICONS;
+interface Props {
+	name: Name;
+	class?: string;
+}
+const { name, class: className } = Astro.props;
+const paths = ICONS[name];
+---
+
+<svg
+	viewBox="0 0 16 16"
+	fill="none"
+	stroke="currentColor"
+	stroke-width="1.5"
+	stroke-linecap="round"
+	stroke-linejoin="round"
+	aria-hidden="true"
+	focusable="false"
+	class={className}
+>
+	{paths.map((d: string) => <path d={d} />)}
+</svg>

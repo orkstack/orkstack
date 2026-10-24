@@ -1,0 +1,239 @@
+---
+// A real Orkflow, read from examples/ at build time and never retyped, with
+// numbered balloons in its margin keyed to a parts list: what each part
+// does, and where the DSL reference says so. Below it, a run of this same
+// file in the UI.
+import { Code } from 'astro:components';
+import DrawingFrame from '../shared/DrawingFrame.astro';
+import ThemeShot from '../shared/ThemeShot.astro';
+import { shot } from '../../lib/media';
+import { example, lineOf } from '../../lib/example';
+import codeThemes from '../../styles/generated/code-themes.json';
+import { route, repoUrl } from '../../../site.config.mjs';
+
+const each = lineOf(/^\s+each:/);
+const notes = [
+	{
+		line: lineOf(/^apiVersion:/),
+		key: 'Header',
+		text: '<code>apiVersion</code> and <code>kind</code> say what the document is; <code>name</code> and <code>version</code> name it. Applying stores that version, immutably, pinned by a SHA-256 digest.',
+		href: route('docs/authoring/dsl') + '#the-document-header',
+	},
+	{
+		line: lineOf(/- id: list/),
+		key: 'A task that decides',
+		text: 'A <code>json</code> task computes the list once, with jq, and returns it as its values. <code>network: none</code> starts its container with no network at all.',
+		href: route('docs/authoring/patterns'),
+	},
+	{
+		line: lineOf(/needs: \[list\]/),
+		key: 'needs',
+		text: 'The only thing that orders tasks. <code>convert</code> starts when <code>list</code> has succeeded; tasks without needs start at once, in parallel.',
+		href: route('docs/authoring/dsl') + '#tasks',
+	},
+	{
+		line: each,
+		key: 'each',
+		text: 'A fan-out: one durable item per element of <code>list</code>’s result, at most two at a time, each with its own attempts, logs and artifacts.',
+		href: route('docs/authoring/dsl') + '#fan-out-each',
+	},
+	{
+		line: lineOf(/retry:/),
+		key: 'retry',
+		text: 'Up to two attempts per item, with backoff. A task without <code>retry:</code> makes exactly one.',
+		href: route('docs/authoring/dsl') + '#tasks',
+	},
+	{
+		line: lineOf(/printf/, each),
+		key: 'with',
+		text: 'The image’s own configuration, rendered per item. The <code>sh</code> helper quotes a value for the shell; a file written under <code>/orkstack/output/artifacts</code> is an artifact.',
+		href: route('docs/authoring/dsl') + '#templating',
+	},
+	{
+		line: lineOf(/cat \/orkstack\/input\/artifacts/),
+		key: 'Artifacts in',
+		text: '<code>merge</code> reads every item’s file from <code>/orkstack/input</code>. The bytes travel through object storage, never through the engine.',
+		href: route('docs/activities/contract'),
+	},
+].map((n, i) => ({ ...n, n: i + 1 }));
+
+const run = shot('ui-run-finished');
+const code = example.lines.join('\n');
+---
+
+<section class="block example" aria-labelledby="example-title">
+	<header class="block-head">
+		<h2 id="example-title">A real Orkflow, part by part</h2>
+		<p>
+			<a href={repoUrl(example.path)} class="figure">{example.path}</a>, as the repository has it, from its
+			header on. It runs with nothing but the local stack.
+		</p>
+	</header>
+	<div class="example-body">
+		<div class="listing" style={`--first-line: ${example.firstLine}`}>
+			<ol class="balloons" aria-hidden="true">
+				{
+					notes.map((n) => (
+						<li class="balloon" style={`--line: ${n.line}`}>
+							{n.n}
+						</li>
+					))
+				}
+			</ol>
+			<Code
+				code={code}
+				lang="yaml"
+				themes={codeThemes as any}
+				defaultColor={false}
+				class="listing-code"
+			/>
+		</div>
+		<ol class="register parts-list" aria-label="What each part does">
+			{
+				notes.map((n) => (
+					<li>
+						<span class="balloon" aria-hidden="true">
+							{n.n}
+						</span>
+						<div>
+							<span class="parts-key">
+								{n.key}
+								<span class="parts-line figure">line {n.line + example.firstLine - 1}</span>
+							</span>
+							<p set:html={n.text} />
+							<a class="more" href={n.href}>
+								Reference
+							</a>
+						</div>
+					</li>
+				))
+			}
+		</ol>
+	</div>
+	<DrawingFrame caption={`${example.name} @ ${example.version} · a finished run`} class="example-run">
+		<ThemeShot shot={run} sizes="(min-width: 1280px) 1240px, 100vw" />
+		<p slot="after" class="frame-note">{run.caption}</p>
+	</DrawingFrame>
+</section>
+
+<style>
+	.example-body {
+		display: grid;
+		gap: calc(var(--spacing) * 8);
+		align-items: start;
+	}
+	@media (min-width: 1100px) {
+		.example-body {
+			grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+		}
+	}
+	/* The listing: a margin of balloons, then the code. Every line has the
+	   same height, so a balloon's place is its line number times it. */
+	.listing {
+		--line-height: var(--text-sm--line-height);
+		--pad: calc(var(--spacing) * 4);
+		position: relative;
+		display: grid;
+		grid-template-columns: calc(var(--spacing) * 9) minmax(0, 1fr);
+		border: var(--rule-region) solid var(--color-ink);
+		background-color: var(--color-paper-sunken);
+	}
+	.balloons {
+		position: relative;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-right: var(--rule-hair) solid var(--color-rule);
+	}
+	/* In the margin a balloon is one line tall, so two on adjacent lines
+	   never touch. */
+	.balloons .balloon {
+		position: absolute;
+		left: 50%;
+		top: calc(var(--pad) + (var(--line) - 1) * var(--line-height) + var(--line-height) / 2);
+		width: calc(var(--line-height) - var(--rule-region));
+		height: calc(var(--line-height) - var(--rule-region));
+		font-size: var(--text-2xs);
+		transform: translate(-50%, -50%);
+	}
+	/* The listing's colours: Shiki's two themes (made from tokens.css), the
+	   page's data-theme choosing, and the system choosing with JS off. */
+	.listing :global(.listing-code span) {
+		color: var(--shiki-light);
+		font-weight: var(--shiki-light-font-weight);
+		font-style: var(--shiki-light-font-style);
+	}
+	:global(:root[data-theme='dark']) .listing :global(.listing-code span) {
+		color: var(--shiki-dark);
+		font-weight: var(--shiki-dark-font-weight);
+		font-style: var(--shiki-dark-font-style);
+	}
+	@media (prefers-color-scheme: dark) {
+		:global(:root:not([data-theme])) .listing :global(.listing-code span) {
+			color: var(--shiki-dark);
+			font-weight: var(--shiki-dark-font-weight);
+			font-style: var(--shiki-dark-font-style);
+		}
+	}
+	.listing :global(.listing-code) {
+		margin: 0;
+		padding: var(--pad);
+		overflow-x: auto;
+		/* Shiki paints its theme's ground inline; the listing's own is the
+		   sunken paper around it. */
+		background-color: transparent !important;
+		font-family: var(--font-mono);
+		font-size: var(--text-sm);
+		line-height: var(--line-height);
+	}
+	.listing :global(.listing-code code) {
+		font-family: inherit;
+	}
+	.parts-list {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-top: var(--rule-region) solid var(--color-ink);
+	}
+	.parts-list li {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: calc(var(--spacing) * 3);
+		padding-block: calc(var(--spacing) * 3);
+		border-bottom: var(--rule-hair) solid var(--color-rule);
+	}
+	.parts-key {
+		display: flex;
+		align-items: baseline;
+		gap: calc(var(--spacing) * 2);
+		font-weight: var(--font-weight-semibold);
+		font-size: var(--text-md);
+		line-height: var(--text-md--line-height);
+	}
+	.parts-line {
+		color: var(--color-ink-muted);
+		font-size: var(--text-xs);
+		font-weight: var(--font-weight-normal);
+	}
+	.parts-list p {
+		margin: calc(var(--spacing) * 1) 0;
+		color: var(--color-ink-secondary);
+		font-size: var(--text-base);
+		line-height: var(--text-base--line-height);
+	}
+	.parts-list :global(code) {
+		font-family: var(--font-mono);
+		font-size: 0.92em;
+		color: var(--color-ink);
+	}
+	.example-run {
+		margin-top: calc(var(--spacing) * 12);
+	}
+	.frame-note {
+		margin: 0;
+		border-top: var(--rule-hair) solid var(--color-rule);
+		padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+		color: var(--color-ink-secondary);
+		font-size: var(--text-sm);
+	}
+</style>

@@ -1,0 +1,290 @@
+---
+// The model in three parts, and ARCHITECTURE.md's diagram redrawn in the
+// UI's own drawing language: paper boxes with a 1.5 px ink outline, the name
+// in the sans and a second line in the mono, orthogonal edges with
+// arrowheads, on the drafting grid. Balloons key the three parts to the list
+// beside it. Two drawings of the same graph: across on a wide screen, down on
+// a narrow one, as the UI's Direction Rule chooses between them.
+import DrawingFrame from '../shared/DrawingFrame.astro';
+import { route } from '../../../site.config.mjs';
+
+type Node = { id: string; x: number; y: number; name: string; note: string; balloon?: number };
+type Edge = { d: string; label?: string; lx?: number; ly?: number; anchor?: 'start' | 'middle' | 'end' };
+const W = 190;
+const H = 58;
+
+// Across: four columns, three rows.
+const across: { w: number; h: number; nodes: Node[]; edges: Edge[] } = {
+	w: 1160,
+	h: 440,
+	nodes: [
+		{ id: 'orkflow', x: 40, y: 48, name: 'Orkflow', note: 'a YAML document', balloon: 1 },
+		{ id: 'clients', x: 330, y: 48, name: 'orkctl · UI · API', note: 'one Connect contract' },
+		{ id: 'ork', x: 620, y: 48, name: 'ork', note: 'engine and API' },
+		{ id: 'http', x: 910, y: 48, name: 'Triggers, callbacks', note: 'plain HTTP' },
+		{ id: 'temporal', x: 620, y: 200, name: 'Temporal', note: 'durable execution' },
+		{ id: 'orker', x: 910, y: 200, name: 'Orker', note: 'a generic worker', balloon: 3 },
+		{ id: 'storage', x: 620, y: 352, name: 'Object storage', note: 'S3-compatible' },
+		{ id: 'activity', x: 910, y: 352, name: 'Activity', note: 'any OCI image', balloon: 2 },
+	],
+	edges: [
+		{ d: 'M230 77H330', label: 'apply', lx: 280, ly: 69 },
+		{ d: 'M520 77H620', label: 'submit', lx: 570, ly: 69 },
+		{ d: 'M910 77H810', label: 'start', lx: 860, ly: 69 },
+		{ d: 'M715 106V200', label: 'start a run', lx: 724, ly: 158, anchor: 'start' },
+		{ d: 'M810 229H910', label: 'dispatch', lx: 860, ly: 221 },
+		{ d: 'M1005 258V352', label: 'run, files in and out', lx: 1014, ly: 310, anchor: 'start' },
+		{ d: 'M910 244H866V381H810', label: 'artifacts, records', lx: 858, ly: 312, anchor: 'end' },
+	],
+};
+
+// Down: two columns, for a narrow screen.
+const down: typeof across = {
+	w: 470,
+	h: 690,
+	nodes: [
+		{ id: 'orkflow', x: 20, y: 24, name: 'Orkflow', note: 'a YAML document', balloon: 1 },
+		{ id: 'clients', x: 20, y: 152, name: 'orkctl · UI · API', note: 'one Connect contract' },
+		{ id: 'ork', x: 20, y: 280, name: 'ork', note: 'engine and API' },
+		{ id: 'http', x: 260, y: 280, name: 'Triggers, callbacks', note: 'plain HTTP' },
+		{ id: 'temporal', x: 20, y: 408, name: 'Temporal', note: 'durable execution' },
+		{ id: 'orker', x: 260, y: 408, name: 'Orker', note: 'a generic worker', balloon: 3 },
+		{ id: 'storage', x: 20, y: 590, name: 'Object storage', note: 'S3-compatible' },
+		{ id: 'activity', x: 260, y: 590, name: 'Activity', note: 'any OCI image', balloon: 2 },
+	],
+	edges: [
+		{ d: 'M115 82V152', label: 'apply', lx: 124, ly: 122, anchor: 'start' },
+		{ d: 'M115 210V280', label: 'submit', lx: 124, ly: 250, anchor: 'start' },
+		{ d: 'M260 309H210', label: '', lx: 0, ly: 0 },
+		{ d: 'M115 338V408', label: 'start a run', lx: 124, ly: 378, anchor: 'start' },
+		{ d: 'M210 437H260', label: '', lx: 0, ly: 0 },
+		{ d: 'M355 466V590', label: 'run, files', lx: 364, ly: 530, anchor: 'start' },
+		{ d: 'M300 466V530H115V590', label: 'artifacts, records', lx: 124, ly: 522, anchor: 'start' },
+	],
+};
+
+const parts = [
+	{
+		n: 1,
+		name: 'Orkflow',
+		text: 'A YAML document: tasks, the needs that order them, typed inputs and each task’s configuration. Apply validates it, resolves every image to a digest and stores an immutable version.',
+		href: route('docs/authoring/dsl'),
+		link: 'DSL reference',
+	},
+	{
+		n: 2,
+		name: 'Activity',
+		text: 'Any OCI image. It reads its inputs as files under /orkstack/input, writes its results under /orkstack/output, logs to stdout and stderr, and exits. No SDK.',
+		href: route('docs/activities/contract'),
+		link: 'OCI activity contract',
+	},
+	{
+		n: 3,
+		name: 'Orker',
+		text: 'A generic worker that runs any task’s image. There is no per-Orkflow worker code: pool: selects which Orkers run a task, and pin: keeps a group of tasks on one Orker.',
+		href: route('docs/concepts/architecture'),
+		link: 'Architecture',
+	},
+];
+const drawings = [
+	{ key: 'across', g: across },
+	{ key: 'down', g: down },
+];
+---
+
+<section class="block model" aria-labelledby="model-title">
+	<header class="block-head">
+		<h2 id="model-title">The model, in three parts</h2>
+		<p>
+			An Orkflow says what should happen. Activities do the work. Orkers run the activities. Temporal keeps
+			every run durable, and object storage holds every byte the tasks pass on.
+		</p>
+	</header>
+	<div class="model-body">
+		<DrawingFrame caption="How a run flows · ARCHITECTURE.md" grid class="model-frame">
+			{
+				drawings.map(({ key, g }) => (
+					<svg
+						class:list={['model-drawing', `model-${key}`]}
+						viewBox={`0 0 ${g.w} ${g.h}`}
+						role="img"
+						aria-labelledby={`model-${key}-title`}
+					>
+						<title id={`model-${key}-title`}>
+							An Orkflow is applied through orkctl, the UI or the API to the ork engine; triggers and callbacks
+							also reach it over plain HTTP. The engine starts each run on Temporal, which dispatches tasks to
+							Orkers. An Orker runs the activity's OCI image, passing files in and out, and writes artifacts and
+							records to object storage.
+						</title>
+						<defs>
+							<marker id={`arrow-${key}`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+								<path d="M0 0L8 4L0 8z" class="model-arrow" />
+							</marker>
+						</defs>
+						{g.edges.map((e) => (
+							<>
+								<path d={e.d} class="model-edge" marker-end={`url(#arrow-${key})`} />
+								{e.label && (
+									<text x={e.lx} y={e.ly} class="model-edge-label" text-anchor={e.anchor ?? 'middle'}>
+										{e.label}
+									</text>
+								)}
+							</>
+						))}
+						{g.nodes.map((n) => (
+							<g transform={`translate(${n.x} ${n.y})`}>
+								<rect width={W} height={H} class="model-node" />
+								<text x="14" y="25" class="model-name">
+									{n.name}
+								</text>
+								<text x="14" y="44" class="model-note">
+									{n.note}
+								</text>
+								{n.balloon && (
+									<g transform={`translate(${W} 0)`} class="model-balloon">
+										<circle r="12" />
+										<text y="4.5" text-anchor="middle">
+											{n.balloon}
+										</text>
+									</g>
+								)}
+							</g>
+						))}
+					</svg>
+				))
+			}
+		</DrawingFrame>
+		<ol class="parts" aria-label="The three parts">
+			{
+				parts.map((p) => (
+					<li class="part">
+						<span class="balloon" aria-hidden="true">
+							{p.n}
+						</span>
+						<div>
+							<h3>{p.name}</h3>
+							<p>{p.text}</p>
+							<a class="more" href={p.href}>
+								{p.link}
+							</a>
+						</div>
+					</li>
+				))
+			}
+		</ol>
+	</div>
+</section>
+
+<style>
+	.model-body {
+		display: grid;
+		gap: calc(var(--spacing) * 8);
+	}
+	.model-frame :global(.frame-body) {
+		padding: calc(var(--spacing) * 10) calc(var(--spacing) * 4) calc(var(--spacing) * 4);
+	}
+	.model-drawing {
+		display: block;
+		width: 100%;
+		height: auto;
+	}
+	.model-across {
+		display: none;
+	}
+	.model-down {
+		max-width: 30rem;
+		margin-inline: auto;
+	}
+	@media (min-width: 900px) {
+		.model-across {
+			display: block;
+		}
+		.model-down {
+			display: none;
+		}
+	}
+	.model-node {
+		fill: var(--color-paper);
+		stroke: var(--color-ink);
+		stroke-width: var(--rule-region);
+		vector-effect: non-scaling-stroke;
+	}
+	.model-name {
+		fill: var(--color-ink);
+		font-family: var(--font-sans);
+		font-size: 15px;
+		font-weight: var(--font-weight-semibold);
+	}
+	.model-note {
+		fill: var(--color-ink-secondary);
+		font-family: var(--font-mono);
+		font-size: 11.5px;
+	}
+	.model-edge {
+		fill: none;
+		stroke: var(--color-ink);
+		stroke-width: var(--rule-region);
+		vector-effect: non-scaling-stroke;
+	}
+	.model-arrow {
+		fill: var(--color-ink);
+	}
+	.model-edge-label {
+		fill: var(--color-ink-secondary);
+		font-family: var(--font-mono);
+		font-size: 11px;
+		paint-order: stroke;
+		stroke: var(--color-paper);
+		stroke-width: 4px;
+	}
+	.model-balloon circle {
+		fill: var(--color-paper);
+		stroke: var(--color-ink);
+		stroke-width: var(--rule-region);
+		vector-effect: non-scaling-stroke;
+	}
+	.model-balloon text {
+		fill: var(--color-ink);
+		font-family: var(--font-sans);
+		font-size: 13px;
+		font-weight: var(--font-weight-bold);
+	}
+	.parts {
+		display: grid;
+		gap: 0;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-top: var(--rule-region) solid var(--color-ink);
+	}
+	.part {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: calc(var(--spacing) * 4);
+		padding-block: calc(var(--spacing) * 5);
+		border-bottom: var(--rule-hair) solid var(--color-rule);
+	}
+	.part h3 {
+		margin: 0;
+		font-size: var(--text-lg);
+		line-height: var(--text-lg--line-height);
+		font-weight: var(--font-weight-semibold);
+	}
+	.part p {
+		margin: calc(var(--spacing) * 1.5) 0 calc(var(--spacing) * 2);
+		color: var(--color-ink-secondary);
+		font-size: var(--text-md);
+		line-height: var(--text-md--line-height);
+	}
+	@media (min-width: 900px) {
+		.parts {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			column-gap: calc(var(--spacing) * 8);
+			border-top: 0;
+		}
+		.part {
+			border-top: var(--rule-region) solid var(--color-ink);
+			border-bottom: 0;
+		}
+	}
+</style>

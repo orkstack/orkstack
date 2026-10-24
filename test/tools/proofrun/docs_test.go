@@ -125,6 +125,36 @@ func TestProofsDoc_MentionsEverythingThatExists(t *testing.T) {
 	}
 }
 
+// The scope table's actions are a vocabulary a contributor reads in the table
+// and in this document: every action the parser knows is named in §3.
+func TestProofsDoc_NamesEveryScopeAction(t *testing.T) {
+	doc := readProofsDoc(t)
+	i := strings.Index(doc, "The scope table's actions:")
+	if i < 0 {
+		t.Fatal("docs/PROOFS.md does not list the scope table's actions")
+	}
+	paragraph := doc[i : i+strings.Index(doc[i:], "\n\n")]
+	var missing []string
+	for action := range knownActions {
+		if !strings.Contains(paragraph, "`"+action+"`") {
+			missing = append(missing, action)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("docs/PROOFS.md §3 omits the scope actions %v", missing)
+	}
+	table, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "proof-scope.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for action := range knownActions {
+		if !regexp.MustCompile(`(?m)^#\s+(actions\s+)?` + regexp.QuoteMeta(action) + `\s`).Match(table) {
+			t.Errorf("scripts/proof-scope.tsv's legend omits the action %s", action)
+		}
+	}
+}
+
 func TestProofsDoc_CountsWhatItChecks(t *testing.T) {
 	workflows := workflowJobs(t)
 	jobs := 0

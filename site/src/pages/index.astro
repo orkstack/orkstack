@@ -1,0 +1,25 @@
+---
+import Landing from '../layouts/Landing.astro';
+import Hero from '../components/landing/Hero.astro';
+import Model from '../components/landing/Model.astro';
+import Example from '../components/landing/Example.astro';
+import Features from '../components/landing/Features.astro';
+import Durable from '../components/landing/Durable.astro';
+import Limits from '../components/landing/Limits.astro';
+import Quickstart from '../components/landing/Quickstart.astro';
+import Status from '../components/landing/Status.astro';
+---
+
+<Landing
+	title="OrkStack: durable workflows without workflow code"
+	description="Author Orkflows in YAML and run any OCI image as a durable step on a fleet of generic workers, on Temporal and S3-compatible storage. Pre-release, MIT licensed."
+>
+	<Hero />
+	<Model />
+	<Example />
+	<Features />
+	<Durable />
+	<Limits />
+	<Quickstart />
+	<Status />
+</Landing>

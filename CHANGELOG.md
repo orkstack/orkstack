@@ -46,6 +46,26 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- A landing page and documentation site in `site/` (Astro and Starlight),
+  deployed to GitHub Pages at https://orkstack.github.io/orkstack/ on every
+  push to `main` (`.github/workflows/site.yml`); a pull request uploads the
+  built site as an artifact. The docs are the repository's own markdown,
+  ported on every build (`site/docs.manifest.json`), and the site takes its
+  whole style from `ui/src/tokens.css`: `make site` checks and builds it,
+  failing on a colour or face outside the tokens and on a broken link, and
+  `make site-media` regenerates its screenshots and recordings from the real
+  stack. Proofs run it as the `site` gate.
+- `docs/API.md`, the client-facing API reference, generated from the proto
+  sources' comments (`make api-reference`, and `make proto` regenerates it).
+- `docs/REASONS.md`, every machine-readable failure reason with what it means
+  and what to do, held complete against the reason constants.
+- New reference pages: `docs/GETTING_STARTED.md`, `docs/WEBHOOKS.md`,
+  `docs/SECURITY_MODEL.md`, `docs/LIMITATIONS.md`, `docs/UPGRADING.md`,
+  `docs/PRODUCTION_CHECKLIST.md`, `docs/TROUBLESHOOTING.md` and
+  `docs/PROVEN.md` (how OrkStack is proven).
+- Issue forms for bugs, feature requests and questions, and
+  `.github/SUPPORT.md`: questions go to GitHub Issues.
+
 - The proof runs sharded in CI: `proofrun integration -plan-only` writes one
   plan, `-plan … -shard K` runs one shard of it, and `proofrun merge` merges
   every part into one `proof.json` with the same eligibility rules a local
