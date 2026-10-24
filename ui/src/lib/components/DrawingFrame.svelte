@@ -5,11 +5,12 @@
 <script lang="ts">
 	// The frame a run's (or an Orkflow's) tasks are drawn in: a box with a
 	// 1.5 px ink rule, its view tabs and caption on a paper patch at the top
-	// left, and — behind the DAG only — the drafting grid. Its height is CSS,
-	// never measured: the task map's frame is --spacing-drawing tall, and the
-	// DAG's is its drawing plus the patch and padding, up to that height
-	// (min(--spacing-drawing, content + 48 px)), so a six-task DAG is not
-	// a page of empty grid.
+	// left, and — behind the DAG only — the drafting grid. It is its content
+	// plus the patch and padding, up to --spacing-drawing
+	// (min(--spacing-drawing, content + 48 px)), so a six-task run is not a
+	// page of empty frame: the DAG's height is the drawing's own (CSS, from
+	// its aspect), the task map's is computed from the frame's width before
+	// first paint (mapHeight).
 	//
 	// The DAG is BOUNDED, on every page: up to DAG_DRAW_LIMIT tasks it is
 	// drawn; up to DAG_LEGIBLE_LIMIT on request; beyond that it is never laid
@@ -28,6 +29,7 @@
 	import DagGraph from './DagGraph.svelte';
 	import Icon from './Icon.svelte';
 	import { DAG_LEGIBLE_LIMIT, dagBound, neighbourhood, type NodeState } from '$lib/dag';
+	import { mapGeometry } from '$lib/taskMap';
 
 	interface Props {
 		testid: string;
@@ -55,6 +57,12 @@
 		/** Where a reader goes instead past the limit, for a page with no selection (the Orkflow page). */
 		largeHint?: string;
 		map?: Snippet;
+		/**
+		 * The task map's sections (its tasks, then each fan-out's items), for
+		 * sizing its frame: like the DAG's, the map's frame is its content plus
+		 * the patch and padding, up to --spacing-drawing.
+		 */
+		mapSections?: { count: number; labelled: boolean }[];
 	}
 
 	let {
@@ -74,7 +82,8 @@
 		onselect,
 		neighbourhoodWhenLarge = false,
 		largeHint = 'The task register below lists every task and what it needs.',
-		map
+		map,
+		mapSections = undefined
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -138,6 +147,32 @@
 		measure();
 	}
 
+	// The task map's frame: as tall as the map the frame's width lays out at
+	// the largest pitch that fits, plus the 32 px patch, the 16 px padding and
+	// the 3 px of rules; the whole --spacing-drawing when even the smallest
+	// pitch does not fit (the map then scrolls inside it). Measured once the
+	// frame is laid out, before its first paint, from the same geometry the
+	// map itself is drawn with.
+	let section = $state<HTMLElement | undefined>(undefined);
+	let frameBox = $state({ width: 0, max: 0 });
+	$effect(() => {
+		const el = section;
+		if (!el || !mapSections || typeof ResizeObserver === 'undefined') return;
+		const observer = new ResizeObserver(() => {
+			frameBox = { width: el.clientWidth, max: parseFloat(getComputedStyle(el).maxHeight) || 0 };
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	});
+	const MAP_CHROME = 32 + 16 + 3;
+	const mapHeight = $derived.by(() => {
+		if (view !== 'map' || !mapSections || frameBox.width <= 0 || frameBox.max <= 0) return undefined;
+		const room = frameBox.max - MAP_CHROME;
+		const g = mapGeometry(mapSections, frameBox.width - 16, room);
+		// At least one line of text: the map's "Laying out…" before it paints.
+		return g.scroll > 0 ? frameBox.max : MAP_CHROME + Math.max(g.height, 20);
+	});
+
 	function scrollBy(direction: 1 | -1): void {
 		const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 		panel?.scrollBy({ left: direction * panel.clientWidth * 0.75, behavior: still ? 'auto' : 'smooth' });
@@ -167,9 +202,11 @@
 {/snippet}
 
 <section
+	bind:this={section}
 	data-testid={testid}
 	aria-label="Tasks of {orkflowLabel}"
-	class="frame relative isolate flex flex-col overflow-hidden {view === 'dag' ? 'max-h-drawing' : 'h-drawing'}"
+	class="frame relative isolate flex flex-col overflow-hidden max-h-drawing {view === 'dag' || mapHeight !== undefined ? '' : 'h-drawing'}"
+	style:height={mapHeight !== undefined ? `${mapHeight}px` : undefined}
 >
 	<div
 		class="relative z-10 flex h-8 shrink-0 items-stretch self-start border-r border-b border-ink bg-paper {drawn && (hidden.left || hidden.right)

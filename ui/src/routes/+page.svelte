@@ -266,8 +266,8 @@
 			<p class="text-sm text-ink-muted" data-testid="running-empty">Nothing is running in {shown}.</p>
 		{:else}
 			<div class="overflow-x-auto">
-				<table class="register min-w-[560px]" data-testid="running-list">
-					<thead>
+				<table class="register register-stacked sm:min-w-[560px]" data-testid="running-list">
+					<thead class="max-sm:sr-only">
 						<tr>
 							<th scope="col">Run</th>
 							<th scope="col">Orkflow</th>
@@ -299,8 +299,8 @@
 			<p class="text-sm text-ink-muted" data-testid="failures-empty">No run failed in this window.</p>
 		{:else}
 			<div class="overflow-x-auto">
-				<table class="register min-w-[420px]" data-testid="failure-table">
-					<thead>
+				<table class="register register-stacked sm:min-w-[420px]" data-testid="failure-table">
+					<thead class="max-sm:sr-only">
 						<tr>
 							<th scope="col">Orkflow</th>
 							<th scope="col" class="text-right">Failed</th>
@@ -320,8 +320,9 @@
 										)}>{failure.orkflowName}</a
 									>
 								</td>
-								<td class="figure text-right font-semibold text-red">{failure.failed.toString()}</td>
-								<td class="figure text-right text-ink-secondary">{failure.total.toString()}</td>
+								<!-- Stacked below 640 px, the figures say what they count. -->
+								<td class="figure text-right font-semibold text-red">{failure.failed.toString()}<span class="font-sans font-normal sm:hidden"> failed</span></td>
+								<td class="figure text-ink-secondary sm:text-right"><span class="font-sans sm:hidden">of </span>{failure.total.toString()}<span class="font-sans sm:hidden"> finished</span></td>
 							</tr>
 						{/each}
 					</tbody>
@@ -348,8 +349,8 @@
 			<p class="text-sm text-ink-muted" data-testid="pools-empty">No pool could be read for {shown}.</p>
 		{:else}
 			<div class="overflow-x-auto">
-				<table class="register min-w-[480px]" data-testid="pool-list">
-					<thead>
+				<table class="register register-stacked sm:min-w-[480px]" data-testid="pool-list">
+					<thead class="max-sm:sr-only">
 						<tr>
 							<th scope="col">Pool</th>
 							<th scope="col">Orkers</th>

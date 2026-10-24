@@ -1536,6 +1536,12 @@
 			items: t.each !== undefined || taskDefs.get(t.id)?.each !== undefined ? t.items.map((i) => ({ index: i.index, status: i.status })) : undefined
 		}));
 	}
+	// The map's sections as its frame is sized by: every task, then each
+	// fan-out's items (the same sections the map builds, $lib/taskMap).
+	const mapSections = $derived([
+		{ count: tasks.length, labelled: false },
+		...tasks.filter((t) => isFanOut(t.id) && t.items.length > 0).map((t) => ({ count: t.items.length, labelled: true }))
+	]);
 	let legend = $state.raw(new Map<Status, number>());
 	// Of each status the map's key counts, the cells that never started.
 	const legendNever = $derived.by(() => {
@@ -1979,6 +1985,7 @@
 				hrefOf={(id) => taskHref(id, 0)}
 				onselect={(id) => selectTask(id)}
 				neighbourhoodWhenLarge
+				{mapSections}
 			>
 				{#snippet map()}
 					<TaskMap
@@ -1997,7 +2004,17 @@
 				{#if view === 'map'}
 					<TaskMapLegend counts={legend} neverStarted={legendNever} onpick={(status) => taskMap?.focusStatus(status)} />
 				{:else}
-					<p class="text-xs text-ink-muted">A dashed outline is a failure handler; a faded node never started.</p>
+					{@const handlers = tasks.some((t) => isFailureHandler(joinOf(t.id)))}
+					{@const faded = tasks.some((t) => neverStarted(t))}
+					{#if handlers || faded}
+						<!-- The key says only what this drawing shows. -->
+						<p class="text-xs text-ink-muted" data-testid="run-dag-key">
+							{[handlers ? 'A dashed outline is a failure handler' : '', faded ? 'a faded node never started' : '']
+								.filter(Boolean)
+								.join('; ')
+								.replace(/^a/, 'A')}.
+						</p>
+					{/if}
 				{/if}
 			</div>
 		</div>
@@ -2046,7 +2063,7 @@
 					<dd class="figure border-b border-rule py-1.5 text-ink" data-testid="run-elapsed">{formatDuration(startedAt ?? run.startedAt, finishedAt ?? run.finishedAt ?? (isTerminal(runStatus) ? undefined : currentTimestamp))}</dd>
 					<dt class="caps border-b border-rule py-1.5 pr-4 text-ink-muted">Tasks</dt>
 					<dd class="border-b border-rule py-1.5 text-ink" data-testid="task-summary">
-						{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}{#if cachedTotal > 0}<span data-testid="task-summary-cached"> · {cachedTotal} cached</span>{/if}
+						<span class="figure">{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length}</span> succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}{#if cachedTotal > 0}<span data-testid="task-summary-cached"> · {cachedTotal} cached</span>{/if}
 					</dd>
 				</dl>
 			</section>
@@ -2440,7 +2457,7 @@
 							{/if}
 							<!-- The row's own actions, inline: its output and what ran. -->
 							<span class="ml-auto flex flex-wrap items-center gap-2">
-								{#if !isAwait && !composed && !fanOut}
+								{#if !isAwait && !composed && !fanOut && !neverStarted(task)}
 									<button
 										type="button"
 										data-testid="task-log-toggle-{task.id}"

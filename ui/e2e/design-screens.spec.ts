@@ -23,6 +23,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fullPageShot } from './uiHelpers';
 
 // The design screens (UI revamp, finish), against a real engine and Orker on
 // real Temporal and MinIO: the key pages — the runs register, a failed run on
@@ -290,7 +291,7 @@ test('screens: the key pages in light and dark, at 1440, 390 and 320 px', async 
 					reflowed.push(base);
 				}
 				await page.screenshot({ path: out(`${base}-first.png`) });
-				await page.screenshot({ path: out(`${base}.png`), fullPage: true });
+				await fullPageShot(page, out(`${base}.png`));
 				written.push(base);
 			}
 		}

@@ -22,6 +22,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fullPageShot } from './uiHelpers';
 
 // The finish review's fixes (2026-10-22), proven in the browser against a
 // real engine and Orker on real Temporal and MinIO:
@@ -417,12 +418,32 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 		})
 	);
 	await expect(page.locator('.btn-primary:visible')).toHaveCount(1);
-	await page.screenshot({ path: out('failed-run-1440.png'), fullPage: true });
+	// The body starts under the drawing, beside the aside, not after it.
+	const body = await page.evaluate(() => ({
+		tasks: document.querySelector('[data-testid="task-list"]')!.getBoundingClientRect().top,
+		asideEnd: document.querySelector('aside[aria-label="About this run"]')!.getBoundingClientRect().bottom
+	}));
+	note(`body at 1440: ${JSON.stringify(body)}`);
+	expect(body.tasks).toBeLessThan(body.asideEnd);
+	await fullPageShot(page, out('failed-run-1440.png'));
 
 	// The task map's key says it too.
 	await page.getByTestId('run-view-map').click();
 	await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 	await expect(page.getByTestId('task-map-legend-canceled-note')).toHaveText('· never started');
+	// The map's frame fits its six cells too: their rows, the 32 px patch,
+	// the 16 px padding and the frame's rules.
+	const mapFit = await page.evaluate(() => {
+		const frame = document.querySelector('[data-testid="run-drawing"]')!.getBoundingClientRect().height;
+		const map = document.querySelector('[data-testid="task-map"]') as HTMLElement;
+		const canvas = document.querySelector('[data-testid="task-map-canvas"]')!.getBoundingClientRect().height;
+		return { frame, canvas, pitch: Number(map.dataset.pitch) };
+	});
+	note(`map frame at 1440: ${JSON.stringify(mapFit)}`);
+	expect(mapFit.pitch).toBe(16);
+	// (A single row is given at least one line of text's height, 20 px.)
+	expect(mapFit.frame - (Math.max(mapFit.canvas, 20) + 51)).toBeGreaterThanOrEqual(-1);
+	expect(mapFit.frame - (Math.max(mapFit.canvas, 20) + 51)).toBeLessThanOrEqual(1);
 	await page.screenshot({ path: out('failed-run-map-1440.png') });
 
 	// One primary on the Runs register too: Apply filters is a plain button.
@@ -456,6 +477,16 @@ test('at 390 px the drawing starts within 220 px, and the secondary actions fold
 	for (const id of ['run-more-evidence', 'run-more-compare', 'run-more-export', 'run-more-events', 'run-more-stability']) {
 		await expect(page.getByTestId(id)).toBeVisible();
 	}
+	// The list is on screen, whole, and nothing of the frame is over it.
+	const list = (await page.getByTestId('run-more-list').boundingBox())!;
+	note(`More list at 390: ${JSON.stringify(list)}`);
+	expect(list.x).toBeGreaterThanOrEqual(0);
+	expect(list.x + list.width).toBeLessThanOrEqual(390);
+	const topmost = await page.evaluate(() => {
+		const r = document.querySelector('[data-testid="run-more-compare"]')!.getBoundingClientRect();
+		return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('[data-testid]')?.getAttribute('data-testid');
+	});
+	expect(topmost).toBe('run-more-compare');
 	await page.screenshot({ path: out('failed-run-390-more.png') });
 	await page.getByTestId('run-more-events').click();
 	await expect(page.getByTestId('run-events')).toBeVisible();
@@ -498,7 +529,7 @@ test('at 320 px: the count band is 2 × 2, run ids shorten in the middle, the ti
 	for (const l of band.labels) expect(l.lines, `${l.text} is one line`).toBe(1);
 	expect(band.cliOffWindowRow).toBeLessThanOrEqual(4);
 	expect(await pastRightEdge(page)).toEqual([]);
-	await page.screenshot({ path: out('dashboard-320.png'), fullPage: true });
+	await fullPageShot(page, out('dashboard-320.png'));
 
 	await page.goto(`${UI_ORIGIN}/runs?ns=default`);
 	const row = page.getByTestId(`run-row-${failedRun}`);
@@ -546,5 +577,5 @@ test('Admin → Namespaces leads with its registry, and Create namespace opens t
 	await expect(page.locator('#ns-create-form input[placeholder], #ns-create-form textarea[placeholder]')).toHaveCount(0);
 	await expect(page.locator('.btn-primary:visible')).toHaveCount(1);
 	await expect(page.getByTestId('ns-create-submit')).toHaveClass(/btn-primary/);
-	await page.screenshot({ path: out('admin-namespaces-create-1440.png'), fullPage: true });
+	await fullPageShot(page, out('admin-namespaces-create-1440.png'));
 });
