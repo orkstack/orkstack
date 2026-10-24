@@ -263,7 +263,7 @@ test('Plan answers per draft, starts nothing, and a real run agrees with it', as
 	// P3: the plan's CLI equivalent.
 	await page.getByTestId('run-submit-plan-cli-trigger').click();
 	const command = page.getByTestId('run-submit-plan-cli-command');
-	await expect(command).toContainText(`orkctl run plan '${FLOW}' --namespace '${NS}'`);
+	await expect(command).toContainText(`orkctl run plan ${FLOW} --namespace ${NS}`);
 	await expect(command).toContainText(`'{"deploy":true}' > input.json`);
 	// The Orkflow page's dialog pins the version the page shows, so the copied
 	// command plans exactly that version rather than whatever `current` is.

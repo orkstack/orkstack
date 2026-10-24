@@ -187,7 +187,7 @@ test('L2: a created_at row through datetime-local sends the UTC instant', async 
 	await expect.poll(() => urlFilters(page)).toEqual(['created_at>=2000-01-01T07:00:00Z']);
 	await expect.poll(() => orkflowRows(page)).toEqual([...PAY, ...SEARCH]);
 	const cli = await cliCommand(page, 'orkflow');
-	expect(cli).toBe(`orkctl -n '${NS}' orkflow list --filter 'created_at>=2000-01-01T07:00:00Z'`);
+	expect(cli).toBe(`orkctl -n ${NS} orkflow list --filter 'created_at>=2000-01-01T07:00:00Z'`);
 	note(`L2 CLI equivalent: ${cli}`);
 	await page.screenshot({ path: out('screenshot-orkflows-created-at.png'), fullPage: true });
 });

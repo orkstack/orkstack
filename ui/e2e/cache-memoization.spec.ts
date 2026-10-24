@@ -223,7 +223,7 @@ test('the Cache admin page shows the hit rate and purges memos', async ({ page }
 	await expect(page.getByTestId('cache-purge-dialog')).toBeVisible();
 	await page.getByTestId('cache-purge-orkflow').check();
 	await page.getByTestId('cache-purge-cli-trigger').click();
-	await expect(page.getByTestId('cache-purge-cli-command')).toContainText(`cache purge --orkflow '${name}'`);
+	await expect(page.getByTestId('cache-purge-cli-command')).toContainText(`cache purge --orkflow ${name}`);
 	await page.getByTestId('cache-purge-confirm').click();
 	await expect(page.getByTestId('cache-purge-result').first()).toContainText('Purged', { timeout: 30_000 });
 	await page.getByTestId('cache-purge-dialog-close').click();

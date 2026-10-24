@@ -318,7 +318,7 @@ test('R3: a created_at window through datetime-local, and its CLI equivalent in 
 	await page.getByTestId('run-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual([`created_at<${untilUtc}`, `created_at>=${sinceUtc}`]);
 	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(RUNS + FAILED_RUNS);
-	expect(await cliCommand(page)).toBe(`orkctl -n '${NS}' run list --filter 'created_at<${untilUtc}' --filter 'created_at>=${sinceUtc}'`);
+	expect(await cliCommand(page)).toBe(`orkctl -n ${NS} run list --filter 'created_at<${untilUtc}' --filter 'created_at>=${sinceUtc}'`);
 	await page.screenshot({ path: out('screenshot-runs-created-window.png'), fullPage: true });
 
 	// A window that closed before the runs existed keeps none.

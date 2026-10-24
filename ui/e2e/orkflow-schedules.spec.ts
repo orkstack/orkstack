@@ -175,7 +175,7 @@ test('the Schedules tab creates a schedule and shows its next fire times', async
 	const row = page.getByTestId('schedule-row-nightly');
 	await expect(row).toBeVisible();
 	await expect(page.getByTestId('schedule-row-state-nightly')).toHaveText('paused');
-	await expect(page.getByTestId('schedule-row-next-nightly')).toContainText(/T01:00:00Z|T00:00:00Z/);
+	await expect(page.getByTestId('schedule-row-next-nightly')).toContainText(/T0[12]:00:00Z/);
 	await page.getByTestId('schedule-expand-nightly').click();
 	const fires = page.getByTestId('schedule-next-fires-nightly').locator('li');
 	await expect(fires).toHaveCount(10);

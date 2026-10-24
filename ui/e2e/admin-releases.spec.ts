@@ -258,7 +258,7 @@ test('the first release is promoted from the page', async ({ page }) => {
 	await expect(page.getByTestId('release-dialog')).toBeVisible();
 	await expect(page.getByTestId('release-dialog-blockers')).toHaveText('No blockers: this release can take new runs.');
 	await page.getByTestId('release-dialog-cli-trigger').click();
-	await expect(page.getByTestId('release-dialog-cli-popover')).toContainText(`orkctl release promote '${V1}'`);
+	await expect(page.getByTestId('release-dialog-cli-popover')).toContainText(`orkctl release promote ${V1}`);
 	await expect(page.getByTestId('release-dialog-accept')).toBeEnabled();
 	await shot(page, 'admin-releases-first-promote-dialog.png');
 	await page.getByTestId('release-dialog-accept').click();
@@ -384,7 +384,7 @@ test('a decision made on a stale read is refused', async ({ page }) => {
 	await page.getByTestId('release-ramp-percent').fill('15');
 	await expect(page.getByTestId('release-ramp-percent-error')).toBeHidden();
 	await page.getByTestId('release-dialog-cli-trigger').click();
-	await expect(page.getByTestId('release-dialog-cli-popover')).toContainText(`orkctl release ramp '${V1}' --percent 15`);
+	await expect(page.getByTestId('release-dialog-cli-popover')).toContainText(`orkctl release ramp ${V1} --percent 15`);
 	await page.getByTestId('release-dialog-cli-trigger').click();
 	await expect(page.getByTestId('release-dialog-cli-popover')).toBeHidden();
 	await page.getByTestId('release-dialog-cancel').click();
