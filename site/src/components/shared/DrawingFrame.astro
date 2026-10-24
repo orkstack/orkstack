@@ -35,8 +35,13 @@ const { caption, class: className, grid = false } = Astro.props;
 		font-size: var(--text-xs);
 		line-height: var(--text-xs--line-height);
 	}
+	/* The caption patch sits on the frame's own top band, so it never covers
+	   what the frame holds (the UI keeps its frame controls off a node the
+	   same way). */
 	.frame-body {
 		overflow: hidden;
+		margin-top: calc(var(--text-xs--line-height) + var(--spacing) * 3);
+		border-top: var(--rule-hair) solid var(--color-rule);
 	}
 	/* The drafting grid, behind a drawing only: an 8 px minor grid under a
 	   40 px major one. */

@@ -4,18 +4,25 @@
 // detail. One or two sentences each, every one stated in the docs it links.
 import { route } from '../../../site.config.mjs';
 
+/** A row's text with `backticked` words set as code; nothing else is markup. */
+const html = (t: string) =>
+	t
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/`([^`]+)`/g, '<code>$1</code>');
+
 const groups = [
 	{
 		name: 'Authoring',
 		rows: [
 			{
 				name: 'A DAG in YAML',
-				text: 'Tasks ordered only by needs:, with typed inputs:, templated with: and condition:, retries and timeouts. Independent tasks run in parallel.',
+				text: 'Tasks ordered only by `needs:`, with typed `inputs:`, templated `with:` and `condition:`, retries and timeouts. Independent tasks run in parallel.',
 				href: route('docs/authoring/dsl') + '#tasks',
 			},
 			{
 				name: 'Flow control in the DSL',
-				text: 'Fan out with each:, wait for a person or a system with await:, re-join branches with join:, reuse results with cache:, and compose Orkflows with uses: orkflow:.',
+				text: 'Fan out with `each:`, wait for a person or a system with `await:`, re-join branches with `join:`, reuse results with `cache:`, and compose Orkflows with `uses: orkflow:`.',
 				href: route('docs/authoring/dsl'),
 			},
 			{
@@ -25,7 +32,7 @@ const groups = [
 			},
 			{
 				name: 'Plan before you run',
-				text: 'orkctl run plan shows which tasks would run, which would be skipped and why, and starts nothing.',
+				text: '`orkctl run plan` shows which tasks would run, which would be skipped and why, and starts nothing.',
 				href: route('docs/authoring/dsl') + '#planning-a-run-orkctl-run-plan',
 			},
 		],
@@ -45,7 +52,7 @@ const groups = [
 			},
 			{
 				name: 'Generic Orkers',
-				text: 'Any Orker of a pool runs any unpinned task. pool: selects which Orkers; pin: keeps a group of tasks on one Orker sharing /orkstack/shared.',
+				text: 'Any Orker of a pool runs any unpinned task. `pool:` selects which Orkers; `pin:` keeps a group of tasks on one Orker sharing `/orkstack/shared`.',
 				href: route('docs/authoring/dsl') + '#pins',
 			},
 			{
@@ -85,7 +92,7 @@ const groups = [
 		rows: [
 			{
 				name: 'One contract, three surfaces',
-				text: 'The orkctl CLI, the web UI and the Connect API share one proto contract, with live events over WebSocket.',
+				text: 'The `orkctl` CLI, the web UI and the Connect API share one proto contract, with live events over WebSocket.',
 				href: route('docs/operating/ui-cli-parity'),
 			},
 			{
@@ -95,7 +102,7 @@ const groups = [
 			},
 			{
 				name: 'Namespaces and releases',
-				text: 'Allowed pools, retention, holds, budgets and secret sources per namespace; orkctl release rolls a build out without breaking running runs.',
+				text: 'Allowed pools, retention, holds, budgets and secret sources per namespace; `orkctl release` rolls a build out without breaking running runs.',
 				href: route('docs/operating/deployment'),
 			},
 			{
@@ -130,7 +137,7 @@ const groups = [
 								<th scope="row">
 									<a href={r.href}>{r.name}</a>
 								</th>
-								<td>{r.text}</td>
+								<td set:html={html(r.text)} />
 							</tr>
 						))}
 					</tbody>
@@ -154,6 +161,11 @@ const groups = [
 		width: 34%;
 		font-weight: var(--font-weight-semibold);
 		text-align: start;
+	}
+	.register :global(code) {
+		font-family: var(--font-mono);
+		font-size: 0.9em;
+		color: var(--color-ink);
 	}
 	.register tbody th a {
 		color: var(--color-ink);

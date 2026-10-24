@@ -74,14 +74,14 @@ const parts = [
 	{
 		n: 2,
 		name: 'Activity',
-		text: 'Any OCI image. It reads its inputs as files under /orkstack/input, writes its results under /orkstack/output, logs to stdout and stderr, and exits. No SDK.',
+		text: 'Any OCI image. It reads its inputs as files under <code>/orkstack/input</code>, writes its results under <code>/orkstack/output</code>, logs to stdout and stderr, and exits. No SDK.',
 		href: route('docs/activities/contract'),
 		link: 'OCI activity contract',
 	},
 	{
 		n: 3,
 		name: 'Orker',
-		text: 'A generic worker that runs any task’s image. There is no per-Orkflow worker code: pool: selects which Orkers run a task, and pin: keeps a group of tasks on one Orker.',
+		text: 'A generic worker that runs any task’s image. There is no per-Orkflow worker code: <code>pool:</code> selects which Orkers run a task, and <code>pin:</code> keeps a group of tasks on one Orker.',
 		href: route('docs/concepts/architecture'),
 		link: 'Architecture',
 	},
@@ -163,7 +163,7 @@ const drawings = [
 						</span>
 						<div>
 							<h3>{p.name}</h3>
-							<p>{p.text}</p>
+							<p set:html={p.text} />
 							<a class="more" href={p.href}>
 								{p.link}
 							</a>
@@ -269,6 +269,11 @@ const drawings = [
 		font-size: var(--text-lg);
 		line-height: var(--text-lg--line-height);
 		font-weight: var(--font-weight-semibold);
+	}
+	.part :global(code) {
+		font-family: var(--font-mono);
+		font-size: 0.9em;
+		color: var(--color-ink);
 	}
 	.part p {
 		margin: calc(var(--spacing) * 1.5) 0 calc(var(--spacing) * 2);
