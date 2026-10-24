@@ -8,6 +8,14 @@ include breaking changes, and each is marked **BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- A local full proof records each nightly-listed test its base also lists as
+  `deferred`, as a sharded proof's merger does. It built its ledger over the
+  plan's whole expected set, which includes the deferred tests, so the first
+  full proof on a tree whose base carried a nightly list failed with every
+  deferred test reported as having no outcome.
+
 ### Changed
 
 - The proof is faster on one host, running the same tests: integration tests

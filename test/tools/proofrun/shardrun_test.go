@@ -414,3 +414,47 @@ func TestPlanFile_RoundTripsAndPinsItsInputs(t *testing.T) {
 		t.Errorf("the job's timeout did not round-trip: %v", p.Jobs[0].Timeout)
 	}
 }
+
+// A local full proof is one plan and one part, so it must record a deferred
+// test the way the merger records one for a sharded proof: as `deferred`,
+// with its list entry, counted as expected and never as missing. Until this
+// test the local path built its ledger over the plan's whole expected set —
+// which is run ∪ deferred — and the first full proof on a tree whose base
+// carried a nightly list reported every deferred test as having no outcome.
+func TestIntegration_ALocalRunRecordsTheDeferredTestsAsDeferred(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles a test binary")
+	}
+	quiet(t)
+	out := t.TempDir()
+	treeFile := filepath.Join(out, "nightly.txt")
+	baseFile := filepath.Join(out, "nightly-base.txt")
+	for _, f := range []string{treeFile, baseFile} {
+		if err := os.WriteFile(f, []byte(nightlyRow("TestPass", "TestNamespace")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmdIntegration([]string{"-out", out, "-jobs", "1", "-namespace-prefix", "fake", "-costs", "", "-allow", "", "-quarantine", "",
+		"-host-speed", "", "-nightly", treeFile, "-nightly-mode", nightlyDefer, "-nightly-base", baseFile, "./testdata/fakesuite"})
+	var l ledger
+	if err := readJSON(filepath.Join(out, "integration-tests.json"), &l); err != nil {
+		t.Fatal(err)
+	}
+	var deferred *entry
+	for i := range l.Tests {
+		if l.Tests[i].Test == "TestPass" {
+			deferred = &l.Tests[i]
+		}
+	}
+	if deferred == nil || deferred.Outcome != "deferred" || !strings.Contains(deferred.Reason, "TestPass") {
+		t.Fatalf("TestPass = %+v, want outcome deferred with its list entry as the reason", deferred)
+	}
+	if l.Summary.Deferred != 1 {
+		t.Errorf("deferred count = %d, want 1 (%+v)", l.Summary.Deferred, l.Summary)
+	}
+	for _, p := range l.Problems {
+		if strings.Contains(p, "TestPass") {
+			t.Errorf("the deferred test is a problem: %q", p)
+		}
+	}
+}

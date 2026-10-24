@@ -934,11 +934,24 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	r.runAll(ctx, jobs)
 	stopSignals()
+	// expected = run ∪ deferred (writePlan). A deferred test ran nowhere, so
+	// the ledger is built over the run set and each deferred test is then
+	// recorded as `deferred` with its list entry — the outcome AGENTS.md §11
+	// gives it, written here exactly as the merger writes it for a sharded
+	// proof (mergeIntegration), since a local proof is one plan and one part.
 	var expected []testKey
 	for _, e := range plan.Expected {
+		if isDeferred(plan.Deferred, testKey{e.Package, e.Test}) {
+			continue
+		}
 		expected = append(expected, testKey{e.Package, e.Test})
 	}
 	l := buildLedgerQ("integration", expected, listed, r.c, allow, quarantine)
+	for _, d := range plan.Deferred {
+		l.Tests = append(l.Tests, entry{Package: d.Package, Test: d.Test, Outcome: "deferred", Reason: d.Entry})
+		l.Summary.Expected++
+		l.Summary.Deferred++
+	}
 	for _, k := range unlisted {
 		l.Tests = append(l.Tests, entry{Package: k.Package, Test: k.Test, Outcome: outcomeNone,
 			Reason: "it was selected, and its test binary does not list it"})
