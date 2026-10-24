@@ -1,0 +1,161 @@
+name: ci
+
+# The fast contributor path and the feature tier. No required check lives
+# here; the merge gate is `proof.yml`'s `proof` job (docs/PROOFS.md).
+#
+#   check    build, vet, lint and the unit suites with -short: no Docker,
+#            under two minutes warm; cold, 377 s was measured at four CPUs
+#            and about twice that is estimated at two (docs/PROOFS.md §11.5).
+#   feature  the feature proof of this change, on a public repository or with
+#            the ci:feature label (a private repository keeps its metered
+#            minutes for the merge gate).
+
+on:
+  # `check` runs on every push and every pull request; `feature` narrows
+  # itself to a validate/feature/** push below.
+  push:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: check
+        # Cold, two vCPUs: estimated at about 750 s, so 25 minutes is a margin of two.
+        timeout-minutes: 25
+        # Pointing DOCKER_HOST at nothing proves the fast path needs no Docker.
+        run: DOCKER_HOST=unix:///nonexistent make check
+
+  feature:
+    needs: check
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/validate/feature/')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.event.repository.visibility == 'public' || contains(github.event.pull_request.labels.*.name, 'ci:feature'))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - uses: oven-sh/setup-bun@v2.2.0
+        timeout-minutes: 5
+        with:
+          bun-version: "1.4.3"
+      - name: bun install
+        timeout-minutes: 5
+        working-directory: ui
+        run: bun install --frozen-lockfile
+      - uses: ./.github/actions/proof-host
+        timeout-minutes: 10
+        with:
+          cosign: "true"
+          temporal-cli: "true"
+      - name: base
+        id: base
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The commit the change branched from, whatever shape the pushed
+          # commit has; on main itself (nothing to diff) its first parent.
+          base="$(git merge-base HEAD origin/main)"
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then
+            base="$(git rev-parse HEAD^1)"
+          fi
+          echo "base=$base" >>"$GITHUB_OUTPUT"
+      - name: body
+        id: body
+        timeout-minutes: 1
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            printf '%s\n' "$PR_BODY" >"$RUNNER_TEMP/body.txt"
+          else
+            git log -1 --format=%B >"$RUNNER_TEMP/body.txt"
+          fi
+      - name: evidence
+        id: evidence
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -uo pipefail
+          mapfile -t args < <(go run ./test/tools/proofrun evidence-args -body "$RUNNER_TEMP/body.txt")
+          printf '%s\n' "${args[@]}" >"$RUNNER_TEMP/evidence-args.txt"
+      - name: select
+        id: select
+        timeout-minutes: 5
+        shell: bash
+        env:
+          BASE: ${{ steps.base.outputs.base }}
+        run: |
+          set -uo pipefail
+          mapfile -t args <"$RUNNER_TEMP/evidence-args.txt"
+          go run ./test/tools/proofrun select -base "$BASE" -out "$RUNNER_TEMP/sel.json" "${args[@]}"
+          code=$?
+          if [ "$code" -eq 0 ]; then echo "run=true" >>"$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$code" -eq 2 ] && jq -e '.refused_full | length > 0' "$RUNNER_TEMP/sel.json" >/dev/null 2>&1 &&
+             ! jq -e '.errors[] | select(test("changes how every suite runs") | not)' "$RUNNER_TEMP/sel.json" >/dev/null 2>&1; then
+            {
+              echo "this change touches paths only the full proof covers:"
+              jq -r '.refused_full[] | "- " + .' "$RUNNER_TEMP/sel.json"
+              echo
+              echo "the proof check runs it."
+            } >>"$GITHUB_STEP_SUMMARY"
+            echo "run=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          exit "$code"
+      - name: feature proof
+        if: steps.select.outputs.run == 'true'
+        timeout-minutes: 30
+        shell: bash
+        env:
+          PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}
+          BASE: ${{ steps.base.outputs.base }}
+        run: |
+          set -euo pipefail
+          mapfile -t args <"$RUNNER_TEMP/evidence-args.txt"
+          scripts/proof.sh --tier feature --base "$BASE" "${args[@]}" "feature-ci-$GITHUB_RUN_ID"
+      - name: summary
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          f="proof/feature-ci-$GITHUB_RUN_ID-feature/proof.json"
+          if [ -f "$f" ]; then
+            jq -r '"feature proof: **\(.result)** (never merge evidence) tree `\(.tree)`"' "$f"
+            jq -r '.ineligible_reasons[]? | "- " + .' "$f" || true
+          fi
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        timeout-minutes: 5
+        with:
+          name: feature-proof-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: proof/feature-ci-${{ github.run_id }}-feature/
+          retention-days: 14
+          if-no-files-found: warn

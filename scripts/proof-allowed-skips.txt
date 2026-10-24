@@ -1,0 +1,18 @@
+# The only tests a proof may see skip (AGENTS.md §11.2). Any other skip fails
+# its gate, because a skip is never a pass. An entry that names a test its
+# package no longer lists fails the gate too: a stale allowance would silently
+# cover the next test that took its name.
+#
+# Each entry is a test that is not evidence of anything by design — an opt-in
+# recorder that rewrites a committed fixture or measures on request, or the
+# child half of a helper subprocess — and says why.
+#
+# suite<TAB>package<TAB>test<TAB>reason   (suite: unit, integration or any)
+any	github.com/orkstack/orkstack/internal/engine	TestRunIDHelperProcess	the child role of TestNewRunID_UniqueAcrossSeparateProcesses; it runs only when that test re-executes the binary
+integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordGoldenRunHistory	opt-in recorder (ORK_RECORD_GOLDEN_HISTORY=1): re-records a committed replay fixture that is meant to age
+integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordAwaitedRunHistories	opt-in recorder: re-records committed replay fixtures
+integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordCachedRunHistory	opt-in recorder: re-records a committed replay fixture
+integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordComposedRunHistory	opt-in recorder: re-records a committed replay fixture
+integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordEachRunHistory	opt-in recorder: re-records a committed replay fixture
+integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordJoinRunHistory	opt-in recorder: re-records a committed replay fixture
+integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_SnapshotExternalizationHistoryGrowth	opt-in measurement of live history size, run on request

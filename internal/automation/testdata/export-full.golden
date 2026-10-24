@@ -1,0 +1,65 @@
+apiVersion: orkstack/v1
+kind: Automation
+namespace: payments
+
+settings:
+  description: card rails
+  labels:
+    team: payments
+    tier: "1"
+  default_pool: main
+  allowed_pools: [main, gpu]
+  run_retention: 168h
+  telemetry:
+    sink: datadog
+    task_logs: enabled
+    attributes:
+      cost_center: "42"
+  max_running: 5
+  allowed_secrets: ['env:PAYMENTS_*']
+  require_signed_by: cosign:release
+  budget:
+    cpu_seconds: 3600
+    gib_seconds: 7200
+    period: 720h
+    enforce: true
+
+schedules:
+  hourly-sync: # paused: "investigating INC-42" — operational state; not managed here
+    orkflow: sync
+    version: "2"
+    description: hourly ledger sync
+    interval: 1h
+    jitter: 30s
+    start_at: "2026-01-01T00:00:00Z"
+    end_at: "2030-01-01T00:00:00Z"
+    overlap: buffer-one
+    catchup_window: 10m
+    pause_on_failure: true
+  nightly-reconcile:
+    orkflow: reconcile
+    cron: ["0 2 * * *"]
+    timezone: Europe/Lisbon
+    overlap: skip
+    input:
+      mode: full
+
+triggers:
+  ci-hook:
+    orkflow: deploy
+    version: "3"
+  github-deploy:
+    orkflow: deploy
+    description: GitHub Actions deploy hook
+
+webhooks:
+  etl-loader:
+    url: https://hooks.acme.dev/etl
+    events: [TASK_SUCCEEDED, RUN_FAILED]
+    orkflow: nightly-etl
+
+# Not managed by this document: these objects have no name, and an unnamed object is
+# outside every automation document — no apply touches it, --prune included. Name one
+# in place (its token or secret is kept), then export again to see it above:
+#   orkctl trigger update trg-4a1c0e2b7d3f8156 -n payments --name NAME   (deploy@current)
+#   orkctl webhook update wh-1111111111111111 --name NAME   (https://audit.test/  payments/*/*)

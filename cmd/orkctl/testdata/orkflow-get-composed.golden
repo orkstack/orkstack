@@ -1,0 +1,14 @@
+Name:         deploy
+Version:      1.0.0
+Description:  -
+Created:      2026-01-02T03:04:05Z
+
+TASK     USES                         NEEDS  TIMEOUT
+build    shell                        -      300s
+release  orkflow:release-block@2.1.0  build  -
+
+COMPOSED  ORKFLOW              DIGEST
+release   release-block@2.1.0  sha256:4296f8d2ce59…1f4650
+
+OUTPUT  TEMPLATE
+digest  {{ .tasks.release.output.digest }}

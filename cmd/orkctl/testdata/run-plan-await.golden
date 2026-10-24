@@ -1,0 +1,11 @@
+PLAN  awaited-cli@1.0.0  namespace default
+definition  sha256:3c579b74c59292724a702c1ae8d8abce85eee62501204fdf1a716f80b78ce40c
+input       {}
+
+WAVE  TASK      OUTCOME  DETAIL
+1     plan      runs
+2     training  awaits   await ≤ 6h0m0s, callback
+2     approval  awaits   await ≤ 24h0m0s
+3     evaluate  runs
+
+2 run, 2 awaits, 0 skipped, 3 waves. Nothing was started.

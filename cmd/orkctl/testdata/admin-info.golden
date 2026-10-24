@@ -1,0 +1,10 @@
+engine:       v1.2.3
+go:           go1.25.6
+deployment:   orkstack
+versioning:   on (build 2026-01-02.1)
+artifacts:    s3://orkstack-artifacts (s3)
+temporal:     localhost:7233
+server time:  2026-01-02T03:04:05Z
+
+Everything above except the server time is this replica's own configuration and build,
+not a measurement of the cluster.

@@ -1,0 +1,7 @@
+Updated webhook wh-0000000000000001
+NAME    etl-loader
+URL     https://example.test/b
+EVENTS  RUN_FAILED
+SCOPE   payments/*/*
+
+The signing secret is unchanged.

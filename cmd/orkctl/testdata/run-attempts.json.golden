@@ -1,0 +1,42 @@
+{
+  "attempts": [
+    {
+      "schemaVersion": 1,
+      "runId": "run-attempts-4",
+      "taskId": "flaky",
+      "attempt": 1,
+      "outcome": "FAILED",
+      "error": {
+        "code": "CONTAINER_EXIT_NONZERO",
+        "message": "wget: server returned error: HTTP/1.1 503 Service Unavailable",
+        "details": "probe 1: connection reset\nprobe 2: connection reset",
+        "retryable": true,
+        "category": "ACTIVITY_FAILED"
+      },
+      "exitCode": 8,
+      "startedAt": "2026-01-02T03:04:05Z",
+      "finishedAt": "2026-01-02T03:04:06.200Z",
+      "orkerId": "orker-a1",
+      "pool": "default",
+      "phase": "run"
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-attempts-4",
+      "taskId": "flaky",
+      "attempt": 2,
+      "outcome": "SUCCEEDED",
+      "startedAt": "2026-01-02T03:04:07Z",
+      "finishedAt": "2026-01-02T03:04:07.900Z",
+      "orkerId": "orker-a1",
+      "pool": "default",
+      "phase": "upload"
+    },
+    {
+      "runId": "run-attempts-4",
+      "taskId": "build",
+      "attempt": 1,
+      "outcome": "UNREPORTED"
+    }
+  ]
+}

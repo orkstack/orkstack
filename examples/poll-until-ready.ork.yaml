@@ -1,0 +1,83 @@
+# OrkStack orkflow DSL
+#
+# Wait until an upstream export is ready, fetch it, and summarize it — with no
+# loop anywhere.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Repeat without loops"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Environment variables are configuration"
+#
+#   wait-ready  ONE check per attempt: it exits non-zero while the status
+#               endpoint does not say {"ready": true}. The retry policy is the
+#               poll — Temporal waits between attempts with backoff, starts no
+#               container meanwhile, and gives up after maximum_attempts. A
+#               wait longer than this policy allows is an awaited task with a
+#               callback instead (docs/DSL.md, "Awaited tasks").
+#   fetch       one GET, the response body kept as an artifact.
+#   summarize   a json task over that file. `env: {TZ: ...}` is ordinary
+#               tool configuration: jq's strflocaltime reads it. It is NOT
+#               cached, although its filter reads nothing but its input: a
+#               cached task's key covers every ancestor's values.json, and
+#               fetch's carries the request's duration and the response's
+#               headers, which differ on every run — it would never hit.
+#
+# Run it every 15 minutes with a schedule, not a loop:
+# examples/automation/examples.ork.yaml declares one.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: poll-until-ready
+version: "0.1.0"
+description: "Poll a status endpoint through a retry policy, fetch the export once it is ready, and summarize it."
+
+inputs:
+  status_url:
+    type: string
+    required: true
+  export_url:
+    type: string
+    required: true
+
+tasks:
+  # The URL reaches the shell as a positional argument ("$1"): a rendered value
+  # is one argv element, never text inside the shell program.
+  - id: wait-ready
+    uses: shell
+    timeout_seconds: 30
+    retry:
+      maximum_attempts: 20
+      initial_interval_seconds: 5
+      backoff_coefficient: 1.5
+      maximum_interval_seconds: 60
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - 'wget -q -O - "$1" | jq -e ".ready == true" > /dev/null'
+        - wait-ready
+        - '{{ .inputs.status_url }}'
+
+  - id: fetch
+    uses: http
+    needs: [wait-ready]
+    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    with:
+      op: get
+      url: '{{ .inputs.export_url }}'
+      captureBodyAs: export.json
+      timeoutSeconds: 60
+
+  - id: summarize
+    uses: json
+    needs: [fetch]
+    network: none
+    env:
+      TZ: Europe/Berlin
+    with:
+      op: query
+      src: '{{ artifact "fetch/export.json" }}'
+      filter: |
+        {
+          rows: (.rows | length),
+          total: ([.rows[].amount] | add),
+          generated_local: (.generated_at | fromdateiso8601 | strflocaltime("%Y-%m-%d %H:%M"))
+        }

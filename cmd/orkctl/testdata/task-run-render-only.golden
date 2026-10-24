@@ -1,0 +1,114 @@
+TASK RUN  consume  task-run-fixture@1  namespace default
+definition   sha256:1ad23e3b02ccc87986506b618a756ab9ec8063c6bdce1e0ab71110843a8bedaa  the run's own
+source run   ork-1790000000000000000-4294967297  task-run-fixture@1  sha256:1ad23e3b02ccc87986506b618a756ab9ec8063c6bdce1e0ab71110843a8bedaa
+             consume there: FAILED  CONTAINER_EXIT_NONZERO: task "consume": the container exited 1
+local run    local-<id>  (a new logical activity; idempotency key default/local-<id>/consume)
+image        localhost:5001/test/fake@sha256:5eed0000000000000000000000000000000000000000000000000000000000aa
+input        {"expect":"prod","target":"staging"}
+
+UPSTREAM  STATUS     FROM                                VALUES  ARTIFACTS
+produce   SUCCEEDED  ork-1790000000000000000-4294967297  20      1
+
+ARTIFACT             SIZE  SHA256
+produce/payload.txt  26    6f39071feb3117ba6a602feddf95730310fe9d3e28f7ae1676c046cb8f3779c2
+
+secrets      none declared
+env helper   ORK_ORKER_ENV_ALLOWLIST is empty: the env helper reads no variable
+resources    cpu 1, memory 1Gi (this machine's ORK_ORKER_* policy; the pool's Orkers apply their own)
+network      default (this machine's container network, not the pool's)
+limits       contract defaults: values 262144, 256 artifacts of at most 5368709120, logs 16777216 per stream
+             (a deployment may configure others; they are engine configuration no client reads)
+
+fetched      produce/values.json  20  295aff2366ab9f4c0e5ae73e0f49d22cb9a43287d277ab575544a8c28ec14079  ok
+fetched      produce/payload.txt  26  6f39071feb3117ba6a602feddf95730310fe9d3e28f7ae1676c046cb8f3779c2  ok
+› staging inputs
+› pulling image
+› rendering
+config.json  (201 bytes)
+  {
+    "command": [
+      "sh",
+      "-c",
+      "test \"$TARGET\" = \"$EXPECT\""
+    ],
+    "expect": "prod",
+    "op": "exec",
+    "payload": "/orkstack/input/artifacts/produce/payload.txt",
+    "target": "staging"
+  }
+task.json    (2030 bytes)
+  {
+    "schemaVersion": 1,
+    "idempotencyKey": "default/local-<id>/consume",
+    "run": {
+      "id": "local-<id>",
+      "namespace": "default",
+      "orkflow": {
+        "name": "task-run-fixture",
+        "version": "1",
+        "definitionDigest": "sha256:1ad23e3b02ccc87986506b618a756ab9ec8063c6bdce1e0ab71110843a8bedaa"
+      }
+    },
+    "task": {
+      "id": "consume",
+      "attempt": 1,
+      "pool": "main"
+    },
+    "image": {
+      "reference": "shell",
+      "pinned": "localhost:5001/test/fake@sha256:5eed0000000000000000000000000000000000000000000000000000000000aa",
+      "indexDigest": "sha256:5eed0000000000000000000000000000000000000000000000000000000000aa",
+      "platformDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "platform": "linux/amd64",
+      "delivery": "registry"
+    },
+    "limits": {
+      "timeoutSeconds": 300,
+      "cancellationGracePeriodSeconds": 30,
+      "valuesMaxBytes": 262144,
+      "artifactMaxCount": 256,
+      "artifactMaxBytes": 5368709120,
+      "logMaxBytes": 16777216,
+      "commitMaxBytes": 4194304
+    },
+    "resources": {
+      "cpu": "1",
+      "memory": "1Gi"
+    },
+    "network": "default",
+    "paths": {
+      "input": "/orkstack/input",
+      "config": "/orkstack/input/config.json",
+      "runInput": "/orkstack/input/run.json",
+      "secrets": "/orkstack/input/secrets",
+      "output": "/orkstack/output",
+      "values": "/orkstack/output/values.json",
+      "artifacts": "/orkstack/output/artifacts",
+      "tmp": "/orkstack/tmp"
+    },
+    "inputs": {
+      "artifacts": [
+        {
+          "producer": "produce",
+          "name": "payload.txt",
+          "nameB64": "cGF5bG9hZC50eHQ",
+          "path": "/orkstack/input/artifacts/produce/payload.txt",
+          "sizeBytes": 26,
+          "sha256": "6f39071feb3117ba6a602feddf95730310fe9d3e28f7ae1676c046cb8f3779c2",
+          "contentType": "text/plain; charset=utf-8"
+        }
+      ],
+      "upstream": [
+        {
+          "taskId": "produce",
+          "valuesPath": "/orkstack/input/upstream/produce/values.json"
+        }
+      ]
+    },
+    "secrets": []
+  }
+
+RENDERED  no container was started
+values       none: no container was started
+artifacts    none
+Nothing was written to the deployment: no run, no commit, no attempt record, no log.

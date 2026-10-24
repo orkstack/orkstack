@@ -1,0 +1,8 @@
+DELIVERY                                         WEBHOOK              WHEN                  EVENT        RUN                  TASK    DELIVERED  ATTEMPTS  LAST
+dlv-20260102T021705.891204113Z-9c22a1f04e7b3d58  wh-4a1c0e2b7d3f8159  2026-01-02T02:17:05Z  RUN_FAILED   ork-2026-01-01-8f31  -       no         4         502 at 02:17:06.824Z
+dlv-20260102T021505.891204113Z-0d9e5b3a7c61f284  wh-4a1c0e2b7d3f8159  2026-01-02T02:15:05Z  TASK_FAILED  ork-2026-01-01-8f31  settle  no         1         400 at 02:15:05.902Z
+dlv-20260102T021405.891204113Z-71b0cc19e2d4a6f3  wh-4a1c0e2b7d3f8159  2026-01-02T02:14:05Z  RUN_STARTED  ork-2026-01-01-8f31  -       yes        1         200 at 02:14:05.902Z
+
+Window: 2025-12-26T03:04:05Z to 2026-01-02T03:04:05Z, newest first.
+Every namespace unless a namespace filter narrows it.
+The body is not stored; each record carries its SHA-256 and the signature that was sent.

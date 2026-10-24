@@ -1,0 +1,3 @@
+Rejection delivered to await training of run ork-cli-1
+  reason  databricks job cancelled
+The run applies it next; follow it with: orkctl run watch ork-cli-1

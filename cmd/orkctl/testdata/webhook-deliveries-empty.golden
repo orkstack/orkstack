@@ -1,0 +1,5 @@
+No deliveries match --filter 'created_at<2025-12-01T00:00:00Z'.
+
+Window: 2025-11-24T00:00:00Z to 2025-12-01T00:00:00Z, newest first.
+Every namespace unless a namespace filter narrows it.
+The body is not stored; each record carries its SHA-256 and the signature that was sent.

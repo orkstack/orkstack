@@ -1,0 +1,5 @@
+VERSION  CURRENT  COMPAT   APPLIED               DESCRIPTION
+2.0.0    *        -        2026-01-02T03:04:05Z  the 2.0.0 version
+1.0.0             unknown  2026-01-02T03:04:05Z  the 1.0.0 version
+
+No version has been promoted, so deploy runs its newest applied version (2.0.0).

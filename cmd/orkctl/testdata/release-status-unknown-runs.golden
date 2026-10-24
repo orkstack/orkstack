@@ -1,0 +1,35 @@
+deployment:  orkstack
+current:     2026.08.16-a1b2c3d since 2026-09-24T09:02:11Z
+ramping:     -
+
+RELEASE             ROLE       ENGINE  ORKERS  POOLS SERVED    RUNS     STATE
+2026.08.16-a1b2c3d  current    2       3       build,gpu,main  14       serving
+2026.08.23-c4d5e6f  candidate  1       2       gpu,main        0        not ready (2 blockers)
+2026.08.09-9f8e7d6  previous   1       2       build,main      unknown  draining (checked 2026-09-24T09:13:02Z)
+2026.08.02-0a1b2c3  previous   0       0       -               0        drained by the cluster, Orker list incomplete
+
+2026.08.23-c4d5e6f cannot take new runs yet:
+  - 1 Orker(s) did not answer (orker-c001), so their release and pool are unknown; an Orker that stopped leaves the list within 90 seconds — ask again.
+  - pool "build" is in use (orker-7f3a of release 2026.08.09-9f8e7d6 serves it) and no Orker of release 2026.08.23-c4d5e6f serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.23-c4d5e6f ORK_ORKER_POOL=build.
+
+2026.08.09-9f8e7d6 cannot take new runs yet:
+  - 1 Orker(s) did not answer (orker-c001), so their release and pool are unknown; an Orker that stopped leaves the list within 90 seconds — ask again.
+  - pool "gpu" is in use (orker-c2 of release 2026.08.23-c4d5e6f serves it) and no Orker of release 2026.08.09-9f8e7d6 serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.09-9f8e7d6 ORK_ORKER_POOL=gpu.
+
+2026.08.02-0a1b2c3 cannot take new runs yet:
+  - no engine of release 2026.08.02-0a1b2c3 is running, so a run sent to it would never start. Start ork with ORK_BUILD_ID=2026.08.02-0a1b2c3 and ORK_DEPLOYMENT_NAME=orkstack.
+  - 1 Orker(s) did not answer (orker-c001), so their release and pool are unknown; an Orker that stopped leaves the list within 90 seconds — ask again.
+  - pool "build" is in use (orker-7f3a of release 2026.08.09-9f8e7d6 serves it) and no Orker of release 2026.08.02-0a1b2c3 serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.02-0a1b2c3 ORK_ORKER_POOL=build.
+  - pool "gpu" is in use (orker-c2 of release 2026.08.23-c4d5e6f serves it) and no Orker of release 2026.08.02-0a1b2c3 serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.02-0a1b2c3 ORK_ORKER_POOL=gpu.
+  - pool "main" is in use (orker-91c0 of release 2026.08.16-a1b2c3d serves it) and no Orker of release 2026.08.02-0a1b2c3 serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.02-0a1b2c3 ORK_ORKER_POOL=main.
+
+2026.08.09-9f8e7d6 is still finishing work:
+  1 open pin:  pin "build" of run ork-20260922-0001 on orker-7f3a, expires in 0h41m
+Keep one of its engines and one of its Orkers in every pool it serves running until it is
+drained, and stop no Orker that hosts an open pin ("orkctl orker drain <orker>" waits for one).
+"orkctl release wait 2026.08.09-9f8e7d6" exits when it is drained.
+
+runs in flight could not be counted for 2026.08.09-9f8e7d6: the run index could not be asked which runs execute on this release
+2 Orkers belong to no release:
+  orker-c001: did not answer (context deadline exceeded)
+  orker-d002: pool gpu, started without ORK_BUILD_ID

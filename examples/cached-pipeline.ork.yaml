@@ -1,0 +1,49 @@
+# OrkStack orkflow DSL
+#
+# Memoize a deterministic task across runs. `featurize` is a pure function of
+# its input, so a second run with the same input reuses the first run's
+# commit and starts no container. `stamp` changes every run, so `train`,
+# although cached, always finds a new key and runs.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: cached-pipeline
+version: "0.1.0"
+description: "A cached, deterministic prefix; a cached task whose upstream changes every run."
+
+inputs:
+  rows:
+    type: number
+    default: 1000
+
+tasks:
+  - id: featurize
+    uses: shell
+    cache:
+      enabled: true
+      ttl_seconds: 86400
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        seq 1 {{ .inputs.rows }} > /orkstack/output/artifacts/features.txt
+        echo featurized {{ .inputs.rows }} rows
+
+  - id: stamp
+    uses: shell
+    with:
+      op: eval
+      command: ["sh", "-c", "date +%s%N"]
+
+  - id: train
+    uses: shell
+    needs: [featurize, stamp]
+    cache:
+      enabled: true
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        wc -l < /orkstack/input/artifacts/featurize/features.txt
+        echo trained at {{ sh .tasks.stamp.output.value }}

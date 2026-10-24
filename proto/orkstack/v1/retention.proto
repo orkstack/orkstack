@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// RetentionPolicy is the deployment's one retention setting: the most any
+// namespace may keep a finished run, and what a namespace that sets no
+// run_retention inherits. It is stored in the artifact store at
+// metadata/settings/retention-policy.json so any replica answers for it.
+message RetentionPolicy {
+  // max_run_retention bounds every Namespace.run_retention. Always set once
+  // the engine has booted: a deployment that never chose one is written the
+  // built-in 72h at first boot (archive.RetentionController.Ensure).
+  google.protobuf.Duration max_run_retention = 1;
+  // updated_at is written by the engine on every change; unset only on the
+  // document the engine materialized itself at first boot.
+  google.protobuf.Timestamp updated_at = 2;
+}

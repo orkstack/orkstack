@@ -1,0 +1,18 @@
+# Minimal Prometheus config for the `observability` compose profile.
+#
+# `--web.enable-otlp-receiver` (set on the service's command, not here) is what
+# lets the Collector push metrics straight to /api/v1/otlp. This scrape config
+# is the other path: ork and orker's own ORK_ADMIN_ADDR listeners, reached from
+# inside the compose network by the Docker-for-Mac/Windows DNS name. On Linux,
+# the `extra_hosts` entry on the prometheus service maps the same name to the
+# host gateway.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: ork
+    static_configs:
+      - targets: ["host.docker.internal:9464"]
+  - job_name: orker
+    static_configs:
+      - targets: ["host.docker.internal:9465"]

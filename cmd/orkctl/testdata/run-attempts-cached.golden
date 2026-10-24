@@ -1,0 +1,4 @@
+TASK       ATTEMPT  OUTCOME    PHASE   EXIT  STARTED               DURATION  ORKER     CACHE                                         ERROR
+featurize  1        SUCCEEDED  memo    0     2026-01-02T03:04:05Z  1s        orker-a1  hit ork-1758790021000000000-4081623940183294  -
+stamp      1        SUCCEEDED  commit  0     2026-01-02T03:04:05Z  1s        orker-a1  -                                             -
+train      1        SUCCEEDED  commit  0     2026-01-02T03:04:05Z  1s        orker-a1  miss MEMO_EXPIRED                             -

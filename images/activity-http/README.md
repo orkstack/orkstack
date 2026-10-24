@@ -1,0 +1,123 @@
+# activity-http
+
+Performs one HTTP request and reports the response as data. A reference
+implementation of the OCI Activity Contract: `curl` makes the request, `jq`
+writes the result, and there is no OrkStack SDK.
+
+"No SDK" means no library that knows about OrkStack, not no packages: this
+image installs `curl` to do its work and `jq` to speak the ABI, and links
+against nothing that schedules it, reports progress or hands back results —
+exactly what a third-party image built on `curl` would do.
+
+```yaml
+- id: notify
+  uses: http
+  with:
+    op: post
+    url: https://example.test/hooks/deploy
+    body:
+      status: ok
+```
+
+## Configuration
+
+Read from `/orkstack/input/config.json`.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `op` | string | `get` (default), `post`, `put`, `patch`, `delete`, `head` |
+| `url` | string | **Required.** The absolute request URL. |
+| `headers` | object | Request headers, one per key |
+| `body` | string, mapping or list | A string is sent verbatim; a mapping or a list is sent as compact JSON, with `Content-Type: application/json` unless `headers` sets a content type |
+| `timeoutSeconds` | number | Passed to curl as `--max-time` |
+| `captureBodyAs` | string | Save the response body as this output artifact |
+
+`op` is the portable spelling of the HTTP method; the two are the same thing.
+
+**Body.** Write a JSON body as a YAML mapping (or list) under `body:`. Each
+string leaf is a template the Orker renders before this image runs, and the
+image serializes the result, so a quote, a backslash or a newline in a value
+stays inside its string: escaping is correct by construction. JSON built by
+splicing a value into a string (`body: '{"message": "{{ .inputs.message }}"}'`)
+is not — a quote in the value breaks the document.
+Header values are quoted before they reach argv, so a rendered value cannot
+inject a curl argument — the same argv discipline `activity-shell` applies to
+`command`.
+
+## A non-2xx response is not a failure
+
+**This image exits `0` for any response it received**, and reports the code in
+`status`. An HTTP status is data; an activity failure is a failure to *perform*
+the request. Branch on `status` in your Orkflow:
+
+```yaml
+condition: '{{ eq .tasks.notify.output.status 200.0 }}'
+```
+
+The activity fails (exit `1`, an ordinary `ActivityFailed`) only when the
+request could not be performed at all — a missing `url`, DNS failure,
+connection refused, TLS failure, or the request exceeding `timeoutSeconds`.
+Those are the cases a retry can fix; give the task a `retry:` if you want one.
+An unknown `op` exits `2`.
+
+This is a documented contract of *this image*, not a platform rule.
+
+## Output
+
+`/orkstack/output/values.json`:
+
+```json
+{
+  "status": 200,
+  "headers": {"content-type": "application/json", "content-length": "18"},
+  "durationMs": 42.318,
+  "sizeBytes": 18,
+  "json": {"ok": true}
+}
+```
+
+| Key | Presence | Meaning |
+|---|---|---|
+| `status` | always | HTTP status code |
+| `headers` | always | Response headers. A repeated header keeps its last value. |
+| `durationMs` | always | Wall-clock time of the request, milliseconds |
+| `sizeBytes` | always | Response body size |
+| `json` | conditional | The parsed body, present only when it is valid JSON **and** at most 1 MiB. Absence means "not JSON, or too large" — never "empty". |
+
+When `captureBodyAs` is set, the raw response body is written to
+`/orkstack/output/artifacts/<name>` and becomes an output artifact. It must be
+a plain file name: no `/`, and not `.` or `..`.
+
+## Interface
+
+The image declares its `with:` contract in the
+`org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
+"Declaring the interface"), so `orkctl orkflow validate` and apply check a
+task's `with:` before anything runs: a missing required key or an unknown
+`op` is an error, an undeclared key a warning. Five shared keys, six ops that
+read nothing beyond them, `get` when `op` is absent, and every `values.json`
+key of Output — `json` included, although it is present only for a JSON body
+of at most 1 MiB. The label, as the Dockerfile carries it:
+
+```dockerfile
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type":"string","required":true},"headers":{"type":"object"},"body":{"type":"string|object|array"},"timeoutSeconds":{"type":"number"},"captureBodyAs":{"type":"string"}},"ops":{"get":{},"post":{},"put":{},"patch":{},"delete":{},"head":{}},"defaultOp":"get","values":{"status":{"type":"number"},"headers":{"type":"object"},"durationMs":{"type":"number"},"sizeBytes":{"type":"number"},"json":{"type":"object"}}}'
+```
+
+`orkctl activity inspect http` renders it as a table.
+
+## Cancellation
+
+curl runs in the background under a TERM trap (the contract's §10.1 rule 2a),
+so cancellation interrupts an in-flight request within the grace period rather
+than being escalated to SIGKILL.
+
+## Environment
+
+The image sets no variable and honours the task's `env:`: curl reads its own
+(`HTTPS_PROXY`, `NO_PROXY`, …) like anywhere else.
+
+## Building
+
+```bash
+make -C images image-http
+```

@@ -1,0 +1,216 @@
+package artifacts
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"io"
+	"net/url"
+	"path"
+	"regexp"
+	"strings"
+	"time"
+)
+
+// ArtifactRef is the reference every store returns.
+//
+// These json tags are what the run archive and the engine<->Orker seam write.
+//
+// It mirrors orkstack.v1.ArtifactRef deliberately rather than being it. A
+// store is not a proto concern, and keeping the two apart is what lets the
+// artifact layer stay usable from a test that never touches generated code.
+type ArtifactRef struct {
+	Name        string            `json:"name"`
+	URI         string            `json:"uri"`
+	ContentType string            `json:"content_type,omitempty"`
+	SizeBytes   int64             `json:"size_bytes,omitempty"`
+	SHA256      string            `json:"sha256,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+// PutOptions carries optional attributes for a Put. The logical name is the
+// explicit Put argument, never an option.
+type PutOptions struct {
+	// ContentType overrides sniffing. When empty the store detects the type
+	// from the first bytes of the stream (net/http.DetectContentType).
+	ContentType string
+	// Metadata is optional key/value data stored alongside the object and
+	// returned by Stat.
+	Metadata map[string]string
+	// ExpectedSHA256 is the lowercase hex sha256 the caller already computed
+	// for the bytes r will yield, and ExpectedSize their length (read only
+	// when ExpectedSHA256 is set; 0 is an empty artifact). A store refuses a
+	// Put whose bytes do not match, and stores nothing. When r is also an
+	// io.ReadSeeker the S3 store uploads straight from it — no spool, no
+	// second hash — with the digest as a checksum the server verifies.
+	ExpectedSHA256 string
+	ExpectedSize   int64
+	// SpoolDir is where a store that must spool a NON-seekable reader puts
+	// the spool file. Empty means the OS temp directory. The Orker names a
+	// directory under its work root, which it reaps at boot, so a process
+	// killed mid-upload leaves nothing behind in TMPDIR.
+	SpoolDir string
+}
+
+// Store persists artifacts and hands back references. Implementations are
+// content-addressed: each physical object key ends in the lowercase sha256 of
+// its bytes. Logical names remain opaque strings; providers map them to safe
+// physical keys and recover them without changing ArtifactRef.Name.
+//
+// A new backend implements Store and calls Register at init time; nothing else
+// in the codebase needs to change.
+type Store interface {
+	// Put streams r into the store under the logical name and returns the
+	// stored reference. The reader need not be seekable and its length need not
+	// be known in advance.
+	Put(ctx context.Context, name string, r io.Reader, opts PutOptions) (ArtifactRef, error)
+	// Get opens the artifact at uri. The caller closes the reader.
+	// A missing artifact returns an error matching ErrNotFound.
+	Get(ctx context.Context, uri string) (io.ReadCloser, error)
+	// Stat returns the reference for uri without transferring the bytes.
+	// A missing artifact returns an error matching ErrNotFound.
+	Stat(ctx context.Context, uri string) (ArtifactRef, error)
+	// List returns references whose logical name starts with prefix, ordered by
+	// URI. An empty prefix lists everything in the store.
+	List(ctx context.Context, prefix string) ([]ArtifactRef, error)
+	// Presign returns a URL granting time-limited read access to uri.
+	// Backends without signed URLs return an error matching ErrUnsupported.
+	Presign(ctx context.Context, uri string, ttl time.Duration) (string, error)
+	// Delete removes the artifact at uri. Delete is idempotent: removing an
+	// artifact that is already gone returns nil.
+	Delete(ctx context.Context, uri string) error
+}
+
+// Sentinel errors. Providers wrap these with %w, so callers use errors.Is.
+var (
+	// ErrNotFound reports a missing artifact.
+	ErrNotFound = errors.New("artifact not found")
+	// ErrInvalidURI reports a URI this store cannot address.
+	ErrInvalidURI = errors.New("invalid artifact URI")
+	// ErrUnsupported reports an operation the backend cannot perform.
+	ErrUnsupported = errors.New("operation unsupported by artifact backend")
+	// ErrUnknownBackend reports an unregistered ORK_ARTIFACT_BACKEND value.
+	ErrUnknownBackend = errors.New("unknown artifact backend")
+)
+
+const (
+	// objectNamespace isolates generated object keys from provider bookkeeping.
+	objectNamespace = "objects"
+	// encodedNameChunkSize keeps every generated filesystem component well
+	// below common 255-byte component limits. Prefixes add two more bytes.
+	encodedNameChunkSize = 200
+)
+
+// digestPattern matches the lowercase hex sha256 that terminates every key.
+var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// objectKey builds the canonical physical key for an opaque logical name and
+// content digest. Raw URL-safe base64 preserves every byte in name, including
+// empty strings, separators, dot segments, NUL, and invalid UTF-8. Chunking
+// prevents long names from becoming overlong filesystem components.
+func objectKey(name, sha string) string {
+	parts := []string{objectNamespace}
+	parts = append(parts, encodeName(name)...)
+	parts = append(parts, sha)
+	return path.Join(parts...)
+}
+
+// ObjectIDFromURI returns the physical content-addressed key carried by a
+// canonical local or S3 artifact URI. The complete key is the object identity,
+// rather than its digest alone, because equal bytes under different logical
+// names are distinct stored objects.
+func ObjectIDFromURI(uri string) (string, bool) {
+	u, err := url.Parse(uri)
+	if err != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if segment == "." || segment == ".." {
+			return "", false
+		}
+	}
+	switch u.Scheme {
+	case "file":
+		if u.Host != "" && u.Host != "localhost" {
+			return "", false
+		}
+		parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+		for i, part := range parts {
+			if part != objectNamespace {
+				continue
+			}
+			candidate := strings.Join(parts[i:], "/")
+			if _, _, ok := splitKey(candidate); ok {
+				return candidate, true
+			}
+		}
+	case "s3":
+		if u.Host == "" {
+			return "", false
+		}
+		candidate := strings.TrimPrefix(u.Path, "/")
+		if _, _, ok := splitKey(candidate); ok {
+			return candidate, true
+		}
+		if _, ok := splitS3ObjectKey(candidate); ok {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func encodeName(name string) []string {
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(name))
+	if encoded == "" {
+		return []string{"n-"}
+	}
+
+	var parts []string
+	for first := true; encoded != ""; first = false {
+		n := encodedNameChunkSize
+		if n > len(encoded) {
+			n = len(encoded)
+		}
+		marker := "c-"
+		if first {
+			marker = "n-"
+		}
+		parts = append(parts, marker+encoded[:n])
+		encoded = encoded[n:]
+	}
+	return parts
+}
+
+// splitKey reverses objectKey, returning the exact logical name and digest.
+// Only canonical keys generated by objectKey are accepted.
+func splitKey(key string) (name, sha string, ok bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) < 3 || parts[0] != objectNamespace {
+		return "", "", false
+	}
+	sha = parts[len(parts)-1]
+	if !digestPattern.MatchString(sha) {
+		return "", "", false
+	}
+
+	var encoded strings.Builder
+	for i, part := range parts[1 : len(parts)-1] {
+		marker := "c-"
+		if i == 0 {
+			marker = "n-"
+		}
+		if !strings.HasPrefix(part, marker) {
+			return "", "", false
+		}
+		encoded.WriteString(strings.TrimPrefix(part, marker))
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded.String())
+	if err != nil {
+		return "", "", false
+	}
+	name = string(decoded)
+	if objectKey(name, sha) != key {
+		return "", "", false
+	}
+	return name, sha, true
+}

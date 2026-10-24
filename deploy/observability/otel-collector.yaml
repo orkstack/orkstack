@@ -1,0 +1,38 @@
+# Minimal Collector config for the `observability` compose profile.
+#
+# Receives OTLP/http on :4318 — the same endpoint an operator would otherwise
+# hand to OTEL_EXPORTER_OTLP_ENDPOINT directly — and fans logs, traces and
+# metrics out to Loki, Tempo and Prometheus. Nothing here is OrkStack-specific:
+# ork and orker never speak to this file, only to the standard OTEL_* env
+# (docs/DEPLOY.md, "Telemetry").
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  debug:
+    verbosity: basic
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  otlphttp/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [debug, otlphttp/loki]
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      exporters: [otlphttp/prometheus]

@@ -1,0 +1,6 @@
+cordoned orker-7f3a: "orkctl orker drain"
+waiting for 2 tasks and 1 pin to finish…
+  09:15:40  2 tasks, 1 pin     pin "build" of run ork-20260922-1  expires in 2h11m
+  10:02:40  0 tasks, 1 pin     pin "build" of run ork-20260922-1  expires in 1h24m
+  11:36:40  0 tasks, 0 pins
+orker-7f3a is drained; it is safe to stop this process.

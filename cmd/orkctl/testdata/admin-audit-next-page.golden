@@ -1,0 +1,10 @@
+WHEN                  PRINCIPAL  ACTION            NAMESPACE      TARGET                RESULT
+2026-01-02T01:04:05Z  dsantos    namespace.update  prod-payments  prod-payments         ok
+2026-01-02T00:04:05Z  dsantos    trigger.create    prod-payments  trg-4a91c0e2b7d3f815  ok
+
+Window: 2026-01-01T00:00:00Z to 2026-01-02T03:04:05Z (exclusive), newest first.
+Every namespace unless a namespace filter narrows it.
+principal is the identity the deployment's gateway asserted in Ork-Principal;
+OrkStack records it and does not authenticate it.
+
+Next page: orkctl admin audit --filter 'principal=dsantos' --filter 'at>=2026-01-01T00:00:00Z' --limit 2 --page-token v2:eyJmaWx0ZXJzIjoiNjc1NDY3MWU5OGQ3NmY2MGY4MDY0YmE3MzMzOTVlOTQzZTg3OTc2NTNkNDg5OTViNzkwOGM1OTJkNzNlZGZhOSIsIndpbmRvd19zaW5jZSI6IjIwMjYtMDEtMDFUMDA6MDA6MDBaIiwid2luZG93X3VudGlsIjoiMjAyNi0wMS0wMlQwMzowNDowNVoiLCJiZWZvcmVfa2V5IjoibWV0YWRhdGEvYXVkaXQvMjAyNi8wMS8wMi9hdWQtMjAyNjAxMDJUMDAwNDA1LjAwMDAwMDAwMFotYmJiYmJiYmJiYmJiYmJiYi5qc29uIn0

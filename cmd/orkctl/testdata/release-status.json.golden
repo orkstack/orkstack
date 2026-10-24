@@ -1,0 +1,185 @@
+{
+  "deploymentName": "orkstack",
+  "versioned": true,
+  "releases": [
+    {
+      "buildId": "2026.08.16-a1b2c3d",
+      "role": "CURRENT",
+      "roleSince": "2026-09-24T09:02:11Z",
+      "firstSeenAt": "2026-08-16T10:00:00Z",
+      "engineReplicas": 2,
+      "orkers": [
+        {
+          "orkerId": "orker-b45e",
+          "pool": "build",
+          "buildId": "2026.08.16-a1b2c3d",
+          "runningTasks": 1,
+          "lastSeen": "2026-09-24T09:15:38Z"
+        },
+        {
+          "orkerId": "orker-g1",
+          "pool": "gpu",
+          "buildId": "2026.08.16-a1b2c3d",
+          "lastSeen": "2026-09-24T09:15:38Z"
+        },
+        {
+          "orkerId": "orker-91c0",
+          "pool": "main",
+          "buildId": "2026.08.16-a1b2c3d",
+          "runningTasks": 2,
+          "lastSeen": "2026-09-24T09:15:38Z"
+        }
+      ],
+      "poolsServed": [
+        "build",
+        "gpu",
+        "main"
+      ],
+      "runsInFlight": 14
+    },
+    {
+      "buildId": "2026.08.23-c4d5e6f",
+      "role": "CANDIDATE",
+      "firstSeenAt": "2026-08-23T10:00:00Z",
+      "engineReplicas": 1,
+      "orkers": [
+        {
+          "orkerId": "orker-c2",
+          "pool": "gpu",
+          "buildId": "2026.08.23-c4d5e6f",
+          "lastSeen": "2026-09-24T09:15:38Z"
+        },
+        {
+          "orkerId": "orker-c1",
+          "pool": "main",
+          "buildId": "2026.08.23-c4d5e6f",
+          "lastSeen": "2026-09-24T09:15:38Z"
+        }
+      ],
+      "poolsServed": [
+        "gpu",
+        "main"
+      ],
+      "drained": true,
+      "blockers": [
+        {
+          "kind": "POOL_NOT_SERVED",
+          "pool": "build",
+          "message": "pool \"build\" is in use (orker-7f3a of release 2026.08.09-9f8e7d6 serves it) and no Orker of release 2026.08.23-c4d5e6f serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.23-c4d5e6f ORK_ORKER_POOL=build."
+        }
+      ]
+    },
+    {
+      "buildId": "2026.08.09-9f8e7d6",
+      "role": "PREVIOUS",
+      "firstSeenAt": "2026-08-09T10:00:00Z",
+      "engineReplicas": 1,
+      "orkers": [
+        {
+          "orkerId": "orker-7f3a",
+          "pool": "build",
+          "buildId": "2026.08.09-9f8e7d6",
+          "openPins": 1,
+          "maxConcurrentPins": 1,
+          "lastSeen": "2026-09-24T09:15:38Z",
+          "pins": [
+            {
+              "runId": "ork-20260922-0001",
+              "pin": "build",
+              "expiresAt": "2026-09-24T09:56:40Z"
+            }
+          ]
+        },
+        {
+          "orkerId": "orker-p1",
+          "pool": "main",
+          "buildId": "2026.08.09-9f8e7d6",
+          "lastSeen": "2026-09-24T09:15:38Z"
+        }
+      ],
+      "poolsServed": [
+        "build",
+        "main"
+      ],
+      "runsInFlight": 3,
+      "runs": [
+        {
+          "id": "ork-20260922-0001",
+          "orkflowName": "nightly-build",
+          "orkflowVersion": "4",
+          "status": "RUNNING",
+          "createdAt": "2026-09-24T08:15:40Z",
+          "namespace": "payments"
+        },
+        {
+          "id": "ork-20260922-0002",
+          "orkflowName": "reconcile",
+          "orkflowVersion": "2",
+          "status": "RUNNING",
+          "createdAt": "2026-09-24T07:15:40Z",
+          "namespace": "payments"
+        },
+        {
+          "id": "ork-20260922-0003",
+          "orkflowName": "hello",
+          "orkflowVersion": "1",
+          "status": "RUNNING",
+          "createdAt": "2026-09-24T06:15:40Z"
+        }
+      ],
+      "drainState": "DRAINING",
+      "drainCheckedAt": "2026-09-24T09:13:02Z",
+      "blockers": [
+        {
+          "kind": "POOL_NOT_SERVED",
+          "pool": "gpu",
+          "message": "pool \"gpu\" is in use (orker-c2 of release 2026.08.23-c4d5e6f serves it) and no Orker of release 2026.08.09-9f8e7d6 serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.09-9f8e7d6 ORK_ORKER_POOL=gpu."
+        }
+      ]
+    },
+    {
+      "buildId": "2026.08.02-0a1b2c3",
+      "role": "PREVIOUS",
+      "firstSeenAt": "2026-08-02T10:00:00Z",
+      "drainState": "DRAINED",
+      "drainCheckedAt": "2026-09-24T08:00:00Z",
+      "drained": true,
+      "blockers": [
+        {
+          "kind": "NO_ENGINE",
+          "message": "no engine of release 2026.08.02-0a1b2c3 is running, so a run sent to it would never start. Start ork with ORK_BUILD_ID=2026.08.02-0a1b2c3 and ORK_DEPLOYMENT_NAME=orkstack."
+        },
+        {
+          "kind": "POOL_NOT_SERVED",
+          "pool": "build",
+          "message": "pool \"build\" is in use (orker-7f3a of release 2026.08.09-9f8e7d6 serves it) and no Orker of release 2026.08.02-0a1b2c3 serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.02-0a1b2c3 ORK_ORKER_POOL=build."
+        },
+        {
+          "kind": "POOL_NOT_SERVED",
+          "pool": "gpu",
+          "message": "pool \"gpu\" is in use (orker-c2 of release 2026.08.23-c4d5e6f serves it) and no Orker of release 2026.08.02-0a1b2c3 serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.02-0a1b2c3 ORK_ORKER_POOL=gpu."
+        },
+        {
+          "kind": "POOL_NOT_SERVED",
+          "pool": "main",
+          "message": "pool \"main\" is in use (orker-91c0 of release 2026.08.16-a1b2c3d serves it) and no Orker of release 2026.08.02-0a1b2c3 serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.02-0a1b2c3 ORK_ORKER_POOL=main."
+        }
+      ]
+    }
+  ],
+  "unattributedOrkers": [
+    {
+      "orkerId": "orker-d002",
+      "pool": "gpu",
+      "lastSeen": "2026-09-24T09:15:38Z"
+    },
+    {
+      "orkerId": "orker-old",
+      "pool": "main",
+      "buildId": "2026.07.01-0000000",
+      "lastSeen": "2026-09-24T09:15:40Z"
+    }
+  ],
+  "revision": "r1|2026.08.16-a1b2c3d||0",
+  "observedAt": "2026-01-02T03:04:05Z"
+}

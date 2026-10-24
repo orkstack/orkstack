@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// ImagePolicy is the deployment's supply-chain floor (AGENTS.md §5): which
+// images may be applied and executed anywhere in this deployment. It is
+// stored in the artifact store at metadata/settings/image-policy.json,
+// beside RetentionPolicy, so any replica answers for it. A deployment that
+// never wrote one has the empty policy, which permits exactly what today's
+// behaviour permits.
+//
+// A namespace may TIGHTEN this policy (Namespace.require_signed_by) and can
+// never loosen it: there is no namespace field for either floor below.
+message ImagePolicy {
+  // require_digest refuses a `uses:` written as a mutable tag. The engine
+  // already RESOLVES a tag to a digest at apply; this refuses the tag as an
+  // INPUT, which is a different and stricter question — "the document must
+  // name what it meant", not merely "we recorded what it resolved to". A
+  // catalog name (`uses: shell`) is not a tag the author wrote and is
+  // exempt; the catalog is the operator's own configuration.
+  bool require_digest = 1;
+  // allowed_registries are literal "{registry}/{repository}" prefixes,
+  // matched on "/" boundaries against the RESOLVED name (docker.io/library/
+  // alpine, never alpine). Empty means no restriction, which is today's
+  // behaviour and what an upgrade preserves. The rule is
+  // internal/task.ValidRegistryPrefix and RegistryAllowed, the one place it
+  // is implemented; the store refuses an entry that fails it.
+  repeated string allowed_registries = 2;
+  // signing_keys are the cosign PUBLIC keys a namespace may require by name
+  // (Namespace.require_signed_by = "cosign:<name>"): name → PEM "PUBLIC KEY"
+  // block, ECDSA P-256, exactly what `cosign generate-key-pair` writes to
+  // cosign.pub. Public material only: nothing in OrkStack ever holds or
+  // uses a private key. A key a namespace still names cannot be removed
+  // (FAILED_PRECONDITION naming the namespace) — the same "lower the
+  // namespace first" rule UpdateRetentionPolicy applies.
+  map<string, string> signing_keys = 3;
+  // updated_at is written by the store on every write; unset means no
+  // policy document has ever been written.
+  google.protobuf.Timestamp updated_at = 4;
+}
+
+// ImagePolicySelection is the policy IN FORCE for one run: the deployment
+// floor composed with the run's namespace at submit, carried on the plan
+// and on every ExecuteTaskInput exactly as WorkspaceLimits and
+// TelemetrySelection are, and never re-read afterwards. It is UNSET when
+// the deployment configured no policy and the namespace names no signer,
+// which keeps such a run's recorded payloads byte-identical to what they
+// were before this message existed.
+//
+// Carrying it is what makes every attempt of one task judged by one rule,
+// and what lets the Orker verify without reading a document at dispatch
+// (AGENTS.md §2.1, §5): the Orker trusts this message no more and no less
+// than it trusts ExecuteTaskInput.image — it re-derives nothing from it, it
+// checks the image against it, and it verifies the signature itself with
+// the key it carries.
+message ImagePolicySelection {
+  bool require_digest = 1;
+  repeated string allowed_registries = 2;
+  // require_signed_by is the namespace's signer, "cosign:<name>", or empty.
+  string require_signed_by = 3;
+  // signing_key_pem is the PEM public key that name resolved to when the run
+  // was submitted; set exactly when require_signed_by is. A run keeps the
+  // key it was submitted under even if the policy's key is later rotated.
+  string signing_key_pem = 4;
+}

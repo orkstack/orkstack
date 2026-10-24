@@ -1,0 +1,98 @@
+# OrkStack orkflow DSL
+#
+# Ask a person only when a change is risky; apply, decline, or tell the
+# requester it was rejected.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Wait for a person or a system"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Decide in a task, branch on its value"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Reuse a block with declared outputs"
+#
+#   assess          a json task decides `risky` (a JSON boolean) from the
+#                   typed `changes` input.
+#   approval        an awaited task, opened only when risky. It starts no
+#                   container and holds no Orker while it waits. Resolve it:
+#                     orkctl run resolve <run> --task approval --values '{"approved":true,"approver":"dana"}'
+#                   A business "no" is a COMPLETION ({"approved": false}),
+#                   which a condition reads; `--reject --reason TEXT` is a
+#                   failure, and so is the deadline passing.
+#   apply           none_failed: runs after an approval, or when none was
+#                   needed. Its condition reads the approval only behind the
+#                   `index .tasks` guard, because a skipped approval is absent.
+#   announce        the notify-block (apply examples/notify-block.ork.yaml
+#                   first): "applied" or "declined".
+#   tell-requester  join: any_failed on approval: a rejection or an expired
+#                   deadline fails the run, and the requester hears why.
+#
+#   orkctl run plan --file examples/approval-gate.ork.yaml --input notify_url=https://hooks.example.com/changes --output assess='{"result":{"risky":false}}' --assert-skipped approval --assert-runs apply --assert-runs announce --assert-skipped tell-requester
+#   orkctl run plan --file examples/approval-gate.ork.yaml --input notify_url=https://hooks.example.com/changes --output assess='{"result":{"risky":true}}' --output approval='{"approved":false,"approver":"dana"}' --assert-runs approval --assert-skipped apply --assert-runs announce
+#   orkctl run plan --file examples/approval-gate.ork.yaml --input notify_url=https://hooks.example.com/changes --output assess='{"result":{"risky":true}}' --assume-failed approval --assert-runs tell-requester
+apiVersion: orkstack/v1
+kind: Orkflow
+name: approval-gate
+version: "0.1.0"
+description: "Assess a change in a json task, wait for an approval only when it is risky, then apply, decline or report a rejection. Apply notify-block first."
+
+inputs:
+  changes:
+    type: array
+    default:
+      - { service: web, setting: replicas, value: "3" }
+  notify_url:
+    type: string
+    required: true
+
+tasks:
+  - id: assess
+    uses: json
+    network: none
+    with:
+      op: query
+      src: run.json
+      filter: |
+        .changes as $c
+        | {
+            count: ($c | length),
+            services: ([$c[].service] | unique),
+            risky: (($c | length) > 5 or any($c[]; .service == "payments" or .service == "auth")),
+            summary: ([$c[] | "\(.service): \(.setting) = \(.value)"] | join("; "))
+          }
+
+  - id: approval
+    needs: [assess]
+    condition: '{{ .tasks.assess.output.result.risky }}'
+    await:
+      timeout_seconds: 86400
+      schema:
+        approved: { type: boolean, required: true }
+        approver: { type: string, required: true }
+
+  - id: apply
+    uses: shell
+    needs: [assess, approval]
+    join: none_failed
+    condition: '{{ if index .tasks "approval" }}{{ .tasks.approval.output.approved }}{{ else }}true{{ end }}'
+    with:
+      op: script
+      interpreter: sh
+      command: ['{{ .tasks.assess.output.result.summary }}']
+      script: |
+        set -eu
+        echo "applying: $1"
+
+  - id: announce
+    uses: orkflow:notify-block@0.1.0
+    needs: [assess, apply]
+    join: none_failed
+    with:
+      url: '{{ .inputs.notify_url }}'
+      subject: change
+      text: '{{ if index .tasks "apply" }}applied{{ else }}declined{{ end }}: {{ .tasks.assess.output.result.summary }}{{ with index .tasks "approval" }} (approver: {{ .output.approver }}){{ end }}'
+
+  - id: tell-requester
+    uses: orkflow:notify-block@0.1.0
+    needs: [approval]
+    join: any_failed
+    with:
+      url: '{{ .inputs.notify_url }}'
+      subject: change
+      text: 'not applied: the approval was rejected or expired ({{ .tasks.assess.output.result.summary }})'

@@ -1,0 +1,100 @@
+apiVersion: orkstack/v1
+kind: Orkflow
+# A vector that pins its version and uses every feature.
+name: every-feature
+version: "1.0.0"
+description: Every feature a definition can carry.
+labels:
+  team: platform
+inputs:
+  parts:
+    type: array
+    default:
+      - name: a
+      - name: b
+  retries:
+    type: number
+    default: 3
+  verbose:
+    type: boolean
+    default: false
+outputs:
+  merged: '{{ .tasks.merge.output.value }}'
+pins:
+  build:
+    timeout_seconds: 600
+tasks:
+  - id: prepare
+    uses: shell
+    network: none
+    cache:
+      enabled: true
+      ttl_seconds: 3600
+    with:
+      op: exec
+      command: [sh, -c, "echo prepare"]
+      scalars:
+        n1: null
+        n2: ~
+        n3:
+        b1: true
+        b2: False
+        i1: 0
+        i2: -0
+        i3: +12
+        i4: 42
+        h1: 0x1F
+        f1: 1.5
+        f2: .5
+        f3: 1.
+        f4: 1.0
+        f5: 01.5
+        f6: 1.5e+3
+        f7: 1.5E-3
+        big: 9007199254740992
+        s1: 1.2.3
+        s2: 10.0.0.1
+        s3: v1
+        s4: 3d
+        s5: inf
+        s6: nUll
+        s7: _1
+        s8: https://x/y
+        m1: {a: b}
+  - id: approval
+    needs: [prepare]
+    await:
+      timeout_seconds: 3600
+      schema:
+        approved: { type: boolean, required: true }
+        approver: { type: string }
+  - id: convert
+    uses: shell
+    needs: [approval]
+    each:
+      over: '{{ .inputs.parts }}'
+      as: part
+      max_items: 10
+      max_parallel: 2
+    retry: { maximum_attempts: 2, initial_interval_seconds: 1, backoff_coefficient: 2.0, maximum_interval_seconds: 60 }
+    with:
+      op: eval
+      command: [sh, -c, "echo {{ sh .each.part.name }}"]
+  - id: merge
+    uses: shell
+    pin: build
+    needs: [convert]
+    timeout_seconds: 120
+    resources: { cpu: "1", memory: 512Mi }
+    env:
+      MODE: merge
+    with:
+      op: eval
+      command: [sh, -c, "printf merged"]
+  - id: cleanup
+    uses: shell
+    needs: [merge]
+    join: all_done
+    with:
+      op: eval
+      command: [sh, -c, "echo cleanup"]

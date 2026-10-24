@@ -1,0 +1,90 @@
+# OrkStack orkflow DSL
+#
+# A pin: two tasks that execute on ONE Orker process and share one read-write
+# directory, /orkstack/shared, for the life of the group.
+#
+#   pool:  which Orkers a task may run on — a set.
+#   pin:   which ONE member of that set, for these tasks, together.
+#
+# What the shape below demonstrates:
+#   * `pins:` declares the group once, by name, with the group's own option —
+#     its whole lifetime. A task joins with `pin: build`, a bare name, and a
+#     name nothing declared is refused at compile.
+#   * `write` leaves a file under /orkstack/shared and `read` finds it there,
+#     which is only possible because both ran on the same host.
+#   * `checksum` is UNPINNED: it may run on any Orker of the pool and sees the
+#     pinned group's work only through the artifact `read` committed. Nothing
+#     outside a pin can see /orkstack/shared.
+#
+# A pin imposes NO ORDERING. The `needs: [write]` edge is what makes `read`
+# run second; membership in `build` adds no edge at all. Two members with no
+# edge between them run concurrently, on one host, sharing one directory —
+# which is the author's own concurrency contract with their filesystem, exactly
+# as it would be for two processes on one machine. (This is the one place the
+# familiar `workingDir` analogy misleads: Kestra serializes those tasks and
+# OrkStack does not.)
+#
+# Both members set `run_as_orker_user: true` and neither names a pool, because
+# every task of one pin must agree on both: /orkstack/shared is 1777 with the
+# sticky bit, so two members running as different users could each create files
+# the other cannot replace, and a pin is one process out of one pool's set.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: pinned-build
+version: "0.1.0"
+description: "Two pinned tasks hand a file over on disk; an unpinned one reads the committed artifact."
+
+inputs:
+  release:
+    type: string
+    default: "1.4.2"
+
+pins:
+  build:                    # declared once, by name
+    timeout_seconds: 900    # optional; 0 or absent means derived from the members
+
+tasks:
+  # 1. Write into the shared directory. Nothing here is committed: /orkstack/shared
+  #    is neither an input tree nor an output tree, and nothing in it is hashed,
+  #    uploaded or stored.
+  - id: write
+    uses: shell
+    pin: build
+    run_as_orker_user: true
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        mkdir -p /orkstack/shared/src
+        {
+          echo "release: {{ .inputs.release }}"
+          echo "host-local handoff: this file never leaves the pin"
+        } > /orkstack/shared/src/version.txt
+        cat /orkstack/shared/src/version.txt
+
+  # 2. Read what the previous task left on this host's disk, and — because a
+  #    file that must outlive the pin has to be committed like any other — copy
+  #    it into /orkstack/output/artifacts/ as well. The platform does not keep
+  #    the two channels consistent; the task does.
+  - id: read
+    uses: shell
+    pin: build
+    needs: [write]
+    run_as_orker_user: true
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - cat /orkstack/shared/src/version.txt | tee /orkstack/output/artifacts/version.txt
+
+  # 3. Unpinned. It runs wherever the pool sends it, never sees
+  #    /orkstack/shared, and reaches the pinned group's work the ordinary way:
+  #    through a committed artifact resolved to a local path before it starts.
+  - id: checksum
+    uses: file
+    needs: [read]
+    with:
+      op: checksum
+      src: '{{ artifact "read/version.txt" }}'

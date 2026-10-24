@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<script>
+			// Paint the right theme before the first frame. This mirrors
+			// $lib/theme.ts's own resolution (an explicit choice in
+			// localStorage, else the OS setting) because that module cannot
+			// run until the app hydrates — by which point a wrong-themed flash
+			// has already happened. Kept tiny and duplicated rather than
+			// imported: this runs before any bundle exists to import from.
+			// Storage and matchMedia are read in separate tries, so a browser
+			// that refuses storage still follows the OS (ui/test/theme.test.ts).
+			(function () {
+				var stored = null;
+				try {
+					stored = localStorage.getItem('ork-theme');
+				} catch (e) {}
+				var dark = stored === 'dark';
+				if (stored !== 'light' && stored !== 'dark') {
+					try {
+						dark = matchMedia('(prefers-color-scheme: dark)').matches;
+					} catch (e) {}
+				}
+				document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+			})();
+		</script>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover" class="bg-paper text-ink antialiased">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

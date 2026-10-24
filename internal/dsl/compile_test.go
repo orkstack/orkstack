@@ -1,0 +1,1440 @@
+package dsl_test
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
+)
+
+const examplePath = "../../examples/hello.ork.yaml"
+
+func TestCompile_AcceptsHelloExample(t *testing.T) {
+	source, err := os.ReadFile(examplePath)
+	if err != nil {
+		t.Fatalf("read example: %v", err)
+	}
+	wf, err := dsl.Compile(source)
+	if err != nil {
+		t.Fatalf("Compile(hello.ork.yaml) = error %v, want success", err)
+	}
+
+	if wf.GetName() != "hello-ork" {
+		t.Errorf("name = %q, want hello-ork", wf.GetName())
+	}
+	if wf.GetVersion() != "0.2.0" {
+		t.Errorf("version = %q, want pinned 0.2.0", wf.GetVersion())
+	}
+	if wf.GetSourceYaml() != string(source) {
+		t.Errorf("source_yaml does not round-trip the original bytes")
+	}
+	if got, want := len(wf.GetTasks()), 3; got != want {
+		t.Fatalf("tasks = %d, want %d", got, want)
+	}
+
+	wantOrder := []string{"fetch", "transform", "verify"}
+	for i, task := range wf.GetTasks() {
+		if task.GetId() != wantOrder[i] {
+			t.Errorf("task[%d].id = %q, want %q", i, task.GetId(), wantOrder[i])
+		}
+		if task.GetTimeoutSeconds() != dsl.DefaultTimeoutSeconds {
+			t.Errorf("task %q timeout = %d, want default %d",
+				task.GetId(), task.GetTimeoutSeconds(), dsl.DefaultTimeoutSeconds)
+		}
+	}
+
+	byID := map[string][]string{}
+	for _, task := range wf.GetTasks() {
+		byID[task.GetId()] = task.GetNeeds()
+	}
+	if got := byID["transform"]; len(got) != 1 || got[0] != "fetch" {
+		t.Errorf("transform.needs = %v, want [fetch]", got)
+	}
+	if got := byID["verify"]; len(got) != 1 || got[0] != "transform" {
+		t.Errorf("verify.needs = %v, want [transform]", got)
+	}
+
+	fetchWith := wf.GetTasks()[0].GetWith().AsMap()
+	if fetchWith["url"] != "{{ .inputs.url }}" {
+		t.Errorf("fetch.with.url = %v, want the raw un-rendered template", fetchWith["url"])
+	}
+	if _, ok := wf.GetInputs().GetFields()["url"]; !ok {
+		t.Errorf("inputs.url not compiled, got %v", wf.GetInputs().AsMap())
+	}
+}
+
+func TestCompileFile_AcceptsHelloExample(t *testing.T) {
+	wf, err := dsl.CompileFile(examplePath)
+	if err != nil {
+		t.Fatalf("CompileFile = error %v, want success", err)
+	}
+	if wf.GetName() != "hello-ork" {
+		t.Errorf("name = %q, want hello-ork", wf.GetName())
+	}
+}
+
+// TestCompile_AcceptsEveryShippedExample keeps examples/ honest: every file we
+// ship as documentation must still compile, and every task that names a
+// catalog activity must name the generic `op` selector, so the examples stay a
+// faithful reference for docs/ACTIVITY_IMAGES.md.
+//
+// `op` is a convention of the first-party images, not of the OCI contract: a
+// task whose `uses` is a registry reference (an image of the author's own,
+// examples/custom-image.ork.yaml) has its own configuration shape and is
+// exempt. An awaited task runs no activity and a composed task's with: is
+// its child run's input, so neither names an `op` either.
+func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
+	paths, err := filepath.Glob("../../examples/*.ork.yaml")
+	if err != nil {
+		t.Fatalf("glob examples: %v", err)
+	}
+	if len(paths) < 4 {
+		t.Fatalf("found %d examples (%v), want hello, http-post, file-read and shell-eval", len(paths), paths)
+	}
+	catalog := dsl.BuiltinActivityCatalog()
+
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			wf, err := dsl.CompileFile(path)
+			if err != nil {
+				t.Fatalf("CompileFile(%s) = error %v, want success", path, err)
+			}
+			for _, task := range wf.GetTasks() {
+				if task.GetAwait() != nil {
+					continue // an awaited task runs no activity and has no `op`
+				}
+				if task.GetOrkflow() != nil {
+					continue // a composed task's with: is its child run's input
+				}
+				if _, ok := catalog[task.GetUses()]; !ok {
+					continue // a registry reference: `op` is not its convention
+				}
+				with := task.GetWith().AsMap()
+				op, _ := with["op"].(string)
+				if strings.TrimSpace(op) == "" {
+					t.Errorf("%s task %q does not set an explicit `op`", filepath.Base(path), task.GetId())
+				}
+			}
+		})
+	}
+}
+
+func TestCompile_RejectsInvalidDocuments(t *testing.T) {
+	tests := []struct {
+		name        string
+		yaml        string
+		wantMessage string
+	}{
+		{
+			name: "duplicate task ids",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: dup-wf
+tasks:
+  - id: a
+    uses: shell
+    with: {command: "echo 1"}
+  - id: a
+    uses: shell
+    with: {command: "echo 2"}
+`,
+			wantMessage: "duplicate task id",
+		},
+		{
+			name: "missing needs target",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: missing-need
+tasks:
+  - id: a
+    uses: shell
+    needs: [ghost]
+    with: {command: "echo 1"}
+`,
+			wantMessage: "needs unknown task",
+		},
+		{
+			name: "cyclic needs",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: cyclic
+tasks:
+  - id: a
+    uses: shell
+    needs: [b]
+    with: {command: "echo a"}
+  - id: b
+    uses: shell
+    needs: [a]
+    with: {command: "echo b"}
+`,
+			wantMessage: "cycle in needs graph",
+		},
+		{
+			name: "self cycle",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: self-cycle
+tasks:
+  - id: a
+    uses: shell
+    needs: [a]
+    with: {command: "echo a"}
+`,
+			wantMessage: "cycle",
+		},
+		{
+			name: "invalid orkflow slug",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: Hello_Ork
+tasks:
+  - id: a
+    uses: shell
+    with: {command: "echo 1"}
+`,
+			wantMessage: "is not a slug",
+		},
+		{
+			name: "invalid task slug",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: bad-task-slug
+tasks:
+  - id: Fetch_Thing
+    uses: shell
+    with: {command: "echo 1"}
+`,
+			wantMessage: "is not a slug",
+		},
+		{
+			name: "unparseable template in with",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: bad-template
+tasks:
+  - id: a
+    uses: shell
+    with:
+      command: "echo {{ .inputs.url "
+`,
+			wantMessage: "template parse error",
+		},
+		{
+			name: "unparseable template in condition",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: bad-condition
+tasks:
+  - id: a
+    uses: shell
+    condition: "{{ if }}"
+    with: {command: "echo 1"}
+`,
+			wantMessage: "template parse error",
+		},
+		{
+			// `uses:` is REQUIRED: it is the only image-selecting field, and
+			// a task that names no activity has nothing to run.
+			name: "uses is missing",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: no-uses
+tasks:
+  - id: a
+    with: {command: "echo 1"}
+`,
+			wantMessage: "`uses:` is required",
+		},
+		{
+			// A templated `uses:` cannot compile. Resolution happens at APPLY
+			// so a run pins an immutable digest, and a reference selected from
+			// run input is not knowable then. This is a deliberate capability
+			// loss, not an oversight.
+			name: "uses is a template",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: templated-uses
+inputs:
+  image: {type: string, default: "alpine:3.20"}
+tasks:
+  - id: a
+    uses: "{{ .inputs.image }}"
+`,
+			wantMessage: "cannot be a template",
+		},
+		{
+			// A key the schema does not define is refused, never ignored:
+			// decoding is strict, so a misspelled or unsupported key cannot
+			// be accepted in silence and surface later as a run that behaves
+			// differently from its document.
+			name: "unknown task key is refused",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: unknown-key
+tasks:
+  - id: a
+    uses: shell
+    plugin: shell
+    with: {command: "echo 1"}
+`,
+			wantMessage: "field plugin not found",
+		},
+		{
+			name: "unknown top-level key is refused",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: unknown-key
+queue: gpu
+tasks:
+  - id: a
+    uses: shell
+`,
+			wantMessage: "field queue not found",
+		},
+		{
+			// There is no `container` activity: every task already is a
+			// container, so a workload names the image it wants directly.
+			name: "uses container is an unknown activity",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: no-container-activity
+tasks:
+  - id: a
+    uses: container
+`,
+			wantMessage: "container",
+		},
+		{
+			// Exactly two network modes exist. A typo must not silently
+			// select the one with full network access.
+			name: "unknown network mode",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: bad-network
+tasks:
+  - id: a
+    uses: shell
+    network: nonw
+`,
+			wantMessage: "`network:` must be",
+		},
+		{
+			name: "secret without a source",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: bad-secret
+tasks:
+  - id: a
+    uses: shell
+    secrets:
+      - name: db_password
+`,
+			wantMessage: "needs a `source:`",
+		},
+		{
+			name: "undeclared input reference",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: undeclared-input
+tasks:
+  - id: a
+    uses: shell
+    with:
+      command: "echo {{ .inputs.nope }}"
+`,
+			wantMessage: "undeclared input",
+		},
+		{
+			name: "non-upstream task reference",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: non-upstream
+tasks:
+  - id: a
+    uses: shell
+    with: {command: "echo a"}
+  - id: b
+    uses: shell
+    with:
+      command: "echo {{ .tasks.a.output.stdout }}"
+`,
+			wantMessage: "not in its needs closure",
+		},
+		{
+			name: "non-upstream artifact reference",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: non-upstream-artifact
+tasks:
+  - id: a
+    uses: shell
+    with: {command: "echo a"}
+  - id: b
+    uses: shell
+    with:
+      command: "cat {{ artifact \"a/body\" }}"
+`,
+			wantMessage: "not in its needs closure",
+		},
+		{
+			name: "malformed artifact reference",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: bad-artifact
+tasks:
+  - id: a
+    uses: shell
+    with: {command: "echo a"}
+  - id: b
+    uses: shell
+    needs: [a]
+    with:
+      command: "cat {{ artifact \"body\" }}"
+`,
+			wantMessage: "must be \"<task>/<name>\"",
+		},
+		{
+			name: "missing name",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+tasks:
+  - id: a
+    uses: shell
+    with: {command: "echo 1"}
+`,
+			wantMessage: "orkflow name is required",
+		},
+		{
+			name:        "unparseable yaml",
+			yaml:        "name: [oops\n",
+			wantMessage: "parse yaml",
+		},
+		{
+			// Rule 9: a pin is a REFERENCE, so a typo is a missing pin and
+			// never a second, one-task group.
+			name: "task pins to an undeclared pin",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: unknown-pin
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: buidl
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: `task "a" pins to unknown pin "buidl"`,
+		},
+		{
+			// Rule 9: a pin name becomes a directory component on the pin
+			// host, so it is held to the slug rule like every other name.
+			name: "declared pin name is not a slug",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: bad-pin-slug
+pins:
+  Build_1: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: Build_1
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: `pin name "Build_1" is not a slug`,
+		},
+		{
+			// Rule 10: a pin is one process out of ONE pool's set.
+			name: "pin spans two pools",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: pin-two-pools
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    pool: gpu
+    with: {op: exec, command: "echo 1"}
+  - id: b
+    uses: shell
+    pin: build
+    pool: cpu
+    with: {op: exec, command: "echo 2"}
+`,
+			wantMessage: `pin "build" spans two pools`,
+		},
+		{
+			// Rule 11: the sticky-bit failure mode, refused before it can
+			// break the pin's second task.
+			name: "pin disagrees on run_as_orker_user",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: pin-two-users
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    run_as_orker_user: true
+    with: {op: exec, command: "echo 1"}
+  - id: b
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 2"}
+`,
+			wantMessage: `pin "build" disagrees on run_as_orker_user`,
+		},
+		{
+			// Rule 12: a declaration nothing references is a typo, and the
+			// error names the half that is unreferenced.
+			name: "declared pin nothing references",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: unused-pin
+pins:
+  build: {}
+  buidl: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: `pin "buidl" is declared but no task references it`,
+		},
+		{
+			// Rule 13: 0 means derived, so the only value that names no
+			// lifetime at all is a negative one.
+			name: "negative pin timeout",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: negative-pin-timeout
+pins:
+  build:
+    timeout_seconds: -1
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: `pin "build": timeout_seconds -1 is negative`,
+		},
+		{
+			// Strict decoding covers the new keys like every other: `pins:` is
+			// a known field, and a key inside it that the schema does not
+			// define is refused rather than ignored.
+			name: "unknown key inside a pin declaration",
+			yaml: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: unknown-pin-option
+pins:
+  build:
+    timeout_second: 60
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: "field timeout_second not found",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := dsl.Compile([]byte(tc.yaml))
+			if err == nil {
+				t.Fatalf("Compile() = nil error, want rejection containing %q", tc.wantMessage)
+			}
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Fatalf("Compile() error = %q, want it to contain %q", err.Error(), tc.wantMessage)
+			}
+		})
+	}
+}
+
+func TestCompile_AcceptsTransitiveUpstreamReference(t *testing.T) {
+	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: transitive
+tasks:
+  - id: a
+    uses: shell
+    with: {command: "echo a"}
+  - id: b
+    uses: shell
+    needs: [a]
+    with: {command: "echo b"}
+  - id: c
+    uses: shell
+    needs: [b]
+    with:
+      command: "echo {{ .tasks.a.output.stdout }} {{ artifact \"a/body\" }}"
+`
+	if _, err := dsl.Compile([]byte(doc)); err != nil {
+		t.Fatalf("Compile() = error %v, want acceptance of transitive upstream reference", err)
+	}
+}
+
+// TestCompile_UnpinnedVersionNamesTheBytesItStores is the derived version's
+// whole contract: it is the sha256 of the source the document is stored with,
+// header included — the very bytes the store compares.
+//
+// The second half is not decoration. A version names ONE stored document, and
+// the store decides "this apply is what is already there" by comparing what it
+// holds — source bytes included (pkg/artifacts.SameStoredOrkflow). A
+// derivation covering LESS than those bytes names two different documents: a
+// comment-only edit compiled to the same version carrying different source,
+// and the store then refused it as an attempt to rewrite an immutable version
+// — with advice ("publish a new version") its author could not follow, because
+// a derived version is not theirs to choose. So the derivation covers exactly
+// the bytes that are stored, and the two notions of "the same document" cannot
+// disagree.
+func TestCompile_UnpinnedVersionNamesTheBytesItStores(t *testing.T) {
+	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: unpinned
+description: hash me
+tasks:
+  - id: a
+    uses: shell
+    with: {command: "echo 1"}
+`
+	first, err := dsl.Compile([]byte(doc))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(first.GetVersion()) != 64 {
+		t.Fatalf("version = %q, want a 64-char sha256 hex hash", first.GetVersion())
+	}
+
+	// The same bytes are the same version. This is what makes re-applying an
+	// unchanged file a no-op rather than a second version of the same thing.
+	second, err := dsl.Compile([]byte(doc))
+	if err != nil {
+		t.Fatalf("Compile (repeat): %v", err)
+	}
+	if first.GetVersion() != second.GetVersion() {
+		t.Errorf("version is not stable: %q vs %q", first.GetVersion(), second.GetVersion())
+	}
+
+	// And the version IS those bytes' hash, so nothing else has to agree with
+	// the compiler about what "the same document" means — it can measure it.
+	sum := sha256.Sum256([]byte(first.GetSourceYaml()))
+	if want := hex.EncodeToString(sum[:]); first.GetVersion() != want {
+		t.Errorf("version %q does not name the stored source (sha256 %q)",
+			first.GetVersion(), want)
+	}
+
+	// Every change to those bytes is a new version, including the ones a
+	// compiler could dismiss as cosmetic and the ones that only move the
+	// header: a comment is part of the document its author reads, and an edit
+	// that adds or moves one has to be storable.
+	withComment := "# remind me why this exists\n" + doc
+	headerAfter := "# one\n# two\n" + dsl.OrkflowHeader + "name: unpinned\ndescription: hash me\ntasks:\n  - id: a\n    uses: shell\n    with: {command: \"echo 1\"}\n"
+	headerFirst := dsl.OrkflowHeader + "# one\n# two\nname: unpinned\ndescription: hash me\ntasks:\n  - id: a\n    uses: shell\n    with: {command: \"echo 1\"}\n"
+	for what, edited := range map[string]string{
+		"a comment":         withComment,
+		"whitespace":        strings.ReplaceAll(doc, "description: hash me", "description:   hash me"),
+		"an edited command": strings.ReplaceAll(doc, "echo 1", "echo 2"),
+		"a reordered mapping": strings.Replace(doc, "name: unpinned\ndescription: hash me",
+			"description: hash me\nname: unpinned", 1),
+		"the header after comments": headerAfter,
+		"the header first":          headerFirst,
+	} {
+		changed, err := dsl.Compile([]byte(edited))
+		if err != nil {
+			t.Fatalf("Compile (%s): %v", what, err)
+		}
+		if changed.GetVersion() == first.GetVersion() {
+			t.Errorf("%s did not change the version %q", what, first.GetVersion())
+		}
+		sum := sha256.Sum256([]byte(changed.GetSourceYaml()))
+		if want := hex.EncodeToString(sum[:]); changed.GetVersion() != want {
+			t.Errorf("%s: version %q does not name the stored source (sha256 %q)",
+				what, changed.GetVersion(), want)
+		}
+	}
+}
+
+func TestCompile_PinnedVersionIsPreservedVerbatim(t *testing.T) {
+	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: pinned
+version: "  2.0.0-RC1  "
+tasks:
+  - id: a
+    uses: shell
+    with: {command: "echo 1"}
+`
+	wf, err := dsl.Compile([]byte(doc))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if wf.GetVersion() != "  2.0.0-RC1  " {
+		t.Errorf("version = %q, want the pinned value preserved verbatim", wf.GetVersion())
+	}
+}
+
+func TestCompile_CompilesRetryTimeoutAndPool(t *testing.T) {
+	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: options
+tasks:
+  - id: a
+    uses: shell
+    pool: gpu
+    timeout_seconds: 42
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
+      backoff_coefficient: 1.5
+      maximum_interval_seconds: 10
+    with: {command: "echo 1"}
+`
+	wf, err := dsl.Compile([]byte(doc))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	task := wf.GetTasks()[0]
+	if task.GetPool() != "gpu" {
+		t.Errorf("pool = %q, want gpu", task.GetPool())
+	}
+	if task.GetTimeoutSeconds() != 42 {
+		t.Errorf("timeout_seconds = %d, want 42", task.GetTimeoutSeconds())
+	}
+	retry := task.GetRetry()
+	if retry.GetMaximumAttempts() != 3 || retry.GetInitialIntervalSeconds() != 2 ||
+		retry.GetBackoffCoefficient() != 1.5 || retry.GetMaximumIntervalSeconds() != 10 {
+		t.Errorf("retry = %+v, want the DSL values", retry)
+	}
+}
+
+// TestCompile_CarriesTheNamespaceAndLeavesAbsenceEmpty pins the two halves of
+// rule 1's namespace: an author who names one gets it verbatim, and an author
+// who names none gets an empty field — "empty means default" is resolved once,
+// where the name becomes a storage key, and never guessed twice.
+func TestCompile_CarriesTheNamespaceAndLeavesAbsenceEmpty(t *testing.T) {
+	const named = `
+apiVersion: orkstack/v1
+kind: Orkflow
+namespace: payments
+name: nightly-close
+tasks:
+  - id: settle
+    uses: shell
+    with: {command: "echo 1"}
+`
+	wf, err := dsl.Compile([]byte(named))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if wf.GetNamespace() != "payments" {
+		t.Errorf("namespace = %q, want payments", wf.GetNamespace())
+	}
+
+	const anonymous = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: nightly-close
+tasks:
+  - id: settle
+    uses: shell
+    with: {command: "echo 1"}
+`
+	wf, err = dsl.Compile([]byte(anonymous))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if wf.GetNamespace() != "" {
+		t.Errorf("namespace = %q, want empty (meaning the default namespace)", wf.GetNamespace())
+	}
+}
+
+func TestCompile_RejectsANamespaceOrPoolThatIsNotASlug(t *testing.T) {
+	cases := []struct{ name, doc, want string }{
+		{
+			name: "namespace",
+			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
+namespace: Payments Team
+name: nightly-close
+tasks:
+  - id: settle
+    uses: shell
+    with: {command: "echo 1"}
+`,
+			want: "namespace",
+		},
+		{
+			name: "pool",
+			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: nightly-close
+tasks:
+  - id: settle
+    uses: shell
+    pool: GPU_Large
+    with: {command: "echo 1"}
+`,
+			want: "pool",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := dsl.Compile([]byte(tc.doc))
+			if err == nil {
+				t.Fatalf("Compile accepted a %s that is not a slug", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not name %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// TestCompile_CompilesPinsSortedByNameWhateverTheSourceOrder is the
+// determinism half of the pins compilation.
+//
+// A YAML mapping decodes into a Go map, which has no order to hand on, so
+// ranging it would let ONE document compile to two different messages. That
+// matters twice: the definition digest is computed over the compiled message
+// (dsl.canonicalPins), and the store decides "this apply is a repeat of an
+// unchanged document" by comparing the message it holds
+// (pkg/artifacts.SameStoredOrkflow). A compilation that varied with map
+// iteration order would make re-applying an unchanged file a different
+// document under a stored version.
+func TestCompile_CompilesPinsSortedByNameWhateverTheSourceOrder(t *testing.T) {
+	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: sorted-pins
+pins:
+  zebra: {}
+  build:
+    timeout_seconds: 900
+  alpha: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: zebra
+    with: {op: exec, command: "echo a"}
+  - id: b
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo b"}
+  - id: c
+    uses: shell
+    pin: alpha
+    with: {op: exec, command: "echo c"}
+`
+	wf, err := dsl.Compile([]byte(doc))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	var got []string
+	for _, pin := range wf.GetPins() {
+		got = append(got, pin.GetName())
+	}
+	want := []string{"alpha", "build", "zebra"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("pins = %v, want them sorted by name: %v", got, want)
+	}
+
+	// The same keys typed in a different order are the same message, which is
+	// the property the digest and the store depend on.
+	reordered := strings.Replace(doc,
+		"  zebra: {}\n  build:\n    timeout_seconds: 900\n  alpha: {}\n",
+		"  alpha: {}\n  zebra: {}\n  build:\n    timeout_seconds: 900\n", 1)
+	if reordered == doc {
+		t.Fatal("test setup: the reordered document is identical to the original")
+	}
+	again, err := dsl.Compile([]byte(reordered))
+	if err != nil {
+		t.Fatalf("Compile (reordered): %v", err)
+	}
+	if !proto.Equal(&orkstackv1.Orkflow{Pins: wf.GetPins()}, &orkstackv1.Orkflow{Pins: again.GetPins()}) {
+		t.Errorf("reordering the pins keys changed the compiled pins: %v vs %v",
+			wf.GetPins(), again.GetPins())
+	}
+
+	// The declared option travels; an empty options object is a zero timeout,
+	// which means DERIVED and not "no lifetime".
+	byName := map[string]int32{}
+	for _, pin := range wf.GetPins() {
+		byName[pin.GetName()] = pin.GetTimeoutSeconds()
+	}
+	if byName["build"] != 900 {
+		t.Errorf("build.timeout_seconds = %d, want 900", byName["build"])
+	}
+	if byName["alpha"] != 0 {
+		t.Errorf("alpha.timeout_seconds = %d, want 0 (derived)", byName["alpha"])
+	}
+	if got, want := wf.GetTasks()[0].GetPin(), "zebra"; got != want {
+		t.Errorf("task a pin = %q, want %q carried verbatim", got, want)
+	}
+}
+
+// TestCompile_LeavesPinsAbsentWhenTheDocumentDeclaresNone is the backward
+// compatibility half: a document with no `pins:` key compiles to the message
+// it compiled to before pins existed. An empty-but-allocated slice would be a
+// difference nothing wanted — canonicalPins already refuses to emit a `pins`
+// key for it, and this keeps the message itself unchanged too.
+func TestCompile_LeavesPinsAbsentWhenTheDocumentDeclaresNone(t *testing.T) {
+	const doc = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: unpinned-doc
+tasks:
+  - id: a
+    uses: shell
+    with: {op: exec, command: "echo 1"}
+`
+	wf, err := dsl.Compile([]byte(doc))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if wf.GetPins() != nil {
+		t.Errorf("pins = %#v, want nil for a document that declares none", wf.GetPins())
+	}
+	if got := wf.GetTasks()[0].GetPin(); got != "" {
+		t.Errorf("task pin = %q, want empty", got)
+	}
+}
+
+// TestCompile_AcceptsPinsAtTheirDefaults covers the three acceptances the
+// rules must not overshoot: a pin with no timeout at all, a pin whose author
+// wrote `timeout_seconds: 0` explicitly (both mean DERIVED, because
+// Pin.timeout_seconds is a plain int32 in which the two are one value), and a
+// pin whose members spell the default pool two different ways — absent and
+// `main` are one route in QueueForPool, so rule 10 must not see two pools.
+func TestCompile_AcceptsPinsAtTheirDefaults(t *testing.T) {
+	cases := []struct{ name, doc string }{
+		{
+			name: "absent timeout",
+			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: pin-no-timeout
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+		},
+		{
+			name: "explicit zero timeout means derived",
+			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: pin-zero-timeout
+pins:
+  build:
+    timeout_seconds: 0
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+		},
+		{
+			name: "absent pool and main are the same pool",
+			doc: `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: pin-default-pool-two-spellings
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    pool: main
+    run_as_orker_user: true
+    with: {op: exec, command: "echo 1"}
+  - id: b
+    uses: shell
+    pin: build
+    needs: [a]
+    run_as_orker_user: true
+    with: {op: exec, command: "echo 2"}
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wf, err := dsl.Compile([]byte(tc.doc))
+			if err != nil {
+				t.Fatalf("Compile() = error %v, want acceptance", err)
+			}
+			if got := wf.GetPins()[0].GetTimeoutSeconds(); got < 0 {
+				t.Errorf("timeout_seconds = %d, want a non-negative value", got)
+			}
+		})
+	}
+}
+
+// TestCompile_AcceptsThePinnedBuildExample reads the shipped example as an
+// author would and checks the two fields a pin actually is: the group on the
+// orkflow and the membership on each task. The shipped-examples sweep only
+// proves it compiles; this proves it compiles to the pin it documents.
+func TestCompile_AcceptsThePinnedBuildExample(t *testing.T) {
+	wf, err := dsl.CompileFile("../../examples/pinned-build.ork.yaml")
+	if err != nil {
+		t.Fatalf("CompileFile(pinned-build.ork.yaml) = error %v, want success", err)
+	}
+	if got := len(wf.GetPins()); got != 1 {
+		t.Fatalf("pins = %d, want 1", got)
+	}
+	if got := wf.GetPins()[0].GetName(); got != "build" {
+		t.Errorf("pin name = %q, want build", got)
+	}
+	if got := wf.GetPins()[0].GetTimeoutSeconds(); got != 900 {
+		t.Errorf("pin timeout_seconds = %d, want 900", got)
+	}
+
+	wantPin := map[string]string{"write": "build", "read": "build", "checksum": ""}
+	if got, want := len(wf.GetTasks()), len(wantPin); got != want {
+		t.Fatalf("tasks = %d, want %d", got, want)
+	}
+	for _, task := range wf.GetTasks() {
+		want, known := wantPin[task.GetId()]
+		if !known {
+			t.Errorf("unexpected task %q", task.GetId())
+			continue
+		}
+		if task.GetPin() != want {
+			t.Errorf("task %q pin = %q, want %q", task.GetId(), task.GetPin(), want)
+		}
+		// Rules 10 and 11 hold in the example itself: the pinned tasks agree
+		// on the pool (both absent) and on run_as_orker_user (both true).
+		if task.GetPin() != "" {
+			if task.GetPool() != "" {
+				t.Errorf("task %q pool = %q, want absent", task.GetId(), task.GetPool())
+			}
+			if !task.GetRunAsOrkerUser() {
+				t.Errorf("task %q run_as_orker_user = false, want true across the pin", task.GetId())
+			}
+		}
+	}
+}
+
+func TestCompileFile_ReportsMissingFile(t *testing.T) {
+	_, err := dsl.CompileFile(filepath.Join(t.TempDir(), "nope.ork.yaml"))
+	if err == nil {
+		t.Fatal("CompileFile(missing) = nil error, want failure")
+	}
+}
+
+func TestCompile_RejectsIndirectInvalidTemplateReferences(t *testing.T) {
+	tests := []struct {
+		name        string
+		expression  string
+		wantMessage string
+	}{
+		{name: "unknown root", expression: `{{ .notAContextValue }}`, wantMessage: "unknown template root"},
+		{name: "bare inputs root", expression: `{{ .inputs }}`, wantMessage: "must name a declared input"},
+		{name: "bare tasks root", expression: `{{ .tasks }}`, wantMessage: "must name an upstream task"},
+		{name: "indexed missing input", expression: `{{ index .inputs "missing" }}`, wantMessage: "undeclared input"},
+		{name: "indexed non-upstream task", expression: `{{ index .tasks "producer" }}`, wantMessage: "not in its needs closure"},
+		{name: "chained indexed non-upstream task", expression: `{{ (index .tasks "producer").output }}`, wantMessage: "not in its needs closure"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			document := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
+name: indirect-reference
+inputs:
+  url:
+    type: string
+tasks:
+  - id: producer
+    uses: shell
+    with: {command: "echo producer"}
+  - id: consumer
+    uses: shell
+    with:
+      command: %q
+`, tc.expression)
+			_, err := dsl.Compile([]byte(document))
+			if err == nil {
+				t.Fatalf("Compile() accepted invalid template %q", tc.expression)
+			}
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Fatalf("Compile() error = %q, want it to contain %q", err, tc.wantMessage)
+			}
+		})
+	}
+}
+
+func TestCompile_AcceptsValidIndexedAndRelativeTemplateReferences(t *testing.T) {
+	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: indexed-references
+inputs:
+  url:
+    type: string
+  items:
+    type: array
+tasks:
+  - id: producer
+    uses: shell
+    with: {command: "echo producer"}
+  - id: consumer
+    uses: shell
+    needs: [producer]
+    with:
+      direct_input: '{{ index .inputs "url" }}'
+      dynamic_input: '{{ $key := "url" }}{{ index .inputs $key }}'
+      task_output: '{{ (index .tasks "producer").output.stdout }}'
+      relative: '{{ range .inputs.items }}{{ .value }}{{ end }}'
+`
+	if _, err := dsl.Compile([]byte(document)); err != nil {
+		t.Fatalf("Compile() rejected valid indexed/relative references: %v", err)
+	}
+}
+
+func TestCompile_RejectsRootVariablesNamedTreesAndUnreboundElseReferences(t *testing.T) {
+	tests := []struct {
+		name        string
+		expression  string
+		wantMessage string
+	}{
+		{name: "root variable undeclared input", expression: `{{ $.inputs.missing }}`, wantMessage: "undeclared input"},
+		{name: "root variable unknown task", expression: `{{ $.tasks.ghost.output.x }}`, wantMessage: "unknown task"},
+		{name: "root variable non-upstream task", expression: `{{ $.tasks.producer.output.x }}`, wantMessage: "not in its needs closure"},
+		{name: "named define", expression: `{{ define "bad" }}{{ $.inputs.missing }}{{ end }}{{ template "bad" . }}`, wantMessage: "undeclared input"},
+		{name: "with else", expression: `{{ with .inputs.url }}ok{{ else }}{{ .inputs.missing }}{{ end }}`, wantMessage: "undeclared input"},
+		{name: "range else", expression: `{{ range .inputs.items }}{{ .value }}{{ else }}{{ .inputs.missing }}{{ end }}`, wantMessage: "undeclared input"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			document := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
+name: complete-template-validation
+inputs:
+  url:
+    type: string
+  items:
+    type: array
+tasks:
+  - id: producer
+    uses: shell
+    with: {command: "echo producer"}
+  - id: consumer
+    uses: shell
+    with:
+      command: %q
+`, tc.expression)
+			_, err := dsl.Compile([]byte(document))
+			if err == nil {
+				t.Fatalf("Compile() accepted invalid template %q", tc.expression)
+			}
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Fatalf("Compile() error = %q, want it to contain %q", err, tc.wantMessage)
+			}
+		})
+	}
+}
+
+func TestCompile_AcceptsValidRootVariableReferences(t *testing.T) {
+	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: root-variable-references
+inputs:
+  url:
+    type: string
+tasks:
+  - id: producer
+    uses: shell
+    with: {command: "echo producer"}
+  - id: consumer
+    uses: shell
+    needs: [producer]
+    with:
+      input: '{{ $.inputs.url }}'
+      indexed_input: '{{ index $.inputs "url" }}'
+      indexed_task: '{{ (index $.tasks "producer").output.stdout }}'
+      task: '{{ $.tasks.producer.output.stdout }}'
+      rebound_root: '{{ with .inputs.url }}{{ $.inputs.url }}{{ end }}'
+      local: '{{ $name := .inputs.url }}{{ $name }}'
+      named: '{{ define "ok" }}{{ $.inputs.url }}{{ end }}{{ template "ok" . }}'
+`
+	if _, err := dsl.Compile([]byte(document)); err != nil {
+		t.Fatalf("Compile() rejected valid root variable references: %v", err)
+	}
+}
+
+func TestCompile_AcceptsNamedTemplateWithReboundRelativeContext(t *testing.T) {
+	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: named-rebound
+inputs:
+  obj:
+    type: object
+tasks:
+  - id: render
+    uses: shell
+    with:
+      command: '{{ define "value" }}{{ .value }}{{ end }}{{ with .inputs.obj }}{{ template "value" . }}{{ end }}'
+`
+	if _, err := dsl.Compile([]byte(document)); err != nil {
+		t.Fatalf("Compile() rejected named template relative to its rebound argument: %v", err)
+	}
+}
+
+func TestCompile_RejectsRootPreservingWithAndIndexBypasses(t *testing.T) {
+	tests := []struct {
+		name        string
+		expression  string
+		wantMessage string
+	}{
+		{name: "with dot", expression: `{{ with . }}{{ .inputs.missing }}{{ end }}`, wantMessage: "undeclared input"},
+		{name: "with dollar", expression: `{{ with $ }}{{ .inputs.missing }}{{ end }}`, wantMessage: "undeclared input"},
+		{name: "index root dot", expression: `{{ index . "inputs" "missing" }}`, wantMessage: "undeclared input"},
+		{name: "index root dollar", expression: `{{ index $ "tasks" "ghost" "output" }}`, wantMessage: "unknown task"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			document := fmt.Sprintf(`
+apiVersion: orkstack/v1
+kind: Orkflow
+name: root-bypass
+inputs:
+  present:
+    type: string
+tasks:
+  - id: only
+    uses: shell
+    with:
+      command: %q
+`, tc.expression)
+			_, err := dsl.Compile([]byte(document))
+			if err == nil {
+				t.Fatalf("Compile() accepted invalid root reference %q", tc.expression)
+			}
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Fatalf("Compile() error = %q, want it to contain %q", err, tc.wantMessage)
+			}
+		})
+	}
+}
+
+func TestCompile_AcceptsValidRootPreservingWithAndIndexPaths(t *testing.T) {
+	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: root-paths
+inputs:
+  present:
+    type: string
+tasks:
+  - id: producer
+    uses: shell
+  - id: consumer
+    uses: shell
+    needs: [producer]
+    with:
+      with_dot: '{{ with . }}{{ .inputs.present }}{{ end }}'
+      with_dollar: '{{ with $ }}{{ .inputs.present }}{{ end }}'
+      input_dot: '{{ index . "inputs" "present" }}'
+      input_dollar: '{{ index $ "inputs" "present" }}'
+      task_dot: '{{ index . "tasks" "producer" "output" }}'
+      task_dollar: '{{ index $ "tasks" "producer" "output" }}'
+`
+	if _, err := dsl.Compile([]byte(document)); err != nil {
+		t.Fatalf("Compile() rejected valid root-preserving paths: %v", err)
+	}
+}
+
+// TestCompile_ANullKeyInWithIsRefused: YAML lets two distinct keys stringify
+// to one JSON key (`null` and `"<nil>"`), and the old decode resolved the
+// collision last-wins. The strict mapping refuses a null key outright (R14),
+// so there is no collision to resolve and one document compiles one way.
+func TestCompile_ANullKeyInWithIsRefused(t *testing.T) {
+	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: colliding-keys
+tasks:
+  - id: only
+    uses: shell
+    with:
+      nested:
+        null: one
+        "<nil>": two
+`
+	_, err := dsl.Compile([]byte(document))
+	want := "line 10: the key null is null, and a JSON object key is a string; quote it ('null') for the key 'null'"
+	if err == nil || err.Error() != want || fieldOf(err) != "tasks[0].with.nested.null" {
+		t.Fatalf("Compile() = %v (field %q), want %q on tasks[0].with.nested.null", err, fieldOf(err), want)
+	}
+	for _, key := range []string{"~", "null", "Null"} {
+		doc := strings.Replace(document, "        null: one\n", "        "+key+": one\n", 1)
+		if _, err := dsl.Compile([]byte(doc)); err == nil || !strings.Contains(err.Error(), "is null, and a JSON object key is a string") {
+			t.Errorf("key %s: %v", key, err)
+		}
+	}
+}
+
+func TestCompile_PreservesExplicitEmptyStructPresence(t *testing.T) {
+	const explicit = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: explicit-empty
+inputs: {}
+tasks:
+  - id: only
+    uses: shell
+    with: {}
+`
+	wf, err := dsl.Compile([]byte(explicit))
+	if err != nil {
+		t.Fatalf("Compile(explicit empty): %v", err)
+	}
+	if wf.Inputs == nil || len(wf.Inputs.GetFields()) != 0 {
+		t.Errorf("inputs = %v, want a present empty Struct", wf.Inputs)
+	}
+	if wf.GetTasks()[0].With == nil || len(wf.GetTasks()[0].With.GetFields()) != 0 {
+		t.Errorf("with = %v, want a present empty Struct", wf.GetTasks()[0].With)
+	}
+
+	const omitted = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: omitted-empty
+tasks:
+  - id: only
+    uses: shell
+`
+	wf, err = dsl.Compile([]byte(omitted))
+	if err != nil {
+		t.Fatalf("Compile(omitted): %v", err)
+	}
+	if wf.Inputs != nil || wf.GetTasks()[0].With != nil {
+		t.Errorf("omitted fields became present: inputs=%v with=%v", wf.Inputs, wf.GetTasks()[0].With)
+	}
+	preservesPresenceForEveryDataPosition(t)
+}
+
+// preservesPresenceForEveryDataPosition is the rest of
+// TestCompile_PreservesExplicitEmptyStructPresence: for each data position, an absent key and a bare null (`key:`, `key: ~`,
+// `key: null`) compile to an unset field with one digest, and `{}` to a
+// present, empty struct.
+func preservesPresenceForEveryDataPosition(t *testing.T) {
+	documents := map[string]func(value string) string{
+		"inputs": func(value string) string {
+			return "apiVersion: orkstack/v1\nkind: Orkflow\nname: x\nversion: \"1\"\n" + value + "tasks:\n  - id: a\n    uses: shell\n"
+		},
+		"with": func(value string) string {
+			return "apiVersion: orkstack/v1\nkind: Orkflow\nname: x\nversion: \"1\"\ntasks:\n  - id: a\n    uses: shell\n" + indent(value, "    ")
+		},
+		"schema": func(value string) string {
+			return "apiVersion: orkstack/v1\nkind: Orkflow\nname: x\nversion: \"1\"\ntasks:\n  - id: a\n    await:\n      timeout_seconds: 60\n" + indent(value, "      ")
+		},
+	}
+	struct_ := func(position string, wf *orkstackv1.Orkflow) *structpb.Struct {
+		switch position {
+		case "inputs":
+			return wf.GetInputs()
+		case "with":
+			return wf.GetTasks()[0].GetWith()
+		}
+		return wf.GetTasks()[0].GetAwait().GetSchema()
+	}
+	for position, document := range documents {
+		absent, err := dsl.Compile([]byte(document("")))
+		if err != nil {
+			t.Fatalf("%s absent: %v", position, err)
+		}
+		absentDigest, _ := dsl.DefinitionDigest(absent)
+		if struct_(position, absent) != nil {
+			t.Errorf("%s absent compiled present", position)
+		}
+		for _, null := range []string{position + ":\n", position + ": ~\n", position + ": null\n"} {
+			wf, err := dsl.Compile([]byte(document(null)))
+			if err != nil {
+				t.Fatalf("%q: %v", null, err)
+			}
+			if struct_(position, wf) != nil {
+				t.Errorf("%q compiled present", null)
+			}
+			if digest, _ := dsl.DefinitionDigest(wf); digest != absentDigest {
+				t.Errorf("%q digest %s, want the absent form's %s", null, digest, absentDigest)
+			}
+		}
+		empty, err := dsl.Compile([]byte(document(position + ": {}\n")))
+		if err != nil {
+			t.Fatalf("%s: {}: %v", position, err)
+		}
+		if got := struct_(position, empty); got == nil || len(got.GetFields()) != 0 {
+			t.Errorf("%s: {} = %v, want a present empty struct", position, got)
+		}
+	}
+}
+
+func indent(text, prefix string) string {
+	if text == "" {
+		return ""
+	}
+	return prefix + text
+}

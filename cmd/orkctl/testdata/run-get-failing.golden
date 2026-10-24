@@ -1,0 +1,20 @@
+Run:       ork-1790000000000000000-4294967301
+Orkflow:   branch-and-recover
+Version:   0.1.0
+Status:    RUNNING (failing)
+Created:   2026-01-02T03:04:05Z
+Started:   2026-01-02T03:04:05Z
+Finished:  -
+Origin:    unrecorded (started before origins were recorded)
+Input:     -
+Output:    -
+Error:     RUN_FAILED: container exited with status 1
+
+TASK      STATUS     POOL  PIN  ORKER    ATTEMPT  EXIT  SCHEDULED             STARTED               FINISHED              ERROR
+verify    SUCCEEDED  main  -    orker-1  1        0     2026-01-02T03:04:06Z  2026-01-02T03:04:06Z  2026-01-02T03:04:07Z  -
+deploy    FAILED     main  -    orker-1  2        1     2026-01-02T03:04:07Z  2026-01-02T03:04:09Z  2026-01-02T03:04:10Z  CONTAINER_NONZERO_EXIT: container exited with status 1
+rollback  RUNNING    main  -    orker-1  1        0     2026-01-02T03:04:11Z  2026-01-02T03:04:11Z  -                     -
+
+JOIN      POLICY
+verify    none_failed
+rollback  any_failed

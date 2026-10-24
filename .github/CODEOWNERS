@@ -1,0 +1,20 @@
+# The files that decide what a proof runs or excuses need a code-owner
+# review; docs/PROOFS.md and scripts/github-merge-gate.sh enforce it.
+/scripts/proof.sh @orkstack
+/scripts/proof-part.sh @orkstack
+/scripts/proof-nightly-tests.txt @orkstack
+/scripts/proof-quarantine.txt @orkstack
+/scripts/proof-allowed-skips.txt @orkstack
+/scripts/proof-test-costs.tsv @orkstack
+/scripts/proof-slow-tests.txt @orkstack
+/scripts/proof-ui-costs.tsv @orkstack
+/scripts/proof-section11-coverage.tsv @orkstack
+/scripts/proof-host-speed.tsv @orkstack
+/scripts/proof-scope.tsv @orkstack
+/scripts/integration.sh @orkstack
+/scripts/github-merge-gate.sh @orkstack
+/scripts/github/ @orkstack
+/.github/ @orkstack
+/test/tools/proofrun/ @orkstack
+/Makefile @orkstack
+/ui/playwright.config.ts @orkstack

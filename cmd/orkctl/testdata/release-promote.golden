@@ -1,0 +1,3 @@
+release 2026.08.23-c4d5e6f is current (was 2026.08.16-a1b2c3d).
+New runs start on 2026.08.23-c4d5e6f; the 14 runs executing on 2026.08.16-a1b2c3d finish there.
+Keep 2026.08.16-a1b2c3d running until "orkctl release wait 2026.08.16-a1b2c3d" exits 0.

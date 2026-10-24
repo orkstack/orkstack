@@ -1,0 +1,74 @@
+# OrkStack orkflow DSL
+#
+# The file activity is deliberately small: copy, checksum, gzip, gunzip, tar,
+# untar, concat, and no eighth op. A workload that needs more builds its own
+# image, which under the OCI Activity Contract costs nothing — every task is
+# already a container, so a bespoke image is not a plugin, an extension or a
+# registration. It is just an image.
+#
+# This pipeline seeds a file with the shell, then round-trips it through
+# compression and verifies the digest survived.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: file-read
+version: "0.2.0"
+description: Seed a file, compress it, decompress it, and prove the bytes round-tripped.
+
+inputs:
+  greeting:
+    type: string
+    default: "hello from the file activity"
+
+tasks:
+  # 1. Any regular file written to /orkstack/output/artifacts/ IS an output
+  #    artifact, named exactly as the file. The scan is not recursive, and a
+  #    directory, symlink, device, socket or FIFO there fails the activity —
+  #    §3.5 has no directory semantics, so archive a hierarchy yourself.
+  - id: seed
+    uses: shell
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - printf '%s\n' "{{ .inputs.greeting }}" > /orkstack/output/artifacts/greeting.txt
+
+  # 2. The digest of the original bytes. `checksum` writes no artifact: it
+  #    reads a file and reports its digest, and values.json already carries
+  #    the answer.
+  - id: before
+    uses: file
+    needs: [seed]
+    with:
+      op: checksum
+      src: '{{ artifact "seed/greeting.txt" }}'
+
+  # 3. Compress. The output name defaults to basename(src) + ".gz".
+  - id: compress
+    uses: file
+    needs: [seed]
+    with:
+      op: gzip
+      src: '{{ artifact "seed/greeting.txt" }}'
+
+  # 4. Decompress, back to the original name.
+  - id: expand
+    uses: file
+    needs: [compress]
+    with:
+      op: gunzip
+      src: '{{ artifact "compress/greeting.txt.gz" }}'
+
+  # 5. Prove the round trip. The two digests are compared in the document, so
+  #    the check is visible rather than buried in an image.
+  - id: verify
+    uses: shell
+    needs: [before, expand]
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - >-
+          test "{{ .tasks.before.output.sha256 }}"
+          = "$(sha256sum "{{ artifact "expand/greeting.txt" }}" | cut -d' ' -f1)"

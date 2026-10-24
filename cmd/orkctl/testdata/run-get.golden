@@ -1,0 +1,15 @@
+Run:       run-001
+Orkflow:   hello-ork
+Version:   0.2.0
+Status:    SUCCEEDED
+Created:   2026-01-02T03:04:05Z
+Started:   2026-01-02T03:04:05Z
+Finished:  2026-01-02T03:04:05Z
+Origin:    submit
+Input:     {"url":"https://httpbin.org/json"}
+Output:    {"saved":"result.txt"}
+
+TASK       STATUS     POOL  PIN  ORKER  ATTEMPT  EXIT  SCHEDULED  STARTED               FINISHED              ERROR
+fetch      SUCCEEDED  -     -    -      1        0     -          2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
+transform  SUCCEEDED  -     -    -      1        0     -          2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
+save       SUCCEEDED  -     -    -      1        0     -          2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -

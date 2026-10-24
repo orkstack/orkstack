@@ -1,0 +1,142 @@
+# OrkStack configuration file — generated defaults.
+#
+# Every key config.Schema knows about, written at its own built-in
+# default, nested by section in Schema's declaration order. docs/DEPLOY.md
+# §1 documents each key. This file changes nothing when used as-is: loading it
+# with --config and applying it sets every value to what the binary
+# already falls back to with no file at all.
+#
+# GENERATED — do not hand-edit. Regenerate with "make config-defaults" (or
+# "ork --defaults" / "orker --defaults") whenever internal/config/config.go
+# gains, loses, or changes a Schema entry; internal/config/defaults_file_test.go
+# fails the build until this file matches again.
+#
+# A key written active below (uncommented) carries a real literal default —
+# uncomment and edit only what you mean to change. A key left commented
+# has no single fixed default to write: either its value is computed at
+# runtime (see the note on that line), or it belongs to an SDK/library this
+# package does not second-guess. See deploy/orkstack.example.yaml for a
+# worked, hand-annotated example, and docs/DEPLOY.md §1 for the full
+# mechanism (--config, ORK_CONFIG_FILE, {ork:,orker:}, {file:}, --check).
+
+temporal:
+  address: localhost:7233
+  namespace: ork-main
+
+deployment:
+  name: orkstack
+  build_id: ""  # empty means versioning is off
+
+pool:
+  name: main
+  # queue: ""  # derived from the pool
+
+storage:
+  backend: local
+  dir: ./.data/artifacts
+  s3:
+    endpoint: http://localhost:9000
+    region: us-east-1
+    bucket: orkstack-artifacts
+    access_key: orkstack
+    secret_key: orkstack-secret
+    session_token: ""  # for temporary credentials
+    path_style: true
+
+engine:
+  http_addr: :8080  # ork
+  ws_allowed_origins: []  # ork
+  idempotency_ttl: 24h  # ork
+  registry_auth_file: ""  # ork
+  stats_cache_ttl: 5s  # ork
+  each_max_items: 1000  # ork
+  orkflow_max_tasks: 4000  # ork
+  history:
+    max_events: 51200  # ork
+    max_bytes: 52428800  # 50 MiB; ork
+  continuation:
+    enabled: true  # ork
+    events: 8192  # ork
+    bytes: 8388608  # 8 MiB; ork
+    restore_timeout: 1h  # ork
+  definition_by_reference: true  # ork
+  snapshot_overlays: true  # ork
+  run_max_in_flight: 1000  # ork
+  compose_max_depth: 4  # ork
+  cache_max_ttl: 168h  # ork
+  usage_cache_ttl: 5m  # ork
+  limits:
+    values_max_bytes: 262144  # 256 KiB; ork
+    artifact_max_count: 256  # ork
+    artifact_max_bytes: 5368709120  # 5 GiB; ork
+    log_max_bytes: 16777216  # 16 MiB; ork
+    commit_max_bytes: 4194304  # 4 MiB; ork
+    # transfer_budget_seconds: ""  # ork; max(300, artifact_max_count × artifact_max_bytes ÷ floor throughput)
+    floor_throughput_bytes_per_sec: 10485760  # 10 MiB/s; ork
+  cleanup:
+    enabled: false  # ork
+    interval: 1h  # ork
+    retention_buffer: 24h  # ork
+    batch_size: 100  # ork
+
+# activities: {}  # ork; built-in shell/http/file/json/git/template → ghcr.io/orkstack/activity-*:0.1
+
+orker:
+  # id: ""  # orker; hostname-<hash of the work dir>
+  # workdir: ""  # orker; temp dir
+  image_layout: /var/lib/orkstack/images  # orker
+  env_allowlist: []  # orker
+  secret_schemes: [env, file]  # orker
+  secret_allow: []  # orker
+  registry_auth_file: ""  # orker
+  task_log_export: false  # orker
+  heartbeat_interval: 5s  # orker
+  max_concurrent: 16  # orker
+  pins:
+    max_concurrent: 0  # orker
+  log:
+    flush_bytes: 65536  # 64 KiB; orker
+    flush_interval: 500ms  # orker
+    max_bytes: 16777216  # 16 MiB; orker
+  resources:
+    default_cpu: 1  # orker
+    default_memory: 1Gi  # orker
+    max_cpu: 8  # orker
+    max_memory: 16Gi  # orker
+    pids_limit: 512  # orker
+    tmpfs_bytes: 67108864  # 64 MiB; orker
+    force_user: false  # orker
+  docker:
+    # bin: ""  # orker; docker on PATH
+    pull_timeout: 5m  # orker
+
+telemetry:
+  log_format: text
+  log_level: info
+  admin_addr: ""  # no listener when unset
+  pprof_enabled: false
+  high_cardinality: false
+  service_name: {ork: ork, orker: orker}
+  resource_attributes: {}
+  exporters:
+    traces: none
+    metrics: [none]
+    logs: none
+  sampler: {}
+    # sampler.name: ""  # SDK default: parentbased_always_on
+    # sampler.arg: ""  # SDK default
+  otlp: {}
+    # otlp.endpoint: ""  # SDK defaults
+    # otlp.protocol: ""  # SDK defaults
+    # otlp.headers: {}  # SDK defaults
+    # otlp.timeout: ""  # SDK defaults
+    # otlp.certificate: ""  # SDK defaults
+    # otlp.traces.endpoint: ""  # SDK defaults
+    # otlp.traces.headers: {}  # SDK defaults
+    # otlp.metrics.endpoint: ""  # SDK defaults
+    # otlp.metrics.headers: {}  # SDK defaults
+    # otlp.logs.endpoint: ""  # SDK defaults
+    # otlp.logs.headers: {}  # SDK defaults
+  batch: {}
+    # batch.metric_export_interval: ""  # SDK default
+  # sinks: {}  # no named sinks

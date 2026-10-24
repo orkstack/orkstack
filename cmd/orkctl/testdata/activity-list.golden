@@ -1,0 +1,8 @@
+NAME      REFERENCE                                      DIGEST                PLATFORMS                INTERFACE
+file      localhost:5001/orkstack/activity-file:dev      sha256:2b1e0a7c9d3f…  linux/amd64,linux/arm64  7 ops
+git       localhost:5001/orkstack/activity-git:dev       sha256:222222222222…  linux/amd64              5 keys, 2 ops
+http      localhost:5001/orkstack/activity-http:dev      sha256:cccccccccccc…  linux/amd64              malformed
+json      localhost:5001/orkstack/activity-json:dev      sha256:111111111111…  linux/amd64              2 ops
+migrate   ghcr.io/acme/migrate:v3                        -                     -                        -
+shell     localhost:5001/orkstack/activity-shell:dev     sha256:dddddddddddd…  linux/amd64              none
+template  localhost:5001/orkstack/activity-template:dev  sha256:333333333333…  linux/amd64              1 op

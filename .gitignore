@@ -1,0 +1,48 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+/ork
+/orker
+/orkctl
+# `go build` inside a command's own directory names the binary after it.
+/cmd/ork/ork
+/cmd/orker/orker
+/cmd/orkctl/orkctl
+
+# Go
+*.test
+*.out
+/coverage/
+
+# Node / UI
+node_modules/
+ui/.svelte-kit/
+ui/build/
+ui/dist/
+.env
+.env.*
+!.env.example
+
+# Local data / artifacts
+# Unanchored: `ork` writes its local run archive under the process's working
+# directory, which for `go test ./cmd/...` is the package directory.
+.data/
+/tmp/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Evidence produced by `make proof` (scripts/proof.sh) is regenerated per
+# change and summarised in the commit or PR; it is never committed.
+/proof/
+
+# Agent scratch (todos, research).
+.atomic/
+
+# Process state written by scripts/stack.sh (make up).
+.run/
+__pycache__/

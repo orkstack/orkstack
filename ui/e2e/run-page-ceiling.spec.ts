@@ -1,0 +1,351 @@
+import { expect, test, type Page } from './test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import {
+	bin,
+	catalogEnv,
+	clusterEnv,
+	ensureActivityImages,
+	ensureBucket,
+	killStarted,
+	noteTo,
+	orkerEnv,
+	ownBucket,
+	proofOut,
+	removeBucket,
+	repoRoot,
+	rpc as callEngine,
+	spawnLogged,
+	storeEnv,
+	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
+	uiDir,
+	waitFor,
+	waitForEngine
+} from './harness';
+import { taskMapCellCenter } from './uiHelpers';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-page-ceiling');
+
+// The run detail page at the task ceiling (spec E7, the run-page case of
+// T7): the deployment's default engine.orkflow_max_tasks is the largest size
+// at which, among the task soak's other thresholds, the run page of a flat
+// stage of that many tasks becomes interactive within 5 s, live and finished.
+//
+// It is a file of its own, beside run-page.spec.ts, for one reason: it runs
+// without Playwright's trace. A trace snapshots the whole DOM at every
+// action, which on a page of thousands of task cards is seconds of the
+// test's own work counted against the page, and a trace setting can only be
+// changed for a whole file.
+//
+// Topology: one engine, one Orker, the production UI build, a Temporal
+// namespace of its own, and a stamped Orkflow name.
+
+test.use({ trace: 'off' });
+test.describe.configure({ mode: 'serial' });
+
+const ENGINE = 'http://127.0.0.1:18471';
+const ENGINE_WS = 'ws://127.0.0.1:18471';
+const UI_ORIGIN = 'http://127.0.0.1:14471';
+const TEMPORAL_NAMESPACE = temporalNamespace('run-page-ceiling');
+
+const STAMP = Date.now().toString(36);
+const GATED_ORKFLOW = `run-page-gated-${STAMP}`;
+
+// The gated task size: the deployment default engine.orkflow_max_tasks,
+// which the task soak measured (ORK_SOAK_TASKS selects a fallback size, as
+// it does for the soak). The engine below runs at its defaults, so the
+// ceiling it applies is this size.
+const GATED_TASKS = Number(process.env.ORK_SOAK_TASKS ?? 4000);
+// E7: the run page is interactive within 5 s, live and finished.
+const GATED_RENDER_BUDGET_MS = 5_000;
+// T2 (e)'s output-maximal rows: every task's inline output at the 4 KiB
+// values bound.
+const OUTPUT_MAXIMAL_BYTES = 4096;
+
+const PROOF_DIR = process.env.ORK_PROOF_DIR
+	? path.join(process.env.ORK_PROOF_DIR, 'run-page-ceiling')
+	: path.join(uiDir, 'test-results', 'run-page-ceiling');
+const TRANSCRIPT = 'run-page-ceiling-session.txt';
+
+const outPath = proofOut(PROOF_DIR);
+const note = noteTo(path.join(PROOF_DIR, TRANSCRIPT));
+
+const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
+
+// gatedOrkflow is the task soak's flat-short shape at the gated size: every
+// task needs nothing and runs the shortest container there is.
+function gatedOrkflow(): string {
+	const lines = ['apiVersion: orkstack/v1', 'kind: Orkflow', `name: ${GATED_ORKFLOW}`, 'version: "0.1.0"', 'description: A flat stage at the gated task size.', 'tasks:'];
+	for (let i = 0; i < GATED_TASKS; i++) {
+		lines.push(`  - id: t${i}`, '    uses: shell', '    network: none', '    with: {op: exec, command: [echo, ok]}');
+	}
+	return lines.join('\n') + '\n';
+}
+
+test.beforeAll(async () => {
+	ensureBucket(BUCKET);
+	mkdirSync(PROOF_DIR, { recursive: true });
+	writeFileSync(
+		outPath(TRANSCRIPT),
+		[
+			'# The run detail page at the task ceiling: interactive within 5 s,',
+			'# live and finished, and the output-maximal rows quoted.',
+			'#',
+			'# Written by ui/e2e/run-page-ceiling.spec.ts. Every line below was',
+			'# produced by the run that wrote this file.',
+			`# temporal namespace: ${TEMPORAL_NAMESPACE}`,
+			`# orkflow:            ${GATED_ORKFLOW} (${GATED_TASKS} tasks, ork namespace: default)`,
+			`# engine:             ${ENGINE}`,
+			''
+		].join('\n')
+	);
+	// Prerequisites, stated as failures rather than skips (AGENTS.md §11.1).
+	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
+	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
+	for (const port of [18471, 14471]) {
+		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
+	}
+	ensureActivityImages();
+	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
+	spawnLogged(outPath('engine.log'), bin('ork'), [], {
+		...catalogEnv,
+		...cluster,
+		...storeEnv(BUCKET),
+		ORK_HTTP_ADDR: '127.0.0.1:18471',
+		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+	});
+	spawnLogged(outPath('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('run-page-ceiling') });
+	await waitForEngine(ENGINE);
+	spawnLogged(
+		outPath('ui.log'),
+		'node',
+		['build'],
+		{ HOST: '127.0.0.1', PORT: '14471', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS },
+		uiDir
+	);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('the default pool reports a live Orker', async () => {
+		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>('NamespaceService/ListPools', {});
+		return (answer.pools ?? []).some((p) => (p.liveOrkerCount ?? 0) > 0);
+	});
+	await rpc('OrkflowService/ApplyOrkflow', { yaml: gatedOrkflow() });
+	note(`applied ${GATED_ORKFLOW} (${GATED_TASKS} tasks)`);
+});
+
+test.afterAll(async () => {
+	await killStarted();
+	removeBucket(BUCKET);
+});
+
+// Opening, timed: milliseconds from navigation to the header, to every card,
+// and to interactive.
+interface Opening {
+	header: number;
+	cards: number;
+	interactive: number;
+}
+
+// The drift guard beside the gate: the UI revamp's stages are each held to the
+// MEDIAN of five opens of the same run against one baseline, because a single
+// open's run-to-run spread on one tree (~500 ms) is as large as the drift it
+// would have to see. The extra opens happen after the gated first open and
+// assert nothing; their medians are written for a stage to quote.
+const EXTRA_OPENS = 4;
+const openings: Record<string, Opening[]> = {};
+
+function median(values: number[]): number {
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+function medianOf(phase: string): Opening {
+	const all = openings[phase] ?? [];
+	return {
+		header: median(all.map((o) => o.header)),
+		cards: median(all.map((o) => o.cards)),
+		interactive: median(all.map((o) => o.interactive))
+	};
+}
+
+// measureRunPage opens a run's page and times it to interactive: its header,
+// every one of its task cards drawn, the last of them in view, and the page
+// answering a click (the last card's Inspect opens). It returns the
+// milliseconds from navigation, and records the opening under its phase.
+async function measureRunPage(
+	page: Page,
+	runId: string,
+	tasks: number,
+	phase: string,
+	screenshot = true
+): Promise<number> {
+	const started = Date.now();
+	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
+	await expect(page.getByTestId('run-status')).toBeVisible({ timeout: 60_000 });
+	const header = Date.now() - started;
+	// The last card drawn is every card drawn (the list renders in order);
+	// they are counted once, after, rather than polled: a locator polling a
+	// count over thousands of cards is the test's own load on the page.
+	const last = page.getByTestId(`task-t${tasks - 1}`);
+	await last.scrollIntoViewIfNeeded({ timeout: 60_000 });
+	await expect(last).toBeVisible();
+	const cards = Date.now() - started;
+	await page.getByTestId(`task-inspect-toggle-t${tasks - 1}`).click();
+	await expect(page.getByTestId(`task-t${tasks - 1}-inspect`)).toBeVisible({ timeout: 60_000 });
+	const elapsed = Date.now() - started;
+	expect(await page.getByTestId('task-list').locator('[data-testid^="task-deep-link-"]').count()).toBe(tasks);
+	note(
+		`${phase}: run page of ${runId} (${tasks} tasks) interactive ${elapsed} ms after navigation ` +
+			`(header ${header} ms, every card ${cards} ms)`
+	);
+	(openings[phase] ??= []).push({ header, cards, interactive: elapsed });
+	// The viewport, not the full page: a page of thousands of cards is taller
+	// than a screenshot may be.
+	if (screenshot) await page.screenshot({ path: outPath(`screenshot-run-page-gated-${phase}.png`) });
+	return elapsed;
+}
+
+// cardInViewport: the card's box ends inside the viewport, below the bar and
+// above the title block.
+async function cardInViewport(page: Page, testid: string): Promise<boolean> {
+	return page.evaluate((id) => {
+		const card = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();
+		const top = document.querySelector('header')!.getBoundingClientRect().bottom;
+		const bottom = document.querySelector('[data-testid="title-block"]')!.getBoundingClientRect().top;
+		return card.top >= top - 1 && card.bottom <= bottom + 1;
+	}, testid);
+}
+
+// E7: the run page of the gated-size flat-short run is interactive within
+// 5 s, live — every card drawn while its tasks start — and again once the
+// run has finished (canceled here: a real container per task would keep one
+// Orker busy for an hour at this size). The output-maximal run of T2 (e) at
+// the same size, its rows archived by test/tools/archive-sized-run, is
+// opened too, and its time quoted, not gated.
+test('the run page at the gated task size is interactive within 5 s, live and finished', async ({ page }) => {
+	test.setTimeout(30 * 60_000);
+	const run = (await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: GATED_ORKFLOW })).run.id;
+	note(`submitted ${GATED_ORKFLOW} (${GATED_TASKS} tasks) as run ${run}`);
+	await waitFor(
+		`run ${run} is running tasks`,
+		async () => {
+			const answer = await rpc<{ run?: { taskRuns?: { status?: string }[] } }>('RunService/GetRun', { runId: run });
+			const rows = answer.run?.taskRuns ?? [];
+			return (
+				rows.length === GATED_TASKS &&
+				rows.some((row) => row.status === 'STATUS_RUNNING' || row.status === 'STATUS_SUCCEEDED')
+			);
+		},
+		300_000
+	);
+
+	const live = await measureRunPage(page, run, GATED_TASKS, 'live');
+	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+	for (let i = 0; i < EXTRA_OPENS; i++) await measureRunPage(page, run, GATED_TASKS, 'live', false);
+
+	await rpc('RunService/CancelRun', { runId: run, reason: 'run-page-ceiling e2e: gated-size render measured' });
+	// Finished means its last snapshot: the run reads CANCELED as soon as the
+	// cancel is decided, and its thousands of rows reach their own ends over
+	// the minutes the run takes to record them.
+	const terminal = ['STATUS_SUCCEEDED', 'STATUS_FAILED', 'STATUS_CANCELED', 'STATUS_SKIPPED'];
+	await waitFor(
+		`run ${run} finished, every task row with it`,
+		async () => {
+			const answer = await rpc<{ run?: { status?: string; taskRuns?: { status?: string }[] } }>('RunService/GetRun', {
+				runId: run
+			});
+			const rows = answer.run?.taskRuns ?? [];
+			return (
+				answer.run?.status === 'STATUS_CANCELED' &&
+				rows.length === GATED_TASKS &&
+				rows.every((row) => terminal.includes(row.status ?? ''))
+			);
+		},
+		900_000
+	);
+	const finished = await measureRunPage(page, run, GATED_TASKS, 'finished');
+	await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
+	for (let i = 0; i < EXTRA_OPENS; i++) await measureRunPage(page, run, GATED_TASKS, 'finished', false);
+	const medians = { opens: 1 + EXTRA_OPENS, live: medianOf('live'), finished: medianOf('finished') };
+	writeFileSync(outPath('medians.json'), JSON.stringify(medians, null, 2) + '\n');
+	note(
+		`medians of ${medians.opens} opens (quoted, not gated): ` +
+			`live header ${medians.live.header} ms, cards ${medians.live.cards} ms, interactive ${medians.live.interactive} ms; ` +
+			`finished header ${medians.finished.header} ms, cards ${medians.finished.cards} ms, interactive ${medians.finished.interactive} ms`
+	);
+
+	// The task map at the ceiling, outside the timed span (UI revamp, stage
+	// 2): the run opens on its map, which drew every task's cell; from the
+	// top of the page, selecting the middle and the last cell selects that
+	// task and lands its card between the bar and the title block — where the
+	// card-height estimate behind the scroll is most wrong.
+	await page.evaluate(() => window.scrollTo(0, 0));
+	const map = page.getByTestId('task-map');
+	await expect(map).toHaveAttribute('data-painted', 'true');
+	await expect(map).toHaveAttribute('data-cells', String(GATED_TASKS));
+	note(`task map: ${await map.getAttribute('data-cells')} cells painted`);
+	await page.screenshot({ path: outPath('screenshot-task-map-gated-light.png') });
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await page.screenshot({ path: outPath('screenshot-task-map-gated-dark.png') });
+	await page.emulateMedia({ colorScheme: 'light' });
+	for (const index of [Math.floor(GATED_TASKS / 2), GATED_TASKS - 1]) {
+		const id = `t${index}`;
+		const at = await taskMapCellCenter(page, index);
+		await page.mouse.click(at.x, at.y);
+		await expect(page).toHaveURL(new RegExp(`task=${id}\\b`));
+		await expect(map).toHaveAttribute('data-selected', id);
+		await expect(page.getByTestId(`task-${id}`)).toHaveAttribute('data-selected', 'true');
+		await expect.poll(() => cardInViewport(page, `task-${id}`)).toBe(true);
+		note(`task map: cell ${index} selected ${id}, its card inside the viewport`);
+		await page.evaluate(() => window.scrollTo(0, 0));
+	}
+
+	// The output-maximal rows, quoted only.
+	const definition = await rpc<{ orkflow?: { definitionDigest?: string } }>('OrkflowService/GetOrkflow', {
+		name: GATED_ORKFLOW
+	});
+	const maximal = `ork-${Date.now()}-output-maximal`;
+	const archived = execFileSync(
+		'go',
+		[
+			'run',
+			'./test/tools/archive-sized-run',
+			'default',
+			GATED_ORKFLOW,
+			'0.1.0',
+			definition.orkflow?.definitionDigest ?? '',
+			maximal,
+			String(GATED_TASKS),
+			String(OUTPUT_MAXIMAL_BYTES)
+		],
+		{ cwd: repoRoot, env: { ...process.env, ...storeEnv(BUCKET) } }
+	).toString();
+	note(archived.trim());
+	const outputMaximal = await measureRunPage(page, maximal, GATED_TASKS, 'output-maximal');
+	writeFileSync(
+		outPath('run-page-gated.json'),
+		JSON.stringify(
+			{
+				tasks: GATED_TASKS,
+				budget_ms: GATED_RENDER_BUDGET_MS,
+				live_ms: live,
+				finished_ms: finished,
+				output_maximal_ms: outputMaximal,
+				output_maximal_inline_bytes: OUTPUT_MAXIMAL_BYTES
+			},
+			null,
+			2
+		) + '\n'
+	);
+	note(
+		`E7 run page at ${GATED_TASKS} tasks: live ${live} ms, finished ${finished} ms (budget ${GATED_RENDER_BUDGET_MS} ms); ` +
+			`output-maximal ${outputMaximal} ms (quoted)`
+	);
+	expect(live, 'live run page').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
+	expect(finished, 'finished run page').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
+});

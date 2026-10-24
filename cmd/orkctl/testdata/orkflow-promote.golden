@@ -1,0 +1,3 @@
+Promoted deploy to version 1.0.0 in namespace default
+Previous: none; this orkflow ran its newest applied version until now.
+Interface against 2.0.0: unknown (orkctl orkflow compat deploy 2.0.0 1.0.0 says why)

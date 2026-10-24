@@ -1,0 +1,8 @@
+NAME  ORKERS                 DEFAULT  LAST SEEN
+gpu   unknown (unreachable)  -        -
+main  2                      yes      2026-01-02T03:04:05Z
+
+A task naming no pool runs on main.
+
+1 pool could not be reached, so its Orkers are unknown rather than zero:
+  gpu: cannot tell whether pool "gpu" has live Orkers: context deadline exceeded

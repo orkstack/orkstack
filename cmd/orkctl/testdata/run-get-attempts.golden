@@ -1,0 +1,21 @@
+Run:       run-attempts-6
+Orkflow:   flaky-pipeline
+Version:   0.1.0
+Status:    SUCCEEDED
+Created:   2026-01-02T03:04:05Z
+Started:   2026-01-02T03:04:05Z
+Finished:  2026-01-02T03:04:05Z
+Origin:    unrecorded (started before origins were recorded)
+Input:     -
+Output:    -
+
+TASK   STATUS     POOL  PIN  ORKER  ATTEMPT  EXIT  SCHEDULED  STARTED               FINISHED              ERROR
+flaky  SUCCEEDED  -     -    -      2        0     -          2026-01-02T03:04:05Z  2026-01-02T03:04:08Z  -
+build  FAILED     -     -    -      1        0     -          2026-01-02T03:04:05Z  -                     ORKER_HEARTBEAT_TIMEOUT: the orker stopped heartbeating
+
+TASK   ATTEMPT  OUTCOME     PHASE   EXIT  STARTED               DURATION  ORKER     ERROR
+flaky  1        FAILED      run     8     2026-01-02T03:04:05Z  1.2s      orker-a1  ACTIVITY_FAILED/CONTAINER_EXIT_NONZERO: wget: server returned error: HTTP/1.1 503 Service Unavailable
+flaky  2        SUCCEEDED   upload  0     2026-01-02T03:04:07Z  900ms     orker-a1  -
+build  1        UNREPORTED  -       -     -                     -         -         -
+
+UNREPORTED: no record from the orker — it crashed or lost its heartbeat.

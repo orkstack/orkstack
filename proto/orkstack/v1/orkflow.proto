@@ -1,0 +1,252 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// RetryPolicy mirrors Temporal retry semantics for a task.
+message RetryPolicy {
+  int32 maximum_attempts = 1;            // 0 or 1 = no retries
+  int32 initial_interval_seconds = 2;    // default 1
+  double backoff_coefficient = 3;        // default 2.0
+  int32 maximum_interval_seconds = 4;    // default 100
+}
+
+// Pin is a named group of tasks that execute on ONE Orker process and share
+// /orkstack/shared for the group's lifetime (docs/DSL.md "Pins"). It is the user-facing word; the Temporal session that
+// implements it is internal, as a queue is to a pool.
+message Pin {
+  string name = 1;                       // slug, unique within the orkflow
+
+  // timeout_seconds bounds the whole pin, from the moment its first task is
+  // dispatched until its last task ends. 0 means derived: the sum of every
+  // member task's wall-clock budget, which is the sequential worst case.
+  int32 timeout_seconds = 2;
+}
+
+// OrkflowRef names one immutable Orkflow version in the referencing
+// definition's OWN namespace — a composition never crosses a namespace.
+message OrkflowRef {
+  string name = 1;
+  string version = 2;
+  // definition_digest is the referenced version's Orkflow.definition_digest,
+  // stamped at apply. Empty only in a message the compiler produced before
+  // internal/api resolved it; a stored definition never carries an empty one.
+  string definition_digest = 3;
+}
+
+// Task is a single node in the orkflow DAG. It maps to exactly one activity
+// execution on an Orker, and an activity is an OCI image.
+message Task {
+  string id = 1;                         // unique within the orkflow
+
+  // 2 held the in-process plugin name. Under the OCI Activity Contract a task
+  // names an activity, and an activity is an image. Reserved rather than
+  // reused so a stored version document can never be re-read as an image.
+  reserved 2;
+  reserved "plugin";
+
+  // with holds the activity-specific configuration (templated).
+  google.protobuf.Struct with = 3;
+  // needs lists task ids that must complete before this task runs (DAG edges).
+  repeated string needs = 4;
+  // condition is a Go template rendered by the engine; the task is skipped
+  // when it renders one of the documented falsy spellings (docs/DSL.md
+  // "Templating").
+  string condition = 5;
+  int32 timeout_seconds = 6;             // default 300
+  RetryPolicy retry = 7;
+
+  // 8 held a removed execution-routing field. It is reserved rather than
+  // reused, so a stale document cannot silently become a pool selection.
+  // The name stays reserved for the clean cut; the old key is rejected by
+  // the DSL and discarded by store decoding.
+  reserved 8;
+  reserved "queue";
+
+  // pool names the set of Orkers this task runs on. Empty means the
+  // deployment's default pool, which answers to the name "main";
+  // Namespace.default_pool joins that resolution.
+  //
+  // Writing "main" and writing nothing are ONE route, always: "main" is a name
+  // for the deployment's default pool and not for one fixed set of Orkers, so
+  // wherever an operator has pointed the default, both spellings go there and
+  // both are reported on the pool that answers for it. Within a run, one pool
+  // name means one set of Orkers, in both directions. The engine maps a pool
+  // to its internal execution channel and nowhere else.
+  string pool = 9;
+
+  // uses is what the author wrote: a catalog activity name ("shell") or a
+  // registry reference ("ghcr.io/acme/migrate:v3", "repo@sha256:..."). It is
+  // the only image-selecting field in the DSL.
+  string uses = 10;
+  // image is the engine's apply-time resolution of uses. It is stamped into
+  // the immutable version document, so re-applying the same YAML after a tag
+  // moves produces a different definition (§4.4).
+  ImageRef image = 11;
+  repeated string command = 12;
+  map<string, string> env = 13;
+  repeated SecretRef secrets = 14;
+  ResourceRequest resources = 15;
+  NetworkMode network = 16;
+  int32 cancellation_grace_period_seconds = 17;
+  // run_as_orker_user is the §3.1 escape hatch, per task. It changes what
+  // runs, so it is part of canonicalOrkflow(Task) (§4.4).
+  bool run_as_orker_user = 18;
+
+  // pin names the Pin this task belongs to, or is empty. Every task of one
+  // pin runs on one Orker process and sees the same /orkstack/shared. It
+  // changes what runs and where, so it is part of canonicalOrkflow(Task) —
+  // emitted ONLY when set, so a definition with no pin keeps its digest.
+  string pin = 19;
+
+  // await makes this an awaited task. Mutually exclusive with uses and with
+  // every field that shapes a container (docs/DSL.md rules 6 and 15): an
+  // awaited task has no image, no pool, and no timeout_seconds of its own.
+  AwaitSpec await = 20;
+
+  // each makes this task a fan-out. A fan-out has uses:, like any container
+  // task; it may not name a pin (docs/DSL.md rule 23) and an awaited task may
+  // not carry it (rule 15).
+  EachSpec each = 21;
+
+  // orkflow is the apply-time resolution of `uses: orkflow:<name>@<version>`,
+  // the analogue of image for a container task. A composed task starts a
+  // CHILD RUN of exactly that definition, in this Orkflow's namespace, and
+  // reaches no Orker: it carries no image, pool, pin, retry, timeout or other
+  // execution field (docs/DSL.md rules 26–27). Part of canonicalOrkflow(Task)
+  // only when set (see pin), so this Orkflow's digest pins the child's.
+  OrkflowRef orkflow = 22;
+
+  // cache opts this container task into memoization across runs. It may not
+  // name a pin (docs/DSL.md rule 36), and an awaited or composed task may not
+  // carry it (rules 15, 27).
+  CacheSpec cache = 23;
+
+  // join is when this task may start, decided from how its needs ended
+  // (docs/DSL.md "Joins and failure handlers"). UNSPECIFIED is
+  // all_succeeded. Part of canonicalOrkflow(Task) ONLY when set (see pin), so
+  // a definition with no join keeps its digest. A task whose join is
+  // ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry
+  // each or carry cache (docs/DSL.md rule 39).
+  JoinPolicy join = 24;
+}
+
+// CacheSpec opts ONE task into memoization across runs (docs/DSL.md
+// "Caching"). Declaring it is the author's assertion that the task is a pure
+// function of what it is given — its image, command, env, secrets' names and
+// sources, network mode, rendered config.json, run.json, staged input files
+// and, for a fan-out item, its item — which OrkStack cannot verify. Part of
+// canonicalOrkflow(Task) only when set (see Task.pin); never part of a memo
+// key.
+message CacheSpec {
+  // ttl_seconds bounds how old a memoized result this task may reuse,
+  // measured from when the result was committed. 0 means no bound of the
+  // task's own; the deployment's ORK_CACHE_MAX_TTL caps it either way.
+  int32 ttl_seconds = 1;
+  // scope: ORKFLOW (what the compiler writes when absent) or NAMESPACE.
+  CacheScope scope = 2;
+}
+
+// EachSpec makes a Task a fan-out: ONE node of the DAG that runs as one item
+// per element of an array read at run time — every item the same image, with
+// the same needs, pool, resources, timeout and retry policy (docs/DSL.md
+// "Fan-out"). Part of canonicalOrkflow(Task), emitted ONLY when set (see
+// Task.pin).
+message EachSpec {
+  // over is the reference exactly as the author wrote it: one template action
+  // naming an input or an upstream task's output, never an expression.
+  string over = 1;
+  // as is the name .each.<as> binds an item to. The compiler writes "item"
+  // when the document names none, so a stored value is never empty.
+  string as = 2;
+  // max_items is the author's bound, 1..10000; the sum over every fan-out of
+  // one Orkflow is at most 10000, and at most the deployment's
+  // ORK_EACH_MAX_ITEMS (1000 unless the deployment raises it). An array
+  // longer than this fails the task EACH_TOO_MANY_ITEMS before any item
+  // runs.
+  int32 max_items = 3;
+  // max_parallel bounds how many items are in flight at once; 0 means no
+  // bound of the task's own.
+  int32 max_parallel = 4;
+  // source is over, compiled at apply (EachSource).
+  EachSource source = 5;
+}
+
+// AwaitSpec makes a Task an awaited task: it starts no container and reaches
+// no Orker, and the run waits until the task is resolved from outside the run
+// — completed with values, or rejected with a reason — or its deadline passes.
+// Part of canonicalOrkflow(Task), emitted ONLY when set (see Task.pin).
+message AwaitSpec {
+  // timeout_seconds is the deadline, from the moment the task starts
+  // awaiting. Required: 1 to 2592000 (30 days).
+  int32 timeout_seconds = 1;
+  // callback asks SubmitRun to mint a one-time bearer token for this await
+  // and disclose it once, in SubmitRunResponse.await_callbacks, so a caller
+  // outside the deployment's API can resolve it over plain HTTP. False means
+  // the await is resolved through RunService.ResolveAwait only.
+  bool callback = 2;
+  // schema declares the values a completion must carry, in the vocabulary
+  // Orkflow.inputs uses — a map from key to {type, required}; no default.
+  // Unset means any JSON object is accepted.
+  google.protobuf.Struct schema = 3;
+}
+
+// Orkflow is the compiled, validated form of a DSL document.
+message Orkflow {
+  string name = 1;                       // unique identifier (slug)
+  string version = 2;                    // semantic or content hash
+  string description = 3;
+  map<string, string> labels = 4;
+  // inputs declares the accepted input parameters (JSON schema fragment as struct).
+  google.protobuf.Struct inputs = 5;
+  repeated Task tasks = 6;
+  string source_yaml = 7;                // original DSL for round-trip/audit
+  google.protobuf.Timestamp created_at = 8;
+  // namespace scopes this orkflow. Empty means the built-in "default"
+  // namespace. A name is unique WITHIN a namespace, never globally: two
+  // namespaces may both hold an orkflow called "deploy", and they are two
+  // different orkflows stored under two different keys.
+  string namespace = 9;
+
+  // definition_digest is the canonical digest of THIS document's definition
+  // (§4.4): "sha256:" + hex(sha256(canonicalOrkflow(wf))).
+  //
+  // It is computed at APPLY, after image resolution, and stamped here —
+  // "the version document is the pin", which is what AGENTS.md §7.2 requires
+  // of a run. Workflow code READS it and never computes it, so a run records
+  // the digest of the definition it actually pinned rather than one derived
+  // from whatever a later reader happened to reconstruct.
+  //
+  // It is NOT part of canonicalOrkflow. The canonical form enumerates its
+  // fields and this one is not among them, so stamping the digest into the
+  // document it describes does not change that digest: the value is stable
+  // under re-canonicalization, and pkg/artifacts.sameStoredOrkflow still
+  // sees a re-apply of an unchanged document as equal.
+  //
+  // Added after the original wire freeze, deliberately and ADDITIVELY: fields
+  // 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an
+  // older reader simply does not see it. The alternative was to populate
+  // orkflow_definition_digest from workflow code, which changes recorded
+  // activity-payload bytes and would force re-recording the base replay
+  // fixture, which is never re-recorded.
+  string definition_digest = 10;
+
+  // pins declares every Pin a task may name, sorted by name at compile so
+  // one document always compiles to one message. Part of canonicalOrkflow,
+  // emitted ONLY when non-empty (see Task.pin).
+  repeated Pin pins = 11;
+
+  // outputs is this Orkflow's declared return contract: output name to a
+  // template over .inputs and .tasks.<id>.output, rendered ONCE, by the
+  // engine, when a run succeeds; every value renders to a string. When
+  // non-empty the rendered map IS Run.output, and is what a composing
+  // parent's task receives as its values. When empty, Run.output keeps the
+  // leaf aggregation it has always had, and a composing parent's task
+  // receives {}. Part of canonicalOrkflow only when non-empty (see pins).
+  map<string, string> outputs = 12;
+}

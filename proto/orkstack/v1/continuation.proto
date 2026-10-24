@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/run.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// The messages in this file are internal: no RPC carries them, and none of
+// them, nor any of their words (generation, carry, checkpoint, segment), is
+// a user-facing surface (AGENTS.md §7 vocabulary). A run that continues as new
+// into a fresh Temporal execution hands its successor a RunContinuation, and
+// writes the immutable objects it names under the run's snapshot prefix.
+
+// ContinuationPart is one gzip member of a checkpoint object: the unit a
+// generation verifies and decodes at a time.
+message ContinuationPart {
+  // offset is the byte offset of this member in the stored object.
+  int64 offset = 1;
+  // size_bytes is the stored (gzip) bytes of this member.
+  int64 size_bytes = 2;
+  // raw_bytes is the decoded bytes of this member.
+  int64 raw_bytes = 3;
+  // sha256 is the lowercase hex SHA-256 of the stored member bytes.
+  string sha256 = 4;
+}
+
+// ContinuationObject is one immutable object a run wrote when one of its
+// generations continued as new. Internal: no RPC carries it.
+message ContinuationObject {
+  // uri is the snapshot-store URI
+  // (…/metadata/snapshots/{ns}/{run}/continuations/…).
+  string uri = 1;
+  // sha256 is the lowercase hex SHA-256 of the whole stored object.
+  string sha256 = 2;
+  // size_bytes is the size of the whole stored object.
+  int64 size_bytes = 3;
+  // raw_bytes is the sum of the parts' raw_bytes (checkpoint), or the decoded
+  // size (segment, snapshot).
+  int64 raw_bytes = 4;
+  // parts is set for a checkpoint only, contiguous from offset 0.
+  repeated ContinuationPart parts = 5;
+}
+
+// EventSegmentRef names one closed generation's event segment.
+message EventSegmentRef {
+  int64 generation = 1;
+  // execution_id is the cluster's id for that generation's execution: used
+  // only to retire it. Never user-facing (AGENTS.md §7).
+  string execution_id = 2;
+  // first_sequence is the first sequence assignable in that generation.
+  int64 first_sequence = 3;
+  // last_sequence is the last sequence assigned in it (burned ones
+  // included); first_sequence-1 when the generation assigned none.
+  int64 last_sequence = 4;
+  // event_count is the number of events actually published
+  // (<= last_sequence-first_sequence+1).
+  int64 event_count = 5;
+  ContinuationObject object = 6;
+}
+
+// RunContinuation is RunWorkflow's fifth argument: what crosses a switch.
+// Unset (nil) on generation 0. Bounded below 256 KiB (AGENTS.md §2.2).
+message RunContinuation {
+  // version is 1; a build refuses any other explicitly.
+  int32 version = 1;
+  // generation is the generation this carry STARTS (>= 1).
+  int64 generation = 2;
+  // event_sequence is the last sequence assigned before the switch.
+  int64 event_sequence = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp started_at = 5;
+  // checkpoint is the run's state at the switch.
+  ContinuationObject checkpoint = 6;
+  // segments holds one entry per closed generation, oldest first;
+  // len(segments) == generation.
+  repeated EventSegmentRef segments = 7;
+  // version_decisions is every workflow.GetVersion answer the run has so far.
+  map<string, int32> version_decisions = 8;
+  // snapshot is the full snapshot of the run's exact state that the switch
+  // wrote: a gzipped Run under a content-addressed continuations/ key, never
+  // a {seq}.pb key.
+  ContinuationObject snapshot = 9;
+}
+
+// RunCheckpointPart is one gzip member of a checkpoint. Concatenated
+// serializations of this message MERGE (repeated fields append, and only part
+// 0 sets header), so the whole object gunzipped as one multistream and
+// unmarshalled once yields every row: what readers do. A generation decodes it
+// part by part.
+message RunCheckpointPart {
+  // header is set on part 0 only: the Run with task_runs cleared.
+  Run header = 1;
+  // task_runs is in definition order, with items cleared.
+  repeated TaskRun task_runs = 2;
+  // items holds the item rows (task_id and item set), in (definition order,
+  // index) order.
+  repeated TaskRun items = 3;
+}
+
+// RunEventSegment is the body of one event segment, gzip-compressed.
+message RunEventSegment {
+  string run_id = 1;
+  int64 generation = 2;
+  int64 first_sequence = 3;
+  int64 last_sequence = 4;
+  // events is exactly the PublishEvent events of that generation, in
+  // sequence order.
+  repeated Event events = 5;
+}
+
+// RunSnapshotOverlay replaces, by key, the rows of the FULL snapshot at
+// base_uri. base_uri is always a {seq}.pb full snapshot of the same run,
+// never another overlay. base_sha256 is the lowercase hex SHA-256 of the
+// base bytes this overlay was diffed against: a {seq}.pb key can be
+// rewritten by a retried emit, so a reader verifies it.
+//
+// It is written as {seq}.ovl beside the {seq}.pb snapshots, for a
+// non-terminal event of a run whose plan enables overlays and that declares
+// more rows than its policy's floor. Materialized: the base's rows in base
+// order, each replaced by the overlay row with the same key — task_id for a
+// task row, (task_id, item) for an item row — and the header replacing the
+// base's. The writer writes one only when that materialization equals the
+// run it was asked to snapshot; otherwise it writes a full snapshot.
+// Internal: no RPC carries it.
+message RunSnapshotOverlay {
+  string base_uri = 1;
+  // header is the Run with task_runs cleared.
+  Run header = 2;
+  // task_runs holds the task rows that differ from the base's, items
+  // cleared.
+  repeated TaskRun task_runs = 3;
+  // items holds the item rows (task_id and item set) that differ from the
+  // base's.
+  repeated TaskRun items = 4;
+  string base_sha256 = 5;
+}

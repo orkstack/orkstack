@@ -1,0 +1,7 @@
+Applied orkflow hello-ork (version 0.2.0)
+Fetch JSON, extract a field, and record the result's digest.
+
+TASK       USES   NEEDS      TIMEOUT
+fetch      http   -          300s
+transform  shell  fetch      300s
+verify     file   transform  300s

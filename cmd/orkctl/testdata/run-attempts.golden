@@ -1,0 +1,6 @@
+TASK   ATTEMPT  OUTCOME     PHASE   EXIT  STARTED               DURATION  ORKER     ERROR
+flaky  1        FAILED      run     8     2026-01-02T03:04:05Z  1.2s      orker-a1  ACTIVITY_FAILED/CONTAINER_EXIT_NONZERO: wget: server returned error: HTTP/1.1 503 Service Unavailable
+flaky  2        SUCCEEDED   upload  0     2026-01-02T03:04:07Z  900ms     orker-a1  -
+build  1        UNREPORTED  -       -     -                     -         -         -
+
+UNREPORTED: no record from the orker — it crashed or lost its heartbeat.

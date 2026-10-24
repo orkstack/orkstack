@@ -1,0 +1,6 @@
+maximum run retention:  168h0m0s
+namespace retention:    not enforced (ORK_CLEANUP_ENABLED=false: every run is kept
+                        for the maximum plus the enforcement margin)
+
+Each namespace may keep runs for less — see `orkctl namespace update
+--run-retention`.

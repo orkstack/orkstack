@@ -1,0 +1,6 @@
+No audit records match --filter 'at<2025-12-01T00:00:00Z'.
+
+Window: 2025-11-24T00:00:00Z to 2025-12-01T00:00:00Z (exclusive), newest first.
+Every namespace unless a namespace filter narrows it.
+principal is the identity the deployment's gateway asserted in Ork-Principal;
+OrkStack records it and does not authenticate it.

@@ -1,0 +1,5 @@
+TASK     ITEM  ATTEMPT  KIND    NAME      SIZE  SHA256
+convert  0     1        OUTPUT  part.txt  7     aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+convert  1     1        OUTPUT  part.txt  7     bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+convert  2     2        OUTPUT  part.txt  7     cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+convert  3     1        OUTPUT  part.txt  7     dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd

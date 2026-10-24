@@ -1,0 +1,164 @@
+# OrkStack configuration file — example.
+#
+# `ork` and `orker` read this one shared schema. Point either binary at a
+# copy of this file with `--config PATH` or `ORK_CONFIG_FILE=PATH` (docs/DEPLOY.md §1).
+# Every key below is commented out at its built-in default; uncomment and
+# edit only what you mean to change. The file is decoded strictly — an
+# unknown key is refused at boot, naming its full path — so a stray typo is
+# caught before anything starts, not silently ignored.
+#
+# This is a worked, hand-annotated example — not the full key list. For
+# every key config.Schema knows about, see the generated
+# deploy/orkstack.defaults.yaml (`make config-defaults`, or `ork --defaults`
+# / `orker --defaults`).
+#
+# Precedence is defaults < this file < environment: an `ORK_*`/`OTEL_*`
+# variable already set in the process environment always wins over what is
+# written here. That is deliberate — the environment stays the layer a
+# container orchestrator or a secrets manager overrides per replica.
+#
+# Any scalar leaf may be written as `{ork: X, orker: Y}` to give the two
+# binaries different values from this one file (`telemetry.admin_addr`
+# below needs exactly that); a plain scalar still applies to both. Any
+# string leaf may be written as `{file: /path}` to pull a secret from a
+# file instead of writing it here, one trailing newline trimmed.
+#
+# Validate this file without starting anything:
+#   ork   --config orkstack.yaml --check
+#   orker --config orkstack.yaml --check
+# `--check` prints the effective configuration for that binary as YAML,
+# secrets redacted to `***`, each value labeled `file`, `env`, or `default`.
+
+temporal: {}
+  # address: localhost:7233
+  # namespace: ork-main
+
+deployment: {}
+  # name: orkstack
+  # build_id: ""            # empty means versioning is off (docs/DEPLOY.md §1)
+
+pool: {}
+  # name: main
+  # queue: ""                # derived from pool.name; operator escape hatch only
+
+storage:
+  # backend: local           # local | s3 — a replicated deployment must set s3 (docs/DEPLOY.md §0)
+  # dir: ./.data/artifacts   # filesystem root for the local backend; ignored under s3
+  s3: {}
+    # endpoint: http://localhost:9000
+    # region: us-east-1
+    # bucket: orkstack-artifacts
+    # access_key: orkstack           # the docker-compose dev credential; supply a real one
+    # secret_key: orkstack-secret    # as above — or {file: /run/secrets/ork_s3_secret_key}
+    # session_token: ""              # for temporary credentials
+    # path_style: true               # the dev store needs path-style addressing; AWS S3 does not
+
+engine:
+  # http_addr: :8080
+  # ws_allowed_origins: ""           # comma-separated browser origins for /ws/runs/{id}
+  # idempotency_ttl: 24h
+  # registry_auth_file: ""           # a docker config.json for manifest GETs at apply time
+  # stats_cache_ttl: 5s              # 0 switches the GetStats cache off
+  limits: {}
+    # values_max_bytes: 262144            # 256 KiB
+    # artifact_max_count: 256
+    # artifact_max_bytes: 5368709120       # 5 GiB
+    # log_max_bytes: 16777216              # 16 MiB
+    # commit_max_bytes: 4194304            # 4 MiB
+    # transfer_budget_seconds: 0           # 0/unset derives from artifact limits and the floor throughput
+    # floor_throughput_bytes_per_sec: 10485760   # 10 MiB/s
+  cleanup: {}
+    # enabled: false           # deletes durable data once true — see docs/DEPLOY.md §1
+    # interval: 1h
+    # retention_buffer: 24h
+    # batch_size: 100
+
+# The activity catalog: catalog name -> registry reference, resolved to a
+# digest at apply time. Re-serializes to ORK_ACTIVITY_CATALOG under the hood
+# (docs/DEPLOY.md §1). Uncomment to override the built-in
+# shell/http/file/json/git/template entries (ghcr.io/orkstack/activity-*:0.1).
+# An override REPLACES the built-in table, so list every name the deployment
+# offers:
+# activities:
+#   shell: ghcr.io/orkstack/activity-shell:0.1
+#   http: ghcr.io/orkstack/activity-http:0.1
+#   file: ghcr.io/orkstack/activity-file:0.1
+#   json: ghcr.io/orkstack/activity-json:0.1
+#   git: ghcr.io/orkstack/activity-git:0.1
+#   template: ghcr.io/orkstack/activity-template:0.1
+
+orker:
+  # id: ""                    # default: hostname-<hash of the work dir>; two Orkers must never share one
+  # workdir: ""                # default: os.TempDir(); set to a docker-daemon-bind-mountable path (docs/DEPLOY.md §1)
+  # image_layout: ""           # directory of OCI image layouts to serve a pinned digest from when a pull fails
+  # env_allowlist: ""          # comma-separated names {{ env "NAME" }} may read in a task's with:
+  # secret_schemes: env,file
+  # task_log_export: false     # requires telemetry.exporters.logs: otlp — see docs/DEPLOY.md §7 "Task logs"
+  log: {}
+    # flush_bytes: 65536       # 64 KiB
+    # flush_interval: 500ms
+    # max_bytes: 16777216      # 16 MiB
+  resources: {}
+    # default_cpu: "1"
+    # default_memory: 1Gi
+    # max_cpu: "8"
+    # max_memory: 16Gi
+    # pids_limit: 512
+    # tmpfs_bytes: 67108864    # 64 MiB
+    # force_user: false
+  docker: {}
+    # bin: docker              # resolved on PATH
+    # pull_timeout: ""         # runtime default
+
+# Telemetry. Off by default: with nothing set below, ork and orker behave
+# byte-identically to a deployment that has never heard of this section
+# (docs/DEPLOY.md §7). What follows is a worked example — the local Grafana
+# profile (`make infra-up-observability`, deploy/observability/README.md)
+# plus a second, named sink for a tenant's own Datadog account.
+telemetry:
+  # log_format: text                # text | json
+  # log_level: info                 # debug | info | warn | error
+  admin_addr: {ork: ":9464", orker: ":9465"}   # default: "" (no listener); per-binary since the ports must differ
+  # pprof_enabled: false            # mounts net/http/pprof on the admin listener
+  # high_cardinality: false         # adds run_id/task_id/orkflow labels to ork_* metrics — see docs/DEPLOY.md §7
+  # service_name: ""                # default: ork / orker per binary — the local profile wants exactly that
+  # resource_attributes: {}         # standard OTEL_RESOURCE_ATTRIBUTES map
+  exporters:
+    logs: otlp                      # default: none
+    metrics: [prometheus, otlp]     # default: none
+    traces: otlp                    # default: none
+  sampler: {}
+    # name: ""                      # default: parentbased_always_on
+    # arg: ""                       # default: SDK default, e.g. a ratio for traceidratio
+  otlp:
+    endpoint: http://localhost:4318 # default: unset (SDK default)
+    protocol: http/protobuf         # default: unset; only http/protobuf is supported
+    # headers: {}                   # map, e.g. {Authorization: {file: /run/secrets/otlp_token}} — a top-level headers leaf takes a literal or {file:}, not {source:} (that shape is for a named sink's own headers below, which have their own schema)
+    # timeout: 0                    # milliseconds, per the OTel spec; default: SDK default
+    # certificate: ""               # default: SDK default
+    # traces:
+    #   endpoint: ""                # overrides otlp.endpoint for traces only
+    #   headers: {}
+    # metrics:
+    #   endpoint: ""
+    #   headers: {}
+    # logs:
+    #   endpoint: ""
+    #   headers: {}
+  batch: {}
+    # metric_export_interval: 0     # milliseconds; default: SDK default
+  # Named OTLP destinations a namespace may select with `--telemetry-sink`
+  # (docs/DEPLOY.md §7, "Named sinks"). Default: empty — the OTEL_* /
+  # otlp.* settings above ARE the default sink until a `default:` entry is
+  # given here. A header's value is a literal `value` or a `source` of
+  # `env:NAME` / `file:/path` — never both, never neither.
+  sinks:
+    laptop-collector:
+      endpoint: http://localhost:4318
+    datadog:
+      endpoint: https://otlp.datadoghq.com
+      headers:
+        DD-API-KEY: {source: "env:DD_API_KEY"}
+
+# OTEL_BSP_*, OTEL_BLRP_*, and OTEL_PROPAGATORS have no keys here — they
+# remain environment only (docs/DEPLOY.md §1).

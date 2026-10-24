@@ -1,0 +1,260 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+
+	"connectrpc.com/connect"
+	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/structpb"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+)
+
+func newOrkflowCommand(g *globalFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "orkflow",
+		Aliases: []string{"of"},
+		Short:   "Inspect registered orkflows and their versions",
+		Long: "An orkflow's versions are immutable: applying an edit adds a version and\n" +
+			"never rewrites one. Which version runs is a pointer you move with\n" +
+			"`promote`, and move back the same way.",
+	}
+	cmd.AddCommand(
+		newOrkflowListCommand(g),
+		newOrkflowValidateCommand(g),
+		newOrkflowGetCommand(g),
+		newOrkflowVersionsCommand(g),
+		newOrkflowPromoteCommand(g),
+		newOrkflowDiffCommand(g),
+		newOrkflowCompatCommand(g),
+		newOrkflowCallersCommand(g),
+		newOrkflowEditCommand(g),
+		newOrkflowDeleteCommand(g),
+	)
+	return cmd
+}
+
+func newOrkflowValidateCommand(g *globalFlags) *cobra.Command {
+	return &cobra.Command{Use: "validate <file.ork.yaml>", Short: "Validate an orkflow without storing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		source, err := os.ReadFile(args[0])
+		if err != nil {
+			return fmt.Errorf("read orkflow file: %w", err)
+		}
+		ctx, cancel := g.unaryContext(cmd)
+		defer cancel()
+		response, err := g.orkflowClient().ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: string(source), Namespace: g.namespace}))
+		if err != nil {
+			return rpcError("validate orkflow", err)
+		}
+		if g.json {
+			return writeJSON(cmd.OutOrStdout(), response.Msg)
+		}
+		out := cmd.OutOrStdout()
+		failed, warnings := renderValidationIssues(out, response.Msg.GetIssues())
+		// Only an ERROR fails validation: a warned document is one apply
+		// accepts, and docs/UI_CLI_PARITY.md says "invalid documents exit
+		// nonzero" — not warned ones.
+		if !failed {
+			wf := response.Msg.GetOrkflow()
+			if warnings == 0 {
+				fmt.Fprintf(out, "Valid orkflow %s (version %s)\n", wf.GetName(), wf.GetVersion())
+			} else {
+				fmt.Fprintf(out, "Valid orkflow %s (version %s), %s\n", wf.GetName(), wf.GetVersion(), countNoun(warnings, "warning"))
+			}
+			return nil
+		}
+		return fmt.Errorf("orkflow validation failed")
+	}}
+}
+
+func newOrkflowListCommand(g *globalFlags) *cobra.Command {
+	var (
+		limit       int32
+		pageToken   string
+		filterTexts *[]string
+	)
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List registered orkflows",
+		Long: "list shows the current version of every orkflow in the namespace, ordered by\n" +
+			"name, narrowed by --filter. Filters apply before the page is cut; when more\n" +
+			"orkflows match than one page holds, the command prints the next page's\n" +
+			"command.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
+
+			resp, err := g.orkflowClient().ListOrkflows(ctx, connect.NewRequest(
+				&orkstackv1.ListOrkflowsRequest{PageSize: limit, PageToken: pageToken, Namespace: g.namespace, Filters: filters},
+			))
+			if err != nil {
+				return rpcError("list orkflows", err)
+			}
+			if g.json {
+				return writeJSON(cmd.OutOrStdout(), resp.Msg)
+			}
+			if len(filters) > 0 && len(resp.Msg.GetOrkflows()) == 0 {
+				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("orkflows", filters))
+				return nil
+			}
+			if err := renderOrkflowList(cmd.OutOrStdout(), resp.Msg.GetOrkflows()); err != nil {
+				return err
+			}
+			if next := resp.Msg.GetNextPageToken(); next != "" {
+				// The token is bound to the filters it was minted under, so
+				// the next-page command repeats every one of them.
+				args := append([]string{"orkflow", "list"}, filterArgs(filters)...)
+				if limit != 0 {
+					args = append(args, "--limit", fmt.Sprint(limit))
+				}
+				args = append(args, "--page-token", next)
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "\nNext page: %s\n", orkctlCommand(g.namespace, args...))
+				return err
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of orkflows to return (0 = server default)")
+	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous list")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListOrkflowsRequest{})
+	return cmd
+}
+
+func newOrkflowGetCommand(g *globalFlags) *cobra.Command {
+	var version string
+	cmd := &cobra.Command{
+		Use:   "get <name>",
+		Short: "Show one orkflow",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
+
+			resp, err := g.orkflowClient().GetOrkflow(ctx, connect.NewRequest(
+				&orkstackv1.GetOrkflowRequest{Name: args[0], Version: version, Namespace: g.namespace},
+			))
+			if err != nil {
+				return rpcError("get orkflow", err)
+			}
+			if g.json {
+				return writeJSON(cmd.OutOrStdout(), resp.Msg)
+			}
+			return renderOrkflow(cmd.OutOrStdout(), resp.Msg.GetOrkflow())
+		},
+	}
+	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: the current one)")
+	return cmd
+}
+
+func renderOrkflowList(out io.Writer, orkflows []*orkstackv1.Orkflow) error {
+	if len(orkflows) == 0 {
+		fmt.Fprintln(out, "No orkflows.")
+		return nil
+	}
+	table := newTable(out)
+	fmt.Fprintln(table, "NAME\tVERSION\tTASKS\tCREATED\tDESCRIPTION")
+	for _, wf := range orkflows {
+		fmt.Fprintf(table, "%s\t%s\t%d\t%s\t%s\n",
+			wf.GetName(), wf.GetVersion(), len(wf.GetTasks()),
+			formatTime(wf.GetCreatedAt()), orDash(wf.GetDescription()))
+	}
+	if err := table.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	return nil
+}
+
+func renderOrkflow(out io.Writer, wf *orkstackv1.Orkflow) error {
+	header := newTable(out)
+	fmt.Fprintf(header, "Name:\t%s\n", wf.GetName())
+	fmt.Fprintf(header, "Version:\t%s\n", wf.GetVersion())
+	fmt.Fprintf(header, "Description:\t%s\n", orDash(wf.GetDescription()))
+	fmt.Fprintf(header, "Created:\t%s\n", formatTime(wf.GetCreatedAt()))
+	if err := header.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	fmt.Fprintln(out)
+	if err := renderOrkflowInputs(out, wf.GetInputs()); err != nil {
+		return err
+	}
+	if err := renderTaskTable(out, wf.GetTasks()); err != nil {
+		return err
+	}
+	if err := renderComposeTables(out, wf); err != nil {
+		return err
+	}
+	return renderCachedTable(out, wf.GetTasks())
+}
+
+// renderOrkflowInputs prints the declared inputs, best-effort: the schema is a
+// free-form struct, so unknown shapes render as a dash rather than failing.
+func renderOrkflowInputs(out io.Writer, inputs *structpb.Struct) error {
+	fields := inputs.GetFields()
+	if len(fields) == 0 {
+		return nil
+	}
+	table := newTable(out)
+	fmt.Fprintln(table, "INPUT\tTYPE\tDEFAULT\tREQUIRED")
+	for _, name := range sortedKeys(fields) {
+		spec := fields[name].GetStructValue().GetFields()
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n",
+			name,
+			orDash(spec["type"].GetStringValue()),
+			orDash(scalarString(spec["default"])),
+			orDash(scalarString(spec["required"])),
+		)
+	}
+	if err := table.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	fmt.Fprintln(out)
+	return nil
+}
+
+// scalarString renders a struct value for a single table cell.
+func scalarString(value *structpb.Value) string {
+	if value == nil {
+		return ""
+	}
+	switch value.GetKind().(type) {
+	case *structpb.Value_NullValue, nil:
+		return ""
+	case *structpb.Value_StringValue:
+		return value.GetStringValue()
+	default:
+		encoded, err := value.MarshalJSON()
+		if err != nil {
+			return ""
+		}
+		return string(encoded)
+	}
+}
+
+// renderValidationIssues prints ValidateOrkflow's issues the way `orkflow
+// validate` always has — one line each, severity first, then the field when
+// there is one — and reports whether any was an ERROR and how many were
+// warnings. `task run --file` prints a refused document's issues through it,
+// so the two commands never disagree on how a document's problems read.
+func renderValidationIssues(out io.Writer, issues []*orkstackv1.ValidationIssue) (failed bool, warnings int) {
+	for _, issue := range issues {
+		severity := "warning"
+		if issue.GetSeverity() == orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
+			severity, failed = "error", true
+		} else {
+			warnings++
+		}
+		if issue.GetField() != "" {
+			fmt.Fprintf(out, "%-8s %s: %s\n", severity, issue.GetField(), issue.GetMessage())
+		} else {
+			fmt.Fprintf(out, "%-8s %s\n", severity, issue.GetMessage())
+		}
+	}
+	return failed, warnings
+}

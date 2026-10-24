@@ -1,0 +1,43 @@
+{
+  "orkers": [
+    {
+      "orkerId": "orker-c001",
+      "lastSeen": "2026-09-22T09:13:58Z",
+      "unavailableReason": "describe orker: context deadline exceeded"
+    },
+    {
+      "orkerId": "orker-7f3a",
+      "pool": "build",
+      "buildId": "2026.08.16-a1b2",
+      "runningTasks": 2,
+      "openPins": 1,
+      "maxConcurrentPins": 2,
+      "cordoned": true,
+      "cordonReason": "CVE-2026-1234 runtime patch",
+      "cordonedAt": "2026-09-22T08:52:10Z",
+      "lastSeen": "2026-09-22T09:14:02Z",
+      "pins": [
+        {
+          "runId": "ork-20260922-1",
+          "pin": "build",
+          "since": "2026-09-22T07:52:10Z",
+          "expiresAt": "2026-09-22T11:26:40Z"
+        }
+      ]
+    },
+    {
+      "orkerId": "orker-91c0",
+      "pool": "build",
+      "buildId": "2026.08.16-a1b2",
+      "maxConcurrentPins": 2,
+      "lastSeen": "2026-09-22T09:14:04Z"
+    },
+    {
+      "orkerId": "orker-b45e",
+      "pool": "build",
+      "buildId": "2026.08.09-9f8e",
+      "runningTasks": 3,
+      "lastSeen": "2026-09-22T09:14:01Z"
+    }
+  ]
+}

@@ -1,0 +1,567 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
+import "orkstack/v1/common.proto";
+import "orkstack/v1/telemetry.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// TaskEach is a fan-out task's own state on the run snapshot. It is SET for
+// every task whose definition declares `each:` — from the run's first
+// snapshot, while the task is still PENDING — and UNSET for every other task,
+// so a snapshot of a run with no fan-out is byte-identical to what it was
+// before this message existed.
+message TaskEach {
+  // expanded is true once the array was counted and the items created. It
+  // stays false while PENDING, when the task was SKIPPED, and when the array
+  // could not be counted (the task then FAILED with an EACH_* code).
+  bool expanded = 1;
+  // count is the number of items, equal to len(TaskRun.items), once expanded.
+  int32 count = 2;
+}
+
+// TaskChild is a composed task's own state on the run snapshot. It is SET for
+// every task whose definition declares `uses: orkflow:` — from the run's first
+// snapshot, while the task is still PENDING — and UNSET for every other task,
+// so a snapshot of a run with no composed task is byte-identical to what it
+// was before this message existed.
+message TaskChild {
+  // The child Orkflow as the parent pinned it (Task.orkflow).
+  string orkflow_name = 1;
+  string orkflow_version = 2;
+  string orkflow_definition_digest = 3;
+  // run_id is the child run, set once its start is CONFIRMED and never before:
+  // an id whose start was refused names no run. The child run's own
+  // Run.origin is {PARENT_RUN, <this run's id>}.
+  string run_id = 4;
+}
+
+// TaskRun is the execution record of a single Task within a Run.
+message TaskRun {
+  string task_id = 1;
+
+  // 2 held the in-process plugin name, mirroring Task.plugin. Reserved for
+  // the same reason and at the same time.
+  reserved 2;
+  reserved "plugin";
+
+  Status status = 3;
+  int32 attempt = 4;
+  // output carries the inline values.json when one was inlined, decoded for
+  // display only. values_ref is the authoritative reference.
+  Payload output = 5;
+  repeated ArtifactRef artifacts = 6;
+  Error error = 7;                       // carries FailureCategory (§8)
+
+  // started_at is when the Orker began the attempt that produced this task's
+  // outcome, on the Orker's own clock: ExecuteTaskResult.started_at for a
+  // succeeded task (the committing attempt's start for an adopted commit,
+  // exactly as `attempt` is the committing attempt), and
+  // ActivityFailureDetail.started_at for a failed one. It is the start of
+  // the FINAL attempt, on the same rule attempt, error, exit_code and
+  // orker_id already follow: the snapshot describes the attempt that decided
+  // the task, and ListTaskAttempts describes the rest.
+  //
+  // Unset while the task is PENDING or RUNNING, and for a terminal task no
+  // Orker reported on — a host that died before reporting, a Temporal-side
+  // timeout, a cancellation that reached the Orker as a plain context
+  // cancellation, a lost pin. Unset is "not known", never zero.
+  //
+  // Before this field's meaning was corrected it held the dispatch instant;
+  // scheduled_at (18) holds that now.
+  //
+  // For an awaited task, both are the instant the task started awaiting, on
+  // the workflow's clock: it is never queued and no Orker reports on it.
+  google.protobuf.Timestamp started_at = 8;
+  // finished_at is the workflow's own clock at the moment it learned this
+  // task's outcome.
+  google.protobuf.Timestamp finished_at = 9;
+  // pool names the set of Orkers this attempt was dispatched to, in the word
+  // its author typed: the task's own `pool:`, or the pool this run's default
+  // route resolves to when the task named none.
+  //
+  // Within a run, one pool name means one set of Orkers, so naming this pool
+  // on a task reaches exactly the Orkers this attempt reached. That holds
+  // under the per-deployment route override operators use to keep two stacks
+  // apart: an execution channel belonging to no pool reports as the built-in
+  // "main", and a task that writes "main" follows the same override instead
+  // of escaping it. The override is an operator concern this contract does
+  // not expose, so this name is the routing request rather than a measurement
+  // of the host that answered, and another deployment resolves it against its
+  // own Orkers.
+  //
+  // Empty means the task never reached an Orker (skipped, or terminal before
+  // dispatch).
+  string pool = 10;
+
+  // values_ref addresses the committed values.json for this attempt. Set
+  // whenever the task succeeded, whether or not output was inlined.
+  ArtifactRef values_ref = 11;
+  // commit references the durable completion record (§5).
+  CommitRef commit = 12;
+  // exit_code is the container's exit status as reported by the Orker.
+  int32 exit_code = 13;
+  // system_artifacts are stdout.log and stderr.log for this attempt.
+  repeated ArtifactRef system_artifacts = 14;
+
+  // retry_state says why Temporal stopped retrying this task, read off
+  // temporal.ActivityError.RetryState() when the task ended in an error. It is
+  // DERIVED data on the snapshot — the engine records what Temporal already
+  // decided, it does not decide anything with it.
+  //
+  // Unset for SUCCEEDED and SKIPPED tasks, for a failure that never reached an
+  // activity, and for snapshots written before this field existed.
+  RetryState retry_state = 15;
+
+  // pin is the Pin this task belongs to, as the author named it, or empty.
+  // Two TaskRuns of one run with the same pin ran on the same Orker.
+  string pin = 16;
+
+  // orker_id is the Orker that produced this task's final outcome, read off
+  // ExecuteTaskResult.orker_id or ActivityFailureDetail.orker_id. Set for
+  // every task that reached an Orker, pinned or not; empty when the task
+  // never reached one (skipped, canceled before dispatch) or when the Orker
+  // died before reporting (heartbeat timeout).
+  //
+  // One exception to "reported by this task's own attempt": a task recorded
+  // PIN_HOST_LOST or PIN_TIMEOUT reports nothing at all — its host died — so
+  // the engine BACKFILLS this from another member of the same pin. A pin never
+  // moves: every member executes on the same Orker process for the pin's whole
+  // life, so a sibling's orker_id is this task's by construction. It stays
+  // empty only when no member of that pin ever reported one, in which case the
+  // failure's error.details carries the Temporal session's raw OS host name as
+  // an explicitly labelled best-effort lead, which is NOT an orker_id.
+  // Empty on a fan-out task's own row, whose items each carry their own.
+  string orker_id = 17;
+
+  // scheduled_at is the instant the engine scheduled this task's activity —
+  // workflow.Now at schedule(), which is also the timestamp on the
+  // EVENT_TYPE_TASK_SCHEDULED event. It is a PROJECTION of that event onto
+  // the snapshot, not a new measurement, and it is the workflow's own
+  // deterministic clock, never an Orker's.
+  //
+  // Unset when the task never reached scheduling (skipped, or canceled
+  // before dispatch) and on a snapshot written before this field existed.
+  // The two are told apart by started_at: a pre-contract snapshot has
+  // started_at set (it held the dispatch instant then) and scheduled_at
+  // unset; a never-scheduled task has neither.
+  //
+  // For an awaited task, both are the instant the task started awaiting, on
+  // the workflow's clock: it is never queued and no Orker reports on it.
+  google.protobuf.Timestamp scheduled_at = 18;
+
+  // await is this task's await state, set for a task whose definition
+  // declares `await:` and unset otherwise (see TaskAwait).
+  TaskAwait await = 19;
+
+  // each is set for a fan-out task's own row (TaskEach).
+  TaskEach each = 20;
+  // items are a fan-out's items, one per element of the expanded array, in
+  // index order; empty until expansion and for every task that is not a
+  // fan-out. Each element is a TaskRun whose task_id is this task's id and
+  // whose `item` is set; the fields below mean for an item what they mean for
+  // a task (its own attempt, commit, values_ref, artifacts, logs, orker, error,
+  // times). An item never carries `output` (its values are read through
+  // values_ref), `each`, `items`, `pin` or `await`.
+  //
+  // This row itself is the AGGREGATE: its status is the fan-out's, its error
+  // is the error of the item that failed it (message prefixed "item N of M
+  // failed:"), its scheduled_at is the expansion instant, its started_at the
+  // earliest item's, and its attempt, exit_code, orker_id, commit, values_ref,
+  // artifacts and system_artifacts are unset — those belong to items.
+  //
+  // ListRuns never carries items (only GetRun does), and neither does a
+  // webhook body or the workflow's own result.
+  repeated TaskRun items = 21;
+  // item is set on an element of `items`: its 0-based index. Unset on every
+  // row of Run.task_runs.
+  optional int32 item = 22;
+
+  // child is set for a composed task (TaskChild). Such a task reaches no
+  // Orker: pool, pin, orker_id, attempt, exit_code, commit, artifacts and
+  // system_artifacts stay unset, and values_ref addresses the child's
+  // declared outputs as stored for THIS run.
+  TaskChild child = 23;
+
+  // cache is the memo decision of the attempt that produced this task's
+  // outcome (CacheResult, key_components never set here). Set only for a
+  // cached task that SUCCEEDED on an Orker that implements caching; unset for
+  // every other row — so a snapshot of a run with no cached task is
+  // byte-identical — and for a cached task that failed, whose attempts carry
+  // what each memo step decided. On a fan-out it is set on the items, never
+  // on the fan-out's own row.
+  CacheResult cache = 24;
+
+  // join is the task's join policy, set from the run's first snapshot for
+  // every task whose definition declares one other than all_succeeded, and
+  // UNSET otherwise — so a snapshot of a run with no join is byte-identical
+  // to what it was before this field existed. Its presence is how a client
+  // tells a failure handler from an ordinary task without reading the
+  // definition (the precedent of TaskRun.await, .each and .child).
+  JoinPolicy join = 25;
+}
+
+// AwaitResolvedVia names the door an await's resolution came through.
+enum AwaitResolvedVia {
+  AWAIT_RESOLVED_VIA_UNSPECIFIED = 0;
+  // API: RunService.ResolveAwait — orkctl, the UI, or another Connect client.
+  AWAIT_RESOLVED_VIA_API = 1;
+  // CALLBACK: the plain-HTTP callback door, authenticated by the await's
+  // callback token.
+  AWAIT_RESOLVED_VIA_CALLBACK = 2;
+}
+
+// TaskAwait is an awaited task's own state on the run snapshot. It is SET for
+// every task whose definition declares `await:` — from the run's first
+// snapshot, while the task is still PENDING — and UNSET for every other
+// task, so a snapshot of a run with no await is byte-identical to what it was
+// before this message existed. Its presence is how a client tells an awaited
+// task from a container task without reading the definition.
+message TaskAwait {
+  // callback mirrors AwaitSpec.callback: whether a callback token was minted.
+  bool callback = 1;
+  // deadline is when the await times out, on the workflow's clock. Unset
+  // until the task starts awaiting.
+  google.protobuf.Timestamp deadline = 2;
+  // resolved_via and resolved_by are set when a resolution was APPLIED —
+  // completed or rejected — and never for a timeout or a cancellation.
+  AwaitResolvedVia resolved_via = 3;
+  // resolved_by is the Ork-Principal assertion on the resolving request,
+  // bounded to 256 bytes: recorded as asserted and NEVER authenticated, the
+  // word control-plane-audit-trail and run-origin use. Empty when none was
+  // sent.
+  string resolved_by = 4;
+}
+
+// AwaitSignal is ENGINE-INTERNAL: the argument of the Temporal Signal that
+// resolves an awaited task. Only internal/api sends it and only RunWorkflow
+// reads it; no client surface renders it. It carries references and at most
+// 4 KiB of inline bytes — never a values body above that (AGENTS.md §2.2).
+message AwaitSignal {
+  string task_id = 1;
+  // reject true is a rejection with reason; false is a completion with values.
+  bool reject = 2;
+  string reason = 3;
+  // values is the stored values.json of a completion, written by the door
+  // BEFORE the signal was sent. Unset for a rejection.
+  ArtifactRef values = 4;
+  // values_json is values' exact bytes when they are at most 4096 bytes, as
+  // ExecuteTaskResult.values_json is (activity.proto: the same bound, the same
+  // reason, and bytes rather than a Struct for the same reason). Empty above it.
+  bytes values_json = 5;
+  AwaitResolvedVia via = 6;
+  string principal = 7;
+}
+
+// AttemptOutcome is how one Temporal attempt of a task ended.
+enum AttemptOutcome {
+  ATTEMPT_OUTCOME_UNSPECIFIED = 0;
+  // SUCCEEDED: the attempt returned an ExecuteTaskResult, fresh or adopted.
+  ATTEMPT_OUTCOME_SUCCEEDED = 1;
+  // FAILED: the attempt returned an ApplicationError; error is set.
+  ATTEMPT_OUTCOME_FAILED = 2;
+  // CANCELED: the attempt's context was cancelled (§6.3).
+  ATTEMPT_OUTCOME_CANCELED = 3;
+  // UNREPORTED is never written by an Orker. A reader synthesizes it for an
+  // attempt number that has no record, which means the Orker running it died
+  // or lost its heartbeat before it could write one.
+  ATTEMPT_OUTCOME_UNREPORTED = 4;
+}
+
+// PhaseSpan is one §7.1 phase of one attempt, on the Orker's clock. Spans
+// are recorded by the dispatcher's own Phase() sequence, so a list of them is
+// contiguous: each span's finished_at is the next span's started_at, the
+// first begins at the attempt's first Phase call, and the last ends at
+// TaskAttempt.finished_at. The names are the dispatcher's own — "start",
+// "commit-check", "workspace", "stage-inputs", "image", "render", "create",
+// "run", "exit", "validate", "commit", and, entered from the wait path,
+// "timeout" and "cancel"; "image-policy" is entered only when the task
+// carries an image policy (ExecuteTaskInput.image_policy), between
+// "commit-check" and "workspace"; "memo" and "stage-artifacts" are entered
+// only by an attempt of a cached task, after "stage-inputs" — and are not an enum, for the reason
+// TaskAttempt.phase is a string: a reader of an older build must be able to
+// read a phase it has never heard of.
+message PhaseSpan {
+  string phase = 1;
+  google.protobuf.Timestamp started_at = 2;
+  google.protobuf.Timestamp finished_at = 3;
+}
+
+// ReservedResources is what an Orker granted one attempt: the cpu and memory
+// limits its container was (or, for an attempt that ended before a
+// container existed, would have been) created with, AFTER the Orker's
+// defaults filled a missing request and its caps admitted it
+// (ORK_ORKER_DEFAULT_CPU/_MEMORY, ORK_ORKER_MAX_CPU/_MEMORY). They are the
+// same values the attempt's task.json reports as resources, as numbers.
+//
+// A reservation is a limit, not a measurement: nothing here says how much
+// of it the workload used.
+message ReservedResources {
+  // cpu is the cpu limit in cores: "2" is 2, "500m" is 0.5.
+  double cpu = 1;
+  // memory_bytes is the memory limit in bytes: "4Gi" is 4294967296.
+  int64 memory_bytes = 2;
+}
+
+// TaskAttempt is the immutable record of ONE Temporal attempt of one task,
+// written by the Orker that ran it at the end of the attempt (§7.1). It is the
+// failure-side sibling of ActivityCommit: a commit says what the winning
+// attempt produced, an attempt record says what EVERY attempt did, including
+// the ones that lost.
+//
+// Temporal owns retries, so the workflow only ever sees a task's final
+// outcome — an intermediate attempt's error reaches nothing that outlives the
+// Orker process. This record is what makes it durable, and it is written
+// best-effort: a record that cannot be stored is logged, never allowed to
+// change what the attempt itself reported.
+message TaskAttempt {
+  // schema_version is 1. A reader that does not know the value ignores the
+  // record rather than guessing, exactly as ActivityCommit's does.
+  int32 schema_version = 1;
+
+  string run_id = 2;
+  string task_id = 3;
+  // attempt is activity.GetInfo(ctx).Attempt, 1-based.
+  int32 attempt = 4;
+  AttemptOutcome outcome = 5;
+  // error is set only for FAILED, and carries the same shape TaskRun.error
+  // does: the §8.2 reason as code, the category, retryability, the Orker's
+  // message, and its scan notes as details.
+  Error error = 6;
+  // exit_code is the container's exit status, 0 when the container never ran.
+  int32 exit_code = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp finished_at = 9;
+  // orker_id is the Orker that executed this attempt. "Which Orker failed" is
+  // the retry question, so the record answers it without a log search.
+  string orker_id = 10;
+  // pool is the routing request this attempt was dispatched with, as
+  // TaskRun.pool spells it.
+  string pool = 11;
+  // phase is the §7.1 phase the attempt ended in — "image", "run",
+  // "commit", … — the same name as the last element of phases below.
+  string phase = 12;
+  // image is the ImageRef as executed, with platform_digest and delivery set.
+  ImageRef image = 13;
+  // system_artifacts are the stdout.log/stderr.log references, when this
+  // attempt got as far as uploading them.
+  repeated ArtifactRef system_artifacts = 14;
+  // commit_adopted is true when this attempt found an existing commit and
+  // returned it without running the container (§5.4).
+  bool commit_adopted = 15;
+  // build_id is ORK_BUILD_ID of the Orker that ran the attempt.
+  string build_id = 16;
+
+  // phases lists every §7.1 phase this attempt passed through, in order,
+  // contiguous, the last ending at finished_at, and its last element's phase
+  // equal to `phase` above. Empty on a record written before this field
+  // existed and on a synthesized UNREPORTED row. A reader renders an empty
+  // list as unavailable, never as "no phases happened".
+  //
+  // schema_version stays 1: the field is additive and UnmarshalAttempt
+  // discards unknown fields, so a record with phases reads on a build without
+  // them and a record without phases reads on this one as an empty list.
+  repeated PhaseSpan phases = 17;
+
+  // resources is what this Orker reserved for the attempt. Set on every
+  // record whose request the Orker's policy admitted — including an attempt
+  // that adopted a commit or failed before its container started, because
+  // the Orker's slot was committed to it either way. Unset when the request
+  // was refused (RESOURCE_REQUEST_REFUSED), on a record written before this field
+  // existed, and on a synthesized UNREPORTED row. A reader never treats
+  // unset as zero: usage counts such an attempt's held time and reports it
+  // as carrying no reservation. schema_version stays 1: the field is
+  // additive and UnmarshalAttempt discards unknown fields.
+  ReservedResources resources = 18;
+  // item is set when this attempt ran one item of a fan-out task: that item's
+  // 0-based index. The record then lives under the item's own key
+  // (metadata/attempts/{run}/{task}/{item}/{attempt}.json). schema_version
+  // stays 1: the field is additive and UnmarshalAttempt discards unknown
+  // fields.
+  optional int32 item = 19;
+
+  // cache is this attempt's memo decision, key_components included. Set
+  // only for an attempt of a cached task that reached the memo step; a HIT
+  // records outcome SUCCEEDED, phase "memo", exit_code 0, no
+  // system_artifacts (it uploaded none) and image equal to the input's
+  // pinned ImageRef with no platform (it pulled nothing).
+  CacheResult cache = 20;
+}
+
+// RetryState is why Temporal stopped retrying a task. It mirrors
+// temporal.api.enums.v1.RetryState with its own numbering, because a value of
+// another proto package's enum may not be carried by number: the mapping is
+// explicit, in internal/engine/workflow.go.
+//
+// temporal's RETRY_STATE_IN_PROGRESS has no member here on purpose. It names a
+// retry that has not finished, and this field is only ever set from the error
+// of a task that already reached a terminal outcome; it maps to UNSPECIFIED.
+enum RetryState {
+  RETRY_STATE_UNSPECIFIED = 0;
+  RETRY_STATE_NON_RETRYABLE_FAILURE = 1;
+  RETRY_STATE_TIMEOUT = 2;
+  RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED = 3;
+  RETRY_STATE_RETRY_POLICY_NOT_SET = 4;
+  RETRY_STATE_CANCEL_REQUESTED = 5;
+  RETRY_STATE_INTERNAL_SERVER_ERROR = 6;
+}
+
+// Run is one execution of an Orkflow.
+message Run {
+  string id = 1;                         // ork run id, ork-{timestamp}-{sequence} (also Temporal workflow id)
+  string orkflow_name = 2;
+  string orkflow_version = 3;
+  Status status = 4;
+  Payload input = 5;
+  // output is the Orkflow's declared outputs, rendered at success, when it
+  // declares `outputs:`; otherwise every leaf task's inline values, keyed by
+  // task id.
+  Payload output = 6;
+  // error is set when the run's outcome is decided FAILED or CANCELED. While
+  // a failing run's failure handlers still run, it is already set and status
+  // is RUNNING (docs/DSL.md "Joins and failure handlers"); the terminal
+  // snapshot carries the same error with status FAILED.
+  Error error = 7;
+  repeated TaskRun task_runs = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp finished_at = 11;
+  // namespace is the namespace of the orkflow this run executed. Empty means
+  // the built-in "default" namespace. It is a coordinate of the run, not a
+  // lookup: the archive indexes runs under it, so listing one namespace's runs
+  // is a single prefix scan.
+  string namespace = 12;
+
+  // orkflow_definition_digest is the canonical digest of the definition this
+  // run pinned (§4.4). A run that started before a pointer moved is still
+  // explainable by the exact bytes it ran.
+  string orkflow_definition_digest = 13;
+
+  // telemetry is the selection this run was pinned with (see
+  // ExecuteTaskInput.telemetry). Unset when none was configured.
+  TelemetrySelection telemetry = 14;
+
+  // origin is what started this run (RunOrigin). Unset only on a run
+  // recorded before origins existed; every run started since carries at
+  // least a kind. It is present on every snapshot the run writes, on the
+  // archived run, and therefore in every webhook payload's embedded run.
+  RunOrigin origin = 15;
+}
+
+// RunOriginKind is WHAT started a run. It is decided by the process that
+// accepted the submission and is never accepted from a client: the public
+// SubmitRun RPC produces SUBMIT, or RUN_AGAIN when the request names a
+// source run the server confirms exists; the trigger door produces TRIGGER
+// from its stored record; schedule and composition code produce SCHEDULE
+// and PARENT_RUN. A caller who could claim "trigger" would be claiming an
+// audit fact, so no request field carries a kind.
+enum RunOriginKind {
+  // UNSPECIFIED is what a run recorded before origins existed carries.
+  // Every client renders it as "unrecorded" — never as SUBMIT, because
+  // "a person submitted this" is a claim, and no evidence supports it.
+  RUN_ORIGIN_KIND_UNSPECIFIED = 0;
+  // SUBMIT: SubmitRun over Connect — orkctl run submit, the UI's submit
+  // dialog, or a direct API call. id is empty.
+  RUN_ORIGIN_KIND_SUBMIT = 1;
+  // TRIGGER: POST /v1/triggers/{id}. id is the trigger id (trg-…).
+  RUN_ORIGIN_KIND_TRIGGER = 2;
+  // SCHEDULE: a schedule fired. id is the schedule id (sch-…). Defined
+  // here so orkflow-schedules stamps it without touching Run; nothing
+  // produces it until that proposal lands.
+  RUN_ORIGIN_KIND_SCHEDULE = 3;
+  // PARENT_RUN: a child run started by a composing parent. id is the
+  // PARENT run's id. Defined here so composed-orkflows adds no Run field
+  // of its own; nothing produces it until that proposal lands.
+  RUN_ORIGIN_KIND_PARENT_RUN = 4;
+  // RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the
+  // SOURCE run's id, which the server confirmed exists in this namespace.
+  RUN_ORIGIN_KIND_RUN_AGAIN = 5;
+}
+
+// RunOrigin is the immutable record of what started a run. It is decided
+// once, at submit, by the process that accepted the submission, and travels
+// on the replay-pinned plan exactly as the definition digest and the
+// telemetry selection do (internal/engine/plan.go): recorded in history,
+// identical on every replay, readable by any replica. It records; nothing
+// in OrkStack reads it to decide anything.
+message RunOrigin {
+  RunOriginKind kind = 1;
+  // id names the originating object for the kinds that have one — a
+  // trigger id, a schedule id, a parent run id, a source run id — and is
+  // empty for SUBMIT. Opaque: nothing parses it or derives anything from
+  // its shape (AGENTS.md §7).
+  string id = 2;
+  // reference is caller-supplied correlation text — a CI job URL, a ticket
+  // key, a partner event id — carried through from
+  // SubmitRunRequest.origin_reference or the Ork-Origin-Reference header on
+  // the trigger door. At most 256 bytes and no control characters, VALIDATED
+  // at the request boundary and never sanitized (AGENTS.md §7): an
+  // over-long or malformed reference is INVALID_ARGUMENT and starts no run.
+  // Opaque to OrkStack: it is never an expression, a selector or a routing
+  // key. A client renders it as a link only when it parses as an http(s)
+  // URL, and as text otherwise.
+  string reference = 3;
+  // description is the originating object's own human label at the moment
+  // of submit — Trigger.description for TRIGGER, the schedule's name for
+  // SCHEDULE — copied so a run stays explainable after the trigger is
+  // deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256
+  // bytes by truncation.
+  string description = 4;
+  // principal is what the deployment's gateway asserted in the
+  // Ork-Principal request header on the submitting request — the trigger
+  // invoke, the Connect SubmitRun — recorded verbatim, bounded to 256 bytes
+  // by truncation, and NEVER authenticated: it is the same assertion, on the
+  // same terms, as AuditRecord.principal. Empty when no header was present;
+  // a client then omits the line entirely rather than showing a blank that
+  // could be mistaken for a name.
+  string principal = 5;
+}
+
+// EventType classifies a run event on the realtime stream.
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_RUN_CREATED = 1;
+  EVENT_TYPE_RUN_STARTED = 2;
+  EVENT_TYPE_TASK_SCHEDULED = 3;
+  EVENT_TYPE_TASK_STARTED = 4;
+  EVENT_TYPE_TASK_LOG = 5;
+  EVENT_TYPE_TASK_SUCCEEDED = 6;
+  EVENT_TYPE_TASK_FAILED = 7;
+  EVENT_TYPE_RUN_SUCCEEDED = 8;
+  EVENT_TYPE_RUN_FAILED = 9;
+  EVENT_TYPE_RUN_CANCELED = 10;
+  // TASK_AWAITING: an awaited task started waiting. Status AWAITING; the
+  // message names the deadline.
+  EVENT_TYPE_TASK_AWAITING = 11;
+  // TASK_RESOLVED: an awaited task was resolved from outside the run. Status
+  // is the outcome it decided — SUCCEEDED for a completion, FAILED for a
+  // rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same
+  // status, so a reader that only knows the older task events still sees the
+  // task end.
+  EVENT_TYPE_TASK_RESOLVED = 12;
+}
+
+// Event is a single realtime update for a run, delivered over the
+// server-streaming RPC and the WebSocket bridge.
+message Event {
+  string run_id = 1;
+  int64 sequence = 2;                    // monotonic per run
+  EventType type = 3;
+  // task_id is set for task events. Empty on exactly one event that is not
+  // about a task: the TASK_LOG, status RUNNING, a run with failure handlers
+  // emits when it starts failing (docs/DSL.md "Joins and failure handlers").
+  string task_id = 4;
+  Status status = 5;
+  string message = 6;                    // human readable / log line
+  Payload data = 7;                      // optional structured detail
+  google.protobuf.Timestamp timestamp = 8;
+  // item is set on an event about ONE ITEM of a fan-out task: the item's
+  // 0-based index. Such an event is EVENT_TYPE_TASK_LOG carrying the item's
+  // terminal status — the precedent markSkipped and markCanceled set, since
+  // the Event contract has no item type — and TaskRun.items is the
+  // authoritative record. Unset on every other event.
+  optional int32 item = 9;
+}

@@ -1,0 +1,18 @@
+PLAN  branch-and-recover@0.1.0  namespace default
+definition  sha256:015631e3cc6f50515fb8452728f9d993af98849201878bd6d371e6bb5c57516a
+input       {"fail_deploy":false,"fail_rollback":false,"rollback_seconds":0,"route":"canary","smoke_seconds":10}
+
+WAVE  TASK      OUTCOME         DETAIL
+1     decide    runs
+2     canary    runs
+2     full      skipped         condition "{{ eq .tasks.decide.output.value \"full\" }}" evaluated false
+3     verify    runs            join none_failed
+4     deploy    assumed_failed  assumed to fail (--assume-failed)
+4     smoke     runs
+5     rollback  runs            join any_failed
+5     notify    runs            join all_done
+6     escalate  skipped         join any_failed: none of its needs failed (rollback); it runs only when one of them fails
+-     announce  unreached       after deploy fails
+
+6 run, 1 assumed failed, 2 skipped, 5 waves. Nothing was started.
+The run would FAIL at deploy: assumed to fail. 1 task unreached; tasks that do not depend on a failed task are planned as if nothing had failed, and in a run any of them still pending or running when it fails is canceled. Failure handlers that would run: rollback, notify.

@@ -1,0 +1,578 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/common.proto";
+import "orkstack/v1/namespace.proto";
+import "orkstack/v1/run.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// StatsService answers one question — "how is this namespace doing?" — from
+// the two records that already exist. It adds no write path, keeps no counter
+// and stores nothing: a number here is derived on read, or it is not reported.
+//
+// The two sources are the cluster's own index of executions (live runs, and
+// how long the finished ones took) and the run archive's INDEX, whose keys
+// carry a run's namespace, orkflow, status and time. Neither is this process's
+// memory, so any replica answers identically — including one that started
+// nothing and holds no state of its own.
+//
+// A counter would have been cheaper to read and impossible to trust: it is a
+// third record of a fact two records already hold, and the day it disagrees
+// with them there is no way to tell which is lying. Deriving on read cannot
+// drift, and the cost is bounded by a short-lived cache whose age every answer
+// carries (computed_at).
+service StatsService {
+  // GetStats reports one namespace's runs over one time window.
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+  // GetFailureBreakdown groups one namespace's FAILED runs over one window by
+  // the dimensions the caller names. It is the read that makes the §4
+  // failure categories pay: a category nobody counts is a comment.
+  //
+  // It reads run BODIES — one per failed run in the window — which GetStats
+  // deliberately never does. The discriminating facts are not in the index
+  // key, and widening the key would be a migration and a second copy of the
+  // body. So the cost is bounded three ways instead: by the window, by the
+  // failed subset of it, and by a scan budget that FAILS the call rather
+  // than answering from a subset (see GetFailureBreakdownResponse).
+  rpc GetFailureBreakdown(GetFailureBreakdownRequest) returns (GetFailureBreakdownResponse);
+  // GetFlakeIndex groups one namespace's dispatched tasks over one window by
+  // the dimensions the caller names and reports, per group, how often a
+  // task needed more than one attempt. It is the one cross-run read of the
+  // per-attempt records the Orker writes: a SUCCEEDED run that retried is
+  // invisible to every other number this service reports, by construction.
+  //
+  // It reads run BODIES — one per finished run in the window, not only the
+  // failed ones — and one attempt listing per dispatched task. That is more
+  // than GetFailureBreakdown reads and far more than GetStats, which reads
+  // none, so the cost is bounded the same three ways: by the window, by an
+  // optional orkflow, and by a scan budget that FAILS the call rather than
+  // answering from a subset (see GetFlakeIndexResponse).
+  rpc GetFlakeIndex(GetFlakeIndexRequest) returns (GetFlakeIndexResponse);
+  // GetUsage reports how much of the fleet one namespace RESERVED over one
+  // window: task-seconds, and cpu-seconds and GiB-seconds as each attempt's
+  // reservation multiplied by how long its Orker held it. It is the read a
+  // budget is held against, and the one the admission gate itself makes for
+  // an enforced budget.
+  //
+  // It reads the archive index (keys), every finished run's body in the
+  // window, and every attempt record of those runs, so its cost is bounded
+  // three ways: by the window, by a whole-answer cache whose age every answer
+  // carries (computed_at), and by a scan bound that FAILS the call rather
+  // than answering from a subset (see GetUsageResponse).
+  rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
+}
+
+message GetStatsRequest {
+  string namespace = 1;                  // empty = the default namespace
+  // since is the inclusive start of the window. Empty means lookback before
+  // the window ends, and lookback's own default is 24 hours.
+  google.protobuf.Timestamp since = 2;
+  // until is the exclusive end of the window. Empty means the moment the
+  // answer is computed. A window whose end is not after its start is refused
+  // rather than answered with zeros, which is a number that reads like a fact.
+  google.protobuf.Timestamp until = 3;
+  // lookback says how far back from `until` the window reaches, for the client
+  // that means "the last six hours" rather than a pair of instants. It is
+  // ignored when `since` is set.
+  //
+  // It exists so that ONE clock decides a relative window. A client that
+  // resolved "six hours ago" itself would be pairing its own clock with the
+  // server's — the two ends of one window measured by two machines — and a
+  // client running a few minutes fast would silently ask about a window of
+  // the wrong length, or about one that ends before it starts. The times a
+  // window is compared against are the server's either way, so the arithmetic
+  // belongs there.
+  google.protobuf.Duration lookback = 4;
+}
+
+// OrkflowFailures is one orkflow's failure record inside the window: how many
+// of its finished runs failed, and how many finished at all.
+//
+// Both numbers travel together because neither means anything alone. Three
+// failures out of four is an outage; three out of three thousand is Tuesday.
+message OrkflowFailures {
+  string orkflow_name = 1;
+  int64 failed = 2;
+  int64 total = 3;
+}
+
+message GetStatsResponse {
+  // ONE WINDOW, ONE POPULATION. Every number below is about the same set of
+  // runs: the runs this namespace CREATED between window_since (inclusive) and
+  // window_until (exclusive). A run is counted in the window it was submitted
+  // in, whenever it happens to end, because that is the only instant both
+  // sources agree on — the archive index stamps a run by its creation time
+  // (internal/engine/archive.go, RunIndexTime) and the cluster's execution
+  // index carries its start.
+  //
+  // The alternative — counting a run in the window it FINISHED in — was what
+  // the percentiles used to do, and one answer carrying both is a lie no
+  // field could correct: `orkctl stats --since 15m` over hour-long runs
+  // reported `succeeded 0 / failed 0 / rate unavailable` beside
+  // `p50 58m over 12 finished runs`, two populations printed as one.
+  //
+  // The one exception is `running`, and it is stated where it is declared: it
+  // is a fact about NOW rather than about the window.
+  //
+  // runs_by_status counts the window's runs. Keys are the lowercase, unprefixed
+  // status names: "running", "succeeded", "failed", "canceled". All four are
+  // always present, so a client renders a real zero rather than a blank.
+  //
+  // There is deliberately no "pending" key. A run that has been accepted but
+  // has not started its first task is still one executing entry in the
+  // cluster's index, and telling the two apart means reading that run's
+  // history — one read per run, which is the cost this whole service is built
+  // to avoid. "running" therefore means "accepted and not finished", and the
+  // `running` list below is exactly the same set. A key that could only ever
+  // be answered by guessing is not reported at all.
+  map<string, int64> runs_by_status = 1;
+  // success_rate is succeeded / finished, between 0 and 1, over the window's
+  // runs that have finished. Canceled runs count as finished: a client that
+  // cancels half its runs has not succeeded at them, and hiding them would
+  // make the rate rise when things go wrong.
+  double success_rate = 2;
+  // success_rate_defined is false when the window finished no runs at all.
+  // A rate over nothing is not 0 — it is unanswerable, and 0 is the most
+  // alarming number a dashboard can show. Render "no data", never zero.
+  bool success_rate_defined = 3;
+  // p50_duration and p95_duration are the median and 95th percentile of how
+  // long the window's finished runs took, by nearest rank over the samples
+  // duration_sample_count reports.
+  //
+  // "The window's finished runs" is the SAME set success_rate is a rate over:
+  // runs created inside the window that have since ended. A run created before
+  // the window and closed inside it is neither counted nor sampled, and one
+  // created inside it and still going is counted as running and sampled by
+  // neither.
+  google.protobuf.Duration p50_duration = 4;
+  google.protobuf.Duration p95_duration = 5;
+  // duration_coverage_since is the instant the percentiles actually cover,
+  // which can be later than the window's start. How long a run took is known
+  // only while the cluster still holds its execution record; the archive index
+  // carries a run's status and time but not its duration, and reading bodies
+  // to recover one is the cost this service refuses.
+  //
+  // So a 30-day window over a 3-day record answers for 3 days AND SAYS SO
+  // here, instead of quietly presenting three days of latency as thirty. It is
+  // also the one place the two sources can legitimately disagree about the
+  // one population: a run created before this instant is still counted from
+  // the archive, which keeps every run for ever, and can no longer be sampled
+  // from the cluster, which does not.
+  google.protobuf.Timestamp duration_coverage_since = 6;
+  // duration_sample_count is how many runs the percentiles were computed from:
+  // the window's runs that have finished and whose execution record the
+  // cluster still holds. Zero means they are unavailable and the two durations
+  // above are unset — a client shows "unavailable", never "0s", which reads as
+  // instant success.
+  int64 duration_sample_count = 7;
+  // most_failing lists the orkflows with the most failed runs in the window,
+  // worst first, and only those that failed at least once.
+  repeated OrkflowFailures most_failing = 8;
+  // running is every run executing when the answer was computed, newest first.
+  // Each is the shallow projection an index can give — id, namespace, orkflow,
+  // status and start time. A run's tasks, input and output live elsewhere;
+  // GetRun reads them.
+  repeated Run running = 9;
+  // pools is the same pool health ListPools reports: every pool this namespace
+  // may dispatch onto, with the Orkers serving it right now.
+  repeated Pool pools = 10;
+  // computed_at is when these numbers were measured, which is not necessarily
+  // when they were asked for: an answer may be served from a short-lived cache.
+  // It is the age of every number here, on the wire, so a client can show it.
+  google.protobuf.Timestamp computed_at = 11;
+  // namespace, window_since and window_until are the question that was
+  // actually answered, with an empty request resolved. A client that asked
+  // for "the default namespace, the last day" cannot label its own numbers
+  // without them, and it should not have to know the default's name to do it.
+  string namespace = 14;
+  google.protobuf.Timestamp window_since = 12;
+  google.protobuf.Timestamp window_until = 13;
+}
+
+// FailureGroupBy names one dimension of a fingerprint. The order of the
+// values is the order dimensions render in, and the order ties break in.
+enum FailureGroupBy {
+  FAILURE_GROUP_BY_UNSPECIFIED = 0;
+  FAILURE_GROUP_BY_ORKFLOW  = 1;   // Run.orkflow_name
+  FAILURE_GROUP_BY_TASK     = 2;   // the primary failed task's id (see FailureGroup.task_id)
+  FAILURE_GROUP_BY_CODE     = 3;   // TaskRun.error.code, or Run.error.code for a run-level failure
+  FAILURE_GROUP_BY_CATEGORY = 4;   // TaskRun.error.category, likewise
+  FAILURE_GROUP_BY_IMAGE    = 5;   // TaskAttempt.image.pinned — needs the attempt record; may be unavailable
+  FAILURE_GROUP_BY_POOL     = 6;   // TaskRun.pool
+  FAILURE_GROUP_BY_PHASE    = 7;   // TaskAttempt.phase — needs the attempt record; may be unavailable
+  FAILURE_GROUP_BY_ORKER    = 8;   // TaskRun.orker_id
+}
+
+message GetFailureBreakdownRequest {
+  string namespace = 1;                       // empty = the default namespace
+  // since, until and lookback carry exactly GetStatsRequest's window
+  // semantics: since inclusive, until exclusive, lookback ignored when since
+  // is set, lookback defaulting to 24h, and a window with no time in it
+  // refused. One clock — the server's — resolves a relative window.
+  google.protobuf.Timestamp since = 2;
+  google.protobuf.Timestamp until = 3;
+  google.protobuf.Duration lookback = 4;
+  string orkflow_name = 5;                    // empty = every orkflow in the namespace
+  // group_by is the fingerprint's dimensions, in the caller's order. Empty
+  // means ORKFLOW, TASK, CODE, CATEGORY. A duplicate or UNSPECIFIED value is
+  // InvalidArgument. IMAGE and PHASE are the two that read attempt records.
+  repeated FailureGroupBy group_by = 6;
+  // category keeps only failures of one §4 category. UNSPECIFIED keeps all.
+  FailureCategory category = 7;
+  // limit caps the groups returned, worst first. 0 means 50; more than 500
+  // is InvalidArgument. It bounds the answer, never the scan: the totals
+  // below are over every group.
+  int32 limit = 8;
+}
+
+// FailureGroup is every failed run in the window that shares one fingerprint.
+//
+// A dimension NOT in the request's group_by is empty here and means "not
+// grouped by". A dimension that IS in group_by and is empty means one of two
+// things, told apart by attempt_evidence_missing: for IMAGE and PHASE with a
+// nonzero attempt_evidence_missing it means "unavailable — the attempt record
+// was reclaimed or never written"; otherwise it means the snapshot genuinely
+// carries no value (a run-level failure has no task, a task that never
+// reached an Orker has no pool or orker, a snapshot written before a field
+// existed). Clients render the first as `unavailable` and the second as `-`.
+message FailureGroup {
+  string orkflow_name = 1;
+  string task_id = 2;
+  string code = 3;
+  FailureCategory category = 4;
+  string image_pinned = 5;
+  string pool = 6;
+  string phase = 7;
+  string orker_id = 8;
+  int64 run_count = 9;
+  // first_seen and last_seen are the creation times of the group's oldest and
+  // newest runs — the same coordinate the window is measured in.
+  google.protobuf.Timestamp first_seen = 10;
+  google.protobuf.Timestamp last_seen = 11;
+  // example_run_ids holds at most 3 of the group's runs, newest created
+  // first. Ids are never compared with each other (AGENTS.md §7).
+  repeated string example_run_ids = 12;
+  // attempt_evidence_missing counts this group's runs whose attempt record
+  // could not be read, so image and phase were unavailable for them. It is
+  // only ever nonzero when the response's attempt_evidence_read is true.
+  int64 attempt_evidence_missing = 13;
+}
+
+message GetFailureBreakdownResponse {
+  repeated FailureGroup groups = 1;
+  // failed_runs_in_window is the population: index keys under the
+  // namespace's `failed` status inside the window — the same count GetStats
+  // reports as runs_by_status["failed"] for the same window.
+  int64 failed_runs_in_window = 2;
+  // failed_runs_scanned is how many of those had a body to read. It is less
+  // than failed_runs_in_window only for an index row whose body is absent —
+  // the crash window between the archive's two writes, which ListRuns
+  // already skips. Any OTHER unreadable body fails the call.
+  int64 failed_runs_scanned = 3;
+  // failed_runs_grouped is sum(run_count) over EVERY group, before limit. It
+  // equals failed_runs_scanned unless category narrowed the answer.
+  int64 failed_runs_grouped = 4;
+  // groups_total is how many groups there were before limit, so a client can
+  // say "showing 50 of 212".
+  int64 groups_total = 5;
+  // attempt_evidence_missing is the total across groups.
+  int64 attempt_evidence_missing = 6;
+  // attempt_evidence_read is true when group_by named IMAGE or PHASE and the
+  // attempt store was therefore consulted. When false, attempt_evidence_missing
+  // is 0 because nothing was looked for, not because everything was found.
+  bool attempt_evidence_read = 7;
+  // group_by is the dimensions actually grouped by, with an empty request
+  // resolved. A client cannot label its own columns without it.
+  repeated FailureGroupBy group_by = 8;
+  // namespace, window_since, window_until and computed_at are the question
+  // that was answered and when, exactly as GetStatsResponse carries them.
+  string namespace = 9;
+  google.protobuf.Timestamp window_since = 10;
+  google.protobuf.Timestamp window_until = 11;
+  google.protobuf.Timestamp computed_at = 12;
+}
+
+message GetFlakeIndexRequest {
+  string namespace = 1;                       // empty = the default namespace
+  // since, until and lookback carry exactly GetStatsRequest's window
+  // semantics: since inclusive, until exclusive, lookback ignored when since
+  // is set, lookback defaulting to 24h, and a window with no time in it
+  // refused. One clock — the server's — resolves a relative window.
+  google.protobuf.Timestamp since = 2;
+  google.protobuf.Timestamp until = 3;
+  google.protobuf.Duration lookback = 4;
+  string orkflow_name = 5;                    // empty = every orkflow in the namespace
+  // group_by is the group key's dimensions, in the caller's order. Empty
+  // means TASK. ORKFLOW is always part of the key — a task id names a task
+  // only within its orkflow — and may be named explicitly; naming it alone
+  // asks "which orkflow retries most". CODE and CATEGORY are refused
+  // (InvalidArgument): they are what a group REPORTS as its dominant cause,
+  // not what it is keyed by. A duplicate or UNSPECIFIED value is
+  // InvalidArgument.
+  //
+  // ORKFLOW, TASK and POOL are read from the archived run body. ORKER, PHASE
+  // and IMAGE are read from each attempt record — one task's attempts can run
+  // on different Orkers — so a group keyed by any of those three exists only
+  // where a record exists (see FlakeGroup, body_keyed).
+  repeated FailureGroupBy group_by = 6;
+  // limit caps the groups returned, flakiest first. 0 means 50; more than
+  // 500 is InvalidArgument. It bounds the answer, never the scan: the totals
+  // below are over every group.
+  int32 limit = 7;
+}
+
+// FlakeGroup is every (run, task) pair in the window whose attempts share
+// one group key, counted by run.
+//
+// A dimension NOT in the request's group_by is empty here and means "not
+// grouped by". A dimension that IS in group_by and is empty means the record
+// genuinely carries no value (a record written before the field existed);
+// there is no "unavailable" case for a keyed dimension, because a task whose
+// records are gone is not in any record-keyed group at all — it is counted
+// in runs_evidence_missing instead.
+message FlakeGroup {
+  string orkflow_name = 1;
+  string task_id = 2;
+  string pool = 3;
+  string orker_id = 4;
+  string phase = 5;
+  string image_pinned = 6;
+  // runs_observed is how many distinct runs contributed a task with at least
+  // one attempt carrying this group's key. It is the denominator.
+  int64 runs_observed = 7;
+  // runs_retried is how many of those runs had a NON-FINAL attempt carrying
+  // this key — an attempt below the task's highest, which by construction
+  // did not complete the task and caused the next one to be scheduled. It
+  // is the numerator. Keyed by ORKER, this attributes a retry to the Orker
+  // whose attempt failed, never to the one that then succeeded.
+  int64 runs_retried = 8;
+  // retry_rate is runs_retried / runs_observed, between 0 and 1.
+  double retry_rate = 9;
+  // retry_rate_defined is false when runs_observed is 0. That happens only
+  // for a body-keyed group: a task the window dispatched in some run but for
+  // which no run in the window has a record. Render "unavailable", never 0%.
+  bool retry_rate_defined = 10;
+  // runs_evidence_missing is how many distinct runs dispatched a task with
+  // this group's body key and hold NO attempt record for it: the records were
+  // reclaimed on the run's retention schedule, or the Orker's best-effort
+  // write never landed. Those runs are in neither runs_observed nor
+  // runs_retried. Exact when the response's body_keyed is true; 0 otherwise,
+  // because a task with no record has no orker, phase or image to be keyed
+  // by, and only the response total is then meaningful.
+  int64 runs_evidence_missing = 11;
+  // p50_attempts and p95_attempts are the median and 95th percentile, by
+  // nearest rank over runs_observed samples, of how many attempts carrying
+  // this key one run took (the maximum over that run's member tasks). For a
+  // body-keyed group that is simply the task's attempt count; for an
+  // ORKER-keyed group it is how many attempts ran on that Orker in that run.
+  // Nearest rank: every value here is a count some run actually reached.
+  int32 p50_attempts = 12;
+  int32 p95_attempts = 13;
+  // retry_attempts is the number of non-final RECORDED attempts carrying
+  // this key, summed over the group's runs — the attempts the retries are
+  // attributed to, and the population dominant_* is the mode of.
+  int64 retry_attempts = 14;
+  // unreported_attempts counts attempts numbered below a task's highest that
+  // have no record of their own: the Orker running them died or lost its
+  // heartbeat before it could file one. They are retries with no recorded
+  // cause. Exact when body_keyed; 0 otherwise, for the reason given on
+  // runs_evidence_missing.
+  int64 unreported_attempts = 15;
+  // dominant_code, dominant_category and dominant_phase are ONE triple — the
+  // (error.code, error.category, phase) that the most of retry_attempts
+  // share — never three independent modes, which could name a combination
+  // no attempt had. dominant_count is how many of retry_attempts share it.
+  // All four are unset when retry_attempts is 0.
+  string dominant_code = 16;
+  FailureCategory dominant_category = 17;
+  string dominant_phase = 18;
+  int64 dominant_count = 19;
+  // last_retried_at is the creation time of the newest run in runs_retried —
+  // the coordinate the window is measured in. Unset when runs_retried is 0.
+  google.protobuf.Timestamp last_retried_at = 20;
+  // example_run_ids holds at most 3 of the group's retried runs, newest
+  // created first, so a row leads to a run page whose attempt timeline
+  // shows the retries. Ids are never compared with each other (AGENTS.md §7).
+  repeated string example_run_ids = 21;
+}
+
+message GetFlakeIndexResponse {
+  repeated FlakeGroup groups = 1;
+  // runs_in_window is the population: index keys under the namespace (and
+  // orkflow, if named) inside the window, every finished status — the same
+  // count GetStats reports as runs_by_status succeeded + failed + canceled
+  // for the same window.
+  int64 runs_in_window = 2;
+  // runs_scanned is how many of those had a body to read. It is less than
+  // runs_in_window only for an index row whose body is absent — the crash
+  // window between the archive's two writes, which ListRuns already skips.
+  // Any OTHER unreadable body fails the call.
+  int64 runs_scanned = 3;
+  // runs_dispatched is how many scanned runs dispatched at least one task
+  // (TaskRun.pool set). A run that dispatched nothing — a start that failed,
+  // every task skipped — has no attempts to index and is in no count below.
+  int64 runs_dispatched = 4;
+  // runs_evidence_complete is how many dispatched runs hold at least one
+  // record for EVERY task they dispatched. runs_evidence_missing is how many
+  // hold none for at least one. The two sum to runs_dispatched. A run in the
+  // second set is excluded from every group's runs_observed for the tasks it
+  // has no record of, and is NEVER counted as "did not retry".
+  int64 runs_evidence_complete = 5;
+  int64 runs_evidence_missing = 6;
+  // groups_total is how many groups there were before limit, so a client can
+  // say "showing 50 of 212".
+  int64 groups_total = 7;
+  // body_keyed is true when the resolved group_by names no record-level
+  // dimension (ORKER, PHASE, IMAGE). Then every group's runs_evidence_missing
+  // and unreported_attempts are exact; when false, both are 0 on every group
+  // and only the response's runs_evidence_missing is meaningful.
+  bool body_keyed = 8;
+  // group_by is the dimensions actually grouped by, with an empty request
+  // resolved to TASK and ORKFLOW made explicit at the front. A client cannot
+  // label its own columns without it.
+  repeated FailureGroupBy group_by = 9;
+  // namespace, window_since, window_until and computed_at are the question
+  // that was answered and when, exactly as GetStatsResponse carries them.
+  string namespace = 10;
+  google.protobuf.Timestamp window_since = 11;
+  google.protobuf.Timestamp window_until = 12;
+  google.protobuf.Timestamp computed_at = 13;
+}
+
+message GetUsageRequest {
+  string namespace = 1;                       // empty = the default namespace
+  // since, until and lookback carry exactly GetStatsRequest's window
+  // semantics: since inclusive, until exclusive, lookback ignored when since
+  // is set, lookback defaulting to 24h, and a window with no time in it
+  // refused. One clock — the server's — resolves a relative window.
+  google.protobuf.Timestamp since = 2;
+  google.protobuf.Timestamp until = 3;
+  google.protobuf.Duration lookback = 4;
+  // group_by names the dimensions rows are keyed by, in the caller's order.
+  // Empty means no rows: the namespace total alone. ORKFLOW, TASK and POOL
+  // are accepted; TASK implies ORKFLOW, which is prepended when absent,
+  // because a task id names a task only within its orkflow. Every other
+  // value, a duplicate, or UNSPECIFIED is InvalidArgument: usage is not a
+  // failure, and code, category, image, phase and orker are not what a
+  // reservation is attributed to.
+  repeated FailureGroupBy group_by = 5;
+}
+
+// UsageRow is one group's reserved consumption, or the namespace total.
+//
+// A key dimension NOT in the response's group_by is empty and means "not
+// grouped by". The total row has every key empty.
+message UsageRow {
+  string orkflow_name = 1;                    // Run.orkflow_name
+  string task_id = 2;                         // TaskRun.task_id
+  string pool = 3;                            // TaskRun.pool — where the task was dispatched
+  // runs is how many distinct finished runs dispatched at least one task
+  // into this row.
+  int64 runs = 4;
+  // tasks is how many dispatched tasks (TaskRun.pool set) are in this row,
+  // with or without an attempt record.
+  int64 tasks = 5;
+  // attempts is how many attempt RECORDS were read for this row. Attempts
+  // that left none are unreported_attempts, never counted here.
+  int64 attempts = 6;
+  // task_seconds is the sum of held time (finished_at − started_at) over the
+  // row's recorded attempts that have both instants in order.
+  double task_seconds = 7;
+  // cpu_seconds and gib_seconds are reservation × held time over the row's
+  // recorded attempts that carry a reservation. RESERVED, not used.
+  double cpu_seconds = 8;
+  double gib_seconds = 9;
+  // attempts_without_resources counts recorded attempts with a usable
+  // interval and no reservation — written before TaskAttempt.resources
+  // existed, by an Orker of an older release, or refused before a
+  // reservation was resolved. Their held time IS in task_seconds; they add
+  // nothing to cpu_seconds or gib_seconds, which are lower bounds whenever
+  // this is nonzero.
+  int64 attempts_without_resources = 10;
+  // attempts_unmeasured counts recorded attempts missing started_at or
+  // finished_at, or finishing before they started. They contribute to no
+  // sum. No Orker of this tree writes one; the count exists so a record from
+  // another writer is visible instead of silently zero.
+  int64 attempts_unmeasured = 11;
+  // unreported_attempts counts attempts numbered below a task's highest that
+  // have no record — the Orker running them died or lost its heartbeat
+  // before filing one. Their consumption is unknown and not counted.
+  int64 unreported_attempts = 12;
+}
+
+message GetUsageResponse {
+  // total is the whole namespace over the window; every row sums into it.
+  UsageRow total = 1;
+  // rows is one per group, ordered by cpu_seconds desc, gib_seconds desc,
+  // task_seconds desc, then each keyed dimension ascending in group_by's
+  // enum order — total and clock-free, so two replicas produce the same
+  // table from the same bytes. Empty when group_by is.
+  repeated UsageRow rows = 2;
+  // group_by is the dimensions actually grouped by, TASK's implied ORKFLOW
+  // made explicit at the front. A client cannot label its columns without it.
+  repeated FailureGroupBy group_by = 3;
+
+  // THE POPULATION AND ITS EVIDENCE — the same definitions
+  // GetFlakeIndexResponse uses, over the same set.
+  //
+  // runs_in_window is the population: archive index keys of this namespace
+  // inside the window, every finished status — the count GetStats reports
+  // as runs_by_status succeeded + failed + canceled for the same window.
+  // Runs still in flight are not in it; they are counted once they finish.
+  int64 runs_in_window = 4;
+  // runs_scanned is how many of those had a body to read; less only for an
+  // index row whose body is absent (the crash window between the archive's
+  // two writes, which ListRuns already skips). Any other unreadable body
+  // fails the call.
+  int64 runs_scanned = 5;
+  // runs_dispatched is how many scanned runs dispatched at least one task.
+  int64 runs_dispatched = 6;
+  // runs_evidence_complete counts dispatched runs holding at least one
+  // attempt record for every task they dispatched; runs_evidence_missing
+  // counts those holding none for at least one. They sum to runs_dispatched.
+  // The consumption of a task with no record is NOT in any sum above:
+  // reclaimed on the run's retention schedule, removed by a lifecycle rule,
+  // or never written by a best-effort Orker write — the reader cannot tell
+  // which, and says "missing".
+  int64 runs_evidence_complete = 7;
+  int64 runs_evidence_missing = 8;
+  // coverage_since is the creation time of the OLDEST run in the window that
+  // still has at least one attempt record. Runs created before it have none
+  // — on a deployment whose cleanup worker reclaims records, that is where
+  // reclamation has reached. Unset when no run in the window has a record.
+  // runs_evidence_missing counts every run, before or after it, that is
+  // missing evidence for some task.
+  google.protobuf.Timestamp coverage_since = 9;
+
+  // THE BUDGET. Read from the namespace document on every call — policy is
+  // never cached — and held against the measurement above.
+  //
+  // budget is the namespace's budget at the moment of this answer; unset
+  // means unbounded.
+  Budget budget = 10;
+  // budget_window is true when the answered window is exactly the trailing
+  // budget period the admission gate evaluates: the request set neither
+  // since nor until, and set lookback equal to budget.period. Only then is a
+  // share of the budget meaningful, and only then is budget_reached set.
+  bool budget_window = 11;
+  // budget_reached is true when budget_window is true and total has reached
+  // any dimension the budget bounds (used ≥ bound). It is the same decision
+  // the admission gate makes, so an enforced budget with budget_reached true
+  // is one whose next submit is refused, unless the measurement ages out
+  // first. A soft budget reports it and refuses nothing. False whenever
+  // budget_window is false.
+  bool budget_reached = 12;
+
+  // namespace, window_since, window_until and computed_at are the question
+  // that was answered and when it was measured, exactly as GetStatsResponse
+  // carries them. computed_at is the age of the measurement; an answer may be
+  // served from a cache of up to ORK_USAGE_CACHE_TTL.
+  string namespace = 13;
+  google.protobuf.Timestamp window_since = 14;
+  google.protobuf.Timestamp window_until = 15;
+  google.protobuf.Timestamp computed_at = 16;
+}

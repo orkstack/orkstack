@@ -1,0 +1,9 @@
+PLAN  deploy@1.0.0  namespace default
+definition  sha256:810037ff37d24b59d460d1f192da0233a49a7f345d023541058db9a69fa0b159
+input       {}
+
+WAVE  TASK     OUTCOME  DETAIL
+1     build    runs
+2     release  runs     orkflow release-block@2.1.0 as a child run (not planned: orkctl run plan release-block --version 2.1.0)
+
+2 run, 0 skipped, 2 waves. Nothing was started.

@@ -1,0 +1,52 @@
+# OrkStack orkflow DSL
+#
+# Fan out over an upstream array, one durable item per element, then merge.
+# `list` computes the array once, in a json task: its values.json is
+# {"result": [...]}, and a fan-out reads `result`. Computing the list is a
+# task's job — the platform only moves the array to the items.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Batch transforms into one prepare task"
+apiVersion: orkstack/v1
+kind: Orkflow
+name: each-fan-out
+version: "0.3.0"
+description: "List parts in a json task, convert each part as its own item, merge them."
+
+tasks:
+  - id: list
+    uses: json
+    network: none
+    with:
+      op: query
+      nullInput: true
+      vars:
+        parts: [{name: a}, {name: b}, {name: c}, {name: d}]
+      filter: '$vars.parts'
+
+  - id: convert
+    uses: shell
+    needs: [list]
+    each:
+      over: '{{ .tasks.list.output.result }}'
+      as: part
+      max_items: 50
+      max_parallel: 2
+    retry: { maximum_attempts: 2 }
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        # `sh` quotes the item's value for the shell (AGENTS.md §6).
+        printf '%s\n' {{ sh .each.part.name }} > /orkstack/output/artifacts/part.txt
+        echo converted {{ sh .each.part.name }} "({{ .each.index }} of {{ .each.count }})"
+
+  - id: merge
+    uses: shell
+    needs: [convert]
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        cat /orkstack/input/artifacts/convert/*/part.txt | tee /orkstack/output/artifacts/merged.txt

@@ -1,0 +1,137 @@
+== ListActivities (orkstack.v1.ActivityInfo)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD          OPERATORS       VALUES
+  name           = != =a,b ~ ^   text
+  reference      = != =a,b ~ ^   text
+  index_digest   = != =a,b       text
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListAuditRecords (orkstack.v1.AuditRecord)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD        OPERATORS       VALUES
+  at           >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  action       = != =a,b ~ ^   text
+  principal    = != =a,b ~ ^   text
+  target       = != =a,b ~ ^   text
+  succeeded    =               true false
+  error_code   = != =a,b       text
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListDeliveries (orkstack.v1.Delivery)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD        OPERATORS       VALUES
+  created_at   >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  run_id       = != =a,b       text
+  webhook_id   = != =a,b       text
+  event        = != =a,b       RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SUCCEEDED TASK_FAILED
+  delivered    =               true false
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListNamespaces (orkstack.v1.Namespace)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD               OPERATORS       VALUES
+  name                = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  description         = != =a,b ~ ^   text
+  labels.KEY          = != =a,b ~ ^   text
+  default_pool        = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  hold.reason         = != =a,b ~ ^   text
+  require_signed_by   = != =a,b ~ ^   text
+  telemetry.sink      = != =a,b ~ ^   text
+  created_at          >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  updated_at          >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListOrkers (orkstack.v1.Orker)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD      OPERATORS       VALUES
+  orker_id   = != =a,b ~ ^   an Orker id
+  pool       = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty; an unreachable row is kept
+  build_id   = != =a,b ~ ^   text; an unreachable row is kept
+  cordoned   =               true false; an unreachable row is kept
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListOrkflows (orkstack.v1.Orkflow)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD               OPERATORS       VALUES
+  name                = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  version             = != =a,b ~ ^   text
+  description         = != =a,b ~ ^   text
+  labels.KEY          = != =a,b ~ ^   text
+  definition_digest   = != =a,b       text
+  created_at          >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListPools (orkstack.v1.Pool)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD        OPERATORS       VALUES
+  name         = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  is_default   =               true false
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListReleases (orkstack.v1.Release)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD      OPERATORS       VALUES
+  build_id   = != =a,b ~ ^   text
+  role       = != =a,b       CURRENT RAMPING PREVIOUS CANDIDATE
+  drained    =               true false
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListRuns (orkstack.v1.Run)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD          OPERATORS       VALUES
+  orkflow_name   = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  status         = != =a,b       PENDING RUNNING SUCCEEDED FAILED CANCELED SKIPPED
+  created_at     >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  origin.kind    =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN
+  origin.id      =               text; needs origin.kind=
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListSchedules (orkstack.v1.Schedule)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD             OPERATORS       VALUES
+  id                = != =a,b       text
+  name              = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  orkflow_name      = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  orkflow_version   = != =a,b ~ ^   text; an unreachable row is kept
+  description       = != =a,b ~ ^   text; an unreachable row is kept
+  paused            =               true false; an unreachable row is kept
+  created_at        >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z); an unreachable row is kept
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListTriggers (orkstack.v1.Trigger)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD             OPERATORS       VALUES
+  id                = != =a,b       text
+  name              = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  orkflow_name      = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  orkflow_version   = != =a,b ~ ^   text
+  description       = != =a,b ~ ^   text
+  created_at        >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+== ListWebhooks (orkstack.v1.Webhook)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD          OPERATORS       VALUES
+  id             = != =a,b       text
+  name           = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  url            = != =a,b ~ ^   text
+  namespace      = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  orkflow_name   = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  task_id        = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  created_at     >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+

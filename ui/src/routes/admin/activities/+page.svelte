@@ -1,0 +1,386 @@
+<script lang="ts">
+	// The activity catalog (§4.2): what this deployment can run.
+	//
+	// An activity is an image, and which images exist is engine configuration
+	// read in one place (§4.2), so every row is complete or the whole read
+	// failed. There is no "partial row" state here because the wire cannot
+	// produce one.
+	//
+	// ROW ORDER IS THE RESPONSE'S OWN. §2.3 makes ListActivitiesResponse's
+	// ordering part of the contract, in as many words: "A stable order is part
+	// of the contract, not an implementation detail: the Admin page renders
+	// it." So this page renders `data.activities` in the order it arrived and
+	// sorts nothing. A client-side sort would silently take that guarantee
+	// over from the server, and the next reader would not know which of the
+	// two was in force.
+	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { navigating, page } from '$app/state';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import ScopeNote from '$lib/components/ScopeNote.svelte';
+	import SheetHeader from '$lib/components/SheetHeader.svelte';
+	import ListFilter from '$lib/components/ListFilter.svelte';
+	import { listHref } from '$lib/browsing';
+	import type { FieldFilter } from '$lib/listFilter';
+	import { namespaceLabel } from '$lib/namespace';
+	import { ListActivitiesRequestSchema } from '$lib/gen/orkstack/v1/activity_service_pb';
+	import ActivityInterface from '$lib/components/ActivityInterface.svelte';
+	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
+	import { inspectCommand, interfaceSummary, pinnedReference, shortDigest } from '$lib/activity';
+	import { errorMessage } from '$lib/client';
+	import { activityClient } from '$lib/clients/activities';
+	import type { ActivityInfo } from '$lib/gen/orkstack/v1/activity_service_pb';
+	import { fmtTimestamp } from '$lib/status';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
+
+	// The catalog's filters (ListFilter; docs/UI_CLI_PARITY.md "Filtering
+	// lists"). `ns` rides along for links out of this page; it does not scope
+	// the catalog.
+	function applyFilters(filters: FieldFilter[]) {
+		void goto(listHref('/admin/activities', { ns: namespaceLabel(data.namespace) }, { filter: filters }), { keepFocus: true, noScroll: true });
+	}
+	const clearHref = $derived(listHref('/admin/activities', { ns: namespaceLabel(data.namespace) }));
+
+	// Which catalog rows have their interface disclosed. Keyed by name, which
+	// the catalog guarantees unique.
+	let disclosed = $state<Record<string, boolean>>({});
+
+	// Inspect a reference: InspectActivity resolves one reference on demand,
+	// exactly as `orkctl activity inspect` does. An error is the server's own
+	// message, never a silently empty result.
+	let inspectReference = $state('');
+	let inspecting = $state(false);
+	let inspected = $state<ActivityInfo | null>(null);
+	let inspectError = $state('');
+	const inspectCli = $derived(inspectCommand(inspectReference.trim() || '<name-or-reference>'));
+	async function inspect(event: SubmitEvent) {
+		event.preventDefault();
+		const reference = inspectReference.trim();
+		inspecting = true;
+		inspectError = '';
+		inspected = null;
+		try {
+			const res = await activityClient(fetch).inspectActivity({ reference });
+			inspected = res.activity ?? null;
+			if (!inspected) inspectError = 'the engine answered with no activity';
+		} catch (err) {
+			inspectError = errorMessage(err);
+		} finally {
+			inspecting = false;
+		}
+	}
+
+	let retrying = $state(false);
+	let copiedLocalTool = $state('');
+	async function copyLocalTool(command: string, label: string, shownAt: string) {
+		if ((await copyText(command)) === 'copied') {
+			copiedLocalTool = label;
+			return;
+		}
+		selectByTestid(shownAt);
+		copiedLocalTool = MANUAL_COPY_MESSAGE;
+	}
+	async function retry() {
+		retrying = true;
+		try {
+			await invalidateAll();
+		} finally {
+			retrying = false;
+		}
+	}
+
+	// navigatingHere covers a re-entry into this same URL a delayed RPC could
+	// stall on (the Retry click sets `retrying` itself, since it calls
+	// invalidateAll directly rather than goto).
+	const navigatingHere = $derived(
+		navigating.to !== null && navigating.to.url.pathname === page.url.pathname
+	);
+	const busy = $derived(retrying || navigatingHere);
+</script>
+
+<svelte:head><title>Admin — Activities — OrkStack</title></svelte:head>
+
+<SheetHeader title="Activities" />
+
+<ScopeNote testid="activities-scope-caption">
+	Every activity this deployment can run, as configured on the engine — deployment-wide, not scoped
+	by the namespace selector above. An activity is an OCI image; a task names one with
+	<code>uses:</code>.
+</ScopeNote>
+
+<!--
+	ORKER STATUS. Presented the way the Pools page presents liveness: an
+	unanswered probe is its OWN state, never drawn as a zero or an absence.
+	DescribeOrker is dispatched onto the default pool's own channel (§6.5), so
+	"no answer" means no Orker is serving that pool right now — which is
+	fixed by starting one, not by asking again.
+-->
+<section class="mb-10" data-testid="orker-section" aria-labelledby="orker-heading">
+	<h2 id="orker-heading" class="mb-2 text-md font-semibold text-ink">Orker</h2>
+	{#if data.orkerError}
+		<div
+			class="border border-red px-4 py-3 text-sm"
+			data-testid="orker-unavailable"
+		>
+			<p class="severity-warning font-semibold">No Orker answered the default pool.</p>
+			<p class="mt-1 break-words text-ink-secondary">{data.orkerError}</p>
+			<p class="mt-1 text-xs text-ink-secondary">
+				Nothing was measured. Start an Orker for this deployment's default pool — this is not a
+				report that zero Orkers are healthy.
+			</p>
+		</div>
+	{:else if !data.orker}
+		<p class="text-sm text-ink-muted" data-testid="orker-empty">
+			The probe returned no Orker description.
+		</p>
+	{:else}
+		{@const orker = data.orker}
+		<!-- The Orker's facts in the title block's anatomy. -->
+		<dl
+			class="grid grid-cols-2 border-t-(length:--rule-frame) border-b border-ink text-sm sm:grid-cols-4"
+			data-testid="orker-card"
+		>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Orker</dt>
+				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-id">{orker.orkerId || '—'}</dd>
+			</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Pool</dt>
+				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-pool">{orker.pool || '—'}</dd>
+			</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Runtime</dt>
+				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-runtime">{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}</dd>
+			</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Build</dt>
+				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-build">{orker.buildId || 'unversioned'}</dd>
+			</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Security profile</dt>
+				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
+			</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Max concurrent</dt>
+				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-max-concurrent">{String(orker.maxConcurrent)}</dd>
+			</div>
+			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
+				<dt class="caps text-ink-muted">Rootless</dt>
+				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-rootless">{orker.rootless ? 'yes' : 'no'}</dd>
+			</div>
+		</dl>
+	{/if}
+</section>
+
+<section class="region mb-10 pt-3" data-testid="activity-local-tools">
+	<h2 class="text-md font-semibold text-ink">Local activity tools</h2>
+	<p class="mt-1 max-w-prose text-sm text-ink-secondary">
+		Builds and contract tests run on your machine with its OCI runtime. They are intentionally not browser actions.
+	</p>
+	<p class="mt-2 max-w-prose text-xs text-ink-muted">Prerequisites: a local build context, Docker or another supported OCI runtime, and access to the image registry when pushing.</p>
+	<ul class="mt-3 border-t border-rule">
+		<li class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-2">
+			<p class="w-56 text-sm font-semibold text-ink">Build an image</p>
+			<code data-testid="activity-build-command" class="min-w-0 flex-1 break-all font-mono text-xs text-ink-secondary">orkctl activity build ./images/my-activity</code>
+			<button type="button" onclick={() => void copyLocalTool('orkctl activity build ./images/my-activity', 'Build command copied', 'activity-build-command')} class="btn btn-sm">Copy build command</button>
+		</li>
+		<li class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-2">
+			<p class="w-56 text-sm font-semibold text-ink">Run the activity contract test</p>
+			<code data-testid="activity-test-command" class="min-w-0 flex-1 break-all font-mono text-xs text-ink-secondary">orkctl activity test my-image</code>
+			<button type="button" onclick={() => void copyLocalTool('orkctl activity test my-image', 'Test command copied', 'activity-test-command')} class="btn btn-sm">Copy test command</button>
+		</li>
+	</ul>
+	{#if copiedLocalTool}<p data-testid="activity-local-tool-copied" class="confirm mt-2 text-xs text-ink" role="status">{copiedLocalTool}</p>{/if}
+</section>
+
+<h2 class="mb-2 text-md font-semibold text-ink">Catalog</h2>
+
+<ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} />
+
+{#if data.activitiesError}
+	<ErrorPanel
+		testid="activities-error"
+		retryTestid="activities-retry"
+		subject="the activity catalog"
+		message={data.activitiesError}
+		busy={retrying}
+		onretry={retry}
+	/>
+{:else if busy}
+	<p class="text-sm text-ink-muted" data-testid="activities-loading">Loading activities…</p>
+{:else if data.activities.length === 0 && data.applied.length > 0}
+	<p class="text-sm text-ink-muted" data-testid="activities-empty">No activities match these filters.</p>
+{:else if data.activities.length === 0}
+	<p class="text-sm text-ink-muted" data-testid="activities-empty">
+		This deployment has no activities configured. A task can still name any registry reference
+		directly with <code>uses:</code>.
+	</p>
+{:else}
+	<div class="overflow-x-auto border-t-2 border-ink" data-testid="activity-list">
+		<table class="register min-w-[960px]">
+			<thead>
+				<tr>
+					<th scope="col">Name</th>
+					<th scope="col">Reference</th>
+					<th scope="col">Index digest</th>
+					<th scope="col">Media type</th>
+					<th scope="col">Platforms</th>
+					<th scope="col">Interface</th>
+					<th scope="col">Resolved</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.activities as activity (activity.name)}
+					<tr
+						class="transition-colors hover:bg-hover"
+						data-testid="activity-row-{activity.name}"
+					>
+						<td class="font-mono font-semibold text-ink" data-testid="activity-name-{activity.name}">
+							{activity.name}
+						</td>
+						<td
+							class="font-mono text-xs whitespace-nowrap text-ink-secondary"
+							data-testid="activity-reference-{activity.name}"
+						>
+							{activity.reference || '—'}
+						</td>
+						<!--
+							The digest is the PIN, and the pin is the point: it is
+							what makes a run explainable after a tag moves. It is
+							abbreviated for the eye but carried in full in `title`
+							and in a data attribute, so nothing here is the only
+							copy of the value.
+						-->
+						<td>
+							{#if activity.indexDigest}
+								<span
+									class="figure text-xs whitespace-nowrap text-ink"
+									title={activity.indexDigest}
+									data-digest={activity.indexDigest}
+									data-testid="activity-digest-{activity.name}">{shortDigest(activity.indexDigest)}</span
+								>
+							{:else}
+								<span
+									class="text-xs text-ink-muted"
+									data-testid="activity-digest-unresolved-{activity.name}"
+									title="this reference has not been resolved to an index digest">unresolved</span
+								>
+							{/if}
+						</td>
+						<td
+							class="font-mono text-xs text-ink-muted"
+							data-testid="activity-media-type-{activity.name}"
+						>
+							{activity.mediaType || '—'}
+						</td>
+						<td class="font-mono text-xs text-ink-muted" data-testid="activity-platforms-{activity.name}">
+							{#if activity.platforms.length > 0}
+								{activity.platforms.join(', ')}
+							{:else}
+								<span title="a single-manifest reference advertises no platform list"
+									>single manifest</span
+								>
+							{/if}
+						</td>
+						<!--
+							What the image declares about its with: block. The cell
+							is a disclosure: the full table opens in a row beneath,
+							so the catalog stays one line per activity.
+						-->
+						<td class="text-xs">
+							{#if activity.indexDigest}
+								<button
+									type="button"
+									class="btn-disclosure inline-flex items-center gap-1 font-semibold whitespace-nowrap text-blue hover:underline"
+									aria-expanded={!!disclosed[activity.name]}
+									aria-controls="activity-interface-panel-{activity.name}"
+									data-testid="activity-interface-{activity.name}"
+									onclick={() => (disclosed[activity.name] = !disclosed[activity.name])}
+								>
+									{interfaceSummary(activity)}
+								</button>
+							{:else}
+								<span class="text-ink-muted" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
+							{/if}
+						</td>
+						<td class="figure text-xs whitespace-nowrap text-ink-muted" data-testid="activity-resolved-at-{activity.name}">
+							{fmtTimestamp(activity.resolvedAt)}
+						</td>
+					</tr>
+					{#if disclosed[activity.name]}
+						<tr class="bg-paper-sunken">
+							<td
+								colspan="7"
+								class="px-5 py-3"
+								id="activity-interface-panel-{activity.name}"
+								data-testid="activity-interface-panel-{activity.name}"
+							>
+								<ActivityInterface info={activity} />
+							</td>
+						</tr>
+					{/if}
+				{/each}
+			</tbody>
+		</table>
+	</div>
+{/if}
+
+<!--
+	INSPECT A REFERENCE. Any reference `uses:` would accept — a catalog name or
+	a registry reference — resolved on demand by the engine against the
+	registry, uncached, writing nothing. Namespace-agnostic like the rest of
+	this page.
+-->
+<section class="region mt-10 pt-3" data-testid="activity-inspect">
+	<h2 class="mb-2 text-md font-semibold text-ink">Inspect a reference</h2>
+	<form class="flex flex-wrap items-center gap-2" data-testid="activity-inspect-form" onsubmit={inspect}>
+		<label class="sr-only" for="activity-inspect-reference">Catalog name or registry reference</label>
+		<input
+			id="activity-inspect-reference"
+			type="text"
+			bind:value={inspectReference}
+			placeholder="file, or ghcr.io/acme/migrate:v3"
+			autocomplete="off"
+			spellcheck="false"
+			class="field h-9 min-w-0 flex-1 px-3 font-mono text-sm sm:max-w-md"
+			data-testid="activity-inspect-reference"
+		/>
+		<button
+			type="submit"
+			disabled={inspecting || inspectReference.trim() === ''}
+			class="btn btn-primary"
+			data-testid="activity-inspect-submit">{inspecting ? 'Inspecting…' : 'Inspect'}</button
+		>
+		<CliEquivalent testid="activity-inspect-cli" command={inspectCli} label="orkctl activity inspect for this reference" />
+	</form>
+	{#if inspectError}
+		<div class="mt-3">
+			<ErrorPanel testid="activity-inspect-error" subject="that reference" message={inspectError} />
+		</div>
+	{:else if inspected}
+		<div
+			class="mt-3 space-y-3 border-t-(length:--rule-region) border-b border-ink py-3 text-sm"
+			data-testid="activity-inspect-result"
+		>
+			<dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
+				<dt class="caps text-ink-muted">Activity</dt>
+				<dd class="text-ink" data-testid="activity-inspect-activity">
+					{inspected.name ? `${inspected.name} (catalog)` : `${inspected.reference} (reference)`}
+				</dd>
+				<dt class="caps text-ink-muted">Reference</dt>
+				<dd class="font-mono break-all text-ink-secondary">{inspected.reference}</dd>
+				<dt class="caps text-ink-muted">Pinned</dt>
+				<dd class="font-mono break-all text-ink" data-testid="activity-inspect-pinned">{pinnedReference(inspected)}</dd>
+				<dt class="caps text-ink-muted">Media type</dt>
+				<dd class="font-mono text-ink-secondary">{inspected.mediaType || '-'}</dd>
+				<dt class="caps text-ink-muted">Platforms</dt>
+				<dd class="text-ink-secondary">{inspected.platforms.length > 0 ? inspected.platforms.join(', ') : '-'}</dd>
+				<dt class="caps text-ink-muted">Resolved</dt>
+				<dd class="text-ink-secondary">{fmtTimestamp(inspected.resolvedAt)}</dd>
+			</dl>
+			<ActivityInterface info={inspected} />
+		</div>
+	{/if}
+</section>

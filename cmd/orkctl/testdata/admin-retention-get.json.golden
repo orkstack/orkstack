@@ -1,0 +1,5 @@
+{
+  "policy": {
+    "maxRunRetention": "259200s"
+  }
+}

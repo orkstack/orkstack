@@ -1,0 +1,44 @@
+# OrkStack orkflow DSL
+#
+# Plan a change, wait for a person or a system to approve it, then apply it.
+# `approval` starts no container and holds no pool slot while it waits.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: awaited-approval
+version: "0.1.0"
+description: "Plan a change, wait for an approval, then apply it."
+
+inputs:
+  target:
+    type: string
+    default: staging
+
+tasks:
+  - id: plan
+    uses: shell
+    with:
+      op: eval
+      command: ["sh", "-c", "printf 'deploy %s' \"{{ .inputs.target }}\""]
+
+  - id: approval
+    needs: [plan]
+    await:
+      timeout_seconds: 86400
+      callback: true
+      schema:
+        approved: { type: boolean, required: true }
+        approver: { type: string, required: true }
+
+  - id: apply
+    uses: shell
+    needs: [approval]
+    condition: "{{ .tasks.approval.output.approved }}"
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - >-
+          printf 'applying: %s (approved by %s)\n'
+          "{{ .tasks.plan.output.value }}"
+          "{{ .tasks.approval.output.approver }}"

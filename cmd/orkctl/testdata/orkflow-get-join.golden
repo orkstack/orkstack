@@ -1,0 +1,29 @@
+Name:         branch-and-recover
+Version:      0.1.0
+Description:  Branch on a decision, re-join after the branch that ran, and recover when deploy fails.
+Created:      2026-01-02T03:04:05Z
+
+INPUT             TYPE     DEFAULT  REQUIRED
+fail_deploy       boolean  false    -
+fail_rollback     boolean  false    -
+rollback_seconds  number   0        -
+route             string   canary   -
+smoke_seconds     number   10       -
+
+TASK      USES   NEEDS         TIMEOUT
+decide    shell  -             300s
+canary    shell  decide        300s
+full      shell  decide        300s
+verify    shell  canary,full   300s
+deploy    shell  verify        300s
+smoke     shell  verify        300s
+announce  shell  deploy        300s
+rollback  shell  deploy        300s
+escalate  shell  rollback      300s
+notify    shell  deploy,smoke  300s
+
+JOIN      POLICY       NEEDS
+verify    none_failed  canary,full
+rollback  any_failed   deploy
+escalate  any_failed   rollback
+notify    all_done     deploy,smoke

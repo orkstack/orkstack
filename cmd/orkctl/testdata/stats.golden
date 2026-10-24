@@ -1,0 +1,20 @@
+Namespace:     default
+Window:        2026-01-01T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:      2026-01-02T03:04:05Z
+Success rate:  50.0% of 4 finished
+Run duration:  p50 4s  p95 8s (4 of the window's finished runs, since 2026-01-01T03:04:05Z)
+
+RUNS       COUNT
+running    1
+succeeded  2
+failed     1
+canceled   1
+
+MOST FAILING  FAILED  FINISHED
+deploy        1       3
+
+RUNNING NOW  ORKFLOW  STARTED
+ork-live-1   deploy   2026-01-02T02:54:05Z
+
+POOL            ORKERS
+main (default)  0

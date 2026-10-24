@@ -1,0 +1,281 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/telemetry.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
+// names, runs and pool defaults. Two namespaces may both hold an orkflow
+// called "deploy" and never see each other's documents.
+//
+// It is OrkStack's own coordinate. The deployment runtime partition is an
+// operator setting outside this contract and appears in no proto field, DSL
+// key, CLI flag or UI control.
+//
+// The registry lives in the artifact store at metadata/namespaces/{name}.json.
+// "default" always resolves and is never created: a deployment that registered
+// nothing still has one namespace, and every orkflow that names none is in it.
+message Namespace {
+  // name is a slug, unique in the deployment, and is the key of the document.
+  string name = 1;
+  string description = 2;
+  map<string, string> labels = 3;
+  // default_pool is where a task that names no pool runs. Empty means the
+  // built-in pool "main".
+  //
+  // It is read on the submit path: a run's routing resolves a task's own
+  // `pool:`, then this, then "main". The registry stores only a name the
+  // engine can route to — the same slug rule the DSL and the engine's pool
+  // mapping use — because a stored routing target nothing can honour is a
+  // defect, not a placeholder.
+  string default_pool = 4;
+  // allowed_pools bounds every pool this namespace may dispatch onto. Empty
+  // means no restriction. A non-empty list must contain default_pool, which
+  // the registry refuses to store otherwise — an allow-list that excludes the
+  // namespace's own default would refuse every task that names no pool. Each
+  // entry is held to the same pool-name rule as default_pool.
+  //
+  // It is enforced at the API boundary, in both places a pool can be chosen:
+  // when an orkflow is applied, with the file in hand, and again when a run is
+  // submitted, which is the gate no client can bypass.
+  repeated string allowed_pools = 5;
+  // created_at and updated_at are written by the registry, never by a client:
+  // created_at when the document is first written and preserved on every
+  // later write, updated_at on each one.
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  // etag is the registry's compare-and-swap token for this document: the
+  // value a read handed back, which an update sends back to say which version
+  // it edited. A write whose etag no longer matches the stored one is refused,
+  // so two operators editing the same namespace at once cannot silently
+  // clobber each other — the loser is told to re-read.
+  //
+  // An EMPTY etag is a condition too, not the absence of one: it says the
+  // version this update edited had no stored bytes at all, and the write is
+  // refused if some other writer has since created them. That is what the
+  // default namespace needs — until somebody writes its document a read hands
+  // back a synthesized one carrying no token — and it is why an update never
+  // has an unconditional mode: an empty token read as "overwrite whatever is
+  // there" turned the promise above off for exactly the one namespace every
+  // deployment has.
+  //
+  // It is the store's token and opaque: nothing derives meaning from its
+  // shape, and a client only ever round-trips it. It is never stored inside
+  // the document — it names the document's stored bytes, so a copy inside
+  // them could only ever be the token of the write before.
+  string etag = 8;
+  // run_retention is how long a finished run of this namespace stays readable
+  // before OrkStack retires it and reclaims its run-scoped storage. Unset
+  // means "the deployment maximum" (SystemService.GetRetentionPolicy), which
+  // is also the most any namespace may ask for: a value above the maximum is
+  // refused with INVALID_ARGUMENT, and the maximum applies even to a stored
+  // value that a later, lower maximum left above it.
+  //
+  // It counts from the moment the run finished, never from submission: a run
+  // that executed for two days under a 72h retention is readable for 72h after
+  // it ended. Resolution is archive.EffectiveRunRetention, the one place that
+  // implements it — the same shape default_pool has in DefaultPoolFor.
+  google.protobuf.Duration run_retention = 9;
+
+  // telemetry is this namespace's selection among the deployment's telemetry
+  // sinks. It names things the operator declared (ORK_TELEMETRY_SINKS) and
+  // can never name an endpoint or a credential (AGENTS.md §6): a namespace
+  // admin chooses WHERE among the operator's destinations, not the
+  // destination itself. Unset means "the default sink, deployment defaults".
+  TelemetryPolicy telemetry = 10;
+
+  // hold, when set, refuses every new run of this namespace at submit with
+  // FAILED_PRECONDITION, naming the reason and since. Unset means accepting,
+  // which is what every namespace has today and what an upgrade preserves.
+  //
+  // It is enforced in exactly one place — SubmitRun's preparation, the gate
+  // every door into a namespace already goes through (orkctl, the UI, `run
+  // again`, a trigger invoke) — and read from the registry on every submit,
+  // so a hold set through one replica is honoured by every other on its
+  // next request.
+  NamespaceHold hold = 11;
+
+  // max_running bounds how many runs of this namespace may be in flight at
+  // once — accepted and not finished, which is exactly the population
+  // GetStatsResponse.running reports. 0 means unlimited, which is the
+  // inherited default and what every namespace has today.
+  //
+  // It is evaluated by reading the cluster's execution index at submit — the
+  // same read GetStats.running performs (docs/STATS.md §1) — so no OrkStack
+  // counter exists to disagree with it tomorrow. That makes it best-effort
+  // under simultaneous submits against several replicas: each reads, then
+  // acts, with no lock between, and the overshoot is bounded by the number
+  // of submits racing through the window between one replica's read and the
+  // cluster indexing its start. A lock would remove the overshoot and
+  // AGENTS.md §2.1 forbids building one, which is the right trade — a guard
+  // that is occasionally one over is worth far more than a lock service. A
+  // namespace that sets 0 never pays the read at all.
+  int32 max_running = 12;
+
+  // allowed_secrets bounds which SecretRef.source values a task of this
+  // namespace may resolve. Empty means UNRESTRICTED, which is what every
+  // namespace has today and therefore what an upgrade preserves — a
+  // deployment that sets none behaves exactly as it did before this field
+  // existed. It bounds NAMES: nothing that reads this field stores,
+  // compares or transmits a secret value.
+  //
+  // Each entry is `scheme:pattern`. The scheme is literal. The pattern is
+  // matched against the locator ONLY, never across the separator, and
+  // never as a regular expression: "*" is the one wildcard and it does not
+  // cross "/"; every other character is itself. A "file:" locator with a
+  // ".." segment is refused outright rather than normalized, so a pattern
+  // cannot be escaped by path traversal. The rule is
+  // internal/dsl.ValidSecretPattern and CheckSecretSource, the one place it
+  // is implemented; the registry refuses an entry that fails it.
+  //
+  // It is enforced at the API boundary in the two places a secret can be
+  // named, exactly as allowed_pools is: when an orkflow is applied or
+  // validated, with the file in hand (an issue anchored to
+  // tasks[i].secrets[j].source), and again when a run is submitted, which is
+  // the gate no client can bypass and which catches a definition stored
+  // while the list was wider. It composes by INTERSECTION with each Orker's
+  // own floor (ORK_ORKER_SECRET_ALLOW): a namespace can only ever narrow
+  // what its Orkers already permit.
+  repeated string allowed_secrets = 13;
+
+  // require_signed_by names a signer every image executed in this namespace
+  // must satisfy: "cosign:<key-name>", where <key-name> is one of the
+  // deployment's ImagePolicy.signing_keys. Unset means no signature is
+  // required, which is what every namespace has today and what an upgrade
+  // preserves. A namespace may only TIGHTEN the deployment policy: this is
+  // its one field for doing so, and there is none for loosening.
+  //
+  // It is enforced in the three places an image passes: at apply and
+  // validate, with the file in hand (a field-anchored issue on
+  // tasks[i].uses); at submit, before a run id is minted, which catches a
+  // definition stored before the requirement existed; and by the Orker at
+  // dispatch, which verifies the signature itself against the key the run
+  // pinned at submit. Only "cosign:" exists; it is a closed set, not an
+  // extension point (AGENTS.md §13).
+  string require_signed_by = 14;
+
+  // budget bounds this namespace's reserved consumption over a rolling
+  // period. Unset means unbounded, which is what every namespace has today
+  // and what an upgrade preserves.
+  //
+  // An enforced budget is checked in exactly one place — the admission gate
+  // in SubmitRun's preparation, after the hold and max_running — by reading
+  // the namespace's usage over the trailing period. That read is a
+  // read-then-act with no lock, cached for at most ORK_USAGE_CACHE_TTL, and
+  // counts a run only once it has finished, so enforcement is best-effort by
+  // a bounded margin: the runs that finished inside one cache lifetime, every
+  // run still in flight, and submits racing the check. A lock would remove
+  // the margin and AGENTS.md §2.1 forbids building one.
+  Budget budget = 15;
+}
+
+// NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
+// decision and never a retroactive one: a run already accepted continues, is
+// readable, and finishes normally (AGENTS.md §15). Releasing a hold starts
+// nothing that was refused while it was set — a refused submit was refused,
+// not queued.
+//
+// It is a message rather than two scalars on Namespace so that "held" is one
+// presence check (hold != nil) and a hold can never be half-set.
+message NamespaceHold {
+  // reason is required. A hold with no reason is refused by the registry:
+  // the next operator to read this document is the one who has to decide
+  // whether to release it, and "on hold" with no why is not a decision they
+  // can make. It is a short human line, bounded at 512 bytes with no control
+  // characters, never a secret and never machine-parsed.
+  string reason = 1;
+  // since is written by the registry on the write that SET the hold and
+  // preserved on every later write while it stays set, never supplied by a
+  // client — the same rule created_at/updated_at follow. Editing the reason
+  // of a hold does not move it: the door has been closed since the first
+  // write, whatever the sign on it now says.
+  google.protobuf.Timestamp since = 2;
+}
+
+// Budget bounds how much of the fleet one namespace may RESERVE over a
+// rolling period. Its units are reservation × held time: the cpu and memory
+// an Orker granted each attempt (TaskAttempt.resources), multiplied by how
+// long that Orker held the attempt. They are not utilization, and every
+// surface that renders them says so: OrkStack reserves, the kernel measures,
+// and presenting the first as the second would be a number no measurement
+// produced.
+//
+// Usage is derived on read (StatsService.GetUsage) from the runs this
+// namespace created inside the period that have FINISHED; a run still in
+// flight is counted when it finishes. Nothing counts usage as it happens, so
+// nothing can disagree with the records tomorrow.
+message Budget {
+  // cpu_seconds bounds reserved cpu × held time, in cpu-seconds. 0 means this
+  // dimension is not bounded. At least one of cpu_seconds and gib_seconds is
+  // above 0; a budget that bounds nothing is refused — clear it instead.
+  int64 cpu_seconds = 1;
+  // gib_seconds bounds reserved memory × held time, in GiB-seconds (memory
+  // bytes ÷ 2^30 × seconds). 0 means this dimension is not bounded.
+  int64 gib_seconds = 2;
+  // period is the rolling window a budget is held against, ending at the
+  // moment of the question. Required; at least 1h and at most 744h (31 days).
+  // A longer question is a report — `orkctl stats usage --since` — not a
+  // budget evaluated at every submit.
+  google.protobuf.Duration period = 3;
+  // enforce turns the budget from an observation into an admission rule.
+  // False — the default — reports usage against the budget on every read and
+  // never refuses anything, and costs nothing at submit. True refuses every
+  // new run of the namespace with FAILED_PRECONDITION while measured usage
+  // over the trailing period is at or above any bounded dimension. Either
+  // way an accepted run is never touched (AGENTS.md §15).
+  bool enforce = 4;
+}
+
+// Pool is a set of Orkers, observed live.
+//
+// Nothing writes a Pool: it is derived on read from what the cluster reports
+// about the Orkers polling for a pool's work, so any replica answers, including
+// one that started nothing and holds no state of its own.
+message Pool {
+  // name is the pool a task's `pool:` names. "main" is built in and is where a
+  // task runs when neither it nor its namespace names one.
+  string name = 1;
+  // live_orker_count is how many Orkers were serving this pool when the answer
+  // was computed. Zero means a task sent here would wait for an Orker that is
+  // not there, which is what a submit refuses.
+  int32 live_orker_count = 2;
+  // 3 held `plugins`, the per-pool plugin inventory. Under the OCI Activity
+  // Contract an activity is an image and which images exist is engine
+  // configuration (ActivityService.ListActivities), so a pool has no
+  // inventory to report. Reserved, never reused.
+  reserved 3;
+  reserved "plugins";
+  // is_default marks the pool a task of this namespace runs on when it names
+  // none.
+  bool is_default = 4;
+  // last_seen is the most recent moment an Orker of this pool was observed
+  // STILL POLLING.
+  //
+  // Temporal remembers a poller for minutes after its worker died, so the
+  // probe drops a record older than the freshness window before counting or
+  // timestamping anything (internal/engine/pool_probe.go). One consequence is
+  // load-bearing and stated here rather than discovered: a pool whose Orkers
+  // have all gone quiet reports NO last_seen at all, not the moment the last
+  // of them was heard. This field answers "how fresh is the number beside
+  // it", never "when did this pool die".
+  google.protobuf.Timestamp last_seen = 5;
+  // unavailable_reason says that this pool COULD NOT BE ASKED, and why.
+  //
+  // Empty is the normal case: live_orker_count is a measurement. Non-empty
+  // means nothing was measured — the cluster did not answer for this pool —
+  // and live_orker_count is 0 because there is no number to report, NOT
+  // because nobody is serving it. The two need opposite reactions: an empty
+  // pool is fixed by starting an Orker, an unreachable one by asking again,
+  // and a renderer that showed them alike would tell an operator to scale a
+  // pool that may be perfectly healthy.
+  //
+  // It exists so that ListPools can NARROW instead of refusing. One pool the
+  // cluster could not answer for used to fail the whole call, hiding every
+  // healthy pool beside it — and an admin read is opened precisely when
+  // something is already wrong. Each pool carries its own verdict now.
+  string unavailable_reason = 6;
+}

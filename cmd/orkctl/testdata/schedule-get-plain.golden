@@ -1,0 +1,16 @@
+Schedule:     plain (sch-00000000000000b1)
+Namespace:    default
+Runs:         hello-ork@current
+Description:  -
+When:         every 15m
+Overlap:      skip
+State:        active
+Fires:        0 taken, 0 skipped (overlap), 0 missed (catch-up window)
+Created:      2026-01-02T03:04:05Z    Updated: 2026-01-02T03:04:05Z
+Input:        -
+
+Next fires:
+  -
+
+Recent fires:
+  -

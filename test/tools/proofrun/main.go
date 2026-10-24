@@ -1,0 +1,79 @@
+// Command proofrun is the engine behind scripts/proof.sh, scripts/integration.sh
+// and the CI proof graph (AGENTS.md §11.2). It is test tooling, standard
+// library only:
+//
+//	proofrun unit         run the unit suites and write their ledger
+//	proofrun integration  plan a run once, or run one shard of that plan
+//	proofrun select       decide what a feature proof runs, or refuse (exit 2)
+//	proofrun feature-report  the feature README's scope sections
+//	proofrun ui-ledger    check the Playwright report against its listing
+//	proofrun ui-plan      split Playwright spec files by measured wall
+//	proofrun record       write a part.json (or a feature proof.json)
+//	proofrun merge        merge a proof's parts into one proof.json
+//	proofrun verify       refuse a merge or tag whose proof does not cover it
+//	proofrun temporal-args  the temporal service's image and arguments
+//	proofrun costs        regenerate the cost ledgers and the slow list
+//	proofrun push-layout  push OCI layouts byte for byte and check the digests
+//	proofrun layout-digests  the images.tsv a layout push would produce
+//	proofrun evidence-args  turn Proof-tests:/Proof-specs: lines into flags
+//	proofrun touches      whether a change touches paths of one scope action
+//	proofrun gates        the gates and specs a feature selection runs
+//	proofrun free-port    a port nothing listens on
+//
+// Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation.
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+// subcommand is one entry of the dispatch table. The table is the list the
+// usage and the documentation drift test enumerate.
+type subcommand struct {
+	name    string
+	summary string
+	run     func([]string) int
+}
+
+var subcommands = []subcommand{
+	{"unit", "run the unit suites and write their ledger", cmdUnit},
+	{"integration", "plan a run once, or run one shard of that plan", cmdIntegration},
+	{"select", "decide what a feature proof runs, or refuse", cmdSelect},
+	{"feature-report", "the feature README's scope sections", cmdFeatureReport},
+	{"ui-ledger", "check the Playwright report against its listing", cmdUILedger},
+	{"ui-plan", "split the Playwright spec files by measured wall", cmdUIPlan},
+	{"record", "write a part.json (or a feature proof.json)", cmdRecord},
+	{"merge", "merge a proof's parts into one proof.json", cmdMerge},
+	{"flakes", "derive per-test flake rates from proof ledgers", cmdFlakes},
+	{"verify", "refuse a merge or a tag whose proof does not cover it", cmdVerify},
+	{"temporal-args", "the temporal service's image and arguments", cmdTemporalArgs},
+	{"costs", "regenerate the cost ledgers and the slow list", cmdCosts},
+	{"push-layout", "push OCI layouts byte for byte and check their digests", cmdPushLayout},
+	{"layout-digests", "the images.tsv a layout push would produce", cmdLayoutDigests},
+	{"evidence-args", "turn Proof-tests:/Proof-specs: lines into flags", cmdEvidenceArgs},
+	{"free-port", "a port nothing listens on", cmdFreePort},
+	{"touches", "whether a change touches paths of one scope action", cmdTouches},
+	{"gates", "the gates and specs a feature selection runs", cmdGates},
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
+	}
+	for _, c := range subcommands {
+		if c.name == os.Args[1] {
+			os.Exit(c.run(os.Args[2:]))
+		}
+	}
+	usage()
+	os.Exit(2)
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: proofrun <subcommand> [flags]")
+	for _, c := range subcommands {
+		fmt.Fprintf(os.Stderr, "  %-16s %s\n", c.name, c.summary)
+	}
+}

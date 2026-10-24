@@ -1,0 +1,21 @@
+apiVersion: orkstack/v1
+kind: Automation
+namespace: default
+
+settings:
+  description: the namespace every orkflow that names none belongs to
+  labels: {}
+  default_pool: main
+  allowed_pools: []
+  run_retention: inherit
+  telemetry: {}
+  max_running: 0
+  allowed_secrets: []
+  require_signed_by: ""
+  budget: {}
+
+schedules: {}
+
+triggers: {}
+
+webhooks: {}

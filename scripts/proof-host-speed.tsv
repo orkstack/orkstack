@@ -1,0 +1,25 @@
+# Assertions whose pass depends on the host's speed. A miss on a runner below
+# the reference CPU count is recorded in proof.json's host_speed_failures and
+# in the README; it is never a widened local bound (docs/PROOFS.md).
+#
+# A UI row excuses exactly one thing, and only on a CI ui-e2e part whose runner
+# has fewer CPUs than the row's reference: a failed outcome of the named test
+# whose failure is exactly the assertion the row declares. The assertion is
+#   lessThan MS                  expect(received).toBeLessThan[OrEqual](expected)
+#                                with Expected MS (the bound's own timing miss)
+#   visibleWithin MS LOCATOR     expect(locator).toBeVisible() on exactly LOCATOR,
+#                                timed out after MS (the page never drew within
+#                                the spec's own wait)
+# A skip, a missing outcome, any other assertion of the same test (another
+# locator's visibility included), and the same miss on a local proof all still
+# fail the proof. A row counts only once the base carries it identically: a
+# row a change adds, or a bound it loosens, excuses nothing. A test row
+# (assertion "-") is recorded on a miss and never excused.
+#
+# Columns are TAB-separated: kind, name, member, assertion, bound (seconds),
+# reference CPUs, note. kind=ui names a Playwright spec path under ui/ and the
+# test's title; kind=test names a Go package and its test.
+# kind	name	member	assertion	bound	reference_cpus	note
+ui	e2e/run-page-ceiling.spec.ts	the run page at the gated task size is interactive within 5 s, live and finished	lessThan 5000	5	16	the run page at the gated task size is interactive within 5 s
+ui	e2e/run-page-ceiling.spec.ts	the run page at the gated task size is interactive within 5 s, live and finished	visibleWithin 60000 getByTestId('run-status')	5	16	on a 2-vCPU runner the run page's header never drew within the spec's 60 s wait (validation run 39345074409)
+ui	e2e/each-fan-out.spec.ts	the run page and the item list at the gated size are interactive within 5 s	lessThan 5000	5	16	the run page and the item list at the gated size are interactive within 5 s

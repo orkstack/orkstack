@@ -1,0 +1,11 @@
+{
+  "engineVersion": "v1.2.3",
+  "goVersion": "go1.25.6",
+  "deploymentName": "orkstack",
+  "buildId": "2026-01-02.1",
+  "versioningActive": true,
+  "artifactBackend": "s3",
+  "artifactLocation": "s3://orkstack-artifacts",
+  "temporalAddress": "localhost:7233",
+  "serverTime": "2026-01-02T03:04:05Z"
+}

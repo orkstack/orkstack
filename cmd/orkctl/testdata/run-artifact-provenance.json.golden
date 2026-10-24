@@ -1,0 +1,23 @@
+{
+  "artifact": {
+    "name": "report.txt",
+    "uri": "file:///STORE/objects/n-cmVwb3J0LnR4dA/5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+    "contentType": "text/plain; charset=utf-8",
+    "sizeBytes": "6",
+    "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+  },
+  "bytesPresent": true,
+  "ownReference": "HELD",
+  "references": [
+    {
+      "runId": "ork-1-a1",
+      "orkflowName": "completed",
+      "orkflowVersion": "0.1.0",
+      "taskId": "completed",
+      "kind": "OUTPUT",
+      "runStatus": "SUCCEEDED",
+      "runCreatedAt": "2026-01-02T03:04:05Z"
+    }
+  ],
+  "computedAt": "2026-01-02T03:04:05Z"
+}

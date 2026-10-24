@@ -1,0 +1,552 @@
+{
+ "grammar": [
+  {
+   "text": "status=FAILED",
+   "filter": {
+    "field": "status",
+    "op": "EQUALS",
+    "values": [
+     "FAILED"
+    ]
+   }
+  },
+  {
+   "text": "status!=FAILED",
+   "filter": {
+    "field": "status",
+    "op": "NOT_EQUALS",
+    "values": [
+     "FAILED"
+    ]
+   }
+  },
+  {
+   "text": "status=FAILED,CANCELED",
+   "filter": {
+    "field": "status",
+    "op": "IN",
+    "values": [
+     "FAILED",
+     "CANCELED"
+    ]
+   }
+  },
+  {
+   "text": "name~tenant",
+   "filter": {
+    "field": "name",
+    "op": "CONTAINS",
+    "values": [
+     "tenant"
+    ]
+   }
+  },
+  {
+   "text": "name^tenant-",
+   "filter": {
+    "field": "name",
+    "op": "PREFIX",
+    "values": [
+     "tenant-"
+    ]
+   }
+  },
+  {
+   "text": "created_at>=2026-10-01T00:00:00Z",
+   "filter": {
+    "field": "created_at",
+    "op": "AT_OR_AFTER",
+    "values": [
+     "2026-10-01T00:00:00Z"
+    ]
+   }
+  },
+  {
+   "text": "created_at<2026-10-09T00:00:00+02:00",
+   "filter": {
+    "field": "created_at",
+    "op": "BEFORE",
+    "values": [
+     "2026-10-09T00:00:00+02:00"
+    ]
+   }
+  },
+  {
+   "text": "namespace=",
+   "filter": {
+    "field": "namespace",
+    "op": "EQUALS",
+    "values": [
+     ""
+    ]
+   }
+  },
+  {
+   "text": "hold.reason!=",
+   "filter": {
+    "field": "hold.reason",
+    "op": "NOT_EQUALS",
+    "values": [
+     ""
+    ]
+   }
+  },
+  {
+   "text": "created_at<",
+   "filter": {
+    "field": "created_at",
+    "op": "BEFORE",
+    "values": [
+     ""
+    ]
+   }
+  },
+  {
+   "text": "labels.team=payments",
+   "filter": {
+    "field": "labels.team",
+    "op": "EQUALS",
+    "values": [
+     "payments"
+    ]
+   }
+  },
+  {
+   "text": "labels.a.b.c=x",
+   "filter": {
+    "field": "labels.a.b.c",
+    "op": "EQUALS",
+    "values": [
+     "x"
+    ]
+   }
+  },
+  {
+   "text": "labels.a\\=b=c",
+   "filter": {
+    "field": "labels.a=b",
+    "op": "EQUALS",
+    "values": [
+     "c"
+    ]
+   }
+  },
+  {
+   "text": "labels.k\\!x=1",
+   "filter": {
+    "field": "labels.k!x",
+    "op": "EQUALS",
+    "values": [
+     "1"
+    ]
+   }
+  },
+  {
+   "text": "labels.k\\~\\^\\<\\>=v",
+   "filter": {
+    "field": "labels.k~^<>",
+    "op": "EQUALS",
+    "values": [
+     "v"
+    ]
+   }
+  },
+  {
+   "text": "labels.a\\\\b=v",
+   "filter": {
+    "field": "labels.a\\b",
+    "op": "EQUALS",
+    "values": [
+     "v"
+    ]
+   }
+  },
+  {
+   "text": "labels.team~pay",
+   "filter": {
+    "field": "labels.team",
+    "op": "CONTAINS",
+    "values": [
+     "pay"
+    ]
+   }
+  },
+  {
+   "text": "description=x\\,y",
+   "filter": {
+    "field": "description",
+    "op": "EQUALS",
+    "values": [
+     "x,y"
+    ]
+   }
+  },
+  {
+   "text": "description=a\\,b,c",
+   "filter": {
+    "field": "description",
+    "op": "IN",
+    "values": [
+     "a,b",
+     "c"
+    ]
+   }
+  },
+  {
+   "text": "description=a\\\\b",
+   "filter": {
+    "field": "description",
+    "op": "EQUALS",
+    "values": [
+     "a\\b"
+    ]
+   }
+  },
+  {
+   "text": "name=a=b",
+   "filter": {
+    "field": "name",
+    "op": "EQUALS",
+    "values": [
+     "a=b"
+    ]
+   }
+  },
+  {
+   "text": "name=\\=x",
+   "filter": {
+    "field": "name",
+    "op": "EQUALS",
+    "values": [
+     "=x"
+    ]
+   }
+  },
+  {
+   "text": "name=x,\\=y",
+   "filter": {
+    "field": "name",
+    "op": "IN",
+    "values": [
+     "x",
+     "=y"
+    ]
+   }
+  },
+  {
+   "text": "url~https://x.test/a?b=c",
+   "filter": {
+    "field": "url",
+    "op": "CONTAINS",
+    "values": [
+     "https://x.test/a?b=c"
+    ]
+   }
+  },
+  {
+   "text": "description= spaced value ",
+   "filter": {
+    "field": "description",
+    "op": "EQUALS",
+    "values": [
+     " spaced value "
+    ]
+   }
+  },
+  {
+   "text": " name=x",
+   "filter": {
+    "field": " name",
+    "op": "EQUALS",
+    "values": [
+     "x"
+    ]
+   }
+  },
+  {
+   "text": "name=\\x",
+   "filter": {
+    "field": "name",
+    "op": "EQUALS",
+    "values": [
+     "x"
+    ]
+   },
+   "formatted": "name=x"
+  },
+  {
+   "text": "origin.kind=parent-run",
+   "filter": {
+    "field": "origin.kind",
+    "op": "EQUALS",
+    "values": [
+     "parent-run"
+    ]
+   }
+  },
+  {
+   "text": "origin.id=ork-1786837143070480000-1",
+   "filter": {
+    "field": "origin.id",
+    "op": "EQUALS",
+    "values": [
+     "ork-1786837143070480000-1"
+    ]
+   }
+  },
+  {
+   "text": "name=é,ü",
+   "filter": {
+    "field": "name",
+    "op": "IN",
+    "values": [
+     "é",
+     "ü"
+    ]
+   }
+  },
+  {
+   "text": "\\=x=1",
+   "filter": {
+    "field": "=x",
+    "op": "EQUALS",
+    "values": [
+     "1"
+    ]
+   }
+  },
+  {
+   "text": "action^namespace.",
+   "filter": {
+    "field": "action",
+    "op": "PREFIX",
+    "values": [
+     "namespace."
+    ]
+   }
+  },
+  {
+   "text": "",
+   "error": "empty filter"
+  },
+  {
+   "text": "=x",
+   "error": "empty field in filter \"=x\""
+  },
+  {
+   "text": "!x",
+   "error": "empty field in filter \"!x\""
+  },
+  {
+   "text": "name",
+   "error": "no operator in filter \"name\""
+  },
+  {
+   "text": "created_at>2026-10-09T00:00:00Z",
+   "error": "no operator \">\"; use >= (at or after) or < (before)"
+  },
+  {
+   "text": "status!FAILED",
+   "error": "no operator \"!\"; use != (not equals)"
+  },
+  {
+   "text": "a<=b",
+   "error": "no operator \"<=\", \"==\" or \">==\"; escape a value's leading = as \\="
+  },
+  {
+   "text": "a==b",
+   "error": "no operator \"<=\", \"==\" or \">==\""
+  },
+  {
+   "text": "a>==b",
+   "error": "no operator \"<=\", \"==\" or \">==\""
+  },
+  {
+   "text": "a!==b",
+   "error": "no operator \"<=\", \"==\" or \">==\""
+  },
+  {
+   "text": "name~a,b",
+   "error": "a list of values needs =; escape a literal comma as \\,"
+  },
+  {
+   "text": "name^a,b",
+   "error": "a list of values needs ="
+  },
+  {
+   "text": "name!=a,b",
+   "error": "a list of values needs ="
+  },
+  {
+   "text": "created_at>=a,b",
+   "error": "a list of values needs ="
+  },
+  {
+   "text": "name=a,",
+   "error": "an empty value in the list"
+  },
+  {
+   "text": "name=,a",
+   "error": "an empty value in the list"
+  },
+  {
+   "text": "name=a\\",
+   "error": "a trailing \\ escapes nothing"
+  },
+  {
+   "text": "labels.a\\",
+   "error": "a trailing \\ escapes nothing"
+  }
+ ],
+ "canonical": [
+  {
+   "request": "orkstack.v1.ListNamespacesRequest",
+   "filters": [],
+   "texts": [],
+   "key": ""
+  },
+  {
+   "request": "orkstack.v1.ListNamespacesRequest",
+   "filters": [
+    "name~b",
+    "labels.team=payments",
+    "name~b"
+   ],
+   "texts": [
+    "labels.team=payments",
+    "name~b"
+   ],
+   "key": "348039e4750c2bc06f26e8a2e2155022712255141ec48375bfdb407bde128409"
+  },
+  {
+   "request": "orkstack.v1.ListNamespacesRequest",
+   "filters": [
+    "labels.team=payments",
+    "name~b"
+   ],
+   "texts": [
+    "labels.team=payments",
+    "name~b"
+   ],
+   "key": "348039e4750c2bc06f26e8a2e2155022712255141ec48375bfdb407bde128409"
+  },
+  {
+   "request": "orkstack.v1.ListNamespacesRequest",
+   "filters": [
+    "name=b,a,a"
+   ],
+   "texts": [
+    "name=a,b"
+   ],
+   "key": "35db1d6eb34bbb393a5b30de514a6786abe7210b77953e7e2fa2bd143db2f7cd"
+  },
+  {
+   "request": "orkstack.v1.ListNamespacesRequest",
+   "filters": [
+    "name=a,a"
+   ],
+   "texts": [
+    "name=a"
+   ],
+   "key": "985a4e7ef3b1fdd36d8877947f6c721494dfeed5719a8b8de7299fad7ded2d59"
+  },
+  {
+   "request": "orkstack.v1.ListNamespacesRequest",
+   "filters": [
+    "name=a"
+   ],
+   "texts": [
+    "name=a"
+   ],
+   "key": "985a4e7ef3b1fdd36d8877947f6c721494dfeed5719a8b8de7299fad7ded2d59"
+  },
+  {
+   "request": "orkstack.v1.ListNamespacesRequest",
+   "filters": [
+    "created_at>=2026-10-01T00:00:00Z",
+    "created_at>=2026-10-02T02:00:00+02:00",
+    "created_at<2026-11-01T00:00:00.0000009Z",
+    "created_at<2026-12-01T00:00:00Z"
+   ],
+   "texts": [
+    "created_at<2026-11-01T00:00:00Z",
+    "created_at>=2026-10-02T00:00:00Z"
+   ],
+   "key": "35f1d1da6423fba9d94ecdd5d005d8c085074d54a681317ee55c73144157de8f"
+  },
+  {
+   "request": "orkstack.v1.ListNamespacesRequest",
+   "filters": [
+    "updated_at>=2026-10-01T12:00:00.123456789+00:00"
+   ],
+   "texts": [
+    "updated_at>=2026-10-01T12:00:00.123456Z"
+   ],
+   "key": "18d00e756ee5cf73a80275aedf173e9928146222fa5b9676e182f634becbfb50"
+  },
+  {
+   "request": "orkstack.v1.ListReleasesRequest",
+   "filters": [
+    "role=current"
+   ],
+   "texts": [
+    "role=CURRENT"
+   ],
+   "key": "211d08528208579c17e3dd011e2c73ed809cd6971ba1bc33b2273be36486b80c"
+  },
+  {
+   "request": "orkstack.v1.ListReleasesRequest",
+   "filters": [
+    "role=RELEASE_ROLE_CURRENT"
+   ],
+   "texts": [
+    "role=CURRENT"
+   ],
+   "key": "211d08528208579c17e3dd011e2c73ed809cd6971ba1bc33b2273be36486b80c"
+  },
+  {
+   "request": "orkstack.v1.ListReleasesRequest",
+   "filters": [
+    "drained=true",
+    "build_id!=b1"
+   ],
+   "texts": [
+    "build_id!=b1",
+    "drained=true"
+   ],
+   "key": "1482e2a4377c2508cc59007191e6c9690dd632f72cea5ec7fee1cb8b25e99462"
+  },
+  {
+   "request": "orkstack.v1.ListReleasesRequest",
+   "filters": [
+    "role=previous,current"
+   ],
+   "texts": [
+    "role=CURRENT,PREVIOUS"
+   ],
+   "key": "1ab4ee153d3d52a90bac9f29501a86e5eb359f22717b3f39e0f858ceda0cef81"
+  },
+  {
+   "request": "orkstack.v1.ListOrkersRequest",
+   "filters": [
+    "pool=gpu",
+    "orker_id^host-"
+   ],
+   "texts": [
+    "orker_id^host-",
+    "pool=gpu"
+   ],
+   "key": "9c280fb8b88b11ddbc4551b797aa1419a76afdcb6c21a1010597862e5aca196a"
+  },
+  {
+   "request": "orkstack.v1.ListNamespacesRequest",
+   "filters": [
+    "description=x\\,y"
+   ],
+   "texts": [
+    "description=x\\,y"
+   ],
+   "key": "a13c6452af508f4d65950bb81db444c29ec66eb9d94870697ff3bd2b9f911e95"
+  }
+ ]
+}

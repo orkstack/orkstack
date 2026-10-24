@@ -1,0 +1,16 @@
+Name:         cached-pipeline
+Version:      0.1.0
+Description:  A cached, deterministic prefix; a cached task whose upstream changes every run.
+Created:      2026-01-02T03:04:05Z
+
+INPUT  TYPE    DEFAULT  REQUIRED
+rows   number  1000     -
+
+TASK       USES   NEEDS            TIMEOUT
+featurize  shell  -                300s
+stamp      shell  -                300s
+train      shell  featurize,stamp  300s
+
+CACHED     TTL             SCOPE
+featurize  24h             orkflow
+train      deployment cap  orkflow

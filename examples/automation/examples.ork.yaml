@@ -1,0 +1,44 @@
+# OrkStack automation document (docs/AUTOMATION.md)
+#
+# Everything around the example Orkflows, declared by name in one reviewable
+# file: the namespace's settings, a schedule and a trigger.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Declare what surrounds your Orkflows"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Repeat without loops"
+#
+# A namespace that only this document would create must exist before an
+# Orkflow is validated in it, and a schedule or trigger must name an Orkflow
+# version that is stored or applied by the same command, so:
+#   orkctl namespace create examples
+#   orkctl apply -n examples examples/notify-block.ork.yaml
+#   orkctl apply -n examples examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml --dry-run
+#   orkctl apply -n examples examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml
+#   orkctl apply examples/automation/examples.ork.yaml --check     # exits 0: nothing drifted
+#   orkctl schedule fire poll-exports -n examples                  # one fire now, as if its time had come
+#
+# The trigger's token is printed once, with a runnable curl, and never stored
+# in this file. Replace the example.com URLs with yours.
+apiVersion: orkstack/v1
+kind: Automation
+namespace: examples
+
+settings:
+  description: "The shipped example Orkflows (examples/README.md)"
+  run_retention: 48h
+  allowed_secrets: ["env:GIT_TOKEN"]
+
+schedules:
+  poll-exports:
+    orkflow: poll-until-ready
+    description: "Fetch and summarize the export every 15 minutes, once it is ready"
+    cron: "*/15 * * * *"
+    timezone: UTC
+    overlap: skip
+    input:
+      status_url: https://exports.example.com/status
+      export_url: https://exports.example.com/latest.json
+
+triggers:
+  change-from-ci:
+    orkflow: approval-gate
+    description: "CI submits a change for assessment and, when risky, approval"

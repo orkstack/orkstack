@@ -1,0 +1,59 @@
+{
+  "findings": [
+    {
+      "field": "inputs.image",
+      "change": "UNCHANGED",
+      "verdict": "COMPATIBLE",
+      "from": "string, required",
+      "to": "string, required",
+      "message": "input \"image\" is unchanged"
+    },
+    {
+      "field": "inputs.notes",
+      "change": "UNCHANGED",
+      "verdict": "COMPATIBLE",
+      "from": "string, optional, default \"\"",
+      "to": "string, optional, default \"\"",
+      "message": "input \"notes\" is unchanged"
+    },
+    {
+      "field": "inputs.region",
+      "change": "ADDED",
+      "verdict": "BREAKING",
+      "to": "string, required",
+      "message": "input \"region\" is added and required with no default: a run that does not supply it no longer satisfies the declaration"
+    },
+    {
+      "field": "inputs.timeout",
+      "change": "ADDED",
+      "verdict": "COMPATIBLE",
+      "to": "number, optional, default 300",
+      "message": "input \"timeout\" is added and optional with default 300"
+    },
+    {
+      "field": "outputs.digest",
+      "change": "UNCHANGED",
+      "verdict": "COMPATIBLE",
+      "from": "declared",
+      "to": "declared",
+      "message": "output \"digest\" is unchanged"
+    },
+    {
+      "field": "outputs.sbom",
+      "change": "ADDED",
+      "verdict": "COMPATIBLE",
+      "to": "declared",
+      "message": "output \"sbom\" is added"
+    },
+    {
+      "field": "outputs.url",
+      "change": "REMOVED",
+      "verdict": "BREAKING",
+      "from": "declared",
+      "message": "output \"url\" is removed: an Orkflow composing this one that reads .tasks.<id>.output.url is refused at its next apply against this version, and a reader of the run's output no longer finds it"
+    }
+  ],
+  "verdict": "BREAKING",
+  "fromVersion": "2.1.0",
+  "toVersion": "3.0.0"
+}

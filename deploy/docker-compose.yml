@@ -1,0 +1,179 @@
+# OrkStack local infrastructure: Temporal dev-server, SeaweedFS (S3) and a
+# registry. The application processes (ork, orker, ui) are not containers here;
+# `make up` (scripts/stack.sh) starts them on the host against this stack, or
+# run them by hand with `make run-ork`, `make run-orker`, `bun dev`.
+#
+# Usage: docker compose -f deploy/docker-compose.yml up -d  (or `make infra-up`)
+#
+# EVERY TAG HERE IS PINNED, and that is a correctness requirement rather than
+# a style preference (§4.6). The durable commit protocol depends on behaviour
+# that changed INSIDE these images:
+#
+#   seaweedfs         conditional PutObject (If-None-Match: *) is the
+#                     arbitration point of the whole commit protocol (§5.3).
+#                     SeaweedFS documents the conditional create as atomic
+#                     cluster-wide. It is pinned by digest; a floating image
+#                     that lost the conditional write would turn
+#                     create-if-absent into a silent overwrite — the one
+#                     failure §5 exists to prevent. Updates arrive as PRs
+#                     that must pass the proof; no tag is ever floated.
+#   temporalio/temporal
+#                     workflow versioning and replay behaviour.
+#
+# A floating `:latest` makes the infrastructure a variable in every durability
+# test, and reliability is the product (AGENTS.md §11).
+name: orkstack
+
+services:
+  temporal:
+    image: temporalio/temporal:1.8.2
+    command:
+      - server
+      - start-dev
+      - --ip
+      - 0.0.0.0
+      - --ui-port
+      - "8233"
+      - --log-level
+      - warn
+    ports:
+      - "7233:7233"   # gRPC frontend
+      - "8233:8233"   # Temporal Web UI
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # The dev object store. MinIO stopped publishing images and moved to the
+  # closed AIStor; Garage cannot do conditional writes; SeaweedFS is
+  # Apache-2.0, maintained, and documents If-None-Match creates as atomic
+  # cluster-wide — the arbitration point of the commit protocol (§5.3).
+  # Pin the multi-arch index digest; an update is a PR that runs the proof.
+  #
+  # `weed mini` runs master, volume, filer and S3 in one process. The S3 API
+  # listens on 8333; 9000 stays the published port so ORK_S3_ENDPOINT and
+  # every documented default are unchanged. `-bucket` creates the dev bucket.
+  seaweedfs:
+    image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts"]
+    ports:
+      - "9000:8333"   # S3 API, on the documented port
+      - "9333:9333"   # master
+      - "8888:8888"   # filer
+    volumes:
+      - seaweedfs-data:/data
+    healthcheck:
+      # 403 is a healthy answer too: it proves the S3 server is listening.
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ | grep -qE '200|403'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # The local registry (§4.6). It exists because there is no such thing as an
+  # unpushed image in this design: a locally built, never-pushed image has NO
+  # registry manifest digest — a local image ID is not a manifest digest and
+  # does not transfer to a second Orker — so nothing could pin it.
+  #
+  # `make -C images push` publishes the three first-party activities here and
+  # prints their index digests, which is what makes `make up` produce REAL
+  # digests with no network at all.
+  #
+  # Port 5001, not 5000: macOS binds 5000 to AirPlay Receiver by default.
+  registry:
+    image: registry:3
+    ports:
+      - "5001:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+    healthcheck:
+      test: ["CMD", "/bin/registry", "--version"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---- observability profile ----
+  #
+  # Off by default: `docker compose up` and `make infra-up` never start these.
+  # `make infra-up-observability` (or `--profile observability`) adds a Collector,
+  # Loki, Tempo, Prometheus and Grafana wired to receive whatever ork and orker
+  # export over standard OTEL_* (docs/DEPLOY.md, "Telemetry"). Same pinning rule
+  # as above; tags recorded here were current stable at the time this profile
+  # was written.
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    profiles: ["observability"]
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4318:4318"   # OTLP/http — point OTEL_EXPORTER_OTLP_ENDPOINT here
+    depends_on:
+      - loki
+      - tempo
+      - prometheus
+
+  loki:
+    image: grafana/loki:3.7.7
+    profiles: ["observability"]
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"   # native OTLP too: http://localhost:3100/otlp
+
+  tempo:
+    image: grafana/tempo:3.0.3
+    profiles: ["observability"]
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # Tempo API (Grafana reads this)
+      - "4317:4317"   # OTLP/gRPC, direct or via the collector
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-otlp-receiver
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      # so the container can reach ork's and orker's ORK_ADMIN_ADDR on the
+      # host; docker-desktop resolves this on macOS/Windows without the entry,
+      # but Linux needs host-gateway explicitly.
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    profiles: ["observability"]
+    environment:
+      # Anonymous admin is for a local stack only — see deploy/observability/README.md.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - loki
+      - tempo
+      - prometheus
+
+volumes:
+  seaweedfs-data:
+  registry-data:
+  loki-data:
+  tempo-data:
+  prometheus-data:
+  grafana-data:

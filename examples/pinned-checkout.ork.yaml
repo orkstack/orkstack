@@ -1,0 +1,138 @@
+# OrkStack orkflow DSL
+#
+# Check a commit out ONCE into a pin's shared directory, validate and package
+# it there, and hand the package on as an ordinary artifact.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Share a working tree: pins"
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Pin moving inputs: resolve, then use the commit"
+#
+#   resolve    unpinned: what does `ref` mean now?
+#   checkout   pinned: a working tree with its .git, at that commit, in
+#              /orkstack/shared/src. Staged and renamed into place, so a
+#              retried attempt finds no half-written tree.
+#   validate,  pinned: they read the tree in place, with no archive in
+#   merge,     between. Every member sets run_as_orker_user: true and no pool
+#   package    — a pin is one process out of one pool's set.
+#   checksum   unpinned: it sees the pin's work only through the artifact
+#              `package` committed. Nothing under /orkstack/shared outlives
+#              the pin.
+#
+# A pin imposes no ordering: the needs: edges do. A pinned task is never
+# cached (/orkstack/shared is an input no memo key covers), and the pool must
+# have a pin host (an Orker with ORK_ORKER_MAX_PINS above zero) or submit is
+# refused. Export GIT_TOKEN where the Orker runs; for a public repository
+# delete both `tokenSecret:` lines and both `secrets:` blocks.
+#
+# The repository must hold VERSION, config/base.json and
+# config/<environment>.json, each JSON file one object.
+#
+#   orkctl run submit pinned-checkout --input repo=https://git.example.com/acme/app.git --input environment=prod
+apiVersion: orkstack/v1
+kind: Orkflow
+name: pinned-checkout
+version: "0.1.0"
+description: "Check a commit out once into a pin, validate and package it in place, and checksum the package outside the pin."
+
+inputs:
+  repo:
+    type: string
+    required: true
+  ref:
+    type: string
+    default: main
+  environment:
+    type: string
+    default: staging
+
+pins:
+  workspace:
+    timeout_seconds: 1800
+
+tasks:
+  - id: resolve
+    uses: git
+    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    secrets:
+      - name: git-token
+        source: env:GIT_TOKEN
+    with:
+      op: resolve
+      url: '{{ .inputs.repo }}'
+      ref: '{{ .inputs.ref }}'
+      tokenSecret: git-token
+
+  - id: checkout
+    uses: git
+    needs: [resolve]
+    pin: workspace
+    run_as_orker_user: true
+    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    secrets:
+      - name: git-token
+        source: env:GIT_TOKEN
+    with:
+      op: clone
+      url: '{{ .inputs.repo }}'
+      ref: '{{ .tasks.resolve.output.commit }}'
+      tokenSecret: git-token
+      dest: /orkstack/shared/src
+
+  - id: validate
+    uses: shell
+    needs: [checkout]
+    pin: workspace
+    run_as_orker_user: true
+    network: none
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        cd /orkstack/shared/src/config
+        for f in *.json; do
+          jq -e 'type == "object"' "$f" > /dev/null || { echo "not a JSON object: config/$f" >&2; exit 1; }
+        done
+        echo "every config file is a JSON object"
+
+  - id: merge
+    uses: json
+    needs: [validate]
+    pin: workspace
+    run_as_orker_user: true
+    network: none
+    with:
+      op: merge
+      srcs:
+        - /orkstack/shared/src/config/base.json
+        - '/orkstack/shared/src/config/{{ .inputs.environment }}.json'
+      as: config.json
+
+  # The commit and the merged file arrive as positional arguments: rendered
+  # values are data in argv, never text inside the script.
+  - id: package
+    uses: shell
+    needs: [merge]
+    pin: workspace
+    run_as_orker_user: true
+    network: none
+    with:
+      op: script
+      interpreter: sh
+      command: ['{{ .tasks.resolve.output.commit }}', '{{ artifact "merge/config.json" }}']
+      script: |
+        set -eu
+        out=/orkstack/shared/out
+        mkdir -p "$out"
+        printf '%s\n' "$1" > "$out/COMMIT"
+        cp "$2" "$out/config.json"
+        cp /orkstack/shared/src/VERSION "$out/VERSION"
+        tar -czf /orkstack/output/artifacts/bundle.tar.gz -C "$out" COMMIT VERSION config.json
+        echo "packaged $(cat "$out/VERSION") at $1"
+
+  - id: checksum
+    uses: file
+    needs: [package]
+    network: none
+    with:
+      op: checksum
+      src: '{{ artifact "package/bundle.tar.gz" }}'

@@ -1,0 +1,151 @@
+# OrkStack orkflow DSL
+#
+# Typed inputs, and what happens to a rendered value when it lands next to a
+# shell, a jq program or a JSON document.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Pass values as data, never as code"
+#
+# INPUTS. `type` is one of string, number, boolean, object and array. A run's
+# input is JSON (docs/JSON.md), never YAML. `default` fills an input the
+# caller omitted; `required: true` with no default is the one combination
+# nothing fills, and the first task that renders it fails RENDER_FAILED
+# (ContractViolation) rather than running with an empty string.
+#
+# ESCAPING, best first:
+#   1. argv        `command` is an array: a rendered value is ONE argument,
+#                  whatever it contains.
+#   2. positional  a script takes values as "$1", "$2" through `command`, so
+#                  the script text itself never changes.
+#   3. sh          when a value must sit inside shell text, `{{ sh ... }}`
+#                  quotes it (AGENTS.md §6).
+#   4. vars        values reach a jq filter as $vars, never spliced into the
+#                  filter, and JSON is BUILT by jq, never by string splicing.
+#
+# `note` defaults to a value with a quote and a semicolon in it on purpose.
+#   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --input release=1.4.2 --assert-runs regional --assert-skipped publish
+#   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --input release=1.4.2 --input dry_run=false --assert-runs publish
+apiVersion: orkstack/v1
+kind: Orkflow
+name: inputs-and-escaping
+version: "0.1.0"
+description: "Object, array, number and boolean inputs; argv, positional arguments, the sh helper and jq $vars against a hostile default."
+
+inputs:
+  region:
+    type: object
+    default:
+      name: eu-west-1
+      zone: eu-west-1a
+  stages:
+    type: array
+    default: ["build", "test", "package"]
+  release:
+    type: string
+    required: true
+  note:
+    type: string
+    default: "it's a test; echo unsafe"
+  retries:
+    type: number
+    default: 3
+  dry_run:
+    type: boolean
+    default: true
+
+tasks:
+  # 1. argv: printf runs directly with three arguments; there is no shell.
+  - id: argv
+    uses: shell
+    network: none
+    with:
+      op: exec
+      command: ["printf", "note=%s\n", "{{ .inputs.note }}"]
+
+  # 2. positional: the script is constant text; the value is "$1".
+  - id: positional
+    uses: shell
+    network: none
+    with:
+      op: script
+      interpreter: sh
+      command: ["{{ .inputs.note }}"]
+      script: |
+        set -eu
+        printf 'note=%s\n' "$1" | tee /orkstack/output/artifacts/note.txt
+
+  # 3. sh: the value sits inside shell text, so it is quoted. Without `sh`
+  #    this default would end the printf at the quote and run `echo unsafe`.
+  - id: quoted
+    uses: shell
+    network: none
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - "printf 'note=%s\\n' {{ sh .inputs.note }}"
+
+  # 4. vars: values into jq as $vars, a number recovered with tonumber, and
+  #    the JSON document built by jq — any quote in `note` stays data.
+  - id: as-json
+    uses: json
+    network: none
+    with:
+      op: query
+      nullInput: true
+      vars:
+        note: '{{ .inputs.note }}'
+        release: '{{ .inputs.release }}'
+        retries: '{{ .inputs.retries }}'
+      filter: '{note: $vars.note, release: $vars.release, retries: ($vars.retries | tonumber)}'
+      as: inputs.json
+
+  # 5. A condition reads a nested object field and compares it.
+  - id: regional
+    uses: shell
+    needs: [argv]
+    condition: '{{ eq .inputs.region.name "eu-west-1" }}'
+    network: none
+    with:
+      op: exec
+      command: ["echo", "{{ .inputs.region.name }}", "{{ .inputs.region.zone }}"]
+
+  # 6. A boolean input read with `not`: publish only when this is not a dry run.
+  - id: publish
+    uses: shell
+    needs: [as-json]
+    condition: '{{ not .inputs.dry_run }}'
+    network: none
+    with:
+      op: exec
+      command: ["echo", "publishing release", "{{ .inputs.release }}"]
+
+  # 7. An array input with range. Inside the body `.` is the element and `$`
+  #    is the root, and every element still goes through `sh`.
+  - id: stamp
+    uses: shell
+    network: none
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        {
+          echo "release:" {{ sh .inputs.release }}
+          {{- range .inputs.stages }}
+          echo "stage:" {{ sh . }} "of" {{ sh $.inputs.release }}
+          {{- end }}
+        } > /orkstack/output/artifacts/stamp.txt
+        cat /orkstack/output/artifacts/stamp.txt
+
+  - id: archive
+    uses: file
+    needs: [positional, as-json, stamp]
+    network: none
+    with:
+      op: tar
+      srcs:
+        - '{{ artifact "positional/note.txt" }}'
+        - '{{ artifact "as-json/inputs.json" }}'
+        - '{{ artifact "stamp/stamp.txt" }}'
+      as: inputs-and-escaping.tar.gz
