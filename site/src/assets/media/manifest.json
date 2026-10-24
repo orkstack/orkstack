@@ -1,0 +1,68 @@
+{
+	"$comment": "Written by make site-media (site/media/). Do not edit.",
+	"sourceCommit": "753d485864a72cab0c58e15283a362d7d9efb565",
+	"orkflows": [
+		"examples/each-fan-out.ork.yaml",
+		"examples/awaited-approval.ork.yaml"
+	],
+	"browserImage": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
+	"items": {
+		"ui-orkflow": {
+			"alt": "The each-fan-out Orkflow in the OrkStack UI: its stored version, digest and tasks, with the button that submits a run.",
+			"caption": "The Orkflow after apply: an immutable version, pinned by its digest.",
+			"light": "ui-orkflow-light.webp",
+			"dark": "ui-orkflow-dark.webp"
+		},
+		"ui-run-hero": {
+			"alt": "A run of each-fan-out in the OrkStack UI while it runs: the DAG of list, convert and merge, with list done, convert running and merge waiting, beside the run’s version and timing.",
+			"caption": "A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.",
+			"light": "ui-run-hero-light.webp",
+			"dark": "ui-run-hero-dark.webp"
+		},
+		"ui-run-live": {
+			"alt": "A run of each-fan-out in the OrkStack UI while it runs: the DAG of list, convert and merge, with list done, convert running and merge waiting, beside the run’s version and timing.",
+			"caption": "A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.",
+			"light": "ui-run-hero-light.webp",
+			"dark": "ui-run-hero-dark.webp"
+		},
+		"ui-run-finished": {
+			"alt": "The finished run of each-fan-out: list, convert and merge all SUCCEEDED, the leaf task’s values, and the run’s timing in the aside.",
+			"caption": "The same Orkflow’s run, finished.",
+			"light": "ui-run-finished-light.webp",
+			"dark": "ui-run-finished-dark.webp"
+		},
+		"ui-fanout": {
+			"alt": "One item of the convert fan-out opened in the run page: its attempt, its timing and its log lines.",
+			"caption": "Each fan-out item is its own durable activity, with its own attempts and logs.",
+			"light": "ui-fanout-light.webp",
+			"dark": "ui-fanout-dark.webp"
+		},
+		"ui-await": {
+			"alt": "An awaited task in the run page, with the dialog that resolves it: approved checked, the approver filled in, ready to complete.",
+			"caption": "An awaited task waits for a person or a system; resolving it starts the next task.",
+			"light": "ui-await-light.webp",
+			"dark": "ui-await-dark.webp"
+		},
+		"e2e-demo": {
+			"alt": "A screen recording: the each-fan-out example applied from the UI’s Apply page, a run submitted and watched to the end, and its merged artifact opened.",
+			"caption": "Apply, submit, watch, open the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.",
+			"webm": "e2e-demo-light.webm",
+			"mp4": "e2e-demo-light.mp4",
+			"poster": "e2e-demo-light.webp",
+			"webmDark": "e2e-demo-dark.webm",
+			"mp4Dark": "e2e-demo-dark.mp4",
+			"posterDark": "e2e-demo-dark.webp"
+		},
+		"cli-quickstart": {
+			"alt": "A terminal recording: orkctl applies each-fan-out, plans it, submits it and watches it to SUCCEEDED, then prints the merge task’s log.",
+			"caption": "orkctl apply, run plan, run submit --watch and run logs, recorded against the local stack.",
+			"mp4Dark": "cli-quickstart-dark.mp4",
+			"posterDark": "cli-quickstart-dark.webp",
+			"webmDark": "cli-quickstart-dark.webm",
+			"mp4": "cli-quickstart-light.mp4",
+			"poster": "cli-quickstart-light.webp",
+			"webm": "cli-quickstart-light.webm"
+		}
+	},
+	"vhsImage": "ghcr.io/charmbracelet/vhs:v0.12.1@sha256:ea49a6a1c529be83153e88321892b5585964418f0b9055e8c1e0d732194234a3"
+}

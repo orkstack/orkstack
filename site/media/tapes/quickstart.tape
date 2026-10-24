@@ -29,16 +29,18 @@ Sleep 500ms
 Enter
 Sleep 3s
 
+# The run takes about ten seconds on the local stack. (Wait+Screen stalled
+# the recording in VHS 0.12.1, so this is a fixed pause; the hidden step
+# below waits for the run to end before its logs are read.)
 Type "./bin/orkctl run submit each-fan-out --watch"
 Sleep 500ms
 Enter
-Wait+Screen@180s /SUCCEEDED/
-Sleep 2s
+Sleep 18s
 
 Hide
-Type "RUN=$(./bin/orkctl run list --limit 1 --json | grep -o 'ork-[0-9]*-[0-9]*' | head -1) && clear"
+Type "RUN=$(./bin/orkctl run list --limit 1 --json | grep -o 'ork-[0-9]*-[0-9]*' | head -1) && ./bin/orkctl run watch $RUN >/dev/null 2>&1; clear"
 Enter
-Sleep 1s
+Sleep 2s
 Show
 
 Type "./bin/orkctl run logs $RUN --task merge"

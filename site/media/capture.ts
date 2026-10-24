@@ -15,7 +15,7 @@
 // with the host's loopback exposed.
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import { startBrowserServer, stopBrowserServer } from '../../ui/e2e/browser-server';
@@ -24,6 +24,7 @@ const repo = path.resolve(import.meta.dirname, '..', '..');
 const assets = path.join(repo, 'site', 'src', 'assets', 'media');
 const publicMedia = path.join(repo, 'site', 'public', 'media');
 const work = path.join(repo, 'site', '.media-work');
+// media/run.sh serves the built UI and says where.
 const UI = process.env.ORK_UI_URL ?? 'http://127.0.0.1:5173';
 const ENGINE = process.env.ORK_SERVER ?? 'http://127.0.0.1:8080';
 const NS = 'examples';
@@ -81,7 +82,6 @@ async function contexts(browser: Browser): Promise<Record<Theme, BrowserContext>
 async function main() {
 	mkdirSync(assets, { recursive: true });
 	mkdirSync(publicMedia, { recursive: true });
-	rmSync(work, { recursive: true, force: true });
 	mkdirSync(work, { recursive: true });
 
 	// The namespace and the two Orkflows. An apply of bytes already stored is
@@ -113,27 +113,51 @@ async function main() {
 			(p) => p.screenshot(),
 		);
 
-		// A run, caught while its fan-out is running.
-		const live = submit('each-fan-out');
-		await both((p) => p.goto(`${UI}/runs/${live}?ns=${NS}`));
-		// Both themes must show the fan-out running, in the same capture: the
-		// alt text says so. A pair taken across the moment an item finishes is
-		// thrown away and taken again, on a fresh run if this one has ended.
-		const running = (p: Page) => p.locator('[data-testid^="task-convert-item-"][data-status="RUNNING"]');
+		// A run, caught while its fan-out is running. The example's items take a
+		// few seconds, so the run page is loaded once first (the dev server
+		// compiles a route on its first visit), then a run is submitted and
+		// opened at once. Both themes must show the fan-out running in the same
+		// capture, as the alt text says; a pair taken across the moment the last
+		// item finishes, or a run that ended before it was caught, is thrown
+		// away and taken again on a fresh run.
+		const warm = submit('each-fan-out');
+		await both((p) => p.goto(`${UI}/runs/${warm}?ns=${NS}`));
+		await both((p) => p.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 180_000 }));
+		// Live: the fan-out task is running with some of its items done and
+		// some still to run. (An item runs for a second or two, so the moment
+		// to catch is the task's, not one item's.)
+		const live = (p: Page) =>
+			p.evaluate(() => {
+				const status = document.querySelector('[data-testid="task-convert-status"]')?.textContent?.trim();
+				const items = [...document.querySelectorAll<HTMLElement>('[data-testid^="task-convert-item-"][data-status]')].map(
+					(e) => e.dataset.status,
+				);
+				return status === 'RUNNING' && items.includes('SUCCEEDED') && items.some((s) => s === 'PENDING' || s === 'RUNNING');
+			});
 		let livePair: Buffer[] | undefined;
-		for (let tries = 0; tries < 4 && !livePair; tries++) {
-			if (tries > 0 && (await pages.light.getByTestId('run-status').innerText()).trim() !== 'RUNNING') {
-				const again = submit('each-fan-out');
-				await both((p) => p.goto(`${UI}/runs/${again}?ns=${NS}`));
+		for (let tries = 0; tries < 6 && !livePair; tries++) {
+			const id = submit('each-fan-out');
+			await both((p) => p.goto(`${UI}/runs/${id}?ns=${NS}`));
+			const deadline = Date.now() + 60_000;
+			let caught = false;
+			while (Date.now() < deadline) {
+				const now = await Promise.all(themes.map((t) => live(pages[t])));
+				if (now.every(Boolean)) {
+					caught = true;
+					break;
+				}
+				const status = (await pages.light.getByTestId('run-status').innerText().catch(() => '')).trim();
+				if (status && status !== 'RUNNING' && status !== 'PENDING') break;
+				await pages.light.waitForTimeout(100);
 			}
-			await both((p) => running(p).first().waitFor({ timeout: 120_000 }));
+			if (!caught) continue;
 			const pair = await Promise.all(themes.map((t) => pages[t].screenshot()));
-			const still = await Promise.all(themes.map(async (t) => (await running(pages[t]).count()) > 0));
+			const still = await Promise.all(themes.map((t) => live(pages[t])));
 			if (still.every(Boolean)) livePair = pair;
 		}
 		if (!livePair) throw new Error('could not capture the fan-out running in both themes at once');
 		manifest.items['ui-run-hero'] = {
-			alt: 'A run of each-fan-out in the OrkStack UI: the DAG of list, convert and merge, with convert’s items running, beside the run’s version and timing.',
+			alt: 'A run of each-fan-out in the OrkStack UI while it runs: the DAG of list, convert and merge, with list done, convert running and merge waiting, beside the run’s version and timing.',
 			caption: 'A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.',
 			light: await save('ui-run-hero', 'light', livePair[0]),
 			dark: await save('ui-run-hero', 'dark', livePair[1]),
@@ -147,8 +171,8 @@ async function main() {
 		await both((p) => p.getByTestId('run-status').waitFor());
 		await shotPair(
 			'ui-run-finished',
-			'The finished run of each-fan-out: every task SUCCEEDED, the fan-out’s four items settled, and the run’s timing in the aside.',
-			'The same Orkflow’s run, finished: list, four convert items, merge.',
+			'The finished run of each-fan-out: list, convert and merge all SUCCEEDED, the leaf task’s values, and the run’s timing in the aside.',
+			'The same Orkflow’s run, finished.',
 			pages,
 			(p) => p.screenshot(),
 		);
@@ -257,7 +281,6 @@ async function main() {
 			'\t',
 		) + '\n',
 	);
-	rmSync(work, { recursive: true, force: true });
 }
 
 /** Re-encode a recording to VP9 WebM and H.264 MP4, and a poster frame. */
