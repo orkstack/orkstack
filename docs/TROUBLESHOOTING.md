@@ -418,13 +418,13 @@ A `404` means the origin is accepted, because the probe run does not exist. A `4
 
 **Cause.** On Linux the name `host.docker.internal` does not resolve inside containers by default. Some integration and browser test suites, and the observability stack, rely on it. The Orker never adds a host mapping to an activity container, by design ([README.md](../README.md), "Linux hosts"; [AGENTS.md](../AGENTS.md), "11.1 Development workflow").
 
-**Confirm.** The README's check prints nothing when the name is not mapped:
+**Confirm.** The check in [CONTRIBUTING.md](../CONTRIBUTING.md), "Linux hosts", prints nothing when the name is not mapped:
 
 ```bash
 docker run --rm alpine:3.20 getent hosts host.docker.internal
 ```
 
-**Fix.** Apply the one-time host setup in ([README.md](../README.md), "Linux hosts"): map the name to the default bridge gateway, `172.17.0.1`, in `/etc/hosts`, and allow containers on the bridge through the host firewall if that is active. A host with a customised bridge uses its own gateway address.
+**Fix.** Apply the one-time host setup in [CONTRIBUTING.md](../CONTRIBUTING.md), "Linux hosts": map the name to the default bridge gateway, `172.17.0.1`, in `/etc/hosts`, and allow containers on the bridge through the host firewall if that is active. A host with a customised bridge uses its own gateway address.
 
 ### `make down` reports a process it did not start, or a process survived
 

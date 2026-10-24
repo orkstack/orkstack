@@ -129,6 +129,30 @@ make down    # stop everything make up started; data is kept
 make reset   # wipe every local run, object and build output
 ```
 
+## More about the local stack
+
+`make reset` returns the machine to a vanilla state: it deletes Temporal
+history, every object-store object (artifacts, archived runs, and the
+Orkflow catalogue), the local artifact store and all build output. The
+repository itself is untouched.
+
+The individual steps are there when you want them: `make tools`,
+`make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
+`make infra-up-observability` adds a local Grafana stack
+([deploy/observability](../deploy/observability/README.md)).
+To run the UI by hand, `cd ui && bun run dev`: its server proxies Connect calls
+to `ENGINE_API_URL` (default `http://127.0.0.1:8080`), and the browser opens
+WebSockets to `PUBLIC_ENGINE_WS_URL` (default the page's host on `:8080`).
+
+Configuration needs nothing for a laptop: `make up` runs on defaults alone.
+Past that, `ork` and `orker` read one shared YAML file (`--config PATH`), with
+`ORK_`/`OTEL_` environment variables overriding it; see
+[DEPLOY.md](./DEPLOY.md), "Configuration", and the generated
+[`deploy/orkstack.defaults.yaml`](../deploy/orkstack.defaults.yaml).
+
+On a Linux host, the test suites and the observability profile need one more
+step of host setup ([CONTRIBUTING.md](../CONTRIBUTING.md), "Linux hosts").
+
 ## Where next
 
 - [Examples](../examples/README.md) — every example Orkflow and what it

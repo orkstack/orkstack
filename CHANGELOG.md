@@ -43,6 +43,12 @@ include breaking changes, and each is marked **BREAKING**.
   helper tools specs ran with `go run` are built once
   per run. `ORK_E2E_BROWSER=host` drives the host's own Chromium instead
   (docs/PROOFS.md, AGENTS.md §11.1).
+- The README is a short front page: what OrkStack is, one real Orkflow
+  (held to `examples/each-fan-out.ork.yaml` by a test), a five-command
+  quickstart and an index of the docs. The local stack's details moved to
+  `docs/GETTING_STARTED.md`, "More about the local stack", the Linux host
+  setup to `CONTRIBUTING.md`, "Linux hosts", and the feature list to the
+  documentation site's overview page.
 
 ### Added
 

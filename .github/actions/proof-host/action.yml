@@ -28,7 +28,7 @@ runs:
         fi
         df -h / | tee -a "$GITHUB_STEP_SUMMARY"
 
-    # The README's "Linux hosts" setup, variant A, as the spike measured it:
+    # CONTRIBUTING.md's "Linux hosts" setup, variant A, as the spike measured it:
     # the host name resolves inside containers through the daemon's DNS.
     # The Orker never adds --add-host (AGENTS.md §6, §11.1).
     - name: host.docker.internal

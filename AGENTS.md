@@ -981,14 +981,14 @@ they are present.
 
 Some suites have an activity container call a stub on the host at
 `host.docker.internal`; a Linux host with plain Docker Engine needs one-time
-host setup for that name (README, "Linux hosts"). It is host setup, never
+host setup for that name (CONTRIBUTING.md, "Linux hosts"). It is host setup, never
 Orker behavior: the Orker must not add `--add-host` or any host-network
 configuration to activity containers (§6). The observability gate's
 Prometheus reaches the admin listeners over that same default bridge:
 `scripts/proof-observability.sh` attaches its own Prometheus container to the
 bridge and binds that run's admin listeners to the bridge's gateway, for the
 gate only. That is proof and development setup, never a `deploy/` default or a
-production listener (README, "Linux hosts", says what it exposes).
+production listener (CONTRIBUTING.md, "Linux hosts", says what it exposes).
 
 Integration tests run concurrently: as separate processes within a proof, and
 beside other agents' proofs on the same host. Each integration test owns these

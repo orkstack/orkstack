@@ -17,8 +17,63 @@ known flake: tell its owner if it is new to you. Never re-run a failing test unt
 passes; a second run is the flip the list exists to count, not a remedy.
 
 Start infra only when touching Temporal or storage: `make infra-up`. On a
-Linux host, do the one-time `host.docker.internal` setup in the README's
-"Linux hosts" first.
+Linux host, do the one-time `host.docker.internal` setup in "Linux hosts"
+below first.
+
+## Linux hosts
+
+Docker Desktop (macOS, Windows) provides `host.docker.internal` inside
+containers; plain Docker Engine on Linux does not. Several integration and
+Playwright tests start a stub server on the host and have an activity
+container call it at that name, so on Linux run once:
+
+```bash
+# make the name resolve inside containers (containers use the host's
+# resolver on the docker0 gateway, which serves /etc/hosts)
+echo '172.17.0.1 host.docker.internal' | sudo tee -a /etc/hosts
+
+# if ufw is active with a default-deny input policy, let containers on the
+# default bridge reach host TCP ports
+sudo ufw allow in on docker0 from 172.17.0.0/16 proto tcp
+
+# verify
+docker run --rm alpine:3.20 getent hosts host.docker.internal
+```
+
+`172.17.0.1` is the gateway of Docker's default bridge; a host with a
+customized `docker0` uses its own gateway address.
+
+The same applies to the observability stack (`make infra-up-observability`).
+Its Prometheus container scrapes `ork` and `orker` at
+`host.docker.internal:9464` and `:9465`, but it sits on the compose network,
+and on Linux a listener on `127.0.0.1` cannot be reached from a container. To
+scrape a stack you run by hand:
+
+1. Bind each process's admin listener to the gateway: `ORK_ADMIN_ADDR=172.17.0.1:9464`
+   for `ork`, `172.17.0.1:9465` for `orker`.
+2. Enable the `prometheus` metrics exporter (`OTEL_METRICS_EXPORTER=prometheus`;
+   see `docs/DEPLOY.md` §1).
+3. Attach Prometheus to the default bridge:
+
+```bash
+docker network connect bridge "$(docker ps -q --filter label=com.docker.compose.service=prometheus)"
+```
+
+The observability proof gate (`scripts/proof-observability.sh`) does the same
+for its own run, and detaches Prometheus afterwards only if it attached it.
+
+This is development and proof setup only: never bind a deployment's admin
+listeners to the bridge gateway, and nothing in `deploy/` does. While a
+listener is bound there, every container on Docker's default bridge can reach
+it, and that includes the activity containers an Orker starts with network
+`default`. What they can reach is the admin surface of that `ork` or
+`orker`: `/metrics`, `/healthz`, `/readyz`, and, under
+`ORK_PPROF_ENABLED=true`, `/debug/pprof/` (profiles, goroutine stacks and the
+process's command line). It is not the Connect API,
+not Temporal and not object storage, but an activity needs none of it
+(AGENTS.md §15), so unbind it (unset `ORK_ADMIN_ADDR`, or set it back to
+`127.0.0.1:…`) when you are done. The proof gate binds there only for its own
+run, with its own `ork` and `orker`, and stops them when it ends.
 
 ## What CI runs on your pull request
 
