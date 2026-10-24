@@ -18,7 +18,7 @@ const { title, description } = Astro.props;
 const canonical = new URL(Astro.url.pathname, SITE);
 const footer = [
 	{ label: 'Project', value: 'OrkStack' },
-	{ label: 'Status', value: 'Pre-release' },
+	{ label: 'Status', value: 'Pre-release', stamp: true },
 	{ label: 'License', value: 'MIT', href: `${REPO}/blob/${BRANCH}/LICENSE` },
 	{ label: 'Source', value: 'GitHub', href: REPO },
 	{ label: 'Docs', value: 'Read the docs', href: route('docs') },

@@ -59,6 +59,10 @@ const owners = [
 </section>
 
 <style>
+	/* One baseline across a row: the caps tag sits on the owner's line. */
+	.owners tbody :is(th, td) {
+		vertical-align: baseline;
+	}
 	.owners tbody th {
 		width: 22%;
 		font-weight: var(--font-weight-semibold);

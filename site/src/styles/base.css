@@ -290,3 +290,28 @@ html {
 		border-bottom: 0;
 	}
 }
+
+/* A status stamp, the UI's: a 1 px frame, tracked caps, the drawn mark
+   before the word. Pre-release is a neutral state, drawn in the ink. */
+.stamp {
+	display: inline-flex;
+	align-items: center;
+	gap: calc(var(--spacing) * 1.5);
+	border: var(--rule-hair) solid var(--color-rule-strong);
+	border-radius: var(--radius-sm);
+	background-color: var(--color-paper-sunken);
+	padding: 0 calc(var(--spacing) * 1.5);
+	color: var(--color-ink);
+	font-family: var(--font-sans);
+	font-size: var(--text-2xs);
+	line-height: calc(var(--text-2xs--line-height) + var(--spacing));
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: var(--tracking-caps);
+	text-transform: uppercase;
+}
+.stamp::before {
+	content: '';
+	width: calc(var(--spacing) * 2);
+	height: calc(var(--spacing) * 2);
+	border: var(--rule-hair) solid var(--color-ink-muted);
+}

@@ -57,14 +57,18 @@ const links = [
 	.status-links a {
 		display: block;
 		padding: calc(var(--spacing) * 4);
-		color: var(--color-ink);
+		color: var(--color-blue);
 		font-size: var(--text-md);
 		font-weight: var(--font-weight-semibold);
-		text-decoration: none;
+		text-decoration-line: underline;
+		text-decoration-color: color-mix(in oklab, var(--color-blue) 40%, transparent);
+		text-underline-offset: var(--underline-offset);
 		transition: background-color var(--duration-fast) var(--ease-out);
 	}
 	.status-links a:hover {
 		background-color: var(--color-hover);
+		color: var(--color-blue-strong);
+		text-decoration-color: currentColor;
 	}
 	@media (max-width: 639.98px) {
 		.status-links li + li {

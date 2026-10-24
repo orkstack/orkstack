@@ -170,10 +170,14 @@ h1#_top {
 	color: var(--color-blue-strong);
 	text-decoration-color: currentColor;
 }
+/* Inline code: the mono on the hover wash, a hairline, no margin of its own
+   so punctuation sits against it. */
 .sl-markdown-content :not(pre) > code {
+	margin: 0;
 	border: var(--rule-hair) solid var(--color-rule-faint);
 	border-radius: var(--radius-xs);
-	padding: 0 calc(var(--spacing) * 1);
+	background-color: var(--color-hover);
+	padding: 0 0.2em;
 	font-size: 0.9em;
 }
 

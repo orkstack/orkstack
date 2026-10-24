@@ -11,8 +11,8 @@ import { route, REPO } from '../../../site.config.mjs';
 import { example } from '../../lib/example';
 
 const hero = shot('ui-run-hero');
-const facts = [
-	{ label: 'Status', value: 'Pre-release' },
+const facts: { label: string; value: string; stamp?: boolean }[] = [
+	{ label: 'Status', value: 'Pre-release', stamp: true },
 	{ label: 'Runs on', value: 'A Temporal cluster' },
 	{ label: 'Activities', value: 'Any OCI image' },
 	{ label: 'Storage', value: 'S3-compatible' },
@@ -41,7 +41,7 @@ const facts = [
 			facts.map((f) => (
 				<div class="hero-fact">
 					<dt class="caps">{f.label}</dt>
-					<dd>{f.value}</dd>
+					<dd>{f.stamp ? <span class="stamp">{f.value}</span> : f.value}</dd>
 				</div>
 			))
 		}
@@ -123,9 +123,12 @@ const facts = [
 		.hero-view {
 			border-width: 0 0 var(--rule-frame);
 		}
-		/* The view takes what the first viewport leaves once the bar and the
+		/* The view is the run page's top: its heading, the DAG and the timing
+		   register, cut under them (about half the capture's height). It also
+		   gives way to what the first viewport leaves once the bar and the
 		   title block (about 20rem) are drawn, so the actions stay in view. */
 		.hero-view :global(.frame-body) {
+			aspect-ratio: 2400 / 745;
 			max-height: clamp(16rem, calc(100svh - 26rem), 40rem);
 		}
 		.hero-title {

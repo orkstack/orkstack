@@ -6,6 +6,7 @@ interface Cell {
 	label: string;
 	value: string;
 	href?: string;
+	stamp?: boolean;
 }
 interface Props {
 	cells: Cell[];
@@ -20,7 +21,9 @@ const { cells, class: className, label = 'Summary' } = Astro.props;
 		cells.map((c) => (
 			<div class="titleblock-cell">
 				<dt class="caps">{c.label}</dt>
-				<dd class="titleblock-value">{c.href ? <a href={c.href}>{c.value}</a> : c.value}</dd>
+				<dd class="titleblock-value">
+					{c.href ? <a href={c.href}>{c.value}</a> : c.stamp ? <span class="stamp">{c.value}</span> : c.value}
+				</dd>
 			</div>
 		))
 	}

@@ -59,9 +59,12 @@ main:focus {
 	}
 }
 
-/* A section: more space above its heading than below. */
+/* A section: a region of the sheet, opened by the 1.5 px ink rule as every
+   region of the UI is, with more space above its heading than below. */
 .block {
-	margin-top: calc(var(--spacing) * 28);
+	margin-top: calc(var(--spacing) * 24);
+	border-top: var(--rule-region) solid var(--color-ink);
+	padding-top: calc(var(--spacing) * 6);
 }
 .block-head {
 	max-width: 46rem;

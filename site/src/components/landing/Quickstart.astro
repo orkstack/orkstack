@@ -81,17 +81,19 @@ const demo = clip('cli-quickstart');
 </script>
 
 <style>
+	/* The commands, then the recording at the column's full width, where a
+	   terminal's text reads at its own size. */
 	.quickstart-body {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: calc(var(--spacing) * 8);
-		align-items: start;
 	}
-	@media (min-width: 1100px) {
-		.quickstart-body {
-			grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-		}
+	.quickstart-body :global(.clip) {
+		max-width: 75rem;
 	}
 	.terminal {
+		min-width: 0;
+		max-width: 52rem;
 		border: var(--rule-region) solid var(--color-ink);
 		background-color: var(--color-paper-sunken);
 	}
