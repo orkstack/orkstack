@@ -2,8 +2,9 @@ import type { ArtifactRef, Payload } from './gen/orkstack/v1/common_pb';
 
 // The characters a POSIX shell never reads as syntax: a token made only of
 // them is passed as written. Everything else — a space, a quote, `$`, `*`,
-// `~`, a backslash, a newline — is single-quoted.
-const SHELL_SAFE = /^[A-Za-z0-9_@%+=:,./-]+$/;
+// `~`, a backslash, a newline — is single-quoted, and so is a token that
+// starts with `=`, which zsh expands as a command's path.
+const SHELL_SAFE = /^(?!=)[A-Za-z0-9_@%+=:,./-]+$/;
 
 /**
  * Quote one CLI argument for a POSIX shell without trusting page data as

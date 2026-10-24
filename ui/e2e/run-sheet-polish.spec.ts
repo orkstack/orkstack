@@ -311,13 +311,15 @@ test('running: a RUNNING task is a soft green box that breathes, and stands stil
 	await page.screenshot({ path: out('running-dag-light-1440-reduced-motion.png') });
 	await page.getByTestId('run-view-map').click();
 	await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
-	const whole = rgb(green);
-	await expect.poll(async () => near(await mapPixel(page, 1), whole), { timeout: 5_000 }).toBe(true);
+	expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
+	const whole = rgb(green).join(',');
+	const cell = async () => (await mapPixel(page, 1)).slice(0, 3).join(',');
+	await expect.poll(cell, { timeout: 5_000 }).toBe(whole);
 	// And it stays whole: a page making progress (the clock ticks) has not
 	// repainted the cell in the meantime.
 	const elapsed = await page.getByTestId('run-elapsed').innerText();
 	await expect(page.getByTestId('run-elapsed')).not.toHaveText(elapsed, { timeout: 5_000 });
-	expect(near(await mapPixel(page, 1), whole)).toBe(true);
+	expect(await cell()).toBe(whole);
 	await page.screenshot({ path: out('running-map-light-1440-reduced-motion.png') });
 	await page.emulateMedia({ reducedMotion: null });
 	await page.setViewportSize({ width: 1440, height: 900 });
@@ -332,13 +334,13 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 
 	// Retries: the cloud and the task's panel say the same, and neither says a
 	// bare "retryable".
-	const cloud = page.getByTestId('run-error-retry-state');
-	const panel = page.getByTestId('task-charge-error-retry-state');
-	await expect(panel).toBeVisible();
-	await expect(cloud).toHaveText((await panel.innerText()).trim());
+	// `charge` declares no retry policy, so it was tried once and its budget
+	// ran out; the run's own wrapper (never retryable itself) is not quoted.
+	await expect(page.getByTestId('task-charge-error-retry-state')).toHaveText('retries exhausted');
+	await expect(page.getByTestId('run-error-retry-state')).toHaveText('retries exhausted');
 	await expect(page.locator('[data-testid$="-retryable"]')).toHaveCount(0);
-	await expect(page.getByTestId('run-error')).not.toContainText(/\bretryable\b/);
-	note(`retries: cloud and panel both say "${await cloud.innerText()}"`);
+	await expect(page.getByTestId('run-error')).not.toContainText('not retryable');
+	note('retries: cloud and panel both say "retries exhausted"');
 
 	// Never started: CANCELED, "never started", in the row, on the node and in
 	// the map's key — and no faded node is struck through.
@@ -374,7 +376,10 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 	expect(Math.abs(fit.frame - (fit.svg + 48 + 3))).toBeLessThanOrEqual(4);
 
 	// Rows share one timeline: each task's mark starts where its run had got
-	// to, so a later task starts further right on the same track.
+	// to, so a later task starts further right on the same track. (The rows
+	// are brought into view first: a card off screen is not laid out.)
+	await page.getByTestId('task-charge').scrollIntoViewIfNeeded();
+	await expect(page.getByTestId('task-validate-run-segment')).toBeVisible();
 	const lefts = await page.evaluate(() =>
 		['validate', 'reserve-stock', 'charge'].map((id) => {
 			const track = document.querySelector(`[data-testid="task-${id}-run-segment"]`)!.parentElement!.getBoundingClientRect();

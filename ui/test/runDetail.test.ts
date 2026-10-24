@@ -70,7 +70,7 @@ test('a token is quoted only when a shell would read it as syntax', () => {
 		expect(shellQuote(safe)).toBe(safe);
 	}
 	expect(shellQuote('')).toBe("''");
-	for (const unsafe of ['a b', 'action^namespace.', '$(touch x)', '~/x', '*', 'tab\there', 'new\nline', '"q"', 'back\\slash']) {
+	for (const unsafe of ['a b', '=x', 'action^namespace.', '$(touch x)', '~/x', '*', 'tab\there', 'new\nline', '"q"', 'back\\slash']) {
 		expect(shellQuote(unsafe).startsWith("'")).toBe(true);
 	}
 });

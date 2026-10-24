@@ -495,7 +495,7 @@
 	guardUnsaved(
 		(navigation) =>
 			leavesRoute(navigation) &&
-			(createFields() !== createSeed || (editingName !== '' && editFields() !== editSeed)),
+			((createOpen && createFields() !== createSeed) || (editingName !== '' && editFields() !== editSeed)),
 		'Discard the namespace changes you have not saved?'
 	);
 
@@ -740,15 +740,16 @@
 <SheetHeader title="Namespaces">
 	{#snippet actions()}
 		<!-- The page's one primary: it opens the create form, a disclosure under
-		     the header; open, it hands the primary to the form's own submit. -->
-		<button
+		     the header; open, it hands the primary to the form's own submit. A
+		     registry that could not be read offers no form to open. -->
+		{#if !data.namespacesError}<button
 			type="button"
 			data-testid="ns-create-open"
 			aria-expanded={createOpen}
 			aria-controls="ns-create-form"
 			onclick={() => (createOpen = !createOpen)}
 			class="btn {createOpen ? '' : 'btn-primary'}">{createOpen ? 'Close the form' : 'Create namespace'}</button
-		>
+		>{/if}
 	{/snippet}
 </SheetHeader>
 

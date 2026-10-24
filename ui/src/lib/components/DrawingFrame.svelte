@@ -19,7 +19,8 @@
 	// A drawing is scaled to the frame's width (DagGraph, down to
 	// DAG_MIN_SCALE). One still wider than that scrolls inside the frame: the
 	// frame says so with a pair of scroll controls on its top band, beside the
-	// tabs and never over a node, the one with nothing more to show disabled;
+	// tabs and never over a node, the one with nothing more to show marked
+	// aria-disabled (never `disabled`, which would drop a keyboard user's focus);
 	// and on first drawing it brings the selected task — else the failed one,
 	// whose failure handlers follow it — into view.
 	import { tick, type Snippet } from 'svelte';
@@ -168,7 +169,7 @@
 <section
 	data-testid={testid}
 	aria-label="Tasks of {orkflowLabel}"
-	class="frame relative flex flex-col overflow-hidden {view === 'dag' ? 'max-h-drawing' : 'h-drawing'}"
+	class="frame relative isolate flex flex-col overflow-hidden {view === 'dag' ? 'max-h-drawing' : 'h-drawing'}"
 >
 	<div
 		class="relative z-10 flex h-8 shrink-0 items-stretch self-start border-r border-b border-ink bg-paper {drawn && (hidden.left || hidden.right)
@@ -245,20 +246,20 @@
 			<button
 				type="button"
 				data-testid="{prefix}-scroll-left"
-				class="inline-flex size-8 items-center justify-center border-r border-rule text-ink hover:bg-hover disabled:text-ink-muted disabled:opacity-50"
+				class="inline-flex size-8 items-center justify-center border-r border-rule text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-muted aria-disabled:opacity-50"
 				aria-label="Scroll the DAG left"
 				title="More of the DAG to the left"
-				disabled={!hidden.left}
-				onclick={() => scrollBy(-1)}><Icon name="chevronLeft" /></button
+				aria-disabled={!hidden.left}
+				onclick={() => hidden.left && scrollBy(-1)}><Icon name="chevronLeft" /></button
 			>
 			<button
 				type="button"
 				data-testid="{prefix}-scroll-right"
-				class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover disabled:text-ink-muted disabled:opacity-50"
+				class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-muted aria-disabled:opacity-50"
 				aria-label="Scroll the DAG right"
 				title="More of the DAG to the right"
-				disabled={!hidden.right}
-				onclick={() => scrollBy(1)}><Icon name="chevronRight" /></button
+				aria-disabled={!hidden.right}
+				onclick={() => hidden.right && scrollBy(1)}><Icon name="chevronRight" /></button
 			>
 		</div>
 	{/if}

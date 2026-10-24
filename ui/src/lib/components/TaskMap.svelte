@@ -183,12 +183,20 @@
 	// ---- Running cells breathe ----
 	// While any cell is RUNNING, its mark fades and returns every 2.4 s, as a
 	// running DAG node's ground does: only those cells are repainted, at most
-	// fifteen times a second, and not at all while the page is hidden. Under
-	// reduced motion nothing moves and the mark stays whole.
+	// fifteen times a second (a hidden page gets no frames at all). Under
+	// reduced motion the loop never runs and the mark stays whole.
+	let reducedMotion = $state(false);
 	$effect(() => {
-		if (!painted || (counts.get(Status.RUNNING) ?? 0) === 0) return;
-		if (typeof matchMedia !== 'function' || typeof requestAnimationFrame !== 'function') return;
-		const still = matchMedia('(prefers-reduced-motion: reduce)');
+		if (typeof matchMedia !== 'function') return;
+		const query = matchMedia('(prefers-reduced-motion: reduce)');
+		reducedMotion = query.matches;
+		const change = () => (reducedMotion = query.matches);
+		query.addEventListener('change', change);
+		return () => query.removeEventListener('change', change);
+	});
+	$effect(() => {
+		if (!painted || reducedMotion || (counts.get(Status.RUNNING) ?? 0) === 0) return;
+		if (typeof requestAnimationFrame !== 'function') return;
 		const runningCells = () => {
 			const out: number[] = [];
 			for (let i = 0; i < statuses.length; i++) if (statuses[i] === Status.RUNNING) out.push(i);
@@ -199,18 +207,14 @@
 		let faded = false;
 		const tick = (t: number) => {
 			pulse = requestAnimationFrame(tick);
-			if (still.matches || document.hidden) {
-				// Stopping mid-breath leaves the cells whole, not half faded.
-				if (faded) paint(runningCells());
-				faded = false;
-				return;
-			}
 			if (t - last < 66) return;
 			last = t;
 			paint(runningCells(), runningPulse(t));
 			faded = true;
 		};
 		pulse = requestAnimationFrame(tick);
+		// Stopping — reduced motion asked for, no cell running, the map gone —
+		// leaves the cells whole, never half faded.
 		return () => {
 			cancelAnimationFrame(pulse);
 			if (faded) paint(runningCells());

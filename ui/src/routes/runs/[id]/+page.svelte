@@ -1542,8 +1542,10 @@
 		const out = new Map<Status, number>();
 		const add = (s: Status) => out.set(s, (out.get(s) ?? 0) + 1);
 		for (const t of tasks) {
-			if (neverStarted(t)) add(t.status);
-			for (const item of t.items) if (item.status === Status.CANCELED && !item.run?.scheduledAt) add(item.status);
+			// A fan-out's own cell is not one the key counts; its items are.
+			if (isFanOut(t.id)) {
+				for (const item of t.items) if (item.status === Status.CANCELED && !item.run?.scheduledAt) add(item.status);
+			} else if (neverStarted(t)) add(t.status);
 		}
 		return out;
 	});
@@ -1890,7 +1892,7 @@
 					<button type="button" data-testid="run-more-export" onclick={() => { close(); downloadJson(`${run.id}.json`, runExport()); }}>Export JSON</button>
 					<a href={eventsHref(!eventsOpen)} data-testid="run-more-events" data-sveltekit-noscroll onclick={close}>{eventsOpen ? 'Hide events' : 'Show events'}</a>
 					<button type="button" data-testid="run-more-stability" aria-pressed={historyOpen} onclick={() => { close(); toggleHistory(); }}
-						>{historyOpen ? 'Hide' : 'Show'} retry history ({HISTORY_WINDOW})</button
+						>Retry history ({HISTORY_WINDOW})</button
 					>
 					<button type="button" data-testid="run-more-copy-get" onclick={() => { close(); void copy(getCommand, 'Command copied', 'run-reproduce-get'); }}
 						>Copy orkctl run get</button
