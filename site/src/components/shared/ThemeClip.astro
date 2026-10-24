@@ -34,12 +34,19 @@ const views = [clip.light, clip.dark];
 	.clip {
 		margin: 0;
 	}
+	/* The recording is 1200×860 and its last line sits on its bottom row. The
+	   box is 110 of its pixels taller, drawn in the terminal's own background
+	   (the VHS theme's is --color-paper-sunken too), and the recording sits at
+	   its top: a paused video's controls band falls on that strip, below the
+	   last line, at every width. */
 	video,
 	.clip-missing {
 		display: block;
 		width: 100%;
 		height: auto;
-		aspect-ratio: 1200 / 860;
+		aspect-ratio: 1200 / 970;
+		object-fit: contain;
+		object-position: top;
 		border: var(--rule-region) solid var(--color-ink);
 		background-color: var(--color-paper-sunken);
 	}
