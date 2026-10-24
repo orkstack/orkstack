@@ -1961,8 +1961,8 @@
 		which image, and the command that reproduces it. Below 1280 px the
 		aside follows the drawing.
 	-->
-	<div class="mb-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_var(--spacing-aside)]">
-		<div class="min-w-0">
+	<div class="mb-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_var(--spacing-aside)] xl:grid-rows-[auto_1fr]">
+		<div class="min-w-0 xl:col-start-1 xl:row-start-1">
 			<DrawingFrame
 				testid="run-drawing"
 				caption="{run.orkflowName} @ {run.orkflowVersion} · {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'}"
@@ -2001,7 +2001,7 @@
 				{/if}
 			</div>
 		</div>
-		<aside class="min-w-0 space-y-6" aria-label="About this run">
+		<aside class="min-w-0 space-y-6 xl:col-start-2 xl:row-span-2 xl:row-start-1 xl:self-start" aria-label="About this run">
 			<VersionTable namespace={data.namespace} orkflowName={run.orkflowName} runVersion={run.orkflowVersion} />
 			{#if runError || runErrorMessage}
 				<!--
@@ -2076,14 +2076,20 @@
 				</ul>
 			</section>
 		</aside>
-	</div>
+		<!--
+			THE BODY, in the drawing's column: from 1280 px the run's values and
+			its tasks start under the drawing, the aside beside them, instead of
+			waiting for the aside to end; below that the aside follows the
+			drawing and the body follows the aside.
+		-->
+		<div class="min-w-0 space-y-6 xl:col-start-1 xl:row-start-2">
 
 	<!--
 		THE RUN'S VALUES. A value is shown in its own block; what a run has
 		none of (no input, no aggregated output yet or at all) is said once, in
 		one NOTE, rather than as an empty box beside a sentence in another.
 	-->
-	<section class="mb-6 space-y-4" aria-label="Run values">
+	<section class="space-y-4" aria-label="Run values">
 		{#if hasRunInput || run.output}
 			<div class="grid gap-6 lg:grid-cols-2">
 				{#if hasRunInput}
@@ -2815,6 +2821,8 @@
 				{/snippet}
 			</ConfirmDialog>
 		{/if}
+	</div>
+		</div>
 	</div>
 
 	{#if runAgainDialogOpen}
