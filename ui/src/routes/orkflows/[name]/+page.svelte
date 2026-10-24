@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import { dagDirectionParam } from '$lib/dag';
 	import { rememberRecent } from '$lib/palette/recent';
 	import DrawingFrame from '$lib/components/DrawingFrame.svelte';
 	import Dialog from '$lib/components/Dialog.svelte';
@@ -214,6 +215,7 @@
 					caption="{wf.name} @ {wf.version} · {wf.tasks.length} {wf.tasks.length === 1 ? 'task' : 'tasks'}"
 					tasks={wf.tasks}
 					orkflowLabel="{wf.name}@{wf.version}"
+					direction={dagDirectionParam(page.url)}
 				/>
 			</section>
 			<aside class="min-w-0" aria-labelledby="orkflow-sheet-versions-heading">

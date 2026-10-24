@@ -117,7 +117,7 @@
 	import TaskMap from '$lib/components/TaskMap.svelte';
 	import TaskMapLegend from '$lib/components/TaskMapLegend.svelte';
 	import VersionTable from '$lib/components/VersionTable.svelte';
-	import { DAG_DRAW_LIMIT, type NodeState } from '$lib/dag';
+	import { DAG_DRAW_LIMIT, dagDirectionParam, type NodeState } from '$lib/dag';
 	import { itemLabel } from '$lib/each';
 	import { isFailureHandler } from '$lib/join';
 	import { recordSeen } from '$lib/heldRuns';
@@ -1986,6 +1986,7 @@
 				onselect={(id) => selectTask(id)}
 				neighbourhoodWhenLarge
 				{mapSections}
+				direction={dagDirectionParam(page.url)}
 			>
 				{#snippet map()}
 					<TaskMap

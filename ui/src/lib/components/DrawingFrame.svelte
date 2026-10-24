@@ -28,7 +28,7 @@
 	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import DagGraph from './DagGraph.svelte';
 	import Icon from './Icon.svelte';
-	import { DAG_LEGIBLE_LIMIT, dagBound, neighbourhood, type NodeState } from '$lib/dag';
+	import { DAG_LEGIBLE_LIMIT, chooseDagDirection, dagBound, neighbourhood, type DagDirection, type NodeState } from '$lib/dag';
 	import { mapGeometry } from '$lib/taskMap';
 
 	interface Props {
@@ -63,6 +63,12 @@
 		 * the patch and padding, up to --spacing-drawing.
 		 */
 		mapSections?: { count: number; labelled: boolean }[];
+		/**
+		 * Which way the DAG reads: left to right (the default), top to
+		 * bottom, or `auto` — whichever leaves less of it to scroll in this
+		 * frame ($lib/dag chooseDagDirection).
+		 */
+		direction?: DagDirection | 'auto';
 	}
 
 	let {
@@ -83,7 +89,8 @@
 		neighbourhoodWhenLarge = false,
 		largeHint = 'The task register below lists every task and what it needs.',
 		map,
-		mapSections = undefined
+		mapSections = undefined,
+		direction = 'LR'
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -157,7 +164,7 @@
 	let frameBox = $state({ width: 0, max: 0 });
 	$effect(() => {
 		const el = section;
-		if (!el || !mapSections || typeof ResizeObserver === 'undefined') return;
+		if (!el || (!mapSections && direction !== 'auto') || typeof ResizeObserver === 'undefined') return;
 		const observer = new ResizeObserver(() => {
 			frameBox = { width: el.clientWidth, max: parseFloat(getComputedStyle(el).maxHeight) || 0 };
 		});
@@ -165,6 +172,14 @@
 		return () => observer.disconnect();
 	});
 	const MAP_CHROME = 32 + 16 + 3;
+	// `auto`: decided once the frame is laid out (before its first paint),
+	// for the tasks it draws.
+	const dagDirection = $derived.by((): DagDirection => {
+		if (direction !== 'auto') return direction;
+		const drawnTasks = near.length ? near : tasks;
+		if (!drawnTasks || frameBox.width <= 0 || frameBox.max <= 0) return 'LR';
+		return chooseDagDirection(drawnTasks, { width: frameBox.width - 16, height: frameBox.max - MAP_CHROME });
+	});
 	const mapHeight = $derived.by(() => {
 		if (view !== 'map' || !mapSections || frameBox.width <= 0 || frameBox.max <= 0) return undefined;
 		const room = frameBox.max - MAP_CHROME;
@@ -252,7 +267,7 @@
 			)}
 		{:else if bound === 'draw' || (bound === 'on-request' && drawAll)}
 			<div class="p-2">
-				<DagGraph tasks={tasks} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} />
+				<DagGraph tasks={tasks} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} />
 			</div>
 		{:else if bound === 'on-request'}
 			{@render note(
@@ -273,7 +288,7 @@
 			)}
 			{#if near.length}
 				<div class="p-2">
-					<DagGraph tasks={near} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} />
+					<DagGraph tasks={near} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} />
 				</div>
 			{/if}
 		{/if}

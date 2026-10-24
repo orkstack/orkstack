@@ -25,6 +25,7 @@
 		edgePath,
 		fitDagLine,
 		layoutDag,
+		type DagDirection,
 		type DagNode,
 		type NodeState
 	} from '$lib/dag';
@@ -48,6 +49,8 @@
 		selected?: string;
 		hrefOf?: (id: string) => string;
 		onselect?: (id: string) => void;
+		/** Left to right (the default) or top to bottom. */
+		direction?: DagDirection;
 	}
 
 	let {
@@ -57,10 +60,11 @@
 		stateOf = undefined,
 		selected = undefined,
 		hrefOf = (id: string) => `#task-row-${id}`,
-		onselect = undefined
+		onselect = undefined,
+		direction = 'LR'
 	}: Props = $props();
 
-	const layout = $derived(layoutDag(tasks));
+	const layout = $derived(layoutDag(tasks, direction));
 	// A task's join, by id: an edge INTO a joined task carries its word, and
 	// is drawn dashed when that task is a failure handler.
 	const joinById = $derived(new Map(tasks.map((task) => [task.id, task.join])));
@@ -101,6 +105,7 @@
 {:else}
 	<svg
 		data-testid={run ? 'run-dag' : 'orkflow-dag'}
+		data-direction={layout.direction}
 		viewBox="0 0 {layout.width} {layout.height}"
 		style="width:100%;max-width:{layout.width}px;min-width:{Math.round(layout.width * DAG_MIN_SCALE)}px"
 		class="dag block h-auto"
@@ -123,7 +128,7 @@
 		{#each layout.edges as edge (edge.fromId + '->' + edge.toId)}
 			<path
 				data-testid={run ? `run-dag-edge-${edge.fromId}-${edge.toId}` : `dag-edge-${edge.fromId}-${edge.toId}`}
-				d={edgePath({ ...edge, x2: edge.x2 - 2 })}
+				d={edgePath(edge, 2)}
 				class="dag-edge"
 				stroke-dasharray={isFailureHandler(joinById.get(edge.toId)) ? DAG_DASH : undefined}
 				data-join={joinAttr(joinById.get(edge.toId))}
