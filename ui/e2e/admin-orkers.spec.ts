@@ -3,21 +3,27 @@ import { type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	clusterEnv,
+	ensureBucket,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('admin-orkers');
 
 // Admin → Pools → Show Orkers, against a real engine, two real Orkers on
 // `main`, real Temporal and real MinIO (docs/DEPLOY.md "Removing an Orker safely: cordon and drain").
@@ -76,7 +82,7 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
 function startOrker(id: string, root: string): ChildProcess {
 	const child = spawnLogged(outPath(`${id}.log`), bin('orker'), [], {
 		...clusterEnv(TEMPORAL_NAMESPACE),
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv(root),
 		ORK_ORKER_ID: id
 	});
@@ -104,6 +110,7 @@ async function openOrkers(page: Page): Promise<void> {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -127,7 +134,7 @@ test.beforeAll(async () => {
 	mine.push(
 		spawnLogged(outPath('engine.log'), bin('ork'), [], {
 			...clusterEnv(TEMPORAL_NAMESPACE),
-			...s3Env,
+			...storeEnv(BUCKET),
 			ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`,
 			ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 		})
@@ -159,6 +166,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	for (const child of mine.splice(0)) await stop(child);
+	removeBucket(BUCKET);
 });
 
 test('Pools shows its Orkers and cordons one with a reason', async ({ page }) => {

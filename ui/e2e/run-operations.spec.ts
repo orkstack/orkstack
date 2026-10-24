@@ -3,23 +3,30 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-operations');
 
 // This is an operator flow, not a mocked RPC test. It proves that a browser
 // can request cancellation without painting a made-up terminal status, then
@@ -27,7 +34,7 @@ import {
 const ENGINE = 'http://127.0.0.1:18088';
 const ENGINE_WS = 'ws://127.0.0.1:18088';
 const UI_ORIGIN = 'http://127.0.0.1:14180';
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-run-operations';
+const TEMPORAL_NAMESPACE = temporalNamespace('run-operations');
 const NAME = `run-operations-${Date.now().toString(36)}`;
 const COMPLETED_NAME = `${NAME}-completed`;
 const PROOF_DIR = process.env.ORK_PROOF_DIR
@@ -79,6 +86,7 @@ tasks:
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -88,9 +96,9 @@ test.beforeAll(async () => {
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(out('engine.log'), bin('ork'), [], {
-		...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18088', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18088', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('run-operations') });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('run-operations') });
 	spawnLogged(out('ui.log'), 'node', ['build'], {
 		HOST: '127.0.0.1', PORT: '14180', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
 	}, uiDir);
@@ -104,7 +112,10 @@ test.beforeAll(async () => {
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: completedWorkflow() });
 });
 
-test.afterAll(async () => { await killStarted(); });
+test.afterAll(async () => {
+	await killStarted();
+	removeBucket(BUCKET);
+});
 
 test('cancel confirmation, authoritative status, pinned version, deep links and rerun review survive one operator flow', async ({ page }) => {
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: NAME });

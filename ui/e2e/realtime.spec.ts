@@ -5,7 +5,10 @@ import { createServer, type Server } from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { catalogEnv, containerHost, ensureActivityImages, orkerEnv, s3Env, killStarted, trackChild, bin, temporalAddress, temporalReachable } from './harness';
+import { bin, catalogEnv, containerHost, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, storeEnv, temporalAddress, temporalReachable, trackChild } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('realtime');
 
 // Realtime proof: real engine + real Orker + built UI, driven by a browser.
 // The spec submits hello-ork through the UI form and asserts the run page
@@ -99,6 +102,7 @@ function tcpOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 
 	// Infra preconditions: Temporal + MinIO must be live (make infra-up).
@@ -138,7 +142,7 @@ test.beforeAll(async () => {
 	// before it runs.
 	spawnLogged('engine.log', bin('ork'), [], {
 		...catalogEnv,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_TEMPORAL_ADDRESS: temporalAddress(),
 		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE,
 		ORK_HTTP_ADDR: '127.0.0.1:18080',
@@ -155,7 +159,7 @@ test.beforeAll(async () => {
 
 	// Orker: the generic worker that runs any activity image, against MinIO.
 	spawnLogged('orker.log', bin('orker'), [], {
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_TEMPORAL_ADDRESS: temporalAddress(),
 		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE,
 		...orkerEnv('realtime')
@@ -216,6 +220,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 	stubServer?.close();
 });
 

@@ -2,23 +2,30 @@ import { expect, test } from './test';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('artifact-provenance');
 
 // The Provenance disclosure on a recorded artifact, against a real engine,
 // Orker, Temporal and MinIO: the bytes are present, the run's own reference is
@@ -26,10 +33,10 @@ import {
 // copyable command is exactly the one runCommand quotes. A second run of the
 // same orkflow writes identical bytes and still lists only itself — on the S3
 // layout an object key embeds its run id.
-const ENGINE = 'http://127.0.0.1:18088';
-const ENGINE_WS = 'ws://127.0.0.1:18088';
-const UI_ORIGIN = 'http://127.0.0.1:14180';
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-artifact-provenance';
+const ENGINE = 'http://127.0.0.1:18098';
+const ENGINE_WS = 'ws://127.0.0.1:18098';
+const UI_ORIGIN = 'http://127.0.0.1:14198';
+const TEMPORAL_NAMESPACE = temporalNamespace('artifact-provenance');
 const NAME = `artifact-provenance-${Date.now().toString(36)}`;
 const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'artifact-provenance')
@@ -58,20 +65,21 @@ tasks:
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18088, 14180]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	for (const port of [18098, 14198]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
 
 	ensureActivityImages();
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(out('engine.log'), bin('ork'), [], {
-		...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18088', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18098', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('artifact-provenance') });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('artifact-provenance') });
 	spawnLogged(out('ui.log'), 'node', ['build'], {
-		HOST: '127.0.0.1', PORT: '14180', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
+		HOST: '127.0.0.1', PORT: '14198', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
 	}, uiDir);
 	await waitForEngine(ENGINE);
 	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
@@ -82,7 +90,10 @@ test.beforeAll(async () => {
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: completedWorkflow() });
 });
 
-test.afterAll(async () => { await killStarted(); });
+test.afterAll(async () => {
+	await killStarted();
+	removeBucket(BUCKET);
+});
 
 /** Submits the orkflow and returns once the run's archive holds its marker. */
 async function submitArchived(): Promise<string> {

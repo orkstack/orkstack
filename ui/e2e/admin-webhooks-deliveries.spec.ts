@@ -7,23 +7,29 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { OP, addListFilter, selectOption } from './uiHelpers';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('admin-webhooks-deliv');
 
 // Admin → Webhooks → Deliveries, in a browser, against the real engine, Orker,
 // Temporal and MinIO (docs/UI_CLI_PARITY.md "Webhook deliveries", "Filtering
@@ -120,7 +126,7 @@ function startEngine(): ChildProcess {
 	const child = spawnLogged(out(`engine-${mine.length}.log`), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`,
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
@@ -206,6 +212,7 @@ test.describe.configure({ mode: 'serial' });
 test.use({ timezoneId: 'UTC' });
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -226,7 +233,7 @@ test.beforeAll(async () => {
 	ensureActivityImages();
 
 	engine = startEngine();
-	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('admin-deliveries') }));
+	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('admin-deliveries') }));
 	mine.push(
 		spawnLogged(out('ui.log'), 'node', ['build'], {
 			HOST: '127.0.0.1', PORT: String(UI_PORT), ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
@@ -251,6 +258,7 @@ test.afterAll(async () => {
 	}
 	for (const child of mine) await stop(child);
 	await new Promise<void>((resolve) => (receiver ? receiver.close(() => resolve()) : resolve()));
+	removeBucket(BUCKET);
 });
 
 test('a settled delivery appears in the Deliveries panel with its attempts and digest', async ({ page }) => {

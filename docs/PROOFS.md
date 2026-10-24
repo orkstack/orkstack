@@ -52,8 +52,11 @@ after another — lint, build, unit, `go vet -tags=integration`, then the UI
 type-check and unit suites (after one `svelte-kit sync`, which both read);
 then the setup the long gates need (the proof's own Temporal, the activity
 images, the binaries); then the integration suite with the activity contract
-fixture beside it, the only two gates that overlap; then Playwright; then the
-observability gate. A full proof runs: lint; build; unit; `go vet -tags=integration`; the activity
+fixture beside it — the only two gates that overlap, and the fixture starts
+only once the integration runner has finished its heavy jobs
+(`integration-heavy-done`), so a heavy test's quiet host never carries the
+fixture's containers; then Playwright, spec files `PROOF_UI_WORKERS` at a
+time; then the observability gate. A full proof runs: lint; build; unit; `go vet -tags=integration`; the activity
 images, built once from this tree; every integration test whose package's
 integration build differs from its unit build, against real Temporal and the
 S3-compatible store; the activity contract fixture; the UI type-check, unit
@@ -61,8 +64,21 @@ and every Playwright spec; and the observability gate when the tree changes a
 telemetry path. A release proof runs the observability gate unconditionally.
 
 Integration tests run as separate processes, `PROOF_JOBS` at a time (default
-4). Playwright spec files run on `PROOF_UI_WORKERS` workers (default and
-today's only safe value: 1). A **heavy** test — one whose assertions are
+4; the ordinary jobs keep every slot busy, so the phase's wall is their total
+work divided by the slots, but at 6 on a 16-core host one engine boot in 277
+jobs stalled 50 s on its fresh bucket's first read while SeaweedFS grew and
+removed per-bucket volumes, and a merge gate is never rerun). Playwright spec files run on
+`PROOF_UI_WORKERS` workers (default 2 — measured clean on a 16-core host,
+while at 3 one load-sensitive spec failed in each of three runs): the browser
+runs in a network
+namespace of its own (`ui/e2e/browser-server.ts`, from the image
+`ui/e2e/browser-image.txt` pins; a proof pulls it when the host lacks it), and
+every spec file owns its bucket. The two spec files that assert a render budget
+run alone after the others, as `--project` runs on one worker, and the run page
+at the task ceiling runs on the host's Chromium (`ui/playwright.config.ts`).
+The gate starts one browser server for both invocations, and the second reuses
+the first's UI build when the hash of the build's inputs
+(`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A **heavy** test — one whose assertions are
 bounds — runs alone, in its own CI shard or first on a local host. A test is
 heavy by what it asserts, not by how long it takes: the reduced-ceiling copies
 of a moved soak run the same E4/E7 thresholds and are heavy, while a test that

@@ -1014,20 +1014,30 @@ containers by `label=ork.orker=` or `label=ork.run=`, never with an unfiltered
 the Docker daemon, CPU and memory, the SeaweedFS and registry servers (isolated by
 bucket and tag), and the host's network interfaces.
 
-Playwright specs are not yet isolated that far. A proof runs spec files one at
-a time (`PROOF_UI_WORKERS=1`, after the integration phase), each spec still
-listens on fixed ports, and a spec that does not create a bucket of its own
-uses the development bucket, whose deployment-wide documents (retention, image
-policy, audit) every such spec shares. Chromium shares the host's network
-namespace, so a container started or stopped anywhere on the host aborts its
-loads (`ui/e2e/test.ts`). Until each spec allocates its own ports and bucket
-and the browser runs in a network namespace of its own, at most one proof runs
-Playwright specs on a host at a time: the Playwright gate takes a host-wide
-lock, so a feature proof's specs wait for a full proof's, and never run beside
-them. Specs run by hand (`cd ui && bun run test`) take no lock; do not run them
-while a proof's Playwright gate runs. The observability gate is the other
-exception: its Prometheus scrape targets are fixed ports, so it runs under a
-host-wide lock of its own. A test that proves something did NOT happen within a
+Playwright specs are isolated from each other, and not yet from another
+proof's. The browser runs in a network namespace of its own — Playwright's
+browser server in the container `ui/e2e/browser-image.txt` pins by digest
+(`ui/e2e/browser-server.ts`), reached over `connectOptions` with
+`exposeNetwork: '<loopback>'`, so a spec's `127.0.0.1` URLs are unchanged —
+and a container started or stopped anywhere on the host never reaches it;
+`ui/e2e/network-change.spec.ts` proves that with a host-namespace browser as
+the positive control, and the navigation guard's ceiling is zero repeats. One
+spec, the run page at the task ceiling, is still driven on the host's Chromium
+(`ui/playwright.config.ts`, `projects`): alone, after every other file, with
+tasks that open no network interface. Every spec file creates a bucket of its own (`ownBucket` in
+`ui/e2e/harness.ts`, the same name shape as `s3bucket`, removed when the file
+is done), so the deployment-wide documents (retention, image policy, audit,
+webhooks, the namespace registry) are its alone, and a proof runs spec files
+`PROOF_UI_WORKERS` at a time (default 2), after the integration phase; its
+Temporal namespace is `temporalNamespace`'s, the prefix extended with the
+file, its process and a stamp. Each spec still listens on fixed ports and
+names fixed Orker work roots — unique across files, not across proofs — so at most one
+proof runs Playwright specs on a host at a time: the Playwright gate takes a
+host-wide lock, so a feature proof's specs wait for a full proof's, and never
+run beside them. Specs run by hand (`cd ui && bun run test`) take no lock; do
+not run them while a proof's Playwright gate runs. The observability gate is
+the other exception: its Prometheus scrape targets are fixed ports, so it runs
+under a host-wide lock of its own. A test that proves something did NOT happen within a
 window also observes, in that window, that the system was making progress, so
 a slow host cannot make it pass.
 
@@ -1164,9 +1174,13 @@ reason to run less: the fast gates (lint, build, unit, vet and the UI
 type-check and unit suites) run first and alone, and a failure there or in any
 later gate stops a local proof (`PROOF_FAIL_FAST`, docs/PROOFS.md §2.2), which
 still writes its failing verdict; integration tests run as separate processes,
-`PROOF_JOBS` at a time (default 4), beside the activity fixture, and
-Playwright spec files run on `PROOF_UI_WORKERS` workers (default and today's
-only safe value: 1). The unit and integration ledgers, and the
+`PROOF_JOBS` at a time (default 4: six ran 270 of 277 jobs clean, then one
+engine boot stalled 50 s on its fresh bucket's first read while the store grew
+and removed per-bucket volumes, which a merge gate cannot afford), with the
+activity fixture beside them once the heavy tests have run alone, and
+Playwright spec files run on `PROOF_UI_WORKERS` workers (default 2: measured
+clean; at 3 a load-sensitive spec failed in each of three runs). The
+unit and integration ledgers, and the
 Playwright ledger, list every test that `go test -list` and
 `playwright test --list` report, with the job that ran it, its outcome and its
 duration. A listed test without an outcome fails the gate. In the full tier,

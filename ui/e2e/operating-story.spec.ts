@@ -4,25 +4,32 @@ import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
-	rpc as callEngine,
-	s3Env,
-	spawnLogged,
-	tcpOpen,
-	uiDir,
+	removeBucket,
 	repoRoot,
-	waitFor,
-	waitForEngine,
-	bin,
+	rpc as callEngine,
+	spawnLogged,
+	storeEnv,
+	tcpOpen,
 	temporalAddress,
-	temporalReachable
+	temporalNamespace,
+	temporalReachable,
+	uiDir,
+	waitFor,
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('operating-story');
 
 // The operating story, in one command against the real stack.
 //
@@ -59,7 +66,7 @@ const ENGINE_B = 'http://127.0.0.1:18191';
 const ENGINE_B_WS = 'ws://127.0.0.1:18191';
 const UI_ORIGIN = 'http://127.0.0.1:14181';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-operating-story';
+const TEMPORAL_NAMESPACE = temporalNamespace('operating-story');
 // The image every container task here runs. It is activity-shell rather than a
 // bare `alpine:3.20`, because an activity must write
 // /orkstack/output/values.json and a stock base image does not — an image that
@@ -180,6 +187,7 @@ let mainOrkerProc: ChildProcess | undefined;
 let batchOrkerProc: ChildProcess | undefined;
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -221,13 +229,13 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine-a.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18190'
 	});
 	spawnLogged(outPath('engine-b.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18191',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
@@ -235,12 +243,12 @@ test.beforeAll(async () => {
 	// workspace path and what its identity lock is keyed on (see orkerEnv).
 	mainOrkerProc = spawnLogged(outPath('orker-main.log'), bin('orker'), [], {
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('story-main')
 	});
 	batchOrkerProc = spawnLogged(outPath('orker-batch.log'), bin('orker'), [], {
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('story-batch'),
 		ORK_ORKER_POOL: 'batch'
 	});
@@ -274,6 +282,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 // ── 1. the chatty container, followed live from a replica that started

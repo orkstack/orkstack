@@ -446,3 +446,62 @@ func TestUILedger_ADeclaredVisibilityTimeoutExitsCleanlyAndNoOther(t *testing.T)
 		t.Errorf("a local proof: exit %d, gaps %v", code, l.KnownGaps)
 	}
 }
+
+// With several workers, the gap before a test is measured within its own
+// lane: the other lane's test that ended last says nothing about what this
+// file paid in beforeAll. Here a.spec.ts runs in lane 0 and b.spec.ts in
+// lane 1, interleaved in time exactly as interleaved() is; measured on one
+// global timeline their walls would be 17 and 13, losing most of each file's
+// start-up to the other file.
+func TestCosts_AFilesWallIsMeasuredWithinItsOwnWorkerLane(t *testing.T) {
+	entry := func(file, title string, lane int, start, dur float64) uiEntry {
+		return uiEntry{File: file, Title: title, Project: "chromium", Outcome: outcomePass, Seconds: dur,
+			abs: 1_000 + start, endAbs: 1_000 + start + dur, lane: lane}
+	}
+	got := fileWalls([]uiEntry{
+		entry("a.spec.ts", "one", 0, 0, 10),
+		entry("b.spec.ts", "one", 1, 12, 5),
+		entry("a.spec.ts", "two", 0, 20, 4),
+		entry("b.spec.ts", "two", 1, 24, 6),
+	})
+	want := map[string]float64{"a.spec.ts": 14 + 10, "b.spec.ts": 11 + 7}
+	if len(got) != 2 {
+		t.Fatalf("files = %+v", got)
+	}
+	for _, f := range got {
+		if math.Abs(f.WallSeconds-want[f.File]) > 1e-6 {
+			t.Errorf("%s wall = %v, want %v (its tests %v plus the gap before its second test in its own lane)", f.File, f.WallSeconds, want[f.File], f.Seconds)
+		}
+	}
+}
+
+// The lane comes from the report: a result's parallelIndex.
+func TestUILedger_ReadsEachResultsWorkerLane(t *testing.T) {
+	report := interleaved()
+	report.Suites[1].Specs[0].Tests[0].Results[0].ParallelIndex = 2
+	_, tests := flattenPW(report)
+	if got := tests["b.spec.ts › one [chromium]"].lane; got != 2 {
+		t.Errorf("lane = %d, want 2", got)
+	}
+	if got := tests["a.spec.ts › one [chromium]"].lane; got != 0 {
+		t.Errorf("lane = %d, want 0", got)
+	}
+}
+
+// A proof with several workers runs the suite as two invocations — the
+// parallel project, then the solo projects on one worker — and the ledger
+// reads both reports as one run: every listed test finds its outcome.
+func TestUILedger_ReadsSeveralReportsAsOneRun(t *testing.T) {
+	a := fixtureReport(uiTestSpec{"a.spec.ts", "one", 0, 10})
+	b := fixtureReport(uiTestSpec{"solo.spec.ts", "budget", 20, 4})
+	list := fixtureReport(uiTestSpec{"a.spec.ts", "one", 0, 10}, uiTestSpec{"solo.spec.ts", "budget", 20, 4})
+	merged := mergeReports(a, b)
+	l := buildUILedger(list, merged, 0, 0)
+	if len(l.Problems) != 0 || l.Pass != 2 || l.Listed != 2 {
+		t.Fatalf("ledger pass %d of %d, problems %v", l.Pass, l.Listed, l.Problems)
+	}
+	half := buildUILedger(list, a, 0, 0)
+	if half.Pass != 1 || len(half.Problems) == 0 {
+		t.Errorf("with one report only, the solo test must have no outcome: pass %d, problems %v", half.Pass, half.Problems)
+	}
+}

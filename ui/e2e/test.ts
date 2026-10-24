@@ -81,6 +81,7 @@ export async function navigateThroughNetworkChanges(
   page: Page,
   label: string,
   navigate: () => Promise<Response | null>,
+  report: (line: string) => void = console.log,
 ): Promise<Response | null> {
   for (let attempt = 1; ; attempt++) {
     const aborted: string[] = [];
@@ -126,7 +127,7 @@ export async function navigateThroughNetworkChanges(
         `${what} on every one of ${NAVIGATION_ATTEMPTS} attempts:\n  ${aborted.join("\n  ")}`,
       );
     }
-    console.log(
+    report(
       `e2e: ${what}; navigating again (attempt ${attempt + 1} of ${NAVIGATION_ATTEMPTS})`,
     );
   }
@@ -169,19 +170,36 @@ async function pageCodeSettled(
   }
 }
 
-/** guardPage makes `page.goto` and `page.reload` navigate through network changes. */
-export function guardPage(page: Page): void {
+/**
+ * guardPage makes `page.goto` and `page.reload` navigate through network
+ * changes. Each repeat is reported through `report` — the suite's log by
+ * default, which the proof's ui-e2e ledger counts against
+ * NETWORK_CHANGE_RETRY_CEILING (playwright.config.ts). A spec that provokes a
+ * repeat on purpose, on a host-namespace browser of its own
+ * (network-change.spec.ts), passes its transcript instead, so a deliberate
+ * repeat is never counted as churn the suite's browser saw.
+ */
+export function guardPage(
+  page: Page,
+  report: (line: string) => void = console.log,
+): void {
   if (guardedPages.has(page)) return;
   guardedPages.add(page);
   const goto = page.goto.bind(page);
   const reload = page.reload.bind(page);
   page.goto = (url, options) =>
-    navigateThroughNetworkChanges(page, `goto ${url}`, () =>
-      goto(url, options),
+    navigateThroughNetworkChanges(
+      page,
+      `goto ${url}`,
+      () => goto(url, options),
+      report,
     );
   page.reload = (options) =>
-    navigateThroughNetworkChanges(page, `reload ${page.url()}`, () =>
-      reload(options),
+    navigateThroughNetworkChanges(
+      page,
+      `reload ${page.url()}`,
+      () => reload(options),
+      report,
     );
 }
 

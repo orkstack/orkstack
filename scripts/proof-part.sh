@@ -173,7 +173,7 @@ part_start_temporal() {
 
 part_binaries() {
 	local pkg
-	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller; do
+	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run; do
 		go build -o "$DIR/bin/$(basename "$pkg")" "$pkg" || return 1
 	done
 }
@@ -314,7 +314,11 @@ part_main() { # <part>
 			-namespace-prefix "$PROOF_ID-s$k" -print-progress || true
 		;;
 	ui-e2e:*)
-		local k="${PART#ui-e2e:}"
+		local k="${PART#ui-e2e:}" image
+		# The browser-server image the suite's global setup runs Chromium in
+		# (ui/e2e/browser-server.ts), pinned by digest in ui/e2e/browser-image.txt.
+		image="$(grep -v '^#' "$REPO/ui/e2e/browser-image.txt" | grep -v '^$' | head -n1)"
+		docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image" >"$DIR/browser-image-pull.log" 2>&1 || part_say "proof: cannot pull $image"
 		PART_TEMPORAL_RAN=""
 		part_run temporal temporal.log part_start_temporal || true
 		STACK_ENV+=(ORK_TEMPORAL_ADDRESS="$TEMPORAL_ADDRESS")
@@ -337,15 +341,30 @@ part_main() { # <part>
 			env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
 				"$REPO/ui/node_modules/.bin/playwright" test --list --reporter=json "${rel[@]}" >"$DIR/ui-e2e-list.json"
 		) >"$DIR/ui-e2e.log" 2>&1 || true
-		(
-			cd "$REPO/ui"
-			env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
-				PLAYWRIGHT_JSON_OUTPUT_FILE="$DIR/ui-e2e-report.json" \
-				PLAYWRIGHT_JSON_OUTPUT_NAME="$DIR/ui-e2e-report.json" \
-				"$REPO/ui/node_modules/.bin/playwright" test --workers "$PROOF_UI_WORKERS" --reporter=list,json "${rel[@]}"
-		) >>"$DIR/ui-e2e.log" 2>&1 || true
+		# As scripts/proof.sh ui_e2e_locked: one invocation on one worker; with
+		# more workers the parallel project first, then the solo projects (the
+		# render-budget files) on one worker, and the ledger reads both reports.
+		part_playwright() { # <report> <workers> <args...>
+			local report="$1" workers="$2"
+			shift 2
+			(
+				cd "$REPO/ui"
+				env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+					PLAYWRIGHT_JSON_OUTPUT_FILE="$report" \
+					PLAYWRIGHT_JSON_OUTPUT_NAME="$report" \
+					"$REPO/ui/node_modules/.bin/playwright" test --workers "$workers" --reporter=list,json "$@"
+			) >>"$DIR/ui-e2e.log" 2>&1
+		}
+		local reports=(-report "$DIR/ui-e2e-report.json")
+		if [ "$PROOF_UI_WORKERS" -gt 1 ]; then
+			part_playwright "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" --project chromium "${rel[@]}" || true
+			part_playwright "$DIR/ui-e2e-report-solo.json" 1 --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling "${rel[@]}" || true
+			reports+=(-report "$DIR/ui-e2e-report-solo.json")
+		else
+			part_playwright "$DIR/ui-e2e-report.json" 1 "${rel[@]}" || true
+		fi
 		part_run ui-e2e ui-e2e-ledger.log "$PR" ui-ledger -list "$DIR/ui-e2e-list.json" \
-			-report "$DIR/ui-e2e-report.json" -log "$DIR/ui-e2e.log" \
+			"${reports[@]}" -log "$DIR/ui-e2e.log" \
 			-config "$REPO/ui/playwright.config.ts" -out "$DIR" -shard "$k" -part "$PART" \
 			-host-speed scripts/proof-host-speed.tsv -host-speed-base "$(dirname "$UI_PLAN")/host-speed-base.txt" || true
 		;;

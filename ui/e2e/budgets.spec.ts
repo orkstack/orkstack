@@ -2,26 +2,32 @@ import { expect, test, type Page } from './test';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	openNamespaceEdit,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
 import { adminNamespaceUrl } from './uiHelpers';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('budgets');
 
 // Namespace budgets in a browser, against a real engine, Orker, Temporal and
 // MinIO (docs/DEPLOY.md "Namespace budgets"):
@@ -81,6 +87,7 @@ tasks:
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	// Three image builds, two Go builds, the UI build, and an engine that
 	// reloads every orkflow on the shared store before it serves: on a loaded
 	// host that has measured past the 180 s default, so the hook gets its own.
@@ -96,12 +103,12 @@ test.beforeAll(async () => {
 	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18421',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
 		ORK_USAGE_CACHE_TTL: '0'
 	});
-	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('budgets') });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('budgets') });
 	spawnLogged(
 		out('ui.log'),
 		'node',
@@ -121,6 +128,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 async function awaitStatus(runId: string, status: string): Promise<void> {

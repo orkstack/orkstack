@@ -2,29 +2,36 @@ import { expect, test } from "./test";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import {
+  bin,
   catalogEnv,
   clusterEnv,
+  ensureBucket,
   killStarted,
+  ownBucket,
   proofOut,
+  removeBucket,
   rpc as callEngine,
-  s3Env,
   spawnLogged,
+  storeEnv,
   tcpOpen,
+  temporalAddress,
+  temporalNamespace,
+  temporalReachable,
   uiDir,
   waitFor,
   waitForEngine,
-  bin,
-  temporalAddress,
-  temporalReachable,
 } from "./harness";
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('orkflow-delete');
 
 // Orkflow deletion through the real built UI and engine. The UI-only safety
 // states use targeted ListRuns responses; successful deletion uses the real
 // Temporal-backed ListRuns check and the real S3-backed DeleteOrkflow RPC.
-const ENGINE = "http://127.0.0.1:18089";
-const ENGINE_WS = "ws://127.0.0.1:18089";
-const UI_ORIGIN = "http://127.0.0.1:14182";
-const TEMPORAL_NAMESPACE = "ork-ui-orkflow-delete";
+const ENGINE = "http://127.0.0.1:18091";
+const ENGINE_WS = "ws://127.0.0.1:18091";
+const UI_ORIGIN = "http://127.0.0.1:14188";
+const TEMPORAL_NAMESPACE = temporalNamespace('orkflow-delete');
 const NS = "ui-delete";
 const STAMP = Date.now().toString(36);
 const DELETABLE = `deletable-${STAMP}`;
@@ -58,11 +65,12 @@ const versionsUrl = (name: string) =>
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
+  ensureBucket(BUCKET);
   mkdirSync(PROOF_DIR, { recursive: true });
   if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
   if (!(await tcpOpen(9000)))
     throw new Error("MinIO is not reachable on 127.0.0.1:9000");
-  for (const port of [18089, 14182]) {
+  for (const port of [18091, 14188]) {
     if (await tcpOpen(port))
       throw new Error(`port ${port} already in use (stray process?)`);
   }
@@ -70,8 +78,8 @@ test.beforeAll(async () => {
   spawnLogged(outPath("engine.log"), bin("ork"), [], {
     ...catalogEnv,
     ...clusterEnv(TEMPORAL_NAMESPACE),
-    ...s3Env,
-    ORK_HTTP_ADDR: "127.0.0.1:18089",
+    ...storeEnv(BUCKET),
+    ORK_HTTP_ADDR: "127.0.0.1:18091",
     ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
   });
   await waitForEngine(ENGINE);
@@ -81,7 +89,7 @@ test.beforeAll(async () => {
     ["build"],
     {
       HOST: "127.0.0.1",
-      PORT: "14182",
+      PORT: "14188",
       ENGINE_API_URL: ENGINE,
       PUBLIC_ENGINE_WS_URL: ENGINE_WS,
     },
@@ -105,6 +113,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await killStarted();
+  removeBucket(BUCKET);
 });
 
 test("the delete control confirms irreversible deletion and cancel changes nothing", async ({

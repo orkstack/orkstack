@@ -1,6 +1,5 @@
 import { expect, test, type Page } from './test';
 import AxeBuilder from '@axe-core/playwright';
-import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -9,11 +8,13 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
-	repoRoot,
+	removeBucket,
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
@@ -56,7 +57,7 @@ const UI_PORT = '14911';
 const UI_ORIGIN = `http://127.0.0.1:${UI_PORT}`;
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-shell-${STAMP}`;
-const BUCKET = `orkstack-shell-${STAMP}`;
+const BUCKET = ownBucket('shell');
 const FLOW = `shell-hello-${STAMP}`;
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR
@@ -73,17 +74,6 @@ const BANNED = /\b(queues?|sessions?|generations?|checkpoints?|task queue|workfl
 
 let runId = '';
 
-function bucketEnv(action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		ORK_BUCKET_ACTION: action,
-		ORK_S3_BUCKET: BUCKET,
-		ORK_S3_ENDPOINT: s3Env.ORK_S3_ENDPOINT,
-		ORK_S3_REGION: s3Env.ORK_S3_REGION,
-		ORK_S3_ACCESS_KEY: s3Env.ORK_S3_ACCESS_KEY,
-		ORK_S3_SECRET_KEY: s3Env.ORK_S3_SECRET_KEY
-	};
-}
 
 test.describe.configure({ mode: 'serial' });
 
@@ -96,7 +86,7 @@ test.beforeAll(async () => {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 	ensureActivityImages();
-	execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('ensure') });
+	ensureBucket(BUCKET);
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...catalogEnv,
@@ -147,7 +137,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
 	await killStarted();
 	try {
-		execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('cleanup') });
+		removeBucket(BUCKET, note);
 		note(`removed this run's own bucket ${BUCKET}`);
 	} catch (err) {
 		note(`bucket cleanup for ${BUCKET} failed (leaked, not fatal): ${err}`);

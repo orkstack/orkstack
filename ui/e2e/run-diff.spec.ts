@@ -3,24 +3,30 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { runCommand } from '../src/lib/runDetail';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-diff');
 
 // The run comparison, against a real engine, Orker, Temporal and MinIO: the
 // run page's Compare action pre-selects the orkflow's last successful run, the
@@ -88,6 +94,7 @@ async function submitTerminal(input: Record<string, unknown>): Promise<{ id: str
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -97,9 +104,9 @@ test.beforeAll(async () => {
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(out('engine.log'), bin('ork'), [], {
-		...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18099', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18099', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('run-diff') });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('run-diff') });
 	spawnLogged(out('ui.log'), 'node', ['build'], {
 		HOST: '127.0.0.1', PORT: '14199', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
 	}, uiDir);
@@ -139,6 +146,7 @@ test.afterAll(async () => {
 		// best effort: the namespace is empty and stamped
 	}
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 const compareURL = (from: string, to: string, ns = 'default') => `/runs/${from}/compare?to=${to}&ns=${ns}`;

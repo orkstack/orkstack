@@ -4,24 +4,31 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('run-evidence');
 
 // The Evidence dialog on the run page, in a browser, against the real stack
 // (docs/RUN_EVIDENCE.md).
@@ -41,7 +48,7 @@ const ENGINE = 'http://127.0.0.1:18537';
 const ENGINE_WS = 'ws://127.0.0.1:18537';
 const UI_ORIGIN = 'http://127.0.0.1:14537';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-run-evidence';
+const TEMPORAL_NAMESPACE = temporalNamespace('run-evidence');
 const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 
 const STAMP = Date.now().toString(36);
@@ -114,6 +121,7 @@ async function submit(name: string): Promise<string> {
 }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -145,13 +153,13 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18537',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		...orkerEnv('run-evidence')
 	});
 	await waitForEngine(ENGINE);
@@ -185,6 +193,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 /** Opens the finished run's page and waits until the archive answers. */

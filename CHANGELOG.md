@@ -8,6 +8,36 @@ include breaking changes, and each is marked **BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- A local full proof records each nightly-listed test its base also lists as
+  `deferred`, as a sharded proof's merger does. It built its ledger over the
+  plan's whole expected set, which includes the deferred tests, so the first
+  full proof on a tree whose base carried a nightly list failed with every
+  deferred test reported as having no outcome.
+
+### Changed
+
+- The proof is faster on one host, running the same tests: integration tests
+  keep `PROOF_JOBS=4` (6 was measured: clean but for one 50 s engine-boot
+  stall on a fresh bucket, so it stays an operator's choice), the activity contract
+  fixture starts after the heavy tests rather than beside them and runs its
+  four images in parallel, and the Playwright suite runs spec files
+  `PROOF_UI_WORKERS=2` at a time (was 1); the two spec files that assert a render
+  budget run alone, after the others. The browser runs in a network
+  namespace of its own — Playwright's browser server in the image
+  `ui/e2e/browser-image.txt` pins by digest, pulled by the proof when the host
+  lacks it — so a container starting or stopping on the host no longer aborts
+  a page load, and the navigation guard's ceiling is zero repeats; every spec
+  file creates and removes a bucket of its own instead of sharing
+  `orkstack-artifacts`, and names a Temporal namespace of its own run; the UI
+  build is reused when the hash of its inputs matches the last build's, the
+  browser server is started once per gate, a trace is kept only for a failing
+  test in every run (`--trace on` records one by hand); the
+  helper tools specs ran with `go run` are built once
+  per run. `ORK_E2E_BROWSER=host` drives the host's own Chromium instead
+  (docs/PROOFS.md, AGENTS.md §11.1).
+
 ### Added
 
 - The proof runs sharded in CI: `proofrun integration -plan-only` writes one

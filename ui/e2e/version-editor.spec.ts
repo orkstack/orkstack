@@ -2,23 +2,30 @@ import { expect, test, type Page } from './test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('version-editor');
 
 // Editing ANY version of an orkflow from the browser.
 //
@@ -44,10 +51,10 @@ import {
 // Ports of this spec's own, so the whole e2e directory runs in one invocation.
 const ENGINE = 'http://127.0.0.1:18087';
 const ENGINE_WS = 'ws://127.0.0.1:18087';
-const UI_ORIGIN = 'http://127.0.0.1:14180';
+const UI_ORIGIN = 'http://127.0.0.1:14185';
 
 const TEMPORAL_NAMESPACE =
-	process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-version-editor';
+	temporalNamespace('version-editor');
 
 // The OrkStack namespace is NOT `default`, deliberately: every link the version
 // list offers has to carry the namespace it belongs to, and a spec that worked
@@ -132,6 +139,7 @@ const openVersions = (page: Page) =>
 const versionsUrl = `${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${NS}&tab=versions`;
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
 		outPath(TRANSCRIPT),
@@ -154,7 +162,7 @@ test.beforeAll(async () => {
 	// reaches here and a failure here is never an absence (AGENTS.md §11.1).
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18087, 14180]) {
+	for (const port of [18087, 14185]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
@@ -169,7 +177,7 @@ test.beforeAll(async () => {
 	spawnLogged(outPath('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18087',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
@@ -181,7 +189,7 @@ test.beforeAll(async () => {
 		['build'],
 		{
 			HOST: '127.0.0.1',
-			PORT: '14180',
+			PORT: '14185',
 			ENGINE_API_URL: ENGINE,
 			PUBLIC_ENGINE_WS_URL: ENGINE_WS
 		},
@@ -205,6 +213,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 // The owner's scenario, verbatim.

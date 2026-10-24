@@ -357,3 +357,65 @@ export const containerHost = process.env.ORK_TEST_CONTAINER_HOST ?? 'host.docker
 export function cosignSign(args: string[]): string {
 	return execFileSync(bin('cosign-sign'), args, { cwd: repoRoot, encoding: 'utf8' });
 }
+
+/**
+ * ownBucket names an object-store bucket for THIS spec file alone:
+ * `orkstack-<label>-<pid>-<suffix>`, the shape internal/testsupport/s3bucket
+ * gives every Go integration test and scripts/proof-clean.sh recognises (it
+ * removes one only once the pid in its name is gone).
+ *
+ * Every spec used to share the development bucket, `orkstack-artifacts`, and
+ * with it that bucket's deployment-wide documents — retention, image policy,
+ * audit, webhooks, the namespace registry — and every earlier run's leftovers,
+ * which made an engine boot cost time proportional to the bucket's history
+ * and made spec files unable to run beside each other (AGENTS.md §11.1). A
+ * bucket of the file's own starts empty, is the file's to write, and is
+ * removed by removeBucket once the file is done with it.
+ */
+export function ownBucket(label: string): string {
+	if (!/^[a-z][a-z0-9-]{0,19}$/.test(label)) throw new Error(`ownBucket: label ${JSON.stringify(label)} must be ^[a-z][a-z0-9-]{0,19}$`);
+	return `orkstack-${label}-${process.pid}-${Math.floor(Math.random() * 1_000_000_000)}`;
+}
+
+/** storeEnv is s3Env against `bucket`: what an engine or Orker of this spec is started with. */
+export function storeEnv(bucket: string): Record<string, string> {
+	return { ...s3Env, ORK_S3_BUCKET: bucket };
+}
+
+/** bucketToolEnv is the environment test/tools/bucket-ensure needs for `action` on `bucket`. */
+function bucketToolEnv(bucket: string, action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
+	return { ...process.env, ...storeEnv(bucket), ORK_BUCKET_ACTION: action };
+}
+
+/** ensureBucket creates `bucket` (idempotently) before the spec's engine and Orker boot against it. */
+export function ensureBucket(bucket: string): void {
+	execFileSync(bin('bucket-ensure'), [], { cwd: repoRoot, env: bucketToolEnv(bucket, 'ensure'), stdio: 'pipe' });
+}
+
+/**
+ * removeBucket empties and deletes `bucket` once the spec is done with it.
+ * A failure is reported and never thrown: the spec's own assertions are its
+ * verdict, and a bucket left behind is what scripts/proof-clean.sh lists.
+ */
+export function removeBucket(bucket: string, report: (line: string) => void = console.warn): void {
+	try {
+		execFileSync(bin('bucket-ensure'), [], { cwd: repoRoot, env: bucketToolEnv(bucket, 'cleanup'), stdio: 'pipe' });
+	} catch (err) {
+		report(`e2e: bucket ${bucket} was not removed (left for scripts/proof-clean.sh): ${err}`);
+	}
+}
+
+/**
+ * temporalNamespace names a Temporal namespace for THIS run of THIS spec file
+ * alone: `<prefix>-<label>-<pid>-<stamp>`, where the prefix is
+ * ORK_TEMPORAL_NAMESPACE (`ork-ui` by default), extended as AGENTS.md §11.1
+ * asks of every integration test. A spec used to name a FIXED namespace, and
+ * against a long-lived Temporal (`make infra-up`'s) its lists then held the
+ * runs of every earlier run of the spec — whose snapshots and commits live in
+ * an earlier run's bucket, gone with it — so a page could pick a run the
+ * engine could no longer read. A proof's Temporal is its own and fresh; a
+ * developer's is not, and the spec must not care which it is given.
+ */
+export function temporalNamespace(label: string): string {
+	return `${process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui'}-${label}-${process.pid}-${Date.now().toString(36)}`;
+}

@@ -2,25 +2,31 @@ import { expect, test, type Page } from './test';
 import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	repoRoot,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('examples-gallery');
 
 // The example gallery against a real engine, Orker, Temporal and MinIO
 // (examples/README.md):
@@ -82,6 +88,7 @@ const EXAMPLES = readdirSync(path.join(repoRoot, 'examples'))
 	});
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -91,9 +98,9 @@ test.beforeAll(async () => {
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(out('engine.log'), bin('ork'), [], {
-		...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18853', ORK_WS_ALLOWED_ORIGINS: UI
+		...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18853', ORK_WS_ALLOWED_ORIGINS: UI
 	});
-	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('examples-gallery') });
+	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('examples-gallery') });
 	spawnLogged(out('ui.log'), 'node', ['build'], {
 		HOST: '127.0.0.1', PORT: '14853', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
 	}, uiDir);
@@ -107,7 +114,10 @@ test.beforeAll(async () => {
 	note(`namespace ${NS}, engine ${ENGINE}, ui ${UI}, ${EXAMPLES.length} examples in examples/`);
 });
 
-test.afterAll(async () => { await killStarted(); });
+test.afterAll(async () => {
+	await killStarted();
+	removeBucket(BUCKET);
+});
 
 test('P1: the gallery lists every example with its name and description', async ({ page }) => {
 	await page.goto(`${UI}/apply?ns=${NS}`);

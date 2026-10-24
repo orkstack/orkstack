@@ -2,23 +2,30 @@ import { expect, test, type Page } from './test';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
 import { ORKFLOW_PLACEHOLDER, automationPlaceholder } from '../src/lib/placeholders';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('document-header');
 
 // The document header (docs/DSL.md, "The document header") through the UI:
 // the Apply page's placeholder is a document that applies, header and all; a
@@ -28,7 +35,7 @@ import { ORKFLOW_PLACEHOLDER, automationPlaceholder } from '../src/lib/placehold
 // placeholder is the automation document's own header.
 const ENGINE = 'http://127.0.0.1:18102';
 const UI = 'http://127.0.0.1:14200';
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-document-header';
+const TEMPORAL_NAMESPACE = temporalNamespace('document-header');
 const NS = `document-header-${Date.now().toString(36)}`;
 const proof = proofOut(
 	process.env.ORK_PROOF_DIR
@@ -54,6 +61,7 @@ namespace: ${NS}
 `;
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(proof('..'), { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('the object store is not reachable on 127.0.0.1:9000');
@@ -63,7 +71,7 @@ test.beforeAll(async () => {
 	spawnLogged(proof('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
-		...s3Env,
+		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18102',
 		ORK_WS_ALLOWED_ORIGINS: UI
 	});
@@ -81,6 +89,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
+	removeBucket(BUCKET);
 });
 
 test('the header is required, shown and offered by every authoring surface', async ({ page }) => {

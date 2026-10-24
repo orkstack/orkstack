@@ -2,30 +2,37 @@ import { expect, test, type Page } from './test';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+	bin,
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	orkerEnv,
+	ownBucket,
 	proofOut,
+	removeBucket,
 	rpc as callEngine,
-	s3Env,
 	spawnLogged,
+	storeEnv,
 	tcpOpen,
+	temporalAddress,
+	temporalNamespace,
+	temporalReachable,
 	uiDir,
 	waitFor,
-	waitForEngine,
-	bin,
-	temporalAddress,
-	temporalReachable
+	waitForEngine
 } from './harness';
+
+/** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
+const BUCKET = ownBucket('authoring-operations');
 
 // Authoring is useful only if selecting a version, filling its declared input,
 // and replaying a prior run all address the same immutable definition. This
 // uses the built UI and a live engine/Orker, not mocked client responses.
 const ENGINE = 'http://127.0.0.1:18089';
 const UI = 'http://127.0.0.1:14182';
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-authoring';
+const TEMPORAL_NAMESPACE = temporalNamespace('authoring');
 const NS = 'authoring-ops';
 const FLOW = `authoring-${Date.now().toString(36)}`;
 const proof = proofOut(process.env.ORK_PROOF_DIR ? path.join(process.env.ORK_PROOF_DIR, 'authoring-operations') : path.join(uiDir, 'test-results', 'authoring-operations'));
@@ -65,14 +72,15 @@ tasks:
 function shot(page: Page, name: string) { return page.screenshot({ path: proof(name), fullPage: true }); }
 
 test.beforeAll(async () => {
+	ensureBucket(BUCKET);
 	mkdirSync(proof('..'), { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18089, 14182]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
 	ensureActivityImages();
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
-	spawnLogged(proof('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...s3Env, ORK_HTTP_ADDR: '127.0.0.1:18089', ORK_WS_ALLOWED_ORIGINS: UI });
-	spawnLogged(proof('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ...orkerEnv('authoring-operations') });
+	spawnLogged(proof('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18089', ORK_WS_ALLOWED_ORIGINS: UI });
+	spawnLogged(proof('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('authoring-operations') });
 	await waitForEngine(ENGINE);
 	spawnLogged(proof('ui.log'), 'node', ['build'], { HOST: '127.0.0.1', PORT: '14182', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') }, uiDir);
 	// A readiness probe only: any always-present route answers it, and this one
@@ -87,7 +95,10 @@ test.beforeAll(async () => {
 	await rpc('OrkflowService/ApplyOrkflow', { namespace: NS, yaml: yaml('2.0.0', 'two') });
 });
 
-test.afterAll(async () => { await killStarted(); });
+test.afterAll(async () => {
+	await killStarted();
+	removeBucket(BUCKET);
+});
 
 test('version-pinned submit, typed inputs, CLI, and run-again retain author intent', async ({ page }) => {
 	// The orkflow's own page IS the submit surface: `?version=` selects the
