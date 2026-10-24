@@ -17,6 +17,27 @@ export function shellQuote(value: string): string {
 }
 
 /**
+ * A command's words, split at the spaces a shell splits it at — never
+ * inside a quoted token — so a page can let a long command wrap only between
+ * its words. Joined with single spaces they are the command again.
+ */
+export function commandWords(command: string): string[] {
+	const words: string[] = [];
+	let word = '';
+	let quote = '';
+	for (const c of command) {
+		if (quote === '' && (c === "'" || c === '"')) quote = c;
+		else if (c === quote) quote = '';
+		if (c === ' ' && quote === '') {
+			words.push(word);
+			word = '';
+		} else word += c;
+	}
+	words.push(word);
+	return words;
+}
+
+/**
  * A run id drawn short where a whole one does not fit: its first four and
  * last six characters ("ork-…873153"). Characters are counted, never parsed:
  * nothing is read from an id's parts (AGENTS.md §7).

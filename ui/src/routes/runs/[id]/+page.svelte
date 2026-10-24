@@ -60,7 +60,7 @@
 	import { errorMessage } from '$lib/client';
 	import { runClient } from '$lib/clients/runs';
 	import { statsClient } from '$lib/clients/stats';
-	import { artifactMetadata, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shortRunId, taskRunCommand, timestampJson } from '$lib/runDetail';
+	import { artifactMetadata, commandWords, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shortRunId, taskRunCommand, timestampJson } from '$lib/runDetail';
 	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '$lib/eventBuffer';
 	import { eventBatcher, slicedApply } from '$lib/eventBatch';
 	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
@@ -2059,7 +2059,9 @@
 				<ul class="space-y-1.5">
 					{#each [{ key: 'get', command: getCommand, what: 'Read this run' }, { key: 'again', command: againCommand, what: 'Run it again' }] as line (line.key)}
 						<li class="flex items-start gap-2">
-							<code class="min-w-0 flex-1 overflow-x-auto font-mono text-xs break-normal whitespace-pre-wrap text-ink" data-testid="run-reproduce-{line.key}">{line.command}</code>
+							<code class="min-w-0 flex-1 overflow-x-auto font-mono text-xs text-ink" data-testid="run-reproduce-{line.key}"
+									>{#each commandWords(line.command) as word, i (i)}{#if i > 0}{' '}{/if}<span class="whitespace-nowrap">{word}</span>{/each}</code
+								>
 							<button
 								type="button"
 								class="btn-icon -mt-1.5 inline-flex size-7 shrink-0 items-center justify-center"

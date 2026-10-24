@@ -290,8 +290,8 @@ test('running: a RUNNING task is a soft green box that breathes, and stands stil
 	}
 
 	// The task map: the running cell's mark fades and returns.
-	await setTheme(page, 'light');
 	await page.setViewportSize({ width: 1440, height: 900 });
+	await setTheme(page, 'light');
 	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default&view=map`);
 	await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 	// DAG order: warm, long, after — `long` is the second cell.
@@ -320,6 +320,7 @@ test('running: a RUNNING task is a soft green box that breathes, and stands stil
 	expect(near(await mapPixel(page, 1), whole)).toBe(true);
 	await page.screenshot({ path: out('running-map-light-1440-reduced-motion.png') });
 	await page.emulateMedia({ reducedMotion: null });
+	await page.setViewportSize({ width: 1440, height: 900 });
 	await setTheme(page, 'system');
 });
 

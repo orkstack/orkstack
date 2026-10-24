@@ -91,3 +91,11 @@ test('a short value is said on one line, spaced like the pretty form; a long one
 	expect(emptyPayload(payload({}))).toBe(true);
 	expect(emptyPayload(payload({ a: 1 }))).toBe(false);
 });
+
+test('a command splits into the words a shell sees, and joins back into itself', async () => {
+	const { commandWords } = await import('../src/lib/runDetail');
+	const cmd = "orkctl --namespace 'prod west' run get ork-1 --json";
+	expect(commandWords(cmd)).toEqual(['orkctl', '--namespace', "'prod west'", 'run', 'get', 'ork-1', '--json']);
+	expect(commandWords(cmd).join(' ')).toBe(cmd);
+	expect(commandWords(`orkctl x --reason 'it'"'"'s ok'`)).toEqual(['orkctl', 'x', '--reason', `'it'"'"'s ok'`]);
+});
