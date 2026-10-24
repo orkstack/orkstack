@@ -2577,10 +2577,10 @@ type DescribeOrkerResult struct {
 	// flight right now, pinned members included. Counted in the process; it
 	// is a measurement, not a projection.
 	RunningTasks int32 `protobuf:"varint,13,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
-	// open_pins is how many pins this Orker currently hosts: sessions it
-	// accepted and has not completed. Counted from the session creation
-	// activities in flight, so it is exact from the instant a pin is accepted,
-	// before its first member arrives. It never exceeds max_concurrent_pins.
+	// open_pins is how many pins this Orker currently hosts: pins it accepted
+	// and has not closed. Counted from the pin openings in flight, so it is
+	// exact from the instant a pin is accepted, before its first member
+	// arrives. It never exceeds max_concurrent_pins.
 	OpenPins int32 `protobuf:"varint,14,opt,name=open_pins,json=openPins,proto3" json:"open_pins,omitempty"`
 	// pins details each open pin, ordered by run_id. len(pins) == open_pins.
 	Pins []*OpenPin `protobuf:"bytes,15,rep,name=pins,proto3" json:"pins,omitempty"`
@@ -2764,9 +2764,9 @@ func (x *DescribeOrkerResult) GetJoinSupported() bool {
 	return false
 }
 
-// OpenPin is one pin this Orker currently hosts: a session it has accepted
-// and not yet completed. It names the run and the pin — never the session,
-// which is internal (AGENTS.md §7) — and says when the shared directory's
+// OpenPin is one pin this Orker currently hosts: a pin it has accepted and
+// not yet closed. It names the run and the pin, never the mechanism behind
+// it (AGENTS.md §7), and says when the shared directory's
 // lease ends, which is the longest the pin can live even if nothing else
 // closes it (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
 type OpenPin struct {
@@ -2774,8 +2774,8 @@ type OpenPin struct {
 	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	// pin is the name the author wrote in `pin:`. EMPTY until the pin's first
 	// member attempt arrives: the Orker learns the name from
-	// ExecuteTaskInput.pin, and a session exists from the moment its creation
-	// is accepted, before any member has been dispatched to it.
+	// ExecuteTaskInput.pin, and a pin is open from the moment it is accepted,
+	// before any member has been dispatched to it.
 	Pin string `protobuf:"bytes,2,opt,name=pin,proto3" json:"pin,omitempty"`
 	// since is when this Orker accepted the pin.
 	Since *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=since,proto3" json:"since,omitempty"`

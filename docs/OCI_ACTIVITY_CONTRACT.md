@@ -594,7 +594,7 @@ The template helpers are exactly three:
   re-serializes: key order, spacing and number formatting are preserved, and
   the committed `sha256` is the sha256 of exactly what the workload wrote.
 
-256 KiB, not the 4 KiB of Tekton or Kubernetes, because `values.json` is an
+The bound is 256 KiB rather than a few KiB because `values.json` is an
 object-store artifact, not a Temporal payload. The Temporal budget is enforced
 separately: only a `values.json` of ≤ 4 KiB is copied inline into the result.
 

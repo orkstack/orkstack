@@ -93,8 +93,8 @@ func (x *RetryPolicy) GetMaximumIntervalSeconds() int32 {
 }
 
 // Pin is a named group of tasks that execute on ONE Orker process and share
-// /orkstack/shared for the group's lifetime (docs/DSL.md "Pins"). It is the user-facing word; the Temporal session that
-// implements it is internal, as a queue is to a pool.
+// /orkstack/shared for the group's lifetime (docs/DSL.md "Pins"). What
+// implements it is internal, as a pool's routing is (AGENTS.md §7).
 type Pin struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // slug, unique within the orkflow
@@ -239,7 +239,7 @@ type Task struct {
 	// wherever an operator has pointed the default, both spellings go there and
 	// both are reported on the pool that answers for it. Within a run, one pool
 	// name means one set of Orkers, in both directions. The engine maps a pool
-	// to its internal execution channel and nowhere else.
+	// to its internal route and nowhere else.
 	Pool string `protobuf:"bytes,9,opt,name=pool,proto3" json:"pool,omitempty"`
 	// uses is what the author wrote: a catalog activity name ("shell") or a
 	// registry reference ("ghcr.io/acme/migrate:v3", "repo@sha256:..."). It is

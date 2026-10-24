@@ -17,8 +17,8 @@ message RetryPolicy {
 }
 
 // Pin is a named group of tasks that execute on ONE Orker process and share
-// /orkstack/shared for the group's lifetime (docs/DSL.md "Pins"). It is the user-facing word; the Temporal session that
-// implements it is internal, as a queue is to a pool.
+// /orkstack/shared for the group's lifetime (docs/DSL.md "Pins"). What
+// implements it is internal, as a pool's routing is (AGENTS.md §7).
 message Pin {
   string name = 1;                       // slug, unique within the orkflow
 
@@ -77,7 +77,7 @@ message Task {
   // wherever an operator has pointed the default, both spellings go there and
   // both are reported on the pool that answers for it. Within a run, one pool
   // name means one set of Orkers, in both directions. The engine maps a pool
-  // to its internal execution channel and nowhere else.
+  // to its internal route and nowhere else.
   string pool = 9;
 
   // uses is what the author wrote: a catalog activity name ("shell") or a

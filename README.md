@@ -8,8 +8,11 @@
 
 ---
 
-> Status: pre-release; breaking changes are listed in
-> [CHANGELOG.md](./CHANGELOG.md).
+> Status: pre-release — stable, but breaking changes may be introduced until
+> 1.0. Each one is listed in [CHANGELOG.md](./CHANGELOG.md), marked
+> **BREAKING**.
+>
+> Documentation: [orkstack.github.io/orkstack](https://orkstack.github.io/orkstack/)
 
 ## Why
 
@@ -98,12 +101,19 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the components and data flow.
 ## Quickstart (dev)
 
 ```bash
-make up             # Temporal, SeaweedFS, a registry, engine, orker and UI, health-checked
+make infra-up       # Temporal, SeaweedFS and a local registry
+make -C images push # the first-party activity images, into that registry
+make up             # engine, orker and UI on that infrastructure, health-checked
 ./bin/orkctl apply examples/hello.ork.yaml
 ./bin/orkctl run plan hello-ork     # which tasks would run; starts nothing
 ./bin/orkctl run submit hello-ork --watch
 make down           # stop everything (data is kept)
 ```
+
+The first-party activities (`uses: shell`, `http`, …) resolve to the images
+`make -C images push` put in the local registry; without that step an apply
+that uses them fails. [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md)
+walks through each step.
 
 An Orkflow is a YAML document that begins with `apiVersion: orkstack/v1` and
 `kind: Orkflow`; `examples/hello.ork.yaml` is a small one, and
@@ -207,6 +217,7 @@ gitignored; the commit or pull request quotes it. No proof, no done.
 
 | Document | What it covers |
 |---|---|
+| [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md) | From a fresh clone to a finished run on the local stack, step by step |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Components, the engine's pieces, and how a run flows through them |
 | [AGENTS.md](./AGENTS.md) | The engineering contract: boundaries, vocabulary, invariants, evidence |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | The change checklist |
@@ -218,10 +229,19 @@ gitignored; the commit or pull request quotes it. No proof, no done.
 | [docs/ORKFLOW_TRIGGERS.md](./docs/ORKFLOW_TRIGGERS.md) | Inbound triggers: plain-HTTP run starters with bearer tokens |
 | [docs/ORKFLOW_SCHEDULES.md](./docs/ORKFLOW_SCHEDULES.md) | Schedules on Temporal Schedules: specs, fires, backfill, overlap |
 | [docs/AUTOMATION.md](./docs/AUTOMATION.md) | Automation documents: a namespace's settings, schedules, triggers and webhooks as YAML |
+| [docs/WEBHOOKS.md](./docs/WEBHOOKS.md) | Run-event webhooks: scoping, signed bodies, delivery records and redelivery |
 | [docs/schemas/](./docs/schemas/) | JSON Schemas of the authored documents (generated) |
 | [docs/CLI.md](./docs/CLI.md) | The `orkctl` command and flag reference (generated from the Cobra tree) |
+| [docs/API.md](./docs/API.md) | The client-facing Connect API: every service, message and enum (generated from the proto sources) |
+| [docs/REASONS.md](./docs/REASONS.md) | Every machine-readable failure reason, what it means and what to do |
 | [docs/PROOFS.md](./docs/PROOFS.md) | Proofs and CI: the tiers, the plan and its shards, the job graph, artifacts and recovery procedures |
+| [docs/PROVEN.md](./docs/PROVEN.md) | How OrkStack is proven: what is tested before a change merges, and why the evidence can be believed |
 | [docs/DEPLOY.md](./docs/DEPLOY.md) | Topology, configuration, releases and rollback, operations, telemetry |
+| [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md) | What to set up and decide before running a deployment carefully |
+| [docs/SECURITY_MODEL.md](./docs/SECURITY_MODEL.md) | The security model: the Orker as the boundary, image policy, secrets, callers and credentials |
+| [docs/UPGRADING.md](./docs/UPGRADING.md) | Versioning: the pre-1.0 promise, Orkflow versions, and rolling OrkStack forward and back |
+| [docs/LIMITATIONS.md](./docs/LIMITATIONS.md) | Every hard limit and deliberate omission, with its setting and its reason |
+| [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) | Symptoms, their causes, and what to do: submitting, running, failures, the local stack |
 | [docs/STORAGE.md](./docs/STORAGE.md) | What is persisted where: the object-store key layout and its invariants |
 | [docs/STATS.md](./docs/STATS.md) | Where stats, failure fingerprints, flakes, usage and cache numbers come from |
 | [docs/RUN_EVIDENCE.md](./docs/RUN_EVIDENCE.md) | The run evidence bundle format and offline verification |

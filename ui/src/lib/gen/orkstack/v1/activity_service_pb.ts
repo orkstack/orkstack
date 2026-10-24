@@ -431,9 +431,9 @@ export const ActivityService: GenService<{
     output: typeof ListActivitiesResponseSchema;
   },
   /**
-   * DescribeOrker is the pool-liveness probe (§6.5). It is dispatched as a
-   * Temporal activity on a pool's own channel, so it answers only when an
-   * Orker is actually polling that pool.
+   * DescribeOrker is the pool-liveness probe (§6.5). It is answered by an
+   * Orker of that pool, so it answers only when an Orker is actually polling
+   * that pool.
    *
    * @generated from rpc orkstack.v1.ActivityService.DescribeOrker
    */
@@ -455,8 +455,8 @@ export const ActivityService: GenService<{
    * drain loop relies on it (CordonOrker, a write, is the one that answers
    * NOT_FOUND for that id).
    *
-   * An orker_id EQUALS filter asks exactly that one Orker, on its own
-   * channel, and returns at most one row: it is what `orkctl orker get` and
+   * An orker_id EQUALS filter asks exactly that one Orker, and no other, and
+   * returns at most one row: it is what `orkctl orker get` and
    * the drain loop send, so a drain costs one activity per poll and not one
    * per Orker of the fleet. Every other filter is applied to the inventory;
    * an unreachable row is kept under a pool, build_id or cordoned filter,
@@ -472,7 +472,7 @@ export const ActivityService: GenService<{
   },
   /**
    * CordonOrker sets or clears ONE Orker's cordon: a process-local flag
-   * delivered over that Orker's own channel, lost when the process exits.
+   * delivered to that Orker alone, lost when the process exits.
    * A cordoned Orker takes no new task and opens no new pin; everything
    * already in flight on it is untouched. The response is the Orker's
    * state AFTER the change, as the Orker itself reported it.

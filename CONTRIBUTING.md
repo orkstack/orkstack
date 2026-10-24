@@ -9,7 +9,8 @@ contract. This file is the quick checklist.
 over the integration suites, and the unit suites with `-short`, which skips
 the scale tests and the tests that compile binaries; it keeps the test cache.
 Every proof runs those, without `-short`. Run it before every push. For the UI:
-`cd ui && bun run check && bun run test:unit`.
+`cd ui && bun run check && bun run test:unit`. For the site (`site/`, which
+also renders every doc): `make site`.
 
 When a test is listed in `scripts/proof-quarantine.txt`, its failure is that
 known flake: tell its owner if it is new to you. Never re-run a failing test until it
@@ -72,7 +73,11 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
 6. Update the docs the change makes false, and add the CHANGELOG.md
-   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1).
+   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1). A new
+   doc is also a page of the site: add it to `site/docs.manifest.json`, or
+   exclude it there with its reason. A change to the UI's look changes
+   `ui/src/tokens.css`, never the site, and regenerates the site's
+   screenshots (`make site-media`) when they would show it.
 7. Produce the change's evidence with a feature proof that names the tests and
    specs proving it:
    `make proof-feature TESTS='internal/engine:TestIntegration_X' SPECS='ui/e2e/x.spec.ts'`.
