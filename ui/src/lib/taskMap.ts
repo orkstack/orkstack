@@ -511,7 +511,9 @@ function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: 
 /**
  * Paints cells onto a context already scaled to CSS pixels: every cell, or
  * only `only` (a live batch's dirty cells). No computed style is read here —
- * the colours are handed in.
+ * the colours are handed in. `runningAlpha` is how strongly a RUNNING cell's
+ * mark is drawn over its paper (the map's pulse, $lib/taskMap runningPulse);
+ * every other mark, and every ground, is drawn whole.
  */
 export function paintCells(
 	ctx: CanvasRenderingContext2D,
@@ -519,13 +521,17 @@ export function paintCells(
 	statuses: Uint8Array,
 	kinds: Uint8Array,
 	colors: MapColors,
-	only?: Iterable<number>
+	only?: Iterable<number>,
+	runningAlpha = 1
 ): void {
 	const paintOne = (i: number) => {
 		const r = rectOf(g, i);
 		ctx.fillStyle = colors.paper;
 		ctx.fillRect(r.x, r.y, r.w, r.h);
+		const running = statuses[i] === Status.RUNNING;
+		if (running) ctx.globalAlpha = runningAlpha;
 		drawMark(ctx, r, statuses[i] as Status, kinds[i], colors);
+		if (running) ctx.globalAlpha = 1;
 	};
 	if (only) {
 		for (const i of only) if (i >= 0 && i < g.total) paintOne(i);
@@ -533,6 +539,19 @@ export function paintCells(
 	}
 	ctx.clearRect(0, 0, g.columns * g.pitch, g.height);
 	for (let i = 0; i < g.total; i++) paintOne(i);
+}
+
+/** How long one breath of a running cell takes, and how far it fades. */
+export const PULSE_MS = 2400;
+const PULSE_FLOOR = 0.45;
+
+/**
+ * The alpha of a running cell's mark at time `t` (ms): whole at the start of
+ * each breath, fading to PULSE_FLOOR halfway and back, on a cosine so it
+ * eases at both ends — the same 2.4 s as a running DAG node's ground.
+ */
+export function runningPulse(t: number): number {
+	return PULSE_FLOOR + (1 - PULSE_FLOOR) * (0.5 + 0.5 * Math.cos((2 * Math.PI * t) / PULSE_MS));
 }
 
 /** The overlay: the selected cell's ink frame (a paper gap inside it) and the keyboard cursor. */

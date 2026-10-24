@@ -137,3 +137,24 @@ export async function taskMapCellCenter(page: Page, index: number): Promise<{ x:
 	const half = (pitch - 2) / 2;
 	return { x: box.x + PAD + col * pitch + half, y: box.y + PAD + row * pitch - scrollTop + half };
 }
+
+/**
+ * The whole page as one image, as a reader scrolling it would see it. Two
+ * things a full-page capture otherwise gets wrong are undone for the capture
+ * only, and restored after it: task cards are laid out with
+ * `content-visibility: auto`, which leaves every card past the first
+ * viewport unpainted in a capture that does not scroll; and the title block
+ * is sticky to the viewport's bottom edge, so a capture paints it once,
+ * across the middle of the page. During the capture every element is
+ * painted and the title block sits where the document ends.
+ */
+export async function fullPageShot(page: Page, path: string): Promise<void> {
+	const style = await page.addStyleTag({
+		content: '* { content-visibility: visible !important; } [data-testid="title-block"] { position: static !important; }'
+	});
+	try {
+		await page.screenshot({ path, fullPage: true });
+	} finally {
+		await style.evaluate((el) => el.remove());
+	}
+}

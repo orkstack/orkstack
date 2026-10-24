@@ -147,7 +147,7 @@
 					onclick={() => onSelect(selected === item.index ? undefined : item.index)}
 					class="relative inline-flex h-7 min-w-7 items-center justify-center rounded-sm border px-1 font-mono text-2xs leading-none {STATUS_CLASSES[
 						item.status
-					]} {selected === item.index ? 'ring-2 ring-blue' : ''}"
+					]} {item.status === Status.RUNNING ? 'animate-live-ground motion-reduce:animate-none' : ''} {selected === item.index ? 'ring-2 ring-blue' : ''}"
 				>{item.index}{#if isCachedItem(item)}<span
 							aria-hidden="true"
 							class="absolute top-0 right-0 size-1.5 rounded-bl-sm bg-ink"
@@ -195,8 +195,7 @@
 						error={run.error}
 						testid="task-{taskId}-item-{current.index}-error"
 						compact
-						retryState={run.retryState}
-						attemptCount={attemptsSeen(currentAttempts)}
+						tries={{ retryable: run.error.retryable, retryState: run.retryState, attempts: attemptsSeen(currentAttempts) }}
 					/>
 				</div>
 			{/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import { dagDirectionParam } from '$lib/dag';
 	import { rememberRecent } from '$lib/palette/recent';
 	import DrawingFrame from '$lib/components/DrawingFrame.svelte';
 	import Dialog from '$lib/components/Dialog.svelte';
@@ -193,13 +194,13 @@
 		<ErrorPanel
 			testid="engine-error"
 			retryTestid="overview-retry"
-			subject="orkflow {data.name}"
+			subject="Orkflow {data.name}"
 			message={data.orkflowError}
 			busy={reloading}
 			onretry={reload}
 		/>
 	{:else if reloading}
-		<p data-testid="overview-loading" class="text-sm text-ink-muted">Loading the orkflow…</p>
+		<p data-testid="overview-loading" class="text-sm text-ink-muted">Loading the Orkflow…</p>
 	{:else if !wf}
 		<p data-testid="overview-empty" class="text-sm text-ink-muted">
 			The engine returned no document for {data.name}.
@@ -212,8 +213,10 @@
 				<DrawingFrame
 					testid="orkflow-drawing"
 					caption="{wf.name} @ {wf.version} · {wf.tasks.length} {wf.tasks.length === 1 ? 'task' : 'tasks'}"
+					captionLead={wf.name}
 					tasks={wf.tasks}
 					orkflowLabel="{wf.name}@{wf.version}"
+					direction={dagDirectionParam(page.url)}
 				/>
 			</section>
 			<aside class="min-w-0" aria-labelledby="orkflow-sheet-versions-heading">

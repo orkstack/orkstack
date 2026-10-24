@@ -15,7 +15,7 @@ export const ORKFLOW_PLACEHOLDER = `apiVersion: ${API_VERSION}
 kind: Orkflow
 name: my-orkflow
 version: "0.1.0"
-description: Describe what this orkflow does.
+description: Describe what this Orkflow does.
 
 inputs:
   url:

@@ -21,6 +21,9 @@ colors:
   blue: "#2b59c3"
   blue-strong: "#1f4596"
   blue-tint: "#e8ecf5"
+  green: "#2b7a4b"
+  green-strong: "#1d5e39"
+  green-tint: "#e5f2e8"
   red: "#c2362b"
   red-strong: "#9e2a21"
   red-tint: "#fde9e6"
@@ -44,6 +47,9 @@ colors:
   blue-dark: "#86a4ec"
   blue-strong-dark: "#a9c0f5"
   blue-tint-dark: "#1c2741"
+  green-dark: "#7cc795"
+  green-strong-dark: "#a5dcb5"
+  green-tint-dark: "#16281e"
   red-dark: "#ef7b6e"
   red-strong-dark: "#f6a196"
   red-tint-dark: "#3a1f1d"
@@ -185,8 +191,8 @@ components:
     rounded: "{rounded.sm}"
     padding: "0 6px"
   stamp-running:
-    backgroundColor: "{colors.blue-tint}"
-    textColor: "{colors.blue}"
+    backgroundColor: "{colors.green-tint}"
+    textColor: "{colors.green-strong}"
     typography: "{typography.label}"
     rounded: "{rounded.sm}"
     padding: "0 6px"
@@ -261,27 +267,28 @@ components:
 
 **Creative North Star: "The Drawing Office"**
 
-Every Orkflow is a controlled drawing: a sheet with a version, a digest and a title block that always says what you are looking at. The ground is drafting paper, the text is a blue-black ink, and hue is rationed. One drafting blue marks selection, links and live work. One revision-cloud red marks failure and attention, and nothing else. Hairline rules divide rows and heavier rules divide regions, so structure comes from line weight rather than from boxes, cards or fills.
+Every Orkflow is a controlled drawing: a sheet with a version, a digest and a title block that always says what you are looking at. The ground is drafting paper, the text is a blue-black ink, and hue is rationed. One drafting blue marks selection, links and waiting on the outside world. One survey green marks work running now. One revision-cloud red marks failure and attention, and nothing else. Hairline rules divide rows and heavier rules divide regions, so structure comes from line weight rather than from boxes, cards or fills.
 
-The density is a working engineer's: 14 px body text in a narrow sans, 13 px registers, tracked 11 px caps for every label, and a mono for anything a person copies or compares (ids, digests, durations, commands, logs). Every page has the same three bands: a 44 px top bar, the page content, and a 64 px title block stuck to the bottom edge that states the page's facts the way a drawing's title block does. On a run, the content is a drawing frame (the DAG on a drafting grid, or the task map) beside an aside holding the version register and, when the run failed, the revision cloud with the reason.
+The density is a working engineer's: 14 px body text in a narrow sans, 13 px registers, tracked 11 px caps for every label, and a mono for anything a person copies or compares (ids, digests, durations, commands, logs). Every page has the same three bands: a 44 px top bar, the page content, and a 64 px title block stuck to the bottom edge that states the page's facts the way a drawing's title block does. On a run, the content is a drawing frame (the DAG on a drafting grid, or the task map) beside an aside holding the version register, the revision cloud with the reason when the run failed, and the run's timing register.
 
 Dark mode is the same drawing on ink-toned paper with pale rules. It is never a cyan-on-navy blueprint. The system rejects the category default of a grey sidebar console with a strip of stat cards: navigation is two modes in a top bar, and counts are a ruled band of title-block cells, never hero numbers.
 
 **Key Characteristics:**
-- Drafting paper and blue-black ink; two accent hues, each with one job.
+- Drafting paper and blue-black ink; three accent hues, each with one job.
 - Line weight carries structure: 1 px hairline, 1.5 px region, 2 px frame, 3 px alarm.
 - Square corners (2 px at most on controls); a radius is a softened corner, never a pill.
 - Tracked caps for labels, mono for figures, narrow sans for everything else.
 - Status is told by a drawn mark and its word, and only secondarily by colour.
 - Flat at rest; shadows belong to overlays alone.
-- One authored motion: the revision cloud drawing itself in when a watched run fails.
+- One authored moment: the revision cloud drawing itself in when a watched run fails; and one state that breathes: work running now.
 
 ## Colors
 
-A warm off-white paper and a deep blue-black ink, with one blue and one red that are never used decoratively.
+A warm off-white paper and a deep blue-black ink, with one blue, one green and one red that are never used decoratively.
 
 ### Primary
-- **Drafting Blue** (`blue`): selection, links, the current mode's 2 px underline, the focus ring (`focus` is the same value), live work (RUNNING and AWAITING stamps, a running DAG node's outline), the caret and the native accent colour. `blue-strong` is its text-on-tint form (AWAITING ink, the selected window button); `blue-tint` is the ground of a selected palette option, a selected Select option, a running stamp and the diff register's new value.
+- **Drafting Blue** (`blue`): selection, links, the current mode's 2 px underline, the focus ring (`focus` is the same value), work waiting on the outside world (the AWAITING stamp's ring, an awaiting DAG node's outline), the caret and the native accent colour. `blue-strong` is its text-on-tint form (AWAITING ink, the selected window button); `blue-tint` is the ground of a selected palette option, a selected Select option, an awaiting stamp and the diff register's new value.
+- **Survey Green** (`green`): work running now, and nothing else. The RUNNING stamp's dot, a running DAG node's outline and breathing ground, a running cell of the task map and of a fan-out's item grid, the LIVE badge while the page receives a run's events, and RUNNING in the title block. `green-strong` is its text-on-tint form (RUNNING ink); `green-tint` is the ground of a running stamp, node and item. It is a survey green, warmer than the teal pin (c) and never confused with SUCCEEDED, which is ink.
 
 ### Secondary
 - **Revision-Cloud Red** (`red`): failure and attention only. A FAILED stamp and mark, a failed DAG node's 3 px outline and text, the revision cloud's outline, the held-run delta, the danger button, a namespace hold. `red-strong` is red text on a tint and the hover of the danger button; `red-tint` is the ground of a task's failure panel, a FAILED stamp and a held FAILED row.
@@ -301,13 +308,13 @@ A warm off-white paper and a deep blue-black ink, with one blue and one red that
 Six coloured-pencil pairs (`--color-pin-a-line` / `-fill` through `pin-f`: blue, violet, teal, ochre, slate, olive, each with a dark twin in `tokens.css`). A pin's member task rows carry its 1 px line all round and its fill. They are identity, never status: the pin's name is always written beside it, and each line is at least 3:1 on paper and on its own fill. They are runtime tokens (read with `var()`), not Tailwind utilities.
 
 ### Status
-Status tokens (`--color-{status}-bg / -fg / -border / -solid`) are aliases of the colours above, never new hues: PENDING is paper with a strong rule; RUNNING is blue on blue-tint; AWAITING is blue-strong on blue-tint; SUCCEEDED is ink on sunken paper with the `mark` fill; FAILED is red on red-tint; CANCELED is ink-secondary on sunken paper; SKIPPED and UNSPECIFIED are ink-muted on paper with a dashed or dotted border.
+Status tokens (`--color-{status}-bg / -fg / -border / -solid`) are aliases of the colours above, never new hues: PENDING is paper with a strong rule; RUNNING is green-strong on green-tint with a green border and mark; AWAITING is blue-strong on blue-tint; SUCCEEDED is ink on sunken paper with the `mark` fill; FAILED is red on red-tint; CANCELED is ink-secondary on sunken paper; SKIPPED and UNSPECIFIED are ink-muted on paper with a dashed or dotted border.
 
 ### Aliases
 `--color-fg` is the one permanent alias, of `ink`: `run-page-pins.spec.ts` reads it by name, and it has always meant the ink. Every legacy name from before this design was deleted; no other alias may be added.
 
 ### Named Rules
-**The Two Accents Rule.** Blue means selected, linked or live. Red means failed or needs attention. Neither is ever used for emphasis, branding or decoration, and a canceled run's reason is an ink NOTE, not red.
+**The Three Accents Rule.** Blue means selected, linked or waiting on the outside world. Green means running now. Red means failed or needs attention. None is ever used for emphasis, branding or decoration, and a canceled run's reason is an ink NOTE, not red. (Until 2026-10-22 this was the Two Accents Rule, with RUNNING in blue. It became three because blue then meant both "selected" and "running" — a selected running node was a blue ring round a blue outline — and because the person who runs these Orkflows reads running work as green. A fourth accent needs the same kind of case, written here.)
 
 **The One File Rule.** Every colour, in both themes, is declared in `ui/src/tokens.css`. No component, route or stylesheet declares a raw colour; Tailwind's own palette is reset away, so `bg-red-500`, `text-white` or `shadow-md` emit nothing. `ui/test/tokens.test.ts` enforces it on the sources and on the compiled CSS.
 
@@ -344,17 +351,20 @@ Paragraphs that explain are held to `max-w-prose` (65ch).
 
 The page is a vertical stack of three bands. The **top bar** is 44 px (`--spacing-bar`), sticky, with a 1.5 px ink rule under it. The **content** is centred, at most 1440 px wide, with a 16 px gutter below 640 px and a 24 px sheet margin from 640 px up, and 24 px above and below. The **title block** is 64 px (`--spacing-titleblock`), sticky at the bottom with a 2 px ink rule above it. `scroll-padding` on `<html>` equals both, so a focused control is never hidden under either (WCAG 2.4.11).
 
-A page opens with its `SheetHeader`: the headline and a line of facts at the left, the page's one primary action at the top right, a hairline under it and 24 px below. Regions within a page start with a 1.5 px ink rule (`.region`). Registers (tables) are the main content of list pages.
+A page opens with its `SheetHeader`: the headline and a line of facts at the left, the page's one primary action at the top right, a hairline under it and 24 px below. A run's line of facts is one line — `orkflow@version · origin submit · [STATUS]`, the origin in words, never a stamp — and says LIVE only while the run is; a finished run's status already says it ended. Below 1024 px a run's secondary actions (Evidence, Compare, Export JSON, Show events, retry history, the copied command) fold into one **More** disclosure beside Run again, and below 640 px its id is drawn short in the middle (`ork-…873153`), the whole id staying the heading for assistive technology; together they start the drawing within 220 px of the top at 390 px. Regions within a page start with a 1.5 px ink rule (`.region`). Registers (tables) are the main content of list pages.
 
-The run page sets a **drawing frame** (`--spacing-drawing`, clamp(240 px, 42 vh, 480 px), a fixed height from CSS so nothing below it moves) beside an **aside** of 360 px (`--spacing-aside`) with a 24 px gap from 1280 px (`xl`) up; below that the aside follows the drawing. The frame's view tabs (DAG, Task map) and caption sit on a 32 px paper patch at its top left. Inside, the task map picks the largest cell pitch of 16, 14, 12, 10 or 8 px (cell = pitch − 2, gap 2) whose rows fit; at 4,000 tasks it fits whole at 1440 × 900 and scrolls inside the frame (never the page) at 1280 × 720. The DAG draws 190 × 58 nodes with 56 px between layers and 34 px between rows, scaled down to the frame's width but never below 0.6; up to 80 tasks it is drawn, up to 300 on request, and beyond that the run page draws only the selected task's neighbourhood.
+The run page sets a **drawing frame** beside an **aside** of 360 px (`--spacing-aside`) with a 24 px gap from 1280 px (`xl`) up, and the run's body (its values NOTE, events and task list) flows in the drawing's column under the frame, the aside beside it; below 1280 px the aside follows the drawing and the body follows the aside. The frame is its content plus the 32 px patch and 16 px padding, up to `--spacing-drawing` (clamp(240 px, 42 vh, 480 px)): `min(var(--spacing-drawing), content + 48px)`, so a small run is not a page of empty grid or empty map. The DAG's height is its drawing's own (CSS, from its aspect); the task map's is computed from the frame's width with the map's own geometry, once the frame is laid out and before its first paint, so nothing below the frame moves. Below 640 px the frame may grow to `--spacing-drawing-tall` (clamp(240 px, 65 svh, 640 px)): a phone has the height a drawing needs and not the width. A drawing that still does not fit says so on the frame's top band, with a pair of scroll controls for each way it overflows (up/down, left/right; the one with nothing more to show `aria-disabled`), never over a node. The caption shortens the Orkflow's name, never its version or task count. The run's timing (Created, Started, Finished, Elapsed, Tasks) is a register in the aside, never a second band across the page, and a run with no input or no aggregated output says so in one NOTE rather than an empty box. The frame's view tabs (DAG, Task map) and caption sit on a 32 px paper patch at its top left. Inside, the task map picks the largest cell pitch of 16, 14, 12, 10 or 8 px (cell = pitch − 2, gap 2) whose rows fit; at 4,000 tasks it fits whole at 1440 × 900 and scrolls inside the frame (never the page) at 1280 × 720. The DAG draws 190 × 58 nodes with 56 px between layers and 34 px between rows, scaled down to the frame's width but never below 0.6; up to 80 tasks it is drawn, up to 300 on request, and beyond that the run page draws only the selected task's neighbourhood.
+
+The DAG is a layered drawing (`$lib/dag` layoutDag), the same Orkflow always drawn the same way: each task one layer past its deepest need; an edge that skips layers gets a 12 px lane in every layer it passes, so no edge ever runs through a box; the order within each layer is chosen by barycentre sweeps from declaration order to cross as few edges as it can (a shape that can be drawn without crossings is); and between two layers each edge runs on a track of its own split or join, the gap widening (to 216 px at most) to keep tracks 8 px apart. **The Direction Rule.** A DAG reads left to right unless top to bottom clearly costs its reader less in the frame it is drawn in (`chooseDagDirection`, decided once the frame is laid out and before it paints): the frames of drawing to scroll through, a frame of sideways scrolling counting as two downward, divided by the square of the scale it is drawn at (at 0.6 an id is 8 px); left to right wins a tie and anything within a tenth. So wide parallel stages — the common shape — read left to right everywhere, as a flow sheet does; a long chain reads top to bottom, one full-size column; and on a phone a small or medium DAG turns top to bottom, where a 190 px column fits. Task ids stay horizontal text either way. `?dag=lr` and `?dag=tb` override it for a reader and a shared link. `test/dagStress.ts` holds the shapes both directions are held to (decided 2026-10-22).
 
 The spacing unit is 4 px (`--spacing`); every padding, gap and height is a multiple of it. Typical rhythms: 8 × 12 px register cells, 8 px between the groups of a filter toolbar, 24 px between regions, 40 px after a dashboard section.
 
 Breakpoints, containers, aspect ratios and blurs keep Tailwind's defaults (sm 640, md 768, lg 1024, xl 1280, 2xl 1536 px), because they are not identity and media queries cannot read `var()`. Responsive behaviour:
 - Below 1024 px the top bar drops Build's three page links, the namespace picker and the appearance switch into a **Menu** drawer (a right-hand dialog 320 px wide); below 640 px the mode links go too.
 - Below 640 px the title block keeps its first cell and STATUS (or its second cell) and folds the rest into a "Page details" disclosure.
-- Below 640 px a stacked register (`.register-stacked`) turns each row into a two-column grid of its cells, so nothing hides behind a sideways scroll.
-- The dashboard's count band is seven cells in one ruled row from 1024 px up, and below that a 12-column grid: four status cells of three columns over three figure cells of four.
+- Below 640 px a stacked register (`.register-stacked`) turns each row into a two-column grid of its cells, so nothing hides behind a sideways scroll; every register of the dashboard is one, and a bare figure in it says what it counts ("1 failed", "of 2 finished"). A register of many facts (Admin → Namespaces, `.register-pairs`) stacks into two equal columns, each fact under its head's words (the cell's `data-label`), the name on its own line and the actions on the last. A row's actions sit beside its name at every width, so a register's sideways scroll never takes them out of reach.
+- The dashboard's count band is seven cells in one ruled row from 1024 px up, and below that a 12-column grid: four status cells of three columns over three figure cells of four; below 400 px the four status cells are a 2 × 2 grid. A label never breaks inside a word.
+- Below 640 px a run id in a register is drawn short in the middle (`ork-…873153`), its whole id kept for assistive technology and on hover, and the title block's first cell wraps to two lines at 13 px rather than losing its end.
 
 ### Named Rules
 **The Three Bands Rule.** Every page has the top bar, the content and the title block, and nothing else is fixed to the viewport except an open overlay.
@@ -378,7 +388,7 @@ Drawings are square-cornered. Controls, stamps, notes and failure panels take a 
 
 Rules have four weights, each with one job: **hairline** 1 px (`--rule-hair`) between rows and around controls; **region** 1.5 px (`--rule-region`) around a drawing frame, under the top bar and register heads, above regions, and on every DAG outline and edge (non-scaling, so a scaled drawing keeps its weight); **frame** 2 px (`--rule-frame`) above the title block and as the focus outline with its 2 px offset; **alarm** 3 px (`--rule-alarm`) on a failed DAG node only.
 
-Status marks are drawn shapes, 8 px square, in CSS on the stamp itself (no extra element, because a run page holds thousands): SUCCEEDED a filled square, FAILED a red square crossed in paper, CANCELED an outline struck once, SKIPPED a hatched square with a dashed outline, PENDING a hollow square, UNSPECIFIED a dotted outline, RUNNING a filled blue dot that pulses, AWAITING a blue ring. The same shapes are drawn as SVG on DAG nodes and on the task map's canvas. Under forced colours every mark keeps a CanvasText border.
+Status marks are drawn shapes, 8 px square, in CSS on the stamp itself (no extra element, because a run page holds thousands): SUCCEEDED a filled square, FAILED a red square crossed in paper, CANCELED an outline struck once, SKIPPED a hatched square with a dashed outline, PENDING a hollow square, UNSPECIFIED a dotted outline, RUNNING a filled green dot that pulses, AWAITING a blue ring. The same shapes are drawn as SVG on DAG nodes and on the task map's canvas. Under forced colours every mark keeps a CanvasText border.
 
 The **revision delta** is a small drawn triangle: the drawing's mark for "changed". It sits before a held run's id (red) and before a changed value in the compare register (blue).
 
@@ -389,15 +399,18 @@ The world's nouns (sheet, title block, drawing, revision cloud, revision delta, 
 ### Buttons
 Quiet and drawn, not raised.
 - **Shape:** 2 px corner, 36 px tall, 14 px inline padding, 13 px semibold, a 1 px `rule-strong` outline on paper.
-- **Primary:** ink fill, `on-ink` text; hover moves to `ink-secondary`. One per page, at the top right of the `SheetHeader`.
+- **Primary:** ink fill, `on-ink` text; hover moves to `ink-secondary`. One per page, at the top right of the `SheetHeader`; a list's Apply filters is a default button. Where the primary opens a form (Admin → Namespaces' Create namespace), the form is a disclosure under the header and, while it is open, its own submit is the primary.
+- **More:** a page's secondary actions folded into one disclosure (`MoreMenu`) where its header has no room; its items are ordinary buttons and links, each doing exactly what the button it stands for does.
 - **Danger:** red fill, `on-ink` text, hover `red-strong`. Destructive confirmations only.
+- **Danger outline:** a red outline and `red-strong` text on paper, hover `red-tint`: the button that opens a destructive or holding confirmation (Cancel run, Hold…), never the act itself.
 - **Hover / Focus:** hover changes the ground to `hover` over 120 ms ease-out; focus is the global 2 px focus-colour outline at 2 px offset.
 - **Small:** 28 px, 10 px padding, 12 px. **Icon:** 32 px square (above the 24 px target floor), transparent, `ink-secondary`, ink on hover. **Disabled:** 50 % opacity, no pointer events.
 - **Disclosure:** a chevron drawn in CSS on the button itself (no element per task row), turned down when expanded.
 
 ### Status stamps
 - **Style:** a 1 px frame in the status border colour, the status ground, 11 px tracked caps in the status ink, 6 px inline padding, and the drawn mark 6 px before the word. The text is exactly the status word.
-- **Variants:** the eight statuses above. Failure categories reuse the stamp in red and ink treatments: ACTIVITY_FAILED red on red-tint, INFRASTRUCTURE_ERROR red-strong on paper, CONTRACT_VIOLATION on-ink on a red-strong fill, TIMED_OUT and CANCELLED in ink tones. Version marks in the aside are stamps too: "This run" in ink, "Current" in blue, "Head" in `rule-strong`.
+- **Variants:** the eight statuses above. Failure categories reuse the stamp in red and ink treatments: ACTIVITY_FAILED red on red-tint, INFRASTRUCTURE_ERROR red-strong on paper, CONTRACT_VIOLATION on-ink on a red-strong fill, TIMED_OUT and CANCELLED in ink tones. Version marks in the aside are stamps too: "This run" in ink on a row of sunken paper (whatever the run's status: the status is said once, by the run), "Current" in blue, "Head" in `rule-strong`.
+- **Never started:** a task the run ended before it reached an Orker is stamped with its lifecycle status (CANCELED, as the wire says) with "never started" under it — on its row, as its DAG node's line, in the map's readout and in the map's key ("CANCELED 1 · never started"). No view says something else about it.
 
 ### Registers
 The table is the main surface of most pages.
@@ -405,6 +418,8 @@ The table is the main surface of most pages.
 - **Rows:** 13 px, a 1 px `rule` hairline under each, 8 × 12 px padding, `hover` wash on hover. Ids and timestamps in the mono.
 - **Held rows:** a run whose status changed since it was last seen keeps its new status's ground (red-tint for FAILED, sunken paper otherwise) and a red revision delta before its id until opened; hover underlines the id instead of replacing the ground.
 - **Duration:** the runs register's DURATION is submission to finish; the run page's Elapsed is start to finish, so the two can differ by the run's wait before it started.
+- **Task rows:** a run's task rows share one timeline. A task's mark is 4 px tall, `mark` for its run and `rule-strong` for its wait for an Orker, placed at (its start − the run's start) ÷ the run's elapsed and as wide as its duration ÷ that, on a hairline of fixed width, so the rows read together as when each task ran. A value of at most 64 characters is said on its row in the mono (`Values {"exitCode": 0}`); a longer one keeps its block. Each command a row offers is a button that names it in the mono (`run logs`, `run timing`, `task run`), never a row of identical prompts.
+- **Commands:** every CLI equivalent quotes only the tokens a shell would read as syntax (`orkctl --namespace default run get ork-1 --json`; `--filter 'action^namespace.'`), and a command written out on the page breaks only at spaces.
 
 ### Inputs / Fields
 - **Style:** 1 px `rule-strong` outline, 2 px corner, paper ground, ink text, 36 px tall with 12 px padding; placeholder in `ink-placeholder` at full opacity.
@@ -419,10 +434,10 @@ The table is the main surface of most pages.
 - **Command palette:** Ctrl/Cmd+K anywhere, including from inside a text field. A native `<dialog>` on `sheet`, 640 px wide at most, 3 px corner, 1.5 px ink frame, overlay shadow. Results are grouped under caps heads; the active option is semibold on blue-tint with an "Enter" `<kbd>`.
 
 ### Title Block (signature)
-The persistent 64 px band along the bottom of every page. Cells stack an 11 px caps label in `ink-muted` over an 18 px semibold value, divided by 1 px ink rules; the first cell is twice the width of the rest. STATUS writes its word after its drawn mark, red for FAILED, blue for RUNNING, ink otherwise. Digests can be copied from their cell. It never shows a run id: the id is the page's headline. The chosen sketch's static frame used 92 px; the shipped block is 64 px because it is sticky on every page, and at 1280 × 720 the bar and a 92 px block would take 19 % of the viewport for chrome where 64 px takes 15 %, the sketch's own share at 1440 × 900. The difference is cell padding, not type.
+The persistent 64 px band along the bottom of every page. Cells stack an 11 px caps label in `ink-muted` over an 18 px semibold value, divided by 1 px ink rules; the first cell is twice the width of the rest. STATUS writes its word after its drawn mark, red for FAILED, green for RUNNING, blue for AWAITING, ink otherwise. Below 640 px the first cell wraps to two lines at 13 px rather than losing its end. Digests can be copied from their cell. It never shows a run id: the id is the page's headline. The chosen sketch's static frame used 92 px; the shipped block is 64 px because it is sticky on every page, and at 1280 × 720 the bar and a 92 px block would take 19 % of the viewport for chrome where 64 px takes 15 %, the sketch's own share at 1440 × 900. The difference is cell padding, not type.
 
 ### Drawing Frame and Task Map (signature)
-A 1.5 px ink frame of fixed height with a paper patch at its top left holding the view tabs (caps, the selected one ink with a 2 px blue underline) and a mono caption ("order-saga @ 0.4.2 · 6 tasks"). The DAG view sits on the drafting grid: nodes are paper boxes with a 1.5 px ink outline, the task id in 13 px semibold sans and a second line in the 11 px mono, orthogonal ink edges with arrowheads, a 2 px blue ring for the selected node, a 3 px red outline and red text for a failed one, a blue outline for running and awaiting, 45 % opacity for a task the run never started. Where the drawing is wider than the frame at 0.6 scale, scroll buttons appear at the edge that hides more. The task map is one canvas, one cell per task or fan-out item, drawn with the status marks; a legend under the frame lists each status present with its mark and count.
+A 1.5 px ink frame of fixed height with a paper patch at its top left holding the view tabs (caps, the selected one ink with a 2 px blue underline) and a mono caption ("order-saga @ 0.4.2 · 6 tasks"). The DAG view sits on the drafting grid: nodes are paper boxes with a 1.5 px ink outline, the task id in 13 px semibold sans and a second line in the 11 px mono, orthogonal ink edges with arrowheads, a 2 px blue ring for the selected node, a 3 px red outline and red text for a failed one, a blue outline for awaiting, and 45 % opacity, never a strike, for a task the run never started (its line reads "never started"). A running node is a soft green box: a green outline round a ground that breathes from `green-tint` to paper and back every 2.4 s, resting on the tint under reduced motion. A node's tags (`each ≤ n`, `join …`, `cached`, a composed Orkflow) are `ink-secondary`, never an accent; every line fits its node (a composed task's name gives way before its pinned version, the whole reference in its title). Where the drawing is wider than the frame at 0.6 scale, a pair of scroll buttons sits on the frame's top band, beside the tabs and never over a node, the one with nothing more to show disabled. The task map is one canvas, one cell per task or fan-out item, drawn with the status marks; a running cell's mark breathes with the DAG's 2.4 s (only those cells are repainted, at most 15 times a second, never while the page is hidden or under reduced motion). A legend under the frame lists each status present with its mark and count.
 
 ### Revision Cloud (signature)
 The run's failure, once per page, in the aside. A scalloped 1.5 px red outline around a caps tag in `red-strong` ("VERSION 0.4.2 · charge failed"), the reason code in the mono, the plain explanation in ink, the attempt line and the reproducing command. Task and item failures never get a cloud: they use the compact failure panel, red ink on a red-tint ground with a 2 px corner and no rule, the code after a filled mark. Clouds everywhere would stop meaning anything.
@@ -433,10 +448,10 @@ The run's failure, once per page, in the aside. A scalloped 1.5 px red outline a
 - **Hold banner:** a namespace on hold is the one full-width red element: 1 px red border on red-tint, the reason, and the CLI command that releases it.
 
 ### Overlays
-Dialogs, popovers and listboxes share one treatment: `sheet` ground, ink frame (1.5 px for dialogs and the palette, 1 px for popovers and listboxes), 3 px corner, overlay shadow, and the `overlay-in` entrance (120 ms, 3 px rise and 0.985 scale, ease-out). The dialog's body scrolls inside the panel; its title sits over a hairline.
+A popover hangs from its trigger's edge but never past the viewport's: opened near the other edge (a header's actions wrapped to the left on a phone), it moves back inside, 8 px clear. Dialogs, popovers and listboxes share one treatment: `sheet` ground, ink frame (1.5 px for dialogs and the palette, 1 px for popovers and listboxes), 3 px corner, overlay shadow, and the `overlay-in` entrance (120 ms, 3 px rise and 0.985 scale, ease-out). The dialog's body scrolls inside the panel; its title sits over a hairline.
 
 ### Motion
-Motion is state feedback, never decoration, and all of it is in `tokens.css`. Ease-out is `cubic-bezier(0.16, 1, 0.3, 1)`; durations are 120 ms (hover, colour, overlay entrance), 200 ms (base) and 600 ms (the cloud). Four animations exist: the RUNNING dot's 1.6 s pulse, the 2 px navigation progress bar under the top edge, the overlay entrance, and the cloud drawing itself in once when a run turns FAILED while someone is watching it (on load it is simply there). Under `prefers-reduced-motion` the dot and the cloud stop and the progress bar falls back to a pulse. No animation library is used.
+Motion is state feedback, never decoration, and all of it is in `tokens.css`. Ease-out is `cubic-bezier(0.16, 1, 0.3, 1)`; the one symmetric curve, `--ease-in-out` (`cubic-bezier(0.45, 0, 0.55, 1)`), is for a breath. Durations are 120 ms (hover, colour, overlay entrance), 200 ms (base), 600 ms (the cloud) and 2.4 s (a running ground's breath). Five animations exist: the RUNNING dot's 1.6 s pulse, the running ground's 2.4 s breath (`live-fill` on a DAG node, `live-ground` on a fan-out item, the same curve painted on the task map's canvas), the 2 px navigation progress bar under the top edge, the overlay entrance, and the cloud drawing itself in once when a run turns FAILED while someone is watching it (on load it is simply there). Under `prefers-reduced-motion` the dot, the breath and the cloud stop — a running node rests on its green tint, a running map cell is drawn whole — and the progress bar falls back to a pulse. No animation library is used.
 
 ## Do's and Don'ts
 
@@ -448,10 +463,10 @@ Motion is state feedback, never decoration, and all of it is in `tokens.css`. Ea
 - **Do** set labels in the 11 px tracked caps and ids, digests, durations and commands in the mono with tabular figures.
 - **Do** design light and dark together; the dark theme is ink-toned paper (`#13161c`) with pale rules.
 - **Do** keep every control at least 24 px and every focus outline the 2 px focus colour at a 2 px offset.
-- **Do** write the product's words on every surface: version, origin, pool, pin, "asserted by" for a principal.
+- **Do** write the product's words on every surface: version, origin, pool, pin, "asserted by" for a principal; "Orkflow" is a name and is always capitalised (lowercase only where it is the DSL's or the CLI's own word: `orkflow:name@version`, `orkctl orkflow …`, a cache scope).
 
 ### Don't:
-- **Don't** use blue or red for emphasis, branding or decoration; a canceled run's reason is an ink NOTE.
+- **Don't** use blue, green or red for emphasis, branding or decoration; a canceled run's reason is an ink NOTE.
 - **Don't** draw a revision cloud for anything but the run's own failure, and never more than one per page.
 - **Don't** put the drafting grid behind anything but the DAG.
 - **Don't** add shadows to page content; they belong to overlays and the title block's lift.

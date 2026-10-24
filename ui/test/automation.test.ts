@@ -117,13 +117,13 @@ test('the CLI builders quote every value through shellQuote', () => {
 	expect(automationPlanCli("o'brien", true)).toBe(
 		`orkctl apply automation.ork.yaml --dry-run -n 'o'"'"'brien' --prune`
 	);
-	expect(automationPlanCli('', false)).toBe(`orkctl apply automation.ork.yaml --dry-run -n 'default'`);
+	expect(automationPlanCli('', false)).toBe(`orkctl apply automation.ork.yaml --dry-run -n default`);
 	expect(automationApplyCli('payments', false, 'sha256:ab')).toBe(
-		`orkctl apply automation.ork.yaml -n 'payments' --expect-plan 'sha256:ab'`
+		`orkctl apply automation.ork.yaml -n payments --expect-plan sha256:ab`
 	);
-	expect(automationExportCli('payments')).toBe(`orkctl export -n 'payments' > automation.ork.yaml`);
+	expect(automationExportCli('payments')).toBe(`orkctl export -n payments > automation.ork.yaml`);
 	expect(triggerUpdateCli('trg-1', 'payments', { name: 'gh', version: '', description: "it's" })).toBe(
-		`orkctl trigger update 'trg-1' -n 'payments' --name 'gh' --follow-current --description 'it'"'"'s'`
+		`orkctl trigger update trg-1 -n payments --name gh --follow-current --description 'it'"'"'s'`
 	);
 	expect(
 		webhookUpdateCli('wh-1', {
@@ -135,7 +135,7 @@ test('the CLI builders quote every value through shellQuote', () => {
 			taskId: ''
 		})
 	).toBe(
-		`orkctl webhook update 'wh-1' --name 'etl' --url 'https://x.test/' --event 'RUN_FAILED' --deployment-wide --orkflow '' --task ''`
+		`orkctl webhook update wh-1 --name etl --url https://x.test/ --event RUN_FAILED --deployment-wide --orkflow '' --task ''`
 	);
 });
 

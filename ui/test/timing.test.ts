@@ -212,3 +212,29 @@ test('an awaited task is awaited, never queued: run is F − B and nothing else 
 	expect(pending.scheduled).toBe(false);
 	expect(pending.queueWait.kind).toBe('na');
 });
+
+test("a task is placed on its run's timeline: offset and width are shares of the run's span", async () => {
+	const { timelinePlacement } = await import('../src/lib/timing');
+	const run = { start: 1_000, end: 11_000 };
+	// Scheduled at 2 s, started at 3 s, finished at 6 s of a 10 s run.
+	const [wait, work] = timelinePlacement(run, { scheduled: 3_000, started: 4_000, finished: 7_000 })!;
+	const close = (s: { key: string; left: number; width: number; known: boolean }, key: string, left: number, width: number, known: boolean) => {
+		expect(s.key).toBe(key);
+		expect(Math.round(s.left * 1e6) / 1e6).toBe(left);
+		expect(Math.round(s.width * 1e6) / 1e6).toBe(width);
+		expect(s.known).toBe(known);
+	};
+	close(wait, 'wait', 0.2, 0.1, true);
+	close(work, 'run', 0.3, 0.3, true);
+	// No Orker start known: the span is split in two, marked unknown.
+	const [first, second] = timelinePlacement(run, { scheduled: 1_000, started: null, finished: 5_000 })!;
+	close(first, 'wait', 0, 0.2, false);
+	close(second, 'run', 0.2, 0.2, false);
+	// A time outside the run is clamped to its ends; an unknown end places nothing.
+	expect(timelinePlacement(run, { scheduled: 0, started: 500, finished: 20_000 })!.map((s) => [s.left, s.width])).toEqual([
+		[0, 0],
+		[0, 1]
+	]);
+	expect(timelinePlacement({ start: 1_000, end: null }, { scheduled: 1, started: 2, finished: 3 })).toBeNull();
+	expect(timelinePlacement(run, { scheduled: 2_000, started: 3_000, finished: null })).toBeNull();
+});

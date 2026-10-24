@@ -89,9 +89,9 @@ test('promote, roll back and ramp are offered per role', () => {
 
 test('releaseCommand shell-quotes a build id containing a quote', () => {
 	expect(releaseCommand('promote', "v1'; rm -rf /")).toBe(`orkctl release promote 'v1'"'"'; rm -rf /'`);
-	expect(releaseCommand('rollback', 'v1')).toBe(`orkctl release rollback 'v1'`);
-	expect(releaseCommand('ramp', 'v2', 10)).toBe(`orkctl release ramp 'v2' --percent 10`);
-	expect(releaseCommand('ramp', 'v2', 0)).toBe(`orkctl release ramp 'v2' --percent 0`);
+	expect(releaseCommand('rollback', 'v1')).toBe(`orkctl release rollback v1`);
+	expect(releaseCommand('ramp', 'v2', 10)).toBe(`orkctl release ramp v2 --percent 10`);
+	expect(releaseCommand('ramp', 'v2', 0)).toBe(`orkctl release ramp v2 --percent 0`);
 });
 
 test('holdsSummary names the runs and pins still on a release', () => {

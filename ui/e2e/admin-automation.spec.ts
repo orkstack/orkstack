@@ -372,7 +372,7 @@ test('renaming a trigger in place keeps its token', async ({ page }) => {
 	await expect(page.getByTestId(`trigger-name-${id}`)).toHaveText('unnamed');
 	await page.getByTestId(`edit-trigger-${id}`).click();
 	const dialog = page.getByTestId('trigger-edit-dialog');
-	await expect(dialog).toContainText("Editing keeps this trigger's URL and token. Its orkflow cannot change.");
+	await expect(dialog).toContainText("Editing keeps this trigger's URL and token. Its Orkflow cannot change.");
 	await page.getByTestId('trigger-edit-name').fill('renamed-in-place');
 	await page.getByTestId('trigger-edit-description').fill('named by the browser');
 	await page.getByTestId('trigger-edit-submit').click();

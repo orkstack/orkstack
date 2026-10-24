@@ -236,6 +236,7 @@ test('2: the form refuses a bad prefix and a private key locally, without a requ
 
 test('3: Admin → Namespaces offers the signer select and shows the Signed by column', async ({ page }) => {
 	await openNamespaces(page);
+	await page.getByTestId('ns-create-open').click();
 	await page.getByTestId('ns-create-name').fill(PROD);
 	await chooseSigner(page, 'ns-create-require-signed-by', 'cosign:e2e');
 	await page.getByTestId('ns-create-submit').click();

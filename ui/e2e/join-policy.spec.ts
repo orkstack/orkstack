@@ -168,7 +168,7 @@ test('P3 — plan the failure path', async ({ page }) => {
 	await expect(page.getByTestId('run-plan-summary')).toContainText('1 assumed failed');
 	await expect(page.getByTestId('run-plan-fails')).toContainText('Failure handlers that would run: rollback, notify.');
 	await page.getByTestId('run-submit-plan-cli-trigger').click();
-	await expect(page.getByTestId('run-submit-plan-cli-command')).toContainText("--assume-failed 'deploy'");
+	await expect(page.getByTestId('run-submit-plan-cli-command')).toContainText('--assume-failed deploy');
 	await page.getByTestId('run-submit-plan-cli-trigger').click();
 	note(`P3 failure sentence: ${await page.getByTestId('run-plan-fails').textContent()}`);
 	await shot(page, 'screenshot-plan-assume-failed.png');
@@ -255,7 +255,8 @@ test('P5 — cancel a failing run', async ({ page }) => {
 	await page.getByTestId('cancel-run-accept').click();
 	await expect(page.getByTestId('run-status')).toHaveText(/failed/i, { timeout: 120_000 });
 	await expect(page.getByTestId('task-rollback-status')).toHaveText(/canceled/i);
-	await expect(page.getByTestId('task-escalate-status')).toHaveText('Never started');
+	await expect(page.getByTestId('task-escalate-status')).toHaveText('CANCELED');
+	await expect(page.getByTestId('task-escalate-status-note')).toHaveText('never started');
 	await expect(banner).toHaveCount(0);
 	note(`P5 ${runId}: cancelled while failing; run FAILED, rollback CANCELED, escalate never started`);
 	await shot(page, 'screenshot-failing-canceled.png');

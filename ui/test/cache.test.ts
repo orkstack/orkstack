@@ -122,13 +122,13 @@ test('sourceAttemptDuration and memoWriteSentence', () => {
 
 test('purgeCommand names exactly one selector and quotes what a page supplies', () => {
 	expect(purgeCommand({ namespace: 'ml', orkflow: 'cached-pipeline', task: 'featurize' })).toBe(
-		"orkctl --namespace 'ml' cache purge --orkflow 'cached-pipeline' --task 'featurize'"
+		"orkctl --namespace ml cache purge --orkflow cached-pipeline --task featurize"
 	);
 	expect(purgeCommand({ namespace: '', namespaceScoped: true })).toBe(
-		"orkctl --namespace 'default' cache purge --namespace-scoped"
+		"orkctl --namespace default cache purge --namespace-scoped"
 	);
 	expect(purgeCommand({ namespace: 'ml', all: true, task: 'ignored', olderThan: '72h' })).toBe(
-		"orkctl --namespace 'ml' cache purge --all --older-than '72h'"
+		"orkctl --namespace ml cache purge --all --older-than 72h"
 	);
 	// A quote in a task id cannot become shell syntax.
 	const hostile = purgeCommand({ namespace: 'ml', orkflow: 'p', task: "x'; rm -rf / #" });
@@ -159,7 +159,7 @@ test('cacheWindowFrom, cacheStatsCli, hitRateLabel, reusedLabel and inventoryRow
 	});
 	expect(cacheWindowFrom(new URL('http://x/admin/cache?since=junk')).window).toBe('24h');
 	expect(cacheStatsCli('ml', { window: '168h' }, 'cached-pipeline')).toBe(
-		"orkctl --namespace 'ml' cache stats --since '168h' --orkflow 'cached-pipeline'"
+		"orkctl --namespace ml cache stats --since 168h --orkflow cached-pipeline"
 	);
 	expect(hitRateLabel({ hitRate: 8 / 9, hitRateDefined: true })).toBe('88.9%');
 	expect(hitRateLabel({ hitRate: 0, hitRateDefined: false })).toBe('unavailable');

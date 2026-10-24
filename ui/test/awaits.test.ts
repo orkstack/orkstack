@@ -17,11 +17,11 @@ test('awaitCurl single-quotes a real token and double-quotes the placeholder', (
 	expect(url).toBe('http://localhost:8080/v1/runs/ork-1/awaits/training');
 	const real = awaitCurl({ url, token: "tok'en" });
 	expect(real).toContain(`-H 'Authorization: Bearer tok'"'"'en'`);
-	expect(real).toContain(`curl -X POST 'http://localhost:8080/v1/runs/ork-1/awaits/training'`);
+	expect(real).toContain(`curl -X POST http://localhost:8080/v1/runs/ork-1/awaits/training`);
 	const placeholder = awaitCurl({ url });
 	expect(placeholder).toContain('-H "Authorization: Bearer $ORKSTACK_CALLBACK_TOKEN"');
 	const reject = awaitCurl({ url, reject: true });
-	expect(reject).toContain(`'http://localhost:8080/v1/runs/ork-1/awaits/training/reject'`);
+	expect(reject).toContain('http://localhost:8080/v1/runs/ork-1/awaits/training/reject ');
 	expect(reject).toContain(`-d '{"reason":"…"}'`);
 });
 
@@ -33,13 +33,13 @@ test('resolveCli round-trips a value containing a quote', () => {
 		valuesJson: `{"approver":"o'brien"}`
 	});
 	expect(command).toBe(
-		`orkctl --namespace 'team-a' 'run' 'resolve' 'ork-1' '--task' 'approval' '--values' '{"approver":"o'"'"'brien"}'`
+		`orkctl --namespace team-a run resolve ork-1 --task approval --values '{"approver":"o'"'"'brien"}'`
 	);
 	expect(resolveCli({ namespace: '', runId: 'ork-1', taskId: 'gate', reject: true, reason: 'no' })).toBe(
-		`orkctl --namespace 'default' 'run' 'resolve' 'ork-1' '--task' 'gate' '--reject' '--reason' 'no'`
+		`orkctl --namespace default run resolve ork-1 --task gate --reject --reason no`
 	);
 	expect(resolveCli({ namespace: '', runId: 'ork-1', taskId: 'gate', valuesJson: '{}' })).toBe(
-		`orkctl --namespace 'default' 'run' 'resolve' 'ork-1' '--task' 'gate'`
+		`orkctl --namespace default run resolve ork-1 --task gate`
 	);
 });
 

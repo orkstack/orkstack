@@ -205,7 +205,7 @@ test('the child run names its parent and the parent lists its children', async (
 	// its CLI equivalent is the same two filters.
 	await page.getByTestId('run-children-cli-trigger').click();
 	await expect(page.getByTestId('run-children-cli-command')).toContainText(
-		`'run' 'list' '--filter' 'origin.kind=PARENT_RUN' '--filter' 'origin.id=${runId}'`
+		`run list --filter origin.kind=PARENT_RUN --filter origin.id=${runId}`
 	);
 	await page.keyboard.press('Escape');
 	await page.getByTestId('run-children-link').click();
@@ -268,7 +268,11 @@ test('the Orkflow page shows the child reference, its digest and the outputs', a
 	await page.goto(`${UI}/orkflows/composed-release?ns=${NS}`);
 	await expect(page.getByTestId('task-child-link-release')).toHaveText('orkflow release-block@0.1.0');
 	await expect(page.getByTestId('task-child-digest-release')).toHaveText(/^sha256:[0-9a-f]{12}…[0-9a-f]{6}$/);
-	await expect(page.getByTestId('dag-node-release-orkflow')).toHaveText('orkflow release-block@0.1.0');
+	// The node's line fits its box: the name gives way, the pinned version
+	// stays whole, and the full reference is the line's title.
+	const ref = page.getByTestId('dag-node-release-orkflow');
+	await expect(ref.locator('title')).toHaveText('orkflow release-block@0.1.0');
+	expect(await ref.evaluate((el) => el.lastChild?.textContent)).toBe('orkflow release-…@0.1.0');
 	await expect(page.getByTestId('orkflow-output-digest')).toContainText('{{ .tasks.release.output.digest }}');
 	await shot(page, 'screenshot-orkflow-page.png');
 	await page.getByTestId('task-child-link-release').click();

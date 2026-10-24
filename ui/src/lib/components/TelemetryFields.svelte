@@ -66,7 +66,6 @@
 		<input
 			data-testid="{idPrefix}-telemetry-sink{testIdSuffix}"
 			bind:value={sink}
-			placeholder="default"
 			class="field h-9 px-3 font-mono"
 		/>
 	{:else}
@@ -88,12 +87,11 @@
 	/>
 </label>
 <label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
-	<span class="field-label mb-0">Telemetry attributes <span class="field-hint">(one key=value per line)</span></span>
+	<span class="field-label mb-0">Telemetry attributes <span class="field-hint">(one key=value per line, e.g. team=payments)</span></span>
 	<textarea
 		data-testid="{idPrefix}-telemetry-attributes{testIdSuffix}"
 		bind:value={attributesText}
 		rows="3"
-		placeholder="team=payments"
 		class="field px-3 py-2 font-mono text-xs"
 	></textarea>
 	{#if attributesHint}

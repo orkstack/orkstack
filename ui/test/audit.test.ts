@@ -73,9 +73,9 @@ test('the address carries the filters as repeated filter keys, drops the cursor 
 test('the CLI equivalent is admin audit with every filter shell-quoted and --limit, never -n', () => {
 	expect(auditCliCommand(base)).toBe('orkctl admin audit');
 	expect(auditCliCommand({ filters: parsed('namespace=payments', "principal=o'brien", 'action^namespace.'), limit: 2 })).toBe(
-		`orkctl admin audit --filter 'action^namespace.' --filter 'namespace=payments' --filter 'principal=o'"'"'brien' --limit 2`
+		`orkctl admin audit --filter 'action^namespace.' --filter namespace=payments --filter 'principal=o'"'"'brien' --limit 2`
 	);
-	expect(auditCliCommand({ filters: parsed('namespace='), limit: DEFAULT_AUDIT_LIMIT })).toBe(`orkctl admin audit --filter 'namespace='`);
+	expect(auditCliCommand({ filters: parsed('namespace='), limit: DEFAULT_AUDIT_LIMIT })).toBe(`orkctl admin audit --filter namespace=`);
 });
 
 test('the scope sentence says what the namespace filter selects', () => {

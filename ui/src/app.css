@@ -235,6 +235,28 @@
 			padding: 0;
 		}
 	}
+	/* A stacked register of many facts (Admin → Namespaces): two equal
+	   columns, each fact under its column head's words, drawn from the cell's
+	   data-label; the heads stay for assistive technology. */
+	.register-pairs tr {
+		@variant max-sm {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+			align-items: start;
+		}
+	}
+	.register-stacked td[data-label]::before {
+		@variant max-sm {
+			content: attr(data-label);
+			display: block;
+			font-size: var(--text-2xs);
+			line-height: var(--text-2xs--line-height);
+			font-weight: var(--font-weight-semibold);
+			letter-spacing: var(--tracking-caps);
+			text-transform: uppercase;
+			color: var(--color-ink-muted);
+			font-family: var(--font-sans);
+		}
+	}
 
 	/* A drawing's frame: the region rule all round. */
 	.frame {
@@ -407,10 +429,11 @@
 		width: calc(var(--spacing) * 2);
 		height: calc(var(--spacing) * 2);
 		border-radius: var(--radius-full);
-		border: var(--rule-region) solid var(--color-blue);
+		border: var(--rule-region) solid var(--color-awaiting-solid);
 	}
 	.mark-dot {
-		background-color: var(--color-blue);
+		border-color: var(--color-running-solid);
+		background-color: var(--color-running-solid);
 	}
 
 	/* Forced colours drop background images and recolour fills; a border in

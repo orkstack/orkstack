@@ -485,6 +485,56 @@ func TestMerge_DeferredTestsAreRecordedNotRun(t *testing.T) {
 	}
 }
 
+// A local run records each deferred test itself, as `deferred` with its list
+// entry (run.go, planAndMaybeRun): the merged ledger carries it once, from the
+// plan, and the proof stays eligible.
+func TestMerge_ALocalLedgerThatRecordsItsDeferredTestsIsEligible(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	f.deferB(nightlyLine("TestB")+"\n", nightlyLine("TestB")+"\n")
+	f.writeLocal(ledger{Suite: "integration", Tests: []entry{
+		passEntry("TestA"),
+		{Package: mPkg, Test: "TestB", Outcome: "deferred", Reason: nightlyLine("TestB")},
+	}})
+	r, code := f.merge()
+	if code != 0 || r.Result != "pass" || !r.MergeEligible {
+		t.Fatalf("code %d, result %s eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
+	}
+	var l ledger
+	if err := readJSON(filepath.Join(f.out, "integration-tests.json"), &l); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range l.Tests {
+		if e.Test == "TestB" {
+			n++
+			if e.Outcome != "deferred" || e.Reason != nightlyLine("TestB") {
+				t.Errorf("deferred entry = %+v", e)
+			}
+		}
+	}
+	if n != 1 || l.Summary.Deferred != 1 || len(l.Problems) != 0 {
+		t.Errorf("TestB entries %d, summary %+v, problems %v; want one deferred entry and no problem", n, l.Summary, l.Problems)
+	}
+}
+
+// Only the plan decides what is deferred: a part's deferred entry for a test
+// the plan runs is a problem, not an outcome.
+func TestMerge_ADeferredEntryForATestThePlanRunsFailsTheProof(t *testing.T) {
+	f := newMergeFixture(t, tierFull, false)
+	f.deferB(nightlyLine("TestB")+"\n", nightlyLine("TestB")+"\n")
+	f.writeLocal(ledger{Suite: "integration", Tests: []entry{
+		{Package: mPkg, Test: "TestA", Outcome: "deferred", Reason: nightlyLine("TestA")},
+		{Package: mPkg, Test: "TestB", Outcome: "deferred", Reason: nightlyLine("TestB")},
+	}})
+	r, code := f.merge()
+	if code != 1 || r.MergeEligible {
+		t.Fatalf("code %d, eligible %v: a deferred entry for a test the plan runs passed", code, r.MergeEligible)
+	}
+	if got := strings.Join(r.Ineligible, "\n"); !strings.Contains(got, "wrote a deferred entry for "+mPkg+".TestA") || strings.Contains(got, ".TestB") {
+		t.Errorf("ineligible = %v; want TestA's entry refused and TestB's accepted", r.Ineligible)
+	}
+}
+
 func TestMerge_ARunnerSizeUISpecIsAKnownGap(t *testing.T) {
 	f := newMergeFixture(t, tierFull, true)
 	f.anchorHostSpeed(hostRow, hostRow)
@@ -828,7 +878,7 @@ func TestMerge_ADeferredEntryOutsideThePlanFailsTheProof(t *testing.T) {
 			d := passEntry("TestB")
 			d.Outcome, d.Reason = "deferred", nightlyLine("TestB")
 			return []entry{passEntry("TestA"), d}
-		}, "only the merger writes deferred entries"},
+		}, "only the plan's deferred set is deferred"},
 		{"the plan defers outside defer mode", func(f *mergeFixture) []entry {
 			f.plan.Nightly.Mode = nightlyInclude
 			f.plan.Deferred = []deferredRef{{Package: mPkg, Test: "TestB", Entry: nightlyLine("TestB")}}

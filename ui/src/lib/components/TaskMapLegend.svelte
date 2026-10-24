@@ -1,13 +1,29 @@
 <script lang="ts">
 	// The task map's key, under its frame: one entry per status present, with
 	// its drawn mark and its count. Pressing one moves the map's cursor to that
-	// status's first cell.
+	// status's first cell. A status whose cells the run ended before they ever
+	// started says so ("never started"), in the same words as their rows.
 	import type { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { statusLabel } from '$lib/status';
 	import { statusClassWord, statusMark } from '$lib/statusMarks';
 	import { STATUS_ORDER } from '$lib/taskMap';
 
-	let { counts, onpick }: { counts: Map<Status, number>; onpick: (status: Status) => void } = $props();
+	let {
+		counts,
+		neverStarted = new Map(),
+		onpick
+	}: {
+		counts: Map<Status, number>;
+		/** Of each status's cells, how many never started. */
+		neverStarted?: Map<Status, number>;
+		onpick: (status: Status) => void;
+	} = $props();
+
+	function never(status: Status): string {
+		const n = neverStarted.get(status) ?? 0;
+		if (n <= 0) return '';
+		return n >= (counts.get(status) ?? 0) ? 'never started' : `${fmt.format(n)} never started`;
+	}
 
 	const fmt = new Intl.NumberFormat('en-US');
 	const present = $derived(STATUS_ORDER.filter((s) => (counts.get(s) ?? 0) > 0));
@@ -28,6 +44,7 @@
 				>
 				<span class="caps">{statusLabel(status)}</span>
 				<span class="figure">{fmt.format(counts.get(status) ?? 0)}</span>
+				{#if never(status)}<span class="text-ink-muted" data-testid="task-map-legend-{statusClassWord(status)}-note">· {never(status)}</span>{/if}
 			</button>
 		</li>
 	{/each}

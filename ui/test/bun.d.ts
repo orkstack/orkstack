@@ -18,8 +18,12 @@ declare module 'bun' {
 
 declare module 'bun:test' {
 	export function test(name: string, fn: () => void | Promise<void>): void;
-	export function expect<T>(value: T): {
+	// A second argument is the message a failure prints (which shape, which
+	// edge), as Bun's own expect takes.
+	export function expect<T>(value: T, message?: string): {
 		toBe(expected: T): void;
+		toBeLessThan(expected: number): void;
+		toBeLessThanOrEqual(expected: number): void;
 		toEqual(expected: unknown): void;
 		toContain(expected: unknown): void;
 		toHaveLength(expected: number): void;
@@ -67,4 +71,11 @@ declare const Bun: {
 interface ImportMeta {
 	/** Bun: the directory of the current module. */
 	readonly dir: string;
+}
+
+// The one environment read the unit tests make: UPDATE_DAG_PINS=1 rewrites
+// dag.test.ts's pinned layouts. A module, not a global, so the app's code
+// cannot reach a `process` it does not have.
+declare module 'node:process' {
+	export const env: Record<string, string | undefined>;
 }

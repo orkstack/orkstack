@@ -94,7 +94,7 @@ test('planCli omits --version when empty, emits --outputs-file only with assumpt
 	const current = planCli({ name: 'deploy', namespace: 'payments', version: '', input: { region: 'eu' } });
 	expect(current).toBe(
 		`printf '%s\\n' '{"region":"eu"}' > input.json\n` +
-			`orkctl run plan 'deploy' --namespace 'payments' --input-json "$(cat input.json)"`
+			`orkctl run plan deploy --namespace payments --input-json "$(cat input.json)"`
 	);
 	expect(current).not.toContain('--version');
 	expect(current).not.toContain('--outputs-file');
@@ -108,7 +108,7 @@ test('planCli omits --version when empty, emits --outputs-file only with assumpt
 	});
 	expect(pinned).toContain(`printf '%s\\n' '{"build":{"ok":true}}' > outputs.json`);
 	expect(pinned).toContain(
-		`orkctl run plan 'it'"'"'s' --namespace 'default' --version '1.2.3' --input-json "$(cat input.json)" --outputs-file outputs.json`
+		`orkctl run plan 'it'"'"'s' --namespace default --version 1.2.3 --input-json "$(cat input.json)" --outputs-file outputs.json`
 	);
 	expect(planCli({ name: 'x', namespace: 'n', version: '', input: {}, assumedOutputs: {} })).not.toContain(
 		'outputs.json'
@@ -248,5 +248,5 @@ test('planCaveats names unused assumptions and an assumption an older server ign
 	expect(parseAssumeFailed(' deploy, ,rollback ,')).toEqual(['deploy', 'rollback']);
 	expect(
 		planCli({ name: 'deploy', namespace: 'payments', version: '', input: {}, assumeFailed: ['deploy', 'roll back'] })
-	).toContain("--assume-failed 'deploy' --assume-failed 'roll back'");
+	).toContain("--assume-failed deploy --assume-failed 'roll back'");
 });

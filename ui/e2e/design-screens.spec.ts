@@ -23,6 +23,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fullPageShot } from './uiHelpers';
 
 // The design screens (UI revamp, finish), against a real engine and Orker on
 // real Temporal and MinIO: the key pages — the runs register, a failed run on
@@ -290,7 +291,7 @@ test('screens: the key pages in light and dark, at 1440, 390 and 320 px', async 
 					reflowed.push(base);
 				}
 				await page.screenshot({ path: out(`${base}-first.png`) });
-				await page.screenshot({ path: out(`${base}.png`), fullPage: true });
+				await fullPageShot(page, out(`${base}.png`));
 				written.push(base);
 			}
 		}
@@ -336,6 +337,7 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 
 	// The saga's five layers are drawn whole at 1440, scaled no lower than 0.6,
 	// and the frame offers no scrolling.
+	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'LR');
 	const wide = await dagFit(page);
 	note(`DAG at 1440: ${JSON.stringify(wide)}`);
 	expect(wide.scrolls).toBe(false);
@@ -388,14 +390,24 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	await page.getByTestId('task-log-toggle-validate').click();
 	await expect(page.getByTestId('task-log-state-validate')).toHaveCount(0);
 
-	// At 390 the drawing scrolls in its frame: the frame says so with a
-	// control, and the failed task is the one in view.
+	// At 390 the saga reads top to bottom (the Direction Rule): one column
+	// that needs no sideways scrolling, the failed task in view.
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default`);
-	await expect(page.getByTestId('run-dag')).toBeVisible();
+	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'TB');
+	await expect.poll(async () => (await dagFit(page)).failedInView).toBe(true);
+	const column = await dagFit(page);
+	note(`DAG at 390 (auto, top to bottom): ${JSON.stringify(column)}`);
+	expect(column.scrolls).toBe(false);
+	expect(column.scale).toBeGreaterThanOrEqual(0.6 - 0.001);
+	await page.screenshot({ path: out('finish-run-dag-390-auto.png') });
+	// Asked to read left to right, it scrolls in its frame: the frame says
+	// so with a control, and the failed task is the one in view.
+	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default&dag=lr`);
+	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'LR');
 	await expect.poll(async () => (await dagFit(page)).failedInView).toBe(true);
 	const narrow = await dagFit(page);
-	note(`DAG at 390: ${JSON.stringify(narrow)}`);
+	note(`DAG at 390 (dag=lr): ${JSON.stringify(narrow)}`);
 	expect(narrow.scrolls).toBe(true);
 	expect(narrow.scale).toBeGreaterThanOrEqual(0.6 - 0.001);
 	await expect(page.getByTestId('run-dag-scroll-left').or(page.getByTestId('run-dag-scroll-right')).first()).toBeVisible();
@@ -439,7 +451,8 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 		return { rows: rows.map((top) => Math.abs(Math.round(right - Math.max(...cells.filter((c) => Math.round(c.top) === top).map((c) => c.right))))), notes };
 	});
 	note(`band at 390: ${JSON.stringify(band)}`);
-	expect(band.rows).toEqual([0, 0]);
+	// Below 400 px the four status counts are a 2 × 2 grid over the three figures.
+	expect(band.rows).toEqual([0, 0, 0]);
 	for (const n of band.notes) expect(n.cut, `${n.id} is whole`).toBe(false);
 
 	// The runs register at 1280 × 720: the filter toolbar is one row, and the

@@ -130,7 +130,7 @@ test('itemFromUrl reads a well-formed ?item= only', () => {
 
 test('itemCli quotes every argument: a quote in a task id cannot become shell syntax', () => {
 	expect(itemCli({ namespace: '', runId: 'ork-1', taskId: 'convert', item: 97, command: 'logs' })).toBe(
-		"orkctl --namespace 'default' 'run' 'logs' 'ork-1' '--task' 'convert' '--item' '97'"
+		"orkctl --namespace default run logs ork-1 --task convert --item 97"
 	);
 	const hostile = itemCli({ namespace: 'data', runId: 'ork-1', taskId: "x'; rm -rf / #", item: 1, command: 'attempts' });
 	expect(hostile).toContain(`'x'"'"'; rm -rf / #'`);

@@ -305,6 +305,9 @@
 	let createBusy = $state(false);
 	let createServerError = $state('');
 	let createSuccess = $state('');
+	// The create form is a disclosure the header's primary opens; it stays
+	// open after a create, so the next one starts where the last one left.
+	let createOpen = $state(false);
 
 	// What the create form holds, as one comparable value: the form is dirty
 	// when it differs from what it held when it was last opened or reset.
@@ -492,7 +495,7 @@
 	guardUnsaved(
 		(navigation) =>
 			leavesRoute(navigation) &&
-			(createFields() !== createSeed || (editingName !== '' && editFields() !== editSeed)),
+			((createOpen && createFields() !== createSeed) || (editingName !== '' && editFields() !== editSeed)),
 		'Discard the namespace changes you have not saved?'
 	);
 
@@ -734,7 +737,21 @@
 
 <svelte:head><title>Admin — Namespaces — OrkStack</title></svelte:head>
 
-<SheetHeader title="Namespaces" />
+<SheetHeader title="Namespaces">
+	{#snippet actions()}
+		<!-- The page's one primary: it opens the create form, a disclosure under
+		     the header; open, it hands the primary to the form's own submit. A
+		     registry that could not be read offers no form to open. -->
+		{#if !data.namespacesError}<button
+			type="button"
+			data-testid="ns-create-open"
+			aria-expanded={createOpen}
+			aria-controls="ns-create-form"
+			onclick={() => (createOpen = !createOpen)}
+			class="btn {createOpen ? '' : 'btn-primary'}">{createOpen ? 'Close the form' : 'Create namespace'}</button
+		>{/if}
+	{/snippet}
+</SheetHeader>
 
 <ScopeNote testid="namespaces-scope-caption">
 	All namespaces this deployment has — the namespace selector above does not filter this view; the filters below do.
@@ -767,8 +784,9 @@
 		onretry={retry}
 	/>
 {:else}
-	<section class="region mb-10 pt-3">
-		<h2 class="mb-3 text-md font-semibold text-ink">Create a namespace</h2>
+	{#if createOpen}
+	<section id="ns-create-form" class="region mb-10 pt-3" aria-labelledby="ns-create-heading">
+		<h2 id="ns-create-heading" class="mb-3 text-md font-semibold text-ink">Create a namespace</h2>
 		<form
 			class="grid max-w-4xl gap-4 sm:grid-cols-2"
 			onsubmit={(e) => {
@@ -777,11 +795,10 @@
 			}}
 		>
 			<label class="flex flex-col gap-1.5 text-sm">
-				<span class="field-label mb-0">Name</span>
+				<span class="field-label mb-0">Name <span class="field-hint">(lowercase letters, digits, hyphens; e.g. payments)</span></span>
 				<input
 					data-testid="ns-create-name"
 					bind:value={createName}
-					placeholder="payments"
 					class="field h-9 px-3"
 				/>
 				{#if createErrors.name}
@@ -803,7 +820,6 @@
 				<input
 					data-testid="ns-create-default-pool"
 					bind:value={createDefaultPool}
-					placeholder={DEFAULT_POOL_NAME}
 					class="field h-9 px-3"
 				/>
 				{#if createErrors.defaultPool}
@@ -813,11 +829,10 @@
 				{/if}
 			</label>
 			<label class="flex flex-col gap-1.5 text-sm">
-				<span class="field-label mb-0">Allowed pools <span class="field-hint">(comma-separated, blank = unrestricted)</span></span>
+				<span class="field-label mb-0">Allowed pools <span class="field-hint">(comma-separated, e.g. cpu, gpu; blank = unrestricted)</span></span>
 				<input
 					data-testid="ns-create-allowed-pools"
 					bind:value={createAllowedPools}
-					placeholder="cpu, gpu"
 					class="field h-9 px-3"
 				/>
 				{#if createErrors.allowedPools}
@@ -832,7 +847,6 @@
 					data-testid="ns-create-run-retention"
 					bind:value={createRunRetentionHours}
 					inputmode="decimal"
-					placeholder="inherit"
 					class="field h-9 px-3"
 				/>
 				<span class="text-xs text-ink-muted">Blank inherits the deployment maximum.</span>
@@ -847,7 +861,6 @@
 				<input
 					data-testid="ns-create-hold-reason"
 					bind:value={createHoldReason}
-					placeholder="accepting"
 					class="field h-9 px-3"
 				/>
 				{#if createErrors.holdReason}
@@ -862,7 +875,6 @@
 					data-testid="ns-create-max-running"
 					bind:value={createMaxRunning}
 					inputmode="numeric"
-					placeholder="0"
 					class="field h-9 px-3"
 				/>
 				{#if createErrors.maxRunning}
@@ -875,16 +887,16 @@
 				<legend class="field-label mb-0 float-left w-full">Budget <span class="field-hint">(reserved cpu and memory over a rolling period; both amounts blank = unbounded)</span></legend>
 				<div class="grid gap-3 sm:grid-cols-4">
 					<label class="flex flex-col gap-1.5">
-						<span class="field-label mb-0">Budget cpu-seconds</span>
-						<input data-testid="ns-create-budget-cpu-seconds" bind:value={createBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="field h-9 px-3" />
+						<span class="field-label mb-0">Budget cpu-seconds <span class="field-hint">(blank = unbounded)</span></span>
+						<input data-testid="ns-create-budget-cpu-seconds" bind:value={createBudgetCpuSeconds} inputmode="numeric" class="field h-9 px-3" />
 					</label>
 					<label class="flex flex-col gap-1.5">
-						<span class="field-label mb-0">Budget GiB-seconds</span>
-						<input data-testid="ns-create-budget-gib-seconds" bind:value={createBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="field h-9 px-3" />
+						<span class="field-label mb-0">Budget GiB-seconds <span class="field-hint">(blank = unbounded)</span></span>
+						<input data-testid="ns-create-budget-gib-seconds" bind:value={createBudgetGibSeconds} inputmode="numeric" class="field h-9 px-3" />
 					</label>
 					<label class="flex flex-col gap-1.5">
-						<span class="field-label mb-0">Budget period (hours)</span>
-						<input data-testid="ns-create-budget-period-hours" bind:value={createBudgetPeriodHours} inputmode="numeric" placeholder="720" class="field h-9 px-3" />
+						<span class="field-label mb-0">Budget period <span class="field-hint">(whole hours, e.g. 720)</span></span>
+						<input data-testid="ns-create-budget-period-hours" bind:value={createBudgetPeriodHours} inputmode="numeric" class="field h-9 px-3" />
 					</label>
 					<label class="flex items-center gap-2 self-end pb-2">
 						<input type="checkbox" class="size-4" data-testid="ns-create-budget-enforce" bind:checked={createBudgetEnforce} />
@@ -897,12 +909,11 @@
 				{/if}
 			</fieldset>
 			<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
-				<span class="field-label mb-0">Allowed secrets <span class="field-hint">(one scheme:pattern per line; blank = unrestricted)</span></span>
+				<span class="field-label mb-0">Allowed secrets <span class="field-hint">(one scheme:pattern per line, e.g. env:SANDBOX_*; blank = unrestricted)</span></span>
 				<textarea
 					data-testid="ns-create-allowed-secrets"
 					bind:value={createAllowedSecrets}
 					rows="2"
-					placeholder="env:SANDBOX_*"
 					spellcheck="false"
 					class="field px-3 py-2 font-mono text-xs"
 				></textarea>
@@ -931,7 +942,7 @@
 				sinks={data.telemetrySinks}
 				sinksError={data.telemetrySinksError}
 				idPrefix="ns-create"
-				attributesHint="Stamped on every signal of this namespace's runs. Blank sets none of its own."
+				attributesHint="Stamped on every trace, metric and log of this namespace's runs. Blank sets none of its own."
 				attributesError={createErrors.telemetryAttributes}
 				attributesErrorTestId="ns-create-error-telemetry-attributes"
 			/>
@@ -959,6 +970,7 @@
 			<p class="confirm mt-3 text-sm text-ink" role="status" data-testid="ns-create-success">{createSuccess}</p>
 		{/if}
 	</section>
+	{/if}
 
 	<h2 class="mb-2 text-md font-semibold text-ink">Registry</h2>
 	{@render filterForm()}
@@ -969,7 +981,7 @@
 		{#if emptyState === 'only-default'}
 			<p class="mb-3 text-sm text-ink-muted" data-testid="namespaces-empty">
 				No namespaces beyond <code>default</code> yet — it is undeletable
-				below because every orkflow that names no namespace is in it. Create one above.
+				below because every Orkflow that names no namespace is in it. Create namespace, at the top of the page, adds one.
 			</p>
 		{:else if emptyState === 'no-match'}
 			<p class="mb-3 text-sm text-ink-muted" data-testid="namespaces-empty">
@@ -982,10 +994,13 @@
 		{/if}
 		{#if data.namespacesList.length > 0}
 			<div class="relative overflow-x-auto border-t-2 border-ink">
-				<table class="register min-w-[720px]" data-testid="namespace-list">
-					<thead>
+				<table class="register register-stacked register-pairs sm:min-w-[720px]" data-testid="namespace-list">
+					<thead class="max-sm:sr-only">
 						<tr>
 							<th scope="col">Name</th>
+							<!-- A row's actions sit beside its name, so the register's
+							     sideways scroll never takes them out of reach. -->
+							<th scope="col"><span class="sr-only">Actions</span></th>
 							<th scope="col">Description</th>
 							<th scope="col">Default pool</th>
 							<th scope="col">Allowed pools</th>
@@ -995,11 +1010,10 @@
 							<th scope="col">Max running</th>
 							<th scope="col">Signed by</th>
 							<th scope="col">Budget</th>
-	<th scope="col">Telemetry sink</th>
+							<th scope="col">Telemetry sink</th>
 							<th scope="col">Task logs</th>
 							<th scope="col">Attrs</th>
 							<th scope="col">Updated</th>
-							<th scope="col"><span class="sr-only">Actions</span></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1009,52 +1023,9 @@
 								data-testid="namespace-row-{ns.name}"
 								data-held={ns.hold ? 'true' : 'false'}
 							>
-								<td class="font-mono font-semibold whitespace-nowrap text-ink">{ns.name}</td>
-								<td class="max-w-xs truncate text-ink-secondary"
-									>{ns.description || '—'}</td
-								>
-								<td class="text-ink-secondary"
-									>{ns.defaultPool || DEFAULT_POOL_NAME}</td
-								>
-								<td class="text-ink-secondary">
-									{ns.allowedPools.length > 0 ? ns.allowedPools.join(', ') : 'unrestricted'}
-								</td>
-								<td
-									class="max-w-xs truncate font-mono text-xs text-ink-secondary"
-									title={allowedSecretsLabel(ns.allowedSecrets)}
-									data-testid="namespace-allowed-secrets-{ns.name}">{allowedSecretsLabel(ns.allowedSecrets)}</td
-								>
-								<td class="text-ink-secondary" data-testid="namespace-run-retention-{ns.name}"
-									>{runRetentionLabel(ns.runRetention)}</td
-								>
-								<td
-									class="max-w-xs truncate {ns.hold ? 'severity-error font-semibold' : 'text-ink-secondary'}"
-									title={holdLabel(ns.hold)}
-									data-testid="namespace-hold-{ns.name}">{holdLabel(ns.hold)}</td
-								>
-								<td class="figure text-ink-secondary" data-testid="namespace-max-running-{ns.name}"
-									>{maxRunningLabel(ns.maxRunning)}</td
-								>
-								<td class="font-mono text-xs text-ink-secondary" data-testid="namespace-require-signed-by-{ns.name}"
-									>{ns.requireSignedBy || '—'}</td
-								>
-								<td class="figure text-xs whitespace-nowrap text-ink" data-testid="namespace-budget-{ns.name}"
-									>{budgetConfigLabel(ns.budget)}</td
-								>
-								<td class="text-ink-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
-									>{telemetrySinkLabel(ns.telemetry)}</td
-								>
-								<td class="text-ink-secondary" data-testid="namespace-task-logs-{ns.name}"
-									>{taskLogsLabel(ns.telemetry)}</td
-								>
-								<td class="figure text-ink-secondary" data-testid="namespace-telemetry-attribute-count-{ns.name}"
-									>{attributeCountLabel(ns.telemetry)}</td
-								>
-								<td class="figure text-xs text-ink-muted"
-									>{fmtTimestamp(ns.updatedAt)}</td
-								>
-								<td>
-									<div class="flex items-center justify-end gap-2">
+								<td class="font-mono font-semibold whitespace-nowrap text-ink max-sm:col-span-2">{ns.name}</td>
+								<td class="max-sm:col-span-2 max-sm:order-last">
+									<div class="flex items-center gap-2 sm:justify-start">
 										<button
 											type="button"
 											data-testid="namespace-edit-{ns.name}"
@@ -1086,7 +1057,7 @@
 											<span
 												class="text-xs text-ink-muted"
 												data-testid="namespace-delete-default-reason"
-												title="every orkflow that names no namespace is in it"
+												title="every Orkflow that names no namespace is in it"
 											>
 												undeletable
 											</span>
@@ -1094,7 +1065,7 @@
 												type="button"
 												data-testid="namespace-delete-default"
 												disabled
-												title="default cannot be deleted: every orkflow that names no namespace is in it"
+												title="default cannot be deleted: every Orkflow that names no namespace is in it"
 												class="btn btn-sm cursor-not-allowed"
 											>
 												Delete
@@ -1111,10 +1082,53 @@
 										{/if}
 									</div>
 								</td>
+								<td data-label="Description" class="max-w-xs truncate text-ink-secondary"
+									>{ns.description || '—'}</td
+								>
+								<td data-label="Default pool" class="text-ink-secondary"
+									>{ns.defaultPool || DEFAULT_POOL_NAME}</td
+								>
+								<td data-label="Allowed pools" class="text-ink-secondary">
+									{ns.allowedPools.length > 0 ? ns.allowedPools.join(', ') : 'unrestricted'}
+								</td>
+								<td data-label="Allowed secrets"
+									class="max-w-xs truncate font-mono text-xs text-ink-secondary"
+									title={allowedSecretsLabel(ns.allowedSecrets)}
+									data-testid="namespace-allowed-secrets-{ns.name}">{allowedSecretsLabel(ns.allowedSecrets)}</td
+								>
+								<td data-label="Run retention" class="text-ink-secondary" data-testid="namespace-run-retention-{ns.name}"
+									>{runRetentionLabel(ns.runRetention)}</td
+								>
+								<td data-label="Hold"
+									class="max-w-xs truncate {ns.hold ? 'severity-error font-semibold' : 'text-ink-secondary'}"
+									title={holdLabel(ns.hold)}
+									data-testid="namespace-hold-{ns.name}">{holdLabel(ns.hold)}</td
+								>
+								<td data-label="Max running" class="figure text-ink-secondary" data-testid="namespace-max-running-{ns.name}"
+									>{maxRunningLabel(ns.maxRunning)}</td
+								>
+								<td data-label="Signed by" class="font-mono text-xs text-ink-secondary" data-testid="namespace-require-signed-by-{ns.name}"
+									>{ns.requireSignedBy || '—'}</td
+								>
+								<td data-label="Budget" class="figure text-xs whitespace-nowrap text-ink" data-testid="namespace-budget-{ns.name}"
+									>{budgetConfigLabel(ns.budget)}</td
+								>
+								<td data-label="Telemetry sink" class="text-ink-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
+									>{telemetrySinkLabel(ns.telemetry)}</td
+								>
+								<td data-label="Task logs" class="text-ink-secondary" data-testid="namespace-task-logs-{ns.name}"
+									>{taskLogsLabel(ns.telemetry)}</td
+								>
+								<td data-label="Attrs" class="figure text-ink-secondary" data-testid="namespace-telemetry-attribute-count-{ns.name}"
+									>{attributeCountLabel(ns.telemetry)}</td
+								>
+								<td data-label="Updated" class="figure text-xs text-ink-muted"
+									>{fmtTimestamp(ns.updatedAt)}</td
+								>
 							</tr>
 							{#if editingName === ns.name}
 								<tr>
-									<td colspan="15" class="border-b-(length:--rule-region) border-ink bg-paper-sunken px-4 py-4">
+									<td colspan="15" class="border-b-(length:--rule-region) border-ink bg-paper-sunken px-4 py-4 max-sm:col-span-2">
 										<form
 											data-testid="namespace-edit-form-{ns.name}"
 											class="grid max-w-4xl gap-4 sm:grid-cols-2"
@@ -1159,7 +1173,6 @@
 													data-testid="ns-edit-run-retention-{ns.name}"
 													bind:value={editRunRetentionHours}
 													inputmode="decimal"
-													placeholder="inherit"
 													class="field h-9 px-3"
 												/>
 												{#if editErrors.runRetention}
@@ -1171,7 +1184,6 @@
 												<input
 													data-testid="ns-edit-hold-reason-{ns.name}"
 													bind:value={editHoldReason}
-													placeholder="accepting"
 													class="field h-9 px-3"
 												/>
 												<span class="text-xs text-ink-muted">A reason closes the namespace to new runs; blank releases it.</span>
@@ -1185,7 +1197,6 @@
 													data-testid="ns-edit-max-running-{ns.name}"
 													bind:value={editMaxRunning}
 													inputmode="numeric"
-													placeholder="0"
 													class="field h-9 px-3"
 												/>
 												{#if editErrors.maxRunning}
@@ -1196,16 +1207,16 @@
 												<legend class="field-label mb-0 float-left w-full">Budget <span class="field-hint">(reserved cpu and memory over a rolling period; both amounts blank = unbounded)</span></legend>
 												<div class="grid gap-3 sm:grid-cols-4">
 													<label class="flex flex-col gap-1.5">
-														<span class="field-label mb-0">Budget cpu-seconds</span>
-														<input data-testid="ns-edit-budget-cpu-seconds-{ns.name}" bind:value={editBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="field h-9 px-3" />
+														<span class="field-label mb-0">Budget cpu-seconds <span class="field-hint">(blank = unbounded)</span></span>
+														<input data-testid="ns-edit-budget-cpu-seconds-{ns.name}" bind:value={editBudgetCpuSeconds} inputmode="numeric" class="field h-9 px-3" />
 													</label>
 													<label class="flex flex-col gap-1.5">
-														<span class="field-label mb-0">Budget GiB-seconds</span>
-														<input data-testid="ns-edit-budget-gib-seconds-{ns.name}" bind:value={editBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="field h-9 px-3" />
+														<span class="field-label mb-0">Budget GiB-seconds <span class="field-hint">(blank = unbounded)</span></span>
+														<input data-testid="ns-edit-budget-gib-seconds-{ns.name}" bind:value={editBudgetGibSeconds} inputmode="numeric" class="field h-9 px-3" />
 													</label>
 													<label class="flex flex-col gap-1.5">
-														<span class="field-label mb-0">Budget period (hours)</span>
-														<input data-testid="ns-edit-budget-period-hours-{ns.name}" bind:value={editBudgetPeriodHours} inputmode="numeric" placeholder="720" class="field h-9 px-3" />
+														<span class="field-label mb-0">Budget period <span class="field-hint">(whole hours, e.g. 720)</span></span>
+														<input data-testid="ns-edit-budget-period-hours-{ns.name}" bind:value={editBudgetPeriodHours} inputmode="numeric" class="field h-9 px-3" />
 													</label>
 													<label class="flex items-center gap-2 self-end pb-2">
 														<input type="checkbox" class="size-4" data-testid="ns-edit-budget-enforce-{ns.name}" bind:checked={editBudgetEnforce} />
@@ -1218,12 +1229,11 @@
 												{/if}
 											</fieldset>
 											<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
-												<span class="field-label mb-0">Allowed secrets <span class="field-hint">(one scheme:pattern per line; blank = unrestricted)</span></span>
+												<span class="field-label mb-0">Allowed secrets <span class="field-hint">(one scheme:pattern per line, e.g. env:SANDBOX_*; blank = unrestricted)</span></span>
 												<textarea
 													data-testid="ns-edit-allowed-secrets-{ns.name}"
 													bind:value={editAllowedSecrets}
 													rows="2"
-													placeholder="unrestricted"
 													spellcheck="false"
 													class="field px-3 py-2 font-mono text-xs"
 												></textarea>
@@ -1415,7 +1425,7 @@
 	>
 		{#snippet body()}
 			<p>
-				This removes the registry entry for <span class="font-mono font-semibold text-ink">{pendingDelete}</span>. It is refused while any orkflow is still stored in it.
+				This removes the registry entry for <span class="font-mono font-semibold text-ink">{pendingDelete}</span>. It is refused while any Orkflow is still stored in it.
 			</p>
 		{/snippet}
 	</ConfirmDialog>

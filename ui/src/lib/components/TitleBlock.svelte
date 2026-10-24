@@ -30,7 +30,8 @@
 
 	function statusInk(status: Status | undefined): string {
 		if (status === Status.FAILED) return 'text-red';
-		if (status === Status.RUNNING || status === Status.AWAITING) return 'text-blue';
+		if (status === Status.RUNNING) return 'text-green';
+		if (status === Status.AWAITING) return 'text-blue';
 		return 'text-ink';
 	}
 </script>
@@ -75,7 +76,9 @@
 				class="flex min-w-0 flex-col justify-center border-r border-ink px-3 last:border-r-0 sm:px-4 {kept.has(i) ? '' : 'max-sm:hidden'}"
 			>
 				<dt class="caps text-ink-muted">{f.label}</dt>
-				<dd class="truncate text-lg font-semibold">{@render value(f)}</dd>
+				<!-- Below 640 px the first cell (an Orkflow's name, a page's) wraps to
+				     two lines at a smaller size rather than losing its end. -->
+				<dd class="truncate text-lg font-semibold {i === 0 ? 'max-sm:line-clamp-2 max-sm:text-sm max-sm:break-words max-sm:whitespace-normal' : ''}">{@render value(f)}</dd>
 			</dl>
 		{/each}
 		{#if folded.length}

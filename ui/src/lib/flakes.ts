@@ -124,7 +124,7 @@ export function flakeHistoryTitle(history: FlakeGroup | undefined, window: strin
 	if (!history.retryRateDefined) {
 		return `; retry history unavailable: no attempt record of this task in the last ${window}`;
 	}
-	return `; retried in ${history.runsRetried} of ${history.runsObserved} runs of this orkflow in the last ${window}`;
+	return `; retried in ${history.runsRetried} of ${history.runsObserved} runs of this Orkflow in the last ${window}`;
 }
 
 /**

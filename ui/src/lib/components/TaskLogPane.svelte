@@ -449,7 +449,7 @@
 				>
 					{#if stateLabel === 'LIVE'}
 						<span
-							class="size-1.5 rounded-full bg-blue animate-live-dot motion-reduce:animate-none"
+							class="size-1.5 rounded-full bg-green animate-live-dot motion-reduce:animate-none"
 							aria-hidden="true"
 						></span>
 					{/if}

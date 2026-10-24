@@ -167,7 +167,7 @@
 	</form>
 	{#if data.orkflow}
 		<span class="text-sm text-ink-muted" data-testid="cache-orkflow-filter">
-			orkflow <span class="font-mono text-ink-secondary">{data.orkflow}</span>
+			Orkflow <span class="font-mono text-ink-secondary">{data.orkflow}</span>
 			<a class="link ml-1" href={withNamespace(`/admin/cache?since=${encodeURIComponent(data.window.window === 'custom' ? (data.window.since ?? '') : data.window.window)}`, data.namespace)}>clear</a>
 		</span>
 	{/if}

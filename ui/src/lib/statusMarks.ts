@@ -1,13 +1,13 @@
 // How each status is DRAWN: its mark (the shape before the word on a stamp,
 // and later the cell of the task map) and its fill. Statuses differ by shape,
-// never by hue alone (WCAG 1.4.1): only RUNNING/AWAITING (blue) and FAILED
-// (red) carry colour at all, and each status's word is always written beside
-// its mark. The CSS for every mark is in app.css's `.mark-*` primitives.
+// never by hue alone (WCAG 1.4.1): only RUNNING (green), AWAITING (blue) and
+// FAILED (red) carry colour at all, and each status's word is always written
+// beside its mark. The CSS for every mark is in app.css's `.mark-*` primitives.
 import { Status } from './gen/orkstack/v1/common_pb';
 import { statusClasses } from './status';
 
 export type MarkShape = 'square' | 'dot' | 'ring' | 'cross' | 'strike' | 'hatch' | 'hollow' | 'dotted';
-/** live: the drafting blue; alarm: the revision red; the rest are ink. */
+/** live: the survey green; live-outline: the drafting blue; alarm: the revision red; the rest are ink. */
 export type MarkFill = 'solid' | 'live' | 'live-outline' | 'alarm' | 'outline' | 'hatched' | 'none';
 
 export interface StatusMark {

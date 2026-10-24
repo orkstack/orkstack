@@ -15,6 +15,12 @@ include breaking changes, and each is marked **BREAKING**.
   plan's whole expected set, which includes the deferred tests, so the first
   full proof on a tree whose base carried a nightly list failed with every
   deferred test reported as having no outcome.
+- The merger accepts those `deferred` entries for exactly the tests the plan
+  defers, and records each once from the plan. It refused every `deferred`
+  entry a part wrote ("only the merger writes deferred entries") and then
+  reported the test as an outcome the plan had deferred, so a local full proof
+  with a non-empty nightly list could not be merge-eligible. A `deferred` entry
+  for a test the plan runs is still a problem.
 
 ### Changed
 
@@ -100,6 +106,27 @@ include breaking changes, and each is marked **BREAKING**.
   (`string|object|array`).
 
 ### Changed
+
+- The UI's finish pass (`ui/DESIGN.md`): a failed run tells one story — the
+  revision cloud and the task's panel read one retry phrase off the failing
+  task, and a task the run never started is stamped CANCELED with "never
+  started" on its row, its DAG node and the task map's key; the run header
+  is one line of facts with a **More** menu below 1024 px, so the drawing
+  starts within 220 px on a phone; timing is a register beside the drawing,
+  task rows share one run timeline and name their commands; Admin →
+  Namespaces leads with its registry and **Create namespace** opens the form;
+  "Orkflow" is capitalised on every surface; and every CLI equivalent quotes
+  only the words a shell would read as syntax.
+- A RUNNING task is drawn in a third accent, survey green, and breathes: a
+  soft green DAG node whose ground fades every 2.4 s, its task-map cell and
+  fan-out items with it, still under reduced motion (DESIGN.md's Three
+  Accents Rule).
+- The DAG is a layered drawing: an edge that skips layers runs in a lane of
+  its own and never through a box, each layer is ordered to cross as few
+  edges as it can, and every split or join has a track of its own. It reads
+  left to right unless top to bottom clearly costs its reader less in the
+  frame it is drawn in — a long chain, or a small DAG on a phone; `?dag=lr`
+  and `?dag=tb` override it (DESIGN.md's Direction Rule).
 
 - A local proof now fails fast. `scripts/proof.sh` runs lint, build, unit,
   vet and the UI type-check and unit suites first, one after another, and

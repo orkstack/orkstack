@@ -15,7 +15,6 @@
 	import { errorMessage } from '$lib/client';
 	import { orkflowClient } from '$lib/clients/orkflows';
 	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
 
@@ -24,12 +23,11 @@
 		orkflowName: string;
 		/** The version this run pinned. */
 		runVersion: string;
-		runStatus: Status;
 		/** At most this many rows; this run's own row is always among them. */
 		limit?: number;
 	}
 
-	let { namespace, orkflowName, runVersion, runStatus, limit = 5 }: Props = $props();
+	let { namespace, orkflowName, runVersion, limit = 5 }: Props = $props();
 
 	let versions = $state<OrkflowVersion[] | null>(null);
 	let head = $state('');
@@ -64,11 +62,11 @@
 		return own ? [...first.slice(0, limit - 1), own] : first;
 	});
 
+	// This run's own version row is marked by its stamp on a sunken ground,
+	// whatever the run's status: the status is said once, by the run, and an
+	// accent here would be a second, louder copy of it.
 	function rowGround(version: string): string {
-		if (version !== runVersion) return '';
-		if (runStatus === Status.FAILED) return 'bg-red-tint';
-		if (runStatus === Status.RUNNING || runStatus === Status.PENDING) return 'bg-blue-tint';
-		return 'bg-paper-sunken';
+		return version === runVersion ? 'bg-paper-sunken' : '';
 	}
 
 	const allHref = $derived(withNamespace(`/orkflows/${encodeURIComponent(orkflowName)}?tab=versions`, namespace));

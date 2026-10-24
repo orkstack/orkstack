@@ -115,6 +115,9 @@
 	--color-blue: var(--color-blue);
 	--color-blue-strong: var(--color-blue-strong);
 	--color-blue-tint: var(--color-blue-tint);
+	--color-green: var(--color-green);
+	--color-green-strong: var(--color-green-strong);
+	--color-green-tint: var(--color-green-tint);
 	--color-red: var(--color-red);
 	--color-red-strong: var(--color-red-strong);
 	--color-red-tint: var(--color-red-tint);
@@ -136,6 +139,7 @@
 	--spacing-titleblock: var(--spacing-titleblock);
 	--spacing-aside: var(--spacing-aside);
 	--spacing-drawing: var(--spacing-drawing);
+	--spacing-drawing-tall: var(--spacing-drawing-tall);
 
 	/* Shadows */
 	--shadow-overlay: var(--shadow-overlay);
@@ -143,8 +147,11 @@
 
 	/* Motion */
 	--ease-out: var(--ease-out);
+	--ease-in-out: var(--ease-in-out);
 	--ease-linear: var(--ease-linear);
 	--animate-live-dot: var(--animate-live-dot);
+	--animate-live-fill: var(--animate-live-fill);
+	--animate-live-ground: var(--animate-live-ground);
 	--animate-nav-progress: var(--animate-nav-progress);
 	--animate-overlay-in: var(--animate-overlay-in);
 	--animate-cloud-draw: var(--animate-cloud-draw);

@@ -3,11 +3,14 @@
 </script>
 
 <script lang="ts">
-	// The frame a run's (or an Orkflow's) tasks are drawn in: a fixed-height
-	// box with a 1.5 px ink rule, its view tabs and caption on a paper patch at
-	// the top left, and — behind the DAG only — the drafting grid. The height
-	// is CSS (--spacing-drawing), so nothing is measured before first paint and
-	// the content below it never moves.
+	// The frame a run's (or an Orkflow's) tasks are drawn in: a box with a
+	// 1.5 px ink rule, its view tabs and caption on a paper patch at the top
+	// left, and — behind the DAG only — the drafting grid. It is its content
+	// plus the patch and padding, up to --spacing-drawing
+	// (min(--spacing-drawing, content + 48 px)), so a six-task run is not a
+	// page of empty frame: the DAG's height is the drawing's own (CSS, from
+	// its aspect), the task map's is computed from the frame's width before
+	// first paint (mapHeight).
 	//
 	// The DAG is BOUNDED, on every page: up to DAG_DRAW_LIMIT tasks it is
 	// drawn; up to DAG_LEGIBLE_LIMIT on request; beyond that it is never laid
@@ -16,19 +19,24 @@
 	//
 	// A drawing is scaled to the frame's width (DagGraph, down to
 	// DAG_MIN_SCALE). One still wider than that scrolls inside the frame: the
-	// frame says so with a scroll control at the edge that hides more, and on
-	// first drawing it brings the selected task — else the failed one, whose
-	// failure handlers follow it — into view.
+	// frame says so with a pair of scroll controls on its top band, beside the
+	// tabs and never over a node, the one with nothing more to show marked
+	// aria-disabled (never `disabled`, which would drop a keyboard user's focus);
+	// and on first drawing it brings the selected task — else the failed one,
+	// whose failure handlers follow it — into view.
 	import { tick, type Snippet } from 'svelte';
 	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import DagGraph from './DagGraph.svelte';
 	import Icon from './Icon.svelte';
-	import { DAG_LEGIBLE_LIMIT, dagBound, neighbourhood, type NodeState } from '$lib/dag';
+	import { DAG_LEGIBLE_LIMIT, chooseDagDirection, dagBound, neighbourhood, type DagDirection, type NodeState } from '$lib/dag';
+	import { mapGeometry } from '$lib/taskMap';
 
 	interface Props {
 		testid: string;
 		/** "order-saga @ 0.4.2 · 6 tasks" */
 		caption: string;
+		/** The part of the caption that may be shortened to fit ("order-saga"); the rest is kept whole. */
+		captionLead?: string;
 		/** The tabs, when there is more than the DAG; with none the frame shows only the DAG. */
 		views?: { id: DrawingView; label: string; testid: string }[];
 		view?: DrawingView;
@@ -51,11 +59,24 @@
 		/** Where a reader goes instead past the limit, for a page with no selection (the Orkflow page). */
 		largeHint?: string;
 		map?: Snippet;
+		/**
+		 * The task map's sections (its tasks, then each fan-out's items), for
+		 * sizing its frame: like the DAG's, the map's frame is its content plus
+		 * the patch and padding, up to --spacing-drawing.
+		 */
+		mapSections?: { count: number; labelled: boolean }[];
+		/**
+		 * Which way the DAG reads: left to right (the default), top to
+		 * bottom, or `auto` — whichever leaves less of it to scroll in this
+		 * frame ($lib/dag chooseDagDirection).
+		 */
+		direction?: DagDirection | 'auto';
 	}
 
 	let {
 		testid,
 		caption,
+		captionLead = undefined,
 		views = [],
 		view = 'dag',
 		onview,
@@ -70,7 +91,9 @@
 		onselect,
 		neighbourhoodWhenLarge = false,
 		largeHint = 'The task register below lists every task and what it needs.',
-		map
+		map,
+		mapSections = undefined,
+		direction = 'LR'
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -86,18 +109,24 @@
 		view === 'dag' && !!tasks && (bound === 'draw' || (bound === 'on-request' && drawAll) || near.length > 0)
 	);
 	let panel = $state<HTMLDivElement | undefined>(undefined);
-	let hidden = $state({ left: false, right: false });
+	let hidden = $state({ left: false, right: false, up: false, down: false });
 
 	function measure(): void {
 		if (!panel) return;
-		const max = panel.scrollWidth - panel.clientWidth;
-		hidden = { left: panel.scrollLeft > 1, right: panel.scrollLeft < max - 1 };
+		const maxX = panel.scrollWidth - panel.clientWidth;
+		const maxY = panel.scrollHeight - panel.clientHeight;
+		hidden = {
+			left: panel.scrollLeft > 1,
+			right: panel.scrollLeft < maxX - 1,
+			up: panel.scrollTop > 1,
+			down: panel.scrollTop < maxY - 1
+		};
 	}
 
 	$effect(() => {
 		const el = panel;
 		if (!el || !drawn || typeof ResizeObserver === 'undefined') {
-			hidden = { left: false, right: false };
+			hidden = { left: false, right: false, up: false, down: false };
 			return;
 		}
 		const observer = new ResizeObserver(measure);
@@ -134,9 +163,45 @@
 		measure();
 	}
 
-	function scrollBy(direction: 1 | -1): void {
+	// The task map's frame: as tall as the map the frame's width lays out at
+	// the largest pitch that fits, plus the 32 px patch, the 16 px padding and
+	// the 3 px of rules; the whole --spacing-drawing when even the smallest
+	// pitch does not fit (the map then scrolls inside it). Measured once the
+	// frame is laid out, before its first paint, from the same geometry the
+	// map itself is drawn with.
+	let section = $state<HTMLElement | undefined>(undefined);
+	let frameBox = $state({ width: 0, max: 0 });
+	$effect(() => {
+		const el = section;
+		if (!el || (!mapSections && direction !== 'auto') || typeof ResizeObserver === 'undefined') return;
+		const observer = new ResizeObserver(() => {
+			frameBox = { width: el.clientWidth, max: parseFloat(getComputedStyle(el).maxHeight) || 0 };
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	});
+	const MAP_CHROME = 32 + 16 + 3;
+	// `auto`: decided once the frame is laid out (before its first paint),
+	// for the tasks it draws.
+	const dagDirection = $derived.by((): DagDirection => {
+		if (direction !== 'auto') return direction;
+		const drawnTasks = near.length ? near : tasks;
+		if (!drawn || !drawnTasks || frameBox.width <= 0 || frameBox.max <= 0) return 'LR';
+		return chooseDagDirection(drawnTasks, { width: frameBox.width - 16, height: frameBox.max - MAP_CHROME });
+	});
+	const mapHeight = $derived.by(() => {
+		if (view !== 'map' || !mapSections || frameBox.width <= 0 || frameBox.max <= 0) return undefined;
+		const room = frameBox.max - MAP_CHROME;
+		const g = mapGeometry(mapSections, frameBox.width - 16, room);
+		// At least one line of text: the map's "Laying out…" before it paints.
+		return g.scroll > 0 ? frameBox.max : MAP_CHROME + Math.max(g.height, 20);
+	});
+
+	function scrollBy(direction: 1 | -1, axis: 'x' | 'y' = 'x'): void {
 		const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-		panel?.scrollBy({ left: direction * panel.clientWidth * 0.75, behavior: still ? 'auto' : 'smooth' });
+		if (!panel) return;
+		const step = axis === 'x' ? { left: direction * panel.clientWidth * 0.75 } : { top: direction * panel.clientHeight * 0.75 };
+		panel.scrollBy({ ...step, behavior: still ? 'auto' : 'smooth' });
 	}
 
 	function onTabKey(event: KeyboardEvent, index: number): void {
@@ -147,6 +212,18 @@
 		document.getElementById(`${uid}-tab-${next.id}`)?.focus();
 	}
 </script>
+
+{#snippet scroller(testid: string, label: string, title: string, icon: 'chevronLeft' | 'chevronRight' | 'chevronUp' | 'chevronDown', more: boolean, go: () => void, last: boolean)}
+	<button
+		type="button"
+		data-testid={testid}
+		class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-muted aria-disabled:opacity-50 {last ? '' : 'border-r border-rule'}"
+		aria-label={label}
+		{title}
+		aria-disabled={!more}
+		onclick={() => more && go()}><Icon name={icon} /></button
+	>
+{/snippet}
 
 {#snippet note(text: string, testidValue: string, action?: Snippet)}
 	<div data-testid={testidValue} class="note m-4 flex max-w-prose flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2 text-sm">
@@ -163,11 +240,21 @@
 {/snippet}
 
 <section
+	bind:this={section}
 	data-testid={testid}
 	aria-label="Tasks of {orkflowLabel}"
-	class="frame relative flex h-drawing flex-col overflow-hidden"
+	class="frame relative isolate flex flex-col overflow-hidden max-h-drawing max-sm:max-h-drawing-tall {view === 'dag' || mapHeight !== undefined ? '' : 'h-drawing'}"
+	style:height={mapHeight !== undefined ? `${mapHeight}px` : undefined}
 >
-	<div class="relative z-10 flex h-8 max-w-full shrink-0 items-stretch self-start border-r border-b border-ink bg-paper">
+	<div
+		class="relative z-10 flex h-8 shrink-0 items-stretch self-start border-r border-b border-ink bg-paper {!drawn
+			? 'max-w-full'
+			: (hidden.left || hidden.right) && (hidden.up || hidden.down)
+				? 'max-w-[calc(100%-8rem)]'
+				: hidden.left || hidden.right || hidden.up || hidden.down
+					? 'max-w-[calc(100%-4rem)]'
+					: 'max-w-full'}"
+	>
 		{#if views.length > 1}
 			<div role="tablist" aria-label="View" class="flex shrink-0">
 				{#each views as v, i (v.id)}
@@ -188,7 +275,12 @@
 				{/each}
 			</div>
 		{/if}
-		<p class="flex min-w-0 items-center px-3 font-mono text-xs text-ink-secondary" title={caption}><span class="truncate">{caption}</span></p>
+		<!-- The Orkflow's name gives way; its version and task count never do. -->
+		<p class="flex min-w-0 items-center px-3 font-mono text-xs text-ink-secondary" title={caption}>
+			{#if captionLead && caption.startsWith(captionLead)}<span class="truncate">{captionLead}</span><span class="shrink-0 whitespace-pre"
+					>{caption.slice(captionLead.length)}</span
+				>{:else}<span class="truncate">{caption}</span>{/if}
+		</p>
 	</div>
 	<div
 		bind:this={panel}
@@ -207,7 +299,7 @@
 			)}
 		{:else if bound === 'draw' || (bound === 'on-request' && drawAll)}
 			<div class="p-2">
-				<DagGraph tasks={tasks} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} />
+				<DagGraph tasks={tasks} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} />
 			</div>
 		{:else if bound === 'on-request'}
 			{@render note(
@@ -228,29 +320,23 @@
 			)}
 			{#if near.length}
 				<div class="p-2">
-					<DagGraph tasks={near} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} />
+					<DagGraph tasks={near} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} />
 				</div>
 			{/if}
 		{/if}
 	</div>
-	{#if drawn && hidden.left}
-		<button
-			type="button"
-			data-testid="{prefix}-scroll-left"
-			class="btn absolute top-1/2 left-0 z-10 size-8 border-ink bg-paper p-0 text-ink"
-			aria-label="Scroll the DAG left"
-			title="More of the DAG to the left"
-			onclick={() => scrollBy(-1)}><Icon name="chevronLeft" /></button
-		>
-	{/if}
-	{#if drawn && hidden.right}
-		<button
-			type="button"
-			data-testid="{prefix}-scroll-right"
-			class="btn absolute top-1/2 right-0 z-10 size-8 border-ink bg-paper p-0 text-ink"
-			aria-label="Scroll the DAG right"
-			title="More of the DAG to the right"
-			onclick={() => scrollBy(1)}><Icon name="chevronRight" /></button
-		>
+	{#if drawn && (hidden.left || hidden.right || hidden.up || hidden.down)}
+		<!-- A drawing that does not fit says so on the frame's top band, for
+		     each way it overflows: the pair for a way with more to show. -->
+		<div class="absolute top-0 right-0 z-10 flex h-8 border-b border-l border-ink bg-paper">
+			{#if hidden.up || hidden.down}
+				{@render scroller(`${prefix}-scroll-up`, 'Scroll the DAG up', 'More of the DAG above', 'chevronUp', hidden.up, () => scrollBy(-1, 'y'), false)}
+				{@render scroller(`${prefix}-scroll-down`, 'Scroll the DAG down', 'More of the DAG below', 'chevronDown', hidden.down, () => scrollBy(1, 'y'), !(hidden.left || hidden.right))}
+			{/if}
+			{#if hidden.left || hidden.right}
+				{@render scroller(`${prefix}-scroll-left`, 'Scroll the DAG left', 'More of the DAG to the left', 'chevronLeft', hidden.left, () => scrollBy(-1), false)}
+				{@render scroller(`${prefix}-scroll-right`, 'Scroll the DAG right', 'More of the DAG to the right', 'chevronRight', hidden.right, () => scrollBy(1), true)}
+			{/if}
+		</div>
 	{/if}
 </section>

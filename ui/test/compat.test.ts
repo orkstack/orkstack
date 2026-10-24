@@ -88,9 +88,9 @@ test('followers excludes pinned and unavailable rows and every composer', () => 
 	expect(
 		callersFooter({ callers: rows, allVersions: false, scannedVersions: 3 })
 	).toEqual([
-		'Scanned the current version of 3 orkflows (--all-versions scans every stored version).',
+		'Scanned the current version of 3 Orkflows (--all-versions scans every stored version).',
 		'Moved by a promotion (they follow the current version): triggers 1, schedules 1.',
-		'Not moved by a promotion (they pin a version): composing orkflows 1, triggers 1, schedules 1.',
+		'Not moved by a promotion (they pin a version): composing Orkflows 1, triggers 1, schedules 1.',
 		'schedule lost: version unavailable (describe failed)'
 	]);
 });
@@ -109,16 +109,16 @@ test('callerHref keeps the namespace for all three kinds', () => {
 
 test('the three commands state the namespace and quote every argument', () => {
 	expect(compatCommand('', "it's", '2.1.0', '3.0.0')).toBe(
-		`orkctl --namespace 'default' 'orkflow' 'compat' 'it'"'"'s' '2.1.0' '3.0.0'`
+		`orkctl --namespace default orkflow compat 'it'"'"'s' 2.1.0 3.0.0`
 	);
 	expect(callersCommand('payments', 'release-block', true)).toBe(
-		`orkctl --namespace 'payments' 'orkflow' 'callers' 'release-block' '--all-versions'`
+		`orkctl --namespace payments orkflow callers release-block --all-versions`
 	);
 	expect(callersCommand('payments', 'release-block', false)).toBe(
-		`orkctl --namespace 'payments' 'orkflow' 'callers' 'release-block'`
+		`orkctl --namespace payments orkflow callers release-block`
 	);
 	expect(promoteCommand('payments', "o'k", '3.0.0', true)).toBe(
-		`orkctl --namespace 'payments' 'orkflow' 'promote' 'o'"'"'k' '3.0.0' '--acknowledge-breaking'`
+		`orkctl --namespace payments orkflow promote 'o'"'"'k' 3.0.0 --acknowledge-breaking`
 	);
 	expect(promoteCommand('payments', 'release-block', '3.0.0', false)).not.toContain('acknowledge');
 });

@@ -85,7 +85,7 @@ test("a subscription's Deliveries link opens deliveryFilter=webhook_id=<id>", ()
 test('the CLI equivalent is webhook deliveries with every filter shell-quoted and --limit, never -n', () => {
 	expect(deliveriesCliCommand(base)).toBe('orkctl webhook deliveries');
 	expect(deliveriesCliCommand({ filters: parsed("run_id=ork-'x", 'delivered=false', 'namespace=payments'), limit: 2 })).toBe(
-		`orkctl webhook deliveries --filter 'delivered=false' --filter 'namespace=payments' --filter 'run_id=ork-'"'"'x' --limit 2`
+		`orkctl webhook deliveries --filter delivered=false --filter namespace=payments --filter 'run_id=ork-'"'"'x' --limit 2`
 	);
 });
 

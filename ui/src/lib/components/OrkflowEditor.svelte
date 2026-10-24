@@ -129,12 +129,12 @@
 
 	const dirty = $derived(yaml !== cleanYaml);
 
-	guardUnsaved(() => dirty, 'Discard unsaved orkflow YAML?');
+	guardUnsaved(() => dirty, 'Discard unsaved Orkflow YAML?');
 
 	async function validate(): Promise<boolean> {
 		applyError = '';
 		issues = [];
-		if (!yaml.trim()) { applyError = 'Paste an orkflow YAML document first.'; return false; }
+		if (!yaml.trim()) { applyError = 'Paste an Orkflow YAML document first.'; return false; }
 		const validatedYaml = yaml;
 		const validatedNamespace = namespace;
 		validating = true;
@@ -168,7 +168,7 @@
 		conflictDiffError = '';
 		if (!base || !expectedHead) {
 			applyError =
-				'This orkflow’s versions could not be read, so an edit can be checked against ' +
+				'This Orkflow’s versions could not be read, so an edit can be checked against ' +
 				'neither the version it came from nor the newest one. Reload before applying — ' +
 				'applying blind is how a newer version gets buried.';
 			return;

@@ -160,6 +160,7 @@ async function openAdmin(page: Page): Promise<void> {
 
 test('1: Admin → Namespaces shows the Allowed secrets column, set or unrestricted', async ({ page }) => {
 	await openAdmin(page);
+	await page.getByTestId('ns-create-open').click();
 	await page.getByTestId('ns-create-name').fill(NS);
 	await page.getByTestId('ns-create-allowed-secrets').fill('env:SANDBOX_*');
 	await page.getByTestId('ns-create-submit').click();

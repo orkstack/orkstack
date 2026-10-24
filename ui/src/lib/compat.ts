@@ -199,9 +199,9 @@ export function callersFooter(resp: {
 	const lines = [
 		resp.allVersions
 			? `Scanned every stored version of every orkflow: ${resp.scannedVersions} definitions.`
-			: `Scanned the current version of ${resp.scannedVersions} orkflows (--all-versions scans every stored version).`,
+			: `Scanned the current version of ${resp.scannedVersions} Orkflows (--all-versions scans every stored version).`,
 		`Moved by a promotion (they follow the current version): triggers ${movedTriggers}, schedules ${movedSchedules}.`,
-		`Not moved by a promotion (they pin a version): composing orkflows ${composing}, triggers ${pinnedTriggers}, schedules ${pinnedSchedules}.`
+		`Not moved by a promotion (they pin a version): composing Orkflows ${composing}, triggers ${pinnedTriggers}, schedules ${pinnedSchedules}.`
 	];
 	for (const c of unavailableSchedules(resp.callers)) {
 		lines.push(`schedule ${c.name}: version unavailable (${c.unavailableReason})`);

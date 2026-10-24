@@ -42,7 +42,7 @@ test('flakeBadgeLabel keeps the in-run label and says flaky only when this run d
 	expect(flakeBadgeLabel(null, undefined)).toBeNull();
 	expect(flakeBadgeLabel(null, create(FlakeGroupSchema, { retryRateDefined: true, runsObserved: 2n }))).toBeNull();
 	expect(flakeBadgeLabel(null, create(FlakeGroupSchema, { retryRateDefined: false, runsEvidenceMissing: 3n }))).toBeNull();
-	expect(flakeHistoryTitle(history, '7 days')).toBe('; retried in 1 of 2 runs of this orkflow in the last 7 days');
+	expect(flakeHistoryTitle(history, '7 days')).toBe('; retried in 1 of 2 runs of this Orkflow in the last 7 days');
 	expect(flakeHistoryTitle(undefined, '7 days')).toBe('');
 	expect(flakeHistoryTitle(create(FlakeGroupSchema, {}), '7 days')).toContain('unavailable');
 });

@@ -164,7 +164,7 @@ test('modes: Build is current on its four pages, Operate on every admin page, an
 		await expect(page.getByTestId('nav-admin')).not.toHaveAttribute('aria-current', /.+/);
 		await expect(page.getByTestId('admin-nav')).toHaveCount(0);
 	}
-	await expect(primary(page).getByRole('link', { name: 'Apply orkflow', exact: true })).toHaveAttribute('aria-current', 'page');
+	await expect(primary(page).getByRole('link', { name: 'Apply Orkflow', exact: true })).toHaveAttribute('aria-current', 'page');
 
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
 	await expect(page.getByTestId('nav-admin')).toHaveAttribute('aria-current', 'true');
@@ -180,7 +180,7 @@ test('modes: Build is current on its four pages, Operate on every admin page, an
 	for (const [name, href] of [
 		['Runs', '/runs?ns=default'],
 		['Orkflows', '/orkflows?ns=default'],
-		['Apply orkflow', '/apply?ns=default']
+		['Apply Orkflow', '/apply?ns=default']
 	]) {
 		await expect(primary(page).getByRole('link', { name, exact: true })).toHaveAttribute('href', href);
 	}

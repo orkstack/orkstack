@@ -108,7 +108,7 @@
 
 <SheetHeader title="Orkflows">
 	{#snippet actions()}
-		<a href={withNamespace('/apply', data.namespace)} class="btn btn-primary">Apply orkflow</a>
+		<a href={withNamespace('/apply', data.namespace)} class="btn btn-primary">Apply Orkflow</a>
 	{/snippet}
 </SheetHeader>
 
@@ -123,20 +123,20 @@
 	<ErrorPanel
 		testid="engine-error"
 		retryTestid="orkflows-retry"
-		subject="the orkflows in namespace {namespaceLabel(data.namespace)}"
+		subject="the Orkflows in namespace {namespaceLabel(data.namespace)}"
 		message={data.error}
 		busy={retrying}
 		onretry={retry}
 	/>
 {:else if retrying}
-	<p class="text-sm text-ink-muted" data-testid="orkflows-loading">Loading orkflows…</p>
+	<p class="text-sm text-ink-muted" data-testid="orkflows-loading">Loading Orkflows…</p>
 {:else if data.orkflows.length === 0 && data.applied.length > 0}
 	<p class="border border-dashed border-rule-strong px-6 py-12 text-center text-sm text-ink-muted" data-testid="orkflows-empty">
-		No orkflows match these filters.
+		No Orkflows match these filters.
 	</p>
 {:else if data.orkflows.length === 0}
 	<p class="border border-dashed border-rule-strong px-6 py-12 text-center text-sm text-ink-muted" data-testid="orkflows-empty">
-		No orkflows in namespace {namespaceLabel(data.namespace)} yet. Apply one from a YAML document to get
+		No Orkflows in namespace {namespaceLabel(data.namespace)} yet. Apply one from a YAML document to get
 		started.
 	</p>
 {:else}
@@ -183,5 +183,5 @@
 			</tbody>
 		</table>
 	</div>
-	<Pagination testid="orkflows" noun="orkflow" page={data.page} count={data.orkflows.length} {previousHref} {nextHref} {firstHref} onnext={next} />
+	<Pagination testid="orkflows" noun="Orkflow" page={data.page} count={data.orkflows.length} {previousHref} {nextHref} {firstHref} onnext={next} />
 {/if}

@@ -8,7 +8,7 @@
 	// node, and a failure handler's dash set by ATTRIBUTE (DAG_DASH) on that
 	// rect and on every edge into it — never by the CSS property, so the
 	// attribute is the dash drawn. Every other mark of a node (selection,
-	// focus, status, strike, tags) is a path, a circle, a line or text.
+	// focus, status, tags) is a path, a circle or text.
 	//
 	// The caller bounds what is drawn (DrawingFrame: at most 80 tasks, 300 on
 	// request); this component lays out whatever it is handed. The drawing
@@ -16,7 +16,6 @@
 	// narrower than DAG_MIN_SCALE of it — so a typical Orkflow is drawn whole
 	// in its frame, and one too wide for that scrolls in it.
 	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import {
 		DAG_DASH,
 		DAG_LINE_CHARS,
@@ -25,7 +24,9 @@
 		DAG_NODE_W,
 		edgePath,
 		fitDagLine,
+		fitDagRef,
 		layoutDag,
+		type DagDirection,
 		type DagNode,
 		type NodeState
 	} from '$lib/dag';
@@ -49,6 +50,8 @@
 		selected?: string;
 		hrefOf?: (id: string) => string;
 		onselect?: (id: string) => void;
+		/** Left to right (the default) or top to bottom. */
+		direction?: DagDirection;
 	}
 
 	let {
@@ -58,10 +61,11 @@
 		stateOf = undefined,
 		selected = undefined,
 		hrefOf = (id: string) => `#task-row-${id}`,
-		onselect = undefined
+		onselect = undefined,
+		direction = 'LR'
 	}: Props = $props();
 
-	const layout = $derived(layoutDag(tasks));
+	const layout = $derived(layoutDag(tasks, direction));
 	// A task's join, by id: an edge INTO a joined task carries its word, and
 	// is drawn dashed when that task is a failure handler.
 	const joinById = $derived(new Map(tasks.map((task) => [task.id, task.join])));
@@ -102,6 +106,7 @@
 {:else}
 	<svg
 		data-testid={run ? 'run-dag' : 'orkflow-dag'}
+		data-direction={layout.direction}
 		viewBox="0 0 {layout.width} {layout.height}"
 		style="width:100%;max-width:{layout.width}px;min-width:{Math.round(layout.width * DAG_MIN_SCALE)}px"
 		class="dag block h-auto"
@@ -124,7 +129,7 @@
 		{#each layout.edges as edge (edge.fromId + '->' + edge.toId)}
 			<path
 				data-testid={run ? `run-dag-edge-${edge.fromId}-${edge.toId}` : `dag-edge-${edge.fromId}-${edge.toId}`}
-				d={edgePath({ ...edge, x2: edge.x2 - 2 })}
+				d={edgePath(edge, 2)}
 				class="dag-edge"
 				stroke-dasharray={isFailureHandler(joinById.get(edge.toId)) ? DAG_DASH : undefined}
 				data-join={joinAttr(joinById.get(edge.toId))}
@@ -171,26 +176,24 @@
 								<path d={part.d} class={part.cls} stroke-dasharray={part.dash} />
 							{/if}
 						{/each}
-						{#if state.status === Status.CANCELED}
-							<line
-								class="dag-strike"
-								x1={node.x + 4}
-								y1={node.y + DAG_NODE_H - 4}
-								x2={node.x + DAG_NODE_W - 4}
-								y2={node.y + 4}
-							/>
-						{/if}
 					{/if}
 					<text x={textX} y={node.y + 22} class="dag-id">{node.task.id}</text>
 					{#if state}
 						{@render line(node, state.line)}
 					{:else if node.task.orkflow}
-						<!-- A composed task: it runs another Orkflow as a child run. -->
+						<!-- A composed task: it runs another Orkflow as a child run. Its
+						     name gives way to fit the node; its version never does. -->
+						{@const ref = `orkflow ${node.task.orkflow.name}@${node.task.orkflow.version}`}
+						{@const shown = fitDagRef(
+							node.task.orkflow.name,
+							node.task.orkflow.version,
+							DAG_LINE_CHARS - (node.task.cache ? CACHED_TAG.length + 1 : 0)
+						)}
 						<text
 							data-testid={run ? `run-dag-node-${node.task.id}-orkflow` : `dag-node-${node.task.id}-orkflow`}
 							x={node.x + TEXT_X}
 							y={node.y + 44}
-							class="dag-tag">orkflow {node.task.orkflow.name}@{node.task.orkflow.version}</text
+							class="dag-tag">{#if shown !== ref}<title>{ref}</title>{/if}{shown}</text
 						>
 					{:else}
 						{@render line(node, activityLabel(node.task) || '—')}
@@ -247,8 +250,7 @@
 	.dag-outline,
 	.dag-edge,
 	.dag-select,
-	.dag-focus,
-	.dag-strike {
+	.dag-focus {
 		vector-effect: non-scaling-stroke;
 	}
 	.dag-arrowhead {
@@ -265,8 +267,10 @@
 		font-family: var(--font-mono);
 		font-size: var(--text-2xs);
 	}
+	/* A node's tags (each, join, cached, a composed Orkflow) are notes on the
+	   drawing, not links or live work: ink, never the accent. */
 	.dag-tag {
-		fill: var(--color-blue);
+		fill: var(--color-ink-secondary);
 		font-family: var(--font-mono);
 		font-size: var(--text-2xs);
 	}
@@ -301,16 +305,23 @@
 	.dag-node.is-failed .dag-line {
 		fill: var(--color-red);
 	}
-	.dag-node.is-running .dag-outline,
+	/* Running now: a soft green box whose ground fades to paper and back,
+	   under a green outline. Under reduced motion it rests on the tint. */
+	.dag-node.is-running .dag-outline {
+		stroke: var(--color-running-border);
+		fill: var(--color-running-bg);
+		animation: var(--animate-live-fill);
+	}
 	.dag-node.is-awaiting .dag-outline {
-		stroke: var(--color-blue);
+		stroke: var(--color-awaiting-border);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.dag-node.is-running .dag-outline {
+			animation: none;
+		}
 	}
 	.dag-node.is-never {
 		opacity: var(--opacity-faded);
-	}
-	.dag-strike {
-		stroke: var(--color-ink-muted);
-		stroke-width: var(--rule-region);
 	}
 
 	/* The status marks (statusMarks.svgMark). */

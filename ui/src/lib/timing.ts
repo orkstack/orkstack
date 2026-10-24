@@ -231,3 +231,47 @@ export function formatQuantity(q: Quantity): string {
 export function phasesLine(phases: PhaseTiming[]): string {
 	return phases.map((p) => `${p.phase} ${formatQuantity(p.duration)}`).join(' · ');
 }
+
+/** One segment of a task on its run's timeline, as fractions of the run's span. */
+export interface TimelineSegment {
+	key: 'wait' | 'run';
+	/** Where it starts: (its start − the run's start) ÷ the run's span. */
+	left: number;
+	/** How long it is: its duration ÷ the run's span. */
+	width: number;
+	/** False when the split between waiting and running is not known. */
+	known: boolean;
+}
+
+/**
+ * timelinePlacement puts one task on its RUN's timeline, the one every row
+ * of the run shares, so a reader sees when each task ran relative to the
+ * others, not only how long: a segment starts at (its start − the run's
+ * start) ÷ the run's span and is as wide as its duration ÷ that span.
+ * Times are epoch milliseconds. WAIT runs from scheduled to the Orker's
+ * start, RUN from that start to finished; with no start known, the span
+ * from scheduled to finished is split in two segments marked unknown.
+ * Null when the run's span or the task's own ends are not known.
+ */
+export function timelinePlacement(
+	run: { start: number | null; end: number | null },
+	task: { scheduled: number | null; started: number | null; finished: number | null }
+): TimelineSegment[] | null {
+	if (run.start === null || run.end === null || run.end <= run.start) return null;
+	const from = task.scheduled ?? task.started;
+	if (from === null || task.finished === null) return null;
+	const span_ = run.end - run.start;
+	const at = (t: number) => Math.min(Math.max((t - run.start!) / span_, 0), 1);
+	const segment = (key: 'wait' | 'run', a: number, b: number, known: boolean): TimelineSegment => ({
+		key,
+		left: at(a),
+		width: Math.max(at(b) - at(a), 0),
+		known
+	});
+	if (task.started !== null) {
+		const begun = Math.max(task.started, from);
+		return [segment('wait', from, begun, true), segment('run', begun, Math.max(task.finished, begun), true)];
+	}
+	const mid = from + (task.finished - from) / 2;
+	return [segment('wait', from, mid, false), segment('run', mid, task.finished, false)];
+}

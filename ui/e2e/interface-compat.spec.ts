@@ -279,7 +279,7 @@ test('compare interfaces shows the findings the CLI prints', async ({ page }) =>
 	);
 	await page.getByTestId('compat-cli-trigger').click();
 	await expect(page.getByTestId('compat-cli-command')).toHaveText(
-		`orkctl --namespace '${NS}' 'orkflow' 'compat' '${BLOCK}' '2.1.0' '3.0.0'`
+		`orkctl --namespace ${NS} orkflow compat ${BLOCK} 2.1.0 3.0.0`
 	);
 	note('Compare interfaces 2.1.0 → 3.0.0: breaking — 2 breaking changes (inputs.region ADDED, outputs.url REMOVED)');
 	await shot(page, 'screenshot-compare-interfaces.png');
@@ -300,7 +300,7 @@ test('callers lists the composing orkflow, the trigger and the schedule', async 
 	);
 	await page.getByTestId('callers-cli-trigger').click();
 	await expect(page.getByTestId('callers-cli-command')).toHaveText(
-		`orkctl --namespace '${NS}' 'orkflow' 'callers' '${BLOCK}'`
+		`orkctl --namespace ${NS} orkflow callers ${BLOCK}`
 	);
 	note(`Callers: ${CHECKOUT}@4.2.0 (reads digest, url), trigger ${TRIGGER} (current), schedule ${SCHEDULE} (2.1.0)`);
 	await shot(page, 'screenshot-callers.png');
@@ -364,7 +364,7 @@ test('a breaking promotion requires acknowledgement and then lands', async ({ pa
 	await expect(page.getByTestId('promote-accept')).toBeEnabled();
 	await page.getByTestId('promote-cli-trigger').click();
 	await expect(page.getByTestId('promote-cli-command')).toHaveText(
-		`orkctl --namespace '${NS}' 'orkflow' 'promote' '${BLOCK}' '3.0.0' '--acknowledge-breaking'`
+		`orkctl --namespace ${NS} orkflow promote ${BLOCK} 3.0.0 --acknowledge-breaking`
 	);
 	await page.getByTestId('promote-cli-trigger').click();
 	await page.getByTestId('promote-accept').click();

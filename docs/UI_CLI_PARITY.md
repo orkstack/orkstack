@@ -50,7 +50,9 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
 - **Every action has its CLI equivalent.** The UI shows a shell-escaped,
   runnable `orkctl` (or `curl`) command beside each action, carrying the
   namespace, version, task, attempt and item where they apply; a quote in a
-  value cannot become shell syntax. Copy works on a plain-HTTP origin too
+  value cannot become shell syntax. A word is quoted only when a shell would
+  read it as syntax (a space, a quote, `$`, `*`, `~`, a leading `=`), so the
+  command reads the way a person types it. Copy works on a plain-HTTP origin too
   (where the browser offers no Clipboard API, it falls back to the legacy
   copy command); when the browser refuses both, the command is selected on
   screen and the page says to copy it by hand. A copy never silently does
@@ -347,8 +349,8 @@ the field's own, by their display names), and a value control for the field's
 kind (text; for in, one input where `\,` is a literal comma; an enum select,
 or a checkbox per value for in; `true`/`false`; a `datetime-local` shown with
 the UTC instant it sends). **Add filter**, **Clear filters** and the CLI
-equivalent of the applied filters (`orkctl … --filter '…'`, every value
-shell-quoted) sit beside it. The browser blocks nothing the CLI would send —
+equivalent of the applied filters (`orkctl … --filter …`, a value quoted
+wherever the shell would read it) sit beside it. The browser blocks nothing the CLI would send —
 an empty label key goes out as `labels.`, an empty time as `""` — and shows
 the server's refusal verbatim in the page's error panel, with Clear filters
 still there to recover.

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { env } from 'node:process';
 import { TaskSchema, type Task } from '../src/lib/gen/orkstack/v1/orkflow_pb';
 import {
 	DAG_DASH,
@@ -18,25 +19,31 @@ import { DAG_FIXTURES } from './dagFixtures';
 
 const tasksOf = (spec: [string, string[]][]): Task[] => spec.map(([id, needs]) => create(TaskSchema, { id, needs }));
 
-// What layoutDag drew on each fixture before it was re-based on layerOrder
-// (recorded from main's function, x re-derived for LAYER_GAP 56; see
-// test/dagFixtures.ts).
-const PINNED = JSON.parse(readFileSync(`${import.meta.dir}/fixtures/dag-layouts.json`, 'utf8')) as Record<
-	string,
-	{ nodes: { id: string; layer: number; index: number; x: number; y: number }[]; edges: unknown[]; width: number; height: number }
->;
+// What layoutDag draws on each fixture, pinned so a change to the layout is
+// a decision and never an accident. Recorded from the layered layout of
+// 2026-10-22 (lanes for long edges, barycentre order, a track per split or
+// join): against the drawing it replaced, `declaration-ties` lost its one
+// crossing (`late` moved below `m`) and `skip-layers` drew its long edge
+// a→d in a lane below b and c instead of through them; every other fixture
+// kept every box where it was. UPDATE_DAG_PINS=1 rewrites the fixture.
+const PIN_FILE = `${import.meta.dir}/fixtures/dag-layouts.json`;
+const drawn = (spec: [string, string[]][]) => {
+	const got = layoutDag(tasksOf(spec));
+	return {
+		nodes: got.nodes.map((n) => ({ id: n.task.id, layer: n.layer, index: n.index, x: n.x, y: n.y })),
+		edges: got.edges,
+		width: got.width,
+		height: got.height
+	};
+};
+if (env.UPDATE_DAG_PINS === '1') {
+	writeFileSync(PIN_FILE, `${JSON.stringify(Object.fromEntries(Object.entries(DAG_FIXTURES).map(([k, v]) => [k, drawn(v)])), null, '\t')}\n`);
+}
+const PINNED = JSON.parse(readFileSync(PIN_FILE, 'utf8')) as Record<string, ReturnType<typeof drawn>>;
 
-test('layoutDag draws every fixture exactly as it did before the re-base', () => {
+test('layoutDag draws every fixture exactly as pinned', () => {
 	expect(Object.keys(PINNED).sort()).toEqual(Object.keys(DAG_FIXTURES).sort());
-	for (const [name, spec] of Object.entries(DAG_FIXTURES)) {
-		const got = layoutDag(tasksOf(spec));
-		expect({
-			nodes: got.nodes.map((n) => ({ id: n.task.id, layer: n.layer, index: n.index, x: n.x, y: n.y })),
-			edges: got.edges,
-			width: got.width,
-			height: got.height
-		}).toEqual(PINNED[name]);
-	}
+	for (const [name, spec] of Object.entries(DAG_FIXTURES)) expect(drawn(spec), name).toEqual(PINNED[name]);
 });
 
 /** The order layoutDag puts its nodes in, as declaration positions. */
@@ -132,6 +139,13 @@ test('edgePath routes an edge orthogonally: across, down, across', () => {
 	expect(edgePath({ x1: 214, y1: 53, x2: 324, y2: 145 })).toBe('M 214 53 H 269 V 145 H 324');
 	// A straight edge stays straight.
 	expect(edgePath({ x1: 0, y1: 10, x2: 100, y2: 10 })).toBe('M 0 10 H 50 V 10 H 100');
+	// A routed edge follows its points; the inset shortens its last leg so
+	// the arrowhead's tip meets the target's outline, whichever way it runs.
+	const routed = { x1: 0, y1: 0, x2: 30, y2: 40, points: [[0, 0], [10, 0], [10, 40], [30, 40]] as [number, number][] };
+	expect(edgePath(routed)).toBe('M 0 0 L 10 0 L 10 40 L 30 40');
+	expect(edgePath(routed, 2)).toBe('M 0 0 L 10 0 L 10 40 L 28 40');
+	const down = { x1: 0, y1: 0, x2: 0, y2: 50, points: [[0, 0], [0, 50]] as [number, number][] };
+	expect(edgePath(down, 2)).toBe('M 0 0 L 0 48');
 });
 
 test('the failure-handler dash is the attribute join-policy.spec.ts reads', () => {
@@ -171,4 +185,15 @@ test('the one-hop neighbourhood is the task, its needs and its dependents, in de
 		['ship', ['charge']],
 		['report', ['ship']]
 	]);
+});
+
+test("a composed task's line keeps its version whole and lets the name give way", async () => {
+	const { fitDagRef } = await import('../src/lib/dag');
+	expect(fitDagRef('notify', '1.0.0')).toBe('orkflow notify@1.0.0');
+	expect(fitDagRef('release-block', '0.1.0')).toBe('orkflow release-…@0.1.0');
+	expect(fitDagRef('release-block', '0.1.0')).toHaveLength(DAG_LINE_CHARS);
+	// A cached node gives "cached " of its room to the tag.
+	expect(fitDagRef('release-block', '0.1.0', DAG_LINE_CHARS - 7)).toBe('orkflow r…@0.1.0');
+	// A version too long for any of the name to show is cut like any line.
+	expect(fitDagRef('a', '2026.10.22-rc.1+build.7')).toHaveLength(DAG_LINE_CHARS);
 });

@@ -5,7 +5,7 @@
 	// that state and is told when the popover wants it changed, which is what
 	// lets one caller open a popover from a button, another from a menu row,
 	// and a third close it as a side effect of the action it was showing.
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import { dismissOnOutsideOrEscape } from '$lib/dismiss';
 
 	interface Props {
@@ -58,6 +58,23 @@
 	// 4,000 cards two document listeners each were the largest single cost of
 	// drawing the page.
 	let root = $state<HTMLDivElement | undefined>(undefined);
+	// The panel hangs from its trigger's edge, but never past the viewport's:
+	// opened from a trigger near the other edge (a header's actions wrapped to
+	// the left on a phone), it is moved back inside, 8 px clear of the edge.
+	let panel = $state<HTMLDivElement | undefined>(undefined);
+	let shift = $state(0);
+	$effect(() => {
+		if (!open || !panel) {
+			shift = 0;
+			return;
+		}
+		const r = panel.getBoundingClientRect();
+		const current = untrack(() => shift);
+		const left = r.left - current;
+		const right = r.right - current;
+		const room = document.documentElement.clientWidth;
+		shift = left < 8 ? 8 - left : right > room - 8 ? Math.max(room - 8 - right, 8 - left) : 0;
+	});
 	$effect(() => {
 		if (!open || !root) return;
 		const node = root;
@@ -74,8 +91,10 @@
 	{@render trigger()}
 	{#if open}
 		<div
+			bind:this={panel}
 			data-testid={testid}
 			data-overlay
+			style:translate={shift ? `${shift}px 0` : undefined}
 			class="absolute z-10 mt-1 rounded-md border border-ink bg-sheet p-3 text-ink shadow-overlay animate-overlay-in motion-reduce:animate-none {align ===
 			'end'
 				? 'right-0'

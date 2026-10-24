@@ -1071,20 +1071,19 @@ test('a task watched live acquires its real exit code and Error.category without
 	note(`live-watched run ${run}: ok measured 0; boom measured 3 / Activity failed without reload`);
 	await shot(page, 'screenshot-live-terminal-facts.png');
 
-	// A TASK THE RUN ENDED BEFORE IT EVER STARTED SHOWS NO STATUS AT ALL.
+	// A TASK THE RUN ENDED BEFORE IT EVER STARTED IS STAMPED, AND SAYS SO.
 	//
 	// `never` carries STATUS_CANCELED on the wire, deliberately — that is the
 	// lifecycle truth. But it never reached an Orker, so it has no started_at,
-	// and drawing the same CANCELED badge a killed task gets said something
-	// false about it. The card is greyed, says "Never started", and the word
-	// CANCELED appears nowhere inside it.
+	// and a bare CANCELED stamp would say the same thing a killed task's does.
+	// It is stamped CANCELED with "never started" under it — the words its DAG
+	// node and the task map's key use too, so no view contradicts another.
 	const neverStatus = page.getByTestId('task-never-status');
-	await expect(neverStatus).toHaveAttribute('data-state', 'not-started', { timeout: 60_000 });
-	await expect(neverStatus).toHaveText(/Never started/);
+	await expect(neverStatus).toHaveText('CANCELED', { timeout: 60_000 });
+	await expect(page.getByTestId('task-never-status-note')).toHaveText('never started');
 	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
-	await expect(page.getByTestId('task-never')).not.toContainText('CANCELED');
 	await shot(page, 'screenshot-task-never-started.png');
-	note('task never: rendered greyed as "Never started", with no CANCELED badge');
+	note('task never: stamped CANCELED with "never started" under it');
 
 	await page.reload();
 	// Both disclosures are re-opened: a reload keeps the URL's state and not a
@@ -1099,8 +1098,8 @@ test('a task watched live acquires its real exit code and Error.category without
 	// broke before — the snapshot carried a stamped started_at, so a reloaded
 	// page could not tell the two CANCELED cases apart at all.
 	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
-	await expect(page.getByTestId('task-never-status')).toHaveText(/Never started/);
-	await expect(page.getByTestId('task-never')).not.toContainText('CANCELED');
+	await expect(page.getByTestId('task-never-status')).toHaveText('CANCELED');
+	await expect(page.getByTestId('task-never-status-note')).toHaveText('never started');
 });
 
 // A FAILED task hands the reader the command that runs it on their own
@@ -1121,7 +1120,7 @@ test('a failed task offers the command that runs it locally; a succeeded or neve
 	await trigger.click();
 	const command = page.getByTestId('run-task-boom-replay-cli-command');
 	await expect(command).toHaveText(
-		`orkctl --namespace 'default' 'task' 'run' '--from-run' '${run}' '--task' 'boom'`
+		`orkctl --namespace default task run --from-run ${run} --task boom`
 	);
 	await expect(page.getByTestId('run-task-ok-replay-cli-trigger')).toHaveCount(0);
 	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');

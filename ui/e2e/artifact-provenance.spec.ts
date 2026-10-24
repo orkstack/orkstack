@@ -157,7 +157,7 @@ test('the provenance disclosure shows present bytes, a held reference, this run 
 
 	await page.getByTestId('artifact-provenance-cli-completed-report.txt-trigger').click();
 	await expect(page.getByTestId('artifact-provenance-cli-completed-report.txt-command')).toHaveText(
-		`orkctl --namespace 'default' 'run' 'artifact' 'provenance' '${runId}' '--task' 'completed' '--kind' 'output' '--name' 'report.txt'`
+		`orkctl --namespace default run artifact provenance ${runId} --task completed --kind output --name report.txt`
 	);
 	await page.screenshot({ path: out('screenshot-artifact-provenance.png'), fullPage: true });
 	await page.getByTestId('artifact-provenance-cli-completed-report.txt-trigger').click();

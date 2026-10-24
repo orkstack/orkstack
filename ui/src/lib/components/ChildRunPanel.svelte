@@ -127,7 +127,7 @@
 >
 	<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-ink-secondary">
 		{#if childRunId}
-			<span>Runs orkflow</span>
+			<span>Runs Orkflow</span>
 			<a
 				href={childOrkflowHref(namespace, child?.orkflowName ?? '', child?.orkflowVersion ?? '')}
 				data-testid="task-{taskId}-child-orkflow"
@@ -143,7 +143,7 @@
 				<StatusPill status={childStatus} testid="task-{taskId}-child-status" />
 			{/if}
 		{:else if status === Status.SKIPPED || isTerminal(status)}
-			<span>Runs orkflow</span>
+			<span>Runs Orkflow</span>
 			<a
 				href={childOrkflowHref(namespace, child?.orkflowName ?? '', child?.orkflowVersion ?? '')}
 				data-testid="task-{taskId}-child-orkflow"
@@ -151,7 +151,7 @@
 			>
 			<span data-testid="task-{taskId}-child-none">— no child run was started.</span>
 		{:else}
-			<span>Will run orkflow</span>
+			<span>Will run Orkflow</span>
 			<a
 				href={childOrkflowHref(namespace, child?.orkflowName ?? '', child?.orkflowVersion ?? '')}
 				data-testid="task-{taskId}-child-orkflow"

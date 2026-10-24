@@ -136,7 +136,7 @@ test('a URL filter that does not parse is an error the page shows without a requ
 		.toEqual([filterOf('delivered', FilterOperator.EQUALS, ['false'])]);
 });
 
-test('filter flags are canonical and always single-quoted', () => {
+test('filter flags are canonical, and quoted wherever the shell would read them', () => {
 	const filters = [
 		filterOf('name', FilterOperator.PREFIX, ['tenant-']),
 		filterOf('labels.team', FilterOperator.EQUALS, ['payments']),
@@ -144,11 +144,11 @@ test('filter flags are canonical and always single-quoted', () => {
 	];
 	expect(filterFlags(filters)).toEqual([
 		`--filter 'description=it'"'"'s x\\,y'`,
-		`--filter 'labels.team=payments'`,
+		'--filter labels.team=payments',
 		`--filter 'name^tenant-'`
 	]);
 	expect(['orkctl', 'namespace', 'list', ...filterFlags([filters[1]])].join(' ')).toBe(
-		"orkctl namespace list --filter 'labels.team=payments'"
+		"orkctl namespace list --filter labels.team=payments"
 	);
 	expect(canonicalTexts([filters[0], filters[0]])).toEqual(['name^tenant-']);
 });

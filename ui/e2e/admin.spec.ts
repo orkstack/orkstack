@@ -450,6 +450,7 @@ test('creating a namespace validates locally, updates round-trip the etag, and a
 		createCalled = true;
 		return route.continue();
 	});
+	await page.getByTestId('ns-create-open').click();
 	await page.getByTestId('ns-create-name').fill('Not_A_Slug');
 	await page.getByTestId('ns-create-default-pool').fill('main');
 	await page.getByTestId('ns-create-submit').click();
@@ -539,6 +540,7 @@ test('a typed namespace form asks before leaving, keeps its fields when kept, an
 }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
 	await expect(page.getByTestId('namespaces-scope-caption')).toBeVisible();
+	await page.getByTestId('ns-create-open').click();
 	await page.getByTestId('ns-create-name').fill(GUARDED_NS);
 	await page.getByTestId('ns-create-description').fill('typed, not saved');
 

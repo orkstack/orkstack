@@ -443,12 +443,13 @@ test('screens: both themes, desktop and 390 px, with axe', async ({ page }) => {
 			expect(await pastRightEdge(page), `${label} at 390 px: nothing runs past the right edge`).toEqual([]);
 			await page.screenshot({ path: out(`screenshot-${label}-${theme}-390.png`), fullPage: true });
 		}
-		// The band wraps into ruled lines of cells, never into a stack of tiles.
+		// The band wraps into ruled lines of cells, never into a stack of tiles:
+		// below 400 px the four status counts are a 2 × 2 grid over the three figures.
 		await page.goto(`${UI_ORIGIN}/?ns=default`);
 		const tops = await page.evaluate(() =>
 			[...document.querySelectorAll('[data-testid="dashboard-counts"] > *')].map((el) => Math.round(el.getBoundingClientRect().top))
 		);
-		expect(new Set(tops).size, `band rows at 390 px: ${tops.join(',')}`).toBe(2);
+		expect(new Set(tops).size, `band rows at 390 px: ${tops.join(',')}`).toBe(3);
 	}
 	await page.setViewportSize({ width: 1280, height: 720 });
 	await page.goto(`${UI_ORIGIN}/?ns=default`);

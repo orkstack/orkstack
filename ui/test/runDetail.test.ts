@@ -1,23 +1,23 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { ArtifactRefSchema, PayloadSchema } from '../src/lib/gen/orkstack/v1/common_pb';
-import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, shellQuote, taskRunCommand, timestampJson } from '../src/lib/runDetail';
+import { artifactMetadata, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shellQuote, shortRunId, taskRunCommand, timestampJson } from '../src/lib/runDetail';
 
 test('copyable run commands quote every page-derived coordinate and name the namespace', () => {
 	expect(shellQuote("a' b")).toBe("'a'\"'\"' b'");
 	expect(runCommand('prod west', ['run', 'get', "ork-'42"])).toBe(
-		"orkctl --namespace 'prod west' 'run' 'get' 'ork-'\"'\"'42'"
+		"orkctl --namespace 'prod west' run get 'ork-'\"'\"'42'"
 	);
-	expect(runCommand('', ['run', 'cancel', 'ork-1'])).toContain("--namespace 'default'");
+	expect(runCommand('', ['run', 'cancel', 'ork-1'])).toContain('--namespace default ');
 });
 
 test('the local replay command names the namespace, the run and the task, and nothing else', () => {
 	expect(taskRunCommand('', 'ork-1-2', 'publish')).toBe(
-		"orkctl --namespace 'default' 'task' 'run' '--from-run' 'ork-1-2' '--task' 'publish'"
+		"orkctl --namespace default task run --from-run ork-1-2 --task publish"
 	);
 	// Page data is quoted, never trusted as shell syntax.
 	expect(taskRunCommand("it's", 'ork-1-2', "pub'lish")).toBe(
-		"orkctl --namespace 'it'\"'\"'s' 'task' 'run' '--from-run' 'ork-1-2' '--task' 'pub'\"'\"'lish'"
+		"orkctl --namespace 'it'\"'\"'s' task run --from-run ork-1-2 --task 'pub'\"'\"'lish'"
 	);
 });
 
@@ -63,4 +63,39 @@ test('durations only use two authoritative timestamps', () => {
 	expect(formatDuration({ seconds: 11n, nanos: 0 }, { seconds: 10n, nanos: 0 })).toBe('—');
 	const exported = { startedAt: timestampJson({ seconds: 10n, nanos: 0 }) };
 	expect(JSON.stringify(exported)).toBe('{"startedAt":"1970-01-01T00:00:10.000Z"}');
+});
+
+test('a token is quoted only when a shell would read it as syntax', () => {
+	for (const safe of ['default', 'ork-1792-6378', '--json', 'origin.kind=PARENT_RUN', 'status=FAILED,CANCELED', 'a/b:c@d%e+f', '1.2.3']) {
+		expect(shellQuote(safe)).toBe(safe);
+	}
+	expect(shellQuote('')).toBe("''");
+	for (const unsafe of ['a b', '=x', 'action^namespace.', '$(touch x)', '~/x', '*', 'tab\there', 'new\nline', '"q"', 'back\\slash']) {
+		expect(shellQuote(unsafe).startsWith("'")).toBe(true);
+	}
+});
+
+test('a run id is drawn short by its first four and last six characters, never parsed', () => {
+	expect(shortRunId('ork-1792470266129284632-6378181302490759169')).toBe('ork-…759169');
+	expect(shortRunId('ork-1-2')).toBe('ork-1-2');
+	expect(shortRunId('abcdefghijklmn')).toBe('abcd…ijklmn');
+});
+
+test('a short value is said on one line, spaced like the pretty form; a long one is not', () => {
+	const payload = (data: Record<string, unknown>) => create(PayloadSchema, { data: data as never });
+	expect(inlinePayload(payload({ exitCode: 0 }))).toBe('{"exitCode": 0}');
+	expect(inlinePayload(payload({ a: [1, 'two'], b: { c: null } }))).toBe('{"a": [1, "two"], "b": {"c": null}}');
+	expect(inlinePayload(payload({ text: 'x'.repeat(80) }))).toBeNull();
+	expect(inlinePayload(undefined)).toBeNull();
+	expect(emptyPayload(undefined)).toBe(true);
+	expect(emptyPayload(payload({}))).toBe(true);
+	expect(emptyPayload(payload({ a: 1 }))).toBe(false);
+});
+
+test('a command splits into the words a shell sees, and joins back into itself', async () => {
+	const { commandWords } = await import('../src/lib/runDetail');
+	const cmd = "orkctl --namespace 'prod west' run get ork-1 --json";
+	expect(commandWords(cmd)).toEqual(['orkctl', '--namespace', "'prod west'", 'run', 'get', 'ork-1', '--json']);
+	expect(commandWords(cmd).join(' ')).toBe(cmd);
+	expect(commandWords(`orkctl x --reason 'it'"'"'s ok'`)).toEqual(['orkctl', 'x', '--reason', `'it'"'"'s ok'`]);
 });

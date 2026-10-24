@@ -1,8 +1,50 @@
 import type { ArtifactRef, Payload } from './gen/orkstack/v1/common_pb';
 
-/** Quote one CLI argument for a POSIX shell without trusting page data as code. */
+// The characters a POSIX shell never reads as syntax: a token made only of
+// them is passed as written. Everything else — a space, a quote, `$`, `*`,
+// `~`, a backslash, a newline — is single-quoted, and so is a token that
+// starts with `=`, which zsh expands as a command's path.
+const SHELL_SAFE = /^(?!=)[A-Za-z0-9_@%+=:,./-]+$/;
+
+/**
+ * Quote one CLI argument for a POSIX shell without trusting page data as
+ * code: a token that holds only safe characters is written bare, the way a
+ * person types it, and any other is single-quoted (an embedded quote closes,
+ * escapes and reopens). The empty string is `''`.
+ */
 export function shellQuote(value: string): string {
+	if (SHELL_SAFE.test(value)) return value;
 	return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
+/**
+ * A command's words, split at the spaces a shell splits it at — never
+ * inside a quoted token — so a page can let a long command wrap only between
+ * its words. Joined with single spaces they are the command again.
+ */
+export function commandWords(command: string): string[] {
+	const words: string[] = [];
+	let word = '';
+	let quote = '';
+	for (const c of command) {
+		if (quote === '' && (c === "'" || c === '"')) quote = c;
+		else if (c === quote) quote = '';
+		if (c === ' ' && quote === '') {
+			words.push(word);
+			word = '';
+		} else word += c;
+	}
+	words.push(word);
+	return words;
+}
+
+/**
+ * A run id drawn short where a whole one does not fit: its first four and
+ * last six characters ("ork-…873153"). Characters are counted, never parsed:
+ * nothing is read from an id's parts (AGENTS.md §7).
+ */
+export function shortRunId(id: string): string {
+	return id.length > 13 ? `${id.slice(0, 4)}…${id.slice(-6)}` : id;
 }
 
 /** A copyable command always states the namespace, including `default`. */
@@ -22,6 +64,36 @@ export function taskRunCommand(namespace: string, runId: string, taskId: string)
 /** Payloads are compact JSON values; absent means the API has no inline value. */
 export function payloadJson(payload: Payload | undefined): string {
 	return JSON.stringify(payload?.data ?? {}, null, 2);
+}
+
+/** One line of JSON, spaced the way the pretty form is: `{"exitCode": 0, "ok": true}`. */
+function oneLine(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(oneLine).join(', ')}]`;
+	if (value !== null && typeof value === 'object') {
+		return `{${Object.entries(value as Record<string, unknown>)
+			.map(([k, v]) => `${JSON.stringify(k)}: ${oneLine(v)}`)
+			.join(', ')}}`;
+	}
+	return JSON.stringify(value) ?? 'null';
+}
+
+/** The longest value a task row states inline, in characters; anything longer keeps its own block. */
+export const INLINE_VALUES_MAX = 64;
+
+/**
+ * A payload short enough to read on its row — one line of JSON of at most
+ * INLINE_VALUES_MAX characters — or null when it needs its own block.
+ */
+export function inlinePayload(payload: Payload | undefined): string | null {
+	if (!payload) return null;
+	const line = oneLine(payload.data ?? {});
+	return line.length <= INLINE_VALUES_MAX ? line : null;
+}
+
+/** A payload with nothing in it: absent, or an empty object. */
+export function emptyPayload(payload: Payload | undefined): boolean {
+	const data = payload?.data;
+	return data === undefined || data === null || (typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length === 0);
 }
 
 /** Artifact references are metadata only. Their storage URI is never a browser download URL. */

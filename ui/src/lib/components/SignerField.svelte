@@ -26,12 +26,11 @@
 </script>
 
 <label class="flex flex-col gap-1.5 text-sm">
-	<span class="field-label mb-0">Require signed by</span>
+	<span class="field-label mb-0">Require signed by{#if keysError} <span class="field-hint">(cosign:&lt;key-name&gt;)</span>{/if}</span>
 	{#if keysError}
 		<input
 			data-testid={testid}
 			bind:value
-			placeholder="cosign:<key-name>"
 			class="field h-9 px-3 font-mono"
 		/>
 	{:else}

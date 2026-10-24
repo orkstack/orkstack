@@ -502,6 +502,7 @@ test('a namespace and its pool policy are set in the Admin section, and pool hea
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	await page.getByTestId('ns-create-open').click();
 	await expect(page.getByTestId('ns-create-name')).toBeVisible();
 	await page.getByTestId('ns-create-name').fill(OPS_NS);
 	await page.getByTestId('ns-create-description').fill('Operating story — a pool policy set in the browser.');

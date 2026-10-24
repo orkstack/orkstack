@@ -25,6 +25,7 @@
 	import { setTitleBlock } from '$lib/sheet.svelte';
 	import { statusLabel } from '$lib/status';
 	import { pollWhileVisible } from '$lib/visibility';
+	import { shortRunId } from '$lib/runDetail';
 
 	let { data }: PageProps = $props();
 
@@ -199,7 +200,7 @@
 <SheetHeader title={orkflowName ? `Runs for ${orkflowName}` : 'Runs'} testid="runs-heading">
 	{#snippet actions()}
 		<a href={submitHref} data-testid="runs-submit-run" class="btn btn-primary">
-			{orkflowName ? 'Submit a run' : 'Browse orkflows'}
+			{orkflowName ? 'Submit a run' : 'Browse Orkflows'}
 		</a>
 	{/snippet}
 </SheetHeader>
@@ -281,7 +282,9 @@
 									class="mr-1.5 inline-flex align-middle text-red"><Icon name="delta" class="size-3.5" /></span
 								>{/if}<a
 								href={withNamespace(`/runs/${run.id}`, data.namespace)}
-								class="font-mono text-xs font-medium text-ink group-hover:underline hover:text-blue">{run.id}</a
+								title={run.id}
+								class="font-mono text-xs font-medium text-ink group-hover:underline hover:text-blue"
+								><span class="max-sm:sr-only">{run.id}</span><span aria-hidden="true" class="sm:hidden">{shortRunId(run.id)}</span></a
 							>
 						</td>
 						<td class="text-ink-secondary max-sm:row-start-2 max-sm:truncate max-sm:text-xs">{run.orkflowName}@{run.orkflowVersion}</td>
