@@ -1,5 +1,4 @@
 import { expect, test, type Page } from './test';
-import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -7,11 +6,13 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
+	ensureBucket,
 	killStarted,
 	noteTo,
 	orkerEnv,
+	ownBucket,
 	proofOut,
-	repoRoot,
+	removeBucket,
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
@@ -45,7 +46,7 @@ const UI_PORT = '14941';
 const UI_ORIGIN = `http://127.0.0.1:${UI_PORT}`;
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-dag-gallery-${STAMP}`;
-const BUCKET = `orkstack-dag-gallery-${STAMP}`;
+const BUCKET = ownBucket('dag-gallery');
 const CHILD = `gallery-child-${STAMP}`;
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR
@@ -55,18 +56,6 @@ const out = proofOut(PROOF_DIR);
 const note = noteTo(out('transcript.txt'));
 
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
-
-function bucketEnv(action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		ORK_BUCKET_ACTION: action,
-		ORK_S3_BUCKET: BUCKET,
-		ORK_S3_ENDPOINT: s3Env.ORK_S3_ENDPOINT,
-		ORK_S3_REGION: s3Env.ORK_S3_REGION,
-		ORK_S3_ACCESS_KEY: s3Env.ORK_S3_ACCESS_KEY,
-		ORK_S3_SECRET_KEY: s3Env.ORK_S3_SECRET_KEY
-	};
-}
 
 /** An Orkflow's name for a stress shape in this run. */
 const nameOf = (shape: string) => `dag-${shape}-${STAMP}`;
@@ -142,7 +131,7 @@ test.beforeAll(async () => {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 	ensureActivityImages();
-	execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('ensure') });
+	ensureBucket(BUCKET);
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...catalogEnv,
@@ -181,7 +170,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
 	await killStarted();
 	try {
-		execFileSync('go', ['run', './test/tools/bucket-ensure'], { cwd: repoRoot, env: bucketEnv('cleanup') });
+		removeBucket(BUCKET, note);
 		note(`removed this run's own bucket ${BUCKET}`);
 	} catch (err) {
 		note(`bucket cleanup for ${BUCKET} failed (leaked, not fatal): ${err}`);
