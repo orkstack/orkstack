@@ -16,9 +16,15 @@
 		testid: string;
 		/** Names the icon button for anyone who cannot see the glyph. */
 		label?: string;
+		/**
+		 * Words drawn beside the glyph, in the mono — the command's own name
+		 * ("run logs") — where several of these sit side by side and a row of
+		 * identical prompts would not say which is which.
+		 */
+		text?: string;
 	}
 
-	let { command, testid, label = 'CLI equivalent' }: Props = $props();
+	let { command, testid, label = 'CLI equivalent', text = undefined }: Props = $props();
 
 	let open = $state(false);
 	// The copy result is stated rather than animated away, the same way the run
@@ -56,10 +62,12 @@
 			aria-expanded={open}
 			data-testid="{testid}-trigger"
 			onclick={toggle}
-			class="inline-flex size-8 items-center justify-center rounded-sm border border-rule-strong bg-paper text-ink-secondary transition-colors hover:bg-hover hover:text-ink"
+			class="inline-flex items-center justify-center gap-1.5 rounded-sm border border-rule-strong bg-paper text-ink-secondary transition-colors hover:bg-hover hover:text-ink {text
+				? 'h-7 px-2'
+				: 'size-8'}"
 		>
 			<!-- A shell prompt: the window, the caret, the cursor. -->
-			<Icon name="terminal" />
+			<Icon name="terminal" />{#if text}<span class="font-mono text-xs whitespace-nowrap">{text}</span>{/if}
 		</button>
 	{/snippet}
 	{#snippet content()}

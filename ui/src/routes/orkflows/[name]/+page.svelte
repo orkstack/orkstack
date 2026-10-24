@@ -193,13 +193,13 @@
 		<ErrorPanel
 			testid="engine-error"
 			retryTestid="overview-retry"
-			subject="orkflow {data.name}"
+			subject="Orkflow {data.name}"
 			message={data.orkflowError}
 			busy={reloading}
 			onretry={reload}
 		/>
 	{:else if reloading}
-		<p data-testid="overview-loading" class="text-sm text-ink-muted">Loading the orkflow…</p>
+		<p data-testid="overview-loading" class="text-sm text-ink-muted">Loading the Orkflow…</p>
 	{:else if !wf}
 		<p data-testid="overview-empty" class="text-sm text-ink-muted">
 			The engine returned no document for {data.name}.

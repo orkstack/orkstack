@@ -133,7 +133,7 @@ test('version-pinned submit, typed inputs, CLI, and run-again retain author inte
 	await page.getByText('Advanced submission options').click();
 	await page.getByTestId('run-submit-idempotency-key').fill('authoring-retry-key');
 	await page.getByTestId('run-submit-cli-trigger').click();
-	await expect(page.getByTestId('run-submit-cli-command')).toContainText("--version '1.0.0'");
+	await expect(page.getByTestId('run-submit-cli-command')).toContainText('--version 1.0.0');
 	await shot(page, 'screenshot-version-pinned-submit.png');
 
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', {

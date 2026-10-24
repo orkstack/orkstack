@@ -347,7 +347,7 @@
 	<p data-testid="versions-loading" class="text-sm text-ink-muted">Loading versions…</p>
 {:else if versions.length === 0}
 	<p data-testid="versions-empty" class="text-sm text-ink-muted">
-		No stored versions. Apply this orkflow from the Edit tab to create one.
+		No stored versions. Apply this Orkflow from the Edit tab to create one.
 	</p>
 {:else}
 	<div class="mb-4 flex items-start justify-between gap-4">
@@ -356,7 +356,7 @@
 			{versions.length === 1 ? 'version' : 'versions'}; runs execute
 			<span class="font-medium text-ink" data-testid="versions-resolved">{resolved}</span>
 			{#if !currentVersion}
-				<span class="text-ink-muted">(nobody has promoted this orkflow, so the newest applies)</span>
+				<span class="text-ink-muted">(nobody has promoted this Orkflow, so the newest applies)</span>
 			{/if}
 		</p>
 		<div class="flex flex-col items-end gap-2">
@@ -374,7 +374,7 @@
 					type="button"
 					data-testid="versions-delete"
 					disabled={reloading || deleteSafety !== 'safe'}
-					title={deleteSafetyReason || 'Permanently delete this orkflow and every version'}
+					title={deleteSafetyReason || 'Permanently delete this Orkflow and every version'}
 					onclick={askToDelete}
 					class="btn border-red text-red-strong hover:bg-red-tint"
 				>

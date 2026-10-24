@@ -25,7 +25,7 @@
 	let permitNavigation = $state(false);
 	const dirty = $derived(yaml !== cleanYaml);
 
-	guardUnsaved(() => dirty && !permitNavigation, 'Discard unsaved orkflow YAML?');
+	guardUnsaved(() => dirty && !permitNavigation, 'Discard unsaved Orkflow YAML?');
 
 	// An example's YAML is fetched when its card is chosen, not shipped with
 	// the page ($lib/examples). A second click while one is loading is not
@@ -49,7 +49,7 @@
 	async function validate(): Promise<boolean> {
 		formError = '';
 		issues = [];
-		if (!yaml.trim()) { formError = 'Paste an orkflow YAML document first.'; return false; }
+		if (!yaml.trim()) { formError = 'Paste an Orkflow YAML document first.'; return false; }
 		const validatedYaml = yaml;
 		const validatedNamespace = data.namespace;
 		validating = true;
@@ -68,7 +68,7 @@
 		formError = '';
 		warnings = [];
 		applied = null;
-		if (!yaml.trim()) { formError = 'Paste an orkflow YAML document first.'; return; }
+		if (!yaml.trim()) { formError = 'Paste an Orkflow YAML document first.'; return; }
 		const submittedYaml = yaml;
 		const submittedNamespace = data.namespace;
 		applying = true;
@@ -85,7 +85,7 @@
 				await goto(withNamespace(`/orkflows/${res.orkflow.name}`, submittedNamespace));
 				return;
 			}
-			throw new Error('engine returned no orkflow');
+			throw new Error('engine returned no Orkflow');
 		} catch (err) {
 			formError = errorMessage(err);
 		} finally { applying = false; }
@@ -113,9 +113,9 @@
 	}
 </script>
 
-<svelte:head><title>Apply orkflow — OrkStack</title></svelte:head>
+<svelte:head><title>Apply Orkflow — OrkStack</title></svelte:head>
 
-<SheetHeader title="Apply an orkflow">
+<SheetHeader title="Apply an Orkflow">
 	{#snippet meta()}
 		<p data-testid="apply-namespace">
 			Into namespace <span class="font-mono text-ink">{namespaceLabel(data.namespace)}</span>. A document
@@ -131,7 +131,7 @@
 			class="btn">{validating ? 'Validating…' : 'Validate'}</button
 		>
 		<button type="submit" form="apply-form" data-testid="apply-submit" disabled={applying} class="btn btn-primary">
-			{applying ? 'Applying…' : 'Apply orkflow'}
+			{applying ? 'Applying…' : 'Apply Orkflow'}
 		</button>
 	{/snippet}
 </SheetHeader>
@@ -197,7 +197,7 @@
 	{#if applied}
 		<p data-testid="apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">
 			Applied {applied.name}@{applied.version}.
-			<a class="link font-semibold" href={withNamespace(`/orkflows/${applied.name}`, data.namespace)}>Open orkflow</a>
+			<a class="link font-semibold" href={withNamespace(`/orkflows/${applied.name}`, data.namespace)}>Open Orkflow</a>
 		</p>
 	{/if}
 </form>

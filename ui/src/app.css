@@ -407,10 +407,11 @@
 		width: calc(var(--spacing) * 2);
 		height: calc(var(--spacing) * 2);
 		border-radius: var(--radius-full);
-		border: var(--rule-region) solid var(--color-blue);
+		border: var(--rule-region) solid var(--color-awaiting-solid);
 	}
 	.mark-dot {
-		background-color: var(--color-blue);
+		border-color: var(--color-running-solid);
+		background-color: var(--color-running-solid);
 	}
 
 	/* Forced colours drop background images and recolour fills; a border in

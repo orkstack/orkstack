@@ -2,8 +2,9 @@
  * OrkStack design tokens — every value the UI is drawn with, in one file.
  *
  * The world is an engineering drawing office: drafting paper for the ground,
- * a deep blue-black ink, ONE drafting blue for selection, links and live
- * work, and ONE revision-cloud red reserved for failure and attention.
+ * a deep blue-black ink, ONE drafting blue for selection, links and waiting,
+ * ONE survey green for work running now, and ONE revision-cloud red reserved
+ * for failure and attention.
  * Hairline rules divide rows; heavier rules divide regions. Dark is
  * ink-toned paper with pale rules, never a cyan-on-navy blueprint.
  *
@@ -116,26 +117,33 @@
 	/* Motion: exponential ease-out from an already-visible default. */
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 	--ease-linear: linear;
+	/* The one symmetric curve: a pulse that breathes, not one that snaps. */
+	--ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
 	--duration-fast: 120ms;
 	--duration-base: 200ms;
 	--duration-draw: 600ms;
 	--animate-live-dot: live-dot 1.6s var(--ease-out) infinite;
+	/* A running DAG node's ground, fading between the green tint and paper. */
+	--animate-live-fill: live-fill 2.4s var(--ease-in-out) infinite;
+	/* The same breath for a running HTML cell (a fan-out item's button). */
+	--animate-live-ground: live-ground 2.4s var(--ease-in-out) infinite;
 	--animate-nav-progress: nav-progress 1.2s var(--ease-out) infinite;
 	--animate-overlay-in: overlay-in var(--duration-fast) var(--ease-out) both;
 	--animate-cloud-draw: cloud-draw var(--duration-draw) var(--ease-out) both;
 
-	/* Status — the drawing convention is line type and fill; only the two
-	   accents carry hue (blue: live or waiting on the outside world; red:
-	   failed). Every status also differs by its drawn mark and its word. */
+	/* Status — the drawing convention is line type and fill; only the three
+	   accents carry hue (green: running now; blue: waiting on the outside
+	   world; red: failed). Every status also differs by its drawn mark and
+	   its word. */
 	--color-pending-bg: var(--color-paper);
 	--color-pending-fg: var(--color-ink-secondary);
 	--color-pending-border: var(--color-rule-strong);
 	--color-pending-solid: var(--color-ink-muted);
 
-	--color-running-bg: var(--color-blue-tint);
-	--color-running-fg: var(--color-blue);
-	--color-running-border: var(--color-blue);
-	--color-running-solid: var(--color-blue);
+	--color-running-bg: var(--color-green-tint);
+	--color-running-fg: var(--color-green-strong);
+	--color-running-border: var(--color-green);
+	--color-running-solid: var(--color-green);
 
 	--color-awaiting-bg: var(--color-blue-tint);
 	--color-awaiting-fg: var(--color-blue-strong);
@@ -210,6 +218,11 @@
 	--color-blue-strong: #1f4596;
 	--color-blue-tint: #e8ecf5;
 
+	/* Survey green: work running now, and nothing else */
+	--color-green: #2b7a4b;
+	--color-green-strong: #1d5e39;
+	--color-green-tint: #e5f2e8;
+
 	/* Revision-cloud red */
 	--color-red: #c2362b;
 	--color-red-strong: #9e2a21;
@@ -268,6 +281,10 @@
 	--color-blue-strong: #a9c0f5;
 	--color-blue-tint: #1c2741;
 
+	--color-green: #7cc795;
+	--color-green-strong: #a5dcb5;
+	--color-green-tint: #16281e;
+
 	--color-red: #ef7b6e;
 	--color-red-strong: #f6a196;
 	--color-red-tint: #3a1f1d;
@@ -301,6 +318,28 @@
 	}
 	50% {
 		opacity: 0.35;
+	}
+}
+
+/* The ground of a running node: from its green tint to paper and back. The
+   tint is the resting state, so a paused or reduced-motion page shows it. */
+@keyframes live-fill {
+	0%,
+	100% {
+		fill: var(--color-green-tint);
+	}
+	50% {
+		fill: var(--color-paper);
+	}
+}
+
+@keyframes live-ground {
+	0%,
+	100% {
+		background-color: var(--color-green-tint);
+	}
+	50% {
+		background-color: var(--color-paper);
 	}
 }
 

@@ -255,7 +255,7 @@
 	{/each}
 	<button type="button" class="btn" data-testid="{testid}-filter-add" onclick={addRow}><Icon name="filter" class="size-3.5" />Add filter</button>
 	{#if children}{@render children()}{/if}
-	<button type="submit" class="btn btn-primary" data-testid="{testid}-filters-apply">Apply filters</button>
+	<button type="submit" class="btn" data-testid="{testid}-filters-apply">Apply filters</button>
 	{#if applied.length > 0}
 		<a href={clearHref} class="link text-sm font-medium" data-testid="{testid}-filters-clear">Clear filters</a>
 	{/if}

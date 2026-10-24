@@ -236,7 +236,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 	<span class="font-medium text-ink">{name}</span>
 	in namespace <span class="font-medium text-ink">{namespaceLabel(namespace)}</span> over plain
 	HTTP, by posting to
-	<code class="font-mono text-xs">/v1/triggers/&lt;id&gt;</code> with its bearer token. The orkflow,
+	<code class="font-mono text-xs">/v1/triggers/&lt;id&gt;</code> with its bearer token. The Orkflow,
 	the namespace and the version come from the trigger itself and never from the request, so a token
 	cannot be redirected at anything else. Each trigger pins its own version when it is created — or
 	follows the current pointer — and says which on its row below.
@@ -452,7 +452,7 @@ import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
 	<Dialog title="Edit trigger {editing.id}" testid="trigger-edit-dialog" onclose={() => (editing = null)} widthClass="max-w-xl">
 		{#snippet body()}
 			<p class="mb-3 text-sm text-ink-secondary">
-				Editing keeps this trigger's URL and token. Its orkflow cannot change.
+				Editing keeps this trigger's URL and token. Its Orkflow cannot change.
 			</p>
 			<form
 				class="space-y-3"

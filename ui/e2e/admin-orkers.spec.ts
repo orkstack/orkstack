@@ -195,7 +195,7 @@ test('Pools shows its Orkers and cordons one with a reason', async ({ page }) =>
 
 	await page.getByTestId(`orker-cli-${ORKER_A}-trigger`).click();
 	const popover = page.getByTestId(`orker-cli-${ORKER_A}-popover`);
-	const expected = `orkctl orker cordon '${ORKER_A}' --reason 'it'"'"'s the CVE-2026-1234 runtime patch'`;
+	const expected = `orkctl orker cordon ${ORKER_A} --reason 'it'"'"'s the CVE-2026-1234 runtime patch'`;
 	await expect(popover).toContainText(expected);
 	await shot(page, 'admin-orkers-cordoned.png');
 	note(`cordoned ${ORKER_A} with ${JSON.stringify(REASON)}; CLI equivalent: ${expected}`);

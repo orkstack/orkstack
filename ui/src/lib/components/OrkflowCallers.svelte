@@ -106,7 +106,7 @@
 		{/if}
 		{#if response.callers.length === 0}
 			<p data-testid="callers-empty" class="text-sm text-ink-muted">
-				Nothing in namespace {namespaceLabel(namespace)} references {name}: no orkflow composes it and
+				Nothing in namespace {namespaceLabel(namespace)} references {name}: no Orkflow composes it and
 				no trigger or schedule starts it.
 			</p>
 		{:else}

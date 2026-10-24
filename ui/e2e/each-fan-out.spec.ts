@@ -340,7 +340,7 @@ test('an item that retried shows its own attempts and logs', async ({ page }) =>
 
 	// The CLI equivalent names --item 2.
 	await page.getByTestId('task-convert-item-panel-cli-logs-trigger').click();
-	await expect(page.getByTestId('task-convert-item-panel-cli-logs-command')).toContainText("'--item' '2'");
+	await expect(page.getByTestId('task-convert-item-panel-cli-logs-command')).toContainText("--item 2");
 	note(`item 2 panel: ${(await panel.textContent())?.replace(/\s+/g, ' ').slice(0, 400)}`);
 	await shot(page, 'screenshot-each-item-panel.png');
 });

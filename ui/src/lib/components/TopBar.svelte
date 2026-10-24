@@ -63,7 +63,7 @@
 				<a href={link(runs.href)} aria-current={current(runs.href)} class="{ITEM} max-lg:hidden">{runs.label}</a>
 				<a href={link(orkflows.href)} aria-current={current(orkflows.href)} class="{ITEM} max-lg:hidden">{orkflows.label}</a>
 				<a href={link(apply.href)} aria-current={current(apply.href)} class="{ITEM} max-lg:hidden"
-					>{apply.label}<span class="sr-only"> orkflow</span></a
+					>{apply.label}<span class="sr-only"> Orkflow</span></a
 				>
 				<span class="mx-1 h-5 border-l border-rule" aria-hidden="true"></span>
 				<a href={link('/admin')} data-testid="nav-admin" aria-current={modeCurrent('operate', '/admin')} class={MODE}

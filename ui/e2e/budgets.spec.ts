@@ -151,6 +151,7 @@ async function openSubmitDialog(page: Page): Promise<void> {
 
 test('1: Admin → Namespaces creates an enforced budget and the Budget column says so', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces`);
+	await page.getByTestId('ns-create-open').click();
 	await page.getByTestId('ns-create-name').fill(NS);
 	await page.getByTestId('ns-create-budget-cpu-seconds').fill('1');
 	await page.getByTestId('ns-create-budget-period-hours').fill('1');

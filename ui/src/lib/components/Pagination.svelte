@@ -23,7 +23,7 @@
 		page: number;
 		/** rows on this page */
 		count: number;
-		/** singular noun for the status line, pluralised by count: 'run' | 'orkflow' */
+		/** singular noun for the status line, pluralised by count: 'run' | 'Orkflow' */
 		noun: string;
 		/** undefined = disabled */
 		previousHref?: string;

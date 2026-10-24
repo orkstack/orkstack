@@ -274,6 +274,7 @@ test('N5: a filter that matches nothing says so, and Clear filters goes back to 
 test('N6: a create from page 1 lands on the created row, though it sorts onto the last page', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10`);
 	await expectRows(page, PAGES[0]);
+	await page.getByTestId('ns-create-open').click();
 	await page.getByTestId('ns-create-name').fill(CREATED);
 	await page.getByTestId('ns-create-description').fill('created from page 1');
 	await page.getByTestId('ns-create-submit').click();
@@ -311,7 +312,7 @@ test('N8: the CLI equivalent is the applied filter as orkctl spells it', async (
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10&filter=${encodeURIComponent('labels.team=payments')}`);
 	await expectRows(page, PAYMENTS.slice(0, 10));
 	await page.getByTestId('namespaces-filters-cli-trigger').click();
-	await expect(page.getByTestId('namespaces-filters-cli-command')).toHaveText("orkctl namespace list --filter 'labels.team=payments'");
+	await expect(page.getByTestId('namespaces-filters-cli-command')).toHaveText("orkctl namespace list --filter labels.team=payments");
 	note(`CLI equivalent: ${await page.getByTestId('namespaces-filters-cli-command').innerText()}`);
 });
 

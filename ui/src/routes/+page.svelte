@@ -31,6 +31,7 @@
 	import { setTitleBlock } from '$lib/sheet.svelte';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import type { PageProps } from './$types';
+	import { shortRunId } from '$lib/runDetail';
 
 	let { data }: PageProps = $props();
 
@@ -192,7 +193,7 @@
 					data-testid="dashboard-window-{preset}"
 					aria-current={data.window === preset ? 'page' : undefined}
 					href={windowHref(preset)}
-					class="figure inline-flex items-center border-r border-rule-strong px-3 text-sm text-ink-secondary transition-colors hover:bg-hover hover:text-ink current:bg-blue-tint current:font-semibold current:text-blue-strong"
+					class="figure inline-flex items-center border-r border-rule-strong px-2 text-sm sm:px-3 text-ink-secondary transition-colors hover:bg-hover hover:text-ink current:bg-blue-tint current:font-semibold current:text-blue-strong"
 				>{preset}</a>
 			{/each}
 			<Popover open={customOpen} onOpenChange={(open) => (customOpen = open)} align="end" testid="dashboard-window-custom-popover">
@@ -204,7 +205,7 @@
 						aria-expanded={customOpen}
 						aria-haspopup="dialog"
 						onclick={() => (customOpen = !customOpen)}
-						class="inline-flex h-full items-center px-3 text-sm text-ink-secondary transition-colors hover:bg-hover hover:text-ink current:bg-blue-tint current:font-semibold current:text-blue-strong"
+						class="inline-flex h-full items-center px-2 text-sm text-ink-secondary sm:px-3 transition-colors hover:bg-hover hover:text-ink current:bg-blue-tint current:font-semibold current:text-blue-strong"
 					>{customLabel}</button>
 				{/snippet}
 				{#snippet content()}
@@ -250,10 +251,10 @@
 		data-testid="dashboard-counts"
 		class="mb-8 grid grid-cols-12 border-y border-rule lg:grid-cols-7"
 	>
-		<CountCell label="Running" value={fmtCount(counts['running'])} testid="stat-running" status={Status.RUNNING} class="col-span-3 lg:col-span-1" />
-		<CountCell label="Succeeded" value={fmtCount(counts['succeeded'])} testid="stat-succeeded" status={Status.SUCCEEDED} class="col-span-3 lg:col-span-1" />
-		<CountCell label="Failed" value={fmtCount(counts['failed'])} testid="stat-failed" status={Status.FAILED} class="col-span-3 lg:col-span-1" />
-		<CountCell label="Canceled" value={fmtCount(counts['canceled'])} testid="stat-canceled" status={Status.CANCELED} class="col-span-3 lg:col-span-1" />
+		<CountCell label="Running" value={fmtCount(counts['running'])} testid="stat-running" status={Status.RUNNING} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6" />
+		<CountCell label="Succeeded" value={fmtCount(counts['succeeded'])} testid="stat-succeeded" status={Status.SUCCEEDED} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6" />
+		<CountCell label="Failed" value={fmtCount(counts['failed'])} testid="stat-failed" status={Status.FAILED} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6 max-[400px]:border-t max-[400px]:border-l-0 max-[400px]:pl-0" />
+		<CountCell label="Canceled" value={fmtCount(counts['canceled'])} testid="stat-canceled" status={Status.CANCELED} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6 max-[400px]:border-t" />
 		<CountCell label="Success rate" value={successRate} note={rateNote} testid="stat-success-rate" explain={rateExplain} class="col-span-4 lg:col-span-1 max-lg:border-t max-lg:border-l-0 max-lg:pl-0 max-lg:sm:pl-0" />
 		<CountCell label="p50 duration" value={p50} note={coverageNote} testid="stat-p50" class="col-span-4 lg:col-span-1 max-lg:border-t" />
 		<CountCell label="p95 duration" value={p95} note={coverageNote} testid="stat-p95" class="col-span-4 lg:col-span-1 max-lg:border-t" />
@@ -277,7 +278,9 @@
 					<tbody>
 						{#each running as run (run.id)}
 							<tr class="transition-colors hover:bg-hover" data-testid="running-{run.id}">
-								<td><a class="link font-mono text-sm" href={withNamespace(`/runs/${run.id}`, data.namespace)}>{run.id}</a></td>
+								<td><a class="link font-mono text-sm" title={run.id} href={withNamespace(`/runs/${run.id}`, data.namespace)}
+										><span class="max-sm:sr-only">{run.id}</span><span aria-hidden="true" class="sm:hidden">{shortRunId(run.id)}</span></a
+									></td>
 								<td class="text-ink-secondary">{run.orkflowName}{#if run.orkflowVersion}<span class="font-mono">@{run.orkflowVersion}</span>{/if}</td>
 								<td class="figure text-xs text-ink-secondary">{fmtTimestamp(run.startedAt ?? run.createdAt)}</td>
 								<td><StatusPill status={run.status} testid="running-status-{run.id}" /></td>

@@ -257,6 +257,7 @@
 									error={failure}
 									testid="task-{taskId}-attempt-{attempt.attempt}-error"
 									compact
+									tries={{ retryable: failure.retryable, attempts: 0 }}
 								/>
 							</div>
 						{/if}

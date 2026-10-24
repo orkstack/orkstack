@@ -36,6 +36,6 @@ test('the CLI equivalent is runCommand with the kind as the flag the CLI parses'
 	expect(artifactKindFlag(ArtifactKind.STDOUT)).toBe('stdout');
 	expect(artifactKindFlag(ArtifactKind.STDERR)).toBe('stderr');
 	expect(provenanceCommand('', 'ork-1', 'completed', ArtifactKind.OUTPUT, 'report.txt')).toBe(
-		"orkctl --namespace 'default' 'run' 'artifact' 'provenance' 'ork-1' '--task' 'completed' '--kind' 'output' '--name' 'report.txt'"
+		"orkctl --namespace default run artifact provenance ork-1 --task completed --kind output --name report.txt"
 	);
 });

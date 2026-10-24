@@ -96,7 +96,7 @@ export function evidenceSummary(m: Manifest): string {
 
 const REASONS: Record<string, string> = {
 	definition_deleted:
-		"the pinned definition was deleted from the orkflow store; the run's definition digest still attests it",
+		"the pinned definition was deleted from the Orkflow store; the run's definition digest still attests it",
 	definition_digest_mismatch:
 		'a document exists at the pinned coordinates but does not hash to the digest this run pinned',
 	commit_missing: 'the commit record was reclaimed by cleanup; its recorded digest is preserved',

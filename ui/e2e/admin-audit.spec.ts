@@ -183,6 +183,7 @@ test.afterAll(async () => {
 
 test('Admin → Audit lists a write the UI just made, unattributed, with the caption', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	await page.getByTestId('ns-create-open').click();
 	await page.getByTestId('ns-create-name').fill(NS);
 	await page.getByTestId('ns-create-run-retention').fill('48');
 	await page.getByTestId('ns-create-submit').click();
@@ -263,8 +264,8 @@ test('A1/A2/A6: every namespace by default; namespace = selects the deployment-w
 	expect(narrowed.every((row) => row.includes(NS))).toBe(true);
 
 	// A6: the CLI equivalent filters; it never sends -n.
-	expect(await cliText(page, 'audit-cli')).toBe(`orkctl admin audit --filter 'namespace=${NS}'`);
-	expect(await cliText(page, 'audit-filters-cli')).toBe(`orkctl admin audit --filter 'namespace=${NS}'`);
+	expect(await cliText(page, 'audit-cli')).toBe(`orkctl admin audit --filter namespace=${NS}`);
+	expect(await cliText(page, 'audit-filters-cli')).toBe(`orkctl admin audit --filter namespace=${NS}`);
 	await shot(page, 'admin-audit-scoped.png');
 	note(`every namespace: ${everywhere.length} rows; namespace=${NS}: ${narrowed.length} rows, no retention.update`);
 });

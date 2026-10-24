@@ -33,6 +33,7 @@
 		readColors,
 		readoutPosition,
 		rectOf,
+		runningPulse,
 		scrollForCursor,
 		type MapColors,
 		type MapGeometry,
@@ -160,7 +161,7 @@
 	});
 
 	// ---- Paint ----
-	function paint(only?: number[]): void {
+	function paint(only?: number[], runningAlpha = 1): void {
 		const g = geometry;
 		if (!canvas || !g || !model) return;
 		colors ??= readColors();
@@ -175,9 +176,46 @@
 			canvas.style.height = `${g.height}px`;
 		}
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-		paintCells(ctx, g, statuses, model.kinds, colors, only);
+		paintCells(ctx, g, statuses, model.kinds, colors, only, runningAlpha);
 		if (!only) painted = true;
 	}
+
+	// ---- Running cells breathe ----
+	// While any cell is RUNNING, its mark fades and returns every 2.4 s, as a
+	// running DAG node's ground does: only those cells are repainted, at most
+	// fifteen times a second, and not at all while the page is hidden. Under
+	// reduced motion nothing moves and the mark stays whole.
+	$effect(() => {
+		if (!painted || (counts.get(Status.RUNNING) ?? 0) === 0) return;
+		if (typeof matchMedia !== 'function' || typeof requestAnimationFrame !== 'function') return;
+		const still = matchMedia('(prefers-reduced-motion: reduce)');
+		const runningCells = () => {
+			const out: number[] = [];
+			for (let i = 0; i < statuses.length; i++) if (statuses[i] === Status.RUNNING) out.push(i);
+			return out;
+		};
+		let pulse = 0;
+		let last = 0;
+		let faded = false;
+		const tick = (t: number) => {
+			pulse = requestAnimationFrame(tick);
+			if (still.matches || document.hidden) {
+				// Stopping mid-breath leaves the cells whole, not half faded.
+				if (faded) paint(runningCells());
+				faded = false;
+				return;
+			}
+			if (t - last < 66) return;
+			last = t;
+			paint(runningCells(), runningPulse(t));
+			faded = true;
+		};
+		pulse = requestAnimationFrame(tick);
+		return () => {
+			cancelAnimationFrame(pulse);
+			if (faded) paint(runningCells());
+		};
+	});
 
 	// A full paint whenever the geometry changes (first build, resize).
 	$effect(() => {

@@ -3,11 +3,13 @@
 </script>
 
 <script lang="ts">
-	// The frame a run's (or an Orkflow's) tasks are drawn in: a fixed-height
-	// box with a 1.5 px ink rule, its view tabs and caption on a paper patch at
-	// the top left, and — behind the DAG only — the drafting grid. The height
-	// is CSS (--spacing-drawing), so nothing is measured before first paint and
-	// the content below it never moves.
+	// The frame a run's (or an Orkflow's) tasks are drawn in: a box with a
+	// 1.5 px ink rule, its view tabs and caption on a paper patch at the top
+	// left, and — behind the DAG only — the drafting grid. Its height is CSS,
+	// never measured: the task map's frame is --spacing-drawing tall, and the
+	// DAG's is its drawing plus the patch and padding, up to that height
+	// (min(--spacing-drawing, content + 48 px)), so a six-task DAG is not
+	// a page of empty grid.
 	//
 	// The DAG is BOUNDED, on every page: up to DAG_DRAW_LIMIT tasks it is
 	// drawn; up to DAG_LEGIBLE_LIMIT on request; beyond that it is never laid
@@ -16,9 +18,10 @@
 	//
 	// A drawing is scaled to the frame's width (DagGraph, down to
 	// DAG_MIN_SCALE). One still wider than that scrolls inside the frame: the
-	// frame says so with a scroll control at the edge that hides more, and on
-	// first drawing it brings the selected task — else the failed one, whose
-	// failure handlers follow it — into view.
+	// frame says so with a pair of scroll controls on its top band, beside the
+	// tabs and never over a node, the one with nothing more to show disabled;
+	// and on first drawing it brings the selected task — else the failed one,
+	// whose failure handlers follow it — into view.
 	import { tick, type Snippet } from 'svelte';
 	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import DagGraph from './DagGraph.svelte';
@@ -165,9 +168,13 @@
 <section
 	data-testid={testid}
 	aria-label="Tasks of {orkflowLabel}"
-	class="frame relative flex h-drawing flex-col overflow-hidden"
+	class="frame relative flex flex-col overflow-hidden {view === 'dag' ? 'max-h-drawing' : 'h-drawing'}"
 >
-	<div class="relative z-10 flex h-8 max-w-full shrink-0 items-stretch self-start border-r border-b border-ink bg-paper">
+	<div
+		class="relative z-10 flex h-8 shrink-0 items-stretch self-start border-r border-b border-ink bg-paper {drawn && (hidden.left || hidden.right)
+			? 'max-w-[calc(100%-4rem)]'
+			: 'max-w-full'}"
+	>
 		{#if views.length > 1}
 			<div role="tablist" aria-label="View" class="flex shrink-0">
 				{#each views as v, i (v.id)}
@@ -233,24 +240,26 @@
 			{/if}
 		{/if}
 	</div>
-	{#if drawn && hidden.left}
-		<button
-			type="button"
-			data-testid="{prefix}-scroll-left"
-			class="btn absolute top-1/2 left-0 z-10 size-8 border-ink bg-paper p-0 text-ink"
-			aria-label="Scroll the DAG left"
-			title="More of the DAG to the left"
-			onclick={() => scrollBy(-1)}><Icon name="chevronLeft" /></button
-		>
-	{/if}
-	{#if drawn && hidden.right}
-		<button
-			type="button"
-			data-testid="{prefix}-scroll-right"
-			class="btn absolute top-1/2 right-0 z-10 size-8 border-ink bg-paper p-0 text-ink"
-			aria-label="Scroll the DAG right"
-			title="More of the DAG to the right"
-			onclick={() => scrollBy(1)}><Icon name="chevronRight" /></button
-		>
+	{#if drawn && (hidden.left || hidden.right)}
+		<div class="absolute top-0 right-0 z-10 flex h-8 border-b border-l border-ink bg-paper">
+			<button
+				type="button"
+				data-testid="{prefix}-scroll-left"
+				class="inline-flex size-8 items-center justify-center border-r border-rule text-ink hover:bg-hover disabled:text-ink-muted disabled:opacity-50"
+				aria-label="Scroll the DAG left"
+				title="More of the DAG to the left"
+				disabled={!hidden.left}
+				onclick={() => scrollBy(-1)}><Icon name="chevronLeft" /></button
+			>
+			<button
+				type="button"
+				data-testid="{prefix}-scroll-right"
+				class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover disabled:text-ink-muted disabled:opacity-50"
+				aria-label="Scroll the DAG right"
+				title="More of the DAG to the right"
+				disabled={!hidden.right}
+				onclick={() => scrollBy(1)}><Icon name="chevronRight" /></button
+			>
+		</div>
 	{/if}
 </section>

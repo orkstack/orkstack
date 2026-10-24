@@ -439,7 +439,8 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 		return { rows: rows.map((top) => Math.abs(Math.round(right - Math.max(...cells.filter((c) => Math.round(c.top) === top).map((c) => c.right))))), notes };
 	});
 	note(`band at 390: ${JSON.stringify(band)}`);
-	expect(band.rows).toEqual([0, 0]);
+	// Below 400 px the four status counts are a 2 × 2 grid over the three figures.
+	expect(band.rows).toEqual([0, 0, 0]);
 	for (const n of band.notes) expect(n.cut, `${n.id} is whole`).toBe(false);
 
 	// The runs register at 1280 × 720: the filter toolbar is one row, and the

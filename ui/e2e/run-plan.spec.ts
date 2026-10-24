@@ -267,7 +267,7 @@ test('Plan answers per draft, starts nothing, and a real run agrees with it', as
 	await expect(command).toContainText(`'{"deploy":true}' > input.json`);
 	// The Orkflow page's dialog pins the version the page shows, so the copied
 	// command plans exactly that version rather than whatever `current` is.
-	await expect(command).toContainText(`--version '0.1.0'`);
+	await expect(command).toContainText(`--version 0.1.0`);
 	await expect(command).not.toContainText('outputs.json');
 	note(`P3 CLI: ${(await command.textContent())?.replace(/\s+/g, ' ').trim()}`);
 	await page.keyboard.press('Escape');

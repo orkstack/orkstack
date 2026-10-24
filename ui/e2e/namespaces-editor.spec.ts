@@ -329,7 +329,7 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	await expect(page.getByTestId('run-submit-panel')).toBeVisible();
 	await page.getByTestId('orkflow-submit-dialog-close').click();
 
-	await nav.getByRole('link', { name: 'Apply orkflow', exact: true }).click();
+	await nav.getByRole('link', { name: 'Apply Orkflow', exact: true }).click();
 	await page.waitForURL(new RegExp(`/apply\\?.*ns=${ALPHA}`));
 	await expect(page.getByTestId('apply-namespace')).toContainText(ALPHA);
 

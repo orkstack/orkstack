@@ -266,7 +266,7 @@ test('R1: status in and not equals through the enum controls', async ({ page }) 
 	await page.getByTestId('run-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['status=FAILED,CANCELED']);
 	await expect.poll(() => rowStatuses(page)).toEqual(Array(FAILED_RUNS).fill('FAILED'));
-	expect(await cliCommand(page)).toBe(`orkctl -n '${NS}' run list --filter 'status=FAILED,CANCELED'`);
+	expect(await cliCommand(page)).toBe(`orkctl -n ${NS} run list --filter status=FAILED,CANCELED`);
 	await page.screenshot({ path: out('screenshot-runs-status-in.png'), fullPage: true });
 
 	// not equals: one value from the enum Select. The draft was refilled from
@@ -291,7 +291,7 @@ test('R2: orkflow_name contains narrows, and an equals names the Orkflow in the 
 	// A contains is not one Orkflow: the header names none and Submit offers
 	// the picker.
 	await expect(page.getByTestId('runs-heading')).toHaveText('Runs');
-	await expect(page.getByTestId('runs-submit-run')).toHaveText('Browse orkflows');
+	await expect(page.getByTestId('runs-submit-run')).toHaveText('Browse Orkflows');
 
 	await page.goto(`${UI}/runs?ns=${NS}&filter=orkflow_name%3D${FAILING}`);
 	await expect(page.getByTestId('runs-heading')).toContainText(`for ${FAILING}`);

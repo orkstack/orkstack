@@ -204,3 +204,17 @@ test('outcomes are labelled by their enum name and painted from the status palet
 	expect(unreportedClasses).not.toBe(STATUS_CLASSES[Status.FAILED]);
 	expect(unreportedClasses).not.toContain('failed');
 });
+
+test('the cloud and the task panel read one retry phrase off the failing task', async () => {
+	const { retryPhrase } = await import('../src/lib/attempts');
+	// The budget ran out: the reason, with the count where it is the point.
+	expect(retryPhrase({ retryable: true, retryState: RetryState.MAXIMUM_ATTEMPTS_REACHED, attempts: 1 })).toBe('retries exhausted');
+	expect(retryPhrase({ retryable: true, retryState: RetryState.MAXIMUM_ATTEMPTS_REACHED, attempts: 3 })).toBe(
+		'retries exhausted after 3 attempts'
+	);
+	// No reason recorded: only "not retryable" is a fact worth a word.
+	expect(retryPhrase({ retryable: false, attempts: 1 })).toBe('not retryable');
+	expect(retryPhrase({ retryable: true, attempts: 1 })).toBeNull();
+	// No task to blame (a run that failed on its own): nothing about retries.
+	expect(retryPhrase(undefined)).toBeNull();
+});

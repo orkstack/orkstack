@@ -345,7 +345,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 			return;
 		}
 		if (!selectedOrkflow) {
-			formError = 'This orkflow version has not loaded yet.';
+			formError = 'This Orkflow version has not loaded yet.';
 			return;
 		}
 		inputsValue = parsed.value;
@@ -489,7 +489,7 @@ import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
 			{/if}
 			{#if specs.length === 0}
 				<p class="text-sm text-ink-muted">
-					This orkflow declares no inputs. Use JSON to send an explicit object.
+					This Orkflow declares no inputs. Use JSON to send an explicit object.
 				</p>
 			{/if}
 		{:else}

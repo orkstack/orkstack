@@ -45,7 +45,7 @@ import { taskMapCellCenter } from './uiHelpers';
 //   degraded   no definition (GetOrkflow refused): a NOTE with the reason, the
 //              map in run order, the aside whole, every card; the versions
 //              listing refused: an error with Retry, then the table;
-//   live       the title block's STATUS turns RUNNING blue → FAILED red with
+//   live       the title block's STATUS turns RUNNING green → FAILED red with
 //              no reload;
 //   palette    on a run page a task id selects the task; Cancel run… opens
 //              the confirmation and sends nothing;
@@ -321,8 +321,8 @@ test('aside: versions with THIS RUN / CURRENT / HEAD, the failure in its cloud, 
 	await expect(page.getByTestId('run-error')).toBeVisible();
 	await expect(page.getByTestId('run-error-attempts')).toHaveText('attempt 1 of 1');
 	await expect(page.getByTestId('run-failed-image')).toContainText('activity-shell');
-	await expect(page.getByTestId('run-reproduce-get')).toHaveText(`orkctl --namespace 'default' 'run' 'get' '${sagaRun}' '--json'`);
-	await expect(page.getByTestId('run-reproduce-again')).toHaveText(`orkctl --namespace 'default' 'run' 'again' '${sagaRun}'`);
+	await expect(page.getByTestId('run-reproduce-get')).toHaveText(`orkctl --namespace default run get ${sagaRun} --json`);
+	await expect(page.getByTestId('run-reproduce-again')).toHaveText(`orkctl --namespace default run again ${sagaRun}`);
 	// The title block: what this page is, and never the run id.
 	await expect(page.getByTestId('title-block-orkflow')).toContainText(SAGA);
 	await expect(page.getByTestId('title-block-version')).toContainText('0.1.0');
@@ -511,7 +511,7 @@ test('palette: a task id selects the task; Cancel run… opens the confirmation 
 	note(`palette: task jump selected refund on ${sagaRun}; Cancel run… on ${liveRun} opened the confirmation and sent no CancelRun`);
 });
 
-test('live: the title block STATUS turns RUNNING blue → FAILED red with no reload', async ({ page }) => {
+test('live: the title block STATUS turns RUNNING green → FAILED red with no reload', async ({ page }) => {
 	const liveRun = await submit(LIVE);
 	await running(liveRun);
 	await page.goto(runUrl(liveRun));
@@ -524,7 +524,7 @@ test('live: the title block STATUS turns RUNNING blue → FAILED red with no rel
 	// that colours it arrive in the same update, but a computed style read the
 	// instant the text matched has been seen, on a loaded host, to still carry
 	// the ink colour of the frame before.
-	await expect(value).toHaveCSS('color', await tokenColor(page, '--color-blue'));
+	await expect(value).toHaveCSS('color', await tokenColor(page, '--color-green'));
 	await page.screenshot({ path: out('screenshot-run-live-light.png') });
 	await expect(value).toContainText('FAILED', { timeout: 120_000 });
 	await expect(value).toHaveCSS('color', await tokenColor(page, '--color-red'));

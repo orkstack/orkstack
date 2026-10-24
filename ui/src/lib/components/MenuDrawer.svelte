@@ -65,7 +65,7 @@
 						data-testid={p.id === 'overview' ? 'nav-dashboard' : undefined}
 						aria-current={current(p.href)}
 						class={ITEM}
-						>{#if p.id === 'apply'}Apply<span class="sr-only"> orkflow</span>{:else}{p.label}{/if}</a
+						>{#if p.id === 'apply'}Apply<span class="sr-only"> Orkflow</span>{:else}{p.label}{/if}</a
 					>
 				{/each}
 				<p class="caps mt-4 px-3 pb-1 text-ink-muted">Operate</p>

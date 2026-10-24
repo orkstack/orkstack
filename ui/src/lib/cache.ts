@@ -163,8 +163,8 @@ export interface PurgeSelector {
 /** purgeSelectorError is the refusal the CLI makes client-side, or "". */
 export function purgeSelectorError(s: PurgeSelector): string {
 	const n = [Boolean(s.orkflow), Boolean(s.namespaceScoped), Boolean(s.all)].filter(Boolean).length;
-	if (n !== 1) return 'name exactly one of an orkflow, the namespace-scoped memos or all — a purge never has a default scope';
-	if (s.all && s.task) return 'a task narrows an orkflow or the namespace-scoped memos; it does not apply to all';
+	if (n !== 1) return 'name exactly one of an Orkflow, the namespace-scoped memos or all — a purge never has a default scope';
+	if (s.all && s.task) return 'a task narrows an Orkflow or the namespace-scoped memos; it does not apply to all';
 	return '';
 }
 

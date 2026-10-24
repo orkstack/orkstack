@@ -285,7 +285,7 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 	// P4 — the CLI that prints the same thing, and what it printed.
 	await page.getByTestId('run-task-first-timing-cli-trigger').click();
 	await expect(page.getByTestId('run-task-first-timing-cli-command')).toHaveText(
-		`orkctl --namespace 'default' 'run' 'timing' '${run}' '--task' 'first'`
+		`orkctl --namespace default run timing ${run} --task first`
 	);
 	note(`P4 card CLI: ${await page.getByTestId('run-task-first-timing-cli-command').innerText()}`);
 	const cli = runTimingCLI(run, 'first');

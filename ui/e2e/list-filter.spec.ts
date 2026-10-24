@@ -206,7 +206,7 @@ test('L3: Admin → Pools, is_default = true leaves the default pool', async ({ 
 	await expect(page.getByTestId('pool-card-main')).toBeVisible();
 	await expect(page.getByTestId('pool-card-gpu')).toHaveCount(0);
 	const cli = await cliCommand(page, 'pools');
-	expect(cli).toBe(`orkctl -n '${NS}' pool list --filter 'is_default=true'`);
+	expect(cli).toBe(`orkctl -n ${NS} pool list --filter is_default=true`);
 	note(`L3 is_default=true: only main; CLI equivalent: ${cli}`);
 	await page.screenshot({ path: out('screenshot-pools-default.png'), fullPage: true });
 });
@@ -249,7 +249,7 @@ test('L6: changing a filter on page 2 returns to page 1 with no cursor', async (
 	expect(params.get('cursor')).toBeNull();
 	expect(params.get('page')).toBeNull();
 	await expect.poll(() => orkflowRows(page)).toEqual(SEARCH);
-	await expect(page.getByTestId('orkflows-page-status')).toHaveText('6 orkflows');
+	await expect(page.getByTestId('orkflows-page-status')).toHaveText('6 Orkflows');
 	note(`L6 a new filter on page 2 landed on ${page.url()}`);
 });
 

@@ -230,7 +230,7 @@ test('a running task shows what it is doing now: waiting, phase and bytes, cance
 	// P3 — the card's CLI equivalent, and what the CLI prints for the same run.
 	await page.getByTestId('run-task-talk-inspect-cli-trigger').click();
 	await expect(page.getByTestId('run-task-talk-inspect-cli-command')).toHaveText(
-		`orkctl --namespace 'default' 'run' 'inspect' '${run}' '--task' 'talk'`
+		`orkctl --namespace default run inspect ${run} --task talk`
 	);
 	note(`P3 card command: ${await page.getByTestId('run-task-talk-inspect-cli-command').innerText()}`);
 	await page.getByTestId('run-task-talk-inspect-cli-trigger').click();

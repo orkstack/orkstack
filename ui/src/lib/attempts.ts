@@ -183,6 +183,34 @@ export function retryStateLabel(
 	}
 }
 
+/** What a failed task's tries add up to: the facts every failure surface reads. */
+export interface FailureTries {
+	/** The failure's own flag: could the platform have tried it again? */
+	retryable: boolean;
+	/** Why retrying stopped, when the snapshot carries it. */
+	retryState?: RetryState;
+	/** How many tries the attempt timeline knows of. */
+	attempts: number;
+}
+
+/**
+ * retryPhrase is the ONE phrase a failure says about its retries, derived
+ * from the failing task's tries — the same words in the run's cloud and in
+ * the task's own panel, so the two can never contradict each other.
+ *
+ * Why retrying stopped is the answer when the snapshot knows it. Without
+ * it, only "not retryable" is a fact worth stating; a bare "retryable" on a
+ * failure that has already ended says nothing a reader can act on, and
+ * beside a run's own wrapper (never retryable itself) it read as the
+ * opposite of the task's truth. Null means: say nothing.
+ */
+export function retryPhrase(tries: FailureTries | undefined): string | null {
+	if (!tries) return null;
+	const stopped = retryStateLabel(tries.retryState, tries.attempts);
+	if (stopped) return stopped;
+	return tries.retryable ? null : 'not retryable';
+}
+
 export function retryBadgeLabel(attempts: TaskAttempt[], terminal: boolean): string | null {
 	const seen = attemptsSeen(attempts);
 	if (seen < 2) return null;

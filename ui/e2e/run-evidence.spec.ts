@@ -276,9 +276,9 @@ test('P2 toggles change the manifest and the command', async ({ page }) => {
 	await page.getByTestId('run-evidence-artifacts').uncheck();
 	await expect(page.getByTestId('run-evidence-summary')).toContainText(`${before - artifactCount} present`);
 	await page.getByTestId('run-evidence-cli-trigger').click();
-	await expect(page.getByTestId('run-evidence-cli-command')).toContainText("'--no-artifacts'");
+	await expect(page.getByTestId('run-evidence-cli-command')).toContainText("--no-artifacts");
 	await expect(page.getByTestId('run-evidence-cli-command')).toHaveText(
-		`orkctl --namespace 'default' 'run' 'evidence' 'export' '${completedRun}' '--output' '${completedRun}.evidence.tar.gz' '--no-artifacts'`
+		`orkctl --namespace default run evidence export ${completedRun} --output ${completedRun}.evidence.tar.gz --no-artifacts`
 	);
 	note(`P2 present ${before} -> ${before - artifactCount} with --no-artifacts`);
 	await shot(page, 'screenshot-run-evidence-no-artifacts.png');

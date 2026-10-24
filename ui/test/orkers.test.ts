@@ -26,7 +26,7 @@ test('state, tasks and pins read as orkctl orker list prints them', () => {
 
 test('the CLI equivalent quotes a reason so it cannot become shell syntax', () => {
 	const o = create(OrkerSchema, { orkerId: 'orker-7f3a', cordoned: true, cordonReason: "it's $(rm -rf /)" });
-	expect(orkerCommand(o)).toBe(`orkctl orker cordon 'orker-7f3a' --reason 'it'"'"'s $(rm -rf /)'`);
-	expect(orkerCommand(create(OrkerSchema, { orkerId: 'orker-7f3a' }))).toBe(`orkctl orker uncordon 'orker-7f3a'`);
-	expect(cordonCommand('orker-7f3a', "a'b")).toBe(`orkctl orker cordon 'orker-7f3a' --reason 'a'"'"'b'`);
+	expect(orkerCommand(o)).toBe(`orkctl orker cordon orker-7f3a --reason 'it'"'"'s $(rm -rf /)'`);
+	expect(orkerCommand(create(OrkerSchema, { orkerId: 'orker-7f3a' }))).toBe(`orkctl orker uncordon orker-7f3a`);
+	expect(cordonCommand('orker-7f3a', "a'b")).toBe(`orkctl orker cordon orker-7f3a --reason 'a'"'"'b'`);
 });

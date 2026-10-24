@@ -134,7 +134,7 @@
 	</div>
 	<div class="mb-6 flex flex-wrap items-center gap-2">
 		<span data-testid="run-diff-orkflow" class={diff.sameOrkflow ? sameChip : differentChip}
-			>{diff.sameOrkflow ? 'Same orkflow' : 'Different orkflows'}</span
+			>{diff.sameOrkflow ? 'Same Orkflow' : 'Different Orkflows'}</span
 		>
 		{#if compared('definition')}
 			<span

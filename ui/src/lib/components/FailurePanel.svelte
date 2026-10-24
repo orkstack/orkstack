@@ -9,9 +9,10 @@
 	// the category says WHO can fix it, the code says WHAT rule was broken,
 	// and the message says which file or value broke it.
 	//
-	// `retryable` is shown too. It is the difference between "this will be
-	// tried again" and "this run is over", and reading it off the category is
-	// not safe — a task's own retry: policy can override the default.
+	// What happened to the retries is one phrase ($lib/attempts retryPhrase),
+	// read off the failing task's tries rather than this error's own flag: a
+	// run's RUN_FAILED wrapper is never retryable itself, and printing its
+	// flag beside the task's "retries exhausted" told two stories.
 	import { FailureCategory } from '$lib/gen/orkstack/v1/common_pb';
 	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
 	import {
@@ -20,9 +21,8 @@
 		failureCategoryClasses,
 		failureCategoryLabel
 	} from '$lib/activity';
-	import { retryStateLabel } from '$lib/attempts';
+	import { retryPhrase, type FailureTries } from '$lib/attempts';
 	import { plainFailure } from '$lib/failureText';
-	import { RetryState } from '$lib/gen/orkstack/v1/run_pb';
 
 	interface Props {
 		error: OrkError;
@@ -30,15 +30,12 @@
 		/** Compact drops the explanatory blurb, for a dense list row. */
 		compact?: boolean;
 		/**
-		 * retryState is why the platform stopped trying, when the snapshot
-		 * carries it. `retryable` above says whether this failure COULD be
-		 * retried; this says what actually happened to the retries — a budget
-		 * that ran out reads very differently from a failure nothing would ever
-		 * have tried again.
+		 * The failing task's tries: whether it could be retried, why retrying
+		 * stopped and how many tries there were. Absent, the panel says
+		 * nothing about retries — a run that failed with no task to blame
+		 * has no retries to speak of.
 		 */
-		retryState?: RetryState;
-		/** How many tries the attempt timeline knows of, for the exhausted-budget phrasing. */
-		attemptCount?: number;
+		tries?: FailureTries;
 		/** Inside the run's revision cloud: no frame of its own. */
 		bare?: boolean;
 		/**
@@ -48,7 +45,7 @@
 		tone?: 'failure' | 'note';
 	}
 
-	let { error, testid, compact = false, retryState, attemptCount = 0, bare = false, tone = 'failure' }: Props = $props();
+	let { error, testid, compact = false, tries, bare = false, tone = 'failure' }: Props = $props();
 
 	// The sentence without the execution service's wrapper, and the reason
 	// code it led with. A run's RUN_FAILED wraps its task's reason: the panel
@@ -57,7 +54,7 @@
 	const reason = $derived(plain.code && plain.code !== error.code ? plain.code : undefined);
 	const failure = $derived(tone === 'failure');
 
-	const retryNote = $derived(retryStateLabel(retryState, attemptCount));
+	const retryNote = $derived(retryPhrase(tries));
 
 	const category = $derived(error.category ?? FailureCategory.UNSPECIFIED);
 </script>
@@ -102,9 +99,6 @@
 				data-testid="{testid}-code">{error.code}</span
 			>
 		{/if}
-		<span class="text-xs {error.retryable ? 'text-ink' : 'text-ink-secondary'}" data-testid="{testid}-retryable">
-			{error.retryable ? 'retryable' : 'not retryable'}
-		</span>
 		{#if retryNote}
 			<span class="text-xs text-ink-secondary" data-testid="{testid}-retry-state">{retryNote}</span>
 		{/if}

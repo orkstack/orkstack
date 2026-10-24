@@ -205,7 +205,7 @@ test('the child run names its parent and the parent lists its children', async (
 	// its CLI equivalent is the same two filters.
 	await page.getByTestId('run-children-cli-trigger').click();
 	await expect(page.getByTestId('run-children-cli-command')).toContainText(
-		`'run' 'list' '--filter' 'origin.kind=PARENT_RUN' '--filter' 'origin.id=${runId}'`
+		`run list --filter origin.kind=PARENT_RUN --filter origin.id=${runId}`
 	);
 	await page.keyboard.press('Escape');
 	await page.getByTestId('run-children-link').click();
