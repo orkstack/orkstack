@@ -13,7 +13,7 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 const words = {
 	'cli-quickstart': {
 		alt: 'A terminal recording: orkctl applies each-fan-out, plans it, submits it and watches it to SUCCEEDED, then prints the merge task’s log.',
-		caption: 'orkctl apply, run plan, run submit --watch and run logs, recorded against the local stack.',
+		caption: 'orkctl apply, run plan, run submit --watch and run logs, recorded against the local stack: the run finishes with status SUCCEEDED, and the merge task’s log lists the four parts, a to d.',
 	},
 };
 for (const file of readdirSync(out).sort()) {

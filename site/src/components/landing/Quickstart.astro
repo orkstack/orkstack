@@ -81,23 +81,28 @@ const demo = clip('cli-quickstart');
 </script>
 
 <style>
-	/* The commands, then the recording at the column's full width, where a
-	   terminal's text reads at its own size. */
+	/* The commands, then the recording, at one measure: wide enough that the
+	   terminal's text reads, narrow enough that the recording and its
+	   controls fit a laptop's viewport and its text stays under the body's. */
 	.quickstart-body {
 		display: grid;
+		max-width: 64rem;
 		grid-template-columns: minmax(0, 1fr);
 		gap: calc(var(--spacing) * 8);
 	}
-	/* One measure: the commands and the recording both span the column. On a
-	   phone the recording shows its left columns, where the commands and the
-	   start of each line are, at a size that reads. */
+	/* On a phone the recording shows its left columns, where the commands and
+	   the start of each line are, at about the size of small text; the
+	   caption says how the run ended. The frame moves to the window, so the
+	   crop keeps its right edge. */
 	@media (max-width: 639.98px) {
 		.quickstart-body :global(.clip .theme-pair) {
 			overflow: hidden;
+			border: var(--rule-region) solid var(--color-ink);
 		}
 		.quickstart-body :global(.clip video) {
-			width: 210%;
+			width: 270%;
 			max-width: none;
+			border: 0;
 		}
 	}
 	.terminal {

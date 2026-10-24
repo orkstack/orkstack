@@ -55,7 +55,7 @@
 		},
 		"cli-quickstart": {
 			"alt": "A terminal recording: orkctl applies each-fan-out, plans it, submits it and watches it to SUCCEEDED, then prints the merge task’s log.",
-			"caption": "orkctl apply, run plan, run submit --watch and run logs, recorded against the local stack.",
+			"caption": "orkctl apply, run plan, run submit --watch and run logs, recorded against the local stack: the run finishes with status SUCCEEDED, and the merge task’s log lists the four parts, a to d.",
 			"mp4Dark": "cli-quickstart-dark.mp4",
 			"posterDark": "cli-quickstart-dark.webp",
 			"webmDark": "cli-quickstart-dark.webm",
