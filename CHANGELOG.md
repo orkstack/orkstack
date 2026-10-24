@@ -15,6 +15,12 @@ include breaking changes, and each is marked **BREAKING**.
   plan's whole expected set, which includes the deferred tests, so the first
   full proof on a tree whose base carried a nightly list failed with every
   deferred test reported as having no outcome.
+- The merger accepts those `deferred` entries for exactly the tests the plan
+  defers, and records each once from the plan. It refused every `deferred`
+  entry a part wrote ("only the merger writes deferred entries") and then
+  reported the test as an outcome the plan had deferred, so a local full proof
+  with a non-empty nightly list could not be merge-eligible. A `deferred` entry
+  for a test the plan runs is still a problem.
 
 ### Changed
 

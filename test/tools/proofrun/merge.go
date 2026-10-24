@@ -1341,6 +1341,14 @@ func (m *merger) mergeIntegration() {
 			m.checkShardListing(part, shard)
 			for _, e := range shard.Tests {
 				k := testKey{e.Package, e.Test}
+				// A local run records each test the plan defers as `deferred`
+				// with its list entry (planAndMaybeRun), as the loop over
+				// m.plan.Deferred below does: it ran nowhere, and the plan's
+				// own entry stands for it. Any other deferred entry is a
+				// problem below.
+				if e.Outcome == "deferred" && isDeferred(m.plan.Deferred, k) {
+					continue
+				}
 				if prev, dup := seen[k]; dup && prev != part {
 					msg := fmt.Sprintf("%s has outcomes from shards %s and %s", k, prev, part)
 					l.Problems = append(l.Problems, msg)
@@ -1351,7 +1359,7 @@ func (m *merger) mergeIntegration() {
 				switch e.Outcome {
 				case outcomePass, outcomeFail, outcomeSkip, outcomeNone, outcomeQuarantinedFail:
 				case "deferred":
-					msg := fmt.Sprintf("%s wrote a deferred entry for %s: only the merger writes deferred entries, from the plan's deferred set", part, k)
+					msg := fmt.Sprintf("%s wrote a deferred entry for %s, which the plan runs: only the plan's deferred set is deferred", part, k)
 					l.Problems = append(l.Problems, msg)
 					m.problems = append(m.problems, msg)
 				default:
