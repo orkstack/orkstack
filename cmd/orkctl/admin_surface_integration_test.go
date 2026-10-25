@@ -139,8 +139,8 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 		}
 	}
 	addrA, addrB := freeAddress(t), freeAddress(t)
-	startProcess(ctx, t, "ork-A", enginePath, engineEnv(addrA)...)
-	startProcess(ctx, t, "ork-B", enginePath, engineEnv(addrB)...)
+	exitedA := startProcess(ctx, t, "ork-A", enginePath, engineEnv(addrA)...)
+	exitedB := startProcess(ctx, t, "ork-B", enginePath, engineEnv(addrB)...)
 
 	session := &sessionRecorder{}
 	configPath := filepath.Join(t.TempDir(), "orkctl.json")
@@ -166,8 +166,8 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	}
 	onA := against("A", addrA)
 	onB := against("B", addrB)
-	waitForEngine(t, probe(addrA))
-	waitForEngine(t, probe(addrB))
+	waitForEngine(t, exitedA, probe(addrA))
+	waitForEngine(t, exitedB, probe(addrB))
 
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 	namespace := "admin-" + token

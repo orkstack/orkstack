@@ -715,11 +715,15 @@ func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3Or
 	if err != nil {
 		return nil, fmt.Errorf("open orkflow store: %w", err)
 	}
+	// The list is the whole of a boot's wait on the bucket, so its duration is
+	// logged: a slow boot then names the read that stalled, not just "slow".
+	listStart := time.Now()
 	stored, err := store.List(ctx, artifacts.DefaultNamespace)
 	if err != nil {
 		return nil, fmt.Errorf("reload orkflows from %s (endpoint %s): %w",
 			store.Location(), cfg.S3Endpoint, err)
 	}
+	listTook := time.Since(listStart)
 	// The boot log names the default namespace's catalog. It is a reachability
 	// check and a human breadcrumb, not an inventory: listing every namespace
 	// at boot would scan the whole prefix to log something nobody reads.
@@ -728,7 +732,8 @@ func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3Or
 		"endpoint", cfg.S3Endpoint,
 		"namespace", artifacts.DefaultNamespace,
 		"orkflows", len(stored),
-		"names", orkflowNames(stored))
+		"names", orkflowNames(stored),
+		"list_took", listTook.Round(time.Millisecond).String())
 	return store, nil
 }
 
@@ -755,17 +760,21 @@ func openNamespaceStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3
 	if err != nil {
 		return nil, fmt.Errorf("open namespace registry: %w", err)
 	}
+	// Timed for the same reason as the Orkflow store's list above.
+	listStart := time.Now()
 	registered, err := store.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read namespaces from %s (endpoint %s): %w",
 			store.Location(), cfg.S3Endpoint, err)
 	}
+	listTook := time.Since(listStart)
 	names := make([]string, 0, len(registered))
 	for _, ns := range registered {
 		names = append(names, ns.GetName())
 	}
 	logger.Info("namespace registry ready",
-		"store", store.Location(), "namespaces", len(registered), "names", names)
+		"store", store.Location(), "namespaces", len(registered), "names", names,
+		"list_took", listTook.Round(time.Millisecond).String())
 	return store, nil
 }
 

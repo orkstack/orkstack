@@ -60,11 +60,14 @@ func newAwaitCLI(t *testing.T, engines int, withOrker bool) *awaitCLI {
 	if withOrker {
 		startOrker(ctx, t, testbin.Path(t, "./cmd/orker"), address, temporalNamespace, taskQueue)
 	}
+	var exits []<-chan struct{}
 	for i := 0; i < engines; i++ {
-		c.engines = append(c.engines, "http://"+startEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue))
+		addr, exited := startEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue)
+		c.engines = append(c.engines, "http://"+addr)
+		exits = append(exits, exited)
 	}
 	for i := range c.engines {
-		waitForEngine(t, func(args ...string) (string, string, int) { return c.on(i, args...) })
+		waitForEngine(t, exits[i], func(args ...string) (string, string, int) { return c.on(i, args...) })
 	}
 	t.Cleanup(func() { c.session.writeProof(t) })
 	namespace := fmt.Sprintf("awaits-%d-%d", os.Getpid(), time.Now().UnixNano())

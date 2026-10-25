@@ -84,9 +84,10 @@ func startInterfaceStack(ctx context.Context, t *testing.T, engines int, withOrk
 		)
 	}
 	stack := &interfaceStack{session: &sessionRecorder{}, pool: pool}
+	var exits []<-chan struct{}
 	for i := range engines {
 		addr := freeAddress(t)
-		startProcess(ctx, t, fmt.Sprintf("ork-%d", i), enginePath,
+		exited := startProcess(ctx, t, fmt.Sprintf("ork-%d", i), enginePath,
 			"ORK_HTTP_ADDR="+addr,
 			"ORK_ADMIN_ADDR="+freeAddress(t),
 			"ORK_TEMPORAL_ADDRESS="+address,
@@ -94,6 +95,7 @@ func startInterfaceStack(ctx context.Context, t *testing.T, engines int, withOrk
 			"ORK_ORKER_QUEUE="+taskQueue,
 		)
 		stack.engines = append(stack.engines, "http://"+addr)
+		exits = append(exits, exited)
 	}
 	configPath := filepath.Join(t.TempDir(), "orkctl.json")
 	run := func(server string, args ...string) (string, string, int) {
@@ -105,8 +107,8 @@ func startInterfaceStack(ctx context.Context, t *testing.T, engines int, withOrk
 	}
 	stack.run = run
 	stack.cli = func(args ...string) (string, string, int) { return run(stack.engines[0], args...) }
-	for _, server := range stack.engines {
-		waitForEngine(t, func(args ...string) (string, string, int) {
+	for i, server := range stack.engines {
+		waitForEngine(t, exits[i], func(args ...string) (string, string, int) {
 			return runBinaryWithEnv(ctx, t, orkctlPath, root,
 				[]string{configEnvVar + "=" + configPath}, append(args, "--server", server)...)
 		})

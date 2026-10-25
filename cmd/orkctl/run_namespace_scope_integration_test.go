@@ -62,7 +62,7 @@ func TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother(t
 	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	startNamespacedOrker(ctx, t, orkerPath, address, temporalNamespace, taskQueue)
-	engineAddr := startNamespacedEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue)
+	engineAddr, engineExited := startNamespacedEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue)
 
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	cli := func(args ...string) (string, string, int) {
@@ -70,7 +70,7 @@ func TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother(t
 		return runBinaryWithEnv(ctx, t, orkctlPath, repoRoot,
 			[]string{configEnvVar + "=" + configPath, namespaceEnvVar + "="}, full...)
 	}
-	waitForEngine(t, cli)
+	waitForEngine(t, engineExited, cli)
 
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 	alpha := "scope-alpha-" + token

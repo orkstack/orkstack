@@ -26,6 +26,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -352,20 +353,25 @@ type engineReplica struct {
 	addr  string
 	runs  orkstackv1connect.RunServiceClient
 	flows orkstackv1connect.OrkflowServiceClient
+	// exited closes when the process exits; awaitReady ends its wait on it.
+	// Nil means the replica's process is not tracked, and the wait runs to its
+	// deadline.
+	exited <-chan struct{}
 }
 
+// awaitReady waits for the replica's API to answer. A slow boot is tolerated up
+// to bootwait.Deadline and recorded past bootwait.WarnAfter, and a replica
+// whose process has exited fails the wait at once.
 func (r *engineReplica) awaitReady(ctx context.Context, t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(90 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := r.flows.ListOrkflows(ctx,
-			connect.NewRequest(&orkstackv1.ListOrkflowsRequest{})); err == nil {
-			t.Logf("%s ready at %s", r.name, r.addr)
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
+	_, err := bootwait.Wait{What: fmt.Sprintf("%s at %s", r.name, r.addr), Exited: r.exited, Logf: t.Logf}.Until(ctx,
+		func(ctx context.Context) error {
+			_, err := r.flows.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
+			return err
+		})
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("%s at %s did not become ready", r.name, r.addr)
 }
 
 // startReplica boots one real `ork` process on its own port, sharing the
@@ -379,7 +385,7 @@ func startReplica(
 ) *engineReplica {
 	t.Helper()
 	addr := freeAddress(t)
-	startProcess(ctx, t, name, enginePath, append([]string{
+	exited := startProcess(ctx, t, name, enginePath, append([]string{
 		"ORK_HTTP_ADDR=" + addr,
 		"ORK_TEMPORAL_ADDRESS=" + temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE=" + namespace,
@@ -389,10 +395,11 @@ func startReplica(
 	httpClient := h2cClient(t)
 	baseURL := "http://" + addr
 	return &engineReplica{
-		name:  name,
-		addr:  addr,
-		runs:  orkstackv1connect.NewRunServiceClient(httpClient, baseURL),
-		flows: orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL),
+		name:   name,
+		addr:   addr,
+		runs:   orkstackv1connect.NewRunServiceClient(httpClient, baseURL),
+		flows:  orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL),
+		exited: exited,
 	}
 }
 

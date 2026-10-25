@@ -30,6 +30,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -185,6 +186,26 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 	fmt.Fprintf(transcript, "engine A boot: %s\nengine B boot: %s\n",
 		findLogLine(logA.String(), "reloaded orkflows from durable store"), bootLine)
 
+	// Both boot reads say how long they took. A slow boot is a stall in the
+	// object store's list, and the engine's own log is where a proof finds out
+	// which of the two reads it was (cmd/ork openOrkflowStore, openNamespaceStore).
+	for _, boot := range []struct {
+		engine string
+		log    *strings.Builder
+	}{{"A", logA}, {"B", logB}} {
+		for _, message := range []string{"reloaded orkflows from durable store", "namespace registry ready"} {
+			line := findLogLine(boot.log.String(), message)
+			if line == "" {
+				t.Errorf("engine %s did not log %q:\n%s", boot.engine, message, boot.log.String())
+				continue
+			}
+			if !strings.Contains(line, "list_took=") {
+				t.Errorf("engine %s's %q line does not say how long its list took (list_took):\n%s",
+					boot.engine, message, line)
+			}
+		}
+	}
+
 	writeRestartProof(t, transcript.String())
 }
 
@@ -265,7 +286,7 @@ func bootEngine(
 	for attempt := 1; attempt <= attempts; attempt++ {
 		address, process := startEngine(ctx, t, binary, temporalAddress, name, extraEnv...)
 		client := orkflowClient(t, address)
-		if err := waitForEngine(ctx, client, process); err == nil {
+		if err := waitForEngine(ctx, t, name, client, process); err == nil {
 			return address, client, process.log
 		} else if attempt == attempts {
 			stopEngine(t, name)
@@ -351,27 +372,23 @@ func orkflowClient(t *testing.T, address string) orkstackv1connect.OrkflowServic
 }
 
 // waitForEngine polls the Connect API until the engine answers, and gives up
-// as soon as the process exits: a dead engine will never answer.
+// as soon as the process exits: a dead engine will never answer. A slow boot
+// is tolerated up to bootwait.Deadline and recorded with a WARN line past
+// bootwait.WarnAfter, not absorbed.
 func waitForEngine(
 	ctx context.Context,
+	t *testing.T,
+	name string,
 	client orkstackv1connect.OrkflowServiceClient,
 	process *engineProcess,
 ) error {
-	deadline := time.Now().Add(60 * time.Second)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		select {
-		case <-process.done:
-			return fmt.Errorf("engine exited during startup (last probe: %v)", lastErr)
-		default:
-		}
-		_, lastErr = client.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
-		if lastErr == nil {
-			return nil
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	return fmt.Errorf("engine did not answer within 60s: %w", lastErr)
+	t.Helper()
+	_, err := bootwait.Wait{What: name, Exited: process.done, Logf: t.Logf}.Until(ctx,
+		func(ctx context.Context) error {
+			_, err := client.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
+			return err
+		})
+	return err
 }
 
 // findLogLine returns the first log line containing needle.

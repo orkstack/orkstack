@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
@@ -104,7 +105,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 
 	temporalNamespace := privateTemporalNamespace()
 	startOrker(ctx, t, orkerPath, address, temporalNamespace, taskQueue)
-	engineAddr := startEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue)
+	engineAddr, engineExited := startEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue)
 
 	session := &sessionRecorder{}
 	cli := func(args ...string) (string, string, int) {
@@ -113,7 +114,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 		session.record(full, stdout, stderr, code)
 		return stdout, stderr, code
 	}
-	waitForEngine(t, func(args ...string) (string, string, int) {
+	waitForEngine(t, engineExited, func(args ...string) (string, string, int) {
 		return runBinary(ctx, t, orkctlPath, repoRoot,
 			append(args, "--server", "http://"+engineAddr)...)
 	})
@@ -418,11 +419,12 @@ func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, temp
 
 // startEngine runs the real ork binary on a free loopback port. The
 // orkerQueue is passed through so task dispatch and the pool probe target the
-// private queue the test's Orker polls.
-func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, temporalNamespace, orkerQueue string) string {
+// private queue the test's Orker polls. It returns the address and a channel
+// that closes when the process exits, which waitForEngine ends its wait on.
+func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, temporalNamespace, orkerQueue string) (string, <-chan struct{}) {
 	t.Helper()
 	addr := freeAddress(t)
-	startProcess(ctx, t, "ork", enginePath,
+	exited := startProcess(ctx, t, "ork", enginePath,
 		"ORK_HTTP_ADDR="+addr,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
@@ -430,17 +432,19 @@ func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, te
 		"ORK_ARTIFACT_BACKEND=local",
 		"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),
 	)
-	return addr
+	return addr, exited
 }
 
 // startProcess starts a built binary with extra environment and guarantees it
-// is stopped when the test ends, so no worker outlives the test.
+// is stopped when the test ends, so no worker outlives the test. The returned
+// channel closes when the process has exited, for a wait that must not poll a
+// process that is gone.
 //
 // Every engine started here gets the local activity catalog, because apply-time
 // image resolution (§4.3) runs in the engine and the built-in catalog names
 // references that are not published (see localActivityCatalogEnv). One place,
 // rather than one copy per engine launcher.
-func startProcess(ctx context.Context, t *testing.T, name, path string, env ...string) {
+func startProcess(ctx context.Context, t *testing.T, name, path string, env ...string) <-chan struct{} {
 	t.Helper()
 	// The BINARY decides, not the label: replicas are started as "ork-A",
 	// "ork-history" and so on, and an engine that missed the catalog would fail
@@ -456,10 +460,10 @@ func startProcess(ctx context.Context, t *testing.T, name, path string, env ...s
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start %s: %v", name, err)
 	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
 	t.Cleanup(func() {
 		_ = cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() { _ = cmd.Wait(); close(done) }()
 		select {
 		case <-done:
 		case <-time.After(15 * time.Second):
@@ -468,19 +472,24 @@ func startProcess(ctx context.Context, t *testing.T, name, path string, env ...s
 		}
 		t.Logf("%s log:\n%s", name, log.String())
 	})
+	return done
 }
 
-// waitForEngine polls the engine through the CLI until it answers.
-func waitForEngine(t *testing.T, cli func(args ...string) (string, string, int)) {
+// waitForEngine polls the engine through the CLI until it answers. A slow boot
+// is tolerated up to bootwait.Deadline and logged past bootwait.WarnAfter; a
+// process that has exited (exited closes) ends the wait at once.
+func waitForEngine(t *testing.T, exited <-chan struct{}, cli func(args ...string) (string, string, int)) {
 	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, _, code := cli("orkflow", "list"); code == 0 {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
+	_, err := bootwait.Wait{What: "ork", Exited: exited, Logf: t.Logf}.Until(context.Background(),
+		func(context.Context) error {
+			if _, stderr, code := cli("orkflow", "list"); code != 0 {
+				return fmt.Errorf("orkflow list exit %d: %s", code, strings.TrimSpace(stderr))
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("ork did not become ready within 60s")
 }
 
 // waitForPoolLive polls `pool list -n namespace --json` until the pool reports
@@ -489,19 +498,22 @@ func waitForEngine(t *testing.T, cli func(args ...string) (string, string, int))
 // test that submits right after boot has to observe liveness first.
 func waitForPoolLive(t *testing.T, cli func(args ...string) (string, string, int), namespace, pool string) {
 	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
 	var last string
-	for time.Now().Before(deadline) {
-		stdout, _, code := cli("pool", "list", "-n", namespace, "--json")
-		last = stdout
-		if code == 0 {
-			if p := decodePoolList(t, stdout).byName(pool); p != nil && p.LiveOrkerCount > 0 {
-				return
+	_, err := bootwait.Wait{What: fmt.Sprintf("a live Orker in pool %q (namespace %q)", pool, namespace), Logf: t.Logf}.Until(
+		context.Background(), func(context.Context) error {
+			stdout, _, code := cli("pool", "list", "-n", namespace, "--json")
+			last = stdout
+			if code != 0 {
+				return fmt.Errorf("pool list exit %d", code)
 			}
-		}
-		time.Sleep(250 * time.Millisecond)
+			if p := decodePoolList(t, stdout).byName(pool); p == nil || p.LiveOrkerCount == 0 {
+				return errors.New("no live Orker yet")
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("%v; last listing:\n%s", err, last)
 	}
-	t.Fatalf("pool %q in namespace %q reported no live Orker within 60s; last listing:\n%s", pool, namespace, last)
 }
 
 // runBinary executes a built binary and returns stdout, stderr, and its exit

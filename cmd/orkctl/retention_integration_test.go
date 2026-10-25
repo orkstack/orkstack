@@ -52,13 +52,13 @@ func TestIntegration_CLISetsMaximumRunRetentionOnTheRealCluster(t *testing.T) {
 	enginePath := testbin.Path(t, "./cmd/ork")
 
 	pool := privateTaskPool()
-	engineAddr := startNamespacedEngine(ctx, t, enginePath, address, temporalNamespace, pool)
+	engineAddr, engineExited := startNamespacedEngine(ctx, t, enginePath, address, temporalNamespace, pool)
 
 	cli := func(args ...string) (string, string, int) {
 		return runBinary(ctx, t, orkctlPath, root,
 			append(args, "--server", "http://"+engineAddr)...)
 	}
-	waitForEngine(t, cli)
+	waitForEngine(t, engineExited, cli)
 
 	// A verification handle dialed independently of `ork` and of `orkctl`:
 	// nothing under test ever touches this client. It is the only thing

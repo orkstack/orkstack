@@ -20,6 +20,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
@@ -197,15 +198,15 @@ func (s *relStack) startEngine(name, build string) {
 	if s.first == "" {
 		s.first = name
 	}
-	deadline := time.Now().Add(90 * time.Second)
-	for {
-		if _, _, code := s.cliQuietOn(name, "orkflow", "list"); code == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			s.t.Fatalf("engine %s did not become ready", name)
-		}
-		time.Sleep(250 * time.Millisecond)
+	_, err := bootwait.Wait{What: "engine " + name, Exited: s.procs[name].done, Logf: s.t.Logf}.Until(s.ctx,
+		func(context.Context) error {
+			if _, stderr, code := s.cliQuietOn(name, "orkflow", "list"); code != 0 {
+				return fmt.Errorf("orkflow list exit %d: %s", code, strings.TrimSpace(stderr))
+			}
+			return nil
+		})
+	if err != nil {
+		s.t.Fatal(err)
 	}
 	s.note("engine %s up (release %q)", name, build)
 }

@@ -78,10 +78,11 @@ func (s *scheduleStack) startEngine(ctx context.Context, t *testing.T, name, add
 	httpClient := h2cClient(t)
 	baseURL := "http://" + addr
 	e.engineReplica = &engineReplica{
-		name:  name,
-		addr:  addr,
-		runs:  orkstackv1connect.NewRunServiceClient(httpClient, baseURL),
-		flows: orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL),
+		name:   name,
+		addr:   addr,
+		runs:   orkstackv1connect.NewRunServiceClient(httpClient, baseURL),
+		flows:  orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL),
+		exited: e.done,
 	}
 	t.Cleanup(func() {
 		e.stop()
