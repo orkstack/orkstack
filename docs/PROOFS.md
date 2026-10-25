@@ -74,8 +74,11 @@ runs in a network
 namespace of its own (`ui/e2e/browser-server.ts`, from the image
 `ui/e2e/browser-image.txt` pins; a proof pulls it when the host lacks it), and
 every spec file owns its bucket. The two spec files that assert a render budget
-run alone after the others, as `--project` runs on one worker, and the run page
-at the task ceiling runs on the host's Chromium (`ui/playwright.config.ts`).
+(`each-fan-out-ceiling.spec.ts`, `run-page-ceiling.spec.ts`) hold nothing but
+their budget test and run alone after the others, as `--project` runs on one
+worker; the fan-out's functional tests are `each-fan-out.spec.ts`, which runs
+with the others. The run page at the task ceiling runs on the host's Chromium
+(`ui/playwright.config.ts`).
 The gate starts one browser server for both invocations, and the second reuses
 the first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A **heavy** test — one whose assertions are
@@ -759,7 +762,8 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
   word for one. A miss is never turned into a wider local bound. Both
   class-B misses below are declared rows.
 - **The validation run's class-B results** (run 39345074409, recorded in
-  `host_speed_failures` and `known_gaps`): `each-fan-out.spec.ts` measured
+  `host_speed_failures` and `known_gaps`): `each-fan-out.spec.ts` (whose
+  gated test is now `each-fan-out-ceiling.spec.ts`) measured
   7,006 ms against its declared 5,000 ms budget at the gated size on a 2-vCPU
   runner; `run-page-ceiling.spec.ts` never reached its 5 s budget, because
   the run page did not become visible within 60 s there.

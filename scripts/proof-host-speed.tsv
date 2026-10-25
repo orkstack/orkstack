@@ -22,4 +22,4 @@
 # kind	name	member	assertion	bound	reference_cpus	note
 ui	e2e/run-page-ceiling.spec.ts	the run page at the gated task size is interactive within 5 s, live and finished	lessThan 5000	5	16	the run page at the gated task size is interactive within 5 s
 ui	e2e/run-page-ceiling.spec.ts	the run page at the gated task size is interactive within 5 s, live and finished	visibleWithin 60000 getByTestId('run-status')	5	16	on a 2-vCPU runner the run page's header never drew within the spec's 60 s wait (validation run 39345074409)
-ui	e2e/each-fan-out.spec.ts	the run page and the item list at the gated size are interactive within 5 s	lessThan 5000	5	16	the run page and the item list at the gated size are interactive within 5 s
+ui	e2e/each-fan-out-ceiling.spec.ts	the run page and the item list at the gated size are interactive within 5 s	lessThan 5000	5	16	the run page and the item list at the gated size are interactive within 5 s

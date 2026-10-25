@@ -26,6 +26,18 @@ include breaking changes, and each is marked **BREAKING**.
   way, is the `NIGHTLY=` evidence; and `main` is pushed to `origin` after
   every merge (AGENTS.md §11.2, §11.3; docs/PROOFS.md §6, §10). The checks
   `merge-check` applies are unchanged.
+- The Playwright suite runs less of itself alone, measuring the same things.
+  The fan-out's render-budget test (E4, "the run page and the item list at the
+  gated size are interactive within 5 s") moved from `each-fan-out.spec.ts`
+  to `ui/e2e/each-fan-out-ceiling.spec.ts`, with ports, a bucket, a Temporal
+  namespace and an Orker work root of its own; that file is now the one the
+  `chromium-solo-each-fan-out` project runs alone, and the fan-out's six
+  functional tests run in the parallel `chromium` project. The new file costs
+  the UI planner's unmeasured 160 s until a full proof measures it. Its
+  `scripts/proof-host-speed.tsv` row moved with it, and because a row excuses
+  only once the base carries it identically, the moved row excuses nothing on
+  the change that moves it: a CI `ui-e2e` part on a runner below 16 CPUs that
+  misses the 5 s budget fails that proof, until `main` carries the row.
 - The proof is faster on one host, running the same tests: integration tests
   keep `PROOF_JOBS=4` (6 was measured: clean but for one 50 s engine-boot
   stall on a fresh bucket, so it stays an operator's choice), the activity contract
