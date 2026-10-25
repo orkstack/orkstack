@@ -2669,14 +2669,24 @@ func TestIntegration_ContinuationChaosC29_FrontendUnreachableDuringTheStart(t *t
 }
 
 // TestIntegration_ContinuationChaosC15_LongItemsStillSwitch: a fan-out at
-// max_parallel 4 whose items each run 150 s — longer than any fixed hold
-// window would allow — reaches the hold line, holds until its running items
-// finish, switches, and completes.
+// max_parallel 4 whose items each run 60 s — far longer than the run takes
+// to reach its hold line — reaches the hold line, holds until its running
+// items finish, switches, and completes.
 func TestIntegration_ContinuationChaosC15_LongItemsStillSwitch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	s := newChaosStack(t, ctx, "C15")
-	const itemTime = 150 * time.Second
+	// itemTime is what one hold must outlast. The hold is bounded by the
+	// running work alone, never by a clock of its own (AGENTS.md §7.3;
+	// TestContinuation_HoldHasNoClock proves hours of workflow clock), so no
+	// product window sets a floor here. Heartbeats record no history event,
+	// so the hold line is crossed at the same point of the run whatever
+	// itemTime is, and the hold lasts what its running items have left. The
+	// assertion below demands a hold of at least itemTime-30s (the 30 s
+	// absorbs how far those items had run): at 60 s still a 30 s hold —
+	// far above scheduling noise and impossible for a hold that gave up
+	// early. Shortening it further shrinks that 30 s; do not go below it.
+	const itemTime = 60 * time.Second
 	s.startReplica("replica-a", replicaOptions{})
 	s.startProjection(nil)
 	s.startOrker("orker-1", func(actx context.Context, s *chaosStack, orker string, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
@@ -2723,10 +2733,10 @@ func TestIntegration_ContinuationChaosC15_LongItemsStillSwitch(t *testing.T) {
 		longest = max(longest, seconds)
 	}
 	if longest < (itemTime - 30*time.Second).Seconds() {
-		t.Fatalf("the switches held %v: want one that held while 150 s items finished", holds)
+		t.Fatalf("the switches held %v: want one that held while %v items finished", holds, itemTime)
 	}
 	s.transcript.figure("hold_durations", holds)
-	t.Logf("C15: held for the running 150 s items (switch holds %v); %d generations; %d events", holds, len(s.chain(runID)), len(events))
+	t.Logf("C15: held for the running %v items (switch holds %v); %d generations; %d events", itemTime, holds, len(s.chain(runID)), len(events))
 }
 
 // pendingPeaks is the most activities one execution had scheduled and not
