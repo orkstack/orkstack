@@ -798,7 +798,7 @@ STACK_ENV=(
 )
 
 # ---- P2: integration, with the Docker-only activity fixture beside it -----------
-# The only gates that run side by side. If either fails, the other is stopped
+# The only gates that run beside tests. If either fails, the other is stopped
 # (wait_bg, stop_running_gates) and Playwright and observability never start.
 #
 # The fixture starts only once the integration runner has finished its HEAVY
@@ -815,6 +815,42 @@ fixture_after_heavy() {
 		done
 	fi
 	exec make -C images test TAG="$IMAGE_TAG" REGISTRY="$REGISTRY"
+}
+
+# ---- P3: the UI build, during the ordinary integration jobs ----------------------
+# The vite build the Playwright gate's global setup would otherwise make first
+# (ui/e2e/build-ui.ts, which global-setup.ts calls), and the listing the gate
+# plans from, made while the ordinary integration jobs run: only once
+# integration-heavy-done exists, the fixture's policy, so never beside a heavy
+# test, or once the integration gate has passed without one. Both are only a
+# head start and never a gate: the global setup rebuilds whenever the hash of
+# the build's inputs differs from the one beside ui/build, which a failed or
+# interrupted build never leaves, and the gate lists for itself when no
+# listing was written. The gate waits for this to end before it starts.
+UI_PREBUILD=""
+ui_prebuild() {
+	local started
+	while [ ! -e "$DIR/integration-heavy-done" ] && ! grep -q "^integration"$'\t' "$GATES_TSV"; do
+		sleep 2
+	done
+	if [ ! -e "$DIR/integration-heavy-done" ] && ! grep -q "^integration"$'\tpass\t' "$GATES_TSV"; then
+		say "integration ended before its ordinary jobs: no pre-build, the Playwright gate builds the UI"
+		return 0
+	fi
+	started=$SECONDS
+	if ! (cd "$REPO/ui" && bun e2e/build-ui.ts); then
+		say "ui-prebuild: the UI build failed after $((SECONDS - started))s: the Playwright gate builds it"
+		return 1
+	fi
+	say "ui-prebuild: ui/build ready after $((SECONDS - started))s"
+	if (cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+		"$REPO/ui/node_modules/.bin/playwright" test --list --reporter=json "${SPEC_ARGS[@]}" >"$DIR/ui-e2e-list.json.pre"); then
+		mv "$DIR/ui-e2e-list.json.pre" "$DIR/ui-e2e-list.json"
+		say "ui-prebuild: listed the specs into $DIR/ui-e2e-list.json"
+	else
+		rm -f "$DIR/ui-e2e-list.json.pre"
+		say "ui-prebuild: playwright test --list failed: the Playwright gate lists for itself"
+	fi
 }
 if [ -z "$FF_TRIGGER" ]; then
 	if runs activity-fixture; then
@@ -836,8 +872,26 @@ if [ -z "$FF_TRIGGER" ]; then
 		# into a failure now that the prerequisites were probed above, and the
 		# ledger fails any skip scripts/proof-allowed-skips.txt does not name.
 		run_bg integration integration.log env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 "$PR" integration "${integ_args[@]}"
+		if runs ui-e2e; then
+			ui_prebuild >"$DIR/ui-prebuild.log" 2>&1 &
+			UI_PREBUILD=$!
+		fi
 	fi
 	wait_bg
+fi
+# The pre-build ends before the Playwright gate starts, so the two never
+# build ui/build at once; a proof that has stopped ends it instead.
+if [ -n "$UI_PREBUILD" ]; then
+	if [ -n "$FF_TRIGGER" ]; then
+		for p in $(descendants "$UI_PREBUILD"); do kill -TERM "$p" 2>/dev/null; done
+		kill -TERM "$UI_PREBUILD" 2>/dev/null
+		wait "$UI_PREBUILD" 2>/dev/null
+	else
+		say "== ui-prebuild: waiting for the UI pre-build -> $DIR/ui-prebuild.log"
+		wait "$UI_PREBUILD"
+		grep '^ui-prebuild:\|^integration ended' "$DIR/ui-prebuild.log" | sed 's/^/   /'
+	fi
+	UI_PREBUILD=""
 fi
 
 # ---- P4: Playwright ------------------------------------------------------------------
@@ -869,7 +923,9 @@ ui_e2e_locked() {
 		docker pull "$image" >"$DIR/browser-image-pull.log" 2>&1 || { say "cannot pull $image: $DIR/browser-image-pull.log"; return 1; }
 	fi
 	say "browser server image: $image"
-	if ! (cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+	if [ -s "$DIR/ui-e2e-list.json" ]; then
+		say "playwright test --list: listed by the UI pre-build during the ordinary integration jobs ($DIR/ui-e2e-list.json)"
+	elif ! (cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
 		"$pw" test --list --reporter=json "${SPEC_ARGS[@]}" >"$DIR/ui-e2e-list.json"); then
 		say "playwright test --list failed"
 		return 1

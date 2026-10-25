@@ -381,3 +381,42 @@ func TestRepositoryProofScript_BuildsTheSetupInParallel(t *testing.T) {
 		}
 	}
 }
+
+// The UI pre-build: started beside integration only when Playwright will run,
+// waiting for integration-heavy-done (never beside a heavy test), building
+// through the same ui/e2e/build-ui.ts the suite's global setup calls, and
+// collected before the Playwright gate starts, so the two never build at
+// once. It is never a gate: a failure leaves the gate to build as before.
+func TestRepositoryProofScript_PrebuildsTheUIAfterTheHeavyJobs(t *testing.T) {
+	text := proofScript(t)
+	fn := at(text, "ui_prebuild() {")
+	if fn < 0 {
+		t.Fatal("proof.sh has no ui_prebuild")
+	}
+	body := text[fn : fn+strings.Index(text[fn:], "\n}\n")]
+	wait := strings.Index(body, `while [ ! -e "$DIR/integration-heavy-done" ]`)
+	build := strings.Index(body, "bun e2e/build-ui.ts")
+	if wait < 0 || build < 0 || build < wait {
+		t.Error("ui_prebuild does not wait for integration-heavy-done before it builds")
+	}
+	if strings.Contains(body, ">>\"$GATES_TSV\"") || strings.Contains(body, "step ") || strings.Contains(body, "run_bg ") {
+		t.Error("ui_prebuild records a gate: a pre-build is a head start, never evidence")
+	}
+	start := at(text, "ui_prebuild >\"$DIR/ui-prebuild.log\" 2>&1 &")
+	integ := at(text, "run_bg integration ")
+	collect := at(text, `wait "$UI_PREBUILD"`)
+	e2e := at(text, "step ui-e2e ")
+	if start < 0 || start < integ || collect < start || e2e < collect {
+		t.Error("the pre-build is not started after integration and collected before the Playwright gate")
+	}
+	if !strings.Contains(text, `if [ -s "$DIR/ui-e2e-list.json" ]; then`) {
+		t.Error("the Playwright gate does not reuse the pre-build's listing")
+	}
+	setup, err := os.ReadFile(filepath.Join(mustRepoRoot(), "ui", "e2e", "global-setup.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(setup), "ensureUIBuild(uiDir)") || strings.Contains(string(setup), "execFileSync('bun', ['run', 'build']") {
+		t.Error("ui/e2e/global-setup.ts does not build through build-ui.ts's ensureUIBuild: the pre-build and the gate would decide differently")
+	}
+}

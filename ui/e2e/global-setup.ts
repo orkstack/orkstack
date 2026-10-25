@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startBrowserServer } from './browser-server';
-import { BUILD_HASH_FILE, buildInputsHash } from './build-hash';
+import { ensureUIBuild } from './build-ui';
 
 // Everything every spec needs built, built ONCE per Playwright run rather than
 // in each spec's beforeAll (which was 39 vite builds and as many Go builds of
@@ -18,8 +18,9 @@ import { BUILD_HASH_FILE, buildInputsHash } from './build-hash';
 //   - the UI, `vite build` into ui/build, which every spec serves with
 //     `node build` — rebuilt only when the hash of its inputs differs from
 //     the one the last build left beside it (build-hash.ts), so the second
-//     invocation of a proof's two, and a run by hand after no change, serve
-//     the build already there;
+//     invocation of a proof's two, a run by hand after no change, and a
+//     proof that built it during its ordinary integration jobs
+//     (build-ui.ts) serve the build already there;
 //   - the browser server, in a container and so in a network namespace of
 //     its own (browser-server.ts says why), its endpoint exported as
 //     ORK_E2E_BROWSER_WS for playwright.config.ts to connect every worker
@@ -64,19 +65,7 @@ export default function globalSetup(): void {
 			execFileSync('go', ['build', '-o', target, pkg], { cwd: repoRoot, stdio: 'inherit' });
 		}
 	}
-	const buildDir = path.join(uiDir, 'build');
-	const hashFile = path.join(buildDir, BUILD_HASH_FILE);
-	const hash = buildInputsHash(uiDir);
-	const previous = existsSync(hashFile) ? readFileSync(hashFile, 'utf8').trim() : '';
-	if (previous === hash && existsSync(path.join(buildDir, 'index.js'))) {
-		console.log(`e2e: ui/build is this tree's own (inputs ${hash.slice(0, 12)}): not rebuilt`);
-	} else {
-		execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
-		if (!existsSync(path.join(buildDir, 'index.js'))) {
-			throw new Error('UI build output missing: ui/build/index.js');
-		}
-		writeFileSync(hashFile, hash + '\n');
-	}
+	ensureUIBuild(uiDir);
 	if (process.env.ORK_E2E_BROWSER === 'host') {
 		console.log('e2e: ORK_E2E_BROWSER=host: driving the host\'s own Chromium, in the host\'s network namespace');
 		return;

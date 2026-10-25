@@ -88,7 +88,18 @@ with the others. The run page at the task ceiling runs on the host's Chromium
 (`ui/playwright.config.ts`).
 The gate starts one browser server for both invocations, and the second reuses
 the first's UI build when the hash of the build's inputs
-(`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A **heavy** test — one whose assertions are
+(`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
+runs both integration and Playwright makes that build earlier, while its
+ordinary integration jobs run: once `integration-heavy-done` exists (the
+fixture's policy, so never beside a heavy test), or once the integration gate
+has passed without one, it runs `bun e2e/build-ui.ts` — the same
+`ensureUIBuild` the global setup calls — and `playwright test --list` into
+`ui-e2e-list.json`, logging both to `ui-prebuild.log`. The Playwright gate
+waits for it to end, then uses that listing and finds the build's hash
+matching (its log reads `e2e: ui/build is this tree's own (inputs …): not
+rebuilt`). It is a head start, never a gate: a failed or interrupted build
+leaves no matching hash and a failed listing leaves no file, so the gate
+builds and lists for itself as before. A **heavy** test — one whose assertions are
 bounds — runs alone, in its own CI shard or first on a local host. A test is
 heavy by what it asserts, not by how long it takes: the reduced-ceiling copies
 of a moved soak run the same E4/E7 thresholds and are heavy, while a test that

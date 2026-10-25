@@ -74,6 +74,12 @@ include breaking changes, and each is marked **BREAKING**.
   and `push` pushes each as soon as it is built, with the same registry
   digests recorded. A proof links its nine stack binaries with one `go build`
   rather than nine.
+- A proof that runs integration and Playwright builds the UI and lists the
+  specs while its ordinary integration jobs run (after the heavy ones, never
+  beside them), through `ui/e2e/build-ui.ts`, which the Playwright global
+  setup now calls too, so the Playwright gate starts with the build in place.
+  A failed or stale pre-build is rebuilt by the gate as before
+  (docs/PROOFS.md §2.1).
 - The proof is faster on one host, running the same tests: integration tests
   keep `PROOF_JOBS=4` (6 was measured: clean but for one 50 s engine-boot
   stall on a fresh bucket, so it stays an operator's choice), the activity contract
