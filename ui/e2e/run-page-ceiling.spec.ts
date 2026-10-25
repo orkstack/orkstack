@@ -221,6 +221,14 @@ async function cardInViewport(page: Page, testid: string): Promise<boolean> {
 	}, testid);
 }
 
+// GETRUN_POLL_MS is how often this spec's waits ask GetRun, against the
+// harness's 250 ms: each GetRun re-reads the run's whole history — about 25,000
+// events by the end of the cancel — on the engine that is recording the rows,
+// so a fast poll is load of the test's own on what it waits for. The waits
+// are outside every timed span.
+const GETRUN_POLL_MS = 1_000;
+const GETRUN_POLL_FINISHED_MS = 2_000;
+
 // E7: the run page of the gated-size flat-short run is interactive within
 // 5 s, live — every card drawn while its tasks start — and again once the
 // run has finished (canceled here: a real container per task would keep one
@@ -241,7 +249,8 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 				rows.some((row) => row.status === 'STATUS_RUNNING' || row.status === 'STATUS_SUCCEEDED')
 			);
 		},
-		300_000
+		300_000,
+		GETRUN_POLL_MS
 	);
 
 	const live = await measureRunPage(page, run, GATED_TASKS, 'live');
@@ -266,7 +275,8 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 				rows.every((row) => terminal.includes(row.status ?? ''))
 			);
 		},
-		900_000
+		900_000,
+		GETRUN_POLL_FINISHED_MS
 	);
 	const finished = await measureRunPage(page, run, GATED_TASKS, 'finished');
 	await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
@@ -310,11 +320,10 @@ test('the run page at the gated task size is interactive within 5 s, live and fi
 		name: GATED_ORKFLOW
 	});
 	const maximal = `ork-${Date.now()}-output-maximal`;
+	// The prebuilt helper (e2e/global-setup.ts suiteBinaries), not `go run`.
 	const archived = execFileSync(
-		'go',
+		bin('archive-sized-run'),
 		[
-			'run',
-			'./test/tools/archive-sized-run',
 			'default',
 			GATED_ORKFLOW,
 			'0.1.0',

@@ -704,7 +704,7 @@ push_images() {
 }
 build_binaries() {
 	local pkg
-	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run; do
+	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run ./test/tools/archive-sized-run; do
 		go build -o "$DIR/bin/$(basename "$pkg")" "$pkg" || return 1
 		say "built $DIR/bin/$(basename "$pkg") from $pkg"
 	done

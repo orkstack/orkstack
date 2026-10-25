@@ -76,10 +76,17 @@ export function spawnLogged(
 	return trackChild(child);
 }
 
+/**
+ * waitFor polls `probe` until it answers true, every `intervalMs` (250 ms by
+ * default), and fails naming `label` once `timeoutMs` has passed. A probe
+ * that is itself costly for the system under test — a GetRun of a run whose
+ * history holds tens of thousands of events — passes a longer interval.
+ */
 export async function waitFor(
 	label: string,
 	probe: () => Promise<boolean>,
-	timeoutMs = 120_000
+	timeoutMs = 120_000,
+	intervalMs = 250
 ): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
@@ -89,7 +96,7 @@ export async function waitFor(
 			// not ready yet
 		}
 		if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
-		await new Promise((r) => setTimeout(r, 250));
+		await new Promise((r) => setTimeout(r, intervalMs));
 	}
 }
 

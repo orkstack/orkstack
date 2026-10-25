@@ -47,7 +47,8 @@ export const suiteBinaries: Record<string, string> = {
 	'bucket-ensure': './test/tools/bucket-ensure',
 	'reclaim-run': './test/tools/reclaim-run',
 	generations: './test/tools/generations',
-	'archive-legacy-run': './test/tools/archive-legacy-run'
+	'archive-legacy-run': './test/tools/archive-legacy-run',
+	'archive-sized-run': './test/tools/archive-sized-run'
 };
 
 export default function globalSetup(): void {

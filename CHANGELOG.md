@@ -38,6 +38,12 @@ include breaking changes, and each is marked **BREAKING**.
   only once the base carries it identically, the moved row excuses nothing on
   the change that moves it: a CI `ui-e2e` part on a runner below 16 CPUs that
   misses the 5 s budget fails that proof, until `main` carries the row.
+- `ui/e2e/run-page-ceiling.spec.ts` does less work of its own around what it
+  measures. It polls GetRun every 1–2 s instead of every 250 ms
+  while it waits for the run (each GetRun re-reads the run's whole history),
+  and runs `test/tools/archive-sized-run` as a binary the suite builds once
+  (`ui/e2e/global-setup.ts`, `scripts/proof.sh`, `scripts/proof-part.sh`)
+  rather than through `go run`. No budget, size or timed open changed.
 - The proof is faster on one host, running the same tests: integration tests
   keep `PROOF_JOBS=4` (6 was measured: clean but for one 50 s engine-boot
   stall on a fresh bucket, so it stays an operator's choice), the activity contract
