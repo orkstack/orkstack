@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1184 496" width="1184" height="496" role="img" aria-labelledby="architecture-title">
+<title id="architecture-title">An Orkflow is applied through orkctl, the UI or the API to the ork engine; triggers and callbacks also reach it over plain HTTP. The engine starts each run on Temporal, which dispatches tasks to Orkers. An Orker runs the activity’s OCI image, passing files in and out, and writes artifacts and records to object storage.</title>
+<style>.paper{fill:#fbfbf8}.frame{fill:none;stroke:#14213d;stroke-width:1.5px}.band{fill:none;stroke:rgb(20 33 61 / 0.16);stroke-width:1px}.caption{fill:#3a4661;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:12px}.node{fill:#fbfbf8;stroke:#14213d;stroke-width:1.5px}.group{fill:none;stroke:#14213d;stroke-width:1px;stroke-dasharray:6 4}.name{fill:#14213d;font-family:'Archivo Narrow Variable', 'Arial Narrow', 'Roboto Condensed', ui-sans-serif, system-ui, sans-serif;font-size:15px;font-weight:600}.note{fill:#3a4661;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11.5px}.edge{fill:none;stroke:#14213d;stroke-width:1.5px}.back{fill:none;stroke:#3a4661;stroke-width:1.5px;stroke-dasharray:6 4}.arrow{fill:#14213d}.arrow-back{fill:#3a4661}.label{fill:#3a4661;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11px;paint-order:stroke;stroke:#fbfbf8;stroke-width:4px}.label-fail{fill:#c2362b;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11px;font-weight:700;paint-order:stroke;stroke:#fbfbf8;stroke-width:4px}.fail{fill:none;stroke:#c2362b;stroke-width:2.25px}.brace{fill:none;stroke:#3a4661;stroke-width:1px}.balloon circle{fill:#fbfbf8;stroke:#14213d;stroke-width:1.5px}.balloon text{fill:#14213d;font-family:'Archivo Narrow Variable', 'Arial Narrow', 'Roboto Condensed', ui-sans-serif, system-ui, sans-serif;font-size:13px;font-weight:700}</style>
+<defs>
+<pattern id="minor" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M8 0H0V8" fill="none" stroke="#e6e9ef" stroke-width="1"/></pattern>
+<pattern id="major" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="url(#minor)"/><path d="M40 0H0V40" fill="none" stroke="#c8cfdc" stroke-width="1"/></pattern>
+<marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" class="arrow"/></marker>
+<marker id="arrow-back" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" class="arrow-back"/></marker>
+</defs>
+<rect class="paper" width="1184" height="496"/>
+<rect y="32" width="1184" height="464" fill="url(#major)"/>
+<path class="band" d="M0 32.5H1184M262.5 0V32"/>
+<text class="caption" x="12" y="21">How a run flows · ARCHITECTURE.md</text>
+<g transform="translate(0 56)">
+<path class="edge" d="M230 77H330" marker-end="url(#arrow)"/>
+<text class="label" x="280" y="69" text-anchor="middle">apply</text>
+<path class="edge" d="M520 77H620" marker-end="url(#arrow)"/>
+<text class="label" x="570" y="69" text-anchor="middle">submit</text>
+<path class="edge" d="M910 77H810" marker-end="url(#arrow)"/>
+<text class="label" x="860" y="69" text-anchor="middle">start</text>
+<path class="edge" d="M715 106V200" marker-end="url(#arrow)"/>
+<text class="label" x="724" y="158" text-anchor="start">start a run</text>
+<path class="edge" d="M810 229H910" marker-end="url(#arrow)"/>
+<text class="label" x="860" y="221" text-anchor="middle">dispatch</text>
+<path class="edge" d="M1005 258V352" marker-end="url(#arrow)"/>
+<text class="label" x="1014" y="310" text-anchor="start">run, files in and out</text>
+<path class="edge" d="M910 244H866V381H810" marker-end="url(#arrow)"/>
+<text class="label" x="858" y="312" text-anchor="end">artifacts, records</text>
+<g transform="translate(40 48)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">Orkflow</text><text class="note" x="14" y="44">a YAML document</text></g>
+<g class="balloon" transform="translate(230 48)"><circle r="12"/><text y="4.5" text-anchor="middle">1</text></g>
+<g transform="translate(330 48)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">orkctl · UI · API</text><text class="note" x="14" y="44">one Connect contract</text></g>
+<g transform="translate(620 48)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">ork</text><text class="note" x="14" y="44">engine and API</text></g>
+<g transform="translate(910 48)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">Triggers, callbacks</text><text class="note" x="14" y="44">plain HTTP</text></g>
+<g transform="translate(620 200)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">Temporal</text><text class="note" x="14" y="44">durable execution</text></g>
+<g transform="translate(910 200)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">Orker</text><text class="note" x="14" y="44">a generic worker</text></g>
+<g class="balloon" transform="translate(1100 200)"><circle r="12"/><text y="4.5" text-anchor="middle">3</text></g>
+<g transform="translate(620 352)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">Object storage</text><text class="note" x="14" y="44">S3-compatible</text></g>
+<g transform="translate(910 352)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">Activity</text><text class="note" x="14" y="44">any OCI image</text></g>
+<g class="balloon" transform="translate(1100 352)"><circle r="12"/><text y="4.5" text-anchor="middle">2</text></g>
+</g>
+<rect class="frame" x="0.75" y="0.75" width="1182.5" height="494.5"/>
+</svg>

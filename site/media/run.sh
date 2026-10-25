@@ -31,8 +31,28 @@ need() {
 	exit 77
 }
 
-{ command -v docker >/dev/null && docker info >/dev/null 2>&1; } || need "Docker is not running"
 { command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; } || need "ffmpeg and ffprobe are not installed"
+
+# The README's animation of the UI: the end-to-end recording as an animated
+# WebP, which GitHub shows inline where it cannot play a video. It needs only
+# ffmpeg and the recordings, so SITE_MEDIA_ONLY=readme redoes it alone.
+readme_ui_demo() {
+	for theme in light dark; do
+		ffmpeg -y -loglevel error -i "$SITE/public/media/e2e-demo-$theme.mp4" \
+			-vf "fps=6,scale=960:-2:flags=lanczos" -loop 0 -c:v libwebp -quality 50 -compression_level 6 \
+			-an "$REPO/docs/images/ui-demo-$theme.webp"
+		echo "  docs/images/ui-demo-$theme.webp"
+	done
+}
+ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libwebp || need "ffmpeg has no libwebp encoder (the README's UI animation is an animated WebP)"
+if [ "${SITE_MEDIA_ONLY:-}" = readme ]; then
+	readme_ui_demo
+	exit 0
+fi
+
+{ command -v docker >/dev/null && docker info >/dev/null 2>&1; } || need "Docker is not running"
+
+
 command -v bun >/dev/null || need "bun is not installed"
 command -v node >/dev/null || need "node is not installed"
 command -v go >/dev/null || need "go is not installed (the recordings use a static orkctl)"
@@ -100,6 +120,7 @@ for theme in light dark; do
 		{
 			echo "Output out/$name.webm"
 			echo "Output out/$name.mp4"
+			echo "Output out/$name.gif"
 			echo "Set Theme $theme_json"
 			echo "Source tapes/$(basename "$tape")"
 		} >"$VHS/tapes/run-$name.tape"
@@ -116,4 +137,6 @@ for theme in light dark; do
 	done
 done
 (cd "$SITE" && node media/finish.mjs "$VHS/out" "$VHS_IMAGE")
+echo "== README animations =="
+readme_ui_demo
 echo "site-media: done. Look at every asset before committing it (site/src/assets/media, site/public/media)."

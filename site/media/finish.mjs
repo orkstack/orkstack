@@ -4,10 +4,13 @@
 import { readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
-import { siteRoot } from '../scripts/tokens.mjs';
+import { repoRoot, siteRoot } from '../scripts/tokens.mjs';
 
 const [out, vhsImage] = process.argv.slice(2);
 const pub = path.join(siteRoot, 'public', 'media');
+// The README shows each terminal recording as a GIF, which GitHub plays
+// inline; the site keeps the videos.
+const readmeImages = path.join(repoRoot, 'docs', 'images');
 const manifestPath = path.join(siteRoot, 'src', 'assets', 'media', 'manifest.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 const words = {
@@ -17,13 +20,17 @@ const words = {
 	},
 };
 for (const file of readdirSync(out).sort()) {
-	const m = /^(cli-[a-z-]+?)-(light|dark)\.(webm|mp4|png)$/.exec(file);
+	const m = /^(cli-[a-z-]+?)-(light|dark)\.(webm|mp4|png|gif)$/.exec(file);
 	if (!m) continue;
 	const [, name, theme, ext] = m;
 	if (!words[name]) throw new Error(`media/finish.mjs has no alt text and caption for ${name}`);
 	const item = (manifest.items[name] ??= { ...words[name] });
 	Object.assign(item, words[name]);
 	const suffix = theme === 'dark' ? 'Dark' : '';
+	if (ext === 'gif') {
+		copyFileSync(path.join(out, file), path.join(readmeImages, file));
+		continue;
+	}
 	if (ext === 'png') {
 		const poster = `${name}-${theme}.webp`;
 		await sharp(path.join(out, file)).webp({ quality: 82 }).toFile(path.join(pub, poster));

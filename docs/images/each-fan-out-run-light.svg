@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 372" width="960" height="372" role="img" aria-labelledby="each-fan-out-run-title">
+<title id="each-fan-out-run-title">The each-fan-out example as a run: list computes 4 parts, convert runs one item per part, 2 at a time, and merge reads every item’s part.txt once all of them have ended.</title>
+<style>.paper{fill:#fbfbf8}.frame{fill:none;stroke:#14213d;stroke-width:1.5px}.band{fill:none;stroke:rgb(20 33 61 / 0.16);stroke-width:1px}.caption{fill:#3a4661;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:12px}.node{fill:#fbfbf8;stroke:#14213d;stroke-width:1.5px}.group{fill:none;stroke:#14213d;stroke-width:1px;stroke-dasharray:6 4}.name{fill:#14213d;font-family:'Archivo Narrow Variable', 'Arial Narrow', 'Roboto Condensed', ui-sans-serif, system-ui, sans-serif;font-size:15px;font-weight:600}.note{fill:#3a4661;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11.5px}.edge{fill:none;stroke:#14213d;stroke-width:1.5px}.back{fill:none;stroke:#3a4661;stroke-width:1.5px;stroke-dasharray:6 4}.arrow{fill:#14213d}.arrow-back{fill:#3a4661}.label{fill:#3a4661;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11px;paint-order:stroke;stroke:#fbfbf8;stroke-width:4px}.label-fail{fill:#c2362b;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11px;font-weight:700;paint-order:stroke;stroke:#fbfbf8;stroke-width:4px}.fail{fill:none;stroke:#c2362b;stroke-width:2.25px}.brace{fill:none;stroke:#3a4661;stroke-width:1px}.balloon circle{fill:#fbfbf8;stroke:#14213d;stroke-width:1.5px}.balloon text{fill:#14213d;font-family:'Archivo Narrow Variable', 'Arial Narrow', 'Roboto Condensed', ui-sans-serif, system-ui, sans-serif;font-size:13px;font-weight:700}</style>
+<defs>
+<pattern id="minor" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M8 0H0V8" fill="none" stroke="#e6e9ef" stroke-width="1"/></pattern>
+<pattern id="major" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="url(#minor)"/><path d="M40 0H0V40" fill="none" stroke="#c8cfdc" stroke-width="1"/></pattern>
+<marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" class="arrow"/></marker>
+<marker id="arrow-back" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" class="arrow-back"/></marker>
+</defs>
+<rect class="paper" width="960" height="372"/>
+<rect y="32" width="960" height="340" fill="url(#major)"/>
+<path class="band" d="M0 32.5H960M240.5 0V32"/>
+<text class="caption" x="12" y="21">each-fan-out @ 0.3.0 · 3 tasks</text>
+<g data-task="list"><g transform="translate(40 173)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">list</text><text class="note" x="14" y="44">uses: json</text></g></g>
+<g data-edge="list->convert"><path class="edge" d="M230 202H330" marker-end="url(#arrow)"/><text class="label" x="280" y="194" text-anchor="middle">4 parts</text></g>
+<g data-task="convert">
+<rect class="group" x="330" y="72" width="300" height="260"/>
+<text class="label" x="342" y="92" text-anchor="start">each: one item per part, 2 at a time</text>
+<g transform="translate(350 102)" data-item="0"><rect class="node" width="260" height="44"/><text class="name" x="14" y="18">convert[0]</text><text class="note" x="14" y="37">uses: shell</text></g>
+<g transform="translate(350 158)" data-item="1"><rect class="node" width="260" height="44"/><text class="name" x="14" y="18">convert[1]</text><text class="note" x="14" y="37">uses: shell</text></g>
+<g transform="translate(350 214)" data-item="2"><rect class="node" width="260" height="44"/><text class="name" x="14" y="18">convert[2]</text><text class="note" x="14" y="37">uses: shell</text></g>
+<g transform="translate(350 270)" data-item="3"><rect class="node" width="260" height="44"/><text class="name" x="14" y="18">convert[3]</text><text class="note" x="14" y="37">uses: shell</text></g>
+</g>
+<g data-edge="convert->merge"><path class="edge" d="M630 202H730" marker-end="url(#arrow)"/><text class="label" x="680" y="194" text-anchor="middle">4 × part.txt</text></g>
+<g data-task="merge"><g transform="translate(730 173)"><rect class="node" width="190" height="58"/><text class="name" x="14" y="25">merge</text><text class="note" x="14" y="44">uses: shell</text></g></g>
+<rect class="frame" x="0.75" y="0.75" width="958.5" height="370.5"/>
+</svg>
