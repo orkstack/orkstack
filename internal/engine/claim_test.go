@@ -301,3 +301,31 @@ func TestClaimWorkflowID_IsAnOpaqueFixedLengthIDPerKey(t *testing.T) {
 		t.Error("an empty key still has to produce a usable workflow id")
 	}
 }
+
+// TestClaimWorkflow_HoldsTheKeyForItsTTLOrTheDefault: the claim is held for
+// exactly its TTL, and a TTL that is not positive holds it for the default —
+// never for no time, which would free the key at once and let a second
+// submission start a second run.
+func TestClaimWorkflow_HoldsTheKeyForItsTTLOrTheDefault(t *testing.T) {
+	for name, tc := range map[string]struct{ ttl, held time.Duration }{
+		"zero":           {0, engine.DefaultClaimTTL},
+		"negative":       {-time.Second, engine.DefaultClaimTTL},
+		"one nanosecond": {time.Nanosecond, time.Nanosecond},
+		"an hour":        {time.Hour, time.Hour},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var suite testsuite.WorkflowTestSuite
+			env := suite.NewTestWorkflowEnvironment()
+			env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
+				workflow.RegisterOptions{Name: engine.ClaimWorkflowType})
+			start := env.Now()
+			env.ExecuteWorkflow(engine.ClaimWorkflowType, engine.ClaimWorkflowInput{Key: "order-42", TTL: tc.ttl})
+			if !env.IsWorkflowCompleted() || env.GetWorkflowError() != nil {
+				t.Fatalf("claim workflow: completed=%v err=%v", env.IsWorkflowCompleted(), env.GetWorkflowError())
+			}
+			if held := env.Now().Sub(start); held != tc.held {
+				t.Fatalf("a TTL of %v held the key for %v, want %v", tc.ttl, held, tc.held)
+			}
+		})
+	}
+}

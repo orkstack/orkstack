@@ -89,51 +89,23 @@ func TestParseSinksBadName(t *testing.T) {
 	}
 }
 
-func TestParseSinksHeaderBothValueAndSource(t *testing.T) {
-	_, err := ParseSinks([]byte(`
-sinks:
-  default:
-    endpoint: http://x
-    headers:
-      X-Test: { value: "a", source: "env:B" }
-`))
-	if err == nil {
-		t.Fatal("expected an error for a header with both value and source")
-	}
-	if !strings.Contains(err.Error(), "X-Test") {
-		t.Errorf("error %q does not name the header", err)
-	}
-}
-
-func TestParseSinksHeaderNeitherValueNorSource(t *testing.T) {
-	_, err := ParseSinks([]byte(`
-sinks:
-  default:
-    endpoint: http://x
-    headers:
-      X-Test: {}
-`))
-	if err == nil {
-		t.Fatal("expected an error for a header with neither value nor source")
-	}
-	if !strings.Contains(err.Error(), "X-Test") {
-		t.Errorf("error %q does not name the header", err)
-	}
-}
-
-func TestParseSinksUnknownScheme(t *testing.T) {
-	_, err := ParseSinks([]byte(`
-sinks:
-  default:
-    endpoint: http://x
-    headers:
-      X-Test: { source: "vault:secret/data" }
-`))
-	if err == nil {
-		t.Fatal("expected an error for an unsupported source scheme")
-	}
-	if !strings.Contains(err.Error(), "vault") {
-		t.Errorf("error %q does not name the scheme", err)
+// A sink header names exactly one of value and source, and a source only a
+// scheme the sinks support; each refusal names what it refused.
+func TestParseSinksMalformedHeaderRefused(t *testing.T) {
+	for name, tc := range map[string]struct{ header, names string }{
+		"both value and source":    {header: `{ value: "a", source: "env:B" }`, names: "X-Test"},
+		"neither value nor source": {header: `{}`, names: "X-Test"},
+		"an unknown source scheme": {header: `{ source: "vault:secret/data" }`, names: "vault"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseSinks([]byte("sinks:\n  default:\n    endpoint: http://x\n    headers:\n      X-Test: " + tc.header + "\n"))
+			if err == nil {
+				t.Fatalf("ParseSinks accepted a header %s", tc.header)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("error %q does not name %q", err, tc.names)
+			}
+		})
 	}
 }
 

@@ -170,6 +170,78 @@ func TestBoundAttempt_KeepsTheSerializedRecordUnderTheCap(t *testing.T) {
 	}
 }
 
+// The per-field limits keep the strings short, but not their ENCODING: a
+// control character costs six bytes as JSON. A record still over the cap after
+// those limits gives up its details, then its message, to the marker alone —
+// and keeps the code, the phase and the coordinates that say which attempt
+// failed and why. An empty field stays empty rather than claiming a cut.
+func TestBoundAttempt_ShrinksDetailsThenMessageToFitTheCap(t *testing.T) {
+	escaped := func(n int) string { return strings.Repeat("\x01", n) }
+	for _, tc := range []struct {
+		name                 string
+		message, details     string
+		orkerID              string
+		wantMessage, wantDet string
+	}{
+		{
+			name:    "the details alone go",
+			message: "task \"flaky\": the container exited 1", details: escaped(AttemptErrorDetailsMaxBytes),
+			wantMessage: "task \"flaky\": the container exited 1", wantDet: AttemptTruncationMarker,
+		},
+		{
+			name:    "then the message",
+			message: escaped(AttemptErrorMessageMaxBytes), details: escaped(AttemptErrorDetailsMaxBytes),
+			orkerID:     strings.Repeat("o", 42000),
+			wantMessage: AttemptTruncationMarker, wantDet: AttemptTruncationMarker,
+		},
+		{
+			name:    "empty details stay empty",
+			message: escaped(AttemptErrorMessageMaxBytes), details: "",
+			orkerID:     strings.Repeat("o", 42000),
+			wantMessage: AttemptTruncationMarker, wantDet: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := sampleAttempt("ork-1", "flaky", 2)
+			record.Error.Message, record.Error.Details = tc.message, tc.details
+			if tc.orkerID != "" {
+				record.OrkerId = tc.orkerID
+			}
+			bounded, err := BoundAttempt(record)
+			if err != nil {
+				t.Fatalf("BoundAttempt: %v", err)
+			}
+			if got := bounded.GetError().GetDetails(); got != tc.wantDet {
+				t.Errorf("details = %d bytes %q..., want %q", len(got), prefix(got, 20), tc.wantDet)
+			}
+			if got := bounded.GetError().GetMessage(); got != tc.wantMessage {
+				t.Errorf("message = %d bytes %q..., want %q", len(got), prefix(got, 20), tc.wantMessage)
+			}
+			if bounded.GetError().GetCode() != "CONTAINER_EXIT_NONZERO" || bounded.GetPhase() != "run" ||
+				bounded.GetAttempt() != 2 || bounded.GetOrkerId() != record.GetOrkerId() {
+				t.Errorf("bounded record lost a field the ladder must keep: %v", bounded)
+			}
+			document, err := MarshalAttempt(record)
+			if err != nil {
+				t.Fatalf("MarshalAttempt: %v", err)
+			}
+			if len(document) > AttemptMaxBytes {
+				t.Fatalf("serialized record = %d bytes, cap is %d", len(document), AttemptMaxBytes)
+			}
+			if record.GetError().GetMessage() != tc.message || record.GetError().GetDetails() != tc.details {
+				t.Error("BoundAttempt mutated the record it was given")
+			}
+		})
+	}
+}
+
+func prefix(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
 // A record with nothing to truncate round-trips byte for byte through the
 // encoder pair, which is what lets a reader compare what it stored.
 func TestMarshalAttempt_RoundTrips(t *testing.T) {
