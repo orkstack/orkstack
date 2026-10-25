@@ -250,7 +250,7 @@ if [ -n "$PART" ]; then
 	exit $?
 fi
 
-ALL_GATES="temporal binaries lint build unit vet-integration images integration activity-fixture ui-check ui-unit ui-e2e observability"
+ALL_GATES="temporal binaries integration-compile lint build unit vet-integration images integration activity-fixture ui-check ui-unit ui-e2e observability"
 declare -A RUN=()
 SPEC_ARGS=()
 OBS_PATHS=""
@@ -328,6 +328,7 @@ if runs integration || runs ui-e2e || runs observability; then
 	RUN[binaries]=1
 	RUN[temporal]=1
 fi
+if runs integration; then RUN[integration-compile]=1; fi
 
 # ---- prerequisites, decided before a single file is written (exit 77) -------
 tcp_open() { (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null; }
@@ -536,18 +537,35 @@ run_bg() { # run beside the others; wait_bg collects them
 	(RUN_TRACK=1 run "$@") &
 	BG+=($!)
 }
+step_bg() { # <gate> <log> <command...>: run_bg, unless the gate is not due or the proof has stopped
+	runs "$1" || return 0
+	[ -z "$FF_TRIGGER" ] || return 0
+	run_bg "$@"
+}
 kill_tree() { # <pid>: it and its descendants, found by parent pid
 	local child
 	for child in $(ps -o pid= --ppid "$1" 2>/dev/null); do kill_tree "$child"; done
 	kill -KILL "$1" 2>/dev/null
 }
+descendants() { # <pid>: the pids under it, found by parent pid
+	local child
+	for child in $(ps -o pid= --ppid "$1" 2>/dev/null); do
+		printf '%s\n' "$child"
+		descendants "$child"
+	done
+}
 # stop_running_gates ends the gates running beside each other: SIGTERM to the
 # command pid each recorded (proofrun integration, which then writes its
 # ledger with every unfinished test as having no outcome, and make), a minute
-# of grace, then SIGKILL to what is left of that pid's tree. Only pids this
-# script recorded are signalled — never a name or a pattern (AGENTS.md §11.1).
+# of grace, then SIGKILL to what is left of that pid's tree. A setup member is
+# a shell function, whose subshell a SIGTERM ends at once while the docker or
+# go command it waited on runs on, orphaned: so the pids under each command
+# are found before the SIGTERM, and those still alive once it has ended are
+# sent a SIGTERM of their own. Only pids this script recorded, or found under
+# them by parent pid, are signalled — never a name or a pattern (AGENTS.md
+# §11.1).
 stop_running_gates() { # <failed gate>
-	local f gate pid p i alive pids=()
+	local f gate pid p k i alive pids=() kids=()
 	for f in "$DIR"/running.*; do
 		[ -e "$f" ] || continue
 		gate="${f##*/running.}"
@@ -555,6 +573,7 @@ stop_running_gates() { # <failed gate>
 		{ [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } || continue
 		printf 'stopped: %s failed\n' "$1" >"$DIR/stop.$gate"
 		say "proof: stopping $gate (pid $pid): $1 failed"
+		mapfile -t -O "${#kids[@]}" kids < <(descendants "$pid")
 		kill -TERM "$pid" 2>/dev/null
 		pids+=("$pid")
 	done
@@ -563,10 +582,13 @@ stop_running_gates() { # <failed gate>
 		for p in "${pids[@]}"; do
 			if kill -0 "$p" 2>/dev/null; then alive=1; fi
 		done
-		[ -n "$alive" ] || return 0
+		[ -n "$alive" ] || break
 		sleep 0.5
 	done
-	for p in "${pids[@]}"; do kill_tree "$p"; done
+	if [ -n "$alive" ]; then
+		for p in "${pids[@]}"; do kill_tree "$p"; done
+	fi
+	for k in "${kids[@]}"; do kill -TERM "$k" 2>/dev/null; done
 }
 wait_bg() {
 	local done_pid p rest
@@ -624,7 +646,14 @@ fi
 step ui-check ui-check.log in_ui bun run check
 step ui-unit ui-unit.log in_ui bun test test/
 
-# ---- P0: Temporal, images, binaries ---------------------------------------------
+# ---- P0: the setup, one concurrent group: Temporal, images, binaries, test binaries --
+# Everything the long gates need, started together once the fast gates have
+# passed, and collected by wait_bg: a failure of any member stops the others
+# (stop_running_gates) and the proof, and each member is its own gates.tsv
+# row as before, with a `setup` row for the group's wall. Nothing here is
+# load-sensitive — no test runs until the group has ended — and the unit gate
+# ran alone before it. A member runs in a subshell, so what start_temporal
+# learns reaches the proof through temporal.env.
 TEMPORAL_ADDRESS="127.0.0.1:7233"
 TEMPORAL_IMAGE=""
 SWEPT=""
@@ -667,7 +696,6 @@ start_temporal() {
 		--label "orkstack.proof=$PROOF_ID" \
 		--label "orkstack.proof.owner=$(hostname):$$:$(proc_start $$)" \
 		-p 127.0.0.1::7233 "${args[@]}" || return 1
-	TEMPORAL_STARTED=1
 	port="$(docker port "$TEMPORAL_NAME" 7233/tcp | head -n1 | awk -F: '{print $NF}')"
 	if [ -z "$port" ]; then
 		say "no published port for $TEMPORAL_NAME"
@@ -677,6 +705,7 @@ start_temporal() {
 	for i in $(seq 1 240); do
 		if docker exec "$TEMPORAL_NAME" temporal operator cluster health --address 127.0.0.1:7233 2>/dev/null | grep -q SERVING; then
 			say "Temporal $TEMPORAL_IMAGE serving at $TEMPORAL_ADDRESS ($(docker image inspect --format '{{index .RepoDigests 0}}' "$TEMPORAL_IMAGE" 2>/dev/null))"
+			printf 'TEMPORAL_ADDRESS=%q\nTEMPORAL_IMAGE=%q\nSWEPT=%q\n' "$TEMPORAL_ADDRESS" "$TEMPORAL_IMAGE" "$SWEPT" >"$DIR/temporal.env"
 			return 0
 		fi
 		sleep 0.5
@@ -710,14 +739,42 @@ build_binaries() {
 	done
 }
 
-step temporal temporal.log start_temporal
-if runs images && [ -z "$FF_TRIGGER" ]; then
-	IMAGES_BUILT=1
-	step images images.log push_images
-elif [ -z "$FF_TRIGGER" ] && [ -z "$IMAGE_TAG_OWN" ] && { runs temporal || runs activity-fixture; }; then
-	record_images >"$DIR/images.log" 2>&1
+if [ -z "$FF_TRIGGER" ]; then
+	SETUP_STARTED=$SECONDS
+	SETUP_MEMBERS=""
+	for g in temporal images binaries integration-compile; do
+		if runs "$g"; then SETUP_MEMBERS="$SETUP_MEMBERS $g"; fi
+	done
+	# Set here, in the proof's own shell, before the member starts: on_exit
+	# stops the container by its exact name, whichever member failed.
+	if runs temporal && [ "$PROOF_TEMPORAL" = own ]; then TEMPORAL_STARTED=1; fi
+	if runs images; then IMAGES_BUILT=1; fi
+	step_bg temporal temporal.log start_temporal
+	step_bg images images.log push_images
+	step_bg binaries binaries.log build_binaries
+	compile_args=(-out "$DIR/bin/test")
+	if [ "$TIER" = feature ]; then compile_args+=(-select "$DIR/selection.json"); fi
+	step_bg integration-compile integration-compile.log "$PR" compile "${compile_args[@]}"
+	if [ -z "$IMAGE_TAG_OWN" ] && { runs temporal || runs activity-fixture; }; then
+		record_images >"$DIR/images.log" 2>&1
+	fi
+	wait_bg
+	if [ -f "$DIR/temporal.env" ]; then
+		# shellcheck source=/dev/null
+		. "$DIR/temporal.env"
+	fi
+	if [ -n "$SETUP_MEMBERS" ]; then
+		setup_result=pass
+		for g in $SETUP_MEMBERS; do
+			if [ "$(awk -F'\t' -v g="$g" '$1 == g {print $2; exit}' "$GATES_TSV")" != pass ]; then setup_result=fail; fi
+		done
+		for g in $SETUP_MEMBERS; do
+			awk -F'\t' -v g="$g" '$1 == g {print g ": " $2 " in " $3 "s -> " $4; exit}' "$GATES_TSV"
+		done >"$DIR/setup.log"
+		printf '%s\t%s\t%s\t%s\t%s\n' setup "$setup_result" "$((SECONDS - SETUP_STARTED))" setup.log "concurrent:$SETUP_MEMBERS" >>"$GATES_TSV"
+		say "   setup: $setup_result ($((SECONDS - SETUP_STARTED))s wall, concurrent:$SETUP_MEMBERS)"
+	fi
 fi
-step binaries binaries.log build_binaries
 
 # What every stack gate sees. The unit gate sees none of it.
 STACK_ENV=(
@@ -753,7 +810,7 @@ if [ -z "$FF_TRIGGER" ]; then
 		run_bg activity-fixture activity-fixture.log fixture_after_heavy
 	fi
 	if runs integration; then
-		integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" -lists-changed "$DIR/lists-changed.json")
+		integ_args=(-out "$DIR" -bin "$DIR/bin/test" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" -lists-changed "$DIR/lists-changed.json")
 		case "$TIER" in
 		full) integ_args+=(-nightly-mode defer -nightly-base "$DIR/nightly-base.txt") ;;
 		release) integ_args+=(-nightly-mode include) ;;

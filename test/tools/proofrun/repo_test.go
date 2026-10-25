@@ -170,11 +170,13 @@ func at(text, prefix string) int {
 // failure in the fast gates first: lint, build, unit, vet, and the two UI
 // gates run one after another, alone, before the Temporal, the images and the
 // binaries, and before any gate that takes hours. The UI gates both read
-// ui/.svelte-kit, which is generated once before either.
+// ui/.svelte-kit, which is generated once before either. The setup — Temporal,
+// images, binaries and the integration test binaries — then runs as one
+// concurrent group, collected before any test starts.
 func TestRepositoryProofScript_RunsTheFastGatesBeforeAnythingLong(t *testing.T) {
 	text := proofScript(t)
 	fast := []string{"step lint ", "step build ", "step unit ", "step vet-integration ", "step ui-check ", "step ui-unit "}
-	long := []string{"step temporal ", "step images ", "step binaries ", "run_bg activity-fixture ", "run_bg integration ", "step ui-e2e ", "step observability "}
+	long := []string{"step_bg temporal ", "step_bg images ", "step_bg binaries ", "step_bg integration-compile ", "run_bg activity-fixture ", "run_bg integration ", "step ui-e2e ", "step observability "}
 	last := -1
 	for _, g := range fast {
 		i := at(text, g)
@@ -209,10 +211,33 @@ func TestRepositoryProofScript_RunsTheFastGatesBeforeAnythingLong(t *testing.T) 
 	if n := strings.Count(text, "svelte-kit sync >"); n != 1 {
 		t.Errorf("svelte-kit sync is generated %d times, want once", n)
 	}
-	// The only gates that run beside each other are the two that start
-	// together; nothing else is started in the background.
-	if n := strings.Count(text, "\trun_bg "); n != 2 {
-		t.Errorf("%d run_bg call sites, want 2 (activity-fixture and integration)", n)
+	// The gates that run beside each other: the setup group's members
+	// (through step_bg, which calls run_bg once) and then integration with
+	// the activity fixture; nothing else is started in the background.
+	if n := strings.Count(text, "\trun_bg "); n != 3 {
+		t.Errorf("%d run_bg call sites, want 3 (step_bg, activity-fixture and integration)", n)
+	}
+	if n := strings.Count(text, "\tstep_bg "); n != 4 {
+		t.Errorf("%d step_bg call sites, want 4 (temporal, images, binaries, integration-compile)", n)
+	}
+	// The setup group is collected, and temporal.env read, before the stack
+	// environment is built and before integration or the fixture starts.
+	group := at(text, "step_bg integration-compile ")
+	collect := at(text[group:], "wait_bg\n")
+	env := at(text[group:], ". \"$DIR/temporal.env\"")
+	stack := at(text[group:], "STACK_ENV=(")
+	first := at(text[group:], "run_bg activity-fixture ")
+	if collect < 0 || env < collect || stack < env || first < stack {
+		t.Errorf("the setup group is not collected (wait_bg), its temporal.env read, and STACK_ENV built before the first long gate starts")
+	}
+	// What proofrun compile builds is what proofrun integration adopts.
+	for _, want := range []string{`compile_args=(-out "$DIR/bin/test")`, `integ_args=(-out "$DIR" -bin "$DIR/bin/test"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("proof.sh lacks %q", want)
+		}
+	}
+	if !subcommandFlags(t, "integration")["bin"] || !subcommandFlags(t, "compile")["out"] {
+		t.Error("proofrun integration -bin or proofrun compile -out is gone")
 	}
 }
 
@@ -248,10 +273,18 @@ func TestRepositoryProofScript_FailsFast(t *testing.T) {
 	if i < 0 || !strings.Contains(text[i:i+300], `[ -z "$FF_TRIGGER" ] || return 0`) {
 		t.Error("step does not refuse to start a gate once the proof has stopped")
 	}
-	for _, g := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "ui-e2e", "observability", "temporal", "images", "binaries"} {
+	for _, g := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "ui-e2e", "observability"} {
 		if !strings.Contains(text, "step "+g+" ") {
 			t.Errorf("gate %s is not run through step: a stopped proof would still start it", g)
 		}
+	}
+	for _, g := range []string{"temporal", "images", "binaries", "integration-compile"} {
+		if !strings.Contains(text, "\tstep_bg "+g+" ") {
+			t.Errorf("setup member %s is not run through step_bg: a stopped proof would still start it", g)
+		}
+	}
+	if i := at(text, "step_bg() {"); i < 0 || !strings.Contains(text[i:i+200], `[ -z "$FF_TRIGGER" ] || return 0`) {
+		t.Error("step_bg does not refuse to start a gate once the proof has stopped")
 	}
 	// A stopped gate is ended through the pid its own run recorded.
 	if !strings.Contains(text, `kill -TERM "$pid"`) || !strings.Contains(text, `printf '%s\n' "$cpid" >"$DIR/running.$gate"`) {

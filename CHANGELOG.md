@@ -61,6 +61,14 @@ include breaking changes, and each is marked **BREAKING**.
   and runs `test/tools/archive-sized-run` as a binary the suite builds once
   (`ui/e2e/global-setup.ts`, `scripts/proof.sh`, `scripts/proof-part.sh`)
   rather than through `go run`. No budget, size or timed open changed.
+- A proof's setup — its own Temporal, the activity images, the binaries and
+  the integration test binaries — runs as one concurrent group once the fast
+  gates pass, instead of one step after another, with each member still its
+  own `gates.tsv` row and a `setup` row for the group's wall; a failure of any
+  member stops the others. `proofrun compile -out DIR` builds the integration
+  test binaries ahead, and `proofrun integration -bin DIR` adopts them only
+  when their manifest names the same working tree, packages, binary SHA-256
+  and listing (docs/PROOFS.md §2.1, §4).
 - The proof is faster on one host, running the same tests: integration tests
   keep `PROOF_JOBS=4` (6 was measured: clean but for one 50 s engine-boot
   stall on a fresh bucket, so it stays an operator's choice), the activity contract

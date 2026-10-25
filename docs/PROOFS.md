@@ -50,8 +50,12 @@ parts. There is one verdict implementation.
 A local proof runs its gates in this order: the **fast gates**, alone and one
 after another — lint, build, unit, `go vet -tags=integration`, then the UI
 type-check and unit suites (after one `svelte-kit sync`, which both read);
-then the setup the long gates need (the proof's own Temporal, the activity
-images, the binaries); then the integration suite with the activity contract
+then the **setup**, as one
+concurrent group — the proof's own Temporal, the activity images, the binaries
+and the integration test binaries (`proofrun compile`), each its own row of
+`gates.tsv` (`temporal`, `images`, `binaries`, `integration-compile`) and the
+group's wall a `setup` row; nothing in it is load-sensitive, no test runs until
+it has ended, and a failure of any member stops the others; then the integration suite with the activity contract
 fixture beside it — the only two gates that overlap, and the fixture starts
 only once the integration runner has finished its heavy jobs
 (`integration-heavy-done`), so a heavy test's quiet host never carries the
@@ -95,8 +99,12 @@ become eligible, and everything after that failure only costs time. By default
 (`PROOF_FAIL_FAST=1`) `scripts/proof.sh` therefore stops at the first failing
 gate, in every tier it runs on one host (feature, full, nightly and release):
 
-- a failure in a fast gate (or in the Temporal, images or binaries setup)
-  starts no other gate, and nothing long has begun;
+- a failure in a fast gate starts no other gate, and nothing long has begun;
+- a failure of a setup member (Temporal, images, binaries, the integration
+  test binaries) stops the members still running, as integration and the
+  fixture stop each other below, and starts no other gate. A member that is
+  a shell function ends at once on `SIGTERM`, so the script also signals the
+  processes it found under that member's pid before stopping it;
 - while the integration suite and the activity fixture run, a failure of
   either stops the other: the script sends `SIGTERM` to the command pid it
   recorded for that gate (never a name or a pattern), waits up to a minute, and
@@ -170,7 +178,16 @@ does not exist are invalid invocations.
 ## 4. The plan and the sharding
 
 `proofrun integration -plan-only` compiles and lists the integration packages
-once and writes `integration-plan.json`, format 2:
+once and writes `integration-plan.json`, format 2. A local proof compiles them
+earlier, while its Temporal starts and its images push: `proofrun compile -out
+DIR` (`-select FILE` for a feature proof's packages) compiles and lists the
+same package set into `DIR` and writes `compiled.json` last — the working tree
+it compiled, and each package's binary, binary SHA-256 and listing SHA-256.
+`proofrun integration -bin DIR` adopts those binaries only when the manifest
+names this working tree, exactly the packages it plans, and binaries whose
+bytes and listings still hash as recorded, and fails on any mismatch; a
+directory with no manifest is compiled into as before. The plan records the
+adopted binaries' SHA-256 exactly as it records its own compile's:
 
 - `tree`, `commit`, `tier`, `proof_id`, `base_ref`, `base_commit`,
   `merge_base`, `observability_required`;
@@ -720,6 +737,7 @@ one only once the process its name records is gone.
 |---|---|
 | `unit` | `-out FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE` |
 | `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-host-speed FILE`, `-host-speed-base FILE` |
+| `compile` | `-out DIR`, `-select FILE` |
 | `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
 | `feature-report` | `-dir DIR`, `-select FILE` |
 | `ui-ledger` | `-report FILE`, `-list FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
