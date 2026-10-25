@@ -6,9 +6,10 @@
 //		go run ./test/tools/bucket-ensure
 //
 // ORK_BUCKET_ACTION selects the mode: "ensure" (the default — create if
-// absent, idempotently), "cleanup" (empty the bucket and delete it,
-// idempotently against a bucket that is already gone) or "list" (print every
-// bucket's name; ORK_S3_BUCKET is not needed).
+// absent, idempotently), "cleanup" (delete the bucket, emptying it first when
+// the store refuses a non-empty one; idempotently against a bucket that is
+// already gone) or "list" (print every bucket's name; ORK_S3_BUCKET is not
+// needed).
 //
 // WHY THIS EXISTS. The development stack makes exactly one bucket,
 // `orkstack-artifacts`, once, and every e2e spec file used to share it. A
@@ -44,6 +45,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -174,19 +176,38 @@ func ensure() error {
 	return fmt.Errorf("create bucket %q at %s: %w", bucket, endpoint, err)
 }
 
-// cleanup empties and removes the bucket this run created. S3 (and MinIO)
-// refuse DeleteBucket on a non-empty bucket, so every object is listed and
-// batch-deleted first, in pages, before the bucket itself goes — and both
-// steps are idempotent against a bucket that is already gone, since the
-// alternative (this tool erroring on a re-run, or on a run that never got
-// far enough to create the bucket) would make every OTHER call site have to
-// guard a call that promises to be a no-op.
+// cleanup removes the bucket this run created.
 func cleanup() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	client, bucket, endpoint, err := newClient(ctx)
 	if err != nil {
 		return err
+	}
+	return cleanupBucket(ctx, client, bucket, endpoint, os.Stdout)
+}
+
+// cleanupBucket removes bucket, idempotently against one that is already gone
+// (the alternative — this tool erroring on a re-run, or on a run that never got
+// far enough to create the bucket — would make every OTHER call site guard a
+// call that promises to be a no-op).
+//
+// It asks the store to delete the bucket first. A store that deletes a
+// non-empty bucket whole (SeaweedFS can) does it in that one request, the
+// cheapest removal there is, and at a higher PROOF_JOBS the one that stalls
+// other processes least. One that refuses with BucketNotEmpty (S3 does) gets
+// every object listed and batch-deleted in pages, then the bucket again.
+func cleanupBucket(ctx context.Context, client *s3.Client, bucket, endpoint string, out io.Writer) error {
+	_, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
+	switch {
+	case err == nil:
+		fmt.Fprintf(out, "bucket-ensure: removed %q at %s\n", bucket, endpoint)
+		return nil
+	case bucketAbsent(err):
+		fmt.Fprintf(out, "bucket-ensure: %q is already gone\n", bucket)
+		return nil
+	case !bucketNotEmpty(err):
+		return fmt.Errorf("delete bucket %q at %s: %w", bucket, endpoint, err)
 	}
 
 	removed := 0
@@ -198,7 +219,7 @@ func cleanup() error {
 		})
 		if err != nil {
 			if bucketAbsent(err) {
-				fmt.Printf("bucket-ensure: %q is already gone\n", bucket)
+				fmt.Fprintf(out, "bucket-ensure: %q is already gone\n", bucket)
 				return nil
 			}
 			return fmt.Errorf("list objects in %q at %s: %w", bucket, endpoint, err)
@@ -224,14 +245,22 @@ func cleanup() error {
 
 	if _, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)}); err != nil {
 		if bucketAbsent(err) {
-			fmt.Printf("bucket-ensure: %q is already gone (removed %d object(s) first)\n", bucket, removed)
+			fmt.Fprintf(out, "bucket-ensure: %q is already gone (removed %d object(s) first)\n", bucket, removed)
 			return nil
 		}
 		return fmt.Errorf("delete bucket %q at %s (removed %d object(s) first): %w",
 			bucket, endpoint, removed, err)
 	}
-	fmt.Printf("bucket-ensure: removed %q at %s (%d object(s))\n", bucket, endpoint, removed)
+	fmt.Fprintf(out, "bucket-ensure: removed %q at %s (%d object(s))\n", bucket, endpoint, removed)
 	return nil
+}
+
+// bucketNotEmpty reports whether err is S3's refusal to delete a bucket that
+// still holds objects: the one failure that sends cleanup to empty the bucket
+// itself.
+func bucketNotEmpty(err error) bool {
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "BucketNotEmpty"
 }
 
 // bucketAbsent reports whether err is S3's own "no such bucket" — the one

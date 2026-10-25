@@ -26,6 +26,23 @@ include breaking changes, and each is marked **BREAKING**.
   reported the test as an outcome the plan had deferred, so a local full proof
   with a non-empty nightly list could not be merge-eligible. A `deferred` entry
   for a test the plan runs is still a problem.
+- An engine boot that stalled 50 s behind object-store bucket churn at a
+  higher `PROOF_JOBS` left the integration tests' 60 s boot waits no margin on
+  a merge gate that is never rerun. Every wait for a process a test starts
+  now allows a boot 180 s (the test binary's own bucket create, 120 s), ends
+  at once when the process exits, and records a boot over 20 s as a `WARN`
+  line with its duration, which `proofrun overhead` lists, instead of
+  absorbing it. The engine's boot log lines for the Orkflow store and the
+  namespace registry carry a `list_took` attribute, so a slow boot names the
+  read that stalled.
+- A test process removed its bucket on its slot as it ended, and that
+  removal's churn was the stall above. A process whose tests passed now names
+  its bucket in a file (`ORK_TEST_BUCKET_LEFT_FILE`), and `proofrun
+  integration` removes those buckets once, after the integration phase, four
+  at a time; a failing process still keeps its bucket, and a removal that
+  fails is logged and never fails the proof. A bucket is removed with one
+  request when the store deletes a non-empty bucket, and is emptied object by
+  object only when the store refuses, here and in `test/tools/bucket-ensure`.
 
 ### Added
 

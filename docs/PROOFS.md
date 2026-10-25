@@ -91,7 +91,35 @@ Integration tests run as separate processes, `PROOF_JOBS` at a time (default
 4; the ordinary jobs keep every slot busy, so the phase's wall is their total
 work divided by the slots, but at 6 on a 16-core host one engine boot in 277
 jobs stalled 50 s on its fresh bucket's first read while SeaweedFS grew and
-removed per-bucket volumes, and a merge gate is never rerun). Playwright spec files run on
+removed per-bucket volumes, and a merge gate is never rerun).
+
+That stall class is tolerated, and still recorded. Every wait for a process a
+test started (`internal/testsupport/bootwait`) allows the boot 180 s, ends at
+once when the process has exited instead of polling it, and logs how long the
+boot took, with a `WARN` line past 20 s that `proofrun overhead` lists under
+"Slow boots". A test binary's bucket create (`s3bucket.Main`) is allowed 120 s
+and warns the same way, and the engine's two boot reads log `list_took`, so a
+slow boot says which read stalled. The default stays 4 until a proof at 6 is
+measured clean again.
+
+A test process's bucket is removed after the integration phase, not on its
+slot, because removing a bucket is the store's heaviest per-bucket operation
+and its churn was the stall. `proofrun integration` (a local proof, and each CI
+shard) gives every test process a file to name its bucket in
+(`ORK_TEST_BUCKET_LEFT_FILE`, `integration/<job>.bucket`). A process whose
+tests passed writes its bucket's name there and exits (`s3bucket.Finish`); one
+with a failure keeps its bucket and writes nothing, as before. When the phase's
+last process has ended, still inside the gate's wall, the runner removes the
+buckets of the processes whose tests all passed, four at a time and two minutes
+each, asking the store to delete the bucket whole and emptying it object by
+object only when the store refuses a non-empty one. It removes only a name of
+the shape `s3bucket.Name` makes, never the development bucket. The
+`bucket sweep:` lines of `integration.log` say what it kept, what it left
+(`left s3://… : <error>`) and ends with `removed N of M passing job buckets`; a
+removal that fails costs disk and never the verdict, and a run a signal stopped
+removes none.
+
+Playwright spec files run on
 `PROOF_UI_WORKERS` workers (default 2 — measured clean on a 16-core host,
 while at 3 one load-sensitive spec failed in each of three runs): the browser
 runs in a network
@@ -599,8 +627,9 @@ there is refused). Its Markdown report has:
   `end <job> after X s` lines in `integration.log` (each part's log in a
   merged proof) joined with `integration-tests.json` by job: each process's
   wall, its top-level tests' ledger seconds, and the difference. That
-  difference is the per-process overhead: bucket create and remove, binary
-  init and Temporal namespace registration, together. The report gives its
+  difference is the per-process overhead: bucket create, binary init and
+  Temporal namespace registration, together (a bucket's removal was part of it
+  until the end-of-phase sweep, §2.1, took it over). The report gives its
   min, median, p90, max and total, and the total in slot-seconds and in wall
   at `proof.json`'s `proof_jobs`. It also gives the heavy phase's wall (the
   plan's heavy jobs, run alone) and the ordinary phase's wall and slot
@@ -748,7 +777,10 @@ private repository.
 **Stop or clean up a proof.** `make proof-stop PROOF=proof/<name>` stops the
 proof you started and the containers it labelled. `make proof-clean` lists the
 buckets and work roots failed tests kept; `make proof-clean REMOVE=1` removes
-one only once the process its name records is gone.
+one only once the process its name records is gone. It also lists the passing
+jobs' buckets that a bucket sweep a signal stopped did not reach (§2.1): they
+are the proof's `integration/*.bucket` files, and the store holds each as a
+bucket whose process is gone.
 
 ## 11. Reference
 
