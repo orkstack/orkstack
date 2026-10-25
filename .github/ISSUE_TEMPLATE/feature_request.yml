@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Some things OrkStack deliberately does not do (loops, `continue_on_error`, exactly-once, a database of its own); the Limitations page says why: https://orkstack.github.io/orkstack/docs/operating/limitations/
+        Some things OrkStack deliberately does not do (loops, `continue_on_error`, exactly-once, a database of its own); LIMITATIONS.md says why: https://github.com/orkstack/orkstack/blob/main/docs/LIMITATIONS.md
   - type: textarea
     id: problem
     attributes:

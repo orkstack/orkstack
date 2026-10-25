@@ -7,37 +7,37 @@ const limits = [
 	{
 		no: 'No loops',
 		text: 'The graph stays a DAG. Repeat with a retry policy, a fan-out, a schedule or an awaited task.',
-		href: route('docs/authoring/patterns') + '#repeat-without-loops',
+		href: route('docs/reference/limits'),
 	},
 	{
 		no: 'No continue_on_error',
 		text: 'A failure handler runs compensation, and the run still ends FAILED with its original reason.',
-		href: route('docs/authoring/dsl') + '#joins-and-failure-handlers-join',
+		href: route('docs/how-to/handle-failure'),
 	},
 	{
 		no: 'No exactly-once',
 		text: 'Activities run at least once. A durably committed result is never run again; side effects outside it may repeat.',
-		href: route('docs/activities/contract'),
+		href: route('docs/concepts/durability'),
 	},
 	{
 		no: 'No SDK or sidecar',
 		text: 'An activity never calls OrkStack back. It reads files, writes files and exits.',
-		href: route('docs/activities/contract'),
+		href: route('docs/concepts/activities'),
 	},
 	{
 		no: 'No database',
 		text: 'Nothing beyond Temporal and object storage, and no record anyone edits to unstick a run.',
-		href: route('docs/concepts/product-boundary'),
+		href: route('docs/concepts/how-it-works'),
 	},
 	{
 		no: 'No Temporal Cloud yet',
 		text: 'The engine connects to a cluster by address and namespace; the authentication and TLS a hosted cluster needs are not built.',
-		href: route('docs/operating/limitations'),
+		href: route('docs/reference/limits'),
 	},
 	{
 		no: 'One runtime, two networks',
 		text: 'Docker is the only container runtime today, and a task’s network is default or none.',
-		href: route('docs/operating/limitations'),
+		href: route('docs/reference/limits'),
 	},
 ];
 ---
@@ -47,8 +47,8 @@ const limits = [
 		<h2 id="limits-title">What OrkStack deliberately doesn’t do</h2>
 		<p>
 			Each of these is a decision, written down with its reason. The full list, with every bound and the setting
-			that moves it, is on <a href={route('docs/operating/limitations')}>Limitations</a>; how each guarantee is
-			tested is on <a href={route('docs/contributing/proven')}>How OrkStack is proven</a>.
+			that moves it, is on <a href={route('docs/reference/limits')}>Limits</a>; how each guarantee is
+			tested is on <a href={route('docs/concepts/proven')}>How OrkStack is proven</a>.
 		</p>
 	</header>
 	<ul class="limit-list">

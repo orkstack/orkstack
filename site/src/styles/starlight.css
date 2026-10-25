@@ -233,6 +233,12 @@ h1#_top {
 .sl-markdown-content .theme-figure img {
 	border: var(--rule-region) solid var(--color-ink);
 }
+/* A diagram draws its own frame (scripts/readme-diagrams.mjs). */
+.sl-markdown-content .theme-diagram img {
+	width: 100%;
+	height: auto;
+	border: 0;
+}
 .sl-markdown-content .theme-figure figcaption {
 	margin-top: calc(var(--spacing) * 2);
 	color: var(--color-ink-muted);

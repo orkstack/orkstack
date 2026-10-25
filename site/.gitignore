@@ -10,3 +10,5 @@ node_modules/
 .impeccable/
 # make site-media's scratch directory (removed when it finishes).
 .media-work/
+# The diagrams, copied from docs/images/ on every build.
+public/diagrams/

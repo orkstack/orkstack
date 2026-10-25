@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        The documentation may already answer it: https://orkstack.github.io/orkstack/docs/ (Troubleshooting and FAQ is under Operating).
+        The documentation may already answer it: https://orkstack.github.io/orkstack/docs/, and https://orkstack.github.io/orkstack/docs/how-to/troubleshoot/ covers the common problems.
   - type: textarea
     id: question
     attributes:

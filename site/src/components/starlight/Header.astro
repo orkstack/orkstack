@@ -13,7 +13,7 @@ import { route, REPO } from '../../../site.config.mjs';
 // (aria-current="true") and "Examples" is too when the page is one of them.
 // Neither is "page": the sidebar marks the page itself.
 const id = Astro.locals.starlightRoute.id;
-const inExamples = id === 'docs/getting-started/examples' || id.startsWith('docs/getting-started/examples/');
+const inExamples = id === 'docs/examples' || id.startsWith('docs/examples/');
 ---
 
 <div class="sl-header">
@@ -22,7 +22,7 @@ const inExamples = id === 'docs/getting-started/examples' || id.startsWith('docs
 		<nav class="topbar-links sl-header-places" aria-label="Primary">
 			<span class="topbar-rule" aria-hidden="true"></span>
 			<a class="topbar-link" href={route('docs')} aria-current={inExamples ? undefined : 'true'}>Docs</a>
-			<a class="topbar-link" href={route('docs/getting-started/examples')} aria-current={inExamples ? 'true' : undefined}
+			<a class="topbar-link" href={route('docs/examples')} aria-current={inExamples ? 'true' : undefined}
 				>Examples</a
 			>
 		</nav>
