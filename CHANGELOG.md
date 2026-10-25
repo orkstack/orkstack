@@ -10,6 +10,11 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- A proof's split Playwright invocations pass their spec files before
+  `--project`, which took every word after it as a project name: a feature
+  proof naming specs, and every CI `ui-e2e` part, ran with more than one UI
+  worker refused its files as unknown projects. They also pass
+  `--pass-with-no-tests`, since a selection may hold no file of one project.
 - A local full proof records each nightly-listed test its base also lists as
   `deferred`, as a sharded proof's merger does. It built its ledger over the
   plan's whole expected set, which includes the deferred tests, so the first

@@ -258,3 +258,42 @@ func TestRepositoryProofScript_FailsFast(t *testing.T) {
 		t.Error("proof.sh no longer stops a gate through the command pid it recorded")
 	}
 }
+
+// Playwright's --project takes every word after it as a project name, so a
+// spec file passed after it is refused as an unknown project and the
+// invocation runs nothing. Every split UI invocation of the gate passes its
+// spec files before --project, and passes --pass-with-no-tests, because a
+// selection or a shard may hold no file of one of the projects.
+func TestRepositoryPlaywrightProjectInvocationsPassFilesFirst(t *testing.T) {
+	root := mustRepoRoot()
+	for file, files := range map[string]string{
+		"scripts/proof.sh":      `"${SPEC_ARGS[@]}"`,
+		"scripts/proof-part.sh": `"${rel[@]}"`,
+	} {
+		src, err := os.ReadFile(filepath.Join(root, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := 0
+		for n, line := range strings.Split(string(src), "\n") {
+			project := strings.Index(line, "--project ")
+			if project < 0 || strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			seen++
+			at := strings.Index(line, files)
+			switch {
+			case at < 0:
+				t.Errorf("%s:%d: a --project invocation without %s: %s", file, n+1, files, strings.TrimSpace(line))
+			case at > project:
+				t.Errorf("%s:%d: %s after --project, which takes it as project names: %s", file, n+1, files, strings.TrimSpace(line))
+			}
+			if !strings.Contains(line, "--pass-with-no-tests") {
+				t.Errorf("%s:%d: a --project invocation without --pass-with-no-tests: %s", file, n+1, strings.TrimSpace(line))
+			}
+		}
+		if seen != 2 {
+			t.Errorf("%s: %d --project invocations, want the parallel one and the solo one", file, seen)
+		}
+	}
+}
