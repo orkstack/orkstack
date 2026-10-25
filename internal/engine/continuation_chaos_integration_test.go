@@ -3198,7 +3198,15 @@ func TestIntegration_ContinuationChaosC31_RestoreRetriesStayWithinTheirBound(t *
 		}
 		return nil
 	}
-	_, budget := s.tcPlan()
+	// The restore timeout is this test's own, not tcPlan's 5 minutes: 150 s
+	// still drives both regimes RestoreHistoryBound charges for. Its stalled
+	// first half (75 s) holds two full DefaultRestoreAttempt (30 s) blocks;
+	// in its cut second half the local-activity backoff keeps doubling
+	// (1, 2, 4, 8, 16, 32 s) past the 10 s workflow-task timeout, into the
+	// server-timer regime: the first 16 s backoff starts by about 105 s, so
+	// 150 s leaves it 45 s to spare. The bound and the guard's threshold
+	// below are computed from this budget, so they stay exact.
+	budget := engine.DefaultContinuationBudget(120, 1<<20, 150*time.Second)
 	s.startReplica("replica-a", replicaOptions{beforeRead: beforeRead,
 		store: splitStore{SnapshotStore: s.store, reads: s.snapshotStoreVia(proxy)}})
 	s.startProjection(nil)
