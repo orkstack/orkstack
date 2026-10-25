@@ -13,6 +13,7 @@ import (
 	"go.temporal.io/sdk/testsuite"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // recordingObserver is a ContinuationObserver that keeps every observation.
@@ -174,4 +175,28 @@ type failingStore struct {
 
 func (f *failingStore) WriteContinuation(context.Context, string, string, int64, string, []byte) (string, error) {
 	return "", f.err
+}
+
+// A read whose key does not resolve fails RUN_STATE_CORRUPT and says what the
+// run could not read in its own words: its definition, when the locator names
+// a definition passed by reference, and its saved state otherwise.
+func TestReadContinuationChunk_AnUnresolvableKeyNamesWhatItWas(t *testing.T) {
+	for kind, want := range map[string]string{
+		artifacts.ContinuationKindDefinition: "the run's definition is not named by a valid key",
+		artifacts.ContinuationKindCheckpoint: "the run's saved state is not named by a valid key",
+	} {
+		t.Run(kind, func(t *testing.T) {
+			var suite testsuite.WorkflowTestSuite
+			env := suite.NewTestActivityEnvironment()
+			a := NewSnapshotActivities(newMemSnapshotStore())
+			env.RegisterActivityWithOptions(a.ReadContinuationChunk, activity.RegisterOptions{Name: ActivityReadContinuationChunk})
+			loc := ContinuationLocator{Namespace: "team-a", RunID: "ork-1-2", Generation: 1, Kind: kind, SHA256: "not-a-digest"}
+			_, err := env.ExecuteActivity(ActivityReadContinuationChunk, loc, int64(10), int64(0), int64(10),
+				ContinuationObservationInput{Namespace: "team-a"})
+			var app *temporal.ApplicationError
+			if !errors.As(err, &app) || app.Type() != RunStateCorruptCode || !app.NonRetryable() || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want a non-retryable %s naming %q", err, RunStateCorruptCode, want)
+			}
+		})
+	}
 }
