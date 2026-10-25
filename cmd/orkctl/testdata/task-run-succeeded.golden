@@ -40,7 +40,7 @@ config.json  (204 bytes)
 › running
   │ done
 › validating outputs
-› collecting outputs (into this machine's session directory)
+› collecting outputs (into this machine's work directory)
 
 SUCCEEDED
 exit code    0 after <d>

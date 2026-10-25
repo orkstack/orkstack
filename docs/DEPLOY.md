@@ -296,7 +296,9 @@ instead of writing an empty value that can never take effect. `--check`
 validates the file, prints the effective configuration for the binary you
 ran it on as YAML — secret leaves redacted to `***`, and every value
 labeled with where it came from: `file`, `env`, or `default` — then exits
-0, or 1 naming the first error. `--check` never starts anything.
+0, or 1 naming the first error. `--check` never starts anything. The other
+flag that starts nothing is `--healthcheck`, which asks a running process
+whether it is ready (§5, "Health checks").
 
 Two subtrees are documents rather than scalars: `activities:` and
 `telemetry.sinks:` carry their own nested schema — the same shapes
@@ -1532,6 +1534,101 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   worktree's dev stack, including any process whose executable is this
   worktree's `bin/ork` or `bin/orker`, and `scripts/proof-stop.sh
   proof/<name>` stops a proof you started.
+
+### Health checks
+
+`ork --healthcheck` and `orker --healthcheck` ask the process's own admin
+listener whether it is ready, and exit with the answer. They exist for a
+container that has no shell: the `ork` and `orker` images are distroless, so a
+Docker `HEALTHCHECK`, a Compose `healthcheck:` or an exec probe has no `curl`
+or `wget` to run. The binary makes the request itself. It starts nothing: no
+engine boot, no Temporal connection, no store.
+
+- **What it asks.** `GET /readyz` on `ORK_ADMIN_ADDR` (`telemetry.admin_addr`),
+  the listener of §7. It reads its configuration the way a boot does:
+  `--config PATH`, `ORK_CONFIG_FILE` and `--no-config` mean what they mean for
+  the daemon, and an environment variable wins over the file. Give the check
+  the daemon's configuration, and the two cannot disagree about the address.
+  A listener bound to every interface (`:9464`, `0.0.0.0:9464`, `[::]:9464`) is
+  asked on loopback, `127.0.0.1` or `::1`, because a wildcard address says where
+  to listen and is no place to connect to. Any other host is asked as written,
+  since a listener bound to `10.1.2.3` does not answer on loopback.
+- **What it answers.** Exit `0` and one line on stdout, `ork: ready (http://…)`,
+  when `/readyz` answers `200`. Exit `1` and one line on stderr, with the
+  reason, for everything else: `503 Service Unavailable: not ready` while the
+  process boots or shuts down, `connection refused` when nothing listens,
+  `no answer within 3s`, or any other status. An unset `ORK_ADMIN_ADDR` is exit
+  `1` naming the variable, because a process with no admin listener has nothing
+  to ask. A random port (`:0`) is refused for the same reason: a check cannot
+  know it. A bad argument, and `--healthcheck` with `--check`, are exit `2`.
+- **What ready means.** It is the process's own claim, not a probe of its
+  dependencies. `ork` is ready once its API is serving, and `orker` once its
+  task, control and presence workers are all polling. It flips once at boot
+  and once at shutdown: a Temporal or object storage outage that begins after
+  boot does not make either unready.
+- **Wiring it.** Set `ORK_ADMIN_ADDR` inside the container, on loopback if
+  nothing outside should reach it (`ORK_ADMIN_ADDR=127.0.0.1:9464`; it is never
+  published), and run the same binary with the flag and the same environment:
+
+  ```yaml
+  healthcheck:
+    test: ["CMD", "/usr/local/bin/ork", "--healthcheck"]   # orker: /usr/local/bin/orker
+    interval: 10s
+    timeout: 5s
+    start_period: 30s
+    retries: 3
+  ```
+
+  `start_period` is the boot: a check that fails inside it does not count
+  against `retries`. The check itself gives up after 3 seconds.
+
+### Running the published images
+
+Each release publishes `ork`, `orker`, `orkctl` and `ui` images to
+`ghcr.io/orkstack`, for linux/amd64 and linux/arm64, beside the first-party
+activity images ([UPGRADING.md](UPGRADING.md), "Release artifacts").
+[`deploy/quickstart/compose.yaml`](../deploy/quickstart/compose.yaml) runs all
+of them on one machine and is the worked example of what follows; it is
+checked by `internal/dist`'s tests and run end to end by
+`scripts/release-smoke.sh` before a release publishes anything.
+
+| Image | Runs | User | Settings it needs in a container |
+|---|---|---|---|
+| `ork` | `/usr/local/bin/ork` | non-root | the API on `ORK_HTTP_ADDR` (default `:8080`, every interface), Temporal (`ORK_TEMPORAL_ADDRESS`), the store (`ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_*`), `ORK_WS_ALLOWED_ORIGINS` naming the UI's origin, and `ORK_ADMIN_ADDR` for a health check |
+| `orker` | `/usr/local/bin/orker`, with the `docker` CLI | root | the Docker socket and a work directory, below; Temporal and the store as for `ork` |
+| `orkctl` | `/usr/local/bin/orkctl` | non-root | `ORK_SERVER`; its working directory is `/work` |
+| `ui` | `node build` on port 5173 | non-root | `ENGINE_API_URL` (where its server reaches the engine) and `PUBLIC_ENGINE_WS_URL` (where a browser reaches the engine's WebSockets) |
+
+**The Orker in a container.** The Orker starts each task's container through
+the host's Docker daemon, so its container needs that daemon's socket
+(`/var/run/docker.sock`). Whoever can use the socket can start a privileged
+container: the Orker container is as trusted as root on its host
+([SECURITY_MODEL.md](SECURITY_MODEL.md), "The Orker's own access to the
+host"). Give the socket to the Orker and to nothing else. Three more rules
+follow from the daemon reading paths on the host:
+
+- **The work directory is the same path inside and out.** The daemon
+  bind-mounts each task's workspace from `ORK_ORKER_WORKDIR` as a host path,
+  so mount the host directory at that same path in the container
+  (`-v /var/lib/orkstack/work:/var/lib/orkstack/work`). On a machine whose
+  daemon runs in a virtual machine (Docker Desktop, colima), the directory
+  must also be one the virtual machine shares; the Orker's boot check refuses
+  one it cannot bind (`WORKDIR_NOT_BINDABLE`).
+- **One `ORK_ORKER_ID` per Orker, set explicitly.** The default id is derived
+  from the container's host name and work directory, and the identity lock
+  lives in the container's own `/tmp`: two Orker containers on one daemon
+  must each be given a distinct id.
+- **A stop grace longer than a task's.** A stopped Orker cancels its running
+  tasks, each with its own grace (30 s by default) before SIGKILL; give the
+  Orker's container longer than that (`stop_grace_period: 45s`) and run it
+  with an init (`init: true`), so a signal reaches the process.
+
+**The activity catalog.** A release's `ork` resolves `uses: shell` and the
+other first-party names by the tag of its release line, for example
+`ghcr.io/orkstack/activity-shell:0.1` for every 0.1 release; that tag moves to
+each patch release of the line. To pin the exact release instead, set
+`ORK_ACTIVITY_CATALOG` to the images by tag and digest, as the quickstart's
+`.env` does.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 

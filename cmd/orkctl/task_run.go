@@ -128,6 +128,9 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 			"command could not run the task.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireLocalRunHost(g.hostOS(), "task run"); err != nil {
+				return err
+			}
 			selected, err := opts.item.resolve(cmd, opts.task)
 			if err != nil {
 				return err
@@ -158,7 +161,7 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 			"with --from-run it overrides the recorded outcome, without it every direct need must be named")
 	flags.StringVar(&opts.shared, "shared", "", "seed a pinned task's /orkstack/shared from this directory")
 	flags.BoolVar(&opts.renderOnly, "render-only", false, "stop once the input tree is sealed; start no container")
-	flags.BoolVar(&opts.keep, "keep", false, "keep the session directory and print its path")
+	flags.BoolVar(&opts.keep, "keep", false, "keep the work directory and print its path")
 	return cmd
 }
 
@@ -967,7 +970,7 @@ func (r *taskRunner) pinTimeout(name string, in *orkstackv1.ExecuteTaskInput) in
 
 // dispatch runs the task through the dispatcher and reports it.
 func (r *taskRunner) dispatch() (err error) {
-	// STEP 8. The session directory, the store, the dispatcher.
+	// STEP 8. The work directory, the store, the dispatcher.
 	root := localToolRoot("task-run")
 	if root == "" {
 		root = os.TempDir()
@@ -975,7 +978,7 @@ func (r *taskRunner) dispatch() (err error) {
 	r.session = filepath.Join(root, "ork-task-run-"+strings.TrimPrefix(r.localID, "local-"))
 	for _, dir := range []string{r.session, filepath.Join(r.session, "logs"), filepath.Join(r.session, ".fetched"), filepath.Join(r.session, ".work")} {
 		if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
-			return fmt.Errorf("create the session directory: %w", mkErr)
+			return fmt.Errorf("create the work directory: %w", mkErr)
 		}
 	}
 	defer r.cleanup()
@@ -985,7 +988,7 @@ func (r *taskRunner) dispatch() (err error) {
 	}
 	store, err := newReplayStore(filepath.Join(r.session, ".store"))
 	if err != nil {
-		return fmt.Errorf("create the session store: %w", err)
+		return fmt.Errorf("create the work store: %w", err)
 	}
 	r.store = store
 	defer func() { _ = store.Close() }()

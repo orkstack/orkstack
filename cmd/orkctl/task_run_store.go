@@ -12,7 +12,7 @@ import (
 
 // replayStore serves the upstream bytes this invocation fetched, under the
 // URI the source run recorded, and keeps everything else in a local store in
-// the session directory. There is no path from it to the deployment's bucket.
+// the work directory. There is no path from it to the deployment's bucket.
 //
 // It is the ONLY artifacts.Store the local dispatcher holds. The recorded
 // URIs stay unchanged in the UpstreamRefs the dispatcher stages from, so

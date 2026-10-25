@@ -26,7 +26,7 @@ name: orkstack
 
 services:
   temporal:
-    image: temporalio/temporal:1.8.2
+    image: temporalio/temporal:1.8.2@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
     command:
       - server
       - start-dev

@@ -20,6 +20,47 @@ Before you upgrade, read the **BREAKING** entries in the `[Unreleased]` section.
 | Data written in an Orkflow (`inputs:`, `with:`, `await.schema`) becomes JSON through one strict mapping. A plain `yes`, `on`, `0755`, `1:30`, `1e3` or date is refused, naming the path ([JSON.md](./JSON.md), "Data written in an authored document") | Quote the value if you mean a string, or write the number the way JSON writes it |
 | An unpinned Orkflow's derived version now covers the whole source, header included. Applying a pinned version again with only its header changed is refused ([CHANGELOG.md](../CHANGELOG.md), Changed) | Give an edited document a new `version:`, or remove `version:` and let the source name one |
 
+## Release artifacts
+
+Each release is published by `release.yml`, and only after its pre-release
+proof passed and its quickstart ran end to end on the images it publishes
+([PROOFS.md](./PROOFS.md) §5). It publishes:
+
+- **On the GitHub release**, under names that carry no version, so that
+  `https://github.com/orkstack/orkstack/releases/latest/download/<name>`
+  always names the newest one:
+  - `orkctl-linux-amd64.tar.gz`, `orkctl-linux-arm64.tar.gz`,
+    `orkctl-darwin-amd64.tar.gz`, `orkctl-darwin-arm64.tar.gz`,
+    `orkctl-windows-amd64.zip`, `orkctl-windows-arm64.zip`;
+  - `ork-linux-amd64.tar.gz`, `ork-linux-arm64.tar.gz`,
+    `orker-linux-amd64.tar.gz`, `orker-linux-arm64.tar.gz`;
+  - `orkstack-quickstart.tar.gz`, the compose file of
+    [GETTING_STARTED.md](./GETTING_STARTED.md) with a `.env` naming this
+    release's images by version and digest, and the example Orkflows;
+  - `SHA256SUMS`, over every file above: `sha256sum --ignore-missing -c
+    SHA256SUMS` checks the ones you downloaded.
+- **On `ghcr.io/orkstack`**, for linux/amd64 and linux/arm64: `ork`, `orker`,
+  `orkctl`, `ui`, and the six first-party activity images `activity-shell`,
+  `activity-http`, `activity-file`, `activity-json`, `activity-git` and
+  `activity-template`. Each is tagged `X.Y.Z`, which never moves, and `X.Y`,
+  which moves to each patch release of that line. Deploy by digest, or by
+  `X.Y.Z`; the quickstart's `.env` names both.
+
+The images are not signed yet. A namespace's `require_signed_by` therefore
+cannot be met by the first-party activity images as published; sign them with
+your own key and push them to your own registry if you need it
+([SECURITY_MODEL.md](./SECURITY_MODEL.md), "Image policy").
+
+The built-in activity catalog names the activity images by their `X.Y` tag,
+so a release's `ork` resolves `uses: shell` to that release line's image at
+apply time and pins its digest; `release.yml` refuses a version whose `X.Y`
+the catalog does not name. The release notes are the version's
+`## [X.Y.Z]` section of [CHANGELOG.md](../CHANGELOG.md).
+
+Running the published images is set out in [DEPLOY.md](./DEPLOY.md),
+"Running the published images". A deployment that turns versioning on sets
+`ORK_BUILD_ID` itself, one value per release, as with any other build.
+
 ## Orkflow versions
 
 An Orkflow version is immutable. Applying an edit creates a new version, and applying an unchanged file writes nothing ([DSL.md](./DSL.md), "`version`"). A run pins the version it started with and the definition digest that version carries ([AGENTS.md](../AGENTS.md) §2.2), so it finishes on the definition it began with.

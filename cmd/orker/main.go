@@ -24,6 +24,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	cfgfile "github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -270,7 +271,9 @@ func applyConfigFile(
 	args []string, binary cfgfile.Binary,
 	lookup func(string) (string, bool), setenv func(string, string) error,
 ) (doc *cfgfile.Document, path string, check bool, set []string, err error) {
-	path, check, _, err = cfgfile.ParseArgs(args, lookup)
+	var parsed cfgfile.Args
+	parsed, err = cfgfile.ParseArgs(args, lookup)
+	path, check = parsed.Path, parsed.Check
 	if err != nil {
 		return nil, "", check, nil, err
 	}
@@ -298,7 +301,8 @@ func main() {
 	// --defaults needs no config file, no environment, and nothing else
 	// this func does below: print config.RenderDefaults() and stop — see
 	// cmd/ork's main for the full rationale (shared design).
-	if _, _, showDefaults, err := cfgfile.ParseArgs(os.Args[1:], os.LookupEnv); err == nil && showDefaults {
+	requested, argsErr := cfgfile.ParseArgs(os.Args[1:], os.LookupEnv)
+	if argsErr == nil && requested.Defaults {
 		fmt.Print(cfgfile.RenderDefaults())
 		os.Exit(0)
 	}
@@ -320,6 +324,15 @@ func main() {
 	if cfgCheck {
 		fmt.Print(cfgDoc.Effective(cfgfile.BinaryOrker, os.LookupEnv))
 		os.Exit(0)
+	}
+
+	// --healthcheck asks this process's own running copy, over the admin
+	// listener, whether it is ready (docs/DEPLOY.md, "Health checks"). It comes
+	// after the configuration file is applied, because ORK_ADMIN_ADDR may have
+	// come from the file, and before loadConfig or any boot step: it starts
+	// nothing, and the exit status is the answer.
+	if argsErr == nil && requested.Healthcheck {
+		os.Exit(healthcheck.Run(context.Background(), "orker", os.Getenv, os.Stdout, os.Stderr))
 	}
 
 	cfg := loadConfig()

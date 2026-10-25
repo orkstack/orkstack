@@ -49,6 +49,20 @@ resource caps and the network mode. It makes no control-plane read at dispatch.
 The policy travels on the input, pinned at submit
 ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §4.7).
 
+### The Orker's own access to the host
+
+The Orker starts every task's container through the container runtime: on a
+host, the `docker` CLI and the daemon behind it. Whoever can use that daemon
+can start a privileged container, so an Orker process is as trusted as root
+on its host, whatever user it runs as, and an Orker host should run nothing
+whose compromise through it you would not accept. The release's `orker` image
+runs as root for that reason and says so; the quickstart mounts the Docker
+socket into the `orker` service and into no other
+([deploy/quickstart/compose.yaml](../deploy/quickstart/compose.yaml)), and a
+test refuses a compose file that gives it to any other service. An activity
+container never receives the socket, a host path or the host's namespaces
+("What the Orker refuses" below).
+
 ## What an activity container receives
 
 The Orker renders the container's mounts from paths it created for the attempt
@@ -65,9 +79,11 @@ Nothing in an Orkflow can name a host path.
 | `/tmp` | a tmpfs, 64 MiB by default | read-write, `nosuid`, `nodev` |
 
 - The root file system is read-only, and the working directory is `/orkstack`.
-- The environment is the task's own `env:` map and nothing else. The platform
-  adds no variable: required platform state travels as files
-  (`internal/orker/container_runtime.go`, `ContainerSpec.Env`).
+- The environment is the image's own `ENV`, overridden by the task's `env:`
+  map, plus what the container runtime adds (`HOSTNAME` under Docker). The
+  platform adds no variable: required platform state travels as files
+  ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md) §3.7;
+  `internal/orker/container_runtime.go`, `ContainerSpec.Env`).
 - The container runs as the image's own user. It runs as the Orker's own user
   only when the task sets `run_as_orker_user: true`, or when the deployment sets
   `ORK_ORKER_FORCE_USER=true`, which defaults to off
@@ -352,6 +368,14 @@ its own writes (`internal/api/audit.go`). A record is written once to
 - **Temporal has no TLS or credential setting.** The configuration schema sets the
   Temporal address and namespace for the engine and the Orker. It has no TLS or
   credential key for that connection (`internal/config/config.go`, `temporal.*`).
+- **Loopback is not an authentication boundary.** The quickstart publishes its
+  ports on `127.0.0.1` only (`deploy/quickstart/compose.yaml`). That keeps other
+  machines out, but any process on the machine reaches the API, and so can a
+  web page by DNS rebinding: the API checks neither the `Host` header nor a
+  Connect request's `Origin`, and the WebSocket bridge accepts an `Origin`
+  whose host equals the request's `Host` (`internal/api/ws.go`,
+  `originAllowed`), which a rebinding page satisfies. A deployment anyone else
+  can reach needs the authenticating gateway this model assumes.
 - **Object-storage keys have development defaults.** `ORK_S3_ACCESS_KEY` and
   `ORK_S3_SECRET_KEY` default to the values in the development compose file
   (`pkg/artifacts/config.go`). The operator must supply real credentials

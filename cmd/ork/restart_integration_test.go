@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -243,8 +244,26 @@ var engines = map[string]*engineProcess{}
 
 type engineProcess struct {
 	cmd  *exec.Cmd
-	log  *strings.Builder
+	log  *syncBuffer
 	done chan struct{}
+}
+
+// syncBuffer is a log an exec.Cmd writes to while a test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // bootEngine runs the real ork binary until its API answers, and returns the
@@ -259,7 +278,7 @@ func bootEngine(
 	t *testing.T,
 	binary, temporalAddress, name string,
 	extraEnv ...string,
-) (string, orkstackv1connect.OrkflowServiceClient, *strings.Builder) {
+) (string, orkstackv1connect.OrkflowServiceClient, *syncBuffer) {
 	t.Helper()
 	const attempts = 3
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -298,7 +317,7 @@ func startEngine(
 		localActivityCatalogEnv(t),
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
-	log := &strings.Builder{}
+	log := &syncBuffer{}
 	cmd.Stdout = log
 	cmd.Stderr = log
 	if err := cmd.Start(); err != nil {

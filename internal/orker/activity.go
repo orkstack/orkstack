@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -518,8 +517,11 @@ func (a *Activities) claimIdentity() error {
 	if err != nil {
 		return fmt.Errorf("%s: open the orker identity lock %s: %w", ReasonWorkdirFailed, path, err)
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockIdentity(file); err != nil {
 		_ = file.Close()
+		if !errors.Is(err, errIdentityHeld) {
+			return err
+		}
 		return fmt.Errorf(
 			"another live orker already holds the identity %q; a second orker sharing one identity "+
 				"would force-remove the first one's RUNNING containers at boot (§5.5). "+
@@ -535,7 +537,7 @@ func (a *Activities) claimIdentity() error {
 // and for an embedded Orker that outlives one Activities.
 func (a *Activities) Close() {
 	if a.identityLock != nil {
-		_ = syscall.Flock(int(a.identityLock.Fd()), syscall.LOCK_UN)
+		unlockIdentity(a.identityLock)
 		_ = a.identityLock.Close()
 		a.identityLock = nil
 	}

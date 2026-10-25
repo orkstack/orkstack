@@ -33,6 +33,13 @@ LAYOUT_DIR ?= $(CURDIR)/.layout
 
 ACTIVITIES := shell http file json git template
 
+# PLATFORMS (e.g. linux/amd64,linux/arm64) and LABELS (space-separated
+# key=value) reach only `make oci`; both default to empty, which builds for this
+# machine with no extra label, as every proof does. `make release-images` sets
+# them for a release.
+PLATFORMS ?=
+LABELS ?=
+
 # DOCKER_BUILD_FLAGS is passed to every image build, e.g. an air-gapped
 # builder's --build-arg GOMPLATE_BASE_URL=<mirror> for activity-template (whose
 # Dockerfile verifies the downloaded binary against its pinned SHA-256 whatever
@@ -97,6 +104,7 @@ oci: ## Build every image once as an OCI image layout into OUT/activity-<name>/:
 	  echo "building activity-$$a -> $(abspath $(OUT))/activity-$$a"; \
 	  rm -rf "$(abspath $(OUT))/activity-$$a"; \
 	  docker buildx build $(DOCKER_BUILD_FLAGS) --provenance=false --sbom=false \
+	    $(if $(strip $(PLATFORMS)),--platform $(PLATFORMS)) $(foreach l,$(LABELS),--label '$(l)') \
 	    --output "type=oci,dest=$(abspath $(OUT))/activity-$$a,tar=false" \
 	    "activity-$$a" || exit 1; \
 	done

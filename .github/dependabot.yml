@@ -44,6 +44,19 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # The development stack's and the quickstart's compose files pin images by
+  # digest too. deploy/skopeo-image.txt, and the QEMU and BuildKit images in
+  # release.yml's `with:`, are moved by hand.
+  - package-ecosystem: docker-compose
+    directories: ["/deploy", "/deploy/quickstart"]
+    schedule:
+      interval: weekly
+    groups:
+      docker-compose:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

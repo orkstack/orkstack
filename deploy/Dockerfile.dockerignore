@@ -1,0 +1,16 @@
+# The build context of deploy/Dockerfile is the repository root, and this file
+# admits only what its targets copy (BuildKit reads <Dockerfile>.dockerignore).
+*
+!LICENSE
+!dist/bin/linux-*/ork
+!dist/bin/linux-*/orker
+!dist/bin/linux-*/orkctl
+!examples/*.ork.yaml
+!ui/
+ui/node_modules
+ui/.svelte-kit
+ui/build
+ui/e2e
+ui/test
+ui/test-results
+ui/playwright-report
