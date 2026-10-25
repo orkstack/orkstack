@@ -2784,11 +2784,16 @@ func TestIntegration_ContinuationChaosC25_InFlightCapBoundsAWideRun(t *testing.T
 	s := newChaosStack(t, ctx, "C25")
 	s.startReplica("replica-a", replicaOptions{})
 	s.startProjection(nil)
-	// Every task takes a few seconds, so the run's work piles up against its
-	// cap instead of draining as fast as it is dispatched.
+	// Every task takes 15 s, so the run's work piles up against its cap
+	// instead of draining as fast as it is dispatched. It must outlast only
+	// the one pass that dispatches the first 200 items beside the 300 tasks
+	// still running — a workflow task, well under a second — for the cap to
+	// be reached; 15 s leaves that pass a wide margin and keeps the 1,500
+	// units at three rounds under the cap. Too short a value cannot pass
+	// falsely: the peakTasks >= limit.Max check below fails it explicitly.
 	s.startOrker("orker-1", func(actx context.Context, s *chaosStack, orker string, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if !strings.HasPrefix(in.GetTaskId(), "list") {
-			done := time.After(40 * time.Second)
+			done := time.After(15 * time.Second)
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
 			for waiting := true; waiting; {
@@ -3174,7 +3179,7 @@ func (s splitStore) ReadContinuationRange(ctx context.Context, uri string, wantS
 
 // TestIntegration_ContinuationChaosC31_RestoreRetriesStayWithinTheirBound:
 // after a switch, object storage is unreachable for the next generation's
-// reads for its whole 5-minute restore timeout — every attempt blocking its
+// reads for its whole 150 s restore timeout — every attempt blocking its
 // full 30 s for the first half, failing at once for the second. The run ends
 // RUN_STATE_UNAVAILABLE with a terminal event, and that generation's history
 // stays within RestoreHistoryBound of its plan and below the guard.
