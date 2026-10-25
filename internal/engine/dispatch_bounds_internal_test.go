@@ -94,3 +94,42 @@ func TestHoldDispatch_TheHardStopCountsTheBlockingPublish(t *testing.T) {
 		return nil
 	})
 }
+
+// TestHoldDispatch_AnOpenPinCountsAgainstTheCap: the cap counts every pin
+// from its open request to its close (its session-creation activity stays
+// pending for the pin's whole life), so with Max-1 activities in flight an
+// open pin brings the run to its cap, and a closed one no longer counts.
+func TestHoldDispatch_AnOpenPinCountsAgainstTheCap(t *testing.T) {
+	const capMax = 3
+	runGuardWorkflow(t, nil, func(ctx workflow.Context) error {
+		plan := guardPlan(t, DefaultHistoryMaxEvents, DefaultHistoryMaxBytes)
+		plan.InFlight = &InFlightLimit{Max: capMax, HardStop: DefaultPendingActivityHardStop}
+		s := newRunState(ctx, "ork-pin-cap", guardCompile(t, guardStateDocument),
+			guardInput(t, map[string]any{"regions": itemsArray(3)}), plan)
+		inFlight := map[string]workflow.Future{"x": nil, "y": nil}
+		if s.livePins() != 0 || s.holdDispatch(ctx, "a", inFlight) {
+			t.Fatalf("with no pin open: livePins = %d, held = true; want 0 and no hold under the cap", s.livePins())
+		}
+		p := s.pins["build"]
+		p.opened = true
+		if got := s.livePins(); got != 1 {
+			t.Fatalf("an open pin: livePins = %d, want 1", got)
+		}
+		if got := s.inFlightWork(inFlight); got != capMax {
+			t.Fatalf("inFlightWork = %d, want %d: two activities and the open pin", got, capMax)
+		}
+		if !s.holdDispatch(ctx, "a", inFlight) {
+			t.Fatal("two activities and an open pin did not hold a dispatch at a cap of 3")
+		}
+		closed, settle := workflow.NewFuture(ctx)
+		settle.Set(nil, nil)
+		p.closed = closed
+		if got := s.livePins(); got != 0 {
+			t.Fatalf("a closed pin: livePins = %d, want 0", got)
+		}
+		if s.holdDispatch(ctx, "a", inFlight) {
+			t.Fatal("a closed pin still held a dispatch")
+		}
+		return nil
+	})
+}
