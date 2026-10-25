@@ -59,7 +59,7 @@ func (r claimRecorder) Complete(success any, err error) {
 func claimEnv(t *testing.T, requests ...engine.ClaimRequest) []claimOutcome {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(30 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
 		workflow.RegisterOptions{Name: engine.ClaimWorkflowType})
@@ -181,7 +181,7 @@ func TestClaimWorkflow_HoldsTheKeyForItsWholeTTLAndThenFreesIt(t *testing.T) {
 	const ttl = 90 * time.Minute
 
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(30 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
 		workflow.RegisterOptions{Name: engine.ClaimWorkflowType})
@@ -236,7 +236,7 @@ func TestClaimWorkflow_CancellationFreesAStrandedKeyEarly(t *testing.T) {
 	const ttl = 24 * time.Hour
 
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(30 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
 		workflow.RegisterOptions{Name: engine.ClaimWorkflowType})

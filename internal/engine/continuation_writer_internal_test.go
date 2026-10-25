@@ -601,7 +601,7 @@ func newRefusalHarnessOver(t *testing.T, store *memSnapshotStore) *refusalHarnes
 	h := newRefusalHarness(t)
 	h.store = store
 	var suite testsuite.WorkflowTestSuite
-	h.env = suite.NewTestWorkflowEnvironment()
+	h.env = generousDeadlock(suite.NewTestWorkflowEnvironment())
 	h.env.SetTestTimeout(120 * time.Second)
 	h.env.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
 	activities := NewSnapshotActivities(store)

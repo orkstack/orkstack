@@ -126,9 +126,9 @@ type fireHarness struct {
 func newFireHarness(t *testing.T) *fireHarness {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	capture := &fireCapture{memo: map[string]any{}}
-	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&fireWorkerInterceptor{capture: capture}}})
+	env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&fireWorkerInterceptor{capture: capture}}}))
 	env.RegisterWorkflowWithOptions(engine.ScheduleFireWorkflow, workflow.RegisterOptions{Name: engine.ScheduleFireWorkflowType})
 	// The schedule's action starts the fire on the engine's run channel; the
 	// child run is started on the fire's own channel.

@@ -204,7 +204,7 @@ func TestJoinHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		sentEvent []*orkstackv1.Event
 	)
 	suite := &testsuite.WorkflowTestSuite{}
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(120 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	env.RegisterActivityWithOptions(

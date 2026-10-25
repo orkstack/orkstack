@@ -78,7 +78,7 @@ func newEachHarness(t *testing.T, behavior func(context.Context, *orkstackv1.Exe
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	h := &eachHarness{
-		env:       suite.NewTestWorkflowEnvironment(),
+		env:       generousDeadlock(suite.NewTestWorkflowEnvironment()),
 		bus:       engine.NewEventBus(),
 		store:     engine.NewRunStore(),
 		snapshots: newTestSnapshotStore(),

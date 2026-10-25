@@ -87,7 +87,7 @@ func TestStartRun_PassesExactlyFourArguments(t *testing.T) {
 func TestStartChild_PassesExactlyFourArguments(t *testing.T) {
 	h := newComposeHarness(t, defaultBehavior)
 	capture := &childStartArgs{}
-	h.env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&childStartArgsInterceptor{capture: capture}}})
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&childStartArgsInterceptor{capture: capture}}}))
 	parent, plan, _ := composedFixture(t, composedChildDocument)
 	h.mockChild(func(workflow.Context, childStart) (*orkstackv1.Run, error) {
 		return childOutputs(t, map[string]any{"digest": "sha256:abc", "url": "https://r/abc"}), nil
@@ -106,9 +106,9 @@ func TestScheduleFire_PassesExactlyFourArguments(t *testing.T) {
 	capture := &childStartArgs{}
 	// The fire harness already intercepts the fire's own child start; this
 	// one counts its arguments alongside.
-	h.env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{
 		&fireWorkerInterceptor{capture: h.capture}, &childStartArgsInterceptor{capture: capture},
-	}})
+	}}))
 	h.scheduled(t, nightly)
 	h.prepare(func(context.Context, *orkstackv1.ScheduleRecord, time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
 		return firePreparation(t, "ork-20260924-1"), nil

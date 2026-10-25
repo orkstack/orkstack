@@ -149,7 +149,7 @@ func drainTestWorkflow(ctx workflow.Context) (bool, error) {
 
 func TestDrainResolutions_RecordsEveryQueuedSignalAsALog(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.RegisterWorkflow(drainTestWorkflow)
 	var (
 		mu     sync.Mutex

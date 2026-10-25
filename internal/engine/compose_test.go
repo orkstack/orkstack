@@ -103,7 +103,7 @@ func newComposeHarness(t *testing.T, behavior func(*composeHarness, *orkstackv1.
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	h := &composeHarness{
-		env:       suite.NewTestWorkflowEnvironment(),
+		env:       generousDeadlock(suite.NewTestWorkflowEnvironment()),
 		bus:       engine.NewEventBus(),
 		store:     engine.NewRunStore(),
 		snapshots: newTestSnapshotStore(),

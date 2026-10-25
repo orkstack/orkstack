@@ -99,7 +99,7 @@ func expandForTest(s *runState, id string, count int32) {
 func runGuardWorkflow(t *testing.T, setup func(env *testsuite.TestWorkflowEnvironment), body func(ctx workflow.Context) error) {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return &orkstackv1.ExecuteTaskResult{}, nil
@@ -611,7 +611,7 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 			var checks int
 			var guardErr error
 			var suite testsuite.WorkflowTestSuite
-			env := suite.NewTestWorkflowEnvironment()
+			env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
 			env.SetCurrentHistoryLength(state.length)
 			env.ExecuteWorkflow(func(ctx workflow.Context) error {

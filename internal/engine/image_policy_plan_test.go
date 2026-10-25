@@ -142,7 +142,7 @@ func TestRunWorkflow_ReplaysAPolicyCarryingPlan(t *testing.T) {
 		sent []*orkstackv1.ExecuteTaskInput
 	)
 	suite := &testsuite.WorkflowTestSuite{}
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	env.RegisterActivityWithOptions(

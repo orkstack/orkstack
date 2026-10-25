@@ -328,7 +328,7 @@ func (r *commandRecorder) count(command string) int {
 // recordCommands installs a fresh recorder on h.
 func recordCommands(h *harness) *commandRecorder {
 	r := &commandRecorder{}
-	h.env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{r}})
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{r}}))
 	return r
 }
 
