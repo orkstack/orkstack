@@ -330,3 +330,54 @@ func TestRepositoryPlaywrightProjectInvocationsPassFilesFirst(t *testing.T) {
 		}
 	}
 }
+
+// The setup's links and image builds are parallel: one `go build` writes all
+// nine stack binaries into bin/ (in a local proof and a CI part alike), and
+// the images Makefile builds, pushes and exports its images IMAGE_JOBS at a
+// time, each image a target of its own.
+func TestRepositoryProofScript_BuildsTheSetupInParallel(t *testing.T) {
+	text := proofScript(t)
+	part, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof-part.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// STACK_BINARIES is defined before proof.sh sources proof-part.sh.
+	def, src := at(text, "STACK_BINARIES=("), at(text, `. "$REPO/scripts/proof-part.sh"`)
+	if def < 0 || src < 0 || def > src {
+		t.Error("STACK_BINARIES is not defined before a CI part sources proof-part.sh")
+	}
+	for name, body := range map[string]string{"proof.sh": text, "proof-part.sh": string(part)} {
+		if !strings.Contains(body, `go build -o "$DIR/bin/" "${STACK_BINARIES[@]}"`) {
+			t.Errorf("%s does not link the stack binaries with one go build into bin/", name)
+		}
+		if regexp.MustCompile(`go build -o "\$DIR/bin/\$\(basename`).MatchString(body) {
+			t.Errorf("%s still links the stack binaries one by one", name)
+		}
+	}
+	// The same nine the Playwright suite's global setup builds when missing.
+	setup, err := os.ReadFile(filepath.Join(mustRepoRoot(), "ui", "e2e", "global-setup.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := text[def : def+strings.Index(text[def:], "\n")]
+	for _, m := range regexp.MustCompile(`'?([a-z-]+)'?: '(\./[a-z/-]+)'`).FindAllStringSubmatch(string(setup), -1) {
+		if !strings.Contains(line, " "+m[2]+" ") && !strings.Contains(line, " "+m[2]+")") && !strings.Contains(line, "("+m[2]+" ") {
+			t.Errorf("ui/e2e/global-setup.ts builds %s from %s, which STACK_BINARIES lacks", m[1], m[2])
+		}
+	}
+	mk, err := os.ReadFile(filepath.Join(mustRepoRoot(), "images", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"IMAGE_JOBS ?= 6",
+		"@$(MAKE) -j$(IMAGE_JOBS) -Otarget $(addprefix image-,$(ACTIVITIES))",
+		"@$(MAKE) -j$(IMAGE_JOBS) -Otarget $(addprefix push-,$(ACTIVITIES))",
+		"$(addprefix push-,$(ACTIVITIES)): push-%: image-%",
+		"@$(MAKE) -j$(IMAGE_JOBS) -Otarget $(addprefix oci-,$(ACTIVITIES))",
+	} {
+		if !strings.Contains(string(mk), want) {
+			t.Errorf("images/Makefile lacks %q", want)
+		}
+	}
+}

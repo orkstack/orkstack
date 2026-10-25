@@ -69,6 +69,11 @@ include breaking changes, and each is marked **BREAKING**.
   test binaries ahead, and `proofrun integration -bin DIR` adopts them only
   when their manifest names the same working tree, packages, binary SHA-256
   and listing (docs/PROOFS.md §2.1, §4).
+- `make -C images images`, `push` and `oci` build the six first-party images
+  `IMAGE_JOBS` at a time (default 6; `IMAGE_JOBS=1` is the old serial order),
+  and `push` pushes each as soon as it is built, with the same registry
+  digests recorded. A proof links its nine stack binaries with one `go build`
+  rather than nine.
 - The proof is faster on one host, running the same tests: integration tests
   keep `PROOF_JOBS=4` (6 was measured: clean but for one 50 s engine-boot
   stall on a fresh bucket, so it stays an operator's choice), the activity contract

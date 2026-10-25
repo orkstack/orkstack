@@ -171,10 +171,15 @@ part_start_temporal() {
 	return 1
 }
 
+# As scripts/proof.sh build_binaries: one `go build` links all nine into bin/.
 part_binaries() {
 	local pkg
-	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run ./test/tools/archive-sized-run; do
-		go build -o "$DIR/bin/$(basename "$pkg")" "$pkg" || return 1
+	go build -o "$DIR/bin/" "${STACK_BINARIES[@]}" || return 1
+	for pkg in "${STACK_BINARIES[@]}"; do
+		if [ ! -x "$DIR/bin/$(basename "$pkg")" ]; then
+			part_say "go build wrote no $DIR/bin/$(basename "$pkg") for $pkg"
+			return 1
+		fi
 	done
 }
 

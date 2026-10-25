@@ -55,7 +55,10 @@ concurrent group — the proof's own Temporal, the activity images, the binaries
 and the integration test binaries (`proofrun compile`), each its own row of
 `gates.tsv` (`temporal`, `images`, `binaries`, `integration-compile`) and the
 group's wall a `setup` row; nothing in it is load-sensitive, no test runs until
-it has ended, and a failure of any member stops the others; then the integration suite with the activity contract
+it has ended, and a failure of any member stops the others. Within it, `make -C
+images push` builds and pushes the six images `IMAGE_JOBS` (default 6) at a
+time (`make -C images oci`, a CI build part's, does the same), and one `go
+build -o bin/` links the nine stack binaries; then the integration suite with the activity contract
 fixture beside it — the only two gates that overlap, and the fixture starts
 only once the integration runner has finished its heavy jobs
 (`integration-heavy-done`), so a heavy test's quiet host never carries the

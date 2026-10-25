@@ -231,6 +231,13 @@ else
 	IMAGE_TAG="$PROOF_ID"
 fi
 
+# The binaries every stack gate runs, in a local proof and in a CI part
+# (scripts/proof-part.sh), linked by one `go build`: an -o that ends in a
+# slash writes each main package's executable into that directory, named
+# after its last path element (`go help build`), so the nine links share one
+# build graph instead of nine.
+STACK_BINARIES=(./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run ./test/tools/archive-sized-run)
+
 # proofrun decides the selection before anything is written, so it is built
 # first, into a temporary directory, and moved into the proof's bin/ later.
 PR_TMP="$(mktemp -d)"
@@ -733,8 +740,12 @@ push_images() {
 }
 build_binaries() {
 	local pkg
-	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run ./test/tools/archive-sized-run; do
-		go build -o "$DIR/bin/$(basename "$pkg")" "$pkg" || return 1
+	go build -o "$DIR/bin/" "${STACK_BINARIES[@]}" || return 1
+	for pkg in "${STACK_BINARIES[@]}"; do
+		if [ ! -x "$DIR/bin/$(basename "$pkg")" ]; then
+			say "go build wrote no $DIR/bin/$(basename "$pkg") for $pkg"
+			return 1
+		fi
 		say "built $DIR/bin/$(basename "$pkg") from $pkg"
 	done
 }
