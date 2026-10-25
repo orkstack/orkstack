@@ -18,6 +18,14 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- The merge contract names a CI full proof as merge evidence on the local
+  path: a `validate/full/<name>` run's `proof-<run>-a<n>` artifact, downloaded
+  and passed to `make merge-check PROOF=`, gates a fast-forward when it is a
+  full, passing, merge-eligible proof of exactly the candidate's tree over
+  `main`'s tip; a GitHub nightly proof of `main`'s tip, downloaded the same
+  way, is the `NIGHTLY=` evidence; and `main` is pushed to `origin` after
+  every merge (AGENTS.md §11.2, §11.3; docs/PROOFS.md §6, §10). The checks
+  `merge-check` applies are unchanged.
 - The proof is faster on one host, running the same tests: integration tests
   keep `PROOF_JOBS=4` (6 was measured: clean but for one 50 s engine-boot
   stall on a fresh bucket, so it stays an operator's choice), the activity contract

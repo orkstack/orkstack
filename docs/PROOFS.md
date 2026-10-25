@@ -330,7 +330,12 @@ on GitHub, interim rule A applies: `make proof-nightly` runs on `main`'s tip
 after every merge that moves `main`, and passes before the next merge starts
 and before every tag. `make merge-check PROOF=… NIGHTLY=…` refuses a merge
 when `main`'s list is non-empty and no passing nightly proof of `main`'s tree
-is given. On the GitHub merge path `merge-check` does not run, so there rule A
+is given. A GitHub nightly proof of `main`'s tip — `nightly.yml` dispatched
+(`workflow_dispatch`) or its schedule — downloaded as its `proof-<run>-a<n>`
+artifact is that `NIGHTLY=` evidence, exactly as a local `make proof-nightly`
+is (§10). It binds the tree `main` pointed at when the run checked it out: a
+merge made after the run starts moves `main` to another tree, and `verify`
+refuses the proof as a tree mismatch. On the GitHub merge path `merge-check` does not run, so there rule A
 is a process rule: the merge stage runs `make proof-nightly` itself and quotes
 it. A red nightly or release proof is a failing `main`: fix or revert the
 change that broke it, and never edit a list, a threshold or a measurement
@@ -563,8 +568,41 @@ label: push again, or close and reopen.
 `validate/full/<name>` with its base as the first parent; the proof compares
 by tree, never by commit. A feature proof uses `validate/feature/<name>`.
 
+**Merge on a CI full proof of the candidate** (`AGENTS.md` §11.3(b)). The
+`validate/full/<name>` run's base is the candidate's first parent, so build
+the candidate on `main`'s tip, push it, and download its passing run's
+artifact into `proof/` (gitignored, so the worktree stays clean). The
+artifact's `proof.json` is the evidence: download it, never retype it.
+
+```bash
+git push origin HEAD:validate/full/<name>
+gh run list --workflow proof.yml --branch validate/full/<name> -L 1   # <id>
+gh run view <id> --json attempt -q .attempt                          # <attempt>
+gh run download <id> -n proof-<id>-a<attempt> -D proof/ci-<id>
+make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
+git checkout main && git merge --ff-only <candidate>
+git push origin main
+```
+
+`merge-check PROOF=` applies the same rules as to a local proof: tier `full`,
+result `pass`, `merge_eligible`, `tree` equal to `HEAD`'s tree, `base_commit`
+equal to `main`'s tip, the candidate's first parent equal to `main`'s tip, a
+clean worktree, and a quarantine check date at most 30 days old. If `main`
+moved since the push, rebuild the candidate and push it again.
+
 **Run the nightly proof after a merge** and pass it to the next
-`make merge-check PROOF=… NIGHTLY=…`.
+`make merge-check PROOF=… NIGHTLY=…`: locally `make proof-nightly`, or on
+GitHub by dispatching `nightly.yml` on `main` once `main` is pushed, and
+downloading its artifact:
+
+```bash
+gh workflow run nightly.yml --ref main
+gh run list --workflow nightly.yml -L 1                              # <nid>
+gh run view <nid> --json attempt -q .attempt                         # <attempt>
+gh run download <nid> -n proof-<nid>-a<attempt> -D proof/nightly-gh-<nid>
+```
+
+It is evidence only for the tree `main` pointed at when it started (§6).
 
 **Run the release gate.** Dispatch `release.yml` from `main` with `version`
 set and `tag: false`; `release.yml` › `validate` refuses a malformed version

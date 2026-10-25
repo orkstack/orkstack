@@ -22,6 +22,9 @@ type mergeFixture struct {
 	plan       *integrationPlan
 	planSHA    string
 	uiPlan     uiPlan
+	// tree and base are what every part records it measured: the plan's
+	// own unless a test proves a real tree.
+	tree, base string
 }
 
 // emptySHA is what fileSHA256 gives an absent or empty list.
@@ -61,7 +64,7 @@ func uiLedgerFixture() uiLedger {
 func newMergeFixture(t *testing.T, tier string, ci bool) *mergeFixture {
 	t.Helper()
 	dir := t.TempDir()
-	f := &mergeFixture{t: t, dir: dir, parts: filepath.Join(dir, "parts"), out: filepath.Join(dir, "out")}
+	f := &mergeFixture{t: t, dir: dir, parts: filepath.Join(dir, "parts"), out: filepath.Join(dir, "out"), tree: "tree1", base: "base1"}
 	f.plan = &integrationPlan{
 		Format: planFormat, Tree: "tree1", Commit: "commit1", Tier: tier, ProofID: "pr-ci-1",
 		BaseRef: mainBranch, BaseCommit: "base1",
@@ -123,8 +126,8 @@ func mBinaries() map[string]binaryRecord {
 
 func (f *mergeFixture) basePart(part string) partRecord {
 	r := partRecord{
-		Part: part, Attempt: 1, Tier: f.plan.Tier, Tree: "tree1", TreeEnd: "tree1",
-		CleanStart: true, CleanEnd: true, BaseRef: mainBranch, BaseCommit: "base1",
+		Part: part, Attempt: 1, Tier: f.plan.Tier, Tree: f.tree, TreeEnd: f.tree,
+		CleanStart: true, CleanEnd: true, BaseRef: mainBranch, BaseCommit: f.base,
 		ImageTag: f.plan.ProofID, ImageTagOwn: true, PlanSHA256: f.planSHA,
 		UIPlanSHA256: sha256File(f.uiPlanPath),
 		Runner:       runnerRecord{OS: "linux", CPUs: 16},
