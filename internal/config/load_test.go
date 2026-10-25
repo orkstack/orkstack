@@ -262,25 +262,21 @@ func TestLoad_HappyPath_Orker(t *testing.T) {
 	}
 }
 
-func TestLoad_UnknownKey_NamesDottedPath(t *testing.T) {
-	path := writeTemp(t, "bad.yaml", "storage:\n  bogus_key: 1\n")
-	_, err := Load(path, BinaryOrk)
-	if err == nil {
-		t.Fatal("Load: want an error for an unknown key")
-	}
-	if !strings.Contains(err.Error(), "storage.bogus_key") {
-		t.Errorf("Load error = %q, want it to contain the dotted path \"storage.bogus_key\"", err.Error())
-	}
-}
-
-func TestLoad_UnknownKey_TopLevel(t *testing.T) {
-	path := writeTemp(t, "bad.yaml", "not_a_real_section:\n  x: 1\n")
-	_, err := Load(path, BinaryOrk)
-	if err == nil {
-		t.Fatal("Load: want an error for an unknown top-level key")
-	}
-	if !strings.Contains(err.Error(), "not_a_real_section") {
-		t.Errorf("Load error = %q, want it to name not_a_real_section", err.Error())
+// An unknown key is refused by its full dotted path, nested or top-level.
+func TestLoad_UnknownKey_NamesItsPath(t *testing.T) {
+	for name, tc := range map[string]struct{ doc, path string }{
+		"nested":    {doc: "storage:\n  bogus_key: 1\n", path: "storage.bogus_key"},
+		"top-level": {doc: "not_a_real_section:\n  x: 1\n", path: "not_a_real_section"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(writeTemp(t, "bad.yaml", tc.doc), BinaryOrk)
+			if err == nil {
+				t.Fatal("Load: want an error for an unknown key")
+			}
+			if !strings.Contains(err.Error(), tc.path) {
+				t.Errorf("Load error = %q, want it to name %q", err, tc.path)
+			}
+		})
 	}
 }
 
@@ -353,15 +349,24 @@ func TestLoad_SecretFile_MissingFile(t *testing.T) {
 	}
 }
 
-func TestLoad_SecretFile_TrimsOneTrailingNewline(t *testing.T) {
-	secretFile := writeTemp(t, "secret", "topsecret\n\n")
-	path := writeTemp(t, "cfg.yaml", "storage:\n  s3:\n    secret_key: {file: "+secretFile+"}\n")
-	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := doc.values["ORK_S3_SECRET_KEY"].value; got != "topsecret\n" {
-		t.Errorf("secret_key = %q, want exactly one trailing newline trimmed (\"topsecret\\n\")", got)
+// A secret file loses exactly one trailing line ending, LF or CRLF, and
+// nothing more: a second newline is part of the secret.
+func TestLoad_SecretFile_TrimsOneTrailingLineEnding(t *testing.T) {
+	for name, tc := range map[string]struct{ file, want string }{
+		"one of two newlines": {file: "topsecret\n\n", want: "topsecret\n"},
+		"a CRLF":              {file: "topsecret\r\n", want: "topsecret"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			secretFile := writeTemp(t, "secret", tc.file)
+			path := writeTemp(t, "cfg.yaml", "storage:\n  s3:\n    secret_key: {file: "+secretFile+"}\n")
+			doc, err := Load(path, BinaryOrk)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := doc.values["ORK_S3_SECRET_KEY"].value; got != tc.want {
+				t.Errorf("secret_key from %q = %q, want %q", tc.file, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -506,18 +511,6 @@ func TestLoad_SecretFile_MissingFile_NamesResolvedPath(t *testing.T) {
 	want := filepath.Join(dir, "no-such-secret")
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("Load error = %q, want it to name the resolved path %q", err.Error(), want)
-	}
-}
-
-func TestLoad_SecretFile_TrimsTrailingCRLF(t *testing.T) {
-	secretFile := writeTemp(t, "secret", "topsecret\r\n")
-	path := writeTemp(t, "cfg.yaml", "storage:\n  s3:\n    secret_key: {file: "+secretFile+"}\n")
-	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := doc.values["ORK_S3_SECRET_KEY"].value; got != "topsecret" {
-		t.Errorf("secret_key = %q, want the trailing CRLF trimmed (\"topsecret\")", got)
 	}
 }
 
