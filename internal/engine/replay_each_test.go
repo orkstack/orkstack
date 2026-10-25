@@ -211,7 +211,7 @@ func TestEachHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		sent = map[string]map[string]any{}
 	)
 	suite := &testsuite.WorkflowTestSuite{}
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	env.RegisterActivityWithOptions(func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {

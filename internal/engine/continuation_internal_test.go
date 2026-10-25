@@ -36,7 +36,7 @@ const refusalWorkflowID = "ork-1700000000-42"
 func newRefusalHarness(t *testing.T) *refusalHarness {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
-	h := &refusalHarness{env: suite.NewTestWorkflowEnvironment(), store: newMemSnapshotStore()}
+	h := &refusalHarness{env: generousDeadlock(suite.NewTestWorkflowEnvironment()), store: newMemSnapshotStore()}
 	h.env.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
 	activities := NewSnapshotActivities(h.store)
 	h.env.RegisterActivityWithOptions(activities.WriteSnapshot, activity.RegisterOptions{Name: ActivityWriteSnapshot})
@@ -294,7 +294,7 @@ func TestEndUnrestorable_IgnoresASwitchSnapshotThatFailsVerification(t *testing.
 // RUN_STATE_* code.
 func TestEndUnrestorable_CanceledRunEndsCanceled(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	store := newMemSnapshotStore()
 	var published []*orkstackv1.Event
 	env.RegisterActivityWithOptions(NewSnapshotActivities(store).WriteFailedRunSnapshot,
@@ -337,7 +337,7 @@ func TestEndUnrestorable_CategoryIsTheReadersForEveryCode(t *testing.T) {
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
-			env := suite.NewTestWorkflowEnvironment()
+			env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 			env.RegisterActivityWithOptions(NewSnapshotActivities(newMemSnapshotStore()).WriteFailedRunSnapshot,
 				activity.RegisterOptions{Name: ActivityWriteFailedRunSnapshot})
 			env.RegisterActivityWithOptions(func(context.Context, *orkstackv1.Event, string, string) error { return nil },

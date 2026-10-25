@@ -215,7 +215,7 @@ func (r *flatStageRun) stageExecute(ctx context.Context, in *orkstackv1.ExecuteT
 // stageGeneration builds generation g's environment.
 func (r *flatStageRun) stageGeneration(remaining int) *testsuite.TestWorkflowEnvironment {
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(5 * time.Minute)
 	env.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
 	activities := NewSnapshotActivities(r.store)

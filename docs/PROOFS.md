@@ -50,8 +50,15 @@ parts. There is one verdict implementation.
 A local proof runs its gates in this order: the **fast gates**, alone and one
 after another — lint, build, unit, `go vet -tags=integration`, then the UI
 type-check and unit suites (after one `svelte-kit sync`, which both read), then
-the site gate; then the setup the long gates need (the proof's own Temporal, the activity
-images, the binaries); then the integration suite with the activity contract
+the site gate; then the **setup**, as one
+concurrent group — the proof's own Temporal, the activity images, the binaries
+and the integration test binaries (`proofrun compile`), each its own row of
+`gates.tsv` (`temporal`, `images`, `binaries`, `integration-compile`) and the
+group's wall a `setup` row; nothing in it is load-sensitive, no test runs until
+it has ended, and a failure of any member stops the others. Within it, `make -C
+images push` builds and pushes the six images `IMAGE_JOBS` (default 6) at a
+time (`make -C images oci`, a CI build part's, does the same), and one `go
+build -o bin/` links the nine stack binaries; then the integration suite with the activity contract
 fixture beside it — the only two gates that overlap, and the fixture starts
 only once the integration runner has finished its heavy jobs
 (`integration-heavy-done`), so a heavy test's quiet host never carries the
@@ -91,11 +98,25 @@ runs in a network
 namespace of its own (`ui/e2e/browser-server.ts`, from the image
 `ui/e2e/browser-image.txt` pins; a proof pulls it when the host lacks it), and
 every spec file owns its bucket. The two spec files that assert a render budget
-run alone after the others, as `--project` runs on one worker, and the run page
-at the task ceiling runs on the host's Chromium (`ui/playwright.config.ts`).
+(`each-fan-out-ceiling.spec.ts`, `run-page-ceiling.spec.ts`) hold nothing but
+their budget test and run alone after the others, as `--project` runs on one
+worker; the fan-out's functional tests are `each-fan-out.spec.ts`, which runs
+with the others. The run page at the task ceiling runs on the host's Chromium
+(`ui/playwright.config.ts`).
 The gate starts one browser server for both invocations, and the second reuses
 the first's UI build when the hash of the build's inputs
-(`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A **heavy** test — one whose assertions are
+(`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
+runs both integration and Playwright makes that build earlier, while its
+ordinary integration jobs run: once `integration-heavy-done` exists (the
+fixture's policy, so never beside a heavy test), or once the integration gate
+has passed without one, it runs `bun e2e/build-ui.ts` — the same
+`ensureUIBuild` the global setup calls — and `playwright test --list` into
+`ui-e2e-list.json`, logging both to `ui-prebuild.log`. The Playwright gate
+waits for it to end, then uses that listing and finds the build's hash
+matching (its log reads `e2e: ui/build is this tree's own (inputs …): not
+rebuilt`). It is a head start, never a gate: a failed or interrupted build
+leaves no matching hash and a failed listing leaves no file, so the gate
+builds and lists for itself as before. A **heavy** test — one whose assertions are
 bounds — runs alone, in its own CI shard or first on a local host. A test is
 heavy by what it asserts, not by how long it takes: the reduced-ceiling copies
 of a moved soak run the same E4/E7 thresholds and are heavy, while a test that
@@ -109,8 +130,12 @@ become eligible, and everything after that failure only costs time. By default
 (`PROOF_FAIL_FAST=1`) `scripts/proof.sh` therefore stops at the first failing
 gate, in every tier it runs on one host (feature, full, nightly and release):
 
-- a failure in a fast gate (or in the Temporal, images or binaries setup)
-  starts no other gate, and nothing long has begun;
+- a failure in a fast gate starts no other gate, and nothing long has begun;
+- a failure of a setup member (Temporal, images, binaries, the integration
+  test binaries) stops the members still running, as integration and the
+  fixture stop each other below, and starts no other gate. A member that is
+  a shell function ends at once on `SIGTERM`, so the script also signals the
+  processes it found under that member's pid before stopping it;
 - while the integration suite and the activity fixture run, a failure of
   either stops the other: the script sends `SIGTERM` to the command pid it
   recorded for that gate (never a name or a pattern), waits up to a minute, and
@@ -194,7 +219,16 @@ does not exist are invalid invocations.
 ## 4. The plan and the sharding
 
 `proofrun integration -plan-only` compiles and lists the integration packages
-once and writes `integration-plan.json`, format 2:
+once and writes `integration-plan.json`, format 2. A local proof compiles them
+earlier, while its Temporal starts and its images push: `proofrun compile -out
+DIR` (`-select FILE` for a feature proof's packages) compiles and lists the
+same package set into `DIR` and writes `compiled.json` last — the working tree
+it compiled, and each package's binary, binary SHA-256 and listing SHA-256.
+`proofrun integration -bin DIR` adopts those binaries only when the manifest
+names this working tree, exactly the packages it plans, and binaries whose
+bytes and listings still hash as recorded, and fails on any mismatch; a
+directory with no manifest is compiled into as before. The plan records the
+adopted binaries' SHA-256 exactly as it records its own compile's:
 
 - `tree`, `commit`, `tier`, `proof_id`, `base_ref`, `base_commit`,
   `merge_base`, `observability_required`;
@@ -369,7 +403,12 @@ on GitHub, interim rule A applies: `make proof-nightly` runs on `main`'s tip
 after every merge that moves `main`, and passes before the next merge starts
 and before every tag. `make merge-check PROOF=… NIGHTLY=…` refuses a merge
 when `main`'s list is non-empty and no passing nightly proof of `main`'s tree
-is given. On the GitHub merge path `merge-check` does not run, so there rule A
+is given. A GitHub nightly proof of `main`'s tip — `nightly.yml` dispatched
+(`workflow_dispatch`) or its schedule — downloaded as its `proof-<run>-a<n>`
+artifact is that `NIGHTLY=` evidence, exactly as a local `make proof-nightly`
+is (§10). It binds the tree `main` pointed at when the run checked it out: a
+merge made after the run starts moves `main` to another tree, and `verify`
+refuses the proof as a tree mismatch. On the GitHub merge path `merge-check` does not run, so there rule A
 is a process rule: the merge stage runs `make proof-nightly` itself and quotes
 it. A red nightly or release proof is a failing `main`: fix or revert the
 change that broke it, and never edit a list, a threshold or a measurement
@@ -547,6 +586,37 @@ It rewrites `scripts/proof-test-costs.tsv`, `scripts/proof-slow-tests.txt` and,
 from the merged UI ledger's file walls, `scripts/proof-ui-costs.tsv`. Commit
 with the run URL as the source.
 
+**Measure a proof's overhead.** `make proof-overhead FROM=proof/<name>
+[OUT=/tmp/overhead.md]` (`proofrun overhead -from DIR [-out FILE]`) reads an
+existing proof directory, runs nothing, and never writes inside it (an `-out`
+there is refused). Its Markdown report has:
+
+- **Gates**, from `gates.tsv`: each gate's seconds and share of the critical
+  path, which is the serial chain fast gates → setup (Temporal, images,
+  binaries) → integration beside the activity fixture (the longer of the two)
+  → `ui-e2e` → observability.
+- **Integration processes**, from the runner's `start <job> slot k:` and
+  `end <job> after X s` lines in `integration.log` (each part's log in a
+  merged proof) joined with `integration-tests.json` by job: each process's
+  wall, its top-level tests' ledger seconds, and the difference. That
+  difference is the per-process overhead: bucket create and remove, binary
+  init and Temporal namespace registration, together. The report gives its
+  min, median, p90, max and total, and the total in slot-seconds and in wall
+  at `proof.json`'s `proof_jobs`. It also gives the heavy phase's wall (the
+  plan's heavy jobs, run alone) and the ordinary phase's wall and slot
+  utilisation (busy slot-seconds over slots × wall). The log has no
+  timestamps, so a phase's wall is its busiest slot's summed process walls.
+- **Playwright**, from `ui-e2e-tests.json`: the parallel and solo
+  invocations' walls (`SOLO_SPECS` in `ui/playwright.config.ts`, `-config`,
+  names the solo files), their summed file walls against an ideal packing on
+  the proof's `proof_ui_workers`, and the gate's seconds outside the tests.
+- **Slow boots**: every `WARN` line about a boot that took long, from the
+  integration logs, each job's log and `ui-e2e.log`.
+- A summary naming the top three time sinks.
+
+A missing ledger, plan or log is listed under "Partial proof" and its section
+says so.
+
 **Derive flake rates.** `make proof-flakes FROM='proof/*' REPO=.` reads every
 proof's `unit-tests.json`, `integration-tests.json` and `ui-e2e-tests.json`,
 and reports flips (a fail and a pass on one tree) and suspect failures (a
@@ -602,8 +672,41 @@ label: push again, or close and reopen.
 `validate/full/<name>` with its base as the first parent; the proof compares
 by tree, never by commit. A feature proof uses `validate/feature/<name>`.
 
+**Merge on a CI full proof of the candidate** (`AGENTS.md` §11.3(b)). The
+`validate/full/<name>` run's base is the candidate's first parent, so build
+the candidate on `main`'s tip, push it, and download its passing run's
+artifact into `proof/` (gitignored, so the worktree stays clean). The
+artifact's `proof.json` is the evidence: download it, never retype it.
+
+```bash
+git push origin HEAD:validate/full/<name>
+gh run list --workflow proof.yml --branch validate/full/<name> -L 1   # <id>
+gh run view <id> --json attempt -q .attempt                          # <attempt>
+gh run download <id> -n proof-<id>-a<attempt> -D proof/ci-<id>
+make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
+git checkout main && git merge --ff-only <candidate>
+git push origin main
+```
+
+`merge-check PROOF=` applies the same rules as to a local proof: tier `full`,
+result `pass`, `merge_eligible`, `tree` equal to `HEAD`'s tree, `base_commit`
+equal to `main`'s tip, the candidate's first parent equal to `main`'s tip, a
+clean worktree, and a quarantine check date at most 30 days old. If `main`
+moved since the push, rebuild the candidate and push it again.
+
 **Run the nightly proof after a merge** and pass it to the next
-`make merge-check PROOF=… NIGHTLY=…`.
+`make merge-check PROOF=… NIGHTLY=…`: locally `make proof-nightly`, or on
+GitHub by dispatching `nightly.yml` on `main` once `main` is pushed, and
+downloading its artifact:
+
+```bash
+gh workflow run nightly.yml --ref main
+gh run list --workflow nightly.yml -L 1                              # <nid>
+gh run view <nid> --json attempt -q .attempt                         # <attempt>
+gh run download <nid> -n proof-<nid>-a<attempt> -D proof/nightly-gh-<nid>
+```
+
+It is evidence only for the tree `main` pointed at when it started (§6).
 
 **Run the release gate.** Dispatch `release.yml` from `main` with `version`
 set and `tag: false`; `release.yml` › `validate` refuses a malformed version
@@ -662,6 +765,7 @@ one only once the process its name records is gone.
 | `make release-tag` | tag HEAD after a passing release proof of it |
 | `make proof-flakes` | derive per-test flake rates from the ledgers |
 | `make proof-slow-list` | regenerate the costs and the slow list from a proof |
+| `make proof-overhead` | report where a proof's wall-clock went, from its directory, running nothing |
 | `make proof-observability` | only the observability gate; never merge-eligible |
 | `make proof-stop` | stop one proof and everything it started |
 | `make proof-clean` | list or remove what failed tests kept |
@@ -686,6 +790,7 @@ one only once the process its name records is gone.
 |---|---|
 | `unit` | `-out FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE` |
 | `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-host-speed FILE`, `-host-speed-base FILE` |
+| `compile` | `-out DIR`, `-select FILE` |
 | `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
 | `feature-report` | `-dir DIR`, `-select FILE` |
 | `ui-ledger` | `-report FILE`, `-list FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
@@ -696,6 +801,7 @@ one only once the process its name records is gone.
 | `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S` |
 | `temporal-args` | `-compose FILE` |
 | `costs` | `-from DIR`, `-costs-out FILE`, `-slow-out FILE`, `-ui-costs-out FILE`, `-threshold SECONDS` |
+| `overhead` | `-from DIR`, `-out FILE`, `-config FILE` |
 | `push-layout` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
 | `layout-digests` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
 | `evidence-args` | `-body FILE` |
@@ -760,7 +866,8 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
   word for one. A miss is never turned into a wider local bound. Both
   class-B misses below are declared rows.
 - **The validation run's class-B results** (run 39345074409, recorded in
-  `host_speed_failures` and `known_gaps`): `each-fan-out.spec.ts` measured
+  `host_speed_failures` and `known_gaps`): `each-fan-out.spec.ts` (whose
+  gated test is now `each-fan-out-ceiling.spec.ts`) measured
   7,006 ms against its declared 5,000 ms budget at the gated size on a 2-vCPU
   runner; `run-page-ceiling.spec.ts` never reached its 5 s budget, because
   the run page did not become visible within 60 s there.

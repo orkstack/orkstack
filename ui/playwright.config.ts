@@ -61,7 +61,7 @@ const isolatedBrowser = browserWS
 export const NETWORK_CHANGE_RETRY_CEILING = 0;
 
 /** The spec files that assert a render budget and therefore run alone (see `projects`). */
-export const SOLO_SPECS = [/each-fan-out\.spec\.ts$/, /run-page-ceiling\.spec\.ts$/];
+export const SOLO_SPECS = [/each-fan-out-ceiling\.spec\.ts$/, /run-page-ceiling\.spec\.ts$/];
 
 export default defineConfig({
 	testDir: './e2e',
@@ -84,7 +84,10 @@ export default defineConfig({
 	},
 	// Three projects, one browser. `chromium` holds every spec file but the
 	// two that assert an absolute render budget (the run page at the task
-	// ceiling, the fan-out at the item ceiling: "interactive within 5 s"). A
+	// ceiling, the fan-out at the item ceiling: "interactive within 5 s"). Each
+	// of those files holds nothing but its budget test, so nothing that could
+	// run beside the others is serialised behind them (the fan-out's
+	// functional tests are each-fan-out.spec.ts, in `chromium`). A
 	// budget is a measurement of a quiet host, as a heavy integration test is
 	// (test/tools/proofrun/plan.go), so each of those files runs ALONE: a
 	// proof with more than one worker runs `--project chromium` first, then
@@ -116,7 +119,7 @@ export default defineConfig({
 		{
 			name: 'chromium-solo-each-fan-out',
 			use: { browserName: 'chromium', ...isolatedBrowser },
-			testMatch: /each-fan-out\.spec\.ts$/
+			testMatch: /each-fan-out-ceiling\.spec\.ts$/
 		},
 		{
 			name: 'chromium-solo-run-page-ceiling',

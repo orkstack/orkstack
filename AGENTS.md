@@ -1059,10 +1059,11 @@ kept; docs/PROOFS.md §10 says how.
 No proof, no done. A change is finished when its behavior has been observed,
 not when its code reads right. A change is **done** when it is on `main` and a
 full proof passed on the exact tree `main` then points at (§11.3) — the
-`proof` check of the pull request (or merge group) that landed it, or a local
-`make proof` — and when every reference doc that describes what changed says
-the new thing, with a CHANGELOG.md `[Unreleased]` entry for a user-visible
-change. Done is judged by the merge gate, and a deferred test's regression is
+`proof` check of the pull request (or merge group) that landed it, a local
+`make proof`, or a CI full proof of that exact tree downloaded and passed to
+`make merge-check PROOF=` (§11.3(b)) — and when every reference doc that
+describes what changed says the new thing, with a CHANGELOG.md `[Unreleased]`
+entry for a user-visible change. Done is judged by the merge gate, and a deferred test's regression is
 a failing `main`, found by the nightly or the pre-release proof. A feature
 proof means "ready for the merge proof", never "done".
 
@@ -1233,10 +1234,15 @@ review for a change to the gate's own files.
 several branches to share one proof, with `--no-ff`. When both sides changed a
 file, resolve the union of behaviors against the merge base; do not take one
 side wholesale. Run `make merge-check` (build, lint, unit and
-`go vet -tags=integration`), then `make proof` on that clean candidate. When
-the proof passes, amend the merge commit's message to quote it; the amend
-leaves the tree, which the proof is bound to, unchanged. Then run
-`make merge-check PROOF=proof/<name>` and fast-forward `main` with
+`go vet -tags=integration`), then `make proof` on that clean candidate, or
+push the candidate to `validate/full/<name>` and download the
+`proof-<run>-a<n>` artifact of its passing run (docs/PROOFS.md §10);
+`make merge-check PROOF=` accepts it when it is a full, passing,
+merge-eligible proof of exactly the candidate's tree whose base is `main`'s
+tip. The artifact is downloaded, never retyped: its `proof.json` is the
+evidence. When the proof passes, amend the merge commit's message to quote
+it; the amend leaves the tree, which the proof is bound to, unchanged. Then
+run `make merge-check PROOF=proof/<name>` and fast-forward `main` with
 `git merge --ff-only`. `merge-check PROOF=` refuses unless the proof is a
 full, passing, merge-eligible proof of exactly the candidate's tree, the
 worktree is clean, and both the candidate's first parent and the base the
@@ -1246,10 +1252,11 @@ proof at a time on a host until two concurrent full proofs have both passed
 there.
 
 Until the merge gate is enforced (docs/PROOFS.md §6), path (b) is the merge
-path, and a CI run of the candidate is additional evidence, never a substitute
-for (b)'s `merge-check PROOF=`. Enabling it is an outward-facing change,
-confirmed by the person first. Pushing is a separate step, taken only when the
-person asks.
+path, and a CI run of the candidate counts only through (b)'s
+`merge-check PROOF=`, never as a substitute for it. Enabling it is an
+outward-facing change, confirmed by the person first. Pushing is a separate
+step, taken only when the person asks; once they have, `main` is pushed to
+`origin` after every merge, so the nightly and the gate see the real tip.
 ## 12. Repository layout and engineering conventions
 
 ```text

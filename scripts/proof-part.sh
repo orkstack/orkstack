@@ -173,10 +173,15 @@ part_start_temporal() {
 	return 1
 }
 
+# As scripts/proof.sh build_binaries: one `go build` links all nine into bin/.
 part_binaries() {
 	local pkg
-	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run; do
-		go build -o "$DIR/bin/$(basename "$pkg")" "$pkg" || return 1
+	go build -o "$DIR/bin/" "${STACK_BINARIES[@]}" || return 1
+	for pkg in "${STACK_BINARIES[@]}"; do
+		if [ ! -x "$DIR/bin/$(basename "$pkg")" ]; then
+			part_say "go build wrote no $DIR/bin/$(basename "$pkg") for $pkg"
+			return 1
+		fi
 	done
 }
 
@@ -348,6 +353,8 @@ part_main() { # <part>
 		# As scripts/proof.sh ui_e2e_locked: one invocation on one worker; with
 		# more workers the parallel project first, then the solo projects (the
 		# render-budget files) on one worker, and the ledger reads both reports.
+		# The shard's files come before --project, which would otherwise take
+		# them as project names; a shard may hold no file of one project.
 		part_playwright() { # <report> <workers> <args...>
 			local report="$1" workers="$2"
 			shift 2
@@ -361,8 +368,8 @@ part_main() { # <part>
 		}
 		local reports=(-report "$DIR/ui-e2e-report.json")
 		if [ "$PROOF_UI_WORKERS" -gt 1 ]; then
-			part_playwright "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" --project chromium "${rel[@]}" || true
-			part_playwright "$DIR/ui-e2e-report-solo.json" 1 --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling "${rel[@]}" || true
+			part_playwright "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" "${rel[@]}" --pass-with-no-tests --project chromium || true
+			part_playwright "$DIR/ui-e2e-report-solo.json" 1 "${rel[@]}" --pass-with-no-tests --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling || true
 			reports+=(-report "$DIR/ui-e2e-report-solo.json")
 		else
 			part_playwright "$DIR/ui-e2e-report.json" 1 "${rel[@]}" || true

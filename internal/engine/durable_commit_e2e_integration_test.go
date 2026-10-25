@@ -161,7 +161,7 @@ func TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly(t *testing.T) {
 	}
 
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(2 * time.Minute)
 	env.RegisterWorkflow(evidenceAdoptionProbeWorkflow)
 	env.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {

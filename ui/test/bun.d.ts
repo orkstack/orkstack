@@ -51,6 +51,35 @@ declare module 'node:fs' {
 	export function readFileSync(path: string): Uint8Array;
 	export function readdirSync(path: string, options?: { recursive?: boolean }): string[];
 	export function writeFileSync(path: string, data: string): void;
+	// e2e/build-ui.ts and its test (build-ui.test.ts): the build's marker,
+	// and the test's own temporary UI directory.
+	export function existsSync(path: string): boolean;
+	export function rmSync(path: string, options?: { force?: boolean; recursive?: boolean }): void;
+	export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
+	export function mkdtempSync(prefix: string): string;
+}
+
+// e2e/build-ui.ts runs `bun run build`; build-ui.test.ts imports it.
+declare module 'node:child_process' {
+	export function execFileSync(
+		file: string,
+		args: string[],
+		options: { cwd: string; stdio: 'inherit' | 'ignore' }
+	): unknown;
+}
+declare module 'node:path' {
+	const path: {
+		resolve(...paths: string[]): string;
+		dirname(path: string): string;
+		join(...paths: string[]): string;
+	};
+	export default path;
+}
+declare module 'node:url' {
+	export function fileURLToPath(url: string): string;
+}
+declare module 'node:os' {
+	export function tmpdir(): string;
 }
 
 // The hash e2e/build-hash.ts takes over the UI build's inputs; its test under
@@ -71,6 +100,8 @@ declare const Bun: {
 interface ImportMeta {
 	/** Bun: the directory of the current module. */
 	readonly dir: string;
+	/** Bun (and Node 24+): whether this module is the entry point. */
+	readonly main: boolean;
 }
 
 // The one environment read the unit tests make: UPDATE_DAG_PINS=1 rewrites

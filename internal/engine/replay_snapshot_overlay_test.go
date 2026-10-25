@@ -329,7 +329,7 @@ func TestSnapshotOverlayHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) 
 		return writes[i].written
 	}
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetStartTime(startedAt(recorded))
 	env.SetTestTimeout(60 * time.Second)
 	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: runID})

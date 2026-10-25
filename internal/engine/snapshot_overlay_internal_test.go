@@ -61,7 +61,7 @@ func newOverlayHarness(t *testing.T) *overlayHarness {
 		uris: map[int64]string{}, failItem: -1}
 	h.activities = NewSnapshotActivities(h.store)
 	var suite testsuite.WorkflowTestSuite
-	h.env = suite.NewTestWorkflowEnvironment()
+	h.env = generousDeadlock(suite.NewTestWorkflowEnvironment())
 	h.env.SetTestTimeout(120 * time.Second)
 	h.env.SetStartWorkflowOptions(startOptionsForTest())
 	h.env.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})

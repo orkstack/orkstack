@@ -127,7 +127,7 @@ func newHarnessOver(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshots 
 func newHarnessShared(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshots *testSnapshotStore, values *memValues, behavior func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
 	t.Helper()
 	h := &harness{
-		env:           suite.NewTestWorkflowEnvironment(),
+		env:           generousDeadlock(suite.NewTestWorkflowEnvironment()),
 		bus:           engine.NewEventBus(),
 		store:         engine.NewRunStore(),
 		queues:        map[string]string{},
@@ -311,7 +311,7 @@ func newPinHarness(
 ) *harness {
 	t.Helper()
 	h := newHarness(t, suite, behavior)
-	h.env.SetWorkerOptions(worker.Options{EnableSessionWorker: true})
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{EnableSessionWorker: true}))
 	h.env.RegisterActivityWithOptions(
 		func(_ context.Context, in *orkstackv1.ReleasePinInput) error {
 			h.mu.Lock()
@@ -922,7 +922,7 @@ tasks:
     with: {command: "exit 3"}
 `
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 
@@ -1214,7 +1214,7 @@ func TestRunWorkflow_CancelsSiblingsAndSkipsUnstartedTasksWhenATaskFails(t *test
 	var suite testsuite.WorkflowTestSuite
 	siblingCanceled := make(chan struct{})
 
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	snapshots := newTestSnapshotStore()
@@ -1353,7 +1353,7 @@ func TestRunWorkflow_NeverAnnouncesACanceledSiblingAsATaskOutcome(t *testing.T) 
 	var suite testsuite.WorkflowTestSuite
 	siblingCanceled := make(chan struct{})
 
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	snapshots := newTestSnapshotStore()

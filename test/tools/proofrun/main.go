@@ -4,6 +4,7 @@
 //
 //	proofrun unit         run the unit suites and write their ledger
 //	proofrun integration  plan a run once, or run one shard of that plan
+//	proofrun compile      compile and list the integration test binaries ahead
 //	proofrun select       decide what a feature proof runs, or refuse (exit 2)
 //	proofrun feature-report  the feature README's scope sections
 //	proofrun ui-ledger    check the Playwright report against its listing
@@ -13,6 +14,7 @@
 //	proofrun verify       refuse a merge or tag whose proof does not cover it
 //	proofrun temporal-args  the temporal service's image and arguments
 //	proofrun costs        regenerate the cost ledgers and the slow list
+//	proofrun overhead     where an existing proof's wall-clock went
 //	proofrun push-layout  push OCI layouts byte for byte and check the digests
 //	proofrun layout-digests  the images.tsv a layout push would produce
 //	proofrun evidence-args  turn Proof-tests:/Proof-specs: lines into flags
@@ -39,6 +41,7 @@ type subcommand struct {
 var subcommands = []subcommand{
 	{"unit", "run the unit suites and write their ledger", cmdUnit},
 	{"integration", "plan a run once, or run one shard of that plan", cmdIntegration},
+	{"compile", "compile and list the integration test binaries a later integration adopts", cmdCompile},
 	{"select", "decide what a feature proof runs, or refuse", cmdSelect},
 	{"feature-report", "the feature README's scope sections", cmdFeatureReport},
 	{"ui-ledger", "check the Playwright report against its listing", cmdUILedger},
@@ -49,6 +52,7 @@ var subcommands = []subcommand{
 	{"verify", "refuse a merge or a tag whose proof does not cover it", cmdVerify},
 	{"temporal-args", "the temporal service's image and arguments", cmdTemporalArgs},
 	{"costs", "regenerate the cost ledgers and the slow list", cmdCosts},
+	{"overhead", "where an existing proof's wall-clock went, and its per-process overhead", cmdOverhead},
 	{"push-layout", "push OCI layouts byte for byte and check their digests", cmdPushLayout},
 	{"layout-digests", "the images.tsv a layout push would produce", cmdLayoutDigests},
 	{"evidence-args", "turn Proof-tests:/Proof-specs: lines into flags", cmdEvidenceArgs},

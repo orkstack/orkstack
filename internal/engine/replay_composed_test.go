@@ -166,9 +166,9 @@ func TestComposedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	)
 	capture := &childStartCapture{}
 	suite := &testsuite.WorkflowTestSuite{}
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
-	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}})
+	env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}}))
 	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: runID, TaskQueue: parentQueue})
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: "ParentRunWorkflow"})
 	env.RegisterWorkflowWithOptions(func(workflow.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) (*orkstackv1.Run, error) {

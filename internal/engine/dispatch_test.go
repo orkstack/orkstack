@@ -307,7 +307,7 @@ func TestRunWorkflow_ReadsTheOrkersFailureAsDataNotAsAString(t *testing.T) {
 // which is why they are asserted rather than assumed.
 func TestRunWorkflow_SetsTheHeartbeatAndCancellationOptions(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(30 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	env.RegisterActivityWithOptions(

@@ -219,7 +219,7 @@ tasks:
 // the engine's ReleasePin, as newPinHarness does.
 func enablePins(h *harness, options worker.Options) {
 	options.EnableSessionWorker = true
-	h.env.SetWorkerOptions(options)
+	h.env.SetWorkerOptions(testWorkerOptions(options))
 	h.env.RegisterActivityWithOptions(func(_ context.Context, in *orkstackv1.ReleasePinInput) error {
 		h.mu.Lock()
 		h.released = append(h.released, in)

@@ -1,0 +1,10 @@
+planned 5 jobs on 1 shards (2 slots each); estimated 300s of work, floor 40s
+start a-001 slot 1: example.com/a TestHeavy (estimated 30s, timeout 10m0s)
+end   a-001 after 40.0s (exit 0), 1 of 1 tests started
+start a-002 slot 1: example.com/a TestA,TestB (estimated 90s, timeout 10m0s)
+start a-003 slot 2: example.com/a TestC (estimated 45s, timeout 10m0s)
+end   a-003 after 50.0s (exit 0), 1 of 1 tests started
+start b-004 slot 2: example.com/b TestD (estimated 20s, timeout 10m0s)
+end   a-002 after 100.0s (exit 0), 2 of 2 tests started
+end   b-004 after 30.0s (exit 0), 1 of 1 tests started
+start b-005 slot 1: example.com/b TestE (estimated 20s, timeout 10m0s)

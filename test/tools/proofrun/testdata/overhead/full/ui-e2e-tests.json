@@ -1,0 +1,12 @@
+{"suite":"ui-e2e","tests":[
+ {"file":"e2e/runs.spec.ts","title":"lists runs","project":"chromium","outcome":"pass","seconds":30,"start":0},
+ {"file":"e2e/runs.spec.ts","title":"opens a run","project":"chromium","outcome":"pass","seconds":20,"start":32},
+ {"file":"e2e/home.spec.ts","title":"renders","project":"chromium","outcome":"pass","seconds":45,"start":0},
+ {"file":"e2e/each-fan-out.spec.ts","title":"fans out","project":"chromium-solo-each-fan-out","outcome":"pass","seconds":25,"start":60},
+ {"file":"e2e/run-page-ceiling.spec.ts","title":"renders the ceiling","project":"chromium-solo-run-page-ceiling","outcome":"pass","seconds":30,"start":90}],
+ "problems":[],"listed":5,"pass":5,
+ "files":[
+ {"file":"e2e/each-fan-out.spec.ts","shard":1,"tests":1,"seconds":25,"wall_seconds":25},
+ {"file":"e2e/home.spec.ts","shard":1,"tests":1,"seconds":45,"wall_seconds":45},
+ {"file":"e2e/run-page-ceiling.spec.ts","shard":1,"tests":1,"seconds":30,"wall_seconds":30},
+ {"file":"e2e/runs.spec.ts","shard":1,"tests":2,"seconds":50,"wall_seconds":52}]}

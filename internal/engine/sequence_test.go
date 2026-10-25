@@ -32,7 +32,7 @@ import (
 // of any replica executing it.
 func TestRunWorkflow_NumbersItsOwnEvents(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 
@@ -104,7 +104,7 @@ func TestRunWorkflow_NumbersItsOwnEvents(t *testing.T) {
 // snapshot every replica reads.
 func TestRunWorkflow_SnapshotCarriesCreatedAt(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 

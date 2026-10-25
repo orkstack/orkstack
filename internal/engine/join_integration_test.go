@@ -677,6 +677,18 @@ func (j *joinE2E) awaitLiveAttempt(runID, taskID string, attempt int32, within t
 	return ""
 }
 
+// killRollbackSeconds is the rollback_seconds the killUnderRollback runs
+// hold rollback open with. Attempt 1 has to still be running when the kill
+// lands: awaitLiveAttempt sees its first heartbeat within one heartbeat tick
+// (5 s by default) of the attempt's start, and 30 s leaves a wide margin. A
+// rollback that ended first would SUCCEED on attempt 1, which both tests'
+// assertions refuse explicitly. A killed container that then exits 0 inside
+// its SIGTERM grace is still recorded CANCELED (the Orker checks
+// cancellation first). The retry re-runs the whole hold after the 30 s
+// heartbeat timeout, so this value is paid twice; do not lengthen it again
+// without a reason.
+const killRollbackSeconds = 30
+
 // killUnderRollback is the kill-under-a-handler procedure: two Orkers; once notify
 // succeeded and rollback's first attempt heartbeats, stop the Orker under it.
 func (j *joinE2E) killUnderRollback(runID string, workers map[string]worker.Worker) string {
@@ -716,7 +728,7 @@ func TestIntegration_JoinOrkerKilledUnderAHandlerRetriesIt(t *testing.T) {
 	j := startJoinE2E(t)
 	workers := map[string]worker.Worker{"join-i9-a": j.orker("join-i9-a"), "join-i9-b": j.orker("join-i9-b")}
 	runID := joinRunID("i9")
-	j.startRun(runID, j.example(nil), map[string]any{"route": "canary", "fail_deploy": true, "smoke_seconds": 1, "rollback_seconds": 60})
+	j.startRun(runID, j.example(nil), map[string]any{"route": "canary", "fail_deploy": true, "smoke_seconds": 1, "rollback_seconds": killRollbackSeconds})
 	victim := j.killUnderRollback(runID, workers)
 	run := j.wait(runID)
 	rollback := taskRunNamed(run, "rollback")
@@ -758,7 +770,7 @@ func TestIntegration_JoinOrkerKilledUnderAHandlerWithoutRetryFailsIt(t *testing.
 	j := startJoinE2E(t)
 	workers := map[string]worker.Worker{"join-i9b-a": j.orker("join-i9b-a"), "join-i9b-b": j.orker("join-i9b-b")}
 	runID := joinRunID("i9b")
-	j.startRun(runID, j.example(noRetryVariant), map[string]any{"route": "canary", "fail_deploy": true, "smoke_seconds": 1, "rollback_seconds": 60})
+	j.startRun(runID, j.example(noRetryVariant), map[string]any{"route": "canary", "fail_deploy": true, "smoke_seconds": 1, "rollback_seconds": killRollbackSeconds})
 	j.killUnderRollback(runID, workers)
 	run := j.wait(runID)
 	rollback := taskRunNamed(run, "rollback")

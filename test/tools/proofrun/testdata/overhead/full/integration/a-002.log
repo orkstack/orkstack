@@ -1,0 +1,4 @@
+=== RUN   TestA
+time=2026-10-20T10:00:00Z level=INFO msg="engine boot" took=2s
+time=2026-10-20T10:00:30Z level=WARN msg="engine boot took 23.4s" threshold=20s
+--- PASS: TestA (40.00s)

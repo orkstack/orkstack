@@ -82,7 +82,7 @@ func TestRunPlan_EncodesIdenticallyWithoutOrigin(t *testing.T) {
 func snapshotsFor(t *testing.T, runID string, plan engine.RunPlan) []*orkstackv1.Run {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	var snapshots []*orkstackv1.Run

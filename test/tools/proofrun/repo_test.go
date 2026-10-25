@@ -170,11 +170,13 @@ func at(text, prefix string) int {
 // failure in the fast gates first: lint, build, unit, vet, the two UI gates
 // and the site gate run one after another, alone, before the Temporal, the
 // images and the binaries, and before any gate that takes hours. The UI gates
-// both read ui/.svelte-kit, which is generated once before either.
+// both read ui/.svelte-kit, which is generated once before either. The setup —
+// Temporal, images, binaries and the integration test binaries — then runs as
+// one concurrent group, collected before any test starts.
 func TestRepositoryProofScript_RunsTheFastGatesBeforeAnythingLong(t *testing.T) {
 	text := proofScript(t)
 	fast := []string{"step lint ", "step build ", "step unit ", "step vet-integration ", "step ui-check ", "step ui-unit ", "step site "}
-	long := []string{"step temporal ", "step images ", "step binaries ", "run_bg activity-fixture ", "run_bg integration ", "step ui-e2e ", "step observability "}
+	long := []string{"step_bg temporal ", "step_bg images ", "step_bg binaries ", "step_bg integration-compile ", "run_bg activity-fixture ", "run_bg integration ", "step ui-e2e ", "step observability "}
 	last := -1
 	for _, g := range fast {
 		i := at(text, g)
@@ -209,10 +211,33 @@ func TestRepositoryProofScript_RunsTheFastGatesBeforeAnythingLong(t *testing.T) 
 	if n := strings.Count(text, "svelte-kit sync >"); n != 1 {
 		t.Errorf("svelte-kit sync is generated %d times, want once", n)
 	}
-	// The only gates that run beside each other are the two that start
-	// together; nothing else is started in the background.
-	if n := strings.Count(text, "\trun_bg "); n != 2 {
-		t.Errorf("%d run_bg call sites, want 2 (activity-fixture and integration)", n)
+	// The gates that run beside each other: the setup group's members
+	// (through step_bg, which calls run_bg once) and then integration with
+	// the activity fixture; nothing else is started in the background.
+	if n := strings.Count(text, "\trun_bg "); n != 3 {
+		t.Errorf("%d run_bg call sites, want 3 (step_bg, activity-fixture and integration)", n)
+	}
+	if n := strings.Count(text, "\tstep_bg "); n != 4 {
+		t.Errorf("%d step_bg call sites, want 4 (temporal, images, binaries, integration-compile)", n)
+	}
+	// The setup group is collected, and temporal.env read, before the stack
+	// environment is built and before integration or the fixture starts.
+	group := at(text, "step_bg integration-compile ")
+	collect := at(text[group:], "wait_bg\n")
+	env := at(text[group:], ". \"$DIR/temporal.env\"")
+	stack := at(text[group:], "STACK_ENV=(")
+	first := at(text[group:], "run_bg activity-fixture ")
+	if collect < 0 || env < collect || stack < env || first < stack {
+		t.Errorf("the setup group is not collected (wait_bg), its temporal.env read, and STACK_ENV built before the first long gate starts")
+	}
+	// What proofrun compile builds is what proofrun integration adopts.
+	for _, want := range []string{`compile_args=(-out "$DIR/bin/test")`, `integ_args=(-out "$DIR" -bin "$DIR/bin/test"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("proof.sh lacks %q", want)
+		}
+	}
+	if !subcommandFlags(t, "integration")["bin"] || !subcommandFlags(t, "compile")["out"] {
+		t.Error("proofrun integration -bin or proofrun compile -out is gone")
 	}
 }
 
@@ -294,13 +319,150 @@ func TestRepositoryProofScript_FailsFast(t *testing.T) {
 	if i < 0 || !strings.Contains(text[i:i+300], `[ -z "$FF_TRIGGER" ] || return 0`) {
 		t.Error("step does not refuse to start a gate once the proof has stopped")
 	}
-	for _, g := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "site", "ui-e2e", "observability", "temporal", "images", "binaries"} {
+	for _, g := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "site", "ui-e2e", "observability"} {
 		if !strings.Contains(text, "step "+g+" ") {
 			t.Errorf("gate %s is not run through step: a stopped proof would still start it", g)
 		}
 	}
+	for _, g := range []string{"temporal", "images", "binaries", "integration-compile"} {
+		if !strings.Contains(text, "\tstep_bg "+g+" ") {
+			t.Errorf("setup member %s is not run through step_bg: a stopped proof would still start it", g)
+		}
+	}
+	if i := at(text, "step_bg() {"); i < 0 || !strings.Contains(text[i:i+200], `[ -z "$FF_TRIGGER" ] || return 0`) {
+		t.Error("step_bg does not refuse to start a gate once the proof has stopped")
+	}
 	// A stopped gate is ended through the pid its own run recorded.
 	if !strings.Contains(text, `kill -TERM "$pid"`) || !strings.Contains(text, `printf '%s\n' "$cpid" >"$DIR/running.$gate"`) {
 		t.Error("proof.sh no longer stops a gate through the command pid it recorded")
+	}
+}
+
+// Playwright's --project takes every word after it as a project name, so a
+// spec file passed after it is refused as an unknown project and the
+// invocation runs nothing. Every split UI invocation of the gate passes its
+// spec files before --project, and passes --pass-with-no-tests, because a
+// selection or a shard may hold no file of one of the projects.
+func TestRepositoryPlaywrightProjectInvocationsPassFilesFirst(t *testing.T) {
+	root := mustRepoRoot()
+	for file, files := range map[string]string{
+		"scripts/proof.sh":      `"${SPEC_ARGS[@]}"`,
+		"scripts/proof-part.sh": `"${rel[@]}"`,
+	} {
+		src, err := os.ReadFile(filepath.Join(root, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := 0
+		for n, line := range strings.Split(string(src), "\n") {
+			project := strings.Index(line, "--project ")
+			if project < 0 || strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			seen++
+			at := strings.Index(line, files)
+			switch {
+			case at < 0:
+				t.Errorf("%s:%d: a --project invocation without %s: %s", file, n+1, files, strings.TrimSpace(line))
+			case at > project:
+				t.Errorf("%s:%d: %s after --project, which takes it as project names: %s", file, n+1, files, strings.TrimSpace(line))
+			}
+			if !strings.Contains(line, "--pass-with-no-tests") {
+				t.Errorf("%s:%d: a --project invocation without --pass-with-no-tests: %s", file, n+1, strings.TrimSpace(line))
+			}
+		}
+		if seen != 2 {
+			t.Errorf("%s: %d --project invocations, want the parallel one and the solo one", file, seen)
+		}
+	}
+}
+
+// The setup's links and image builds are parallel: one `go build` writes all
+// nine stack binaries into bin/ (in a local proof and a CI part alike), and
+// the images Makefile builds, pushes and exports its images IMAGE_JOBS at a
+// time, each image a target of its own.
+func TestRepositoryProofScript_BuildsTheSetupInParallel(t *testing.T) {
+	text := proofScript(t)
+	part, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof-part.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// STACK_BINARIES is defined before proof.sh sources proof-part.sh.
+	def, src := at(text, "STACK_BINARIES=("), at(text, `. "$REPO/scripts/proof-part.sh"`)
+	if def < 0 || src < 0 || def > src {
+		t.Error("STACK_BINARIES is not defined before a CI part sources proof-part.sh")
+	}
+	for name, body := range map[string]string{"proof.sh": text, "proof-part.sh": string(part)} {
+		if !strings.Contains(body, `go build -o "$DIR/bin/" "${STACK_BINARIES[@]}"`) {
+			t.Errorf("%s does not link the stack binaries with one go build into bin/", name)
+		}
+		if regexp.MustCompile(`go build -o "\$DIR/bin/\$\(basename`).MatchString(body) {
+			t.Errorf("%s still links the stack binaries one by one", name)
+		}
+	}
+	// The same nine the Playwright suite's global setup builds when missing.
+	setup, err := os.ReadFile(filepath.Join(mustRepoRoot(), "ui", "e2e", "global-setup.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := text[def : def+strings.Index(text[def:], "\n")]
+	for _, m := range regexp.MustCompile(`'?([a-z-]+)'?: '(\./[a-z/-]+)'`).FindAllStringSubmatch(string(setup), -1) {
+		if !strings.Contains(line, " "+m[2]+" ") && !strings.Contains(line, " "+m[2]+")") && !strings.Contains(line, "("+m[2]+" ") {
+			t.Errorf("ui/e2e/global-setup.ts builds %s from %s, which STACK_BINARIES lacks", m[1], m[2])
+		}
+	}
+	mk, err := os.ReadFile(filepath.Join(mustRepoRoot(), "images", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"IMAGE_JOBS ?= 6",
+		"@$(MAKE) -j$(IMAGE_JOBS) -Otarget $(addprefix image-,$(ACTIVITIES))",
+		"@$(MAKE) -j$(IMAGE_JOBS) -Otarget $(addprefix push-,$(ACTIVITIES))",
+		"$(addprefix push-,$(ACTIVITIES)): push-%: image-%",
+		"@$(MAKE) -j$(IMAGE_JOBS) -Otarget $(addprefix oci-,$(ACTIVITIES))",
+	} {
+		if !strings.Contains(string(mk), want) {
+			t.Errorf("images/Makefile lacks %q", want)
+		}
+	}
+}
+
+// The UI pre-build: started beside integration only when Playwright will run,
+// waiting for integration-heavy-done (never beside a heavy test), building
+// through the same ui/e2e/build-ui.ts the suite's global setup calls, and
+// collected before the Playwright gate starts, so the two never build at
+// once. It is never a gate: a failure leaves the gate to build as before.
+func TestRepositoryProofScript_PrebuildsTheUIAfterTheHeavyJobs(t *testing.T) {
+	text := proofScript(t)
+	fn := at(text, "ui_prebuild() {")
+	if fn < 0 {
+		t.Fatal("proof.sh has no ui_prebuild")
+	}
+	body := text[fn : fn+strings.Index(text[fn:], "\n}\n")]
+	wait := strings.Index(body, `while [ ! -e "$DIR/integration-heavy-done" ]`)
+	build := strings.Index(body, "bun e2e/build-ui.ts")
+	if wait < 0 || build < 0 || build < wait {
+		t.Error("ui_prebuild does not wait for integration-heavy-done before it builds")
+	}
+	if strings.Contains(body, ">>\"$GATES_TSV\"") || strings.Contains(body, "step ") || strings.Contains(body, "run_bg ") {
+		t.Error("ui_prebuild records a gate: a pre-build is a head start, never evidence")
+	}
+	start := at(text, "ui_prebuild >\"$DIR/ui-prebuild.log\" 2>&1 &")
+	integ := at(text, "run_bg integration ")
+	collect := at(text, `wait "$UI_PREBUILD"`)
+	e2e := at(text, "step ui-e2e ")
+	if start < 0 || start < integ || collect < start || e2e < collect {
+		t.Error("the pre-build is not started after integration and collected before the Playwright gate")
+	}
+	if !strings.Contains(text, `if [ -s "$DIR/ui-e2e-list.json" ]; then`) {
+		t.Error("the Playwright gate does not reuse the pre-build's listing")
+	}
+	setup, err := os.ReadFile(filepath.Join(mustRepoRoot(), "ui", "e2e", "global-setup.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(setup), "ensureUIBuild(uiDir)") || strings.Contains(string(setup), "execFileSync('bun', ['run', 'build']") {
+		t.Error("ui/e2e/global-setup.ts does not build through build-ui.ts's ensureUIBuild: the pre-build and the gate would decide differently")
 	}
 }

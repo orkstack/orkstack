@@ -228,7 +228,7 @@ func TestContinuation_PlanWithoutBudgetIsByteIdentical(t *testing.T) {
 				current = h
 				enablePins(h, worker.Options{})
 				r := &commandRecorder{}
-				h.env.SetWorkerOptions(worker.Options{EnableSessionWorker: true, Interceptors: []interceptor.WorkerInterceptor{r}})
+				h.env.SetWorkerOptions(testWorkerOptions(worker.Options{EnableSessionWorker: true, Interceptors: []interceptor.WorkerInterceptor{r}}))
 				h.countItems = func(*orkstackv1.ArtifactRef) (int32, error) { return count, nil }
 				for i, sig := range signals {
 					h.signalAt(offsets[i], sig)

@@ -239,6 +239,10 @@ proof-clean: ## List the buckets and work roots failed tests kept; REMOVE=1 remo
 proof-slow-list: ## Regenerate scripts/proof-test-costs.tsv and scripts/proof-slow-tests.txt from a full proof: FROM=proof/<name>
 	go run ./test/tools/proofrun costs -from $(FROM)
 
+.PHONY: proof-overhead
+proof-overhead: ## Report where an existing proof's wall-clock went and its per-process overhead, running nothing: FROM=proof/<name> [OUT=FILE.md]
+	go run ./test/tools/proofrun overhead -from $(FROM) $(if $(OUT),-out $(OUT))
+
 .PHONY: proof-flakes
 proof-flakes: ## Derive per-test flake rates from the proof ledgers: FROM='proof/*' [REPO=.]
 	go run ./test/tools/proofrun flakes -from '$(or $(FROM),proof/*)' $(if $(REPO),-repo $(REPO))

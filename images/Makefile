@@ -19,6 +19,10 @@
 #   make contract  run the contract fixtures on REGISTRY/…:TAG as they are, with
 #                  no build (ACTIVITY= runs one); `make test` builds, then runs it.
 #
+# `images`, `push` and `oci` build the six images IMAGE_JOBS (default 6) at a
+# time, and `push` pushes each as soon as it is built; IMAGE_JOBS=1 is the old
+# one-after-another order. The digests are the registry's either way.
+#
 # The local registry is `registry:3` from deploy/docker-compose.yml on port
 # 5001; `push`, `layout` and `release` need it running.
 
@@ -42,12 +46,19 @@ DOCKER_BUILD_FLAGS ?=
 # ref/1 is the one place a first-party image reference is spelled.
 ref = $(REGISTRY)/$(NAMESPACE)/activity-$(1):$(TAG)
 
+# IMAGE_JOBS is how many images `images`, `push` and `oci` build (and push) at
+# once. Each image is a target of its own with its own build context and its
+# own repository, so they share nothing but the daemon and BuildKit's cache;
+# `-O` keeps each one's output whole. IMAGE_JOBS=1 builds one after another.
+IMAGE_JOBS ?= 6
+
 .PHONY: help
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n",$$1,$$2}'
 
 .PHONY: images
-images: $(addprefix image-,$(ACTIVITIES)) ## Build and tag every first-party activity image
+images: ## Build and tag every first-party activity image, IMAGE_JOBS at a time
+	@$(MAKE) -j$(IMAGE_JOBS) -Otarget $(addprefix image-,$(ACTIVITIES))
 
 .PHONY: $(addprefix image-,$(ACTIVITIES))
 $(addprefix image-,$(ACTIVITIES)): image-%: ## Build one activity image
@@ -55,10 +66,8 @@ $(addprefix image-,$(ACTIVITIES)): image-%: ## Build one activity image
 	@echo "built $(call ref,$*)"
 
 .PHONY: push
-push: images ## Push every image to REGISTRY (this is what mints the index digest)
-	@for a in $(ACTIVITIES); do \
-	  docker push "$(REGISTRY)/$(NAMESPACE)/activity-$$a:$(TAG)" || exit 1; \
-	done
+push: ## Build and push every image to REGISTRY, IMAGE_JOBS at a time (this is what mints the index digest)
+	@$(MAKE) -j$(IMAGE_JOBS) -Otarget $(addprefix push-,$(ACTIVITIES))
 	@echo
 	@echo "pinned references — paste into ORK_ACTIVITY_CATALOG:"
 	@for a in $(ACTIVITIES); do \
@@ -66,6 +75,10 @@ push: images ## Push every image to REGISTRY (this is what mints the index diges
 	        --format '{{.Manifest.Digest}}' 2>/dev/null) || exit 1; \
 	  printf '  %-8s %s/%s/activity-%s@%s\n' "$$a" "$(REGISTRY)" "$(NAMESPACE)" "$$a" "$$d"; \
 	done
+
+.PHONY: $(addprefix push-,$(ACTIVITIES))
+$(addprefix push-,$(ACTIVITIES)): push-%: image-% ## Build and push one activity image
+	docker push '$(call ref,$*)'
 
 .PHONY: layout
 layout: push ## Export each pushed image as an OCI image layout for the embedded fallback
@@ -90,16 +103,19 @@ print-activities: ## Print the first-party activity names, for scripts
 	@echo $(ACTIVITIES)
 
 .PHONY: oci
-oci: ## Build every image once as an OCI image layout into OUT/activity-<name>/: no push, no daemon tag
+oci: ## Build every image once as an OCI image layout into OUT/activity-<name>/, IMAGE_JOBS at a time: no push, no daemon tag
 	$(if $(strip $(OUT)),,$(error make oci needs OUT=<directory> for the layouts (absolute, or relative to images/)))
 	@mkdir -p '$(abspath $(OUT))'
-	@for a in $(ACTIVITIES); do \
-	  echo "building activity-$$a -> $(abspath $(OUT))/activity-$$a"; \
-	  rm -rf "$(abspath $(OUT))/activity-$$a"; \
-	  docker buildx build $(DOCKER_BUILD_FLAGS) --provenance=false --sbom=false \
-	    --output "type=oci,dest=$(abspath $(OUT))/activity-$$a,tar=false" \
-	    "activity-$$a" || exit 1; \
-	done
+	@$(MAKE) -j$(IMAGE_JOBS) -Otarget $(addprefix oci-,$(ACTIVITIES)) OUT='$(abspath $(OUT))'
+
+.PHONY: $(addprefix oci-,$(ACTIVITIES))
+$(addprefix oci-,$(ACTIVITIES)): oci-%: ## Build one image as an OCI image layout into OUT/activity-<name>/
+	$(if $(strip $(OUT)),,$(error make oci-$* needs OUT=<directory> for the layout))
+	@echo "building activity-$* -> $(abspath $(OUT))/activity-$*"
+	@rm -rf '$(abspath $(OUT))/activity-$*'
+	docker buildx build $(DOCKER_BUILD_FLAGS) --provenance=false --sbom=false \
+	  --output 'type=oci,dest=$(abspath $(OUT))/activity-$*,tar=false' \
+	  activity-$*
 
 # The activities the contract fixtures cover: shell is the bash fixture's
 # reference image; json, git and template have a first-party fixture each.

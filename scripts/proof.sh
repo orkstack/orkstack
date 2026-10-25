@@ -231,6 +231,13 @@ else
 	IMAGE_TAG="$PROOF_ID"
 fi
 
+# The binaries every stack gate runs, in a local proof and in a CI part
+# (scripts/proof-part.sh), linked by one `go build`: an -o that ends in a
+# slash writes each main package's executable into that directory, named
+# after its last path element (`go help build`), so the nine links share one
+# build graph instead of nine.
+STACK_BINARIES=(./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run ./test/tools/archive-sized-run)
+
 # proofrun decides the selection before anything is written, so it is built
 # first, into a temporary directory, and moved into the proof's bin/ later.
 PR_TMP="$(mktemp -d)"
@@ -250,7 +257,7 @@ if [ -n "$PART" ]; then
 	exit $?
 fi
 
-ALL_GATES="temporal binaries lint build unit vet-integration images integration activity-fixture ui-check ui-unit site ui-e2e observability"
+ALL_GATES="temporal binaries integration-compile lint build unit vet-integration images integration activity-fixture ui-check ui-unit site ui-e2e observability"
 declare -A RUN=()
 SPEC_ARGS=()
 OBS_PATHS=""
@@ -328,6 +335,7 @@ if runs integration || runs ui-e2e || runs observability; then
 	RUN[binaries]=1
 	RUN[temporal]=1
 fi
+if runs integration; then RUN[integration-compile]=1; fi
 
 # ---- prerequisites, decided before a single file is written (exit 77) -------
 tcp_open() { (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null; }
@@ -544,18 +552,35 @@ run_bg() { # run beside the others; wait_bg collects them
 	(RUN_TRACK=1 run "$@") &
 	BG+=($!)
 }
+step_bg() { # <gate> <log> <command...>: run_bg, unless the gate is not due or the proof has stopped
+	runs "$1" || return 0
+	[ -z "$FF_TRIGGER" ] || return 0
+	run_bg "$@"
+}
 kill_tree() { # <pid>: it and its descendants, found by parent pid
 	local child
 	for child in $(ps -o pid= --ppid "$1" 2>/dev/null); do kill_tree "$child"; done
 	kill -KILL "$1" 2>/dev/null
 }
+descendants() { # <pid>: the pids under it, found by parent pid
+	local child
+	for child in $(ps -o pid= --ppid "$1" 2>/dev/null); do
+		printf '%s\n' "$child"
+		descendants "$child"
+	done
+}
 # stop_running_gates ends the gates running beside each other: SIGTERM to the
 # command pid each recorded (proofrun integration, which then writes its
 # ledger with every unfinished test as having no outcome, and make), a minute
-# of grace, then SIGKILL to what is left of that pid's tree. Only pids this
-# script recorded are signalled — never a name or a pattern (AGENTS.md §11.1).
+# of grace, then SIGKILL to what is left of that pid's tree. A setup member is
+# a shell function, whose subshell a SIGTERM ends at once while the docker or
+# go command it waited on runs on, orphaned: so the pids under each command
+# are found before the SIGTERM, and those still alive once it has ended are
+# sent a SIGTERM of their own. Only pids this script recorded, or found under
+# them by parent pid, are signalled — never a name or a pattern (AGENTS.md
+# §11.1).
 stop_running_gates() { # <failed gate>
-	local f gate pid p i alive pids=()
+	local f gate pid p k i alive pids=() kids=()
 	for f in "$DIR"/running.*; do
 		[ -e "$f" ] || continue
 		gate="${f##*/running.}"
@@ -563,6 +588,7 @@ stop_running_gates() { # <failed gate>
 		{ [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } || continue
 		printf 'stopped: %s failed\n' "$1" >"$DIR/stop.$gate"
 		say "proof: stopping $gate (pid $pid): $1 failed"
+		mapfile -t -O "${#kids[@]}" kids < <(descendants "$pid")
 		kill -TERM "$pid" 2>/dev/null
 		pids+=("$pid")
 	done
@@ -571,10 +597,13 @@ stop_running_gates() { # <failed gate>
 		for p in "${pids[@]}"; do
 			if kill -0 "$p" 2>/dev/null; then alive=1; fi
 		done
-		[ -n "$alive" ] || return 0
+		[ -n "$alive" ] || break
 		sleep 0.5
 	done
-	for p in "${pids[@]}"; do kill_tree "$p"; done
+	if [ -n "$alive" ]; then
+		for p in "${pids[@]}"; do kill_tree "$p"; done
+	fi
+	for k in "${kids[@]}"; do kill -TERM "$k" 2>/dev/null; done
 }
 wait_bg() {
 	local done_pid p rest
@@ -638,7 +667,14 @@ step ui-unit ui-unit.log in_ui bun test test/
 # builds it (link validation included). It needs no Temporal and no Docker.
 step site site.log in_site bash -c 'bun run check && bun run build'
 
-# ---- P0: Temporal, images, binaries ---------------------------------------------
+# ---- P0: the setup, one concurrent group: Temporal, images, binaries, test binaries --
+# Everything the long gates need, started together once the fast gates have
+# passed, and collected by wait_bg: a failure of any member stops the others
+# (stop_running_gates) and the proof, and each member is its own gates.tsv
+# row as before, with a `setup` row for the group's wall. Nothing here is
+# load-sensitive — no test runs until the group has ended — and the unit gate
+# ran alone before it. A member runs in a subshell, so what start_temporal
+# learns reaches the proof through temporal.env.
 TEMPORAL_ADDRESS="127.0.0.1:7233"
 TEMPORAL_IMAGE=""
 SWEPT=""
@@ -681,7 +717,6 @@ start_temporal() {
 		--label "orkstack.proof=$PROOF_ID" \
 		--label "orkstack.proof.owner=$(hostname):$$:$(proc_start $$)" \
 		-p 127.0.0.1::7233 "${args[@]}" || return 1
-	TEMPORAL_STARTED=1
 	port="$(docker port "$TEMPORAL_NAME" 7233/tcp | head -n1 | awk -F: '{print $NF}')"
 	if [ -z "$port" ]; then
 		say "no published port for $TEMPORAL_NAME"
@@ -691,6 +726,7 @@ start_temporal() {
 	for i in $(seq 1 240); do
 		if docker exec "$TEMPORAL_NAME" temporal operator cluster health --address 127.0.0.1:7233 2>/dev/null | grep -q SERVING; then
 			say "Temporal $TEMPORAL_IMAGE serving at $TEMPORAL_ADDRESS ($(docker image inspect --format '{{index .RepoDigests 0}}' "$TEMPORAL_IMAGE" 2>/dev/null))"
+			printf 'TEMPORAL_ADDRESS=%q\nTEMPORAL_IMAGE=%q\nSWEPT=%q\n' "$TEMPORAL_ADDRESS" "$TEMPORAL_IMAGE" "$SWEPT" >"$DIR/temporal.env"
 			return 0
 		fi
 		sleep 0.5
@@ -718,20 +754,52 @@ push_images() {
 }
 build_binaries() {
 	local pkg
-	for pkg in ./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run; do
-		go build -o "$DIR/bin/$(basename "$pkg")" "$pkg" || return 1
+	go build -o "$DIR/bin/" "${STACK_BINARIES[@]}" || return 1
+	for pkg in "${STACK_BINARIES[@]}"; do
+		if [ ! -x "$DIR/bin/$(basename "$pkg")" ]; then
+			say "go build wrote no $DIR/bin/$(basename "$pkg") for $pkg"
+			return 1
+		fi
 		say "built $DIR/bin/$(basename "$pkg") from $pkg"
 	done
 }
 
-step temporal temporal.log start_temporal
-if runs images && [ -z "$FF_TRIGGER" ]; then
-	IMAGES_BUILT=1
-	step images images.log push_images
-elif [ -z "$FF_TRIGGER" ] && [ -z "$IMAGE_TAG_OWN" ] && { runs temporal || runs activity-fixture; }; then
-	record_images >"$DIR/images.log" 2>&1
+if [ -z "$FF_TRIGGER" ]; then
+	SETUP_STARTED=$SECONDS
+	SETUP_MEMBERS=""
+	for g in temporal images binaries integration-compile; do
+		if runs "$g"; then SETUP_MEMBERS="$SETUP_MEMBERS $g"; fi
+	done
+	# Set here, in the proof's own shell, before the member starts: on_exit
+	# stops the container by its exact name, whichever member failed.
+	if runs temporal && [ "$PROOF_TEMPORAL" = own ]; then TEMPORAL_STARTED=1; fi
+	if runs images; then IMAGES_BUILT=1; fi
+	step_bg temporal temporal.log start_temporal
+	step_bg images images.log push_images
+	step_bg binaries binaries.log build_binaries
+	compile_args=(-out "$DIR/bin/test")
+	if [ "$TIER" = feature ]; then compile_args+=(-select "$DIR/selection.json"); fi
+	step_bg integration-compile integration-compile.log "$PR" compile "${compile_args[@]}"
+	if [ -z "$IMAGE_TAG_OWN" ] && { runs temporal || runs activity-fixture; }; then
+		record_images >"$DIR/images.log" 2>&1
+	fi
+	wait_bg
+	if [ -f "$DIR/temporal.env" ]; then
+		# shellcheck source=/dev/null
+		. "$DIR/temporal.env"
+	fi
+	if [ -n "$SETUP_MEMBERS" ]; then
+		setup_result=pass
+		for g in $SETUP_MEMBERS; do
+			if [ "$(awk -F'\t' -v g="$g" '$1 == g {print $2; exit}' "$GATES_TSV")" != pass ]; then setup_result=fail; fi
+		done
+		for g in $SETUP_MEMBERS; do
+			awk -F'\t' -v g="$g" '$1 == g {print g ": " $2 " in " $3 "s -> " $4; exit}' "$GATES_TSV"
+		done >"$DIR/setup.log"
+		printf '%s\t%s\t%s\t%s\t%s\n' setup "$setup_result" "$((SECONDS - SETUP_STARTED))" setup.log "concurrent:$SETUP_MEMBERS" >>"$GATES_TSV"
+		say "   setup: $setup_result ($((SECONDS - SETUP_STARTED))s wall, concurrent:$SETUP_MEMBERS)"
+	fi
 fi
-step binaries binaries.log build_binaries
 
 # What every stack gate sees. The unit gate sees none of it.
 STACK_ENV=(
@@ -744,7 +812,7 @@ STACK_ENV=(
 )
 
 # ---- P2: integration, with the Docker-only activity fixture beside it -----------
-# The only gates that run side by side. If either fails, the other is stopped
+# The only gates that run beside tests. If either fails, the other is stopped
 # (wait_bg, stop_running_gates) and Playwright and observability never start.
 #
 # The fixture starts only once the integration runner has finished its HEAVY
@@ -762,12 +830,48 @@ fixture_after_heavy() {
 	fi
 	exec make -C images test TAG="$IMAGE_TAG" REGISTRY="$REGISTRY"
 }
+
+# ---- P3: the UI build, during the ordinary integration jobs ----------------------
+# The vite build the Playwright gate's global setup would otherwise make first
+# (ui/e2e/build-ui.ts, which global-setup.ts calls), and the listing the gate
+# plans from, made while the ordinary integration jobs run: only once
+# integration-heavy-done exists, the fixture's policy, so never beside a heavy
+# test, or once the integration gate has passed without one. Both are only a
+# head start and never a gate: the global setup rebuilds whenever the hash of
+# the build's inputs differs from the one beside ui/build, which a failed or
+# interrupted build never leaves, and the gate lists for itself when no
+# listing was written. The gate waits for this to end before it starts.
+UI_PREBUILD=""
+ui_prebuild() {
+	local started
+	while [ ! -e "$DIR/integration-heavy-done" ] && ! grep -q "^integration"$'\t' "$GATES_TSV"; do
+		sleep 2
+	done
+	if [ ! -e "$DIR/integration-heavy-done" ] && ! grep -q "^integration"$'\tpass\t' "$GATES_TSV"; then
+		say "integration ended before its ordinary jobs: no pre-build, the Playwright gate builds the UI"
+		return 0
+	fi
+	started=$SECONDS
+	if ! (cd "$REPO/ui" && bun e2e/build-ui.ts); then
+		say "ui-prebuild: the UI build failed after $((SECONDS - started))s: the Playwright gate builds it"
+		return 1
+	fi
+	say "ui-prebuild: ui/build ready after $((SECONDS - started))s"
+	if (cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+		"$REPO/ui/node_modules/.bin/playwright" test --list --reporter=json "${SPEC_ARGS[@]}" >"$DIR/ui-e2e-list.json.pre"); then
+		mv "$DIR/ui-e2e-list.json.pre" "$DIR/ui-e2e-list.json"
+		say "ui-prebuild: listed the specs into $DIR/ui-e2e-list.json"
+	else
+		rm -f "$DIR/ui-e2e-list.json.pre"
+		say "ui-prebuild: playwright test --list failed: the Playwright gate lists for itself"
+	fi
+}
 if [ -z "$FF_TRIGGER" ]; then
 	if runs activity-fixture; then
 		run_bg activity-fixture activity-fixture.log fixture_after_heavy
 	fi
 	if runs integration; then
-		integ_args=(-out "$DIR" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" -lists-changed "$DIR/lists-changed.json")
+		integ_args=(-out "$DIR" -bin "$DIR/bin/test" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" -lists-changed "$DIR/lists-changed.json")
 		case "$TIER" in
 		full) integ_args+=(-nightly-mode defer -nightly-base "$DIR/nightly-base.txt") ;;
 		release) integ_args+=(-nightly-mode include) ;;
@@ -782,8 +886,26 @@ if [ -z "$FF_TRIGGER" ]; then
 		# into a failure now that the prerequisites were probed above, and the
 		# ledger fails any skip scripts/proof-allowed-skips.txt does not name.
 		run_bg integration integration.log env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 "$PR" integration "${integ_args[@]}"
+		if runs ui-e2e; then
+			ui_prebuild >"$DIR/ui-prebuild.log" 2>&1 &
+			UI_PREBUILD=$!
+		fi
 	fi
 	wait_bg
+fi
+# The pre-build ends before the Playwright gate starts, so the two never
+# build ui/build at once; a proof that has stopped ends it instead.
+if [ -n "$UI_PREBUILD" ]; then
+	if [ -n "$FF_TRIGGER" ]; then
+		for p in $(descendants "$UI_PREBUILD"); do kill -TERM "$p" 2>/dev/null; done
+		kill -TERM "$UI_PREBUILD" 2>/dev/null
+		wait "$UI_PREBUILD" 2>/dev/null
+	else
+		say "== ui-prebuild: waiting for the UI pre-build -> $DIR/ui-prebuild.log"
+		wait "$UI_PREBUILD"
+		grep '^ui-prebuild:\|^integration ended' "$DIR/ui-prebuild.log" | sed 's/^/   /'
+	fi
+	UI_PREBUILD=""
 fi
 
 # ---- P4: Playwright ------------------------------------------------------------------
@@ -815,7 +937,9 @@ ui_e2e_locked() {
 		docker pull "$image" >"$DIR/browser-image-pull.log" 2>&1 || { say "cannot pull $image: $DIR/browser-image-pull.log"; return 1; }
 	fi
 	say "browser server image: $image"
-	if ! (cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+	if [ -s "$DIR/ui-e2e-list.json" ]; then
+		say "playwright test --list: listed by the UI pre-build during the ordinary integration jobs ($DIR/ui-e2e-list.json)"
+	elif ! (cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
 		"$pw" test --list --reporter=json "${SPEC_ARGS[@]}" >"$DIR/ui-e2e-list.json"); then
 		say "playwright test --list failed"
 		return 1
@@ -826,7 +950,11 @@ ui_e2e_locked() {
 	# parallel project runs first and the two solo projects — the spec files
 	# that assert a render budget, which only a quiet host can measure
 	# (ui/playwright.config.ts, `projects`) — run after it on one worker; the
-	# ledger reads both reports as one run.
+	# ledger reads both reports as one run. Spec files come BEFORE --project:
+	# Playwright's --project takes every following word as a project name, so
+	# a file after it is refused as an unknown project. --pass-with-no-tests,
+	# because a selection may hold no file of one project; the ledger still
+	# fails every listed test without an outcome.
 	local reports=()
 	if [ "$PROOF_UI_WORKERS" -gt 1 ]; then
 		# One browser server for both invocations, started here and stopped
@@ -843,10 +971,10 @@ ui_e2e_locked() {
 			BROWSER_WS=""
 			BROWSER_CONTAINER=""
 		fi
-		playwright_run "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" --project chromium "${SPEC_ARGS[@]}" || code=1
+		playwright_run "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" "${SPEC_ARGS[@]}" --pass-with-no-tests --project chromium || code=1
 		reports+=(-report "$DIR/ui-e2e-report.json")
 		if [ "$code" -eq 0 ] || [ "$PROOF_FAIL_FAST" = 0 ]; then
-			playwright_run "$DIR/ui-e2e-report-solo.json" 1 --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling "${SPEC_ARGS[@]}" || code=1
+			playwright_run "$DIR/ui-e2e-report-solo.json" 1 "${SPEC_ARGS[@]}" --pass-with-no-tests --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling || code=1
 			reports+=(-report "$DIR/ui-e2e-report-solo.json")
 		fi
 		if [ -n "$BROWSER_CONTAINER" ]; then docker stop -t 5 "$BROWSER_CONTAINER" >/dev/null 2>&1; fi

@@ -586,12 +586,19 @@ func TestIntegration_ACordonedPinHostOpensNoNewPinAndKeepsItsOpenOne(t *testing.
 	probe := engine.NewTemporalPoolProbe(d.temporal)
 	awaitPoolServedBy(t, ctx, probe, pool, a.queue, 1)
 	awaitPoolServedBy(t, ctx, probe, pool+" (session creation)", a.queue+"__internal_session_creation", 1)
-	d.storeOrkflow("hold-"+d.token, pool, cordonHoldPinYAML, 60)
+	// hold is how long run 1's first member keeps its pin open. It must
+	// outlast what happens between that member's start and the cordon
+	// taking effect — the fleet read reporting the pin, then CordonOrker,
+	// a few seconds — so that run 1's "after" is dispatched to a host
+	// already cordoned. 30 s leaves a wide margin, and the started_at check
+	// on "after" below fails the test explicitly if it ever does not.
+	const hold = 30
+	d.storeOrkflow("hold-"+d.token, pool, cordonHoldPinYAML, hold)
 	d.storeOrkflow("quick-"+d.token, pool, cordonQuickPinYAML, 0)
 
 	d.transcript.section("a pin opens on A; A is cordoned")
 	run1 := d.submit("hold-" + d.token)
-	d.transcript.line("run 1 %s submitted (pin build: hold 60s, then after)", run1)
+	d.transcript.line("run 1 %s submitted (pin build: hold %ds, then after)", run1, hold)
 	rows := d.awaitFleet(orkersWhere("orker_id", a.id), 3*time.Minute,
 		"A reporting run 1's open pin with its name and lease", func(rows []*orkstackv1.Orker) bool {
 			if len(rows) != 1 || rows[0].GetOpenPins() != 1 || len(rows[0].GetPins()) != 1 {
@@ -603,6 +610,7 @@ func TestIntegration_ACordonedPinHostOpensNoNewPinAndKeepsItsOpenOne(t *testing.
 	d.transcript.line("ListOrkers A          %s pins=%v", describeRows(rows), rows[0].GetPins())
 	const reason = "drain for kernel patch"
 	d.cordon(a.id, reason)
+	cordoned := time.Now()
 	d.transcript.line("A %s cordoned: %q", a.id, reason)
 
 	run2 := d.submit("quick-" + d.token)
@@ -648,6 +656,12 @@ func TestIntegration_ACordonedPinHostOpensNoNewPinAndKeepsItsOpenOne(t *testing.
 	if after.GetOrkerId() != a.id || !a.sawTask(run1, "after") {
 		t.Fatalf("run 1's post-cordon member ran on %s; an open pin must keep executing on its host %s",
 			after.GetOrkerId(), a.id)
+	}
+	// The positive control on the hold: "after" began only once CordonOrker
+	// had returned, so it really was dispatched to a cordoned host.
+	if started := after.GetStartedAt().AsTime(); after.GetStartedAt() == nil || !started.After(cordoned) {
+		t.Fatalf("run 1's after started at %v, not after the cordon at %v: the %ds hold ended before A was cordoned",
+			started, cordoned, hold)
 	}
 	d.transcript.line("run 1 %s SUCCEEDED; hold -> %s, after (dispatched after the cordon) -> %s", run1,
 		pinTaskRun(t, first, "hold").GetOrkerId(), after.GetOrkerId())

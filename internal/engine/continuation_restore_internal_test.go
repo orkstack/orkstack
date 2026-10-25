@@ -277,7 +277,7 @@ func TestRestore_NeverPanicsOnAMalformedCarryOrPlan(t *testing.T) {
 // scheduling another.
 func TestContinuation_RestoreDeadlinePassedIssuesNoRead(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	var reads int
 	var mu sync.Mutex
 	env.RegisterActivityWithOptions(func(context.Context, ContinuationLocator, int64, int64, int64, ContinuationObservationInput) ([]byte, error) {
@@ -346,9 +346,9 @@ func (o *memoRecorderOutbound) NewContinueAsNewError(ctx workflow.Context, wfn a
 // comes after the carry's check — leaves no stray memo upsert in history.
 func TestContinuation_OversizedCarryLeavesNoMemoUpsert(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	recorder := &memoRecorder{}
-	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{recorder}})
+	env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{recorder}}))
 	store := newMemSnapshotStore()
 	a := NewSnapshotActivities(store)
 	env.RegisterActivityWithOptions(a.WriteEventSegment, activity.RegisterOptions{Name: ActivityWriteEventSegment})

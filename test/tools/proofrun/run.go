@@ -733,53 +733,39 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		}
 	}
 
-	var pkgs []pkgInfo
-	var chosen map[string][]string
-	whole := map[string]bool{}
-	if sel != nil {
-		chosen = map[string][]string{}
-		var names []string
-		for p, ps := range sel.Integration {
-			if ps.Whole != "" {
-				whole[p] = true
-				names = append(names, p)
-			} else if tests := ps.run(); len(tests) > 0 {
-				chosen[p] = tests
-				names = append(names, p)
-			}
-		}
-		sort.Strings(names)
-		if len(names) == 0 {
-			fmt.Fprintln(stdout, "proofrun integration: the selection runs no integration test")
-			plan := &integrationPlan{Format: planFormat, Tier: tierFeature, Expected: []testRef{}, Jobs: []job{}, Shards: []planShard{}, Packages: []planPackage{}, Problems: []string{}}
-			return writePlan(*o, plan, measured, nightly, nightlyBase, nil)
-		}
-		dirs, err := packageDirs("integration", names)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "proofrun integration:", err)
-			return 2
-		}
-		for _, n := range names {
-			pkgs = append(pkgs, pkgInfo{ImportPath: n, Dir: dirs[n]})
-		}
-	} else {
-		if pkgs, err = integrationPackages(patterns); err != nil {
-			fmt.Fprintln(os.Stderr, "proofrun integration:", err)
-			return 2
-		}
+	pkgs, chosen, whole, err := integrationPackageSet(sel, patterns)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
+		return 2
+	}
+	if sel != nil && len(pkgs) == 0 {
+		fmt.Fprintln(stdout, "proofrun integration: the selection runs no integration test")
+		plan := &integrationPlan{Format: planFormat, Tier: tierFeature, Expected: []testRef{}, Jobs: []job{}, Shards: []planShard{}, Packages: []planPackage{}, Problems: []string{}}
+		return writePlan(*o, plan, measured, nightly, nightlyBase, nil)
 	}
 	if err := os.MkdirAll(filepath.Join(o.out, "integration"), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 		return 1
 	}
 
+	// A directory `proofrun compile` filled (scripts/proof.sh compiles while
+	// its setup runs) is adopted when its manifest matches this tree, these
+	// packages and these bytes; one with no manifest is compiled into.
 	started := time.Now()
-	bins, err := compile(pkgs, binDir, stdout)
+	bins, err := prebuiltBinaries(binDir, pkgs)
 	if err != nil {
-		fmt.Fprintln(stdout, err)
+		fmt.Fprintln(stdout, "proofrun integration:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "compiled %d integration packages in %.1fs\n", len(pkgs), time.Since(started).Seconds())
+	if bins != nil {
+		fmt.Fprintf(stdout, "adopted %d integration test binaries proofrun compile built in %s (tree, packages and SHA-256 checked)\n", len(bins), binDir)
+	} else {
+		if bins, err = compile(pkgs, binDir, stdout); err != nil {
+			fmt.Fprintln(stdout, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "compiled %d integration packages in %.1fs\n", len(pkgs), time.Since(started).Seconds())
+	}
 
 	listed := map[string]map[string]bool{}
 	run := map[string][]string{}

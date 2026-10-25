@@ -225,7 +225,7 @@ func TestIntegration_DefinitionChaosC34_DeletedAtALaterGeneration(t *testing.T) 
 }
 
 // TestIntegration_DefinitionChaosC35_FrontendCutDuringTheLoad: the engine
-// cannot reach the Temporal frontend from a definition read until 30 s
+// cannot reach the Temporal frontend from a definition read until 15 s
 // later — at generation 0's load, and at generation 1's. The load completes,
 // the run succeeds, and no RUN_DEFINITION_* code is recorded.
 func TestIntegration_DefinitionChaosC35_FrontendCutDuringTheLoad(t *testing.T) {
@@ -247,9 +247,17 @@ func TestIntegration_DefinitionChaosC35_FrontendCutDuringTheLoad(t *testing.T) {
 				replicaOptions{client: engineClient}, hook)
 			s.transcript.step("the engine's connection to the Temporal frontend cut at the definition read")
 			hook.open(nil)
-			time.Sleep(30 * time.Second) // the outage
+			// The outage. The cut is made on the hook's entry, inside the
+			// workflow task that reads the definition, so counted from that
+			// task's start it lasts longer than outage. It must outlast the
+			// cluster's 10 s workflow-task timeout (StartRun sets none), so
+			// the task that was reading always times out and is retried
+			// rather than sometimes completing; 15 s leaves a 5 s margin.
+			// Refused > 0 below proves the cut was met.
+			const outage = 15 * time.Second
+			time.Sleep(outage)
 			proxy.Restore()
-			s.transcript.step("the frontend reachable again after 30 s (%d connections refused meanwhile)", proxy.Stats().Refused)
+			s.transcript.step("the frontend reachable again after %v (%d connections refused meanwhile)", outage, proxy.Stats().Refused)
 			status, err := s.wait(runID, 3*time.Minute)
 			if status != enums.WORKFLOW_EXECUTION_STATUS_COMPLETED || err != nil {
 				t.Fatalf("the run closed %v: %v", status, err)

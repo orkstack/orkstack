@@ -10,6 +10,11 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- A proof's split Playwright invocations pass their spec files before
+  `--project`, which took every word after it as a project name: a feature
+  proof naming specs, and every CI `ui-e2e` part, ran with more than one UI
+  worker refused its files as unknown projects. They also pass
+  `--pass-with-no-tests`, since a selection may hold no file of one project.
 - A local full proof records each nightly-listed test its base also lists as
   `deferred`, as a sharded proof's merger does. It built its ledger over the
   plan's whole expected set, which includes the deferred tests, so the first
@@ -22,8 +27,65 @@ include breaking changes, and each is marked **BREAKING**.
   with a non-empty nightly list could not be merge-eligible. A `deferred` entry
   for a test the plan runs is still a problem.
 
+### Added
+
+- `proofrun overhead` and `make proof-overhead FROM=proof/<name>`, which read
+  an existing proof directory, run nothing and change nothing, and report as
+  Markdown where its wall-clock went: each gate's share of the serial
+  critical path, each integration process's wall against its tests' ledger
+  seconds (the per-process overhead, with its distribution and its cost in
+  wall minutes at the proof's `PROOF_JOBS`), the heavy and ordinary phases'
+  walls and slot utilisation, the two Playwright invocations' walls and lane
+  packing, any slow-boot warnings, and the top three time sinks. A partial
+  proof is reported as partial, never a crash.
+
 ### Changed
 
+- The merge contract names a CI full proof as merge evidence on the local
+  path: a `validate/full/<name>` run's `proof-<run>-a<n>` artifact, downloaded
+  and passed to `make merge-check PROOF=`, gates a fast-forward when it is a
+  full, passing, merge-eligible proof of exactly the candidate's tree over
+  `main`'s tip; a GitHub nightly proof of `main`'s tip, downloaded the same
+  way, is the `NIGHTLY=` evidence; and `main` is pushed to `origin` after
+  every merge (AGENTS.md §11.2, §11.3; docs/PROOFS.md §6, §10). The checks
+  `merge-check` applies are unchanged.
+- The Playwright suite runs less of itself alone, measuring the same things.
+  The fan-out's render-budget test (E4, "the run page and the item list at the
+  gated size are interactive within 5 s") moved from `each-fan-out.spec.ts`
+  to `ui/e2e/each-fan-out-ceiling.spec.ts`, with ports, a bucket, a Temporal
+  namespace and an Orker work root of its own; that file is now the one the
+  `chromium-solo-each-fan-out` project runs alone, and the fan-out's six
+  functional tests run in the parallel `chromium` project. The new file costs
+  the UI planner's unmeasured 160 s until a full proof measures it. Its
+  `scripts/proof-host-speed.tsv` row moved with it, and because a row excuses
+  only once the base carries it identically, the moved row excuses nothing on
+  the change that moves it: a CI `ui-e2e` part on a runner below 16 CPUs that
+  misses the 5 s budget fails that proof, until `main` carries the row.
+- `ui/e2e/run-page-ceiling.spec.ts` does less work of its own around what it
+  measures. It polls GetRun every 1–2 s instead of every 250 ms
+  while it waits for the run (each GetRun re-reads the run's whole history),
+  and runs `test/tools/archive-sized-run` as a binary the suite builds once
+  (`ui/e2e/global-setup.ts`, `scripts/proof.sh`, `scripts/proof-part.sh`)
+  rather than through `go run`. No budget, size or timed open changed.
+- A proof's setup — its own Temporal, the activity images, the binaries and
+  the integration test binaries — runs as one concurrent group once the fast
+  gates pass, instead of one step after another, with each member still its
+  own `gates.tsv` row and a `setup` row for the group's wall; a failure of any
+  member stops the others. `proofrun compile -out DIR` builds the integration
+  test binaries ahead, and `proofrun integration -bin DIR` adopts them only
+  when their manifest names the same working tree, packages, binary SHA-256
+  and listing (docs/PROOFS.md §2.1, §4).
+- `make -C images images`, `push` and `oci` build the six first-party images
+  `IMAGE_JOBS` at a time (default 6; `IMAGE_JOBS=1` is the old serial order),
+  and `push` pushes each as soon as it is built, with the same registry
+  digests recorded. A proof links its nine stack binaries with one `go build`
+  rather than nine.
+- A proof that runs integration and Playwright builds the UI and lists the
+  specs while its ordinary integration jobs run (after the heavy ones, never
+  beside them), through `ui/e2e/build-ui.ts`, which the Playwright global
+  setup now calls too, so the Playwright gate starts with the build in place.
+  A failed or stale pre-build is rebuilt by the gate as before
+  (docs/PROOFS.md §2.1).
 - The proof is faster on one host, running the same tests: integration tests
   keep `PROOF_JOBS=4` (6 was measured: clean but for one 50 s engine-boot
   stall on a fresh bucket, so it stays an operator's choice), the activity contract
