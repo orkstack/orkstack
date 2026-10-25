@@ -516,6 +516,37 @@ It rewrites `scripts/proof-test-costs.tsv`, `scripts/proof-slow-tests.txt` and,
 from the merged UI ledger's file walls, `scripts/proof-ui-costs.tsv`. Commit
 with the run URL as the source.
 
+**Measure a proof's overhead.** `make proof-overhead FROM=proof/<name>
+[OUT=/tmp/overhead.md]` (`proofrun overhead -from DIR [-out FILE]`) reads an
+existing proof directory, runs nothing, and never writes inside it (an `-out`
+there is refused). Its Markdown report has:
+
+- **Gates**, from `gates.tsv`: each gate's seconds and share of the critical
+  path, which is the serial chain fast gates → setup (Temporal, images,
+  binaries) → integration beside the activity fixture (the longer of the two)
+  → `ui-e2e` → observability.
+- **Integration processes**, from the runner's `start <job> slot k:` and
+  `end <job> after X s` lines in `integration.log` (each part's log in a
+  merged proof) joined with `integration-tests.json` by job: each process's
+  wall, its top-level tests' ledger seconds, and the difference. That
+  difference is the per-process overhead: bucket create and remove, binary
+  init and Temporal namespace registration, together. The report gives its
+  min, median, p90, max and total, and the total in slot-seconds and in wall
+  at `proof.json`'s `proof_jobs`. It also gives the heavy phase's wall (the
+  plan's heavy jobs, run alone) and the ordinary phase's wall and slot
+  utilisation (busy slot-seconds over slots × wall). The log has no
+  timestamps, so a phase's wall is its busiest slot's summed process walls.
+- **Playwright**, from `ui-e2e-tests.json`: the parallel and solo
+  invocations' walls (`SOLO_SPECS` in `ui/playwright.config.ts`, `-config`,
+  names the solo files), their summed file walls against an ideal packing on
+  the proof's `proof_ui_workers`, and the gate's seconds outside the tests.
+- **Slow boots**: every `WARN` line about a boot that took long, from the
+  integration logs, each job's log and `ui-e2e.log`.
+- A summary naming the top three time sinks.
+
+A missing ledger, plan or log is listed under "Partial proof" and its section
+says so.
+
 **Derive flake rates.** `make proof-flakes FROM='proof/*' REPO=.` reads every
 proof's `unit-tests.json`, `integration-tests.json` and `ui-e2e-tests.json`,
 and reports flips (a fail and a pass on one tree) and suspect failures (a
@@ -664,6 +695,7 @@ one only once the process its name records is gone.
 | `make release-tag` | tag HEAD after a passing release proof of it |
 | `make proof-flakes` | derive per-test flake rates from the ledgers |
 | `make proof-slow-list` | regenerate the costs and the slow list from a proof |
+| `make proof-overhead` | report where a proof's wall-clock went, from its directory, running nothing |
 | `make proof-observability` | only the observability gate; never merge-eligible |
 | `make proof-stop` | stop one proof and everything it started |
 | `make proof-clean` | list or remove what failed tests kept |
@@ -698,6 +730,7 @@ one only once the process its name records is gone.
 | `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S` |
 | `temporal-args` | `-compose FILE` |
 | `costs` | `-from DIR`, `-costs-out FILE`, `-slow-out FILE`, `-ui-costs-out FILE`, `-threshold SECONDS` |
+| `overhead` | `-from DIR`, `-out FILE`, `-config FILE` |
 | `push-layout` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
 | `layout-digests` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
 | `evidence-args` | `-body FILE` |

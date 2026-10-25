@@ -1,0 +1,9 @@
+{"suite":"integration","tests":[
+ {"package":"example.com/a","test":"TestHeavy","job":"a-001","outcome":"pass","seconds":35},
+ {"package":"example.com/a","test":"TestA","job":"a-002","outcome":"pass","seconds":40},
+ {"package":"example.com/a","test":"TestB","job":"a-002","outcome":"pass","seconds":50},
+ {"package":"example.com/a","test":"TestB/sub","job":"a-002","outcome":"pass","seconds":50},
+ {"package":"example.com/a","test":"TestC","job":"a-003","outcome":"pass","seconds":48},
+ {"package":"example.com/b","test":"TestD","job":"b-004","outcome":"pass","seconds":22},
+ {"package":"example.com/b","test":"TestE","job":"b-005","outcome":"none","seconds":0},
+ {"package":"example.com/b","test":"TestSoak","outcome":"deferred","seconds":0}],"problems":[]}

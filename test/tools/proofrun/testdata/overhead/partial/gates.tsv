@@ -1,0 +1,3 @@
+lint	pass	10	lint.log	make lint
+build	fail	20	build.log	go build ./...
+unit	not-started	0	unit.log	not started: build failed

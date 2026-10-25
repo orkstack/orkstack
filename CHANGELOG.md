@@ -16,6 +16,18 @@ include breaking changes, and each is marked **BREAKING**.
   full proof on a tree whose base carried a nightly list failed with every
   deferred test reported as having no outcome.
 
+### Added
+
+- `proofrun overhead` and `make proof-overhead FROM=proof/<name>`, which read
+  an existing proof directory, run nothing and change nothing, and report as
+  Markdown where its wall-clock went: each gate's share of the serial
+  critical path, each integration process's wall against its tests' ledger
+  seconds (the per-process overhead, with its distribution and its cost in
+  wall minutes at the proof's `PROOF_JOBS`), the heavy and ordinary phases'
+  walls and slot utilisation, the two Playwright invocations' walls and lane
+  packing, any slow-boot warnings, and the top three time sinks. A partial
+  proof is reported as partial, never a crash.
+
 ### Changed
 
 - The merge contract names a CI full proof as merge evidence on the local

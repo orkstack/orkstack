@@ -1,0 +1,12 @@
+lint	pass	10	lint.log	make lint
+build	pass	20	build.log	go build ./...
+unit	pass	30	unit.log	proofrun unit
+vet-integration	pass	10	vet-integration.log	go vet -tags=integration ./...
+ui-check	pass	15	ui-check.log	bun run check
+ui-unit	pass	5	ui-unit.log	bun test test/
+temporal	pass	5	temporal.log	start_temporal
+images	pass	40	images.log	push_images
+binaries	pass	15	binaries.log	build_binaries
+integration	pass	200	integration.log	proofrun integration
+activity-fixture	pass	120	activity-fixture.log	fixture_after_heavy
+ui-e2e	pass	150	ui-e2e.log	ui_e2e

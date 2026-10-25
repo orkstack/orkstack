@@ -13,6 +13,7 @@
 //	proofrun verify       refuse a merge or tag whose proof does not cover it
 //	proofrun temporal-args  the temporal service's image and arguments
 //	proofrun costs        regenerate the cost ledgers and the slow list
+//	proofrun overhead     where an existing proof's wall-clock went
 //	proofrun push-layout  push OCI layouts byte for byte and check the digests
 //	proofrun layout-digests  the images.tsv a layout push would produce
 //	proofrun evidence-args  turn Proof-tests:/Proof-specs: lines into flags
@@ -49,6 +50,7 @@ var subcommands = []subcommand{
 	{"verify", "refuse a merge or a tag whose proof does not cover it", cmdVerify},
 	{"temporal-args", "the temporal service's image and arguments", cmdTemporalArgs},
 	{"costs", "regenerate the cost ledgers and the slow list", cmdCosts},
+	{"overhead", "where an existing proof's wall-clock went, and its per-process overhead", cmdOverhead},
 	{"push-layout", "push OCI layouts byte for byte and check their digests", cmdPushLayout},
 	{"layout-digests", "the images.tsv a layout push would produce", cmdLayoutDigests},
 	{"evidence-args", "turn Proof-tests:/Proof-specs: lines into flags", cmdEvidenceArgs},

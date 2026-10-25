@@ -1,0 +1,6 @@
+{"format":2,"jobs":[
+ {"id":"a-001","package":"example.com/a","tests":["TestHeavy"],"heavy":true},
+ {"id":"a-002","package":"example.com/a","tests":["TestA","TestB"]},
+ {"id":"a-003","package":"example.com/a","tests":["TestC"]},
+ {"id":"b-004","package":"example.com/b","tests":["TestD"]},
+ {"id":"b-005","package":"example.com/b","tests":["TestE"]}]}
