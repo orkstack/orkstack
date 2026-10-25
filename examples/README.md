@@ -27,8 +27,12 @@ validation warning). Follow the guide, not them.
 
 ## Running them
 
+Start a stack first: the quickstart from a release, whose bundle carries the
+example Orkflows under `examples/` ([Getting started](../docs/GETTING_STARTED.md)), or
+`make up` from a checkout ([CONTRIBUTING.md](../CONTRIBUTING.md), "The local
+development stack"). Then:
+
 ```sh
-make up                                          # the whole local stack
 orkctl apply examples/decide-and-route.ork.yaml  # store one example
 orkctl run plan decide-and-route --output decide='{"result":{"route":"canary","notify":true}}'
 orkctl run submit decide-and-route --watch       # run it, with --input K=V as its comment header says
