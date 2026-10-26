@@ -595,26 +595,44 @@ func verifyNightlyProblems(nightlyDir, mainTip string) []string {
 			return []string{fmt.Sprintf("%s's nightly list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
 		}
 	}
+	specs := ""
+	if ls, err := gitOut("ls-tree", "--name-only", mainTip, "--", nightlySpecFile); err != nil {
+		return []string{fmt.Sprintf("whether %s carries a nightly spec list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
+	} else if strings.TrimSpace(ls) != "" {
+		if specs, err = gitOut("show", mainTip+":"+nightlySpecFile); err != nil {
+			return []string{fmt.Sprintf("%s's nightly spec list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
+		}
+	}
 	tree, err := gitOut("rev-parse", mainTip+"^{tree}")
 	if err != nil {
 		return []string{fmt.Sprintf("%s's tip tree cannot be read: %v", mainBranch, err)}
 	}
-	return nightlyProofProblems(list, nightlyDir, strings.TrimSpace(tree))
+	return nightlyProofProblemsWith(list, specs, nightlyDir, strings.TrimSpace(tree))
 }
 
 // nightlyProofProblems is verifyNightlyProblems, pure over main's list text,
 // the nightly proof's directory and main's tip tree.
 func nightlyProofProblems(list, nightlyDir, mainTree string) []string {
+	return nightlyProofProblemsWith(list, "", nightlyDir, mainTree)
+}
+
+// nightlyProofProblemsWith also reads main's nightly spec list: a merge needs
+// a nightly proof while either list is non-empty.
+func nightlyProofProblemsWith(list, specList, nightlyDir, mainTree string) []string {
 	entries, err := parseNightlyList(strings.NewReader(list), mainBranch+":scripts/proof-nightly-tests.txt")
 	if err != nil {
 		// An unreadable list is not an empty one: it fails closed.
 		return []string{fmt.Sprintf("%s's nightly list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
 	}
-	if len(entries) == 0 {
+	specs, err := parseNightlySpecs(strings.NewReader(specList), mainBranch+":"+nightlySpecFile)
+	if err != nil {
+		return []string{fmt.Sprintf("%s's nightly spec list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
+	}
+	if len(entries) == 0 && len(specs) == 0 {
 		return nil
 	}
 	if nightlyDir == "" {
-		return []string{fmt.Sprintf("%s's nightly list holds %d test(s): name a passing nightly proof of its tip with NIGHTLY=proof/<name>", mainBranch, len(entries))}
+		return []string{fmt.Sprintf("%s's nightly lists hold %d test(s) and %d spec file(s): name a passing nightly proof of its tip with NIGHTLY=proof/<name>", mainBranch, len(entries), len(specs))}
 	}
 	var r proofRecord
 	if err := readJSON(filepath.Join(nightlyDir, "proof.json"), &r); err != nil {

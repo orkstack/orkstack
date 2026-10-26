@@ -1,0 +1,19 @@
+# The Playwright spec files a full proof defers to the nightly tier and the
+# pre-release gate (AGENTS.md §11, docs/PROOFS.md): the spec side of
+# scripts/proof-nightly-tests.txt. The list changes only with the user's
+# approval, and it is parsed as strictly:
+#
+#   spec<TAB>covering merge-gate specs<TAB>approved<TAB>reason
+#
+# A spec is a file under ui/e2e/. Every spec named here must be a listed
+# spec file, and every covering spec a listed spec file that is not itself
+# on this list; a stale row fails the gate. "Approved" is
+# "YYYY-MM-DD <name>": the day the user approved the move, and who asked.
+#
+# A full proof defers only the rows its base's list also carries, so the
+# change that adds a row runs that spec one last time; its tests are
+# recorded as deferred in the Playwright ledger. The nightly tier runs
+# exactly these specs; the pre-release gate runs everything, these included.
+# A red nightly or pre-release proof is a failing main: fix it or revert the
+# change that broke it, and never edit this list to make a proof pass.
+ui/e2e/run-page-ceiling.spec.ts	ui/e2e/run-page-reduced-ceiling.spec.ts	2026-10-26 Daniel Santos	the run page at the 4,000-task default ceiling takes about 7.5 min of the Playwright solo lane; the merge gate runs the same measurement, helpers and 5 s budget with engine.orkflow_max_tasks lowered to 1,000

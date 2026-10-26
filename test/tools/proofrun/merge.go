@@ -262,7 +262,7 @@ func cmdMerge(args []string) int {
 		return 2
 	}
 	m := &merger{
-		plan: plan, planPath: *planFile, uiPlan: uiP, planSHA: planSHA, uiPlanSHA: uiPlanSHA,
+		plan: plan, planPath: *planFile, uiPlan: uiP, uiPlanPath: *uiPlanFile, planSHA: planSHA, uiPlanSHA: uiPlanSHA,
 		parts: parts, absent: absent,
 		attempts: attempts, hostSpeed: hostSpeed, hostSpeedFile: *hostSpeedFile,
 		excusedUIGate: map[string]bool{},
@@ -374,6 +374,7 @@ type merger struct {
 	plan              *integrationPlan
 	planPath          string
 	uiPlan            *uiPlan
+	uiPlanPath        string
 	planSHA           string
 	uiPlanSHA         string
 	parts             map[string]map[int]partReading
@@ -1160,7 +1161,7 @@ func (m *merger) checkIdentity(part string, attempt int, r *partRecord, buildIma
 	} else if m.planSHA != "" && r.PlanSHA256 != "" && r.PlanSHA256 != m.planSHA {
 		add("it read plan %s, and this merge reads %s", short(r.PlanSHA256), short(m.planSHA))
 	}
-	if (strings.HasPrefix(part, "ui-e2e:") || part == "local") && m.uiPlan != nil && p.Tier != tierNightly && r.UIPlanSHA256 != m.uiPlanSHA {
+	if (strings.HasPrefix(part, "ui-e2e:") || part == "local") && m.uiPlan != nil && r.UIPlanSHA256 != m.uiPlanSHA {
 		add("it read UI plan %s, and this merge reads %s", orDash(short(r.UIPlanSHA256)), orDash(short(m.uiPlanSHA)))
 	}
 	if isStackPart(part) && r.Temporal.Mode != "own" {
@@ -1656,6 +1657,81 @@ func (m *merger) checkDeferredAnchor() {
 	}
 }
 
+// checkUIDeferredAnchor is checkDeferredAnchor for the Playwright ledger: the
+// UI plan's nightly mode must be its tier's, only defer leaves a spec file
+// out, and the deferred files must be exactly the rows both nightly spec
+// lists carry — re-derived from the two hashed files themselves, the tree's
+// at the path the plan read and the base's copy beside the plan.
+func (m *merger) checkUIDeferredAnchor() {
+	p := m.uiPlan
+	mode := nightlyInclude
+	if p.Nightly != nil {
+		mode = p.Nightly.Mode
+		if want, known := tierNightlyMode[m.plan.Tier]; known && mode != want {
+			m.problems = append(m.problems, fmt.Sprintf("the UI plan's nightly mode is %s, and a %s proof's is %s", orDash(mode), m.plan.Tier, want))
+		}
+	}
+	if mode != nightlyDefer {
+		for _, d := range p.Deferred {
+			m.problems = append(m.problems, fmt.Sprintf("%s was deferred, and the UI plan's nightly mode is %s: only defer leaves a spec out", d.File, mode))
+		}
+		return
+	}
+	baseFile := filepath.Join(filepath.Dir(m.uiPlanPath), "nightly-specs-base.txt")
+	if got, _ := fileSHA256(p.Nightly.File); got != p.Nightly.SHA256 {
+		m.problems = append(m.problems, fmt.Sprintf("the nightly spec list %s is not the one the UI plan read (plan sha256 %s, tree %s)",
+			orDash(p.Nightly.File), short(p.Nightly.SHA256), orDash(short(got))))
+	}
+	if got, _ := fileSHA256(baseFile); got != p.Nightly.BaseSHA256 {
+		m.problems = append(m.problems, fmt.Sprintf("the base's nightly spec list beside the UI plan is not the one it hashed (plan sha256 %s, %s %s)",
+			short(p.Nightly.BaseSHA256), baseFile, orDash(short(got))))
+	}
+	tree, err := readNightlySpecs(p.Nightly.File)
+	if err != nil {
+		m.problems = append(m.problems, "the tree's nightly spec list cannot be read to check the deferral: "+err.Error())
+		return
+	}
+	base, err := readNightlySpecs(baseFile)
+	if err != nil {
+		m.problems = append(m.problems, "the base's nightly spec list cannot be read to check the deferral: "+err.Error())
+		return
+	}
+	if !slicesEqual(specEntryLines(tree), p.Nightly.Entries) || !slicesEqual(specEntryLines(base), p.Nightly.BaseEntries) {
+		m.problems = append(m.problems, "the nightly spec rows the UI plan embeds are not the hashed files' rows")
+	}
+	inTree, inBase := map[string]bool{}, map[string]bool{}
+	for _, e := range tree {
+		inTree[e.file()] = true
+	}
+	for _, e := range base {
+		inBase[e.file()] = true
+	}
+	want := deferredSpecSet(tree, base)
+	deferred := map[string]bool{}
+	for _, d := range p.Deferred {
+		deferred[d.File] = true
+		if _, ok := want[d.File]; ok {
+			continue
+		}
+		if !inBase[d.File] {
+			m.problems = append(m.problems, fmt.Sprintf("%s was deferred, but the base's nightly spec list does not carry it: a row the change adds is run", d.File))
+		}
+		if !inTree[d.File] {
+			m.problems = append(m.problems, fmt.Sprintf("%s was deferred, but this tree's nightly spec list does not carry it", d.File))
+		}
+	}
+	files := make([]string, 0, len(want))
+	for f := range want {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	for _, f := range files {
+		if !deferred[f] {
+			m.problems = append(m.problems, fmt.Sprintf("%s is in both nightly spec lists and was not deferred", want[f].Spec))
+		}
+	}
+}
+
 func (m *merger) mergeUnit() {
 	if m.plan.Tier == tierNightly {
 		return
@@ -1687,7 +1763,7 @@ func (m *merger) mergeUnit() {
 }
 
 func (m *merger) mergeUI() {
-	if m.uiPlan == nil || m.plan.Tier == tierNightly {
+	if m.uiPlan == nil {
 		return
 	}
 	l := &uiLedger{Suite: "ui-e2e", Problems: []string{}, Tests: []uiEntry{}}
@@ -1696,6 +1772,14 @@ func (m *merger) mergeUI() {
 	for _, t := range m.uiPlan.Tests {
 		planned[t.File+"\x00"+t.Title+"\x00"+t.Project] = true
 	}
+	// A spec file the plan defers ran nowhere: a part's own deferred entry
+	// for one of its tests stands for nothing (the plan's row is recorded
+	// below), and any outcome for one is a problem.
+	deferredSpec := map[string]string{}
+	for _, d := range m.uiPlan.Deferred {
+		deferredSpec[d.File] = d.Entry
+	}
+	m.checkUIDeferredAnchor()
 	files := map[string]uiFileEntry{}
 	maxRetries := 0
 	uiParts := m.partNames("ui-e2e:")
@@ -1768,6 +1852,20 @@ func (m *merger) mergeUI() {
 			}
 			for _, e := range shard.Tests {
 				k := e.File + "\x00" + e.Title + "\x00" + e.Project
+				if _, d := deferredSpec[e.File]; d || e.Outcome == "deferred" {
+					switch {
+					case d && e.Outcome == "deferred":
+					case d:
+						msg := fmt.Sprintf("%s reported %s, which the UI plan defers to the nightly tier", part, uiKey(e))
+						l.Problems = append(l.Problems, msg)
+						m.problems = append(m.problems, msg)
+					default:
+						msg := fmt.Sprintf("%s wrote a deferred entry for %s, which the UI plan runs", part, uiKey(e))
+						l.Problems = append(l.Problems, msg)
+						m.problems = append(m.problems, msg)
+					}
+					continue
+				}
 				if !planned[k] {
 					msg := fmt.Sprintf("%s reported %s, which the UI plan does not list", part, uiKey(e))
 					l.Problems = append(l.Problems, msg)
@@ -1790,6 +1888,9 @@ func (m *merger) mergeUI() {
 			}
 			for _, e := range shard.Tests {
 				k := e.File + "\x00" + e.Title + "\x00" + e.Project
+				if _, d := deferredSpec[e.File]; d {
+					continue
+				}
 				if prev, dup := seen[k]; dup && prev != part {
 					msg := fmt.Sprintf("%s has outcomes from shards %s and %s", k, prev, part)
 					l.Problems = append(l.Problems, msg)
@@ -1818,6 +1919,11 @@ func (m *merger) mergeUI() {
 	}
 	l.Listed = len(m.uiPlan.Tests)
 	for _, t := range m.uiPlan.Tests {
+		if row, d := deferredSpec[t.File]; d {
+			l.Deferred++
+			l.Tests = append(l.Tests, uiEntry{File: t.File, Title: t.Title, Project: t.Project, Outcome: "deferred", Detail: row})
+			continue
+		}
 		if _, ok := seen[t.File+"\x00"+t.Title+"\x00"+t.Project]; !ok {
 			l.Problems = append(l.Problems, fmt.Sprintf("%s › %s [%s] has no outcome", t.File, t.Title, t.Project))
 		}
@@ -1860,6 +1966,10 @@ func (m *merger) mergeGates(expected []string) {
 	switch m.plan.Tier {
 	case tierNightly:
 		required["integration"] = true
+		// The nightly tier runs the listed spec files too, when it has any.
+		if m.uiPlan != nil && len(m.uiPlan.Files) > 0 {
+			required["ui-e2e"] = true
+		}
 	default:
 		for _, g := range fullGates {
 			required[g] = true

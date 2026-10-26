@@ -111,20 +111,33 @@ func TestRepositoryHostSpeed_NamesRealSpecTests(t *testing.T) {
 		t.Fatal("the table declares no UI bound")
 	}
 	for _, b := range tab.UI {
-		src, err := os.ReadFile(filepath.Join(root, "ui", b.Name))
+		spec, err := os.ReadFile(filepath.Join(root, "ui", b.Name))
 		if err != nil {
 			t.Errorf("line %d: %v", b.Line, err)
 			continue
 		}
-		if !strings.Contains(string(src), "test('"+b.Member+"'") {
+		// A spec may declare its test through a local module it imports
+		// (ui/e2e/runPageCeiling.ts): the title is then the spec's own
+		// `title: '…'`, and the assertions are the module's.
+		src := string(spec)
+		modules := ""
+		for _, m := range regexp.MustCompile(`from '\./([A-Za-z0-9_-]+)'`).FindAllStringSubmatch(src, -1) {
+			if b, err := os.ReadFile(filepath.Join(root, "ui", "e2e", m[1]+".ts")); err == nil {
+				modules += string(b)
+			}
+		}
+		declared := strings.Contains(src, "test('"+b.Member+"'") ||
+			(strings.Contains(src, "title: '"+b.Member+"'") && strings.Contains(modules, "test(c.title,"))
+		if !declared {
 			t.Errorf("line %d: %s declares no test titled %q", b.Line, b.Name, b.Member)
 		}
+		src += modules
 		// The declared assertion is one the spec really makes, so a row can
 		// never excuse an assertion the spec does not have.
-		flat := strings.ReplaceAll(string(src), "_", "")
+		flat := strings.ReplaceAll(src, "_", "")
 		switch b.Assertion.Kind {
 		case "lessThan":
-			if !specAssertsBound(string(src), b.Assertion.MS) {
+			if !specAssertsBound(src, b.Assertion.MS) {
 				t.Errorf("line %d: %s has no toBeLessThan[OrEqual](%g): the row's bound is not one the spec asserts", b.Line, b.Name, b.Assertion.MS)
 			}
 		case "visibleWithin":

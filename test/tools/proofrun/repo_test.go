@@ -346,7 +346,7 @@ func TestRepositoryProofScript_FailsFast(t *testing.T) {
 func TestRepositoryPlaywrightProjectInvocationsPassFilesFirst(t *testing.T) {
 	root := mustRepoRoot()
 	for file, files := range map[string]string{
-		"scripts/proof.sh":      `"${SPEC_ARGS[@]}"`,
+		"scripts/proof.sh":      `"${run_specs[@]}"`, // the selection's files, or the UI plan's when it leaves one out
 		"scripts/proof-part.sh": `"${rel[@]}"`,
 	} {
 		src, err := os.ReadFile(filepath.Join(root, file))

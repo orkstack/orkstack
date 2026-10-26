@@ -3,6 +3,7 @@
 /scripts/proof.sh @orkstack
 /scripts/proof-part.sh @orkstack
 /scripts/proof-nightly-tests.txt @orkstack
+/scripts/proof-nightly-specs.txt @orkstack
 /scripts/proof-quarantine.txt @orkstack
 /scripts/proof-allowed-skips.txt @orkstack
 /scripts/proof-test-costs.tsv @orkstack

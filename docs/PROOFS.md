@@ -30,12 +30,24 @@ missing prerequisite.
 | Tier | Command | Merge evidence | Runs |
 |---|---|---|---|
 | **feature** | `make proof-feature TESTS=… SPECS=…` | no | the fast gates, the change's evidence, its regression set |
-| **full** | `make proof` | yes, on a local host; in CI, the `proof` job | every gate and every test, except the nightly list's entries the base also carries |
-| **nightly** | `make proof-nightly` | no | only the tests `scripts/proof-nightly-tests.txt` names |
-| **release** | `make proof-release` | no; it is a tag precondition | every gate, the nightly tests included, observability always |
+| **full** | `make proof` | yes, on a local host; in CI, the `proof` job | every gate, every test and every spec, except the nightly lists' entries the base also carries |
+| **nightly** | `make proof-nightly` | no | only the tests `scripts/proof-nightly-tests.txt` names and the spec files `scripts/proof-nightly-specs.txt` names |
+| **release** | `make proof-release` | no; it is a tag precondition | every gate, the nightly tests and specs included, observability always |
 
 A full proof records each nightly-listed test as `deferred`, never as passed,
 and only when its base's list also carries it; an entry the change adds runs.
+The spec list works the same way for Playwright: a row names a spec file under
+`ui/e2e/`, the merge-gate spec files that cover it at a smaller size, the
+approval and the reason. The full tier's UI plan leaves out of its files and
+shards each spec file both the tree's list and the base's carry, keeps its
+tests planned, and the Playwright ledger records each as `deferred` with the
+row; a test of such a file that ran, a deferred entry for a file the plan
+runs, and a deferral the two lists do not both carry each fail the proof. The
+nightly tier's plan holds the listed spec files alone, and the nightly proof
+needs its `ui-e2e` gate when the list has any. Today the list holds
+`run-page-ceiling.spec.ts`, the run page at the 4,000-task default ceiling;
+the merge gate runs `run-page-reduced-ceiling.spec.ts`, the same measurement
+with `engine.orkflow_max_tasks` lowered to 1,000.
 The pre-release gate is the full tier with nothing deferred. A tag requires a
 passing release proof of the exact commit: `make release-tag` and the workflow
 both refuse without one.
@@ -125,12 +137,14 @@ while at 3 one load-sensitive spec failed in each of three runs): the browser
 runs in a network
 namespace of its own (`ui/e2e/browser-server.ts`, from the image
 `ui/e2e/browser-image.txt` pins; a proof pulls it when the host lacks it), and
-every spec file owns its bucket. The two spec files that assert a render budget
-(`each-fan-out-ceiling.spec.ts`, `run-page-ceiling.spec.ts`) hold nothing but
-their budget test and run alone after the others, as `--project` runs on one
-worker; the fan-out's functional tests are `each-fan-out.spec.ts`, which runs
-with the others. The run page at the task ceiling runs on the host's Chromium
-(`ui/playwright.config.ts`).
+every spec file owns its bucket. The spec files that assert a render budget
+(`each-fan-out-ceiling.spec.ts`, `run-page-reduced-ceiling.spec.ts` and, where
+it is not deferred, `run-page-ceiling.spec.ts`) hold nothing but their budget
+test and run alone after the others, as `--project` runs on one worker; the
+fan-out's functional tests are `each-fan-out.spec.ts`, which runs with the
+others. The run page at the task ceiling runs on the host's Chromium
+(`ui/playwright.config.ts`); its two spec files share their steps in
+`ui/e2e/runPageCeiling.ts`.
 The gate starts one browser server for both invocations, and the second reuses
 the first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
@@ -307,7 +321,13 @@ commit.
 `proofrun ui-plan -list FILE -shards M -out FILE` splits Playwright spec files
 by their measured wall — their tests' seconds plus the gap before each test in
 its own worker lane — and passes each shard a file list. Playwright's own
-`--shard` is never used. Each invocation's worker lanes are its own: when a
+`--shard` is never used. `-nightly-mode` is the tier's (`defer` for the full
+tier, `only` for the nightly tier, `include` otherwise), `-nightly-specs` the
+tree's spec list and `-nightly-specs-base` the base's copy beside the plan,
+which `defer` needs; the plan records both lists' hashes and rows and its
+`deferred` files, and exits 1 on a stale row. `-run-files-out FILE` writes the
+spec files a local run names on Playwright's command line: the plan's files
+when it leaves a listed one out, and nothing otherwise. Each invocation's worker lanes are its own: when a
 proof runs the parallel project and then the solo projects, the time between
 the two invocations belongs to no file.
 
@@ -724,7 +744,9 @@ merge-gate test that covers the same behaviour at a smaller size or by another
 route, and a row in `scripts/proof-nightly-tests.txt` with
 `<date> <name>` in the approved column. A stale entry, a missing covering test
 or a covering test that is itself on the list fails the plan. The §11 coverage
-map stays green.
+map stays green. A Playwright spec file moves the same way, through
+`scripts/proof-nightly-specs.txt`, with a merge-gate spec file that covers it;
+a spec file that holds only the scale case is the unit that moves.
 
 **Keep §11's coverage map current.** `scripts/proof-section11-coverage.tsv`
 maps every claim of `AGENTS.md` §11's required-coverage list to the tests or

@@ -73,6 +73,16 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- The run page at the 4,000-task default ceiling moves to the nightly tier
+  and the pre-release gate, through a new Playwright twin of the nightly list,
+  `scripts/proof-nightly-specs.txt` (approved 2026-10-26): about 7.5 minutes of
+  every full proof's Playwright solo lane. The merge gate keeps the same
+  measurement in `ui/e2e/run-page-reduced-ceiling.spec.ts`, with
+  `engine.orkflow_max_tasks` lowered to 1,000. A full proof's UI plan defers
+  the spec files both the tree's and the base's list carry, and its Playwright
+  ledger records their tests as `deferred`; the nightly tier, locally and in
+  CI, runs the listed specs and needs its `ui-e2e` gate; `merge-check` asks for
+  a nightly proof while either list is non-empty.
 - A feature proof holds evidence that is there only because it reaches a
   changed helper, type or variable to the slow list, as it holds the
   regression set: on a shared test helper that is about 35 minutes. A test

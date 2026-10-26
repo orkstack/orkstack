@@ -256,6 +256,7 @@ part_main() { # <part>
 		fi
 		OBSERVABILITY_REQUIRED="$obs"
 		git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
+		git show "$BASE_COMMIT:scripts/proof-nightly-specs.txt" >"$DIR/nightly-specs-base.txt" 2>/dev/null || : >"$DIR/nightly-specs-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-host-speed.tsv" >"$DIR/host-speed-base.txt" 2>/dev/null || : >"$DIR/host-speed-base.txt"
 		local mode=defer
@@ -282,8 +283,12 @@ part_main() { # <part>
 			PLAN="$DIR/integration-plan.json"
 			(cd "$REPO/ui" && "$REPO/ui/node_modules/.bin/playwright" test --list --reporter=json >"$DIR/ui-list.json") >>"$DIR/plan.log" 2>&1 || true
 			if [ -s "$DIR/ui-list.json" ]; then
+				# The full tier's UI shards never hold a spec file both nightly
+				# spec lists carry; the nightly tier's hold the listed ones alone.
 				part_run ui-plan ui-plan.log "$PR" ui-plan -list "$DIR/ui-list.json" -costs scripts/proof-ui-costs.tsv \
-					-shards "$UI_SHARDS" -out "$DIR/ui-plan.json" -matrix-out "$DIR/ui-matrix.json" || true
+					-shards "$UI_SHARDS" -out "$DIR/ui-plan.json" -matrix-out "$DIR/ui-matrix.json" \
+					-nightly-mode "$mode" -nightly-specs scripts/proof-nightly-specs.txt \
+					-nightly-specs-base "$DIR/nightly-specs-base.txt" || true
 				UI_PLAN="$DIR/ui-plan.json"
 			fi
 		fi
@@ -375,7 +380,7 @@ part_main() { # <part>
 			part_playwright "$DIR/ui-e2e-report.json" 1 "${rel[@]}" || true
 		fi
 		part_run ui-e2e ui-e2e-ledger.log "$PR" ui-ledger -list "$DIR/ui-e2e-list.json" \
-			"${reports[@]}" -log "$DIR/ui-e2e.log" \
+			"${reports[@]}" -plan "$UI_PLAN" -log "$DIR/ui-e2e.log" \
 			-config "$REPO/ui/playwright.config.ts" -out "$DIR" -shard "$k" -part "$PART" \
 			-host-speed scripts/proof-host-speed.tsv -host-speed-base "$(dirname "$UI_PLAN")/host-speed-base.txt" || true
 		;;

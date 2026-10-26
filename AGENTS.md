@@ -879,16 +879,21 @@ includes:
   proven only by the deferred tests (below).
 
 Scale and soak tests leave the per-merge proof only through
-`scripts/proof-nightly-tests.txt`. Each entry names the test, the merge-gate
-tests that cover the same behaviour at a smaller size or by another route, and
-the date the user approved it. A test is listed only when such tests exist,
-and the list changes only with the user's approval. Every other test, and every
-scenario above, except as the last bullet states, stays in the merge
-gate. A full proof records each listed test as `deferred`, never as passed.
-It defers only the entries its base's list also carries: an entry the change
-itself adds is run, and recorded as it ran. The deferred tests run in the
-nightly tier and in the pre-release gate, and a release tag requires a passing
-pre-release proof of the exact commit it names.
+`scripts/proof-nightly-tests.txt`, and Playwright specs through its spec-side
+twin `scripts/proof-nightly-specs.txt`. Each entry names the test or spec file,
+the merge-gate tests or specs that cover the same behaviour at a smaller size
+or by another route, and the date the user approved it. A test or spec is
+listed only when such coverage exists, and the lists change only with the
+user's approval. Every other test and spec, and every scenario above, except
+as the last bullet states, stays in the merge gate: the run page at the task
+ceiling is proven there by `ui/e2e/run-page-reduced-ceiling.spec.ts`, its
+measurement at a ceiling lowered to 1,000, and at the 4,000-task default by
+the nightly tier. A full proof records each listed test, and each test of a
+listed spec file, as `deferred`, never as passed. It defers only the entries
+its base's list also carries: an entry the change itself adds is run, and
+recorded as it ran. The deferred tests and specs run in the nightly tier and
+in the pre-release gate, and a release tag requires a passing pre-release
+proof of the exact commit it names.
 
 Until the nightly workflow runs on GitHub, `make proof-nightly` runs on
 `main`'s tip after every merge that moves `main`, and passes before the next
@@ -1021,8 +1026,9 @@ browser server in the container `ui/e2e/browser-image.txt` pins by digest
 `exposeNetwork: '<loopback>'`, so a spec's `127.0.0.1` URLs are unchanged —
 and a container started or stopped anywhere on the host never reaches it;
 `ui/e2e/network-change.spec.ts` proves that with a host-namespace browser as
-the positive control, and the navigation guard's ceiling is zero repeats. One
-spec, the run page at the task ceiling, is still driven on the host's Chromium
+the positive control, and the navigation guard's ceiling is zero repeats. The
+run page at the task ceiling (its two spec files, at the default and at the
+reduced ceiling) is still driven on the host's Chromium
 (`ui/playwright.config.ts`, `projects`): alone, after every other file, with
 tasks that open no network interface. Every spec file creates a bucket of its own (`ownBucket` in
 `ui/e2e/harness.ts`, the same name shape as `s3bucket`, removed when the file
@@ -1069,8 +1075,9 @@ proof means "ready for the merge proof", never "done".
 
 **The four tiers.** A **full proof** is the merge gate. A **feature proof**
 is a change's evidence on its branch and never merge evidence. The **nightly
-tier** runs only the tests `scripts/proof-nightly-tests.txt` lists, and is
-never merge evidence. The pre-release gate is the full tier with nothing
+tier** runs only the tests `scripts/proof-nightly-tests.txt` lists and the
+spec files `scripts/proof-nightly-specs.txt` lists, and is never merge
+evidence. The pre-release gate is the full tier with nothing
 deferred, and it runs the observability gate unconditionally. A release tag
 requires a passing pre-release proof of the exact commit. docs/PROOFS.md is
 the reference for what each tier runs.
@@ -1168,7 +1175,8 @@ exercises changed, it says that no spec ran for them. Its result line reads
 **Full proof** (`make proof`; `make proof-ui` is the same) is the merge gate,
 and it runs everything except the tests `scripts/proof-nightly-tests.txt`
 lists, which its integration ledger records as `deferred` with their list
-entry: lint; build; unit; `go vet -tags=integration`; the first-party activity
+entry, and the spec files `scripts/proof-nightly-specs.txt` lists, whose tests
+its Playwright ledger records the same way: lint; build; unit; `go vet -tags=integration`; the first-party activity
 images, built and pushed from this tree under a tag of the proof's own
 (`ORK_TEST_IMAGE_TAG`); every test of every package whose integration build
 differs from its unit build, except the deferred ones, against real Temporal
@@ -1196,14 +1204,15 @@ Playwright ledger, list every test that `go test -list` and
 `playwright test --list` report, with the job that ran it, its outcome and its
 duration. A listed test without an outcome fails the gate. In the full tier,
 `deferred` is a recorded outcome, not a missing one. It is legal only for a
-test the nightly list names, and in every other tier it fails the gate. A skip
+test the nightly list names, or a test of a spec file the nightly spec list
+names, and in every other tier it fails the gate. A skip
 also fails it, unless `scripts/proof-allowed-skips.txt` names the test and the
 reason (an opt-in recorder, a helper subprocess); an allowed-skip entry that
 names no listed test fails it too. A test whose binary crashed while it ran is
 recorded as failed and never re-run; the tests behind it run in a fresh
 process. A full proof is merge-eligible only if every gate ran and passed, the
 ledgers are complete (their `deferred` entries match exactly the entries that
-both the base's list and the tree's list carry), the tree was clean and
+both the base's list and the tree's list carry, test and spec lists alike), the tree was clean and
 unchanged from start to end, the proof ran its own Temporal, the activity
 image tag was its own, and the network-change guard stayed within its ceiling.
 A local proof is one plan and one part; a CI proof is one plan, every part of
