@@ -61,6 +61,10 @@ type partRecord struct {
 	Binaries      map[string]binaryRecord `json:"binaries,omitempty"`
 	// Ledgers names the files this part wrote, relative to its directory.
 	Ledgers map[string]string `json:"ledgers,omitempty"`
+	// Setup is the runner's setup log (.github/actions/proof-fetch): one line
+	// per attempt of every fetch made before the part, so a download or pull
+	// that needed its second attempt is on the record (record -setup-log).
+	Setup []string `json:"setup,omitempty"`
 }
 
 type temporalRecord struct {
@@ -178,6 +182,45 @@ var (
 	progressStart   = regexp.MustCompile(`proofrun: start (\S+) (\S+)`)
 	progressOutcome = regexp.MustCompile(`proofrun: outcome (\S+) (\S+) (\S+)`)
 )
+
+// setupAttemptRE matches one attempt line of a part's setup log, as
+// .github/actions/proof-fetch writes it: `fetch <what>: attempt <n> <how>`.
+// The what names the artifact, pattern or image; the how is `ok in Ns`,
+// `timed out after Ns` or `failed, exit E after Ns`, each with its limit.
+var setupAttemptRE = regexp.MustCompile(`^fetch (.+): attempt ([0-9]+) `)
+
+// setupRetries lists, prefixed with the part, every line of each fetch in a
+// part's setup log that needed more than one attempt (or gave up), in the
+// log's order; a fetch that succeeded first time is left out. The lines are
+// the action's own, so the README and proof.json say what the runner saw.
+func setupRetries(part string, setup []string) []string {
+	attempts := map[string]int{}
+	var order []string
+	for _, l := range setup {
+		m := setupAttemptRE.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		if _, seen := attempts[m[1]]; !seen {
+			order = append(order, m[1])
+		}
+		if n, _ := strconv.Atoi(m[2]); n > attempts[m[1]] {
+			attempts[m[1]] = n
+		}
+	}
+	var out []string
+	for _, what := range order {
+		if attempts[what] < 2 {
+			continue
+		}
+		for _, l := range setup {
+			if strings.HasPrefix(l, "fetch "+what+": ") {
+				out = append(out, part+": "+l)
+			}
+		}
+	}
+	return out
+}
 
 // proofStepNames are the names of the step that runs `scripts/proof.sh
 // --part` in each part job of .github/workflows/proof.yml.
@@ -760,6 +803,14 @@ func (m *merger) merge(name string) {
 	m.mergeGates(expected)
 	m.proof.Parts = append([]string{}, expected...)
 	m.proof.Reruns = m.reruns
+	for _, part := range sortedPartKeys(m.parts) {
+		for _, reading := range m.resultReadings(part) {
+			if reading.Record != nil {
+				proof.SetupRetries = append(proof.SetupRetries, setupRetries(part, reading.Record.Setup)...)
+			}
+		}
+	}
+	m.notes = append(m.notes, proof.SetupRetries...)
 	m.proof.Plan = &planSummary{
 		SHA256: m.planSHA, Shards: len(p.Shards), Jobs: len(p.Jobs),
 		CostsSource: p.Costs.Source, Unmeasured: len(p.Unmeasured),

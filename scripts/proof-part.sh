@@ -59,6 +59,7 @@ part_require() {
 		part_need "docker on PATH" command -v docker
 		part_need "docker compose" docker compose version
 		part_need "bun on PATH" command -v bun
+		part_need "node on PATH (Playwright and the built UI run on it)" command -v node
 		part_need "the temporal CLI on PATH (ui/e2e/admin.spec.ts)" command -v temporal
 		part_need "jq on PATH (the shard's file list)" command -v jq
 		part_need "flock on PATH (the Playwright gate's host lock)" command -v flock
@@ -67,6 +68,13 @@ part_require() {
 		part_need "an integration plan (--plan)" test -f "$PLAN"
 		part_need "a UI plan (--ui-plan)" test -f "$UI_PLAN"
 		part_need "a layout directory (--layouts)" test -d "$LAYOUTS"
+		# The suite's browser is the pinned container (ui/e2e/browser-server.ts);
+		# the host's own Chromium is needed only by the shard whose files drive
+		# one, and is refused here, explicitly, rather than by the spec's
+		# "Executable doesn't exist" after the stack has started.
+		if [ -f "$UI_PLAN" ] && part_ui_shard_drives_host_chromium "${PART#ui-e2e:}"; then
+			part_need "Playwright's Chromium on this host (cd ui && npx playwright install --with-deps chromium): this shard holds a spec driven on the host's Chromium" part_host_chromium
+		fi
 		;;
 	activity-fixture:*)
 		part_need "an integration plan (--plan)" test -f "$PLAN"
@@ -95,6 +103,24 @@ part_require() {
 		return 77
 	fi
 	return 0
+}
+
+# part_ui_shard_files prints the spec files of UI shard $1, as the UI plan
+# lists them (ui/… paths), one per line.
+part_ui_shard_files() { jq -r --argjson k "$1" '.shards[] | select(.index == $k) | .files[]' "$UI_PLAN" 2>/dev/null; }
+
+# part_ui_shard_drives_host_chromium: UI shard $1 holds a spec driven on the
+# HOST's Chromium — run-page-ceiling.spec.ts, the one project without a
+# connection to the container (ui/playwright.config.ts), or
+# network-change.spec.ts, which launches a host-namespace Chromium as its
+# positive control. The same rule decides the `Chromium (host)` step of
+# .github/workflows/proof.yml; every other shard runs the container alone.
+part_ui_shard_drives_host_chromium() { part_ui_shard_files "$1" | grep -qE '(network-change|run-page-ceiling|run-page-reduced-ceiling)\.spec\.ts$'; }
+
+# part_host_chromium: Playwright's own Chromium is installed on this host, at
+# the path playwright-core resolves for it.
+part_host_chromium() {
+	(cd "$REPO/ui" && node -e 'const fs = require("fs"); fs.accessSync(require("playwright-core").chromium.executablePath(), fs.constants.X_OK)')
 }
 
 part_tree_hash() {
@@ -140,6 +166,7 @@ part_record() { # <status>
 	)
 	[ -n "$PLAN" ] && args+=(-plan "$PLAN")
 	[ -n "$UI_PLAN" ] && args+=(-ui-plan "$UI_PLAN")
+	[ -f "$DIR/setup.log" ] && args+=(-setup-log "$DIR/setup.log")
 	[ -f "$DIR/images.tsv" ] && args+=(-image-tag "$PROOF_ID" -images "$DIR/images.tsv" -image-tag-own)
 	[ -n "$PART_TEMPORAL_RAN" ] && args+=(-temporal own -temporal-image "$TEMPORAL_IMAGE" -temporal-address "$TEMPORAL_ADDRESS")
 	[ "$OBSERVABILITY_REQUIRED" = 1 ] && args+=(-observability-required)
@@ -220,6 +247,12 @@ part_main() { # <part>
 	trap 'part_say "proof: part stopped by a signal"; exit 143' TERM INT HUP
 
 	mkdir -p "$DIR/artifacts" "$DIR/bin"
+	# The runner's setup log (.github/actions/proof-fetch): every fetch
+	# attempt made before this part, kept with the part so part.json and the
+	# merged proof show a download or pull that needed its second attempt.
+	if [ -n "${SETUP_LOG:-}" ] && [ -f "$SETUP_LOG" ]; then
+		cp "$SETUP_LOG" "$DIR/setup.log"
+	fi
 	mv "$PR" "$DIR/bin/proofrun"
 	PR="$DIR/bin/proofrun"
 	printf '%s %s %s %s\n' "$$" "$$" "$(part_proc_start $$)" "$PROOF_ID" >"$DIR/proof.pid"

@@ -86,7 +86,13 @@ type proofRecord struct {
 	HostSpeedFailures []hostSpeedFailure `json:"host_speed_failures,omitempty"`
 	KnownGaps         []string           `json:"known_gaps,omitempty"`
 	BinaryDigestNotes []string           `json:"binary_digest_notes,omitempty"`
-	ListsChanged      []listChange       `json:"lists_changed,omitempty"`
+	// SetupRetries are the fetches a part's runner needed a second attempt
+	// for, from the parts' setup logs (.github/actions/proof-fetch): every
+	// attempt line of each such fetch, prefixed with the part. A retry
+	// within one attempt of a part is not a rerun and costs no eligibility;
+	// it is recorded so a slow blob store or registry is seen, not guessed.
+	SetupRetries []string     `json:"setup_retries,omitempty"`
+	ListsChanged []listChange `json:"lists_changed,omitempty"`
 	// QuarantineWarnings are the entries within seven days of their date.
 	QuarantineWarnings []string  `json:"quarantine_warnings,omitempty"`
 	PR                 *prRecord `json:"pr,omitempty"`
@@ -261,6 +267,7 @@ func cmdRecord(args []string) int {
 	fs.IntVar(&r.UIWorkers, "ui-workers", 0, "PROOF_UI_WORKERS")
 	fs.StringVar(&r.GatesOverride, "gates-override", "", "PROOF_GATES, when set")
 	obsRequired := fs.Bool("observability-required", false, "the tree changed a telemetry path")
+	setupLog := fs.String("setup-log", "", "the runner's setup log: every fetch attempt made before this part")
 	selFile := fs.String("select", "", "the feature selection")
 	status := fs.Int("status", 0, "the proof script's own status")
 	if err := fs.Parse(args); err != nil || *dir == "" || *attempt < 1 {
@@ -349,6 +356,20 @@ func cmdRecord(args []string) int {
 		if rec.UIPlanSHA256, hashErr = fieldSHA256(*uiPlanFile); hashErr != nil && *uiPlanFile != "" {
 			fmt.Fprintln(os.Stderr, "proofrun record: -ui-plan:", hashErr)
 			return 2
+		}
+		if *setupLog != "" {
+			// A setup log the part names and cannot read is an error, never
+			// a part that reads as if its runner's setup went unrecorded.
+			b, err := os.ReadFile(*setupLog)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "proofrun record: -setup-log:", err)
+				return 2
+			}
+			for _, l := range strings.Split(string(b), "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					rec.Setup = append(rec.Setup, l)
+				}
+			}
 		}
 		if err := os.MkdirAll(*outDir, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, err)

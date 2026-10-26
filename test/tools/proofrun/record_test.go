@@ -365,3 +365,41 @@ func TestRecord_TheFullTiersWriteOnlyAPart(t *testing.T) {
 		})
 	}
 }
+
+// A part names its runner's setup log and the record carries every line of
+// it, so a fetch that needed its second attempt reaches the merger; a log the
+// part names and cannot read is an error, never a part that reads as if its
+// runner's setup went unrecorded.
+func TestRecord_CarriesTheSetupLog(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "parts", "integration-1-a1")
+	if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("integration\tpass\t3\tintegration.log\tproofrun integration\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, "setup.log")
+	if err := os.WriteFile(log, []byte("fetch artifact plan-a1: attempt 1 timed out after 180s (limit 180s)\nfetch artifact plan-a1: attempt 2 ok in 14s (limit 360s)\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	quiet(t)
+	prev := os.Stdout
+	devnull, _ := os.Open(os.DevNull)
+	os.Stdout = devnull
+	defer func() { os.Stdout = prev }()
+	base := []string{"-dir", dir, "-tier", tierFull, "-part", "integration:1", "-attempt", "1", "-tree-start", "t", "-tree-end", "t", "-clean-start", "-clean-end", "-out-dir", out}
+	if code := cmdRecord(append(base, "-setup-log", log)); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	var rec partRecord
+	if err := readJSON(filepath.Join(out, "part.json"), &rec); err != nil {
+		t.Fatalf("no part.json: %v", err)
+	}
+	if want := []string{
+		"fetch artifact plan-a1: attempt 1 timed out after 180s (limit 180s)",
+		"fetch artifact plan-a1: attempt 2 ok in 14s (limit 360s)",
+	}; strings.Join(rec.Setup, "\n") != strings.Join(want, "\n") {
+		t.Errorf("setup = %q, want %q", rec.Setup, want)
+	}
+	if code := cmdRecord(append(base, "-setup-log", filepath.Join(dir, "absent.log"))); code != 2 {
+		t.Errorf("an unreadable setup log exited %d, want 2", code)
+	}
+}

@@ -19,6 +19,23 @@ include breaking changes, and each is marked **BREAKING**.
   between the parallel and the solo invocation (the second Playwright start
   and its global setup) is no longer charged to the solo invocation's first
   spec file's wall, which the UI costs and plan read.
+- A CI proof part fetches the run's own artifacts, and a `ui-e2e` part the
+  browser image, through `.github/actions/proof-fetch`: a fetch that makes no
+  progress is retried once with twice the limit (3 minutes, then 6, under a
+  step limit of 10), every attempt is recorded in the part's `setup.log`,
+  its `part.json` (`setup`) and the merged `proof.json` (`setup_retries`),
+  and a fetch that fails both attempts fails the part before it starts,
+  never a job re-run. An artifact download that stalled for its 3-minute
+  limit (GitHub Actions run 40346476240, `activity-fixture (json)`) lost the
+  whole proof to a new run.
+- The CI `ui-e2e` parts drive the browser in the pinned container
+  (`ui/e2e/browser-image.txt`), as a local proof does, and install the
+  host's Chromium only in the shard whose files drive one
+  (`run-page-ceiling.spec.ts`, `run-page-reduced-ceiling.spec.ts`,
+  `network-change.spec.ts`), decided from the UI plan and required by
+  `scripts/proof-part.sh` as a prerequisite of that part. Every part apt-installed the host browser's system libraries, and
+  one mirror at 50 KB/s took `ui-e2e (3)` past its 5-minute limit (the same
+  run) with no test started.
 - A proof's split Playwright invocations pass their spec files before
   `--project`, which took every word after it as a project name: a feature
   proof naming specs, and every CI `ui-e2e` part, ran with more than one UI

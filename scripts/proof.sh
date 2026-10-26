@@ -6,7 +6,8 @@
 #   scripts/proof.sh --tier feature [--base REF] [--tests PKG:REGEX]... \
 #                    [--specs FILE]... [NAME]   feature proof -> proof/NAME-feature/
 #   scripts/proof.sh --tier nightly|release [NAME]
-#   scripts/proof.sh --part PART --plan FILE ...  one CI part -> proof/<id>-part-PART-aN/
+#   scripts/proof.sh --part PART --plan FILE [--setup-log FILE] ...
+#                                               one CI part -> proof/<id>-part-PART-aN/
 #
 # A full, release or nightly proof runs its gates on one host and then writes
 # one part (`local`) and merges it with `proofrun merge`, the same verdict the
@@ -105,6 +106,7 @@ BASE_COMMIT=""
 MERGE_BASE=""
 SHARDS=""
 UI_SHARDS=""
+SETUP_LOG=""
 BASE_COMMIT_GIVEN=""
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -134,6 +136,8 @@ while [ $# -gt 0 ]; do
 	--shards=*) SHARDS="${1#*=}"; shift ;;
 	--ui-shards) [ $# -ge 2 ] || invalid "--ui-shards needs a number"; UI_SHARDS="$2"; shift 2 ;;
 	--ui-shards=*) UI_SHARDS="${1#*=}"; shift ;;
+	--setup-log) [ $# -ge 2 ] || invalid "--setup-log needs a file"; SETUP_LOG="$2"; shift 2 ;;
+	--setup-log=*) SETUP_LOG="${1#*=}"; shift ;;
 	-h | --help) usage; exit 0 ;;
 	-*) invalid "unknown option $1 (see --help)" ;;
 	*)
@@ -149,6 +153,12 @@ full | feature | nightly | release) ;;
 esac
 if [ -n "$PART" ] && [ "$TIER" = feature ]; then
 	invalid "--part is a full, release or nightly proof's part; a feature proof runs on one host"
+fi
+# The runner's setup log (.github/actions/proof-fetch): every fetch attempt
+# made before a CI part, copied into the part's directory so its part.json and
+# the merged proof carry it. A local proof fetches nothing before itself.
+if [ -n "$SETUP_LOG" ] && [ -z "$PART" ]; then
+	invalid "--setup-log is a CI part's record of its runner's setup; a local proof has none"
 fi
 if [ "$TIER" = full ] && { [ ${#TESTS[@]} -gt 0 ] || [ ${#SPECS[@]} -gt 0 ]; }; then
 	invalid "--tests and --specs name a feature proof's evidence; the full proof runs everything"

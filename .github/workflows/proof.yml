@@ -184,9 +184,10 @@ jobs:
     needs: [base, plan]
     if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 55
     permissions:
       contents: read
+      actions: read
     outputs:
       build_artifact: part-build-a${{ github.run_attempt }}
     steps:
@@ -201,11 +202,13 @@ jobs:
           go-version: "1.27.3"
       - uses: docker/setup-buildx-action@v4.4.1
         timeout-minutes: 3
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
+      - name: fetch plan
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
         with:
-          name: ${{ needs.plan.outputs.plan_artifact }}
+          artifact: ${{ needs.plan.outputs.plan_artifact }}
           path: ${{ runner.temp }}/ci/plan
+          token: ${{ github.token }}
       - name: build
         timeout-minutes: 20
         shell: bash
@@ -213,6 +216,7 @@ jobs:
           scripts/proof.sh --part build --tier "$TIER" --proof-id "$PROOF_ID" \
             --attempt "$GITHUB_RUN_ATTEMPT" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
+            --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
@@ -276,9 +280,10 @@ jobs:
     needs: [base, plan, build]
     if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 155
     permissions:
       contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -298,16 +303,20 @@ jobs:
         with:
           cosign: "true"
           cleanup-disk: "true"
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
+      - name: fetch plan
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
         with:
-          name: ${{ needs.plan.outputs.plan_artifact }}
+          artifact: ${{ needs.plan.outputs.plan_artifact }}
           path: ${{ runner.temp }}/ci/plan
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
+          token: ${{ github.token }}
+      - name: fetch build
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
         with:
-          name: ${{ needs.build.outputs.build_artifact }}
+          artifact: ${{ needs.build.outputs.build_artifact }}
           path: ${{ runner.temp }}/ci/build
+          token: ${{ github.token }}
       - name: integration shard
         timeout-minutes: ${{ env.TIER == 'nightly' && 105 || (env.TIER == 'release' && 105 || 45) }}
         shell: bash
@@ -318,6 +327,7 @@ jobs:
             --attempt "$GITHUB_RUN_ATTEMPT" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
+            --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
@@ -334,9 +344,10 @@ jobs:
     # none.
     if: ${{ needs.plan.outputs.ui_matrix != '[]' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 110
     permissions:
       contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -363,20 +374,62 @@ jobs:
         timeout-minutes: 10
         with:
           temporal-cli: "true"
-      - name: Chromium
+      - name: fetch plan
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
+        with:
+          artifact: ${{ needs.plan.outputs.plan_artifact }}
+          path: ${{ runner.temp }}/ci/plan
+          token: ${{ github.token }}
+      - name: fetch build
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
+        with:
+          artifact: ${{ needs.build.outputs.build_artifact }}
+          path: ${{ runner.temp }}/ci/build
+          token: ${{ github.token }}
+      # The browser every spec file's `chromium` project drives: Playwright's
+      # own image, pinned by digest in ui/e2e/browser-image.txt, which the
+      # suite's global setup runs in a network namespace of its own
+      # (ui/e2e/browser-server.ts), as a local proof does. A pull from the
+      # image registry, never an apt mirror; the reference is read from the
+      # file, so the pin moves in one place.
+      - name: browser image
+        id: browser-image
+        timeout-minutes: 1
+        shell: bash
+        run: echo "image=$(grep -v '^#' ui/e2e/browser-image.txt | grep -v '^$' | head -n1)" >>"$GITHUB_OUTPUT"
+      - name: fetch browser image
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
+        with:
+          image: ${{ steps.browser-image.outputs.image }}
+      # The host's own Chromium is installed only in the shard whose files
+      # drive it: run-page-ceiling.spec.ts, the one spec Playwright runs on the
+      # host's Chromium (ui/playwright.config.ts), and network-change.spec.ts,
+      # which launches a host-namespace Chromium as its positive control. Every
+      # other shard skips the apt install the host browser's system libraries
+      # need, which has stalled a part on a slow mirror. scripts/proof-part.sh
+      # applies the same rule as a prerequisite of the part.
+      - name: host chromium shard
+        id: host-chromium
+        timeout-minutes: 1
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          needed=false
+          if jq -e --argjson k "$SHARD" '[.shards[] | select(.index == $k) | .files[] | select(test("(network-change|run-page-ceiling|run-page-reduced-ceiling)\\.spec\\.ts$"))] | length > 0' \
+            "$RUNNER_TEMP/ci/plan/ui-plan.json" >/dev/null; then
+            needed=true
+          fi
+          echo "needed=$needed" | tee -a "$GITHUB_OUTPUT"
+      - name: Chromium (host)
+        if: steps.host-chromium.outputs.needed == 'true'
         timeout-minutes: 5
         working-directory: ui
         run: npx playwright install --with-deps chromium
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
-        with:
-          name: ${{ needs.plan.outputs.plan_artifact }}
-          path: ${{ runner.temp }}/ci/plan
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
-        with:
-          name: ${{ needs.build.outputs.build_artifact }}
-          path: ${{ runner.temp }}/ci/build
       - name: UI shard
         timeout-minutes: 35
         shell: bash
@@ -388,6 +441,7 @@ jobs:
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --ui-plan "$RUNNER_TEMP/ci/plan/ui-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
+            --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
@@ -401,9 +455,10 @@ jobs:
     needs: [base, plan, build]
     if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 65
+    timeout-minutes: 75
     permissions:
       contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -422,16 +477,20 @@ jobs:
         timeout-minutes: 10
         with:
           cleanup-disk: "true"
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
+      - name: fetch plan
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
         with:
-          name: ${{ needs.plan.outputs.plan_artifact }}
+          artifact: ${{ needs.plan.outputs.plan_artifact }}
           path: ${{ runner.temp }}/ci/plan
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
+          token: ${{ github.token }}
+      - name: fetch build
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
         with:
-          name: ${{ needs.build.outputs.build_artifact }}
+          artifact: ${{ needs.build.outputs.build_artifact }}
           path: ${{ runner.temp }}/ci/build
+          token: ${{ github.token }}
       - name: activity fixture
         timeout-minutes: 25
         shell: bash
@@ -440,6 +499,7 @@ jobs:
             --attempt "$GITHUB_RUN_ATTEMPT" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
+            --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
@@ -453,9 +513,10 @@ jobs:
     needs: [base, plan, build]
     if: ${{ (needs.plan.outputs.observability == 'true' || inputs.tier == 'release') && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 65
+    timeout-minutes: 75
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v7.0.1
         timeout-minutes: 3
@@ -469,16 +530,20 @@ jobs:
       - name: observability stack
         timeout-minutes: 10
         run: docker compose -f deploy/docker-compose.yml --profile observability up -d --wait
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
+      - name: fetch plan
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
         with:
-          name: ${{ needs.plan.outputs.plan_artifact }}
+          artifact: ${{ needs.plan.outputs.plan_artifact }}
           path: ${{ runner.temp }}/ci/plan
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
+          token: ${{ github.token }}
+      - name: fetch build
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
         with:
-          name: ${{ needs.build.outputs.build_artifact }}
+          artifact: ${{ needs.build.outputs.build_artifact }}
           path: ${{ runner.temp }}/ci/build
+          token: ${{ github.token }}
       - name: observability
         timeout-minutes: 25
         shell: bash
@@ -487,6 +552,7 @@ jobs:
             --attempt "$GITHUB_RUN_ATTEMPT" \
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
+            --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
@@ -501,7 +567,7 @@ jobs:
     if: always()
     needs: [base, plan, build, fast, integration, ui-e2e, activity-fixture, observability]
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 70
     permissions:
       contents: read
       actions: read
@@ -535,16 +601,20 @@ jobs:
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
+      - name: fetch plan
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
         with:
-          name: ${{ needs.plan.outputs.plan_artifact }}
+          artifact: ${{ needs.plan.outputs.plan_artifact }}
           path: ${{ runner.temp }}/ci/parts/${{ needs.plan.outputs.plan_artifact }}
-      - uses: actions/download-artifact@v8.0.2
-        timeout-minutes: 3
+          token: ${{ github.token }}
+      - name: fetch parts
+        uses: ./.github/actions/proof-fetch
+        timeout-minutes: 10
         with:
           pattern: part-*
           path: ${{ runner.temp }}/ci/parts
+          token: ${{ github.token }}
       - name: job records
         timeout-minutes: 10
         shell: bash

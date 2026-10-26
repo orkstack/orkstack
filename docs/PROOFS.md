@@ -158,7 +158,14 @@ test and run alone after the others, as `--project` runs on one worker; the
 fan-out's functional tests are `each-fan-out.spec.ts`, which runs with the
 others. The run page at the task ceiling runs on the host's Chromium
 (`ui/playwright.config.ts`); its two spec files share their steps in
-`ui/e2e/runPageCeiling.ts`.
+`ui/e2e/runPageCeiling.ts`. `network-change.spec.ts` launches a host-namespace
+Chromium of its own as its positive control; every other spec drives the
+container. A CI `ui-e2e` part installs the host's Chromium
+(`playwright install --with-deps chromium`, an apt install of its system
+libraries) only when its shard holds one of those three files, decided from
+the UI plan by the same rule `scripts/proof-part.sh` applies as a prerequisite
+of the part; the other shards pull the pinned image and nothing from an apt
+mirror.
 The gate starts one browser server for both invocations, and the second reuses
 the first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
@@ -380,7 +387,7 @@ repository is private, carries the `ci:proof` label.
 | `proof.yml` › `build` | builds every activity image once as an OCI layout and records its digests | the layouts and `images.tsv` |
 | `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build | one part |
 | `proof.yml` › `integration` | one matrix entry per shard: its own Temporal, store, registry and images | one part per shard |
-| `proof.yml` › `ui-e2e` | one matrix entry per UI shard: its own stack and file list | one part per shard |
+| `proof.yml` › `ui-e2e` | one matrix entry per UI shard: its own stack and file list; the pinned browser image pulled, the host's Chromium installed only where the shard's files drive it (§2.1) | one part per shard |
 | `proof.yml` › `activity-fixture` | one matrix entry per activity: `make -C images contract` | one part per activity |
 | `proof.yml` › `observability` | when the plan says it is due, or always for release | one part |
 | `proof.yml` › `proof` | `if: always()`; downloads every part and GitHub's job records; runs `proofrun merge`; writes the summary | the merged `proof.json` and ledgers |
@@ -474,6 +481,24 @@ stack part needs: Docker images cached, the Temporal CLI, cosign, and the
 Linux `host.docker.internal` name. It is proof-host setup, never Orker
 behaviour.
 
+The composite action `.github/actions/proof-fetch` is how every part job
+fetches a run's own artifacts (the plan, the build, the proof job's parts)
+and how a `ui-e2e` job pulls the browser image: at most two attempts, the
+first bounded to 3 minutes and the second to 6 (`timeout` kills a fetch that
+makes no progress), under a step limit of 10, so a stalled blob store or
+registry costs a retry rather than the part, and a lost runner still fails
+within the step. An artifact is fetched with `gh run download` on the job's
+own token (`actions: read`), because `actions/download-artifact` has no limit
+of its own and nothing to retry. Every attempt is one line in the runner's
+setup log, which the part step hands to `scripts/proof.sh --part` as
+`--setup-log`; the part copies it to its `setup.log`, `proofrun record`
+carries its lines (`-setup-log`) into `part.json` (`setup`), and the merger lists
+every fetch that needed its second attempt in `proof.json` (`setup_retries`)
+and under the README's Notes. A retry is inside one attempt of a part: it is
+never a rerun and costs no eligibility. A fetch that fails both attempts
+fails the step, before the part, and the remedy is a new run of the same
+tree (§10) — the action re-runs no job and nothing continues on error.
+
 ## 6. The merge queue, the nightly tier and the pre-release gate
 
 The required `proof` check has two modes:
@@ -562,7 +587,7 @@ Retention is chosen from `github.event.repository.private`:
 `plan` and `build` publish their artifact names as job outputs, and every job
 that downloads them reads the names from `needs.*.outputs`, so a "Re-run job"
 of one shard finds what attempt 1 uploaded — while it exists. Past the
-retention above, a re-run fails at its download step, and the remedy is a new
+retention above, a re-run fails at its fetch step, and the remedy is a new
 run.
 
 The merged artifact `proof-<run_id>-a<n>` carries `proof.json`, the merged
@@ -585,6 +610,8 @@ file's `wall_seconds`.
 - `host_speed_failures`, `known_gaps`, `binary_digest_notes`;
 - `lists_changed`, the gate files the change edits and the rows it adds or
   removes;
+- `setup_retries`, every fetch a part's runner needed a second attempt for
+  (§5), the action's own lines prefixed with the part;
 - `pr` and `ci`.
 
 A ledger entry has `package`, `test`, `job`, `outcome`, `seconds`, an optional
@@ -597,8 +624,9 @@ tier does not expect.
 
 A part's `part.json` holds its identity (`part`, `attempt`, `tier`, `tree`,
 `tree_end`, `clean_start`, `clean_end`, `base_commit`, `image_tag`), its
-gates, the plan hashes it read, its runner, its image digests and its ledger
-names. It carries no verdict.
+gates, the plan hashes it read, its runner, its image digests, its ledger
+names and, for a CI part, its runner's setup log (`setup`: every fetch
+attempt made before it). It carries no verdict.
 
 ### 7.1 What the merger re-derives
 
@@ -783,7 +811,10 @@ missing part needs a new run of the same tree.
 
 **After a setup failure, or a "Re-run job" past the artifact's retention.**
 Start a new run of the same tree (push again, or close and reopen the pull
-request). After a test failure, never: fix it, with evidence.
+request). A fetch that failed both of its attempts (§5) is a setup failure:
+its job's log and the step summary name every attempt, and a part that did
+run after a retried fetch shows it in `proof.json`'s `setup_retries`. After a
+test failure, never: fix it, with evidence.
 
 **On a private repository, start the proof** after adding the `ci:proof`
 label: push again, or close and reopen.
