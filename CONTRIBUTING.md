@@ -27,11 +27,13 @@ make up              # build ork, orker and orkctl; start them and the UI
 ```
 
 `make infra-up` starts [`deploy/docker-compose.yml`](./deploy/docker-compose.yml):
-a Temporal development server, SeaweedFS as the S3-compatible object store,
-and a local OCI registry on `localhost:5001`. `make -C images push` builds the
-first-party activities (`http`, `shell`, `file`, `json`, `git`, `template`)
-and pushes them to that registry; the stack points the activity catalog at
-them, so an Orkflow that `uses: shell` runs the images this checkout built.
+a Temporal development server (set to see a drained release in seconds, not
+the default minutes: docs/DEPLOY.md §4, "Underneath"), SeaweedFS as the
+S3-compatible object store, and a local OCI registry on `localhost:5001`.
+`make -C images push` builds the first-party activities (`http`, `shell`,
+`file`, `json`, `git`, `template`) and pushes them to that registry; the stack
+points the activity catalog at them, so an Orkflow that `uses: shell` runs
+the images this checkout built.
 `make up` builds `bin/ork`, `bin/orker` and `bin/orkctl`, starts the engine,
 one Orker and the UI, and waits until each one answers: the engine's API, an
 Orker polling its pool, the UI and its live-event socket. When it prints

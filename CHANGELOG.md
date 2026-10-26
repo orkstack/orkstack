@@ -138,6 +138,16 @@ include breaking changes, and each is marked **BREAKING**.
   Go and Bun are needed only to develop OrkStack: the development stack
   (`make infra-up`, `make up`, …) is in `CONTRIBUTING.md`, "The local
   development stack", beside the Linux host setup ("Linux hosts").
+- The development stack's Temporal, and so the Temporal every proof starts for
+  itself, detects a drained release in seconds instead of minutes. Its
+  `deploy/docker-compose.yml` command passes
+  `matching.wv.VersionDrainageStatusVisibilityGracePeriod` (`10s`) and
+  `matching.wv.VersionDrainageStatusRefreshInterval` (`3s`) with
+  `--dynamic-config-value`; the cluster's defaults are three minutes each, which
+  every test that waits for a release to drain (`orkctl release wait`, the
+  continuation chain's rollout) waited out. They are development and proof
+  settings, not a recommendation for a deployment, and the quickstart keeps the
+  defaults (docs/DEPLOY.md §4, "Underneath"; docs/PROOFS.md §2.1).
 
 ### Added
 

@@ -71,6 +71,16 @@ and every Playwright spec; the site's check and build; and the observability
 gate when the tree changes a telemetry path. A release proof runs the
 observability gate unconditionally.
 
+The proof's own Temporal is the `temporal` service of
+`deploy/docker-compose.yml`: its image and its command, read by `proofrun
+temporal-args` and started on a port of its own, never a second copy of them
+in a script. The command carries two `--dynamic-config-value` settings that
+make a worker-deployment version report `Drained` in seconds rather than in
+the cluster's default minutes, so the integration tests that wait for a
+release to drain (`orkctl release wait`, the continuation chain's rollout) wait
+seconds (docs/DEPLOY.md §4, "Underneath"). They are development and proof
+settings, not a deployment's.
+
 The **site gate** runs `bun run check && bun run build` in `site/`, logged to
 `site.log`: the docs sync, the design-token drift check and `astro check`, then
 `astro build` with link validation and a post-build link check. The site

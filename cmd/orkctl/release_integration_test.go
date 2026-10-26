@@ -609,7 +609,7 @@ func TestIntegration_ReleaseRolloutThroughOrkctl(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("release wait v1: exit %d\n%s", code, stderr)
 	}
-	s.note("EVIDENCE release wait v1 exited 0 after %s (the cluster's drain refresh is minutes)",
+	s.note("EVIDENCE release wait v1 exited 0 after %s (the development and proof Temporal refreshes its drain verdict in seconds, deploy/docker-compose.yml; a cluster's default is minutes)",
 		time.Since(began).Round(time.Second))
 }
 
