@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,12 @@ import (
 // a leftover is removed only when the process its name records is gone, and
 // never when a proof that is still running recorded it. A thing whose owner
 // cannot be told is listed and left alone.
+//
+// An activity container runs as root and writes root-owned files into its
+// bind-mounted work root, which this unprivileged process cannot unlink. Only
+// then (the host's removal was refused for permission, the process is gone,
+// the cleanup is removing and a container runtime is there) is that one root
+// emptied through a throwaway container: see removeTreeArgs for what it is.
 //
 // It finds buckets by the names proofs recorded, not by the store's listing
 // alone: the development store, SeaweedFS 4.48 with its auth off, answers the
@@ -86,6 +93,8 @@ type cleanDocker interface {
 	ProofTemporals(ctx context.Context) ([][2]string, error)
 	Remove(ctx context.Context, id string) error
 	Stop(ctx context.Context, name string) error
+	// RemoveTree empties a work root through a throwaway container.
+	RemoveTree(ctx context.Context, root string) error
 }
 
 // cleaner holds what one cleanup looks at and how it acts.
@@ -99,6 +108,7 @@ type cleaner struct {
 	docker    cleanDocker          // nil when there is no container runtime
 	remove    bool
 	out       io.Writer
+	removeAll func(path string) error // the host's removal of a work root: os.RemoveAll
 
 	protected map[int]bool // pids a running proof recorded
 }
@@ -107,9 +117,9 @@ type cleaner struct {
 type cleanCounts struct{ buckets, workRoots, containers int }
 
 func cmdClean(args []string) int {
-	fs := flag.NewFlagSet("clean", flag.ContinueOnError)
-	remove := fs.Bool("remove", false, "remove what is listed (without it, nothing is removed)")
-	if err := fs.Parse(args); err != nil {
+	flags := flag.NewFlagSet("clean", flag.ContinueOnError)
+	remove := flags.Bool("remove", false, "remove what is listed (without it, nothing is removed)")
+	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	ctx := context.Background()
@@ -119,6 +129,7 @@ func cmdClean(args []string) int {
 		procStart: processStart,
 		remove:    *remove,
 		out:       os.Stdout,
+		removeAll: os.RemoveAll,
 	}
 	c.host, _ = os.Hostname()
 	if dir := os.Getenv("ORK_ORKER_WORKDIR"); dir != "" {
@@ -162,7 +173,7 @@ func (c *cleaner) run(ctx context.Context) cleanCounts {
 	fmt.Fprintln(c.out, "== proof Temporal containers whose proof is gone")
 	n.containers += c.temporals(ctx)
 	fmt.Fprintln(c.out, "== per-test work roots")
-	n.workRoots = c.removeWorkRoots(roots)
+	n.workRoots = c.removeWorkRoots(ctx, roots)
 
 	verb := "would remove"
 	if c.remove {
@@ -389,8 +400,15 @@ func (c *cleaner) workRoots() []workRoot {
 	return roots
 }
 
-// removeWorkRoots removes the work roots of processes that are gone.
-func (c *cleaner) removeWorkRoots(roots []workRoot) int {
+// removeWorkRoots removes the work roots of processes that are gone. A root
+// the host cannot remove for lack of permission holds files an activity
+// container wrote as root; with a container runtime it is emptied through a
+// throwaway container, once, and a failure there is listed and not retried.
+func (c *cleaner) removeWorkRoots(ctx context.Context, roots []workRoot) int {
+	found := map[string]bool{}
+	for _, r := range roots {
+		found[r.path] = true
+	}
 	removed := 0
 	for _, r := range roots {
 		if why := c.owner(r.pid); why != "" {
@@ -402,13 +420,49 @@ func (c *cleaner) removeWorkRoots(roots []workRoot) int {
 			removed++
 			continue
 		}
-		if err := os.RemoveAll(r.path); err != nil {
+		err := c.removeAll(r.path)
+		switch {
+		case err == nil:
+			removed++
+		case !errors.Is(err, fs.ErrPermission):
+			fmt.Fprintf(c.out, "    (not removed: %v)\n", err)
+		case c.docker == nil:
 			fmt.Fprintf(c.out, "    (some files are not ours to remove: try a container, or sudo: %v)\n", err)
-			continue
+		default:
+			if err := c.emptyThroughContainer(ctx, r.path, found); err != nil {
+				fmt.Fprintf(c.out, "    (not removed, even through a container: %v)\n", err)
+				continue
+			}
+			fmt.Fprintf(c.out, "    removed through a container: %s\n", r.path)
+			removed++
 		}
-		removed++
 	}
 	return removed
+}
+
+// emptyThroughContainer removes a dead process's work root that holds
+// root-owned files: a throwaway container deletes what is inside it, then the
+// empty root goes from the host. Only a root this run found is ever handed to
+// the container, as a real directory and not a link to one.
+func (c *cleaner) emptyThroughContainer(ctx context.Context, path string, found map[string]bool) error {
+	if !found[path] {
+		return fmt.Errorf("%s is not a work root this run found", path)
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory", path)
+	}
+	abs, err := filepath.Abs(path) // ORK_ORKER_WORKDIR may be relative
+	if err != nil {
+		return err
+	}
+	if err := c.docker.RemoveTree(ctx, abs); err != nil {
+		return err
+	}
+	return os.Remove(path)
 }
 
 // hashedOrkerID is internal/orker's identity for an Orker given no id: the
@@ -656,4 +710,66 @@ func (dockerCLI) Stop(ctx context.Context, name string) error {
 	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	return exec.CommandContext(cctx, "docker", "stop", name).Run()
+}
+
+// firstPartyBase is the digest-pinned alpine the first-party images
+// (images/*/Dockerfile) are built from, so a host that built them has it and
+// the cleanup pulls nothing new.
+const firstPartyBase = "alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+
+// workRootRemoveTimeout bounds one work root's removal through a container;
+// a variable only so a test can shorten it.
+var workRootRemoveTimeout = 2 * time.Minute
+
+// removeTreeArgs are the arguments of the throwaway container that empties
+// one work root: the root is its only mount, and it has no privilege, host
+// namespace, added capability or network. The root must be a cleaned,
+// absolute path named like a test's work root, and one `-v` cannot misread.
+func removeTreeArgs(name, root string) ([]string, error) {
+	switch {
+	case !filepath.IsAbs(root) || filepath.Clean(root) != root:
+		return nil, fmt.Errorf("%q is not an absolute, cleaned path", root)
+	case !workRootName.MatchString(filepath.Base(root)):
+		return nil, fmt.Errorf("%q is not named like a test's work root", root)
+	case strings.Contains(root, ":"):
+		return nil, fmt.Errorf("%q cannot be mounted: its name holds a colon", root)
+	}
+	return []string{
+		"run", "--rm", "--name", name, "--network", "none",
+		"--read-only", "--security-opt", "no-new-privileges",
+		"-v", root + ":/w", firstPartyBase,
+		// Everything inside /w, dotfiles included; never /w itself.
+		"find", "/w", "-mindepth", "1", "-maxdepth", "1", "-exec", "rm", "-rf", "--", "{}", "+",
+	}, nil
+}
+
+// RemoveTree deletes everything inside a work root through a throwaway
+// container (root can unlink what an activity container wrote as root), which
+// is force-removed by its name when it fails or outlasts the timeout: the
+// docker client dying does not stop it.
+func (dockerCLI) RemoveTree(ctx context.Context, root string) error {
+	name := fmt.Sprintf("orkstack-clean-%d-%d", os.Getpid(), time.Now().UnixNano())
+	args, err := removeTreeArgs(name, root)
+	if err != nil {
+		return err
+	}
+	cctx, cancel := context.WithTimeout(ctx, workRootRemoveTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "docker", args...)
+	cmd.WaitDelay = 10 * time.Second
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	fctx, fcancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer fcancel()
+	_ = exec.CommandContext(fctx, "docker", "rm", "-f", name).Run()
+	if errors.Is(cctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("timed out after %s (container %s removed)", workRootRemoveTimeout, name)
+	}
+	tail := strings.TrimSpace(string(out))
+	if len(tail) > 300 {
+		tail = tail[len(tail)-300:]
+	}
+	return fmt.Errorf("%w: %s", err, tail)
 }

@@ -10,6 +10,17 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- `proofrun clean`, and so every proof's and `scripts/integration.sh`'s first
+  cleanup and `make proof-clean REMOVE=1`, now removes a dead process's work
+  root that holds root-owned files. An activity container runs as root and
+  writes them into its bind-mounted work root, which an unprivileged process
+  cannot unlink, so each such root was only listed (462 on the proof host).
+  When the host's removal is refused for permission, the root is emptied
+  through a throwaway container of the first-party images' pinned alpine base:
+  `--rm`, no network, the root as its only mount, no privilege or host
+  namespace, a two-minute limit after which the container is force-removed,
+  and only for a root this run found whose process is gone. It is logged
+  `removed through a container`; a failure is listed and not retried.
 - A proof's integration phase removes each passing test process's bucket
   while the phase runs, two at a time, off the process's slot, instead of
   keeping every one until the phase's end. A bucket holds store volumes until

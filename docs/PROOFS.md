@@ -918,7 +918,12 @@ every worktree of this repository, and removes:
   hand-off file, or the head of a process's log, where `s3bucket.Main` names
   the bucket it made) and the store still holds, or that the store lists;
 - a work root under a worktree's `.data/work` (or `ORK_ORKER_WORKDIR`) named
-  `<label>-p<pid>-<suffix>`;
+  `<label>-p<pid>-<suffix>`. A dead root holding root-owned files (an
+  activity container wrote them) is refused by the host's removal; it is
+  emptied through a throwaway container of the first-party images' pinned
+  alpine base instead, mounting only that root, with no privileged or host
+  flags and a two-minute limit, and logged `removed through a container`. A
+  failure there is listed and not retried;
 - an activity container whose Orker id ends in a proof id and a pid
   (`proof.OrkerID`), or is a default id, the host and a hash of a work root
   that names a pid;

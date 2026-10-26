@@ -12,6 +12,9 @@
 #     recorded, since SeaweedFS with its auth off lists none;
 #   - Orker work roots under each worktree's .data/work, named
 #     <label>-p<pid>-<suffix> (internal/testsupport/proof.WorkRootPattern);
+#     a dead one holding root-owned files is emptied through a throwaway
+#     container of the first-party images' alpine base (only that root
+#     mounted, no privilege, a hard timeout), logged "removed through a container";
 #   - activity containers whose Orker's process is gone (its proof Orker id
 #     ends in the pid, or its default id hashes a work root naming the pid);
 #   - proof Temporal containers whose proof is gone.
