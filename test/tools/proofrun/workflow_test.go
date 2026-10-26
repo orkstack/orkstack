@@ -2081,3 +2081,72 @@ func readRepoFileForPins(t *testing.T, rel string) string {
 	}
 	return string(b)
 }
+
+// ---- the artifacts carry records, not binaries ----------------------------------
+
+// TestWorkflows_TheArtifactsCarryRecordsNotBinaries: a part's directory is
+// mostly its bin/ — the stack binaries, proofrun and the adopted test
+// binaries, about 500 MB a shard against 100 KB of records — and the proof
+// job once copied every part whole into the merged proof, which made its
+// upload 4.6 GB and timed it out at the step's limit after every part had
+// passed (run 40365261654). Every part upload but the plan's now leaves its
+// bin/ out (the plan's holds the compiled test binaries every shard adopts),
+// and the merged proof copies each part's records without its binaries,
+// image layouts or test artifacts, plus GitHub's job records.
+func TestWorkflows_TheArtifactsCarryRecordsNotBinaries(t *testing.T) {
+	w := loadWorkflow(t, "proof.yml")
+	var merge *wfStep
+	for i := range w.Jobs["proof"].Steps {
+		if w.Jobs["proof"].Steps[i].Name == "merge" {
+			merge = &w.Jobs["proof"].Steps[i]
+		}
+	}
+	if merge == nil {
+		t.Fatal("jobs.proof has no merge step")
+	}
+	if strings.Contains(merge.Run, `cp -r "$RUNNER_TEMP/ci/parts/."`) {
+		t.Error("jobs.proof merge copies every part whole into the merged proof")
+	}
+	for _, want := range []string{
+		`rsync -a --exclude '/*/bin/' --exclude '/*/layouts/' --exclude '/*/artifacts/'`,
+		`"$RUNNER_TEMP/ci/parts/" "$RUNNER_TEMP/ci/proof/parts/"`,
+		`cp -r "$RUNNER_TEMP/ci/jobs" "$RUNNER_TEMP/ci/proof/jobs"`,
+	} {
+		if !strings.Contains(merge.Run, want) {
+			t.Errorf("jobs.proof merge lacks %s", want)
+		}
+	}
+	uploads := 0
+	for _, name := range w.jobNames() {
+		for i, s := range w.Jobs[name].Steps {
+			if !strings.HasPrefix(s.Uses, "actions/upload-artifact@") {
+				continue
+			}
+			uploads++
+			var lines []string
+			for _, l := range strings.Split(withString(s, "path"), "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					lines = append(lines, l)
+				}
+			}
+			switch name {
+			case "plan":
+				if len(lines) != 1 || strings.HasPrefix(lines[0], "!") {
+					t.Errorf("jobs.plan %s uploads %q; the plan's bin/ holds the test binaries the shards adopt", s.label(i), lines)
+				}
+			case "proof":
+				if len(lines) != 1 || !strings.HasSuffix(lines[0], "/ci/proof") {
+					t.Errorf("jobs.proof %s uploads %q, not the merged proof alone", s.label(i), lines)
+				}
+			default:
+				if len(lines) != 2 || !strings.HasPrefix(lines[0], "proof/") || !strings.HasSuffix(lines[0], "/") ||
+					lines[1] != "!"+lines[0]+"bin/**" {
+					t.Errorf("jobs.%s %s uploads %q; want its directory and !<directory>bin/**", name, s.label(i), lines)
+				}
+			}
+		}
+	}
+	if uploads < 8 {
+		t.Errorf("%d upload steps checked; the proof job and every part upload", uploads)
+	}
+}

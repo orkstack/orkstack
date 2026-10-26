@@ -574,7 +574,7 @@ Retention is chosen from `github.event.repository.private`:
 
 | Artifact | Contents | Retention (private / public) |
 |---|---|---|
-| `plan-a<n>` | `integration-plan.json`, `ui-plan.json`, the Playwright listing, the base lists, `part.json` | 1 d / 7 d |
+| `plan-a<n>` | `integration-plan.json`, `ui-plan.json`, the Playwright listing, the base lists, `part.json`, and `bin/`: the compiled integration test binaries every shard adopts (`proofrun compile`) | 1 d / 7 d |
 | `part-build-a<n>` | the OCI layouts, `images.tsv`, `part.json` | 1 d / 7 d |
 | `part-fast-a<n>` | `unit-tests.json`, the gates' logs; the unit log and events only when the unit gate failed | 1 d / 7 d |
 | `part-integration-<k>-a<n>` | the shard's ledger, `part.json`, gates, `integration/*.log`, events, its `artifacts/` | 1 d / 14 d |
@@ -584,6 +584,11 @@ Retention is chosen from `github.event.repository.private`:
 | `feature-proof-<run_id>-a<n>` (`ci.yml` › `feature`) | the feature proof directory | 14 d |
 | `flakes-<run_id>-a<n>` (`nightly.yml` › `flakes`) | `flakes.tsv`, `flakes.md` | 30 d |
 
+Every other part's upload leaves its `bin/` out — the stack binaries,
+proofrun and the adopted test binaries, about 500 MB a shard beside 100 KB
+of records — because nothing downstream reads them: the merger compares the
+digests `part.json` records, never the files.
+
 `plan` and `build` publish their artifact names as job outputs, and every job
 that downloads them reads the names from `needs.*.outputs`, so a "Re-run job"
 of one shard finds what attempt 1 uploaded — while it exists. Past the
@@ -592,9 +597,14 @@ run.
 
 The merged artifact `proof-<run_id>-a<n>` carries `proof.json`, the merged
 `unit-tests.json`, `integration-tests.json` and `ui-e2e-tests.json`, both
-plans, every part's `part.json`, and the logs of failed jobs. It is
-self-sufficient for a costs refresh: the merged UI ledger carries each spec
-file's `wall_seconds`.
+plans, every part's records under `parts/` — its `part.json`, gates, ledgers,
+logs and events, never its `bin/`, `layouts/` or `artifacts/`, which stay in
+the part's own artifact — and GitHub's record of every attempt's jobs under
+`jobs/`, with the logs of failed jobs. It is self-sufficient for a costs
+refresh: the merged UI ledger carries each spec file's `wall_seconds`. Its
+upload is bounded to five minutes, which the records fit and the parts'
+binaries did not: copied in whole they were 4.6 GB, and the upload timed out
+after every part had passed (run 40365261654).
 
 `proof.json` carries the fields a proof always had (`tier`, `name`, `commit`,
 `branch`, `tree`, `tree_end`, `clean_start`, `clean_end`, `base_ref`,

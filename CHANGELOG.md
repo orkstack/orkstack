@@ -36,6 +36,13 @@ include breaking changes, and each is marked **BREAKING**.
   `scripts/proof-part.sh` as a prerequisite of that part. Every part apt-installed the host browser's system libraries, and
   one mirror at 50 KB/s took `ui-e2e (3)` past its 5-minute limit (the same
   run) with no test started.
+- The merged CI proof copies each part's records — `part.json`, gates,
+  ledgers, logs, events — and GitHub's job records, never a part's
+  binaries, image layouts or test artifacts, and every part upload but the
+  plan's leaves its `bin/` out (the plan's holds the compiled test binaries
+  the shards adopt). The proof job copied every part whole, 4.6 GB of
+  mostly binaries, and its upload timed out after every part had passed
+  (run 40365261654), so no CI full proof could yet produce its artifact.
 - A proof's split Playwright invocations pass their spec files before
   `--project`, which took every word after it as a project name: a feature
   proof naming specs, and every CI `ui-e2e` part, ran with more than one UI

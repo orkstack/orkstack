@@ -177,6 +177,8 @@ jobs:
         timeout-minutes: 5
         with:
           name: plan-a${{ github.run_attempt }}
+          # The one part whose bin/ is uploaded: the compiled integration test
+          # binaries every shard adopts (test/tools/proofrun/prebuilt.go).
           path: proof/${{ env.PROOF_NAME }}-part-plan-a${{ github.run_attempt }}/
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
 
@@ -223,7 +225,11 @@ jobs:
         timeout-minutes: 5
         with:
           name: part-build-a${{ github.run_attempt }}
-          path: proof/${{ env.PROOF_NAME }}-part-build-a${{ github.run_attempt }}/
+          # A part's artifact is its records and, here, the image layouts the
+          # shards fetch; never its binaries (docs/PROOFS.md §7).
+          path: |
+            proof/${{ env.PROOF_NAME }}-part-build-a${{ github.run_attempt }}/
+            !proof/${{ env.PROOF_NAME }}-part-build-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
 
   fast:
@@ -273,7 +279,9 @@ jobs:
         timeout-minutes: 5
         with:
           name: part-fast-a${{ github.run_attempt }}
-          path: proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/
+          path: |
+            proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/
+            !proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
 
   integration:
@@ -334,7 +342,9 @@ jobs:
         timeout-minutes: 5
         with:
           name: part-integration-${{ matrix.shard }}-a${{ github.run_attempt }}
-          path: proof/${{ env.PROOF_NAME }}-part-integration-${{ matrix.shard }}-a${{ github.run_attempt }}/
+          path: |
+            proof/${{ env.PROOF_NAME }}-part-integration-${{ matrix.shard }}-a${{ github.run_attempt }}/
+            !proof/${{ env.PROOF_NAME }}-part-integration-${{ matrix.shard }}-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   ui-e2e:
@@ -448,7 +458,9 @@ jobs:
         timeout-minutes: 5
         with:
           name: part-ui-e2e-${{ matrix.shard }}-a${{ github.run_attempt }}
-          path: proof/${{ env.PROOF_NAME }}-part-ui-e2e-${{ matrix.shard }}-a${{ github.run_attempt }}/
+          path: |
+            proof/${{ env.PROOF_NAME }}-part-ui-e2e-${{ matrix.shard }}-a${{ github.run_attempt }}/
+            !proof/${{ env.PROOF_NAME }}-part-ui-e2e-${{ matrix.shard }}-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   activity-fixture:
@@ -506,7 +518,9 @@ jobs:
         timeout-minutes: 5
         with:
           name: part-activity-fixture-${{ matrix.activity }}-a${{ github.run_attempt }}
-          path: proof/${{ env.PROOF_NAME }}-part-activity-fixture-${{ matrix.activity }}-a${{ github.run_attempt }}/
+          path: |
+            proof/${{ env.PROOF_NAME }}-part-activity-fixture-${{ matrix.activity }}-a${{ github.run_attempt }}/
+            !proof/${{ env.PROOF_NAME }}-part-activity-fixture-${{ matrix.activity }}-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   observability:
@@ -559,7 +573,9 @@ jobs:
         timeout-minutes: 5
         with:
           name: part-observability-a${{ github.run_attempt }}
-          path: proof/${{ env.PROOF_NAME }}-part-observability-a${{ github.run_attempt }}/
+          path: |
+            proof/${{ env.PROOF_NAME }}-part-observability-a${{ github.run_attempt }}/
+            !proof/${{ env.PROOF_NAME }}-part-observability-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   proof:
@@ -693,8 +709,15 @@ jobs:
             args+=(-ui-plan "$RUNNER_TEMP/ci/parts/${{ needs.plan.outputs.plan_artifact }}/ui-plan.json")
           fi
           go run ./test/tools/proofrun merge "${args[@]}"
+          # The merged proof keeps every part's records — part.json, gates,
+          # ledgers, logs, events — and GitHub's job records, never a part's
+          # binaries, image layouts or test artifacts: those stay in the part
+          # artifacts, and copied in they were 4.6 GB the upload below could
+          # not finish within its limit (docs/PROOFS.md §7).
           mkdir -p "$RUNNER_TEMP/ci/proof/parts"
-          cp -r "$RUNNER_TEMP/ci/parts/." "$RUNNER_TEMP/ci/proof/parts/" || true
+          rsync -a --exclude '/*/bin/' --exclude '/*/layouts/' --exclude '/*/artifacts/' \
+            "$RUNNER_TEMP/ci/parts/" "$RUNNER_TEMP/ci/proof/parts/" || true
+          cp -r "$RUNNER_TEMP/ci/jobs" "$RUNNER_TEMP/ci/proof/jobs" || true
       - name: summary
         if: always()
         timeout-minutes: 2
