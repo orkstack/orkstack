@@ -1125,7 +1125,11 @@ the site's check and build when a path the site reads changed. It then runs:
 - the change's **evidence**: every test whose source the diff changes,
   including every test that reaches a changed or deleted helper, type,
   variable or `TestMain` through its package's declarations (comment-only
-  changes are no change); every test `--tests` names, where `REGEX` must match
+  changes are no change) — except that a test which is evidence only because
+  it reaches a changed helper, type or variable is held to the slow list, as
+  the regression set is, and the merge proof runs it; when every such test of
+  a package is slow, the cheapest stays, and a changed `TestMain` still runs
+  the whole package; every test `--tests` names, where `REGEX` must match
   whole test names; every spec the diff changes or `--specs` names (a file
   under `ui/test/` names a UI unit test); every spec when the Playwright
   harness, its config or the UI's dependencies changed; the activity contract
@@ -1141,7 +1145,9 @@ the site's check and build when a path the site reads changed. It then runs:
   suite builds (an `images/` change counts as a change to `internal/orker`) —
   every test declared in an integration-tagged file, except those on the slow
   list (`scripts/proof-slow-tests.txt`, regenerated from a full proof's ledger
-  by `make proof-slow-list FROM=proof/<name>`).
+  by `make proof-slow-list FROM=proof/<name>`), which also holds back the
+  evidence that only reaches a changed declaration. A test whose own source
+  changed, and every `--tests` name, runs whatever the slow list says.
 
 The regression set is never evidence. Every changed package with a change
 outside its tests and its comments needs at least one evidence test whose

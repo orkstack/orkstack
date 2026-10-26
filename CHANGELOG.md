@@ -64,6 +64,13 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- A feature proof holds evidence that is there only because it reaches a
+  changed helper, type or variable to the slow list, as it holds the
+  regression set: on a shared test helper that is about 35 minutes. A test
+  whose own source changed and every `--tests` name always run; when every
+  test such a change reaches in a package is slow, the cheapest stays; a
+  changed `TestMain` still runs the whole package. The merge proof runs every
+  test as before.
 - The merge contract names a CI full proof as merge evidence on the local
   path: a `validate/full/<name>` run's `proof-<run>-a<n>` artifact, downloaded
   and passed to `make merge-check PROOF=`, gates a fast-forward when it is a

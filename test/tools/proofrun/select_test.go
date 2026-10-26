@@ -120,6 +120,12 @@ type change struct {
 // new side), keeps the base tree as the old side, and selects.
 func fakeSelect(t *testing.T, changes []change, tests, specs []string) *selection {
 	t.Helper()
+	return fakeSelectSlow(t, changes, tests, specs, map[testKey]slowEntry{{pEngine, "TestIntegration_Slow"}: {Seconds: 120}})
+}
+
+// fakeSelectSlow is fakeSelect with a slow list of the caller's own.
+func fakeSelectSlow(t *testing.T, changes []change, tests, specs []string, slow map[testKey]slowEntry) *selection {
+	t.Helper()
 	root := t.TempDir()
 	newTree := map[string]string{}
 	for p, c := range baseTree {
@@ -161,7 +167,7 @@ func fakeSelect(t *testing.T, changes []change, tests, specs []string) *selectio
 	}
 	in := selectInput{
 		root: root, paths: paths, scope: scope, tests: tests, specs: specs,
-		slow: map[testKey]slowEntry{{pEngine, "TestIntegration_Slow"}: {Seconds: 120}},
+		slow: slow,
 		readNew: func(p string) []byte {
 			if c, ok := newTree[p]; ok {
 				return []byte(c)
@@ -320,11 +326,97 @@ func TestSelect_AChangedTestIsItsOwnEvidenceAndRunsEvenWhenSlow(t *testing.T) {
 }
 
 func TestSelect_AChangedHelperSelectsItsCallers(t *testing.T) {
-	sel := fakeSelect(t, []change{{"internal/engine/live_integration_test.go",
-		strings.Replace(baseTree["internal/engine/live_integration_test.go"], "func boot(t *testing.T) int { return Run() }", "func boot(t *testing.T) int { return Run() + 1 }", 1)}}, nil, nil)
+	sel := fakeSelectSlow(t, []change{bootChange}, nil, nil, map[testKey]slowEntry{})
 	requireErrors(t, sel)
 	if got := evidenceNames(sel, pEngine); !reflect.DeepEqual(got, []string{"TestIntegration_Fast", "TestIntegration_Slow"}) {
 		t.Errorf("evidence = %v", got)
+	}
+}
+
+// bootChange edits boot, the helper TestIntegration_Fast and
+// TestIntegration_Slow reach; TestIntegration_Uses does not.
+var bootChange = change{"internal/engine/live_integration_test.go",
+	strings.Replace(baseTree["internal/engine/live_integration_test.go"], "func boot(t *testing.T) int { return Run() }", "func boot(t *testing.T) int { return Run() + 1 }", 1)}
+
+// A test that is evidence only because it reaches a changed helper is held
+// to the slow list, as the regression set is: the merge proof runs it. A
+// test whose own source changed, and every --tests name, always runs; and
+// when every caller a package's helper change reaches is slow, the cheapest
+// one stays, so the change still has a test that exercises it.
+func TestSelect_TheSlowListAppliesToHelperReachedEvidence(t *testing.T) {
+	slowTest := map[testKey]slowEntry{{pEngine, "TestIntegration_Slow"}: {Seconds: 120}}
+	bothSlow := map[testKey]slowEntry{{pEngine, "TestIntegration_Slow"}: {Seconds: 120}, {pEngine, "TestIntegration_Fast"}: {Seconds: 30}}
+	slowAlsoChanged := change{bootChange.path, strings.Replace(bootChange.content,
+		"func TestIntegration_Slow(t *testing.T) { _ = boot(t) }", "func TestIntegration_Slow(t *testing.T) { _ = boot(t); t.Log(1) }", 1)}
+	cases := []struct {
+		name         string
+		changes      []change
+		tests        []string
+		slow         map[testKey]slowEntry
+		evidence     []string
+		slowOmitted  []string
+		run          []string
+		keptCheapest string
+	}{
+		{
+			name: "a slow caller of a changed helper is left to the merge proof", changes: []change{bootChange}, slow: slowTest,
+			evidence: []string{"TestIntegration_Fast"}, slowOmitted: []string{"TestIntegration_Slow"},
+			run: []string{"TestIntegration_Fast", "TestIntegration_Uses"},
+		},
+		{
+			name: "when every caller is slow the cheapest stays as evidence", changes: []change{bootChange}, slow: bothSlow,
+			evidence: []string{"TestIntegration_Fast"}, slowOmitted: []string{"TestIntegration_Slow"},
+			run: []string{"TestIntegration_Fast", "TestIntegration_Uses"}, keptCheapest: "TestIntegration_Fast",
+		},
+		{
+			name: "a slow caller named by --tests always runs", changes: []change{bootChange}, slow: slowTest,
+			tests:    []string{"internal/engine:TestIntegration_Slow"},
+			evidence: []string{"TestIntegration_Fast", "TestIntegration_Slow"}, slowOmitted: []string{},
+			run: []string{"TestIntegration_Fast", "TestIntegration_Slow", "TestIntegration_Uses"},
+		},
+		{
+			name: "a slow caller whose own source changed always runs", changes: []change{slowAlsoChanged}, slow: slowTest,
+			evidence: []string{"TestIntegration_Fast", "TestIntegration_Slow"}, slowOmitted: []string{},
+			run: []string{"TestIntegration_Fast", "TestIntegration_Slow", "TestIntegration_Uses"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sel := fakeSelectSlow(t, c.changes, c.tests, nil, c.slow)
+			requireErrors(t, sel)
+			ps := sel.Integration[pEngine]
+			if got := evidenceNames(sel, pEngine); !reflect.DeepEqual(got, c.evidence) {
+				t.Errorf("evidence = %v, want %v", got, c.evidence)
+			}
+			omitted := []string{}
+			for _, d := range ps.SlowOmitted {
+				omitted = append(omitted, d.Test)
+			}
+			if !reflect.DeepEqual(omitted, c.slowOmitted) {
+				t.Errorf("slow omitted = %v, want %v", omitted, c.slowOmitted)
+			}
+			for _, d := range ps.SlowOmitted {
+				if !strings.Contains(d.Reached, "reaches changed boot") {
+					t.Errorf("%s is left out without the reach that selected it: %+v", d.Test, d)
+				}
+			}
+			if got := ps.run(); !reflect.DeepEqual(got, c.run) {
+				t.Errorf("run = %v, want %v", got, c.run)
+			}
+			if c.keptCheapest != "" && !strings.Contains(ps.Evidence[c.keptCheapest], "the cheapest") {
+				t.Errorf("%s stays without saying why: %q", c.keptCheapest, ps.Evidence[c.keptCheapest])
+			}
+			// The README says why each one was left out.
+			sel.SlowSource = "proof/x (commit abc)"
+			var r strings.Builder
+			featureReport(&r, sel, outcomes{}, nil)
+			for _, d := range c.slowOmitted {
+				want := "left out: on the slow list (120s in proof/x (commit abc)): " + d + " — evidence only because it reaches changed boot; the merge proof runs it"
+				if !strings.Contains(r.String(), want) {
+					t.Errorf("the README lacks %q:\n%s", want, r.String())
+				}
+			}
+		})
 	}
 }
 

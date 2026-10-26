@@ -201,6 +201,10 @@ func refs(n ast.Node) map[string]bool {
 type dirChange struct {
 	// Tests are tests that changed or reach a changed helper, on the new side.
 	Tests map[string]string // test -> why
+	// Reached names the tests in Tests that are there only because they
+	// reach a changed helper, type or variable through the package's
+	// declarations; their own source did not change.
+	Reached map[string]bool
 	// Whole is set when TestMain or init changed: the whole binary.
 	Whole string
 	// Removed are tests that exist only on the old side.
@@ -221,7 +225,7 @@ type dirChange struct {
 // map); newAll is every Go file of the directory on the new side, which is
 // what reachability is computed over.
 func analyzeDir(cfg, dir string, oldFiles, newFiles map[string]srcFile, newAll []srcFile) dirChange {
-	ch := dirChange{Tests: map[string]string{}}
+	ch := dirChange{Tests: map[string]string{}, Reached: map[string]bool{}}
 	parseSide := func(files map[string]srcFile) map[string]parsedFile {
 		out := map[string]parsedFile{}
 		for name, f := range files {
@@ -390,6 +394,7 @@ func analyzeDir(cfg, dir string, oldFiles, newFiles map[string]srcFile, newAll [
 			}
 			if via := reaches(graph, t, changedHelpers); via != "" {
 				ch.Tests[t] = "reaches changed " + via
+				ch.Reached[t] = true
 			}
 		}
 	}

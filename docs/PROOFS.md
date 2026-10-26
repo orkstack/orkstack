@@ -236,6 +236,18 @@ The selection is:
   selection's `slow_omitted` and the README says "left out: on the slow list";
   they are never called deferred, a word that belongs to the nightly tier.
 
+The slow list also holds back evidence that is there only because it reaches
+a changed helper, type or variable: such a test's own source did not change,
+so the merge proof runs it. Its `slow_omitted` entry carries `reached`, the
+reach that selected it, and the README line ends "evidence only because it
+reaches changed <name>; the merge proof runs it". When every test such a
+change reaches in a package is slow, the cheapest stays as evidence, marked
+"kept: the cheapest of the slow tests the change reaches", so the change
+still has a test that exercises it. A test whose own source changed, and
+every `-tests` name, always runs; a changed `TestMain` still runs the whole
+package, slow tests included. On a shared helper such as `newChaosStack`
+this is about 35 minutes of a feature proof.
+
 The regression set is never evidence. Every changed package with a change
 outside its tests and its comments needs at least one evidence test whose
 binary depends on it, and it must be an integration test when the package is

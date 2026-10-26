@@ -64,6 +64,7 @@ func TestAnalyzeDir(t *testing.T) {
 		old, new   map[string]srcFile
 		unchanged  []srcFile // the rest of the package on the new side
 		tests      []string
+		reached    []string // the tests in `tests` selected only by reaching a changed declaration
 		removed    []string
 		whole      bool
 		production bool
@@ -91,18 +92,20 @@ func TestAnalyzeDir(t *testing.T) {
 			tests: []string{"TestIntegration_Alone"},
 		},
 		{
-			name:  "a changed helper selects every test that reaches it, transitively",
-			cfg:   cfgIntegration,
-			old:   files("live_integration_test.go", integrationHelpers),
-			new:   files("live_integration_test.go", strings.Replace(integrationHelpers, `return "addr"`, `return "127.0.0.1:7233"`, 1)),
-			tests: []string{"TestIntegration_Boots", "TestIntegration_Dials"},
+			name:    "a changed helper selects every test that reaches it, transitively",
+			cfg:     cfgIntegration,
+			old:     files("live_integration_test.go", integrationHelpers),
+			new:     files("live_integration_test.go", strings.Replace(integrationHelpers, `return "addr"`, `return "127.0.0.1:7233"`, 1)),
+			tests:   []string{"TestIntegration_Boots", "TestIntegration_Dials"},
+			reached: []string{"TestIntegration_Boots", "TestIntegration_Dials"},
 		},
 		{
-			name:  "a changed package-level var selects its readers",
-			cfg:   cfgIntegration,
-			old:   files("live_integration_test.go", integrationHelpers),
-			new:   files("live_integration_test.go", strings.Replace(integrationHelpers, `"main"`, `"batch"`, 1)),
-			tests: []string{"TestIntegration_Pools"},
+			name:    "a changed package-level var selects its readers",
+			cfg:     cfgIntegration,
+			old:     files("live_integration_test.go", integrationHelpers),
+			new:     files("live_integration_test.go", strings.Replace(integrationHelpers, `"main"`, `"batch"`, 1)),
+			tests:   []string{"TestIntegration_Pools"},
+			reached: []string{"TestIntegration_Pools"},
 		},
 		{
 			name: "a helper in another file of the package is reached too",
@@ -111,7 +114,8 @@ func TestAnalyzeDir(t *testing.T) {
 			new:  files("helpers_test.go", "package engine\n\nfunc shared() int { return 2 }\n"),
 			unchanged: []srcFile{{Name: "live_integration_test.go", Content: []byte(
 				"//go:build integration\n\npackage engine\n\nimport \"testing\"\n\nfunc TestIntegration_Shared(t *testing.T) { _ = shared() }\n\nfunc TestIntegration_Other(t *testing.T) {}\n")}},
-			tests: []string{"TestIntegration_Shared"},
+			tests:   []string{"TestIntegration_Shared"},
+			reached: []string{"TestIntegration_Shared"},
 		},
 		{
 			name:    "a deleted test is removed, not selected",
@@ -134,7 +138,8 @@ func TestAnalyzeDir(t *testing.T) {
 			new: files("live_integration_test.go", strings.Replace(
 				strings.Replace(integrationHelpers, "func dial(t *testing.T) string { return \"addr\" }\n", "", 1),
 				"_ = dial(t)", "_ = 1", 1)),
-			tests: []string{"TestIntegration_Boots", "TestIntegration_Dials"},
+			tests:   []string{"TestIntegration_Boots", "TestIntegration_Dials"},
+			reached: []string{"TestIntegration_Boots"},
 		},
 		{
 			name:  "a new file's tests are selected",
@@ -186,11 +191,12 @@ func TestAnalyzeDir(t *testing.T) {
 			production: true,
 		},
 		{
-			name:  "unit helpers select unit tests in the unit configuration",
-			cfg:   cfgUnit,
-			old:   files("u_test.go", unitFile),
-			new:   files("u_test.go", strings.Replace(unitFile, "return 1", "return 2", 1)),
-			tests: []string{"TestUnit"},
+			name:    "unit helpers select unit tests in the unit configuration",
+			cfg:     cfgUnit,
+			old:     files("u_test.go", unitFile),
+			new:     files("u_test.go", strings.Replace(unitFile, "return 1", "return 2", 1)),
+			tests:   []string{"TestUnit"},
+			reached: []string{"TestUnit"},
 		},
 	}
 	for _, c := range cases {
@@ -198,6 +204,9 @@ func TestAnalyzeDir(t *testing.T) {
 			ch := analyzeDir(c.cfg, "internal/engine", c.old, c.new, all(c.new, c.unchanged...))
 			if got := keys(ch.Tests); !reflect.DeepEqual(got, orEmpty(c.tests)) {
 				t.Errorf("tests = %v, want %v (%v)", got, c.tests, ch.Tests)
+			}
+			if got := sortedKeys(ch.Reached); !reflect.DeepEqual(got, orEmpty(c.reached)) {
+				t.Errorf("reached = %v, want %v", got, c.reached)
 			}
 			if !reflect.DeepEqual(orEmpty(ch.Removed), orEmpty(c.removed)) {
 				t.Errorf("removed = %v, want %v", ch.Removed, c.removed)
