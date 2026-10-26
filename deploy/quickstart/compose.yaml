@@ -29,7 +29,7 @@ x-store: &store
 
 services:
   temporal:
-    image: temporalio/temporal:1.8.2@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
+    image: temporalio/temporal:1.9.1@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
     command:
       - server
       - start-dev
