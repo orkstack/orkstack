@@ -1127,8 +1127,9 @@ release runs nothing at all (§1).
    hosts an open pin **and** every Orker answered; 4 at `--timeout` (default
    1h), naming every run and pin left; 1 when v1 takes new runs, is unknown,
    or the engine stops answering. The cluster refreshes its drain verdict on a
-   delay of minutes. `wait` is a loop in `orkctl`; nothing server-side holds
-   rollout state.
+   delay of minutes (three by default; the development stack and the proofs
+   shorten it to seconds, §4 "Underneath"). `wait` is a loop in `orkctl`;
+   nothing server-side holds rollout state.
 
    Stopping v1 while it is still draining strands its runs: their tasks stay
    scheduled and unstarted and the runs stay `RUNNING` until v1's workers come
@@ -1443,6 +1444,27 @@ go run ./test/tools/queue-routing \
 `describe-version`'s cluster-side drain verdict does not see an open pin: a
 pin lives in its host process. `orkctl release wait` adds that check from the
 Orker inventory; the raw command does not.
+
+**The development and proof Temporal drains in seconds; a production cluster
+keeps its defaults.** The cluster decides that a version that stopped taking
+new runs has drained by counting the running pinned workflows still on it, on
+a delay set by two dynamic-config values. Both default to three minutes:
+`matching.wv.VersionDrainageStatusVisibilityGracePeriod` before the first
+count, which gives a workflow that started on the version a moment before it
+stopped being current time to reach visibility, and
+`matching.wv.VersionDrainageStatusRefreshInterval` between the counts that
+follow (Temporal server 1.31, which the development image pins). The
+`temporal` service of `deploy/docker-compose.yml` passes
+`--dynamic-config-value` for both, `10s` and `3s`, so every test that waits for
+a release to drain waits seconds rather than minutes. The proofs read the same
+image and command from that service for the Temporal they start for
+themselves (`proofrun temporal-args`, docs/PROOFS.md), so the settings reach
+them too. They are development and proof settings, never a recommendation:
+a shorter grace period can report a version drained while a workflow that
+started on it has not yet reached visibility, and every refresh is a
+visibility query and a new run of the version's own workflow on the cluster.
+The quickstart's Temporal (`deploy/quickstart/compose.yaml`) and every
+production cluster keep the defaults.
 
 **Permissions.** A cluster behind an authorizer must grant the engine's
 identity `DescribeWorkerDeployment`, `DescribeWorkerDeploymentVersion`,

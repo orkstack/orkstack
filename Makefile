@@ -205,7 +205,7 @@ proof-ui: ## Alias of proof: the full proof already runs the UI type-check, unit
 	@scripts/proof.sh $(NAME)
 
 .PHONY: proof-nightly
-proof-nightly: ## The nightly tier: only the deferred scale and soak tests, on one host -> proof/<NAME>-nightly/
+proof-nightly: ## The nightly tier: only the deferred scale and soak tests and specs, on one host -> proof/<NAME>-nightly/
 	@scripts/proof.sh --tier nightly $(if $(NAME),$(NAME),nightly)
 
 .PHONY: proof-release

@@ -86,6 +86,9 @@ type pkgSelection struct {
 type slowOmittedTest struct {
 	Test    string  `json:"test"`
 	Seconds float64 `json:"seconds"`
+	// Reached is set when the test would have been evidence only because it
+	// reaches a changed helper, type or variable: the reach that selected it.
+	Reached string `json:"reached,omitempty"`
 }
 
 // run lists the tests to run; nil with Whole set means every listed test.
@@ -520,12 +523,24 @@ func selectInto(sel *selection, in selectInput) error {
 		return u, i
 	}
 	integEvidence := map[string]map[string]string{} // import path -> test -> why
-	addInteg := func(pkg, test, why string) {
+	// integReached marks the evidence that is there only because it reaches
+	// a changed helper, type or variable; any other reason (its own source
+	// changed, --tests, a changed tool or example) clears the mark and wins
+	// as the reason, because such evidence always runs.
+	integReached := map[string]map[string]bool{}
+	addInteg := func(pkg, test, why string, reached bool) {
 		if integEvidence[pkg] == nil {
 			integEvidence[pkg] = map[string]string{}
+			integReached[pkg] = map[string]bool{}
 		}
 		if _, ok := integEvidence[pkg][test]; !ok {
 			integEvidence[pkg][test] = why
+			integReached[pkg][test] = reached
+			return
+		}
+		if integReached[pkg][test] && !reached {
+			integEvidence[pkg][test] = why
+			integReached[pkg][test] = false
 		}
 	}
 	unitSeen := map[testKey]bool{}
@@ -568,7 +583,7 @@ func selectInto(sel *selection, in selectInput) error {
 				case unitDecl[t]:
 					addUnit(pkg, t, why)
 				case integDecl[t]:
-					addInteg(pkg, t, why)
+					addInteg(pkg, t, why, ch.Reached[t])
 				}
 			}
 		}
@@ -612,7 +627,7 @@ func selectInto(sel *selection, in selectInput) error {
 		}
 		for _, t := range matched {
 			if integDecl[t] {
-				addInteg(pkg, t, "named by --tests "+spec)
+				addInteg(pkg, t, "named by --tests "+spec, false)
 			} else {
 				addUnit(pkg, t, "named by --tests "+spec)
 			}
@@ -670,7 +685,7 @@ func selectInto(sel *selection, in selectInput) error {
 				w := label + ": " + why
 				switch {
 				case integDecl[t]:
-					addInteg(p.ImportPath, t, w)
+					addInteg(p.ImportPath, t, w, false)
 					n++
 				case unitDecl[t]:
 					addUnit(p.ImportPath, t, w)
@@ -770,6 +785,40 @@ func selectInto(sel *selection, in selectInput) error {
 		if w, ok := wholeIntegration[ip.ImportPath]; ok {
 			ps.Whole = w
 		}
+		// Evidence that is there only because it reaches a changed helper,
+		// type or variable is held to the slow list, as the regression set
+		// is: the merge proof runs it. When every such test of the package
+		// is slow, the cheapest stays, so the change keeps a test that
+		// exercises it. A whole-package run (TestMain changed) runs all.
+		omitted := map[string]bool{}
+		if ps.Whole == "" {
+			var slowReached []slowOmittedTest
+			reached := 0
+			for t, why := range ps.Evidence {
+				if !integReached[ip.ImportPath][t] {
+					continue
+				}
+				reached++
+				if s, slow := in.slow[testKey{ip.ImportPath, t}]; slow {
+					slowReached = append(slowReached, slowOmittedTest{Test: t, Seconds: s.Seconds, Reached: why})
+				}
+			}
+			sort.Slice(slowReached, func(i, j int) bool {
+				if slowReached[i].Seconds != slowReached[j].Seconds {
+					return slowReached[i].Seconds < slowReached[j].Seconds
+				}
+				return slowReached[i].Test < slowReached[j].Test
+			})
+			for i, d := range slowReached {
+				if i == 0 && len(slowReached) == reached {
+					ps.Evidence[d.Test] = d.Reached + "; kept: the cheapest of the slow tests the change reaches"
+					continue
+				}
+				delete(ps.Evidence, d.Test)
+				omitted[d.Test] = true
+				ps.SlowOmitted = append(ps.SlowOmitted, d)
+			}
+		}
 		var because []string
 		for _, c := range changedList {
 			if ok, how := deps.dependsOn(cfgIntegration, ip.ImportPath, c); ok {
@@ -784,7 +833,7 @@ func selectInto(sel *selection, in selectInput) error {
 			}
 			sort.Strings(names)
 			for _, t := range names {
-				if _, ev := ps.Evidence[t]; ev {
+				if _, ev := ps.Evidence[t]; ev || omitted[t] {
 					continue
 				}
 				if s, slow := in.slow[testKey{ip.ImportPath, t}]; slow && ps.Whole == "" {
@@ -794,6 +843,7 @@ func selectInto(sel *selection, in selectInput) error {
 				ps.Regression = append(ps.Regression, t)
 			}
 		}
+		sort.Slice(ps.SlowOmitted, func(i, j int) bool { return ps.SlowOmitted[i].Test < ps.SlowOmitted[j].Test })
 		if len(ps.Evidence) == 0 && len(ps.Regression) == 0 && ps.Whole == "" {
 			sel.NotRun = append(sel.NotRun, fmt.Sprintf("%s: its test binary depends on no changed package", relDir(ip.ImportPath)))
 			continue

@@ -10,6 +10,15 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- `proofrun overhead` counts a concurrent setup group once, through its
+  `setup` row, and puts the site gate among the fast gates: it summed the
+  group's members as if serial and reported 88.3 minutes for a proof whose wall
+  was 87.5. A lane's utilisation is never above 100%; it read 115% for the solo
+  projects.
+- The Playwright ledger keeps each invocation's worker lanes apart, so the time
+  between the parallel and the solo invocation (the second Playwright start
+  and its global setup) is no longer charged to the solo invocation's first
+  spec file's wall, which the UI costs and plan read.
 - A proof's split Playwright invocations pass their spec files before
   `--project`, which took every word after it as a project name: a feature
   proof naming specs, and every CI `ui-e2e` part, ran with more than one UI
@@ -64,6 +73,23 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- The run page at the 4,000-task default ceiling moves to the nightly tier
+  and the pre-release gate, through a new Playwright twin of the nightly list,
+  `scripts/proof-nightly-specs.txt` (approved 2026-10-26): about 7.5 minutes of
+  every full proof's Playwright solo lane. The merge gate keeps the same
+  measurement in `ui/e2e/run-page-reduced-ceiling.spec.ts`, with
+  `engine.orkflow_max_tasks` lowered to 1,000. A full proof's UI plan defers
+  the spec files both the tree's and the base's list carry, and its Playwright
+  ledger records their tests as `deferred`; the nightly tier, locally and in
+  CI, runs the listed specs and needs its `ui-e2e` gate; `merge-check` asks for
+  a nightly proof while either list is non-empty.
+- A feature proof holds evidence that is there only because it reaches a
+  changed helper, type or variable to the slow list, as it holds the
+  regression set: on a shared test helper that is about 35 minutes. A test
+  whose own source changed and every `--tests` name always run; when every
+  test such a change reaches in a package is slow, the cheapest stays; a
+  changed `TestMain` still runs the whole package. The merge proof runs every
+  test as before.
 - The merge contract names a CI full proof as merge evidence on the local
   path: a `validate/full/<name>` run's `proof-<run>-a<n>` artifact, downloaded
   and passed to `make merge-check PROOF=`, gates a fast-forward when it is a
@@ -138,6 +164,16 @@ include breaking changes, and each is marked **BREAKING**.
   Go and Bun are needed only to develop OrkStack: the development stack
   (`make infra-up`, `make up`, …) is in `CONTRIBUTING.md`, "The local
   development stack", beside the Linux host setup ("Linux hosts").
+- The development stack's Temporal, and so the Temporal every proof starts for
+  itself, detects a drained release in seconds instead of minutes. Its
+  `deploy/docker-compose.yml` command passes
+  `matching.wv.VersionDrainageStatusVisibilityGracePeriod` (`10s`) and
+  `matching.wv.VersionDrainageStatusRefreshInterval` (`3s`) with
+  `--dynamic-config-value`; the cluster's defaults are three minutes each, which
+  every test that waits for a release to drain (`orkctl release wait`, the
+  continuation chain's rollout) waited out. They are development and proof
+  settings, not a recommendation for a deployment, and the quickstart keeps the
+  defaults (docs/DEPLOY.md §4, "Underneath"; docs/PROOFS.md §2.1).
 
 ### Added
 

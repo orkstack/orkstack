@@ -329,7 +329,10 @@ jobs:
 
   ui-e2e:
     needs: [base, plan, build]
-    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    # Every tier's UI plan names its shards: the nightly tier's hold only the
+    # spec files scripts/proof-nightly-specs.txt lists, and none when it lists
+    # none.
+    if: ${{ needs.plan.outputs.ui_matrix != '[]' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:

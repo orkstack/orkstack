@@ -30,12 +30,28 @@ missing prerequisite.
 | Tier | Command | Merge evidence | Runs |
 |---|---|---|---|
 | **feature** | `make proof-feature TESTS=… SPECS=…` | no | the fast gates, the change's evidence, its regression set |
-| **full** | `make proof` | yes, on a local host; in CI, the `proof` job | every gate and every test, except the nightly list's entries the base also carries |
-| **nightly** | `make proof-nightly` | no | only the tests `scripts/proof-nightly-tests.txt` names |
-| **release** | `make proof-release` | no; it is a tag precondition | every gate, the nightly tests included, observability always |
+| **full** | `make proof` | yes, on a local host; in CI, the `proof` job | every gate, every test and every spec, except the nightly lists' entries the base also carries |
+| **nightly** | `make proof-nightly` | no | only the tests `scripts/proof-nightly-tests.txt` names and the spec files `scripts/proof-nightly-specs.txt` names |
+| **release** | `make proof-release` | no; it is a tag precondition | every gate, the nightly tests and specs included, observability always |
 
 A full proof records each nightly-listed test as `deferred`, never as passed,
 and only when its base's list also carries it; an entry the change adds runs.
+The spec list works the same way for Playwright: a row names a spec file under
+`ui/e2e/`, the merge-gate spec files that cover it at a smaller size, the
+approval and the reason. The full tier's UI plan leaves out of its files and
+shards each spec file both the tree's list and the base's carry, keeps its
+tests planned, and the Playwright ledger records each as `deferred` with the
+row; a test of such a file that ran, a deferred entry for a file the plan
+runs, and a deferral the two lists do not both carry each fail the proof. The
+nightly tier's plan holds the listed spec files alone; its merge reads the
+tree's list itself (`proofrun merge -nightly-specs`), and while the list has
+a row the nightly proof needs a UI plan read from that very list, planning
+exactly its rows, and its `ui-e2e` gate — in CI one `ui-e2e` part per listed
+spec file, up to the requested UI shards. A feature proof's listing holds
+only its selected specs, so it plans with no spec list. Today the list holds
+`run-page-ceiling.spec.ts`, the run page at the 4,000-task default ceiling;
+the merge gate runs `run-page-reduced-ceiling.spec.ts`, the same measurement
+with `engine.orkflow_max_tasks` lowered to 1,000.
 The pre-release gate is the full tier with nothing deferred. A tag requires a
 passing release proof of the exact commit: `make release-tag` and the workflow
 both refuse without one.
@@ -70,6 +86,16 @@ S3-compatible store; the activity contract fixture; the UI type-check, unit
 and every Playwright spec; the site's check and build; and the observability
 gate when the tree changes a telemetry path. A release proof runs the
 observability gate unconditionally.
+
+The proof's own Temporal is the `temporal` service of
+`deploy/docker-compose.yml`: its image and its command, read by `proofrun
+temporal-args` and started on a port of its own, never a second copy of them
+in a script. The command carries two `--dynamic-config-value` settings that
+make a worker-deployment version report `Drained` in seconds rather than in
+the cluster's default minutes, so the integration tests that wait for a
+release to drain (`orkctl release wait`, the continuation chain's rollout) wait
+seconds (docs/DEPLOY.md §4, "Underneath"). They are development and proof
+settings, not a deployment's.
 
 The **site gate** runs `bun run check && bun run build` in `site/`, logged to
 `site.log`: the docs sync, the design-token drift check and `astro check`, then
@@ -125,12 +151,14 @@ while at 3 one load-sensitive spec failed in each of three runs): the browser
 runs in a network
 namespace of its own (`ui/e2e/browser-server.ts`, from the image
 `ui/e2e/browser-image.txt` pins; a proof pulls it when the host lacks it), and
-every spec file owns its bucket. The two spec files that assert a render budget
-(`each-fan-out-ceiling.spec.ts`, `run-page-ceiling.spec.ts`) hold nothing but
-their budget test and run alone after the others, as `--project` runs on one
-worker; the fan-out's functional tests are `each-fan-out.spec.ts`, which runs
-with the others. The run page at the task ceiling runs on the host's Chromium
-(`ui/playwright.config.ts`).
+every spec file owns its bucket. The spec files that assert a render budget
+(`each-fan-out-ceiling.spec.ts`, `run-page-reduced-ceiling.spec.ts` and, where
+it is not deferred, `run-page-ceiling.spec.ts`) hold nothing but their budget
+test and run alone after the others, as `--project` runs on one worker; the
+fan-out's functional tests are `each-fan-out.spec.ts`, which runs with the
+others. The run page at the task ceiling runs on the host's Chromium
+(`ui/playwright.config.ts`); its two spec files share their steps in
+`ui/e2e/runPageCeiling.ts`.
 The gate starts one browser server for both invocations, and the second reuses
 the first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
@@ -236,6 +264,18 @@ The selection is:
   selection's `slow_omitted` and the README says "left out: on the slow list";
   they are never called deferred, a word that belongs to the nightly tier.
 
+The slow list also holds back evidence that is there only because it reaches
+a changed helper, type or variable: such a test's own source did not change,
+so the merge proof runs it. Its `slow_omitted` entry carries `reached`, the
+reach that selected it, and the README line ends "evidence only because it
+reaches changed <name>; the merge proof runs it". When every test such a
+change reaches in a package is slow, the cheapest stays as evidence, marked
+"kept: the cheapest of the slow tests the change reaches", so the change
+still has a test that exercises it. A test whose own source changed, and
+every `-tests` name, always runs; a changed `TestMain` still runs the whole
+package, slow tests included. On a shared helper such as `newChaosStack`
+this is about 35 minutes of a feature proof.
+
 The regression set is never evidence. Every changed package with a change
 outside its tests and its comments needs at least one evidence test whose
 binary depends on it, and it must be an integration test when the package is
@@ -293,8 +333,17 @@ costs file is regenerated from a proof's ledger; the plan reproduces from the
 commit.
 
 `proofrun ui-plan -list FILE -shards M -out FILE` splits Playwright spec files
-by their measured wall — their tests' seconds plus the gap before each test —
-and passes each shard a file list. Playwright's own `--shard` is never used.
+by their measured wall — their tests' seconds plus the gap before each test in
+its own worker lane — and passes each shard a file list. Playwright's own
+`--shard` is never used. `-nightly-mode` is the tier's (`defer` for the full
+tier, `only` for the nightly tier, `include` otherwise), `-nightly-specs` the
+tree's spec list and `-nightly-specs-base` the base's copy beside the plan,
+which `defer` needs; the plan records both lists' hashes and rows and its
+`deferred` files, and exits 1 on a stale row. `-run-files-out FILE` writes the
+spec files a local run names on Playwright's command line: the plan's files
+when it leaves a listed one out, and nothing otherwise. Each invocation's worker lanes are its own: when a
+proof runs the parallel project and then the solo projects, the time between
+the two invocations belongs to no file.
 
 ## 5. The CI job graph
 
@@ -463,7 +512,7 @@ notification; nothing opens an issue. While the nightly workflow does not run
 on GitHub, interim rule A applies: `make proof-nightly` runs on `main`'s tip
 after every merge that moves `main`, and passes before the next merge starts
 and before every tag. `make merge-check PROOF=… NIGHTLY=…` refuses a merge
-when `main`'s list is non-empty and no passing nightly proof of `main`'s tree
+when either of `main`'s nightly lists is non-empty and no passing nightly proof of `main`'s tree
 is given. A GitHub nightly proof of `main`'s tip — `nightly.yml` dispatched
 (`workflow_dispatch`) or its schedule — downloaded as its `proof-<run>-a<n>`
 artifact is that `NIGHTLY=` evidence, exactly as a local `make proof-nightly`
@@ -653,9 +702,12 @@ existing proof directory, runs nothing, and never writes inside it (an `-out`
 there is refused). Its Markdown report has:
 
 - **Gates**, from `gates.tsv`: each gate's seconds and share of the critical
-  path, which is the serial chain fast gates → setup (Temporal, images,
-  binaries) → integration beside the activity fixture (the longer of the two)
-  → `ui-e2e` → observability.
+  path, which is the serial chain fast gates (the site gate among them) →
+  setup (Temporal, images, binaries, the integration test binaries) →
+  integration beside the activity fixture (the longer of the two) → `ui-e2e`
+  → observability. A proof that ran its setup as one concurrent group (§2.1)
+  has a `setup` row holding the group's wall: the setup phase costs that row
+  once and its members nothing more; an older proof's setup is their sum.
 - **Integration processes**, from the runner's `start <job> slot k:` and
   `end <job> after X s` lines in `integration.log` (each part's log in a
   merged proof) joined with `integration-tests.json` by job: each process's
@@ -671,7 +723,11 @@ there is refused). Its Markdown report has:
 - **Playwright**, from `ui-e2e-tests.json`: the parallel and solo
   invocations' walls (`SOLO_SPECS` in `ui/playwright.config.ts`, `-config`,
   names the solo files), their summed file walls against an ideal packing on
-  the proof's `proof_ui_workers`, and the gate's seconds outside the tests.
+  the proof's `proof_ui_workers`, each lane's utilisation, and the gate's
+  seconds outside the tests. A utilisation is at most 100%: when an older
+  ledger's file walls exceed what the lanes held (it charged the gap between
+  two invocations to the next one's first file), the report says so and reads
+  100%.
 - **Slow boots**: every `WARN` line about a boot that took long, from the
   integration logs, each job's log and `ui-e2e.log`.
 - A summary naming the top three time sinks.
@@ -702,7 +758,9 @@ merge-gate test that covers the same behaviour at a smaller size or by another
 route, and a row in `scripts/proof-nightly-tests.txt` with
 `<date> <name>` in the approved column. A stale entry, a missing covering test
 or a covering test that is itself on the list fails the plan. The §11 coverage
-map stays green.
+map stays green. A Playwright spec file moves the same way, through
+`scripts/proof-nightly-specs.txt`, with a merge-gate spec file that covers it;
+a spec file that holds only the scale case is the unit that moves.
 
 **Keep §11's coverage map current.** `scripts/proof-section11-coverage.tsv`
 maps every claim of `AGENTS.md` §11's required-coverage list to the tests or
@@ -860,9 +918,10 @@ bucket whose process is gone.
 | `scripts/proof-scope.tsv` | pattern, actions, flags | refuses the feature tier |
 | `scripts/proof-allowed-skips.txt` | suite, package, test, reason | a skip with no entry, or an entry naming no listed test, fails |
 | `scripts/proof-nightly-tests.txt` | package, test, covering tests, approved, reason | a stale name or a missing covering test fails the plan |
+| `scripts/proof-nightly-specs.txt` | spec, covering specs, approved, reason | a stale spec or a missing covering spec fails the UI plan; a full proof defers the rows its base also carries |
 | `scripts/proof-quarantine.txt` | suite, package, test, owner, since, review-by, reason | structure, budget, a stale name, or an allowed-skip overlap fails; an expired entry stops excusing |
 | `scripts/proof-test-costs.tsv` | package, test, seconds | an unmeasured test gets the conservative default |
-| `scripts/proof-slow-tests.txt` | package, test | a slow test is left out of a feature proof's regression set |
+| `scripts/proof-slow-tests.txt` | package, test | a slow test is left out of a feature proof's regression set, and of its evidence when it is there only by reaching a changed helper, type or variable |
 | `scripts/proof-ui-costs.tsv` | spec file, wall seconds | an unmeasured spec gets 160 s |
 | `scripts/proof-host-speed.tsv` | kind, spec or package, test title or name, assertion, bound, reference CPUs, note | a malformed row fails the merge; only a row the base carries identically excuses, and only its declared assertion's miss on a CI UI part (§12) |
 
@@ -871,14 +930,14 @@ bucket whose process is gone.
 | Subcommand | Flags |
 |---|---|
 | `unit` | `-out FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE` |
-| `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-host-speed FILE`, `-host-speed-base FILE` |
+| `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-nightly-specs FILE`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `compile` | `-out DIR`, `-select FILE` |
 | `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
 | `feature-report` | `-dir DIR`, `-select FILE` |
-| `ui-ledger` | `-report FILE`, `-list FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
-| `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE` |
+| `ui-ledger` | `-report FILE`, `-list FILE`, `-plan FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
+| `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE`, `-nightly-mode MODE`, `-nightly-specs FILE`, `-nightly-specs-base FILE`, `-run-files-out FILE` |
 | `record` | `-dir DIR`, `-tier TIER`, `-name S`, `-commit SHA`, `-branch S`, `-tree-start SHA`, `-tree-end SHA`, `-clean-start BOOL`, `-clean-end BOOL`, `-base-ref REF`, `-base-commit SHA`, `-merge-base SHA`, `-jobs N`, `-ui-workers N`, `-temporal MODE`, `-temporal-image IMAGE`, `-temporal-address ADDR`, `-image-tag TAG`, `-images FILE`, `-image-tag-own`, `-gates-override S`, `-observability-required`, `-part NAME`, `-attempt N`, `-out-dir DIR`, `-plan FILE`, `-ui-plan FILE`, `-select FILE`, `-status N` |
-| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped` |
+| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-nightly-specs FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped` |
 | `flakes` | `-from GLOB`, `-repo DIR`, `-window N`, `-out FILE`, `-md FILE`, `-min-runs N` |
 | `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S` |
 | `temporal-args` | `-compose FILE` |

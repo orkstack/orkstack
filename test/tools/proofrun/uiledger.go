@@ -42,6 +42,10 @@ type pwSuite struct {
 	File   string    `json:"file"`
 	Specs  []pwSpec  `json:"specs"`
 	Suites []pwSuite `json:"suites"`
+
+	// invocation is which of the merged reports (mergeReports) the suite
+	// came from: each Playwright invocation numbers its worker lanes from 0.
+	invocation int
 }
 
 type pwSpec struct {
@@ -78,9 +82,11 @@ type uiEntry struct {
 	// abs and endAbs are the test's first start and last end as Unix seconds,
 	// zero when the report carries no start time.
 	abs, endAbs float64
-	// lane is the Playwright worker lane (the result's parallelIndex) the
-	// test ran in: the gap before a test is measured against the tests of
-	// its own lane only, so a wall stays a file's own with several workers.
+	// lane is the Playwright worker lane the test ran in: its report's
+	// invocation and the result's parallelIndex. The gap before a test is
+	// measured against the tests of its own lane only, so a wall stays a
+	// file's own with several workers, and two invocations' worker 0 are two
+	// lanes: the time between invocations belongs to no file.
 	lane int
 }
 
@@ -95,11 +101,14 @@ type uiFileEntry struct {
 }
 
 type uiLedger struct {
-	Suite             string             `json:"suite"`
-	Tests             []uiEntry          `json:"tests"`
-	Problems          []string           `json:"problems"`
-	Listed            int                `json:"listed"`
-	Pass              int                `json:"pass"`
+	Suite    string    `json:"suite"`
+	Tests    []uiEntry `json:"tests"`
+	Problems []string  `json:"problems"`
+	Listed   int       `json:"listed"`
+	Pass     int       `json:"pass"`
+	// Deferred counts the listed tests of spec files the UI plan defers to
+	// the nightly tier: recorded with outcome "deferred", never run.
+	Deferred          int                `json:"deferred,omitempty"`
 	GuardRetries      int                `json:"network_change_retries"`
 	GuardRetryCeiling int                `json:"network_change_retry_ceiling"`
 	Files             []uiFileEntry      `json:"files,omitempty"`
@@ -111,6 +120,13 @@ type uiLedger struct {
 // the suites and errors of both, and the stats of the first that has any (a
 // proof reads start times from each result, never from the stats).
 func mergeReports(a, b pwReport) pwReport {
+	next := 0
+	for _, s := range a.Suites {
+		next = max(next, s.invocation+1)
+	}
+	for i := range b.Suites {
+		b.Suites[i].invocation = next
+	}
 	a.Suites = append(a.Suites, b.Suites...)
 	a.Errors = append(a.Errors, b.Errors...)
 	if a.Stats == nil {
@@ -122,8 +138,8 @@ func mergeReports(a, b pwReport) pwReport {
 // flattenPW walks a report into "file › describe › title [project]" keys.
 func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 	tests = map[string]uiEntry{}
-	var walk func(s pwSuite, file string, titles []string)
-	walk = func(s pwSuite, file string, titles []string) {
+	var walk func(s pwSuite, file string, titles []string, inv int)
+	walk = func(s pwSuite, file string, titles []string, inv int) {
 		if s.File != "" {
 			file = s.File
 		}
@@ -138,7 +154,7 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 						ms += res.Duration
 					}
 					e.Seconds = ms / 1000
-					e.lane = t.Results[0].ParallelIndex
+					e.lane = inv<<16 | t.Results[0].ParallelIndex
 					if first, err := time.Parse(time.RFC3339Nano, t.Results[0].StartTime); err == nil {
 						last := t.Results[len(t.Results)-1]
 						e.abs = float64(first.UnixNano()) / 1e9
@@ -178,17 +194,25 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 			}
 		}
 		for _, sub := range s.Suites {
-			walk(sub, file, append(append([]string{}, titles...), sub.Title))
+			walk(sub, file, append(append([]string{}, titles...), sub.Title), inv)
 		}
 	}
 	for _, s := range r.Suites {
-		walk(s, s.File, nil)
+		walk(s, s.File, nil, s.invocation)
 	}
 	return keys, tests
 }
 
 // buildUILedger checks a report against the listing.
 func buildUILedger(list, report pwReport, guardRetries, ceiling int) uiLedger {
+	return buildUILedgerDeferring(list, report, guardRetries, ceiling, nil)
+}
+
+// buildUILedgerDeferring is buildUILedger for a plan that defers spec files
+// to the nightly tier (deferred: file -> its nightly spec list row). Their
+// listed tests ran nowhere and are recorded as deferred with the row; one
+// that has an outcome all the same is a problem.
+func buildUILedgerDeferring(list, report pwReport, guardRetries, ceiling int, deferred map[string]string) uiLedger {
 	l := uiLedger{Suite: "ui-e2e", Problems: []string{}, GuardRetries: guardRetries, GuardRetryCeiling: ceiling}
 	listedKeys, listed := flattenPW(list)
 	_, got := flattenPW(report)
@@ -198,6 +222,17 @@ func buildUILedger(list, report pwReport, guardRetries, ceiling int) uiLedger {
 	}
 	for _, k := range listedKeys {
 		e, ok := got[k]
+		if row, d := deferred[listed[k].File]; d {
+			if ok && e.Outcome != outcomeNone {
+				l.Problems = append(l.Problems, k+" ran, and the UI plan defers its spec file to the nightly tier")
+				l.Tests = append(l.Tests, e)
+				continue
+			}
+			le := listed[k]
+			l.Deferred++
+			l.Tests = append(l.Tests, uiEntry{File: le.File, Title: le.Title, Project: le.Project, Outcome: "deferred", Detail: row})
+			continue
+		}
 		if !ok {
 			// The listing names the test's file, title and project; the key's
 			// "[project]" suffix is not part of the title.
@@ -342,6 +377,7 @@ func cmdUILedger(args []string) int {
 	hostSpeed := fs.String("host-speed", "scripts/proof-host-speed.tsv", "declared runner-size budgets")
 	hostSpeedBase := fs.String("host-speed-base", "", "the base's copy of the host-speed table (only rows it carries excuse)")
 	part := fs.String("part", "local", "the part this ledger belongs to: only a CI ui-e2e:K part may excuse a runner-size miss")
+	planFile := fs.String("plan", "", "the UI plan: its deferred spec files' tests are recorded as deferred")
 	if err := fs.Parse(args); err != nil || *listFile == "" || len(reportFiles) == 0 || *out == "" {
 		fmt.Fprintln(os.Stderr, "proofrun ui-ledger -list FILE -report FILE [-report FILE]... -log FILE -out DIR")
 		return 2
@@ -371,7 +407,19 @@ func cmdUILedger(args []string) int {
 			return 1
 		}
 	}
-	l := buildUILedger(list, report, retries, ceiling)
+	var deferred map[string]string
+	if *planFile != "" {
+		var p uiPlan
+		if err := readJSON(*planFile, &p); err != nil {
+			fmt.Println("ui-e2e ledger: the UI plan is unreadable:", err)
+			return 1
+		}
+		deferred = map[string]string{}
+		for _, d := range p.Deferred {
+			deferred[d.File] = d.Entry
+		}
+	}
+	l := buildUILedgerDeferring(list, report, retries, ceiling, deferred)
 	for i := range l.Files {
 		l.Files[i].Shard = *shard
 	}
@@ -417,8 +465,8 @@ func cmdUILedger(args []string) int {
 		fmt.Println(err)
 		return 1
 	}
-	fmt.Printf("ui-e2e ledger: %d listed, %d pass, network-change guard repeated %d navigations (ceiling %d)\n",
-		l.Listed, l.Pass, l.GuardRetries, l.GuardRetryCeiling)
+	fmt.Printf("ui-e2e ledger: %d listed, %d pass, %d deferred, network-change guard repeated %d navigations (ceiling %d)\n",
+		l.Listed, l.Pass, l.Deferred, l.GuardRetries, l.GuardRetryCeiling)
 	for _, p := range l.Problems {
 		fmt.Println("  -", p)
 	}

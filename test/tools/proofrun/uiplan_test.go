@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -503,5 +504,207 @@ func TestUILedger_ReadsSeveralReportsAsOneRun(t *testing.T) {
 	half := buildUILedger(list, a, 0, 0)
 	if half.Pass != 1 || len(half.Problems) == 0 {
 		t.Errorf("with one report only, the solo test must have no outcome: pass %d, problems %v", half.Pass, half.Problems)
+	}
+}
+
+// A proof with several workers runs Playwright as two invocations whose
+// worker 0 lanes are different lanes: the gap between the parallel
+// invocation's last test and the solo invocation's first (the second
+// invocation's start, its global setup) belongs to no file.
+func TestUILedger_ALaneNeverSpansTwoInvocations(t *testing.T) {
+	par := fixtureReport(uiTestSpec{"a.spec.ts", "one", 0, 10})
+	solo := fixtureReport(uiTestSpec{"solo.spec.ts", "budget", 60, 4}, uiTestSpec{"solo.spec.ts", "again", 66, 4})
+	_, tests := flattenPW(mergeReports(par, solo))
+	entries := make([]uiEntry, 0, len(tests))
+	for _, e := range tests {
+		entries = append(entries, e)
+	}
+	for _, f := range fileWalls(entries) {
+		want := map[string]float64{"a.spec.ts": 10, "solo.spec.ts": 10}[f.File]
+		if math.Abs(f.WallSeconds-want) > 1e-6 {
+			t.Errorf("%s wall = %v, want %v (its tests plus the 2 s gap inside its own invocation)", f.File, f.WallSeconds, want)
+		}
+	}
+}
+
+// The nightly spec list decides the plan's files by tier: the full tier
+// (defer) leaves out the specs both lists carry and records them as
+// deferred, its tests still planned so the ledger can name them; the nightly
+// tier (only) plans the listed specs alone; the pre-release gate (include)
+// plans everything.
+func TestUIPlan_TheNightlySpecListDecidesTheFilesByTier(t *testing.T) {
+	listing := fixtureReport(
+		uiTestSpec{"a.spec.ts", "one", 0, 10},
+		uiTestSpec{"run-page-ceiling.spec.ts", "at 4,000", 0, 400},
+		uiTestSpec{"run-page-reduced-ceiling.spec.ts", "at 1,000", 0, 100},
+	)
+	row, err := parseNightlySpecs(strings.NewReader(specRow+"\n"), "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name         string
+		mode         string
+		base         []nightlySpecEntry
+		files, tests []string
+		deferred     []string
+	}{
+		{name: "include", mode: nightlyInclude, base: row,
+			files: []string{"a.spec.ts", "run-page-ceiling.spec.ts", "run-page-reduced-ceiling.spec.ts"},
+			tests: []string{"a.spec.ts", "run-page-ceiling.spec.ts", "run-page-reduced-ceiling.spec.ts"}},
+		{name: "defer", mode: nightlyDefer, base: row,
+			files:    []string{"a.spec.ts", "run-page-reduced-ceiling.spec.ts"},
+			tests:    []string{"a.spec.ts", "run-page-ceiling.spec.ts", "run-page-reduced-ceiling.spec.ts"},
+			deferred: []string{"run-page-ceiling.spec.ts"}},
+		{name: "defer, a row the base lacks is run", mode: nightlyDefer, base: nil,
+			files: []string{"a.spec.ts", "run-page-ceiling.spec.ts", "run-page-reduced-ceiling.spec.ts"},
+			tests: []string{"a.spec.ts", "run-page-ceiling.spec.ts", "run-page-reduced-ceiling.spec.ts"}},
+		{name: "only", mode: nightlyOnly, base: row,
+			files: []string{"run-page-ceiling.spec.ts"},
+			tests: []string{"run-page-ceiling.spec.ts"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, problems := buildUIPlanNightly(listing, []byte("x"), nil, "costs", "sha", 2,
+				uiNightlyInput{Mode: c.mode, File: "tree.txt", Tree: row, BaseFile: "base.txt", Base: c.base})
+			if len(problems) != 0 {
+				t.Fatalf("problems = %v", problems)
+			}
+			var files, tests, sharded, deferred []string
+			for _, f := range p.Files {
+				files = append(files, f.File)
+			}
+			for _, s := range p.Shards {
+				sharded = append(sharded, s.Files...)
+			}
+			seen := map[string]bool{}
+			for _, x := range p.Tests {
+				if !seen[x.File] {
+					seen[x.File] = true
+					tests = append(tests, x.File)
+				}
+			}
+			for _, d := range p.Deferred {
+				deferred = append(deferred, d.File)
+				if d.Entry != specRow {
+					t.Errorf("deferred %s carries entry %q", d.File, d.Entry)
+				}
+			}
+			sort.Strings(sharded)
+			sort.Strings(tests)
+			if !reflect.DeepEqual(files, c.files) || !reflect.DeepEqual(sharded, c.files) {
+				t.Errorf("files = %v, sharded %v, want %v", files, sharded, c.files)
+			}
+			if !reflect.DeepEqual(tests, c.tests) {
+				t.Errorf("planned tests' files = %v, want %v", tests, c.tests)
+			}
+			if !reflect.DeepEqual(orEmpty(deferred), orEmpty(c.deferred)) {
+				t.Errorf("deferred = %v, want %v", deferred, c.deferred)
+			}
+			if p.Nightly == nil || p.Nightly.Mode != c.mode || p.Nightly.File != "tree.txt" {
+				t.Errorf("nightly = %+v", p.Nightly)
+			}
+		})
+	}
+	// A row naming a spec the listing does not hold fails the plan.
+	stale, _ := parseNightlySpecs(strings.NewReader("ui/e2e/gone.spec.ts\tui/e2e/a.spec.ts\t2026-10-26 Daniel Santos\tr\n"), "list")
+	if _, problems := buildUIPlanNightly(listing, []byte("x"), nil, "costs", "sha", 1,
+		uiNightlyInput{Mode: nightlyDefer, Tree: stale, Base: stale}); len(problems) != 1 || !strings.Contains(problems[0], "gone.spec.ts") {
+		t.Errorf("a stale row's problems = %v", problems)
+	}
+}
+
+// A spec file the UI plan defers ran nowhere: its listed tests are recorded
+// as deferred with the list row, and one that has an outcome all the same is
+// a problem.
+func TestUILedger_RecordsThePlansDeferredSpecsAsDeferred(t *testing.T) {
+	listing := fixtureReport(uiTestSpec{"a.spec.ts", "one", 0, 10}, uiTestSpec{"run-page-ceiling.spec.ts", "at 4,000", 0, 400})
+	deferred := map[string]string{"run-page-ceiling.spec.ts": specRow}
+	l := buildUILedgerDeferring(listing, fixtureReport(uiTestSpec{"a.spec.ts", "one", 0, 10}), 0, 0, deferred)
+	if len(l.Problems) != 0 || l.Pass != 1 || l.Deferred != 1 || l.Listed != 2 {
+		t.Fatalf("pass %d deferred %d of %d, problems %v", l.Pass, l.Deferred, l.Listed, l.Problems)
+	}
+	for _, e := range l.Tests {
+		if e.File == "run-page-ceiling.spec.ts" && (e.Outcome != "deferred" || e.Detail != specRow) {
+			t.Errorf("deferred entry = %+v", e)
+		}
+	}
+	ran := buildUILedgerDeferring(listing, listing, 0, 0, deferred)
+	if got := strings.Join(ran.Problems, "\n"); !strings.Contains(got, "run-page-ceiling.spec.ts › at 4,000 [chromium] ran, and the UI plan defers its spec file") {
+		t.Errorf("a deferred spec that ran is not a problem: %v", ran.Problems)
+	}
+}
+
+// The command reads the two lists, writes the deferral into the plan and
+// names the files a run passes Playwright; defer needs the base's copy.
+func TestUIPlan_CommandDefersAndNamesTheFilesToRun(t *testing.T) {
+	quiet(t)
+	dir := t.TempDir()
+	listFile := filepath.Join(dir, "list.json")
+	if err := writeJSON(listFile, listingOf(map[string]int{"a.spec.ts": 1, "run-page-ceiling.spec.ts": 1, "run-page-reduced-ceiling.spec.ts": 1})); err != nil {
+		t.Fatal(err)
+	}
+	tree, base := filepath.Join(dir, "specs.txt"), filepath.Join(dir, "specs-base.txt")
+	for _, f := range []string{tree, base} {
+		if err := os.WriteFile(f, []byte(specRow+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, run := filepath.Join(dir, "ui-plan.json"), filepath.Join(dir, "run.txt")
+	plan := func(mode string, extra ...string) (int, string, uiPlan) {
+		args := append([]string{"-list", listFile, "-out", out, "-shards", "1", "-nightly-mode", mode, "-nightly-specs", tree, "-run-files-out", run}, extra...)
+		code := cmdUIPlan(args)
+		b, _ := os.ReadFile(run)
+		var p uiPlan
+		_ = readJSON(out, &p)
+		return code, string(b), p
+	}
+	code, files, p := plan(nightlyDefer, "-nightly-specs-base", base)
+	if code != 0 || files != "e2e/a.spec.ts\ne2e/run-page-reduced-ceiling.spec.ts\n" || len(p.Deferred) != 1 || p.Nightly.BaseSHA256 == "" {
+		t.Errorf("defer: exit %d, run files %q, plan %+v", code, files, p)
+	}
+	if code, files, _ := plan(nightlyOnly); code != 0 || files != "e2e/run-page-ceiling.spec.ts\n" {
+		t.Errorf("only: exit %d, run files %q", code, files)
+	}
+	if code, files, p := plan(nightlyInclude); code != 0 || files != "" || len(p.Deferred) != 0 {
+		t.Errorf("include: exit %d, run files %q, deferred %v", code, files, p.Deferred)
+	}
+	if code, _, _ := plan(nightlyDefer); code != 2 {
+		t.Errorf("defer without the base's copy: exit %d, want 2", code)
+	}
+}
+
+// A feature proof lists only its selected specs, so the nightly spec list's
+// rows cannot be checked against its listing: it plans with no list.
+func TestUIPlan_AFeatureListingNamesNoNightlySpecList(t *testing.T) {
+	quiet(t)
+	dir := t.TempDir()
+	listFile := filepath.Join(dir, "list.json")
+	if err := writeJSON(listFile, listingOf(map[string]int{"a.spec.ts": 1})); err != nil {
+		t.Fatal(err)
+	}
+	specs := filepath.Join(dir, "specs.txt")
+	if err := os.WriteFile(specs, []byte(specRow+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "ui-plan.json")
+	if code := cmdUIPlan([]string{"-list", listFile, "-out", out, "-shards", "1", "-nightly-specs", specs}); code != 1 {
+		t.Errorf("a partial listing checked against the list: exit %d, want 1 (the row's spec is not listed)", code)
+	}
+	if code := cmdUIPlan([]string{"-list", listFile, "-out", out, "-shards", "1", "-nightly-specs", ""}); code != 0 {
+		t.Errorf("a feature listing with no list: exit %d, want 0", code)
+	}
+}
+
+// scripts/proof.sh gives a feature proof's ui-plan no nightly spec list.
+func TestRepositoryProofScript_AFeatureUIPlanReadsNoNightlySpecList(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`feature) plan_specs="" ;;`, `-nightly-specs "$plan_specs"`} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("scripts/proof.sh lacks %q", want)
+		}
 	}
 }

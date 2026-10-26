@@ -61,7 +61,7 @@ const isolatedBrowser = browserWS
 export const NETWORK_CHANGE_RETRY_CEILING = 0;
 
 /** The spec files that assert a render budget and therefore run alone (see `projects`). */
-export const SOLO_SPECS = [/each-fan-out-ceiling\.spec\.ts$/, /run-page-ceiling\.spec\.ts$/];
+export const SOLO_SPECS = [/each-fan-out-ceiling\.spec\.ts$/, /run-page(-reduced)?-ceiling\.spec\.ts$/];
 
 export default defineConfig({
 	testDir: './e2e',
@@ -126,7 +126,9 @@ export default defineConfig({
 			// ORK_CEILING_BROWSER=container drives it through the isolated browser
 			// instead: the comparison that establishes the cause.
 			use: { browserName: 'chromium', ...(process.env.ORK_CEILING_BROWSER === 'container' ? isolatedBrowser : {}) },
-			testMatch: /run-page-ceiling\.spec\.ts$/
+			// The reduced ceiling in the merge gate, and the 4,000-task default
+			// where the nightly tier and the pre-release gate run it.
+			testMatch: /run-page(-reduced)?-ceiling\.spec\.ts$/
 		}
 	]
 });

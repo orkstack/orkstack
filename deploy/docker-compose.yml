@@ -25,6 +25,22 @@
 name: orkstack
 
 services:
+  # The development server, and the Temporal every proof starts for itself:
+  # scripts/proof.sh and scripts/proof-part.sh run THIS service's image and
+  # command (`proofrun temporal-args`), so a flag added here reaches both.
+  #
+  # The two --dynamic-config-value settings are for development and proof
+  # only, never a recommendation for a deployment. The cluster decides that a
+  # worker-deployment version that stopped taking new runs has drained by
+  # counting its running pinned workflows, on a delay: the grace period
+  # before the first count (which lets a workflow that started on the version
+  # just before it stopped being current reach visibility) and the refresh
+  # interval between the counts after it. Both default to three minutes in
+  # Temporal server 1.31 (the server of this image), which is what every test
+  # that waits for a release to drain used to wait out. Shortened to seconds,
+  # the grace period stays well above the dev server's visibility lag; it is
+  # not removed. Values are JSON, so a duration string keeps its quotes
+  # (docs/DEPLOY.md §4, "Underneath"; TestDevCompose_Temporal...).
   temporal:
     image: temporalio/temporal:1.8.2@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
     command:
@@ -36,6 +52,10 @@ services:
       - "8233"
       - --log-level
       - warn
+      - --dynamic-config-value
+      - 'matching.wv.VersionDrainageStatusVisibilityGracePeriod="10s"'
+      - --dynamic-config-value
+      - 'matching.wv.VersionDrainageStatusRefreshInterval="3s"'
     ports:
       - "7233:7233"   # gRPC frontend
       - "8233:8233"   # Temporal Web UI

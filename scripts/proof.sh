@@ -301,9 +301,14 @@ else
 	*) invalid "cannot tell whether the tree touches a telemetry path" ;;
 	esac
 	if [ "$TIER" = nightly ]; then
-		# The nightly tier runs the deferred tests and nothing else.
+		# The nightly tier runs the deferred tests and spec files and nothing
+		# else: the integration tests scripts/proof-nightly-tests.txt names,
+		# and the Playwright specs scripts/proof-nightly-specs.txt names.
 		RUN=()
 		RUN[integration]=1
+		mapfile -t SPEC_ARGS < <(grep -v '^[[:space:]]*#' scripts/proof-nightly-specs.txt 2>/dev/null |
+			awk -F'\t' 'NF >= 4 && $1 != "" { sub(/^ui\//, "", $1); print $1 }')
+		if [ ${#SPEC_ARGS[@]} -gt 0 ]; then RUN[ui-e2e]=1; fi
 	fi
 	if [ "$TIER" = release ]; then
 		# The pre-release gate runs every gate, observability included.
@@ -635,6 +640,7 @@ wait_bg() {
 # The gate lists are anchored to the base (AGENTS.md §11.2): an entry the
 # change itself adds, or removes, excuses nothing until the base carries it.
 git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
+git show "$BASE_COMMIT:scripts/proof-nightly-specs.txt" >"$DIR/nightly-specs-base.txt" 2>/dev/null || : >"$DIR/nightly-specs-base.txt"
 git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 git show "$BASE_COMMIT:scripts/proof-host-speed.tsv" >"$DIR/host-speed-base.txt" 2>/dev/null || : >"$DIR/host-speed-base.txt"
 # The gate files this change edits, and the rows its excusing lists add or
@@ -944,8 +950,25 @@ ui_e2e_locked() {
 		say "playwright test --list failed"
 		return 1
 	fi
+	# The full tier defers the spec files both nightly spec lists carry; the
+	# nightly tier runs the listed ones alone; the pre-release gate and a
+	# feature proof run what they list. The plan names the files to pass
+	# Playwright when it leaves a listed one out.
+	# A feature proof's listing holds only its selected specs, so the list's
+	# rows cannot be checked against it: it plans with no list.
+	local plan_mode=include plan_specs=scripts/proof-nightly-specs.txt
+	case "$TIER" in
+	full) plan_mode=defer ;;
+	nightly) plan_mode=only ;;
+	feature) plan_specs="" ;;
+	esac
 	"$PR" ui-plan -list "$DIR/ui-e2e-list.json" -costs scripts/proof-ui-costs.tsv \
-		-shards 1 -out "$DIR/ui-plan.json" >>"$DIR/ui-e2e.log" 2>&1 || { say "proofrun ui-plan failed"; return 1; }
+		-shards 1 -out "$DIR/ui-plan.json" -nightly-mode "$plan_mode" \
+		-nightly-specs "$plan_specs" -nightly-specs-base "$DIR/nightly-specs-base.txt" \
+		-run-files-out "$DIR/ui-run-files.txt" >>"$DIR/ui-e2e.log" 2>&1 || { say "proofrun ui-plan failed"; return 1; }
+	local -a run_specs=()
+	mapfile -t run_specs <"$DIR/ui-run-files.txt"
+	if [ ${#run_specs[@]} -eq 0 ]; then run_specs=("${SPEC_ARGS[@]}"); fi
 	# With one worker everything runs in one invocation. With more, the
 	# parallel project runs first and the two solo projects — the spec files
 	# that assert a render budget, which only a quiet host can measure
@@ -971,20 +994,20 @@ ui_e2e_locked() {
 			BROWSER_WS=""
 			BROWSER_CONTAINER=""
 		fi
-		playwright_run "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" "${SPEC_ARGS[@]}" --pass-with-no-tests --project chromium || code=1
+		playwright_run "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" "${run_specs[@]}" --pass-with-no-tests --project chromium || code=1
 		reports+=(-report "$DIR/ui-e2e-report.json")
 		if [ "$code" -eq 0 ] || [ "$PROOF_FAIL_FAST" = 0 ]; then
-			playwright_run "$DIR/ui-e2e-report-solo.json" 1 "${SPEC_ARGS[@]}" --pass-with-no-tests --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling || code=1
+			playwright_run "$DIR/ui-e2e-report-solo.json" 1 "${run_specs[@]}" --pass-with-no-tests --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling || code=1
 			reports+=(-report "$DIR/ui-e2e-report-solo.json")
 		fi
 		if [ -n "$BROWSER_CONTAINER" ]; then docker stop -t 5 "$BROWSER_CONTAINER" >/dev/null 2>&1; fi
 		BROWSER_WS=""
 		BROWSER_CONTAINER=""
 	else
-		playwright_run "$DIR/ui-e2e-report.json" 1 "${SPEC_ARGS[@]}" || code=1
+		playwright_run "$DIR/ui-e2e-report.json" 1 "${run_specs[@]}" || code=1
 		reports+=(-report "$DIR/ui-e2e-report.json")
 	fi
-	"$PR" ui-ledger -list "$DIR/ui-e2e-list.json" "${reports[@]}" \
+	"$PR" ui-ledger -list "$DIR/ui-e2e-list.json" "${reports[@]}" -plan "$DIR/ui-plan.json" \
 		-log "$DIR/ui-e2e.log" -config "$REPO/ui/playwright.config.ts" -out "$DIR" \
 		-part local -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" || code=1
 	return "$code"

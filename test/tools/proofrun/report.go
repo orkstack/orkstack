@@ -192,6 +192,11 @@ func featureReport(w io.Writer, sel *selection, o outcomes, specs map[string]str
 			fmt.Fprintf(w, "  - regression set: %d tests, %d without a pass (never evidence)\n", len(ps.Regression), fail)
 		}
 		for _, d := range ps.SlowOmitted {
+			if d.Reached != "" {
+				fmt.Fprintf(w, "  - left out: on the slow list (%.0fs in %s): %s — evidence only because it %s; the merge proof runs it\n",
+					d.Seconds, orDash(sel.SlowSource), d.Test, d.Reached)
+				continue
+			}
 			fmt.Fprintf(w, "  - left out: on the slow list (%.0fs in %s): %s\n", d.Seconds, orDash(sel.SlowSource), d.Test)
 		}
 	}
