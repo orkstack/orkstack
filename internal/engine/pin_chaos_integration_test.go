@@ -118,6 +118,14 @@ type pinChaosCluster struct {
 // this process), exactly as cmd/orker's workerOptions pairs them.
 func newPinChaosCluster(t *testing.T, ctx context.Context, maxPins int32) *pinChaosCluster {
 	t.Helper()
+	return newPinChaosClusterWithCreationTimeout(t, ctx, maxPins, 0)
+}
+
+// newPinChaosClusterWithCreationTimeout is newPinChaosCluster whose API
+// carries engine.pin_creation_timeout creationTimeout (zero: the engine's
+// default), so a run submitted through it pins that wait in its plan.
+func newPinChaosClusterWithCreationTimeout(t *testing.T, ctx context.Context, maxPins int32, creationTimeout time.Duration) *pinChaosCluster {
+	t.Helper()
 	requirePinChaosDocker(t)
 
 	cfg := s3Config()
@@ -327,6 +335,8 @@ func newPinChaosCluster(t *testing.T, ctx context.Context, maxPins int32) *pinCh
 		PoolOrkers: starter,
 		Artifacts:  cfg,
 		Limits:     engine.DefaultLimits(),
+
+		PinCreationTimeout: creationTimeout,
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -988,38 +998,41 @@ func TestIntegration_ATerminatedRunLeavesItsPinForTheLeaseSweep(t *testing.T) {
 //     request. Its creation poller parks in waitForAvailableToken and stops
 //     polling entirely, so the creation task is never STARTED and what
 //     eventually ends it is the ScheduleToStartTimeout the SDK sets to
-//     SessionOptions.CreationTimeout — the engine's five-minute
-//     pinCreationTimeout. Whether that path really terminates, and really
-//     terminates as PIN_UNAVAILABLE rather than being retried forever by the
-//     creation activity's own retry policy, is only answerable against a real
-//     cluster.
+//     SessionOptions.CreationTimeout — the run's pin creation timeout
+//     (engine.pin_creation_timeout, pinned in its plan at submit). Whether that
+//     path really terminates, and really terminates as PIN_UNAVAILABLE rather
+//     than being retried forever by the creation activity's own retry policy,
+//     is only answerable against a real cluster.
 //
-// So this test costs a real pinCreationTimeout of wall clock, deliberately. It
-// is in its own function so `-run` can skip it while iterating, and the elapsed
-// time is ASSERTED: a PIN_UNAVAILABLE that arrived in two seconds would be some
-// other failure wearing this one's code, and the assertion is what tells the
-// two apart.
+// So this test costs a real creation timeout of wall clock, deliberately, and
+// runs the deployment at 30 seconds (the default is five minutes) so that cost
+// is small. It is in its own function so `-run` can skip it while iterating,
+// and the elapsed time is ASSERTED, relative to the configured number: a
+// PIN_UNAVAILABLE that arrived in two seconds would be some other failure
+// wearing this one's code, and one that arrived after the default would mean
+// the setting never reached the run. The assertions tell both apart.
 //
 // The saturation is real: one Orker, ORK_ORKER_MAX_PINS=1, already holding an
 // open pin for run A whose member is a live container.
 func TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable(t *testing.T) {
-	// pinCreationTimeout is a hardcoded 5 minutes in internal/engine/workflow.go
-	// and is deliberately not a setting, so the budget has to cover it
-	// plus the run that holds the pin open for its whole length.
-	ctx, cancel := context.WithTimeout(context.Background(), 18*time.Minute)
+	// The deployment's engine.pin_creation_timeout, pinned into every plan it
+	// submits. The budget covers it plus the run that holds the pin open for
+	// its whole length.
+	const creationTimeout = 30 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	c := newPinChaosCluster(t, ctx, 1)
+	c := newPinChaosClusterWithCreationTimeout(t, ctx, 1, creationTimeout)
 
 	image := pinnedAlpineForCommitE2E(t)
 
 	// ── run A: takes the pool's only pin slot and keeps it ──
 	//
 	// It must outlive run B's whole creation timeout, so the container's own
-	// sleep is longer than pinCreationTimeout. That sleep is the workload's
-	// test payload, not this test synchronizing by guesswork.
+	// sleep is many times longer than creationTimeout. That sleep is the
+	// workload's test payload, not this test synchronizing by guesswork.
 	holderName := "pin-holder-" + c.token
 	holderVersion := c.seed(holderName,
-		[]*orkstackv1.Pin{{Name: "hold", TimeoutSeconds: 900}},
+		[]*orkstackv1.Pin{{Name: "hold", TimeoutSeconds: 600}},
 		[]*orkstackv1.Task{{
 			Id:             "occupy",
 			Uses:           image,
@@ -1028,8 +1041,8 @@ func TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable(t
 			RunAsOrkerUser: true,
 			Image:          &orkstackv1.ImageRef{Reference: image, Pinned: image},
 			Command: []string{"/bin/sh", "-c",
-				`set -e; printf 'holding the only pin slot' > /orkstack/shared/holder.txt; sleep 480`},
-			TimeoutSeconds: 600,
+				`set -e; printf 'holding the only pin slot' > /orkstack/shared/holder.txt; sleep 240`},
+			TimeoutSeconds: 300,
 			Network:        orkstackv1.NetworkMode_NETWORK_MODE_NONE,
 		}})
 	holderID := c.submit(holderName, holderVersion)
@@ -1091,9 +1104,9 @@ func TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable(t
 	waiterID := c.submit(waiterName, waiterVersion)
 	t.Logf("EVIDENCE waiter run_id=%s submitted at %s", waiterID, started.Format(time.RFC3339))
 
-	// The wait itself. Budgeted at pinCreationTimeout plus room for the
+	// The wait itself. Budgeted at the creation timeout plus room for the
 	// cluster's own scheduling, and polled rather than slept through.
-	final := c.awaitRunTerminal(waiterID, 9*time.Minute)
+	final := c.awaitRunTerminal(waiterID, 3*time.Minute)
 	waited := time.Since(started)
 
 	if final.GetStatus() != orkstackv1.Status_STATUS_FAILED {
@@ -1131,13 +1144,24 @@ func TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable(t
 	}
 
 	// This is what makes it the SATURATION path rather than an instant refusal
-	// wearing the same code: the run waited out the creation timeout. The floor
-	// is deliberately loose (the constant is 5 minutes; the cluster adds its own
-	// scheduling), but it is far above any immediate failure.
-	if waited < 4*time.Minute {
+	// wearing the same code: the run waited out the creation timeout. The
+	// floor is the configured number itself, less a second of slack between
+	// this process's clock and the cluster's timers; the cluster only ever
+	// adds its own scheduling above it. The ceiling is half the engine's
+	// default, so a run that took the five minutes of a build without the
+	// setting fails here instead of passing for being slow.
+	if floor := creationTimeout - time.Second; waited < floor {
 		t.Errorf("the waiter failed after only %s; PIN_UNAVAILABLE is supposed to be the "+
-			"verdict after a full pinCreationTimeout of waiting for a free slot, so this "+
-			"failure came from somewhere else", waited.Round(time.Second))
+			"verdict after the full %s creation timeout of waiting for a free slot, so this "+
+			"failure came from somewhere else", waited.Round(time.Second), creationTimeout)
+	}
+	if ceiling := engine.DefaultPinCreationTimeout / 2; waited > ceiling {
+		t.Errorf("the waiter failed after %s, over %s: the deployment's %s creation timeout "+
+			"never reached the run's plan", waited.Round(time.Second), ceiling, creationTimeout)
+	}
+	if want := fmt.Sprintf("within %s:", creationTimeout); !strings.Contains(queued.GetError().GetMessage(), want) {
+		t.Errorf("queued's PIN_UNAVAILABLE message %q does not say %q: the failure must name the wait it ended",
+			queued.GetError().GetMessage(), want)
 	}
 	t.Logf("EVIDENCE the waiter failed with PIN_UNAVAILABLE after %s", waited.Round(time.Second))
 
@@ -1163,7 +1187,8 @@ func TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable(t
 	}
 
 	pinChaosProof(t, "pin-pool-saturated.txt", []string{
-		"# every pin host in the pool was full for the whole of pinCreationTimeout",
+		"# every pin host in the pool was full for the whole of the pin creation timeout",
+		fmt.Sprintf("pin creation timeout  %s (engine.pin_creation_timeout)", creationTimeout),
 		"pool / orker           " + c.pool + " / " + c.orkerID,
 		"ORK_ORKER_MAX_PINS     1",
 		"holder run             " + holderID + " (holds the only slot, container sleeping)",
