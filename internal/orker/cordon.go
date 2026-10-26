@@ -203,7 +203,7 @@ const sessionCreationActivityName = "internalSessionCreationActivity"
 
 // ReasonOrkerCordoned is the reason a cordoned host refuses to open a pin
 // with. Retryable: the SDK re-queues the creation for another host.
-const ReasonOrkerCordoned = "ORKER_CORDONED"
+const ReasonOrkerCordoned = task.ReasonOrkerCordoned
 
 // ReasonOrkerCordonInvalid refuses a CordonOrker input that could not have
 // passed the API boundary: a cordon without a reason, or a reason that is too
@@ -214,8 +214,13 @@ const ReasonOrkerCordonInvalid = "ORKER_CORDON_INVALID"
 // creation channel refuses: past this many attempts the refusal is
 // non-retryable and the pin fails PIN_UNAVAILABLE. 45 attempts at the SDK's
 // backoff (1s × 1.1ⁿ⁻¹, capped at 10s: ≈98 s over the first 25, then 20 × 10 s)
-// is ≈ 5 minutes — engine.pinCreationTimeout — so an all-cordoned pool fails a
-// pin in the same time a saturated one does.
+// is ≈ 5 minutes — the default of engine.pin_creation_timeout — so, at that
+// default, an all-cordoned pool fails a pin in the same time a saturated one
+// does. The bound is the Orker's own: a cordoned host takes each creation
+// attempt at once and refuses it, so the engine's creation wait never runs
+// out, and the pin fails after about five minutes whatever the deployment
+// sets engine.pin_creation_timeout to (docs/DEPLOY.md, "Removing an Orker
+// safely: cordon and drain").
 // TestCordonRefusalBound_MatchesThePinCreationTimeout sums the backoff and
 // pins the number.
 const cordonPinRefusalAttempts = 45

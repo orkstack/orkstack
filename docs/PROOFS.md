@@ -61,6 +61,15 @@ proof runs its gates on one host and writes one part, `local`, then merges it
 with `proofrun merge`. The CI `proof` job runs the same merger over many
 parts. There is one verdict implementation.
 
+Every local proof of any tier, and every `scripts/integration.sh` run, first
+removes what proofs and test processes that are gone left on the host — their
+buckets, Orker work roots and containers — with `proofrun clean -remove`, once
+its prerequisites are checked and before its own directory exists; its
+`setup.log` opens with the count (§10). It never touches what a live process
+owns or a running proof recorded, and the dev stack stays up. A by-hand
+`go test -tags=integration` does not clean: run `make proof-clean REMOVE=1`
+before it (AGENTS.md §11.1). A CI part runs on a fresh runner and does not.
+
 ### 2.1 The gates
 
 A local proof runs its gates in this order: the **fast gates**, alone and one
@@ -128,22 +137,31 @@ and warns the same way, and the engine's two boot reads log `list_took`, so a
 slow boot says which read stalled. The default stays 4 until a proof at 6 is
 measured clean again.
 
-A test process's bucket is removed after the integration phase, not on its
-slot, because removing a bucket is the store's heaviest per-bucket operation
-and its churn was the stall. `proofrun integration` (a local proof, and each CI
-shard) gives every test process a file to name its bucket in
+A test process's bucket is removed by the runner, off the process's slot,
+because removing a bucket is the store's heaviest per-bucket operation and its
+churn was the stall. `proofrun integration` (a local proof, and each CI shard)
+gives every test process a file to name its bucket in
 (`ORK_TEST_BUCKET_LEFT_FILE`, `integration/<job>.bucket`). A process whose
 tests passed writes its bucket's name there and exits (`s3bucket.Finish`); one
-with a failure keeps its bucket and writes nothing, as before. When the phase's
-last process has ended, still inside the gate's wall, the runner removes the
-buckets of the processes whose tests all passed, four at a time and two minutes
-each, asking the store to delete the bucket whole and emptying it object by
-object only when the store refuses a non-empty one. It removes only a name of
-the shape `s3bucket.Name` makes, never the development bucket. The
-`bucket sweep:` lines of `integration.log` say what it kept, what it left
-(`left s3://… : <error>`) and ends with `removed N of M passing job buckets`; a
-removal that fails costs disk and never the verdict, and a run a signal stopped
-removes none.
+with a failure keeps its bucket and writes nothing, as before. The runner's two
+sweepers remove those buckets while the phase runs, two minutes each at most,
+asking the store to delete the bucket whole and emptying it object by object
+only when the store refuses a non-empty one. They do not wait for the phase to
+end, because a bucket holds at least one of the store's volumes until it is
+removed and a store has a bounded number of them: a SeaweedFS mini server
+sizes it from its free disk (290 on the 2019 MacBook Pro host), so a phase that
+kept its 343 passing buckets to its end ran out, and every write failed with
+`No writable volumes`. A slot hands its process's bucket over before it starts
+the next process and waits while four already wait, so the buckets alive at
+once never exceed the slots, that backlog and the two removals in flight. When
+the phase's last process has ended, still inside the gate's wall, the runner
+removes what the sweepers had not reached. It removes only a name of the shape
+`s3bucket.Name` makes, never the development bucket. The `bucket sweep:` lines
+of `integration.log` say what it kept, what it left (`left s3://… : <error>`),
+how many went while the phase ran, and end with
+`removed N of M passing job buckets`; a removal that fails costs disk and never
+the verdict, and a run a signal stopped removes no more and leaves the rest
+named in its hand-off files (§10).
 
 Playwright spec files run on
 `PROOF_UI_WORKERS` workers (default 2 — measured clean on a 16-core host,
@@ -675,8 +693,8 @@ binary whose listing differs from the plan's. A binary digest that differs is
 a note, never a failure, because separate compiles need not be identical.
 
 By hand, `go test -tags=integration -p 1 ./internal/engine -run '^TestX$'`
-works against `make infra-up`; use a unique `ORK_TEMPORAL_NAMESPACE` whenever
-anything else may run.
+works against `make infra-up`, after `make proof-clean REMOVE=1` (§10); use a
+unique `ORK_TEMPORAL_NAMESPACE` whenever anything else may run.
 
 ## 10. Procedures
 
@@ -714,7 +732,7 @@ there is refused). Its Markdown report has:
   wall, its top-level tests' ledger seconds, and the difference. That
   difference is the per-process overhead: bucket create, binary init and
   Temporal namespace registration, together (a bucket's removal was part of it
-  until the end-of-phase sweep, §2.1, took it over). The report gives its
+  until the runner's bucket sweep, §2.1, took it off the slot). The report gives its
   min, median, p90, max and total, and the total in slot-seconds and in wall
   at `proof.json`'s `proof_jobs`. It also gives the heavy phase's wall (the
   plan's heavy jobs, run alone) and the ordinary phase's wall and slot
@@ -880,12 +898,39 @@ mode. After the first merge through a mode, run
 private repository.
 
 **Stop or clean up a proof.** `make proof-stop PROOF=proof/<name>` stops the
-proof you started and the containers it labelled. `make proof-clean` lists the
-buckets and work roots failed tests kept; `make proof-clean REMOVE=1` removes
-one only once the process its name records is gone. It also lists the passing
-jobs' buckets that a bucket sweep a signal stopped did not reach (§2.1): they
-are the proof's `integration/*.bucket` files, and the store holds each as a
-bucket whose process is gone.
+proof you started and the containers it labelled. A proof stopped this way (or
+by a signal, or killed) leaves what its test processes owned: the passing
+jobs' buckets its sweep did not reach (§2.1, its `integration/*.bucket`
+files), each failing or killed process's bucket, Orker work roots and activity
+containers. A bucket holds store volumes until it is removed, so a host that
+kept them would run the next proof out of volumes.
+
+`proofrun clean` removes them, and nothing else. Every local proof runs
+`proofrun clean -remove` after its prerequisites are checked and before its
+directory exists, keeps the listing as `cleanup.log`, and opens `setup.log`
+with its summary, `cleanup: removed N buckets, N work roots, N containers of
+dead proofs`; `scripts/integration.sh` runs it before each run, and
+`make proof-clean` lists the same things (`REMOVE=1` removes them) by hand. It
+reads the proof directories and `scripts/integration.sh` run directories of
+every worktree of this repository, and removes:
+
+- a bucket named `orkstack-<label>-<pid>-<suffix>` that a run recorded (its
+  hand-off file, or the head of a process's log, where `s3bucket.Main` names
+  the bucket it made) and the store still holds, or that the store lists;
+- a work root under a worktree's `.data/work` (or `ORK_ORKER_WORKDIR`) named
+  `<label>-p<pid>-<suffix>`;
+- an activity container whose Orker id ends in a proof id and a pid
+  (`proof.OrkerID`), or is a default id, the host and a hash of a work root
+  that names a pid;
+- a proof Temporal container whose proof process is gone;
+
+each only when the process its name records is gone, and never one whose pid
+a still-running proof or `integration.sh` run recorded. A work root or a
+container whose owner cannot be told is listed and left alone, and the
+development bucket, the dev stack's work root and its Orker's containers are
+never touched. The recorded names are the source of truth for buckets: the
+development store, SeaweedFS 4.48 with its auth off, answers the S3 bucket
+listing with no bucket at all.
 
 ## 11. Reference
 
@@ -908,7 +953,7 @@ bucket whose process is gone.
 | `make proof-overhead` | report where a proof's wall-clock went, from its directory, running nothing |
 | `make proof-observability` | only the observability gate; never merge-eligible |
 | `make proof-stop` | stop one proof and everything it started |
-| `make proof-clean` | list or remove what failed tests kept |
+| `make proof-clean` | list, or with `REMOVE=1` remove, what test processes that are gone left (`proofrun clean`) |
 | `make github-merge-gate` | check or apply the required-check settings |
 
 ### 11.2 The lists
@@ -949,12 +994,13 @@ bucket whose process is gone.
 | `free-port` | none |
 | `touches` | `-base REF`, `-action NAME`, `-gate-files`, `-scope FILE` |
 | `gates` | `-select FILE` |
+| `clean` | `-remove` |
 
 ### 11.4 The scripts
 
 `scripts/proof-observability.sh` runs the observability gate.
 `scripts/proof-part.sh` runs one CI part. `scripts/proof-stop.sh` stops a
-proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
+proof. `scripts/proof-clean.sh` lists and removes what test processes that are gone left (`proofrun clean`; every proof and `scripts/integration.sh` run it first).
 `scripts/proof.sh` is the entry point behind every proof target.
 
 ### 11.5 Measured numbers

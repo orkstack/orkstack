@@ -92,3 +92,48 @@ func TestPinRunTreeLimits_PinsEveryCommandStreamNumber(t *testing.T) {
 	}
 	t.Logf("E2 run-tree limits: the top-level plan grows by %d bytes with continuation on", len(encoded)-len(before))
 }
+
+// TestPinRunTreeLimits_PinsThePinCreationTimeout: the top-level plan carries
+// the deployment's engine.pin_creation_timeout in whole seconds, always — the
+// default included, so a release that changes the default moves only new
+// runs — and a child plan nested in it carries none (the engine copies it at
+// the child's start, once per run tree).
+func TestPinRunTreeLimits_PinsThePinCreationTimeout(t *testing.T) {
+	cases := []struct {
+		name   string
+		config time.Duration
+		want   int32
+	}{
+		{name: "unset is the engine default", config: 0, want: int32(engine.DefaultPinCreationTimeout / time.Second)},
+		{name: "thirty seconds", config: 30 * time.Second, want: 30},
+		{name: "a day", config: 24 * time.Hour, want: 86400},
+		{name: "never below a second", config: time.Millisecond, want: 1},
+		{name: "a negative value is unset", config: -time.Minute, want: int32(engine.DefaultPinCreationTimeout / time.Second)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewService(Config{PinCreationTimeout: tc.config})
+			child := &engine.ChildRunPlan{RunID: "ork-1-1", Plan: engine.RunPlan{Namespace: "default"}}
+			plan := engine.RunPlan{Namespace: "default", Children: map[string]*engine.ChildRunPlan{"compose": child}}
+			svc.pinRunTreeLimits(&plan)
+			if plan.PinCreationTimeoutSeconds != tc.want {
+				t.Errorf("PinCreationTimeoutSeconds = %d, want %d", plan.PinCreationTimeoutSeconds, tc.want)
+			}
+			if got := plan.Children["compose"].Plan.PinCreationTimeoutSeconds; got != 0 {
+				t.Errorf("a child plan nested in the top-level plan carries %d, want none", got)
+			}
+			encoded, err := json.Marshal(plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded map[string]any
+			if err := json.Unmarshal(encoded, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := decoded["pin_creation_timeout_seconds"].(float64); int32(got) != tc.want {
+				t.Errorf("the encoded plan holds pin_creation_timeout_seconds = %v, want %d",
+					decoded["pin_creation_timeout_seconds"], tc.want)
+			}
+		})
+	}
+}

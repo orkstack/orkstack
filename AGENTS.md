@@ -1060,6 +1060,22 @@ never by its name). `scripts/proof-stop.sh proof/<name>` stops a proof you
 started, and `scripts/proof-clean.sh` lists and removes what a failed proof
 kept; docs/PROOFS.md §10 says how.
 
+Clean the host before any test or proof runs on it. What earlier runs left —
+buckets that hold the object store's volumes, Orker work roots, activity
+containers, proof Temporal containers — has failed later proofs, so before
+`make proof*`, `scripts/integration.sh` or a by-hand
+`go test -tags=integration`, the leftovers of runs whose processes are gone
+are removed and what was removed is logged. Every local proof and every
+`scripts/integration.sh` run does it first, by itself (`proofrun clean
+-remove`; a proof's `setup.log` opens with
+`cleanup: removed N buckets, N work roots, N containers of dead proofs`); a
+by-hand run is preceded by `make proof-clean REMOVE=1`. It is the one
+exception to stopping only what you started: it finds a leftover by the names
+the proofs and runs of every worktree recorded and the pid each name carries,
+and removes it only when that process is gone. It never touches anything of
+a live process, of a proof still running, or whose owner it cannot tell, and
+the dev stack stays up.
+
 ### 11.2 Evidence
 
 No proof, no done. A change is finished when its behavior has been observed,

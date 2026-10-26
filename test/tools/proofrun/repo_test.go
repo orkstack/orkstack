@@ -466,3 +466,48 @@ func TestRepositoryProofScript_PrebuildsTheUIAfterTheHeavyJobs(t *testing.T) {
 		t.Error("ui/e2e/global-setup.ts does not build through build-ui.ts's ensureUIBuild: the pre-build and the gate would decide differently")
 	}
 }
+
+// Every proof, and every scripts/integration.sh run, removes what dead proofs
+// left before anything of its own exists: the cleanup runs after the
+// prerequisites are checked (a refused proof touches nothing) and before the
+// proof's directory is made, its summary line opens setup.log, which the
+// setup group then appends to, and `make proof-clean` is the same command.
+func TestRepositoryProofScripts_CleanWhatDeadProofsLeftFirst(t *testing.T) {
+	text := proofScript(t)
+	prereq := strings.Index(text, `say "proof: prerequisites absent, nothing measured, nothing written:$missing"`)
+	clean, mkdir := at(text, `"$PR" clean -remove`), at(text, `mkdir "$DIR" 2>/dev/null`)
+	if prereq < 0 || clean < 0 || mkdir < 0 || !(prereq < clean && clean < mkdir) {
+		t.Errorf("proof.sh does not run `proofrun clean -remove` after its prerequisites and before it makes its directory (prerequisites %d, clean %d, mkdir %d)", prereq, clean, mkdir)
+	}
+	for _, want := range []string{
+		`grep -m1 '^cleanup:' "$DIR/cleanup.log" >"$DIR/setup.log"`,
+		`done >>"$DIR/setup.log"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("proof.sh lacks %q: setup.log must open with the cleanup's summary and keep it", want)
+		}
+	}
+	if strings.Contains(text, `done >"$DIR/setup.log"`) {
+		t.Error("proof.sh's setup group overwrites setup.log, losing the cleanup's summary")
+	}
+
+	b, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "integration.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	integ := string(b)
+	clean, run := at(integ, "go run ./test/tools/proofrun clean -remove"), at(integ, `ORK_REQUIRE_INFRA="${ORK_REQUIRE_INFRA:-1}" go run ./test/tools/proofrun integration`)
+	if clean < 0 || run < 0 || clean > run {
+		t.Errorf("integration.sh does not run `proofrun clean -remove` before its integration run (clean %d, run %d)", clean, run)
+	}
+
+	b, err = os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof-clean.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"exec go run ./test/tools/proofrun clean ;;", "exec go run ./test/tools/proofrun clean -remove ;;"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("proof-clean.sh lacks %q: `make proof-clean` must be the same cleanup", want)
+		}
+	}
+}

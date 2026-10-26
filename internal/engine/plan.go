@@ -181,6 +181,20 @@ type RunPlan struct {
 	// snapshot is full (every plan built before this field, and every plan
 	// of a deployment that leaves it off).
 	SnapshotOverlay *OverlayPolicy `json:"snapshot_overlay,omitempty"`
+
+	// PinCreationTimeoutSeconds is how long a pin of this run waits for some
+	// pin host of its pool to have a free session slot before its first task
+	// fails PIN_UNAVAILABLE (engine.pin_creation_timeout, docs/DEPLOY.md §1).
+	// Whole seconds, decided at submit for the reason Limits is: it is
+	// process configuration workflow code may not read (AGENTS.md §2.1).
+	// A run-tree limit, like History: set on the top-level plan by
+	// pinRunTreeLimits and copied into each child's start plan by
+	// childStartPlan. Zero means unset, and an unset value is the five
+	// minutes every build before the field used, which is also what a run
+	// whose history was recorded before the pin-creation-timeout version gate
+	// takes whatever this says (pinCreationTimeoutFor). omitempty, so a plan
+	// with none encodes exactly as it did before the field existed.
+	PinCreationTimeoutSeconds int32 `json:"pin_creation_timeout_seconds,omitempty"`
 }
 
 // OverlayPolicy is a run's snapshot-overlay thresholds, pinned per run

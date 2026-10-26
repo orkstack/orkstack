@@ -10,6 +10,28 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- A proof's integration phase removes each passing test process's bucket
+  while the phase runs, two at a time, off the process's slot, instead of
+  keeping every one until the phase's end. A bucket holds store volumes until
+  it is removed, and a phase that kept its 343 passing buckets exhausted the
+  development store's 290 (`No writable volumes`), failing the merge gate on
+  writes no test made wrong. A slot waits to start its next process while
+  four removals are pending, so the buckets alive at once stay within the
+  slots, that backlog and the removals in flight.
+- Every local proof and every `scripts/integration.sh` run first removes what
+  proofs and test processes that are gone left on the host (`proofrun clean
+  -remove`), before its own directory exists, and `setup.log` opens with
+  `cleanup: removed N buckets, N work roots, N containers of dead proofs`. A
+  proof stopped by `make proof-stop` or a signal left every passing job's
+  bucket, each holding store volumes, and the next proof on the host ran out
+  of them. It reads the proof and run directories of every worktree, removes a
+  bucket, work root or activity container only when the process its name
+  records is gone, and never one a still-running proof recorded; a thing
+  whose owner it cannot tell is listed and left.
+- `make proof-clean` is the same cleanup by hand, and now finds buckets at
+  all: the development store (SeaweedFS 4.48, auth off) lists none, so the
+  target listed and removed nothing. It reads the names proofs recorded
+  instead, and it also lists the activity containers of dead test processes.
 - `proofrun overhead` counts a concurrent setup group once, through its
   `setup` row, and puts the site gate among the fast gates: it summed the
   group's members as if serial and reported 88.3 minutes for a proof whose wall
@@ -70,6 +92,19 @@ include breaking changes, and each is marked **BREAKING**.
   walls and slot utilisation, the two Playwright invocations' walls and lane
   packing, any slow-boot warnings, and the top three time sinks. A partial
   proof is reported as partial, never a crash.
+- `engine.pin_creation_timeout` (`ORK_PIN_CREATION_TIMEOUT`, `5m`): how long a
+  pin waits for some pin host of its pool to have a free slot before the task
+  that asked for it fails `PIN_UNAVAILABLE`. It was a fixed five minutes. A
+  duration of whole seconds, 1 second to 24 hours, refused at boot otherwise.
+  A run carries the value in force when it was submitted, so a change moves
+  only new runs, and a child run waits as long as the run that started it. The
+  failure message says what ended the wait: "within" the timeout when no pin
+  host picked the pin up in time, or that every pin host refused it because it
+  is cordoned. A pool whose pin hosts are all cordoned still fails a pin after
+  about five minutes, whatever the setting says. The engine
+  asks a `pin-creation-timeout` version where a run first opens a pin: a run
+  recorded before it keeps the five minutes it was recorded with
+  (`docs/DEPLOY.md` §6).
 
 ### Changed
 

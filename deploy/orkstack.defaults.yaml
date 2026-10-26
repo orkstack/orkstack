@@ -62,6 +62,7 @@ engine:
   definition_by_reference: true  # ork
   snapshot_overlays: true  # ork
   run_max_in_flight: 1000  # ork
+  pin_creation_timeout: 5m  # ork
   compose_max_depth: 4  # ork
   cache_max_ttl: 168h  # ork
   usage_cache_ttl: 5m  # ork

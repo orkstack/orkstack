@@ -191,8 +191,8 @@ func TestRefusePinCreation_Table(t *testing.T) {
 // TestCordonRefusalBound_MatchesThePinCreationTimeout sums the SDK's session
 // creation backoff (session.go: 1s × 1.1ⁿ⁻¹, capped at 10s) over the refusal
 // bound: an all-cordoned pool must fail a pin in about the time a saturated
-// one does, engine.pinCreationTimeout (5m, spelled here as a literal because
-// the Orker never imports the engine).
+// one does at the default engine.pin_creation_timeout (5m, spelled here as a
+// literal because the Orker never imports the engine).
 func TestCordonRefusalBound_MatchesThePinCreationTimeout(t *testing.T) {
 	const pinCreationTimeout = 5 * time.Minute
 	var total time.Duration

@@ -31,7 +31,7 @@ A pin adds no ordering. Two tasks in a pin run side by side unless `needs:` puts
 
 A pin needs a **pin host**: an Orker started with `ORK_ORKER_MAX_PINS` above zero. Set it on every Orker of the pool. A pool with no pin host refuses a pinned run at submit.
 
-If every pin host stays full for five minutes, the task fails with `PIN_UNAVAILABLE`. If a pin's host is lost, the run fails with `PIN_HOST_LOST`. A pin never moves to another Orker, because the shared directory would not come with it.
+If every pin host stays full for five minutes, the task fails with `PIN_UNAVAILABLE`. The wait is five minutes unless the deployment sets `ORK_PIN_CREATION_TIMEOUT`. If a pin's host is lost, the run fails with `PIN_HOST_LOST`. A pin never moves to another Orker, because the shared directory would not come with it.
 
 | | Pool | Pin |
 |---|---|---|

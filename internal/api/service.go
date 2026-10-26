@@ -303,6 +303,14 @@ type Config struct {
 	// engine.DefaultRunMaxInFlight. Pinned into every top-level plan.
 	RunMaxInFlight int32
 
+	// PinCreationTimeout is engine.pin_creation_timeout: how long a pin waits
+	// for a pin host of its pool to have a free slot before its first task
+	// fails PIN_UNAVAILABLE. Zero (or negative) means
+	// engine.DefaultPinCreationTimeout; the boot check in cmd/ork refuses a
+	// value that is not whole seconds, and a smaller one here is raised to one
+	// second. Pinned, in whole seconds, into every top-level plan.
+	PinCreationTimeout time.Duration
+
 	// DefinitionByReference is engine.definition_by_reference's effective
 	// value: a top-level run whose planned definition is over a start
 	// payload's 256 KiB travels by reference (definition_ref.go). It needs
@@ -505,6 +513,9 @@ type Service struct {
 	// defaulted.
 	continuation   *engine.ContinuationBudget
 	runMaxInFlight int32
+	// pinCreationSeconds is Config.PinCreationTimeout in whole
+	// seconds, defaulted: what pinRunTreeLimits pins.
+	pinCreationSeconds int32
 	// definitionByReference is Config.DefinitionByReference, only with
 	// continuation on; definitionObjects is Config.DefinitionObjects.
 	definitionByReference bool
@@ -577,6 +588,7 @@ func NewService(cfg Config) *Service {
 		snapshotOverlays:      cfg.SnapshotOverlays,
 		definitionObjects:     cfg.DefinitionObjects,
 		runMaxInFlight:        int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
+		pinCreationSeconds:    pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
 		historyMaxBytes:       positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:       composeMaxDepthOf(cfg.ComposeMaxDepth),
 		cacheMaxTTL:           cacheMaxTTLOf(cfg.CacheMaxTTL),
@@ -1727,6 +1739,18 @@ func (s *Service) pinRunTreeLimits(plan *engine.RunPlan) {
 	}
 	limit := engine.DefaultInFlightLimit(s.runMaxInFlight)
 	plan.InFlight = &limit
+	plan.PinCreationTimeoutSeconds = s.pinCreationSeconds
+}
+
+// pinCreationTimeoutSecondsOf is the pin creation timeout a plan carries, in
+// whole seconds: the engine default for an unset or negative value, and
+// never below one second (cmd/ork refuses a sub-second value at boot, so a
+// smaller one is only a caller that built a Config by hand).
+func pinCreationTimeoutSecondsOf(timeout time.Duration) int32 {
+	if timeout <= 0 {
+		timeout = engine.DefaultPinCreationTimeout
+	}
+	return int32(max(int64(1), min(int64(timeout/time.Second), math.MaxInt32)))
 }
 
 // continuationBudgetFor is the budget every new top-level plan carries, or
