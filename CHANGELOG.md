@@ -37,10 +37,12 @@ include breaking changes, and each is marked **BREAKING**.
   a failing `proofrun merge` ended the step before the copy, so the proof
   that most needed its parts' details (run 40411125174) uploaded five files.
 - The CI `ui-e2e` shard that drives the host's Chromium installs the browser
-  without `--with-deps`: the runner image already carries its system
-  libraries (the apt install's only new packages were fonts), and that apt
-  install from the runner's mirror at 50–100 KB/s took the shard past its
-  5-minute limit twice (runs 40346476240 and 40411125174).
+  without `--with-deps`, and apt-installs its system libraries only when a
+  launch probe finds the installed browser does not start, each install in
+  two bounded attempts: the runner image already carries those libraries
+  (the apt install's only new packages were fonts), and that apt install
+  from the runner's mirror at 50–100 KB/s took the shard past its 5-minute
+  limit three times (runs 40346476240, 40411125174 and nightly 40413305751).
 - `proofrun overhead` counts a concurrent setup group once, through its
   `setup` row, and puts the site gate among the fast gates: it summed the
   group's members as if serial and reported 88.3 minutes for a proof whose wall

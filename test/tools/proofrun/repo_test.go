@@ -663,9 +663,18 @@ func TestRepositoryCIParts_DriveChromiumInTheContainer(t *testing.T) {
 			}
 			// The runner image carries Chromium's libraries; --with-deps is an
 			// apt install from a mirror that has stalled a shard past its
-			// limit twice (runs 40346476240 and 40411125174).
-			if strings.Contains(s.Run, "--with-deps") || strings.Contains(s.Run, "apt") {
-				t.Errorf("jobs.ui-e2e %s apt-installs Chromium's system libraries, which the runner image already carries", s.label(i))
+			// limit three times (runs 40346476240, 40411125174, 40413305751).
+			// It stays only as the fallback behind a launch probe, in two
+			// bounded attempts, under a 10-minute step.
+			plain, probe, deps := strings.Index(s.Run, "npx playwright install chromium"), strings.Index(s.Run, "chromium.launch("), strings.Index(s.Run, "--with-deps")
+			if plain < 0 || probe < 0 || deps < 0 || !(plain < deps && probe < deps) {
+				t.Errorf("jobs.ui-e2e %s does not install the browser alone, probe its launch, and apt-install its libraries only as the fallback (install %d, probe %d, --with-deps %d)", s.label(i), plain, probe, deps)
+			}
+			if !strings.Contains(s.Run, "for limit in 180 360; do") || !strings.Contains(s.Run, `timeout -k 10 "$limit" `) {
+				t.Errorf("jobs.ui-e2e %s does not bound its installs to proof-fetch's two attempts of 180 s then 360 s", s.label(i))
+			}
+			if n, _, _ := timeoutMinutes(s.Timeout); n != 10 {
+				t.Errorf("jobs.ui-e2e %s has timeout-minutes %v, want 10 (two bounded attempts, then the fallback)", s.label(i), s.Timeout)
 			}
 		case strings.Contains(s.Run, "scripts/proof.sh --part"):
 			part = i

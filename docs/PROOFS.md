@@ -160,13 +160,18 @@ others. The run page at the task ceiling runs on the host's Chromium
 (`ui/playwright.config.ts`); its two spec files share their steps in
 `ui/e2e/runPageCeiling.ts`. `network-change.spec.ts` launches a host-namespace
 Chromium of its own as its positive control; every other spec drives the
-container. A CI `ui-e2e` part installs the host's Chromium
-(`playwright install chromium`, the browser from Playwright's own store and
-nothing from an apt mirror: the runner image already carries its system
-libraries, and `--with-deps`'s apt install stalled a shard past its limit
-twice, runs 40346476240 and 40411125174) only when its shard holds one of
-those three files, decided from the UI plan by the same rule
-`scripts/proof-part.sh` applies as a prerequisite of the part.
+container. A CI `ui-e2e` part installs the host's Chromium only when its
+shard holds one of those three files, decided from the UI plan by the same
+rule `scripts/proof-part.sh` applies as a prerequisite of the part:
+`playwright install chromium`, the browser from Playwright's own store and
+nothing from an apt mirror, because the runner image already carries its
+system libraries and `--with-deps`'s apt install from that mirror stalled
+the shard past its limit three times (runs 40346476240, 40411125174 and
+nightly 40413305751). A launch probe then decides: only a Chromium that
+does not launch falls back to `--with-deps`, each install in the two
+bounded attempts `proof-fetch` makes (180 s, then 360 s) under a 10-minute
+step, and a browser that still does not launch fails the step before the
+part.
 The gate starts one browser server for both invocations, and the second reuses
 the first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that

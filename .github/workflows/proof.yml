@@ -435,18 +435,43 @@ jobs:
             needed=true
           fi
           echo "needed=$needed" | tee -a "$GITHUB_OUTPUT"
-      # Without --with-deps: the runner image already carries Chromium's
-      # shared libraries (run 40411125174's apt log shows the nine packages
-      # --with-deps would add are all fonts, and its eight upgrades libraries
-      # already installed), and that apt install from the runner's mirror at
-      # 50–100 KB/s has cost a run its only host-Chromium shard twice (runs
-      # 40346476240 and 40411125174). The browser itself comes from
-      # Playwright's own store.
+      # The browser from Playwright's own store and nothing from an apt
+      # mirror: the runner image already carries Chromium's shared libraries
+      # (run 40411125174's apt log shows the nine packages --with-deps would
+      # add are all fonts, and its eight upgrades libraries already
+      # installed), and that apt install from the runner's mirror at 50–100
+      # KB/s has cost a run its only host-Chromium shard three times (runs
+      # 40346476240, 40411125174 and nightly 40413305751). A launch probe
+      # then decides: only a Chromium that does not launch falls back to
+      # --with-deps, through the same two bounded attempts as proof-fetch
+      # (180 s, then 360 s), and a browser that still does not launch fails
+      # the step here, before the part. The install itself has the same two
+      # attempts, so a stalled download costs a retry rather than the part.
       - name: Chromium (host)
         if: steps.host-chromium.outputs.needed == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 10
         working-directory: ui
-        run: npx playwright install chromium
+        shell: bash
+        run: |
+          set -uo pipefail
+          probe() { node -e "require('playwright-core').chromium.launch({ headless: true }).then(b => b.close())"; }
+          attempt() { # <what> <command...>
+            local what="$1" limit
+            shift
+            for limit in 180 360; do
+              if timeout -k 10 "$limit" "$@"; then return 0; fi
+              echo "$what: the attempt under ${limit}s did not finish"
+            done
+            return 1
+          }
+          attempt "playwright install chromium" npx playwright install chromium || true
+          if probe; then
+            echo "host chromium launches; its system libraries were already on the image"
+            exit 0
+          fi
+          echo "host chromium does not launch; falling back to --with-deps"
+          attempt "playwright install --with-deps chromium" npx playwright install --with-deps chromium || true
+          probe
       - name: UI shard
         timeout-minutes: 35
         shell: bash
