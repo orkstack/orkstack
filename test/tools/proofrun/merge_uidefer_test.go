@@ -175,7 +175,7 @@ func TestMerge_ANightlyProofRunsTheListedSpecs(t *testing.T) {
 			Tests: []uiEntry{uiEntryOf(ceilingTest, outcomePass, "")},
 			Files: []uiFileEntry{{File: ceilingTest.File, Shard: 1, Tests: 1, Seconds: 10, WallSeconds: 10}},
 		}, gates)
-		r, _ := f.merge("-ui-plan", f.uiPlanPath)
+		r, _ := f.merge("-ui-plan", f.uiPlanPath, "-nightly-specs", f.uiPlan.Nightly.File)
 		return r
 	}
 	r := nightly([]gateRecord{{Gate: "integration", Result: "pass"}, {Gate: "ui-e2e", Result: "pass"}})
@@ -185,5 +185,105 @@ func TestMerge_ANightlyProofRunsTheListedSpecs(t *testing.T) {
 	r = nightly([]gateRecord{{Gate: "integration", Result: "pass"}})
 	if r.Result == "pass" || !strings.Contains(joined(r), "ui-e2e") {
 		t.Errorf("a nightly proof without its Playwright gate passed: %s, %v", r.Result, r.Ineligible)
+	}
+}
+
+// nightlyUIPlan gives the fixture a nightly UI plan of the listed spec alone.
+func nightlyUIPlan(f *mergeFixture) {
+	f.t.Helper()
+	uiDeferral(f, nightlyOnly, true, false)
+	f.uiPlan.Tests = []uiPlanTest{ceilingTest}
+	f.uiPlan.Files = []uiPlanFile{{File: ceilingTest.File, Tests: 1, Shard: 1}}
+	f.uiPlan.Shards = []uiShard{{Index: 1, Files: []string{ceilingTest.File}}}
+	f.save()
+}
+
+func ceilingLedger() uiLedger {
+	return uiLedger{
+		Suite: "ui-e2e", Listed: 1, Pass: 1, GuardRetryCeiling: 3, Problems: []string{},
+		Tests: []uiEntry{uiEntryOf(ceilingTest, outcomePass, "")},
+		Files: []uiFileEntry{{File: ceilingTest.File, Shard: 1, Tests: 1, Seconds: 10, WallSeconds: 10}},
+	}
+}
+
+// A CI nightly proof runs its listed specs as ui-e2e parts: the plan expects
+// them, and the merge takes their ledgers.
+func TestMerge_ACINightlyProofRunsItsUIParts(t *testing.T) {
+	f := newMergeFixture(t, tierNightly, true)
+	f.plan.PartsExpected = partsExpected(tierNightly, false, 2, nightlyUIShards(1, make([]nightlySpecEntry, 1)), false)
+	nightlyUIPlan(f)
+	f.writePart(f.basePart("plan"), nil)
+	build := f.basePart("build")
+	build.Gates = []gateRecord{{Gate: "images", Result: "pass"}}
+	build.Images = map[string]string{"activity-shell": "sha256:aaa"}
+	f.writePart(build, nil)
+	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
+	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	ui := f.basePart("ui-e2e:1")
+	ui.Gates = []gateRecord{{Gate: "ui-e2e", Result: "pass"}}
+	ui.Images = map[string]string{"activity-shell": "sha256:aaa"}
+	f.writePart(ui, map[string]any{"ui-e2e-tests.json": ceilingLedger()})
+	r, _ := f.merge("-ui-plan", f.uiPlanPath, "-nightly-specs", f.uiPlan.Nightly.File)
+	if r.Result != "pass" || !r.EligibleButForTier {
+		t.Fatalf("a CI nightly proof that ran its UI part: result %s, eligible but for tier %v: %v", r.Result, r.EligibleButForTier, r.Ineligible)
+	}
+}
+
+// A nightly proof is held to the tree's nightly spec list itself, never only
+// to the UI plan it was given: with a row listed it needs a UI plan read from
+// that list, whose files are exactly the rows', and its ui-e2e gate.
+func TestMerge_ANightlyProofIsHeldToTheTreesSpecList(t *testing.T) {
+	gates := []gateRecord{{Gate: "integration", Result: "pass"}, {Gate: "ui-e2e", Result: "pass"}}
+	cases := []struct {
+		name   string
+		mutate func(f *mergeFixture) []string // the merge's extra arguments
+		want   string
+	}{
+		{"no UI plan", func(f *mergeFixture) []string {
+			return []string{"-nightly-specs", f.uiPlan.Nightly.File}
+		}, "the nightly spec list names 1 spec file(s), and the proof was given no UI plan"},
+		{"a UI plan of other files", func(f *mergeFixture) []string {
+			f.uiPlan.Files, f.uiPlan.Shards, f.uiPlan.Tests = nil, []uiShard{}, nil
+			f.save()
+			return []string{"-ui-plan", f.uiPlanPath, "-nightly-specs", f.uiPlan.Nightly.File}
+		}, "the nightly UI plan's files [] are not the nightly spec list's [run-page-ceiling.spec.ts]"},
+		{"a UI plan read from another list", func(f *mergeFixture) []string {
+			f.uiPlan.Nightly.SHA256 = emptySHA
+			f.save()
+			return []string{"-ui-plan", f.uiPlanPath, "-nightly-specs", f.uiPlan.Nightly.File}
+		}, "is not the one the UI plan read"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newMergeFixture(t, tierNightly, false)
+			nightlyUIPlan(f)
+			args := c.mutate(f)
+			f.writeLocalUI(ceilingLedger(), gates)
+			r, _ := f.merge(args...)
+			if r.Result == "pass" {
+				t.Errorf("the nightly proof passed")
+			}
+			if got := joined(r); !strings.Contains(got, c.want) {
+				t.Errorf("ineligible lacks %q:\n%s", c.want, got)
+			}
+		})
+	}
+}
+
+// The nightly tier's CI graph has a UI part per shard of its UI plan, which
+// holds the listed spec files alone: at most the requested shards, at most
+// one per row, and none when the list is empty.
+func TestPlan_ANightlyCIProofExpectsItsUIParts(t *testing.T) {
+	if p := partsExpected(tierNightly, false, 2, 1, false); !containsString(p, "ui-e2e:1") || containsString(p, "fast") || containsString(p, "activity-fixture:shell") {
+		t.Errorf("nightly parts = %v", p)
+	}
+	if p := partsExpected(tierNightly, false, 2, 0, false); containsString(p, "ui-e2e:1") {
+		t.Errorf("a nightly proof with no listed spec expects a UI part: %v", p)
+	}
+	rows, _ := parseNightlySpecs(strings.NewReader(specRow+"\n"), "list")
+	for _, c := range []struct{ requested, rows, want int }{{1, 1, 1}, {5, 1, 1}, {1, 0, 0}, {0, 1, 0}} {
+		if got := nightlyUIShards(c.requested, rows[:c.rows]); got != c.want {
+			t.Errorf("nightlyUIShards(%d, %d rows) = %d, want %d", c.requested, c.rows, got, c.want)
+		}
 	}
 }

@@ -297,7 +297,7 @@ func cmdRecord(args []string) int {
 	}
 	var ul uiLedger
 	if readJSON(filepath.Join(*dir, "ui-e2e-tests.json"), &ul) == nil {
-		ledgers["ui-e2e"] = map[string]any{"listed": ul.Listed, "pass": ul.Pass, "problems": len(ul.Problems)}
+		ledgers["ui-e2e"] = map[string]any{"listed": ul.Listed, "pass": ul.Pass, "deferred": ul.Deferred, "problems": len(ul.Problems)}
 		ledgerFiles["ui-e2e"] = "ui-e2e-tests.json"
 		ledgersOK["ui-e2e"] = len(ul.Problems) == 0
 		r.GuardRetries, r.GuardCeiling = &ul.GuardRetries, &ul.GuardRetryCeiling

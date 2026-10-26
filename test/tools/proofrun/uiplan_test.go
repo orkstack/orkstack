@@ -673,3 +673,38 @@ func TestUIPlan_CommandDefersAndNamesTheFilesToRun(t *testing.T) {
 		t.Errorf("defer without the base's copy: exit %d, want 2", code)
 	}
 }
+
+// A feature proof lists only its selected specs, so the nightly spec list's
+// rows cannot be checked against its listing: it plans with no list.
+func TestUIPlan_AFeatureListingNamesNoNightlySpecList(t *testing.T) {
+	quiet(t)
+	dir := t.TempDir()
+	listFile := filepath.Join(dir, "list.json")
+	if err := writeJSON(listFile, listingOf(map[string]int{"a.spec.ts": 1})); err != nil {
+		t.Fatal(err)
+	}
+	specs := filepath.Join(dir, "specs.txt")
+	if err := os.WriteFile(specs, []byte(specRow+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "ui-plan.json")
+	if code := cmdUIPlan([]string{"-list", listFile, "-out", out, "-shards", "1", "-nightly-specs", specs}); code != 1 {
+		t.Errorf("a partial listing checked against the list: exit %d, want 1 (the row's spec is not listed)", code)
+	}
+	if code := cmdUIPlan([]string{"-list", listFile, "-out", out, "-shards", "1", "-nightly-specs", ""}); code != 0 {
+		t.Errorf("a feature listing with no list: exit %d, want 0", code)
+	}
+}
+
+// scripts/proof.sh gives a feature proof's ui-plan no nightly spec list.
+func TestRepositoryProofScript_AFeatureUIPlanReadsNoNightlySpecList(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`feature) plan_specs="" ;;`, `-nightly-specs "$plan_specs"`} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("scripts/proof.sh lacks %q", want)
+		}
+	}
+}

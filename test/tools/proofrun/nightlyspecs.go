@@ -164,3 +164,10 @@ func specEntryLines(entries []nightlySpecEntry) []string {
 	sort.Strings(out)
 	return out
 }
+
+// nightlyUIShards is how many UI parts a nightly CI proof runs: its UI plan
+// holds the listed spec files alone, so at most one shard per row, at most
+// the requested shards, and none when the list is empty.
+func nightlyUIShards(requested int, rows []nightlySpecEntry) int {
+	return max(0, min(requested, len(rows)))
+}

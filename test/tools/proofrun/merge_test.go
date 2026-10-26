@@ -84,7 +84,12 @@ func newMergeFixture(t *testing.T, tier string, ci bool) *mergeFixture {
 		AllowedSkips: fileRef{File: "", SHA256: emptySHA},
 		Quarantine:   quarantineRef{File: filepath.Join(dir, "quarantine.txt"), SHA256: emptySHA, BaseSHA256: emptySHA},
 	}
-	f.plan.PartsExpected = partsExpected(tier, !ci, 2, 1, false)
+	uiShards := 1
+	if tier == tierNightly {
+		// A nightly proof runs a UI part only for a listed spec file.
+		uiShards = 0
+	}
+	f.plan.PartsExpected = partsExpected(tier, !ci, 2, uiShards, false)
 	f.hostSpeed = filepath.Join(dir, "host-speed.tsv")
 	f.plan.HostSpeed = quarantineRef{File: f.hostSpeed, SHA256: emptySHA, BaseSHA256: emptySHA}
 	f.planPath = filepath.Join(dir, "integration-plan.json")

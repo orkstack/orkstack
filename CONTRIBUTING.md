@@ -235,8 +235,9 @@ tree `main` then points at — the `proof` check of the pull request (or merge
 group) that landed it, or a local `make proof` — and when every reference doc
 that describes what changed says the new thing, with a CHANGELOG.md
 `[Unreleased]` entry for a user-visible change. Done is judged by the merge
-gate: the few scale tests listed in `scripts/proof-nightly-tests.txt` run
-nightly and before a release, and a failure there is a failing `main`. A
+gate: the few scale tests listed in `scripts/proof-nightly-tests.txt`, and
+the specs listed in `scripts/proof-nightly-specs.txt`, run nightly and before
+a release, and a failure there is a failing `main`. A
 feature proof means "ready for the merge proof", never "done". No proof, not
 done.
 

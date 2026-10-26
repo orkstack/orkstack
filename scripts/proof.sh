@@ -954,14 +954,17 @@ ui_e2e_locked() {
 	# nightly tier runs the listed ones alone; the pre-release gate and a
 	# feature proof run what they list. The plan names the files to pass
 	# Playwright when it leaves a listed one out.
-	local plan_mode=include
+	# A feature proof's listing holds only its selected specs, so the list's
+	# rows cannot be checked against it: it plans with no list.
+	local plan_mode=include plan_specs=scripts/proof-nightly-specs.txt
 	case "$TIER" in
 	full) plan_mode=defer ;;
 	nightly) plan_mode=only ;;
+	feature) plan_specs="" ;;
 	esac
 	"$PR" ui-plan -list "$DIR/ui-e2e-list.json" -costs scripts/proof-ui-costs.tsv \
 		-shards 1 -out "$DIR/ui-plan.json" -nightly-mode "$plan_mode" \
-		-nightly-specs scripts/proof-nightly-specs.txt -nightly-specs-base "$DIR/nightly-specs-base.txt" \
+		-nightly-specs "$plan_specs" -nightly-specs-base "$DIR/nightly-specs-base.txt" \
 		-run-files-out "$DIR/ui-run-files.txt" >>"$DIR/ui-e2e.log" 2>&1 || { say "proofrun ui-plan failed"; return 1; }
 	local -a run_specs=()
 	mapfile -t run_specs <"$DIR/ui-run-files.txt"

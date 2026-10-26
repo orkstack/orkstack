@@ -20,8 +20,9 @@ import (
 // where page start, per-file fixtures and beforeAll land (plan §1.3 F15).
 
 // unmeasuredSpecSeconds is what a spec file with no measurement costs: above
-// every measured file's wall but run-page-ceiling.spec.ts, so a new file is
-// never packed as if it were free.
+// almost every measured file's wall, so a new file is never packed as if it
+// were free. A deferred spec drops out of the costs a full proof measures, so
+// the nightly tier may cost it at this default.
 const unmeasuredSpecSeconds = 160.0
 
 type uiShard struct {

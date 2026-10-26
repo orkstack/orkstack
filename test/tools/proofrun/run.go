@@ -594,6 +594,7 @@ type integrationPlanOptions struct {
 	shard                                 int
 	matrixOut                             string
 	nightlyFile, nightlyMode, nightlyBase string
+	nightlySpecs                          string
 	tier, proofID                         string
 	baseCommit, mergeBase                 string
 	observabilityRequired                 bool
@@ -627,6 +628,7 @@ func integrationFlags() (*flag.FlagSet, *integrationPlanOptions) {
 	fs.IntVar(&o.shards, "shards", 1, "with -plan-only: split the planned jobs into this many shards")
 	fs.StringVar(&o.matrixOut, "matrix-out", "", "with -plan-only: write the shard indices as a JSON array")
 	fs.StringVar(&o.nightlyFile, "nightly", "scripts/proof-nightly-tests.txt", "the nightly list")
+	fs.StringVar(&o.nightlySpecs, "nightly-specs", nightlySpecFile, "the nightly spec list: a nightly CI plan expects a UI part per listed spec file, up to -ui-shards")
 	fs.StringVar(&o.nightlyMode, "nightly-mode", nightlyInclude, "include (default), defer (leave out entries the base also lists) or only")
 	fs.StringVar(&o.nightlyBase, "nightly-base", "", "the base's copy of the nightly list (required with -nightly-mode defer)")
 	fs.StringVar(&o.tier, "tier", tierFull, "full, nightly, release or feature")
@@ -1079,6 +1081,13 @@ func writePlan(o integrationPlanOptions, p *integrationPlan, measured costs, nig
 	p.PartsExpected = partsExpected(o.tier, !o.ci, len(p.Shards), 0, o.observabilityRequired)
 	if o.ci {
 		uiShards := o.uiShards
+		if o.tier == tierNightly {
+			rows, err := readNightlySpecs(o.nightlySpecs)
+			if err != nil {
+				p.Problems = append(p.Problems, "the nightly spec list is unreadable: "+err.Error())
+			}
+			uiShards = nightlyUIShards(o.uiShards, rows)
+		}
 		p.PartsExpected = partsExpected(o.tier, false, len(p.Shards), uiShards, o.observabilityRequired)
 	}
 	if p.CheckedOn == "" {

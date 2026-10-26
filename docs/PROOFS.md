@@ -43,8 +43,12 @@ shards each spec file both the tree's list and the base's carry, keeps its
 tests planned, and the Playwright ledger records each as `deferred` with the
 row; a test of such a file that ran, a deferred entry for a file the plan
 runs, and a deferral the two lists do not both carry each fail the proof. The
-nightly tier's plan holds the listed spec files alone, and the nightly proof
-needs its `ui-e2e` gate when the list has any. Today the list holds
+nightly tier's plan holds the listed spec files alone; its merge reads the
+tree's list itself (`proofrun merge -nightly-specs`), and while the list has
+a row the nightly proof needs a UI plan read from that very list, planning
+exactly its rows, and its `ui-e2e` gate — in CI one `ui-e2e` part per listed
+spec file, up to the requested UI shards. A feature proof's listing holds
+only its selected specs, so it plans with no spec list. Today the list holds
 `run-page-ceiling.spec.ts`, the run page at the 4,000-task default ceiling;
 the merge gate runs `run-page-reduced-ceiling.spec.ts`, the same measurement
 with `engine.orkflow_max_tasks` lowered to 1,000.
@@ -498,7 +502,7 @@ notification; nothing opens an issue. While the nightly workflow does not run
 on GitHub, interim rule A applies: `make proof-nightly` runs on `main`'s tip
 after every merge that moves `main`, and passes before the next merge starts
 and before every tag. `make merge-check PROOF=… NIGHTLY=…` refuses a merge
-when `main`'s list is non-empty and no passing nightly proof of `main`'s tree
+when either of `main`'s nightly lists is non-empty and no passing nightly proof of `main`'s tree
 is given. A GitHub nightly proof of `main`'s tip — `nightly.yml` dispatched
 (`workflow_dispatch`) or its schedule — downloaded as its `proof-<run>-a<n>`
 artifact is that `NIGHTLY=` evidence, exactly as a local `make proof-nightly`
@@ -904,9 +908,10 @@ bucket whose process is gone.
 | `scripts/proof-scope.tsv` | pattern, actions, flags | refuses the feature tier |
 | `scripts/proof-allowed-skips.txt` | suite, package, test, reason | a skip with no entry, or an entry naming no listed test, fails |
 | `scripts/proof-nightly-tests.txt` | package, test, covering tests, approved, reason | a stale name or a missing covering test fails the plan |
+| `scripts/proof-nightly-specs.txt` | spec, covering specs, approved, reason | a stale spec or a missing covering spec fails the UI plan; a full proof defers the rows its base also carries |
 | `scripts/proof-quarantine.txt` | suite, package, test, owner, since, review-by, reason | structure, budget, a stale name, or an allowed-skip overlap fails; an expired entry stops excusing |
 | `scripts/proof-test-costs.tsv` | package, test, seconds | an unmeasured test gets the conservative default |
-| `scripts/proof-slow-tests.txt` | package, test | a slow test is left out of a feature proof's regression set |
+| `scripts/proof-slow-tests.txt` | package, test | a slow test is left out of a feature proof's regression set, and of its evidence when it is there only by reaching a changed helper, type or variable |
 | `scripts/proof-ui-costs.tsv` | spec file, wall seconds | an unmeasured spec gets 160 s |
 | `scripts/proof-host-speed.tsv` | kind, spec or package, test title or name, assertion, bound, reference CPUs, note | a malformed row fails the merge; only a row the base carries identically excuses, and only its declared assertion's miss on a CI UI part (§12) |
 
@@ -915,14 +920,14 @@ bucket whose process is gone.
 | Subcommand | Flags |
 |---|---|
 | `unit` | `-out FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE` |
-| `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-host-speed FILE`, `-host-speed-base FILE` |
+| `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-nightly-specs FILE`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `compile` | `-out DIR`, `-select FILE` |
 | `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
 | `feature-report` | `-dir DIR`, `-select FILE` |
-| `ui-ledger` | `-report FILE`, `-list FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
-| `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE` |
+| `ui-ledger` | `-report FILE`, `-list FILE`, `-plan FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
+| `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE`, `-nightly-mode MODE`, `-nightly-specs FILE`, `-nightly-specs-base FILE`, `-run-files-out FILE` |
 | `record` | `-dir DIR`, `-tier TIER`, `-name S`, `-commit SHA`, `-branch S`, `-tree-start SHA`, `-tree-end SHA`, `-clean-start BOOL`, `-clean-end BOOL`, `-base-ref REF`, `-base-commit SHA`, `-merge-base SHA`, `-jobs N`, `-ui-workers N`, `-temporal MODE`, `-temporal-image IMAGE`, `-temporal-address ADDR`, `-image-tag TAG`, `-images FILE`, `-image-tag-own`, `-gates-override S`, `-observability-required`, `-part NAME`, `-attempt N`, `-out-dir DIR`, `-plan FILE`, `-ui-plan FILE`, `-select FILE`, `-status N` |
-| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped` |
+| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-nightly-specs FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped` |
 | `flakes` | `-from GLOB`, `-repo DIR`, `-window N`, `-out FILE`, `-md FILE`, `-min-runs N` |
 | `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S` |
 | `temporal-args` | `-compose FILE` |

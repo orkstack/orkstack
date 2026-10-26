@@ -195,6 +195,7 @@ func cmdMerge(args []string) int {
 	partsDir := fs.String("parts", "", "directory holding one subdirectory per part attempt (required)")
 	jobsDir := fs.String("jobs", "", "GitHub's record of every attempt's jobs")
 	hostSpeedFile := fs.String("host-speed", "scripts/proof-host-speed.tsv", "assertions bounded by host speed")
+	nightlySpecs := fs.String("nightly-specs", nightlySpecFile, "the tree's nightly spec list: a nightly proof must run every spec file it lists")
 	out := fs.String("out", "", "the proof directory to write (required)")
 	name := fs.String("name", "", "the proof's name")
 	ciRunID := fs.String("ci-run-id", "", "the CI run id")
@@ -263,7 +264,8 @@ func cmdMerge(args []string) int {
 	}
 	m := &merger{
 		plan: plan, planPath: *planFile, uiPlan: uiP, uiPlanPath: *uiPlanFile, planSHA: planSHA, uiPlanSHA: uiPlanSHA,
-		parts: parts, absent: absent,
+		nightlySpecsFile: *nightlySpecs,
+		parts:            parts, absent: absent,
 		attempts: attempts, hostSpeed: hostSpeed, hostSpeedFile: *hostSpeedFile,
 		excusedUIGate: map[string]bool{},
 	}
@@ -371,10 +373,14 @@ func isNilLedger(v any) bool {
 
 // merger accumulates the merged proof.
 type merger struct {
-	plan              *integrationPlan
-	planPath          string
-	uiPlan            *uiPlan
-	uiPlanPath        string
+	plan             *integrationPlan
+	planPath         string
+	uiPlan           *uiPlan
+	uiPlanPath       string
+	nightlySpecsFile string
+	// nightlySpecRows are the tree's nightly spec list's rows, read by the
+	// nightly tier's merge itself (checkNightlyUI).
+	nightlySpecRows   []nightlySpecEntry
 	planSHA           string
 	uiPlanSHA         string
 	parts             map[string]map[int]partReading
@@ -744,6 +750,9 @@ func (m *merger) merge(name string) {
 	}
 	m.mergeIntegration()
 	m.mergeUnit()
+	if m.plan.Tier == tierNightly {
+		m.checkNightlyUI()
+	}
 	m.mergeUI()
 	if m.ui != nil {
 		proof.GuardRetries, proof.GuardCeiling = &m.ui.GuardRetries, &m.ui.GuardRetryCeiling
@@ -811,7 +820,7 @@ func (m *merger) merge(name string) {
 		proof.Ledgers.(map[string]any)["integration"] = map[string]any{"summary": m.integration.Summary, "problems": len(m.integration.Problems)}
 	}
 	if m.ui != nil {
-		proof.Ledgers.(map[string]any)["ui-e2e"] = map[string]any{"listed": m.ui.Listed, "pass": m.ui.Pass, "problems": len(m.ui.Problems)}
+		proof.Ledgers.(map[string]any)["ui-e2e"] = map[string]any{"listed": m.ui.Listed, "pass": m.ui.Pass, "deferred": m.ui.Deferred, "problems": len(m.ui.Problems)}
 	}
 	ledgersOK := map[string]bool{}
 	if m.unit != nil {
@@ -1657,6 +1666,48 @@ func (m *merger) checkDeferredAnchor() {
 	}
 }
 
+// checkNightlyUI holds a nightly proof to the tree's nightly spec list itself,
+// never only to the UI plan it was given: with a row listed, the proof needs a
+// UI plan read from that very list (its hash), planning exactly the listed
+// spec files, and its ui-e2e gate (mergeGates). A UI plan that could not be
+// made (a failed listing) is then a failing nightly proof, not a passing one.
+func (m *merger) checkNightlyUI() {
+	rows, err := readNightlySpecs(m.nightlySpecsFile)
+	if err != nil {
+		m.problems = append(m.problems, "the nightly spec list cannot be read: "+err.Error())
+		return
+	}
+	m.nightlySpecRows = rows
+	if m.uiPlan == nil {
+		if len(rows) > 0 {
+			m.problems = append(m.problems, fmt.Sprintf("the nightly spec list names %d spec file(s), and the proof was given no UI plan", len(rows)))
+		}
+		return
+	}
+	got, _ := fileSHA256(m.nightlySpecsFile)
+	if m.uiPlan.Nightly == nil || m.uiPlan.Nightly.SHA256 != got {
+		read := ""
+		if m.uiPlan.Nightly != nil {
+			read = m.uiPlan.Nightly.SHA256
+		}
+		m.problems = append(m.problems, fmt.Sprintf("the nightly spec list %s (sha256 %s) is not the one the UI plan read (%s)",
+			m.nightlySpecsFile, orDash(short(got)), orDash(short(read))))
+	}
+	want := make([]string, 0, len(rows))
+	for _, e := range rows {
+		want = append(want, e.file())
+	}
+	sort.Strings(want)
+	have := make([]string, 0, len(m.uiPlan.Files))
+	for _, f := range m.uiPlan.Files {
+		have = append(have, f.File)
+	}
+	sort.Strings(have)
+	if !slicesEqual(have, want) {
+		m.problems = append(m.problems, fmt.Sprintf("the nightly UI plan's files %v are not the nightly spec list's %v", have, want))
+	}
+}
+
 // checkUIDeferredAnchor is checkDeferredAnchor for the Playwright ledger: the
 // UI plan's nightly mode must be its tier's, only defer leaves a spec file
 // out, and the deferred files must be exactly the rows both nightly spec
@@ -1967,7 +2018,7 @@ func (m *merger) mergeGates(expected []string) {
 	case tierNightly:
 		required["integration"] = true
 		// The nightly tier runs the listed spec files too, when it has any.
-		if m.uiPlan != nil && len(m.uiPlan.Files) > 0 {
+		if len(m.nightlySpecRows) > 0 || (m.uiPlan != nil && len(m.uiPlan.Files) > 0) {
 			required["ui-e2e"] = true
 		}
 	default:
