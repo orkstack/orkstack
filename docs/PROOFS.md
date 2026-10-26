@@ -123,10 +123,14 @@ when a changed path's scope row names `site` (§3). In CI it is part of the
 install the pinned Node and `site/node_modules` for it.
 
 Integration tests run as separate processes, `PROOF_JOBS` at a time (default
-4; the ordinary jobs keep every slot busy, so the phase's wall is their total
-work divided by the slots, but at 6 on a 16-core host one engine boot in 277
-jobs stalled 50 s on its fresh bucket's first read while SeaweedFS grew and
-removed per-bucket volumes, and a merge gate is never rerun).
+6; the ordinary jobs keep every slot busy, so the phase's wall is their total
+work divided by the slots). Six was first measured with one engine boot in
+277 jobs stalled 50 s on its fresh bucket's first read while SeaweedFS grew
+and removed per-bucket volumes, and a merge gate is never rerun, so the
+default stayed 4 until that stall was tolerated (below) and passing jobs'
+buckets were removed while the phase runs. At 6 the proof host, a 2019
+MacBook Pro, then ran two full proofs clean: train-a-full in 79.0 min
+(integration 2805 s) and train-b2-full in 71.2 min (integration 2760 s).
 
 That stall class is tolerated, and still recorded. Every wait for a process a
 test started (`internal/testsupport/bootwait`) allows the boot 180 s, ends at
@@ -134,8 +138,7 @@ once when the process has exited instead of polling it, and logs how long the
 boot took, with a `WARN` line past 20 s that `proofrun overhead` lists under
 "Slow boots". A test binary's bucket create (`s3bucket.Main`) is allowed 120 s
 and warns the same way, and the engine's two boot reads log `list_took`, so a
-slow boot says which read stalled. The default stays 4 until a proof at 6 is
-measured clean again.
+slow boot says which read stalled.
 
 A test process's bucket is removed by the runner, off the process's slot,
 because removing a bucket is the store's heaviest per-bucket operation and its
@@ -918,7 +921,12 @@ every worktree of this repository, and removes:
   hand-off file, or the head of a process's log, where `s3bucket.Main` names
   the bucket it made) and the store still holds, or that the store lists;
 - a work root under a worktree's `.data/work` (or `ORK_ORKER_WORKDIR`) named
-  `<label>-p<pid>-<suffix>`;
+  `<label>-p<pid>-<suffix>`. A dead root holding root-owned files (an
+  activity container wrote them) is refused by the host's removal; it is
+  emptied through a throwaway container of the first-party images' pinned
+  alpine base instead, mounting only that root, with no privileged or host
+  flags and a two-minute limit, and logged `removed through a container`. A
+  failure there is listed and not retried;
 - an activity container whose Orker id ends in a proof id and a pid
   (`proof.OrkerID`), or is a default id, the host and a hash of a work root
   that names a pid;

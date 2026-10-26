@@ -37,9 +37,9 @@
 # proof/NAME stops exactly those. Nothing here kills by name or pattern.
 #
 # Environment:
-#   PROOF_JOBS=4        integration test processes at a time (1 = one after another;
-#                       6 ran 270 of 277 jobs clean and then stalled one engine
-#                       boot on its fresh bucket for 50 s, failing the gate)
+#   PROOF_JOBS=6        integration test processes at a time (1 = one after another;
+#                       measured clean at 6 on the proof host in two full
+#                       proofs, docs/PROOFS.md §2.1)
 #   PROOF_UI_WORKERS=2  Playwright workers: spec files at a time (the browser
 #                       runs in a network namespace of its own, and every
 #                       file owns its ports, bucket and namespace)
@@ -206,7 +206,7 @@ else
 fi
 [ -e "$DIR" ] && invalid "proof/$(basename "$DIR") already exists: a proof never reuses a directory, so yesterday's output can never be mistaken for today's"
 
-PROOF_JOBS="${PROOF_JOBS:-4}"
+PROOF_JOBS="${PROOF_JOBS:-6}"
 PROOF_UI_WORKERS="${PROOF_UI_WORKERS:-2}"
 PROOF_TEMPORAL="${PROOF_TEMPORAL:-own}"
 PROOF_FAIL_FAST="${PROOF_FAIL_FAST:-1}"
