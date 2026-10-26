@@ -128,22 +128,31 @@ and warns the same way, and the engine's two boot reads log `list_took`, so a
 slow boot says which read stalled. The default stays 4 until a proof at 6 is
 measured clean again.
 
-A test process's bucket is removed after the integration phase, not on its
-slot, because removing a bucket is the store's heaviest per-bucket operation
-and its churn was the stall. `proofrun integration` (a local proof, and each CI
-shard) gives every test process a file to name its bucket in
+A test process's bucket is removed by the runner, off the process's slot,
+because removing a bucket is the store's heaviest per-bucket operation and its
+churn was the stall. `proofrun integration` (a local proof, and each CI shard)
+gives every test process a file to name its bucket in
 (`ORK_TEST_BUCKET_LEFT_FILE`, `integration/<job>.bucket`). A process whose
 tests passed writes its bucket's name there and exits (`s3bucket.Finish`); one
-with a failure keeps its bucket and writes nothing, as before. When the phase's
-last process has ended, still inside the gate's wall, the runner removes the
-buckets of the processes whose tests all passed, four at a time and two minutes
-each, asking the store to delete the bucket whole and emptying it object by
-object only when the store refuses a non-empty one. It removes only a name of
-the shape `s3bucket.Name` makes, never the development bucket. The
-`bucket sweep:` lines of `integration.log` say what it kept, what it left
-(`left s3://… : <error>`) and ends with `removed N of M passing job buckets`; a
-removal that fails costs disk and never the verdict, and a run a signal stopped
-removes none.
+with a failure keeps its bucket and writes nothing, as before. The runner's two
+sweepers remove those buckets while the phase runs, two minutes each at most,
+asking the store to delete the bucket whole and emptying it object by object
+only when the store refuses a non-empty one. They do not wait for the phase to
+end, because a bucket holds at least one of the store's volumes until it is
+removed and a store has a bounded number of them: a SeaweedFS mini server
+sizes it from its free disk (290 on the 2019 MacBook Pro host), so a phase that
+kept its 343 passing buckets to its end ran out, and every write failed with
+`No writable volumes`. A slot hands its process's bucket over before it starts
+the next process and waits while four already wait, so the buckets alive at
+once never exceed the slots, that backlog and the two removals in flight. When
+the phase's last process has ended, still inside the gate's wall, the runner
+removes what the sweepers had not reached. It removes only a name of the shape
+`s3bucket.Name` makes, never the development bucket. The `bucket sweep:` lines
+of `integration.log` say what it kept, what it left (`left s3://… : <error>`),
+how many went while the phase ran, and end with
+`removed N of M passing job buckets`; a removal that fails costs disk and never
+the verdict, and a run a signal stopped removes no more and leaves the rest
+named in its hand-off files (§10).
 
 Playwright spec files run on
 `PROOF_UI_WORKERS` workers (default 2 — measured clean on a 16-core host,
@@ -714,7 +723,7 @@ there is refused). Its Markdown report has:
   wall, its top-level tests' ledger seconds, and the difference. That
   difference is the per-process overhead: bucket create, binary init and
   Temporal namespace registration, together (a bucket's removal was part of it
-  until the end-of-phase sweep, §2.1, took it over). The report gives its
+  until the runner's bucket sweep, §2.1, took it off the slot). The report gives its
   min, median, p90, max and total, and the total in slot-seconds and in wall
   at `proof.json`'s `proof_jobs`. It also gives the heavy phase's wall (the
   plan's heavy jobs, run alone) and the ordinary phase's wall and slot
@@ -885,7 +894,16 @@ buckets and work roots failed tests kept; `make proof-clean REMOVE=1` removes
 one only once the process its name records is gone. It also lists the passing
 jobs' buckets that a bucket sweep a signal stopped did not reach (§2.1): they
 are the proof's `integration/*.bucket` files, and the store holds each as a
-bucket whose process is gone.
+bucket whose process is gone. A proof stopped this way (`make proof-stop`, or
+a signal) leaves those buckets, each holding store volumes, until
+`make proof-clean REMOVE=1` runs: run it in the stopped proof's worktree
+before the next proof starts on the host, or that proof can run out of
+volumes. The recorded names are the source of truth: the development store,
+SeaweedFS 4.48 with its auth off, answers the S3 bucket listing with no bucket
+at all, so `proof-clean` finds a leftover by the names this worktree's proofs
+recorded (`proof/*/integration/*.bucket`, and the `kept s3://…` and
+`left s3://…` lines of their logs), checks the store still holds it, and adds
+whatever a store that does list its buckets shows.
 
 ## 11. Reference
 

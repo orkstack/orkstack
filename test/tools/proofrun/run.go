@@ -205,10 +205,12 @@ type runner struct {
 	// and the fixture's containers are the load it must not see.
 	heavyDone string
 	// sweep is set by a run that hands the buckets of passing test processes
-	// to sweepBuckets instead of letting each process remove its own on its
-	// slot; sweepable names the process labels whose bucket may be removed.
+	// to its sweepers instead of letting each process remove its own on its
+	// slot; sweepable names the process labels whose bucket may be removed,
+	// and sweeper is the one startSweeper started (sweep.go).
 	sweep     bool
 	sweepable map[string]bool
+	sweeper   *bucketSweeper
 }
 
 // jobResult is what one process reported.
@@ -406,6 +408,7 @@ func (r *runner) runJob(ctx context.Context, j job, slot int) jobResult {
 
 	if r.sweep {
 		r.noteSweepable(j, runErr, local)
+		r.handOff(ctx, label)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -936,10 +939,13 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		r.progress = stdout
 	}
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	// The passing processes leave their buckets to the sweepers, which remove
+	// them off the slots while the phase runs; the end-of-phase pass removes
+	// what they had not reached.
+	remove := bucketRemover()
+	r.startSweeper(ctx, remove)
 	r.runAll(ctx, jobs)
-	// The passing processes left their buckets for this: removed once the
-	// phase is over, so the removals' churn is never on a slot beside a test.
-	r.sweepBuckets(ctx, bucketRemover())
+	r.sweepBuckets(ctx, remove)
 	stopSignals()
 	// expected = run ∪ deferred (writePlan). A deferred test ran nowhere, so
 	// the ledger is built over the run set and each deferred test is then
@@ -1260,8 +1266,10 @@ func runShard(o *integrationPlanOptions) int {
 	}
 	started := time.Now()
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	remove := bucketRemover()
+	r.startSweeper(ctx, remove)
 	r.runAll(ctx, jobs)
-	r.sweepBuckets(ctx, bucketRemover())
+	r.sweepBuckets(ctx, remove)
 	stopSignals()
 	shardSet := map[testKey]bool{}
 	for _, j := range jobs {

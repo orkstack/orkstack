@@ -10,6 +10,22 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- A proof's integration phase removes each passing test process's bucket
+  while the phase runs, two at a time, off the process's slot, instead of
+  keeping every one until the phase's end. A bucket holds store volumes until
+  it is removed, and a phase that kept its 343 passing buckets exhausted the
+  development store's 290 (`No writable volumes`), failing the merge gate on
+  writes no test made wrong. A slot waits to start its next process while
+  four removals are pending, so the buckets alive at once stay within the
+  slots, that backlog and the removals in flight.
+- `make proof-clean` finds the buckets a stopped proof left. The development
+  store (SeaweedFS 4.48, auth off) lists no buckets at all, so the target
+  listed none and removed none; it now also reads the names this worktree's
+  proofs recorded (`proof/*/integration/*.bucket` and the logs' `kept` and
+  `left` lines). A proof stopped by `make proof-stop` or a signal leaves its
+  passing jobs' buckets, each holding store volumes, until
+  `make proof-clean REMOVE=1` runs in its worktree: run it before the next
+  proof on the host.
 - `proofrun overhead` counts a concurrent setup group once, through its
   `setup` row, and puts the site gate among the fast gates: it summed the
   group's members as if serial and reported 88.3 minutes for a proof whose wall

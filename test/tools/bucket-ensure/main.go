@@ -8,8 +8,10 @@
 // ORK_BUCKET_ACTION selects the mode: "ensure" (the default — create if
 // absent, idempotently), "cleanup" (delete the bucket, emptying it first when
 // the store refuses a non-empty one; idempotently against a bucket that is
-// already gone) or "list" (print every bucket's name; ORK_S3_BUCKET is not
-// needed).
+// already gone), "list" (print every bucket's name; ORK_S3_BUCKET is not
+// needed) or "leftovers" (print the test processes' buckets the store still
+// holds, the ones scripts/proof-clean.sh lists, and remove those whose process
+// is gone when ORK_BUCKET_REMOVE=1).
 //
 // WHY THIS EXISTS. The development stack makes exactly one bucket,
 // `orkstack-artifacts`, once, and every e2e spec file used to share it. A
@@ -47,6 +49,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -67,8 +75,10 @@ func main() {
 		err = cleanup()
 	case "list":
 		err = list()
+	case "leftovers":
+		err = leftovers()
 	default:
-		err = fmt.Errorf("unknown ORK_BUCKET_ACTION %q: want \"ensure\", \"cleanup\" or \"list\"", action)
+		err = fmt.Errorf("unknown ORK_BUCKET_ACTION %q: want \"ensure\", \"cleanup\", \"list\" or \"leftovers\"", action)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bucket-ensure: %v\n", err)
@@ -143,6 +153,136 @@ func list() error {
 		fmt.Println(aws.ToString(b.Name))
 	}
 	return nil
+}
+
+// leftoverName is the shape of a test process's bucket
+// (internal/testsupport/s3bucket.Name, and a spec file's own, ui/e2e/harness.ts
+// ownBucket): orkstack-<label>-<pid>-<suffix>. Its pid is the process that
+// made it.
+var leftoverName = regexp.MustCompile(`^orkstack-[a-z][a-z0-9-]*-([0-9]+)-[0-9]+$`)
+
+// recordedName finds a bucket name a proof's integration logs record: one a
+// failing process kept, and one the sweep could not remove.
+var recordedName = regexp.MustCompile(`(?:s3bucket: kept|bucket sweep: left) s3://([^\s]+)`)
+
+// leftovers prints the buckets of test processes the store still holds, and
+// removes each whose process is gone when ORK_BUCKET_REMOVE=1. It is
+// scripts/proof-clean.sh's bucket section.
+func leftovers() error {
+	ctx := context.Background()
+	lctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	client, endpoint, err := newBareClient(lctx)
+	if err != nil {
+		return err
+	}
+	return findLeftovers(ctx, client, endpoint, envOr("ORK_PROOF_ROOT", "proof"),
+		os.Getenv("ORK_BUCKET_REMOVE") == "1", processAlive, os.Stdout)
+}
+
+// findLeftovers looks for leftover buckets in two places, because neither is
+// enough alone: the store's own listing, and the names the proofs under root
+// recorded (each process's integration/<job>.bucket hand-off file, which a
+// stopped run's sweep leaves, and the "kept" and "left" lines of their logs).
+// SeaweedFS 4.48 with its auth off answers ListBuckets with no bucket at all,
+// so on the development store the recorded names are the whole of what is
+// found. A recorded name the store no longer holds is skipped. A bucket whose
+// process is alive is in use and left alone; with remove set, every other one
+// is removed (cleanupBucket). A bucket it cannot remove is reported, never an
+// error.
+func findLeftovers(ctx context.Context, client *s3.Client, endpoint, root string, remove bool,
+	alive func(pid int) bool, out io.Writer) error {
+	held := map[string]bool{}
+	lctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	listed, err := client.ListBuckets(lctx, &s3.ListBucketsInput{})
+	cancel()
+	if err != nil {
+		var apiErr smithy.APIError
+		if !errors.As(err, &apiErr) {
+			return fmt.Errorf("list buckets at %s: %w", endpoint, err)
+		}
+		fmt.Fprintf(out, "  (the store refused its bucket listing: %v; only the names proofs recorded are checked)\n", err)
+	}
+	if listed != nil {
+		for _, b := range listed.Buckets {
+			if name := aws.ToString(b.Name); leftoverName.MatchString(name) {
+				held[name] = true
+			}
+		}
+	}
+	for _, name := range recordedNames(root) {
+		if held[name] || !leftoverName.MatchString(name) {
+			continue
+		}
+		hctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		_, err := client.HeadBucket(hctx, &s3.HeadBucketInput{Bucket: aws.String(name)})
+		cancel()
+		switch {
+		case err == nil:
+			held[name] = true
+		case !bucketAbsent(err):
+			fmt.Fprintf(out, "  %s  (recorded by a proof; the store did not say whether it holds it: %v)\n", name, err)
+		}
+	}
+
+	names := make([]string, 0, len(held))
+	for name := range held {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		pid, _ := strconv.Atoi(leftoverName.FindStringSubmatch(name)[1])
+		if alive(pid) {
+			fmt.Fprintf(out, "  %s  (in use: pid %d is alive; left alone)\n", name, pid)
+			continue
+		}
+		fmt.Fprintf(out, "  %s\n", name)
+		if !remove {
+			continue
+		}
+		rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		if err := cleanupBucket(rctx, client, name, endpoint, io.Discard); err != nil {
+			fmt.Fprintf(out, "    (not removed: %v)\n", err)
+		}
+		cancel()
+	}
+	return nil
+}
+
+// recordedNames are the bucket names the proofs under root recorded: the
+// hand-off files a passing process wrote and a sweep has not removed, and the
+// buckets their logs say were kept or left. A file that cannot be read
+// records nothing.
+func recordedNames(root string) []string {
+	var names []string
+	files, _ := filepath.Glob(filepath.Join(root, "*", "integration", "*.bucket"))
+	for _, file := range files {
+		if data, err := os.ReadFile(file); err == nil {
+			names = append(names, strings.TrimSpace(string(data)))
+		}
+	}
+	logs, _ := filepath.Glob(filepath.Join(root, "*", "integration", "*.log"))
+	more, _ := filepath.Glob(filepath.Join(root, "*", "integration.log"))
+	for _, file := range append(logs, more...) {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		for _, m := range recordedName.FindAllSubmatch(data, -1) {
+			names = append(names, string(m[1]))
+		}
+	}
+	return names
+}
+
+// processAlive reports whether a process with pid exists, whoever owns it. A
+// reused pid keeps a leftover a little longer; it never removes a live one.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func ensure() error {

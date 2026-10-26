@@ -246,6 +246,261 @@ func TestSweepBuckets_RemovesSeveralAtOnceAndNoMoreThanTheLimit(t *testing.T) {
 	}
 }
 
+// passes is what runJob does for a process of label whose one test passed:
+// the process names bucket in its hand-off file, the runner notes it
+// sweepable and hands it to the sweepers.
+func passes(t *testing.T, ctx context.Context, r *runner, label, bucket string) {
+	t.Helper()
+	if err := os.WriteFile(r.bucketFile(label), []byte(bucket+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := newCollector()
+	c.results[testKey{"p", "TestA"}] = &entry{Outcome: outcomePass}
+	r.noteSweepable(job{ID: label, Package: "p", Tests: []string{"TestA"}}, nil, c)
+	r.handOff(ctx, label)
+}
+
+// eventually polls cond until it holds or a deadline passes.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: not within 30s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// liveBuckets is a store that counts the buckets alive at once: a process
+// makes one when it starts, and remove takes it away once gate is closed.
+type liveBuckets struct {
+	mu      sync.Mutex
+	live    map[string]bool
+	peak    int
+	removed []string
+	gate    chan struct{}
+}
+
+func (l *liveBuckets) make(bucket string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.live[bucket] = true
+	l.peak = max(l.peak, len(l.live))
+}
+
+func (l *liveBuckets) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.live)
+}
+
+func (l *liveBuckets) remove(ctx context.Context, bucket string) error {
+	select {
+	case <-l.gate:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.live, bucket)
+	l.removed = append(l.removed, bucket)
+	return nil
+}
+
+// A phase never holds more buckets than its slots, the sweep's backlog and the
+// removals in flight: a slot whose process ended hands its bucket over before
+// it starts the next one, and waits while the backlog is full. With every
+// removal held, the slots fill exactly that bound and stop there; released,
+// every bucket goes, and the phase's end has nothing left to remove.
+func TestSweeper_LiveBucketsNeverExceedTheSlotsTheBacklogAndTheRemovals(t *testing.T) {
+	const slots = 3
+	bound := slots + bucketSweepBacklog + bucketSweepers
+	jobs := 3 * bound
+	f := newSweepFixture(t, nil)
+	store := &liveBuckets{live: map[string]bool{}, gate: make(chan struct{})}
+	ctx := context.Background()
+	f.r.startSweeper(ctx, store.remove)
+
+	var (
+		mu      sync.Mutex
+		started int
+	)
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for s := 0; s < slots; s++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				label, bucket := fmt.Sprintf("ork-%03d", i), fmt.Sprintf("orkstack-ork-%d-7", 100+i)
+				mu.Lock()
+				started++
+				mu.Unlock()
+				store.make(bucket)
+				passes(t, ctx, f.r, label, bucket)
+			}
+		}()
+	}
+	feed := make(chan struct{})
+	go func() {
+		defer close(feed)
+		for i := 0; i < jobs; i++ {
+			next <- i
+		}
+		close(next)
+	}()
+
+	// Held removals: the slots stop once the bound is alive, and no process
+	// starts beyond it.
+	eventually(t, "the slots filling the bound", func() bool { return store.count() >= bound })
+	mu.Lock()
+	if started != bound {
+		t.Errorf("%d processes started with every removal held, want %d (slots + backlog + removals)", started, bound)
+	}
+	mu.Unlock()
+
+	close(store.gate)
+	<-feed
+	wg.Wait()
+	f.r.sweepBuckets(ctx, store.remove)
+
+	if store.peak != bound {
+		t.Errorf("peak live buckets = %d, want %d: never more than the slots, the backlog and the removals", store.peak, bound)
+	}
+	if got := store.count(); got != 0 {
+		t.Errorf("%d buckets alive after the phase, want none", got)
+	}
+	if got := f.files(t); len(got) != 0 {
+		t.Errorf("hand-off files left = %q, want none", got)
+	}
+	want := fmt.Sprintf("bucket sweep: removed %d of %d passing job buckets in ", jobs, jobs)
+	if !strings.Contains(f.log.String(), want) {
+		t.Errorf("log is missing %q:\n%s", want, f.log.String())
+	}
+}
+
+// A passing process's bucket is removed while the phase runs, before the
+// phase's end, and that end counts it without removing it again.
+func TestSweeper_RemovesAPassingBucketWhileThePhaseRuns(t *testing.T) {
+	f := newSweepFixture(t, nil)
+	var rec recorder
+	ctx := context.Background()
+	f.r.startSweeper(ctx, rec.remove)
+
+	passes(t, ctx, f.r, "ork-001", "orkstack-ork-11-100")
+	eventually(t, "the bucket removed while the phase runs", func() bool { return len(rec.names()) == 1 })
+	eventually(t, "its hand-off file removed", func() bool { return len(f.files(t)) == 0 })
+
+	f.r.sweepBuckets(ctx, rec.remove)
+
+	if got, want := rec.names(), []string{"orkstack-ork-11-100"}; !slices.Equal(got, want) {
+		t.Fatalf("removed %q, want %q once", got, want)
+	}
+	out := f.log.String()
+	for _, want := range []string{
+		"bucket sweep: 1 passing job buckets were removed while the phase ran",
+		"bucket sweep: removed 1 of 1 passing job buckets in ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// A process whose tests did not all pass is never handed to the sweepers: its
+// bucket stays for the post-mortem.
+func TestSweeper_AFailedProcessesBucketIsNeverHandedOver(t *testing.T) {
+	f := newSweepFixture(t, map[string]string{"ork-001": "orkstack-ork-11-100"})
+	var rec recorder
+	ctx := context.Background()
+	f.r.startSweeper(ctx, rec.remove)
+	c := newCollector()
+	c.results[testKey{"p", "TestA"}] = &entry{Outcome: outcomeFail}
+	f.r.noteSweepable(job{ID: "ork-001", Package: "p", Tests: []string{"TestA"}}, nil, c)
+	f.r.handOff(ctx, "ork-001")
+
+	f.r.sweepBuckets(ctx, rec.remove)
+
+	if got := rec.names(); len(got) != 0 {
+		t.Fatalf("removed %q: a failing process's bucket is kept", got)
+	}
+	if !strings.Contains(f.log.String(), "bucket sweep: kept s3://orkstack-ork-11-100 of ork-001: not every test of it passed") {
+		t.Errorf("log does not say it was kept:\n%s", f.log.String())
+	}
+}
+
+// A removal that fails while the phase runs is logged once and its file kept:
+// the phase's end counts it among the passing buckets and does not try it
+// again.
+func TestSweeper_ARemovalThatFailedWhileThePhaseRanIsNotTriedAgain(t *testing.T) {
+	f := newSweepFixture(t, nil)
+	calls := map[string]int{}
+	var mu sync.Mutex
+	remove := func(_ context.Context, bucket string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls[bucket]++
+		if bucket == "orkstack-ork-12-200" {
+			return errors.New("store unavailable")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	f.r.startSweeper(ctx, remove)
+	passes(t, ctx, f.r, "ork-001", "orkstack-ork-11-100")
+	passes(t, ctx, f.r, "ork-002", "orkstack-ork-12-200")
+
+	f.r.sweepBuckets(ctx, remove)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls["orkstack-ork-11-100"] != 1 || calls["orkstack-ork-12-200"] != 1 {
+		t.Fatalf("removal calls = %v, want one each", calls)
+	}
+	if got, want := f.files(t), []string{"ork-002"}; !slices.Equal(got, want) {
+		t.Errorf("hand-off files left = %q, want %q", got, want)
+	}
+	out := f.log.String()
+	for _, want := range []string{
+		"bucket sweep: left s3://orkstack-ork-12-200 of ork-002: store unavailable",
+		"bucket sweep: removed 1 of 2 passing job buckets in ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log is missing %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "left s3://orkstack-ork-12-200"); n != 1 {
+		t.Errorf("the failed removal is logged %d times, want once:\n%s", n, out)
+	}
+}
+
+// A run that was stopped hands nothing more over and removes nothing more,
+// even with its backlog full: its slots never wait on the sweepers, and its
+// hand-off files stay for scripts/proof-clean.sh.
+func TestSweeper_AStoppedRunNeitherWaitsNorRemoves(t *testing.T) {
+	f := newSweepFixture(t, nil)
+	var rec recorder
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f.r.startSweeper(ctx, rec.remove)
+
+	for i := 0; i < bucketSweepBacklog+bucketSweepers+2; i++ {
+		passes(t, ctx, f.r, fmt.Sprintf("ork-%03d", i), fmt.Sprintf("orkstack-ork-%d-7", 100+i))
+	}
+	f.r.sweepBuckets(ctx, rec.remove)
+
+	if got := rec.names(); len(got) != 0 {
+		t.Fatalf("a stopped run removed %q", got)
+	}
+	if got := len(f.files(t)); got != bucketSweepBacklog+bucketSweepers+2 {
+		t.Errorf("%d hand-off files left, want every one", got)
+	}
+	if !strings.Contains(f.log.String(), "bucket sweep: skipped (proofrun was stopped)") {
+		t.Errorf("log does not say the sweep was skipped:\n%s", f.log.String())
+	}
+}
+
 func TestNoteSweepable(t *testing.T) {
 	j := job{ID: "ork-001", Package: "p", Tests: []string{"TestA", "TestB"}}
 	outcomes := func(a, b string) *collector {

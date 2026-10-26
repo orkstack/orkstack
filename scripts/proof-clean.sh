@@ -6,7 +6,11 @@
 #   scripts/proof-clean.sh --remove   remove what is listed
 #
 #   - object-storage buckets named orkstack-<label>-<pid>-<suffix>
-#     (internal/testsupport/s3bucket keeps a failed process's bucket);
+#     (internal/testsupport/s3bucket keeps a failed process's bucket, and a
+#     proof a signal stopped leaves its passing processes' ones): the ones the
+#     store lists, and the ones this worktree's proofs recorded (proof/*/), since
+#     SeaweedFS with its auth off lists none (test/tools/bucket-ensure,
+#     ORK_BUCKET_ACTION=leftovers);
 #   - Orker work roots under .data/work that tests create per test, named
 #     <label>-p<pid>-<suffix> (internal/testsupport/proof.WorkRootPattern, and
 #     the observability gate's own; a test removes its own unless a container
@@ -45,20 +49,8 @@ s3env=(
 	ORK_S3_SECRET_KEY="${ORK_S3_SECRET_KEY:-orkstack-secret}"
 )
 echo "== buckets kept by test processes"
-if buckets="$(env "${s3env[@]}" ORK_BUCKET_ACTION=list go run ./test/tools/bucket-ensure 2>/dev/null)"; then
-	for b in $(printf '%s\n' "$buckets" | grep -E '^orkstack-[a-z][a-z0-9-]*-[0-9]+-[0-9]+$'); do
-		pid="${b%-*}"
-		pid="${pid##*-}"
-		if alive "$pid"; then
-			echo "  $b  (in use: pid $pid is alive; left alone)"
-			continue
-		fi
-		echo "  $b"
-		if [ -n "$remove" ]; then
-			env "${s3env[@]}" ORK_BUCKET_ACTION=cleanup ORK_S3_BUCKET="$b" go run ./test/tools/bucket-ensure
-		fi
-	done
-else
+if ! env "${s3env[@]}" ORK_BUCKET_ACTION=leftovers ORK_PROOF_ROOT=proof ${remove:+ORK_BUCKET_REMOVE=1} \
+	go run ./test/tools/bucket-ensure 2>/dev/null; then
 	echo "  (object storage not reachable; skipped)"
 fi
 

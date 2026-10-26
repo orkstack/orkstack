@@ -19,7 +19,7 @@ import (
 // integration process's wall against the seconds its tests' ledger rows
 // account for (the difference is the per-process overhead: bucket create,
 // binary init, Temporal namespace registration; the bucket remove was part
-// of it until the end-of-phase sweep), the heavy and
+// of it until the runner's bucket sweep), the heavy and
 // ordinary phases' walls and slot utilisation, the two Playwright
 // invocations, and any slow-boot warnings the logs carry. It runs nothing
 // and never writes inside the proof directory; a missing file is a line in
@@ -775,7 +775,7 @@ func overheadReport(d overheadData) string {
 	if len(a.Processes) == 0 {
 		w("No integration start/end lines: no per-process table.\n\n")
 	} else {
-		w("%d processes. A process's overhead is its wall (its `start`/`end` lines) minus the seconds its tests' top-level ledger rows report: bucket create, binary init and Temporal namespace registration, together (the bucket remove ran here too until the end-of-phase sweep took it over).\n\n", len(a.Processes))
+		w("%d processes. A process's overhead is its wall (its `start`/`end` lines) minus the seconds its tests' top-level ledger rows report: bucket create, binary init and Temporal namespace registration, together (the bucket remove ran here too until the runner's bucket sweep took it off the slot).\n\n", len(a.Processes))
 		if a.Unended > 0 {
 			w("- %d processes have a start line and no end line (stopped, or the log is cut short); they are left out.\n", a.Unended)
 		}
