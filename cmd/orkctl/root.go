@@ -134,6 +134,11 @@ type globalFlags struct {
 	// can answer a confirmation from" (confirm.go). Nil means the real
 	// check; no flag sets it.
 	terminal func() bool
+
+	// goos is the test seam for the host operating system the local-run
+	// commands (`task run`, `activity test`) check before they start
+	// (local_platform.go). Empty means runtime.GOOS; no flag sets it.
+	goos string
 }
 
 // newRootCommand builds the command tree and the shared flag state.

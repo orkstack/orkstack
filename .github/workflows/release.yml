@@ -1,11 +1,17 @@
 name: release
 
-# The pre-release gate. `validate` refuses a version that is not
-# vMAJOR.MINOR.PATCH before anything else runs. `gate` runs the release tier:
-# every gate, the scale and soak tests included, observability always. `tag`
-# creates the release tag
-# only after `proofrun verify -release` accepts that proof for the exact
-# commit. Nothing here dispatches itself; the user runs it.
+# The pre-release gate, and the release itself. `validate` refuses a version
+# that is not vMAJOR.MINOR.PATCH, or that the built-in activity catalog and
+# CHANGELOG.md do not name, before anything else runs. `gate` runs the
+# release tier: every gate, the scale and soak tests included, observability
+# always. `artifacts`, beside it, builds what a release publishes (the
+# archives, the multi-arch images as OCI layouts, the quickstart bundle) and
+# runs the quickstart on them end to end. `tag` creates the release tag only
+# after `proofrun verify -release` accepts that proof for the exact commit,
+# and `publish` then pushes the images to ghcr.io byte for byte and creates
+# the GitHub release, running no repository code (docs/PROOFS.md §10).
+# `tag: false` is a full dry run that publishes nothing. Nothing here
+# dispatches itself; the user runs it.
 
 on:
   workflow_dispatch:
@@ -33,11 +39,12 @@ jobs:
   # version that is not vMAJOR.MINOR.PATCH.
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 25
     permissions:
       contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      latest: ${{ steps.order.outputs.latest }}
     steps:
       - name: validate the version
         id: version
@@ -64,6 +71,40 @@ jobs:
             echo "a tag is created only from a dispatch on main; this one ran on $REF" >&2
             exit 1
           fi
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          # Every tag, so the order step sees each release there is.
+          fetch-depth: 0
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+          cache: false
+      - name: the catalog and the changelog name this version
+        timeout-minutes: 5
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          go run ./internal/dist/cmd/dist check -version "$VERSION"
+          go run ./internal/dist/cmd/dist notes -version "$VERSION" >/dev/null
+      # The release is the latest unless a higher release exists, so a backport
+      # never takes releases/latest/download from the newer series; one below
+      # a released tag of its own series is refused here, before it is built.
+      - name: the order of this release among the tags
+        id: order
+        timeout-minutes: 3
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git tag --list >"$RUNNER_TEMP/tags"
+          go run ./internal/dist/cmd/dist order -version "$VERSION" -tags "$RUNNER_TEMP/tags" >>"$GITHUB_OUTPUT"
 
   gate:
     needs: validate
@@ -81,8 +122,97 @@ jobs:
       int_shards: 14
       ui_shards: 5
 
+  # What a release publishes, built and run before anything is: the binaries
+  # and their archives, every image for linux/amd64 and linux/arm64 as an OCI
+  # layout, and the quickstart bundle naming those images by digest. The
+  # smoke pushes the layouts to a registry on this runner and runs the bundle
+  # on them end to end. Read-only: nothing leaves this job but its artifact,
+  # and nothing it runs comes from a cache or a floating tag.
+  artifacts:
+    needs: validate
+    concurrency:
+      group: release-artifacts-${{ needs.validate.outputs.version }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 195
+    permissions:
+      contents: read
+    # The name publish downloads, so a re-run of publish finds this upload.
+    outputs:
+      artifact: release-${{ needs.validate.outputs.version }}-${{ github.run_id }}-a${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+          cache: false
+      # The activity images run a package manager at build time; arm64 runs it
+      # under QEMU. The other images run nothing for the target platform.
+      # QEMU's installer runs privileged and BuildKit builds every image, so
+      # both are pinned by digest; Dependabot does not see an image named in
+      # `with:`, so these are updated by hand.
+      - uses: docker/setup-qemu-action@v4.4.0
+        timeout-minutes: 5
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          cache-image: false
+      - uses: docker/setup-buildx-action@v4.4.1
+        timeout-minutes: 5
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      - name: the binaries and their archives
+        timeout-minutes: 20
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: make dist VERSION="$VERSION"
+      - name: the images, linux/amd64 and linux/arm64
+        timeout-minutes: 90
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: make release-images VERSION="$VERSION" OUT=dist/layouts PLATFORMS=linux/amd64,linux/arm64
+      - name: smoke the release before anything is published
+        timeout-minutes: 25
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: scripts/release-smoke.sh --layouts dist/layouts "$VERSION"
+      - name: the quickstart bundle, the checksums, the notes and the image list
+        timeout-minutes: 5
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          mkdir -p dist/meta
+          go run ./internal/dist/cmd/dist digests -layouts dist/layouts >dist/meta/images.tsv
+          go run ./internal/dist/cmd/dist quickstart -version "$VERSION" -images dist/meta/images.tsv \
+            -registry ghcr.io -tag "${VERSION#v}" -out dist
+          go run ./internal/dist/cmd/dist sums dist
+          go run ./internal/dist/cmd/dist notes -version "$VERSION" >dist/meta/notes.md
+          cp deploy/skopeo-image.txt dist/meta/skopeo-image.txt
+      - uses: actions/upload-artifact@v7.0.2
+        timeout-minutes: 30
+        with:
+          name: release-${{ needs.validate.outputs.version }}-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+            dist/meta/
+            dist/layouts/
+          if-no-files-found: error
+          retention-days: 7
+
   tag:
-    needs: [validate, gate]
+    needs: [validate, gate, artifacts]
     if: ${{ inputs.tag && github.ref == 'refs/heads/main' }}
     concurrency:
       group: release-tag-${{ needs.validate.outputs.version }}
@@ -104,10 +234,11 @@ jobs:
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
+          cache: false
       - uses: actions/download-artifact@v8.0.2
         timeout-minutes: 3
         with:
-          name: proof-${{ github.run_id }}-a${{ github.run_attempt }}
+          name: ${{ needs.gate.outputs.proof_artifact }}
           path: ${{ runner.temp }}/ci/proof
       - name: verify the release proof
         timeout-minutes: 5
@@ -138,3 +269,121 @@ jobs:
           echo "::add-mask::$auth"
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
           git push origin "refs/tags/$VERSION"
+
+  # The release: the images to ghcr.io, then the GitHub release with its
+  # assets. It runs no repository code and checks out nothing: it holds the
+  # only package write and the only contents write that touch a release, so
+  # every step is a fixed command over the artifacts job's output, which it
+  # verifies first.
+  publish:
+    needs: [validate, artifacts, tag]
+    if: ${{ inputs.tag && github.ref == 'refs/heads/main' }}
+    concurrency:
+      group: release-publish-${{ needs.validate.outputs.version }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        timeout-minutes: 15
+        with:
+          name: ${{ needs.artifacts.outputs.artifact }}
+          path: ${{ runner.temp }}/release
+      # Everything is checked before anything is pushed: a version tag, once
+      # pushed, never moves.
+      - name: check what the artifacts job built
+        timeout-minutes: 5
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          sha256sum -c SHA256SUMS
+          # The assets released are exactly the files SHA256SUMS sums.
+          printf '%s\n' *.tar.gz *.zip | sort >"$RUNNER_TEMP/assets"
+          awk '{ sub(/^\*/, "", $2); print $2 }' SHA256SUMS | sort >"$RUNNER_TEMP/summed"
+          cmp -s "$RUNNER_TEMP/assets" "$RUNNER_TEMP/summed" || { echo "the release assets are not exactly the files SHA256SUMS sums" >&2; diff "$RUNNER_TEMP/assets" "$RUNNER_TEMP/summed" >&2 || true; exit 1; }
+          skopeo="$(grep -v '^#' meta/skopeo-image.txt | head -1)"
+          [[ "$skopeo" =~ ^quay\.io/skopeo/stable:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]] || { echo "skopeo image: $skopeo" >&2; exit 1; }
+          dups="$(cut -f1 meta/images.tsv | sort | uniq -d)"
+          [ -z "$dups" ] || { echo "listed more than once: $dups" >&2; exit 1; }
+          # The bundle SHA256SUMS covers names every image the list does.
+          tar -xzOf orkstack-quickstart.tar.gz orkstack-quickstart/.env >"$RUNNER_TEMP/quickstart.env"
+          full="${VERSION#v}"
+          n=0
+          while IFS=$'\t' read -r name digest; do
+            [[ "$name" =~ ^(ork|orker|orkctl|ui|activity-(shell|http|file|json|git|template))$ ]] || { echo "image name: $name" >&2; exit 1; }
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "digest: $digest" >&2; exit 1; }
+            index="layouts/$name/index.json"
+            [ -f "$index" ] || { echo "no layout for $name" >&2; exit 1; }
+            # The layout is the image its digest names: its index names that
+            # one manifest, whose bytes hash to it and list both platforms.
+            [ "$(jq -r '.manifests | length' "$index")" = 1 ] && [ "$(jq -r '.manifests[0].digest' "$index")" = "$digest" ] || { echo "$index does not name exactly $digest" >&2; exit 1; }
+            blob="layouts/$name/blobs/sha256/${digest#sha256:}"
+            [ "sha256:$(sha256sum <"$blob" | cut -d' ' -f1)" = "$digest" ] || { echo "$blob does not hash to $digest" >&2; exit 1; }
+            platforms="$(jq -r '[.manifests[]?.platform | select(. != null) | .os + "/" + .architecture] | unique | join(",")' "$blob")"
+            [ "$platforms" = "linux/amd64,linux/arm64" ] || { echo "$name is built for '$platforms', want linux/amd64 and linux/arm64" >&2; exit 1; }
+            grep -qF "ghcr.io/orkstack/$name:$full@$digest" "$RUNNER_TEMP/quickstart.env" || { echo "the quickstart bundle does not name ghcr.io/orkstack/$name:$full@$digest" >&2; exit 1; }
+            n=$((n + 1))
+          done <meta/images.tsv
+          [ "$n" -eq 10 ] || { echo "$n images, want 10" >&2; exit 1; }
+      - name: push the images to ghcr.io, byte for byte
+        timeout-minutes: 60
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          skopeo="$(grep -v '^#' meta/skopeo-image.txt | head -1)"
+          umask 077
+          auth="$(printf '%s:%s' "$ACTOR" "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          # The credential leaves the disk however this step ends.
+          trap 'rm -f "$RUNNER_TEMP/auth.json"' EXIT
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$auth" >"$RUNNER_TEMP/auth.json"
+          sk() { docker run --rm -v "$RUNNER_TEMP/auth.json:/auth.json:ro" -v "$PWD/layouts:/layouts:ro" "$skopeo" "$@"; }
+          full="${VERSION#v}"
+          minor="${full%.*}"
+          while IFS=$'\t' read -r name digest; do
+            ref="ghcr.io/orkstack/$name"
+            # A version tag never moves: one that already holds this digest
+            # (a re-run of this job) is left alone, and any other is refused.
+            # An inspect that fails for any reason is taken for "absent": the
+            # tag job pushed this version's git tag in this run, which fails
+            # for a version released before, so the only image this tag can
+            # hold is this run's own, and the check after the copy proves it.
+            if sk inspect --raw --authfile /auth.json "docker://$ref:$full" >"$RUNNER_TEMP/have.json" 2>/dev/null; then
+              have="sha256:$(sha256sum <"$RUNNER_TEMP/have.json" | cut -d' ' -f1)"
+              [ "$have" = "$digest" ] || { echo "$ref:$full already holds $have, not $digest" >&2; exit 1; }
+            else
+              sk copy --all --preserve-digests --dest-authfile /auth.json "oci:/layouts/$name" "docker://$ref:$full"
+            fi
+            sk copy --all --preserve-digests --dest-authfile /auth.json --src-authfile /auth.json "docker://$ref:$full" "docker://$ref:$minor"
+            for tag in "$full" "$minor"; do
+              sk inspect --raw --authfile /auth.json "docker://$ref:$tag" >"$RUNNER_TEMP/got.json"
+              got="sha256:$(sha256sum <"$RUNNER_TEMP/got.json" | cut -d' ' -f1)"
+              [ "$got" = "$digest" ] || { echo "$ref:$tag is $got, want $digest" >&2; exit 1; }
+            done
+            echo "$ref:$full and :$minor = $digest"
+          done <meta/images.tsv
+      - name: create the GitHub release
+        timeout-minutes: 10
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          REPO: ${{ github.repository }}
+          LATEST: ${{ needs.validate.outputs.latest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          gh release create "$VERSION" --repo "$REPO" --verify-tag --latest="$LATEST" \
+            --title "OrkStack $VERSION" --notes-file meta/notes.md \
+            ./*.tar.gz ./*.zip SHA256SUMS

@@ -1,13 +1,13 @@
 {
-	"$comment": "Every page of the docs, in sidebar order, and the repository file each is ported from. scripts/sync-docs.mjs builds src/content/docs/docs/ from this file; nothing under it is written by hand. A source's sections narrow it to headings ('include'), drop headings ('omit'), or cut it between two lines ('from' up to 'to'). 'append' adds a file verbatim as a code block. 'exclude' lists every repository markdown file that is deliberately not a page, with the reason; the sync fails on a markdown file in neither list.",
+	"$comment": "The docs site's pages. A page under site/content/ is written for the site and cites the repository docs it summarises: its See also links them on GitHub, and scripts/sync-docs.mjs checks that each link names a file and heading that exist. The generated references (orkctl, configuration, error reasons, API, changelog) are ported from the repository as they are.",
 	"groups": [
 		{
-			"label": "Getting started",
+			"label": "Start here",
 			"pages": [
 				{
 					"route": "docs",
 					"title": "OrkStack documentation",
-					"description": "Where to start, and how the documentation is organised: from a first Orkflow to operating a deployment.",
+					"description": "What OrkStack is, and where to go next: a first run, a task to get done, or a key to look up.",
 					"parts": [
 						{
 							"source": "site/content/overview.md"
@@ -15,311 +15,355 @@
 					]
 				},
 				{
-					"route": "docs/getting-started/install",
-					"title": "Install and run locally",
-					"description": "Start the whole local stack with one command, push the first-party activity images, and run a first Orkflow from the CLI and the UI.",
+					"route": "docs/tutorials/first-orkflow",
+					"title": "Your first Orkflow",
+					"description": "Start OrkStack with Docker and apply, run and inspect an Orkflow, in about ten minutes.",
 					"parts": [
 						{
-							"source": "docs/GETTING_STARTED.md"
+							"source": "site/content/tutorials/first-orkflow.md"
 						}
 					]
 				},
 				{
-					"route": "docs/getting-started/examples",
-					"title": "Examples",
-					"description": "Every example Orkflow in the repository, what it shows, what it needs to run, and its complete YAML.",
+					"route": "docs/tutorials/first-activity",
+					"title": "Your first activity image",
+					"description": "Turn a shell script into an activity image and run it as a task of an Orkflow.",
 					"parts": [
 						{
-							"source": "examples/README.md"
+							"source": "site/content/tutorials/first-activity.md"
+						}
+					]
+				},
+				{
+					"route": "docs/examples",
+					"title": "Examples",
+					"description": "Every example Orkflow, what it shows and what it needs to run.",
+					"parts": [
+						{
+							"source": "site/content/examples.md"
 						}
 					],
-					"examples": "docs/getting-started/examples"
+					"examples": "docs/examples"
 				}
 			]
 		},
 		{
-			"label": "Concepts",
+			"label": "How-to: authoring",
 			"pages": [
 				{
-					"route": "docs/concepts/architecture",
-					"title": "Architecture",
-					"description": "The components of OrkStack, what each one owns, and how a run flows through them from apply to retirement.",
+					"route": "docs/how-to/inputs-and-outputs",
+					"title": "Take inputs and return outputs",
+					"description": "Declare a run's inputs, pass them at submit, and return named outputs.",
 					"parts": [
 						{
-							"source": "ARCHITECTURE.md"
+							"source": "site/content/how-to/inputs-and-outputs.md"
 						}
 					]
 				},
 				{
-					"route": "docs/concepts/product-boundary",
-					"title": "Product boundary and invariants",
-					"description": "What OrkStack is and is not: the three primitives it builds on, its explicit non-goals, and the invariants no change may break.",
+					"route": "docs/how-to/pass-files",
+					"title": "Pass files between tasks",
+					"description": "Write artifacts in one task and read them in the next.",
 					"parts": [
 						{
-							"source": "AGENTS.md",
-							"include": [
-								"## 1. Mission and product boundary"
-							]
-						},
-						{
-							"source": "AGENTS.md",
-							"include": [
-								"## 13. Explicit non-goals"
-							]
-						},
-						{
-							"source": "AGENTS.md",
-							"include": [
-								"## 15. Product invariants"
-							]
+							"source": "site/content/how-to/pass-files.md"
 						}
 					]
 				},
 				{
-					"route": "docs/concepts/glossary",
-					"title": "Glossary",
-					"description": "The words OrkStack uses on every surface, from Orkflow and Orker to pin, fan-out and release, each with its exact meaning.",
+					"route": "docs/how-to/retries-and-timeouts",
+					"title": "Add retries and timeouts",
+					"description": "Retry a failing task with backoff, and bound how long it may run.",
 					"parts": [
 						{
-							"source": "AGENTS.md",
-							"from": "The repository vocabulary is deliberate.",
-							"to": "An Orkflow name is unique within a namespace."
-						}
-					]
-				}
-			]
-		},
-		{
-			"label": "Authoring",
-			"pages": [
-				{
-					"route": "docs/authoring/dsl",
-					"title": "Orkflow DSL reference",
-					"description": "Every key of an Orkflow document, its validation rules and its runtime behaviour: tasks, inputs, outputs, joins, pins, awaits, fan-out, composition and caching.",
-					"parts": [
-						{
-							"source": "docs/DSL.md"
+							"source": "site/content/how-to/retries-and-timeouts.md"
 						}
 					]
 				},
 				{
-					"route": "docs/authoring/patterns",
-					"title": "Orkflow patterns",
-					"description": "The rules the shipped examples follow, and why: deciding in a task, branching and re-joining, sagas, repetition without loops, and more.",
+					"route": "docs/how-to/conditions",
+					"title": "Run a task conditionally",
+					"description": "Skip or run a task based on an input or an earlier task's output.",
 					"parts": [
 						{
-							"source": "docs/ORKFLOW_PATTERNS.md"
+							"source": "site/content/how-to/conditions.md"
 						}
 					]
 				},
 				{
-					"route": "docs/authoring/json",
-					"title": "JSON and the enum dialect",
-					"description": "Why runtime data is always JSON, how YAML written in an authored document becomes JSON, and the enum spelling every client shares.",
+					"route": "docs/how-to/fan-out",
+					"title": "Fan out over a list",
+					"description": "Run one task once per element of an array, read every item's results, and see what happens when one fails.",
 					"parts": [
 						{
-							"source": "docs/JSON.md"
-						}
-					]
-				}
-			]
-		},
-		{
-			"label": "Activities",
-			"pages": [
-				{
-					"route": "docs/activities/contract",
-					"title": "OCI activity contract",
-					"description": "The normative contract between the engine, an Orker and a container: the filesystem ABI, the commit protocol, failure categories and the security profile.",
-					"parts": [
-						{
-							"source": "docs/OCI_ACTIVITY_CONTRACT.md"
+							"source": "site/content/how-to/fan-out.md"
 						}
 					]
 				},
 				{
-					"route": "docs/activities/images",
-					"title": "Activity images",
-					"description": "The first-party activity images, the op convention, declaring an image's interface, and writing an image of your own.",
+					"route": "docs/how-to/await",
+					"title": "Wait for an approval or a system",
+					"description": "Pause a run until a person or another system resolves a task, or a deadline passes.",
 					"parts": [
 						{
-							"source": "docs/ACTIVITY_IMAGES.md"
+							"source": "site/content/how-to/await.md"
 						}
 					]
 				},
 				{
-					"route": "docs/activities/example-shell-image",
-					"title": "A complete image in POSIX shell",
-					"description": "A minimal activity image of your own, written in sh with jq on a pinned alpine base, with its Dockerfile and entrypoint in full.",
+					"route": "docs/how-to/handle-failure",
+					"title": "Handle failure",
+					"description": "Run clean-up and compensation tasks when something fails.",
 					"parts": [
 						{
-							"source": "examples/custom-image-shell/README.md"
-						},
-						{
-							"append": "examples/custom-image-shell/Dockerfile",
-							"lang": "dockerfile",
-							"heading": "Dockerfile"
-						},
-						{
-							"append": "examples/custom-image-shell/entrypoint.sh",
-							"lang": "sh",
-							"heading": "entrypoint.sh"
+							"source": "site/content/how-to/handle-failure.md"
 						}
 					]
 				},
 				{
-					"route": "docs/activities/example-go-image",
-					"title": "The same image in Go",
-					"description": "The shell example's activity written in Go and built FROM scratch, with its Dockerfile and program in full.",
+					"route": "docs/how-to/cache",
+					"title": "Reuse results with a cache",
+					"description": "Skip a task whose identical earlier result can be reused.",
 					"parts": [
 						{
-							"source": "examples/custom-image/README.md"
-						},
-						{
-							"append": "examples/custom-image/Dockerfile",
-							"lang": "dockerfile",
-							"heading": "Dockerfile"
-						},
-						{
-							"append": "examples/custom-image/main.go",
-							"lang": "go",
-							"heading": "main.go"
+							"source": "site/content/how-to/cache.md"
 						}
 					]
 				},
 				{
-					"label": "First-party images",
-					"pages": [
+					"route": "docs/how-to/compose",
+					"title": "Call one Orkflow from another",
+					"description": "Run another Orkflow as a task and use its outputs.",
+					"parts": [
 						{
-							"route": "docs/activities/images/http",
-							"title": "activity-http",
-							"description": "One HTTP request, reported as data: its configuration, outputs and failure behaviour.",
-							"parts": [
-								{
-									"source": "images/activity-http/README.md"
-								}
-							]
-						},
+							"source": "site/content/how-to/compose.md"
+						}
+					]
+				},
+				{
+					"route": "docs/how-to/secrets-and-env",
+					"title": "Use secrets and environment",
+					"description": "Give a task secret files and environment variables.",
+					"parts": [
 						{
-							"route": "docs/activities/images/shell",
-							"title": "activity-shell",
-							"description": "Run a command, a script or an expression in a shell image: its ops, configuration and outputs.",
-							"parts": [
-								{
-									"source": "images/activity-shell/README.md"
-								}
-							]
-						},
+							"source": "site/content/how-to/secrets-and-env.md"
+						}
+					]
+				},
+				{
+					"route": "docs/how-to/pools-and-pins",
+					"title": "Choose where tasks run",
+					"description": "Send tasks to a pool of Orkers, and keep a group of tasks on one Orker.",
+					"parts": [
 						{
-							"route": "docs/activities/images/file",
-							"title": "activity-file",
-							"description": "Small, Unix-like file operations: copy, checksum, compression and archives, concatenation.",
-							"parts": [
-								{
-									"source": "images/activity-file/README.md"
-								}
-							]
-						},
-						{
-							"route": "docs/activities/images/json",
-							"title": "activity-json",
-							"description": "Query and reshape JSON with jq as a task: its ops, variables and outputs.",
-							"parts": [
-								{
-									"source": "images/activity-json/README.md"
-								}
-							]
-						},
-						{
-							"route": "docs/activities/images/git",
-							"title": "activity-git",
-							"description": "Resolve and check out git repositories over HTTPS as a task: its ops, credentials and outputs.",
-							"parts": [
-								{
-									"source": "images/activity-git/README.md"
-								}
-							]
-						},
-						{
-							"route": "docs/activities/images/template",
-							"title": "activity-template",
-							"description": "Render text templates from a task's data: its ops, inputs and outputs.",
-							"parts": [
-								{
-									"source": "images/activity-template/README.md"
-								}
-							]
+							"source": "site/content/how-to/pools-and-pins.md"
 						}
 					]
 				}
 			]
 		},
 		{
-			"label": "Starting runs",
+			"label": "How-to: activities",
 			"pages": [
 				{
-					"route": "docs/starting-runs/triggers",
-					"title": "Triggers",
-					"description": "Inbound plain-HTTP run starters with bearer tokens: creating one, invoking it, and how a trigger differs from a webhook.",
+					"route": "docs/how-to/build-an-activity-image",
+					"title": "Build an activity image",
+					"description": "Package your own program as an image OrkStack can run as a task.",
 					"parts": [
 						{
-							"source": "docs/ORKFLOW_TRIGGERS.md"
+							"source": "site/content/how-to/build-an-activity-image.md"
 						}
 					]
 				},
 				{
-					"route": "docs/starting-runs/schedules",
-					"title": "Schedules",
-					"description": "Starting runs on a schedule: specs, fires, backfill, manual fires and what happens when fires overlap.",
+					"route": "docs/how-to/test-an-activity-image",
+					"title": "Test an activity image",
+					"description": "Check an image against the activity contract, and run one task locally.",
 					"parts": [
 						{
-							"source": "docs/ORKFLOW_SCHEDULES.md"
+							"source": "site/content/how-to/test-an-activity-image.md"
 						}
 					]
 				},
 				{
-					"route": "docs/starting-runs/automation",
-					"title": "Automation documents",
-					"description": "A namespace's settings, schedules, triggers and webhooks declared in one YAML document, planned, applied and exported with orkctl.",
+					"route": "docs/how-to/first-party-activities",
+					"title": "Use the first-party activities",
+					"description": "Run shell scripts, HTTP calls, file, JSON, git and template operations without building an image.",
 					"parts": [
 						{
-							"source": "docs/AUTOMATION.md"
-						}
-					]
-				},
-				{
-					"route": "docs/starting-runs/webhooks",
-					"title": "Webhooks",
-					"description": "Run-event webhooks: scoping by namespace, Orkflow and task, signed bodies and how to verify them, delivery records and redelivery.",
-					"parts": [
-						{
-							"source": "docs/WEBHOOKS.md"
+							"source": "site/content/how-to/first-party-activities.md"
 						}
 					]
 				}
 			]
 		},
 		{
-			"label": "Operating",
+			"label": "How-to: starting runs",
 			"pages": [
 				{
-					"route": "docs/operating/deployment",
-					"title": "Deployment and operations",
-					"description": "Topology, replicas and pools, releases and rollback, replay safety, and the day-to-day operations of a deployment.",
+					"route": "docs/how-to/schedules",
+					"title": "Run on a schedule",
+					"description": "Start runs on a cron or interval schedule, backfill, and fire by hand.",
 					"parts": [
 						{
-							"source": "docs/DEPLOY.md",
-							"omit": [
-								"## 1. Configuration",
-								"## 7. Telemetry"
-							]
+							"source": "site/content/how-to/schedules.md"
 						}
 					]
 				},
 				{
-					"route": "docs/operating/configuration",
+					"route": "docs/how-to/triggers",
+					"title": "Start runs over HTTP",
+					"description": "Let another system start a run with a plain HTTP request.",
+					"parts": [
+						{
+							"source": "site/content/how-to/triggers.md"
+						}
+					]
+				},
+				{
+					"route": "docs/how-to/webhooks",
+					"title": "Get run events",
+					"description": "Receive signed HTTP notifications when runs and tasks change state.",
+					"parts": [
+						{
+							"source": "site/content/how-to/webhooks.md"
+						}
+					]
+				},
+				{
+					"route": "docs/how-to/automation",
+					"title": "Manage a namespace as code",
+					"description": "Declare a namespace's settings, schedules, triggers and webhooks in one YAML file.",
+					"parts": [
+						{
+							"source": "site/content/how-to/automation.md"
+						}
+					]
+				}
+			]
+		},
+		{
+			"label": "How-to: operating",
+			"pages": [
+				{
+					"route": "docs/how-to/deploy",
+					"title": "Deploy OrkStack",
+					"description": "What a deployment runs, and the settings to decide first.",
+					"parts": [
+						{
+							"source": "site/content/how-to/deploy.md"
+						}
+					]
+				},
+				{
+					"route": "docs/how-to/namespaces",
+					"title": "Configure namespaces",
+					"description": "Set retention, admission, budgets and policies for a namespace.",
+					"parts": [
+						{
+							"source": "site/content/how-to/namespaces.md"
+						}
+					]
+				},
+				{
+					"route": "docs/how-to/roll-out-a-release",
+					"title": "Roll out a release",
+					"description": "Move a deployment to a new OrkStack release without disturbing running runs.",
+					"parts": [
+						{
+							"source": "site/content/how-to/roll-out-a-release.md"
+						}
+					]
+				},
+				{
+					"route": "docs/how-to/observe",
+					"title": "Observe OrkStack",
+					"description": "Export metrics, logs and traces with OpenTelemetry.",
+					"parts": [
+						{
+							"source": "site/content/how-to/observe.md"
+						}
+					]
+				},
+				{
+					"route": "docs/how-to/inspect-a-run",
+					"title": "Inspect a run",
+					"description": "Read a run's logs, timing, attempts and artifacts, compare runs, and export evidence.",
+					"parts": [
+						{
+							"source": "site/content/how-to/inspect-a-run.md"
+						}
+					]
+				},
+				{
+					"route": "docs/how-to/troubleshoot",
+					"title": "Troubleshoot",
+					"description": "Common symptoms, their causes and their fixes.",
+					"parts": [
+						{
+							"source": "site/content/how-to/troubleshoot.md"
+						}
+					]
+				}
+			]
+		},
+		{
+			"label": "Reference",
+			"pages": [
+				{
+					"route": "docs/reference/orkflow-keys",
+					"title": "Orkflow keys",
+					"description": "Every key of an Orkflow document, its default and what it does.",
+					"parts": [
+						{
+							"source": "site/content/reference/orkflow-keys.md"
+						}
+					]
+				},
+				{
+					"route": "docs/reference/templates",
+					"title": "Templates",
+					"description": "Every value and function a template can use.",
+					"parts": [
+						{
+							"source": "site/content/reference/templates.md"
+						}
+					]
+				},
+				{
+					"route": "docs/reference/activity-contract",
+					"title": "Activity contract",
+					"description": "The files, exit codes and signals between OrkStack and an activity container.",
+					"parts": [
+						{
+							"source": "site/content/reference/activity-contract.md"
+						}
+					]
+				},
+				{
+					"route": "docs/reference/first-party-activities",
+					"title": "First-party activities",
+					"description": "Every operation of the http, shell, file, json, git and template activities, and its keys.",
+					"parts": [
+						{
+							"source": "site/content/reference/first-party-activities.md"
+						}
+					]
+				},
+				{
+					"route": "docs/reference/cli",
+					"title": "orkctl",
+					"description": "Every orkctl command and flag, generated from the CLI's own command tree.",
+					"parts": [
+						{
+							"source": "docs/CLI.md"
+						}
+					]
+				},
+				{
+					"route": "docs/reference/configuration",
 					"title": "Configuration",
-					"description": "The one configuration file both binaries read, every setting with its environment variable and default, and the generated defaults file.",
+					"description": "Every setting of ork and orker: its key, its environment variable and its default.",
 					"parts": [
 						{
 							"source": "docs/DEPLOY.md",
@@ -335,140 +379,9 @@
 					]
 				},
 				{
-					"route": "docs/operating/observability",
-					"title": "Observability",
-					"description": "OpenTelemetry logs, metrics and traces, off by default: recipes, named sinks, per-namespace policy, and the local Grafana profile.",
-					"parts": [
-						{
-							"source": "docs/DEPLOY.md",
-							"include": [
-								"## 7. Telemetry"
-							]
-						},
-						{
-							"source": "deploy/observability/README.md"
-						}
-					]
-				},
-				{
-					"route": "docs/operating/storage",
-					"title": "Storage layout",
-					"description": "What OrkStack persists in object storage, under which key, who writes it and what removes it.",
-					"parts": [
-						{
-							"source": "docs/STORAGE.md"
-						}
-					]
-				},
-				{
-					"route": "docs/operating/stats",
-					"title": "Stats",
-					"description": "Where a dashboard's numbers come from: counts, failure fingerprints, flakes, usage and cache hit rates, all derived on read.",
-					"parts": [
-						{
-							"source": "docs/STATS.md"
-						}
-					]
-				},
-				{
-					"route": "docs/operating/run-evidence",
-					"title": "Run evidence",
-					"description": "The run evidence bundle format, exporting one, and verifying it offline.",
-					"parts": [
-						{
-							"source": "docs/RUN_EVIDENCE.md"
-						}
-					]
-				},
-				{
-					"route": "docs/operating/ui-cli-parity",
-					"title": "UI and CLI parity",
-					"description": "The operator experience contract the UI and orkctl share: the same operations, selectors and errors on both surfaces.",
-					"parts": [
-						{
-							"source": "docs/UI_CLI_PARITY.md"
-						}
-					]
-				},
-				{
-					"route": "docs/operating/security-model",
-					"title": "Security model",
-					"description": "The Orker as the security boundary, what a container never receives, the image policy, secrets, callers and the credentials OrkStack mints.",
-					"parts": [
-						{
-							"source": "docs/SECURITY_MODEL.md"
-						}
-					]
-				},
-				{
-					"route": "docs/operating/production-checklist",
-					"title": "Production checklist",
-					"description": "What to set up and decide before running a deployment carefully, from storage and image policy to releases and observability. Not a readiness claim.",
-					"parts": [
-						{
-							"source": "docs/PRODUCTION_CHECKLIST.md"
-						}
-					]
-				},
-				{
-					"route": "docs/operating/upgrading",
-					"title": "Upgrading and versioning",
-					"description": "The pre-1.0 stability promise, immutable Orkflow versions, and rolling OrkStack itself forward and back with orkctl release.",
-					"parts": [
-						{
-							"source": "docs/UPGRADING.md"
-						}
-					]
-				},
-				{
-					"route": "docs/operating/limitations",
-					"title": "Limitations",
-					"description": "Every hard limit and deliberate omission in one place, with the setting that moves it and the reason it exists.",
-					"parts": [
-						{
-							"source": "docs/LIMITATIONS.md"
-						}
-					]
-				},
-				{
-					"route": "docs/operating/troubleshooting",
-					"title": "Troubleshooting and FAQ",
-					"description": "Symptoms as you see them, what causes each, how to confirm it and what to do: submitting, running, failures and the local stack.",
-					"parts": [
-						{
-							"source": "docs/TROUBLESHOOTING.md"
-						}
-					]
-				}
-			]
-		},
-		{
-			"label": "Reference",
-			"pages": [
-				{
-					"route": "docs/reference/cli",
-					"title": "orkctl reference",
-					"description": "Every orkctl command and flag, generated from the CLI's own command tree.",
-					"parts": [
-						{
-							"source": "docs/CLI.md"
-						}
-					]
-				},
-				{
-					"route": "docs/reference/api",
-					"title": "API reference",
-					"description": "Every client-facing Connect service, method, message and enum, generated from the proto sources' own comments.",
-					"parts": [
-						{
-							"source": "docs/API.md"
-						}
-					]
-				},
-				{
 					"route": "docs/reference/reasons",
 					"title": "Error reasons",
-					"description": "Every machine-readable failure reason a client can see, its failure category, what it means and what to do about it.",
+					"description": "Every failure reason a client can see, what it means and what to do.",
 					"parts": [
 						{
 							"source": "docs/REASONS.md"
@@ -476,12 +389,127 @@
 					]
 				},
 				{
+					"route": "docs/reference/api",
+					"title": "API",
+					"description": "Every Connect service, method, message and enum, generated from the proto sources.",
+					"parts": [
+						{
+							"source": "docs/API.md"
+						}
+					]
+				},
+				{
+					"route": "docs/reference/limits",
+					"title": "Limits",
+					"description": "Every hard limit, its default and the setting that changes it.",
+					"parts": [
+						{
+							"source": "site/content/reference/limits.md"
+						}
+					]
+				},
+				{
 					"route": "docs/reference/changelog",
 					"title": "Changelog",
-					"description": "Every notable change, in Keep a Changelog form; until 1.0 a breaking change is marked BREAKING.",
+					"description": "Every notable change; until 1.0 a breaking change is marked BREAKING.",
 					"parts": [
 						{
 							"source": "CHANGELOG.md"
+						}
+					]
+				}
+			]
+		},
+		{
+			"label": "Concepts",
+			"pages": [
+				{
+					"route": "docs/concepts/how-it-works",
+					"title": "How OrkStack works",
+					"description": "The engine, Temporal, Orkers, containers and object storage, and how a run moves between them.",
+					"parts": [
+						{
+							"source": "site/content/concepts/how-it-works.md"
+						}
+					]
+				},
+				{
+					"route": "docs/concepts/durability",
+					"title": "Runs and durability",
+					"description": "What happens when a task fails or a machine goes away, and what OrkStack guarantees.",
+					"parts": [
+						{
+							"source": "site/content/concepts/durability.md"
+						}
+					]
+				},
+				{
+					"route": "docs/concepts/versions",
+					"title": "Orkflows and versions",
+					"description": "Immutable versions, digests, and which version a run uses.",
+					"parts": [
+						{
+							"source": "site/content/concepts/versions.md"
+						}
+					]
+				},
+				{
+					"route": "docs/concepts/activities",
+					"title": "Activities",
+					"description": "How any container image becomes a task: files in, files out, an exit code.",
+					"parts": [
+						{
+							"source": "site/content/concepts/activities.md"
+						}
+					]
+				},
+				{
+					"route": "docs/concepts/pools-and-pins",
+					"title": "Pools, Orkers and pins",
+					"description": "Where tasks run, and when a group of tasks shares one machine.",
+					"parts": [
+						{
+							"source": "site/content/concepts/pools-and-pins.md"
+						}
+					]
+				},
+				{
+					"route": "docs/concepts/namespaces",
+					"title": "Namespaces",
+					"description": "How a deployment separates teams and workloads.",
+					"parts": [
+						{
+							"source": "site/content/concepts/namespaces.md"
+						}
+					]
+				},
+				{
+					"route": "docs/concepts/security",
+					"title": "Security model",
+					"description": "What a task can and cannot reach, and who holds which credential.",
+					"parts": [
+						{
+							"source": "site/content/concepts/security.md"
+						}
+					]
+				},
+				{
+					"route": "docs/concepts/proven",
+					"title": "How OrkStack is proven",
+					"description": "What is tested before a change merges, and why the evidence can be believed.",
+					"parts": [
+						{
+							"source": "site/content/concepts/proven.md"
+						}
+					]
+				},
+				{
+					"route": "docs/concepts/glossary",
+					"title": "Glossary",
+					"description": "The words OrkStack uses, and what each one means.",
+					"parts": [
+						{
+							"source": "site/content/concepts/glossary.md"
 						}
 					]
 				}
@@ -492,65 +520,15 @@
 			"pages": [
 				{
 					"route": "docs/contributing",
-					"title": "Contributing",
-					"description": "The change checklist: the fast checks, what CI runs on a pull request, and when a change is done.",
+					"title": "Contribute",
+					"description": "Build OrkStack from source, run its tests and proofs, and where the full references live.",
 					"parts": [
 						{
-							"source": "CONTRIBUTING.md"
-						}
-					]
-				},
-				{
-					"route": "docs/contributing/proofs",
-					"title": "Proofs and CI",
-					"description": "How a change is proven: the proof tiers, how evidence is selected, the plan and its shards, the CI job graph and its artifacts.",
-					"parts": [
-						{
-							"source": "docs/PROOFS.md"
-						}
-					]
-				},
-				{
-					"route": "docs/contributing/proven",
-					"title": "How OrkStack is proven",
-					"description": "What is tested before a change merges, the proof tiers, why the evidence can be believed, and the invariants every test defends.",
-					"parts": [
-						{
-							"source": "docs/PROVEN.md"
-						}
-					]
-				},
-				{
-					"route": "docs/contributing/replay-fixtures",
-					"title": "Replay fixtures",
-					"description": "The recorded run histories that guard replay compatibility, and how to record a new one.",
-					"parts": [
-						{
-							"source": "internal/engine/testdata/history/README.md"
-						}
-					]
-				},
-				{
-					"route": "docs/contributing/engineering-contract",
-					"title": "Engineering contract",
-					"description": "AGENTS.md in full: the product boundary, runtime contracts, invariants and the evidence a change needs to be done.",
-					"parts": [
-						{
-							"source": "AGENTS.md"
+							"source": "site/content/contributing.md"
 						}
 					]
 				}
 			]
 		}
-	],
-	"exclude": {
-		"README.md": "the repository's front page; the landing page and Install and run locally carry its content",
-		".github/pull_request_template.md": "a GitHub form, not documentation",
-		"ui/PRODUCT.md": "the UI's design brief, for whoever designs the UI",
-		"ui/DESIGN.md": "the UI's design system, for whoever designs the UI",
-		"site/PRODUCT.md": "the site's design brief, for whoever designs the site",
-		"site/DESIGN.md": "the site's design system, for whoever designs the site",
-		"site/THIRD_PARTY.md": "license notices for the site's vendored code",
-		".github/SUPPORT.md": "a GitHub page for the repository; the landing page and the issue forms carry what it says"
-	}
+	]
 }

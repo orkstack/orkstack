@@ -1,90 +1,63 @@
 # OrkStack documentation
 
-OrkStack runs durable, multi-step Orkflows written in YAML, with each step an
-ordinary OCI container, on Temporal and S3-compatible object storage. These
-pages are ported from the repository's own docs on every build, so they say
-what the code on `main` does.
-
-## Start here
-
-- [Install and run locally](/docs/getting-started/install/) — the local stack
-  and a first run, step by step.
-- [Examples](/docs/getting-started/examples/) — every example Orkflow, with
-  its YAML.
-- [Architecture](/docs/concepts/architecture/) — the components, and how a run
-  flows through them.
-
-## By task
-
-| You want to | Read |
-|---|---|
-| write an Orkflow | [Orkflow DSL reference](/docs/authoring/dsl/), [Orkflow patterns](/docs/authoring/patterns/) |
-| turn an image into an activity | [OCI activity contract](/docs/activities/contract/), [Activity images](/docs/activities/images/) |
-| start runs on a schedule or from outside | [Schedules](/docs/starting-runs/schedules/), [Triggers](/docs/starting-runs/triggers/), [Automation documents](/docs/starting-runs/automation/) |
-| run a deployment | [Deployment and operations](/docs/operating/deployment/), [Configuration](/docs/operating/configuration/) |
-| look up a command | [orkctl reference](/docs/reference/cli/) |
-| change OrkStack itself | [Contributing](/docs/contributing/), [Engineering contract](/docs/contributing/engineering-contract/) |
+Write a multi-step job in YAML, run it, and read what it produced. Each step is an ordinary container image.
 
 ## What it does
 
-**Authoring** ([DSL reference](/docs/authoring/dsl/),
-[patterns](/docs/authoring/patterns/))
+An **Orkflow** is a YAML document. It lists **tasks**, and each task's `needs:` says what must finish first. A task runs one **activity**: a container image that reads its inputs from files, writes its results to files, and exits.
 
-- A DAG of tasks (`needs:`), typed `inputs:`, templated `with:` and
-  `condition`, retries and timeouts; immutable versions pinned by a SHA-256
-  definition digest.
-- `pool:` selects which Orkers run a task; `pin:` keeps a group of tasks on
-  one Orker sharing `/orkstack/shared`.
-- `each:` fans one task out over an array, one item per element.
-- `uses: orkflow:<name>@<version>` composes another Orkflow as a child run,
-  returning its declared `outputs:`.
-- `await:` pauses a task until it is resolved from outside (an approval, an
-  external completion, a one-time callback) or its deadline passes.
-- `cache:` reuses a prior successful result for identical inputs (a memo).
-- `join:` decides when a task may start from how its needs ended; failure
-  handlers run compensation in a failing run.
-- Images may declare their `with:` interface (`orkctl activity inspect`);
-  promoting a version that breaks the Orkflow's declared interface needs an
-  explicit acknowledgement (`orkctl orkflow compat`, `callers`).
+OrkStack runs the tasks in that order. It applies the retries and timeouts you set, and it cancels work when you ask. Once a task's result is committed, a retry returns that result without running the container again. If an Orker is lost, the run carries on or fails with a reason.
 
-**Starting runs**
+This excerpt fans `convert` out over the array that `list` computes:
 
-- `orkctl run submit` (idempotency keys, `--origin-ref`), `run again`, and
-  `run plan` to see which tasks would run without starting anything.
-- [Triggers](/docs/starting-runs/triggers/): a bearer-token plain-HTTP
-  starter.
-- [Schedules](/docs/starting-runs/schedules/): cron or interval, backfill,
-  manual fire.
-- Every run records its origin: what started it, a caller reference and the
-  asserted principal.
+```yaml
+  - id: convert
+    uses: shell
+    needs: [list]
+    each:
+      over: '{{ .tasks.list.output.result }}'
+      as: part
+      max_items: 50
+      max_parallel: 2
+    # ... the script is in examples/each-fan-out.ork.yaml
+  - id: merge
+    uses: shell
+    needs: [convert]
+    # ...
+```
 
-**Operating** ([deployment and operations](/docs/operating/deployment/))
+`convert` runs once per item, two at a time. `merge` starts when every item has ended.
 
-- Namespaces with allowed pools, run retention, admission (`hold`,
-  `max_running`), reserved cpu/memory budgets, allowed secret sources, a
-  required image signer and a telemetry policy.
-- A deployment image policy: require digests, allow registries, cosign keys.
-- Releases: `orkctl release status|ramp|promote|rollback|wait` rolls a new
-  build out without breaking running runs.
-- Orker fleet: `orkctl orker list|get|cordon|uncordon|drain`.
-- [Automation documents](/docs/starting-runs/automation/): one YAML document
-  per namespace for its settings, schedules, triggers and webhooks, applied
-  with `orkctl apply` and exported with `orkctl export`.
-- [Webhooks](/docs/starting-runs/webhooks/) scoped by namespace, Orkflow and
-  task, with signed bodies, delivery records and redelivery.
-- A control-plane audit trail (`orkctl admin audit`).
-- OpenTelemetry logs, metrics and traces, off by default, with named sinks
-  per namespace.
+<!-- site-diagram: each-fan-out-run -->
 
-**Inspecting** ([stats](/docs/operating/stats/),
-[run evidence](/docs/operating/run-evidence/))
+## Start here
 
-- `orkctl run get|watch|logs|attempts|timing|inspect|diff|artifacts`: live
-  attempt state, per-phase timing, every retry, and run-to-run comparison.
-- Artifact provenance: whether a recorded artifact's bytes remain and which
-  archived runs recorded the same object.
-- `orkctl stats` with failure fingerprints, a flake index, reserved usage and
-  cache hit rates, all derived on read.
-- Evidence bundles: `orkctl run evidence export|verify`, verifiable offline.
-- `orkctl task run` replays one task locally against a run's recorded bytes;
-  `orkctl activity test` checks an image against the activity contract.
+- [Your first Orkflow](/docs/tutorials/first-orkflow/): start OrkStack with Docker, run an Orkflow, and read its results. About ten minutes.
+- [Your first activity image](/docs/tutorials/first-activity/): build a container from a shell script and run it as a task.
+- [Examples](/docs/examples/): every example Orkflow, what it shows and what it needs.
+- [How it works](/docs/concepts/how-it-works/): the parts, and how a run moves between them.
+
+## Find what you need
+
+| You want to | Read |
+|---|---|
+| write an Orkflow | [Orkflow keys](/docs/reference/orkflow-keys/), [Fan out over a list](/docs/how-to/fan-out/), [Await a task](/docs/how-to/await/) |
+| make an image into a task | [Build an activity image](/docs/how-to/build-an-activity-image/), [Activities](/docs/concepts/activities/) |
+| run on a schedule or from outside | [Schedules](/docs/how-to/schedules/), [Triggers](/docs/how-to/triggers/), [Automation documents](/docs/how-to/automation/) |
+| run a deployment | [Deploy](/docs/how-to/deploy/), [Namespaces](/docs/how-to/namespaces/) |
+| look up a command | [orkctl reference](/docs/reference/cli/) |
+| look up a word | [Glossary](/docs/concepts/glossary/) |
+| change OrkStack | [Contributing](/docs/contributing/) |
+
+## Status
+
+OrkStack is pre-release. Breaking changes can still land before 1.0. Each one is listed in the [changelog](/docs/reference/changelog/), marked **BREAKING**.
+
+## Where the details live
+
+These pages summarize the repository's own docs. Each page links to the full reference on GitHub, with every key, rule and default. [How OrkStack is tested](/docs/concepts/proven/) explains what the test suite covers.
+
+## See also
+
+- [README.md](https://github.com/orkstack/orkstack/blob/main/README.md): the project front page.
+- [ARCHITECTURE.md](https://github.com/orkstack/orkstack/blob/main/ARCHITECTURE.md): the components, and the flow of a run.

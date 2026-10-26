@@ -1281,6 +1281,8 @@ internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/docscheck/    Documentation drift checks (test-only)
 internal/apidocs/      docs/API.md, the client-facing API reference, generated from the proto comments
+internal/dist/         Release artifacts: binaries, archives, checksums, the quickstart bundle, release guards
+internal/healthcheck/  The `--healthcheck` probe of ork and orker
 images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing
@@ -1289,8 +1291,9 @@ pkg/webhooks/          Run-event webhook registry, signing, and delivery
 pkg/schedules/         Schedule id shape (the schedule itself lives in Temporal)
 ui/                    SvelteKit, Vite, Tailwind, and generated TS clients
 site/                  The landing page and docs site (Astro, Starlight): styled by ui/src/tokens.css,
-                       its docs ported from this repository's markdown on every build
-deploy/                Temporal, object-storage, and registry development stack
+                       its docs written for readers and citing this repository's docs
+deploy/                The development stack (Temporal, object storage, registry), the release images'
+                       Dockerfile, and the quickstart compose bundle
 examples/              Example Orkflows, automation documents, and custom images
 docs/                  Reference material (indexed in README.md; `CLI.md` is generated)
 test/                  Activity contract fixtures and test-only helper tools
@@ -1330,10 +1333,15 @@ run by the `site` gate, refuses one). A change to the UI's look changes the
 tokens, never the site, and reaches the site with no step of its own. A change
 that leaves the site, landing page or docs, looking different from the UI is
 not done. A UI change that alters what the site's screenshots show
-regenerates them with `make site-media` in the same change. The docs are this
-repository's markdown, ported on every build (`site/docs.manifest.json`): a
-new doc is added to the manifest, or excluded there with its reason, and no
-page is written by hand twice.
+regenerates them with `make site-media` in the same change. The site's docs
+are written for people (`site/content/`, `site/docs.manifest.json`): short,
+task-first pages — tutorials, one-task how-to guides, reference tables, short
+concepts — that never copy this repository's normative docs. Each page cites
+the repository docs it summarises, which stay the full reference, and the sync
+refuses a page that cites none, a citation of a file or heading that does not
+exist, and a doc under `docs/` that no page cites. The generated references
+(orkctl, configuration, error reasons, API, changelog) are ported as they
+are. A change to a behaviour a page describes updates that page too.
 
 Agent ownership is split as follows:
 

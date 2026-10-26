@@ -65,7 +65,7 @@ func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *test
 		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 	)
 	engineAddr := freeAddress(t)
-	startProcess(ctx, t, "ork", enginePath,
+	engineExited := startProcess(ctx, t, "ork", enginePath,
 		"ORK_HTTP_ADDR="+engineAddr,
 		"ORK_TEMPORAL_ADDRESS="+address,
 		"ORK_TEMPORAL_NAMESPACE="+namespace,
@@ -81,7 +81,7 @@ func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *test
 		session.record(full, stdout, stderr, code)
 		return stdout, stderr, code
 	}
-	waitForEngine(t, func(args ...string) (string, string, int) {
+	waitForEngine(t, engineExited, func(args ...string) (string, string, int) {
 		return runBinaryWithEnv(ctx, t, orkctlPath, root,
 			[]string{configEnvVar + "=" + configPath},
 			append(args, "--server", "http://"+engineAddr)...)

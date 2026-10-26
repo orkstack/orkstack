@@ -10,7 +10,7 @@ web
 Platform and infrastructure engineers who already want durable, multi-step workflows without writing or deploying workflow code, arriving from a link, a search or the repository. Two jobs, in order: decide whether OrkStack's model fits (the landing page), then learn and look things up while they adopt it (the docs). They read code first and copy commands; they distrust claims they cannot check.
 
 ## Product Purpose
-The site is OrkStack's front door and its manual. The landing page makes the model intelligible in one viewport (an Orkflow in YAML, every step an OCI image, generic Orkers, durability from Temporal) and proves it with a real run of a real example. The docs are the repository's own reference docs, ported on every build, so they say what the code on `main` does. Success is an engineer who leaves the landing page knowing what OrkStack is and is not, and who finds any answer in the docs without reading the source.
+The site is OrkStack's front door and its manual. The landing page makes the model intelligible in one viewport (an Orkflow in YAML, every step an OCI image, generic Orkers, durability from Temporal) and proves it with a real run of a real example. The docs are written for people: short, task-first pages that lead with an example, each citing the repository docs it summarises, which stay the full reference. Success is an engineer who leaves the landing page knowing what OrkStack is and is not, and who finds any answer in the docs without reading the source.
 
 The product itself is described in `ui/PRODUCT.md`; this file covers the site only.
 
@@ -19,7 +19,7 @@ OrkStack is described on its own terms. The site never names, compares to or pos
 
 ## Operating Context
 - The landing page is fully static and works without JavaScript; in the docs only search needs it.
-- Content comes from the repository: the docs from `docs/*.md` and the other markdown (`site/docs.manifest.json`), the example from `examples/`, the screenshots and recordings from `make site-media` against the real stack. Nothing is retyped by hand.
+- Content is checked against the repository: each page written for the site (`site/content/`) cites the repository docs it summarises, and the sync refuses a citation that names no real file or heading; the generated references (orkctl, configuration, error reasons, API) are ported as they are; the examples come from `examples/`, and the screenshots and recordings from `make site-media` against the real stack.
 - Deployed to GitHub Pages at https://orkstack.github.io/orkstack/ on every push to `main`.
 
 ## Capabilities and Constraints

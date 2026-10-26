@@ -2167,7 +2167,7 @@ Flags:
 - `--input STRINGARRAY` — run input as key=value (repeatable); with --from-run, overrides the run's input
 - `--input-json STRING` — run input as a JSON object; merged under --input values
 - `--item INT32` — run this item of a fan-out task (required for one)
-- `--keep` — keep the session directory and print its path
+- `--keep` — keep the work directory and print its path
 - `--need STRINGARRAY` — a failure handler's direct need and how it ended, TASK=succeeded|failed|skipped|canceled (repeatable); with --from-run it overrides the recorded outcome, without it every direct need must be named
 - `--omit-secret STRINGARRAY` — run without this declared secret (repeatable)
 - `--output STRINGARRAY` — supply an upstream task's values.json as TASK=JSON-object (repeatable); wins over --outputs-file

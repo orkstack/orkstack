@@ -168,7 +168,7 @@ var taskRunPhaseLines = map[string]string{
 	"render":       "rendering",
 	"run":          "running",
 	"validate":     "validating outputs",
-	"commit":       "collecting outputs (into this machine's session directory)",
+	"commit":       "collecting outputs (into this machine's work directory)",
 	"timeout":      "timeout: SIGTERM, then SIGKILL after the grace period",
 	"cancel":       "interrupted: SIGTERM, then SIGKILL after the grace period",
 }
@@ -706,7 +706,7 @@ func (r *taskRunner) keepLogs(system []*orkstackv1.ArtifactRef) {
 	}
 }
 
-// cleanup removes the session directory on every path unless --keep, with
+// cleanup removes the work directory on every path unless --keep, with
 // the unseal-then-remove walk the Orker uses for a sealed tree. A file the
 // container created as another uid that this user cannot remove is reported
 // with its path, never ignored.
@@ -715,6 +715,6 @@ func (r *taskRunner) cleanup() {
 		return
 	}
 	if err := (&orker.Workspace{Root: r.session}).Remove(); err != nil {
-		r.t.printf("warning: the session directory %s could not be removed: %v\n", r.session, err)
+		r.t.printf("warning: the work directory %s could not be removed: %v\n", r.session, err)
 	}
 }

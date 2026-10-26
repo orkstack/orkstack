@@ -3,6 +3,89 @@
 Read [AGENTS.md](./AGENTS.md) first — it is the authoritative engineering
 contract. This file is the quick checklist.
 
+## Prerequisites
+
+Using OrkStack needs only Docker ([docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md)).
+Developing it needs:
+
+- **Docker** with Compose v2, for the infrastructure, every task and the
+  integration suites;
+- **Go**, the version in [`go.mod`](./go.mod), to build `ork`, `orker` and
+  `orkctl`;
+- **Bun**, the version `.github/workflows/proof.yml` pins, for the UI and the
+  site;
+- **make**, **git** and **curl**.
+
+## The local development stack
+
+The stack built from this checkout, for working on OrkStack itself:
+
+```bash
+make infra-up        # Temporal, SeaweedFS and a local registry, in Docker
+make -C images push  # the first-party activity images, into that registry
+make up              # build ork, orker and orkctl; start them and the UI
+```
+
+`make infra-up` starts [`deploy/docker-compose.yml`](./deploy/docker-compose.yml):
+a Temporal development server, SeaweedFS as the S3-compatible object store,
+and a local OCI registry on `localhost:5001`. `make -C images push` builds the
+first-party activities (`http`, `shell`, `file`, `json`, `git`, `template`)
+and pushes them to that registry; the stack points the activity catalog at
+them, so an Orkflow that `uses: shell` runs the images this checkout built.
+`make up` builds `bin/ork`, `bin/orker` and `bin/orkctl`, starts the engine,
+one Orker and the UI, and waits until each one answers: the engine's API, an
+Orker polling its pool, the UI and its live-event socket. When it prints
+"OrkStack is up":
+
+| What | Where |
+|---|---|
+| UI | http://localhost:5173 |
+| Engine API | http://localhost:8080 |
+| Temporal UI | http://localhost:8233 |
+| SeaweedFS filer | http://localhost:8888 (S3 API on http://localhost:9000) |
+
+`make status` shows what is running, and `make logs` tails the engine, Orker
+and UI logs. Then `./bin/orkctl apply examples/each-fan-out.ork.yaml` and the
+rest of [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md) work as written,
+with `./bin/orkctl` for `orkctl`.
+
+```bash
+make down    # stop what make up started; data is kept
+make reset   # wipe every local run, object and build output
+```
+
+`make down` also stops the infrastructure `make infra-up` started, which
+other checkouts on the same machine may be using. `make reset` returns the
+machine to a vanilla state: it deletes Temporal history, every object-store
+object (artifacts, archived runs, and the Orkflow catalogue), the local
+artifact store and all build output. The repository itself is untouched.
+
+The individual steps are there when you want them: `make tools`,
+`make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
+`make infra-up-observability` adds a local Grafana stack
+([deploy/observability](./deploy/observability/README.md)).
+To run the UI by hand, `cd ui && bun run dev`: its server proxies Connect calls
+to `ENGINE_API_URL` (default `http://127.0.0.1:8080`), and the browser opens
+WebSockets to `PUBLIC_ENGINE_WS_URL` (default the page's host on `:8080`).
+
+Configuration needs nothing for a laptop: `make up` runs on defaults alone.
+Past that, `ork` and `orker` read one shared YAML file (`--config PATH`), with
+`ORK_`/`OTEL_` environment variables overriding it; see
+[docs/DEPLOY.md](./docs/DEPLOY.md), "Configuration", and the generated
+[`deploy/orkstack.defaults.yaml`](./deploy/orkstack.defaults.yaml).
+
+### The release artifacts
+
+`make dist VERSION=vX.Y.Z` builds what a release publishes as files: `orkctl`
+for Linux, macOS and Windows, `ork` and `orker` for Linux, each archived, and
+`SHA256SUMS`, under `dist/`. `make release-images VERSION=vX.Y.Z OUT=<dir>`
+builds the release images (`ork`, `orker`, `orkctl`, `ui` and the six
+activities) as OCI layouts from those binaries, for this machine unless
+`PLATFORMS` says otherwise. `make release-smoke VERSION=vX.Y.Z` builds both
+for this machine and runs the release's quickstart bundle on them end to end,
+in a compose project, registry and ports of its own; `release.yml` runs the
+same smoke before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).
+
 ## Fast checks (no Docker, under two minutes warm)
 
 `make check` runs `make lint` (`go vet` and gofmt), `go vet -tags=integration`
@@ -128,9 +211,11 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
 6. Update the docs the change makes false, and add the CHANGELOG.md
-   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1). A new
-   doc is also a page of the site: add it to `site/docs.manifest.json`, or
-   exclude it there with its reason. A change to the UI's look changes
+   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1). The
+   site's pages (`site/content/`) are short pages written for readers that
+   cite the repository docs they summarise: update the page that describes a
+   behaviour you change, and give a new doc under `docs/` a site page that
+   cites it (the site's build refuses an uncited one). A change to the UI's look changes
    `ui/src/tokens.css`, never the site, and regenerates the site's
    screenshots (`make site-media`) when they would show it.
 7. Produce the change's evidence with a feature proof that names the tests and

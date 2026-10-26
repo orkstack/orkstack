@@ -212,6 +212,46 @@ proof-nightly: ## The nightly tier: only the deferred scale and soak tests, on o
 proof-release: ## The pre-release gate: every gate, observability always -> proof/<NAME>-release/
 	@scripts/proof.sh --tier release $(if $(NAME),$(NAME),release)
 
+# Release artifacts (docs/UPGRADING.md, "Release artifacts"). release.yml
+# runs these three for every release; each also runs by hand. VERSION must be
+# vMAJOR.MINOR.PATCH here.
+#   make dist             the binaries, their archives and SHA256SUMS -> dist/
+#   make release-images   the release images as OCI layouts -> OUT/<image>/
+#                         (needs make dist; PLATFORMS defaults to this machine)
+#   make release-smoke    builds both for this machine, runs the quickstart
+#                         bundle on them and requires a finished run
+DIST ?= dist
+PLATFORMS ?=
+RELEASE_IMAGES := ork orker orkctl ui
+SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct 2>/dev/null)
+# Every archive and image is stamped with the commit's time, never a clock's.
+need-commit-time = $(if $(strip $(SOURCE_DATE_EPOCH)),,$(error no commit time: run from a git checkout or set SOURCE_DATE_EPOCH))
+
+.PHONY: dist
+dist: ## Release binaries, archives and SHA256SUMS for VERSION=vX.Y.Z -> dist/ (gitignored)
+	$(need-commit-time)
+	go run ./internal/dist/cmd/dist build -version $(VERSION) -out $(DIST) -commit-time $(SOURCE_DATE_EPOCH)
+
+.PHONY: release-images
+release-images: ## Release images (ork, orker, orkctl, ui, activities) as OCI layouts: VERSION=vX.Y.Z OUT=<dir> [PLATFORMS=linux/amd64,linux/arm64]
+	$(if $(strip $(OUT)),,$(error make release-images needs OUT=<directory> for the layouts))
+	$(need-commit-time)
+	@mkdir -p '$(abspath $(OUT))'
+	@for t in $(RELEASE_IMAGES); do \
+	  echo "building $$t -> $(abspath $(OUT))/$$t"; \
+	  rm -rf "$(abspath $(OUT))/$$t"; \
+	  SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) docker buildx build --provenance=false --sbom=false \
+	    $(if $(strip $(PLATFORMS)),--platform $(PLATFORMS)) --build-arg VERSION=$(VERSION) \
+	    -f deploy/Dockerfile --target $$t \
+	    --output "type=oci,dest=$(abspath $(OUT))/$$t,tar=false,rewrite-timestamp=true" . || exit 1; \
+	done
+	$(MAKE) -C images oci OUT='$(abspath $(OUT))' PLATFORMS='$(PLATFORMS)' \
+	  LABELS='org.opencontainers.image.source=https://github.com/orkstack/orkstack org.opencontainers.image.licenses=MIT org.opencontainers.image.version=$(VERSION)'
+
+.PHONY: release-smoke
+release-smoke: ## Build the release for this machine and run the quickstart bundle on it end to end: VERSION=vX.Y.Z
+	@scripts/release-smoke.sh $(VERSION)
+
 .PHONY: release-tag
 release-tag: ## Tag HEAD only after a passing release proof of it: VERSION=vX.Y.Z PROOF=proof/<name>
 	@test -n "$(VERSION)" || (echo "release-tag needs VERSION=vX.Y.Z"; exit 2)

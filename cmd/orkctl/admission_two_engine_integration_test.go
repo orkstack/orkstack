@@ -151,10 +151,10 @@ func startObservedReplica(
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start %s: %v", name, err)
 	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
 	t.Cleanup(func() {
 		_ = cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() { _ = cmd.Wait(); close(done) }()
 		select {
 		case <-done:
 		case <-time.After(15 * time.Second):
@@ -166,10 +166,11 @@ func startObservedReplica(
 	httpClient := h2cClient(t)
 	baseURL := "http://" + addr
 	return &engineReplica{
-		name:  name,
-		addr:  addr,
-		runs:  orkstackv1connect.NewRunServiceClient(httpClient, baseURL),
-		flows: orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL),
+		name:   name,
+		addr:   addr,
+		runs:   orkstackv1connect.NewRunServiceClient(httpClient, baseURL),
+		flows:  orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL),
+		exited: done,
 	}, log
 }
 

@@ -27,7 +27,15 @@ func repoRoot(t *testing.T) string {
 // file re-runs these checks.
 func markdownFiles(t *testing.T) []string {
 	t.Helper()
-	root := repoRoot(t)
+	return markdownFilesUnder(t, repoRoot(t))
+}
+
+// markdownFilesUnder is markdownFiles for the tree at root. A directory named
+// like a build output, a dependency cache or a generated tree is not
+// documentation, and neither is anything under it: /dist/ is where `make dist`
+// writes a release, including the bundle's own README.
+func markdownFilesUnder(t *testing.T, root string) []string {
+	t.Helper()
 	var out []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -35,7 +43,7 @@ func markdownFiles(t *testing.T) []string {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", ".data", ".atomic", ".cache", "node_modules", "proof", "gen", "build", ".svelte-kit", "tmp", "bin":
+			case ".git", ".data", ".atomic", ".cache", "node_modules", "proof", "gen", "build", ".svelte-kit", "tmp", "bin", "dist":
 				if path != root {
 					return filepath.SkipDir
 				}

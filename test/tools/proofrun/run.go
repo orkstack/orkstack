@@ -21,6 +21,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
 )
 
 // pkgInfo is one package as `go list` reports it.
@@ -202,6 +204,11 @@ type runner struct {
 	// it to start the activity fixture: a heavy test measures a quiet host,
 	// and the fixture's containers are the load it must not see.
 	heavyDone string
+	// sweep is set by a run that hands the buckets of passing test processes
+	// to sweepBuckets instead of letting each process remove its own on its
+	// slot; sweepable names the process labels whose bucket may be removed.
+	sweep     bool
+	sweepable map[string]bool
 }
 
 // jobResult is what one process reported.
@@ -349,6 +356,11 @@ func (r *runner) runJob(ctx context.Context, j job, slot int) jobResult {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("ORK_TEMPORAL_NAMESPACE=%s-w%d", r.nsPrefix, slot))
 	}
 	cmd.Env = append(cmd.Env, "ORK_PROOF_JOB="+label)
+	if r.sweep {
+		// A passing process names its bucket here instead of removing it, and
+		// the runner removes it after the phase (sweep.go).
+		cmd.Env = append(cmd.Env, s3bucket.EnvLeftFile+"="+r.bucketFile(label))
+	}
 
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -392,6 +404,9 @@ func (r *runner) runJob(ctx context.Context, j job, slot int) jobResult {
 	}
 	_ = conv.Wait()
 
+	if r.sweep {
+		r.noteSweepable(j, runErr, local)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.events != nil {
@@ -913,12 +928,16 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		jobDir: filepath.Join(o.out, "integration"), c: newCollector(), events: events, log: stdout,
 		progress: nil, failFast: o.failFast, excused: excusedFor("integration", quarantine),
 		heavyDone: filepath.Join(o.out, "integration-heavy-done"),
+		sweep:     true,
 	}
 	if o.printProgress {
 		r.progress = stdout
 	}
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	r.runAll(ctx, jobs)
+	// The passing processes left their buckets for this: removed once the
+	// phase is over, so the removals' churn is never on a slot beside a test.
+	r.sweepBuckets(ctx, bucketRemover())
 	stopSignals()
 	// expected = run ∪ deferred (writePlan). A deferred test ran nowhere, so
 	// the ledger is built over the run set and each deferred test is then
@@ -1225,6 +1244,7 @@ func runShard(o *integrationPlanOptions) int {
 		slots: o.jobs, nsPrefix: o.nsPrefix, baseEnv: os.Environ(), bins: bins, dirs: dirs,
 		jobDir: filepath.Join(o.out, "integration"), c: newCollector(), events: events, log: stdout,
 		failFast: o.failFast, excused: excusedFor("integration", quarantine),
+		sweep: true,
 	}
 	if o.printProgress {
 		r.progress = stdout
@@ -1232,6 +1252,7 @@ func runShard(o *integrationPlanOptions) int {
 	started := time.Now()
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	r.runAll(ctx, jobs)
+	r.sweepBuckets(ctx, bucketRemover())
 	stopSignals()
 	shardSet := map[testKey]bool{}
 	for _, j := range jobs {

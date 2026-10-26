@@ -1,22 +1,24 @@
 ---
-// The local quickstart: the commands docs/GETTING_STARTED.md walks through,
-// in order, each one a target the Makefile defines or an orkctl command, and
-// a recording of them run on the real stack. The copy button is an
-// enhancement: without JavaScript the commands are plain, selectable text.
-// After Landpack's ContentCommand (MIT, see site/THIRD_PARTY.md).
+// The quickstart: the commands docs/GETTING_STARTED.md walks through, in
+// order, run against a published release with Docker as the only
+// prerequisite, and a recording of them run on the real stack. The copy
+// button is an enhancement: without JavaScript the commands are plain,
+// selectable text. After Landpack's ContentCommand (MIT, see
+// site/THIRD_PARTY.md).
 import Icon from '../shared/Icon.astro';
 import { clip } from '../../lib/media';
 import { route } from '../../../site.config.mjs';
 import { example } from '../../lib/example';
 import ThemeClip from '../shared/ThemeClip.astro';
 
+const download = 'https://github.com/orkstack/orkstack/releases/latest/download/orkstack-quickstart.tar.gz';
 const steps = [
-	{ cmd: 'make infra-up', note: 'Temporal, SeaweedFS and a local registry, in Docker' },
-	{ cmd: 'make -C images push', note: 'build and push the first-party activity images' },
-	{ cmd: 'make up', note: 'build and start the engine, an Orker and the UI' },
-	{ cmd: `./bin/orkctl apply ${example.path}`, note: 'validate and store the Orkflow' },
-	{ cmd: `./bin/orkctl run plan ${example.name}`, note: 'what would run, starting nothing' },
-	{ cmd: `./bin/orkctl run submit ${example.name} --watch`, note: 'run it and follow it to the end' },
+	{ cmd: `curl -fsSLO ${download}`, note: 'the release: a compose file, its images and the examples' },
+	{ cmd: 'tar -xzf orkstack-quickstart.tar.gz && cd orkstack-quickstart', note: 'unpack it' },
+	{ cmd: 'docker compose up -d --wait', note: 'Temporal, an object store, the engine, an Orker and the UI' },
+	{ cmd: "alias orkctl='docker compose run --rm orkctl'", note: 'orkctl from its image, nothing to install' },
+	{ cmd: `orkctl apply ${example.path}`, note: 'validate and store the Orkflow' },
+	{ cmd: `orkctl run submit ${example.name} --watch`, note: 'run it and follow it to the end' },
 ];
 const all = steps.map((s) => s.cmd).join('\n');
 const demo = clip('cli-quickstart');
@@ -26,8 +28,9 @@ const demo = clip('cli-quickstart');
 	<header class="block-head">
 		<h2 id="quickstart-title">Run it on your machine</h2>
 		<p>
-			You need Docker, Go and Bun. From a clone of the repository, the whole stack and a first run take six
-			commands; <a href={route('docs/getting-started/install')}>Install and run locally</a> walks through each.
+			You need Docker. From a published release, the whole stack and a first run take six commands;
+			<a href={route('docs/tutorials/first-orkflow')}>Your first Orkflow</a> walks through each. Until the
+			first release is out, <a href={route('docs/contributing')}>build it from source</a>.
 		</p>
 	</header>
 	<div class="quickstart-body">

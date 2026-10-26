@@ -1,0 +1,144 @@
+# The OrkStack quickstart: the whole stack from a release's images, with Docker
+# as the only prerequisite (docs/GETTING_STARTED.md).
+#
+# Each release ships this file in orkstack-quickstart.tar.gz with a .env that
+# names its images by tag and digest (.env.example lists every variable); the
+# repository's copy runs only with such a .env beside it. Temporal and the
+# object store are the development stack's own (deploy/docker-compose.yml,
+# pinned for the same reasons). Everything is published on 127.0.0.1 only.
+#
+# The Orker runs each task's image on this host's Docker daemon, through the
+# socket mounted below. Whoever controls that socket controls the host, so
+# only the orker service sees it (docs/SECURITY_MODEL.md). The daemon
+# bind-mounts each task's workspace from ORKSTACK_WORKDIR, a path it reads on
+# the host, so the Orker sees that directory at the same path.
+#
+#   docker compose up -d --wait                  start
+#   docker compose run --rm orkctl <command>     orkctl, without installing it
+#   docker compose down                          stop (object store data kept)
+name: orkstack-quickstart
+
+x-store: &store
+  ORK_ARTIFACT_BACKEND: s3
+  ORK_S3_ENDPOINT: http://seaweedfs:8333
+  ORK_S3_BUCKET: orkstack-artifacts
+  ORK_S3_ACCESS_KEY: orkstack
+  ORK_S3_SECRET_KEY: orkstack-secret
+  ORK_S3_PATH_STYLE: "true"
+  ORK_TEMPORAL_ADDRESS: temporal:7233
+
+services:
+  temporal:
+    image: temporalio/temporal:1.8.2@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
+    command:
+      - server
+      - start-dev
+      - --ip
+      - 0.0.0.0
+      - --ui-port
+      - "8233"
+      - --log-level
+      - warn
+    ports:
+      - "127.0.0.1:${ORKSTACK_TEMPORAL_UI_PORT-8233}:8233"
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  seaweedfs:
+    image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts"]
+    volumes:
+      - seaweedfs-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ | grep -qE '200|403'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  ork:
+    image: ${ORKSTACK_ORK_IMAGE:?set in .env, which each release writes}
+    environment:
+      <<: *store
+      ORK_HTTP_ADDR: 0.0.0.0:8080
+      # The admin listener answers the health check inside the container and
+      # is never published.
+      ORK_ADMIN_ADDR: 127.0.0.1:9464
+      ORK_WS_ALLOWED_ORIGINS: localhost:${ORKSTACK_UI_PORT-5173},127.0.0.1:${ORKSTACK_UI_PORT-5173}
+      ORK_ACTIVITY_CATALOG: ${ORKSTACK_ACTIVITY_CATALOG:?set in .env, which each release writes}
+    ports:
+      - "127.0.0.1:${ORKSTACK_API_PORT-8080}:8080"
+    depends_on:
+      temporal:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/ork", "--healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  orker:
+    image: ${ORKSTACK_ORKER_IMAGE:?set in .env, which each release writes}
+    environment:
+      <<: *store
+      ORK_ADMIN_ADDR: 127.0.0.1:9465
+      ORK_ORKER_ID: ${ORKSTACK_ORKER_ID-quickstart}
+      ORK_ORKER_WORKDIR: ${ORKSTACK_WORKDIR-${HOME}/.cache/orkstack-quickstart}
+    # The work directory is under your home, never a shared /tmp: whoever owns
+    # it could swap a task's directories for links to the host's, and the
+    # daemon would mount them. It is mounted at the same path, because the
+    # Orker names it to the daemon by its path on this machine.
+    volumes:
+      - ${ORKSTACK_DOCKER_SOCKET-/var/run/docker.sock}:/var/run/docker.sock
+      - ${ORKSTACK_WORKDIR-${HOME}/.cache/orkstack-quickstart}:${ORKSTACK_WORKDIR-${HOME}/.cache/orkstack-quickstart}
+    init: true
+    # Longer than a task container's 30 s cancellation grace, so a stop
+    # reaches every running container before the Orker itself is killed.
+    stop_grace_period: 45s
+    depends_on:
+      temporal:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/orker", "--healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  ui:
+    image: ${ORKSTACK_UI_IMAGE:?set in .env, which each release writes}
+    environment:
+      ENGINE_API_URL: http://ork:8080
+      PUBLIC_ENGINE_WS_URL: ws://localhost:${ORKSTACK_API_PORT-8080}
+    ports:
+      - "127.0.0.1:${ORKSTACK_UI_PORT-5173}:5173"
+    depends_on:
+      ork:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/_app/version.json').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # orkctl without installing it: `docker compose run --rm orkctl apply
+  # examples/each-fan-out.ork.yaml`. It sees this directory, read-only.
+  orkctl:
+    profiles: [cli]
+    image: ${ORKSTACK_ORKCTL_IMAGE:?set in .env, which each release writes}
+    environment:
+      ORK_SERVER: http://ork:8080
+    volumes:
+      - ./:/work:ro
+    working_dir: /work
+    depends_on:
+      ork:
+        condition: service_healthy
+
+volumes:
+  seaweedfs-data:

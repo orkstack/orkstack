@@ -39,6 +39,11 @@ on:
       ui_shards:
         type: number
         default: 5
+    outputs:
+      # The merged proof's artifact name, so a caller's re-run job finds the
+      # attempt that uploaded it (release.yml › tag).
+      proof_artifact:
+        value: ${{ jobs.proof.outputs.proof_artifact }}
 
 concurrency:
   # Only pull requests share a group, so a newer push supersedes an older
@@ -498,6 +503,8 @@ jobs:
       contents: read
       actions: read
       checks: read
+    outputs:
+      proof_artifact: proof-${{ github.run_id }}-a${{ github.run_attempt }}
     steps:
       - name: draft and private-repository guard
         if: github.event_name == 'pull_request'

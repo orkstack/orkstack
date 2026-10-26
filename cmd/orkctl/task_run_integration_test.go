@@ -662,13 +662,13 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 	namespace := isolatedNamespace()
 	_ = dialIsolatedNamespace(ctx, t, address, namespace)
 	startOrker(ctx, t, orkerPath, address, namespace, queue)
-	engineAddr := startEngine(ctx, t, enginePath, address, namespace, queue)
+	engineAddr, engineExited := startEngine(ctx, t, enginePath, address, namespace, queue)
 	server := "http://" + engineAddr
 	var transcript strings.Builder
 	cli := func(args ...string) (string, string, int) {
 		return runBinary(ctx, t, orkctlPath, root, append(args, "--server", server)...)
 	}
-	waitForEngine(t, cli)
+	waitForEngine(t, engineExited, cli)
 	waitForPoolLive(t, cli, "default", pool)
 	sessions := filepath.Join(bindableOrkerWorkRoot(t), "task-run-sessions")
 	if err := os.MkdirAll(sessions, 0o755); err != nil {

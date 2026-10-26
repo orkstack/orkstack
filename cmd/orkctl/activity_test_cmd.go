@@ -97,6 +97,9 @@ func newActivityTestCommand(g *globalFlags) *cobra.Command {
 			"Requires a working container runtime. Exits non-zero if any assertion fails.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireLocalRunHost(g.hostOS(), "activity test"); err != nil {
+				return err
+			}
 			suite := &activitySuite{
 				image:       args[0],
 				grace:       gracePeriod,

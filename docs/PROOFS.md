@@ -91,7 +91,35 @@ Integration tests run as separate processes, `PROOF_JOBS` at a time (default
 4; the ordinary jobs keep every slot busy, so the phase's wall is their total
 work divided by the slots, but at 6 on a 16-core host one engine boot in 277
 jobs stalled 50 s on its fresh bucket's first read while SeaweedFS grew and
-removed per-bucket volumes, and a merge gate is never rerun). Playwright spec files run on
+removed per-bucket volumes, and a merge gate is never rerun).
+
+That stall class is tolerated, and still recorded. Every wait for a process a
+test started (`internal/testsupport/bootwait`) allows the boot 180 s, ends at
+once when the process has exited instead of polling it, and logs how long the
+boot took, with a `WARN` line past 20 s that `proofrun overhead` lists under
+"Slow boots". A test binary's bucket create (`s3bucket.Main`) is allowed 120 s
+and warns the same way, and the engine's two boot reads log `list_took`, so a
+slow boot says which read stalled. The default stays 4 until a proof at 6 is
+measured clean again.
+
+A test process's bucket is removed after the integration phase, not on its
+slot, because removing a bucket is the store's heaviest per-bucket operation
+and its churn was the stall. `proofrun integration` (a local proof, and each CI
+shard) gives every test process a file to name its bucket in
+(`ORK_TEST_BUCKET_LEFT_FILE`, `integration/<job>.bucket`). A process whose
+tests passed writes its bucket's name there and exits (`s3bucket.Finish`); one
+with a failure keeps its bucket and writes nothing, as before. When the phase's
+last process has ended, still inside the gate's wall, the runner removes the
+buckets of the processes whose tests all passed, four at a time and two minutes
+each, asking the store to delete the bucket whole and emptying it object by
+object only when the store refuses a non-empty one. It removes only a name of
+the shape `s3bucket.Name` makes, never the development bucket. The
+`bucket sweep:` lines of `integration.log` say what it kept, what it left
+(`left s3://… : <error>`) and ends with `removed N of M passing job buckets`; a
+removal that fails costs disk and never the verdict, and a run a signal stopped
+removes none.
+
+Playwright spec files run on
 `PROOF_UI_WORKERS` workers (default 2 — measured clean on a 16-core host,
 while at 3 one load-sensitive spec failed in each of three runs): the browser
 runs in a network
@@ -284,6 +312,8 @@ flowchart LR
   nightly["nightly.yml › nightly"] -. calls .-> callee["proof.yml"]
   gate["release.yml › gate"] -. calls .-> callee
   validate["release.yml › validate"] --> gate --> tag["release.yml › tag"]
+  validate --> artifacts["release.yml › artifacts"] --> tag --> publish["release.yml › publish"]
+  artifacts --> publish
   nightly --> flakes["nightly.yml › flakes"]
 ```
 
@@ -344,15 +374,46 @@ passed.
 downloads the last 30 days of proof artifacts and reports same-tree flips and
 suspect failures (`proofrun flakes`); it edits no list. `flakes` waits for
 `nightly`, whatever its result, so its window includes that night's proof.
-`release.yml` holds three: `release.yml` › `validate` runs first on every
-dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, and refuses
-`tag: true` from any ref but `main`;
-`release.yml` › `gate` runs the release tier; and `release.yml` › `tag` runs
-only with `tag: true`, and creates and pushes the tag only after `proofrun
-verify -release` accepts a passing release proof of the exact commit. Its
-checkout keeps no credential; only the step that pushes is given the token. Both
-take a concurrency group named from the validated version, so two dispatches
-of one version run one after the other.
+`release.yml` holds five: `release.yml` › `validate` runs first on every
+dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, refuses
+`tag: true` from any ref but `main`, and refuses a version whose `X.Y` the
+built-in activity catalog does not name or which CHANGELOG.md has no
+`## [X.Y.Z]` section for (`dist check`, `dist notes`), and decides from the
+repository's tags whether the release is the latest (`dist order`): a release
+below a released tag of its own `X.Y` is refused, because it would move the
+`X.Y` image tag back, and a backport to an older series is released but never
+marked the latest;
+`release.yml` › `gate` runs the release tier; `release.yml` › `artifacts`,
+beside it and read-only, builds what the release publishes — `make dist` (the
+archives and `SHA256SUMS`), `make release-images` for linux/amd64 and
+linux/arm64 as OCI layouts, the quickstart bundle naming them by digest — and
+runs `scripts/release-smoke.sh --layouts` on them before it uploads anything.
+It restores no cache, and runs QEMU's installer and BuildKit from images
+pinned by digest in `with:`, which Dependabot does not see, so those two pins
+are moved by hand;
+`release.yml` › `tag` waits for both and runs only with `tag: true`, and
+creates and pushes the tag only after `proofrun verify -release` accepts a
+passing release proof of the exact commit; and `release.yml` › `publish`, also
+only with `tag: true` on `main`, verifies before anything is pushed that the
+assets are exactly what the artifact's `SHA256SUMS` sums and match it, that
+the image list names each of the ten images once, that each layout's index
+names that digest, whose bytes hash to it and list linux/amd64 and
+linux/arm64, and that the quickstart bundle names every image by that tag and
+digest; it then pushes each layout to `ghcr.io/orkstack/<image>` byte for byte
+(`skopeo copy --all --preserve-digests`, from the image
+`deploy/skopeo-image.txt` pins) under `X.Y.Z` and `X.Y`, checks each digest
+after the push, refuses to move an `X.Y.Z` that holds another digest, and only
+then creates the GitHub release (`gh release create --verify-tag`, marked the
+latest when `validate` said so, never a draft or a pre-release, so
+`releases/latest/download/` names the newest release). `tag` and `publish`
+download what `gate` and `artifacts` uploaded by the names those jobs output,
+so a re-run of either finds the first attempt's artifact.
+`publish` checks out nothing and runs no repository code; it holds the only
+`packages: write`. The tag job's checkout keeps no credential, and only the
+step that pushes is given the token. Every one takes a concurrency group named
+from the validated version, so two dispatches of one version run one after the
+other. A dispatch with `tag: false` builds, smokes and proves, and publishes
+nothing.
 
 No `run:` step splices a workflow input or an event field into its shell; each
 reaches the step through `env:`. Every action is pinned to an exact release of
@@ -599,8 +660,9 @@ there is refused). Its Markdown report has:
   `end <job> after X s` lines in `integration.log` (each part's log in a
   merged proof) joined with `integration-tests.json` by job: each process's
   wall, its top-level tests' ledger seconds, and the difference. That
-  difference is the per-process overhead: bucket create and remove, binary
-  init and Temporal namespace registration, together. The report gives its
+  difference is the per-process overhead: bucket create, binary init and
+  Temporal namespace registration, together (a bucket's removal was part of it
+  until the end-of-phase sweep, §2.1, took it over). The report gives its
   min, median, p90, max and total, and the total in slot-seconds and in wall
   at `proof.json`'s `proof_jobs`. It also gives the heavy phase's wall (the
   plan's heavy jobs, run alone) and the ordinary phase's wall and slot
@@ -716,10 +778,24 @@ chosen branch's tip. Locally, `make proof-release` on a clean tree.
 **Tag a release.** Either dispatch `release.yml` with `tag: true` — the `tag`
 job checks out the proved commit, runs `proofrun verify -release -tag vX.Y.Z
 -proof DIR` on the gate's artifact, and only then creates the annotated tag
-and pushes it — or, locally, `make release-tag VERSION=vX.Y.Z
+and pushes it, and `publish` then pushes the images and creates the GitHub
+release — or, locally, `make release-tag VERSION=vX.Y.Z
 PROOF=proof/<release>`, which applies the same check to `HEAD`, tags it and
-does not push. Neither path stops a person with write access from pushing a
-`v*` tag by hand (§12).
+does not push; a tag made that way publishes nothing, because `release.yml` is
+the only path that publishes. Neither path stops a person with write access
+from pushing a `v*` tag by hand (§12). Before dispatching, add the version's
+`## [X.Y.Z]` section to CHANGELOG.md: it becomes the release notes, and
+`validate` refuses a version without one.
+
+**Recover a failed publish.** `publish` is safe to re-run: an image tag that
+already holds this release's digest is left alone, and the release itself is
+created last. Re-run the failed job from the run's page while the
+`artifacts` job's upload is kept (7 days); after that, dispatch again with a
+new patch version.
+
+**After the first publish,** make the ten packages public: each new
+`ghcr.io/orkstack/<image>` starts private, and an anonymous pull (the
+quickstart's) fails until it is public (on each package's settings page).
 
 **Enable the merge gate.** Once the repository is public, run
 `make github-merge-gate` (check mode, read-only) and then
@@ -748,7 +824,10 @@ private repository.
 **Stop or clean up a proof.** `make proof-stop PROOF=proof/<name>` stops the
 proof you started and the containers it labelled. `make proof-clean` lists the
 buckets and work roots failed tests kept; `make proof-clean REMOVE=1` removes
-one only once the process its name records is gone.
+one only once the process its name records is gone. It also lists the passing
+jobs' buckets that a bucket sweep a signal stopped did not reach (§2.1): they
+are the proof's `integration/*.bucket` files, and the store holds each as a
+bucket whose process is gone.
 
 ## 11. Reference
 
@@ -763,6 +842,9 @@ one only once the process its name records is gone.
 | `make proof-nightly` | the nightly tier |
 | `make proof-release` | the pre-release gate |
 | `make release-tag` | tag HEAD after a passing release proof of it |
+| `make dist` | the release's binaries, archives and `SHA256SUMS` for `VERSION=vX.Y.Z` |
+| `make release-images` | the release images as OCI layouts under `OUT`, for `PLATFORMS` |
+| `make release-smoke` | build both for this machine and run the quickstart bundle on them |
 | `make proof-flakes` | derive per-test flake rates from the ledgers |
 | `make proof-slow-list` | regenerate the costs and the slow list from a proof |
 | `make proof-overhead` | report where a proof's wall-clock went, from its directory, running nothing |
@@ -883,7 +965,11 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
 - **The observability gate has not run on GitHub.** The first release run,
   which always runs it, is its calibration.
 - **`nightly.yml` (both jobs), `release.yml`, `workflow_call` and the flakes
-  job have not run on GitHub yet.** Their YAML passes `actionlint`.
+  job have not run on GitHub yet.** `release.yml`'s `artifacts` and `publish`
+  jobs were added after the last `actionlint` pass; the workflow rules in
+  `test/tools/proofrun` hold their shape, and `make release-smoke` runs their
+  build and smoke on a developer's host. The first `tag: false` dispatch is
+  their first run on GitHub.
 - **The nightly soaks' thresholds were measured on a 16-core host.** A
   threshold missed on a 4-vCPU public runner is reported as a calibration
   result, never silently changed.

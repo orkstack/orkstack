@@ -1,9 +1,12 @@
-// Builds the docs collection from the repository's own markdown.
+// Builds the docs collection: the pages written for the site (site/content/)
+// and the generated references ported from the repository as they are.
 //
-// The docs are never copied by hand: docs.manifest.json says which page is
-// ported from which repository file (or which headings of it), and this
-// script writes src/content/docs/docs/ from it on every build. That
-// directory is generated and ignored by git. Along the way it:
+// docs.manifest.json says which page comes from which file (or which
+// headings of it), and this script writes src/content/docs/docs/ from it on
+// every build. That directory is generated and ignored by git. A page
+// written for the site summarises repository docs for a reader; the
+// repository's docs stay the full reference, and each site page cites the
+// ones it summarises. Along the way it:
 //
 //   - gives each page the title and description the manifest states, and an
 //     edit link to the file it came from;
@@ -12,21 +15,24 @@
 //     whichever page holds it; a link to anything else in the repository
 //     becomes its GitHub URL; a link to a file that does not exist fails;
 //   - replaces a <!-- site-media: NAME --> marker (invisible on GitHub) with
-//     NAME's light and dark screenshots;
+//     NAME's light and dark screenshots, and a <!-- site-diagram: NAME -->
+//     marker with docs/images/NAME-{light,dark}.svg (scripts/readme-diagrams.mjs);
 //   - writes one page per example Orkflow, with its YAML read from the file;
-//   - fails when a repository markdown file is neither ported nor excluded
-//     with a reason, so a new doc cannot be forgotten;
+//   - fails when a page written for the site cites no repository doc, or
+//     cites a file or heading that does not exist (its See also links them on
+//     GitHub), and when a doc under docs/ is cited by no page, so a new doc
+//     cannot be forgotten;
 //   - writes src/styles/generated/nojs-theme.css from ui/src/tokens.css.
 //
 // starlight-links-validator then fails the build on any link that still does
 // not resolve.
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, statSync, readdirSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import GithubSlugger from 'github-slugger';
 import YAML from 'yaml';
 import { BASE_PATH, REPO, BRANCH, repoUrl } from '../site.config.mjs';
 import { siteRoot, repoRoot, readTokens, darkMediaCss, resolve, codeTheme } from './tokens.mjs';
+import { checkAnchor, checkCitations, leftoverMarkers, uncitedDocs } from './citations.mjs';
 
 const manifest = JSON.parse(readFileSync(path.join(siteRoot, 'docs.manifest.json'), 'utf8'));
 const outRoot = path.join(siteRoot, 'src', 'content', 'docs');
@@ -251,6 +257,9 @@ function rewriteTarget(target, fromRel) {
 		if (!anchor) return url(idx.whole ?? idx.first);
 		const hit = idx.slugs.get(anchor);
 		if (!hit) {
+			// A heading of a file the site ports only in part: the full
+			// file on GitHub holds it.
+			if (idx.all?.has(anchor)) return `${repoUrl(rel)}#${anchor}`;
 			fail(`${fromRel}: link to ${rel}#${anchor}, which has no such heading`);
 			return target;
 		}
@@ -263,6 +272,10 @@ function rewriteTarget(target, fromRel) {
 		return target;
 	}
 	const dir = statSync(abs).isDirectory();
+	// A heading of a repository doc the site does not port: the doc on
+	// GitHub must still have it.
+	const anchorProblem = dir ? null : checkAnchor(repoRoot, rel, anchor);
+	if (anchorProblem) fail(`${fromRel}: link to ${rel}#${anchor}, ${anchorProblem}`);
 	return repoUrl(rel, { dir }) + (anchor ? `#${anchor}` : '');
 }
 
@@ -332,6 +345,13 @@ function rewriteLinks(text, fromRel) {
 // ------------------------------------------------------------ media
 
 const escapeHtml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const decodeXml = (t) =>
+	String(t)
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;/g, "'")
+		.replace(/&amp;/g, '&');
 const escapeAlt = (t) => String(t).replace(/[\\[\]]/g, (c) => `\\${c}`);
 
 const mediaManifestPath = path.join(mediaDir, 'manifest.json');
@@ -379,6 +399,29 @@ function mediaFigure(name, outFile) {
 		`<figcaption>${escapeHtml(item.caption)}</figcaption>`,
 		`</figure>`,
 	].join('\n');
+}
+
+// The README's diagrams (docs/images/, drawn by scripts/readme-diagrams.mjs
+// from the tokens), served from public/diagrams, one shown per theme.
+const diagramsDir = path.join(repoRoot, 'docs', 'images');
+const diagramsOut = path.join(siteRoot, 'public', 'diagrams');
+rmSync(diagramsOut, { recursive: true, force: true });
+function diagramFigure(name) {
+	const files = [`${name}-light.svg`, `${name}-dark.svg`];
+	for (const f of files) {
+		if (!existsSync(path.join(diagramsDir, f))) {
+			fail(`site-diagram marker ${name}: docs/images/${f} does not exist (cd site && bun run diagrams)`);
+			return '';
+		}
+	}
+	mkdirSync(diagramsOut, { recursive: true });
+	for (const f of files) writeFileSync(path.join(diagramsOut, f), readFileSync(path.join(diagramsDir, f)));
+	// The title is XML text: decode its entities, then escape it for the
+	// attribute, so a quote in a title can never end the alt early.
+	const title = /<title[^>]*>([^<]*)<\/title>/.exec(readFileSync(path.join(diagramsDir, files[0]), 'utf8'))?.[1];
+	const alt = escapeHtml(title === undefined ? name : decodeXml(title));
+	const img = (f) => `<img src="${BASE_PATH}/diagrams/${f}" alt="${alt}" loading="lazy" decoding="async" />`;
+	return [`<figure class="theme-figure theme-diagram">`, img(files[0]), img(files[1]), `</figure>`].join('\n');
 }
 
 // ------------------------------------------- generated blocks
@@ -463,6 +506,7 @@ for (const page of pages) {
 		.map((c) => (c.source ? rewriteLinks(c.text, c.source) : c.text))
 		.join('\n\n');
 	body = body.replace(/<!--\s*site-media:\s*([a-z0-9-]+)\s*-->/g, (_, name) => mediaFigure(name, outFile));
+	body = body.replace(/<!--\s*site-diagram:\s*([a-z0-9-]+)\s*-->/g, (_, name) => diagramFigure(name));
 	body = body.replace(/<!--\s*site-generated:\s*([a-z0-9-]+)\s*-->/g, (_, name) => {
 		if (!generatedBlocks[name]) {
 			fail(`${page.route}: no generated block named ${name}`);
@@ -470,9 +514,9 @@ for (const page of pages) {
 		}
 		return generatedBlocks[name]();
 	});
+	for (const marker of leftoverMarkers(body)) fail(`${page.route}: the marker <!-- ${marker} --> was not replaced (no such media or diagram name)`);
 	const fields = { title: page.title, description: page.description };
-	if (firstSource && !firstSource.startsWith('site/')) fields.editUrl = `${REPO}/edit/${BRANCH}/${firstSource}`;
-	else fields.editUrl = false;
+	fields.editUrl = firstSource ? `${REPO}/edit/${BRANCH}/${firstSource}` : false;
 	mkdirSync(path.dirname(outFile), { recursive: true });
 	writeFileSync(outFile, frontmatter(fields) + body.trimEnd() + '\n');
 }
@@ -481,7 +525,7 @@ for (const ex of exampleFiles) {
 	const outFile = outFileFor(ex.route);
 	const yaml = readFileSync(path.join(repoRoot, ex.rel), 'utf8').replace(/\n+$/, '');
 	const body = [
-		`[Examples](${BASE_PATH}/docs/getting-started/examples/) lists what this ${ex.kind === 'Automation' ? 'automation document' : 'Orkflow'} shows and what it needs to run; its comment header says the same. The file, as it is in the repository: [${ex.rel}](${repoUrl(ex.rel)}).`,
+		`[Examples](${BASE_PATH}/${path.posix.dirname(ex.route)}/) lists what this ${ex.kind === 'Automation' ? 'automation document' : 'Orkflow'} shows and what it needs to run; its comment header says the same. The file, as it is in the repository: [${ex.rel}](${repoUrl(ex.rel)}).`,
 		'',
 		'```yaml title="' + ex.rel + '"',
 		yaml,
@@ -491,23 +535,36 @@ for (const ex of exampleFiles) {
 	writeFileSync(outFile, frontmatter({ title: ex.title, description: ex.description, editUrl: `${REPO}/edit/${BRANCH}/${ex.rel}` }) + body + '\n');
 }
 
-// ------------------------------------------------------------ coverage
+// ------------------------------------------------------------ citations
+//
+// A page written for the site cites the repository docs it summarises in
+// its See also (scripts/citations.mjs); every doc under docs/ must be cited
+// by some page (or be a generated reference ported whole), and every page
+// under site/content/ must be in the manifest, so neither a new doc nor a
+// new page is left out.
 
-let tracked = [];
-try {
-	tracked = execFileSync('git', ['ls-files', '*.md'], { cwd: repoRoot, encoding: 'utf8' })
-		.split('\n')
-		.filter(Boolean);
-} catch {
-	fail('git ls-files failed: the sync needs the repository to check that every doc is ported');
-}
-const ported = new Set(pages.flatMap((p) => p.parts.map((x) => x.source).filter(Boolean)));
-for (const rel of tracked) {
-	if (rel.startsWith('site/content/')) continue;
-	if (!ported.has(rel) && !(rel in manifest.exclude)) {
-		fail(`${rel} is neither ported (docs.manifest.json groups) nor excluded with a reason`);
+const cited = new Set();
+for (const page of pages) {
+	for (const part of page.parts) {
+		if (part.source && !part.source.startsWith('site/content/')) cited.add(part.source);
+	}
+	for (const rel of page.parts.map((x) => x.source).filter((x) => x && x.startsWith('site/content/'))) {
+		const { problems: found, cited: files } = checkCitations({ rel, text: read(rel), repoRoot, repo: REPO, branch: BRANCH });
+		found.forEach(fail);
+		for (const f of files) cited.add(f);
 	}
 }
+for (const doc of uncitedDocs(cited, readdirSync(path.join(repoRoot, 'docs')).sort().map((n) => `docs/${n}`))) {
+	fail(`${doc} is cited by no page of the site: link it from the page that covers it`);
+}
+const listed = new Set(pages.flatMap((p) => p.parts.map((x) => x.source).filter(Boolean)));
+(function walk(dir) {
+	for (const entry of readdirSync(path.join(repoRoot, dir), { withFileTypes: true })) {
+		const rel = `${dir}/${entry.name}`;
+		if (entry.isDirectory()) walk(rel);
+		else if (rel.endsWith('.md') && !listed.has(rel)) fail(`${rel} is not a page of docs.manifest.json`);
+	}
+})('site/content');
 
 // ------------------------------------------------------------ styles
 

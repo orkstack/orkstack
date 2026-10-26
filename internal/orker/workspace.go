@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -1298,11 +1297,7 @@ func describeUnreadable(path string) string {
 	if err != nil {
 		return "unstattable"
 	}
-	described := fmt.Sprintf("mode=%o", info.Mode().Perm())
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		described += fmt.Sprintf(" owner=%d:%d", stat.Uid, stat.Gid)
-	}
-	return described
+	return fmt.Sprintf("mode=%o", info.Mode().Perm()) + ownerOf(info)
 }
 
 // ---------------------------------------------------------------- values.json

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 274" width="1280" height="274" role="img" aria-labelledby="durable-commit-title">
+<title id="durable-commit-title">When a container exits 0, the Orker validates values.json, hashes every artifact, uploads the artifacts and values.json, writes an immutable commit.json, and only then reports success to Temporal. If the Orker is lost before that report, Temporal retries the task, and the retry finds commit.json and returns its result without running the container again.</title>
+<style>.paper{fill:#13161c}.frame{fill:none;stroke:#e7e5dc;stroke-width:1.5px}.band{fill:none;stroke:rgb(231 229 220 / 0.14);stroke-width:1px}.caption{fill:#c3c2ba;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:12px}.node{fill:#13161c;stroke:#e7e5dc;stroke-width:1.5px}.group{fill:none;stroke:#e7e5dc;stroke-width:1px;stroke-dasharray:6 4}.name{fill:#e7e5dc;font-family:'Archivo Narrow Variable', 'Arial Narrow', 'Roboto Condensed', ui-sans-serif, system-ui, sans-serif;font-size:15px;font-weight:600}.note{fill:#c3c2ba;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11.5px}.edge{fill:none;stroke:#e7e5dc;stroke-width:1.5px}.back{fill:none;stroke:#c3c2ba;stroke-width:1.5px;stroke-dasharray:6 4}.arrow{fill:#e7e5dc}.arrow-back{fill:#c3c2ba}.label{fill:#c3c2ba;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11px;paint-order:stroke;stroke:#13161c;stroke-width:4px}.label-fail{fill:#ef7b6e;font-family:'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11px;font-weight:700;paint-order:stroke;stroke:#13161c;stroke-width:4px}.fail{fill:none;stroke:#ef7b6e;stroke-width:2.25px}.brace{fill:none;stroke:#c3c2ba;stroke-width:1px}.balloon circle{fill:#13161c;stroke:#e7e5dc;stroke-width:1.5px}.balloon text{fill:#e7e5dc;font-family:'Archivo Narrow Variable', 'Arial Narrow', 'Roboto Condensed', ui-sans-serif, system-ui, sans-serif;font-size:13px;font-weight:700}</style>
+<defs>
+<pattern id="minor" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M8 0H0V8" fill="none" stroke="rgb(231 229 220 / 0.06)" stroke-width="1"/></pattern>
+<pattern id="major" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="url(#minor)"/><path d="M40 0H0V40" fill="none" stroke="rgb(231 229 220 / 0.11)" stroke-width="1"/></pattern>
+<marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" class="arrow"/></marker>
+<marker id="arrow-back" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" class="arrow-back"/></marker>
+</defs>
+<rect class="paper" width="1280" height="274"/>
+<rect y="32" width="1280" height="242" fill="url(#major)"/>
+<path class="band" d="M0 32.5H1280M370.5 0V32"/>
+<text class="caption" x="12" y="21">A task’s result becomes durable · AGENTS.md §4.1</text>
+<text class="label" x="14" y="111" text-anchor="start">container</text>
+<text class="label" x="14" y="125" text-anchor="start">exits 0</text>
+<path class="edge" d="M80 117H130" marker-end="url(#arrow)"/>
+<g data-step="1"><g transform="translate(130 88)"><rect class="node" width="160" height="58"/><text class="name" x="14" y="25">Validate</text><text class="note" x="14" y="44">values.json</text></g><g class="balloon" transform="translate(290 88)"><circle r="12"/><text y="4.5" text-anchor="middle">1</text></g></g>
+<path class="edge" d="M290 117H322" marker-end="url(#arrow)"/>
+<g data-step="2"><g transform="translate(322 88)"><rect class="node" width="160" height="58"/><text class="name" x="14" y="25">Hash</text><text class="note" x="14" y="44">artifact hashes</text></g><g class="balloon" transform="translate(482 88)"><circle r="12"/><text y="4.5" text-anchor="middle">2</text></g></g>
+<path class="edge" d="M482 117H514" marker-end="url(#arrow)"/>
+<g data-step="3"><g transform="translate(514 88)"><rect class="node" width="160" height="58"/><text class="name" x="14" y="25">Upload</text><text class="note" x="14" y="44">artifacts</text></g><g class="balloon" transform="translate(674 88)"><circle r="12"/><text y="4.5" text-anchor="middle">3</text></g></g>
+<path class="edge" d="M674 117H706" marker-end="url(#arrow)"/>
+<g data-step="4"><g transform="translate(706 88)"><rect class="node" width="160" height="58"/><text class="name" x="14" y="25">Upload</text><text class="note" x="14" y="44">values.json</text></g><g class="balloon" transform="translate(866 88)"><circle r="12"/><text y="4.5" text-anchor="middle">4</text></g></g>
+<path class="edge" d="M866 117H898" marker-end="url(#arrow)"/>
+<g data-step="5"><g transform="translate(898 88)"><rect class="node" width="160" height="58"/><text class="name" x="14" y="25">Write</text><text class="note" x="14" y="44">commit.json</text></g><g class="balloon" transform="translate(1058 88)"><circle r="12"/><text y="4.5" text-anchor="middle">5</text></g></g>
+<path class="edge" d="M1058 117H1090" marker-end="url(#arrow)"/>
+<g data-step="6"><g transform="translate(1090 88)"><rect class="node" width="160" height="58"/><text class="name" x="14" y="25">Report</text><text class="note" x="14" y="44">success to Temporal</text></g><g class="balloon" transform="translate(1250 88)"><circle r="12"/><text y="4.5" text-anchor="middle">6</text></g></g>
+<path class="brace" d="M514 160V168H1058V160"/>
+<text class="label" x="786" y="184" text-anchor="middle">object storage, each object written once</text>
+<path class="fail" d="M1068 99l12 12m0 -12l-12 12"/>
+<text class="label-fail" x="1074" y="60" text-anchor="middle">Orker lost here?</text>
+<path class="back" d="M1170 146V216H978V150" marker-end="url(#arrow-back)"/>
+<text class="label" x="964" y="212" text-anchor="end">Temporal retries the task: the retry finds commit.json</text>
+<text class="label" x="964" y="228" text-anchor="end">and returns its result; the container does not run again</text>
+<rect class="frame" x="0.75" y="0.75" width="1278.5" height="272.5"/>
+</svg>

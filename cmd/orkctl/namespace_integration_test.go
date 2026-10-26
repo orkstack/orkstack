@@ -75,7 +75,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	orkerPath := testbin.Path(t, "./cmd/orker")
 
 	startNamespacedOrker(ctx, t, orkerPath, address, temporalNamespace, taskQueue)
-	engineAddr := startNamespacedEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue)
+	engineAddr, engineExited := startNamespacedEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue)
 
 	// Every invocation gets its own config file, so `namespace use` writes
 	// where the test can read it and never touches the developer's own.
@@ -89,7 +89,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 		transcript.record(full, stdout, stderr, code)
 		return stdout, stderr, code
 	}
-	waitForEngine(t, cli)
+	waitForEngine(t, engineExited, cli)
 	t.Cleanup(func() {
 		publishTranscript(t, "two-namespace-session.txt", transcript.transcript.String())
 	})
@@ -338,10 +338,10 @@ func startNamespacedEngine(
 	ctx context.Context,
 	t *testing.T,
 	enginePath, temporalAddr, temporalNamespace, orkerQueue string,
-) string {
+) (string, <-chan struct{}) {
 	t.Helper()
 	addr := freeAddress(t)
-	startProcess(ctx, t, "ork", enginePath,
+	exited := startProcess(ctx, t, "ork", enginePath,
 		"ORK_HTTP_ADDR="+addr,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
@@ -349,7 +349,7 @@ func startNamespacedEngine(
 		"ORK_ARTIFACT_BACKEND=local",
 		"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),
 	)
-	return addr
+	return addr, exited
 }
 
 // writeNamespacedOrkflow writes a one-task orkflow pinned to this test's pool.

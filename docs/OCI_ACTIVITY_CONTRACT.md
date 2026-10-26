@@ -835,7 +835,7 @@ execution, and none ever reaches a container.
 
 | Source | How the image arrives | Digest |
 |---|---|---|
-| **Builtin** (`shell`, `http`, `file`, `json`, `git`, `template`) | Pulled from the catalog reference like any other image. Built and pushed by `make -C images push`. | Real registry index digest |
+| **Builtin** (`shell`, `http`, `file`, `json`, `git`, `template`) | Pulled from the catalog reference like any other image. Each release publishes them to `ghcr.io/orkstack/activity-<name>` for linux/amd64 and linux/arm64, tagged `X.Y.Z` and `X.Y`, the tag the built-in catalog names (§4.2; [UPGRADING.md](./UPGRADING.md), "Release artifacts"); a checkout builds and pushes them to its local registry with `make -C images push`. | Real registry index digest |
 | **Custom / community** | Pulled from the registry named in `uses:`. The default; needs no configuration. | Real registry index digest |
 | **User-provided source** | `orkctl activity build <path\|git-url> --tag <ref>` builds and pushes, printing the pinned reference to paste into `uses:`. | Real registry index digest |
 | **Embedded fallback** (builtins only) | An **OCI image layout** shipped with the Orker at `ORK_ORKER_IMAGE_LAYOUT` (default `/var/lib/orkstack/images`), used only when a pull of an already-pinned digest fails. | Real registry index digest, carried inside the layout |

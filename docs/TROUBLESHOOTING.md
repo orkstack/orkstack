@@ -12,7 +12,7 @@ orkctl run logs <run-id> --task <task>        # what the task wrote
 
 Every command takes `--json` for scripts and `-n, --namespace` to choose the namespace ([CLI.md](./CLI.md), "`orkctl run get`").
 
-The page is grouped into four parts. **Submitting** covers refusals, which happen before a run exists. **Running** covers a run that exists but is not progressing as expected, or ended in a way nobody asked for. **Failures** covers a task or run that failed, by reason code. **The local stack** covers `make up` and the dev stack in `scripts/stack.sh`.
+The page is grouped into five parts. **Submitting** covers refusals, which happen before a run exists. **Running** covers a run that exists but is not progressing as expected, or ended in a way nobody asked for. **Failures** covers a task or run that failed, by reason code. **The quickstart** covers the release bundle `docker compose` runs ([GETTING_STARTED.md](./GETTING_STARTED.md)). **The local stack** covers `make up` and the dev stack in `scripts/stack.sh`.
 
 ## Submitting
 
@@ -350,6 +350,70 @@ Two commands run a task's pieces locally, through the same code the Orker uses:
 - `orkctl task run --from-run <run-id> --task <task> --render-only` renders the task with the run's recorded upstream bytes, and starts no container.
 - `orkctl task run --from-run <run-id> --task <task>` runs the task here. It writes nothing to the deployment, but any external side effect it performs is real ([CLI.md](./CLI.md), "`orkctl task run`").
 - `orkctl activity test <image>` checks an image against the activity contract, with no Orkflow and no Temporal server involved ([CLI.md](./CLI.md), "`orkctl activity test`").
+
+## The quickstart
+
+These entries apply to the release's quickstart bundle: `compose.yaml` and its
+`.env`, started with `docker compose up -d --wait`
+([deploy/quickstart/compose.yaml](../deploy/quickstart/compose.yaml)).
+
+### `docker compose up` cannot pull `ghcr.io/orkstack/…`
+
+**Cause.** The images are published by a release ([UPGRADING.md](./UPGRADING.md),
+"Release artifacts"). Before the first release there is nothing to pull, and a
+package that is still private refuses an anonymous pull with "denied" or
+"unauthorized".
+
+**Fix.** Download the bundle of a published release, whose `.env` names images
+that exist. Until a release is published, run OrkStack from source
+([CONTRIBUTING.md](../CONTRIBUTING.md), "The local development stack").
+
+### `docker compose up` stops with "port is already allocated"
+
+**Cause.** The quickstart publishes the UI on 5173, the engine on 8080 and the
+Temporal UI on 8233, on `127.0.0.1`. The development stack (`make up`) and many
+other tools use the same ports.
+
+**Fix.** Stop what holds the port, or set `ORKSTACK_UI_PORT`,
+`ORKSTACK_API_PORT` or `ORKSTACK_TEMPORAL_UI_PORT` in `.env` and run
+`docker compose up -d --wait` again.
+
+### A task fails with `WORKDIR_NOT_BINDABLE` or "bind source path does not exist"
+
+**Cause.** The Orker runs each task through this machine's Docker daemon,
+which mounts the task's workspace from `ORKSTACK_WORKDIR` (default
+`~/.cache/orkstack-quickstart`) as a path on the daemon's own machine. A daemon
+in a virtual machine (Docker Desktop, colima, Lima) sees only the directories
+that machine shares.
+
+**Fix.** Set `ORKSTACK_WORKDIR` in `.env` to a directory the virtual machine
+shares and that only you can write, usually one under your home directory, not
+a shared `/tmp`, then
+`docker compose up -d --wait` again ([DEPLOY.md](./DEPLOY.md), "Running the
+published images").
+
+### The Orker cannot reach Docker
+
+**Cause.** The compose file mounts `ORKSTACK_DOCKER_SOCKET` (default
+`/var/run/docker.sock`) into the Orker. Rootless Docker, colima and some
+Docker Desktop setups put the socket elsewhere.
+
+**Confirm.** `docker context inspect --format '{{.Endpoints.docker.Host}}'`
+prints the socket the `docker` command uses.
+
+**Fix.** Set `ORKSTACK_DOCKER_SOCKET` in `.env` to that path without its
+`unix://` prefix.
+
+### Runs are gone after `docker compose down`
+
+**Cause.** The quickstart's Temporal keeps its history in memory, as a
+development server, so a stopped stack forgets its runs. The object store's
+volume keeps the stored Orkflows and the artifacts, unless you ran
+`docker compose down -v`.
+
+**Fix.** None needed for a local trial: apply and submit again. A deployment
+runs a persistent Temporal ([DEPLOY.md](./DEPLOY.md), "0. Topology — what you
+run, and where state lives").
 
 ## The local stack
 

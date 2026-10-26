@@ -36,6 +36,7 @@ import (
 	cfgfile "github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -492,7 +493,9 @@ func applyConfigFile(
 	args []string, binary cfgfile.Binary,
 	lookup func(string) (string, bool), setenv func(string, string) error,
 ) (doc *cfgfile.Document, path string, check bool, set []string, err error) {
-	path, check, _, err = cfgfile.ParseArgs(args, lookup)
+	var parsed cfgfile.Args
+	parsed, err = cfgfile.ParseArgs(args, lookup)
+	path, check = parsed.Path, parsed.Check
 	if err != nil {
 		return nil, "", check, nil, err
 	}
@@ -522,7 +525,8 @@ func main() {
 	// applyConfigFile's own cfgfile.ParseArgs call (which also sees this
 	// flag but, per its own doc, otherwise ignores it) does anything that
 	// could fail on a bad --config path irrelevant to this request.
-	if _, _, showDefaults, err := cfgfile.ParseArgs(os.Args[1:], os.LookupEnv); err == nil && showDefaults {
+	requested, argsErr := cfgfile.ParseArgs(os.Args[1:], os.LookupEnv)
+	if argsErr == nil && requested.Defaults {
 		fmt.Print(cfgfile.RenderDefaults())
 		os.Exit(0)
 	}
@@ -544,6 +548,15 @@ func main() {
 	if cfgCheck {
 		fmt.Print(cfgDoc.Effective(cfgfile.BinaryOrk, os.LookupEnv))
 		os.Exit(0)
+	}
+
+	// --healthcheck asks this process's own running copy, over the admin
+	// listener, whether it is ready (docs/DEPLOY.md, "Health checks"). It comes
+	// after the configuration file is applied, because ORK_ADMIN_ADDR may have
+	// come from the file, and before loadConfig or any boot step: it starts
+	// nothing, and the exit status is the answer.
+	if argsErr == nil && requested.Healthcheck {
+		os.Exit(healthcheck.Run(context.Background(), "ork", os.Getenv, os.Stdout, os.Stderr))
 	}
 
 	cfg := loadConfig()
@@ -715,11 +728,15 @@ func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3Or
 	if err != nil {
 		return nil, fmt.Errorf("open orkflow store: %w", err)
 	}
+	// The list is the whole of a boot's wait on the bucket, so its duration is
+	// logged: a slow boot then names the read that stalled, not just "slow".
+	listStart := time.Now()
 	stored, err := store.List(ctx, artifacts.DefaultNamespace)
 	if err != nil {
 		return nil, fmt.Errorf("reload orkflows from %s (endpoint %s): %w",
 			store.Location(), cfg.S3Endpoint, err)
 	}
+	listTook := time.Since(listStart)
 	// The boot log names the default namespace's catalog. It is a reachability
 	// check and a human breadcrumb, not an inventory: listing every namespace
 	// at boot would scan the whole prefix to log something nobody reads.
@@ -728,7 +745,8 @@ func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3Or
 		"endpoint", cfg.S3Endpoint,
 		"namespace", artifacts.DefaultNamespace,
 		"orkflows", len(stored),
-		"names", orkflowNames(stored))
+		"names", orkflowNames(stored),
+		"list_took", listTook.Round(time.Millisecond).String())
 	return store, nil
 }
 
@@ -755,17 +773,21 @@ func openNamespaceStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3
 	if err != nil {
 		return nil, fmt.Errorf("open namespace registry: %w", err)
 	}
+	// Timed for the same reason as the Orkflow store's list above.
+	listStart := time.Now()
 	registered, err := store.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read namespaces from %s (endpoint %s): %w",
 			store.Location(), cfg.S3Endpoint, err)
 	}
+	listTook := time.Since(listStart)
 	names := make([]string, 0, len(registered))
 	for _, ns := range registered {
 		names = append(names, ns.GetName())
 	}
 	logger.Info("namespace registry ready",
-		"store", store.Location(), "namespaces", len(registered), "names", names)
+		"store", store.Location(), "namespaces", len(registered), "names", names,
+		"list_took", listTook.Round(time.Millisecond).String())
 	return store, nil
 }
 

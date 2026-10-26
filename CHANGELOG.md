@@ -15,6 +15,12 @@ include breaking changes, and each is marked **BREAKING**.
   proof naming specs, and every CI `ui-e2e` part, ran with more than one UI
   worker refused its files as unknown projects. They also pass
   `--pass-with-no-tests`, since a selection may hold no file of one project.
+- An Orker whose identity lock cannot be taken at all, on a filesystem
+  without file locks, fails boot with `WORKDIR_FAILED` naming the lock and the
+  error. It reported another live Orker holding its identity, which sent the
+  operator looking for a process that did not exist.
+- `orkctl task run` calls the directory it runs a task in its work directory
+  in every message; three still named it a session directory.
 - A local full proof records each nightly-listed test its base also lists as
   `deferred`, as a sharded proof's merger does. It built its ledger over the
   plan's whole expected set, which includes the deferred tests, so the first
@@ -26,6 +32,23 @@ include breaking changes, and each is marked **BREAKING**.
   reported the test as an outcome the plan had deferred, so a local full proof
   with a non-empty nightly list could not be merge-eligible. A `deferred` entry
   for a test the plan runs is still a problem.
+- An engine boot that stalled 50 s behind object-store bucket churn at a
+  higher `PROOF_JOBS` left the integration tests' 60 s boot waits no margin on
+  a merge gate that is never rerun. Every wait for a process a test starts
+  now allows a boot 180 s (the test binary's own bucket create, 120 s), ends
+  at once when the process exits, and records a boot over 20 s as a `WARN`
+  line with its duration, which `proofrun overhead` lists, instead of
+  absorbing it. The engine's boot log lines for the Orkflow store and the
+  namespace registry carry a `list_took` attribute, so a slow boot names the
+  read that stalled.
+- A test process removed its bucket on its slot as it ended, and that
+  removal's churn was the stall above. A process whose tests passed now names
+  its bucket in a file (`ORK_TEST_BUCKET_LEFT_FILE`), and `proofrun
+  integration` removes those buckets once, after the integration phase, four
+  at a time; a failing process still keeps its bucket, and a removal that
+  fails is logged and never fails the proof. A bucket is removed with one
+  request when the store deletes a non-empty bucket, and is emptied object by
+  object only when the store refuses, here and in `test/tools/bucket-ensure`.
 
 ### Added
 
@@ -105,21 +128,54 @@ include breaking changes, and each is marked **BREAKING**.
   helper tools specs ran with `go run` are built once
   per run. `ORK_E2E_BROWSER=host` drives the host's own Chromium instead
   (docs/PROOFS.md, AGENTS.md §11.1).
-- The README is a short front page: what OrkStack is, one real Orkflow
-  (held to `examples/each-fan-out.ork.yaml` by a test), a five-command
-  quickstart and an index of the docs. The local stack's details moved to
-  `docs/GETTING_STARTED.md`, "More about the local stack", the Linux host
-  setup to `CONTRIBUTING.md`, "Linux hosts", and the feature list to the
-  documentation site's overview page.
+- The README is OrkStack's front page: what it is, diagrams of the
+  architecture, a run and the commit order drawn from the UI's tokens in both
+  themes (`site/scripts/readme-diagrams.mjs`), one real Orkflow (held to
+  `examples/each-fan-out.ork.yaml` by a test), the CLI and the UI in motion,
+  and a Docker-only quickstart.
+- Getting started needs only Docker: it runs the quickstart bundle of a
+  published release and uses `orkctl` from its image or a release binary.
+  Go and Bun are needed only to develop OrkStack: the development stack
+  (`make infra-up`, `make up`, …) is in `CONTRIBUTING.md`, "The local
+  development stack", beside the Linux host setup ("Linux hosts").
 
 ### Added
 
+- Every release publishes what it takes to run OrkStack without building it
+  (`release.yml`, after its pre-release proof and an end-to-end smoke of the
+  very images it publishes): `orkctl` for Linux, macOS and Windows on amd64
+  and arm64, `ork` and `orker` for Linux, as archives with `SHA256SUMS`; the
+  images `ork`, `orker`, `orkctl`, `ui` and the six first-party activities on
+  `ghcr.io/orkstack`, for linux/amd64 and linux/arm64, tagged `X.Y.Z` and
+  `X.Y`; and `orkstack-quickstart.tar.gz`, a compose file that runs the whole
+  stack from those images (docs/UPGRADING.md, "Release artifacts"). The
+  images are not signed yet. One commit builds the same binaries whatever the
+  state of the checkout or the caller's Go environment. A release below an
+  existing release of its own `X.Y` is refused, and a backport to an older
+  series is published but never marked the latest, so
+  `releases/latest/download/` always serves the newest release. The
+  quickstart keeps its work directory under `~/.cache/orkstack-quickstart`,
+  never a shared `/tmp`. `make dist`, `make release-images` and
+  `make release-smoke` build and check the same artifacts on a developer's
+  machine.
+- `orkctl` builds and runs on Windows; `orkctl task run` and
+  `orkctl activity test`, which run containers locally, refuse there with a
+  reason (docs/LIMITATIONS.md).
+- `ork --healthcheck` and `orker --healthcheck` ask the process's own admin
+  listener (`ORK_ADMIN_ADDR`, `/readyz`) whether it is ready, and exit 0, or 1
+  with a one-line reason, for a container health check in an image with no
+  shell or `curl`. They read the configuration file and environment as a boot
+  does, ask loopback for a listener bound to every interface, and are refused
+  together with `--check` (docs/DEPLOY.md, "Health checks").
 - A landing page and documentation site in `site/` (Astro and Starlight),
   deployed to GitHub Pages at https://orkstack.github.io/orkstack/ on every
   push to `main` (`.github/workflows/site.yml`); a pull request uploads the
-  built site as an artifact. The docs are the repository's own markdown,
-  ported on every build (`site/docs.manifest.json`), and the site takes its
-  whole style from `ui/src/tokens.css`: `make site` checks and builds it,
+  built site as an artifact. Its docs are written for readers, by need:
+  tutorials, one-task how-to guides, reference tables and short concepts,
+  each page citing the repository docs it summarises, which stay the full
+  reference (`site/content/`, `site/docs.manifest.json`); the orkctl,
+  configuration, error-reason and API references are generated. The site
+  takes its whole style from `ui/src/tokens.css`: `make site` checks and builds it,
   failing on a colour or face outside the tokens and on a broken link, and
   `make site-media` regenerates its screenshots and recordings from the real
   stack. Proofs run it as the `site` gate.

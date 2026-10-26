@@ -1,75 +1,101 @@
 # Getting started
 
-This page takes a fresh clone to a finished run on your own machine: the
-whole local stack, the first-party activity images, and one Orkflow applied,
-planned, run and inspected from the CLI and the UI. Everything here is
-development setup; [DEPLOY.md](./DEPLOY.md) is the reference for a real
-deployment.
+This page takes a machine with Docker to a finished run: the whole stack from
+a release's images, and one Orkflow applied, planned, run and inspected from
+the CLI and the UI. Docker is the only prerequisite. Everything here is a
+local setup; [DEPLOY.md](./DEPLOY.md) is the reference for a real deployment,
+and [CONTRIBUTING.md](../CONTRIBUTING.md) builds and runs OrkStack from
+source.
 
 OrkStack is pre-release: stable, but breaking changes may be introduced until
-1.0, and each is listed in [CHANGELOG.md](../CHANGELOG.md).
+1.0, and each is listed in [CHANGELOG.md](../CHANGELOG.md). The commands below
+download a published release. Until the first release is published there is
+nothing to download yet; build and run from source instead
+([CONTRIBUTING.md](../CONTRIBUTING.md), "The local development stack").
 
 <!-- site-media: e2e-demo -->
 
 ## What you need
 
-- **Docker** — Docker Engine or Docker Desktop, with Compose. The stack's
-  infrastructure runs in containers, and so does every task.
-- **Go** — the version in [`go.mod`](../go.mod) (`go 1.27`), to build `ork`,
-  `orker` and `orkctl`.
-- **Bun** — to install and serve the UI.
-- **make**, **git** and **curl**.
+- **Docker** with Compose v2: Docker Engine, or Docker Desktop. The stack
+  runs in containers, and so does every task.
+- **curl** and **tar**, to download the release.
 
-Nothing else: OrkStack needs no database of its own. It runs on a Temporal
-cluster and S3-compatible object storage, and the local stack starts one of
-each.
+Nothing else: no toolchain and no database of its own. OrkStack runs on a
+Temporal cluster and S3-compatible object storage, and the quickstart starts
+one of each. This page is checked on Linux with Docker Engine; Docker Desktop
+on macOS and Windows is not checked yet.
 
-## 1. Start the infrastructure
+## 1. Download the quickstart
 
 ```bash
-git clone https://github.com/orkstack/orkstack.git
-cd orkstack
-make infra-up
+curl -fsSLO https://github.com/orkstack/orkstack/releases/latest/download/orkstack-quickstart.tar.gz
+tar -xzf orkstack-quickstart.tar.gz
+cd orkstack-quickstart
 ```
 
-`make infra-up` starts [`deploy/docker-compose.yml`](../deploy/docker-compose.yml):
-a Temporal development server, SeaweedFS as the S3-compatible object store,
-and a local OCI registry on `localhost:5001`.
+The bundle holds a `compose.yaml`, a `.env` that names the release's images by
+version and digest, and the example Orkflows under `examples/`. To check the
+download first, fetch the release's checksums beside it and run
+`sha256sum --ignore-missing -c SHA256SUMS`
+(`https://github.com/orkstack/orkstack/releases/latest/download/SHA256SUMS`).
 
-## 2. Push the first-party activity images
+## 2. Start OrkStack
 
 ```bash
-make -C images push
+docker compose up -d --wait
 ```
 
-This builds the first-party activities (`http`, `shell`, `file`, `json`,
-`git`, `template`) and pushes them to the local registry. An Orkflow names
-them by catalog name (`uses: shell`); the local stack points that catalog at
-the images you just pushed. Without this step an apply of an Orkflow that
-uses them fails, because their published references are not reachable from a
-development stack ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md),
-§4.6).
-
-## 3. Start OrkStack
-
-```bash
-make up
-```
-
-`make up` builds `bin/ork`, `bin/orker` and `bin/orkctl`, starts the engine,
-one Orker and the UI, and waits until each one answers: the engine's API, an
-Orker polling its pool, the UI and its live-event socket. When it prints
-"OrkStack is up":
+This pulls the release's images from `ghcr.io/orkstack`, starts Temporal,
+SeaweedFS as the S3-compatible object store, the engine, one Orker and the
+UI, and returns once each one passes its health check. Everything listens on
+this machine's loopback only:
 
 | What | Where |
 |---|---|
 | UI | http://localhost:5173 |
 | Engine API | http://localhost:8080 |
 | Temporal UI | http://localhost:8233 |
-| SeaweedFS filer | http://localhost:8888 (S3 API on http://localhost:9000) |
 
-`make status` shows what is running, and `make logs` tails the engine, Orker
-and UI logs.
+If a port is taken, set `ORKSTACK_UI_PORT`, `ORKSTACK_API_PORT` or
+`ORKSTACK_TEMPORAL_UI_PORT` in `.env`. `docker compose ps` shows what is
+running, and `docker compose logs -f ork orker` follows the engine's and the
+Orker's logs.
+
+The Orker runs each task as a container on this machine's Docker, through the
+Docker socket the compose file mounts into it. Whoever controls that socket
+controls the machine, so read [SECURITY_MODEL.md](./SECURITY_MODEL.md) before
+running this anywhere but your own machine.
+
+Listening on loopback keeps other machines out, but it is not a login. Any
+program on this machine can reach the API and start a run, and so can a web
+page you open, by DNS rebinding. Stop the stack with `docker compose down`
+when you are done with it. The object store's keys in the compose file
+(`orkstack` / `orkstack-secret`) are placeholders, and only the stack's own
+services can reach the store.
+
+## 3. Get orkctl
+
+Run it from its image, with nothing to install:
+
+```bash
+alias orkctl='docker compose run --rm orkctl'
+```
+
+The alias works from the bundle's directory, and the container sees that
+directory read-only, which is enough for `orkctl apply examples/…`. Or
+install the binary for your system from the same release
+(`orkctl-linux-amd64.tar.gz`, `orkctl-linux-arm64.tar.gz`,
+`orkctl-darwin-amd64.tar.gz`, `orkctl-darwin-arm64.tar.gz`,
+`orkctl-windows-amd64.zip`, `orkctl-windows-arm64.zip`):
+
+```bash
+curl -fsSLO https://github.com/orkstack/orkstack/releases/latest/download/orkctl-linux-amd64.tar.gz
+tar -xzf orkctl-linux-amd64.tar.gz orkctl
+sudo install -m 0755 orkctl /usr/local/bin/orkctl
+```
+
+Either way, `orkctl version` names the release.
 
 ## 4. Apply an Orkflow
 
@@ -78,7 +104,7 @@ computes a list in one task, converts each element as its own durable item,
 and merges the results:
 
 ```bash
-./bin/orkctl apply examples/each-fan-out.ork.yaml
+orkctl apply examples/each-fan-out.ork.yaml
 ```
 
 Applying compiles the document, checks it (names, the dependency graph, every
@@ -90,8 +116,8 @@ immutable version. Nothing runs yet.
 ## 5. Plan it, then run it
 
 ```bash
-./bin/orkctl run plan each-fan-out
-./bin/orkctl run submit each-fan-out --watch
+orkctl run plan each-fan-out
+orkctl run submit each-fan-out --watch
 ```
 
 `run plan` says which tasks would run and in what order, and starts nothing.
@@ -111,8 +137,8 @@ The fan-out task runs one item per element of the list, two at a time
 ## 6. Inspect what it did
 
 ```bash
-./bin/orkctl run logs <run-id> --task merge
-./bin/orkctl run artifacts <run-id>
+orkctl run logs <run-id> --task merge
+orkctl run artifacts <run-id>
 ```
 
 `run logs` prints a task's stdout and stderr, and `run artifacts` lists the
@@ -125,33 +151,13 @@ logs and artifacts.
 ## 7. Stop, or start over
 
 ```bash
-make down    # stop everything make up started; data is kept
-make reset   # wipe every local run, object and build output
+docker compose down      # stop; the object store keeps its data
+docker compose down -v   # stop and delete the stored data too
 ```
 
-## More about the local stack
-
-`make reset` returns the machine to a vanilla state: it deletes Temporal
-history, every object-store object (artifacts, archived runs, and the
-Orkflow catalogue), the local artifact store and all build output. The
-repository itself is untouched.
-
-The individual steps are there when you want them: `make tools`,
-`make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
-`make infra-up-observability` adds a local Grafana stack
-([deploy/observability](../deploy/observability/README.md)).
-To run the UI by hand, `cd ui && bun run dev`: its server proxies Connect calls
-to `ENGINE_API_URL` (default `http://127.0.0.1:8080`), and the browser opens
-WebSockets to `PUBLIC_ENGINE_WS_URL` (default the page's host on `:8080`).
-
-Configuration needs nothing for a laptop: `make up` runs on defaults alone.
-Past that, `ork` and `orker` read one shared YAML file (`--config PATH`), with
-`ORK_`/`OTEL_` environment variables overriding it; see
-[DEPLOY.md](./DEPLOY.md), "Configuration", and the generated
-[`deploy/orkstack.defaults.yaml`](../deploy/orkstack.defaults.yaml).
-
-On a Linux host, the test suites and the observability profile need one more
-step of host setup ([CONTRIBUTING.md](../CONTRIBUTING.md), "Linux hosts").
+The quickstart's Temporal keeps its history in memory, so a stopped stack
+forgets its runs' histories; the Orkflows and the artifacts are in the object
+store, which `down` keeps unless you add `-v`.
 
 ## Where next
 
@@ -162,3 +168,5 @@ step of host setup ([CONTRIBUTING.md](../CONTRIBUTING.md), "Linux hosts").
   follow, and why.
 - [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md) — what a container
   must do to be an activity, for writing your own image.
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — build OrkStack from source and run
+  the development stack.
