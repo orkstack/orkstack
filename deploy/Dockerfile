@@ -59,7 +59,7 @@ ENTRYPOINT ["/usr/local/bin/orker"]
 
 # The UI: built once on the build platform (its output is JavaScript), with
 # the repository's examples, which its gallery reads at build time.
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS ui-build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS ui-build
 WORKDIR /src/ui
 COPY ui/package.json ui/bun.lock ui/bunfig.toml ./
 RUN bun install --frozen-lockfile
@@ -67,12 +67,12 @@ COPY examples/ /src/examples/
 COPY ui/ ./
 RUN bun run build
 
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS ui-deps
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS ui-deps
 WORKDIR /deps
 COPY ui/package.json ui/bun.lock ui/bunfig.toml ./
 RUN bun install --frozen-lockfile --production
 
-FROM node:26.12.0-trixie-slim@sha256:e556a144463cc8dc53afe8de6d2fa0db5c132fd39ffa232c17641bd40df2bf11 AS ui
+FROM node:26.12.1-trixie-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS ui
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="ui" \
       org.opencontainers.image.description="The OrkStack web UI" \
