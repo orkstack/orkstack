@@ -615,7 +615,7 @@ func integrationFlags() (*flag.FlagSet, *integrationPlanOptions) {
 	fs := flag.NewFlagSet("integration", flag.ContinueOnError)
 	fs.StringVar(&o.out, "out", "", "directory for the ledger, plan, events and per-job logs (required)")
 	fs.StringVar(&o.binDir, "bin", "", "directory to compile test binaries into, or a directory of binaries the plan shipped (default <out>/bin/test)")
-	fs.IntVar(&o.jobs, "jobs", envInt("PROOF_JOBS", 4), "test processes at a time (PROOF_JOBS)")
+	fs.IntVar(&o.jobs, "jobs", envInt("PROOF_JOBS", 6), "test processes at a time (PROOF_JOBS)")
 	fs.StringVar(&o.nsPrefix, "namespace-prefix", "", "each slot k runs with ORK_TEMPORAL_NAMESPACE=<prefix>-w<k>")
 	fs.StringVar(&o.costsFile, "costs", "scripts/proof-test-costs.tsv", "measured per-test durations")
 	fs.StringVar(&o.allowFile, "allow", "scripts/proof-allowed-skips.txt", "allowed skips")

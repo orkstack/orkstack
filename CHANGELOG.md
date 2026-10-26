@@ -108,6 +108,11 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- A local proof and `scripts/integration.sh` run six integration test
+  processes at a time by default (`PROOF_JOBS`, was 4). Six had failed once on
+  an engine boot that stalled 50 s behind the object store's bucket churn;
+  with slow boots tolerated and passing jobs' buckets removed while the phase
+  runs, two full proofs at six ran clean on the proof host (79.0 and 71.2 min).
 - The run page at the 4,000-task default ceiling moves to the nightly tier
   and the pre-release gate, through a new Playwright twin of the nightly list,
   `scripts/proof-nightly-specs.txt` (approved 2026-10-26): about 7.5 minutes of

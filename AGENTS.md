@@ -1209,9 +1209,12 @@ and unit suites and the site's check and build) run first and alone, and a
 failure there or in any later gate stops a local proof (`PROOF_FAIL_FAST`,
 docs/PROOFS.md §2.2), which still writes its failing verdict; integration
 tests run as separate processes,
-`PROOF_JOBS` at a time (default 4: six ran 270 of 277 jobs clean, then one
-engine boot stalled 50 s on its fresh bucket's first read while the store grew
-and removed per-bucket volumes, which a merge gate cannot afford), with the
+`PROOF_JOBS` at a time (default 6: measured clean in two full proofs on the
+proof host, train-a-full in 79.0 min with integration 2805 s and
+train-b2-full in 71.2 min with integration 2760 s, once a slow engine boot is
+tolerated and passing jobs' buckets are removed while the phase runs; an
+earlier run at six had failed on one boot that stalled 50 s on its fresh
+bucket's first read), with the
 activity fixture beside them once the heavy tests have run alone, and
 Playwright spec files run on `PROOF_UI_WORKERS` workers (default 2: measured
 clean; at 3 a load-sensitive spec failed in each of three runs). The
