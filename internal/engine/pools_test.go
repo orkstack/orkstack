@@ -666,7 +666,7 @@ tasks:
 // could OPEN one, and the answer is on the Orker's own DescribeOrker:
 // ORK_ORKER_MAX_PINS. Zero means the process starts no session pollers, so the
 // pin's creation request would sit on a channel nobody polls until
-// pinCreationTimeout ran out and the run failed with PIN_UNAVAILABLE. That is
+// the pin creation timeout ran out and the run failed with PIN_UNAVAILABLE. That is
 // the stranded run the submit-time probe exists to prevent, so it is refused
 // here instead — with both remedies named, because a caller who cannot act on
 // an error is left where they were.

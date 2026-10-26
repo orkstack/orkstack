@@ -106,6 +106,14 @@ const (
 	DefaultPendingActivityHardStop int32 = 1900
 )
 
+// DefaultPinCreationTimeout is engine.pin_creation_timeout's default: how long
+// a pin waits for some pin host of its pool to have a free session slot
+// before its first task fails PIN_UNAVAILABLE. It is five minutes because
+// every build before the setting hardcoded five minutes; a run pins the
+// number in its plan (RunPlan.PinCreationTimeoutSeconds), so a release that
+// changes this default moves only new runs.
+const DefaultPinCreationTimeout = 5 * time.Minute
+
 // DefaultItemInputFloorBytes is the per-item input floor a run pins with its
 // continuation budget (ContinuationBudget.ItemInputFloorBytes): a fan-out of
 // up to dsl.MaxEachItems items still gives each item 16 KiB of activity

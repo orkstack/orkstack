@@ -52,7 +52,7 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 | Cancellation grace period | 30 seconds | `cancellation_grace_period_seconds` on the task |
 | Heartbeat interval | 5 seconds. Allowed range 1 to 10 seconds | `ORK_ORKER_HEARTBEAT_INTERVAL` |
 | Heartbeat timeout, for a lost Orker | 30 seconds | Fixed |
-| Pin creation | 5 minutes | Fixed |
+| Pin creation | 5 minutes. Allowed range 1 second to 24 hours | `ORK_PIN_CREATION_TIMEOUT` |
 | Submit idempotency key | 24 hours | `ORK_IDEMPOTENCY_TTL` |
 | Reuse of a cached result | At most 168 hours from its commit | `ORK_CACHE_MAX_TTL` |
 

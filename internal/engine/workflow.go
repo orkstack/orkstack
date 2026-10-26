@@ -38,22 +38,40 @@ import (
 // without making cancellation any quicker.
 const orkerHeartbeatTimeout = task.HeartbeatTimeout
 
-// pinCreationTimeout is how long a pin waits for SOME pin host in its pool to
-// have a free session slot. It becomes SessionOptions.CreationTimeout, which
-// the SDK uses as the creation activity's ScheduleToStartTimeout
-// (docs/DSL.md "Pins").
+// legacyPinCreationTimeout is how long every build before the
+// pin-creation-timeout gate waited for SOME pin host in a pin's pool to have a
+// free session slot, frozen: a hardcoded constant, never a setting. A run
+// takes it when its history predates the gate (the DefaultVersion branch of
+// pinCreationTimeoutFor) and when its plan carries no number. It is NOT the
+// deployment's default, which is DefaultPinCreationTimeout (pinned_defaults.go,
+// read at submit and nowhere else); the two are equal today, and a release
+// that moves the default must leave this alone.
 //
-// Submit already refused a pool whose Orkers host no pins at all
-// (PoolNoPinHostError), so this covers SATURATION only: every host is at its
-// ORK_ORKER_MAX_PINS. The SDK retries creation on the "too many outstanding
-// sessions" error with a 1s x 1.1 backoff until this expires, and only then
-// does the pin's first task fail with PIN_UNAVAILABLE.
-//
-// A constant, not a setting: workflow code may not read process configuration,
-// and putting it on Pin would be one more knob for a number an author has no
-// better information about than the platform does. Pin.creation_timeout_seconds
-// is a one-field addition later if the trade proves wrong.
-const pinCreationTimeout = 5 * time.Minute
+// What it bounds, whatever number a run takes, is the SessionOptions
+// CreationTimeout, which the SDK uses as the creation activity's
+// ScheduleToStartTimeout (docs/DSL.md "Pins"). Submit already refused a pool
+// whose Orkers host no pins at all (PoolNoPinHostError), so it covers
+// SATURATION only: every host is at its ORK_ORKER_MAX_PINS. The SDK retries
+// creation on the "too many outstanding sessions" error with a 1s x 1.1
+// backoff until it expires, and only then does the pin's first task fail with
+// PIN_UNAVAILABLE.
+const legacyPinCreationTimeout = 5 * time.Minute
+
+// PinCreationTimeoutChange is the workflow.GetVersion change id of the pin
+// creation timeout a run's plan carries (RunPlan.PinCreationTimeoutSeconds).
+// Asked lazily, where a run first opens a pin (pinCreationTimeoutFor): a run
+// that opens none records no marker, and a history recorded before the gate
+// replays its DefaultVersion branch, the legacyPinCreationTimeout every build
+// before it used. A carried generation answers from its carry (version).
+const PinCreationTimeoutChange = "pin-creation-timeout"
+
+// pinCreationTimeoutGateDisabledForTest is a TEST-ONLY switch, the precedent
+// of refusedRouteGateDisabledForTest: when set, pinCreationTimeoutFor takes
+// the DefaultVersion branch WITHOUT asking its version, so a recorder can
+// write a history in the shape of the builds before the gate, and a negative
+// replay test proves the committed fixtures can only replay because of it.
+// Never set in production code.
+var pinCreationTimeoutGateDisabledForTest atomic.Bool
 
 // pinReleaseBudget is the slice of a DERIVED pin lifetime reserved for the
 // release activity that removes /orkstack/shared, added on top of the members'
@@ -733,6 +751,11 @@ type pinState struct {
 	// was created with, and the value PIN_TIMEOUT compares against are one
 	// number computed once.
 	timeout time.Duration
+	// creationTimeout is how long the pin's creation request waits for a free
+	// slot (pinCreationTimeoutFor), decided once where the pin opens. Held
+	// here so the value the session was created with and the value
+	// PIN_UNAVAILABLE reports are one number computed once.
+	creationTimeout time.Duration
 
 	// ready settles when the session is open or its creation failed. The main
 	// loop registers it in its Selector; the coroutine settles it.
@@ -1042,6 +1065,32 @@ func (s *runState) openingPins() int {
 	return opening
 }
 
+// pinCreationTimeoutFor is how long a pin of this run waits for a pin host to
+// have a free session slot: the number the plan carries, which the submitting
+// engine took from engine.pin_creation_timeout.
+//
+// It is a versioned change (PinCreationTimeoutChange), asked lazily, here,
+// where the first pin of the run opens — so a run that opens no pin records no
+// marker, and a history recorded before the gate replays its DefaultVersion
+// branch: legacyPinCreationTimeout, whatever the plan says. From version 1 it
+// is the plan's number, or legacyPinCreationTimeout when the plan carries none
+// (a plan an older engine built, a start that predates the field), so a build
+// that adopts the gate mid-run, as an unversioned fleet's later generation
+// may, keeps the wait the run's earlier pins had. A carried generation
+// answers from its carry (version), never asking again.
+//
+// A pure function of the plan and the history, so it replays identically.
+func (s *runState) pinCreationTimeoutFor(ctx workflow.Context) time.Duration {
+	if pinCreationTimeoutGateDisabledForTest.Load() ||
+		s.version(ctx, PinCreationTimeoutChange, 1) < 1 {
+		return legacyPinCreationTimeout
+	}
+	if seconds := s.plan.PinCreationTimeoutSeconds; seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return legacyPinCreationTimeout
+}
+
 // pinLifetime is a pin's ExecutionTimeout: the author's number, or the
 // sequential worst case derived from its members (docs/DSL.md "Pins").
 //
@@ -1107,6 +1156,7 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 	p.triggeredBy = id
 	p.openedAt = workflow.Now(runCtx)
 	p.timeout = s.pinLifetime(p)
+	p.creationTimeout = s.pinCreationTimeoutFor(runCtx)
 	p.ready, p.readySettable = workflow.NewFuture(runCtx)
 	p.closed, p.closedSettable = workflow.NewFuture(runCtx)
 	p.done = workflow.NewBufferedChannel(runCtx, 1)
@@ -1116,7 +1166,7 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 	// CompleteSession must run in the coroutine that ran CreateSession, so
 	// something other than the main loop has to own the session's life; and
 	// CreateSession blocks until a host answers, bounded only by
-	// pinCreationTimeout, which in the main loop would stall every
+	// the pin's creation timeout, which in the main loop would stall every
 	// unpinned branch of the run — the exact property the loop's re-scan
 	// exists to provide.
 	workflow.Go(runCtx, func(gctx workflow.Context) {
@@ -1138,7 +1188,7 @@ func (s *runState) hostPin(gctx workflow.Context, p *pinState, queue string) {
 	}
 	sessionCtx, err := workflow.CreateSession(base, &workflow.SessionOptions{
 		ExecutionTimeout: p.timeout,
-		CreationTimeout:  pinCreationTimeout,
+		CreationTimeout:  p.creationTimeout,
 		// The dead-host detector for the pin, and the same number a task's own
 		// heartbeat uses. The SDK ticks the creation activity's heartbeat at
 		// min(this/3, 10s), so a lost pin host is noticed within it.
@@ -1223,10 +1273,7 @@ func (s *runState) pinOpened(ctx workflow.Context, name string) error {
 
 	id := p.triggeredBy
 	taskRun := s.taskRuns[id]
-	message := fmt.Sprintf(
-		"pin %q could not be opened on pool %q within %s: no Orker of the pool had a free "+
-			"pin slot, so this task never reached one: %v",
-		name, s.poolForTask(s.tasks[id]), pinCreationTimeout, err)
+	message := s.pinUnavailableMessage(p, s.poolForTask(s.tasks[id]), err)
 	taskRun.Status = orkstackv1.Status_STATUS_FAILED
 	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
 	taskRun.Pin = name
@@ -1247,6 +1294,57 @@ func (s *runState) pinOpened(ctx workflow.Context, name string) error {
 			"run_id", s.runID, "task_id", id, "pin", name, "error", emitErr)
 	}
 	return err
+}
+
+// pinGated reports whether this run took version 1 of the pin-creation-timeout
+// change: the version is decided where its first pin opens (openPin), so by
+// the time a pin's failure is reported it is in the run's own decisions, and a
+// history from before the gate — or the test switch that writes one — has none
+// above DefaultVersion.
+func (s *runState) pinGated() bool {
+	if pinCreationTimeoutGateDisabledForTest.Load() {
+		return false
+	}
+	v, ok := s.versions[PinCreationTimeoutChange]
+	return ok && v >= 1
+}
+
+// pinUnavailableMessage is the explanation a pin's PIN_UNAVAILABLE failure
+// carries: what ended the wait for a free pin slot.
+//
+// Before the gate every failure said "within <the wait>", which is true only
+// when nothing polled the creation request for the whole wait. A pool whose
+// every pin host is cordoned ends after the Orker's own bound on refused
+// attempts (about five minutes whatever the wait is), so from version 1 the
+// message states the cause: the cordon, with the refusal's own text (its
+// reason and how many attempts were refused); "within <the wait>" only for the
+// creation request timing out unstarted; and no claimed wait for any other
+// cause. A DefaultVersion run keeps the legacy wording byte for byte.
+func (s *runState) pinUnavailableMessage(p *pinState, pool string, err error) string {
+	if !s.pinGated() {
+		return fmt.Sprintf(
+			"pin %q could not be opened on pool %q within %s: no Orker of the pool had a free "+
+				"pin slot, so this task never reached one: %v",
+			p.name, pool, p.creationTimeout, err)
+	}
+	var refusal *temporal.ApplicationError
+	if errors.As(err, &refusal) && refusal.Type() == task.ReasonOrkerCordoned {
+		return fmt.Sprintf(
+			"pin %q could not be opened on pool %q: every pin host of the pool refused it because it "+
+				"is cordoned, so this task never reached one: %v",
+			p.name, pool, err)
+	}
+	var timeout *temporal.TimeoutError
+	if errors.As(err, &timeout) && timeout.TimeoutType() == enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START {
+		return fmt.Sprintf(
+			"pin %q could not be opened on pool %q within %s: no Orker of the pool had a free "+
+				"pin slot, so this task never reached one: %v",
+			p.name, pool, p.creationTimeout, err)
+	}
+	return fmt.Sprintf(
+		"pin %q could not be opened on pool %q: no pin host of the pool opened it, so this task "+
+			"never reached one: %v",
+		p.name, pool, err)
 }
 
 // closePinFor signals a pin's coroutine when the task that just became

@@ -357,6 +357,7 @@ then the variable it becomes.
 | `engine.definition_by_reference` | `ORK_DEFINITION_BY_REFERENCE` | `true` | `ork` | a top-level run whose planned definition is over the 256 KiB a run's start may carry travels by reference instead: the start carries a stub naming it, and the run copies the definition into its own history in bounded chunks, sharing the copy bound below (`engine.continuation.bytes`), of which it may take at most a quarter, compressed (2 MiB at the default); a larger one is refused at submit and at apply, "split it into composed Orkflows" (`docs/DSL.md`, "How many tasks an Orkflow may declare"). Needs `engine.continuation.enabled`: an explicit `true` without it is refused at boot, naming both keys, and when neither the configuration file nor the environment sets this key it is on only where the built-in default is on and continuation is (the boot logs the effective value). A submit that needs it is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs an older release (§5, "Engine capabilities and the fleet check"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below that release (§4, R3) |
 | `engine.snapshot_overlays` | `ORK_SNAPSHOT_OVERLAYS` | `true` | `ork` | a run that declares more than 256 rows — its tasks plus every fan-out's `max_items` — writes, for each event before its last, only the rows that changed since its last full snapshot (a snapshot overlay, `docs/STORAGE.md`), and a full snapshot at least every 64 events and whenever more than 256 rows changed; its last event's snapshot is always full. Decided per run, so a small child of a large parent keeps full snapshots. Read at submit, so a change applies to new runs. While any `ork` process polling `ork-engine-events` runs an older release (a draining build's included), or a process of a build that new runs start on does, new runs write full snapshots instead, and the engine logs why at most once a minute (§5, "Snapshot overlays"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below the release that has it (§4) |
 | `engine.run_max_in_flight` | `ORK_RUN_MAX_IN_FLIGHT` | `1000` | `ork` | the most activities, child runs and pins one run keeps pending at once; more wait `PENDING`, exactly as on a saturated pool, and dispatch resumes as running work finishes. An open pin's needs are exempt, below an absolute stop at 1,900. 16 to 1,800; anything else is refused at boot. Without it, a run above the cluster's 2,000 pending activities would stall. Read at submit, so a change applies to new runs |
+| `engine.pin_creation_timeout` | `ORK_PIN_CREATION_TIMEOUT` | `5m` | `ork` | how long a pin waits for some pin host of its pool to have a free slot (`ORK_ORKER_MAX_PINS`) before the task whose readiness asked for it fails `PIN_UNAVAILABLE`. A duration of whole seconds, `1s` to `24h`; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only: a run already accepted keeps the wait it started with, and so does a child run of it. A pool whose pin hosts are all cordoned fails a pin after about five minutes whatever this says (§5, "Removing an Orker safely: cordon and drain") |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
@@ -456,7 +457,9 @@ for one
 `allow_empty_pool` downgrades it to a logged warning, as it does for an empty
 pool. A pool Orker that does not answer the describe probe is not a refusal —
 the submit proceeds and, if no host can open the pin, the triggering task
-fails `PIN_UNAVAILABLE` after the creation timeout (`docs/DSL.md`, "Pins").
+fails `PIN_UNAVAILABLE` after the pin creation timeout
+(`engine.pin_creation_timeout`, five minutes by default; `docs/DSL.md`,
+"Pins").
 Pinning is therefore opt-in twice — by the author (the document) and by the
 operator (this setting) — and a document that pins is refused until an
 operator has opted its pool in, never left waiting. A pin host runs two extra
@@ -1799,9 +1802,11 @@ What a cordon does, precisely:
 - **New pins.** The SDK's session creation activity is refused with a
   retryable `ORKER_CORDONED`, and the SDK retries the creation on another
   host. When **every** pin host of the pool is cordoned, the refusal turns
-  non-retryable after 45 attempts — about five minutes, the time a saturated
-  pool takes — and the triggering task fails `PIN_UNAVAILABLE`, its message
-  naming the cordon and its reason.
+  non-retryable after 45 attempts — about five minutes — and the triggering
+  task fails `PIN_UNAVAILABLE`, its message naming the cordon and its reason.
+  That bound is the Orker's own, so it does not follow
+  `engine.pin_creation_timeout`: a pool whose pin hosts are all cordoned fails
+  a pin after about five minutes whatever that is set to.
 - **Everything in flight** is untouched: running containers finish, and open
   pins keep executing their remaining members, their release, and their
   completion on this host.
@@ -2611,6 +2616,27 @@ opening, and a definition with an `any_failed` handler) and
 recorded with the gate off) guard it with command, behaviour and negative
 tests (`internal/engine/testdata/history/README.md`); a missing fixture fails
 those tests, it never skips them.
+
+**A pin's creation timeout is a versioned change.** A run's plan carries
+`engine.pin_creation_timeout` in whole seconds, pinned at submit and copied
+into each child run's start, and the engine uses it as the wait of every pin
+the run opens. It asks the `pin-creation-timeout` version once, where the
+run's first pin opens: a run that opens no pin records no marker, and a
+generation that continues a run answers from what the run already decided. A
+history recorded before the gate replays its `DefaultVersion` branch, the five
+minutes every earlier build waited, whatever its plan says; version 1 is the
+plan's number, or five minutes for a plan that carries none. Version 1 also
+words a pin's `PIN_UNAVAILABLE` by its cause: "within" the timeout only when no
+pin host picked the pin up in time, and that every pin host refused it because
+it is cordoned when the Orkers did; the `DefaultVersion` branch keeps the
+earlier sentence, which always said "within". A build that
+predates the setting ignores the plan's number, so a rollback to one waits five
+minutes again. The replayer compares no timeout, so the replay tests compare
+the wait the replayed code sends with the one the history recorded, and the
+version it was answered with the recorded marker. The fixtures
+`run-pin-creation-timeout-v1.json` and `run-pin-creation-timeout-legacy-v1.json`
+(the same plan, recorded with the gate on and off) guard it with command and
+negative tests.
 
 If any of them fails, current code no longer produces what the recorded build
 did. Either restore it (`workflow.GetVersion` for a deliberate command-stream

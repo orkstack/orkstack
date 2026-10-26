@@ -850,7 +850,7 @@ var runStateFieldClass = map[string]fieldClass{
 	// A pin's runtime: no pin is opening, open or closing at a switch, and
 	// every pin starts unopened in the next generation.
 	"pinState.opened": fieldEphemeral, "pinState.triggeredBy": fieldEphemeral, "pinState.openedAt": fieldEphemeral,
-	"pinState.timeout": fieldEphemeral, "pinState.ready": fieldEphemeral, "pinState.readySettable": fieldEphemeral,
+	"pinState.timeout": fieldEphemeral, "pinState.creationTimeout": fieldEphemeral, "pinState.ready": fieldEphemeral, "pinState.readySettable": fieldEphemeral,
 	"pinState.readyConsumed": fieldEphemeral, "pinState.ctx": fieldEphemeral, "pinState.openErr": fieldEphemeral,
 	"pinState.done": fieldEphemeral, "pinState.doneSent": fieldEphemeral, "pinState.closed": fieldEphemeral,
 	"pinState.closedSettable": fieldEphemeral, "pinState.lost": fieldEphemeral,

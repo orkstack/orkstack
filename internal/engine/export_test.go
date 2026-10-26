@@ -147,6 +147,14 @@ func DisableRefusedRouteGateForTest() (restore func()) {
 	return func() { refusedRouteGateDisabledForTest.Store(false) }
 }
 
+// DisablePinCreationTimeoutGateForTest sets the test-only switch that makes a
+// pin's creation wait the five minutes the builds before pin-creation-timeout
+// did, WITHOUT asking its version, and returns the function that clears it.
+func DisablePinCreationTimeoutGateForTest() (restore func()) {
+	pinCreationTimeoutGateDisabledForTest.Store(true)
+	return func() { pinCreationTimeoutGateDisabledForTest.Store(false) }
+}
+
 // SetSnapshotBaseHookForTest makes every snapshot write that moves a run's
 // overlay base hand the new base to f, and returns the function that clears
 // it.

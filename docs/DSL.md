@@ -926,15 +926,22 @@ fails the run:
 
 | code | category | when |
 |---|---|---|
-| `PIN_UNAVAILABLE` | `InfrastructureError` | every pin host of the pool stayed full (or cordoned) for the whole creation timeout, a fixed **5 minutes**. Only the task whose readiness asked for the pin fails; it never reached an Orker, so its `scheduled_at` and `started_at` stay unset. |
+| `PIN_UNAVAILABLE` | `InfrastructureError` | every pin host of the pool stayed full (or cordoned) for the whole pin creation timeout, **5 minutes** by default (`engine.pin_creation_timeout`, [DEPLOY.md](./DEPLOY.md) §1). Only the task whose readiness asked for the pin fails; it never reached an Orker, so its `scheduled_at` and `started_at` stay unset. |
 | `PIN_HOST_LOST` | `InfrastructureError` | the host stopped heartbeating the pin (noticed within the 30-second heartbeat timeout) before the pin's lifetime ran out. Every member running at that moment is `FAILED` with this code — never `CANCELED`, because the platform lost it — and members not yet started are `CANCELED`. A member that already committed stays `SUCCEEDED`. |
 | `PIN_TIMEOUT` | `TimedOut` | the pin was open for at least its lifetime (`timeout_seconds`, or the derived sum). Members still running are stopped with it, as above. |
 
 A pool with **no** pin host at all is refused at submit instead (above), so
-`PIN_UNAVAILABLE` only ever means saturation. The creation timeout is a
-constant, not a setting: workflow code may not read process configuration,
-and an author has no better information about the number than the platform
-does. `PIN_HOST_LOST` and `PIN_TIMEOUT` reach the engine as the same event —
+`PIN_UNAVAILABLE` only ever means saturation. The pin creation timeout is
+the deployment's setting (`engine.pin_creation_timeout`, 5 minutes by
+default), not a field of the Orkflow: an author has no better information about
+the number than the platform does. A run takes the value in force when it was
+submitted and keeps it, because workflow code may not read process
+configuration. The failure message says what ended the wait: "within" the
+timeout when no pin host picked the pin up in time, or that every pin host
+refused it because it is cordoned. A pool whose pin hosts are all cordoned
+fails a pin after about five minutes whatever the setting says
+([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
+`PIN_HOST_LOST` and `PIN_TIMEOUT` reach the engine as the same event —
 the pin's hold on its host ended — and are told apart by the elapsed time
 against the pin's lifetime, which is deterministic on replay.
 A member that fails on its own (a non-zero exit) leaves the pin open and

@@ -2094,8 +2094,8 @@ tasks:
 //
 // Submit already refused a pool whose Orkers host no pins at all
 // (PoolNoPinHostError), so reaching here means the pool's hosts are
-// SATURATED: every one is at its ORK_ORKER_MAX_PINS for the whole of
-// pinCreationTimeout. The engine never re-creates a session for a pin, so this
+// SATURATED: every one is at its ORK_ORKER_MAX_PINS for the whole of the run's
+// pin creation timeout. The engine never re-creates a session for a pin, so this
 // is terminal — reported on the member whose readiness asked for the pin,
 // because it is the only one the run had decided to run.
 func TestRunWorkflow_FailsTheTriggeringTaskWhenNoPinHostHasAFreeSlot(t *testing.T) {
@@ -2108,7 +2108,7 @@ func TestRunWorkflow_FailsTheTriggeringTaskWhenNoPinHostHasAFreeSlot(t *testing.
 		return nil
 	})
 	// Never signals: the creation request is refused outright, which is how a
-	// pool with no free slot looks once pinCreationTimeout has run out.
+	// pool with no free slot looks once the pin creation timeout has run out.
 	h.env.OnActivity(sessionCreationActivityName, mock.Anything, mock.Anything).
 		Return(temporal.NewNonRetryableApplicationError(
 			"too many outstanding sessions", task.CategoryInfrastructureError, nil))

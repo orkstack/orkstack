@@ -61,6 +61,19 @@ include breaking changes, and each is marked **BREAKING**.
   walls and slot utilisation, the two Playwright invocations' walls and lane
   packing, any slow-boot warnings, and the top three time sinks. A partial
   proof is reported as partial, never a crash.
+- `engine.pin_creation_timeout` (`ORK_PIN_CREATION_TIMEOUT`, `5m`): how long a
+  pin waits for some pin host of its pool to have a free slot before the task
+  that asked for it fails `PIN_UNAVAILABLE`. It was a fixed five minutes. A
+  duration of whole seconds, 1 second to 24 hours, refused at boot otherwise.
+  A run carries the value in force when it was submitted, so a change moves
+  only new runs, and a child run waits as long as the run that started it. The
+  failure message says what ended the wait: "within" the timeout when no pin
+  host picked the pin up in time, or that every pin host refused it because it
+  is cordoned. A pool whose pin hosts are all cordoned still fails a pin after
+  about five minutes, whatever the setting says. The engine
+  asks a `pin-creation-timeout` version where a run first opens a pin: a run
+  recorded before it keeps the five minutes it was recorded with
+  (`docs/DEPLOY.md` §6).
 
 ### Changed
 

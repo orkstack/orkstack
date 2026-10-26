@@ -144,6 +144,13 @@ const MaxActivityInputBytes = 262144
 // spelling of a reason code is a second place for it to be wrong.
 const ReasonInputTooLarge = "INPUT_TOO_LARGE"
 
+// ReasonOrkerCordoned is the type of the error a cordoned pin host refuses a
+// pin's creation with (internal/orker, ReasonOrkerCordoned is this value). The
+// engine reads it to tell a pin that failed because every host refused it from
+// one that nothing polled in time, and it may not import the Orker, so the
+// spelling lives in this seam package.
+const ReasonOrkerCordoned = "ORKER_CORDONED"
+
 // HeartbeatTimeout is the single number both halves of the heartbeat contract
 // must agree on: the engine sets it in ActivityOptions, and the Orker derives
 // its tick rate from it.

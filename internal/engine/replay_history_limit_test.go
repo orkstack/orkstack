@@ -244,7 +244,7 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 		"testdata/history/run-cached-v1.json",
 		"testdata/history/run-join-v1.json",
 	}
-	newFields := []string{"history", "continuation", "in_flight", "definition", "snapshot_overlay"}
+	newFields := []string{"history", "continuation", "in_flight", "definition", "snapshot_overlay", "pin_creation_timeout_seconds"}
 	for _, path := range fixtures {
 		recorded := loadHistoryFile(t, path)
 		checked := 0

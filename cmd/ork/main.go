@@ -99,6 +99,11 @@ type config struct {
 	// at boot outside their bounds (docs/DEPLOY.md §1).
 	continuation   continuationConfig
 	runMaxInFlight int32
+	// pinCreationTimeout is ORK_PIN_CREATION_TIMEOUT (pinCreationTimeoutFromEnv):
+	// how long a pin waits for a free pin slot before its first task fails
+	// PIN_UNAVAILABLE. Whole seconds, 1s to 24h, refused at boot otherwise
+	// (docs/DEPLOY.md §1).
+	pinCreationTimeout time.Duration
 	// definitionByReference is engine.definition_by_reference's effective
 	// value (definitionByReferenceFromEnv), and definitionByReferenceSet
 	// whether the key was set; the boot logs both.
@@ -149,6 +154,7 @@ func loadConfig() config {
 	byReference, byReferenceSet, byReferenceErr := definitionByReferenceFromEnv(continuation.enabled,
 		engine.DefaultDefinitionByReference)
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
+	pinCreationTimeout, pinCreationErr := pinCreationTimeoutFromEnv()
 	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
 	snapshotOverlays, overlaysErr := snapshotOverlaysFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
@@ -174,6 +180,7 @@ func loadConfig() config {
 		historyMaxBytes:               historyMaxBytes,
 		continuation:                  continuation,
 		runMaxInFlight:                runMaxInFlight,
+		pinCreationTimeout:            pinCreationTimeout,
 		definitionByReference:         byReference,
 		definitionByReferenceSet:      byReferenceSet,
 		snapshotOverlays:              snapshotOverlays,
@@ -181,7 +188,7 @@ func loadConfig() config {
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
-			continuationErr, inFlightErr, byReferenceErr, overlaysErr),
+			continuationErr, inFlightErr, pinCreationErr, byReferenceErr, overlaysErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1389,6 +1396,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		ContinuationBytes:             cfg.continuation.bytes,
 		ContinuationRestoreTimeout:    cfg.continuation.restoreTimeout,
 		RunMaxInFlight:                cfg.runMaxInFlight,
+		PinCreationTimeout:            cfg.pinCreationTimeout,
 		DefinitionByReference:         cfg.definitionByReference,
 		DefinitionObjects:             snapshots,
 		SnapshotOverlays:              cfg.snapshotOverlays,

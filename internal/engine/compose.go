@@ -389,6 +389,7 @@ func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
 	childPlan.Continuation = s.plan.Continuation
 	childPlan.InFlight = s.plan.InFlight
 	childPlan.SnapshotOverlay = s.plan.SnapshotOverlay
+	childPlan.PinCreationTimeoutSeconds = s.plan.PinCreationTimeoutSeconds
 	return childPlan
 }
 

@@ -225,9 +225,9 @@ func (e *PinPoolMismatchError) Error() string {
 // "is anything serving this pool" but "can anything serving this pool OPEN a
 // pin". Without the check the run would be accepted, the session's creation
 // activity would sit on `<queue>__internal_session_creation` that nobody
-// polls, and the pin's tasks would wait out pinCreationTimeout before failing
-// with PIN_UNAVAILABLE — a stranded run, which is exactly what a submit-time
-// probe exists to prevent (docs/DEPLOY.md "Pin hosting is a pool-wide setting").
+// polls, and the pin's tasks would wait out the pin creation timeout before
+// failing with PIN_UNAVAILABLE — a stranded run, which is exactly what a
+// submit-time probe exists to prevent (docs/DEPLOY.md "Pin hosting is a pool-wide setting").
 //
 // Pin hosting is a POOL-WIDE property: one Orker answers the probe, and the
 // documented deployment rule is that every Orker of a pool sets the same
@@ -784,8 +784,8 @@ type checkPinHostRequest struct {
 //     Pools() treats the same failure. Turning a describe blip into a refused
 //     submit would invent a new failure, and the in-workflow backstop already
 //     covers a pool that genuinely cannot open a pin: the session's creation
-//     activity times out at pinCreationTimeout and the task fails with
-//     PIN_UNAVAILABLE.
+//     activity times out at the run's pin creation timeout and the task fails
+//     with PIN_UNAVAILABLE.
 //
 // allowEmpty downgrades a real refusal to a warning exactly as it does for an
 // empty pool: the operator who overrides has been told what they are waiting

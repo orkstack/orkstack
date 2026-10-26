@@ -170,6 +170,10 @@ var Schema = []Var{
 	// ORK_RUN_MAX_IN_FLIGHT's fallback is engine.DefaultRunMaxInFlight: the
 	// most activities, child runs and pins one run keeps pending.
 	{Path: "engine.run_max_in_flight", Env: "ORK_RUN_MAX_IN_FLIGHT", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultRunMaxInFlight))},
+	// ORK_PIN_CREATION_TIMEOUT's fallback is engine.DefaultPinCreationTimeout:
+	// how long a pin waits for a pin host's free slot before its first task
+	// fails PIN_UNAVAILABLE. Pinned, in seconds, into each top-level plan.
+	{Path: "engine.pin_creation_timeout", Env: "ORK_PIN_CREATION_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultPinCreationTimeout)},
 	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the
 	// built-in ceiling (engine.MaxComposeDepth) it may lower and never raise.
 	{Path: "engine.compose_max_depth", Env: "ORK_COMPOSE_MAX_DEPTH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultComposeMaxDepth))},

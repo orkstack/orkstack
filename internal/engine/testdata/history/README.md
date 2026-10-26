@@ -444,3 +444,39 @@ build before it, and must keep replaying through the `DefaultVersion` branch.
   (`refused_route_integration_test.go`). It never skips. The fixtures are
   committed, so the replay tests above fail, never skip, when one is missing;
   only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes them).
+
+### `run-pin-creation-timeout-v1.json` and `run-pin-creation-timeout-legacy-v1.json` — a pin opened under a plan's creation timeout
+
+An Orkflow that opens two pins, one after the other with an unpinned task
+between them (`twoPinsDocument`), run to completion under a plan that carries
+`pin_creation_timeout_seconds: 30`. The gated fixture is recorded by today's
+code: it carries the lazy `pin-creation-timeout` marker once
+(`pinCreationTimeoutFor`, `workflow.go`, asked where the first pin opens), and
+both pins' session creation activities were scheduled with a 30 second
+`ScheduleToStartTimeout`, the plan's number. The `legacy` fixture is recorded
+from the same plan with the gate switched off
+(`DisablePinCreationTimeoutGateForTest`), which is the command sequence of
+every build before the gate: no marker, and both creation activities scheduled
+with the five minutes those builds hardcoded, whatever the plan says. It must
+keep replaying through the `DefaultVersion` branch. The unpinned task between
+the pins gives the run a moment with nothing in flight, so the continuation
+tests that switch every fixture at each idle point carry its decision across
+a generation.
+
+Temporal's replayer compares no timeout, so the replay tests replay with an
+interceptor and compare the `ScheduleToStartTimeout` current code sends on
+replay with the one the history recorded, and the version it is answered with
+the recorded marker.
+
+- command: `TestRunWorkflow_ReplaysCommittedPinCreationTimeoutHistories`
+- negative: `TestPinCreationTimeoutHistories_CatchTheGateRemoved` (the gated
+  fixture replayed with the gate skipped is sent five minutes where it
+  recorded thirty seconds)
+- behaviour: `TestRunWorkflow_APinWaitsForThePlansCreationTimeout`,
+  `TestRunWorkflow_AGateOffPinKeepsTheLegacyFiveMinutes`,
+  `TestRunWorkflow_TheCreationTimeoutGateIsAskedOnlyWhereAPinOpens`
+- recorder: `TestIntegration_RecordPinCreationTimeoutHistories`
+  (`pin_creation_timeout_integration_test.go`). It never skips. The fixtures
+  are committed, so the replay tests above fail, never skip, when one is
+  missing; only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes
+  them).

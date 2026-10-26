@@ -72,7 +72,7 @@ A pool is a set of Orkers. Orkers join a pool with `ORK_ORKER_POOL=gpu`. A task 
 
 | Code | Meaning |
 |---|---|
-| `PIN_UNAVAILABLE` | Every pin host in the pool stayed full for 5 minutes. The task fails before it reaches an Orker, and no directory is made for it. |
+| `PIN_UNAVAILABLE` | Every pin host in the pool stayed full for the pin creation timeout, 5 minutes unless `ORK_PIN_CREATION_TIMEOUT` says otherwise. The task fails before it reaches an Orker, and no directory is made for it. |
 | `PIN_HOST_LOST` | The Orker hosting the pin stopped answering. The run fails. The pin never moves to another Orker, because its directory is not there. |
 | `PIN_TIMEOUT` | The pin was open for its whole lifetime. |
 

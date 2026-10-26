@@ -45,7 +45,7 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 **Confirm.** `orkctl orker list` shows `open/max` in the PINS column for a pin host and `-` for any other Orker ([CLI.md](./CLI.md), "`orkctl orker list`").
 
-**Fix.** Set `ORK_ORKER_MAX_PINS=1` on every Orker of that pool, then restart them. With `--allow-empty-pool` the submit is accepted, but if no host can open the pin, the task that asked for it fails `PIN_UNAVAILABLE` after the five-minute creation timeout ([DSL.md](./DSL.md), "Pins").
+**Fix.** Set `ORK_ORKER_MAX_PINS=1` on every Orker of that pool, then restart them. With `--allow-empty-pool` the submit is accepted, but if no host can open the pin, the task that asked for it fails `PIN_UNAVAILABLE` after the pin creation timeout, five minutes by default ([DSL.md](./DSL.md), "Pins").
 
 ### The pool's Orkers are too old for `each:`, `cache:` or `join:`
 
@@ -286,11 +286,11 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 ### A task failed with `PIN_UNAVAILABLE`
 
-**Cause.** Every pin host of the pool stayed full, or cordoned, for the whole five-minute creation timeout. Only the task that asked for the pin fails. It never reached an Orker, so its `scheduled_at` and `started_at` stay unset. Category `InfrastructureError`, not retried (`internal/engine/workflow.go`; [DSL.md](./DSL.md), "Pins").
+**Cause.** Every pin host of the pool stayed full, or cordoned, for the whole pin creation timeout, five minutes unless `ORK_PIN_CREATION_TIMEOUT` says otherwise. The task's message says which: "within" the timeout when no pin host picked the pin up in time, or that every pin host refused it because it is cordoned. Only the task that asked for the pin fails. It never reached an Orker, so its `scheduled_at` and `started_at` stay unset. Category `InfrastructureError`, not retried (`internal/engine/workflow.go`; [DSL.md](./DSL.md), "Pins").
 
 **Confirm.** `orkctl orker list` shows each pin host's `open/max` and whether it is cordoned.
 
-**Fix.** Add a pin host, uncordon one with `orkctl orker uncordon <orker-id>`, or reduce the number of pins that are open at once. A pool with no pin host at all is refused at submit instead ([DEPLOY.md](./DEPLOY.md), "Pin hosting is a pool-wide setting").
+**Fix.** Add a pin host, uncordon one with `orkctl orker uncordon <orker-id>`, reduce the number of pins that are open at once, or raise `ORK_PIN_CREATION_TIMEOUT` if slots free up slowly (a new value applies to runs submitted after the engine restarts). A pool whose hosts are all cordoned fails after about five minutes whatever the setting says. A pool with no pin host at all is refused at submit instead ([DEPLOY.md](./DEPLOY.md), "Pin hosting is a pool-wide setting").
 
 ### A task failed with `PIN_HOST_LOST` or `PIN_TIMEOUT`
 
