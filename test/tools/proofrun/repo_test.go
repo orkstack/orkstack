@@ -661,8 +661,11 @@ func TestRepositoryCIParts_DriveChromiumInTheContainer(t *testing.T) {
 			if normalizeIf(s.If) != "steps.host-chromium.outputs.needed == 'true'" {
 				t.Errorf("jobs.ui-e2e %s installs the host's Chromium under %q; want only when the shard needs it", s.label(i), s.If)
 			}
-			if !strings.Contains(s.Run, "--with-deps") {
-				t.Errorf("jobs.ui-e2e %s installs Chromium without its system libraries", s.label(i))
+			// The runner image carries Chromium's libraries; --with-deps is an
+			// apt install from a mirror that has stalled a shard past its
+			// limit twice (runs 40346476240 and 40411125174).
+			if strings.Contains(s.Run, "--with-deps") || strings.Contains(s.Run, "apt") {
+				t.Errorf("jobs.ui-e2e %s apt-installs Chromium's system libraries, which the runner image already carries", s.label(i))
 			}
 		case strings.Contains(s.Run, "scripts/proof.sh --part"):
 			part = i
@@ -912,7 +915,7 @@ func TestRepositoryCIParts_MeasureTheRunnerFirst(t *testing.T) {
 		t.Error("scripts/proof.sh does not measure the runner before its first gate")
 	}
 	for _, want := range []string{
-		`-floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >"$DIR/setup.log" 2>&1`,
+		`-floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >>"$DIR/setup.log" 2>&1`,
 		`done >>"$DIR/setup.log"`,
 		`if [ -f "$DIR/runner-health.json" ]; then record_args+=(-runner-health "$DIR/runner-health.json"); fi`,
 	} {
@@ -927,4 +930,39 @@ func TestRepositoryCIParts_MeasureTheRunnerFirst(t *testing.T) {
 	if !strings.Contains(wf, `.degraded_runners[]?`) {
 		t.Error(".github/workflows/proof.yml's summary does not name a degraded runner")
 	}
+}
+
+// The merged proof's copy of the parts is made whatever the merge decided: a
+// failing proof is exactly the one whose parts' events and logs a reader
+// needs (docs/PROOFS.md §8). Under `set -e`, a failing `proofrun merge` used
+// to end the step before the copy (run 40411125174 uploaded five files), so
+// the step keeps the merge's status, copies, and then ends as the merge did.
+func TestRepositoryProofJob_CollectsThePartsAfterAFailingMerge(t *testing.T) {
+	w := loadWorkflow(t, "proof.yml")
+	job, ok := w.Jobs["proof"]
+	if !ok {
+		t.Fatal("proof.yml has no proof job")
+	}
+	for _, s := range job.Steps {
+		if s.Name != "merge" {
+			continue
+		}
+		merge := strings.Index(s.Run, `go run ./test/tools/proofrun merge "${args[@]}" || status=$?`)
+		collect := strings.Index(s.Run, "scripts/proof-collect.sh ")
+		exit := strings.LastIndex(s.Run, `exit "$status"`)
+		if merge < 0 {
+			t.Fatal("the merge step does not keep proofrun merge's status; under set -e a failing merge ends the step before the copy")
+		}
+		if collect < merge {
+			t.Error("the merge step copies the parts before the merge, or not at all")
+		}
+		if exit < collect {
+			t.Error("the merge step does not end as the merge did, after the copy")
+		}
+		if strings.Contains(s.Run[merge:collect], "exit ") {
+			t.Error("the merge step exits between the merge and the copy")
+		}
+		return
+	}
+	t.Fatal("the proof job has no merge step")
 }

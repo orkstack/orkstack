@@ -435,11 +435,18 @@ jobs:
             needed=true
           fi
           echo "needed=$needed" | tee -a "$GITHUB_OUTPUT"
+      # Without --with-deps: the runner image already carries Chromium's
+      # shared libraries (run 40411125174's apt log shows the nine packages
+      # --with-deps would add are all fonts, and its eight upgrades libraries
+      # already installed), and that apt install from the runner's mirror at
+      # 50–100 KB/s has cost a run its only host-Chromium shard twice (runs
+      # 40346476240 and 40411125174). The browser itself comes from
+      # Playwright's own store.
       - name: Chromium (host)
         if: steps.host-chromium.outputs.needed == 'true'
         timeout-minutes: 5
         working-directory: ui
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - name: UI shard
         timeout-minutes: 35
         shell: bash
@@ -708,7 +715,8 @@ jobs:
           if [ -f "$RUNNER_TEMP/ci/parts/${{ needs.plan.outputs.plan_artifact }}/ui-plan.json" ]; then
             args+=(-ui-plan "$RUNNER_TEMP/ci/parts/${{ needs.plan.outputs.plan_artifact }}/ui-plan.json")
           fi
-          go run ./test/tools/proofrun merge "${args[@]}"
+          status=0
+          go run ./test/tools/proofrun merge "${args[@]}" || status=$?
           # The merged proof keeps every part's records, the events and logs
           # only of parts that did not pass, and GitHub's job records — never
           # a part's binaries, image layouts or test artifacts
@@ -716,8 +724,13 @@ jobs:
           # the parts were 4.6 GB and the upload below timed out; with the
           # binaries out, a green run's events and logs were still 900 MB.
           # The copy is not the verdict: proof.json is already written, and
-          # the merger read the parts, not this copy.
+          # the merger read the parts, not this copy. It is made whatever the
+          # merge decided — a failing proof is exactly the one whose parts'
+          # events and logs a reader needs (docs/PROOFS.md §8); under set -e
+          # a failing merge used to end the step before it (run 40411125174
+          # uploaded five files) — and the step then ends as the merge did.
           scripts/proof-collect.sh "$RUNNER_TEMP/ci/parts" "$RUNNER_TEMP/ci/jobs" "$RUNNER_TEMP/ci/proof" || true
+          exit "$status"
       - name: summary
         if: always()
         timeout-minutes: 2

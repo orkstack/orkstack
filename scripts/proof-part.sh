@@ -73,7 +73,7 @@ part_require() {
 		# one, and is refused here, explicitly, rather than by the spec's
 		# "Executable doesn't exist" after the stack has started.
 		if [ -f "$UI_PLAN" ] && part_ui_shard_drives_host_chromium "${PART#ui-e2e:}"; then
-			part_need "Playwright's Chromium on this host (cd ui && npx playwright install --with-deps chromium): this shard holds a spec driven on the host's Chromium" part_host_chromium
+			part_need "Playwright's Chromium on this host (cd ui && npx playwright install chromium): this shard holds a spec driven on the host's Chromium" part_host_chromium
 		fi
 		;;
 	activity-fixture:*)

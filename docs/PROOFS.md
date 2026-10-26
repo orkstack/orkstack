@@ -161,11 +161,12 @@ others. The run page at the task ceiling runs on the host's Chromium
 `ui/e2e/runPageCeiling.ts`. `network-change.spec.ts` launches a host-namespace
 Chromium of its own as its positive control; every other spec drives the
 container. A CI `ui-e2e` part installs the host's Chromium
-(`playwright install --with-deps chromium`, an apt install of its system
-libraries) only when its shard holds one of those three files, decided from
-the UI plan by the same rule `scripts/proof-part.sh` applies as a prerequisite
-of the part; the other shards pull the pinned image and nothing from an apt
-mirror.
+(`playwright install chromium`, the browser from Playwright's own store and
+nothing from an apt mirror: the runner image already carries its system
+libraries, and `--with-deps`'s apt install stalled a shard past its limit
+twice, runs 40346476240 and 40411125174) only when its shard holds one of
+those three files, decided from the UI plan by the same rule
+`scripts/proof-part.sh` applies as a prerequisite of the part.
 The gate starts one browser server for both invocations, and the second reuses
 the first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
@@ -895,10 +896,10 @@ of every part of healthy CI runs (under `parts/<part>/` in each merged
 `proof-<run_id>-a<n>` artifact; `runner_health` in `proof.json` has the same
 values): for a throughput or a capacity, well under the least healthy
 measurement; for a latency (`fsync_p95_ms`), well over the largest. Name
-the runs and the margin in the row's `derived` column. The initial rows are
-provisional — each runner class's published specification at a wide
-margin, because no part had measured itself before the step existed — and
-the first CI runs' parts are the measurements to replace them with. A
+the runs and the margin in the row's `derived` column. The first rows came
+from run 40411125174's 21 parts (2026-10-26), each a third of the least
+measurement or three times the largest latency; a class with no row
+(`unfloored`) is measured for information until its runs give it rows. A
 floor that no healthy run would cross is the aim: a floor can only turn a
 part into "not a proof of the tree", and a floor set too high costs reruns,
 never a false pass.
@@ -1097,8 +1098,11 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
   and 377 s at 4 CPUs (`taskset -c 0-3`). A cold cache recompiles the suites
   and is the number the `ci.yml` › `check` job records on a runner, so a
   2-vCPU runner's cold `check` takes longer than the two-minute warm target.
-- A CI runner is 2 vCPU / 8 GB; `PROOF_JOBS=2`, ten integration shards and
-  five UI shards fit the budget.
+- A CI runner, as `runner_health` records it (run 40411125174, `ubuntu-24.04`
+  on a private repository): 4 CPUs and 16 GB, with 14.3–14.8 GiB available
+  before a part, sequential writes of 59–457 MB/s and reads of 235–534 MB/s
+  on its work disk, and a p95 fsync of 0.2–10 ms; `PROOF_JOBS=2`, ten
+  integration shards and five UI shards fit the budget.
 
 ## 12. Known gaps
 

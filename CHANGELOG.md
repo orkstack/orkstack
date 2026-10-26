@@ -26,12 +26,21 @@ include breaking changes, and each is marked **BREAKING**.
   and `proof.json`. The nightly of 2026-10-26 (run 40371833169) failed two
   soaks on one shard at 2.6× and over 3× their measured times while the same
   tree passed both the next day; the contract had no honest way to record
-  that the runner was degraded. The initial floors are provisional, from
-  each runner class's specification at a wide margin, to be re-derived from
-  the first CI runs' parts.
+  that the runner was degraded. The floors are derived from the 21 parts of
+  run 40411125174, a third of the least measurement or three times the
+  largest latency.
 
 ### Fixed
 
+- The CI proof job copies the parts' records, and a failing part's events
+  and logs, into the merged proof whatever the merge decided: under `set -e`
+  a failing `proofrun merge` ended the step before the copy, so the proof
+  that most needed its parts' details (run 40411125174) uploaded five files.
+- The CI `ui-e2e` shard that drives the host's Chromium installs the browser
+  without `--with-deps`: the runner image already carries its system
+  libraries (the apt install's only new packages were fonts), and that apt
+  install from the runner's mirror at 50–100 KB/s took the shard past its
+  5-minute limit twice (runs 40346476240 and 40411125174).
 - `proofrun overhead` counts a concurrent setup group once, through its
   `setup` row, and puts the site gate among the fast gates: it summed the
   group's members as if serial and reported 88.3 minutes for a proof whose wall

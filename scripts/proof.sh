@@ -465,15 +465,16 @@ LOAD_START="$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
 say "proof: $TIER proof -> $DIR (id $PROOF_ID, tree $TREE_START$([ "$CLEAN_START" = true ] || echo ', NOT clean'))"
 
 # The runner-health measurement a CI part makes first (scripts/proof-part.sh,
-# AGENTS.md §11.2), made here for information only: the same numbers, into
-# setup.log and runner-health.json, recorded in proof.json. The class is
+# AGENTS.md §11.2), made here for information only: the same numbers,
+# appended to setup.log (after the cleanup's summary line, which opens it)
+# and written to runner-health.json, recorded in proof.json. The class is
 # `local`, which scripts/proof-runner-floors.tsv names no floor for, because
 # this host's floors are its measured costs themselves; it never changes a
 # local verdict, and a measurement that cannot run is reported, not failed.
 say "== runner-health: class local (information only)"
-"$PR" runner-health -class local -floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >"$DIR/setup.log" 2>&1 ||
+"$PR" runner-health -class local -floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >>"$DIR/setup.log" 2>&1 ||
 	say "   runner-health: the measurement could not run (exit $?); see $DIR/setup.log"
-sed 's/^/   /' "$DIR/setup.log"
+grep '^runner-health:' "$DIR/setup.log" | sed 's/^/   /'
 
 # ---- cleanup of this proof's own group -------------------------------------------
 TEMPORAL_NAME="orkstack-proof-$PROOF_ID-temporal"
