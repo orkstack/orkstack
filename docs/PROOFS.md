@@ -576,7 +576,7 @@ Retention is chosen from `github.event.repository.private`:
 |---|---|---|
 | `plan-a<n>` | `integration-plan.json`, `ui-plan.json`, the Playwright listing, the base lists, `part.json`, and `bin/`: the compiled integration test binaries every shard adopts (`proofrun compile`) | 1 d / 7 d |
 | `part-build-a<n>` | the OCI layouts, `images.tsv`, `part.json` | 1 d / 7 d |
-| `part-fast-a<n>` | `unit-tests.json`, the gates' logs; the unit log and events only when the unit gate failed | 1 d / 7 d |
+| `part-fast-a<n>` | `unit-tests.json`, the gates' logs; the unit log and events only when the unit gate failed (`scripts/proof-part.sh` removes them from a part whose unit gate passed) | 1 d / 7 d |
 | `part-integration-<k>-a<n>` | the shard's ledger, `part.json`, gates, `integration/*.log`, events, its `artifacts/` | 1 d / 14 d |
 | `part-ui-e2e-<k>-a<n>` | ledger, logs, screenshots, the traces of failed tests | 1 d / 14 d |
 | `part-activity-fixture-<A>-a<n>`, `part-observability-a<n>` | logs, `part.json` | 1 d / 14 d |
@@ -598,13 +598,20 @@ run.
 The merged artifact `proof-<run_id>-a<n>` carries `proof.json`, the merged
 `unit-tests.json`, `integration-tests.json` and `ui-e2e-tests.json`, both
 plans, every part's records under `parts/` — its `part.json`, gates, ledgers,
-logs and events, never its `bin/`, `layouts/` or `artifacts/`, which stay in
-the part's own artifact — and GitHub's record of every attempt's jobs under
-`jobs/`, with the logs of failed jobs. It is self-sufficient for a costs
+setup log and gate logs — and GitHub's record of every attempt's jobs under
+`jobs/`, with the logs of failed jobs. A part that did not pass (a gate
+recorded as anything but `pass`, or no `part.json` because its process died)
+also has its events and per-job logs there (`*.events.jsonl`, `integration/`,
+`unit.log`), the files §8 reads a failure from; a passing part's are left
+out, and no part's `bin/`, `layouts/` or `artifacts/` is copied: all of it
+stays in the part's own artifact. `scripts/proof-collect.sh` makes the copy,
+after the merger has read the parts and written `proof.json`, so what it
+leaves out changes no verdict. The merged proof is self-sufficient for a costs
 refresh: the merged UI ledger carries each spec file's `wall_seconds`. Its
-upload is bounded to five minutes, which the records fit and the parts'
-binaries did not: copied in whole they were 4.6 GB, and the upload timed out
-after every part had passed (run 40365261654).
+upload is bounded to five minutes, which the records fit: copied in whole
+the parts were 4.6 GB and the upload timed out after every part had passed
+(run 40365261654), and with the binaries out a green run's events and logs
+were still 921 MB (run 40388322907).
 
 `proof.json` carries the fields a proof always had (`tier`, `name`, `commit`,
 `branch`, `tree`, `tree_end`, `clean_start`, `clean_end`, `base_ref`,

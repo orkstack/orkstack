@@ -709,15 +709,15 @@ jobs:
             args+=(-ui-plan "$RUNNER_TEMP/ci/parts/${{ needs.plan.outputs.plan_artifact }}/ui-plan.json")
           fi
           go run ./test/tools/proofrun merge "${args[@]}"
-          # The merged proof keeps every part's records — part.json, gates,
-          # ledgers, logs, events — and GitHub's job records, never a part's
-          # binaries, image layouts or test artifacts: those stay in the part
-          # artifacts, and copied in they were 4.6 GB the upload below could
-          # not finish within its limit (docs/PROOFS.md §7).
-          mkdir -p "$RUNNER_TEMP/ci/proof/parts"
-          rsync -a --exclude '/*/bin/' --exclude '/*/layouts/' --exclude '/*/artifacts/' \
-            "$RUNNER_TEMP/ci/parts/" "$RUNNER_TEMP/ci/proof/parts/" || true
-          cp -r "$RUNNER_TEMP/ci/jobs" "$RUNNER_TEMP/ci/proof/jobs" || true
+          # The merged proof keeps every part's records, the events and logs
+          # only of parts that did not pass, and GitHub's job records — never
+          # a part's binaries, image layouts or test artifacts
+          # (scripts/proof-collect.sh, docs/PROOFS.md §7). Copied in whole,
+          # the parts were 4.6 GB and the upload below timed out; with the
+          # binaries out, a green run's events and logs were still 900 MB.
+          # The copy is not the verdict: proof.json is already written, and
+          # the merger read the parts, not this copy.
+          scripts/proof-collect.sh "$RUNNER_TEMP/ci/parts" "$RUNNER_TEMP/ci/jobs" "$RUNNER_TEMP/ci/proof" || true
       - name: summary
         if: always()
         timeout-minutes: 2

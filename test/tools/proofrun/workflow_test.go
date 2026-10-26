@@ -2091,8 +2091,10 @@ func readRepoFileForPins(t *testing.T, rel string) string {
 // upload 4.6 GB and timed it out at the step's limit after every part had
 // passed (run 40365261654). Every part upload but the plan's now leaves its
 // bin/ out (the plan's holds the compiled test binaries every shard adopts),
-// and the merged proof copies each part's records without its binaries,
-// image layouts or test artifacts, plus GitHub's job records.
+// and the merged proof is assembled by scripts/proof-collect.sh — each
+// part's records, the events and logs only of parts that did not pass, and
+// GitHub's job records — after the merger has read the parts
+// (TestRepositoryProofCollect pins what the script keeps).
 func TestWorkflows_TheArtifactsCarryRecordsNotBinaries(t *testing.T) {
 	w := loadWorkflow(t, "proof.yml")
 	var merge *wfStep
@@ -2104,17 +2106,14 @@ func TestWorkflows_TheArtifactsCarryRecordsNotBinaries(t *testing.T) {
 	if merge == nil {
 		t.Fatal("jobs.proof has no merge step")
 	}
-	if strings.Contains(merge.Run, `cp -r "$RUNNER_TEMP/ci/parts/."`) {
-		t.Error("jobs.proof merge copies every part whole into the merged proof")
+	if strings.Contains(merge.Run, `cp -r "$RUNNER_TEMP/ci/parts/."`) || strings.Contains(merge.Run, "rsync ") {
+		t.Error("jobs.proof merge copies the parts itself; scripts/proof-collect.sh decides what the merged proof carries")
 	}
-	for _, want := range []string{
-		`rsync -a --exclude '/*/bin/' --exclude '/*/layouts/' --exclude '/*/artifacts/'`,
-		`"$RUNNER_TEMP/ci/parts/" "$RUNNER_TEMP/ci/proof/parts/"`,
-		`cp -r "$RUNNER_TEMP/ci/jobs" "$RUNNER_TEMP/ci/proof/jobs"`,
-	} {
-		if !strings.Contains(merge.Run, want) {
-			t.Errorf("jobs.proof merge lacks %s", want)
-		}
+	if !strings.Contains(merge.Run, `scripts/proof-collect.sh "$RUNNER_TEMP/ci/parts" "$RUNNER_TEMP/ci/jobs" "$RUNNER_TEMP/ci/proof"`) {
+		t.Error("jobs.proof merge does not collect the parts' records and GitHub's job records with scripts/proof-collect.sh")
+	}
+	if at := strings.Index(merge.Run, "proofrun merge"); at < 0 || strings.Index(merge.Run, "scripts/proof-collect.sh") < at {
+		t.Error("jobs.proof merge collects the parts before the merger has read them")
 	}
 	uploads := 0
 	for _, name := range w.jobNames() {

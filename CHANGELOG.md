@@ -43,6 +43,12 @@ include breaking changes, and each is marked **BREAKING**.
   the shards adopt). The proof job copied every part whole, 4.6 GB of
   mostly binaries, and its upload timed out after every part had passed
   (run 40365261654), so no CI full proof could yet produce its artifact.
+- The merged CI proof carries a part's events and per-job logs only when
+  that part did not pass, and the fast part keeps its unit log and events
+  only when its unit gate failed, as docs/PROOFS.md §7 already said; the
+  ledgers hold every test's outcome either way. With the binaries out, a
+  green run's merged proof was still 921 MB of passing parts' events and
+  logs (run 40388322907), against a five-minute upload limit.
 - A proof's split Playwright invocations pass their spec files before
   `--project`, which took every word after it as a project name: a feature
   proof naming specs, and every CI `ui-e2e` part, ran with more than one UI

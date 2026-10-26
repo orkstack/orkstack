@@ -340,6 +340,14 @@ part_main() { # <part>
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 		part_run unit unit.log env ORK_PROOF_DIR="$DIR/artifacts" "$PR" unit -out "$DIR" \
 			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" || true
+		# The part's artifact is its directory. The unit log and events — a
+		# green run's were 137 MB and 296 MB — stay in it only when the unit
+		# gate failed; the ledger, unit-tests.json, holds every test's outcome
+		# either way (docs/PROOFS.md §7), and the merger reads the ledger.
+		if grep -q $'^unit\tpass\t' "$DIR/gates.tsv"; then
+			rm -f "$DIR/unit.log" "$DIR/unit.events.jsonl"
+			part_say "unit passed: unit.log and unit.events.jsonl left out of the part"
+		fi
 		part_run vet-integration vet-integration.log go vet -tags=integration ./... || true
 		(cd "$REPO/ui" && bun run check >"$DIR/ui-check.log" 2>&1) && printf 'ui-check\tpass\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv" || printf 'ui-check\tfail\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv"
 		(cd "$REPO/ui" && bun test test/ >"$DIR/ui-unit.log" 2>&1) && printf 'ui-unit\tpass\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv" || printf 'ui-unit\tfail\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv"

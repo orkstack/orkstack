@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -713,5 +714,132 @@ func TestRepositoryCIParts_DriveChromiumInTheContainer(t *testing.T) {
 	}
 	if !strings.Contains(string(setup), "startBrowserServer(") {
 		t.Error("ui/e2e/global-setup.ts no longer starts the browser server the parts rely on")
+	}
+}
+
+// scripts/proof-collect.sh assembles the merged proof's copy of the parts:
+// every part's records; the events and per-job logs only of a part that did
+// not pass (a gate not `pass`, or no part.json); never a part's bin/,
+// layouts/ or artifacts/; and GitHub's job records. With the binaries out, a
+// green run's merged proof was still 921 MB of passing parts' events and
+// logs (run 40388322907), against a five-minute upload limit.
+func TestRepositoryProofCollect_KeepsRecordsAndFailingPartsDetails(t *testing.T) {
+	root := mustRepoRoot()
+	dir := t.TempDir()
+	parts, jobs, out := filepath.Join(dir, "parts"), filepath.Join(dir, "jobs"), filepath.Join(dir, "proof")
+	write := func(rel, text string) {
+		t.Helper()
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	passed := `{"part":"integration:1","gates":[{"gate":"temporal","result":"pass"},{"gate":"integration","result":"pass"}]}`
+	failed := `{"part":"integration:2","gates":[{"gate":"temporal","result":"pass"},{"gate":"integration","result":"fail"}]}`
+	for _, f := range []string{
+		// A passing shard: records stay, the rest goes.
+		"parts/part-integration-1-a1/part.json:" + passed,
+		"parts/part-integration-1-a1/gates.tsv:integration\tpass\t9\tintegration.log\tproofrun integration",
+		"parts/part-integration-1-a1/integration-tests.json:{}",
+		"parts/part-integration-1-a1/integration.log:progress",
+		"parts/part-integration-1-a1/setup.log:fetch artifact plan-a1: attempt 1 ok in 6s (limit 180s)",
+		"parts/part-integration-1-a1/integration.events.jsonl:{}",
+		"parts/part-integration-1-a1/integration/engine-001.log:big",
+		"parts/part-integration-1-a1/bin/ork:binary",
+		"parts/part-integration-1-a1/artifacts/run/a:artifact",
+		// A failing shard: its events and per-job logs come too.
+		"parts/part-integration-2-a1/part.json:" + failed,
+		"parts/part-integration-2-a1/integration-tests.json:{}",
+		"parts/part-integration-2-a1/integration.events.jsonl:{}",
+		"parts/part-integration-2-a1/integration/engine-002.log:failure output",
+		"parts/part-integration-2-a1/bin/ork:binary",
+		// A shard whose process died: no part.json, so everything it left.
+		"parts/part-integration-3-a1/integration.events.jsonl:{}",
+		"parts/part-integration-3-a1/bin/ork:binary",
+		// The fast part passed; the plan's bin/ and the build's layouts never travel.
+		"parts/part-fast-a1/part.json:" + `{"part":"fast","gates":[{"gate":"unit","result":"pass"}]}`,
+		"parts/part-fast-a1/unit-tests.json:{}",
+		"parts/part-fast-a1/lint.log:ok",
+		"parts/part-fast-a1/unit.log:verbose",
+		"parts/part-fast-a1/unit.events.jsonl:{}",
+		"parts/plan-a1/part.json:" + `{"part":"plan","gates":[]}`,
+		"parts/plan-a1/integration-plan.json:{}",
+		"parts/plan-a1/bin/test/m.test:binary",
+		"parts/part-build-a1/part.json:" + `{"part":"build","gates":[{"gate":"images","result":"pass"}]}`,
+		"parts/part-build-a1/layouts/activity-shell/index.json:{}",
+		"jobs/attempt-1.json:{}",
+	} {
+		rel, text, _ := strings.Cut(f, ":")
+		write(rel, text)
+	}
+	cmd := exec.Command("bash", filepath.Join(root, "scripts", "proof-collect.sh"), parts, jobs, out)
+	outText, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("proof-collect.sh: %v\n%s", err, outText)
+	}
+	var got []string
+	if err := filepath.WalkDir(out, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(out, p)
+			got = append(got, filepath.ToSlash(rel))
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	want := []string{
+		"jobs/attempt-1.json",
+		"parts/part-build-a1/part.json",
+		"parts/part-fast-a1/lint.log",
+		"parts/part-fast-a1/part.json",
+		"parts/part-fast-a1/unit-tests.json",
+		"parts/part-integration-1-a1/gates.tsv",
+		"parts/part-integration-1-a1/integration-tests.json",
+		"parts/part-integration-1-a1/integration.log",
+		"parts/part-integration-1-a1/part.json",
+		"parts/part-integration-1-a1/setup.log",
+		"parts/part-integration-2-a1/integration-tests.json",
+		"parts/part-integration-2-a1/integration.events.jsonl",
+		"parts/part-integration-2-a1/integration/engine-002.log",
+		"parts/part-integration-2-a1/part.json",
+		"parts/part-integration-3-a1/integration.events.jsonl",
+		"parts/plan-a1/integration-plan.json",
+		"parts/plan-a1/part.json",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the merged proof holds\n  %s\nwant\n  %s\n%s", strings.Join(got, "\n  "), strings.Join(want, "\n  "), outText)
+	}
+	for _, line := range []string{
+		"collect part-integration-1-a1: passed; records only",
+		"collect part-integration-2-a1: did not pass, or left no part.json; records, events and logs",
+		"collect part-integration-3-a1: did not pass, or left no part.json; records, events and logs",
+	} {
+		if !strings.Contains(string(outText), line) {
+			t.Errorf("the script did not say %q:\n%s", line, outText)
+		}
+	}
+	// Without the parts, nothing is written and the exit says why.
+	if err := exec.Command("bash", filepath.Join(root, "scripts", "proof-collect.sh"), filepath.Join(dir, "absent"), jobs, filepath.Join(dir, "p2")).Run(); err == nil {
+		t.Error("an absent parts directory was accepted")
+	}
+
+	// The fast part trims its own unit log and events once its unit gate
+	// passed, so its artifact matches docs/PROOFS.md §7's row.
+	part, err := os.ReadFile(filepath.Join(root, "scripts", "proof-part.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := string(part)
+	trim := at(ps, `if grep -q $'^unit\tpass\t' "$DIR/gates.tsv"; then`)
+	unit := at(ps, "part_run unit unit.log ")
+	if trim < 0 || !strings.Contains(ps, `rm -f "$DIR/unit.log" "$DIR/unit.events.jsonl"`) {
+		t.Error("scripts/proof-part.sh does not leave the unit log and events out of a part whose unit gate passed")
+	}
+	if unit < 0 || trim < unit {
+		t.Error("scripts/proof-part.sh trims the unit log before the unit gate has run")
 	}
 }
