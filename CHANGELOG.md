@@ -18,14 +18,20 @@ include breaking changes, and each is marked **BREAKING**.
   writes no test made wrong. A slot waits to start its next process while
   four removals are pending, so the buckets alive at once stay within the
   slots, that backlog and the removals in flight.
-- `make proof-clean` finds the buckets a stopped proof left. The development
-  store (SeaweedFS 4.48, auth off) lists no buckets at all, so the target
-  listed none and removed none; it now also reads the names this worktree's
-  proofs recorded (`proof/*/integration/*.bucket` and the logs' `kept` and
-  `left` lines). A proof stopped by `make proof-stop` or a signal leaves its
-  passing jobs' buckets, each holding store volumes, until
-  `make proof-clean REMOVE=1` runs in its worktree: run it before the next
-  proof on the host.
+- Every local proof and every `scripts/integration.sh` run first removes what
+  proofs and test processes that are gone left on the host (`proofrun clean
+  -remove`), before its own directory exists, and `setup.log` opens with
+  `cleanup: removed N buckets, N work roots, N containers of dead proofs`. A
+  proof stopped by `make proof-stop` or a signal left every passing job's
+  bucket, each holding store volumes, and the next proof on the host ran out
+  of them. It reads the proof and run directories of every worktree, removes a
+  bucket, work root or activity container only when the process its name
+  records is gone, and never one a still-running proof recorded; a thing
+  whose owner it cannot tell is listed and left.
+- `make proof-clean` is the same cleanup by hand, and now finds buckets at
+  all: the development store (SeaweedFS 4.48, auth off) lists none, so the
+  target listed and removed nothing. It reads the names proofs recorded
+  instead, and it also lists the activity containers of dead test processes.
 - `proofrun overhead` counts a concurrent setup group once, through its
   `setup` row, and puts the site gate among the fast gates: it summed the
   group's members as if serial and reported 88.3 minutes for a proof whose wall

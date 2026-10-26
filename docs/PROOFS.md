@@ -61,6 +61,15 @@ proof runs its gates on one host and writes one part, `local`, then merges it
 with `proofrun merge`. The CI `proof` job runs the same merger over many
 parts. There is one verdict implementation.
 
+Every local proof of any tier, and every `scripts/integration.sh` run, first
+removes what proofs and test processes that are gone left on the host — their
+buckets, Orker work roots and containers — with `proofrun clean -remove`, once
+its prerequisites are checked and before its own directory exists; its
+`setup.log` opens with the count (§10). It never touches what a live process
+owns or a running proof recorded, and the dev stack stays up. A by-hand
+`go test -tags=integration` does not clean: run `make proof-clean REMOVE=1`
+before it (AGENTS.md §11.1). A CI part runs on a fresh runner and does not.
+
 ### 2.1 The gates
 
 A local proof runs its gates in this order: the **fast gates**, alone and one
@@ -684,8 +693,8 @@ binary whose listing differs from the plan's. A binary digest that differs is
 a note, never a failure, because separate compiles need not be identical.
 
 By hand, `go test -tags=integration -p 1 ./internal/engine -run '^TestX$'`
-works against `make infra-up`; use a unique `ORK_TEMPORAL_NAMESPACE` whenever
-anything else may run.
+works against `make infra-up`, after `make proof-clean REMOVE=1` (§10); use a
+unique `ORK_TEMPORAL_NAMESPACE` whenever anything else may run.
 
 ## 10. Procedures
 
@@ -889,21 +898,39 @@ mode. After the first merge through a mode, run
 private repository.
 
 **Stop or clean up a proof.** `make proof-stop PROOF=proof/<name>` stops the
-proof you started and the containers it labelled. `make proof-clean` lists the
-buckets and work roots failed tests kept; `make proof-clean REMOVE=1` removes
-one only once the process its name records is gone. It also lists the passing
-jobs' buckets that a bucket sweep a signal stopped did not reach (§2.1): they
-are the proof's `integration/*.bucket` files, and the store holds each as a
-bucket whose process is gone. A proof stopped this way (`make proof-stop`, or
-a signal) leaves those buckets, each holding store volumes, until
-`make proof-clean REMOVE=1` runs: run it in the stopped proof's worktree
-before the next proof starts on the host, or that proof can run out of
-volumes. The recorded names are the source of truth: the development store,
-SeaweedFS 4.48 with its auth off, answers the S3 bucket listing with no bucket
-at all, so `proof-clean` finds a leftover by the names this worktree's proofs
-recorded (`proof/*/integration/*.bucket`, and the `kept s3://…` and
-`left s3://…` lines of their logs), checks the store still holds it, and adds
-whatever a store that does list its buckets shows.
+proof you started and the containers it labelled. A proof stopped this way (or
+by a signal, or killed) leaves what its test processes owned: the passing
+jobs' buckets its sweep did not reach (§2.1, its `integration/*.bucket`
+files), each failing or killed process's bucket, Orker work roots and activity
+containers. A bucket holds store volumes until it is removed, so a host that
+kept them would run the next proof out of volumes.
+
+`proofrun clean` removes them, and nothing else. Every local proof runs
+`proofrun clean -remove` after its prerequisites are checked and before its
+directory exists, keeps the listing as `cleanup.log`, and opens `setup.log`
+with its summary, `cleanup: removed N buckets, N work roots, N containers of
+dead proofs`; `scripts/integration.sh` runs it before each run, and
+`make proof-clean` lists the same things (`REMOVE=1` removes them) by hand. It
+reads the proof directories and `scripts/integration.sh` run directories of
+every worktree of this repository, and removes:
+
+- a bucket named `orkstack-<label>-<pid>-<suffix>` that a run recorded (its
+  hand-off file, or the head of a process's log, where `s3bucket.Main` names
+  the bucket it made) and the store still holds, or that the store lists;
+- a work root under a worktree's `.data/work` (or `ORK_ORKER_WORKDIR`) named
+  `<label>-p<pid>-<suffix>`;
+- an activity container whose Orker id ends in a proof id and a pid
+  (`proof.OrkerID`), or is a default id, the host and a hash of a work root
+  that names a pid;
+- a proof Temporal container whose proof process is gone;
+
+each only when the process its name records is gone, and never one whose pid
+a still-running proof or `integration.sh` run recorded. A work root or a
+container whose owner cannot be told is listed and left alone, and the
+development bucket, the dev stack's work root and its Orker's containers are
+never touched. The recorded names are the source of truth for buckets: the
+development store, SeaweedFS 4.48 with its auth off, answers the S3 bucket
+listing with no bucket at all.
 
 ## 11. Reference
 
@@ -926,7 +953,7 @@ whatever a store that does list its buckets shows.
 | `make proof-overhead` | report where a proof's wall-clock went, from its directory, running nothing |
 | `make proof-observability` | only the observability gate; never merge-eligible |
 | `make proof-stop` | stop one proof and everything it started |
-| `make proof-clean` | list or remove what failed tests kept |
+| `make proof-clean` | list, or with `REMOVE=1` remove, what test processes that are gone left (`proofrun clean`) |
 | `make github-merge-gate` | check or apply the required-check settings |
 
 ### 11.2 The lists
@@ -967,12 +994,13 @@ whatever a store that does list its buckets shows.
 | `free-port` | none |
 | `touches` | `-base REF`, `-action NAME`, `-gate-files`, `-scope FILE` |
 | `gates` | `-select FILE` |
+| `clean` | `-remove` |
 
 ### 11.4 The scripts
 
 `scripts/proof-observability.sh` runs the observability gate.
 `scripts/proof-part.sh` runs one CI part. `scripts/proof-stop.sh` stops a
-proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
+proof. `scripts/proof-clean.sh` lists and removes what test processes that are gone left (`proofrun clean`; every proof and `scripts/integration.sh` run it first).
 `scripts/proof.sh` is the entry point behind every proof target.
 
 ### 11.5 Measured numbers

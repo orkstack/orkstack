@@ -30,8 +30,16 @@ while [ $# -gt 0 ]; do
 	*) pkgs+=("$1"); shift ;;
 	esac
 done
+# What dead proofs and test runs left (buckets holding the store's volumes,
+# work roots, containers) is removed first, as every proof does: only what a
+# process that is gone left, never what a running proof recorded (`proofrun
+# clean`, docs/PROOFS.md §10).
+cleanup="$(mktemp)"
+go run ./test/tools/proofrun clean -remove >"$cleanup" 2>&1 || :
+grep -m1 '^cleanup:' "$cleanup" || echo "cleanup: did not finish"
 out="$PWD/.data/integration/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$out"
+mv "$cleanup" "$out/cleanup.log"
 ns="${ORK_TEMPORAL_NAMESPACE:-ork}-$(date +%s)"
 ORK_REQUIRE_INFRA="${ORK_REQUIRE_INFRA:-1}" go run ./test/tools/proofrun integration \
 	-out "$out" -jobs "${PROOF_JOBS:-4}" -namespace-prefix "$ns" "${run[@]}" "${pkgs[@]}"

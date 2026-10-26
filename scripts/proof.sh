@@ -414,10 +414,21 @@ if [ -n "$missing" ]; then
 	exit 77
 fi
 
+# ---- what dead proofs left -----------------------------------------------------
+# A proof that was stopped or killed, and a failing test process, leave
+# buckets that hold the object store's volumes, work roots and containers.
+# Every proof removes them first, before its own directory exists: only what a
+# process that is gone left, never what a running proof recorded (`proofrun
+# clean`, docs/PROOFS.md §10). Housekeeping never fails the proof.
+"$PR" clean -remove >"$PR_TMP/cleanup.log" 2>&1 || :
+say "   $(grep -m1 '^cleanup:' "$PR_TMP/cleanup.log" || echo 'cleanup: did not finish (cleanup.log says why)')"
+
 # ---- the evidence directory ---------------------------------------------------
 mkdir -p "$REPO/proof"
 mkdir "$DIR" 2>/dev/null || invalid "proof/$NAME already exists: a proof never reuses a directory"
 mkdir "$DIR/artifacts" "$DIR/bin"
+mv "$PR_TMP/cleanup.log" "$DIR/cleanup.log"
+grep -m1 '^cleanup:' "$DIR/cleanup.log" >"$DIR/setup.log" || echo 'cleanup: did not finish (cleanup.log says why)' >"$DIR/setup.log"
 if [ -n "$SEL_TMP" ]; then
 	mv "$SEL_TMP" "$DIR/selection.json"
 	chmod 644 "$DIR/selection.json"
@@ -801,7 +812,7 @@ if [ -z "$FF_TRIGGER" ]; then
 		done
 		for g in $SETUP_MEMBERS; do
 			awk -F'\t' -v g="$g" '$1 == g {print g ": " $2 " in " $3 "s -> " $4; exit}' "$GATES_TSV"
-		done >"$DIR/setup.log"
+		done >>"$DIR/setup.log"
 		printf '%s\t%s\t%s\t%s\t%s\n' setup "$setup_result" "$((SECONDS - SETUP_STARTED))" setup.log "concurrent:$SETUP_MEMBERS" >>"$GATES_TSV"
 		say "   setup: $setup_result ($((SECONDS - SETUP_STARTED))s wall, concurrent:$SETUP_MEMBERS)"
 	fi

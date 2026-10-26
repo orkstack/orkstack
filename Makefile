@@ -272,7 +272,7 @@ proof-stop: ## Stop one proof and everything it started: PROOF=proof/<name>
 	@scripts/proof-stop.sh $(PROOF)
 
 .PHONY: proof-clean
-proof-clean: ## List the buckets and work roots failed tests kept; REMOVE=1 removes them
+proof-clean: ## List what test processes that are gone left (buckets, work roots, containers); REMOVE=1 removes it
 	@scripts/proof-clean.sh $(if $(REMOVE),--remove)
 
 .PHONY: proof-slow-list
