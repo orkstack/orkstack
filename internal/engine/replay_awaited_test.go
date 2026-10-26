@@ -156,9 +156,22 @@ func TestAwaitedHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) 
 	recorded := loadHistoryFile(t, awaitedResolvedHistory)
 	runID, wf, runInput, plan := goldenWorkflowArgs(t, recorded)
 	recordedTaskInputs, recordedEvents, recordedResults, recordedRun := goldenActivityPayloads(t, recorded)
-	signals, offsets := recordedResolutions(t, recorded)
+	signals, _ := recordedResolutions(t, recorded)
 	if len(signals) == 0 {
 		t.Fatal("the resolved fixture carries no resolution")
+	}
+	// Each recorded resolution is delivered when its task's TASK_AWAITING
+	// event is published, not at its recorded wall-clock offset: the test
+	// environment fast-forwards its clock whenever no activity is running,
+	// so a delayed callback could land between an upstream activity's
+	// completion and the await opening, and resolve() rightly ignores a
+	// resolution for a task not yet AWAITING (the await then timed out at
+	// its deadline, 1 run in about 70). Published from inside the
+	// TASK_AWAITING emit, the task is already AWAITING and an activity is
+	// still in flight, so the clock cannot move past it.
+	pending := map[string][]*orkstackv1.AwaitSignal{}
+	for _, sig := range signals {
+		pending[sig.GetTaskId()] = append(pending[sig.GetTaskId()], sig)
 	}
 
 	var (
@@ -194,17 +207,20 @@ func TestAwaitedHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) 
 			mu.Lock()
 			defer mu.Unlock()
 			sentEvent = append(sentEvent, event)
+			if event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING {
+				for _, sig := range pending[event.GetTaskId()] {
+					env.SignalWorkflow(engine.ResolveAwaitSignal, sig)
+				}
+				delete(pending, event.GetTaskId())
+			}
 			return nil
 		},
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
-	for i := range signals {
-		sig := signals[i]
-		env.RegisterDelayedCallback(func() {
-			env.SignalWorkflow(engine.ResolveAwaitSignal, sig)
-		}, offsets[i])
-	}
 	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan, (*orkstackv1.RunContinuation)(nil))
+	if len(pending) != 0 {
+		t.Fatalf("recorded resolutions for %d task(s) were never delivered: current code never opened their awaits", len(pending))
+	}
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the resolved fixture did not complete the workflow")
 	}
