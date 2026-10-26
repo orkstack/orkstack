@@ -499,6 +499,38 @@ never a rerun and costs no eligibility. A fetch that fails both attempts
 fails the step, before the part, and the remedy is a new run of the same
 tree (§10) — the action re-runs no job and nothing continues on error.
 
+**The runner-health floor.** The first thing every part does, before any
+gate, is measure its runner for about ten seconds (`proofrun runner-health`,
+run by `scripts/proof-part.sh`): sequential write and read throughput and
+the 95th-percentile fsync latency on its work disk, where the object store's
+and Temporal's volumes live (the probe is written and read back through
+`O_DIRECT`, so the read measures the disk and not the page cache),
+single-core and all-core CPU throughput (SHA-256 over a fixed buffer), and
+available memory. It writes `runner-health.json` beside the part's records:
+each value, the floor `scripts/proof-runner-floors.tsv` declares for the
+runner's class — `github-hosted/<ImageOS>/<N>cpu` on a GitHub-hosted runner,
+the image and its vCPU count — and a verdict, `above-floor`, `below-floor`
+or `unfloored` (a class the table does not name). A stack part
+(`integration`, `ui-e2e`, `activity-fixture`, `observability`) below a floor
+records itself and stops there, with no gate run and its job red; the
+merger classifies that attempt **runner-degraded**, exactly as one whose
+runner GitHub lost: nothing it recorded is an outcome of the tree, the proof
+is not a proof of the tree, `proof.json` names the part, the metric, the
+measured value and the floor (`degraded_runners`), and that one job may run
+again (§8, §10). The `plan`, `build` and `fast` parts, and a local proof's
+`local` part, measure for information: their verdict is recorded and
+changes nothing, because a local host's floors are its measured costs
+themselves. The merger re-derives every verdict from the file's values and
+floors, never from the file's own word, refuses a part that measured against
+floors that are not the tree's, and fails closed on a file it cannot read.
+A measurement that cannot run (a filesystem that refuses `O_DIRECT`, say)
+leaves that metric unmeasured and never below the floor: the floor only
+ever turns a result into "not a proof of the tree", never a failure into a
+pass, which is also why a feature proof may change the table and why no
+base anchor is needed for it. The floor is measured once, at the start: a
+runner that degrades later is not seen, and its failures stay test failures
+(§12).
+
 ## 6. The merge queue, the nightly tier and the pre-release gate
 
 The required `proof` check has two modes:
@@ -629,6 +661,11 @@ were still 921 MB (run 40388322907).
   removes;
 - `setup_retries`, every fetch a part's runner needed a second attempt for
   (§5), the action's own lines prefixed with the part;
+- `runner_health`, every part attempt's runner-health measurement (§5) with
+  the verdict the merger re-derived, and `degraded_runners`, every attempt
+  that measured below the floor, one entry per metric with its value and
+  the floor; a `reruns` entry whose `reason` is `runner-degraded` carries
+  the earlier attempt's entries as `degraded`;
 - `pr` and `ci`.
 
 A ledger entry has `package`, `test`, `job`, `outcome`, `seconds`, an optional
@@ -642,8 +679,9 @@ tier does not expect.
 A part's `part.json` holds its identity (`part`, `attempt`, `tier`, `tree`,
 `tree_end`, `clean_start`, `clean_end`, `base_commit`, `image_tag`), its
 gates, the plan hashes it read, its runner, its image digests, its ledger
-names and, for a CI part, its runner's setup log (`setup`: every fetch
-attempt made before it). It carries no verdict.
+names, its runner-health measurement (`runner_health`, the
+`runner-health.json` beside it, §5) and, for a CI part, its runner's setup
+log (`setup`: every fetch attempt made before it). It carries no verdict.
 
 ### 7.1 What the merger re-derives
 
@@ -675,6 +713,15 @@ attempt made before it). It carries no verdict.
 - **Lost runners.** The lost-runner match reads every check-run annotation of
   the job; GitHub's system annotations cannot be told apart by path. A failure
   seen in the attempt's events or log always wins over it.
+- **Degraded runners.** An attempt's `runner-health.json` is judged by its
+  values against its floors, by each metric's direction, never by its
+  `verdict` or `below_floor` fields; a below-floor measurement wins over
+  everything the attempt recorded, a part.json and passing tests included,
+  because nothing a degraded runner measured is an outcome of the tree. The
+  file's `floors_sha256` must be the tree's table; a file that cannot be
+  read fails closed; an absent file is a part measured before the step
+  existed. The floor binds only the CI stack parts (`floorBinds` in
+  `merge.go`, the same parts `scripts/proof-part.sh` stops).
 
 `make merge-check PROOF=…` refuses a proof whose quarantine `checked_on` is
 more than 30 days old (the merged artifact's private retention), and refuses
@@ -690,8 +737,10 @@ when it cannot tell `main`'s nightly list absent from unreadable.
    `integration.events.jsonl` hold the test's own output; the ledger row's
    `job` names the log.
 4. For a part with no result, `ineligible_reasons` says whether GitHub lost the
-   runner (that one job may be re-run) or the attempt is not rerun-eligible
-   (start a new run).
+   runner (that one job may be re-run), the part ran on a degraded runner
+   (`degraded_runners` names the metric, its value and the floor; that one
+   job may be re-run), or the attempt is not rerun-eligible (start a new
+   run).
 5. For a gate, the merged README's gate line names the part and log; download
    that part's artifact.
 6. A local proof that stopped early (§2.2) lists a **Stopped early** section:
@@ -701,10 +750,13 @@ when it cannot tell `main`'s nightly list absent from unreadable.
    not become eligible. Their integration ledger rows read `not finished` or
    `not run`, never `pass`.
 
-Only a part GitHub annotated as a **lost runner** may run again, and only
-"Re-run job" on that job. "Re-run all jobs" and "Re-run failed jobs" give some
-or every part a second attempt after a result, so their proof is ineligible. A
-test failure is never answered by a rerun.
+Only a part GitHub annotated as a **lost runner**, or whose own measurement
+at its start put its runner **below the floor** (`runner-degraded`, §5), may
+run again, and only "Re-run job" on that job. "Re-run all jobs" and "Re-run
+failed jobs" give some or every part a second attempt after a result, so
+their proof is ineligible. A test failure is never answered by a rerun, and a
+degraded part runs again whole, as a new part of the same tree, never a
+failed test in isolation.
 
 ## 9. Reproducing one CI shard locally
 
@@ -825,6 +877,31 @@ fails for any tracked path no row matches, and a case in
 "Re-run job" on that job, on the same day, while the plan and build artifacts
 exist. The merger records the rerun and the unfinished tests. Any other
 missing part needs a new run of the same tree.
+
+**Recover from a degraded runner.** `proof.json`'s `degraded_runners` (and
+the step summary's "degraded runner" line) names the part, the metric, its
+value and the floor, and the part's own log shows the `runner-health:`
+lines. "Re-run job" on that job alone, while the plan and build artifacts
+exist; the merger records the rerun with reason `runner-degraded`. Never
+edit `scripts/proof-runner-floors.tsv` to make the next attempt read as
+healthy, and never answer a failing test on a runner above the floor with a
+rerun: the floor is a measurement, and a part above it that failed is a
+test failure.
+
+**Re-derive the runner-health floors.** The table is a measurement file,
+like the costs: a feature proof may change it, and it is never edited to
+get a proof through. Each class's floor comes from the `runner-health.json`
+of every part of healthy CI runs (under `parts/<part>/` in each merged
+`proof-<run_id>-a<n>` artifact; `runner_health` in `proof.json` has the same
+values): for a throughput or a capacity, well under the least healthy
+measurement; for a latency (`fsync_p95_ms`), well over the largest. Name
+the runs and the margin in the row's `derived` column. The initial rows are
+provisional — each runner class's published specification at a wide
+margin, because no part had measured itself before the step existed — and
+the first CI runs' parts are the measurements to replace them with. A
+floor that no healthy run would cross is the aim: a floor can only turn a
+part into "not a proof of the tree", and a floor set too high costs reruns,
+never a false pass.
 
 **After a setup failure, or a "Re-run job" past the artifact's retention.**
 Start a new run of the same tree (push again, or close and reopen the pull
@@ -972,6 +1049,7 @@ bucket whose process is gone.
 | `scripts/proof-slow-tests.txt` | package, test | a slow test is left out of a feature proof's regression set, and of its evidence when it is there only by reaching a changed helper, type or variable |
 | `scripts/proof-ui-costs.tsv` | spec file, wall seconds | an unmeasured spec gets 160 s |
 | `scripts/proof-host-speed.tsv` | kind, spec or package, test title or name, assertion, bound, reference CPUs, note | a malformed row fails the merge; only a row the base carries identically excuses, and only its declared assertion's miss on a CI UI part (§12) |
+| `scripts/proof-runner-floors.tsv` | class, metric, floor, derived | a malformed row fails the merge and makes `runner-health` exit 2 (the part runs on, unjudged); a class with no row is `unfloored`; a floor only ever makes a part "not a proof of the tree" (§5) |
 
 ### 11.3 `proofrun`
 
@@ -984,8 +1062,8 @@ bucket whose process is gone.
 | `feature-report` | `-dir DIR`, `-select FILE` |
 | `ui-ledger` | `-report FILE`, `-list FILE`, `-plan FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE`, `-nightly-mode MODE`, `-nightly-specs FILE`, `-nightly-specs-base FILE`, `-run-files-out FILE` |
-| `record` | `-dir DIR`, `-tier TIER`, `-name S`, `-commit SHA`, `-branch S`, `-tree-start SHA`, `-tree-end SHA`, `-clean-start BOOL`, `-clean-end BOOL`, `-base-ref REF`, `-base-commit SHA`, `-merge-base SHA`, `-jobs N`, `-ui-workers N`, `-temporal MODE`, `-temporal-image IMAGE`, `-temporal-address ADDR`, `-image-tag TAG`, `-images FILE`, `-image-tag-own`, `-gates-override S`, `-observability-required`, `-part NAME`, `-attempt N`, `-out-dir DIR`, `-plan FILE`, `-ui-plan FILE`, `-select FILE`, `-status N` |
-| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-nightly-specs FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped` |
+| `record` | `-dir DIR`, `-tier TIER`, `-name S`, `-commit SHA`, `-branch S`, `-tree-start SHA`, `-tree-end SHA`, `-clean-start BOOL`, `-clean-end BOOL`, `-base-ref REF`, `-base-commit SHA`, `-merge-base SHA`, `-jobs N`, `-ui-workers N`, `-temporal MODE`, `-temporal-image IMAGE`, `-temporal-address ADDR`, `-image-tag TAG`, `-images FILE`, `-image-tag-own`, `-gates-override S`, `-observability-required`, `-part NAME`, `-attempt N`, `-out-dir DIR`, `-plan FILE`, `-ui-plan FILE`, `-setup-log FILE`, `-runner-health FILE`, `-select FILE`, `-status N` |
+| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-runner-floors FILE`, `-nightly-specs FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped` |
 | `flakes` | `-from GLOB`, `-repo DIR`, `-window N`, `-out FILE`, `-md FILE`, `-min-runs N` |
 | `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S` |
 | `temporal-args` | `-compose FILE` |
@@ -997,6 +1075,7 @@ bucket whose process is gone.
 | `free-port` | none |
 | `touches` | `-base REF`, `-action NAME`, `-gate-files`, `-scope FILE` |
 | `gates` | `-select FILE` |
+| `runner-health` | `-out FILE`, `-class NAME`, `-floors FILE`, `-dir DIR`, `-seconds N` |
 
 ### 11.4 The scripts
 
@@ -1035,6 +1114,13 @@ proof. `scripts/proof-clean.sh` lists and removes what failed tests kept.
   validated end to end; the first green run is planned for the public
   repository. Until then the gate is built, structurally validated and not
   enforced.
+- **A runner that degrades after its measurement.** The runner-health floor
+  (§5) is measured once, before any gate; a runner that slows down later —
+  as the one of nightly run 40371833169 did, in the third generation of a
+  soak that had run two at full speed — is not seen by it, and its failures
+  are recorded as test failures, with a new run of the same tree the only
+  honest answer. A measurement after a failure would be confounded by what
+  the failure left running, so none is taken.
 - **Runner-size known gaps.** A UI spec's 5 s wall-clock budget cannot hold on
   a 2-vCPU runner. `scripts/proof-host-speed.tsv` names each such test by its
   spec file and title, with the one assertion whose failure is its

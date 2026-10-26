@@ -843,3 +843,88 @@ func TestRepositoryProofCollect_KeepsRecordsAndFailingPartsDetails(t *testing.T)
 		t.Error("scripts/proof-part.sh trims the unit log before the unit gate has run")
 	}
 }
+
+// The runner-health floor (AGENTS.md §11.2): every CI part measures its
+// runner FIRST, before any gate, through `proofrun runner-health` against
+// scripts/proof-runner-floors.tsv, into runner-health.json beside its
+// records; the stack parts stop below the floor, and exactly the parts the
+// merger's floorBinds names; the record carries the file; the local proof
+// measures for information into setup.log; and the CI summary names a
+// degraded runner.
+func TestRepositoryCIParts_MeasureTheRunnerFirst(t *testing.T) {
+	root := mustRepoRoot()
+	part, err := os.ReadFile(filepath.Join(root, "scripts", "proof-part.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(part)
+	main := text[strings.Index(text, "part_main() {"):]
+	health, firstGate := at(main, "if ! part_runner_health; then"), at(main, "part_run ")
+	if health < 0 {
+		t.Fatal("scripts/proof-part.sh's part_main does not run part_runner_health")
+	}
+	if firstGate < 0 || health > firstGate {
+		t.Error("scripts/proof-part.sh runs a gate before the runner-health step")
+	}
+	// The part's own work begins where it decides whether observability is
+	// due; the first `case "$PART"` above it only validates the name.
+	if work := at(main, "OBSERVABILITY_REQUIRED=0"); work < 0 || health > work {
+		t.Error("scripts/proof-part.sh measures the runner after the part's work begins")
+	}
+	for _, want := range []string{
+		`"$PR" runner-health -class "$class" -floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json"`,
+		`[ -f "$DIR/runner-health.json" ] && args+=(-runner-health "$DIR/runner-health.json")`,
+		`printf 'github-hosted/%s/%scpu\n' "$ImageOS" "$(nproc)"`,
+		"\t\tpart_record 1 || true\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("scripts/proof-part.sh lacks %s", want)
+		}
+	}
+	// The parts the floor stops are exactly the ones the merger holds to it.
+	binds := regexp.MustCompile(`part_floor_binds\(\) \{\n\tcase "\$PART" in\n\t([^\n]+)\) return 0 ;;`).FindStringSubmatch(text)
+	if binds == nil {
+		t.Fatal("scripts/proof-part.sh has no part_floor_binds case")
+	}
+	for part, pattern := range map[string]string{"integration:3": "integration:*", "ui-e2e:1": "ui-e2e:*", "activity-fixture:git": "activity-fixture:*", "observability": "observability"} {
+		if !floorBinds(part) {
+			t.Errorf("floorBinds(%s) is false, and scripts/proof-part.sh stops it", part)
+		}
+		if !strings.Contains(binds[1], pattern) {
+			t.Errorf("scripts/proof-part.sh's part_floor_binds lacks %s, which floorBinds holds to the floor", pattern)
+		}
+	}
+	for _, part := range []string{"plan", "build", "fast"} {
+		if floorBinds(part) || strings.Contains(binds[1], part) {
+			t.Errorf("the floor binds the %s part, which measures for information only", part)
+		}
+	}
+	// The real floors table parses, so the step never exits 2 on it.
+	if _, err := readRunnerFloors(filepath.Join(root, runnerFloorsFile)); err != nil {
+		t.Errorf("the repository's floors table does not parse: %v", err)
+	}
+	// The local proof measures before its first gate, into setup.log, and
+	// records it; the setup group appends to that log rather than replacing
+	// the measurement.
+	script := proofScript(t)
+	measure, lint := at(script, `"$PR" runner-health -class local`), at(script, "step lint ")
+	if measure < 0 || lint < 0 || measure > lint {
+		t.Error("scripts/proof.sh does not measure the runner before its first gate")
+	}
+	for _, want := range []string{
+		`-floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >"$DIR/setup.log" 2>&1`,
+		`done >>"$DIR/setup.log"`,
+		`if [ -f "$DIR/runner-health.json" ]; then record_args+=(-runner-health "$DIR/runner-health.json"); fi`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("scripts/proof.sh lacks %s", want)
+		}
+	}
+	if !subcommandFlags(t, "record")["runner-health"] || !subcommandFlags(t, "merge")["runner-floors"] {
+		t.Error("record -runner-health or merge -runner-floors is missing")
+	}
+	wf := workflowFile(t, "proof.yml")
+	if !strings.Contains(wf, `.degraded_runners[]?`) {
+		t.Error(".github/workflows/proof.yml's summary does not name a degraded runner")
+	}
+}

@@ -8,6 +8,28 @@ include breaking changes, and each is marked **BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
+  `proofrun runner-health`): every part measures its runner for about ten
+  seconds before any gate — sequential write and read throughput and fsync
+  latency on its work disk, single-core and all-core CPU throughput, and
+  available memory — into `runner-health.json`, with the floors of its
+  runner class and a verdict. A stack part below a floor stops before any
+  gate, and the merger classifies it `runner-degraded`, exactly as a part
+  whose runner GitHub lost: its tests have no outcome of the tree, the proof
+  is not a proof of the tree, `proof.json` records the part, the metric, the
+  measured value and the floor (`degraded_runners`, `runner_health`), and
+  that one job may run again. A part above the floor whose tests fail stays
+  a test failure, and a part with no health file keeps its meaning. A local
+  proof measures the same numbers for information only, into `setup.log`
+  and `proof.json`. The nightly of 2026-10-26 (run 40371833169) failed two
+  soaks on one shard at 2.6× and over 3× their measured times while the same
+  tree passed both the next day; the contract had no honest way to record
+  that the runner was degraded. The initial floors are provisional, from
+  each runner class's specification at a wide margin, to be re-derived from
+  the first CI runs' parts.
+
 ### Fixed
 
 - `proofrun overhead` counts a concurrent setup group once, through its

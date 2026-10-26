@@ -464,6 +464,17 @@ LOAD_START="$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
 
 say "proof: $TIER proof -> $DIR (id $PROOF_ID, tree $TREE_START$([ "$CLEAN_START" = true ] || echo ', NOT clean'))"
 
+# The runner-health measurement a CI part makes first (scripts/proof-part.sh,
+# AGENTS.md §11.2), made here for information only: the same numbers, into
+# setup.log and runner-health.json, recorded in proof.json. The class is
+# `local`, which scripts/proof-runner-floors.tsv names no floor for, because
+# this host's floors are its measured costs themselves; it never changes a
+# local verdict, and a measurement that cannot run is reported, not failed.
+say "== runner-health: class local (information only)"
+"$PR" runner-health -class local -floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >"$DIR/setup.log" 2>&1 ||
+	say "   runner-health: the measurement could not run (exit $?); see $DIR/setup.log"
+sed 's/^/   /' "$DIR/setup.log"
+
 # ---- cleanup of this proof's own group -------------------------------------------
 TEMPORAL_NAME="orkstack-proof-$PROOF_ID-temporal"
 TEMPORAL_STARTED=""
@@ -811,7 +822,7 @@ if [ -z "$FF_TRIGGER" ]; then
 		done
 		for g in $SETUP_MEMBERS; do
 			awk -F'\t' -v g="$g" '$1 == g {print g ": " $2 " in " $3 "s -> " $4; exit}' "$GATES_TSV"
-		done >"$DIR/setup.log"
+		done >>"$DIR/setup.log"
 		printf '%s\t%s\t%s\t%s\t%s\n' setup "$setup_result" "$((SECONDS - SETUP_STARTED))" setup.log "concurrent:$SETUP_MEMBERS" >>"$GATES_TSV"
 		say "   setup: $setup_result ($((SECONDS - SETUP_STARTED))s wall, concurrent:$SETUP_MEMBERS)"
 	fi
@@ -1080,6 +1091,7 @@ if [ -f "$DIR/images.tsv" ]; then
 	if [ -n "$IMAGE_TAG_OWN" ]; then record_args+=(-image-tag-own); fi
 fi
 if [ -n "${PROOF_GATES:-}" ]; then record_args+=(-gates-override "$PROOF_GATES"); fi
+if [ -f "$DIR/runner-health.json" ]; then record_args+=(-runner-health "$DIR/runner-health.json"); fi
 if { [ "$TIER" = full ] && [ -n "$OBS_PATHS" ]; } || [ "$TIER" = release ]; then record_args+=(-observability-required); fi
 
 README="$DIR/README.md"

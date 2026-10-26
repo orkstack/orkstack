@@ -56,7 +56,7 @@ func TestMerge_ACancelledAttemptBeforeAnyTestStartedIsNotRerunEligible(t *testin
 	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)
 	}
-	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "which GitHub did not record as a lost runner (it was cancelled before any test started): only a lost runner may run again; this run cannot become merge-eligible: start a new run") {
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "which neither GitHub recorded as a lost runner nor its runner-health measured below the floor (it was cancelled before any test started): only a lost or degraded runner may run again; this run cannot become merge-eligible: start a new run") {
 		t.Errorf("ineligible = %v", r.Ineligible)
 	}
 }
@@ -67,7 +67,7 @@ func TestMerge_ASetupFailureBeforeTheProofStepIsNotRerunEligible(t *testing.T) {
 	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)
 	}
-	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "(a setup failure before its proof step (Set up the proof host)): only a lost runner may run again; this run cannot become merge-eligible: start a new run") {
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "(a setup failure before its proof step (Set up the proof host)): only a lost or degraded runner may run again; this run cannot become merge-eligible: start a new run") {
 		t.Errorf("ineligible = %v", r.Ineligible)
 	}
 }

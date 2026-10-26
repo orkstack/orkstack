@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "class": "github-hosted/ubuntu24/4cpu",
+  "measured_at": "2026-10-26T05:20:11Z",
+  "seconds": 10.4,
+  "dir": "/home/runner/work/orkstack/orkstack/proof/x-part-integration-2-a1",
+  "runner": {"os": "linux", "cpus": 4, "mem_mb": 16008},
+  "metrics": [
+    {"metric": "disk_write_mb_s", "unit": "MB/s", "value": 12.3, "floor": 40, "below_floor": false, "seconds": 2.6},
+    {"metric": "disk_read_mb_s", "unit": "MB/s", "value": 48.9, "floor": 40, "below_floor": false, "seconds": 2.0},
+    {"metric": "fsync_p95_ms", "unit": "ms", "value": 6.4, "floor": 60, "below_floor": false, "seconds": 1.5},
+    {"metric": "cpu_single_mb_s", "unit": "MB/s", "value": 1402.1, "floor": 300, "below_floor": false, "seconds": 2.0},
+    {"metric": "cpu_all_mb_s", "unit": "MB/s", "value": 5311.7, "floor": 900, "below_floor": false, "seconds": 2.0},
+    {"metric": "mem_available_mib", "unit": "MiB", "value": 13211, "floor": 4096, "below_floor": false}
+  ],
+  "verdict": "above-floor"
+}

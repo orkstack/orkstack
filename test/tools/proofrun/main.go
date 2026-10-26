@@ -21,6 +21,7 @@
 //	proofrun touches      whether a change touches paths of one scope action
 //	proofrun gates        the gates and specs a feature selection runs
 //	proofrun free-port    a port nothing listens on
+//	proofrun runner-health  measure this runner against the floors and write runner-health.json
 //
 // Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation.
 package main
@@ -59,6 +60,7 @@ var subcommands = []subcommand{
 	{"free-port", "a port nothing listens on", cmdFreePort},
 	{"touches", "whether a change touches paths of one scope action", cmdTouches},
 	{"gates", "the gates and specs a feature selection runs", cmdGates},
+	{"runner-health", "measure this runner against the floors and write runner-health.json", cmdRunnerHealth},
 }
 
 func main() {

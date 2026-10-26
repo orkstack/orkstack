@@ -734,6 +734,7 @@ jobs:
             jq -r '.ineligible_reasons[]? | "- " + .' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             jq -r '.quarantine_warnings[]? | "- WARNING: " + .' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             jq -r '.reruns[]? | "- rerun: \(.part) attempt \(.attempt), \(.reason)"' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
+            jq -r '.degraded_runners[]? | "- degraded runner: \(.part) attempt \(.attempt): \(.metric) \(.value) \(.unit), floor \(.floor) (re-run that job alone)"' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             echo
             du -sh "$RUNNER_TEMP/ci/proof" 2>/dev/null || true
           } >>"$GITHUB_STEP_SUMMARY"

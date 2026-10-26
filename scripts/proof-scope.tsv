@@ -66,6 +66,9 @@ scripts/proof-observability.sh	observability
 scripts/proof-slow-tests.txt	none
 scripts/proof-test-costs.tsv	none
 scripts/proof-ui-costs.tsv	none
+# The runner-health floors: a feature proof may re-derive them; a floor only
+# ever turns a part into "not a proof of the tree", never into a pass.
+scripts/proof-runner-floors.tsv	none
 scripts/**	full	docs
 deploy/observability/**	observability
 deploy/**	full

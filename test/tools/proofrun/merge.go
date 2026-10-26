@@ -65,6 +65,9 @@ type partRecord struct {
 	// per attempt of every fetch made before the part, so a download or pull
 	// that needed its second attempt is on the record (record -setup-log).
 	Setup []string `json:"setup,omitempty"`
+	// Health is the part's runner-health.json (record -runner-health): what
+	// its runner measured before any gate, against the floors of its class.
+	Health *runnerHealth `json:"runner_health,omitempty"`
 }
 
 type temporalRecord struct {
@@ -73,14 +76,43 @@ type temporalRecord struct {
 	Address string `json:"address,omitempty"`
 }
 
-// rerunRecord is one part attempt that GitHub said was lost, and the attempt
-// that ran after it. It is the only rerun a merge-eligible proof may hold.
+// rerunRecord is one part attempt that GitHub said was lost, or whose runner
+// measured below the floor, and the attempt that ran after it. They are the
+// only reruns a merge-eligible proof may hold; Reason is `lost-runner` or
+// `runner-degraded`.
 type rerunRecord struct {
 	Part            string            `json:"part"`
 	Attempt         int               `json:"attempt"`
 	EarlierAttempts []int             `json:"earlier_attempts"`
 	Reason          string            `json:"reason"`
 	LostAttempt     lostAttemptRecord `json:"lost_attempt"`
+	// Degraded is what the earlier attempt's runner measured below the
+	// floor, for a `runner-degraded` rerun.
+	Degraded []degradedRunner `json:"degraded,omitempty"`
+}
+
+// degradedRunner is one metric one part attempt measured on the wrong side
+// of its floor (runnerhealth.go). proof.json lists every such attempt under
+// degraded_runners, whether or not the part ran again.
+type degradedRunner struct {
+	Part    string  `json:"part"`
+	Attempt int     `json:"attempt"`
+	Class   string  `json:"class"`
+	Metric  string  `json:"metric"`
+	Unit    string  `json:"unit"`
+	Value   float64 `json:"value"`
+	Floor   float64 `json:"floor"`
+}
+
+// partHealth is one part attempt's runner-health record as proof.json
+// carries it: the verdict re-derived by the merger, never the file's own.
+type partHealth struct {
+	Part    string         `json:"part"`
+	Attempt int            `json:"attempt"`
+	Class   string         `json:"class"`
+	Verdict string         `json:"verdict"`
+	Seconds float64        `json:"seconds"`
+	Metrics []healthMetric `json:"metrics"`
 }
 
 type lostAttemptRecord struct {
@@ -238,6 +270,7 @@ func cmdMerge(args []string) int {
 	partsDir := fs.String("parts", "", "directory holding one subdirectory per part attempt (required)")
 	jobsDir := fs.String("jobs", "", "GitHub's record of every attempt's jobs")
 	hostSpeedFile := fs.String("host-speed", "scripts/proof-host-speed.tsv", "assertions bounded by host speed")
+	runnerFloors := fs.String("runner-floors", runnerFloorsFile, "the tree's runner-health floors: every part must have measured against this table")
 	nightlySpecs := fs.String("nightly-specs", nightlySpecFile, "the tree's nightly spec list: a nightly proof must run every spec file it lists")
 	out := fs.String("out", "", "the proof directory to write (required)")
 	name := fs.String("name", "", "the proof's name")
@@ -310,7 +343,8 @@ func cmdMerge(args []string) int {
 		nightlySpecsFile: *nightlySpecs,
 		parts:            parts, absent: absent,
 		attempts: attempts, hostSpeed: hostSpeed, hostSpeedFile: *hostSpeedFile,
-		excusedUIGate: map[string]bool{},
+		runnerFloorsFile: *runnerFloors,
+		excusedUIGate:    map[string]bool{},
 	}
 	for _, f := range unreadable {
 		m.notes = append(m.notes, "GitHub's job record "+f+" is unreadable: every attempt it would have described is classified as a result (it fails closed)")
@@ -432,9 +466,12 @@ type merger struct {
 	hostSpeed         hostSpeedTable
 	hostSpeedFile     string
 	hostSpeedExcusing hostSpeedTable
+	runnerFloorsFile  string
 	problems          []string
 	ineligible        []string
 	reruns            []rerunRecord
+	degraded          []degradedRunner
+	health            []partHealth
 	proof             *proofRecord
 	unit              *ledger
 	integration       *ledger
@@ -452,14 +489,37 @@ type merger struct {
 
 // partReading is one part attempt's on-disk result.
 type partReading struct {
-	Dir    string
-	Record *partRecord
+	Part    string
+	Attempt int
+	Dir     string
+	Record  *partRecord
 	// Failed and Unfinished are what the attempt's events show: a test that
 	// failed, and a test that started and never finished.
 	Failed, Unfinished bool
 	// Corrupt says the attempt left a part.json that cannot be parsed, or
 	// events that cannot be read: it is a result, never "no failure seen".
 	Corrupt bool
+	// Health is the attempt's runner-health.json, or the copy its part.json
+	// carries; nil for a part measured before the step existed, which keeps
+	// its meaning. HealthCorrupt says the file exists and cannot be read.
+	Health        *runnerHealth
+	HealthCorrupt bool
+}
+
+// degradedMetrics is what the attempt's runner measured on the wrong side of
+// its floor, re-derived from the record's values and floors. The floor binds
+// only the CI stack parts (scripts/proof-part.sh part_floor_binds): a local
+// proof's health, and the plan, build and fast parts', is information.
+func (r partReading) degradedMetrics() []healthMetric {
+	if !floorBinds(r.Part) {
+		return nil
+	}
+	return r.Health.below()
+}
+
+// floorBinds says the runner-health floor decides the part's classification.
+func floorBinds(part string) bool {
+	return (part != "local" && isStackPart(part)) || strings.HasPrefix(part, "activity-fixture:")
 }
 
 // readParts scans -parts. A directory with a part.json is a completed attempt;
@@ -501,7 +561,7 @@ func readParts(dir string) (map[string]map[int]partReading, map[string]bool, err
 		if prev, dup := out[part][attempt]; dup {
 			return nil, nil, fmt.Errorf("%s and %s both claim part %s attempt %d", filepath.Base(prev.Dir), e.Name(), part, attempt)
 		}
-		reading := partReading{Dir: p, Corrupt: corrupt}
+		reading := partReading{Part: part, Attempt: attempt, Dir: p, Corrupt: corrupt}
 		var evErr error
 		reading.Failed, reading.Unfinished, evErr = attemptEvents(p)
 		if evErr != nil {
@@ -509,6 +569,16 @@ func readParts(dir string) (map[string]map[int]partReading, map[string]bool, err
 		}
 		if has {
 			reading.Record = &rec
+		}
+		// The file first: an attempt that died before its part.json still
+		// measured its runner. The record's copy stands in for a part whose
+		// file was not kept beside it (a local proof's part directory).
+		if h, err := readRunnerHealth(p); err != nil {
+			reading.HealthCorrupt = true
+		} else if h != nil {
+			reading.Health = h
+		} else if has && rec.Health != nil {
+			reading.Health = rec.Health
 		}
 		out[part][attempt] = reading
 	}
@@ -631,18 +701,25 @@ const (
 	// attemptResult: the attempt recorded a result; a later attempt makes
 	// the proof ineligible.
 	attemptResult attemptClass = iota
-	// attemptLost: GitHub's own annotation says it lost the runner; the only
-	// attempt that may run again.
+	// attemptLost: GitHub's own annotation says it lost the runner; it may
+	// run again.
 	attemptLost
+	// attemptDegraded: the attempt's own runner-health.json measured its
+	// runner below the floor (AGENTS.md §11.2); it may run again, exactly as
+	// a lost one, and nothing it recorded is an outcome of the tree.
+	attemptDegraded
 	// attemptNotEligible: no result, and not a lost runner (a setup failure,
 	// a cancel before any test started): a later attempt makes the proof
 	// ineligible, and the remedy is a new run.
 	attemptNotEligible
 )
 
-// classify is plan §2.6 rule 2. An attempt that left a part.json, or whose
-// events record a failing test, produced a result. Any other attempt is
-// classified from GitHub's record of its job, the rows tried in order:
+// classify is plan §2.6 rule 2. An attempt whose runner-health.json measured
+// its runner below the floor is degraded, whatever else it left: a result
+// from a degraded runner is not a result of the tree. An attempt that left a
+// part.json, or whose events record a failing test, produced a result. Any
+// other attempt is classified from GitHub's record of its job, the rows
+// tried in order:
 //  1. no record, or a record that could not be read: a result (fails closed);
 //  2. the log has a `proofrun: outcome fail` line: a result;
 //  3. GitHub's runner-lost annotation: a lost runner;
@@ -652,6 +729,12 @@ const (
 //     result that never reached its upload, before it a setup failure or an
 //     early cancel.
 func classify(j *githubJob, reading partReading) (attemptClass, string) {
+	if reading.HealthCorrupt {
+		return attemptResult, "its runner-health.json cannot be read: it fails closed"
+	}
+	if below := reading.degradedMetrics(); len(below) > 0 {
+		return attemptDegraded, "its runner measured below the floor: " + describeBelow(below)
+	}
 	if reading.Record != nil {
 		return attemptResult, "it left its part.json"
 	}
@@ -774,6 +857,7 @@ func (m *merger) merge(name string) {
 	if len(buildImages) == 0 && containsString(expected, "build") {
 		m.ineligible = append(m.ineligible, "the build part recorded no activity image digests: the parts' digests cannot be compared with it")
 	}
+	m.collectHealth()
 	m.carryPartIdentity()
 	m.checkAllowlist()
 	m.checkNightlyAnchorFiles()
@@ -803,6 +887,8 @@ func (m *merger) merge(name string) {
 	m.mergeGates(expected)
 	m.proof.Parts = append([]string{}, expected...)
 	m.proof.Reruns = m.reruns
+	m.proof.DegradedRunners = m.degraded
+	m.proof.RunnerHealth = m.health
 	for _, part := range sortedPartKeys(m.parts) {
 		for _, reading := range m.resultReadings(part) {
 			if reading.Record != nil {
@@ -1078,7 +1164,7 @@ func (m *merger) mergePart(part string) {
 	}
 	sort.Ints(nums)
 	last := nums[len(nums)-1]
-	var lostEarlier []int
+	var lostEarlier, degradedEarlier []int
 	for _, a := range nums[:len(nums)-1] {
 		var j *githubJob
 		if jj, ok := jobs[a]; ok {
@@ -1088,12 +1174,15 @@ func (m *merger) mergePart(part string) {
 		switch class {
 		case attemptLost:
 			lostEarlier = append(lostEarlier, a)
+		case attemptDegraded:
+			degradedEarlier = append(degradedEarlier, a)
+			m.recordDegraded(part, a, attempts[a])
 		case attemptResult:
 			// A later attempt is a new result, never a way to erase the
 			// first: the proof can pass and is still ineligible (rule 2).
 			m.ineligible = append(m.ineligible, fmt.Sprintf("part %s was run again (attempt %d) after attempt %d recorded its result (%s)", part, last, a, why))
 		default:
-			m.ineligible = append(m.ineligible, fmt.Sprintf("part %s was run again (attempt %d) after attempt %d, which GitHub did not record as a lost runner (%s): only a lost runner may run again; this run cannot become merge-eligible: start a new run", part, last, a, why))
+			m.ineligible = append(m.ineligible, fmt.Sprintf("part %s was run again (attempt %d) after attempt %d, which neither GitHub recorded as a lost runner nor its runner-health measured below the floor (%s): only a lost or degraded runner may run again; this run cannot become merge-eligible: start a new run", part, last, a, why))
 		}
 	}
 	lastReading := attempts[last]
@@ -1101,8 +1190,11 @@ func (m *merger) mergePart(part string) {
 	if jj, ok := jobs[last]; ok {
 		lastJob = &jj
 	}
-	if lastReading.Record != nil {
+	if lastReading.Record != nil && len(lastReading.degradedMetrics()) == 0 && !lastReading.HealthCorrupt {
 		for _, a := range lostEarlier {
+			m.reruns = append(m.reruns, m.rerun(part, last, a, attempts[a], jobs[a]))
+		}
+		for _, a := range degradedEarlier {
 			m.reruns = append(m.reruns, m.rerun(part, last, a, attempts[a], jobs[a]))
 		}
 		return
@@ -1113,19 +1205,91 @@ func (m *merger) mergePart(part string) {
 		m.problems = append(m.problems, fmt.Sprintf("part %s left no usable result at attempt %d (%s); it is not rerun-eligible: start a new run", part, last, why))
 	case attemptLost:
 		m.problems = append(m.problems, fmt.Sprintf("part %s left no result because GitHub lost its runner (attempt %d, %s); re-run that job alone, within the plan and build artifacts' retention", part, last, why))
+	case attemptDegraded:
+		m.recordDegraded(part, last, lastReading)
+		m.problems = append(m.problems, fmt.Sprintf("part %s ran on a degraded runner (attempt %d, %s): its tests have no outcome of the tree, and this is not a proof of the tree; re-run that job alone, within the plan and build artifacts' retention", part, last, why))
 	default:
 		m.problems = append(m.problems, fmt.Sprintf("part %s left no result (attempt %d, %s); it is not rerun-eligible (only a lost runner is): start a new run", part, last, why))
 	}
 }
 
+// describeDegraded is the README's line for a rerun's degraded attempt.
+func describeDegraded(d []degradedRunner) string {
+	parts := make([]string, 0, len(d))
+	for _, x := range d {
+		parts = append(parts, fmt.Sprintf("%s %s %s, floor %s", x.Metric, trimFloat(x.Value), x.Unit, trimFloat(x.Floor)))
+	}
+	return strings.Join(parts, "; ")
+}
+
 func (m *merger) rerun(part string, attempt, lost int, reading partReading, j githubJob) rerunRecord {
 	passed, unfinished := attemptProgress(reading.Dir, j.Log)
-	return rerunRecord{
+	rr := rerunRecord{
 		Part: part, Attempt: attempt, EarlierAttempts: []int{lost}, Reason: "lost-runner",
 		LostAttempt: lostAttemptRecord{
 			Conclusion: j.Conclusion, Annotation: strings.Join(j.Annotations, " "), FailedStep: j.FailedStep,
 			PassedBeforeLoss: passed, Unfinished: unfinished,
 		},
+	}
+	if below := reading.degradedMetrics(); len(below) > 0 {
+		rr.Reason = "runner-degraded"
+		rr.Degraded = degradedOf(part, lost, reading.Health, below)
+	}
+	return rr
+}
+
+// recordDegraded lists an attempt's below-floor metrics in proof.json's
+// degraded_runners, once per attempt.
+func (m *merger) recordDegraded(part string, attempt int, reading partReading) {
+	for _, d := range m.degraded {
+		if d.Part == part && d.Attempt == attempt {
+			return
+		}
+	}
+	m.degraded = append(m.degraded, degradedOf(part, attempt, reading.Health, reading.degradedMetrics())...)
+}
+
+func degradedOf(part string, attempt int, h *runnerHealth, below []healthMetric) []degradedRunner {
+	out := make([]degradedRunner, 0, len(below))
+	for _, b := range below {
+		out = append(out, degradedRunner{Part: part, Attempt: attempt, Class: h.Class, Metric: b.Metric, Unit: b.Unit, Value: b.Value, Floor: *b.Floor})
+	}
+	return out
+}
+
+// collectHealth carries every attempt's runner-health record into proof.json
+// (runner_health), with the verdict re-derived, and refuses a part that
+// measured against floors that are not the tree's: the file the part named
+// must hash as the table this merge reads. A tree without a floors table
+// (an older tree) checks nothing.
+func (m *merger) collectHealth() {
+	treeSHA := ""
+	if _, err := os.Stat(m.runnerFloorsFile); err == nil {
+		if _, err := readRunnerFloors(m.runnerFloorsFile); err != nil {
+			m.problems = append(m.problems, "the runner-health floors cannot be read: "+err.Error())
+		}
+		treeSHA, _ = fileSHA256(m.runnerFloorsFile)
+	}
+	for _, part := range sortedPartKeys(m.parts) {
+		for _, reading := range m.orderedReadings(part) {
+			if reading.HealthCorrupt {
+				m.problems = append(m.problems, fmt.Sprintf("part %s attempt %d left a %s that cannot be read: it fails closed", part, reading.Attempt, runnerHealthFile))
+				continue
+			}
+			h := reading.Health
+			if h == nil {
+				continue
+			}
+			verdict := h.verdict()
+			if !floorBinds(part) && verdict == healthBelowFloor {
+				// Information only: the floor does not bind this part.
+				m.notes = append(m.notes, fmt.Sprintf("part %s attempt %d measured below the floor (%s); the floor does not bind this part, so it is recorded and nothing changes", part, reading.Attempt, describeBelow(h.below())))
+			}
+			if treeSHA != "" && h.FloorsSHA256 != "" && h.FloorsSHA256 != treeSHA {
+				m.problems = append(m.problems, fmt.Sprintf("part %s attempt %d measured against runner-health floors that are not the tree's (%s; its sha256 %s, the tree's %s)", part, reading.Attempt, orDash(h.FloorsFile), short(h.FloorsSHA256), short(treeSHA)))
+			}
+			m.health = append(m.health, partHealth{Part: part, Attempt: reading.Attempt, Class: h.Class, Verdict: verdict, Seconds: h.Seconds, Metrics: h.Metrics})
+		}
 	}
 }
 
@@ -2154,12 +2318,14 @@ func (m *merger) partNames(prefix string) []string {
 func (m *merger) hasPartPrefix(prefix string) bool { return len(m.partNames(prefix)) > 0 }
 
 // resultReadings is the part's result: its last attempt that left a
-// part.json. An earlier attempt never adds outcomes or gates to the merge;
-// rule 2 has already decided whether running it again was allowed.
+// part.json and did not measure its runner below the floor. An earlier
+// attempt never adds outcomes or gates to the merge; rule 2 has already
+// decided whether running it again was allowed. A degraded attempt adds
+// nothing either: what it recorded is not an outcome of the tree.
 func (m *merger) resultReadings(part string) []partReading {
 	all := m.orderedReadings(part)
 	for i := len(all) - 1; i >= 0; i-- {
-		if all[i].Record != nil {
+		if all[i].Record != nil && len(all[i].degradedMetrics()) == 0 && !all[i].HealthCorrupt {
 			return all[i : i+1]
 		}
 	}
@@ -2225,9 +2391,21 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) error {
 	if len(r.Reruns) > 0 {
 		fmt.Fprintf(&b, "## Reruns\n\n")
 		for _, rr := range r.Reruns {
+			if rr.Reason == "runner-degraded" {
+				fmt.Fprintf(&b, "- %s attempt %d, after attempt %v ran on a degraded runner (%s); nothing that attempt recorded is an outcome of the tree\n",
+					rr.Part, rr.Attempt, rr.EarlierAttempts, describeDegraded(rr.Degraded))
+				continue
+			}
 			fmt.Fprintf(&b, "- %s attempt %d, after attempt %v was lost by GitHub (%s); %d tests had passed, %d had started and not finished: %s\n",
 				rr.Part, rr.Attempt, rr.EarlierAttempts, rr.Reason, rr.LostAttempt.PassedBeforeLoss,
 				len(rr.LostAttempt.Unfinished), strings.Join(rr.LostAttempt.Unfinished, ", "))
+		}
+		fmt.Fprintln(&b)
+	}
+	if len(r.DegradedRunners) > 0 {
+		fmt.Fprintf(&b, "## Degraded runners\n\nA part whose runner measured below the floor before any gate (scripts/proof-runner-floors.tsv): nothing it recorded is an outcome of the tree, and a part listed here without a later attempt makes this proof not a proof of the tree. Re-run that job alone (docs/PROOFS.md §10).\n\n")
+		for _, d := range r.DegradedRunners {
+			fmt.Fprintf(&b, "- %s attempt %d (%s): %s %s %s, floor %s\n", d.Part, d.Attempt, d.Class, d.Metric, trimFloat(d.Value), d.Unit, trimFloat(d.Floor))
 		}
 		fmt.Fprintln(&b)
 	}

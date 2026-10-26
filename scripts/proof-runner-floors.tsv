@@ -1,0 +1,51 @@
+# The runner-health floors (AGENTS.md §11.2; docs/PROOFS.md §5, §10). Every
+# CI part measures its runner for about ten seconds before any gate
+# (`proofrun runner-health`, run first by scripts/proof-part.sh) and writes
+# runner-health.json: the values, these floors, and a verdict. A stack part
+# (integration, ui-e2e, activity-fixture, observability) whose runner is
+# below a floor of its class stops before any gate, and the merger
+# classifies it runner-degraded, exactly as a part whose runner GitHub
+# lost: its tests get no outcome of the tree, the proof is not a proof of
+# the tree, and that one job may run again. A part above every floor whose
+# tests fail is a test failure. A local proof measures the same numbers for
+# information only; its class, `local`, has no row here, because the host's
+# floors are its measured costs themselves.
+#
+# This is a measurement file, like scripts/proof-test-costs.tsv: a feature
+# proof may change it (scripts/proof-scope.tsv), and it is NEVER edited to
+# get a proof through. A floor can only turn a result into "not a proof of
+# the tree"; it never passes one. Re-derive a class's floors from the
+# runner-health.json of every part of healthy CI runs: each floor is well
+# under the least healthy measurement (a throughput or a capacity) or well
+# over the largest (a latency), with the margin and the runs named in the
+# derived column (docs/PROOFS.md §10, "Re-derive the runner-health floors").
+#
+# A class is `github-hosted/<ImageOS>/<N>cpu` on a GitHub-hosted runner
+# (scripts/proof-part.sh part_runner_class): the runner image and its vCPU
+# count, because the all-core and memory floors depend on the runner's size.
+# The metrics are the ones `proofrun runner-health` measures, in its order;
+# a `_ms` metric is a latency, below its floor when the value is ABOVE it.
+#
+# Columns are TAB-separated: class, metric, floor, derived.
+#
+# The rows below are PROVISIONAL (2026-10-26): no CI part had measured
+# itself before this step existed, so each floor is taken from the runner
+# class's published specification at a wide margin — well under what a
+# healthy runner of that class is expected to measure — and the first CI
+# runs' parts are the measurements to re-derive them from. A provisional
+# floor errs toward "above the floor": a runner a healthy one would beat by
+# three times or more is the only one it names degraded.
+#
+# class	metric	floor	derived
+github-hosted/ubuntu24/4cpu	disk_write_mb_s	40	provisional 2026-10-26: a 4-vCPU ubuntu-24.04 runner's OS disk is specified as a premium SSD; a healthy one is expected well above 120 MB/s sequential, a third of that
+github-hosted/ubuntu24/4cpu	disk_read_mb_s	40	provisional 2026-10-26: as disk_write_mb_s, read back through O_DIRECT
+github-hosted/ubuntu24/4cpu	fsync_p95_ms	60	provisional 2026-10-26: a healthy runner's OS disk fsyncs in single-digit to low tens of milliseconds; four times the high end
+github-hosted/ubuntu24/4cpu	cpu_single_mb_s	300	provisional 2026-10-26: one vCPU of the runner's EPYC or Xeon hashes SHA-256 at 900 MB/s or more with its SHA extensions; a third of that
+github-hosted/ubuntu24/4cpu	cpu_all_mb_s	900	provisional 2026-10-26: three times cpu_single_mb_s's floor on four vCPUs
+github-hosted/ubuntu24/4cpu	mem_available_mib	4096	provisional 2026-10-26: a 16 GB runner has more than 12 GB available after its setup; a third of that
+github-hosted/ubuntu24/2cpu	disk_write_mb_s	40	provisional 2026-10-26: as the 4cpu class; the OS disk is the same
+github-hosted/ubuntu24/2cpu	disk_read_mb_s	40	provisional 2026-10-26: as the 4cpu class
+github-hosted/ubuntu24/2cpu	fsync_p95_ms	60	provisional 2026-10-26: as the 4cpu class
+github-hosted/ubuntu24/2cpu	cpu_single_mb_s	300	provisional 2026-10-26: as the 4cpu class
+github-hosted/ubuntu24/2cpu	cpu_all_mb_s	500	provisional 2026-10-26: a little under twice cpu_single_mb_s's floor on two vCPUs
+github-hosted/ubuntu24/2cpu	mem_available_mib	2048	provisional 2026-10-26: a 7 GB runner has more than 5 GB available after its setup; well under half of that

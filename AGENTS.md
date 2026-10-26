@@ -901,7 +901,13 @@ merge starts and before every tag.
 
 A failing nightly or pre-release proof is a failing `main`: fix it, or revert
 the change that broke it, before anything else merges, and never edit a list,
-a threshold or a measurement file to make it pass. A change that raises a
+a threshold or a measurement file to make it pass. A nightly part whose
+runner measured below the runner-health floor
+(`scripts/proof-runner-floors.tsv`) before any test ran is a runner failure,
+not a failing `main`: the proof records that part as `runner-degraded`, is
+not a proof of the tree, and that one part runs again as a new part of the
+same tree (§11.2); a part above the floor that fails is a failing `main`. A
+change that raises a
 default the deferred tests measured (`engine.orkflow_max_tasks`, the fan-out
 item maximum, or a continuation, history or in-flight default) quotes a
 feature proof that names those tests with `--tests`. A regression that only a
@@ -1085,12 +1091,22 @@ the reference for what each tier runs.
 **Rules for every proof.**
 
 - Never rerun a failing test, and never partially rerun a shard that produced
-  a result. Only a part whose runner GitHub annotated as lost may run again,
-  and `proof.json` records it; any other second attempt makes the proof
-  ineligible.
+  a result. Only a part whose runner GitHub annotated as lost, or whose own
+  runner-health measurement at its start was below the floor
+  (`scripts/proof-runner-floors.tsv`; the part is classified
+  `runner-degraded`, and `proof.json` records the part, the metric, the
+  measured value and the floor), may run again — the whole part, as a new
+  part of the same tree, never a failed test in isolation — and `proof.json`
+  records the rerun; any other second attempt makes the proof ineligible. A
+  degraded part's tests have no outcome of the tree, and a proof holding one
+  with no later attempt is not a proof of the tree; a part above the floor
+  whose tests fail is a test failure. The floor is measured once, before any
+  gate: a runner that degrades later is not seen, and its failures stay test
+  failures.
 - Never edit the costs file, the slow list, the nightly list, the quarantine
-  list or the allowed skips to get a proof through. The nightly and
-  quarantine lists change only with the user's approval.
+  list, the runner-health floors or the allowed skips to get a proof
+  through. The nightly and quarantine lists change only with the user's
+  approval.
 - A new top-level path needs a `scripts/proof-scope.tsv` row, and a path the
   table does not map refuses the feature tier.
 - Read `proof.json`, never the README, for a verdict.
