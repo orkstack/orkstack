@@ -505,3 +505,23 @@ func TestUILedger_ReadsSeveralReportsAsOneRun(t *testing.T) {
 		t.Errorf("with one report only, the solo test must have no outcome: pass %d, problems %v", half.Pass, half.Problems)
 	}
 }
+
+// A proof with several workers runs Playwright as two invocations whose
+// worker 0 lanes are different lanes: the gap between the parallel
+// invocation's last test and the solo invocation's first (the second
+// invocation's start, its global setup) belongs to no file.
+func TestUILedger_ALaneNeverSpansTwoInvocations(t *testing.T) {
+	par := fixtureReport(uiTestSpec{"a.spec.ts", "one", 0, 10})
+	solo := fixtureReport(uiTestSpec{"solo.spec.ts", "budget", 60, 4}, uiTestSpec{"solo.spec.ts", "again", 66, 4})
+	_, tests := flattenPW(mergeReports(par, solo))
+	entries := make([]uiEntry, 0, len(tests))
+	for _, e := range tests {
+		entries = append(entries, e)
+	}
+	for _, f := range fileWalls(entries) {
+		want := map[string]float64{"a.spec.ts": 10, "solo.spec.ts": 10}[f.File]
+		if math.Abs(f.WallSeconds-want) > 1e-6 {
+			t.Errorf("%s wall = %v, want %v (its tests plus the 2 s gap inside its own invocation)", f.File, f.WallSeconds, want)
+		}
+	}
+}

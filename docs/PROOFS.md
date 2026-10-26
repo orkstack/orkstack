@@ -305,8 +305,11 @@ costs file is regenerated from a proof's ledger; the plan reproduces from the
 commit.
 
 `proofrun ui-plan -list FILE -shards M -out FILE` splits Playwright spec files
-by their measured wall — their tests' seconds plus the gap before each test —
-and passes each shard a file list. Playwright's own `--shard` is never used.
+by their measured wall — their tests' seconds plus the gap before each test in
+its own worker lane — and passes each shard a file list. Playwright's own
+`--shard` is never used. Each invocation's worker lanes are its own: when a
+proof runs the parallel project and then the solo projects, the time between
+the two invocations belongs to no file.
 
 ## 5. The CI job graph
 
@@ -665,9 +668,12 @@ existing proof directory, runs nothing, and never writes inside it (an `-out`
 there is refused). Its Markdown report has:
 
 - **Gates**, from `gates.tsv`: each gate's seconds and share of the critical
-  path, which is the serial chain fast gates → setup (Temporal, images,
-  binaries) → integration beside the activity fixture (the longer of the two)
-  → `ui-e2e` → observability.
+  path, which is the serial chain fast gates (the site gate among them) →
+  setup (Temporal, images, binaries, the integration test binaries) →
+  integration beside the activity fixture (the longer of the two) → `ui-e2e`
+  → observability. A proof that ran its setup as one concurrent group (§2.1)
+  has a `setup` row holding the group's wall: the setup phase costs that row
+  once and its members nothing more; an older proof's setup is their sum.
 - **Integration processes**, from the runner's `start <job> slot k:` and
   `end <job> after X s` lines in `integration.log` (each part's log in a
   merged proof) joined with `integration-tests.json` by job: each process's
@@ -683,7 +689,11 @@ there is refused). Its Markdown report has:
 - **Playwright**, from `ui-e2e-tests.json`: the parallel and solo
   invocations' walls (`SOLO_SPECS` in `ui/playwright.config.ts`, `-config`,
   names the solo files), their summed file walls against an ideal packing on
-  the proof's `proof_ui_workers`, and the gate's seconds outside the tests.
+  the proof's `proof_ui_workers`, each lane's utilisation, and the gate's
+  seconds outside the tests. A utilisation is at most 100%: when an older
+  ledger's file walls exceed what the lanes held (it charged the gap between
+  two invocations to the next one's first file), the report says so and reads
+  100%.
 - **Slow boots**: every `WARN` line about a boot that took long, from the
   integration logs, each job's log and `ui-e2e.log`.
 - A summary naming the top three time sinks.

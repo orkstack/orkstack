@@ -1,0 +1,11 @@
+{"suite": "ui-e2e", "tests": [
+ {"file": "e2e/a.spec.ts", "title": "one", "project": "chromium", "outcome": "pass", "seconds": 50, "start": 0},
+ {"file": "e2e/b.spec.ts", "title": "one", "project": "chromium", "outcome": "pass", "seconds": 45, "start": 0},
+ {"file": "e2e/each-fan-out.spec.ts", "title": "at the gated size", "project": "chromium-solo-each-fan-out", "outcome": "pass", "seconds": 10, "start": 100},
+ {"file": "e2e/run-page-ceiling.spec.ts", "title": "at the ceiling", "project": "chromium-solo-run-page-ceiling", "outcome": "pass", "seconds": 40, "start": 115}],
+ "problems": [], "listed": 4, "pass": 4,
+ "files": [
+ {"file": "e2e/a.spec.ts", "shard": 1, "tests": 1, "seconds": 50, "wall_seconds": 50},
+ {"file": "e2e/b.spec.ts", "shard": 1, "tests": 1, "seconds": 45, "wall_seconds": 45},
+ {"file": "e2e/each-fan-out.spec.ts", "shard": 1, "tests": 1, "seconds": 10, "wall_seconds": 40},
+ {"file": "e2e/run-page-ceiling.spec.ts", "shard": 1, "tests": 1, "seconds": 40, "wall_seconds": 45}]}

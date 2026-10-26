@@ -42,6 +42,10 @@ type pwSuite struct {
 	File   string    `json:"file"`
 	Specs  []pwSpec  `json:"specs"`
 	Suites []pwSuite `json:"suites"`
+
+	// invocation is which of the merged reports (mergeReports) the suite
+	// came from: each Playwright invocation numbers its worker lanes from 0.
+	invocation int
 }
 
 type pwSpec struct {
@@ -78,9 +82,11 @@ type uiEntry struct {
 	// abs and endAbs are the test's first start and last end as Unix seconds,
 	// zero when the report carries no start time.
 	abs, endAbs float64
-	// lane is the Playwright worker lane (the result's parallelIndex) the
-	// test ran in: the gap before a test is measured against the tests of
-	// its own lane only, so a wall stays a file's own with several workers.
+	// lane is the Playwright worker lane the test ran in: its report's
+	// invocation and the result's parallelIndex. The gap before a test is
+	// measured against the tests of its own lane only, so a wall stays a
+	// file's own with several workers, and two invocations' worker 0 are two
+	// lanes: the time between invocations belongs to no file.
 	lane int
 }
 
@@ -111,6 +117,13 @@ type uiLedger struct {
 // the suites and errors of both, and the stats of the first that has any (a
 // proof reads start times from each result, never from the stats).
 func mergeReports(a, b pwReport) pwReport {
+	next := 0
+	for _, s := range a.Suites {
+		next = max(next, s.invocation+1)
+	}
+	for i := range b.Suites {
+		b.Suites[i].invocation = next
+	}
 	a.Suites = append(a.Suites, b.Suites...)
 	a.Errors = append(a.Errors, b.Errors...)
 	if a.Stats == nil {
@@ -122,8 +135,8 @@ func mergeReports(a, b pwReport) pwReport {
 // flattenPW walks a report into "file › describe › title [project]" keys.
 func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 	tests = map[string]uiEntry{}
-	var walk func(s pwSuite, file string, titles []string)
-	walk = func(s pwSuite, file string, titles []string) {
+	var walk func(s pwSuite, file string, titles []string, inv int)
+	walk = func(s pwSuite, file string, titles []string, inv int) {
 		if s.File != "" {
 			file = s.File
 		}
@@ -138,7 +151,7 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 						ms += res.Duration
 					}
 					e.Seconds = ms / 1000
-					e.lane = t.Results[0].ParallelIndex
+					e.lane = inv<<16 | t.Results[0].ParallelIndex
 					if first, err := time.Parse(time.RFC3339Nano, t.Results[0].StartTime); err == nil {
 						last := t.Results[len(t.Results)-1]
 						e.abs = float64(first.UnixNano()) / 1e9
@@ -178,11 +191,11 @@ func flattenPW(r pwReport) (keys []string, tests map[string]uiEntry) {
 			}
 		}
 		for _, sub := range s.Suites {
-			walk(sub, file, append(append([]string{}, titles...), sub.Title))
+			walk(sub, file, append(append([]string{}, titles...), sub.Title), inv)
 		}
 	}
 	for _, s := range r.Suites {
-		walk(s, s.File, nil)
+		walk(s, s.File, nil, s.invocation)
 	}
 	return keys, tests
 }

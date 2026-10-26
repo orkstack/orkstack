@@ -339,8 +339,8 @@ func slowBoots(dir string, integrationLogs []string) []string {
 
 // gatePhase is a gate's place on the serial chain scripts/proof.sh runs.
 var gatePhase = map[string]string{
-	"lint": "fast", "build": "fast", "unit": "fast", "vet-integration": "fast", "ui-check": "fast", "ui-unit": "fast",
-	"temporal": "setup", "images": "setup", "binaries": "setup",
+	"lint": "fast", "build": "fast", "unit": "fast", "vet-integration": "fast", "ui-check": "fast", "ui-unit": "fast", "site": "fast",
+	"temporal": "setup", "images": "setup", "binaries": "setup", "integration-compile": "setup", "setup": "setup",
 	"integration": "stack", "activity-fixture": "stack",
 	"ui-e2e": "ui-e2e", "observability": "observability",
 }
@@ -348,7 +348,7 @@ var gatePhase = map[string]string{
 var phaseOrder = []string{"fast", "setup", "stack", "ui-e2e", "observability", "other"}
 
 var phaseText = map[string]string{
-	"fast":          "fast gates (lint, build, unit, vet, UI check and unit), serial",
+	"fast":          "fast gates (lint, build, unit, vet, UI check and unit, site), serial",
 	"setup":         "setup (Temporal, images, binaries), serial",
 	"stack":         "integration beside the activity fixture: the longer of the two",
 	"ui-e2e":        "Playwright",
@@ -370,12 +370,28 @@ type phaseWall struct {
 	Phase   string
 	Gates   []string
 	Seconds float64
+	// Concurrent is set on the setup phase of a proof that ran its setup as
+	// one concurrent group: the phase costs the group's own `setup` row.
+	Concurrent bool
+}
+
+// label is the phase's row in the critical-path table.
+func (p phaseWall) label() string {
+	if p.Phase == "setup" && p.Concurrent {
+		return "setup (Temporal, images, binaries, integration test binaries), concurrent: the setup row's wall"
+	}
+	return phaseText[p.Phase]
 }
 
 // criticalPath folds the gates into the serial chain's phases. Every phase
 // is serial with the next; inside the stack phase integration and the
-// activity fixture run beside each other, so the phase costs the longer.
+// activity fixture run beside each other, so the phase costs the longer. A
+// proof that ran its setup as one concurrent group records a `setup` row
+// holding the group's wall: the phase costs that row once, and its members
+// (Temporal, images, binaries, the integration test binaries) nothing more.
+// An older proof has no such row and ran its setup serially.
 func criticalPath(gates []gateRecord) ([]phaseWall, float64) {
+	_, concurrent := gateSeconds(gates, "setup")
 	by := map[string]*phaseWall{}
 	for _, g := range gates {
 		p := gatePhase[g.Gate]
@@ -388,9 +404,15 @@ func criticalPath(gates []gateRecord) ([]phaseWall, float64) {
 			by[p] = w
 		}
 		w.Gates = append(w.Gates, g.Gate)
-		if p == "stack" {
+		switch {
+		case p == "stack":
 			w.Seconds = math.Max(w.Seconds, g.Seconds)
-		} else {
+		case p == "setup" && concurrent:
+			w.Concurrent = true
+			if g.Gate == "setup" {
+				w.Seconds = g.Seconds
+			}
+		default:
 			w.Seconds += g.Seconds
 		}
 	}
@@ -485,6 +507,27 @@ type uiInvocation struct {
 	FileWalls float64
 	Workers   int
 	Longest   float64
+}
+
+// utilisation is the share of the invocation's lane time its spec files
+// held: their summed walls over the workers times the wall. A lane cannot be
+// busy longer than it existed, so it is at most 1; exceeds says the summed
+// walls were more than the lanes held, which only a miscounted ledger gives.
+func (u uiInvocation) utilisation() (use float64, exceeds bool) {
+	capacity := float64(u.Workers) * u.Wall
+	if capacity <= 0 {
+		return 0, false
+	}
+	if u.FileWalls > capacity+1e-9 {
+		return 1, true
+	}
+	return u.FileWalls / capacity, false
+}
+
+// concurrentSetup says the proof ran its setup as one concurrent group.
+func concurrentSetup(gates []gateRecord) bool {
+	_, ok := gateSeconds(gates, "setup")
+	return ok
 }
 
 func (u uiInvocation) ideal() float64 {
@@ -715,11 +758,14 @@ func overheadReport(d overheadData) string {
 			if gatePhase[g.Gate] == "stack" {
 				note = " (beside each other)"
 			}
+			if gatePhase[g.Gate] == "setup" && g.Gate != "setup" && concurrentSetup(d.Gates) {
+				note = " (in the setup group)"
+			}
 			w("| %s%s | %s | %.0f | %s |\n", g.Gate, note, g.Result, g.Seconds, pct(g.Seconds, a.Total))
 		}
 		w("\nCritical path (each phase serial with the next):\n\n| Phase | Gates | Seconds | Share |\n|---|---|---:|---:|\n")
 		for _, p := range a.Phases {
-			w("| %s | %s | %.0f | %s |\n", phaseText[p.Phase], strings.Join(p.Gates, ", "), p.Seconds, pct(p.Seconds, a.Total))
+			w("| %s | %s | %.0f | %s |\n", p.label(), strings.Join(p.Gates, ", "), p.Seconds, pct(p.Seconds, a.Total))
 		}
 		w("| **total** | | **%.0f** (%s) | 100%% |\n\n", a.Total, minutes(a.Total))
 	}
@@ -784,13 +830,26 @@ func overheadReport(d overheadData) string {
 		w("No ui-e2e-tests.json: no Playwright section.\n\n")
 	} else {
 		w("| Invocation | Workers | Files | Tests | Wall s | Summed file walls s | Ideal packing s | Lane utilisation |\n|---|---:|---:|---:|---:|---:|---:|---:|\n")
+		var over []uiInvocation
 		for _, inv := range []uiInvocation{a.UIPar, a.UISolo} {
 			if inv.Tests == 0 {
 				continue
 			}
-			w("| %s | %d | %d | %d | %.0f | %.0f | %.0f | %s |\n", inv.Name, inv.Workers, len(inv.Files), inv.Tests, inv.Wall, inv.FileWalls, inv.ideal(), pct(inv.FileWalls, float64(inv.Workers)*inv.Wall))
+			use, exceeds := inv.utilisation()
+			if exceeds {
+				over = append(over, inv)
+			}
+			w("| %s | %d | %d | %d | %.0f | %.0f | %.0f | %s |\n", inv.Name, inv.Workers, len(inv.Files), inv.Tests, inv.Wall, inv.FileWalls, inv.ideal(), pct(use, 1))
 		}
 		w("\nA wall is the span from its first test's start to its last test's end. Ideal packing is the larger of the summed file walls over the workers and the longest file: the wall a perfect lane packing would reach.\n")
+		for _, inv := range over {
+			lanes := "lanes"
+			if inv.Workers == 1 {
+				lanes = "lane"
+			}
+			w("The %s' summed file walls (%.0f s) exceed what %d %s held in %.0f s: the ledger counted time outside the invocation into its files (a ledger written before each invocation's worker lanes were kept apart charged the gap between two invocations to the next one's first file), so its utilisation reads 100%%.\n",
+				inv.Name, inv.FileWalls, inv.Workers, lanes, inv.Wall)
+		}
 		if a.UIUntimed > 0 {
 			w("%d tests carry no start time and are left out of the walls.\n", a.UIUntimed)
 		}

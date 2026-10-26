@@ -10,6 +10,15 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- `proofrun overhead` counts a concurrent setup group once, through its
+  `setup` row, and puts the site gate among the fast gates: it summed the
+  group's members as if serial and reported 88.3 minutes for a proof whose wall
+  was 87.5. A lane's utilisation is never above 100%; it read 115% for the solo
+  projects.
+- The Playwright ledger keeps each invocation's worker lanes apart, so the time
+  between the parallel and the solo invocation (the second Playwright start
+  and its global setup) is no longer charged to the solo invocation's first
+  spec file's wall, which the UI costs and plan read.
 - A proof's split Playwright invocations pass their spec files before
   `--project`, which took every word after it as a project name: a feature
   proof naming specs, and every CI `ui-e2e` part, ran with more than one UI

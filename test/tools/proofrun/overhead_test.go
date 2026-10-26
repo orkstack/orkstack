@@ -221,3 +221,52 @@ func TestOverhead_CommandWritesOutAndNeverTouchesTheProof(t *testing.T) {
 		t.Error("overhead changed the proof directory")
 	}
 }
+
+// A proof whose setup ran as one concurrent group records each member and
+// a setup row holding the group's wall: the critical path counts that row
+// once, never the members summed. The site gate is a fast gate.
+func TestOverhead_CountsTheConcurrentSetupGroupOnce(t *testing.T) {
+	a := analyse(readOverhead("testdata/overhead/concurrent", overheadConfig))
+	if !near(a.Total, 499) {
+		t.Errorf("critical path = %v, want 499 (fast 120 with the site gate + setup 29 + stack 200 + ui-e2e 150)", a.Total)
+	}
+	var phases []string
+	for _, p := range a.Phases {
+		phases = append(phases, p.Phase)
+		if p.Phase == "setup" && (!near(p.Seconds, 29) || strings.Join(p.Gates, ",") != "binaries,temporal,integration-compile,images,setup") {
+			t.Errorf("setup phase = %v s over %v, want 29 s over its four members and the setup row", p.Seconds, p.Gates)
+		}
+	}
+	if got := strings.Join(phases, ","); got != "fast,setup,stack,ui-e2e" {
+		t.Errorf("phases = %s", got)
+	}
+	got := overheadReport(readOverhead("testdata/overhead/concurrent", overheadConfig))
+	for _, w := range []string{
+		"| setup (Temporal, images, binaries, integration test binaries), concurrent: the setup row's wall | binaries, temporal, integration-compile, images, setup | 29 |",
+		"| **total** | | **499** (8.3 min) | 100% |",
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("report lacks %q:\n%s", w, got)
+		}
+	}
+}
+
+// A lane cannot be busy longer than it existed: when an invocation's summed
+// file walls exceed its lanes' capacity (a ledger written before proofrun kept
+// each invocation's lanes apart charged the gap between two invocations to
+// the next one's first file), the utilisation is 100% and the report says why.
+func TestOverhead_ALaneIsNeverMoreThanFullyUsed(t *testing.T) {
+	got := overheadReport(readOverhead("testdata/overhead/concurrent", overheadConfig))
+	for _, w := range []string{
+		"| parallel project | 2 | 2 | 2 | 50 | 95 | 50 | 95% |",
+		"| solo projects | 1 | 2 | 2 | 55 | 85 | 85 | 100% |",
+		"The solo projects' summed file walls (85 s) exceed what 1 lane held in 55 s",
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("report lacks %q:\n%s", w, got)
+		}
+	}
+	if strings.Contains(got, "155%") {
+		t.Errorf("a lane is reported more than fully used:\n%s", got)
+	}
+}
