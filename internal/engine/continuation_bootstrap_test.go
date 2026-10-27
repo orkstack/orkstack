@@ -281,26 +281,50 @@ func TestContinuation_CancelDuringARetriedReadEndsCanceled(t *testing.T) {
 
 // TestContinuation_CancelDuringBootstrapBackoffIsObservedAtOnce: reads fail;
 // the cancel lands while Temporal waits out a retry's backoff; the run ends
-// RUN_CANCELED in that workflow task and no further read executes.
+// RUN_CANCELED in that workflow task, and no read the engine asked for runs
+// after the cancel.
+//
+// The reads are counted on either side of the cancel request. After it, the
+// SDK's local-activity retry loop returns from its canceled backoff sleep and
+// schedules the next attempt before the cancellation reaches that attempt;
+// the worker cancels an unstarted local activity before it runs, so in
+// production it never executes, but the test environment starts every local
+// activity on a goroutine the moment it is scheduled, so here that one
+// attempt may begin, already canceled. Counting it as a read made this test
+// fail 12 of 300 runs on two contended CPUs; it is the environment's start,
+// not a read the engine chose, and it is bounded to one.
 func TestContinuation_CancelDuringBootstrapBackoffIsObservedAtOnce(t *testing.T) {
 	plan := smallChunkPlan(2, 8)
 	plan.Continuation.Restore.BackoffInitialMillis = 30_000 // every retry waits on a timer
 	s := firstSwitch(t, "ork-boot-backoff", bigChainDocument, payload(t, nil), plan)
-	var reads atomic.Int32
+	var canceled atomic.Bool
+	var before, after atomic.Int32
 	h := s.next(t, func(h *harness) {
 		h.onContinuation = func(kind string, _ int64) error {
 			if kind == "read" {
-				reads.Add(1)
+				if canceled.Load() {
+					after.Add(1)
+				} else {
+					before.Add(1)
+				}
 				return errors.New("object storage is unavailable")
 			}
 			return nil
 		}
 		var once sync.Once
-		h.env.SetOnTimerScheduledListener(func(string, time.Duration) { once.Do(h.env.CancelWorkflow) })
+		h.env.SetOnTimerScheduledListener(func(string, time.Duration) {
+			once.Do(func() {
+				canceled.Store(true)
+				h.env.CancelWorkflow()
+			})
+		})
 	})
 	requireCanceled(t, h.env.GetWorkflowError())
-	if got := reads.Load(); got != 1 {
-		t.Fatalf("%d read attempts, want the one before the backoff", got)
+	if got := before.Load(); got != 1 {
+		t.Fatalf("%d read attempts before the cancel, want the one before the backoff", got)
+	}
+	if got := after.Load(); got > 1 {
+		t.Fatalf("%d read attempts after the cancel, want at most the SDK's one re-schedule, which the environment starts already canceled", got)
 	}
 	if e := failedStart(t, h, s); e.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
 		t.Fatalf("terminal event %v, want RUN_CANCELED", e.GetType())

@@ -8,6 +8,28 @@ include breaking changes, and each is marked **BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
+  `proofrun runner-health`): every part measures its runner for about ten
+  seconds before any gate — sequential write and read throughput and fsync
+  latency on its work disk, single-core and all-core CPU throughput, and
+  available memory — into `runner-health.json`, with the floors of its
+  runner class and a verdict. A stack part below a floor stops before any
+  gate, and the merger classifies it `runner-degraded`, exactly as a part
+  whose runner GitHub lost: its tests have no outcome of the tree, the proof
+  is not a proof of the tree, `proof.json` records the part, the metric, the
+  measured value and the floor (`degraded_runners`, `runner_health`), and
+  that one job may run again. A part above the floor whose tests fail stays
+  a test failure, and a part with no health file keeps its meaning. A local
+  proof measures the same numbers for information only, into `setup.log`
+  and `proof.json`. The nightly of 2026-10-26 (run 40371833169) failed two
+  soaks on one shard at 2.6× and over 3× their measured times while the same
+  tree passed both the next day; the contract had no honest way to record
+  that the runner was degraded. The floors are derived from the 21 parts of
+  run 40411125174, a third of the least measurement or three times the
+  largest latency.
+
 ### Fixed
 
 - `proofrun clean`, and so every proof's and `scripts/integration.sh`'s first
@@ -43,6 +65,17 @@ include breaking changes, and each is marked **BREAKING**.
   all: the development store (SeaweedFS 4.48, auth off) lists none, so the
   target listed and removed nothing. It reads the names proofs recorded
   instead, and it also lists the activity containers of dead test processes.
+- The CI proof job copies the parts' records, and a failing part's events
+  and logs, into the merged proof whatever the merge decided: under `set -e`
+  a failing `proofrun merge` ended the step before the copy, so the proof
+  that most needed its parts' details (run 40411125174) uploaded five files.
+- The CI `ui-e2e` shard that drives the host's Chromium installs the browser
+  without `--with-deps`, and apt-installs its system libraries only when a
+  launch probe finds the installed browser does not start, each install in
+  two bounded attempts: the runner image already carries those libraries
+  (the apt install's only new packages were fonts), and that apt install
+  from the runner's mirror at 50–100 KB/s took the shard past its 5-minute
+  limit three times (runs 40346476240, 40411125174 and nightly 40413305751).
 - `proofrun overhead` counts a concurrent setup group once, through its
   `setup` row, and puts the site gate among the fast gates: it summed the
   group's members as if serial and reported 88.3 minutes for a proof whose wall
@@ -52,6 +85,36 @@ include breaking changes, and each is marked **BREAKING**.
   between the parallel and the solo invocation (the second Playwright start
   and its global setup) is no longer charged to the solo invocation's first
   spec file's wall, which the UI costs and plan read.
+- A CI proof part fetches the run's own artifacts, and a `ui-e2e` part the
+  browser image, through `.github/actions/proof-fetch`: a fetch that makes no
+  progress is retried once with twice the limit (3 minutes, then 6, under a
+  step limit of 10), every attempt is recorded in the part's `setup.log`,
+  its `part.json` (`setup`) and the merged `proof.json` (`setup_retries`),
+  and a fetch that fails both attempts fails the part before it starts,
+  never a job re-run. An artifact download that stalled for its 3-minute
+  limit (GitHub Actions run 40346476240, `activity-fixture (json)`) lost the
+  whole proof to a new run.
+- The CI `ui-e2e` parts drive the browser in the pinned container
+  (`ui/e2e/browser-image.txt`), as a local proof does, and install the
+  host's Chromium only in the shard whose files drive one
+  (`run-page-ceiling.spec.ts`, `run-page-reduced-ceiling.spec.ts`,
+  `network-change.spec.ts`), decided from the UI plan and required by
+  `scripts/proof-part.sh` as a prerequisite of that part. Every part apt-installed the host browser's system libraries, and
+  one mirror at 50 KB/s took `ui-e2e (3)` past its 5-minute limit (the same
+  run) with no test started.
+- The merged CI proof copies each part's records — `part.json`, gates,
+  ledgers, logs, events — and GitHub's job records, never a part's
+  binaries, image layouts or test artifacts, and every part upload but the
+  plan's leaves its `bin/` out (the plan's holds the compiled test binaries
+  the shards adopt). The proof job copied every part whole, 4.6 GB of
+  mostly binaries, and its upload timed out after every part had passed
+  (run 40365261654), so no CI full proof could yet produce its artifact.
+- The merged CI proof carries a part's events and per-job logs only when
+  that part did not pass, and the fast part keeps its unit log and events
+  only when its unit gate failed, as docs/PROOFS.md §7 already said; the
+  ledgers hold every test's outcome either way. With the binaries out, a
+  green run's merged proof was still 921 MB of passing parts' events and
+  logs (run 40388322907), against a five-minute upload limit.
 - A proof's split Playwright invocations pass their spec files before
   `--project`, which took every word after it as a project name: a feature
   proof naming specs, and every CI `ui-e2e` part, ran with more than one UI

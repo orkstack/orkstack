@@ -137,10 +137,14 @@ func loadWorkflow(t *testing.T, name string) *wfFile {
 	return &w
 }
 
-// proofHostSteps are the composite action's steps.
-func proofHostSteps(t *testing.T) []wfStep {
+// compositeActions are the composite actions under .github/actions the rules
+// cover, each read by compositeSteps.
+var compositeActions = []string{"proof-host", "proof-fetch"}
+
+// compositeSteps are one composite action's steps.
+func compositeSteps(t *testing.T, name string) []wfStep {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "actions", "proof-host", "action.yml"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "actions", name, "action.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,15 +154,43 @@ func proofHostSteps(t *testing.T) []wfStep {
 		} `yaml:"runs"`
 	}
 	if err := yaml.Unmarshal(b, &a); err != nil {
-		t.Fatalf("proof-host action: %v", err)
+		t.Fatalf("%s action: %v", name, err)
 	}
 	if len(a.Runs.Steps) == 0 {
-		t.Fatal("the proof-host action has no steps")
+		t.Fatalf("the %s action has no steps", name)
 	}
 	return a.Runs.Steps
 }
 
+// proofHostSteps are the proof-host composite action's steps.
+func proofHostSteps(t *testing.T) []wfStep { return compositeSteps(t, "proof-host") }
+
 func isCheckout(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/checkout@") }
+
+// proofFetchAction is the composite action every proof.yml download of a
+// run's own artifact goes through: two bounded attempts, logged
+// (.github/actions/proof-fetch).
+const proofFetchAction = "./.github/actions/proof-fetch"
+
+// isArtifactFetch reports whether a step downloads one of the run's own
+// artifacts: through proof-fetch (`artifact:` or `pattern:`), or through
+// actions/download-artifact, which proof.yml no longer uses but the rules
+// still recognise so a step that fell back to it is held to the same shape.
+func isArtifactFetch(s wfStep) bool {
+	if strings.HasPrefix(s.Uses, "actions/download-artifact@") {
+		return true
+	}
+	return s.Uses == proofFetchAction && (withString(s, "artifact") != "" || withString(s, "pattern") != "")
+}
+
+// fetchedArtifact is the artifact name a fetch step downloads, or "" for a
+// pattern download of several.
+func fetchedArtifact(s wfStep) string {
+	if s.Uses == proofFetchAction {
+		return withString(s, "artifact")
+	}
+	return withString(s, "name")
+}
 
 func withString(s wfStep, key string) string {
 	if s.With == nil {
@@ -851,7 +883,9 @@ func TestWorkflows_NothingContinuesOnError(t *testing.T) {
 	for _, file := range allWorkflows {
 		expectNoProblems(t, file, continueOnErrorProblems(file, loadWorkflow(t, file)))
 	}
-	expectNoProblems(t, "the proof-host action", continueOnErrorProblems("the proof-host action", &wfFile{}, proofHostSteps(t)...))
+	for _, a := range compositeActions {
+		expectNoProblems(t, "the "+a+" action", continueOnErrorProblems("the "+a+" action", &wfFile{}, compositeSteps(t, a)...))
+	}
 
 	stepNamed := func(w *wfFile, job, name string) *wfStep {
 		for i := range w.Jobs[job].Steps {
@@ -967,8 +1001,8 @@ func partIdentityProblems(w *wfFile) []string {
 			}
 			downloaded := false
 			for _, d := range job.Steps {
-				if strings.HasPrefix(d.Uses, "actions/download-artifact@") &&
-					withString(d, "name") == "${{ needs.plan.outputs.plan_artifact }}" &&
+				if isArtifactFetch(d) &&
+					fetchedArtifact(d) == "${{ needs.plan.outputs.plan_artifact }}" &&
 					withString(d, "path") == "${{ runner.temp }}/ci/plan" {
 					downloaded = true
 				}
@@ -1025,7 +1059,7 @@ func TestWorkflows_EveryImageUsingPartPassesThePlanTheMergerRequires(t *testing.
 			job := w.Jobs["observability"]
 			var kept []wfStep
 			for _, s := range job.Steps {
-				if withString(s, "name") != "${{ needs.plan.outputs.plan_artifact }}" {
+				if fetchedArtifact(s) != "${{ needs.plan.outputs.plan_artifact }}" {
 					kept = append(kept, s)
 				}
 			}
@@ -1173,7 +1207,9 @@ func TestWorkflows_TheRulesCoverEveryWorkflowOnDisk(t *testing.T) {
 	for _, f := range allWorkflows {
 		covered = append(covered, "workflows/"+f)
 	}
-	covered = append(covered, "actions/proof-host/action.yml")
+	for _, a := range compositeActions {
+		covered = append(covered, "actions/"+a+"/action.yml")
+	}
 	sort.Strings(covered)
 	if got := workflowFilesOnDisk(t); strings.Join(got, "\n") != strings.Join(covered, "\n") {
 		t.Errorf("the workflow rules cover\n  %s\nbut .github holds\n  %s\nadd the new file to allWorkflows (and its rules) or remove it",
@@ -1275,10 +1311,10 @@ func TestWorkflows_ShardsFindThePlanAndBuildByTheirOutputs(t *testing.T) {
 	downloads := 0
 	for _, name := range w.jobNames() {
 		for i, s := range w.Jobs[name].Steps {
-			if !strings.HasPrefix(s.Uses, "actions/download-artifact@") {
+			if !isArtifactFetch(s) {
 				continue
 			}
-			art := withString(s, "name")
+			art := fetchedArtifact(s)
 			if art == "" {
 				continue // a pattern download of every part
 			}
@@ -1917,7 +1953,9 @@ func TestWorkflows_RunStepsNeverInterpolateInputs(t *testing.T) {
 			check(file+" › "+name, w.Jobs[name].Steps)
 		}
 	}
-	check("the proof-host action", proofHostSteps(t))
+	for _, a := range compositeActions {
+		check("the "+a+" action", compositeSteps(t, a))
+	}
 	for _, expr := range []string{"inputs.version", "github.event.pull_request.title", "github.event_name", "github.head_ref",
 		"github.base_ref", "github.ref_name", "github.actor"} {
 		if untrustedInShell.FindString(`run: echo "${{ `+expr+` }}"`) == "" {
@@ -1987,7 +2025,9 @@ func TestWorkflows_ActionsAndToolchainsArePinnedExactly(t *testing.T) {
 			expectNoProblems(t, file, pinProblems(file+" › "+name, w.Jobs[name].Steps, goMinor, seen))
 		}
 	}
-	expectNoProblems(t, "the proof-host action", pinProblems("the proof-host action", proofHostSteps(t), goMinor, seen))
+	for _, a := range compositeActions {
+		expectNoProblems(t, "the "+a+" action", pinProblems("the "+a+" action", compositeSteps(t, a), goMinor, seen))
+	}
 	for _, key := range append([]string{"uses"}, pinKeys...) {
 		if seen[key] == 0 {
 			t.Errorf("no step names %s: the pin check is vacuous", key)
@@ -2040,4 +2080,72 @@ func readRepoFileForPins(t *testing.T, rel string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// ---- the artifacts carry records, not binaries ----------------------------------
+
+// TestWorkflows_TheArtifactsCarryRecordsNotBinaries: a part's directory is
+// mostly its bin/ — the stack binaries, proofrun and the adopted test
+// binaries, about 500 MB a shard against 100 KB of records — and the proof
+// job once copied every part whole into the merged proof, which made its
+// upload 4.6 GB and timed it out at the step's limit after every part had
+// passed (run 40365261654). Every part upload but the plan's now leaves its
+// bin/ out (the plan's holds the compiled test binaries every shard adopts),
+// and the merged proof is assembled by scripts/proof-collect.sh — each
+// part's records, the events and logs only of parts that did not pass, and
+// GitHub's job records — after the merger has read the parts
+// (TestRepositoryProofCollect pins what the script keeps).
+func TestWorkflows_TheArtifactsCarryRecordsNotBinaries(t *testing.T) {
+	w := loadWorkflow(t, "proof.yml")
+	var merge *wfStep
+	for i := range w.Jobs["proof"].Steps {
+		if w.Jobs["proof"].Steps[i].Name == "merge" {
+			merge = &w.Jobs["proof"].Steps[i]
+		}
+	}
+	if merge == nil {
+		t.Fatal("jobs.proof has no merge step")
+	}
+	if strings.Contains(merge.Run, `cp -r "$RUNNER_TEMP/ci/parts/."`) || strings.Contains(merge.Run, "rsync ") {
+		t.Error("jobs.proof merge copies the parts itself; scripts/proof-collect.sh decides what the merged proof carries")
+	}
+	if !strings.Contains(merge.Run, `scripts/proof-collect.sh "$RUNNER_TEMP/ci/parts" "$RUNNER_TEMP/ci/jobs" "$RUNNER_TEMP/ci/proof"`) {
+		t.Error("jobs.proof merge does not collect the parts' records and GitHub's job records with scripts/proof-collect.sh")
+	}
+	if at := strings.Index(merge.Run, "proofrun merge"); at < 0 || strings.Index(merge.Run, "scripts/proof-collect.sh") < at {
+		t.Error("jobs.proof merge collects the parts before the merger has read them")
+	}
+	uploads := 0
+	for _, name := range w.jobNames() {
+		for i, s := range w.Jobs[name].Steps {
+			if !strings.HasPrefix(s.Uses, "actions/upload-artifact@") {
+				continue
+			}
+			uploads++
+			var lines []string
+			for _, l := range strings.Split(withString(s, "path"), "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					lines = append(lines, l)
+				}
+			}
+			switch name {
+			case "plan":
+				if len(lines) != 1 || strings.HasPrefix(lines[0], "!") {
+					t.Errorf("jobs.plan %s uploads %q; the plan's bin/ holds the test binaries the shards adopt", s.label(i), lines)
+				}
+			case "proof":
+				if len(lines) != 1 || !strings.HasSuffix(lines[0], "/ci/proof") {
+					t.Errorf("jobs.proof %s uploads %q, not the merged proof alone", s.label(i), lines)
+				}
+			default:
+				if len(lines) != 2 || !strings.HasPrefix(lines[0], "proof/") || !strings.HasSuffix(lines[0], "/") ||
+					lines[1] != "!"+lines[0]+"bin/**" {
+					t.Errorf("jobs.%s %s uploads %q; want its directory and !<directory>bin/**", name, s.label(i), lines)
+				}
+			}
+		}
+	}
+	if uploads < 8 {
+		t.Errorf("%d upload steps checked; the proof job and every part upload", uploads)
+	}
 }

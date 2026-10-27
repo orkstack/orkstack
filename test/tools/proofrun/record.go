@@ -86,7 +86,20 @@ type proofRecord struct {
 	HostSpeedFailures []hostSpeedFailure `json:"host_speed_failures,omitempty"`
 	KnownGaps         []string           `json:"known_gaps,omitempty"`
 	BinaryDigestNotes []string           `json:"binary_digest_notes,omitempty"`
-	ListsChanged      []listChange       `json:"lists_changed,omitempty"`
+	// SetupRetries are the fetches a part's runner needed a second attempt
+	// for, from the parts' setup logs (.github/actions/proof-fetch): every
+	// attempt line of each such fetch, prefixed with the part. A retry
+	// within one attempt of a part is not a rerun and costs no eligibility;
+	// it is recorded so a slow blob store or registry is seen, not guessed.
+	SetupRetries []string     `json:"setup_retries,omitempty"`
+	ListsChanged []listChange `json:"lists_changed,omitempty"`
+	// RunnerHealth is every part attempt's runner-health record (its verdict
+	// re-derived by the merger), and DegradedRunners every attempt that
+	// measured below the floor, with the metric, its value and the floor: a
+	// part listed there without a later attempt makes the proof not a proof
+	// of the tree (AGENTS.md §11.2; merge.go).
+	RunnerHealth    []partHealth     `json:"runner_health,omitempty"`
+	DegradedRunners []degradedRunner `json:"degraded_runners,omitempty"`
 	// QuarantineWarnings are the entries within seven days of their date.
 	QuarantineWarnings []string  `json:"quarantine_warnings,omitempty"`
 	PR                 *prRecord `json:"pr,omitempty"`
@@ -261,6 +274,8 @@ func cmdRecord(args []string) int {
 	fs.IntVar(&r.UIWorkers, "ui-workers", 0, "PROOF_UI_WORKERS")
 	fs.StringVar(&r.GatesOverride, "gates-override", "", "PROOF_GATES, when set")
 	obsRequired := fs.Bool("observability-required", false, "the tree changed a telemetry path")
+	setupLog := fs.String("setup-log", "", "the runner's setup log: every fetch attempt made before this part")
+	healthFile := fs.String("runner-health", "", "the part's runner-health.json: what its runner measured before any gate")
 	selFile := fs.String("select", "", "the feature selection")
 	status := fs.Int("status", 0, "the proof script's own status")
 	if err := fs.Parse(args); err != nil || *dir == "" || *attempt < 1 {
@@ -283,6 +298,21 @@ func cmdRecord(args []string) int {
 	r.Gates = gates
 	if r.Gates == nil {
 		r.Gates = []gateRecord{}
+	}
+	// A health file the part names and cannot read is an error, never a
+	// part that reads as if its runner went unmeasured.
+	var health *runnerHealth
+	if *healthFile != "" {
+		var h runnerHealth
+		if err := readJSON(*healthFile, &h); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun record: -runner-health:", err)
+			return 2
+		}
+		if h.Format != runnerHealthFormat {
+			fmt.Fprintf(os.Stderr, "proofrun record: -runner-health: %s is format %d, and this proofrun reads format %d\n", *healthFile, h.Format, runnerHealthFormat)
+			return 2
+		}
+		health = &h
 	}
 	ledgers := map[string]any{}
 	ledgerFiles := map[string]string{}
@@ -337,7 +367,7 @@ func cmdRecord(args []string) int {
 			Images: imageDigests(r.Images), ImageTag: r.ImageTag, ImageTagOwn: r.ImageTagOwn,
 			ProofJobs: r.ProofJobs, UIWorkers: r.UIWorkers, GatesOverride: r.GatesOverride,
 			GuardRetries: r.GuardRetries, GuardCeiling: r.GuardCeiling,
-			Runner: currentRunner(), Ledgers: ledgerFiles,
+			Runner: currentRunner(), Ledgers: ledgerFiles, Health: health,
 		}
 		// A plan the part names and cannot hash is an error, never an empty
 		// hash the merger would read as "no plan was read".
@@ -349,6 +379,20 @@ func cmdRecord(args []string) int {
 		if rec.UIPlanSHA256, hashErr = fieldSHA256(*uiPlanFile); hashErr != nil && *uiPlanFile != "" {
 			fmt.Fprintln(os.Stderr, "proofrun record: -ui-plan:", hashErr)
 			return 2
+		}
+		if *setupLog != "" {
+			// A setup log the part names and cannot read is an error, never
+			// a part that reads as if its runner's setup went unrecorded.
+			b, err := os.ReadFile(*setupLog)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "proofrun record: -setup-log:", err)
+				return 2
+			}
+			for _, l := range strings.Split(string(b), "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					rec.Setup = append(rec.Setup, l)
+				}
+			}
 		}
 		if err := os.MkdirAll(*outDir, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -384,6 +428,11 @@ func cmdRecord(args []string) int {
 			return 2
 		}
 		r.EvidenceFailed = evidenceFailures(&sel, loadOutcomes(*dir), loadSpecOutcomes(*dir))
+	}
+	if health != nil {
+		// A feature proof's own host, for information: the floor never binds
+		// a local part.
+		r.RunnerHealth = []partHealth{{Part: "local", Attempt: 1, Class: health.Class, Verdict: health.verdict(), Seconds: health.Seconds, Metrics: health.Metrics}}
 	}
 	verdict(&r, *status, *obsRequired, ledgersOK)
 	if err := writeJSON(filepath.Join(*dir, "proof.json"), r); err != nil {
@@ -645,6 +694,9 @@ func nightlyProofProblemsWith(list, specList, nightlyDir, mainTree string) []str
 	if r.Result != "pass" {
 		p = append(p, "the nightly proof did not pass")
 	}
+	for _, d := range degradedProblems(r) {
+		p = append(p, "the nightly proof: "+d)
+	}
 	if !r.EligibleButForTier {
 		var reasons []string
 		for _, reason := range r.Ineligible {
@@ -659,6 +711,36 @@ func nightlyProofProblemsWith(list, specList, nightlyDir, mainTree string) []str
 	}
 	if !r.CleanStart || !r.CleanEnd || r.Tree != r.TreeEnd {
 		p = append(p, "the nightly proof's tree was not clean")
+	}
+	return p
+}
+
+// degradedProblems names every part whose last attempt ran on a degraded
+// runner: the proof is not a proof of the tree, and the remedy is that one
+// job again, never a new rule. A degraded attempt that a later attempt
+// replaced is a recorded rerun and no problem here.
+func degradedProblems(r proofRecord) []string {
+	rerun := map[string]bool{}
+	for _, rr := range r.Reruns {
+		for _, a := range rr.EarlierAttempts {
+			rerun[fmt.Sprintf("%s#%d", rr.Part, a)] = true
+		}
+	}
+	var p []string
+	seen := map[string]bool{}
+	for _, d := range r.DegradedRunners {
+		key := fmt.Sprintf("%s#%d", d.Part, d.Attempt)
+		if rerun[key] || seen[key] {
+			continue
+		}
+		seen[key] = true
+		var metrics []string
+		for _, x := range r.DegradedRunners {
+			if x.Part == d.Part && x.Attempt == d.Attempt {
+				metrics = append(metrics, fmt.Sprintf("%s %s %s, floor %s", x.Metric, trimFloat(x.Value), x.Unit, trimFloat(x.Floor)))
+			}
+		}
+		p = append(p, fmt.Sprintf("part %s ran on a degraded runner (attempt %d, %s: %s): it is not a proof of the tree; re-run that job alone", d.Part, d.Attempt, d.Class, strings.Join(metrics, "; ")))
 	}
 	return p
 }
@@ -696,6 +778,7 @@ func verifyProblems(r proofRecord, headTree, parent, mainTip, status, mainRef st
 	if msg := quarantineAgeProblem(r, todayUTC()); msg != "" {
 		p = append(p, msg)
 	}
+	p = append(p, degradedProblems(r)...)
 	if r.Tier != "full" {
 		p = append(p, "it is a "+orDash(r.Tier)+" proof; only a full proof gates a merge")
 	}

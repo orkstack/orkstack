@@ -6,7 +6,8 @@
 #   scripts/proof.sh --tier feature [--base REF] [--tests PKG:REGEX]... \
 #                    [--specs FILE]... [NAME]   feature proof -> proof/NAME-feature/
 #   scripts/proof.sh --tier nightly|release [NAME]
-#   scripts/proof.sh --part PART --plan FILE ...  one CI part -> proof/<id>-part-PART-aN/
+#   scripts/proof.sh --part PART --plan FILE [--setup-log FILE] ...
+#                                               one CI part -> proof/<id>-part-PART-aN/
 #
 # A full, release or nightly proof runs its gates on one host and then writes
 # one part (`local`) and merges it with `proofrun merge`, the same verdict the
@@ -105,6 +106,7 @@ BASE_COMMIT=""
 MERGE_BASE=""
 SHARDS=""
 UI_SHARDS=""
+SETUP_LOG=""
 BASE_COMMIT_GIVEN=""
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -134,6 +136,8 @@ while [ $# -gt 0 ]; do
 	--shards=*) SHARDS="${1#*=}"; shift ;;
 	--ui-shards) [ $# -ge 2 ] || invalid "--ui-shards needs a number"; UI_SHARDS="$2"; shift 2 ;;
 	--ui-shards=*) UI_SHARDS="${1#*=}"; shift ;;
+	--setup-log) [ $# -ge 2 ] || invalid "--setup-log needs a file"; SETUP_LOG="$2"; shift 2 ;;
+	--setup-log=*) SETUP_LOG="${1#*=}"; shift ;;
 	-h | --help) usage; exit 0 ;;
 	-*) invalid "unknown option $1 (see --help)" ;;
 	*)
@@ -149,6 +153,12 @@ full | feature | nightly | release) ;;
 esac
 if [ -n "$PART" ] && [ "$TIER" = feature ]; then
 	invalid "--part is a full, release or nightly proof's part; a feature proof runs on one host"
+fi
+# The runner's setup log (.github/actions/proof-fetch): every fetch attempt
+# made before a CI part, copied into the part's directory so its part.json and
+# the merged proof carry it. A local proof fetches nothing before itself.
+if [ -n "$SETUP_LOG" ] && [ -z "$PART" ]; then
+	invalid "--setup-log is a CI part's record of its runner's setup; a local proof has none"
 fi
 if [ "$TIER" = full ] && { [ ${#TESTS[@]} -gt 0 ] || [ ${#SPECS[@]} -gt 0 ]; }; then
 	invalid "--tests and --specs name a feature proof's evidence; the full proof runs everything"
@@ -464,6 +474,18 @@ START_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LOAD_START="$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
 
 say "proof: $TIER proof -> $DIR (id $PROOF_ID, tree $TREE_START$([ "$CLEAN_START" = true ] || echo ', NOT clean'))"
+
+# The runner-health measurement a CI part makes first (scripts/proof-part.sh,
+# AGENTS.md §11.2), made here for information only: the same numbers,
+# appended to setup.log (after the cleanup's summary line, which opens it)
+# and written to runner-health.json, recorded in proof.json. The class is
+# `local`, which scripts/proof-runner-floors.tsv names no floor for, because
+# this host's floors are its measured costs themselves; it never changes a
+# local verdict, and a measurement that cannot run is reported, not failed.
+say "== runner-health: class local (information only)"
+"$PR" runner-health -class local -floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >>"$DIR/setup.log" 2>&1 ||
+	say "   runner-health: the measurement could not run (exit $?); see $DIR/setup.log"
+grep '^runner-health:' "$DIR/setup.log" | sed 's/^/   /'
 
 # ---- cleanup of this proof's own group -------------------------------------------
 TEMPORAL_NAME="orkstack-proof-$PROOF_ID-temporal"
@@ -1081,6 +1103,7 @@ if [ -f "$DIR/images.tsv" ]; then
 	if [ -n "$IMAGE_TAG_OWN" ]; then record_args+=(-image-tag-own); fi
 fi
 if [ -n "${PROOF_GATES:-}" ]; then record_args+=(-gates-override "$PROOF_GATES"); fi
+if [ -f "$DIR/runner-health.json" ]; then record_args+=(-runner-health "$DIR/runner-health.json"); fi
 if { [ "$TIER" = full ] && [ -n "$OBS_PATHS" ]; } || [ "$TIER" = release ]; then record_args+=(-observability-required); fi
 
 README="$DIR/README.md"

@@ -1,0 +1,40 @@
+# The runner-health floors (AGENTS.md §11.2; docs/PROOFS.md §5, §10). Every
+# CI part measures its runner for about ten seconds before any gate
+# (`proofrun runner-health`, run first by scripts/proof-part.sh) and writes
+# runner-health.json: the values, these floors, and a verdict. A stack part
+# (integration, ui-e2e, activity-fixture, observability) whose runner is
+# below a floor of its class stops before any gate, and the merger
+# classifies it runner-degraded, exactly as a part whose runner GitHub
+# lost: its tests get no outcome of the tree, the proof is not a proof of
+# the tree, and that one job may run again. A part above every floor whose
+# tests fail is a test failure. A local proof measures the same numbers for
+# information only; its class, `local`, has no row here, because the host's
+# floors are its measured costs themselves.
+#
+# This is a measurement file, like scripts/proof-test-costs.tsv: a feature
+# proof may change it (scripts/proof-scope.tsv), and it is NEVER edited to
+# get a proof through. A floor can only turn a result into "not a proof of
+# the tree"; it never passes one. A class's floors are derived from the
+# runner-health.json of every part of healthy CI runs: each floor is well
+# under the least healthy measurement (a throughput or a capacity) or well
+# over the largest (a latency), with the margin and the runs named in the
+# derived column (docs/PROOFS.md §10, "Re-derive the runner-health floors").
+# A class with no row is `unfloored`: its parts measure for information, and
+# their runner_health in the merged proof.json is the data its rows come
+# from. Re-derive a class when more runs widen its range.
+#
+# A class is `github-hosted/<ImageOS>/<N>cpu` on a GitHub-hosted runner
+# (scripts/proof-part.sh part_runner_class): the runner image and its vCPU
+# count, because the all-core and memory floors depend on the runner's size.
+# The metrics are the ones `proofrun runner-health` measures, in its order;
+# a `_ms` metric is a latency, below its floor when the value is ABOVE it.
+#
+# Columns are TAB-separated: class, metric, floor, derived.
+#
+# class	metric	floor	derived
+github-hosted/ubuntu24/4cpu	disk_write_mb_s	20	derived 2026-10-26 from run 40411125174: 21 parts measured 58.9–457.1 MB/s (least: plan); a third of the least, rounded down
+github-hosted/ubuntu24/4cpu	disk_read_mb_s	75	derived 2026-10-26 from run 40411125174: 21 parts measured 234.9–534.3 MB/s (least: plan); a third of the least, rounded down
+github-hosted/ubuntu24/4cpu	fsync_p95_ms	30	derived 2026-10-26 from run 40411125174: 21 parts measured 0.23–9.98 ms (largest: activity-fixture:template); three times the largest
+github-hosted/ubuntu24/4cpu	cpu_single_mb_s	450	derived 2026-10-26 from run 40411125174: 21 parts measured 1403.0–2173.1 MB/s (least: integration:9); a third of the least, rounded down
+github-hosted/ubuntu24/4cpu	cpu_all_mb_s	1200	derived 2026-10-26 from run 40411125174: 21 parts measured 3749.3–6735.2 MB/s (least: activity-fixture:git); a third of the least, rounded down
+github-hosted/ubuntu24/4cpu	mem_available_mib	4096	derived 2026-10-26 from run 40411125174: 21 parts measured 14347–14786 MiB on a 16 GB runner; under a third of the least

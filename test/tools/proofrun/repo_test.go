@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -510,4 +512,511 @@ func TestRepositoryProofScripts_CleanWhatDeadProofsLeftFirst(t *testing.T) {
 			t.Errorf("proof-clean.sh lacks %q: `make proof-clean` must be the same cleanup", want)
 		}
 	}
+}
+
+// A runner's setup can stall where the tree is fine: GitHub Actions run
+// 40346476240 (2026-10-26) lost `activity-fixture (json)` to an artifact
+// download that made no progress for its 3-minute limit, and `ui-e2e (3)` to
+// `playwright install --with-deps chromium` apt-installing at 50 KB/s. Both
+// fixes are pinned here: every fetch of a run's own artifact, and the browser
+// image's pull, go through .github/actions/proof-fetch — one retry with a
+// longer limit, a bounded total, every attempt in the setup log the part
+// carries into part.json and the merger into proof.json — and never a job
+// re-run; and the ui-e2e parts drive the pinned browser container, with the
+// host's Chromium installed only in the shard whose files drive one.
+func TestRepositoryCIParts_FetchWithOneBoundedRetry(t *testing.T) {
+	root := mustRepoRoot()
+	action, err := os.ReadFile(filepath.Join(root, ".github", "actions", "proof-fetch", "action.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(action)
+	// Two attempts, the second with twice the limit; both bounded by
+	// `timeout`, which kills what makes no progress.
+	if !strings.Contains(text, "for limit in 180 360; do") {
+		t.Error("proof-fetch does not make exactly two attempts of 180 s then 360 s")
+	}
+	if strings.Count(text, `timeout -k 10 "$limit" `) != 3 {
+		t.Errorf("proof-fetch bounds %d of its three fetch commands (artifact, pattern, image) with timeout", strings.Count(text, `timeout -k 10 "$limit" `))
+	}
+	if strings.Contains(text, "gh run rerun") || strings.Contains(text, "continue-on-error") {
+		t.Error("proof-fetch re-runs a job or continues on error; a setup failure needs a new run of the same tree")
+	}
+	// The lines the merger reads back (merge.go setupAttemptRE).
+	for _, line := range []string{
+		`line="fetch $what: attempt $n ok in ${took}s (limit ${limit}s)"`,
+		`line="fetch $what: attempt $n timed out after ${took}s (limit ${limit}s)"`,
+		`line="fetch $what: attempt $n failed, exit $code after ${took}s (limit ${limit}s)"`,
+	} {
+		if !strings.Contains(text, line) {
+			t.Errorf("proof-fetch does not write %s", line)
+		}
+		sample := strings.NewReplacer("$what", "artifact plan-a1", "$n", "2", "${took}", "14", "${limit}", "360", "$code", "1").
+			Replace(strings.TrimSuffix(strings.TrimPrefix(line, `line="`), `"`))
+		if !setupAttemptRE.MatchString(sample) {
+			t.Errorf("the merger's setupAttemptRE does not match the action's line %q", sample)
+		}
+	}
+	if !strings.Contains(text, `echo "$line" | tee -a "$LOG"`) {
+		t.Error("proof-fetch does not append each attempt to the setup log")
+	}
+
+	w := loadWorkflow(t, "proof.yml")
+	for _, name := range w.jobNames() {
+		job := w.Jobs[name]
+		fetches, part := 0, -1
+		for i, s := range job.Steps {
+			if strings.HasPrefix(s.Uses, "actions/download-artifact@") {
+				t.Errorf("jobs.%s %s downloads with actions/download-artifact, one unbounded attempt; use %s", name, s.label(i), proofFetchAction)
+			}
+			if strings.Contains(s.Run, "scripts/proof.sh --part") {
+				part = i
+			}
+			if s.Uses != proofFetchAction {
+				continue
+			}
+			fetches++
+			// 180 s + 360 s = 9 minutes; the step's limit leaves the second
+			// attempt its full time and still fails a stalled runner inside
+			// ten, which keeps the job's own limit small.
+			if n, _, _ := timeoutMinutes(s.Timeout); n != 10 {
+				t.Errorf("jobs.%s %s has timeout-minutes %v, want 10 (two attempts of 3 and 6 minutes)", name, s.label(i), s.Timeout)
+			}
+			if withString(s, "image") == "" && withString(s, "token") != "${{ github.token }}" {
+				t.Errorf("jobs.%s %s fetches an artifact without the run's token", name, s.label(i))
+			}
+			if part >= 0 {
+				t.Errorf("jobs.%s %s fetches after the part step; its log would miss the part", name, s.label(i))
+			}
+		}
+		if fetches == 0 {
+			continue
+		}
+		if job.Permissions["actions"] != "read" {
+			t.Errorf("jobs.%s fetches artifacts with `gh run download` but has no actions: read", name)
+		}
+		if part >= 0 && !strings.Contains(job.Steps[part].Run, `--setup-log "$RUNNER_TEMP/ci/setup.log"`) {
+			t.Errorf("jobs.%s's part step does not pass --setup-log, so the fetch attempts never reach its part.json", name)
+		}
+	}
+
+	// The part copies the log in and records it; the merger lists a retry.
+	part, err := os.ReadFile(filepath.Join(root, "scripts", "proof-part.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`cp "$SETUP_LOG" "$DIR/setup.log"`, `args+=(-setup-log "$DIR/setup.log")`} {
+		if !strings.Contains(string(part), want) {
+			t.Errorf("scripts/proof-part.sh lacks %s", want)
+		}
+	}
+	if !strings.Contains(proofScript(t), `--setup-log) [ $# -ge 2 ] || invalid`) {
+		t.Error("scripts/proof.sh does not accept --setup-log")
+	}
+}
+
+// hostChromiumSpecs are the spec files that drive the HOST's Chromium, read
+// from the suite itself: the project ui/playwright.config.ts leaves without a
+// connection to the container (its testMatch), and every spec that launches
+// a browser of its own (network-change.spec.ts's positive control).
+func hostChromiumSpecs(t *testing.T) []string {
+	t.Helper()
+	root := mustRepoRoot()
+	cfg, err := os.ReadFile(filepath.Join(root, "ui", "playwright.config.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := filepath.Glob(filepath.Join(root, "ui", "e2e", "*.spec.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var specs []string
+	// A project whose `use` does not spread isolatedBrowser unconditionally
+	// drives the host: every spec file its testMatch (a JavaScript regular
+	// expression Go's syntax also reads) matches is one of them.
+	for _, m := range regexp.MustCompile(`(?s)\{\s*name: '([a-z-]+)',(.*?)testMatch: /([^/\n]+)/`).FindAllStringSubmatch(string(cfg), -1) {
+		if strings.Contains(m[2], "use: { browserName: 'chromium', ...isolatedBrowser }") {
+			continue
+		}
+		match, err := regexp.Compile(m[3])
+		if err != nil {
+			t.Fatalf("project %s: testMatch %q: %v", m[1], m[3], err)
+		}
+		for _, f := range files {
+			if match.MatchString(filepath.Base(f)) {
+				specs = append(specs, strings.TrimSuffix(filepath.Base(f), ".spec.ts"))
+			}
+		}
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "chromium.launch(") {
+			specs = append(specs, strings.TrimSuffix(filepath.Base(f), ".spec.ts"))
+		}
+	}
+	sort.Strings(specs)
+	if len(specs) == 0 {
+		t.Fatal("no spec drives the host's Chromium; the rule below would be vacuous")
+	}
+	return specs
+}
+
+func TestRepositoryCIParts_DriveChromiumInTheContainer(t *testing.T) {
+	root := mustRepoRoot()
+	specs := hostChromiumSpecs(t)
+	if want := []string{"network-change", "run-page-ceiling", "run-page-reduced-ceiling"}; strings.Join(specs, ",") != strings.Join(want, ",") {
+		t.Fatalf("the specs driving the host's Chromium are %v, want %v: update the rule in proof.yml and proof-part.sh with this test", specs, want)
+	}
+	alternation := "(" + strings.Join(specs, "|") + ")"
+
+	w := loadWorkflow(t, "proof.yml")
+	job := w.Jobs["ui-e2e"]
+	if job == nil {
+		t.Fatal("proof.yml has no ui-e2e job")
+	}
+	image, decide, install, pull, part := -1, -1, -1, -1, -1
+	for i, s := range job.Steps {
+		switch {
+		case s.ID == "browser-image":
+			image = i
+			if !strings.Contains(s.Run, "ui/e2e/browser-image.txt") {
+				t.Errorf("jobs.ui-e2e %s does not read the pinned browser image from ui/e2e/browser-image.txt", s.label(i))
+			}
+		case s.Uses == proofFetchAction && withString(s, "image") != "":
+			pull = i
+			if withString(s, "image") != "${{ steps.browser-image.outputs.image }}" {
+				t.Errorf("jobs.ui-e2e %s pulls %q, not the reference browser-image.txt names", s.label(i), withString(s, "image"))
+			}
+		case s.ID == "host-chromium":
+			decide = i
+			if !strings.Contains(s.Run, `"$RUNNER_TEMP/ci/plan/ui-plan.json"`) || !strings.Contains(s.Run, `select(.index == $k)`) {
+				t.Errorf("jobs.ui-e2e %s does not decide from this shard's files in the UI plan", s.label(i))
+			}
+			if !strings.Contains(s.Run, `select(test("`+alternation+`\\.spec\\.ts$"))`) {
+				t.Errorf("jobs.ui-e2e %s does not name exactly the specs that drive the host's Chromium, %s", s.label(i), alternation)
+			}
+			if envString(s, "SHARD") != "${{ matrix.shard }}" {
+				t.Errorf("jobs.ui-e2e %s does not take the shard through env", s.label(i))
+			}
+		case strings.Contains(s.Run, "playwright install"):
+			install = i
+			if normalizeIf(s.If) != "steps.host-chromium.outputs.needed == 'true'" {
+				t.Errorf("jobs.ui-e2e %s installs the host's Chromium under %q; want only when the shard needs it", s.label(i), s.If)
+			}
+			// The runner image carries Chromium's libraries; --with-deps is an
+			// apt install from a mirror that has stalled a shard past its
+			// limit three times (runs 40346476240, 40411125174, 40413305751).
+			// It stays only as the fallback behind a launch probe, in two
+			// bounded attempts, under a 10-minute step.
+			plain, probe, deps := strings.Index(s.Run, "npx playwright install chromium"), strings.Index(s.Run, "chromium.launch("), strings.Index(s.Run, "--with-deps")
+			if plain < 0 || probe < 0 || deps < 0 || !(plain < deps && probe < deps) {
+				t.Errorf("jobs.ui-e2e %s does not install the browser alone, probe its launch, and apt-install its libraries only as the fallback (install %d, probe %d, --with-deps %d)", s.label(i), plain, probe, deps)
+			}
+			if !strings.Contains(s.Run, "for limit in 180 360; do") || !strings.Contains(s.Run, `timeout -k 10 "$limit" `) {
+				t.Errorf("jobs.ui-e2e %s does not bound its installs to proof-fetch's two attempts of 180 s then 360 s", s.label(i))
+			}
+			if n, _, _ := timeoutMinutes(s.Timeout); n != 10 {
+				t.Errorf("jobs.ui-e2e %s has timeout-minutes %v, want 10 (two bounded attempts, then the fallback)", s.label(i), s.Timeout)
+			}
+		case strings.Contains(s.Run, "scripts/proof.sh --part"):
+			part = i
+			if strings.Contains(s.Run, "ORK_E2E_BROWSER") || envString(s, "ORK_E2E_BROWSER") != "" {
+				t.Errorf("jobs.ui-e2e %s chooses the browser; the suite's global setup drives the container", s.label(i))
+			}
+		}
+	}
+	for what, i := range map[string]int{"browser image": image, "its pull": pull, "the host-chromium decision": decide, "the host install": install, "the UI shard": part} {
+		if i < 0 {
+			t.Errorf("jobs.ui-e2e has no step for %s", what)
+		}
+	}
+	if !(image < pull && pull < decide && decide < install && install < part) {
+		t.Errorf("jobs.ui-e2e orders its steps image %d, pull %d, decide %d, install %d, part %d; want that order", image, pull, decide, install, part)
+	}
+	if decide >= 0 {
+		planFetched := false
+		for _, s := range job.Steps[:decide] {
+			if fetchedArtifact(s) == "${{ needs.plan.outputs.plan_artifact }}" {
+				planFetched = true
+			}
+		}
+		if !planFetched {
+			t.Error("jobs.ui-e2e decides on the UI plan before fetching it")
+		}
+	}
+
+	// The part applies the same rule as a prerequisite, so a missing host
+	// Chromium is refused explicitly and only where a spec drives one.
+	src, err := os.ReadFile(filepath.Join(root, "scripts", "proof-part.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := string(src)
+	if !strings.Contains(ps, `grep -qE '`+alternation+`\.spec\.ts$'`) {
+		t.Errorf("scripts/proof-part.sh does not name exactly the specs that drive the host's Chromium, %s", alternation)
+	}
+	if !strings.Contains(ps, `part_ui_shard_drives_host_chromium "${PART#ui-e2e:}"; then`) ||
+		!strings.Contains(ps, `part_need "Playwright's Chromium on this host`) {
+		t.Error("scripts/proof-part.sh does not require the host's Chromium for the shard that drives it")
+	}
+	if strings.Contains(ps, "ORK_E2E_BROWSER=host") {
+		t.Error("scripts/proof-part.sh drives the host's Chromium for the whole suite")
+	}
+	setup, err := os.ReadFile(filepath.Join(root, "ui", "e2e", "global-setup.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(setup), "startBrowserServer(") {
+		t.Error("ui/e2e/global-setup.ts no longer starts the browser server the parts rely on")
+	}
+}
+
+// scripts/proof-collect.sh assembles the merged proof's copy of the parts:
+// every part's records; the events and per-job logs only of a part that did
+// not pass (a gate not `pass`, or no part.json); never a part's bin/,
+// layouts/ or artifacts/; and GitHub's job records. With the binaries out, a
+// green run's merged proof was still 921 MB of passing parts' events and
+// logs (run 40388322907), against a five-minute upload limit.
+func TestRepositoryProofCollect_KeepsRecordsAndFailingPartsDetails(t *testing.T) {
+	root := mustRepoRoot()
+	dir := t.TempDir()
+	parts, jobs, out := filepath.Join(dir, "parts"), filepath.Join(dir, "jobs"), filepath.Join(dir, "proof")
+	write := func(rel, text string) {
+		t.Helper()
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	passed := `{"part":"integration:1","gates":[{"gate":"temporal","result":"pass"},{"gate":"integration","result":"pass"}]}`
+	failed := `{"part":"integration:2","gates":[{"gate":"temporal","result":"pass"},{"gate":"integration","result":"fail"}]}`
+	for _, f := range []string{
+		// A passing shard: records stay, the rest goes.
+		"parts/part-integration-1-a1/part.json:" + passed,
+		"parts/part-integration-1-a1/gates.tsv:integration\tpass\t9\tintegration.log\tproofrun integration",
+		"parts/part-integration-1-a1/integration-tests.json:{}",
+		"parts/part-integration-1-a1/integration.log:progress",
+		"parts/part-integration-1-a1/setup.log:fetch artifact plan-a1: attempt 1 ok in 6s (limit 180s)",
+		"parts/part-integration-1-a1/integration.events.jsonl:{}",
+		"parts/part-integration-1-a1/integration/engine-001.log:big",
+		"parts/part-integration-1-a1/bin/ork:binary",
+		"parts/part-integration-1-a1/artifacts/run/a:artifact",
+		// A failing shard: its events and per-job logs come too.
+		"parts/part-integration-2-a1/part.json:" + failed,
+		"parts/part-integration-2-a1/integration-tests.json:{}",
+		"parts/part-integration-2-a1/integration.events.jsonl:{}",
+		"parts/part-integration-2-a1/integration/engine-002.log:failure output",
+		"parts/part-integration-2-a1/bin/ork:binary",
+		// A shard whose process died: no part.json, so everything it left.
+		"parts/part-integration-3-a1/integration.events.jsonl:{}",
+		"parts/part-integration-3-a1/bin/ork:binary",
+		// The fast part passed; the plan's bin/ and the build's layouts never travel.
+		"parts/part-fast-a1/part.json:" + `{"part":"fast","gates":[{"gate":"unit","result":"pass"}]}`,
+		"parts/part-fast-a1/unit-tests.json:{}",
+		"parts/part-fast-a1/lint.log:ok",
+		"parts/part-fast-a1/unit.log:verbose",
+		"parts/part-fast-a1/unit.events.jsonl:{}",
+		"parts/plan-a1/part.json:" + `{"part":"plan","gates":[]}`,
+		"parts/plan-a1/integration-plan.json:{}",
+		"parts/plan-a1/bin/test/m.test:binary",
+		"parts/part-build-a1/part.json:" + `{"part":"build","gates":[{"gate":"images","result":"pass"}]}`,
+		"parts/part-build-a1/layouts/activity-shell/index.json:{}",
+		"jobs/attempt-1.json:{}",
+	} {
+		rel, text, _ := strings.Cut(f, ":")
+		write(rel, text)
+	}
+	cmd := exec.Command("bash", filepath.Join(root, "scripts", "proof-collect.sh"), parts, jobs, out)
+	outText, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("proof-collect.sh: %v\n%s", err, outText)
+	}
+	var got []string
+	if err := filepath.WalkDir(out, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(out, p)
+			got = append(got, filepath.ToSlash(rel))
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	want := []string{
+		"jobs/attempt-1.json",
+		"parts/part-build-a1/part.json",
+		"parts/part-fast-a1/lint.log",
+		"parts/part-fast-a1/part.json",
+		"parts/part-fast-a1/unit-tests.json",
+		"parts/part-integration-1-a1/gates.tsv",
+		"parts/part-integration-1-a1/integration-tests.json",
+		"parts/part-integration-1-a1/integration.log",
+		"parts/part-integration-1-a1/part.json",
+		"parts/part-integration-1-a1/setup.log",
+		"parts/part-integration-2-a1/integration-tests.json",
+		"parts/part-integration-2-a1/integration.events.jsonl",
+		"parts/part-integration-2-a1/integration/engine-002.log",
+		"parts/part-integration-2-a1/part.json",
+		"parts/part-integration-3-a1/integration.events.jsonl",
+		"parts/plan-a1/integration-plan.json",
+		"parts/plan-a1/part.json",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the merged proof holds\n  %s\nwant\n  %s\n%s", strings.Join(got, "\n  "), strings.Join(want, "\n  "), outText)
+	}
+	for _, line := range []string{
+		"collect part-integration-1-a1: passed; records only",
+		"collect part-integration-2-a1: did not pass, or left no part.json; records, events and logs",
+		"collect part-integration-3-a1: did not pass, or left no part.json; records, events and logs",
+	} {
+		if !strings.Contains(string(outText), line) {
+			t.Errorf("the script did not say %q:\n%s", line, outText)
+		}
+	}
+	// Without the parts, nothing is written and the exit says why.
+	if err := exec.Command("bash", filepath.Join(root, "scripts", "proof-collect.sh"), filepath.Join(dir, "absent"), jobs, filepath.Join(dir, "p2")).Run(); err == nil {
+		t.Error("an absent parts directory was accepted")
+	}
+
+	// The fast part trims its own unit log and events once its unit gate
+	// passed, so its artifact matches docs/PROOFS.md §7's row.
+	part, err := os.ReadFile(filepath.Join(root, "scripts", "proof-part.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := string(part)
+	trim := at(ps, `if grep -q $'^unit\tpass\t' "$DIR/gates.tsv"; then`)
+	unit := at(ps, "part_run unit unit.log ")
+	if trim < 0 || !strings.Contains(ps, `rm -f "$DIR/unit.log" "$DIR/unit.events.jsonl"`) {
+		t.Error("scripts/proof-part.sh does not leave the unit log and events out of a part whose unit gate passed")
+	}
+	if unit < 0 || trim < unit {
+		t.Error("scripts/proof-part.sh trims the unit log before the unit gate has run")
+	}
+}
+
+// The runner-health floor (AGENTS.md §11.2): every CI part measures its
+// runner FIRST, before any gate, through `proofrun runner-health` against
+// scripts/proof-runner-floors.tsv, into runner-health.json beside its
+// records; the stack parts stop below the floor, and exactly the parts the
+// merger's floorBinds names; the record carries the file; the local proof
+// measures for information into setup.log; and the CI summary names a
+// degraded runner.
+func TestRepositoryCIParts_MeasureTheRunnerFirst(t *testing.T) {
+	root := mustRepoRoot()
+	part, err := os.ReadFile(filepath.Join(root, "scripts", "proof-part.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(part)
+	main := text[strings.Index(text, "part_main() {"):]
+	health, firstGate := at(main, "if ! part_runner_health; then"), at(main, "part_run ")
+	if health < 0 {
+		t.Fatal("scripts/proof-part.sh's part_main does not run part_runner_health")
+	}
+	if firstGate < 0 || health > firstGate {
+		t.Error("scripts/proof-part.sh runs a gate before the runner-health step")
+	}
+	// The part's own work begins where it decides whether observability is
+	// due; the first `case "$PART"` above it only validates the name.
+	if work := at(main, "OBSERVABILITY_REQUIRED=0"); work < 0 || health > work {
+		t.Error("scripts/proof-part.sh measures the runner after the part's work begins")
+	}
+	for _, want := range []string{
+		`"$PR" runner-health -class "$class" -floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json"`,
+		`[ -f "$DIR/runner-health.json" ] && args+=(-runner-health "$DIR/runner-health.json")`,
+		`printf 'github-hosted/%s/%scpu\n' "$ImageOS" "$(nproc)"`,
+		"\t\tpart_record 1 || true\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("scripts/proof-part.sh lacks %s", want)
+		}
+	}
+	// The parts the floor stops are exactly the ones the merger holds to it.
+	binds := regexp.MustCompile(`part_floor_binds\(\) \{\n\tcase "\$PART" in\n\t([^\n]+)\) return 0 ;;`).FindStringSubmatch(text)
+	if binds == nil {
+		t.Fatal("scripts/proof-part.sh has no part_floor_binds case")
+	}
+	for part, pattern := range map[string]string{"integration:3": "integration:*", "ui-e2e:1": "ui-e2e:*", "activity-fixture:git": "activity-fixture:*", "observability": "observability"} {
+		if !floorBinds(part) {
+			t.Errorf("floorBinds(%s) is false, and scripts/proof-part.sh stops it", part)
+		}
+		if !strings.Contains(binds[1], pattern) {
+			t.Errorf("scripts/proof-part.sh's part_floor_binds lacks %s, which floorBinds holds to the floor", pattern)
+		}
+	}
+	for _, part := range []string{"plan", "build", "fast"} {
+		if floorBinds(part) || strings.Contains(binds[1], part) {
+			t.Errorf("the floor binds the %s part, which measures for information only", part)
+		}
+	}
+	// The real floors table parses, so the step never exits 2 on it.
+	if _, err := readRunnerFloors(filepath.Join(root, runnerFloorsFile)); err != nil {
+		t.Errorf("the repository's floors table does not parse: %v", err)
+	}
+	// The local proof measures before its first gate, into setup.log, and
+	// records it; the setup group appends to that log rather than replacing
+	// the measurement.
+	script := proofScript(t)
+	measure, lint := at(script, `"$PR" runner-health -class local`), at(script, "step lint ")
+	if measure < 0 || lint < 0 || measure > lint {
+		t.Error("scripts/proof.sh does not measure the runner before its first gate")
+	}
+	for _, want := range []string{
+		`-floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >>"$DIR/setup.log" 2>&1`,
+		`done >>"$DIR/setup.log"`,
+		`if [ -f "$DIR/runner-health.json" ]; then record_args+=(-runner-health "$DIR/runner-health.json"); fi`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("scripts/proof.sh lacks %s", want)
+		}
+	}
+	if !subcommandFlags(t, "record")["runner-health"] || !subcommandFlags(t, "merge")["runner-floors"] {
+		t.Error("record -runner-health or merge -runner-floors is missing")
+	}
+	wf := workflowFile(t, "proof.yml")
+	if !strings.Contains(wf, `.degraded_runners[]?`) {
+		t.Error(".github/workflows/proof.yml's summary does not name a degraded runner")
+	}
+}
+
+// The merged proof's copy of the parts is made whatever the merge decided: a
+// failing proof is exactly the one whose parts' events and logs a reader
+// needs (docs/PROOFS.md §8). Under `set -e`, a failing `proofrun merge` used
+// to end the step before the copy (run 40411125174 uploaded five files), so
+// the step keeps the merge's status, copies, and then ends as the merge did.
+func TestRepositoryProofJob_CollectsThePartsAfterAFailingMerge(t *testing.T) {
+	w := loadWorkflow(t, "proof.yml")
+	job, ok := w.Jobs["proof"]
+	if !ok {
+		t.Fatal("proof.yml has no proof job")
+	}
+	for _, s := range job.Steps {
+		if s.Name != "merge" {
+			continue
+		}
+		merge := strings.Index(s.Run, `go run ./test/tools/proofrun merge "${args[@]}" || status=$?`)
+		collect := strings.Index(s.Run, "scripts/proof-collect.sh ")
+		exit := strings.LastIndex(s.Run, `exit "$status"`)
+		if merge < 0 {
+			t.Fatal("the merge step does not keep proofrun merge's status; under set -e a failing merge ends the step before the copy")
+		}
+		if collect < merge {
+			t.Error("the merge step copies the parts before the merge, or not at all")
+		}
+		if exit < collect {
+			t.Error("the merge step does not end as the merge did, after the copy")
+		}
+		if strings.Contains(s.Run[merge:collect], "exit ") {
+			t.Error("the merge step exits between the merge and the copy")
+		}
+		return
+	}
+	t.Fatal("the proof job has no merge step")
 }

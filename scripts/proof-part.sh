@@ -59,6 +59,7 @@ part_require() {
 		part_need "docker on PATH" command -v docker
 		part_need "docker compose" docker compose version
 		part_need "bun on PATH" command -v bun
+		part_need "node on PATH (Playwright and the built UI run on it)" command -v node
 		part_need "the temporal CLI on PATH (ui/e2e/admin.spec.ts)" command -v temporal
 		part_need "jq on PATH (the shard's file list)" command -v jq
 		part_need "flock on PATH (the Playwright gate's host lock)" command -v flock
@@ -67,6 +68,13 @@ part_require() {
 		part_need "an integration plan (--plan)" test -f "$PLAN"
 		part_need "a UI plan (--ui-plan)" test -f "$UI_PLAN"
 		part_need "a layout directory (--layouts)" test -d "$LAYOUTS"
+		# The suite's browser is the pinned container (ui/e2e/browser-server.ts);
+		# the host's own Chromium is needed only by the shard whose files drive
+		# one, and is refused here, explicitly, rather than by the spec's
+		# "Executable doesn't exist" after the stack has started.
+		if [ -f "$UI_PLAN" ] && part_ui_shard_drives_host_chromium "${PART#ui-e2e:}"; then
+			part_need "Playwright's Chromium on this host (cd ui && npx playwright install chromium): this shard holds a spec driven on the host's Chromium" part_host_chromium
+		fi
 		;;
 	activity-fixture:*)
 		part_need "an integration plan (--plan)" test -f "$PLAN"
@@ -95,6 +103,83 @@ part_require() {
 		return 77
 	fi
 	return 0
+}
+
+# part_ui_shard_files prints the spec files of UI shard $1, as the UI plan
+# lists them (ui/… paths), one per line.
+part_ui_shard_files() { jq -r --argjson k "$1" '.shards[] | select(.index == $k) | .files[]' "$UI_PLAN" 2>/dev/null; }
+
+# part_ui_shard_drives_host_chromium: UI shard $1 holds a spec driven on the
+# HOST's Chromium — run-page-ceiling.spec.ts, the one project without a
+# connection to the container (ui/playwright.config.ts), or
+# network-change.spec.ts, which launches a host-namespace Chromium as its
+# positive control. The same rule decides the `Chromium (host)` step of
+# .github/workflows/proof.yml; every other shard runs the container alone.
+part_ui_shard_drives_host_chromium() { part_ui_shard_files "$1" | grep -qE '(network-change|run-page-ceiling|run-page-reduced-ceiling)\.spec\.ts$'; }
+
+# part_host_chromium: Playwright's own Chromium is installed on this host, at
+# the path playwright-core resolves for it.
+part_host_chromium() {
+	(cd "$REPO/ui" && node -e 'const fs = require("fs"); fs.accessSync(require("playwright-core").chromium.executablePath(), fs.constants.X_OK)')
+}
+
+# part_runner_class names the runner for scripts/proof-runner-floors.tsv:
+# the runner image and its vCPU count on a GitHub-hosted runner, because the
+# all-core and memory floors depend on the runner's size; `self-hosted` and
+# `local` have no row and are measured for information only.
+part_runner_class() {
+	if [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] && [ -n "${ImageOS:-}" ]; then
+		printf 'github-hosted/%s/%scpu\n' "$ImageOS" "$(nproc)"
+	elif [ "${GITHUB_ACTIONS:-}" = true ]; then
+		printf 'self-hosted\n'
+	else
+		printf 'local\n'
+	fi
+}
+
+# part_runner_health is the runner-health floor (AGENTS.md §11.2): the FIRST
+# thing a part does, before any gate. About ten seconds measure this
+# runner's work disk, CPUs and memory against the floors
+# scripts/proof-runner-floors.tsv declares for its class, into
+# runner-health.json beside the part's records. It returns 1 only for a
+# STACK part below a floor: the part then records itself and stops, and the
+# merger classifies it runner-degraded, exactly as a part whose runner
+# GitHub lost — no outcome of the tree, not a proof of the tree, and that
+# one job may run again. The plan, build and fast parts measure for
+# information. A measurement that cannot run (exit 2) is reported and the
+# part runs on, judged as above the floor: the floor only ever turns a
+# result into "not a proof", never a failure into a pass.
+part_runner_health() {
+	local class code=0
+	class="$(part_runner_class)"
+	part_say "== runner-health: class $class against scripts/proof-runner-floors.tsv"
+	"$PR" runner-health -class "$class" -floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >"$DIR/runner-health.log" 2>&1 || code=$?
+	sed 's/^/   /' "$DIR/runner-health.log"
+	case "$code" in
+	0) return 0 ;;
+	1)
+		if part_floor_binds; then
+			part_say "   runner-health: this runner is BELOW the floor; the part stops before any gate and is not a proof of the tree (re-run this job alone)"
+			return 1
+		fi
+		part_say "   runner-health: this runner is below the floor; the $PART part measures for information and runs on"
+		return 0
+		;;
+	*)
+		part_say "   runner-health: the measurement itself failed (exit $code); the part runs on, judged as above the floor"
+		return 0
+		;;
+	esac
+}
+
+# part_floor_binds: the floor stops this part. The stack parts run the
+# tests whose bounds a degraded runner would fail; the plan, build and fast
+# parts record their measurement and run on.
+part_floor_binds() {
+	case "$PART" in
+	integration:* | ui-e2e:* | activity-fixture:* | observability) return 0 ;;
+	esac
+	return 1
 }
 
 part_tree_hash() {
@@ -140,6 +225,8 @@ part_record() { # <status>
 	)
 	[ -n "$PLAN" ] && args+=(-plan "$PLAN")
 	[ -n "$UI_PLAN" ] && args+=(-ui-plan "$UI_PLAN")
+	[ -f "$DIR/setup.log" ] && args+=(-setup-log "$DIR/setup.log")
+	[ -f "$DIR/runner-health.json" ] && args+=(-runner-health "$DIR/runner-health.json")
 	[ -f "$DIR/images.tsv" ] && args+=(-image-tag "$PROOF_ID" -images "$DIR/images.tsv" -image-tag-own)
 	[ -n "$PART_TEMPORAL_RAN" ] && args+=(-temporal own -temporal-image "$TEMPORAL_IMAGE" -temporal-address "$TEMPORAL_ADDRESS")
 	[ "$OBSERVABILITY_REQUIRED" = 1 ] && args+=(-observability-required)
@@ -220,6 +307,12 @@ part_main() { # <part>
 	trap 'part_say "proof: part stopped by a signal"; exit 143' TERM INT HUP
 
 	mkdir -p "$DIR/artifacts" "$DIR/bin"
+	# The runner's setup log (.github/actions/proof-fetch): every fetch
+	# attempt made before this part, kept with the part so part.json and the
+	# merged proof show a download or pull that needed its second attempt.
+	if [ -n "${SETUP_LOG:-}" ] && [ -f "$SETUP_LOG" ]; then
+		cp "$SETUP_LOG" "$DIR/setup.log"
+	fi
 	mv "$PR" "$DIR/bin/proofrun"
 	PR="$DIR/bin/proofrun"
 	printf '%s %s %s %s\n' "$$" "$$" "$(part_proc_start $$)" "$PROOF_ID" >"$DIR/proof.pid"
@@ -235,6 +328,17 @@ part_main() { # <part>
 	: >"$DIR/gates.tsv"
 	START_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	part_say "proof: part $PART attempt $ATTEMPT of $TIER -> $DIR (id $PROOF_ID, tree $TREE_START$([ "$CLEAN_START" = true ] || echo ', NOT clean'))"
+
+	# The runner-health floor runs FIRST, before any gate: a stack part on a
+	# runner below the floor records itself and stops here.
+	if ! part_runner_health; then
+		TREE_END="$(part_tree_hash)"
+		CLEAN_END=false
+		if part_is_clean; then CLEAN_END=true; fi
+		part_record 1 || true
+		part_say "proof: part $PART -> $DIR/part.json (runner below the floor: no gate ran)"
+		return 1
+	fi
 
 	OBSERVABILITY_REQUIRED=0
 	[ "$TIER" = release ] && OBSERVABILITY_REQUIRED=1
@@ -307,6 +411,14 @@ part_main() { # <part>
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 		part_run unit unit.log env ORK_PROOF_DIR="$DIR/artifacts" "$PR" unit -out "$DIR" \
 			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" || true
+		# The part's artifact is its directory. The unit log and events — a
+		# green run's were 137 MB and 296 MB — stay in it only when the unit
+		# gate failed; the ledger, unit-tests.json, holds every test's outcome
+		# either way (docs/PROOFS.md §7), and the merger reads the ledger.
+		if grep -q $'^unit\tpass\t' "$DIR/gates.tsv"; then
+			rm -f "$DIR/unit.log" "$DIR/unit.events.jsonl"
+			part_say "unit passed: unit.log and unit.events.jsonl left out of the part"
+		fi
 		part_run vet-integration vet-integration.log go vet -tags=integration ./... || true
 		(cd "$REPO/ui" && bun run check >"$DIR/ui-check.log" 2>&1) && printf 'ui-check\tpass\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv" || printf 'ui-check\tfail\t0\tui-check.log\tbun run check\n' >>"$DIR/gates.tsv"
 		(cd "$REPO/ui" && bun test test/ >"$DIR/ui-unit.log" 2>&1) && printf 'ui-unit\tpass\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv" || printf 'ui-unit\tfail\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv"

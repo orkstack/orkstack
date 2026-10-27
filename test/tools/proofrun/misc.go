@@ -138,6 +138,7 @@ var gateFilePatterns = []string{
 	"scripts/proof-ui-costs.tsv",
 	"scripts/proof-section11-coverage.tsv",
 	"scripts/proof-host-speed.tsv",
+	"scripts/proof-runner-floors.tsv",
 	"scripts/proof-scope.tsv",
 	"scripts/integration.sh",
 	"scripts/github-merge-gate.sh",

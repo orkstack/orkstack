@@ -1,0 +1,10 @@
+# The floors the fixtures below were measured against (the merge tests pass
+# this file as -runner-floors; its sha256 is what below-floor.json and
+# above-floor.json record as floors_sha256 when a test pins it).
+# class	metric	floor	derived
+github-hosted/ubuntu24/4cpu	disk_write_mb_s	40	fixture
+github-hosted/ubuntu24/4cpu	disk_read_mb_s	40	fixture
+github-hosted/ubuntu24/4cpu	fsync_p95_ms	60	fixture
+github-hosted/ubuntu24/4cpu	cpu_single_mb_s	300	fixture
+github-hosted/ubuntu24/4cpu	cpu_all_mb_s	900	fixture
+github-hosted/ubuntu24/4cpu	mem_available_mib	4096	fixture

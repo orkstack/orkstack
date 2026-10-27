@@ -56,7 +56,7 @@ func TestMerge_ACancelledAttemptBeforeAnyTestStartedIsNotRerunEligible(t *testin
 	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)
 	}
-	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "which GitHub did not record as a lost runner (it was cancelled before any test started): only a lost runner may run again; this run cannot become merge-eligible: start a new run") {
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "which neither GitHub recorded as a lost runner nor its runner-health measured below the floor (it was cancelled before any test started): only a lost or degraded runner may run again; this run cannot become merge-eligible: start a new run") {
 		t.Errorf("ineligible = %v", r.Ineligible)
 	}
 }
@@ -67,7 +67,7 @@ func TestMerge_ASetupFailureBeforeTheProofStepIsNotRerunEligible(t *testing.T) {
 	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)
 	}
-	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "(a setup failure before its proof step (Set up the proof host)): only a lost runner may run again; this run cannot become merge-eligible: start a new run") {
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "(a setup failure before its proof step (Set up the proof host)): only a lost or degraded runner may run again; this run cannot become merge-eligible: start a new run") {
 		t.Errorf("ineligible = %v", r.Ineligible)
 	}
 }
@@ -217,5 +217,80 @@ func TestLogProgress_ReadsTimestampedLines(t *testing.T) {
 	failed, unfinished := logProgress(log)
 	if strings.Join(failed, ",") != "p.TestA" || strings.Join(unfinished, ",") != "p.TestB" {
 		t.Errorf("failed %v unfinished %v", failed, unfinished)
+	}
+}
+
+// A fetch that needed its second attempt is a retry inside one attempt of a
+// part — never a rerun. It costs no eligibility, and it is on the record: the
+// action's own lines, prefixed with the part, in proof.json and the README.
+func TestMerge_ASetupRetryIsRecordedAndEligible(t *testing.T) {
+	f := newMergeFixture(t, tierFull, true)
+	f.writeCI()
+	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
+	rec := f.basePart("integration:2")
+	rec.Gates = []gateRecord{{Gate: "integration", Result: "pass"}}
+	rec.Images = map[string]string{"activity-shell": "sha256:aaa"}
+	rec.Setup = []string{
+		"fetch artifact plan-a1: attempt 1 timed out after 180s (limit 180s)",
+		"fetch artifact plan-a1: attempt 2 ok in 14s (limit 360s)",
+		"fetch artifact part-build-a1: attempt 1 ok in 9s (limit 180s)",
+	}
+	f.writePart(rec, map[string]any{"integration-tests.json": ledger{Suite: "integration", Tests: []entry{passEntry("TestB")}, Binaries: mBinaries()}})
+	f.writeJobs(1)
+	r, code := f.merge()
+	if code != 0 || r.Result != "pass" || !r.MergeEligible {
+		t.Fatalf("code %d result %s eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
+	}
+	if len(r.Reruns) != 0 {
+		t.Errorf("a retried fetch was recorded as a rerun: %+v", r.Reruns)
+	}
+	want := []string{
+		"integration:2: fetch artifact plan-a1: attempt 1 timed out after 180s (limit 180s)",
+		"integration:2: fetch artifact plan-a1: attempt 2 ok in 14s (limit 360s)",
+	}
+	if strings.Join(r.SetupRetries, "\n") != strings.Join(want, "\n") {
+		t.Errorf("setup_retries =\n  %s\nwant\n  %s", strings.Join(r.SetupRetries, "\n  "), strings.Join(want, "\n  "))
+	}
+	readme, err := os.ReadFile(filepath.Join(f.out, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(readme), "- "+want[1]) {
+		t.Error("the README does not list the retried fetch under Notes")
+	}
+}
+
+func TestSetupRetries(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		setup []string
+		want  []string
+	}{
+		{"no setup log", nil, nil},
+		{"every fetch first time", []string{
+			"fetch artifact plan-a1: attempt 1 ok in 9s (limit 180s)",
+			"fetch image mcr.microsoft.com/playwright:v1@sha256:ab: attempt 1 ok in 70s (limit 180s)",
+		}, nil},
+		{"one retried, one not, one gave up", []string{
+			"fetch artifact plan-a1: attempt 1 failed, exit 1 after 2s (limit 180s)",
+			"fetch artifact plan-a1: attempt 2 ok in 3s (limit 360s)",
+			"fetch artifact part-build-a1: attempt 1 ok in 9s (limit 180s)",
+			"fetch image mcr.microsoft.com/playwright:v1@sha256:ab: attempt 1 timed out after 180s (limit 180s)",
+			"fetch image mcr.microsoft.com/playwright:v1@sha256:ab: attempt 2 timed out after 360s (limit 360s)",
+			"fetch image mcr.microsoft.com/playwright:v1@sha256:ab: gave up after 2 attempts; a setup failure needs a new run of the same tree, never a job re-run (docs/PROOFS.md §10)",
+			"not an attempt line",
+		}, []string{
+			"ui-e2e:3: fetch artifact plan-a1: attempt 1 failed, exit 1 after 2s (limit 180s)",
+			"ui-e2e:3: fetch artifact plan-a1: attempt 2 ok in 3s (limit 360s)",
+			"ui-e2e:3: fetch image mcr.microsoft.com/playwright:v1@sha256:ab: attempt 1 timed out after 180s (limit 180s)",
+			"ui-e2e:3: fetch image mcr.microsoft.com/playwright:v1@sha256:ab: attempt 2 timed out after 360s (limit 360s)",
+			"ui-e2e:3: fetch image mcr.microsoft.com/playwright:v1@sha256:ab: gave up after 2 attempts; a setup failure needs a new run of the same tree, never a job re-run (docs/PROOFS.md §10)",
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := setupRetries("ui-e2e:3", c.setup); strings.Join(got, "\n") != strings.Join(c.want, "\n") {
+				t.Errorf("got\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(c.want, "\n  "))
+			}
+		})
 	}
 }

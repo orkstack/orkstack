@@ -1,0 +1,100 @@
+name: proof-fetch
+description: Fetch one of this run's own artifacts, or an image pinned by digest, in at most two bounded attempts, recording every attempt in the setup log a part copies into its directory (docs/PROOFS.md §5).
+
+# A fetch that makes no progress — an artifact download from GitHub's blob
+# store, a pull from a registry — is retried ONCE, with twice the limit, and
+# then the step fails: 3 minutes, then 6, so a stalled runner still fails
+# within ten. It never continues on error (the merger would read a part that
+# ran on half an artifact as a result), and it never re-runs a job: a setup
+# failure after both attempts needs a new run of the same tree. Each attempt
+# is one line in the setup log, which `scripts/proof.sh --part --setup-log`
+# copies into the part's directory, `proofrun record` carries into part.json
+# and `proofrun merge` lists in proof.json (`setup_retries`) and the README.
+#
+# An artifact is fetched with `gh run download` (actions:read on the token)
+# rather than actions/download-artifact, which has no limit of its own and no
+# retry: a stall there ends only at the step's limit, with nothing to retry.
+
+inputs:
+  artifact:
+    description: The name of one artifact of this run, extracted into `path`
+    required: false
+    default: ""
+  pattern:
+    description: A glob of this run's artifact names, each extracted into its own subdirectory of `path`
+    required: false
+    default: ""
+  image:
+    description: An image reference pinned by digest, pulled into the daemon
+    required: false
+    default: ""
+  path:
+    description: Where an artifact is extracted; for `artifact`, a directory of its own
+    required: false
+    default: ""
+  token:
+    description: A token with actions:read, for an artifact
+    required: false
+    default: ""
+  log:
+    description: The setup log every attempt is appended to
+    required: false
+    default: ${{ runner.temp }}/ci/setup.log
+
+runs:
+  using: composite
+  steps:
+    - name: fetch
+      shell: bash
+      env:
+        ARTIFACT: ${{ inputs.artifact }}
+        PATTERN: ${{ inputs.pattern }}
+        IMAGE: ${{ inputs.image }}
+        DEST: ${{ inputs.path }}
+        LOG: ${{ inputs.log }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -uo pipefail
+        case "${ARTIFACT:+a}${PATTERN:+p}${IMAGE:+i}" in
+        a) what="artifact $ARTIFACT" ;;
+        p) what="artifacts $PATTERN" ;;
+        i) what="image $IMAGE" ;;
+        *) echo "proof-fetch: exactly one of artifact, pattern or image" >&2; exit 2 ;;
+        esac
+        if [ -z "$IMAGE" ] && [ -z "$DEST" ]; then
+          echo "proof-fetch: an artifact needs path" >&2
+          exit 2
+        fi
+        mkdir -p "$(dirname "$LOG")"
+        n=0
+        for limit in 180 360; do
+          n=$((n + 1))
+          started=$SECONDS
+          if [ -n "$IMAGE" ]; then
+            timeout -k 10 "$limit" docker pull "$IMAGE"
+            code=$?
+          elif [ -n "$ARTIFACT" ]; then
+            # A half-extracted artifact must never read as a whole one: the
+            # directory is the artifact's own, and each attempt starts it empty.
+            rm -rf "$DEST" && mkdir -p "$DEST" &&
+              timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir "$DEST"
+            code=$?
+          else
+            # Only the subdirectories this pattern produces; `path` may hold
+            # another artifact (the proof job's plan beside its parts).
+            shopt -s nullglob
+            rm -rf "$DEST"/$PATTERN && mkdir -p "$DEST" &&
+              timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern "$PATTERN" --dir "$DEST"
+            code=$?
+          fi
+          took=$((SECONDS - started))
+          case "$code" in
+          0) line="fetch $what: attempt $n ok in ${took}s (limit ${limit}s)" ;;
+          124 | 137) line="fetch $what: attempt $n timed out after ${took}s (limit ${limit}s)" ;;
+          *) line="fetch $what: attempt $n failed, exit $code after ${took}s (limit ${limit}s)" ;;
+          esac
+          echo "$line" | tee -a "$LOG"
+          [ "$code" -eq 0 ] && exit 0
+        done
+        echo "fetch $what: gave up after $n attempts; a setup failure needs a new run of the same tree, never a job re-run (docs/PROOFS.md §10)" | tee -a "$LOG"
+        exit 1
