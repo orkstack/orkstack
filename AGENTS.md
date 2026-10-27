@@ -1042,8 +1042,10 @@ is done), so the deployment-wide documents (retention, image policy, audit,
 webhooks, the namespace registry) are its alone, and a proof runs spec files
 `PROOF_UI_WORKERS` at a time (default 2), after the integration phase; its
 Temporal namespace is `temporalNamespace`'s, the prefix extended with the
-file, its process and a stamp. Each spec still listens on fixed ports and
-names fixed Orker work roots — unique across files, not across proofs — so at most one
+file, its process and a stamp, and its Orkers' work roots are named with its
+process's pid, as an integration test's are (`orkerEnv` in
+`ui/e2e/harness.ts`). Each spec still listens on fixed ports — unique across
+files, not across proofs — so at most one
 proof runs Playwright specs on a host at a time: the Playwright gate takes a
 host-wide lock, so a feature proof's specs wait for a full proof's, and never
 run beside them. Specs run by hand (`cd ui && bun run test`) take no lock; do
@@ -1077,8 +1079,9 @@ are removed and what was removed is logged. Every local proof and every
 `cleanup: removed N buckets, N work roots, N containers of dead proofs`); a
 by-hand run is preceded by `make proof-clean REMOVE=1`. It is the one
 exception to stopping only what you started: it finds a leftover by the names
-the proofs and runs of every worktree recorded and the pid each name carries,
-and removes it only when that process is gone. It never touches anything of
+the proofs and runs of every worktree recorded and the pid each name carries
+— an activity container by the test work root its workspace lies in, whatever
+its Orker is called — and removes it only when that process is gone. It never touches anything of
 a live process, of a proof still running, or whose owner it cannot tell, and
 the dev stack stays up.
 

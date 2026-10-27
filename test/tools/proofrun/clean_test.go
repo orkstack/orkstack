@@ -44,7 +44,7 @@ func (f *fakeCleanStore) Remove(_ context.Context, bucket string) error {
 // removed and stopped, and the work roots it was asked to empty (it empties
 // them, unless treeErr says the container failed).
 type fakeCleanDocker struct {
-	containers [][2]string
+	containers []cleanContainer
 	temporals  [][2]string
 	removed    []string
 	stopped    []string
@@ -64,7 +64,9 @@ func (f *fakeCleanDocker) RemoveTree(_ context.Context, root string) error {
 	return nil
 }
 
-func (f *fakeCleanDocker) Containers(context.Context) ([][2]string, error) { return f.containers, nil }
+func (f *fakeCleanDocker) Containers(context.Context) ([]cleanContainer, error) {
+	return f.containers, nil
+}
 func (f *fakeCleanDocker) ProofTemporals(context.Context) ([][2]string, error) {
 	return f.temporals, nil
 }
@@ -150,14 +152,25 @@ func TestClean_RemovesOnlyWhatDeadProcessesLeft(t *testing.T) {
 		"orkstack-api-15-8":    true,
 		"orkstack-ork-19-9":    true, // no proof here recorded it; a listing store shows it
 	}, listed: []string{"orkstack-artifacts", "orkstack-ork-19-9"}}
+	// An attempt's workspace in root, as its activity container mounts it.
+	workspace := func(root string) []string {
+		w := filepath.Join(root, "ork-ork-1-2-build-1-3")
+		return []string{filepath.Join(w, "input"), filepath.Join(w, "output")}
+	}
 	docker := &fakeCleanDocker{
-		containers: [][2]string{
-			{"c-proof-dead", "soak-pr-aaa-17"},
-			{"c-proof-live", "soak-pr-ddd-41"},
-			{"c-hash-dead", hashedOrkerID(host, deadRoot)},
-			{"c-hash-live", hashedOrkerID(host, liveRoot)},
-			{"c-unknown", "join-i8"},
-			{"c-dev", hashedOrkerID(host, filepath.Join(wt, ".data", "work"))},
+		containers: []cleanContainer{
+			{id: "c-proof-dead", orker: "soak-pr-aaa-17"},
+			{id: "c-proof-live", orker: "soak-pr-ddd-41"},
+			{id: "c-root-dead", orker: "builder-0a1b2c3d", mounts: workspace(deadRoot)},
+			{id: "c-root-live", orker: "builder-4e5f6a7b", mounts: workspace(liveRoot)},
+			// An Orker a test named itself, working in a directory inside its root.
+			{id: "c-nested-dead", orker: "orker-cli-16-5", mounts: workspace(filepath.Join(deadRoot, "main"))},
+			// A dead process's root in a worktree that has been removed since.
+			{id: "c-gone-worktree", orker: "orker-inspect-3-18-1",
+				mounts: workspace(filepath.Join(string(filepath.Separator), "srv", "gone", ".data", "work", "inspect-p18-4"))},
+			{id: "c-unknown", orker: "join-i8"},
+			{id: "c-dev", orker: "builder-9c8d7e6f", mounts: workspace(filepath.Join(wt, ".data", "work"))},
+			{id: "c-fixed-root", orker: "builder-1a2b3c4d", mounts: workspace(filepath.Join(wt, ".data", "work", "e2e", "run-page"))},
 		},
 		temporals: [][2]string{
 			{"orkstack-proof-pr-gone-temporal", host + ":18:500"},
@@ -183,22 +196,24 @@ func TestClean_RemovesOnlyWhatDeadProcessesLeft(t *testing.T) {
 		}
 		n := c.run(context.Background())
 
-		if want := (cleanCounts{buckets: 5, workRoots: 1, containers: 3}); n != want {
+		if want := (cleanCounts{buckets: 5, workRoots: 1, containers: 5}); n != want {
 			t.Errorf("remove=%v: counts = %+v, want %+v\n%s", remove, n, want, out.String())
 		}
-		summary := "cleanup: would remove 5 buckets, 1 work roots, 3 containers of dead proofs\n"
+		summary := "cleanup: would remove 5 buckets, 1 work roots, 5 containers of dead proofs\n"
 		if remove {
-			summary = "cleanup: removed 5 buckets, 1 work roots, 3 containers of dead proofs\n"
+			summary = "cleanup: removed 5 buckets, 1 work roots, 5 containers of dead proofs\n"
 		}
 		if !strings.HasSuffix(out.String(), summary) {
 			t.Errorf("remove=%v: output does not end with %q:\n%s", remove, summary, out.String())
 		}
 		for _, want := range []string{
 			"  c-proof-live of Orker soak-pr-ddd-41  (in use: pid 41 is alive; left alone)",
+			"  c-root-live of Orker builder-4e5f6a7b  (in use: pid 41 is alive; left alone)",
 			"(in use: a running proof recorded pid 42; left alone)",
 			"(its name records no owning pid; not removed here",
-			// join-i8, and the dev stack's own Orker, whose root names no pid.
-			"  2 containers whose owner cannot be told",
+			// join-i8, the dev stack's own Orker, and one on a root that names
+			// no pid.
+			"  3 containers whose owner cannot be told",
 		} {
 			if !strings.Contains(out.String(), want) {
 				t.Errorf("remove=%v: output is missing %q:\n%s", remove, want, out.String())
@@ -227,7 +242,7 @@ func TestClean_RemovesOnlyWhatDeadProcessesLeft(t *testing.T) {
 	}; !slices.Equal(got, want) {
 		t.Errorf("removed buckets %q, want %q", got, want)
 	}
-	if got, want := sorted(docker.removed), []string{"c-hash-dead", "c-proof-dead"}; !slices.Equal(got, want) {
+	if got, want := sorted(docker.removed), []string{"c-gone-worktree", "c-nested-dead", "c-proof-dead", "c-root-dead"}; !slices.Equal(got, want) {
 		t.Errorf("removed containers %q, want %q", got, want)
 	}
 	if got, want := docker.stopped, []string{"orkstack-proof-pr-gone-temporal"}; !slices.Equal(got, want) {
@@ -241,6 +256,37 @@ func TestClean_RemovesOnlyWhatDeadProcessesLeft(t *testing.T) {
 		if _, err := os.Stat(kept); err != nil {
 			t.Errorf("%s was removed: %v", kept, err)
 		}
+	}
+}
+
+// A container's owner is the pid of the test work root its workspace lies in,
+// whatever its Orker is called: a root named like one right under a work-root
+// parent, or under any .data/work. Nothing else names an owner.
+func TestClean_MountOwner(t *testing.T) {
+	parents := map[string]bool{"/r/wt/.data/work": true, "/scratch/roots": true}
+	for _, c := range []struct {
+		name   string
+		mounts []string
+		pid    int
+	}{
+		{"a Go test's root", []string{"/r/wt/.data/work/cli-p42-3/ork-ork-1-2-t-1-9/input"}, 42},
+		{"a directory inside the root", []string{"/r/wt/.data/work/admin-p42-3/main/ork-ork-1-2-t-1-9/input"}, 42},
+		{"a Playwright spec's root", []string{"/r/wt/.data/work/e2e-admin-main-p77-Ab3dE9/ork-ork-1-2-t-1-9/output"}, 77},
+		{"a pin's directory in a root under an extra parent", []string{"/scratch/roots/pin-chaos-p5-1/ork-pin-x"}, 5},
+		{"a root in a worktree removed since", []string{"/gone/wt/.data/work/inspect-p18-4/ork-ork-1-2-t-1-9/input"}, 18},
+		{"the first mount in a root", []string{"/etc/hosts", "/r/wt/.data/work/cli-p42-3/ork-ork-1-2-t-1-9/input"}, 42},
+		{"the development stack's root", []string{"/r/wt/.data/work/ork-ork-1-2-t-1-9/input"}, 0},
+		{"a fixed root that names no pid", []string{"/r/wt/.data/work/e2e/run-page/ork-ork-1-2-t-1-9/input"}, 0},
+		{"a pid-named directory under no work-root parent", []string{"/tmp/x-p19-1/ork-ork-1-2-t-1-9/input"}, 0},
+		{"a relative path", []string{"r/wt/.data/work/cli-p42-3/x"}, 0},
+		{"no mounts", nil, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pid, ok := mountOwner(parents, c.mounts)
+			if pid != c.pid || ok != (c.pid != 0) {
+				t.Errorf("mountOwner(%q) = %d, %v; want %d, %v", c.mounts, pid, ok, c.pid, c.pid != 0)
+			}
+		})
 	}
 }
 

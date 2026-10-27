@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { appendFileSync, createWriteStream, mkdirSync } from 'node:fs';
+import { appendFileSync, createWriteStream, mkdirSync, mkdtempSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -229,10 +229,13 @@ export function bin(name: string): string {
 	return path.join(dir, name);
 }
 
+/** The work root orkerEnv made for each name, in this process. */
+const orkerRoots = new Map<string, string>();
+
 /**
  * orkerEnv is what one Orker in this directory is started with.
  *
- * It carries the work root, for two reasons that happen to have one answer.
+ * It carries the work root, for three reasons that happen to have one answer.
  *
  * FIRST, the per-attempt workspace is BIND-MOUNTED into the activity
  * container, and the Orker's default work root is the OS temp directory. On
@@ -250,19 +253,34 @@ export function bin(name: string): string {
  * two Orkers at once (`main` and `gpu`, `main` and `batch`), so each one is
  * given its OWN root and gets its own identity for free.
  *
+ * THIRD, the root is named like a Go test's (`<label>-p<pid>-<suffix>`,
+ * internal/testsupport/proof.WorkRootPattern): `e2e-<name>-p<this process's
+ * pid>-<suffix>`. An Orker killed mid-task leaves its activity containers and
+ * its root behind, and `proofrun clean` removes them once the process the
+ * root names is gone — a container by the root its workspace mounts. A fixed
+ * root names no process, so its leftovers could never be told apart from a
+ * live run's (AGENTS.md §11.1).
+ *
  * `name` is the pool or role the spec calls this Orker, so a leftover
- * directory says which Orker left it.
+ * directory says which Orker left it. One process gets one root per name, so
+ * an Orker the spec boots again, and a spec reading its root, find the same
+ * one.
  */
 export function orkerEnv(name: string) {
-	const root = path.join(repoRoot, '.data', 'work', 'e2e', name);
-	// Created HERE, before the Orker boots, rather than left to the Orker's own
-	// MkdirAll. The Orker creates the root and then immediately asks the daemon
-	// to bind-mount it, and on a macOS daemon the share is a virtiofs mount of
-	// the host filesystem: a directory that came into existence microseconds
-	// earlier has been observed to fail that probe with a bare
-	// `docker exited -1`. Creating it up front removes the race rather than
-	// retrying around it.
-	mkdirSync(root, { recursive: true });
+	let root = orkerRoots.get(name);
+	if (!root) {
+		const parent = path.join(repoRoot, '.data', 'work');
+		mkdirSync(parent, { recursive: true });
+		// Created HERE, before the Orker boots, rather than left to the Orker's
+		// own MkdirAll. The Orker creates the root and then immediately asks the
+		// daemon to bind-mount it, and on a macOS daemon the share is a virtiofs
+		// mount of the host filesystem: a directory that came into existence
+		// microseconds earlier has been observed to fail that probe with a bare
+		// `docker exited -1`. Creating it up front removes the race rather than
+		// retrying around it.
+		root = mkdtempSync(path.join(parent, `e2e-${name}-p${process.pid}-`));
+		orkerRoots.set(name, root);
+	}
 	return { ORK_ORKER_WORKDIR: root };
 }
 

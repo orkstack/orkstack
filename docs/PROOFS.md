@@ -1059,8 +1059,12 @@ every worktree of this repository, and removes:
   flags and a two-minute limit, and logged `removed through a container`. A
   failure there is listed and not retried;
 - an activity container whose Orker id ends in a proof id and a pid
-  (`proof.OrkerID`), or is a default id, the host and a hash of a work root
-  that names a pid;
+  (`proof.OrkerID`), or whose workspace lies in a work root that names a pid,
+  whatever its Orker is called: a directory named `<label>-p<pid>-<suffix>`
+  right under a worktree's `.data/work` (one since removed included) or
+  `ORK_ORKER_WORKDIR`, read from the container's own mounts. A Playwright
+  spec's Orkers work in such roots too, `e2e-<name>-p<pid>-<suffix>`
+  (`orkerEnv` in `ui/e2e/harness.ts`);
 - a proof Temporal container whose proof process is gone;
 
 each only when the process its name records is gone, and never one whose pid

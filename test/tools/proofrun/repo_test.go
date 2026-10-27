@@ -379,6 +379,47 @@ func TestRepositoryPlaywrightProjectInvocationsPassFilesFirst(t *testing.T) {
 	}
 }
 
+// A Playwright spec's Orker that is killed leaves its activity containers and
+// its work root behind, and `proofrun clean` removes them only when the root
+// names the process that made it (mountOwner). So a spec Orker's root comes
+// from the harness's orkerEnv alone, and orkerEnv names it the way the
+// cleanup reads a test's work root: <label>-p<pid>-<suffix>.
+func TestRepositorySpecOrkersWorkInARootNamingTheirProcess(t *testing.T) {
+	dir := filepath.Join(mustRepoRoot(), "ui", "e2e")
+	files, err := filepath.Glob(filepath.Join(dir, "*.ts"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no e2e sources in %s: %v", dir, err)
+	}
+	sets := regexp.MustCompile(`\bORK_ORKER_WORKDIR\s*:`)
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := len(sets.FindAll(src, -1))
+		switch base := filepath.Base(f); {
+		case base == "harness.ts" && n != 1:
+			t.Errorf("ui/e2e/harness.ts sets ORK_ORKER_WORKDIR %d times, want once: orkerEnv's root", n)
+		case base != "harness.ts" && n != 0:
+			t.Errorf("ui/e2e/%s sets ORK_ORKER_WORKDIR itself; take the work root from orkerEnv (ui/e2e/harness.ts)", base)
+		}
+	}
+
+	harness, err := os.ReadFile(filepath.Join(dir, "harness.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile("mkdtempSync\\(path\\.join\\(parent, `([^`]*)`\\)\\)").FindSubmatch(harness)
+	if m == nil {
+		t.Fatal("ui/e2e/harness.ts: orkerEnv makes no root with mkdtempSync(path.join(parent, `...`))")
+	}
+	// mkdtemp appends six letters and digits.
+	name := strings.NewReplacer("${name}", "admin-main", "${process.pid}", "4242").Replace(string(m[1])) + "Ab3dE9"
+	if got := workRootName.FindStringSubmatch(name); got == nil || got[1] != "4242" {
+		t.Errorf("ui/e2e/harness.ts names a spec Orker's root like %q, which records no owning pid the cleanup reads (%s)", name, workRootName)
+	}
+}
+
 // The setup's links and image builds are parallel: one `go build` writes all
 // nine stack binaries into bin/ (in a local proof and a CI part alike), and
 // the images Makefile builds, pushes and exports its images IMAGE_JOBS at a

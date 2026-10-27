@@ -32,6 +32,15 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- `proofrun clean` now tells which test process left an activity container
+  by the work root the container mounts, whose name carries that process's
+  pid, rather than by the container's Orker id. Tests that name their own
+  Orkers (`orker-cli-…`, `orker-pin-chaos-…`, `orker-rel-v1-…`) and every
+  Playwright spec's Orker, on a fixed root under `.data/work/e2e/`, left
+  containers it could not attribute: 131 had piled up on the proof host,
+  about 50 of them from the day's two full proofs. A spec's Orkers now work
+  in roots named like an integration test's, `e2e-<name>-p<pid>-<suffix>`,
+  and a repository test refuses a spec that sets its own.
 - `proofrun clean`, and so every proof's and `scripts/integration.sh`'s first
   cleanup and `make proof-clean REMOVE=1`, now removes a dead process's work
   root that holds root-owned files. An activity container runs as root and
