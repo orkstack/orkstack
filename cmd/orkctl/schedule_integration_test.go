@@ -477,6 +477,35 @@ func (s *scheduleStack) fireStatus(ctx context.Context, t *testing.T, workflowID
 	return described.GetWorkflowExecutionInfo().GetStatus()
 }
 
+// awaitFireClosed waits until the schedule's n-th fire workflow (1-based, in
+// start order) has closed, and returns it. A fire is a parent that lives
+// exactly as long as its run (engine.ScheduleFireWorkflow), so it closes a
+// moment AFTER the run reads SUCCEEDED; a `schedule fire` sent in that
+// moment meets the open fire, and the default skip overlap policy drops it
+// (fires_skipped_overlap) rather than starting a run. A test that fires a
+// schedule again therefore waits for the previous fire's close, never for
+// its run alone. Visibility lists the fire eventually; its status is read
+// from a describe, which is current.
+func (s *scheduleStack) awaitFireClosed(ctx context.Context, t *testing.T, scheduleID string, n int) fireExecution {
+	t.Helper()
+	fire := s.awaitFireWorkflows(ctx, t, scheduleID, n)[n-1]
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		status := s.fireStatus(ctx, t, fire.WorkflowID)
+		if status != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+			if status != enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED {
+				t.Fatalf("fire %s of %s closed %s, want COMPLETED", fire.WorkflowID, scheduleID, status)
+			}
+			fire.Status = status
+			return fire
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fire %s of %s is still running 60s after its run ended", fire.WorkflowID, scheduleID)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 // firstRunID waits for the newest recent fire to name a run.
 func (s *scheduleStack) awaitFireRun(t *testing.T, name string, count int) scheduleJSON {
 	t.Helper()
@@ -974,6 +1003,9 @@ func TestIntegration_ScheduleFollowsCurrentPointerAtFire(t *testing.T) {
 	s.cli(t, s.a, exitOK, "schedule", "fire", "follow")
 	first := s.awaitRuns(t, followID, 90*time.Second, func(r []runRow) bool { return len(r) == 1 })[0]
 	s.awaitRunStatus(t, first.ID, 3*time.Minute, "SUCCEEDED")
+	// The fire outlives its run by a moment; a second fire sent inside it
+	// is skipped under the overlap policy, never started (awaitFireClosed).
+	s.awaitFireClosed(ctx, t, followID, 1)
 
 	s.apply(t, scheduleOrkflowYAML("hello", "0.2.0", 0, ""))
 	s.cli(t, s.a, exitOK, "orkflow", "promote", "hello", "0.2.0")
@@ -981,6 +1013,13 @@ func TestIntegration_ScheduleFollowsCurrentPointerAtFire(t *testing.T) {
 	s.cli(t, s.a, exitOK, "schedule", "fire", "pinned")
 	follow := s.awaitRuns(t, followID, 90*time.Second, func(r []runRow) bool { return len(r) == 2 })
 	pinned := s.awaitRuns(t, pinnedID, 90*time.Second, func(r []runRow) bool { return len(r) == 1 })
+	// Each schedule's fire has closed before its run is read, so a skipped
+	// fire would be named here, never read as a slow run.
+	s.awaitFireClosed(ctx, t, followID, 2)
+	s.awaitFireClosed(ctx, t, pinnedID, 1)
+	if skipped := s.get(t, s.a, "follow").Schedule.FiresSkippedOverlap + s.get(t, s.a, "pinned").Schedule.FiresSkippedOverlap; skipped != 0 {
+		t.Fatalf("fires_skipped_overlap = %d: a fire was sent while the previous one was open", skipped)
+	}
 	second := s.run(t, s.a, follow[1].ID)
 	pinnedRun := s.run(t, s.a, pinned[0].ID)
 	if s.run(t, s.a, first.ID).OrkflowVersion != "0.1.0" || second.OrkflowVersion != "0.2.0" || pinnedRun.OrkflowVersion != "0.1.0" {
