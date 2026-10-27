@@ -3,8 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,8 +30,10 @@ import (
 // proofrun clean: what test processes that are gone left behind.
 //
 // A test process owns a bucket (internal/testsupport/s3bucket), an Orker work
-// root under .data/work (internal/testsupport/proof.WorkRootPattern) and the
-// activity containers its Orkers started. It removes them itself when its
+// root under .data/work (internal/testsupport/proof.WorkRootPattern; a
+// Playwright spec's Orkers get one of the same shape, ui/e2e/harness.ts) and
+// the activity containers its Orkers started, each of which bind-mounts its
+// workspace from inside that root. It removes them itself when its
 // tests pass, and the runner's sweep removes a passing process's bucket; a
 // failing process keeps them for the post-mortem, and a proof that was
 // stopped or killed leaves them all. Left there, a bucket holds the object
@@ -84,10 +84,17 @@ type cleanStore interface {
 	Remove(ctx context.Context, bucket string) error
 }
 
+// cleanContainer is one activity container as the cleanup sees it: its id,
+// its Orker's id (the ork.orker label) and the host paths it bind-mounts.
+type cleanContainer struct {
+	id, orker string
+	mounts    []string
+}
+
 // cleanDocker is the container runtime as the cleanup sees it.
 type cleanDocker interface {
-	// Containers lists every container labelled ork.orker: its id and that label.
-	Containers(ctx context.Context) ([][2]string, error)
+	// Containers lists every container labelled ork.orker.
+	Containers(ctx context.Context) ([]cleanContainer, error)
 	// ProofTemporals lists the proofs' own Temporal containers: name and the
 	// orkstack.proof.owner label (host:pid:start).
 	ProofTemporals(ctx context.Context) ([][2]string, error)
@@ -165,11 +172,10 @@ func (c *cleaner) run(ctx context.Context) cleanCounts {
 	fmt.Fprintln(c.out, "== buckets kept by test processes")
 	n.buckets = c.buckets(ctx, dead)
 
-	// A default Orker id is the host and a hash of the work root, so the
-	// roots are read for the containers before any of them is removed.
+	// Containers go before the work roots they mount.
 	roots := c.workRoots()
 	fmt.Fprintln(c.out, "== activity containers of test processes")
-	n.containers = c.containers(ctx, roots)
+	n.containers = c.containers(ctx)
 	fmt.Fprintln(c.out, "== proof Temporal containers whose proof is gone")
 	n.containers += c.temporals(ctx)
 	fmt.Fprintln(c.out, "== per-test work roots")
@@ -364,18 +370,22 @@ type workRoot struct {
 	pid  int
 }
 
-// workRoots are the test work roots under every worktree's .data/work and
-// the extra parents; a directory whose name records no pid is listed and
-// left alone.
-func (c *cleaner) workRoots() []workRoot {
+// workParents are the directories test work roots are made in: every
+// worktree's .data/work and the extra parents.
+func (c *cleaner) workParents() []string {
 	var parents []string
 	for _, w := range c.worktrees {
 		parents = append(parents, filepath.Join(w, ".data", "work"))
 	}
-	parents = append(parents, c.workDirs...)
+	return append(parents, c.workDirs...)
+}
+
+// workRoots are the test work roots under every work-root parent; a
+// directory whose name records no pid is listed and left alone.
+func (c *cleaner) workRoots() []workRoot {
 	var roots []workRoot
 	seen := map[string]bool{}
-	for _, parent := range parents {
+	for _, parent := range c.workParents() {
 		entries, err := os.ReadDir(parent)
 		if err != nil {
 			continue
@@ -465,49 +475,47 @@ func (c *cleaner) emptyThroughContainer(ctx context.Context, path string, found 
 	return os.Remove(path)
 }
 
-// hashedOrkerID is internal/orker's identity for an Orker given no id: the
-// host and the first four bytes of the work root's canonical path's SHA-256.
-func hashedOrkerID(host, root string) string {
-	if canonical, err := filepath.EvalSymlinks(root); err == nil {
-		root = canonical
-	}
-	sum := sha256.Sum256([]byte(root))
-	return safeName(host) + "-" + hex.EncodeToString(sum[:4])
-}
-
-// safeName is internal/orker's safeNameComponent.
-func safeName(raw string) string {
-	var b strings.Builder
-	for _, r := range raw {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '.', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
+// mountOwner is the pid of the test work root a container's workspace lies
+// in, and whether there is one. A work root is a directory named like one
+// (workRootName) right under a work-root parent: one of parents, or any
+// .data/work on this host, since the worktree that made it may be gone. The
+// workspace may lie deeper inside the root (a test that gives each of its
+// Orkers a directory of its own there). The development stack's Orker works
+// in .data/work itself, so its containers have no owner here.
+func mountOwner(parents map[string]bool, mounts []string) (int, bool) {
+	for _, mount := range mounts {
+		if !filepath.IsAbs(mount) {
+			continue
+		}
+		for dir := filepath.Clean(mount); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+			parent := filepath.Dir(dir)
+			if !parents[parent] && (filepath.Base(parent) != "work" || filepath.Base(filepath.Dir(parent)) != ".data") {
+				continue
+			}
+			if m := workRootName.FindStringSubmatch(filepath.Base(dir)); m != nil {
+				pid, _ := strconv.Atoi(m[1])
+				return pid, true
+			}
+			break
 		}
 	}
-	cleaned := strings.TrimLeft(b.String(), "-._")
-	if len(cleaned) > 40 {
-		cleaned = cleaned[:40]
-	}
-	if cleaned == "" {
-		return "task"
-	}
-	return cleaned
+	return 0, false
 }
 
 // containers removes the activity containers whose Orker's process is gone.
-// The owner is the pid a proof's Orker id ends in, or the pid of the work
-// root a default Orker id hashes; a container whose owner cannot be told is
-// counted and left alone.
-func (c *cleaner) containers(ctx context.Context, roots []workRoot) int {
+// The owner is the pid a proof's Orker id ends in, or the pid of the test
+// work root the container mounts (mountOwner); a container whose owner cannot
+// be told is counted and left alone.
+func (c *cleaner) containers(ctx context.Context) int {
 	if c.docker == nil {
 		fmt.Fprintln(c.out, "  (no container runtime; skipped)")
 		return 0
 	}
-	byID := map[string]int{}
-	for _, r := range roots {
-		byID[hashedOrkerID(c.host, r.path)] = r.pid
+	parents := map[string]bool{}
+	for _, p := range c.workParents() {
+		if abs, err := filepath.Abs(p); err == nil { // ORK_ORKER_WORKDIR may be relative
+			parents[abs] = true
+		}
 	}
 	list, err := c.docker.Containers(ctx)
 	if err != nil {
@@ -516,8 +524,8 @@ func (c *cleaner) containers(ctx context.Context, roots []workRoot) int {
 	}
 	removed, unknown := 0, 0
 	for _, ct := range list {
-		id, orker := ct[0], ct[1]
-		pid, ok := byID[orker]
+		id, orker := ct.id, ct.orker
+		pid, ok := mountOwner(parents, ct.mounts)
 		if m := proofOrkerID.FindStringSubmatch(orker); m != nil {
 			pid, _ = strconv.Atoi(m[1])
 			ok = true
@@ -542,7 +550,7 @@ func (c *cleaner) containers(ctx context.Context, roots []workRoot) int {
 		removed++
 	}
 	if unknown > 0 {
-		fmt.Fprintf(c.out, "  %d containers whose owner cannot be told (no pid in their Orker id, and no work root that hashes to it); left alone\n", unknown)
+		fmt.Fprintf(c.out, "  %d containers whose owner cannot be told (no pid in their Orker id, and no test work root among their mounts); left alone\n", unknown)
 	}
 	return removed
 }
@@ -676,15 +684,21 @@ func (s *s3CleanStore) Remove(ctx context.Context, bucket string) error {
 // dockerCLI is the docker command line.
 type dockerCLI struct{}
 
-func (dockerCLI) lines(ctx context.Context, args ...string) ([][2]string, error) {
+// output is what a docker command printed, also when it then failed.
+func (dockerCLI) output(ctx context.Context, args ...string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	out, err := exec.CommandContext(cctx, "docker", args...).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func (d dockerCLI) lines(ctx context.Context, args ...string) ([][2]string, error) {
+	out, err := d.output(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
 	var rows [][2]string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		if a, b, ok := strings.Cut(line, "\t"); ok {
 			rows = append(rows, [2]string{a, b})
 		}
@@ -692,8 +706,33 @@ func (dockerCLI) lines(ctx context.Context, args ...string) ([][2]string, error)
 	return rows, nil
 }
 
-func (d dockerCLI) Containers(ctx context.Context) ([][2]string, error) {
-	return d.lines(ctx, "ps", "-a", "--filter", "label=ork.orker", "--format", `{{.ID}}	{{.Label "ork.orker"}}`)
+// Containers lists the containers, then inspects them for their mounts. One
+// removed in between makes the inspection fail after it printed the others,
+// which are still the listing.
+func (d dockerCLI) Containers(ctx context.Context) ([]cleanContainer, error) {
+	ids, err := d.output(ctx, "ps", "-aq", "--filter", "label=ork.orker")
+	if err != nil || ids == "" {
+		return nil, err
+	}
+	out, err := d.output(ctx, append([]string{"inspect", "--format",
+		`{{.Id}}{{"\t"}}{{index .Config.Labels "ork.orker"}}{{range .Mounts}}{{"\t"}}{{.Source}}{{end}}`},
+		strings.Fields(ids)...)...)
+	if err != nil && out == "" {
+		return nil, err
+	}
+	var list []cleanContainer
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) < 2 {
+			continue
+		}
+		id := f[0]
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		list = append(list, cleanContainer{id: id, orker: f[1], mounts: f[2:]})
+	}
+	return list, nil
 }
 
 func (d dockerCLI) ProofTemporals(ctx context.Context) ([][2]string, error) {
