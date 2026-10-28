@@ -26,10 +26,12 @@ turns it into this JSON, never a lenient decode.
 
 ## Data written in an authored document
 
-An Orkflow and an automation document are YAML, and some of what they hold is
-runtime data: an Orkflow's `inputs:` (their defaults), every task's `with:` —
-an `http` `body:`, jq `vars:`, a composed task's input — an await's `schema:`,
-and a schedule's `input:`. It is written as YAML and becomes JSON through one
+An Orkflow, an automation document and an activity interface are YAML, and
+some of what they hold is runtime data: an Orkflow's `inputs:` (their
+defaults), every task's `with:` — an `http` `body:`, jq `vars:`, a composed
+task's input — an await's `schema:`, a schedule's `input:`, and an activity
+interface's `required:` and `default:` (`docs/ACTIVITY_IMAGES.md`, "Declaring
+the interface"). It is written as YAML and becomes JSON through one
 strict mapping, never a lenient decode. On the wire it is the JSON this page
 describes, and the API, the CLI and the UI take only JSON (`AGENTS.md` §3.1).
 

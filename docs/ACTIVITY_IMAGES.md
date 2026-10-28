@@ -76,11 +76,76 @@ The label is **optional**. An image without it is an ordinary activity,
 resolved, applied and run exactly as before; its `with:` is checked by the
 image itself at run time (rule 2 above).
 
+### Writing it: `interface.ork.yaml`
+
+The label's value is one line of JSON, which is hard to read and review once
+an image has more than a few keys. Write the declaration as an activity
+interface document instead, and let `orkctl` pack it into the label. The
+document is YAML with the header every authored document has, and the keys the
+label has (below):
+
+```yaml
+# interface.ork.yaml, beside the Dockerfile.
+apiVersion: orkstack/v1
+kind: ActivityInterface
+ops:
+  copy:
+    fields:
+      src:
+        type: string
+        required: true
+      as:
+        type: string
+defaultOp: copy
+values:
+  path:
+    type: string
+```
+
+`orkctl activity build <context> --tag <ref> --interface interface.ork.yaml`
+packs it into the image it builds, as one `--label` that replaces a `LABEL` of
+the same key in the Dockerfile; a document it cannot pack builds nothing. Any
+other toolchain takes the value `orkctl activity interface pack` prints:
+
+| Toolchain | Where the value goes |
+|---|---|
+| `docker build`, `docker buildx build`, `podman build`, `buildah build`, kaniko | `--label "org.orkstack.activity.interface=$(orkctl activity interface pack interface.ork.yaml)"` |
+| ko | `--image-label` with the same `key=value` |
+| rules_oci | `oci_image`'s `labels` |
+| nix `dockerTools` | `config.Labels` |
+| a Dockerfile alone | paste it as `LABEL org.orkstack.activity.interface='<value>'`; the value never holds a single quote, which pack writes as a JSON unicode escape, so it fits a single-quoted line as it is |
+
+The value is canonical: one declaration always packs to the same bytes (map
+keys sorted, no whitespace), so a rebuild does not move the image's config
+digest. Pack holds the document to every rule the engine reads a label by, so
+a value it prints is never one the engine reports as unreadable, and it writes
+`schemaVersion` itself — the lowest version that expresses the document, `1`
+today — which the document never names.
+
+The document is held to the authored-document rules: the two header lines;
+the keys exactly as the label spells them; `required:` and every `default:`
+converted by the strict mapping (`docs/JSON.md`, "Data written in an authored
+document"), so `yes`, `0755` or a date is refused naming its path; no anchor,
+alias, merge key or tag anywhere; one document per file, at most 1 MiB. An op
+that reads no key beyond `fields` is written `name: {}` or `name:` alone.
+Editors complete it from [`activityinterface.v1.json`](schemas/activityinterface.v1.json),
+which the dispatcher `orkstack.v1.json` selects by `kind`, so the
+`*.ork.yaml` mapping of `docs/DSL.md`, "Editor support", covers
+`interface.ork.yaml`. It is never applied: `orkctl apply` refuses one named on
+its command line and skips one it finds in a directory.
+
+Labels are inherited from a base image: an image built `FROM` a labelled image
+declares the base's interface until it declares its own, with `--interface`
+or a `LABEL` of the same key.
+
+### The label
+
 Its value is the protojson encoding (lowerCamel names) of the
-`orkstack.v1.ActivityInterface` message, verbatim, on one line:
+`orkstack.v1.ActivityInterface` message, on one line — what pack prints for the
+document above:
 
 ```dockerfile
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}}},"defaultOp":"copy","values":{"path":{"type":"string"}}}'
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields":{"as":{"type":"string"},"src":{"type":"string","required":true}}}},"defaultOp":"copy","values":{"path":{"type":"string"}}}'
 ```
 
 - `schemaVersion` is `1`.
@@ -123,8 +188,12 @@ What a document is told:
   released together.
 
 `orkctl activity inspect <name-or-reference>` and Admin → Activities show what
-an image declares. Every first-party image carries the label; each README's
-"Interface" section reproduces it.
+an image declares. Every first-party image carries the label, and so does each
+example image: each one's `interface.ork.yaml`, beside its Dockerfile, is the
+source, and `go run ./internal/schemas/cmd/genschemas` writes the Dockerfile's
+one interface `LABEL` line from it, so a plain `docker build` of the directory
+still declares it; a stale line fails the unit tests. Each README's "Interface"
+section links the document.
 
 ## First-party reference images
 
