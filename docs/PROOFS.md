@@ -1140,6 +1140,7 @@ listing with no bucket at all.
 | `gates` | `-select FILE` |
 | `clean` | `-remove` |
 | `runner-health` | `-out FILE`, `-class NAME`, `-floors FILE`, `-dir DIR`, `-seconds N` |
+| `rerun-plan` | `-repo OWNER/NAME`, `-run ID`, `-attempt N`, `-max-attempts N` |
 
 ### 11.4 The scripts
 
