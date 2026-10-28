@@ -144,6 +144,11 @@ func TestParseCatalog(t *testing.T) {
 		{"a non-slug name", "activities:\n  Shell: ghcr.io/x/y:1\n"},
 		{"an empty reference", "activities:\n  shell: \"\"\n"},
 		{"a reference that is not one", "activities:\n  shell: notareference\n"},
+		// The reference grammar is checked when the catalog is read, not at the
+		// first apply that names the activity: an operator's typo stops boot.
+		{"a reference a runtime would read as an option", "activities:\n  shell: --cap-add=ALL.example/x:1\n"},
+		{"a reference with upper-case path", "activities:\n  shell: ghcr.io/Acme/Shell:1\n"},
+		{"a reference with a space", "activities:\n  shell: \"ghcr.io/acme/shell:1 --privileged\"\n"},
 	} {
 		t.Run("rejects "+tc.name, func(t *testing.T) {
 			if _, err := ParseCatalog([]byte(tc.doc)); err == nil {
