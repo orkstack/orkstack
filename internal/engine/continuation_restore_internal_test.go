@@ -385,7 +385,8 @@ var _ = task.DefaultPool
 // crossed). Every task is classified — and its condition evaluated — once,
 // on its first pass, never again however many passes it waits through; no
 // pin closure is rebuilt; and one held pass's workflow code takes at most
-// 20 ms of its thread's CPU time (passClock; the wall clock is logged).
+// 20 ms of its thread's CPU time (passClock; the wall clock is logged),
+// scaled by raceSlowdown under the race detector.
 func TestReadyLoop_HeldTasksCostConstantPerPass(t *testing.T) {
 	const tasks, dispatched = 4000, 586
 	wf := &orkstackv1.Orkflow{Name: "flat", Version: "v1", Namespace: "team-a"}
@@ -441,15 +442,21 @@ func TestReadyLoop_HeldTasksCostConstantPerPass(t *testing.T) {
 	for _, d := range wallPasses[1:] {
 		wallWorst = max(wallWorst, d)
 	}
-	proof.WriteJSON(t, "continuation", "held-pass-cost.json", map[string]any{
-		"tasks": tasks, "dispatched_before_hold": dispatched, "held_passes": len(held),
-		"slowest_pass_ms": float64(worst.Microseconds()) / 1000, "mean_pass_ms": float64(total.Microseconds()) / 1000 / float64(len(held)),
-		"pass_clock": clock.kind(), "slowest_pass_wall_ms": float64(wallWorst.Microseconds()) / 1000,
-	})
+	// The race detector's instrumentation slows this CPU-bound pass several
+	// times over, so under -race the bound is scaled, never dropped, and the
+	// measurement is not written as evidence.
+	bound := gatedSizeBound(20 * time.Millisecond)
+	if !raceBuild {
+		proof.WriteJSON(t, "continuation", "held-pass-cost.json", map[string]any{
+			"tasks": tasks, "dispatched_before_hold": dispatched, "held_passes": len(held),
+			"slowest_pass_ms": float64(worst.Microseconds()) / 1000, "mean_pass_ms": float64(total.Microseconds()) / 1000 / float64(len(held)),
+			"pass_clock": clock.kind(), "slowest_pass_wall_ms": float64(wallWorst.Microseconds()) / 1000,
+		})
+	}
 	t.Logf("E2 held tasks: %d held passes over %d tasks, slowest %s, mean %s of %s (slowest %s wall clock)",
 		len(held), tasks-dispatched, worst, total/time.Duration(len(held)), clock.kind(), wallWorst)
-	if worst > 20*time.Millisecond {
-		t.Fatalf("the slowest held pass took %s of %s, over 20 ms", worst, clock.kind())
+	if worst > bound {
+		t.Fatalf("the slowest held pass took %s of %s, over %s", worst, clock.kind(), bound)
 	}
 }
 
