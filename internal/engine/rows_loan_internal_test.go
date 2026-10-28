@@ -77,45 +77,103 @@ func TestRowsLoan_TakeBackWaitsForTheReadAndRefusesTheNext(t *testing.T) {
 	}
 }
 
+// rowsLoanHangBound is how long a stress round waits for something that must
+// happen (a reader entering, takeBack returning, the readers leaving) before it
+// reports that it did not. It is a hang guard, not a measurement: a regression
+// of takeBack must fail the test by name, not stop the package at go test's
+// timeout with every other test's outcome behind the crash.
+const rowsLoanHangBound = 30 * time.Second
+
 // TestRowsLoan_NoReaderIsInsideOnceTakeBackReturns: with attempts racing to
 // read, none is inside its read when takeBack returns and none enters after
 // it, however the goroutines interleave; the rows' "change" after takeBack is
 // a plain write the race detector would flag against any straggler.
 func TestRowsLoan_NoReaderIsInsideOnceTakeBackReturns(t *testing.T) {
 	for range 200 {
-		run := loanRun()
-		loan := lendRows(run)
-		var inside, entered atomic.Int64
-		var wg sync.WaitGroup
-		for range 4 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for {
-					release, ok := borrowRows(run)
-					if !ok {
-						return
-					}
-					inside.Add(1)
-					entered.Add(1)
-					_ = run.GetTaskRuns()[0].GetStatus() // a read of a row
-					inside.Add(-1)
-					release()
+		rowsLoanStressRound(t)
+	}
+}
+
+// rowsLoanStressRound is one round of that test. The readers loop until
+// borrowRows refuses them, and also until the round ends (done), so a takeBack
+// that stopped revoking leaves them looping only until the round fails them.
+func rowsLoanStressRound(t *testing.T) {
+	t.Helper()
+	run := loanRun()
+	loan := lendRows(run)
+	var inside, entered atomic.Int64
+	var done atomic.Bool
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !done.Load() {
+				release, ok := borrowRows(run)
+				if !ok {
+					return
 				}
-			}()
-		}
-		for entered.Load() == 0 {
+				inside.Add(1)
+				entered.Add(1)
+				_ = run.GetTaskRuns()[0].GetStatus() // a read of a row
+				inside.Add(-1)
+				release()
+			}
+		}()
+	}
+	finished := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(finished)
+	}()
+	deadline := time.NewTimer(rowsLoanHangBound)
+	defer deadline.Stop()
+	// fail stops the readers, so none outlives the round, then reports.
+	fail := func(format string, args ...any) {
+		done.Store(true)
+		<-finished
+		t.Fatalf(format, args...)
+	}
+
+	for entered.Load() == 0 {
+		select {
+		case <-deadline.C:
+			fail("no reader entered the lent snapshot within %s", rowsLoanHangBound)
+		default:
 			runtime.Gosched()
 		}
+	}
+	taken := make(chan struct{})
+	go func() {
 		loan.takeBack()
-		if n := inside.Load(); n != 0 {
-			t.Fatalf("%d readers were inside their read when takeBack returned", n)
-		}
-		stopped := entered.Load()
-		run.TaskRuns[0].Status = orkstackv1.Status_STATUS_CANCELED // the failure path's write
-		wg.Wait()
-		if entered.Load() != stopped {
-			t.Fatalf("a reader entered after takeBack returned (%d, then %d)", stopped, entered.Load())
+		close(taken)
+	}()
+	select {
+	case <-taken:
+	case <-deadline.C:
+		fail("takeBack did not return within %s", rowsLoanHangBound)
+	}
+	if n := inside.Load(); n != 0 {
+		fail("%d readers were inside their read when takeBack returned", n)
+	}
+	stopped := entered.Load()
+	run.TaskRuns[0].Status = orkstackv1.Status_STATUS_CANCELED // the failure path's write
+	// From here every reader is refused and leaves. Readers still looping, or
+	// one entering, mean takeBack no longer revokes.
+	for {
+		select {
+		case <-finished:
+			if now := entered.Load(); now != stopped {
+				t.Fatalf("a reader entered after takeBack returned (%d entries, then %d)", stopped, now)
+			}
+			return
+		case <-deadline.C:
+			fail("readers were still borrowing %s after takeBack returned: it no longer revokes", rowsLoanHangBound)
+		default:
+			if now := entered.Load(); now != stopped {
+				fail("a reader entered after takeBack returned (%d entries, then %d)", stopped, now)
+			}
+			runtime.Gosched()
 		}
 	}
 }
