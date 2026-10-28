@@ -166,15 +166,17 @@ include breaking changes, and each is marked **BREAKING**.
 - A run canceled while an event's snapshot was being written no longer
   records the cancellation on task rows the write is still encoding. The
   snapshot activity reads the run's live rows, and the SDK frees the run the
-  moment the cancel reaches the activity while the activity goes on, so the
-  failure path changed rows under the encoder: a data race (found by the Go
-  race detector, which no proof gate runs) and a snapshot object that could
-  mix the rows before and after the cancel. The object belonged to an event
-  that was never published, so no read returned it; the run's own end, and
-  every snapshot a reader sees, were unaffected. The run now takes its rows
-  back from the write, which waits for an encode in progress, and the write
-  refuses rows taken back. No extra copy is made: a clone per event would have
-  cost O(rows) of workflow time on every event, replays included.
+  moment a cancel reaches the activity while the activity goes on (a slow
+  object store holding a write past a workflow task is how a real run gets
+  there), so the failure path changed rows under the encoder: a data race
+  found by the Go race detector, which no proof gate runs, and a snapshot
+  object that could mix the rows before and after the cancel. The object
+  belonged to an event that was never published, so no read returned it; the
+  run's own end, and every snapshot a reader sees, were unaffected. The run
+  now takes its rows back from the write, which waits for an encode in
+  progress, and the write refuses rows taken back. No extra copy is made: a
+  clone per event would have cost O(rows) of workflow time on every event,
+  replays included.
 
 ### Added
 
