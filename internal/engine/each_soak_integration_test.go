@@ -734,9 +734,9 @@ func describeReads(reads []getRunRead) string {
 		return "nothing"
 	}
 	first, last := reads[0], reads[len(reads)-1]
-	return fmt.Sprintf("%d events (%d B) and %d objects (%d B) of a %d-event generation, then %d events (%d B) and %d objects (%d B) of a %d-event one",
-		first.Events, first.EventBytes, first.SnapshotReads, first.SnapshotBytes, first.History,
-		last.Events, last.EventBytes, last.SnapshotReads, last.SnapshotBytes, last.History)
+	return fmt.Sprintf("%d events (%d B) and %d objects (%d B) of a %d-event (%d B) generation at %g ms per 1,000 events, then %d events (%d B) and %d objects (%d B) of a %d-event (%d B) one at %g",
+		first.Events, first.EventBytes, first.SnapshotReads, first.SnapshotBytes, first.History, first.HistoryBytes, first.MsPer1000Events,
+		last.Events, last.EventBytes, last.SnapshotReads, last.SnapshotBytes, last.History, last.HistoryBytes, last.MsPer1000Events)
 }
 
 // waitRetired blocks until the cluster no longer knows the run at all: its

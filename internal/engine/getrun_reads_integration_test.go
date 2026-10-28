@@ -122,7 +122,7 @@ func (e *eachSoak) liveGetRuns(t *testing.T, ctx context.Context, runID string, 
 			case <-time.After(soakGetRunSpacing):
 			}
 		}
-		beforeExecution, _ := e.historyOf(t, ctx, runID, "")
+		beforeExecution := e.historyOf(t, ctx, runID, "").execution
 		counted := e.reads.totals()
 		start := time.Now()
 		resp, err := e.api.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
@@ -131,29 +131,38 @@ func (e *eachSoak) liveGetRuns(t *testing.T, ctx context.Context, runID string, 
 			t.Fatalf("GetRun %s: %v", runID, err)
 		}
 		read := e.reads.totals().minus(counted)
-		afterExecution, history := e.historyOf(t, ctx, runID, "")
-		if afterExecution != beforeExecution {
+		after := e.historyOf(t, ctx, runID, "")
+		if after.execution != beforeExecution {
 			// The run switched generations during the read, which scans the
 			// one it found and follows it into the next.
-			_, ended := e.historyOf(t, ctx, runID, beforeExecution)
-			history += ended
+			ended := e.historyOf(t, ctx, runID, beforeExecution)
+			after.events += ended.events
+			after.bytes += ended.bytes
 		}
 		times = append(times, took)
 		reads = append(reads, getRunRead{Seconds: took.Seconds(), Events: read.Events, EventBytes: read.EventBytes,
-			SnapshotReads: read.SnapshotReads, SnapshotBytes: read.SnapshotBytes, History: history})
+			SnapshotReads: read.SnapshotReads, SnapshotBytes: read.SnapshotBytes, History: after.events, HistoryBytes: after.bytes,
+			MsPer1000Events: costPerThousandEvents(took.Seconds(), read.Events)})
 		last = resp.Msg.GetRun()
 	}
 	return times, reads, last
 }
 
+// executionHistory is one generation's execution and the length of its
+// history, in events and in the bytes the cluster reports for them.
+type executionHistory struct {
+	execution     string
+	events, bytes int64
+}
+
 // historyOf is the execution the run is in (execution "") or the named one,
-// and its history length in events.
-func (e *eachSoak) historyOf(t *testing.T, ctx context.Context, runID, execution string) (string, int64) {
+// and its history's length.
+func (e *eachSoak) historyOf(t *testing.T, ctx context.Context, runID, execution string) executionHistory {
 	t.Helper()
 	described, err := e.control.DescribeWorkflowExecution(ctx, runID, execution)
 	if err != nil {
 		t.Fatalf("describe run %s execution %q: %v", runID, execution, err)
 	}
 	info := described.GetWorkflowExecutionInfo()
-	return info.GetExecution().GetRunId(), info.GetHistoryLength()
+	return executionHistory{execution: info.GetExecution().GetRunId(), events: info.GetHistoryLength(), bytes: info.GetHistorySizeBytes()}
 }

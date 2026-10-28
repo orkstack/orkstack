@@ -1263,19 +1263,28 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   `TestIntegration_AnItemCeilingRunCarriesOnAtAReducedCeiling` and
   `TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling`), 2 s on 16
   CPUs, and the run page at the reduced ceiling
-  (`e2e/run-page-reduced-ceiling.spec.ts`), 5 s on 16 CPUs. The archive p95,
-  `Events(0)` and replay checks of the same tests go through the same helper
-  and have no row: they have never missed on a 4-vCPU runner, and a miss of
-  one fails the proof. What keeps a structural slowdown visible where the
-  wall-clock bound is excused is a count that holds on every host: the
-  soaks' live `GetRun` reads go through a counting reader, and each must read
-  at least one history event and at most 110% of the events the generation it
-  read holds (the history is scanned once; the margin is for the instant
-  between the read and the count), and at most 4 saved-state objects (a read
-  takes 1 or 2). The bounds were calibrated on 60 reads of the three tests
-  on the reference host (the calibration is in
-  `internal/engine/getrun_structure_test.go`), and they fail the test on
-  every runner, being counts.
+  (`e2e/run-page-reduced-ceiling.spec.ts`), 5 s on 16 CPUs; the user approved
+  them on 2026-10-27. The archive p95, `Events(0)` and replay checks of the
+  same tests go through the same helper and have no row: none of them missed
+  in the CI full proofs and nightlies read when the rows were chosen (runs
+  39337036208 to 40593609129), so a miss of one fails the proof, and a row
+  for one is proposed when one does.
+
+  What stays visible where the live `GetRun` budget is excused is a bound on
+  what that read reads, which holds on every host: the soaks' live `GetRun`s
+  go through a counting reader, and each must read at least one history
+  event, at most 110% of the events and at most 110% of the bytes the
+  generation it read holds (the history is scanned once, in events and in
+  bytes; the margin is for the instant between the read and the count), and
+  at most 4 saved-state objects (a read takes 1 or 2). They fail the test on
+  every runner, being counts and sizes, and were calibrated on 160 reads of
+  the three tests on the reference host, the bytes on the last 40
+  (`internal/engine/getrun_structure_test.go` holds the calibration). They
+  bound what is read, not what reading it costs: a slower decode or a larger
+  saved state shows only in the wall-clock numbers, which the reference host
+  enforces, and the evidence records the cost per thousand events
+  (`ms_per_1000_events`) and the saved-state bytes to read it by. The run
+  page's 5 s has no structural counterpart at all.
 - **The validation run's class-B results** (run 39345074409, recorded in
   `host_speed_failures` and `known_gaps`): `each-fan-out.spec.ts` (whose
   gated test is now `each-fan-out-ceiling.spec.ts`) measured

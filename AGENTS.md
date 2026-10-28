@@ -901,15 +901,20 @@ there: in every local proof of any tier, and in the pre-release gate wherever
 it runs, which excuses no runner-size miss, so a tag rests on budgets that
 held on the reference class (a CI release proof needs runners as large as the
 reference, or `make proof-release` runs on the reference host). In the merge
-gate and the nightly, on a CI runner with fewer CPUs a miss of one is a
-recorded known gap, never a pass and never a widened bound, and only under a row of
-`scripts/proof-host-speed.tsv` that the user approved and the base carries
-identically; the merger derives each excusal itself from the part's own
-records (docs/PROOFS.md §12). A count, a size, a history share, a
-deadlock-detector trip, a correctness assertion, or a failure beside the
-timing miss gets no row and fails the proof wherever it runs. The soaks'
-live `GetRun` also keeps a bound on what it reads, a count that holds on every
-host, so a structural slowdown stays visible where its budget is excused.
+gate and the nightly, on a CI runner with fewer CPUs, a miss of one is a
+recorded known gap, never a pass and never a widened bound (accepted
+2026-10-27): only under a row of `scripts/proof-host-speed.tsv` that the user
+approved and the base carries identically, and for a Go test only up to the
+bound scaled by the reference's CPUs over the runner's. The merger derives
+each excusal itself from the part's own records (docs/PROOFS.md §12). A count,
+a size, a history share, a deadlock-detector trip, a correctness assertion, or
+a failure beside the timing miss gets no row and fails the proof wherever it
+runs. What stays visible where a budget is excused is a bound on what the
+soaks' live `GetRun` reads, which holds on every host: at most one pass over
+the generation's history, in events and in bytes, and a bounded number of
+saved-state objects. It bounds what is read, not what reading it costs: a
+slower decode shows only in the wall-clock numbers, which the reference host
+enforces, and the run page's 5 s has no such counterpart.
 
 Until the nightly workflow runs on GitHub, `make proof-nightly` runs on
 `main`'s tip after every merge that moves `main`, and passes before the next

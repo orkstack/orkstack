@@ -38,9 +38,12 @@ include breaking changes, and each is marked **BREAKING**.
   the reduced ceiling (5 s on 16 CPUs), which missed at 9,485 ms in run
   40571748126 with no row. The archive p95, `Events(0)` and replay checks go
   through the same helper and have no row. The soaks' live `GetRun` also
-  keeps a bound on what it reads, a count that holds on every host: at most
-  110% of the history events of the generation it read, and at most 4
-  saved-state objects. No threshold changed.
+  keeps a bound on what it reads, which holds on every host: at most 110% of
+  the history events and of the history bytes of the generation it read (one
+  pass over it), and at most 4 saved-state objects. It bounds what is read,
+  not what reading costs: the evidence records the cost per thousand events
+  (`ms_per_1000_events`), which only the wall-clock numbers enforce, and the
+  run page's 5 s has no such counterpart. No threshold changed.
 - A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
   `proofrun runner-health`): every part measures its runner for about ten
   seconds before any gate — sequential write and read throughput and fsync
