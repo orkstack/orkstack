@@ -168,6 +168,32 @@ func TestTiming_AFailureOfALaterCleanupIsNotATimingFailure(t *testing.T) {
 	}
 }
 
+// The soaks take a lock before their stack exists, so its release is
+// registered before the helper and runs after the helper's report. It is
+// silent, so a failing test's output still ends with the helper's line; the
+// stack's own teardown, registered after the helper, speaks before it.
+func TestTiming_ASilentCleanupRegisteredBeforeTheHelperLeavesTheTailIntact(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(proof.EnvDir, dir)
+	f := &fakeTB{name: "TestSoak"}
+	released := false
+	f.Cleanup(func() { released = true }) // the lock's release: first registered, last to run
+	timing := proof.TimingBounds(f)
+	f.Cleanup(func() { f.Logf("stack torn down") }) // the stack's teardown: runs before the report
+	timing.Check("getrun-live-p95", 2.5, 2, "unbounded")
+	f.end()
+	if !released {
+		t.Fatal("the cleanup registered before the helper did not run")
+	}
+	last := f.out[len(f.out)-1]
+	if !strings.HasPrefix(last, "error: timing miss: ") {
+		t.Errorf("the failing test's output ends with %q, want the helper's line", last)
+	}
+	if f.out[0] != "log: stack torn down" {
+		t.Errorf("the teardown's output is %q first, want it before the helper's report: %q", f.out[0], f.out)
+	}
+}
+
 func TestTiming_AHeldTestLeavesARecordAndNoFailure(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(proof.EnvDir, dir)

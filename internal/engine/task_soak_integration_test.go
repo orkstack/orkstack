@@ -572,8 +572,10 @@ func analyzeClosedForm(t *testing.T, h *historypb.History, tasks, dispatchedBefo
 // for a flat shape, and the API at the task-ceiling defaults.
 func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int) (*eachSoak, *latencyHandler) {
 	t.Helper()
-	// First, so its cleanup is the last to run: nothing the stack's own
-	// teardown says follows the helper's report (proof.TimingBounds).
+	// Before the stack, so its cleanup runs after the stack's own teardown:
+	// nothing that teardown says follows the helper's report. The one cleanup
+	// registered earlier is the soak lock's release (holdLock), which is
+	// silent and cannot fail (proof.TimingBounds).
 	timing := proof.TimingBounds(t)
 	cfg := s3Config()
 	requireObjectStore(t, cfg)

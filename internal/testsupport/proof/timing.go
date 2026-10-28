@@ -34,9 +34,12 @@ import (
 //     itself said after them. The merger accepts a failure only when
 //     everything after the first such line is such a line.
 //
-// Timing must therefore be created by TimingBounds before anything else the
-// test registers a cleanup for: cleanups run last-in first-out, and the
-// helper's must be the last to run.
+// Timing must therefore be created by TimingBounds before the test registers
+// any cleanup that can log or fail it (a stack's teardown): cleanups run
+// last-in first-out, and the helper's must run after every one of those. A
+// cleanup registered earlier that does neither, like a lock's release, is
+// harmless; one that printed after the helper's lines would leave the merger
+// output it cannot attribute to the helper, and the miss would stay a failure.
 
 // TimingGroup is the directory under ORK_PROOF_DIR a test's record is
 // written to.

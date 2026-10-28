@@ -144,6 +144,9 @@ func holdLock(t *testing.T, ctx context.Context, path string) {
 	}
 	t.Logf("holding the soak lock %s (waited %s for another soak)", path,
 		time.Since(start).Round(time.Millisecond))
+	// Silent, and it cannot fail the test: it may run after the timing
+	// helper's report without disturbing the failure output the proof's merger
+	// reads (proof.TimingBounds).
 	t.Cleanup(func() {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
@@ -256,8 +259,10 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 	configure func(s *chaosStack, cfg *api.Config),
 ) *eachSoak {
 	t.Helper()
-	// First, so its cleanup is the last to run: nothing the stack's own
-	// teardown says follows the helper's report (proof.TimingBounds).
+	// Before the stack, so its cleanup runs after the stack's own teardown:
+	// nothing that teardown says follows the helper's report. The one cleanup
+	// registered earlier is the soak lock's release (soakAlone), which is
+	// silent and cannot fail (proof.TimingBounds).
 	timing := proof.TimingBounds(t)
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
