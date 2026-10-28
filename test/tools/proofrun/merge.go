@@ -2459,6 +2459,7 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) error {
 		}
 		fmt.Fprintln(&b)
 	}
+	writeRunnerHealthSection(&b, r.RunnerHealth)
 	fmt.Fprintf(&b, "## Gates\n\n")
 	var early []gateRecord
 	for _, g := range r.Gates {

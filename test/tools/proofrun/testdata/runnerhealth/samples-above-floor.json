@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "class": "github-hosted/ubuntu24/4cpu",
+  "measured_at": "2026-10-28T05:20:09Z",
+  "seconds": 13.1,
+  "dir": "/home/runner/work/orkstack/orkstack/proof/x-part-integration-2-a1",
+  "runner": {"os": "linux", "cpus": 4, "mem_mb": 16008},
+  "metrics": [
+    {"metric": "disk_write_mb_s", "unit": "MB/s", "value": 203.5, "floor": 40, "below_floor": false, "seconds": 2.5},
+    {"metric": "disk_read_mb_s", "unit": "MB/s", "value": 311, "floor": 40, "below_floor": false, "seconds": 2,
+      "samples": [
+        {"offset_seconds": 2.5, "value": 311, "seconds": 2},
+        {"offset_seconds": 8, "value": 12.5, "seconds": 1},
+        {"offset_seconds": 11, "value": 9.8, "seconds": 1}
+      ]},
+    {"metric": "fsync_p95_ms", "unit": "ms", "value": 6.41, "floor": 60, "below_floor": false, "seconds": 1.5,
+      "samples": [
+        {"offset_seconds": 4.5, "value": 6.41, "seconds": 1.5},
+        {"offset_seconds": 12, "value": 400.25, "seconds": 1}
+      ]},
+    {"metric": "cpu_single_mb_s", "unit": "MB/s", "value": 1398.4, "floor": 300, "below_floor": false, "seconds": 2},
+    {"metric": "cpu_all_mb_s", "unit": "MB/s", "value": 5290.2, "floor": 900, "below_floor": false, "seconds": 2},
+    {"metric": "mem_available_mib", "unit": "MiB", "value": 13190, "floor": 4096, "below_floor": false}
+  ],
+  "verdict": "above-floor"
+}

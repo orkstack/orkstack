@@ -19,12 +19,14 @@ import (
 )
 
 // The runner-health floor (AGENTS.md §11.2). Every CI part measures its
-// runner for about ten seconds before it runs anything — sequential write and
-// read throughput and fsync latency on its work disk, where the object store's
-// and Temporal's volumes live, single-core and all-core CPU throughput, and
-// available memory — and writes runner-health.json beside its records: the
-// measured values, the floors scripts/proof-runner-floors.tsv declares for
-// its runner class, and a verdict. A stack part below a floor stops before
+// runner for about thirteen seconds before it runs anything — sequential write
+// and read throughput and fsync latency on its work disk, where the object
+// store's and Temporal's volumes live, single-core and all-core CPU
+// throughput, and available memory — and writes runner-health.json beside its
+// records: the measured values, the floors scripts/proof-runner-floors.tsv
+// declares for its runner class, and a verdict. Ten of the thirteen seconds
+// are the judged measurements; the other three take informational readings
+// (healthSample) that no floor reads. A stack part below a floor stops before
 // any gate; the merger classifies it runner-degraded, exactly as a part whose
 // runner GitHub lost: its tests get no outcome of the tree, the proof is not
 // a proof of the tree, and that one job may run again. A part above the floor
@@ -40,7 +42,8 @@ const (
 	runnerFloorsFile   = "scripts/proof-runner-floors.tsv"
 	runnerHealthFormat = 1
 	// runnerHealthSeconds is the default measurement budget, split across
-	// the timed measurements by their shares below.
+	// the judged measurements by their shares below. The informational
+	// readings take their own shares on top of it (extraReadShare).
 	runnerHealthSeconds = 10.0
 )
 
@@ -110,6 +113,25 @@ type healthMetric struct {
 	// a test failure a test failure.
 	Error   string  `json:"error,omitempty"`
 	Seconds float64 `json:"seconds,omitempty"`
+	// Samples is every reading of the metric in the order it was taken, the
+	// judged one first. Only the first is judged against the floor; the rest
+	// are informational (healthSample). Absent for a metric read once.
+	Samples []healthSample `json:"samples,omitempty"`
+}
+
+// healthSample is one reading of a metric, taken apart from the others, with
+// when it began. The first reading of a metric is the metric's own value; the
+// later ones are informational: the floor never reads them, a verdict never
+// depends on them, and they feed the next derivation of the floors.
+type healthSample struct {
+	// Offset is when the reading began, in seconds from the start of the
+	// measurement.
+	Offset float64 `json:"offset_seconds"`
+	Value  float64 `json:"value"`
+	// Seconds is how long the reading took.
+	Seconds float64 `json:"seconds,omitempty"`
+	// Error says this reading could not be taken; the value is then 0.
+	Error string `json:"error,omitempty"`
 }
 
 // runnerHealth is runner-health.json.
@@ -294,7 +316,7 @@ func cmdRunnerHealth(args []string) int {
 	class := fs.String("class", "", "the runner class the floors table names (required)")
 	floorsFile := fs.String("floors", runnerFloorsFile, "the floors table")
 	dir := fs.String("dir", "", "the directory to measure the disk in (default: -out's)")
-	seconds := fs.Float64("seconds", runnerHealthSeconds, "the measurement budget, split across the timed metrics")
+	seconds := fs.Float64("seconds", runnerHealthSeconds, "the measurement budget, split across the timed metrics (the informational readings take 30% more)")
 	if err := fs.Parse(args); err != nil || *out == "" || *class == "" || fs.NArg() > 0 || *seconds <= 0 {
 		fmt.Fprintln(os.Stderr, "proofrun runner-health -out FILE -class NAME [-floors FILE] [-dir DIR] [-seconds N]")
 		return 2
@@ -327,8 +349,9 @@ func cmdRunnerHealth(args []string) int {
 	return 0
 }
 
-// writeRunnerHealthSummary is the step's log: one line per metric and the
-// verdict, the lines a part's log and a local proof's setup.log carry.
+// writeRunnerHealthSummary is the step's log: one line per metric, a line of
+// readings after a metric that was read more than once, and the verdict, the
+// lines a part's log and a local proof's setup.log carry.
 func writeRunnerHealthSummary(w io.Writer, h *runnerHealth) {
 	fmt.Fprintf(w, "runner-health: class %s, %d CPUs, %d MB, measured %.1fs in %s\n", h.Class, h.Runner.CPUs, h.Runner.MemMB, h.Seconds, h.Dir)
 	for _, m := range h.Metrics {
@@ -342,40 +365,140 @@ func writeRunnerHealthSummary(w io.Writer, h *runnerHealth) {
 		default:
 			fmt.Fprintf(w, "runner-health: %s %s %s (floor %s)\n", m.Metric, trimFloat(m.Value), m.Unit, trimFloat(*m.Floor))
 		}
+		if len(m.Samples) > 1 {
+			fmt.Fprintf(w, "runner-health: %s readings %s\n", m.Metric, describeReadings(m))
+		}
 	}
 	fmt.Fprintf(w, "runner-health: verdict %s\n", h.Verdict)
 }
 
+// describeReadings is the one line the log and the README carry for a metric
+// read more than once: each reading with when it began, the first marked as
+// the one the floor judges, and the unit on the first value only.
+func describeReadings(m healthMetric) string {
+	parts := make([]string, 0, len(m.Samples))
+	unit := false
+	for i, smp := range m.Samples {
+		var p string
+		switch {
+		case smp.Error != "":
+			p = fmt.Sprintf("unmeasured at +%ss: %s", trimFloat(smp.Offset), smp.Error)
+		case !unit:
+			p = fmt.Sprintf("%s %s at +%ss", trimFloat(smp.Value), m.Unit, trimFloat(smp.Offset))
+			unit = true
+		default:
+			p = fmt.Sprintf("%s at +%ss", trimFloat(smp.Value), trimFloat(smp.Offset))
+		}
+		if i == 0 {
+			p += " (judged)"
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// The informational readings (docs/PROOFS.md §5): two more disk-read bursts
+// and one more fsync reading, each this share of the budget and on top of the
+// judged measurements' own shares, so the default measurement takes about
+// thirteen seconds. They are taken apart from the judged readings, with the
+// other measurements between them, and recorded with their offsets. The floor
+// never reads them.
+const (
+	extraReadBursts = 2
+	extraReadShare  = 0.10
+	extraFsyncShare = 0.10
+)
+
+// healthProbes are the measurements themselves, so a test can script them.
+type healthProbes struct {
+	diskWrite func(path string, budget time.Duration) (wrote int64, mbPerSec, seconds float64, err error)
+	diskRead  func(path string, size int64, budget time.Duration) (mbPerSec, seconds float64, err error)
+	fsync     func(path string, budget time.Duration) (p95ms, seconds float64, err error)
+	cpu       func(workers int, budget time.Duration) (mbPerSec, seconds float64)
+	memory    func() (mib float64, err error)
+}
+
+var hostProbes = healthProbes{measureDiskWrite, measureDiskRead, measureFsync, measureCPU, memAvailableMiB}
+
 // measureRunnerHealth runs every measurement and judges each against the
 // class's floors. Each timed measurement takes its share of budget.
 func measureRunnerHealth(dir, class string, floors healthFloors, budget time.Duration) *runnerHealth {
+	return measureRunnerHealthWith(hostProbes, dir, class, floors, budget)
+}
+
+// measureRunnerHealthWith is the measurement over scripted or real probes.
+// The judged measurements run in the order they always did — write, read,
+// fsync, single-core CPU, all-core CPU, memory — and the informational
+// readings are slotted between and after them: a read burst after each CPU
+// measurement and one more fsync reading last. Each reading's offset is when
+// it began.
+func measureRunnerHealthWith(p healthProbes, dir, class string, floors healthFloors, budget time.Duration) *runnerHealth {
 	started := time.Now()
 	h := &runnerHealth{Format: runnerHealthFormat, Class: class, MeasuredAt: started.UTC().Format(time.RFC3339), Dir: dir, Runner: currentRunner()}
 	classFloors := floors.forClass(class)
 	values := map[string]healthMetric{}
+	readings := map[string][]healthSample{}
 	share := func(metric string) time.Duration {
 		d, _ := healthMetricByName(metric)
 		return time.Duration(float64(budget) * d.Share)
 	}
+	extra := func(share float64) time.Duration { return time.Duration(float64(budget) * share) }
+	// take records a reading that began at offset at.
+	take := func(metric string, at, value, seconds float64, err error) {
+		smp := healthSample{Offset: at, Value: value, Seconds: seconds}
+		if err != nil {
+			smp.Value, smp.Error = 0, err.Error()
+		}
+		readings[metric] = append(readings[metric], smp)
+	}
+	offset := func() float64 { return time.Since(started).Seconds() }
 	probe := filepath.Join(dir, ".runner-health.probe")
+	// The fsync readings write a file of their own: opening one truncates it,
+	// and the probe must outlive them for the later read bursts. The judged
+	// fsync reading used to open the probe itself, truncating what the write
+	// had just left; it measures the same thing (4 KiB appends and fsyncs on
+	// the work disk) and only no longer follows that truncation.
+	fsyncProbe := filepath.Join(dir, ".runner-health.fsync")
 	defer os.Remove(probe)
-	wrote, writeMB, writeSec, err := measureDiskWrite(probe, share("disk_write_mb_s"))
+	defer os.Remove(fsyncProbe)
+	wrote, writeMB, writeSec, err := p.diskWrite(probe, share("disk_write_mb_s"))
 	values["disk_write_mb_s"] = metricOf(writeMB, writeSec, err)
-	readMB, readSec, err := measureDiskRead(probe, wrote, share("disk_read_mb_s"))
-	values["disk_read_mb_s"] = metricOf(readMB, readSec, err)
-	p95, fsyncSec, err := measureFsync(probe, share("fsync_p95_ms"))
-	values["fsync_p95_ms"] = metricOf(p95, fsyncSec, err)
-	single, singleSec := measureCPU(1, share("cpu_single_mb_s"))
+	// readBurst and fsyncReading take one reading and record it; the first of
+	// each is the judged metric, which the caller keeps.
+	readBurst := func(budget time.Duration) healthMetric {
+		at := offset()
+		mb, sec, err := p.diskRead(probe, wrote, budget)
+		take("disk_read_mb_s", at, mb, sec, err)
+		return metricOf(mb, sec, err)
+	}
+	fsyncReading := func(budget time.Duration) healthMetric {
+		at := offset()
+		ms, sec, err := p.fsync(fsyncProbe, budget)
+		take("fsync_p95_ms", at, ms, sec, err)
+		return metricOf(ms, sec, err)
+	}
+	values["disk_read_mb_s"] = readBurst(share("disk_read_mb_s"))
+	values["fsync_p95_ms"] = fsyncReading(share("fsync_p95_ms"))
+	single, singleSec := p.cpu(1, share("cpu_single_mb_s"))
 	values["cpu_single_mb_s"] = metricOf(single, singleSec, nil)
-	all, allSec := measureCPU(runtime.NumCPU(), share("cpu_all_mb_s"))
+	readBurst(extra(extraReadShare))
+	all, allSec := p.cpu(runtime.NumCPU(), share("cpu_all_mb_s"))
 	values["cpu_all_mb_s"] = metricOf(all, allSec, nil)
-	mem, err := memAvailableMiB()
+	for i := 1; i < extraReadBursts; i++ {
+		readBurst(extra(extraReadShare))
+	}
+	fsyncReading(extra(extraFsyncShare))
+	mem, err := p.memory()
 	values["mem_available_mib"] = metricOf(mem, 0, err)
 	for _, d := range healthMetricDefs {
 		m := values[d.Metric]
 		m.Metric, m.Unit = d.Metric, d.Unit
 		m.Value = roundTo(m.Value, d.Decimals)
 		m.Seconds = roundTo(m.Seconds, 3)
+		for _, smp := range readings[d.Metric] {
+			smp.Offset, smp.Seconds, smp.Value = roundTo(smp.Offset, 3), roundTo(smp.Seconds, 3), roundTo(smp.Value, d.Decimals)
+			m.Samples = append(m.Samples, smp)
+		}
 		if floor, ok := classFloors[d.Metric]; ok {
 			f := floor
 			m.Floor = &f
@@ -617,4 +740,26 @@ func memAvailableMiB() (float64, error) {
 		}
 	}
 	return 0, fmt.Errorf("/proc/meminfo has no MemAvailable line")
+}
+
+// writeRunnerHealthSection is the README's "Runner health" section: one line
+// per part attempt that measured its runner, with its verdict and the
+// readings of every metric read more than once. It is information; the
+// verdict is proof.json's, re-derived by the merger. Nothing is written when
+// nothing was measured.
+func writeRunnerHealthSection(w io.Writer, health []partHealth) {
+	if len(health) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "## Runner health\n\nEvery part measures its runner before any gate (docs/PROOFS.md §5), and `runner_health` in `proof.json` carries every value; only the first reading of each metric is judged against the floor (scripts/proof-runner-floors.tsv), and the later readings are informational and feed the next derivation of the floors.\n\n")
+	for _, h := range health {
+		line := fmt.Sprintf("- %s attempt %d (%s): %s, measured %.1fs", h.Part, h.Attempt, h.Class, h.Verdict, h.Seconds)
+		for _, m := range h.Metrics {
+			if len(m.Samples) > 1 {
+				line += "; " + m.Metric + " " + describeReadings(m)
+			}
+		}
+		fmt.Fprintln(w, line)
+	}
+	fmt.Fprintln(w)
 }
