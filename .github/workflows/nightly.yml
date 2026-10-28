@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       fuzz_budget:
-        description: the fuzz lane's whole time, shared by its Fuzz targets (105m; the lane's step is limited to 135m)
+        description: the fuzz lane's whole time, shared by its Fuzz targets (105m; no more than 120m, because the lane's step is limited to 135m)
         default: 105m
 
 permissions:

@@ -378,7 +378,10 @@ phase, and is one CI part (§5):
   `scripts/proof.sh`) disagree, or when the module's `Fuzz` target count times
   the minimum plus the assumed overhead exceeds the budget. A new target
   therefore fails a unit test before it can make a nightly red; the answer is
-  a larger budget with a longer step and job limit, or fewer targets.
+  a larger budget with a longer step and job limit, or fewer targets. The
+  unit test reads the budgets the repository sets, not the one a dispatch
+  supplies: a dispatched `fuzz_budget` above 120 minutes ends in the step's
+  timeout, with no ledger.
   The CI budget is 105 minutes for the 82 targets (`go test -list '^Fuzz'
   ./...`) of this tree: a turn of about 77 seconds, of which the first
   targets fuzz 31 beside the assumed 45 seconds of overhead, and later ones
