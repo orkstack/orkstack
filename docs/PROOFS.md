@@ -305,7 +305,11 @@ differences:
   race repeat's three runs get 90 minutes (`raceTimeoutFor` in `run.go`).
   It is a hang guard and not a budget. `make test-race` gives `go test` the
   same figure for its `RACE_COUNT` (`RACE_MINUTES_PER_RUN`, which a test holds
-  equal to the gate's).
+  equal to the gate's). The plain unit gate gives each package's binary 15
+  minutes (`unitTimeout`) for the same reason: `internal/engine`'s unit suite
+  took 460 s on a 4-vCPU runner and passed ten minutes on a slower one (CI run
+  40749987883). Fifteen stays under the `fast` step's 20, so a hang ends in
+  `go test`'s own trace naming the test.
 - **It sets no `ORK_PROOF_DIR`.** The measurement files the unit gate's tests
   write there are the unit gate's evidence; a measurement taken under the
   detector is evidence of nothing, and must not overwrite them.

@@ -251,6 +251,11 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The unit gate gives each package's test binary a 15-minute `-timeout`
+  instead of `go test`'s default ten. `internal/engine`'s unit suite took
+  460 s on a 4-vCPU CI runner and passed ten minutes on a slower one (CI run
+  40749987883), which failed the gate with every engine test after it left
+  without an outcome. The race gate already had its own (30 minutes per run).
 - The Orker no longer reports a docker CLI that exited 0 as a failure when
   its output pipe drains late. It allowed 100 ms for that drain, so on a
   loaded host a successful `docker create` became `RUNTIME_REFUSED`
