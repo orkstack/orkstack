@@ -331,6 +331,16 @@ func FuzzJSONCodec_RoundTripsAnyMessage(f *testing.F) {
 		if err != nil {
 			t.Fatalf("protojson cannot write what MarshalJSON wrote: %v", err)
 		}
+		// A message JSON cannot hold exactly (an undeclared number in a
+		// google.protobuf.NullValue, which JSON spells null) is outside what
+		// the dialect promises; it must still read the same either way.
+		plain := messageTypes[int(which)%len(messageTypes)]()
+		if err := protojson.Unmarshal(canonical, plain); err != nil {
+			t.Fatalf("protojson cannot read what it wrote: %v", err)
+		}
+		if !proto.Equal(plain, message) {
+			message = plain
+		}
 		for name, text := range map[string][]byte{"short": short, "canonical": canonical} {
 			back := messageTypes[int(which)%len(messageTypes)]()
 			if err := UnmarshalJSON(text, back); err != nil {
