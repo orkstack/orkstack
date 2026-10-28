@@ -895,13 +895,22 @@ recorded as it ran. The deferred tests and specs run in the nightly tier and
 in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
 
-Until the nightly workflow runs on GitHub, `make proof-nightly` runs on
-`main`'s tip after every merge that moves `main`, and passes before the next
-merge starts and before every tag.
+The nightly of `main` is GitHub's: `nightly.yml` runs the nightly tier on
+`main` every day (05:17 UTC) and by dispatch. No local `make proof-nightly`
+follows a merge: that interim rule, in force while the workflow did not run on
+GitHub, was retired on 2026-10-27, once three consecutive nightlies of `main`
+had passed on it. A release tag has its own gate, the pre-release proof above.
+A merge is not held for a nightly of its own: a run speaks only for the commit
+it measured (its `headSha`), never for `main`'s tip, so the nightly of a later
+commit is a later run.
 
-A failing nightly or pre-release proof is a failing `main`: fix it, or revert
-the change that broke it, before anything else merges, and never edit a list,
-a threshold or a measurement file to make it pass. A nightly part whose
+A failing nightly (the latest completed `nightly.yml` run on `main`) or
+pre-release proof is a failing `main`: fix it, or revert the change that broke
+it, before anything else merges, and never edit a list, a threshold or a
+measurement file to make it pass. A red nightly clears only when a later run,
+of the fix or of a commit after it, passes: the fix is the one merge made
+meanwhile, a nightly of it is dispatched once it is pushed (docs/PROOFS.md
+§10), and nothing else merges before that run passes. A nightly part whose
 runner measured below the runner-health floor
 (`scripts/proof-runner-floors.tsv`) before any test ran is a runner failure,
 not a failing `main`: the proof records that part as `runner-degraded`, is
@@ -1144,8 +1153,9 @@ the reference for what each tier runs.
   `quarantined-fail`, never as a pass, and its entry carries an owner, a
   reason and a review date. An entry excuses nothing until `main` carries it,
   and nothing once its review date has passed.
-- While the interim rule holds, `make merge-check` refuses a merge until a
-  nightly proof of `main`'s tip has passed (`NIGHTLY=`).
+- `make merge-check` asks for no nightly proof: the nightly of `main` is
+  GitHub's (§11). Given one (`NIGHTLY=`), it refuses the merge unless that
+  proof is a passing nightly proof of `main`'s tip.
 - A release tag is created only through `make release-tag` or `release.yml`,
   and both refuse without a passing pre-release proof of the exact commit.
 - A skip is never a pass. The ledgers list every test the binaries report; a

@@ -364,7 +364,7 @@ func TestVerify_ADegradedNightlyPartIsNamed(t *testing.T) {
 		r.Ineligible = append(r.Ineligible, "part integration:2 ran on a degraded runner")
 		r.Gates[0].Result = "fail"
 	})
-	p := strings.Join(nightlyProofProblems(mainNightlyList, dir, "main-tree"), "\n")
+	p := strings.Join(nightlyProofProblems(dir, "main-tree"), "\n")
 	if !strings.Contains(p, "the nightly proof: part integration:2 ran on a degraded runner (attempt 1, github-hosted/ubuntu24/4cpu: disk_write_mb_s 12.3 MB/s, floor 40): it is not a proof of the tree; re-run that job alone") {
 		t.Errorf("problems = %q", p)
 	}

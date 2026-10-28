@@ -97,9 +97,11 @@ func TestVerify_ADownloadedCIProofIsMergeEvidence(t *testing.T) {
 	if code := cmdVerify([]string{"-proof", full, "-nightly", nightly}); code != 0 {
 		t.Fatalf("verify refused a CI full proof of HEAD's tree and a CI nightly proof of main's tip: exit %d", code)
 	}
-	// Without the nightly proof, main's non-empty list refuses the merge.
-	if code := cmdVerify([]string{"-proof", full}); code != 1 {
-		t.Errorf("verify without NIGHTLY= exited %d, want 1", code)
+	// Without a nightly proof the merge is not refused, whatever main's
+	// lists hold: the nightly of main is GitHub's, and merge-check verifies a
+	// nightly proof only when it is given one (AGENTS.md §11).
+	if code := cmdVerify([]string{"-proof", full}); code != 0 {
+		t.Errorf("verify without NIGHTLY= exited %d, want 0: main's non-empty nightly list asks for no proof now", code)
 	}
 	// A CI full proof of another tree is no evidence for HEAD.
 	other := ciMerged(t, tierFull, mainTree, mainTip)
@@ -117,5 +119,22 @@ func TestVerify_ADownloadedCIProofIsMergeEvidence(t *testing.T) {
 	}
 	if code := cmdVerify([]string{"-proof", full, "-nightly", nightly}); code != 1 {
 		t.Errorf("verify after main moved exited %d, want 1", code)
+	}
+}
+
+// A nightly proof asked for by name must exist: `-nightly ""` is a proof
+// directory that is not there, never "no proof asked for". merge-check passes
+// the flag only when NIGHTLY is set, but a script that passes it from an unset
+// variable must not make the check it asked for vanish.
+func TestVerify_AnEmptyNightlyValueIsNotAnAbsentFlag(t *testing.T) {
+	dir, mainTip, _, headTree := ciCandidateRepo(t)
+	full := ciMerged(t, tierFull, headTree, mainTip)
+	t.Chdir(dir)
+	quiet(t)
+	if code := cmdVerify([]string{"-proof", full}); code != 0 {
+		t.Fatalf("verify with no -nightly flag exited %d, want 0", code)
+	}
+	if code := cmdVerify([]string{"-proof", full, "-nightly", ""}); code != 1 {
+		t.Errorf("verify with an empty -nightly exited %d, want 1: the check it asked for was skipped", code)
 	}
 }
