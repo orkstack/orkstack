@@ -197,10 +197,12 @@ include breaking changes, and each is marked **BREAKING**.
   (`"\0"`) is refused at load too, naming the key, instead of failing partway
   through applying the file. Found by reading `Load` while stating
   `FuzzLoad_AValueTheFileSetsIsOneItsKindReads`.
-- A run index key's stamp is read only in the spelling the writer uses. The run,
-  recent and origin index parsers used `time.Parse`, which takes a comma as the
-  decimal separator, so two keys named one record and the cursor a paged scan
-  resumes from was a key the scan had never listed. Found by the fuzz engine
+- A key is read only in the spelling the writer uses. The run, recent and origin
+  index parsers used `time.Parse` for their stamp, which takes a comma as the
+  decimal separator, and the attempt and task-log key parsers used
+  `strconv.ParseInt` for their zero-padded counters, which takes a leading plus
+  sign, so two keys named one record and the cursor a paged scan resumes from
+  was a key the scan had never listed. Both were written by the fuzz engine
   (`FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites`).
 - A registry's bearer challenge is read as bytes. Splitting it ranged over
   runes, which rewrites a byte that is not UTF-8 as U+FFFD, so the token realm

@@ -3,6 +3,7 @@ package artifacts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -554,5 +555,40 @@ func TestRunAttemptReader_GetAttemptReadsBackWhatWasPutAndMissingIsNotFound(t *t
 				t.Fatalf("GetAttempt of a missing record = %v, want ErrNotFound", err)
 			}
 		})
+	}
+}
+
+// Two keys never name one record. strconv.ParseInt takes a leading plus sign,
+// so a zero-padded counter written with one parsed to the attempt (or the log
+// chunk) whose key is spelled without it. A fixed-width segment is digits.
+func TestParseKeys_AFixedWidthCounterIsDigitsOnly(t *testing.T) {
+	ref := AttemptRef{RunID: "ork-1-1", TaskID: "build", Attempt: 10}
+	key, err := AttemptKey(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ParseAttemptKey(key); !ok {
+		t.Fatalf("the writer's own key %q does not parse", key)
+	}
+	signed := strings.Replace(key, "/0000000010.json", "/+000000010.json", 1)
+	if signed == key {
+		t.Fatalf("the key %q does not end in the attempt counter", key)
+	}
+	if parsed, ok := ParseAttemptKey(signed); ok {
+		t.Errorf("ParseAttemptKey(%q) = %+v; the writer spells it %q", signed, parsed, key)
+	}
+
+	logRef := LogRef{RunID: "ork-1-1", TaskID: "build", Attempt: 1}
+	chunk, err := LogChunkKey(logRef, 7, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digits := fmt.Sprintf("%0*d", logSeqWidth, 7)
+	if !strings.HasSuffix(chunk, digits) {
+		t.Fatalf("the chunk key %q does not end in the counter %q", chunk, digits)
+	}
+	signedChunk := strings.TrimSuffix(chunk, digits) + "+" + digits[1:]
+	if parsed, seq, _, ok := ParseLogChunkKey(signedChunk); ok {
+		t.Errorf("ParseLogChunkKey(%q) = %+v, %d; the writer spells it %q", signedChunk, parsed, seq, chunk)
 	}
 }
