@@ -24,10 +24,14 @@ import (
 // binds a real directory with a real container.
 //
 // Flags (files under dir): hang (its content N: the first N `docker run`
-// invocations never answer, and the shim waits to be killed), delay (seconds
-// every later `run` waits before it reaches the daemon), fail (a `run` that
-// the daemon refuses, as it refuses an unshared path). `calls` records every
-// invocation and `runs` counts the `run`s.
+// invocations never answer, and the shim waits to be killed), timeouterr (its
+// content N: the first N `run`s answer at once with the daemon's own deadline
+// error), delay (seconds every later `run` waits before it reaches the
+// daemon), answer (every `run` that is not hung answers success itself, as a
+// daemon that has recovered does, and never reaches the real daemon), fail (a
+// `run` that the daemon refuses, as it refuses an unshared path), inspecthang
+// (`image inspect` never answers). `calls` records every invocation and `runs`
+// counts the `run`s.
 type slowDockerShim struct {
 	t   *testing.T
 	dir string
@@ -40,10 +44,15 @@ func newSlowDockerShim(t *testing.T, realDocker string) *slowDockerShim {
 	script := `#!/bin/sh
 S='` + dir + `'
 echo "$*" >> "$S/calls"
+if [ "$1" = image ] && [ -e "$S/inspecthang" ]; then exec sleep 300; fi
 if [ "$1" = run ]; then
   n=0; if [ -e "$S/runs" ]; then n=$(cat "$S/runs"); fi
   n=$((n+1)); echo "$n" > "$S/runs"
   if [ -e "$S/hang" ] && [ "$n" -le "$(cat "$S/hang")" ]; then exec sleep 300; fi
+  if [ -e "$S/timeouterr" ] && [ "$n" -le "$(cat "$S/timeouterr")" ]; then
+    echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
+  fi
+  if [ -e "$S/answer" ]; then exit 0; fi
   if [ -e "$S/delay" ]; then sleep "$(cat "$S/delay")"; fi
   if [ -e "$S/fail" ]; then echo "docker: Error response from daemon: bind source path does not exist" >&2; exit 125; fi
 fi
@@ -110,11 +119,20 @@ func (s *slowDockerShim) probeContainers() (ran, removed []string) {
 // Under load a daemon took more than the old 30 s control timeout to start the
 // probe's container, the probe was killed, and the Orker refused to start
 // saying its work root was not bind-mountable. A work root is bindable or it is
-// not; a slow daemon says nothing about it. The cases are the three answers
-// the probe now has: a slow start that finishes in its budget boots, one that
-// overruns once boots on the retry, one that never answers refuses boot with
-// its own reason, and a container that ran and was refused is still the work
-// root's fault and is not retried.
+// not; a slow daemon says nothing about it. The cases are the answers the
+// probe now has: a slow start that finishes in its budget boots on the real
+// daemon with a real bind, one that overruns once boots on the retry, a daemon
+// that never answers (the image inspect, or the run), or that keeps answering
+// with its own deadline error, refuses boot with its own reason, and a
+// container the daemon refused is still the work root's fault and is not
+// retried.
+//
+// Only the first case needs the real daemon to be fast, and its budget is 90 s,
+// nearly three times the longest start the incident behind the budget saw
+// (32 s), so it fails for a daemon that is slower still and not for a busy
+// host. The case that overruns once has the shim answer the retry itself: its
+// budget is what the hung first attempt costs in wall time, and a real start
+// inside a budget that short would measure the host, not the probe.
 func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *testing.T) {
 	requireDocker(t)
 	realDocker, err := exec.LookPath("docker")
@@ -147,11 +165,21 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 	}{
 		{
 			name:  "a start slower than usual but inside its budget boots without a retry",
-			flags: map[string]string{"delay": "2"}, budget: time.Minute, wantRuns: 1,
+			flags: map[string]string{"delay": "2"}, budget: 90 * time.Second, wantRuns: 1,
 		},
 		{
 			name:  "a start that overruns once boots on the retry",
-			flags: map[string]string{"hang": "1"}, budget: 10 * time.Second, wantRuns: 2, wantRemoved: 1,
+			flags: map[string]string{"hang": "1", "answer": ""}, budget: 5 * time.Second, wantRuns: 2, wantRemoved: 1,
+		},
+		{
+			name:  "a daemon whose own deadline error repeats refuses boot as slow, not as unbindable",
+			flags: map[string]string{"timeouterr": "9"}, budget: time.Minute,
+			wantRuns: 2, wantReason: orker.ReasonBindProbeTimedOut, wantRemoved: 2,
+		},
+		{
+			name:  "a daemon that never answers the image inspect refuses boot as slow, not as a missing image",
+			flags: map[string]string{"inspecthang": ""}, budget: 2 * time.Second,
+			wantRuns: 0, wantReason: orker.ReasonBindProbeTimedOut,
 		},
 		{
 			name:  "a daemon that never starts it refuses boot as slow, not as unbindable",
@@ -192,7 +220,7 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 				WorkRoot: workRoot,
 			})
 			t.Cleanup(activities.Close)
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 			defer cancel()
 
 			err = activities.Boot(ctx)

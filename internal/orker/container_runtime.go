@@ -211,11 +211,14 @@ var ErrNotBindable = errors.New("path is not bind-mountable by the container run
 // work root can be bound.
 var ErrProbeImageUnavailable = errors.New("the bind probe image is unavailable")
 
-// ErrProbeTimedOut reports that the container daemon did not run the boot-time
-// bind probe's container within the probe's budget, on every attempt it was
-// given. It is distinct from ErrNotBindable: a daemon that is slow under load
-// says nothing about whether the work root can be bound, which only a probe
-// container that ran and exited non-zero can say.
+// ErrProbeTimedOut reports that the container daemon was too slow for the
+// boot-time bind probe: it did not answer the probe's image inspect within the
+// probe's budget, or it did not start the probe's container within it on every
+// attempt it was given, whether it said nothing or said its own deadline had
+// passed. It is distinct from ErrNotBindable: a daemon that is slow under load
+// says nothing about whether the work root can be bound, which only the
+// daemon's refusal of the bind, or a probe container that exited non-zero
+// within its budget, can say.
 var ErrProbeTimedOut = errors.New("the bind probe timed out")
 
 // ReapIncompleteError is Reap's report that it removed every orphan it could

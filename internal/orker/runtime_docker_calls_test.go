@@ -21,8 +21,14 @@ import (
 // exitcode (Wait's status), created (`inspect {{.State.Status}}` answers
 // "created" while it exists), rmfail-<id>, psfail, versionfail, runfail,
 // slowruns (its content N: the first N `run` invocations hang for 30 s, as a
-// daemon that is slow to start a container does). `run` also counts itself
-// into the runs file and, once counted, touches runstarted.
+// daemon that is slow to start a container does), timeoutruns (its content N:
+// the first N `run` invocations answer at once with the daemon's own deadline
+// error, as a daemon whose containerd cannot start the shim does), runother (a
+// refusal that is neither a bind nor a deadline), runexit (the container ran
+// and exited 3), runfailsrc (a refusal that quotes the bind source path),
+// inspecthang (`image inspect` hangs for 30 s) and rmfailall (every `rm` is
+// refused). `run` also counts itself into the runs file and, once counted,
+// touches runstarted.
 type countingDocker struct {
 	t   *testing.T
 	dir string
@@ -37,6 +43,7 @@ S=` + shellQuote(dir) + `
 echo "$*" >> "$S/calls"
 case "$1" in
   image)
+    if [ -e "$S/inspecthang" ]; then exec sleep 30; fi
     if [ -e "$S/present" ]; then
       echo '{"Id":"sha256:abc","Os":"linux","Architecture":"amd64"}'
       exit 0
@@ -56,6 +63,7 @@ case "$1" in
     if [ -e "$S/psfail" ]; then echo "daemon unreachable" >&2; exit 1; fi
     echo c1; echo c2; echo c3 ;;
   rm)
+    if [ -e "$S/rmfailall" ]; then echo "Error response from daemon: removal of container $4 is already in progress" >&2; exit 1; fi
     if [ -e "$S/rmfail-$4" ]; then echo "removal of $4 is already in progress" >&2; exit 1; fi
     exit 0 ;;
   version)
@@ -67,6 +75,16 @@ case "$1" in
     n=$((n+1)); echo "$n" > "$S/runs"
     touch "$S/runstarted"
     if [ -e "$S/runfail" ]; then echo "docker: Error response from daemon: bind source path does not exist" >&2; exit 125; fi
+    if [ -e "$S/runother" ]; then echo "docker: Error response from daemon: no space left on device" >&2; exit 125; fi
+    if [ -e "$S/runexit" ]; then exit 3; fi
+    if [ -e "$S/runfailsrc" ]; then
+      src=""
+      for a in "$@"; do case "$a" in type=bind,source=*) src=${a#type=bind,source=}; src=${src%%,destination=*} ;; esac; done
+      echo "docker: Error response from daemon: error while creating mount source path '$src': permission denied" >&2; exit 125
+    fi
+    if [ -e "$S/timeoutruns" ] && [ "$n" -le "$(cat "$S/timeoutruns")" ]; then
+      echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
+    fi
     if [ -e "$S/slowruns" ] && [ "$n" -le "$(cat "$S/slowruns")" ]; then exec sleep 30; fi
     exit 0 ;;
   *) exit 1 ;;

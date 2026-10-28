@@ -94,7 +94,7 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 		{ReasonBindProbeTimedOut, CategoryInfrastructureError, true,
 			"a slow daemon says nothing about the work root; the next boot may find it fast"},
 		{ReasonWorkdirNotBindable, CategoryInfrastructureError, false,
-			"the probe container ran and failed to bind: a host fact a restart does not change"},
+			"the daemon refused the bind, in its own words: a host fact a restart does not change"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.reason, func(t *testing.T) {

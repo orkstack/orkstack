@@ -105,8 +105,10 @@ const (
 // bound (WORKDIR_NOT_BINDABLE).
 const ReasonBindProbeImageUnavailable = "BIND_PROBE_IMAGE_UNAVAILABLE"
 
-// ReasonBindProbeTimedOut is a boot refusal: the container daemon did not start
-// the bind probe's container within the probe's budget, on two attempts. A
+// ReasonBindProbeTimedOut is a boot refusal: the container daemon was too slow
+// for the bind probe — it did not answer the probe's image inspect within the
+// probe's budget, or it did not start the probe's container within it on two
+// attempts, whether it said nothing or said its own deadline had passed. A
 // daemon too slow to start a container says nothing about whether the work
 // root can be bound (WORKDIR_NOT_BINDABLE), and naming it as unbindable sends
 // an operator to the wrong fix.

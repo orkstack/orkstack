@@ -74,19 +74,24 @@ func probeContainerNames(t *testing.T, calls []string) (ran, removed []string) {
 // TestDockerRuntime_ProbeBindableClassifiesTheRun is the classification of the
 // boot bind probe, one row per way the probe's `docker run` can end:
 //
-//   - the container ran and exited non-zero: the work root cannot be bound,
-//     a fact a second attempt cannot change, so it is ErrNotBindable and the
-//     probe is not run again;
-//   - the daemon did not start the container within the probe's own budget: a
-//     slow daemon says nothing about the work root, so the probe is tried once
-//     more, and an Orker that still cannot start it is told the daemon was
-//     slow (ErrProbeTimedOut), never that the path is unbindable.
+//   - it ends within the budget with a failure that is not about time (the
+//     container exited non-zero, or the daemon refused the bind in its own
+//     words, or refused it for another reason): that is the daemon's answer
+//     about the work root, a fact a second attempt cannot change, so it is
+//     ErrNotBindable and the probe is not run again;
+//   - it does not end within the probe's own budget, or ends sooner with the
+//     daemon's own deadline error: a slow daemon says nothing about the work
+//     root, so the probe is tried once more, and an Orker that still cannot
+//     start it is told the daemon was slow (ErrProbeTimedOut), never that the
+//     path is unbindable. The words of a deadline are looked for in what the
+//     daemon said, never in the path it quoted.
 func TestDockerRuntime_ProbeBindableClassifiesTheRun(t *testing.T) {
 	tests := []struct {
 		name     string
 		flags    map[string]string
 		budget   time.Duration
-		wantErr  error // nil: the probe passes
+		rootName string // the work root's directory name; "" is a plain temporary one
+		wantErr  error  // nil: the probe passes
 		wantRuns int
 		// wantRemoved is how many probe containers were force-removed: one
 		// per attempt that overran, so an attempt the daemon is still
@@ -95,8 +100,30 @@ func TestDockerRuntime_ProbeBindableClassifiesTheRun(t *testing.T) {
 	}{
 		{name: "the container starts and exits zero", budget: time.Minute, wantRuns: 1},
 		{
-			name: "the container ran and exited non-zero", flags: map[string]string{"runfail": ""},
+			name: "the container ran and exited non-zero", flags: map[string]string{"runexit": ""},
 			budget: time.Minute, wantErr: ErrNotBindable, wantRuns: 1,
+		},
+		{
+			name: "the daemon refuses the bind in its own words", flags: map[string]string{"runfail": ""},
+			budget: time.Minute, wantErr: ErrNotBindable, wantRuns: 1,
+		},
+		{
+			name: "the daemon refuses the run for another reason", flags: map[string]string{"runother": ""},
+			budget: time.Minute, wantErr: ErrNotBindable, wantRuns: 1,
+		},
+		{
+			name:  "a refusal that quotes a path with timeout in its name is still the work root's",
+			flags: map[string]string{"runfailsrc": ""}, budget: time.Minute, rootName: "timeout-work-root",
+			wantErr: ErrNotBindable, wantRuns: 1,
+		},
+		{
+			name:  "the daemon answers with its own deadline error once and the retry passes",
+			flags: map[string]string{"timeoutruns": "1"}, budget: time.Minute, wantRuns: 2, wantRemoved: 1,
+		},
+		{
+			name:  "the daemon answers with its own deadline error twice, and never a third attempt",
+			flags: map[string]string{"timeoutruns": "9"}, budget: time.Minute,
+			wantErr: ErrProbeTimedOut, wantRuns: 2, wantRemoved: 2,
 		},
 		{
 			name: "one overrun and the retry passes", flags: map[string]string{"slowruns": "1"},
@@ -121,7 +148,15 @@ func TestDockerRuntime_ProbeBindableClassifiesTheRun(t *testing.T) {
 			}
 			runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: tt.budget}
 
-			err := runtime.ProbeBindable(context.Background(), t.TempDir())
+			root := t.TempDir()
+			if tt.rootName != "" {
+				root = filepath.Join(root, tt.rootName)
+				if err := os.Mkdir(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			err := runtime.ProbeBindable(context.Background(), root)
 
 			if tt.wantErr == nil && err != nil {
 				t.Fatalf("ProbeBindable = %v; want nil", err)
@@ -179,6 +214,120 @@ func TestDockerRuntime_ProbeBindableTimeoutNamesTheDaemonAndTheSetting(t *testin
 	}
 }
 
+// TestDockerRuntime_ProbeBindableReportsAContainerItCouldNotRemove: the
+// force-removal of an attempt that overran is best effort, but a removal the
+// daemon refuses is a fact an operator wants beside the refusal, not one
+// thrown away: the leftover container is the thing to look for.
+func TestDockerRuntime_ProbeBindableReportsAContainerItCouldNotRemove(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("slowruns", "9")
+	fake.set("rmfailall", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
+
+	err := runtime.ProbeBindable(context.Background(), t.TempDir())
+
+	if !errors.Is(err, ErrProbeTimedOut) {
+		t.Fatalf("ProbeBindable = %v; want ErrProbeTimedOut", err)
+	}
+	ran, _ := probeContainerNames(t, fake.calls())
+	for _, want := range append([]string{"could not be removed", "already in progress"}, ran...) {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not contain %q", err, want)
+		}
+	}
+	if got := fake.runs(); got != 2 {
+		t.Errorf("docker run was invoked %d times; a removal that failed does not end the probe's retry", got)
+	}
+}
+
+// TestDockerRuntime_ProbeBindableTimeoutQuotesTheDaemonsDeadlineError: an
+// attempt the daemon ended with its own deadline error did not overrun the
+// budget, so the refusal quotes what the daemon said as well as the budget.
+func TestDockerRuntime_ProbeBindableTimeoutQuotesTheDaemonsDeadlineError(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("timeoutruns", "9")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
+
+	err := runtime.ProbeBindable(context.Background(), t.TempDir())
+
+	if !errors.Is(err, ErrProbeTimedOut) {
+		t.Fatalf("ProbeBindable = %v; want ErrProbeTimedOut", err)
+	}
+	for _, want := range []string{"context deadline exceeded", BindProbeTimeoutVar, "2 attempts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not contain %q", err, want)
+		}
+	}
+}
+
+// TestDockerRuntime_ProbeBindableSlowImageInspectIsTheDaemonsNotTheImages: the
+// probe asks the daemon whether its image is local before it runs it. A daemon
+// that does not answer that within the probe's budget is slow; reading the
+// silence as "the image is absent" would send a daemon that is merely slow to
+// a registry, and on a host with no registry to a refusal that blames the image.
+func TestDockerRuntime_ProbeBindableSlowImageInspectIsTheDaemonsNotTheImages(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("inspecthang", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
+
+	err := runtime.ProbeBindable(context.Background(), t.TempDir())
+
+	if !errors.Is(err, ErrProbeTimedOut) {
+		t.Fatalf("ProbeBindable = %v; want ErrProbeTimedOut", err)
+	}
+	for name, sentinel := range map[string]error{"ErrNotBindable": ErrNotBindable, "ErrProbeImageUnavailable": ErrProbeImageUnavailable} {
+		if errors.Is(err, sentinel) {
+			t.Errorf("a daemon that did not answer image inspect is classified %s: %v", name, err)
+		}
+	}
+	for _, want := range []string{"image inspect", probeBudget.String(), BindProbeTimeoutVar, "daemon"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not contain %q", err, want)
+		}
+	}
+	calls := fake.calls()
+	if n := countPrefix(calls, "pull") + countPrefix(calls, "run"); n != 0 {
+		t.Errorf("calls = %q; a daemon that did not answer image inspect is neither asked to pull nor to run", calls)
+	}
+}
+
+// TestDockerRuntime_ProbeBindableStopsWhenTheContextEndsDuringTheInspect: an
+// Orker told to stop while the daemon is silent on image inspect returns the
+// context's own error, not an image or a slow-daemon finding.
+func TestDockerRuntime_ProbeBindableStopsWhenTheContextEndsDuringTheInspect(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("inspecthang", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Hour}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runtime.ProbeBindable(ctx, t.TempDir()) }()
+	waitForFile(t, filepath.Join(fake.dir, "calls"))
+	cancel()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("ProbeBindable did not return within 30 s of its context being canceled")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ProbeBindable = %v; want the context's own error", err)
+	}
+	for name, sentinel := range map[string]error{
+		"ErrNotBindable": ErrNotBindable, "ErrProbeImageUnavailable": ErrProbeImageUnavailable, "ErrProbeTimedOut": ErrProbeTimedOut,
+	} {
+		if errors.Is(err, sentinel) {
+			t.Errorf("a canceled probe is classified %s: %v", name, err)
+		}
+	}
+}
+
 // TestDockerRuntime_ProbeBindableStopsWhenTheContextEnds: an Orker told to
 // stop while its probe runs is neither slow-daemon nor unbindable. It returns
 // the context's own error at once, runs the probe no second time, and a
@@ -229,8 +378,16 @@ func TestBoot_NamesTheBindProbeOutcome(t *testing.T) {
 	}{
 		{name: "a slow start that the retry gets through boots", flags: map[string]string{"slowruns": "1"}, budget: probeBudget},
 		{
-			name: "a container that ran and failed", flags: map[string]string{"runfail": ""}, budget: time.Minute,
+			name: "a daemon that refuses the bind", flags: map[string]string{"runfail": ""}, budget: time.Minute,
 			wantReason: ReasonWorkdirNotBindable, notReason: ReasonBindProbeTimedOut,
+		},
+		{
+			name: "a daemon whose own deadline error repeats", flags: map[string]string{"timeoutruns": "9"}, budget: time.Minute,
+			wantReason: ReasonBindProbeTimedOut, notReason: ReasonWorkdirNotBindable,
+		},
+		{
+			name: "a daemon that does not answer the image inspect", flags: map[string]string{"inspecthang": ""}, budget: probeBudget,
+			wantReason: ReasonBindProbeTimedOut, notReason: ReasonBindProbeImageUnavailable,
 		},
 		{
 			name: "a daemon that stays slow", flags: map[string]string{"slowruns": "9"}, budget: probeBudget,

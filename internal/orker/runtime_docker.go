@@ -225,12 +225,15 @@ func (d *DockerRuntime) LoadLayout(ctx context.Context, layoutPath, digest strin
 	return info, nil
 }
 
-func (d *DockerRuntime) imagePresent(ctx context.Context, ref string) (bool, error) {
-	code, _, err := d.control(ctx, "image", "inspect", "--format", "{{.Id}}", ref)
-	if err != nil {
-		return false, err
+// imagePresent asks the daemon whether ref is local, giving it `within` to
+// answer. overran reports that it did not: a daemon that is silent has not
+// said the image is absent, and the caller must not read it as saying so.
+func (d *DockerRuntime) imagePresent(ctx context.Context, within time.Duration, ref string) (present, overran bool, err error) {
+	code, _, overran, err := d.runWithin(ctx, within, "image", "inspect", "--format", "{{.Id}}", ref)
+	if overran || err != nil {
+		return false, overran, err
 	}
-	return code == 0, nil
+	return code == 0, false, nil
 }
 
 // inspectImage reads the platform facts the commit records as audit data. An
@@ -847,11 +850,14 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 // names the container and not the cause.
 //
 // The probe has three distinct ways to fail, and each is reported as its own
-// thing: the root cannot be bound (ErrNotBindable: the probe container ran
-// and exited non-zero, or no probe directory could be made), the probe's image
-// is not available (ErrProbeImageUnavailable), and the daemon did not start
-// the probe container within the probe's budget (ErrProbeTimedOut, after one
-// retry). An Orker that is stopped meanwhile gets the context's own error.
+// thing: the root cannot be bound (ErrNotBindable: the daemon refused the
+// probe's run, or its container exited non-zero, within the probe's budget and
+// for a reason that is not a deadline; or no probe directory could be made),
+// the probe's image is not available (ErrProbeImageUnavailable), and the
+// daemon was too slow (ErrProbeTimedOut): it did not answer the image inspect
+// within the probe's budget, or did not start the probe container within it
+// on either of two attempts, whether it said nothing or said its own deadline
+// had passed. An Orker that is stopped meanwhile gets the context's own error.
 func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 	probe, err := os.MkdirTemp(root, "ork-bindprobe-*")
 	if err != nil {
@@ -859,13 +865,25 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 	}
 	defer func() { _ = os.RemoveAll(probe) }()
 
+	// Every step of the probe that waits on the daemon is bounded by the
+	// probe's budget and not by controlTimeout, which is meant for
+	// bookkeeping: under load a daemon has needed more than 30 s to answer
+	// even the cheapest question, and a daemon that is silent has told the
+	// probe nothing about the image or the root.
+	budget := d.bindProbeTimeout()
+
 	// The probe image is fetched first, under the PULL timeout rather than the
 	// probe run's budget an implicit pull would spend, and a failure to fetch
 	// it is its own error: a slow or rate-limited registry is not a work
 	// root the daemon cannot bind, and naming it as one sends an operator to
 	// the wrong fix.
-	present, err := d.imagePresent(ctx, bindProbeImage)
-	if err != nil {
+	present, overran, err := d.imagePresent(ctx, budget, bindProbeImage)
+	switch {
+	case ctx.Err() != nil:
+		return fmt.Errorf("probe bind of %s interrupted: %w", root, ctx.Err())
+	case overran:
+		return probeTimedOut(root, fmt.Sprintf("answer `docker image inspect %s` within %s", bindProbeImage, budget), nil, nil)
+	case err != nil:
 		return fmt.Errorf("%w: the bind probe image %s: %w", ErrProbeImageUnavailable, bindProbeImage, err)
 	}
 	if !present {
@@ -881,14 +899,12 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 	}
 
 	// The run is the one step of the probe that waits on the daemon to create,
-	// start and tear down a container, and under load that has taken longer
-	// than the control timeout (a daemon needed 32 s to start a container
-	// that exits at once). It therefore has a budget of its own, and an
-	// attempt that overruns it is tried once more: whether the daemon is slow
-	// is a fact about the moment, and whether the root binds is not.
-	// A container that RAN and exited non-zero is the only answer that says
-	// the root cannot be bound, and it is final.
-	budget := d.bindProbeTimeout()
+	// start and tear down a container. An attempt that overruns the budget, or
+	// that the daemon ends with a deadline error of its own, is tried once
+	// more: whether the daemon is slow is a fact about the moment, and whether
+	// the root binds is not. Any other failure within the budget is the
+	// daemon's answer about the root, and it is final.
+	var attempts, leftovers []string
 	for attempt := 1; attempt <= bindProbeAttempts; attempt++ {
 		name := containerName("bindprobe")
 		code, out, overran, err := d.runWithin(ctx, budget, "run", "--rm",
@@ -900,6 +916,7 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 			"--mount", fmt.Sprintf("type=bind,source=%s,destination=/probe,readonly", probe),
 			"--entrypoint", "/bin/true",
 			bindProbeImage)
+		answer := strings.TrimSpace(out)
 		switch {
 		case err == nil && code == 0:
 			return nil
@@ -908,21 +925,60 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 			// unbindable root; Boot reports it as the interruption it is.
 			return fmt.Errorf("probe bind of %s interrupted: %w", root, ctx.Err())
 		case overran:
-			// The killed CLI may have left its container half-made, or the
-			// daemon may still be starting it. Remove it on a context of its
-			// own so the retry does not run beside it.
-			_ = d.Remove(context.WithoutCancel(ctx), ContainerID(name))
+			attempts = append(attempts, fmt.Sprintf("attempt %d: no answer within %s", attempt, budget))
 		case err != nil:
 			return fmt.Errorf("%w: probe bind of %s: %w", ErrNotBindable, root, err)
+		case !isUnbindable(answer) && saysDeadline(answer, probe, root):
+			attempts = append(attempts, fmt.Sprintf("attempt %d: the daemon answered %q", attempt, truncateString(answer, 300)))
 		default:
-			return fmt.Errorf("%w: probe bind of %s: docker exited %d: %s",
-				ErrNotBindable, root, code, strings.TrimSpace(out))
+			return fmt.Errorf("%w: probe bind of %s: docker exited %d: %s", ErrNotBindable, root, code, answer)
+		}
+		// The attempt may have left its container half-made, or the daemon may
+		// still be starting it. Removing it is best effort, on a context of
+		// its own, and a removal the daemon refuses is reported with the
+		// refusal: that container is what an operator looks for.
+		if err := d.Remove(context.WithoutCancel(ctx), ContainerID(name)); err != nil {
+			leftovers = append(leftovers, err.Error())
 		}
 	}
-	return fmt.Errorf("%w: the container daemon did not start the probe container within %s on each of %d attempts. "+
-		"That does not show that %s cannot be bound, only that the daemon is slow or unresponsive; "+
-		"raise %s if it is only slow",
-		ErrProbeTimedOut, budget, bindProbeAttempts, root, BindProbeTimeoutVar)
+	return probeTimedOut(root, fmt.Sprintf("start the probe container within %s on each of %d attempts", budget, bindProbeAttempts),
+		attempts, leftovers)
+}
+
+// probeTimedOut is the refusal of a daemon that was too slow: what it did not
+// do, what each attempt saw, and any container that could not be removed. It
+// says in the same breath that the work root is not the finding, and names the
+// setting that raises the budget.
+func probeTimedOut(root, didNot string, attempts, leftovers []string) error {
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "the container daemon did not %s", didNot)
+	if len(attempts) > 0 {
+		fmt.Fprintf(&msg, " (%s)", strings.Join(attempts, "; "))
+	}
+	fmt.Fprintf(&msg, ". That does not show that %s cannot be bound, only that the daemon is slow or unresponsive; "+
+		"raise %s if it is only slow", root, BindProbeTimeoutVar)
+	if len(leftovers) > 0 {
+		fmt.Fprintf(&msg, ". A probe container could not be removed and may remain: %s", strings.Join(leftovers, "; "))
+	}
+	return fmt.Errorf("%w: %s", ErrProbeTimedOut, msg.String())
+}
+
+// saysDeadline reports whether the daemon's answer to the probe's run says that
+// a deadline of its own passed (its containerd could not start the shim in
+// time, a socket timed out), which is a slow daemon and not a finding about
+// the root. The daemon quotes the paths it was given, so the probe's
+// directory and the root are cut out before the words are looked for: a work
+// root named "timeouts" is not a daemon that timed out.
+func saysDeadline(answer, probe, root string) bool {
+	answer = strings.ReplaceAll(answer, probe, "")
+	answer = strings.ReplaceAll(answer, root, "")
+	lowered := strings.ToLower(answer)
+	for _, words := range []string{"deadline exceeded", "timed out", "timeout"} {
+		if strings.Contains(lowered, words) {
+			return true
+		}
+	}
+	return false
 }
 
 // bindProbeAttempts is how many times the boot bind probe runs its container
