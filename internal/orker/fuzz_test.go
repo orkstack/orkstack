@@ -27,9 +27,9 @@ func FuzzRenderer_ARenderedValueIsTheValue(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, value, before, after string) {
 		r := testRenderer(map[string]any{"value": value}, nil, nil, nil, nil)
-		// before and after are template text; they are the author's, so only
-		// the ones that are plain text are part of this property.
-		if strings.Contains(before+after, "{{") || strings.Contains(before+after, "<no value>") {
+		// before and after are template text, the author's, so only plain text
+		// (no brace that could join the action's) is part of this property.
+		if strings.ContainsAny(before+after, "{}") || strings.Contains(before+after, "<no value>") {
 			return
 		}
 		got, err := r.render(context.Background(), map[string]any{
