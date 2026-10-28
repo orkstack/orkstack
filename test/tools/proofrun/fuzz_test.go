@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The fuzz lane (AGENTS.md §11.2, docs/PROOFS.md §2.1) runs every Fuzz target
@@ -99,17 +100,6 @@ func TestFuzzTime_IsAPositiveDurationOrAnIterationCount(t *testing.T) {
 	}
 }
 
-func TestFuzzTime_TheDefaultIsTwoMinutesAndFUZZTIMEChangesIt(t *testing.T) {
-	t.Setenv("FUZZTIME", "")
-	if got := defaultFuzzTime(); got != "2m" {
-		t.Errorf("default = %q, want 2m", got)
-	}
-	t.Setenv("FUZZTIME", "45s")
-	if got := defaultFuzzTime(); got != "45s" {
-		t.Errorf("FUZZTIME=45s gave %q", got)
-	}
-}
-
 func TestFuzzTarget_APackageWithNoDirectoryFailsRatherThanPasses(t *testing.T) {
 	e := fuzzTarget(testKey{"example.com/x", "FuzzX"}, "", "1s", t.TempDir())
 	if e.Outcome != outcomeFail || !strings.Contains(e.Reason, "no directory") {
@@ -121,8 +111,15 @@ func TestFuzzRunner_FlagsAreValidatedBeforeAnythingIsWritten(t *testing.T) {
 	quiet(t)
 	out := filepath.Join(t.TempDir(), "out")
 	for name, args := range map[string][]string{
-		"no -out":        {"-fuzztime", "1s"},
-		"a bad fuzztime": {"-out", out, "-fuzztime", "forever"},
+		"no -out":                      {"-fuzztime", "1s"},
+		"a bad fuzztime":               {"-out", out, "-fuzztime", "forever"},
+		"neither a budget nor a time":  {"-out", out},
+		"both a budget and a time":     {"-out", out, "-budget", "30m", "-fuzztime", "10s"},
+		"a bad budget":                 {"-out", out, "-budget", "forever"},
+		"a budget of no time":          {"-out", out, "-budget", "0s"},
+		"a negative budget":            {"-out", out, "-budget", "-5m"},
+		"an iteration count as budget": {"-out", out, "-budget", "100x"},
+		"a budget below one target":    {"-out", out, "-budget", "10s"},
 	} {
 		if code := cmdFuzz(args); code != 2 {
 			t.Errorf("%s: exit %d, want 2", name, code)
@@ -138,9 +135,14 @@ func TestFuzzRunner_APassingTargetAndACrashingOne(t *testing.T) {
 		t.Skip("runs go test -fuzz")
 	}
 	quiet(t)
+	// A lane budget of 12s for two targets: each is given an equal share of what
+	// remains, less the overhead, and never under the minimum. The crasher a
+	// short fuzz time finds is kept and fails the lane as it does for a longer
+	// one.
+	withTuning(t, 3*time.Second, 2*time.Second)
 	mod := fuzzModuleDir(t, map[string]string{"ok_test.go": fuzzOKSource, "crash_test.go": fuzzCrashSource})
 	out := filepath.Join(t.TempDir(), "out")
-	code := cmdFuzz([]string{"-out", out, "-fuzztime", "3s"})
+	code := cmdFuzz([]string{"-out", out, "-budget", "12s"})
 	if code != 1 {
 		t.Fatalf("exit %d, want 1: FuzzCrash has a crasher", code)
 	}
@@ -154,6 +156,11 @@ func TestFuzzRunner_APassingTargetAndACrashingOne(t *testing.T) {
 	by := map[string]entry{}
 	for _, e := range l.Tests {
 		by[e.Test] = e
+	}
+	for _, name := range []string{"FuzzOK", "FuzzCrash"} {
+		if e := by[name]; e.FuzzSeconds < 3 || e.FuzzSeconds > 12 || e.Seconds < e.FuzzSeconds && e.Outcome == outcomePass {
+			t.Errorf("%s: fuzz_seconds %v, seconds %v: the ledger must record the fuzz time it was given (3s to 12s here)", name, e.FuzzSeconds, e.Seconds)
+		}
 	}
 	if by["FuzzOK"].Outcome != outcomePass || by["FuzzCrash"].Outcome != outcomeFail {
 		t.Errorf("outcomes: FuzzOK %q, FuzzCrash %q", by["FuzzOK"].Outcome, by["FuzzCrash"].Outcome)

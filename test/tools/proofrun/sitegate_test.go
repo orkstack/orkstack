@@ -210,7 +210,7 @@ func (r *siteScriptRepo) run(env []string, args ...string) (int, string) {
 	cmd.Env = append(os.Environ(), hermeticGit()...)
 	cmd.Env = append(cmd.Env, "PATH="+path, "GOROOT="+strings.TrimSpace(string(goroot)), "GOTOOLCHAIN=local",
 		"GOFLAGS=", "GOWORK=off", "TMPDIR="+filepath.Join(r.root, ".tmp"), "BUN_LOG="+r.log, "PROOFRUN_LOG="+r.calls, "PROOF_SESSION=", "PROOF_GATES=", "PROOF_FAIL_FAST=1",
-		"FUZZTIME=", "CGO_ENABLED=1")
+		"FUZZ_BUDGET=", "CGO_ENABLED=1")
 	cmd.Env = append(cmd.Env, env...)
 	cmd.WaitDelay = 20 * time.Second
 	out, err := cmd.CombinedOutput()

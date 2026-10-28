@@ -56,6 +56,16 @@ func TestIntegration_Pools(t *testing.T) { _ = defaultPool }
 func TestIntegration_Alone(t *testing.T) {}
 `
 
+const fuzzFile = `package engine
+
+import "testing"
+
+func FuzzDecode(f *testing.F) {
+	f.Add("a")
+	f.Fuzz(func(t *testing.T, s string) { _ = decode(s) })
+}
+`
+
 func TestAnalyzeDir(t *testing.T) {
 	unitFile := "package engine\n\nimport \"testing\"\n\nfunc TestUnit(t *testing.T) { _ = helper() }\n\nfunc helper() int { return 1 }\n"
 	prod := "package engine\n\n// Run runs.\nfunc Run() int { return 1 }\n"
@@ -198,6 +208,49 @@ func TestAnalyzeDir(t *testing.T) {
 			new:     files("u_test.go", strings.Replace(unitFile, "return 1", "return 2", 1)),
 			tests:   []string{"TestUnit"},
 			reached: []string{"TestUnit"},
+		},
+		{
+			name:  "a changed fuzz target is selected",
+			cfg:   cfgUnit,
+			old:   files("fuzz_test.go", fuzzFile),
+			new:   files("fuzz_test.go", strings.Replace(fuzzFile, `f.Add("a")`, `f.Add("b")`, 1)),
+			tests: []string{"FuzzDecode"},
+		},
+		{
+			name:      "a helper reached only by a fuzz target selects it",
+			cfg:       cfgUnit,
+			old:       files("helper_test.go", "package engine\n\nfunc decode(s string) int { return len(s) }\n"),
+			new:       files("helper_test.go", "package engine\n\nfunc decode(s string) int { return len(s) + 1 }\n"),
+			unchanged: []srcFile{{Name: "fuzz_test.go", Content: []byte(fuzzFile)}},
+			tests:     []string{"FuzzDecode"},
+			reached:   []string{"FuzzDecode"},
+		},
+		{
+			name:    "a deleted fuzz target is removed, not selected",
+			cfg:     cfgUnit,
+			old:     files("fuzz_test.go", fuzzFile),
+			new:     files(),
+			removed: []string{"FuzzDecode"},
+		},
+		{
+			name:  "a new fuzz target is selected",
+			cfg:   cfgUnit,
+			old:   files(),
+			new:   files("fuzz_test.go", fuzzFile),
+			tests: []string{"FuzzDecode"},
+		},
+		{
+			name:  "a changed build constraint selects the file's fuzz targets",
+			cfg:   cfgIntegration,
+			old:   files("fuzz_test.go", fuzzFile),
+			new:   files("fuzz_test.go", "//go:build integration\n\n"+fuzzFile),
+			tests: []string{"FuzzDecode"},
+		},
+		{
+			name: "a function that only looks like a fuzz target is not a test",
+			cfg:  cfgUnit,
+			old:  files("helper_test.go", "package engine\n\nimport \"testing\"\n\nfunc Fuzzy(f *testing.F) {}\n\nfunc FuzzHelper() int { return 1 }\n\nfunc FuzzOther(t *testing.T) {}\n"),
+			new:  files("helper_test.go", "package engine\n\nimport \"testing\"\n\nfunc Fuzzy(f *testing.F) {}\n\nfunc FuzzHelper() int { return 2 }\n\nfunc FuzzOther(t *testing.T) { t.Log(1) }\n"),
 		},
 	}
 	for _, c := range cases {
@@ -852,5 +905,61 @@ func TestParseGoReadsAFuncWithoutABody(t *testing.T) {
 	}
 	if d := pf.Decls[1]; d.Node != "widget.stub" || d.Recv != "widget" || !d.Refs["widget"] || d.Refs["stub"] {
 		t.Errorf("method decl = %+v", d)
+	}
+}
+
+// A native fuzz target is a test: its seeds run in every unit gate, so the
+// evidence selector treats it as one wherever it treats a TestXxx function.
+func TestParseGo_AFuzzTargetIsATest(t *testing.T) {
+	src := `package p
+
+import "testing"
+
+func FuzzParse(f *testing.F)       {}
+func FuzzParse_Round_Trips(f *testing.F) {}
+func Fuzz(f *testing.F)            {}
+func Fuzzy(f *testing.F)           {}
+func FuzzNoParams()                {}
+func FuzzWrongType(t *testing.T)   {}
+func FuzzTwoParams(f *testing.F, n int) {}
+func TestKept(t *testing.T)        {}
+
+type holder struct{}
+
+func (holder) FuzzMethod(f *testing.F) {}
+`
+	pf := parseGo(srcFile{Name: "x_test.go", Content: []byte(src)})
+	if !pf.OK {
+		t.Fatal("did not parse")
+	}
+	got := append([]string(nil), pf.Tests...)
+	sort.Strings(got)
+	want := []string{"Fuzz", "FuzzParse", "FuzzParse_Round_Trips", "TestKept"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("tests = %v, want %v", got, want)
+	}
+	for _, d := range pf.Decls {
+		if d.Test != (d.Key != "method holder.FuzzMethod" && contains(want, d.Name)) {
+			t.Errorf("%s: Test = %v", d.Key, d.Test)
+		}
+	}
+	// A file that is not a test file declares none.
+	plain := parseGo(srcFile{Name: "x.go", Content: []byte(src)})
+	if len(plain.Tests) != 0 {
+		t.Errorf("a non-test file declares tests %v", plain.Tests)
+	}
+}
+
+func TestTestsDeclaredCountsFuzzTargets(t *testing.T) {
+	fs := []srcFile{
+		{Name: "a_test.go", Content: []byte(fuzzFile)},
+		{Name: "b_integration_test.go", Content: []byte("//go:build integration\n\npackage engine\n\nimport \"testing\"\n\nfunc FuzzIntegrationOnly(f *testing.F) {}\n")},
+	}
+	unit, integ := testsDeclared("internal/engine", fs)
+	if !unit["FuzzDecode"] || len(unit) != 1 {
+		t.Errorf("unit = %v", unit)
+	}
+	if !integ["FuzzIntegrationOnly"] || len(integ) != 1 {
+		t.Errorf("integration = %v", integ)
 	}
 }

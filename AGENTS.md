@@ -1159,8 +1159,9 @@ is a change's evidence on its branch and never merge evidence. The **nightly
 tier** runs only the tests `scripts/proof-nightly-tests.txt` lists and the
 spec files `scripts/proof-nightly-specs.txt` lists, and two lanes of its own
 — the race repeat (the concurrency-heavy packages' unit suites under the race
-detector, several times in one run) and the fuzz lane (every Fuzz target for a
-bounded time, a crasher failing it and its input kept) — and is never merge
+detector, several times in one run) and the fuzz lane (every Fuzz target,
+sharing one time budget for the whole lane, a crasher failing it and its input
+kept) — and is never merge
 evidence. The pre-release gate is the full tier with nothing
 deferred, and it runs the observability gate unconditionally. A release tag
 requires a passing pre-release proof of the exact commit. docs/PROOFS.md is

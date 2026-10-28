@@ -56,6 +56,11 @@ type entry struct {
 	Job     string  `json:"job,omitempty"`
 	Outcome string  `json:"outcome"`
 	Seconds float64 `json:"seconds"`
+	// FuzzSeconds is, in the fuzz lane's ledger, the fuzz time the lane gave
+	// the target (go test -fuzztime), of the Seconds it took with its build
+	// and any minimization; empty for a target given an iteration count, and
+	// in every other ledger.
+	FuzzSeconds float64 `json:"fuzz_seconds,omitempty"`
 	// Reason says why an entry is a failure the test itself did not report:
 	// its binary crashed while it ran, or nothing ever reported it.
 	Reason string `json:"reason,omitempty"`

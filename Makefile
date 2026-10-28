@@ -91,13 +91,15 @@ test-race: ## Run the unit tests under the race detector, -short (RACE_COUNT=N r
 	go test -race -short -count=$(RACE_COUNT) -timeout $(RACE_TIMEOUT) $(RACE_PACKAGES)
 
 # The nightly fuzz lane's run (docs/PROOFS.md §2.3): every Fuzz target of the
-# module for FUZZTIME each, a ledger and a log per target under FUZZ_OUT, and
-# the crasher input of a target that fails kept under FUZZ_OUT/crashers.
-FUZZTIME ?= 2m
+# module, sharing FUZZ_BUDGET between them (or FUZZTIME each, when it is set), a
+# ledger and a log per target under FUZZ_OUT, and the crasher input of a target
+# that fails kept under FUZZ_OUT/crashers.
+FUZZ_BUDGET ?= 45m
+FUZZTIME ?=
 FUZZ_OUT ?= .data/fuzz/$(shell date -u +%Y%m%dT%H%M%SZ)
 .PHONY: fuzz
-fuzz: ## Fuzz every Fuzz target for FUZZTIME each (default 2m); crashers are kept under FUZZ_OUT
-	go run ./test/tools/proofrun fuzz -out $(FUZZ_OUT) -fuzztime $(FUZZTIME)
+fuzz: ## Fuzz every Fuzz target, sharing FUZZ_BUDGET (default 45m) or FUZZTIME each; crashers are kept under FUZZ_OUT
+	go run ./test/tools/proofrun fuzz -out $(FUZZ_OUT) $(if $(FUZZTIME),-fuzztime $(FUZZTIME),-budget $(FUZZ_BUDGET))
 
 .PHONY: cover
 cover: ## Run tests with coverage -> coverage.out

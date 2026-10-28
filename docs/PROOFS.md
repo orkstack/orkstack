@@ -350,24 +350,62 @@ phase, and is one CI part (§5):
   same tree holds the same skips to its unit gate, and here they only narrow
   what the lane hunts, are counted in its ledger summary, and are refused
   from a ledger that does not say its run had `-short`.
-- **`fuzz`** runs `proofrun fuzz -fuzztime $FUZZTIME` (default `2m`; a whole
-  number of `s`, `m` or `h`, or of iterations as `100x`; the `nightly.yml`
-  dispatch has a `fuzztime` input): every `Fuzz*` target `go test -list
-  '^Fuzz' ./...` finds, one after another, each for that long, so the lane
-  takes the targets' count times `FUZZTIME` plus a build and a baseline
-  coverage pass per target. Its ledger, `fuzz-tests.json`, has one entry per
-  target, and each target keeps its log under `fuzz/`. A target the engine
-  breaks fails the lane. The engine writes the failing input into the
-  package's `testdata/fuzz/<Target>/`, a file that would turn the proof's
-  tree into another; the lane moves it to `crashers/<package>/<Target>/` in
-  the part's directory, which the part's artifact carries (§7), and leaves the
-  tree as it found it. To reproduce, copy the file back into the package's
-  `testdata/fuzz/<Target>/` and run `go test -run '^<Target>$' <package>`. A
-  lane that finds no `Fuzz` target fails: fuzzing nothing proves nothing.
+- **`fuzz`** runs `proofrun fuzz -budget $FUZZ_BUDGET` (default `105m`; a
+  whole number of `s`, `m` or `h`; the `nightly.yml` dispatch has a
+  `fuzz_budget` input): every `Fuzz*` target `go test -list '^Fuzz' ./...`
+  finds, one after another, and the lane's whole wall-clock time is the
+  budget, shared between them, so the lane ends inside its CI step however
+  many targets the module has. Before each target the lane takes an equal part
+  of the budget that remains, less the overhead of starting a target (the
+  build and link of its instrumented test binary, which `go test -fuzztime`
+  does not count), in whole seconds and never under the 15-second minimum.
+  The overhead is assumed to be 45 seconds until three targets have been
+  measured, and is then the median of what the targets measured (elapsed less
+  fuzz time), so one cold build does not starve the rest; what an early
+  estimate over- or under-spent is shared out among the targets after it,
+  which is why the first targets get the shortest turns. The clock starts when
+  the lane does, so finding the targets counts against the budget. A target
+  starts only if the budget left covers the minimum and the overhead; a lane
+  that spends its budget with targets unstarted fails, naming each one as "not
+  fuzzed", and never skips a target quietly. A target that has started may
+  run ten minutes past its fuzz time (its build, and the minimization of a
+  crasher) before the lane stops it, so the lane ends at most that long past
+  its budget; the fuzz step's limit is the budget plus that and five minutes
+  for the part's own work and the ledger write, and
+  `TestFuzzLane_TheBudgetAndTheModulesTargetsFitTheFuzzStep` fails when the
+  budget and that margin exceed the step's `timeout-minutes` in `proof.yml`,
+  when the places that set a budget (`proof.yml`, `nightly.yml`,
+  `scripts/proof.sh`) disagree, or when the module's `Fuzz` target count times
+  the minimum plus the assumed overhead exceeds the budget. A new target
+  therefore fails a unit test before it can make a nightly red; the answer is
+  a larger budget with a longer step and job limit, or fewer targets. The
+  unit test reads the budgets the repository sets, not the one a dispatch
+  supplies: a dispatched `fuzz_budget` above 120 minutes ends in the step's
+  timeout, with no ledger.
+  The CI budget is 105 minutes for the 82 targets (`go test -list '^Fuzz'
+  ./...`) of this tree: a turn of about 77 seconds, of which the first
+  targets fuzz 31 beside the assumed 45 seconds of overhead, and later ones
+  more, since a measured overhead is usually well under the assumed one. The
+  fuzz step is limited to 135 minutes and its job to 155. Its ledger,
+  `fuzz-tests.json`, has one entry per target with the `seconds` it took and
+  the `fuzz_seconds` it was given, and each target keeps its log under
+  `fuzz/`; the lane's own log line for a target says the fuzz time it was
+  given, how long it took, and what is left of the budget. A target the engine
+  breaks fails the lane, whatever its share. The engine writes the failing
+  input into the package's `testdata/fuzz/<Target>/`, a file that would turn
+  the proof's tree into another; the lane moves it to
+  `crashers/<package>/<Target>/` in the part's directory, which the part's
+  artifact carries (§7), and leaves the tree as it found it. To reproduce,
+  copy the file back into the package's `testdata/fuzz/<Target>/` and run
+  `go test -run '^<Target>$' <package>`. A lane that finds no `Fuzz` target
+  fails: fuzzing nothing proves nothing. `proofrun fuzz -fuzztime DURATION`
+  (or `Nx` iterations) instead gives every target that time and no budget,
+  for a local run or a smoke; the proofs never use it.
 
 `make test-race` runs the race gate's `go test` without its ledger
 (`RACE_COUNT` and `RACE_PACKAGES` give it the repeat's shape), and `make fuzz`
-runs the lane with `FUZZTIME`, keeping its logs and crashers under `FUZZ_OUT`.
+runs the lane with `FUZZ_BUDGET` (default `45m`; `FUZZTIME=30s` gives every
+target that time instead), keeping its logs and crashers under `FUZZ_OUT`.
 
 ## 3. How `proofrun select` picks evidence
 
@@ -390,7 +428,13 @@ The selection is:
 - **the change's evidence**: every test whose source the diff changes,
   including tests that reach a changed or deleted helper, type, variable or
   `TestMain` through their package's declarations; every test named with
-  `-tests` (the pattern must match whole test names); every spec the diff
+  `-tests` (the pattern must match whole test names). A test is a `Test`
+  function or a native fuzz target (`func FuzzXxx(f *testing.F)` in a
+  `_test.go` file, AGENTS.md §11.1): go test runs a target's seeds, `f.Add` and
+  `testdata/fuzz/<Target>/` alike, as an ordinary test, so a changed target,
+  one that reaches a changed helper, and `-tests PKG:FuzzXxx` are evidence like
+  any other, a deleted target is removed, and the unit gate's ledger lists the
+  target once and records its outcome; every spec the diff
   changes or `-specs` names; every spec when the Playwright harness or the UI's
   dependencies changed; the activity fixture when `images/` or `test/fixtures/`
   changed; the tests that read a changed example, and the examples spec; the
@@ -558,7 +602,7 @@ repository is private, carries the `ci:proof` label.
 | `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build | one part |
 | `proof.yml` › `race` | the race gate (§2.3), on a runner of its own; the full and release tiers | one part |
 | `proof.yml` › `race-repeat` | the nightly race repeat (§2.3); the nightly tier alone | one part |
-| `proof.yml` › `fuzz` | the nightly fuzz lane (§2.3), `FUZZTIME` per target; the nightly tier alone | one part, with the crashers it found |
+| `proof.yml` › `fuzz` | the nightly fuzz lane (§2.3), `FUZZ_BUDGET` shared by its targets; the nightly tier alone | one part, with the crashers it found |
 | `proof.yml` › `integration` | one matrix entry per shard: its own Temporal, store, registry and images | one part per shard |
 | `proof.yml` › `ui-e2e` | one matrix entry per UI shard: its own stack and file list; the pinned browser image pulled, the host's Chromium installed only where the shard's files drive it (§2.1) | one part per shard |
 | `proof.yml` › `activity-fixture` | one matrix entry per activity: `make -C images contract` | one part per activity |
@@ -933,7 +977,7 @@ were still 921 MB (run 40388322907).
 - `pr` and `ci`.
 
 A ledger entry has `package`, `test`, `job`, `outcome`, `seconds`, an optional
-`reason`, `allowed_skip`, `quarantine`, `failures` and, for a test that
+`fuzz_seconds` (the fuzz lane's: the fuzz time the target was given, §2.3), `reason`, `allowed_skip`, `quarantine`, `failures` and, for a test that
 failed, `failure_output` (the last 40 lines it printed, without the testing
 package's own framing, each cut at 400 bytes: what the merger reads a
 timing-only failure from, §12). The outcomes are
@@ -1470,7 +1514,7 @@ listing with no bucket at all.
 | `make proof` | the full proof, the merge gate |
 | `make proof-ui` | the same; the full proof already runs the UI suites |
 | `make test-race` | the race gate's `go test`, without its ledger: `-race -short` over `RACE_PACKAGES` (default `./...`), `RACE_COUNT` times (default 1) |
-| `make fuzz` | the fuzz lane: every Fuzz target for `FUZZTIME` (default 2m), logs and crashers under `FUZZ_OUT` |
+| `make fuzz` | the fuzz lane: every Fuzz target, sharing `FUZZ_BUDGET` (default 45m) or given `FUZZTIME` each, logs and crashers under `FUZZ_OUT` |
 | `make proof-feature` | a feature proof of this branch |
 | `make proof-nightly` | the nightly tier |
 | `make proof-release` | the pre-release gate |
@@ -1506,7 +1550,7 @@ listing with no bucket at all.
 | Subcommand | Flags |
 |---|---|
 | `unit` | `-out DIR`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-race`, `-short`, `-count N` |
-| `fuzz` | `-out DIR`, `-fuzztime DURATION` |
+| `fuzz` | `-out DIR`, `-budget DURATION` or `-fuzztime DURATION`, one of the two |
 | `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-nightly-specs FILE`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `compile` | `-out DIR`, `-select FILE` |
 | `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
@@ -1739,10 +1783,16 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   `-short`, and the nightly proof has no unit ledger to hold a skip to (the
   full proof's merger does, §7.1), so a test that skips there narrows what the
   lane hunts without failing it; the ledger summary counts the skips.
-- **The nightly lanes' time grows with the code.** The fuzz lane takes each
-  Fuzz target's `FUZZTIME` in turn and the race repeat three runs of its
-  packages, so a new target or package lengthens a nightly; the CI jobs'
-  limits (`proof.yml` › `fuzz`, `race-repeat`) are the bound.
+- **The nightly lanes' time grows with the code.** The race repeat runs three
+  runs of its packages, so a new package lengthens a nightly; the CI job's
+  limit (`proof.yml` › `race-repeat`) is its bound. The fuzz lane is bounded
+  by construction: its budget is its whole time, shared by the targets, so a
+  new target shortens every turn instead of lengthening the lane (§2.3), and
+  a unit test fails when the targets no longer fit the budget at the minimum
+  turn. What that leaves unmeasured: the lane's real overhead per target on a
+  runner (the assumed 45 seconds is conservative, not measured there), and
+  the fuzzing a turn of a minute or so finds, which is shorter than the two
+  minutes each target had when the lane was a fixed time.
 - **Nothing mechanical reads GitHub's nightly before a merge.** `make
   merge-check` asks for no nightly proof (rule A is retired, §6), and the
   `proof` check does not read `nightly.yml`. `AGENTS.md` §11's "a failing

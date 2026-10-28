@@ -28,13 +28,178 @@ import (
 // written into the tree that was fuzzed.
 var fuzzWorkDir string
 
-// defaultFuzzTime is how long each target fuzzes when -fuzztime is not given:
-// FUZZTIME, or two minutes.
-func defaultFuzzTime() string {
-	if v := os.Getenv("FUZZTIME"); v != "" {
-		return v
+// The lane's time is a budget for the whole lane, shared by its targets, so
+// the lane ends inside its CI step however many targets the module has
+// (docs/PROOFS.md §2.3). A target's share is an equal part of what remains,
+// less the overhead the lane expects for starting a target: the build and
+// link of its instrumented test binary, which `go test -fuzztime` does not
+// count. The lane measures that overhead as it goes.
+const (
+	// fuzzMinTime is the least a target is ever fuzzed for. A target that
+	// cannot be given it before the budget is spent is not run, and fails
+	// the lane by name rather than being skipped quietly.
+	fuzzMinTime = 15 * time.Second
+	// fuzzOverheadEstimate is the overhead the lane assumes for a target
+	// until it has measured fuzzOverheadSamples of them, and the allowance
+	// the budget rule (fuzzbudget_workflow_test.go) holds the target count to.
+	// It is conservative: a warm local build is a few seconds, a cold one on a
+	// small runner is tens.
+	fuzzOverheadEstimate = 45 * time.Second
+	// fuzzOverheadSamples is how many targets are measured before the median
+	// of their overheads replaces the estimate; the median, so that the one
+	// cold build of a run does not starve every target after it.
+	fuzzOverheadSamples = 3
+	// fuzzTargetTail is how long past its fuzz time one target may run, for
+	// the build before it and the minimization after a crasher, before the
+	// lane stops it (fuzzDeadline).
+	fuzzTargetTail = 10 * time.Minute
+	// fuzzLaneMargin is the room a lane's step needs beyond its budget: the
+	// last target's tail and the part's own work around the lane. The CI
+	// budget plus this margin must fit the fuzz step's timeout.
+	fuzzLaneMargin = fuzzTargetTail + 5*time.Minute
+)
+
+// fuzzTunables are the numbers the allocation uses; tests lower them.
+type fuzzTunables struct {
+	Min      time.Duration
+	Overhead time.Duration
+}
+
+var fuzzTuning = fuzzTunables{Min: fuzzMinTime, Overhead: fuzzOverheadEstimate}
+
+// parseFuzzBudget reads a lane budget: a positive duration that covers at
+// least one target at its minimum fuzz time and expected overhead.
+func parseFuzzBudget(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("-budget %q must be a positive duration such as 105m", s)
 	}
-	return "2m"
+	if need := fuzzTuning.Min + fuzzTuning.Overhead; d < need {
+		return 0, fmt.Errorf("-budget %q cannot fuzz even one target: it needs %s (the minimum fuzz time %s and the expected overhead %s)", s, need, fuzzTuning.Min, fuzzTuning.Overhead)
+	}
+	return d, nil
+}
+
+// fuzzPlanner gives each target its fuzz time out of the lane's budget.
+type fuzzPlanner struct {
+	tun       fuzzTunables
+	budget    time.Duration
+	start     time.Time
+	overheads []time.Duration
+}
+
+func newFuzzPlanner(tun fuzzTunables, budget time.Duration, start time.Time) *fuzzPlanner {
+	return &fuzzPlanner{tun: tun, budget: budget, start: start}
+}
+
+// remaining is what is left of the budget at now.
+func (p *fuzzPlanner) remaining(now time.Time) time.Duration {
+	return p.start.Add(p.budget).Sub(now)
+}
+
+// overhead is the per-target overhead the next allotment allows for: the
+// estimate until enough targets have been measured, then their median.
+func (p *fuzzPlanner) overhead() time.Duration {
+	if len(p.overheads) < fuzzOverheadSamples {
+		return p.tun.Overhead
+	}
+	sorted := append([]time.Duration(nil), p.overheads...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return sorted[len(sorted)/2]
+}
+
+// allot is the fuzz time of the next target, when targetsLeft (it included)
+// remain at now: an equal share of what remains, less the overhead, in whole
+// seconds and never under the minimum. It is false when the budget left does
+// not cover the minimum and the overhead, and then the target is not run:
+// starting it would end the lane past its budget.
+func (p *fuzzPlanner) allot(now time.Time, targetsLeft int) (time.Duration, bool) {
+	rest, overhead := p.remaining(now), p.overhead()
+	if targetsLeft < 1 || rest < p.tun.Min+overhead {
+		return 0, false
+	}
+	fuzz := (rest/time.Duration(targetsLeft) - overhead).Truncate(time.Second)
+	if fuzz < p.tun.Min {
+		fuzz = p.tun.Min
+	}
+	return fuzz, true
+}
+
+// observe records what a target that ran to its end cost beyond its fuzz time.
+func (p *fuzzPlanner) observe(elapsed, fuzzed time.Duration) {
+	if elapsed < fuzzed {
+		return
+	}
+	p.overheads = append(p.overheads, elapsed-fuzzed)
+}
+
+// fuzzPlan says how the lane spends its time: a budget shared by the targets,
+// or a fixed -fuzztime for each (the local knob, and an iteration count).
+type fuzzPlan struct {
+	Budget time.Duration
+	Fixed  string
+}
+
+// runFuzzLane fuzzes the targets in order and returns the lane's ledger. The
+// clock and the runner are injected: the lane itself neither sleeps nor
+// fuzzes. start is when the lane began, so the budget includes what the lane
+// did before its first target. Each entry records the fuzz time the target
+// was given (fuzz_seconds) beside the seconds it took; the log line says the
+// same and what is left of the budget.
+func runFuzzLane(targets []testKey, plan fuzzPlan, start time.Time, clock func() time.Time, run func(k testKey, fuzztime string) entry, log io.Writer) ledger {
+	l := ledger{Suite: suiteFuzz, Problems: []string{}}
+	if len(targets) == 0 {
+		l.Problems = append(l.Problems, "no Fuzz target found: a lane that fuzzed nothing proves nothing")
+	}
+	var planner *fuzzPlanner
+	if plan.Fixed == "" {
+		planner = newFuzzPlanner(fuzzTuning, plan.Budget, start)
+		fmt.Fprintf(log, "fuzz: %d targets share a budget of %s: an equal part of what remains each, less %s of overhead, never under %s\n",
+			len(targets), plan.Budget, fuzzTuning.Overhead, fuzzTuning.Min)
+	}
+	for i, k := range targets {
+		fuzztime := plan.Fixed
+		var allotted time.Duration
+		if planner != nil {
+			var ok bool
+			if allotted, ok = planner.allot(clock(), len(targets)-i); !ok {
+				e := entry{Package: k.Package, Test: k.Test, Job: suiteFuzz, Outcome: outcomeFail,
+					Reason: fmt.Sprintf("not fuzzed: the lane's budget of %s was spent before this target could start with its minimum %s and the expected overhead %s", plan.Budget, fuzzTuning.Min, planner.overhead())}
+				l.Summary.Expected++
+				l.Summary.Fail++
+				l.Problems = append(l.Problems, fmt.Sprintf("%s failed: %s", k, e.Reason))
+				fmt.Fprintf(log, "fuzz: %s: %s (%s)\n", k, e.Outcome, e.Reason)
+				l.Tests = append(l.Tests, e)
+				continue
+			}
+			fuzztime = allotted.String()
+		} else if d, err := time.ParseDuration(fuzztime); err == nil {
+			allotted = d
+		}
+		began := clock()
+		e := run(k, fuzztime)
+		elapsed := clock().Sub(began)
+		e.Seconds = elapsed.Seconds()
+		e.FuzzSeconds = allotted.Seconds()
+		l.Summary.Expected++
+		switch e.Outcome {
+		case outcomePass:
+			l.Summary.Pass++
+			if planner != nil {
+				planner.observe(elapsed, allotted)
+			}
+		default:
+			l.Summary.Fail++
+			l.Problems = append(l.Problems, fmt.Sprintf("%s failed: %s", k, e.Reason))
+		}
+		line := fmt.Sprintf("fuzz: %s: %s (fuzz time %s, took %s", k, e.Outcome, fuzztime, elapsed.Round(time.Second))
+		if planner != nil {
+			line += fmt.Sprintf("; %d left, %s of the budget remain, overhead taken as %s", len(targets)-i-1, planner.remaining(clock()).Round(time.Second), planner.overhead())
+		}
+		fmt.Fprintln(log, line+")")
+		l.Tests = append(l.Tests, e)
+	}
+	return l
 }
 
 var fuzzIterations = regexp.MustCompile(`^[1-9][0-9]*x$`)
@@ -59,7 +224,7 @@ func checkFuzzTime(s string) error {
 // that precedes it and the minimization that follows a crasher.
 func fuzzDeadline(fuzztime string) time.Duration {
 	if d, err := time.ParseDuration(fuzztime); err == nil {
-		return d + 10*time.Minute
+		return d + fuzzTargetTail
 	}
 	return 30 * time.Minute
 }
@@ -97,11 +262,15 @@ func fuzzCorpus(dir string) map[string]bool {
 	return files
 }
 
-// cmdFuzz is `proofrun fuzz`: the fuzz lane.
+// cmdFuzz is `proofrun fuzz`: the fuzz lane. It spends either a budget for the
+// whole lane (-budget, the proofs' way) or a fixed time on each target
+// (-fuzztime, the local knob and an iteration count), and exactly one of them.
 func cmdFuzz(args []string) int {
+	began := time.Now()
 	fs := flag.NewFlagSet("fuzz", flag.ContinueOnError)
 	out := fs.String("out", "", "directory for the ledger, each target's log and the crashers (required)")
-	fuzztime := fs.String("fuzztime", defaultFuzzTime(), "how long each target fuzzes (go test -fuzztime: a duration or Nx); the FUZZTIME environment variable sets the default, 2m without it")
+	budget := fs.String("budget", "", "the lane's whole time, shared equally by its targets (a duration such as 105m); discovery counts against it")
+	fuzztime := fs.String("fuzztime", "", "instead of -budget, how long each target fuzzes (go test -fuzztime: a duration or Nx)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -109,9 +278,27 @@ func cmdFuzz(args []string) int {
 		fmt.Fprintln(os.Stderr, "proofrun fuzz: -out is required")
 		return 2
 	}
-	if err := checkFuzzTime(*fuzztime); err != nil {
-		fmt.Fprintln(os.Stderr, "proofrun fuzz:", err)
+	var plan fuzzPlan
+	switch {
+	case *budget != "" && *fuzztime != "":
+		fmt.Fprintln(os.Stderr, "proofrun fuzz: give -budget or -fuzztime, not both")
 		return 2
+	case *budget == "" && *fuzztime == "":
+		fmt.Fprintln(os.Stderr, "proofrun fuzz: give the lane's time: -budget DURATION, or -fuzztime for each target")
+		return 2
+	case *budget != "":
+		d, err := parseFuzzBudget(*budget)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun fuzz:", err)
+			return 2
+		}
+		plan.Budget = d
+	default:
+		if err := checkFuzzTime(*fuzztime); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun fuzz:", err)
+			return 2
+		}
+		plan.Fixed = *fuzztime
 	}
 	patterns := fs.Args()
 	if len(patterns) == 0 {
@@ -127,29 +314,14 @@ func cmdFuzz(args []string) int {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
-	l := ledger{Suite: suiteFuzz, Problems: []string{}}
-	if len(targets) == 0 {
-		l.Problems = append(l.Problems, "no Fuzz target found in "+strings.Join(patterns, " ")+": a lane that fuzzed nothing proves nothing")
-	}
 	sort.Slice(targets, func(i, j int) bool {
 		if targets[i].Package != targets[j].Package {
 			return targets[i].Package < targets[j].Package
 		}
 		return targets[i].Test < targets[j].Test
 	})
-	for _, k := range targets {
-		e := fuzzTarget(k, dirs[k.Package], *fuzztime, *out)
-		l.Summary.Expected++
-		switch e.Outcome {
-		case outcomePass:
-			l.Summary.Pass++
-		default:
-			l.Summary.Fail++
-			l.Problems = append(l.Problems, fmt.Sprintf("%s failed: %s", k, e.Reason))
-		}
-		fmt.Fprintf(stdout, "fuzz: %s: %s (%.0fs)\n", k, e.Outcome, e.Seconds)
-		l.Tests = append(l.Tests, e)
-	}
+	run := func(k testKey, fuzztime string) entry { return fuzzTarget(k, dirs[k.Package], fuzztime, *out) }
+	l := runFuzzLane(targets, plan, began, time.Now, run, stdout)
 	return writeLedgerAndReport(*out, l)
 }
 
@@ -197,7 +369,6 @@ func fuzzTarget(k testKey, dir, fuzztime, out string) entry {
 	corpus := filepath.Join(dir, "testdata", "fuzz", k.Test)
 	before := fuzzCorpus(corpus)
 
-	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), fuzzDeadline(fuzztime))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "test", "-run", "^$", "-fuzz", "^"+k.Test+"$", "-fuzztime", fuzztime, k.Package)
@@ -211,7 +382,6 @@ func fuzzTarget(k testKey, dir, fuzztime, out string) entry {
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.WaitDelay = 30 * time.Second
 	runErr := cmd.Run()
-	e.Seconds = time.Since(started).Seconds()
 
 	var crashers []string
 	for name := range fuzzCorpus(corpus) {

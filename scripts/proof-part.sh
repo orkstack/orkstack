@@ -464,9 +464,10 @@ part_main() { # <part>
 		fi
 		;;
 	fuzz)
-		# The nightly fuzz lane: every Fuzz target for FUZZTIME. A crasher is
-		# kept under crashers/ in the part, which the part's artifact carries.
-		part_run fuzz fuzz.log "$PR" fuzz -out "$DIR" -fuzztime "$FUZZTIME" || true
+		# The nightly fuzz lane: every Fuzz target, sharing FUZZ_BUDGET. A
+		# crasher is kept under crashers/ in the part, which the part's
+		# artifact carries.
+		part_run fuzz fuzz.log "$PR" fuzz -out "$DIR" -budget "$FUZZ_BUDGET" || true
 		;;
 	integration:*)
 		local k="${PART#integration:}"
