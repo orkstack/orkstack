@@ -424,11 +424,11 @@ func TestReadyLoop_HeldTasksCostConstantPerPass(t *testing.T) {
 	if !errors.As(h.env.GetWorkflowError(), &can) {
 		t.Fatalf("workflow error = %v, want the switch after the hold", h.env.GetWorkflowError())
 	}
-	if probe.classify != tasks || probe.conditions != tasks {
-		t.Fatalf("classify ran %d times and conditions %d, want each task once (%d)", probe.classify, probe.conditions, tasks)
+	if probe.classify.Load() != tasks || probe.conditions.Load() != tasks {
+		t.Fatalf("classify ran %d times and conditions %d, want each task once (%d)", probe.classify.Load(), probe.conditions.Load(), tasks)
 	}
-	if probe.closureRebuilds > len(passes) {
-		t.Fatalf("%d pin-closure rebuilds over %d passes, want at most one a pass", probe.closureRebuilds, len(passes))
+	if probe.closureRebuilds.Load() > int64(len(passes)) {
+		t.Fatalf("%d pin-closure rebuilds over %d passes, want at most one a pass", probe.closureRebuilds.Load(), len(passes))
 	}
 	if len(passes) < dispatched {
 		t.Fatalf("%d passes, want at least one per collected completion (%d)", len(passes), dispatched)
