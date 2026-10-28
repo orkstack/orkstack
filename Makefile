@@ -159,7 +159,7 @@ check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integratio
 	go test -short ./...
 
 .PHONY: merge-check
-merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree (AGENTS.md §11.3)
+merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree, and with NIGHTLY=proof/<name> verify that nightly proof of main's tip (AGENTS.md §11.3; none is required)
 	go vet -tags=integration ./...
 	@echo "merge-check OK: the tree builds, passes lint and unit tests, and its integration suites compile"
 ifneq ($(strip $(PROOF)),)
@@ -264,7 +264,7 @@ proof-observability: ## Only the observability gate, with what it needs (needs: 
 	@PROOF_GATES=observability scripts/proof.sh $(NAME)
 
 .PHONY: github-merge-gate
-github-merge-gate: ## Check (APPLY=1 applies) the required proof check; not enforced until the repository is public
+github-merge-gate: ## Check (APPLY=1 applies) the required proof check; not enforced until the apply is run; refuses a private repository
 	@APPLY=$(or $(APPLY),0) QUEUE=$(or $(QUEUE),0) CODEOWNER_REVIEW=$(or $(CODEOWNER_REVIEW),1) scripts/github-merge-gate.sh
 
 .PHONY: proof-stop

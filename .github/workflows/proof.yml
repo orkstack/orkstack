@@ -804,8 +804,9 @@ jobs:
             go run ./test/tools/proofrun verify -release -proof "$proof"
             ;;
           nightly)
-            # Never merge evidence, but rule A's evidence: a pass with every
-            # identity rule held, its tier the only thing it is not.
+            # Never merge evidence, but what a NIGHTLY= merge-check verifies
+            # when given one: a pass with every identity rule held, its tier
+            # the only thing it is not.
             jq -e '.result == "pass" and .eligible_but_for_tier == true' "$proof/proof.json"
             ;;
           *)

@@ -204,8 +204,7 @@ include breaking changes, and each is marked **BREAKING**.
   `engine.orkflow_max_tasks` lowered to 1,000. A full proof's UI plan defers
   the spec files both the tree's and the base's list carry, and its Playwright
   ledger records their tests as `deferred`; the nightly tier, locally and in
-  CI, runs the listed specs and needs its `ui-e2e` gate; `merge-check` asks for
-  a nightly proof while either list is non-empty.
+  CI, runs the listed specs and needs its `ui-e2e` gate.
 - A feature proof holds evidence that is there only because it reaches a
   changed helper, type or variable to the slow list, as it holds the
   regression set: on a shared test helper that is about 35 minutes. A test
@@ -297,6 +296,19 @@ include breaking changes, and each is marked **BREAKING**.
   continuation chain's rollout) waited out. They are development and proof
   settings, not a recommendation for a deployment, and the quickstart keeps the
   defaults (docs/DEPLOY.md §4, "Underneath"; docs/PROOFS.md §2.1).
+- The interim nightly rule is retired (2026-10-27). While the nightly workflow
+  did not run on GitHub, `make proof-nightly` had to run on `main`'s tip after
+  every merge and pass before the next, and `make merge-check` refused a merge
+  without a passing nightly proof of `main`'s tip (`NIGHTLY=`) while either
+  nightly list was non-empty. Its exit condition is met: the last five runs of
+  `nightly.yml` on `main` passed. `merge-check` now asks for no nightly proof,
+  reads neither list, and still verifies a `NIGHTLY=` proof when it is given
+  one; the nightly of `main` is GitHub's, and a failing one is still a failing
+  `main`, fixed or reverted before anything else merges (AGENTS.md §11, §11.2;
+  docs/PROOFS.md §6, §10). `docs/PROOFS.md` §12's known gaps now say what is
+  true: the repository is public and organization-owned, the gate's apply has
+  not been run, the full proof has passed on GitHub only on `validate/full/`
+  pushes, and `release.yml` is the one workflow that has not run there.
 
 ### Added
 

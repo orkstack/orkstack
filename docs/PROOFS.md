@@ -585,36 +585,44 @@ equals the head's merged tree, because the branch contains `main`'s tip.
 
 A required check and the merge queue are GitHub settings, not repository
 files. `scripts/github-merge-gate.sh` (`make github-merge-gate`) is the
-one-command enablement; it refuses until the repository is public and its
-owner can carry the rulesets. **Until then the gate is not enforced**: `main`
+one-command enablement; it refuses a private repository, and this one is
+public and organization-owned. **Until the apply is run the gate is not
+enforced**: no `main-proof-gate` ruleset requires the `proof` check, so `main`
 moves only by `AGENTS.md` §11.3's local path. An organization owner is needed
 only for the optional queue.
 
-The nightly job runs the deferred tests on a schedule (05:17 UTC). A failed
-scheduled run is noticed through GitHub's standard workflow-failure
-notification; nothing opens an issue. While the nightly workflow does not run
-on GitHub, interim rule A applies: `make proof-nightly` runs on `main`'s tip
-after every merge that moves `main`, and passes before the next merge starts
-and before every tag. `make merge-check PROOF=… NIGHTLY=…` refuses a merge
-when either of `main`'s nightly lists is non-empty and no passing nightly proof of `main`'s tree
-is given. A GitHub nightly proof of `main`'s tip — `nightly.yml` dispatched
-(`workflow_dispatch`) or its schedule — downloaded as its `proof-<run>-a<n>`
-artifact is that `NIGHTLY=` evidence, exactly as a local `make proof-nightly`
-is (§10). It binds the tree `main` pointed at when the run checked it out: a
-merge made after the run starts moves `main` to another tree, and `verify`
-refuses the proof as a tree mismatch. On the GitHub merge path `merge-check` does not run, so there rule A
-is a process rule: the merge stage runs `make proof-nightly` itself and quotes
-it. A red nightly or release proof is a failing `main`: fix or revert the
-change that broke it, and never edit a list, a threshold or a measurement
-file to make it pass.
+The nightly job runs the deferred tests on a schedule (05:17 UTC) and by
+dispatch. A failed scheduled run is noticed through GitHub's standard
+workflow-failure notification; nothing opens an issue. The latest run of
+`nightly.yml` on `main` is `main`'s nightly, and a red one is a failing `main`
+(below). Dispatching one after a merge that moves `main` has its verdict
+sooner (§10).
+
+Interim rule A is retired (2026-10-27). While the nightly workflow did not run
+on GitHub it required `make proof-nightly` on `main`'s tip after every merge
+that moved `main`, passing before the next merge started and before every tag,
+and it made `make merge-check` refuse a merge when either of `main`'s nightly
+lists was non-empty and no passing nightly proof of `main`'s tree was given
+(`NIGHTLY=`). Its exit condition, three consecutive public nightlies passing,
+was met: the five most recent runs of `nightly.yml` on `main` (40414822382,
+40431603801, 40443319443, 40489432056 and 40555387388) all passed. Now
+`make merge-check` asks for no nightly proof and reads neither of `main`'s
+lists. `NIGHTLY=proof/<name>` stays as an option: a nightly proof it is given
+(a GitHub run's `proof-<run>-a<n>` artifact, or a local `make proof-nightly`,
+§10) must be a passing nightly proof of the tree `main` points at, and `verify`
+refuses it as a tree mismatch once a merge has moved `main`. A release tag has
+its own gate, the pre-release proof. A red nightly or release proof is a
+failing `main`: fix or revert the change that broke it before anything else
+merges, and never edit a list, a threshold or a measurement file to make it
+pass. Nothing mechanical reads GitHub's nightly before a merge (§12): read the
+latest run on `main` first (§10).
 
 **Calibration.** The soaks' thresholds were measured on a 16-core host, and a
-public runner has 4 vCPU, so the first public nightlies are calibration runs:
+public runner has 4 vCPU, so the first public nightlies were calibration runs:
 a threshold missed on runner size alone is reported and the nightly's layout
 changes (one shape per job, or a larger runner); a threshold or a measured
-default never changes without the user's approval; and until three
-consecutive public nightlies have passed, rule A's local `make proof-nightly`
-continues.
+default never changes without the user's approval. Three consecutive public
+nightlies have passed, which retired rule A.
 
 **The 60-day rule.** GitHub disables a public repository's scheduled
 workflows after 60 days with no repository activity. `make github-merge-gate`
@@ -955,7 +963,7 @@ git push origin HEAD:validate/full/<name>
 gh run list --workflow proof.yml --branch validate/full/<name> -L 1   # <id>
 gh run view <id> --json attempt -q .attempt                          # <attempt>
 gh run download <id> -n proof-<id>-a<attempt> -D proof/ci-<id>
-make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
+make merge-check PROOF=proof/ci-<id>
 git checkout main && git merge --ff-only <candidate>
 git push origin main
 ```
@@ -966,19 +974,25 @@ equal to `main`'s tip, the candidate's first parent equal to `main`'s tip, a
 clean worktree, and a quarantine check date at most 30 days old. If `main`
 moved since the push, rebuild the candidate and push it again.
 
-**Run the nightly proof after a merge** and pass it to the next
-`make merge-check PROOF=… NIGHTLY=…`: locally `make proof-nightly`, or on
-GitHub by dispatching `nightly.yml` on `main` once `main` is pushed, and
-downloading its artifact:
+**Read the nightly before a merge.** `main`'s nightly is `nightly.yml`'s latest
+run on `main` (§6). A red one is a failing `main`: fix or revert before
+anything else merges. After a merge that moves `main`, once `main` is pushed,
+dispatch one to have its verdict sooner:
 
 ```bash
+gh run list --workflow nightly.yml --branch main -L 3 --json databaseId,conclusion,event,headSha
 gh workflow run nightly.yml --ref main
-gh run list --workflow nightly.yml -L 1                              # <nid>
-gh run view <nid> --json attempt -q .attempt                         # <attempt>
-gh run download <nid> -n proof-<nid>-a<attempt> -D proof/nightly-gh-<nid>
 ```
 
+`make merge-check` asks for no nightly proof. To have it verify one anyway,
+pass `NIGHTLY=`: a GitHub run's artifact, or a local `make proof-nightly`.
 It is evidence only for the tree `main` pointed at when it started (§6).
+
+```bash
+gh run view <nid> --json attempt -q .attempt                         # <attempt>
+gh run download <nid> -n proof-<nid>-a<attempt> -D proof/nightly-gh-<nid>
+make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
+```
 
 **Run the release gate.** Dispatch `release.yml` from `main` with `version`
 set and `tag: false`; `release.yml` › `validate` refuses a malformed version
@@ -1007,7 +1021,7 @@ new patch version.
 `ghcr.io/orkstack/<image>` starts private, and an anonymous pull (the
 quickstart's) fails until it is public (on each package's settings page).
 
-**Enable the merge gate.** Once the repository is public, run
+**Enable the merge gate.** The repository is public, so run
 `make github-merge-gate` (check mode, read-only) and then
 `make github-merge-gate APPLY=1`. Check mode refuses unless: you are an
 administrator; the repository is public; for `QUEUE=1`, it is owned by an
@@ -1169,18 +1183,20 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
 
 ## 12. Known gaps
 
-- **The gate is not enforced yet.** Rulesets and branch protection are
-  plan-gated on a private repository; `scripts/github-merge-gate.sh` is the
-  one-command enablement, and it refuses until the repository is public.
-  Until then `main` moves only by `AGENTS.md` §11.3's local path.
-- **The merge queue needs an organization-owned repository.** Queue-less mode
-  is the default: `proof` runs the real proof on the pull request, and
+- **The gate is not enforced yet.** The repository is public, so rulesets are
+  available, but `scripts/github-merge-gate.sh`'s apply has not been run: no
+  `main-proof-gate` ruleset requires the `proof` check. Until it is, `main`
+  moves only by `AGENTS.md` §11.3's local path.
+- **The merge queue is optional and not applied.** The repository is
+  organization-owned, so the queue could be (`APPLY=1 QUEUE=1`). Queue-less
+  mode is the default: `proof` runs the real proof on the pull request, and
   `strict_required_status_checks_policy` makes the tested tree the landed
   tree.
-- **The gate has not had a full green run on GitHub.** Its structure was
-  validated end to end; the first green run is planned for the public
-  repository. Until then the gate is built, structurally validated and not
-  enforced.
+- **The full proof has passed on GitHub only on `validate/full/` pushes.**
+  Runs 40388322907 and 40438152385 passed, but never as the required check of
+  a pull request: the one `pull_request` run, a Dependabot pull request,
+  failed, and no `merge_group` run exists. The pull-request and queue paths
+  are structurally validated and unexercised until the gate is applied.
 - **A runner that degrades after its measurement.** The runner-health floor
   (§5) is measured once, before any gate; a runner that slows down later —
   as the one of nightly run 40371833169 did, in the third generation of a
@@ -1213,23 +1229,21 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   7,006 ms against its declared 5,000 ms budget at the gated size on a 2-vCPU
   runner; `run-page-ceiling.spec.ts` never reached its 5 s budget, because
   the run page did not become visible within 60 s there.
-- **Rule A on the GitHub merge path is a process rule.** `make merge-check …
-  NIGHTLY=…` runs only on the local path; once merges go through GitHub,
-  nothing there checks for a passing nightly proof of `main`'s tip, and the
-  merge stage runs `make proof-nightly` and quotes it by hand.
-- **"Before the next merge starts" is enforced when the next merge ends.**
-  `merge-check NIGHTLY=` refuses at the end; a full proof started while
-  `main`'s tip lacks a passing nightly proof only warns. A proof may therefore
-  run beside a nightly that later fails; it is then refused at `merge-check`,
-  never merged.
+- **Nothing mechanical reads GitHub's nightly before a merge.** `make
+  merge-check` asks for no nightly proof (rule A is retired, §6), and the
+  `proof` check does not read `nightly.yml`. `AGENTS.md` §11's "a failing
+  nightly is a failing `main`" is kept by reading the latest run on `main`
+  before a merge (§10), and a regression only a deferred test can see is found
+  by the next nightly, not at merge.
 - **The observability gate has not run on GitHub.** The first release run,
   which always runs it, is its calibration.
-- **`nightly.yml` (both jobs), `release.yml`, `workflow_call` and the flakes
-  job have not run on GitHub yet.** `release.yml`'s `artifacts` and `publish`
-  jobs were added after the last `actionlint` pass; the workflow rules in
-  `test/tools/proofrun` hold their shape, and `make release-smoke` runs their
-  build and smoke on a developer's host. The first `tag: false` dispatch is
-  their first run on GitHub.
+- **`release.yml` has not run on GitHub yet.** `nightly.yml` has, both jobs,
+  and so has `proof.yml` as a reusable workflow through it (`workflow_call`;
+  the flakes job passed in run 40555387388). `release.yml`'s `artifacts` and
+  `publish` jobs were added after the last `actionlint` pass; the workflow
+  rules in `test/tools/proofrun` hold their shape, and `make release-smoke`
+  runs their build and smoke on a developer's host. The first `tag: false`
+  dispatch is their first run on GitHub.
 - **The nightly soaks' thresholds were measured on a 16-core host.** A
   threshold missed on a 4-vCPU public runner is reported as a calibration
   result, never silently changed.

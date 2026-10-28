@@ -8,12 +8,12 @@
 #   make github-merge-gate CODEOWNER_REVIEW=0   leave code-owner review out
 #   scripts/github-merge-gate.sh --verify-landed SHA
 #
-# The gate is built and not enforced until the repository is public: rulesets
-# and branch protection are refused on a private repository. This script is
-# the one command that applies them once it is. Check mode is read-only.
+# The gate is built and not enforced until the apply is run: rulesets and
+# branch protection are refused on a private repository, and this script is
+# the one command that applies them to a public one. Check mode is read-only.
 #
 # Every ruleset body is UNVERIFIED against the API until it has been applied:
-# none has ever been posted from a private repository. Read the API's answer
+# none has ever been posted to the API. Read the API's answer
 # before anything else.
 set -uo pipefail
 
