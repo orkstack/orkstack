@@ -88,6 +88,15 @@ func FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites(f *testing.F) {
 	if key, err := artifacts.RunObjectRefKey("objects/a", "ork-1-1"); err == nil {
 		seeds = append(seeds, key)
 	}
+	deliveredAt := time.Date(2026, 10, 9, 12, 30, 45, 123456789, time.UTC)
+	if id, err := webhooks.NewDeliveryID(deliveredAt); err == nil {
+		if key, err := artifacts.DeliveryKey(&orkstackv1.Delivery{
+			Id: id, CreatedAt: timestamppb.New(deliveredAt), Event: orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+			Namespace: "payments", RunId: "ork-1-1", WebhookId: "wh-0123456789abcdef", Delivered: true,
+		}); err == nil {
+			seeds = append(seeds, key)
+		}
+	}
 	seeds = append(seeds, "metadata/index/runs/payments/nightly/succeeded/20261009T123045.123456Z/ork%2D1", "metadata/index/runs/a/b/c/d/e/f/g")
 	for _, seed := range seeds {
 		f.Add(seed)
@@ -112,6 +121,15 @@ func FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites(f *testing.F) {
 			})
 			if err != nil || !built || rebuilt != key {
 				t.Fatalf("ParseRunOriginIndexKey(%q) = %+v; RunOriginIndexKey writes %q (%v)", key, entry, rebuilt, err)
+			}
+		}
+		if fields, ok := artifacts.ParseDeliveryKey(key); ok {
+			rebuilt, err := artifacts.DeliveryKey(&orkstackv1.Delivery{
+				Id: fields.ID, CreatedAt: timestamppb.New(fields.CreatedAt), Event: fields.Event, Namespace: fields.Namespace,
+				RunId: fields.RunID, WebhookId: fields.WebhookID, Delivered: fields.Delivered,
+			})
+			if err != nil || rebuilt != key {
+				t.Fatalf("ParseDeliveryKey(%q) = %+v; DeliveryKey writes %q (%v)", key, fields, rebuilt, err)
 			}
 		}
 		if runID, ok := artifacts.ParseRunObjectRefRunID(key); ok {
