@@ -683,7 +683,9 @@ were still 921 MB (run 40388322907).
   mode and hash, deferred entries) and `ui_plan`;
 - `quarantine` (`checked_on`, `base_sha256`) and `quarantined` entries;
 - `nightly` (hash, base commit, base hash);
-- `host_speed_failures`, `known_gaps`, `binary_digest_notes`;
+- `host_speed_failures` (an excused Go test's entry carries its `timing_record`,
+  because no part's `artifacts/` reaches the merged proof), `known_gaps`,
+  `binary_digest_notes`;
 - `lists_changed`, the gate files the change edits and the rows it adds or
   removes;
 - `setup_retries`, every fetch a part's runner needed a second attempt for

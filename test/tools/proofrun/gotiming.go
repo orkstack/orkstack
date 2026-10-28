@@ -38,6 +38,9 @@ import (
 //
 // Anything short of that is the ordinary failure it always was.
 
+// timingRecord is the record a Go test leaves of its wall-clock checks.
+type timingRecord = proof.TimingRecord
+
 // isCIIntegrationPart reports whether part is a CI integration shard, the
 // only place a Go runner-size miss may be excused.
 func isCIIntegrationPart(part string) bool {
@@ -187,7 +190,7 @@ func (m *merger) goTimingExcusal(part string, partDir string, cpus int, shard le
 		}
 		out = append(out, hostSpeedFailure{
 			Part: part, Test: e.Package + "." + e.Test, Kind: "integration", Assertion: row.Assertion.String(), Bound: row.Bound,
-			Observed: c.Measured, RunnerCPUs: cpus, ReferenceCPUs: row.ReferenceCPUs, Message: message, Excused: true,
+			Observed: c.Measured, RunnerCPUs: cpus, ReferenceCPUs: row.ReferenceCPUs, Message: message, Excused: true, Record: &rec,
 		})
 	}
 	return out, ""

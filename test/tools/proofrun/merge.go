@@ -167,6 +167,10 @@ type hostSpeedFailure struct {
 	// UI bound's own timing miss on a CI part (hostspeed.go). Every other
 	// entry is recorded and still fails it (rule 13).
 	Excused bool `json:"excused"`
+	// Record is, for an excused Go test, the timing record the test left (its
+	// checks, their bounds, and whether it failed anything else): the proof
+	// artifact does not keep a part's artifacts, and the excusal rests on it.
+	Record *timingRecord `json:"timing_record,omitempty"`
 }
 
 type ciRecord struct {

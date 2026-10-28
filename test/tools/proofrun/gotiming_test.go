@@ -93,6 +93,16 @@ func TestMerge_AGoTimingMissOnASmallerCIRunnerIsAKnownGap(t *testing.T) {
 		g.Bound != 2 || g.Observed != 2.014 || g.RunnerCPUs != 4 || g.ReferenceCPUs != 16 {
 		t.Errorf("host_speed_failures[0] = %+v", g)
 	}
+	// The part's artifacts are not kept in the merged proof, so the record the
+	// excusal rests on travels in the entry: it can be audited later.
+	if g.Record == nil || g.Record.Test != "TestA" || g.Record.NonTimingFailed || !g.Record.Asserted ||
+		len(g.Record.Checks) != 1 || g.Record.Checks[0].ID != "getrun-live-p95" || g.Record.Checks[0].Bound != 2 || !g.Record.Checks[0].Miss {
+		t.Errorf("host_speed_failures[0].Record = %+v, want the test's own timing record", g.Record)
+	}
+	written, err := os.ReadFile(filepath.Join(f.out, "proof.json"))
+	if err != nil || !strings.Contains(string(written), `"timing_record"`) || !strings.Contains(string(written), `"non_timing_failed": false`) {
+		t.Errorf("proof.json does not carry the timing record (%v):\n%s", err, written)
+	}
 	if len(r.KnownGaps) != 1 || !strings.Contains(r.KnownGaps[0], "getrun-live-p95 measured 2.014 s over its 2 s bound on a 4-CPU runner") {
 		t.Errorf("known_gaps = %v", r.KnownGaps)
 	}
