@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Mapping a Go diff onto tests works on declarations, not lines. Both sides
@@ -75,7 +77,7 @@ type decl struct {
 	Lits   []string        // its string literals, unquoted
 	File   string
 	InTest bool // declared in a _test.go file
-	Test   bool // a top-level func TestXxx
+	Test   bool // a top-level func TestXxx, or a fuzz target FuzzXxx(*testing.F), in a _test.go file
 }
 
 // parsedFile is one parsed file.
@@ -90,12 +92,45 @@ type parsedFile struct {
 	OK      bool
 }
 
+// testName reports whether a function name is a Go test's: Test, or Test
+// followed by something that does not start with a lower-case letter. TestMain
+// is the package's entry point, not a test.
 var testName = func(name string) bool {
-	if !strings.HasPrefix(name, "Test") || name == "TestMain" {
+	return name != "TestMain" && hasTestPrefix(name, "Test")
+}
+
+// hasTestPrefix is go test's own rule for a test-like name: the prefix alone,
+// or the prefix followed by a rune that is not a lower-case letter.
+func hasTestPrefix(name, prefix string) bool {
+	if !strings.HasPrefix(name, prefix) {
 		return false
 	}
-	rest := name[len("Test"):]
-	return rest == "" || !(rest[0] >= 'a' && rest[0] <= 'z')
+	rest := name[len(prefix):]
+	if rest == "" {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	return !unicode.IsLower(r)
+}
+
+// isFuzzTarget reports whether a declaration is a native fuzz target: a
+// top-level func named Fuzz... that takes one *testing.F. Its seeds run as an
+// ordinary test in every unit gate, so the evidence selector treats it as a
+// test wherever it treats a TestXxx function (AGENTS.md §11.1).
+func isFuzzTarget(d *ast.FuncDecl) bool {
+	if d.Recv != nil || !hasTestPrefix(d.Name.Name, "Fuzz") || d.Type.Params == nil || len(d.Type.Params.List) != 1 {
+		return false
+	}
+	param := d.Type.Params.List[0]
+	if len(param.Names) > 1 {
+		return false
+	}
+	star, ok := param.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	return ok && sel.Sel.Name == "F"
 }
 
 // parseGo parses one file without comments into its declarations.
@@ -133,7 +168,7 @@ func parseGo(f srcFile) parsedFile {
 			// function would otherwise refer to it.
 			r, sels := refs(d.Recv, d.Type, d.Body)
 			dd := decl{Key: key, Name: name, Node: node, Recv: recv, Canon: canon(d), Refs: r, Sels: sels, Lits: lits(d), File: f.Name}
-			if d.Recv == nil && testName(name) && pf.TestGo {
+			if pf.TestGo && d.Recv == nil && (testName(name) || isFuzzTarget(d)) {
 				dd.Test = true
 				pf.Tests = append(pf.Tests, name)
 			}
