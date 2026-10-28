@@ -3,6 +3,7 @@
 // library only:
 //
 //	proofrun unit         run the unit suites and write their ledger
+//	proofrun fuzz         run every Fuzz target for a bounded time and write its ledger
 //	proofrun integration  plan a run once, or run one shard of that plan
 //	proofrun compile      compile and list the integration test binaries ahead
 //	proofrun select       decide what a feature proof runs, or refuse (exit 2)
@@ -42,6 +43,7 @@ type subcommand struct {
 
 var subcommands = []subcommand{
 	{"unit", "run the unit suites and write their ledger", cmdUnit},
+	{"fuzz", "run every Fuzz target for a bounded time and write its ledger", cmdFuzz},
 	{"integration", "plan a run once, or run one shard of that plan", cmdIntegration},
 	{"compile", "compile and list the integration test binaries a later integration adopts", cmdCompile},
 	{"select", "decide what a feature proof runs, or refuse", cmdSelect},
