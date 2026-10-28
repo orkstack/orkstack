@@ -452,6 +452,14 @@ The proof's site gate (§2.1) runs the same command, so a change that breaks the
 build is stopped before it merges; the workflow publishes only a build that
 passed.
 
+`proof-rerun.yml` is not part of the proof and holds no required check; it
+asks GitHub for a new attempt of a failed candidate proof, when nothing in it
+recorded a result (§10):
+
+| Job | Runs |
+|---|---|
+| `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run was a push to `validate/full/**` of this repository, and its run attempt is below 3 (so at most two automatic reruns). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
+
 `nightly.yml` holds two jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and

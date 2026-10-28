@@ -1,0 +1,94 @@
+name: proof-rerun
+
+# Runs a failed proof of a candidate again, automatically, when nothing in it
+# recorded a result: every job that failed is the `proof` aggregator, or a part
+# whose runner GitHub lost, whose runner measured below the floor, or whose job
+# failed in a fetch or install step before its proof step started. Those are
+# the only attempts AGENTS.md §11.2 lets run again, and `proofrun rerun-plan`
+# decides it with the merger's own classification (test/tools/proofrun,
+# docs/PROOFS.md §10), not shell. A part that recorded a result is never
+# answered by a rerun, so nothing here retries a failing test.
+#
+# The merger stays the only authority. This workflow asks GitHub for a new
+# attempt of the failed jobs (`gh run rerun --failed`); the next `proof` job
+# reads every attempt and decides. A wrong rerun can make a proof ineligible,
+# never pass one.
+#
+# Off unless the repository variable PROOF_AUTO_RERUN is 'true'. It acts only
+# on a push to validate/full/** of this repository (a candidate), and only
+# while the run attempt is below 3, so at most two automatic reruns follow
+# the first attempt. It runs from the default branch (a workflow_run workflow
+# always does) and checks the default branch out; nothing of the candidate's
+# code runs here, and the planner reads GitHub's record of the run through the
+# API alone.
+#
+# Permissions: the two a rerun needs, `actions: write` and `contents: read`,
+# and `checks: read`, which the `proof` job of proof.yml takes for the same
+# reason: the lost-runner and below-floor evidence is a check-run annotation,
+# and the API serves annotations only to a token that may read checks.
+
+on:
+  workflow_run:
+    workflows: [proof]
+    types: [completed]
+
+concurrency:
+  # One decision per run; a rerun in flight is never torn down.
+  group: proof-rerun-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rerun:
+    if: >-
+      vars.PROOF_AUTO_RERUN == 'true'
+      && github.event.workflow_run.conclusion == 'failure'
+      && github.event.workflow_run.event == 'push'
+      && startsWith(github.event.workflow_run.head_branch, 'validate/full/')
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      actions: write
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: plan
+        id: plan
+        timeout-minutes: 8
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          # Three key=value lines of words the planner validated: rerun, reason
+          # and parts. Nothing it read from the run is printed.
+          go run ./test/tools/proofrun rerun-plan -repo "$REPO" -run "$RUN_ID" -attempt "$RUN_ATTEMPT" | tee -a "$GITHUB_OUTPUT"
+      - name: rerun
+        if: steps.plan.outputs.rerun == 'true'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          # Only the failed jobs and the jobs that need them (the proof job):
+          # every part that finished keeps its attempt.
+          gh run rerun "$RUN_ID" --repo "$REPO" --failed
