@@ -208,3 +208,31 @@ func TestWebSocketBridge_AcceptsBothSpellingsOfAnAllowedOrigin(t *testing.T) {
 		}
 	}
 }
+
+// ORK_WS_ALLOWED_ORIGINS is a comma-separated list, and "a, b" is how a person
+// writes one. The early check and the library's own Accept must read the same
+// patterns: with the space kept, the early check trimmed it and let the
+// origin in, and Accept, which does not trim, then refused the upgrade.
+func TestWebSocketBridge_ReadsAPaddedOrBlankPatternAsTheSamePatternEverywhere(t *testing.T) {
+	for _, patterns := range [][]string{
+		{" http://localhost:5173"},
+		{"localhost:5173 "},
+		{"", "  ", "\tlocalhost:5173\t"},
+		{"http://other.example", " localhost:5173"},
+	} {
+		server, runID := wsBridge(t, patterns)
+		if got := handshake(t, server, runID, "http://localhost:5173"); got != http.StatusSwitchingProtocols {
+			t.Errorf("patterns %q: handshake = %d, want %d", patterns, got, http.StatusSwitchingProtocols)
+		}
+		if got := handshake(t, server, runID, "http://evil.example"); got != http.StatusForbidden {
+			t.Errorf("patterns %q: a foreign origin got %d, want %d", patterns, got, http.StatusForbidden)
+		}
+	}
+	// A blank pattern is no pattern: it must not let in an origin with no host.
+	server, runID := wsBridge(t, []string{"", " "})
+	for _, origin := range []string{"null", "https://"} {
+		if got := handshake(t, server, runID, origin); got != http.StatusForbidden {
+			t.Errorf("blank patterns, origin %q: handshake = %d, want %d", origin, got, http.StatusForbidden)
+		}
+	}
+}
