@@ -1314,7 +1314,13 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   CPU-seconds by 16 cores gives 110 s, which is not a floor: `internal/engine`
   is one long package, and its own path bounds the gate. Neither run was
   quiet, so neither is the gate's cost on the proof host; the first full proof
-  that runs it is.
+  that runs it is. A third run, of the `internal/engine` test binary alone
+  (`-short`, one run) pinned to four CPUs with `taskset -c 12-15` under a load
+  average of 15–30, took 545 s: the package is bound by a few long
+  single-threaded tests (one took 172 s), not by cores, so four CPUs did not
+  lengthen it. That is a data point for a 4-vCPU runner on this host's cores,
+  not a measurement on one, and it leaves the 30-minute timeout per run (§2.3)
+  about 3.3 times the longest package's time.
 - A CI runner, as `runner_health` records it (run 40411125174, `ubuntu-24.04`
   on a private repository): 4 CPUs and 16 GB, with 14.3–14.8 GiB available
   before a part, sequential writes of 59–457 MB/s and reads of 235–534 MB/s
