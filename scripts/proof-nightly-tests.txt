@@ -12,8 +12,10 @@
 # A full proof defers only the entries its base's list also carries, so the
 # change that adds a row runs that test one last time. The nightly tier runs
 # exactly these tests; the pre-release gate runs everything, these included.
-# A red nightly or pre-release proof is a failing main: fix it or revert the
-# change that broke it, and never edit this list to make a proof pass.
+# A red nightly or pre-release proof is a regression on main: fixing it, or
+# reverting the change that broke it, is the next work; it holds no other
+# merge, and a red pre-release proof holds its release. Never edit this list
+# to make a proof pass.
 github.com/orkstack/orkstack/internal/engine	TestIntegration_SoakTasks	TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling,TestShapePeak_IsTheBoundAtTheMaximum	2026-10-18 Daniel Santos	the four flat, staged and deep shapes at the 4,000-task default take 2,194 s and measure only the default ceiling; the merge gate runs the flat-short shape at 1,000 through the same helpers and thresholds
 github.com/orkstack/orkstack/internal/engine	TestIntegration_ThreeThousandTaskDefinitionRuns	TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling,TestIntegration_RecordDefinitionRefHistory,TestIntegration_DefinitionChaosC33_CorruptAtALaterGeneration,TestIntegration_DefinitionChaosC34_DeletedAtALaterGeneration,TestIntegration_DefinitionObjectLostBeforeStartFailsExplicitly	2026-10-18 Daniel Santos	1,486 s to apply a 3,000-task definition whose start is a by-reference stub; the merge gate checks the same path at 1,000 tasks across generations and the loss and corruption cases at a later generation
 github.com/orkstack/orkstack/internal/engine	TestIntegration_SnapshotOverlayBytesForAThousandTasks	TestIntegration_SnapshotOverlaysWriteLessThanFullSnapshots,TestIntegration_RecordSnapshotOverlayHistory,TestIntegration_C37_OverlayBaseLost,TestIntegration_C38_OverlayCorrupt,TestIntegration_C39_ADroppedPublish	2026-10-18 Daniel Santos	702 s to measure the absolute saving at 1,000 tasks (11.2 MB against 158.8 MB); the merge gate keeps the comparison at 400 tasks, above the 256 rows where overlays engage, and every overlay loss and corruption case

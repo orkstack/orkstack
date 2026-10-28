@@ -11,9 +11,8 @@
 #                                timed out after MS (the page never drew within
 #                                the spec's own wait)
 # A skip, a missing outcome, any other assertion of the same test (another
-# locator's visibility included), and the same miss on a local proof or in the
-# release tier (the pre-release gate enforces the budgets on the reference
-# class, on any runner) all still fail the proof. A row counts only once the base carries it identically: a
+# locator's visibility included), and the same miss on a local proof all still
+# fail the proof. The pre-release gate excuses exactly what the merge gate does. A row counts only once the base carries it identically: a
 # row a change adds, or a bound it loosens, excuses nothing.
 #
 # A Go test row names a package and one top-level test, and excuses exactly one

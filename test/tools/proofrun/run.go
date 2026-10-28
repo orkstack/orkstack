@@ -1374,6 +1374,15 @@ func writeLedgerAndReport(out string, l ledger) int {
 // smaller runner would be killed by the timeout rather than judged.
 const raceTimeoutPerRun = 30 * time.Minute
 
+// unitTimeout is the -timeout the plain unit gate gives each package's test
+// binary: a hang guard, not a budget. go test's default is ten minutes, and
+// internal/engine's unit suite took 460 s on a 4-vCPU runner and passed the
+// default on a slower one of the same class (CI run 40749987883), so the
+// default judged the runner rather than the tests. It stays well under the
+// fast step's 30 minutes (proof.yml), so a real hang still ends in go test's
+// own stack trace naming the test rather than in the step being killed.
+const unitTimeout = 15 * time.Minute
+
 // raceTimeoutFor is the -timeout a race suite gives go test for count runs. The
 // timeout covers a test binary from its start to its end, across every
 // repeat of -count, so a repeat of N runs gets N runs' time: the bound stays
@@ -1430,6 +1439,8 @@ func cmdUnit(args []string) int {
 	if *race {
 		listArgs = append(listArgs, "-race")
 		runArgs = append(runArgs, "-race", "-timeout", raceTimeoutFor(*count))
+	} else {
+		runArgs = append(runArgs, "-timeout", unitTimeout.String())
 	}
 	if *short {
 		runArgs = append(runArgs, "-short")

@@ -213,7 +213,8 @@ ifneq ($(strip $(PROOF)),)
 else
 	@echo "NOTE: COMPILE, not run. Without PROOF=proof/<name> this gate needs no"
 	@echo "      infrastructure, and an integration test can be red while it is green."
-	@echo "      A merge needs a full proof of the candidate: make proof, then"
+	@echo "      A merge needs a full proof of the candidate: by default CI's, from a"
+	@echo "      validate/full/<name> push (docs/PROOFS.md §10), or make proof; then"
 	@echo "      make merge-check PROOF=proof/<name> (AGENTS.md §11.3)."
 endif
 
@@ -243,7 +244,7 @@ proof: ## The full proof, the merge gate: every gate, every test, every spec -> 
 	@scripts/proof.sh $(NAME)
 
 .PHONY: proof-feature
-proof-feature: ## A feature proof of this branch, never merge evidence: TESTS='PKG:REGEX ...' SPECS='FILE ...' [BASE=main] -> proof/<NAME>-feature/
+proof-feature: ## An optional feature proof of this branch, never merge evidence: TESTS='PKG:REGEX ...' SPECS='FILE ...' [BASE=main] -> proof/<NAME>-feature/
 	@scripts/proof.sh --tier feature $(if $(BASE),--base $(BASE)) $(foreach t,$(TESTS),--tests '$(t)') $(foreach s,$(SPECS),--specs '$(s)') $(NAME)
 
 .PHONY: proof-ui

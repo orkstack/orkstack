@@ -70,22 +70,25 @@ A claim with no end-to-end test is listed as a known gap, never left out:
 
 | Tier | What it runs | Merge evidence |
 |---|---|---|
-| Feature proof (`make proof-feature`) | the fast gates, the tests and specs that prove the change (its **evidence**), and the integration tests of every package the change reaches (its **regression set**) | never |
+| Feature proof (`make proof-feature`), optional | the fast gates, the tests and specs that prove the change (its **evidence**), and the integration tests of every package the change reaches (its **regression set**) | never |
 | Full proof (`make proof`, or CI's `proof` check) | every gate: lint, build, unit, vet, the activity images, every integration test against a real Temporal cluster and S3-compatible store, the activity contract fixture, the UI's type-check and unit suites, the site's check and build (which also renders every doc), the race gate (the unit tests under the race detector), every Playwright spec, and the observability gate when telemetry changed | yes |
 | Nightly (`make proof-nightly`) | only the scale and soak tests [`scripts/proof-nightly-tests.txt`](../scripts/proof-nightly-tests.txt) lists and the Playwright specs [`scripts/proof-nightly-specs.txt`](../scripts/proof-nightly-specs.txt) lists, each beside the merge-gate tests or specs that cover the same behaviour at a smaller size, and two lanes of its own: the unit tests of the concurrency-heavy packages raced three times over, and every fuzz target for a bounded time | no |
 | Pre-release (`make proof-release`) | the full proof with nothing deferred; a release tag requires one for its exact commit | a tag precondition |
 
-A feature proof is scoped by the diff and is never merge evidence. A full
-proof records each nightly-listed test as `deferred`, never as passed, and a
-failing nightly is a failing `main` that is fixed or reverted before anything
-else merges (AGENTS.md §11). [PROOFS.md](./PROOFS.md) §2 and §6 describe each
+A feature proof is scoped by the diff, optional, and never merge evidence. A
+full proof records each nightly-listed test as `deferred`, never as passed. A
+failing nightly is a regression on `main`: fixing it, or reverting what broke
+it, is the next work, but it holds no other merge, and no release is tagged
+until a pre-release proof, which runs every deferred test, passes
+(AGENTS.md §11). [PROOFS.md](./PROOFS.md) §2 and §6 describe each
 tier as it runs today.
 
 The full proof is built to run sharded in CI as the required `proof` check.
 Until that gate is enforced on GitHub ([PROOFS.md](./PROOFS.md) §12), `main`
-moves only by AGENTS.md §11.3's local path: a full proof of the merge
-candidate, quoted in the merge commit, checked by
-`make merge-check PROOF=…`.
+moves only by AGENTS.md §11.3's path (b): a full proof of the merge candidate
+— by default CI's, run by pushing the candidate to `validate/full/<name>` and
+downloading its artifact, or a local `make proof` — quoted in the merge
+commit and checked by `make merge-check PROOF=…`.
 
 ## Why the evidence can be believed
 

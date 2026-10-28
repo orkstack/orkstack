@@ -486,6 +486,29 @@ func TestUnitRunner_TheRaceTimeoutSpansEveryRepeat(t *testing.T) {
 	}
 }
 
+// The plain unit gate gives each package's binary its own hang guard, not go
+// test's default ten minutes: internal/engine's unit suite took 460 s on a
+// 4-vCPU runner and passed the default on a slower one of the same class
+// (CI run 40749987883), so the default judged the runner, not the tests.
+func TestUnitRunner_ThePlainGateGivesEachBinaryItsHangGuard(t *testing.T) {
+	quiet(t)
+	out := t.TempDir()
+	if code := cmdUnit([]string{"-out", out, "-allow", "", "./testdata/deadlinesuite"}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	events, err := os.ReadFile(filepath.Join(out, unitSuiteName(false, 1)+".events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("timeout-minutes=%d", int(unitTimeout.Minutes()))
+	if !strings.Contains(string(events), want) {
+		t.Errorf("the unit gate did not give the binary its %s -timeout: no %q in its events:\n%s", unitTimeout, want, events)
+	}
+	if unitTimeout <= 10*time.Minute {
+		t.Errorf("unitTimeout = %s: no more room than go test's default", unitTimeout)
+	}
+}
+
 // make test-race is the gate's go test without its ledger: the same flags,
 // the timeout included, for the same repeat count.
 func TestMakefile_TestRaceGivesGoTestTheGatesTimeout(t *testing.T) {

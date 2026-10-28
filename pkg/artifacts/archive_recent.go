@@ -75,12 +75,29 @@ func RunRecentIndexKey(rec RunRecord) (string, error) {
 // RunRecentIndexKeyForEntry renders the recent key a scanned entry came from
 // verbatim. It is the exact cursor for the next newest-first page: an instant
 // prefix is not, because some S3 implementations start after the whole
-// prefix and skip the instant's remaining ties.
+// prefix and skip the instant's remaining ties. Like RunIndexKeyForEntry it
+// renders the stored status as it is: RunRecentIndexKey would re-apply
+// NormalizeRunStatus, which turns a stored "status_succeeded" into
+// "succeeded", a key after the stored one, and the page would skip runs.
 func RunRecentIndexKeyForEntry(entry RunIndexEntry) (string, error) {
-	return RunRecentIndexKey(RunRecord{
-		RunID: entry.RunID, Namespace: entry.Namespace,
-		Orkflow: entry.Orkflow, Status: entry.Status, Time: entry.Time,
-	})
+	namespace, err := encodeArchiveSegment(ResolveNamespace(entry.Namespace))
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run recent index key for entry: namespace: %w", err)
+	}
+	orkflow, err := encodeArchiveSegment(entry.Orkflow)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run recent index key for entry: orkflow: %w", err)
+	}
+	status, err := encodeArchiveSegment(entry.Status)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run recent index key for entry: status: %w", err)
+	}
+	runID, err := encodeArchiveSegment(entry.RunID)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run recent index key for entry: run id: %w", err)
+	}
+	return path.Join(RunRecentIndexNamespace, namespace, invertStamp(RunStamp(entry.Time)),
+		orkflow, status, runID), nil
 }
 
 // ParseRunRecentIndexKey reverses RunRecentIndexKey; a foreign key is
@@ -103,7 +120,7 @@ func ParseRunRecentIndexKey(key string) (RunIndexEntry, bool) {
 		return RunIndexEntry{}, false
 	}
 	status, ok := decodeArchiveSegment(parts[6])
-	if !ok {
+	if !ok || !writtenRunStatus(status) {
 		return RunIndexEntry{}, false
 	}
 	runID, ok := decodeArchiveSegment(parts[7])

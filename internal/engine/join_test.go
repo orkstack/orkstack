@@ -1538,10 +1538,9 @@ tasks:
 
 func TestRunWorkflow_ALostPinMemberStartsAnUnpinnedHandler(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	h := newPinHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
-	}, nil)
-	h.answerThenLosePinHost(nil, temporal.NewNonRetryableApplicationError(
+	running := make(chan struct{})
+	h := newPinHarness(t, &suite, heldUntilLost("prep", running), nil)
+	h.answerThenLosePinHost(running, temporal.NewNonRetryableApplicationError(
 		"pin host stopped heartbeating", task.CategoryInfrastructureError, nil))
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-lost-handler", compile(t, pinnedDocument+`
   - id: recover

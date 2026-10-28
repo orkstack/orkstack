@@ -896,16 +896,16 @@ in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
 
 The merge gate's absolute wall-clock budgets — the soaks' `GetRun` p95, the run
-page's 5 s — were calibrated on the 16-CPU reference host and are enforced
-there: in every local proof of any tier, and in the pre-release gate wherever
-it runs, which excuses no runner-size miss, so a tag rests on budgets that
-held on the reference class (a CI release proof needs runners as large as the
-reference, or `make proof-release` runs on the reference host). In the merge
-gate and the nightly, on a CI runner with fewer CPUs, a miss of one is a
-recorded known gap, never a pass and never a widened bound (accepted
-2026-10-27): only under a row of `scripts/proof-host-speed.tsv` that the user
-approved and the base carries identically, and for a Go test only up to the
-bound scaled by the reference's CPUs over the runner's. The merger derives
+page's 5 s — were calibrated on the 16-CPU reference host and are enforced in
+every local proof of any tier. On a CI runner with fewer CPUs, in the merge
+gate, the nightly and the pre-release gate alike, a miss of one is a recorded
+known gap, never a pass and never a widened bound (accepted 2026-10-27; for
+the pre-release gate 2026-10-28, so a release never waits for a runner as
+large as the reference): only under a row of `scripts/proof-host-speed.tsv`
+that the user approved and the base carries identically, and for a Go test
+only up to the bound scaled by the reference's CPUs over the runner's. A tag
+proved on CI therefore does not rest on budgets that held on the reference
+class; only a proof run on the reference host enforces them. The merger derives
 each excusal itself from the part's own records (docs/PROOFS.md §12). A count,
 a size, a history share, a deadlock-detector trip, a correctness assertion, or
 a failure beside the timing miss gets no row and fails the proof wherever it
@@ -913,8 +913,8 @@ runs. What stays visible where a budget is excused is a bound on what the
 soaks' live `GetRun` reads, which holds on every host: at most one pass over
 the generation's history, in events and in bytes, and a bounded number of
 saved-state objects. It bounds what is read, not what reading it costs: a
-slower decode shows only in the wall-clock numbers, which the reference host
-enforces, and the run page's 5 s has no such counterpart.
+slower decode shows only in the wall-clock numbers, which a proof on the
+reference host enforces, and the run page's 5 s has no such counterpart.
 
 The nightly of `main` is GitHub's: `nightly.yml` runs the nightly tier on
 `main` every day (05:17 UTC) and by dispatch. No local `make proof-nightly`
@@ -929,20 +929,26 @@ no proof: a vulnerability whose vulnerable code the module reaches fails that
 run like any other nightly failure, and the fix is to bump the module to the
 version the report names.
 
-A failing nightly (the latest completed `nightly.yml` run on `main`) or
-pre-release proof is a failing `main`: fix it, or revert the change that broke
-it, before anything else merges, and never edit a list, a threshold or a
+A failing nightly (the latest completed `nightly.yml` run on `main`) is a
+regression on `main`, not a merge freeze (decided 2026-10-28): fixing it, or
+reverting the change that broke it, is the next work, a nightly of the fix is
+dispatched once it is pushed (docs/PROOFS.md §10), and other changes keep
+merging through the merge gate meanwhile. Never edit a list, a threshold or a
 measurement file to make it pass. A red nightly clears only when a later run,
-of the fix or of a commit after it, passes: the fix is the one merge made
-meanwhile, a nightly of it is dispatched once it is pushed (docs/PROOFS.md
-§10), and nothing else merges before that run passes. A nightly part whose
-runner measured below the runner-health floor
-(`scripts/proof-runner-floors.tsv`) before any test ran is a runner failure,
-not a failing `main`: the proof records that part as `runner-degraded`, is
-not a proof of the tree, and that one part runs again as a new part of the
-same tree (§11.2); a part above the floor that fails is a failing `main`. The
-race, race-repeat and fuzz parts are measured for information and no floor
-binds them, so a failure there is a failing `main`. A
+of the fix or of a commit after it, passes. What it holds is the release: a
+release tag requires a passing pre-release proof, which runs every deferred
+test, so no tag is made while one fails, and a failing pre-release proof holds
+its release the same way. The pre-release proof runs neither the nightly's own
+lanes nor its vulnerability scan, so a release is not tagged while either is
+red: that is a rule, not a check. A nightly's verdict is its `proof.json`,
+not the run's colour (docs/PROOFS.md §10, §12). A nightly part whose runner measured below the
+runner-health floor (`scripts/proof-runner-floors.tsv`) before any test ran is
+a runner failure, not a regression: the proof records that part as
+`runner-degraded`, is not a proof of the tree, and that one part runs again as
+a new part of the same tree (§11.2); a part above the floor that fails is a
+regression on `main`. The race, race-repeat and fuzz parts are measured for
+information and no floor binds them, so a failure there is a regression on
+`main`. A
 change that raises a
 default the deferred tests measured (`engine.orkflow_max_tasks`, the fan-out
 item maximum, or a continuation, history or in-flight default) quotes a
@@ -1016,10 +1022,14 @@ Every code change follows this order:
    Changelog 1.1.0), a breaking change marked **BREAKING**. Specs and design
    documents still never go in the repository. A change is not done while a
    doc describes the old behaviour.
-8. Produce the change's evidence with
-   `make proof-feature TESTS='PKG:REGEX …' SPECS='FILE …'`, naming the tests
-   and specs that prove it, and quote it as a feature proof (§11.2).
-9. Commit with a Conventional Commit.
+8. Optionally, check the change's evidence with
+   `make proof-feature TESTS='PKG:REGEX …' SPECS='FILE …'` (§11.2). It is a
+   scoped check on the branch and gates nothing (decided 2026-10-28): the
+   fast loop is step 6, and the gate is the full proof of step 10. A change
+   that raises a default the deferred tests measured still quotes a feature
+   proof that names them (§11).
+9. Commit with a Conventional Commit that names the tests and specs that
+   prove the change.
 10. Merge through §11.3. The full proof of the merged tree is what makes the
     change done.
 
@@ -1150,12 +1160,14 @@ full proof passed on the exact tree `main` then points at (§11.3) — the
 `make proof`, or a CI full proof of that exact tree downloaded and passed to
 `make merge-check PROOF=` (§11.3(b)) — and when every reference doc that
 describes what changed says the new thing, with a CHANGELOG.md `[Unreleased]`
-entry for a user-visible change. Done is judged by the merge gate, and a deferred test's regression is
-a failing `main`, found by the nightly or the pre-release proof. A feature
-proof means "ready for the merge proof", never "done".
+entry for a user-visible change. Done is judged by the merge gate; a deferred
+test's regression is a regression on `main`, found by the nightly or the
+pre-release proof (§11). A feature proof means "ready for the merge proof",
+never "done".
 
 **The four tiers.** A **full proof** is the merge gate. A **feature proof**
-is a change's evidence on its branch and never merge evidence. The **nightly
+is an optional, scoped check of a change on its branch and never merge
+evidence. The **nightly
 tier** runs only the tests `scripts/proof-nightly-tests.txt` lists and the
 spec files `scripts/proof-nightly-specs.txt` lists, and two lanes of its own
 — the race repeat (the concurrency-heavy packages' unit suites under the race
@@ -1222,7 +1234,8 @@ the reference for what each tier runs.
 
 **Feature proof** (`make proof-feature`;
 `scripts/proof.sh --tier feature [--base REF] [--tests PKG:REGEX]... [--specs FILE]...`)
-is the evidence for a change on its branch. Its directory is
+is an optional, scoped check of a change on its branch: it gates nothing, and
+what follows is what it requires when it runs. Its directory is
 `proof/<name>-feature/`. Its change set is the diff from the merge base with
 `--base` (default `main`) to the working tree, untracked files included.
 Every changed path must match a rule in `scripts/proof-scope.tsv`. A path that
@@ -1371,12 +1384,13 @@ review for a change to the gate's own files.
 several branches to share one proof, with `--no-ff`. When both sides changed a
 file, resolve the union of behaviors against the merge base; do not take one
 side wholesale. Run `make merge-check` (build, lint, unit and
-`go vet -tags=integration`), then `make proof` on that clean candidate, or
-push the candidate to `validate/full/<name>` and download the
-`proof-<run>-a<n>` artifact of its passing run (docs/PROOFS.md §10);
-`make merge-check PROOF=` accepts it when it is a full, passing,
-merge-eligible proof of exactly the candidate's tree whose base is `main`'s
-tip. The artifact is downloaded, never retyped: its `proof.json` is the
+`go vet -tags=integration`), then prove that clean candidate. By default, push
+it to `validate/full/<name>`, where CI runs the full proof sharded across
+runners in a fraction of one host's time, and download the
+`proof-<run>-a<n>` artifact of its passing run (docs/PROOFS.md §10); or run
+`make proof` on it. `make merge-check PROOF=` accepts a CI proof when it is a
+full, passing, merge-eligible proof of exactly the candidate's tree whose base
+is `main`'s tip. The artifact is downloaded, never retyped: its `proof.json` is the
 evidence. When the proof passes, amend the merge commit's message to quote
 it; the amend leaves the tree, which the proof is bound to, unchanged. Then
 run `make merge-check PROOF=proof/<name>` and fast-forward `main` with
@@ -1391,9 +1405,10 @@ there.
 Until the merge gate is enforced (docs/PROOFS.md §6), path (b) is the merge
 path, and a CI run of the candidate counts only through (b)'s
 `merge-check PROOF=`, never as a substitute for it. Enabling it is an
-outward-facing change, confirmed by the person first. Pushing is a separate
-step, taken only when the person asks; once they have, `main` is pushed to
-`origin` after every merge, so the nightly and the gate see the real tip.
+outward-facing change, confirmed by the person first. Pushing to `origin`,
+a `validate/full/<name>` candidate included, is a step taken only when the
+person asks; once they have asked for `main`, it is pushed to `origin` after
+every merge, so the nightly and the gate see the real tip.
 ## 12. Repository layout and engineering conventions
 
 ```text

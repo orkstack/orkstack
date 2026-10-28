@@ -31,8 +31,9 @@ say `orkctl`. `make down` stops what `make up` started.
 make check     # lint, vet and the unit tests: no Docker, a few minutes
 ```
 
-Every change ships with tests and with evidence from a proof: a feature proof
-on its branch, and a full proof of the merged tree before it lands. A parser
+Every change ships with tests, and lands only after a full proof of the
+merged tree passes; CI runs it, sharded, as the `proof` check. A feature
+proof on a branch is an optional, scoped check. A parser
 of input OrkStack does not control also gets a fuzz target; `make check` runs
 its seeds, and `go test -list '^Fuzz' ./...` lists them all (see "Fuzzing" in
 [CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md)).

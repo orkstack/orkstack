@@ -41,6 +41,13 @@ const (
 	// budget: cleaning up after a kill is exactly when the context is already
 	// gone.
 	controlTimeout = 30 * time.Second
+	// pipeDrainDelay is how long a docker CLI's output may stay open after
+	// the CLI exited, or after its deadline killed it, before the runner
+	// stops reading (exec.Cmd.WaitDelay). It bounds a pipe a helper process
+	// inherited, never the command itself. At 100 ms a loaded host's late
+	// drain read as a failure of a CLI that had exited 0: a successful
+	// `docker create` became RUNTIME_REFUSED.
+	pipeDrainDelay = 5 * time.Second
 	// DefaultPullTimeout bounds one image pull. Exported so
 	// internal/config's Schema can bind ORK_DOCKER_PULL_TIMEOUT's
 	// documented default to the same constant pullTimeout falls back to.
@@ -144,7 +151,7 @@ func (d *DockerRuntime) runWithin(
 	cmd := exec.CommandContext(cmdCtx, bin, args...)
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
-	cmd.WaitDelay = 100 * time.Millisecond
+	cmd.WaitDelay = pipeDrainDelay
 	runErr := cmd.Run()
 	overran = runErr != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 	switch {

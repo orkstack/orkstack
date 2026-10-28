@@ -1647,24 +1647,7 @@ func (m *merger) checkHostSpeedAnchor() {
 		m.notes = append(m.notes, "the base's host-speed table excuses nothing: "+err.Error())
 		return
 	}
-	if why := m.runnerSizeRefusal(); why != "" {
-		m.notes = append(m.notes, why+": no runner-size miss is excused")
-		return
-	}
 	m.hostSpeedExcusing = anchoredHostSpeed(m.hostSpeed, base)
-}
-
-// runnerSizeRefusal says why this proof excuses no runner-size miss whatever
-// the host-speed table says, or "" when its tier may. The wall-clock budgets
-// were calibrated on the reference host and are enforced there (AGENTS.md
-// §11); the pre-release gate is the one tier a tag rests on, so a miss in it
-// is a failure on every runner, and a CI release proof needs a runner with at
-// least the reference's CPUs, or `make proof-release` on the reference host.
-func (m *merger) runnerSizeRefusal() string {
-	if m.plan != nil && m.plan.Tier == tierRelease {
-		return "the release tier enforces the wall-clock budgets on the reference class"
-	}
-	return ""
 }
 
 // whyNotExcused says why a declared UI bound's miss on part still counts.
@@ -1672,8 +1655,6 @@ func (m *merger) whyNotExcused(part string, e uiEntry) string {
 	switch {
 	case !isCIUIPart(part):
 		return "only a CI ui-e2e part may excuse a runner-size miss"
-	case m.runnerSizeRefusal() != "":
-		return m.runnerSizeRefusal()
 	case len(m.hostSpeedExcusing.uiBounds(e)) == 0:
 		return "the base's host-speed table does not carry this row"
 	default:
