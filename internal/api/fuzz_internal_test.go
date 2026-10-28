@@ -258,12 +258,19 @@ func FuzzAwaitRejectReason(f *testing.F) {
 	for _, seed := range []string{
 		`{"reason":"not approved"}`, `{"reason":""}`, `{}`, `{"reason":null}`, `{"reason":1}`, `{"reason":"a","extra":1}`, `{"REASON":"a"}`,
 		`{"reason":"a"}{"reason":"b"}`, `[]`, `"x"`, ``, `{"reason":"a\ud800"}`, "{\"reason\":\"a\xff\"}", `{"reason":"a","reason":"b"}`,
+		`{"reason":"` + strings.Repeat("x", awaitRejectBodyLimit) + `"}`,
 	} {
 		f.Add([]byte(seed))
 	}
 	f.Fuzz(func(t *testing.T, body []byte) {
 		request := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 		reason, err := awaitRejectReason(httptest.NewRecorder(), request)
+		if len(body) > awaitRejectBodyLimit {
+			if err == nil || !strings.HasPrefix(err.Error(), "read request body") {
+				t.Fatalf("a body of %d bytes, over the %d-byte limit, was read: %v", len(body), awaitRejectBodyLimit, err)
+			}
+			return
+		}
 		if err != nil {
 			if reason != "" || !strings.Contains(err.Error(), "reason") {
 				t.Fatalf("body %q refused as %q with reason %q", body, err, reason)
