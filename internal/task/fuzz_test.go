@@ -167,8 +167,10 @@ func FuzzParseSigningKey(f *testing.F) {
 			}
 			return
 		}
-		if parsed.Curve != elliptic.P256() || !parsed.Curve.IsOnCurve(parsed.X, parsed.Y) {
-			t.Fatalf("ParseSigningKey(%q) accepted a key that is not on P-256", data)
+		// ECDH() refuses a point that is not on the curve, the check IsOnCurve
+		// used to make.
+		if _, err := parsed.ECDH(); err != nil || parsed.Curve != elliptic.P256() {
+			t.Fatalf("ParseSigningKey(%q) accepted a key that is not on P-256 (%v)", data, err)
 		}
 		fingerprint := SigningKeyFingerprint(parsed)
 		if !strings.HasPrefix(fingerprint, "sha256:") || len(fingerprint) != len("sha256:")+64 {
