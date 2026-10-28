@@ -3,6 +3,7 @@ package main
 import (
 	"go/token"
 	"sort"
+	"strings"
 )
 
 // A declGraph is the reference graph of one package's top-level
@@ -36,6 +37,12 @@ import (
 // not a declared type of the package (an alias, a type in a file of another
 // build configuration): the mention of the type cannot be relied on, and the
 // name is all there is.
+//
+// Every init function of a test file is a root of every reach, because it
+// runs before each test and can register a type nothing else mentions. One
+// of a non-test file is not: it cannot mention a declaration of a test file,
+// so what it mentions that a helper shares a name with is a coincidence. Each
+// init function is a node of its own, named by its file and its number.
 type declGraph struct {
 	idents   map[string]map[string]bool // node -> every identifier it mentions
 	selects  map[string]map[string]bool // node -> the names its selector expressions select
@@ -44,6 +51,7 @@ type declGraph struct {
 	methods  map[string]bool            // method nodes known
 	declared map[string]bool            // types declared in the package, aliases excluded
 	prod     map[string]bool            // the declared types a non-test file declares
+	inits    []string                   // the init functions of test files
 
 	frozen      bool
 	sortedIdent map[string][]string
@@ -87,6 +95,12 @@ func (g *declGraph) add(d decl) {
 		if !d.InTest {
 			g.prod[d.Name] = true
 		}
+	case strings.HasPrefix(d.Key, "init#") && d.InTest:
+		// Only a test file's init is a root of every reach: it runs before
+		// each test and can register a type nothing else mentions. A
+		// production init cannot mention a declaration of a test file, so
+		// what it mentions that a helper shares a name with is a coincidence.
+		g.inits = append(g.inits, d.Node)
 	}
 }
 
@@ -154,6 +168,7 @@ func (g *declGraph) freeze() {
 	}
 	sortMethods(g.byRecv)
 	sortMethods(g.bySel)
+	sort.Strings(g.inits)
 	g.frozen = true
 }
 
@@ -176,6 +191,9 @@ func (g *declGraph) reaches(from string, targets map[string]bool) string {
 		if found == "" && targets[n] {
 			found = n
 		}
+	}
+	for _, n := range g.inits {
+		reach(n)
 	}
 	for len(queue) > 0 && found == "" {
 		cur := queue[0]

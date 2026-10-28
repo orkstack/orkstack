@@ -65,7 +65,7 @@ func fileMatches(cfg, dir string, f srcFile) bool {
 type decl struct {
 	Key    string          // "func Name", "method T.Name", "var X", "const X", "type T", "init#3"
 	Name   string          // the identifier other declarations reference it by
-	Node   string          // its node in the reference graph: Name, "T.Name" for a method, the key of an init
+	Node   string          // its node in the reference graph: Name, "T.Name" for a method, "init#3 (file.go)" for an init
 	Recv   string          // a method's receiver type
 	IsType bool            // a type declaration
 	Alias  bool            // a type alias (type A = T)
@@ -127,7 +127,7 @@ func parseGo(f srcFile) parsedFile {
 			} else if name == "init" {
 				inits++
 				key = "init#" + strconv.Itoa(inits)
-				node = key
+				node = key + " (" + f.Name + ")" // init#1 of two files are two nodes
 			}
 			// The declared name is not a mention: a method named like a
 			// function would otherwise refer to it.

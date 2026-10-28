@@ -315,7 +315,10 @@ a type a non-test file declares (an `export_test.go` hook) is reached by its
 selector alone, whether or not the test names the type: it exists in the test
 build only, so production code does not call it through an interface, and the
 test's value of the type may come from another package. A deleted method is
-matched the same way.
+matched the same way. Every `init` function of a test file is part of every
+test's reach, since it runs before each and can register a type nothing else
+mentions; one of a non-test file is not, because it cannot mention a
+declaration of a test file.
 
 The slow list also holds back evidence that is there only because it reaches
 a changed helper, type or variable: such a test's own source did not change,

@@ -310,6 +310,16 @@ type namer interface{ name() string }
 
 func nameOf(n namer) string { return n.name() }
 
+type registered interface{ run() }
+
+var registry []registered
+
+func init() { registry = append(registry, &stage{}) }
+
+type stage struct{}
+
+func (stage) run() {}
+
 type alias = order
 
 func (a *alias) tweak() {}
@@ -359,6 +369,12 @@ func TestCallsCountFunction(t *testing.T) { _ = count() }
 func TestReadsAField(t *testing.T) {
 	s := struct{ setup, count, name int }{}
 	_ = s.setup + s.count + s.name
+}
+
+func TestRunsRegisteredStages(t *testing.T) {
+	for _, r := range registry {
+		r.run()
+	}
 }
 
 func TestTweaksThroughTheTarget(t *testing.T) {
@@ -417,6 +433,11 @@ func TestAnalyzeDirResolvesMethodsByReceiver(t *testing.T) {
 				"TestCallsOrderThroughAnInterface": "order.Name",
 				"TestTweaksThroughTheTarget":       "order.Name",
 			},
+		},
+		{
+			name: "a method of a type only an init function mentions is reached by every test that selects it",
+			new:  change("func (stage) run() {}", "func (stage) run() { _ = 1 }"),
+			want: map[string]string{"TestRunsRegisteredStages": "stage.run"},
 		},
 		{
 			name: "a method declared on an alias is resolved by its selector alone",
@@ -682,6 +703,140 @@ func TestUnrelated(t *testing.T) {}
 				t.Errorf("tests = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// Only a test file's init function is a root of every reach. Production code
+// cannot mention a declaration of a test file, so what its init functions
+// mention that a helper shares a name with is a coincidence: a helper called
+// runIDs was reached by every test of pkg/artifacts through five production
+// init functions that name some other runIDs. Each init is a node of its own,
+// so that init#1 of one file is not init#1 of another.
+func TestAnalyzeDirOnlyATestFilesInitIsARoot(t *testing.T) {
+	const prod = `package engine
+
+func init() { register(build) }
+
+func register(f func()) {}
+
+func build() {
+	var runIDs []string
+	_ = runIDs
+}
+`
+	const head = `package engine
+
+import "testing"
+
+func runIDs() []string { return nil }
+
+func TestReadsRunIDs(t *testing.T) { _ = runIDs() }
+`
+	const withInit = `
+type stage struct{}
+
+func (stage) Run() {}
+
+var stages []interface{ Run() }
+
+func init() { stages = append(stages, &stage{}) }
+
+func TestRunsTheStages(t *testing.T) {
+	for _, s := range stages {
+		s.Run()
+	}
+}
+`
+	for _, c := range []struct {
+		name string
+		test string
+	}{
+		{"a production init beside tests that mention no init", head},
+		{"a production init numbered like the test file's", head + withInit},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var src strings.Builder
+			src.WriteString(c.test)
+			for i := 0; i < 50; i++ {
+				fmt.Fprintf(&src, "\nfunc TestUnrelated%d(t *testing.T) {}\n", i)
+			}
+			oldSrc := src.String()
+			newSrc := strings.Replace(oldSrc, "func runIDs() []string { return nil }", "func runIDs() []string { return []string{} }", 1)
+			if newSrc == oldSrc {
+				t.Fatal("fixture has no runIDs to change")
+			}
+			prodFile := srcFile{Name: "register.go", Content: []byte(prod)}
+			ch := analyzeDir(cfgUnit, "pkg/artifacts", files("init_test.go", oldSrc), files("init_test.go", newSrc),
+				all(files("init_test.go", newSrc), prodFile))
+			if got, want := keys(ch.Tests), []string{"TestReadsRunIDs"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("%d tests selected, want only TestReadsRunIDs: %v", len(got), got[:min(len(got), 5)])
+			}
+		})
+	}
+}
+
+// An init function of a test file runs before every test, so a string it
+// holds is read by every test of the package; one of a production file is
+// not a root.
+func TestTestsReferencingReadsATestFilesInit(t *testing.T) {
+	const prod = `package main
+
+func init() { other = "./test/tools/cosign-sign" }
+
+var other string
+`
+	const test = `package main
+
+import "testing"
+
+var tool string
+
+func init() { tool = "./test/tools/cosign-sign" }
+
+func TestA(t *testing.T) {}
+
+func TestB(t *testing.T) { _ = tool }
+`
+	needle := func(s string) bool { return strings.Contains(s, "test/tools/cosign-sign") }
+	got := testsReferencing("cmd/orkctl", []srcFile{{Name: "x_test.go", Content: []byte(test)}}, needle)
+	if want := []string{"TestA", "TestB"}; !reflect.DeepEqual(keys(got), want) {
+		t.Errorf("a test file's init: got %v, want %v", keys(got), want)
+	}
+	got = testsReferencing("cmd/orkctl", []srcFile{
+		{Name: "x_test.go", Content: []byte(strings.Replace(test, `func init() { tool = "./test/tools/cosign-sign" }`, "", 1))},
+		{Name: "y.go", Content: []byte(prod)},
+	}, needle)
+	if len(got) != 0 {
+		t.Errorf("a production file's init: got %v, want none", keys(got))
+	}
+}
+
+// Every init function is a node of its own, named by its file as well as its
+// number.
+func TestParseGoNamesEachInitByItsFile(t *testing.T) {
+	src := "package p\n\nfunc init() {}\n\nfunc init() {}\n"
+	var nodes []string
+	for _, name := range []string{"a_test.go", "b.go"} {
+		pf := parseGo(srcFile{Name: name, Content: []byte(src)})
+		for _, d := range pf.Decls {
+			if !strings.HasPrefix(d.Key, "init#") {
+				t.Fatalf("decl = %+v", d)
+			}
+			nodes = append(nodes, d.Node)
+			if d.InTest != (name == "a_test.go") {
+				t.Errorf("%s: InTest = %v", name, d.InTest)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, n := range nodes {
+		if seen[n] {
+			t.Errorf("node %q is not unique among %v", n, nodes)
+		}
+		seen[n] = true
+	}
+	if len(nodes) != 4 {
+		t.Errorf("nodes = %v, want four", nodes)
 	}
 }
 

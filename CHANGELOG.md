@@ -45,7 +45,8 @@ include breaking changes, and each is marked **BREAKING**.
   `_test.go` file adds to a production type: only test code calls it, and it
   is matched by its selector alone. The tests that read a changed tool or
   example are found the same way. Functions, variables, constants and types
-  are still matched by name.
+  are still matched by name, and an `init` function of a test file now
+  counts as part of every test's reach.
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
   pid, rather than by the container's Orker id. Tests that name their own
