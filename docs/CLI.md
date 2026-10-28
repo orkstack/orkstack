@@ -396,7 +396,8 @@ non-recursively for *.ork.yaml and *.ork.yml files; orkflows are applied
 before automation, and nothing is written until every document has been
 validated and planned. A directory's activity interfaces (kind:
 ActivityInterface, packed into images by orkctl activity interface pack)
-are skipped; one named on the command line is refused.
+are skipped, each named on stderr; one named on the command line is
+refused.
 
 An automation document names its own namespace, which is authoritative:
 only an -n given on this command line is checked against it, and

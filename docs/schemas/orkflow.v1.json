@@ -595,7 +595,7 @@
           "then": {
             "properties": {
               "src": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               }
             },
@@ -618,7 +618,7 @@
           "then": {
             "properties": {
               "as": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "srcs": {
@@ -630,7 +630,7 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-file (see its README)."
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label."
               }
             },
             "required": [
@@ -653,11 +653,11 @@
           "then": {
             "properties": {
               "as": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "src": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               }
             },
@@ -680,11 +680,11 @@
           "then": {
             "properties": {
               "as": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "src": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               }
             },
@@ -707,11 +707,11 @@
           "then": {
             "properties": {
               "as": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "src": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               }
             },
@@ -734,7 +734,7 @@
           "then": {
             "properties": {
               "as": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "srcs": {
@@ -746,7 +746,7 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-file (see its README)."
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label."
               }
             },
             "required": [
@@ -768,15 +768,15 @@
           "then": {
             "properties": {
               "as": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "member": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "src": {
-                "description": "Declared by the interface label of images/activity-file (see its README).",
+                "description": "Declared by images/activity-file/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               }
             },
@@ -831,7 +831,7 @@
             "properties": {
               "as": {
                 "default": "src.tar.gz",
-                "description": "Declared by the interface label of images/activity-git (see its README).",
+                "description": "Declared by images/activity-git/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "depth": {
@@ -844,10 +844,10 @@
                   }
                 ],
                 "default": 1,
-                "description": "Declared by the interface label of images/activity-git (see its README)."
+                "description": "Declared by images/activity-git/interface.ork.yaml, the source of the image's interface label."
               },
               "dest": {
-                "description": "Declared by the interface label of images/activity-git (see its README).",
+                "description": "Declared by images/activity-git/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               }
             }
@@ -872,7 +872,7 @@
       "description": "The `with:` keys the first-party `git` image declares. A deployment whose activity catalog maps `git` to another image is checked against that image's label by `orkctl orkflow validate`.",
       "properties": {
         "caFile": {
-          "description": "Declared by the interface label of images/activity-git (see its README).",
+          "description": "Declared by images/activity-git/interface.ork.yaml, the source of the image's interface label.",
           "type": "string"
         },
         "op": {
@@ -889,20 +889,20 @@
           ]
         },
         "ref": {
-          "description": "Declared by the interface label of images/activity-git (see its README).",
+          "description": "Declared by images/activity-git/interface.ork.yaml, the source of the image's interface label.",
           "type": "string"
         },
         "tokenSecret": {
-          "description": "Declared by the interface label of images/activity-git (see its README).",
+          "description": "Declared by images/activity-git/interface.ork.yaml, the source of the image's interface label.",
           "type": "string"
         },
         "tokenUser": {
           "default": "x-access-token",
-          "description": "Declared by the interface label of images/activity-git (see its README).",
+          "description": "Declared by images/activity-git/interface.ork.yaml, the source of the image's interface label.",
           "type": "string"
         },
         "url": {
-          "description": "Declared by the interface label of images/activity-git (see its README).",
+          "description": "Declared by images/activity-git/interface.ork.yaml, the source of the image's interface label.",
           "type": "string"
         }
       },
@@ -1021,7 +1021,7 @@
       "description": "The `with:` keys the first-party `http` image declares. A deployment whose activity catalog maps `http` to another image is checked against that image's label by `orkctl orkflow validate`.",
       "properties": {
         "body": {
-          "description": "Declared by the interface label of images/activity-http (see its README).",
+          "description": "Declared by images/activity-http/interface.ork.yaml, the source of the image's interface label.",
           "type": [
             "string",
             "object",
@@ -1029,7 +1029,7 @@
           ]
         },
         "captureBodyAs": {
-          "description": "Declared by the interface label of images/activity-http (see its README).",
+          "description": "Declared by images/activity-http/interface.ork.yaml, the source of the image's interface label.",
           "type": "string"
         },
         "headers": {
@@ -1041,7 +1041,7 @@
               "$ref": "#/definitions/orkflow.template"
             }
           ],
-          "description": "Declared by the interface label of images/activity-http (see its README)."
+          "description": "Declared by images/activity-http/interface.ork.yaml, the source of the image's interface label."
         },
         "op": {
           "anyOf": [
@@ -1070,10 +1070,10 @@
               "$ref": "#/definitions/orkflow.template"
             }
           ],
-          "description": "Declared by the interface label of images/activity-http (see its README)."
+          "description": "Declared by images/activity-http/interface.ork.yaml, the source of the image's interface label."
         },
         "url": {
-          "description": "Declared by the interface label of images/activity-http (see its README).",
+          "description": "Declared by images/activity-http/interface.ork.yaml, the source of the image's interface label.",
           "type": "string"
         }
       },
@@ -1099,7 +1099,7 @@
           "then": {
             "properties": {
               "as": {
-                "description": "Declared by the interface label of images/activity-json (see its README).",
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "srcs": {
@@ -1111,7 +1111,7 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-json (see its README)."
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label."
               }
             },
             "required": [
@@ -1133,15 +1133,15 @@
           "then": {
             "properties": {
               "as": {
-                "description": "Declared by the interface label of images/activity-json (see its README).",
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "filter": {
-                "description": "Declared by the interface label of images/activity-json (see its README).",
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "gather": {
-                "description": "Declared by the interface label of images/activity-json (see its README).",
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "nullInput": {
@@ -1154,7 +1154,7 @@
                   }
                 ],
                 "default": false,
-                "description": "Declared by the interface label of images/activity-json (see its README)."
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label."
               },
               "slurp": {
                 "anyOf": [
@@ -1166,10 +1166,10 @@
                   }
                 ],
                 "default": false,
-                "description": "Declared by the interface label of images/activity-json (see its README)."
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label."
               },
               "src": {
-                "description": "Declared by the interface label of images/activity-json (see its README).",
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "srcs": {
@@ -1181,7 +1181,7 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-json (see its README)."
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label."
               },
               "vars": {
                 "anyOf": [
@@ -1192,7 +1192,7 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-json (see its README)."
+                "description": "Declared by images/activity-json/interface.ork.yaml, the source of the image's interface label."
               }
             },
             "required": [
@@ -1247,7 +1247,7 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-shell (see its README)."
+                "description": "Declared by images/activity-shell/interface.ork.yaml, the source of the image's interface label."
               }
             },
             "required": [
@@ -1277,7 +1277,7 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-shell (see its README)."
+                "description": "Declared by images/activity-shell/interface.ork.yaml, the source of the image's interface label."
               }
             },
             "required": [
@@ -1304,7 +1304,7 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-shell (see its README)."
+                "description": "Declared by images/activity-shell/interface.ork.yaml, the source of the image's interface label."
               }
             },
             "required": [
@@ -1334,14 +1334,14 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-shell (see its README)."
+                "description": "Declared by images/activity-shell/interface.ork.yaml, the source of the image's interface label."
               },
               "interpreter": {
-                "description": "Declared by the interface label of images/activity-shell (see its README).",
+                "description": "Declared by images/activity-shell/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "script": {
-                "description": "Declared by the interface label of images/activity-shell (see its README).",
+                "description": "Declared by images/activity-shell/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               }
             },
@@ -1388,11 +1388,11 @@
           "then": {
             "properties": {
               "as": {
-                "description": "Declared by the interface label of images/activity-template (see its README).",
+                "description": "Declared by images/activity-template/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "data": {
-                "description": "Declared by the interface label of images/activity-template (see its README).",
+                "description": "Declared by images/activity-template/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "datasources": {
@@ -1404,18 +1404,18 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-template (see its README)."
+                "description": "Declared by images/activity-template/interface.ork.yaml, the source of the image's interface label."
               },
               "leftDelim": {
-                "description": "Declared by the interface label of images/activity-template (see its README).",
+                "description": "Declared by images/activity-template/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "rightDelim": {
-                "description": "Declared by the interface label of images/activity-template (see its README).",
+                "description": "Declared by images/activity-template/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "src": {
-                "description": "Declared by the interface label of images/activity-template (see its README).",
+                "description": "Declared by images/activity-template/interface.ork.yaml, the source of the image's interface label.",
                 "type": "string"
               },
               "values": {
@@ -1427,7 +1427,7 @@
                     "$ref": "#/definitions/orkflow.template"
                   }
                 ],
-                "description": "Declared by the interface label of images/activity-template (see its README)."
+                "description": "Declared by images/activity-template/interface.ork.yaml, the source of the image's interface label."
               }
             },
             "required": [

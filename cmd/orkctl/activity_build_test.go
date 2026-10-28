@@ -48,3 +48,15 @@ func TestActivityBuild_RefusesABadInterfaceBeforeBuilding(t *testing.T) {
 		t.Fatalf("the toolchain ran before the interface was packed: %v", err)
 	}
 }
+
+// TestActivityBuild_AFailedBuildNamesTheLabelBySize: a toolchain error
+// quotes the build's argv, and a packed interface — up to 64 KiB of JSON — is
+// named by its size there rather than echoed.
+func TestActivityBuild_AFailedBuildNamesTheLabelBySize(t *testing.T) {
+	label := `{"schemaVersion":1}`
+	got := describeDockerArgs(activityBuildArgs("reg/x:1", "", "", label, "ctx"))
+	want := "build --tag reg/x:1 --label org.orkstack.activity.interface=<packed interface, 19 bytes> ctx"
+	if got != want {
+		t.Fatalf("described\n%s\nwant\n%s", got, want)
+	}
+}

@@ -1,7 +1,9 @@
 # The with: contract of examples/custom-image (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
 # Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
-# that line.
+# that line. In a project of your own, which has no genschemas, drop the
+# Dockerfile's LABEL and build with
+# `orkctl activity build <dir> --tag <ref> --interface interface.ork.yaml`.
 apiVersion: orkstack/v1
 kind: ActivityInterface
 fields:

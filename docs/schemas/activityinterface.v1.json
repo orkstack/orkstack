@@ -35,7 +35,10 @@
         "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$",
         "type": "string"
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "activityinterface.op": {
       "additionalProperties": false,
@@ -93,7 +96,10 @@
         "pattern": "^[a-z][a-z0-9_-]{0,63}$",
         "type": "string"
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "values": {
       "allOf": [

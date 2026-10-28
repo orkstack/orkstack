@@ -218,18 +218,21 @@ func TestApply_ADirectorySkipsItsActivityInterfaces(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	inputs, err := expandApplyArgs([]string{dir})
+	inputs, skipped, err := expandApplyArgs([]string{dir})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
 	if len(inputs) != 1 || filepath.Base(inputs[0].path) != "deploy.ork.yaml" {
 		t.Fatalf("expanded = %v, want only deploy.ork.yaml", inputs)
 	}
+	if len(skipped) != 1 || filepath.Base(skipped[0]) != "interface.ork.yaml" {
+		t.Fatalf("skipped = %v, want interface.ork.yaml, reported", skipped)
+	}
 	only := t.TempDir()
 	if err := os.WriteFile(filepath.Join(only, "interface.ork.yaml"), []byte("apiVersion: orkstack/v1\nkind: ActivityInterface\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := expandApplyArgs([]string{only}); err == nil ||
+	if _, _, err := expandApplyArgs([]string{only}); err == nil ||
 		err.Error() != only+": no Orkflow or automation document to apply: its *.ork.yaml files are activity interfaces, which are packed into images" {
 		t.Fatalf("a directory of interfaces = %v", err)
 	}
@@ -337,7 +340,7 @@ func TestApply_DirectoryExpandsOrkYamlLexicallyAndNonRecursively(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	inputs, err := expandApplyArgs([]string{dir})
+	inputs, _, err := expandApplyArgs([]string{dir})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -349,7 +352,7 @@ func TestApply_DirectoryExpandsOrkYamlLexicallyAndNonRecursively(t *testing.T) {
 		t.Errorf("expanded = %v, want [a.ork.yml b.ork.yaml]", got)
 	}
 	empty := t.TempDir()
-	if _, err := expandApplyArgs([]string{empty}); err == nil || !strings.Contains(err.Error(), "no *.ork.yaml or *.ork.yml files") {
+	if _, _, err := expandApplyArgs([]string{empty}); err == nil || !strings.Contains(err.Error(), "no *.ork.yaml or *.ork.yml files") {
 		t.Errorf("empty directory = %v", err)
 	}
 }

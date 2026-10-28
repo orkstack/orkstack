@@ -17,12 +17,12 @@ include breaking changes, and each is marked **BREAKING**.
   value it packs into, for any toolchain's `--label`, and `orkctl activity
   build --interface FILE` packs it into the image it builds. The label stays
   the contract the engine reads, unchanged, so every existing labelled image
-  keeps working. The packed value is canonical, so one declaration always
-  yields the same image config. `docs/schemas/activityinterface.v1.json`
+  keeps working. The packed value is canonical: one declaration always packs
+  to the same label value. `docs/schemas/activityinterface.v1.json`
   gives editors completion, selected by `kind` in `orkstack.v1.json`.
   `orkctl apply` refuses an activity interface named on its command line and
-  skips one in a directory (docs/ACTIVITY_IMAGES.md, "Declaring the
-  interface").
+  skips one in a directory, naming it on stderr (docs/ACTIVITY_IMAGES.md,
+  "Declaring the interface").
 
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing

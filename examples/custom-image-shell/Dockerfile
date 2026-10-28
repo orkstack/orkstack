@@ -8,7 +8,8 @@ RUN chmod 0555 /usr/local/bin/entrypoint.sh
 # never root
 USER 65532:65532
 # The with: contract (docs/ACTIVITY_IMAGES.md, "Declaring the interface"),
-# generated from interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`.
+# generated from interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`;
+# outside this repository, drop the line and build with `--interface interface.ork.yaml`.
 LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"as":{"type":"string","default":"report.txt"},"label":{"type":"string"},"src":{"type":"string"}},"values":{"argv":{"type":"array"},"artifact":{"type":"string"},"attempt":{"type":"number"},"each":{"type":"object"},"idempotencyKey":{"type":"string"},"label":{"type":"string"},"source":{"type":"string"},"stats":{"type":"object"},"taskId":{"type":"string"}}}'
 # exec form
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

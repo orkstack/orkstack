@@ -35,7 +35,7 @@ func interfaceSchemaKeys() map[string]map[string]any {
 		"interfaceDocument.fields": withDescription(fields,
 			"The top-level `with:` keys every op reads (for an image with no `op`, the whole `with:` block)."),
 		"interfaceDocument.ops": {
-			"type":                 "object",
+			"type":                 []any{"object", "null"},
 			"maxProperties":        MaxInterfaceOps,
 			"propertyNames":        map[string]any{"type": "string", "pattern": opNamePattern.String()},
 			"additionalProperties": map[string]any{"anyOf": []any{map[string]any{"$ref": "#/definitions/activityinterface.op"}, map[string]any{"type": "null"}}},
@@ -111,7 +111,9 @@ func ActivityInterfaceSchema() (map[string]any, error) {
 		"`orkctl activity interface pack` packs it into the image's `" + InterfaceLabel + "` label, which the engine reads."
 	root["definitions"] = map[string]any{
 		"activityinterface.fields": map[string]any{
-			"type":                 "object",
+			// null as well: the parser reads `fields:` with nothing under it
+			// as no keys, and the editor must not flag what pack accepts.
+			"type":                 []any{"object", "null"},
 			"maxProperties":        MaxInterfaceFields,
 			"propertyNames":        map[string]any{"type": "string", "pattern": interfaceKeyPattern.String(), "maxLength": MaxInterfaceKeyBytes},
 			"additionalProperties": map[string]any{"$ref": "#/definitions/activityinterface.field"},

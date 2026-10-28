@@ -35,7 +35,7 @@ const MaxInterfaceDocumentBytes = 1 << 20
 // with.
 const interfaceHeaderLines = `"apiVersion: ` + APIVersion + `" and "kind: ` + KindActivityInterface + `"`
 
-var interfaceHeaderMissing = "the document has no apiVersion or kind: an activity interface begins with the two lines " +
+const interfaceHeaderMissing = "the document has no apiVersion or kind: an activity interface begins with the two lines " +
 	interfaceHeaderLines + " — add them at the top, after any leading comments"
 
 // interfaceDocument is kind: ActivityInterface as authored: the
@@ -275,7 +275,7 @@ func lowestSchemaVersion(*orkstackv1.ActivityInterface) int32 { return 1 }
 
 // PackInterfaceLabel is the label value that declares iface: its protojson
 // encoding (lowerCamel names, field order, map keys sorted) with every
-// insignificant space removed and every single quote escaped as ', so
+// insignificant space removed and every single quote escaped as \u0027, so
 // the value fits a Dockerfile's single-quoted LABEL as it is. It writes the
 // lowest schemaVersion into a copy, holds the copy to every rule the engine
 // reads a label by, and refuses a value past MaxInterfaceLabelBytes. The

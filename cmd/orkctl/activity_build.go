@@ -141,9 +141,22 @@ func runDocker(cmd *cobra.Command, out interface{ Write([]byte) (int, error) }, 
 	proc.Stdout = out
 	proc.Stderr = os.Stderr
 	if err := proc.Run(); err != nil {
-		return fmt.Errorf("docker %s: %w", strings.Join(args, " "), err)
+		return fmt.Errorf("docker %s: %w", describeDockerArgs(args), err)
 	}
 	return nil
+}
+
+// describeDockerArgs is argv for an error message: a packed interface label,
+// up to 64 KiB of JSON, is named by its size rather than echoed.
+func describeDockerArgs(args []string) string {
+	out := make([]string, len(args))
+	for i, arg := range args {
+		if value, ok := strings.CutPrefix(arg, dsl.InterfaceLabel+"="); ok {
+			arg = fmt.Sprintf("%s=<packed interface, %d bytes>", dsl.InterfaceLabel, len(value))
+		}
+		out[i] = arg
+	}
+	return strings.Join(out, " ")
 }
 
 // manifestDigest reads back the index digest the registry assigned.

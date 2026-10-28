@@ -113,11 +113,11 @@ other toolchain takes the value `orkctl activity interface pack` prints:
 | ko | `--image-label` with the same `key=value` |
 | rules_oci | `oci_image`'s `labels` |
 | nix `dockerTools` | `config.Labels` |
-| a Dockerfile alone | paste it as `LABEL org.orkstack.activity.interface='<value>'`; the value never holds a single quote, which pack writes as a JSON unicode escape, so it fits a single-quoted line as it is |
+| a Dockerfile alone | paste it as `LABEL org.orkstack.activity.interface='<value>'`; the value never holds a single quote, which pack writes as a JSON unicode escape, so it fits a single-quoted line as it is — up to BuildKit's 65,535-byte line, past which only a `--label` carries it |
 
 The value is canonical: one declaration always packs to the same bytes (map
-keys sorted, no whitespace), so a rebuild does not move the image's config
-digest. Pack holds the document to every rule the engine reads a label by, so
+keys sorted, no whitespace), so the label contributes the same bytes to every
+build of the image. Pack holds the document to every rule the engine reads a label by, so
 a value it prints is never one the engine reports as unreadable, and it writes
 `schemaVersion` itself — the lowest version that expresses the document, `1`
 today — which the document never names.
@@ -132,7 +132,8 @@ Editors complete it from [`activityinterface.v1.json`](schemas/activityinterface
 which the dispatcher `orkstack.v1.json` selects by `kind`, so the
 `*.ork.yaml` mapping of `docs/DSL.md`, "Editor support", covers
 `interface.ork.yaml`. It is never applied: `orkctl apply` refuses one named on
-its command line and skips one it finds in a directory.
+its command line and skips one it finds in a directory, naming it on
+stderr.
 
 Labels are inherited from a base image: an image built `FROM` a labelled image
 declares the base's interface until it declares its own, with `--interface`

@@ -99,7 +99,11 @@ There are no other exit codes: retrying is the task's `retry:` policy.
 
 The image declares its `with:` contract in
 [`interface.ork.yaml`](interface.ork.yaml), packed into one label that
-validate and apply read; the container never does.
+validate and apply read; the container never does. In this repository the
+Dockerfile's `LABEL` line is generated from that file (`docs/ACTIVITY_IMAGES.md`,
+"Declaring the interface"). In a project of your own, drop the `LABEL` and add
+`--interface interface.ork.yaml` to `orkctl activity build`, which packs the
+file into the image it builds.
 
 There are no `ops`, so the whole `with:` block is its `fields`, and
 `orkctl activity inspect <reference>` heads it `schema 1 · 3 keys`.

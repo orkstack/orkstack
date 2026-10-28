@@ -83,6 +83,14 @@ func TestActivityInterfaceSchema_BoundsAreTheParsers(t *testing.T) {
 	if got := fields["propertyNames"].(map[string]any)["pattern"]; got != interfaceKeyPattern.String() {
 		t.Errorf("fields key pattern = %v, want %s", got, interfaceKeyPattern)
 	}
+	// An empty `fields:`, `values:` or `ops:` is null in YAML, and the
+	// parser reads it as no keys; the schema must not flag it.
+	if got := fields["type"]; !reflect.DeepEqual(got, []any{"object", "null"}) {
+		t.Errorf("fields type = %v, want object or null", got)
+	}
+	if got := properties["ops"].(map[string]any)["type"]; !reflect.DeepEqual(got, []any{"object", "null"}) {
+		t.Errorf("ops type = %v, want object or null", got)
+	}
 	if got := fields["maxProperties"]; got != MaxInterfaceFields {
 		t.Errorf("fields maxProperties = %v, want %d", got, MaxInterfaceFields)
 	}

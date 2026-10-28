@@ -35,6 +35,10 @@ const (
 // contract in (docs/ACTIVITY_IMAGES.md, "Declaring the interface").
 const InterfaceDocument = "interface.ork.yaml"
 
+// MaxDockerfileLine is the longest Dockerfile line BuildKit reads. A label
+// near MaxInterfaceLabelBytes fits a --label argument, not a LABEL line.
+const MaxDockerfileLine = 65535
+
 // labelLine is the interface label's line in a Dockerfile.
 var labelLine = regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`)
 
@@ -99,10 +103,14 @@ func Dockerfiles(repoRoot string) (map[string][]byte, error) {
 		}
 		lines := labelLine.FindAllIndex(raw, -1)
 		if len(lines) != 1 {
-			return nil, fmt.Errorf("schemas: %s carries %d interface LABEL lines, want exactly one for %s to replace",
-				path, len(lines), InterfaceDocument)
+			return nil, fmt.Errorf("schemas: %s carries %d interface LABEL lines, want exactly one for %s to replace: "+
+				"one line, LABEL %s='…', single-quoted and unbroken", path, len(lines), InterfaceDocument, dsl.InterfaceLabel)
 		}
 		line := "LABEL " + dsl.InterfaceLabel + "='" + label + "'"
+		if len(line) > MaxDockerfileLine {
+			return nil, fmt.Errorf("schemas: %s: the interface LABEL line would be %d bytes, and BuildKit refuses a Dockerfile "+
+				"line over %d; build the image with orkctl activity build --interface instead", path, len(line), MaxDockerfileLine)
+		}
 		generated := append(append(append([]byte{}, raw[:lines[0][0]]...), line...), raw[lines[0][1]:]...)
 		rel, err := filepath.Rel(repoRoot, path)
 		if err != nil {

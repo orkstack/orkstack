@@ -32,7 +32,8 @@ func newApplyCommand(g *globalFlags) *cobra.Command {
 			"before automation, and nothing is written until every document has been\n" +
 			"validated and planned. A directory's activity interfaces (kind:\n" +
 			"ActivityInterface, packed into images by orkctl activity interface pack)\n" +
-			"are skipped; one named on the command line is refused.\n\n" +
+			"are skipped, each named on stderr; one named on the command line is\n" +
+			"refused.\n\n" +
 			"An automation document names its own namespace, which is authoritative:\n" +
 			"only an -n given on this command line is checked against it, and\n" +
 			"ORK_NAMESPACE and the saved default never apply to it.\n\n" +

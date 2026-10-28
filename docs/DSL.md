@@ -112,7 +112,7 @@ every comment — with the path relative to the file in this repository:
 ```
 
 or through a mapping in VS Code's `settings.json`, where the dispatcher covers
-both kinds behind one extension:
+every kind behind one extension:
 
 ```json
 "yaml.schemas": {"<path or URL of orkstack.v1.json>": ["*.ork.yaml", "*.ork.yml"]}
@@ -144,8 +144,9 @@ choice:
 
 A first-party `with:` value of an undeclared type is an error in the editor
 and a warning at validate. The docs site will serve the schemas at
-`/schemas/orkflow/v1.json`, `/schemas/automation/v1.json` and
-`/schemas/orkstack/v1.json`; until it does, point at the files in a checkout.
+`/schemas/orkflow/v1.json`, `/schemas/automation/v1.json`,
+`/schemas/activityinterface/v1.json` and `/schemas/orkstack/v1.json`; until
+it does, point at the files in a checkout.
 
 ### `namespace`
 

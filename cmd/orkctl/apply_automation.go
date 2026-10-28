@@ -106,20 +106,22 @@ func (e *activityInterfaceFile) Error() string {
 
 // expandApplyArgs reads every argument: a file as is, a directory as its
 // regular *.ork.yaml and *.ork.yml files, non-recursively, in lexical order.
-// A directory's activity interfaces are skipped: an image's
-// interface.ork.yaml may sit beside the Orkflows that use it.
-func expandApplyArgs(args []string) ([]applyInput, error) {
+// A directory's activity interfaces are skipped, and returned by path so
+// the caller can say so: an image's interface.ork.yaml may sit beside the
+// Orkflows that use it.
+func expandApplyArgs(args []string) ([]applyInput, []string, error) {
+	var skippedPaths []string
 	var inputs []applyInput
 	for _, arg := range args {
 		info, err := os.Stat(arg)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", arg, err)
+			return nil, nil, fmt.Errorf("read %s: %w", arg, err)
 		}
 		paths := []string{arg}
 		if info.IsDir() {
 			entries, err := os.ReadDir(arg)
 			if err != nil {
-				return nil, fmt.Errorf("read directory %s: %w", arg, err)
+				return nil, nil, fmt.Errorf("read directory %s: %w", arg, err)
 			}
 			paths = nil
 			for _, entry := range entries {
@@ -131,33 +133,34 @@ func expandApplyArgs(args []string) ([]applyInput, error) {
 			}
 			sort.Strings(paths)
 			if len(paths) == 0 {
-				return nil, fmt.Errorf("%s: no *.ork.yaml or *.ork.yml files in this directory", arg)
+				return nil, nil, fmt.Errorf("%s: no *.ork.yaml or *.ork.yml files in this directory", arg)
 			}
 		}
 		applied, skipped := 0, 0
 		for _, path := range paths {
 			source, err := os.ReadFile(path)
 			if err != nil {
-				return nil, fmt.Errorf("read %s: %w", path, err)
+				return nil, nil, fmt.Errorf("read %s: %w", path, err)
 			}
 			in, err := classifyDocument(path, source)
 			var notApplied *activityInterfaceFile
 			if info.IsDir() && errors.As(err, &notApplied) {
 				skipped++
+				skippedPaths = append(skippedPaths, path)
 				continue
 			}
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			inputs = append(inputs, in)
 			applied++
 		}
 		if applied == 0 && skipped > 0 {
-			return nil, fmt.Errorf("%s: no Orkflow or automation document to apply: its *.ork.yaml files are "+
+			return nil, nil, fmt.Errorf("%s: no Orkflow or automation document to apply: its *.ork.yaml files are "+
 				"activity interfaces, which are packed into images", arg)
 		}
 	}
-	return inputs, nil
+	return inputs, skippedPaths, nil
 }
 
 // applyRun is one invocation's state, in the shape `--json` prints.
@@ -191,9 +194,13 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 	if opts.secretsOut != "" && opts.dryRun {
 		return fmt.Errorf("--secrets-out writes the secrets an apply discloses; a dry run discloses none")
 	}
-	inputs, err := expandApplyArgs(args)
+	inputs, skipped, err := expandApplyArgs(args)
 	if err != nil {
 		return err
+	}
+	for _, path := range skipped {
+		fmt.Fprintf(cmd.ErrOrStderr(), "skipped %s: kind: %s is packed into an image, not applied\n",
+			path, dsl.KindActivityInterface)
 	}
 	seen := map[string]string{}
 	for _, in := range inputs {

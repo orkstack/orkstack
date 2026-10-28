@@ -2,6 +2,7 @@ package schemas_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -57,6 +58,123 @@ func TestInterfaces_LabelsAreGenerated(t *testing.T) {
 		if err != nil || string(got) != string(want) {
 			t.Errorf("%s is stale (%v): run go run ./internal/schemas/cmd/genschemas", path, err)
 		}
+	}
+	// A Dockerfile that carries an interface LABEL carries one generated
+	// from a document: a hand-written label here has no source to drift from.
+	for _, parent := range []string{"images", "examples"} {
+		dockerfiles, err := filepath.Glob(filepath.Join(root, parent, "*", "Dockerfile"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, dockerfile := range dockerfiles {
+			raw, err := os.ReadFile(dockerfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rel, _ := filepath.Rel(root, dockerfile)
+			if _, generated := files[filepath.ToSlash(rel)]; strings.Contains(string(raw), "LABEL "+dsl.InterfaceLabel) && !generated {
+				t.Errorf("%s carries an interface LABEL with no %s beside it", rel, schemas.InterfaceDocument)
+			}
+		}
+	}
+}
+
+// interfaceDocumentPacking builds an interface document whose packed label
+// is exactly size bytes: keys are added while the label stays under size,
+// then the first keys' names grow by the bytes still missing.
+func interfaceDocumentPacking(t *testing.T, size int) string {
+	t.Helper()
+	build := func(keys int, pad []int) string {
+		var doc strings.Builder
+		doc.WriteString("apiVersion: orkstack/v1\nkind: ActivityInterface\nops:\n")
+		for i := 0; i < keys; i++ {
+			if i%250 == 0 {
+				fmt.Fprintf(&doc, "  op%d:\n    fields:\n", i/250)
+			}
+			extra := 0
+			if i < len(pad) {
+				extra = pad[i]
+			}
+			fmt.Fprintf(&doc, "      k%04d%s:\n        type: string|number|boolean|object|array\n", i, strings.Repeat("x", extra))
+		}
+		return doc.String()
+	}
+	packed := func(source string) int {
+		iface, err := dsl.ParseInterfaceDocument([]byte(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		label, err := dsl.PackInterfaceLabel(iface)
+		if err != nil {
+			return 1 << 30
+		}
+		return len(label)
+	}
+	low, high := 1, 2000 // the most keys whose label stays under size
+	for low < high {
+		mid := (low + high + 1) / 2
+		if packed(build(mid, nil)) <= size {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	missing := size - packed(build(low, nil))
+	var pad []int
+	for missing > 0 {
+		step := min(missing, 100)
+		pad = append(pad, step)
+		missing -= step
+	}
+	source := build(low, pad)
+	if got := packed(source); got != size {
+		t.Fatalf("the document packs to %d bytes, want %d", got, size)
+	}
+	return source
+}
+
+// TestInterfaces_TheGeneratorRefusesALineBuildKitCannotRead: a label near
+// the packer's bound fits a --label argument but not a Dockerfile line,
+// which BuildKit reads up to 65535 bytes.
+func TestInterfaces_TheGeneratorRefusesALineBuildKitCannotRead(t *testing.T) {
+	overhead := len("LABEL " + dsl.InterfaceLabel + "=''")
+	for _, tc := range []struct {
+		name  string
+		label int
+		err   string
+	}{
+		{"the longest line BuildKit reads", schemas.MaxDockerfileLine - overhead, ""},
+		{"one byte longer", schemas.MaxDockerfileLine - overhead + 1, "BuildKit refuses a Dockerfile line over 65535"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			image := filepath.Join(dir, "images", "activity-x")
+			if err := os.MkdirAll(image, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			files := map[string]string{
+				"interface.ork.yaml": interfaceDocumentPacking(t, tc.label),
+				"Dockerfile":         "FROM scratch\nLABEL " + dsl.InterfaceLabel + "='{}'\n",
+			}
+			for name, content := range files {
+				if err := os.WriteFile(filepath.Join(image, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := schemas.Dockerfiles(dir)
+			if tc.err == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if line := strings.Split(string(out["images/activity-x/Dockerfile"]), "\n")[1]; len(line) != schemas.MaxDockerfileLine {
+					t.Fatalf("the LABEL line is %d bytes, want %d", len(line), schemas.MaxDockerfileLine)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.err) {
+				t.Fatalf("Dockerfiles = %v; want an error containing %q", err, tc.err)
+			}
+		})
 	}
 }
 
