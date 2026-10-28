@@ -68,7 +68,7 @@ The `orker` mounts the host's Docker socket. Whoever controls that socket contro
 | `storage.backend` | `ORK_ARTIFACT_BACKEND` | `local` | both. Set `s3` for a replicated deployment |
 | `storage.s3.*` | `ORK_S3_*` | the development store | both. `ork` always needs these, because it reads definitions from the bucket |
 | `pool.name` | `ORK_ORKER_POOL` | `main` | both. The pool an Orker joins, and the pool a task with no `pool:` runs on |
-| `orker.workdir` | `ORK_ORKER_WORKDIR` | the temp directory | orker. Must be a path the Docker daemon can bind-mount |
+| `orker.workdir` | `ORK_ORKER_WORKDIR` | the temp directory | orker. Must be a path the Docker daemon can bind-mount, with no comma or control character in it |
 | `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | orker. Tasks at once on one Orker; size it to the host |
 | `orker.resources.max_cpu`, `max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | orker. A task that asks for more is refused |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | orker. Above zero makes the Orker a pin host |
