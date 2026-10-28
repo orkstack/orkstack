@@ -1,0 +1,2 @@
+go test fuzz v1
+string("metadata/index/recent/0/00008770T777070.000000000Z/0/A/0")

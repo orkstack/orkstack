@@ -479,7 +479,7 @@ func ParseRunIndexKey(key string) (RunIndexEntry, bool) {
 		return RunIndexEntry{}, false
 	}
 	status, ok := decodeArchiveSegment(parts[5])
-	if !ok {
+	if !ok || !writtenRunStatus(status) {
 		return RunIndexEntry{}, false
 	}
 	stamp, ok := parseRunStamp(parts[6])
@@ -558,7 +558,7 @@ func ParseRunOriginIndexKey(key string) (RunIndexEntry, bool) {
 		return RunIndexEntry{}, false
 	}
 	status, ok := decodeArchiveSegment(parts[7])
-	if !ok {
+	if !ok || !writtenRunStatus(status) {
 		return RunIndexEntry{}, false
 	}
 	stamp, ok := parseRunStamp(parts[8])
@@ -639,6 +639,17 @@ func parseRunStamp(s string) (time.Time, bool) {
 func NormalizeRunStatus(raw string) string {
 	status := strings.ToLower(strings.TrimSpace(raw))
 	return strings.TrimPrefix(status, "status_")
+}
+
+// writtenRunStatus reports whether a stored status segment is one
+// NormalizeRunStatus produces: lower case, with no trailing space. It is not
+// NormalizeRunStatus(status) == status, which strips a "status_" prefix and
+// so would refuse the "status_succeeded" a raw "STATUS_STATUS_SUCCEEDED"
+// stores. A parser reads only the writer's spelling: a key with any other
+// status was not written here, and the cursor rebuilt from it would be a
+// different key.
+func writtenRunStatus(status string) bool {
+	return NormalizeRunStatus("status_"+status) == status
 }
 
 // ScanPrefix is the narrowest index prefix that still contains every key q can
