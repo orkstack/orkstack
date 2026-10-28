@@ -304,34 +304,48 @@ func TestLoad_WrongType_NamesKey(t *testing.T) {
 	}
 }
 
-// A typed value is read by the daemon's own reader, which does not trim: a
-// padded duration is silently replaced by its default there, and a padded
-// integer stops the daemon. A value that passes here must be one the reader
-// takes as it stands.
-func TestLoad_ARawValueIsOneItsKindReadsNotATrimmedOne(t *testing.T) {
+// A typed value reaches a daemon's own reader, and not every reader trims: a
+// padded duration would silently become the default there, and a padded
+// integer would stop the daemon. Load trims an integer, boolean or duration
+// and applies the bare value, so every reader takes what the file meant; one
+// that is not of its kind once trimmed is refused, naming the key.
+func TestLoad_ATypedValueIsAppliedTrimmed(t *testing.T) {
 	cases := []struct {
-		name, yaml, wantKey string
+		name, yaml, env, want string
 	}{
-		{"padded duration", "engine:\n  idempotency_ttl: ' 5m'\n", "engine.idempotency_ttl"},
-		{"duration with a trailing space", "engine:\n  idempotency_ttl: '5m '\n", "engine.idempotency_ttl"},
-		{"padded integer", "engine:\n  each_max_items: ' 7 '\n", "engine.each_max_items"},
-		{"padded boolean", "storage:\n  s3:\n    path_style: 'true '\n", "storage.s3.path_style"},
+		{"padded duration", "engine:\n  idempotency_ttl: ' 5m'\n", "ORK_IDEMPOTENCY_TTL", "5m"},
+		{"duration with a trailing space", "engine:\n  idempotency_ttl: '5m '\n", "ORK_IDEMPOTENCY_TTL", "5m"},
+		{"duration from a block scalar", "engine:\n  idempotency_ttl: |\n    5m\n", "ORK_IDEMPOTENCY_TTL", "5m"},
+		{"padded integer", "engine:\n  each_max_items: ' 7 '\n", "ORK_EACH_MAX_ITEMS", "7"},
+		{"padded boolean", "storage:\n  s3:\n    path_style: 'true '\n", "ORK_S3_PATH_STYLE", "true"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeTemp(t, "padded.yaml", tc.yaml)
 			doc, err := Load(path, BinaryOrk)
+			if err != nil {
+				t.Fatalf("Load refused a padded value: %v", err)
+			}
+			if got := doc.values[tc.env].value; got != tc.want {
+				t.Errorf("%s = %q, want the bare %q", tc.env, got, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, yaml, wantKey string }{
+		{"duration", "engine:\n  idempotency_ttl: ' 5 minutes'\n", "engine.idempotency_ttl"},
+		{"integer", "engine:\n  each_max_items: ' 7.0 '\n", "engine.each_max_items"},
+		{"boolean", "storage:\n  s3:\n    path_style: ' yes '\n", "storage.s3.path_style"},
+	} {
+		t.Run("not a "+tc.name, func(t *testing.T) {
+			path := writeTemp(t, "wrong.yaml", tc.yaml)
+			doc, err := Load(path, BinaryOrk)
 			if err == nil {
-				t.Fatalf("Load accepted a padded value and set %v", doc.values)
+				t.Fatalf("Load accepted it and set %v", doc.values)
 			}
 			if !strings.Contains(err.Error(), tc.wantKey) {
 				t.Errorf("Load error = %q, want it to name %q", err.Error(), tc.wantKey)
 			}
 		})
-	}
-	path := writeTemp(t, "plain.yaml", "engine:\n  idempotency_ttl: 5m\n  each_max_items: 7\nstorage:\n  s3:\n    path_style: true\n")
-	if _, err := Load(path, BinaryOrk); err != nil {
-		t.Errorf("Load refused plain typed values: %v", err)
 	}
 }
 

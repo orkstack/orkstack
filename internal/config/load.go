@@ -240,6 +240,11 @@ func walkNode(node *yaml.Node, snode *schemaNode, prefix []string, binary Binary
 			if !present {
 				continue
 			}
+			// Not every reader of a typed value trims it, so the bare value
+			// is what the daemons are handed.
+			if v.Kind == KindInt || v.Kind == KindBool || v.Kind == KindDuration {
+				raw = strings.TrimSpace(raw)
+			}
 			if err := checkScalarType(v.Kind, raw, path); err != nil {
 				return err
 			}
@@ -379,9 +384,9 @@ func trimOneLineEnding(s string) string {
 
 // checkScalarType validates a resolved scalar against its Kind, so a typo
 // (a bool where a duration belongs) is refused at load time naming the key,
-// rather than surfacing later from whatever *FromEnv reader parses it. The
-// value is parsed as it stands: the readers do not trim it, so a padded
-// duration the file passed would silently become the reader's default.
+// rather than surfacing later from whatever *FromEnv reader parses it. raw is
+// the value as it will be applied (trimmed by the caller), and it is parsed as
+// it stands.
 func checkScalarType(kind Kind, raw, path string) error {
 	switch kind {
 	case KindInt:
