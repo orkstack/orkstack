@@ -3,6 +3,12 @@
 // dispatcher orkstack.v1.json, which selects one by kind. They are generated,
 // never hand-written: `go run ./internal/schemas/cmd/genschemas` writes them,
 // and TestSchemas_AreGenerated refuses a stale one.
+//
+// The generator also writes the two kinds' schemas into the UI
+// (ui/src/lib/schemas/), byte for byte: the UI's editor validates, completes
+// and explains from them, and the UI is built from ui/ alone
+// (deploy/Dockerfile). Not under ui/src/lib/gen, which `make proto` empties
+// (buf.gen.yaml, clean: true).
 package schemas
 
 import (
@@ -22,12 +28,19 @@ import (
 // Dir is where the schemas live, relative to the repository root.
 const Dir = "docs/schemas"
 
+// UIDir is the UI's generated copy of UIFiles, relative to the repository root.
+const UIDir = "ui/src/lib/schemas"
+
 // The files, under Dir.
 const (
 	OrkflowFile    = "orkflow.v1.json"
 	AutomationFile = "automation.v1.json"
 	DispatcherFile = "orkstack.v1.json"
 )
+
+// UIFiles are the schemas the UI's editor reads: one per kind. The dispatcher
+// is for editors that do not know a document's kind; the UI always does.
+var UIFiles = []string{OrkflowFile, AutomationFile}
 
 // labelLine is the interface label's line in a first-party Dockerfile.
 var labelLine = regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`)
@@ -133,7 +146,8 @@ func Encode(schema map[string]any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Files returns every generated schema, keyed by its path under docs/schemas/.
+// Files returns every generated file, keyed by its path from the repository
+// root: each schema under Dir, and UIFiles again under UIDir.
 func Files(repoRoot string) (map[string][]byte, error) {
 	trees, err := Trees(repoRoot)
 	if err != nil {
@@ -146,6 +160,9 @@ func Files(repoRoot string) (map[string][]byte, error) {
 			return nil, fmt.Errorf("schemas: encode %s: %w", name, err)
 		}
 		out[strings.TrimPrefix(filepath.ToSlash(filepath.Join(Dir, name)), "./")] = encoded
+	}
+	for _, name := range UIFiles {
+		out[UIDir+"/"+name] = out[Dir+"/"+name]
 	}
 	return out, nil
 }

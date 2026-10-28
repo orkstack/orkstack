@@ -16,23 +16,47 @@ import (
 const root = "../.."
 
 // TestSchemas_AreGenerated: the committed schemas are byte for byte what the
-// generator writes.
+// generator writes, in docs/schemas/ and in the UI's generated copy, which the
+// editor is built from (ui/src/lib/yaml/schemas.ts).
 func TestSchemas_AreGenerated(t *testing.T) {
 	files, err := schemas.Files(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	committed, err := filepath.Glob(filepath.Join(root, schemas.Dir, "*.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(committed) != len(files) {
-		t.Errorf("%s holds %d files, the generator writes %d", schemas.Dir, len(committed), len(files))
+	for dir, want := range map[string]int{schemas.Dir: 3, schemas.UIDir: len(schemas.UIFiles)} {
+		committed, err := filepath.Glob(filepath.Join(root, dir, "*.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(committed) != want {
+			t.Errorf("%s holds %d files, the generator writes %d", dir, len(committed), want)
+		}
 	}
 	for path, want := range files {
 		got, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil || string(got) != string(want) {
 			t.Errorf("%s is stale (%v): run go run ./internal/schemas/cmd/genschemas", path, err)
+		}
+	}
+}
+
+// TestSchemas_UICopyIsTheReference: the UI's copy of each kind's schema is the
+// docs/schemas/ file itself, byte for byte, never a second rendering of it.
+func TestSchemas_UICopyIsTheReference(t *testing.T) {
+	files, err := schemas.Files(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(schemas.UIFiles) != 2 {
+		t.Fatalf("UIFiles = %v, want the two kinds' schemas", schemas.UIFiles)
+	}
+	for _, name := range schemas.UIFiles {
+		ui, ok := files[schemas.UIDir+"/"+name]
+		if !ok {
+			t.Fatalf("the generator writes no %s/%s", schemas.UIDir, name)
+		}
+		if string(ui) != string(files[schemas.Dir+"/"+name]) {
+			t.Errorf("%s/%s differs from %s/%s", schemas.UIDir, name, schemas.Dir, name)
 		}
 	}
 }

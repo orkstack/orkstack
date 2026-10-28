@@ -1,5 +1,6 @@
 // Command genschemas writes the JSON Schemas of the authored documents to
-// docs/schemas/ (internal/schemas). Run it from the repository root:
+// docs/schemas/, and the two kinds' schemas again to the UI's copy in
+// ui/src/lib/schemas/ (internal/schemas). Run it from the repository root:
 //
 //	go run ./internal/schemas/cmd/genschemas
 package main

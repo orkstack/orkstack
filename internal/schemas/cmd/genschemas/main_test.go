@@ -9,7 +9,8 @@ import (
 )
 
 // TestGenschemas_WritesTheCommittedSchemas: the command writes exactly the
-// files docs/schemas/ holds, and names each one it wrote.
+// files docs/schemas/ and the UI's generated copy hold, and names each one it
+// wrote.
 func TestGenschemas_WritesTheCommittedSchemas(t *testing.T) {
 	const root = "../../../.."
 	dest := t.TempDir()
@@ -18,8 +19,8 @@ func TestGenschemas_WritesTheCommittedSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	written := strings.Fields(out.String())
-	if len(written) != 3 {
-		t.Fatalf("wrote %v, want the three schemas", written)
+	if len(written) != 5 {
+		t.Fatalf("wrote %v, want the three schemas and the UI's copies of the two kinds'", written)
 	}
 	for _, path := range written {
 		got, err := os.ReadFile(filepath.Join(dest, path))
