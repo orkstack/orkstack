@@ -110,6 +110,11 @@ const MaxStreamedLine = 64 << 10
 //     Write that completes it. Bytes are never dropped and never doubled,
 //     wherever the read boundary falls.
 //   - A run of MaxStreamedLine bytes with no terminator is emitted as a piece.
+//     A line longer than that is cut into pieces of MaxStreamedLine bytes
+//     however its bytes arrive, in one Write or a byte at a time, and the
+//     terminator that follows a piece ends no empty line of its own: a line
+//     of exactly MaxStreamedLine bytes is one piece, with or without a read
+//     boundary at its end.
 //   - Close emits whatever is left, which is the final line of a process that
 //     ended without a terminator.
 //
@@ -144,6 +149,12 @@ type LineWriter struct {
 	// for the byte after a CR, and the whole point of ending a line on CR is
 	// that a redraw streams immediately.
 	swallowLF bool
+	// pieceEnded is set when a piece was emitted because the buffer reached
+	// MaxStreamedLine with no terminator seen, and cleared when the line it
+	// belongs to ends. A terminator that arrives before any other byte then
+	// ends that line without emitting an empty one, so the lines out do not
+	// depend on where the reads happened to split the stream.
+	pieceEnded bool
 }
 
 // NewLineWriter builds a LineWriter that emits every line to log, each carrying
@@ -190,6 +201,7 @@ func (w *LineWriter) Close() {
 		w.buf = nil
 	}
 	w.swallowLF = false
+	w.pieceEnded = false
 }
 
 // buffered reports how many bytes are held unemitted. It exists for the test
@@ -216,18 +228,25 @@ func (w *LineWriter) drainLocked() {
 			}
 			w.swallowLF = false
 		}
-		if at, kind := indexTerminator(w.buf); at >= 0 {
-			w.emitLocked(w.buf[:at])
+		at, kind := indexTerminator(w.buf)
+		switch {
+		case at >= 0 && at <= MaxStreamedLine:
+			if at > 0 || !w.pieceEnded {
+				w.emitLocked(w.buf[:at])
+			}
 			w.buf = w.buf[at+1:]
 			w.swallowLF = kind == '\r'
-			continue
-		}
-		if len(w.buf) >= MaxStreamedLine {
+			w.pieceEnded = false
+		case len(w.buf) >= MaxStreamedLine:
+			// No terminator within the first MaxStreamedLine bytes: cut a
+			// piece here, whether or not a terminator comes later in the
+			// buffer, so a line is the same pieces however it arrived.
 			w.emitLocked(w.buf[:MaxStreamedLine])
 			w.buf = w.buf[MaxStreamedLine:]
-			continue
+			w.pieceEnded = true
+		default:
+			return
 		}
-		return
 	}
 }
 

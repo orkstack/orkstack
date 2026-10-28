@@ -45,6 +45,7 @@ func TestIntegration_Uses(t *testing.T) { _ = Run() }
 	"internal/orker/activity.go":   "package orker\n\nfunc Boot() {}\n",
 	"internal/dsl/parse.go":        "package dsl\n\nfunc Parse() int { return 1 }\n",
 	"internal/dsl/parse_test.go":   "package dsl\n\nimport \"testing\"\n\nfunc TestParse(t *testing.T) { _ = Parse() }\n",
+	"internal/dsl/fuzz_test.go":    dslFuzzFile,
 	"internal/dsl/testdata/a.yaml": "a: 1\n",
 	"cmd/orkctl/main.go":           "package main\n\nfunc main() {}\n",
 	"cmd/orkctl/cli_integration_test.go": `//go:build integration

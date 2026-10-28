@@ -71,8 +71,8 @@ A claim with no end-to-end test is listed as a known gap, never left out:
 | Tier | What it runs | Merge evidence |
 |---|---|---|
 | Feature proof (`make proof-feature`) | the fast gates, the tests and specs that prove the change (its **evidence**), and the integration tests of every package the change reaches (its **regression set**) | never |
-| Full proof (`make proof`, or CI's `proof` check) | every gate: lint, build, unit, vet, the activity images, every integration test against a real Temporal cluster and S3-compatible store, the activity contract fixture, the UI's type-check and unit suites, the site's check and build (which also renders every doc), every Playwright spec, and the observability gate when telemetry changed | yes |
-| Nightly (`make proof-nightly`) | only the scale and soak tests [`scripts/proof-nightly-tests.txt`](../scripts/proof-nightly-tests.txt) lists and the Playwright specs [`scripts/proof-nightly-specs.txt`](../scripts/proof-nightly-specs.txt) lists, each beside the merge-gate tests or specs that cover the same behaviour at a smaller size | no |
+| Full proof (`make proof`, or CI's `proof` check) | every gate: lint, build, unit, vet, the activity images, every integration test against a real Temporal cluster and S3-compatible store, the activity contract fixture, the UI's type-check and unit suites, the site's check and build (which also renders every doc), the race gate (the unit tests under the race detector), every Playwright spec, and the observability gate when telemetry changed | yes |
+| Nightly (`make proof-nightly`) | only the scale and soak tests [`scripts/proof-nightly-tests.txt`](../scripts/proof-nightly-tests.txt) lists and the Playwright specs [`scripts/proof-nightly-specs.txt`](../scripts/proof-nightly-specs.txt) lists, each beside the merge-gate tests or specs that cover the same behaviour at a smaller size, and two lanes of its own: the unit tests of the concurrency-heavy packages raced three times over, and every fuzz target for a bounded time | no |
 | Pre-release (`make proof-release`) | the full proof with nothing deferred; a release tag requires one for its exact commit | a tag precondition |
 
 A feature proof is scoped by the diff and is never merge evidence. A full
@@ -95,7 +95,10 @@ candidate, quoted in the merge commit, checked by
   ([PROOFS.md](./PROOFS.md) §1, §6).
 - **A skip is never a pass.** The only tests a proof may see skip are listed
   in [`scripts/proof-allowed-skips.txt`](../scripts/proof-allowed-skips.txt),
-  each with its reason; any other skip fails its gate.
+  each with its reason; any other skip fails its gate. The one exception is
+  the race gate, which runs `-short`: a test it skips counts only because the
+  unit gate, which runs it without `-short`, passed it
+  ([PROOFS.md](./PROOFS.md) §2.3).
 - **Nothing goes missing.** The ledgers list every test the compiled
   binaries report; a listed test without an outcome fails the proof, and so
   does an allowance that names no test ([PROOFS.md](./PROOFS.md) §7).

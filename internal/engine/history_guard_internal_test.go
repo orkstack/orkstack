@@ -592,8 +592,9 @@ func flatDocument(n int) string {
 // events, at the default limit of 51,200 — both inside the band where the
 // quick O(1) bound crosses and the exact count does not, so every guard check
 // of the pass takes the per-pass path. One pass's guard checks — one per
-// ready task, as the ready loop makes them — stay within 20 ms, under the
-// production 1 s deadlock detector.
+// ready task, as the ready loop makes them — stay within 20 ms of CPU time
+// (scaled under the race detector, gatedSizeBound), under the production 1 s
+// deadlock detector.
 func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 	wf := guardCompile(t, flatDocument(4000))
 	for _, state := range []struct {
@@ -606,13 +607,15 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 		{"286 in flight after 300 collections", 14_736, 286, 300, 51_408, 46_720},
 	} {
 		t.Run(state.name, func(t *testing.T) {
-			var elapsed time.Duration
+			var elapsed, wallElapsed time.Duration
+			var wallStarted time.Time
+			var clock *passClock
 			var quickTotal, exactTotal int64
 			var checks int
 			var guardErr error
 			var suite testsuite.WorkflowTestSuite
 			env := generousDeadlock(suite.NewTestWorkflowEnvironment())
-			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 			env.SetCurrentHistoryLength(state.length)
 			env.ExecuteWorkflow(func(ctx workflow.Context) error {
 				s := newRunState(ctx, "ork-flat", wf, nil, guardPlan(t, DefaultHistoryMaxEvents, DefaultHistoryMaxBytes))
@@ -629,7 +632,12 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 				events, _ := s.historyNow(ctx)
 				qe, _ := s.quickReserve(inFlight, s.plan.History.Reserve)
 				quickTotal = events + qe
-				started := time.Now()
+				// The pass is timed on this goroutine's thread CPU time
+				// (passClock): a host loaded by other processes delays it
+				// without adding to its CPU time, and a slower guard still does.
+				clock = &passClock{}
+				begin := clock.now()
+				wallStarted = time.Now()
 				s.beginPass()
 				pendingTasks := len(s.order) - state.done - state.inFlight
 				for i := 0; i <= pendingTasks; i++ { // check point 1, then one per ready task
@@ -639,7 +647,8 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 						break
 					}
 				}
-				elapsed = time.Since(started)
+				elapsed = clock.now() - begin
+				wallElapsed = time.Since(wallStarted)
 				re, _ := s.reserveNow(inFlight)
 				exactTotal = events + re
 				return nil
@@ -658,10 +667,12 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 				t.Fatalf("the state is not inside the per-pass band: quick %d, exact %d, limit %d",
 					quickTotal, exactTotal, DefaultHistoryMaxEvents)
 			}
-			t.Logf("E0 deadlock budget (%s): %d guard checks in one pass took %.2f ms (budget 20 ms)",
-				state.name, checks, float64(elapsed.Microseconds())/1000)
-			if elapsed > 20*time.Millisecond {
-				t.Fatalf("one pass's guard checks took %s, over 20 ms", elapsed)
+			bound := gatedSizeBound(20 * time.Millisecond)
+			t.Logf("E0 deadlock budget (%s): %d guard checks in one pass took %.2f ms of %s (budget %s; %.2f ms wall clock)",
+				state.name, checks, float64(elapsed.Microseconds())/1000, clock.kind(), bound,
+				float64(wallElapsed.Microseconds())/1000)
+			if elapsed > bound {
+				t.Fatalf("one pass's guard checks took %s of %s, over %s", elapsed, clock.kind(), bound)
 			}
 		})
 	}

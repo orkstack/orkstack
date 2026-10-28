@@ -101,6 +101,7 @@ orker:
   docker:
     bin: /usr/bin/docker
     pull_timeout: 5m
+    bind_probe_timeout: 3m
 telemetry:
   log_format: json
   log_level: debug
@@ -234,14 +235,15 @@ func TestLoad_HappyPath_Orker(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"ORK_ORKER_ID":              "orker-1",
-		"ORK_ORKER_WORKDIR":         "/var/ork/work",
-		"ORK_ORKER_ENV_ALLOWLIST":   "FOO,BAR",
-		"ORK_ORKER_LOG_FLUSH_BYTES": "65536",
-		"ORK_ORKER_DEFAULT_CPU":     "1",
-		"ORK_DOCKER_BIN":            "/usr/bin/docker",
-		"ORK_DOCKER_PULL_TIMEOUT":   "5m",
-		"ORK_ADMIN_ADDR":            "127.0.0.1:9465", // the orker side of the per-binary leaf
+		"ORK_ORKER_ID":                  "orker-1",
+		"ORK_ORKER_WORKDIR":             "/var/ork/work",
+		"ORK_ORKER_ENV_ALLOWLIST":       "FOO,BAR",
+		"ORK_ORKER_LOG_FLUSH_BYTES":     "65536",
+		"ORK_ORKER_DEFAULT_CPU":         "1",
+		"ORK_DOCKER_BIN":                "/usr/bin/docker",
+		"ORK_DOCKER_PULL_TIMEOUT":       "5m",
+		"ORK_DOCKER_BIND_PROBE_TIMEOUT": "3m",
+		"ORK_ADMIN_ADDR":                "127.0.0.1:9465", // the orker side of the per-binary leaf
 	}
 	for env, expected := range want {
 		rv, ok := doc.values[env]
@@ -297,6 +299,76 @@ func TestLoad_WrongType_NamesKey(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantKey) {
 				t.Errorf("Load error = %q, want it to name %q", err.Error(), tc.wantKey)
+			}
+		})
+	}
+}
+
+// A typed value reaches a daemon's own reader, and not every reader trims: a
+// padded duration would silently become the default there, and a padded
+// integer would stop the daemon. Load trims an integer, boolean or duration
+// and applies the bare value, so every reader takes what the file meant; one
+// that is not of its kind once trimmed is refused, naming the key.
+func TestLoad_ATypedValueIsAppliedTrimmed(t *testing.T) {
+	cases := []struct {
+		name, yaml, env, want string
+	}{
+		{"padded duration", "engine:\n  idempotency_ttl: ' 5m'\n", "ORK_IDEMPOTENCY_TTL", "5m"},
+		{"duration with a trailing space", "engine:\n  idempotency_ttl: '5m '\n", "ORK_IDEMPOTENCY_TTL", "5m"},
+		{"duration from a block scalar", "engine:\n  idempotency_ttl: |\n    5m\n", "ORK_IDEMPOTENCY_TTL", "5m"},
+		{"padded integer", "engine:\n  each_max_items: ' 7 '\n", "ORK_EACH_MAX_ITEMS", "7"},
+		{"padded boolean", "storage:\n  s3:\n    path_style: 'true '\n", "ORK_S3_PATH_STYLE", "true"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTemp(t, "padded.yaml", tc.yaml)
+			doc, err := Load(path, BinaryOrk)
+			if err != nil {
+				t.Fatalf("Load refused a padded value: %v", err)
+			}
+			if got := doc.values[tc.env].value; got != tc.want {
+				t.Errorf("%s = %q, want the bare %q", tc.env, got, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, yaml, wantKey string }{
+		{"duration", "engine:\n  idempotency_ttl: ' 5 minutes'\n", "engine.idempotency_ttl"},
+		{"integer", "engine:\n  each_max_items: ' 7.0 '\n", "engine.each_max_items"},
+		{"boolean", "storage:\n  s3:\n    path_style: ' yes '\n", "storage.s3.path_style"},
+	} {
+		t.Run("not a "+tc.name, func(t *testing.T) {
+			path := writeTemp(t, "wrong.yaml", tc.yaml)
+			doc, err := Load(path, BinaryOrk)
+			if err == nil {
+				t.Fatalf("Load accepted it and set %v", doc.values)
+			}
+			if !strings.Contains(err.Error(), tc.wantKey) {
+				t.Errorf("Load error = %q, want it to name %q", err.Error(), tc.wantKey)
+			}
+		})
+	}
+}
+
+// An environment variable cannot hold a NUL byte, and a double-quoted YAML
+// scalar can spell one ("\0"). The file is refused at load, naming the key,
+// rather than failing partway through applying it at boot.
+func TestLoad_RefusesAValueTheEnvironmentCannotHold(t *testing.T) {
+	cases := []struct {
+		name, yaml, wantKey string
+	}{
+		{"a string", "temporal:\n  address: \"a\\0b\"\n", "temporal.address"},
+		{"a list item", "engine:\n  ws_allowed_origins: [\"a\", \"b\\0\"]\n", "engine.ws_allowed_origins"},
+		{"a map value", "telemetry:\n  resource_attributes:\n    k: \"v\\0\"\n", "telemetry.resource_attributes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTemp(t, "nul.yaml", tc.yaml)
+			doc, err := Load(path, BinaryOrk)
+			if err == nil {
+				t.Fatalf("Load accepted a NUL byte and set %q", doc.values)
+			}
+			if !strings.Contains(err.Error(), tc.wantKey) || !strings.Contains(err.Error(), "NUL") {
+				t.Errorf("Load error = %q, want it to name %q and NUL", err.Error(), tc.wantKey)
 			}
 		})
 	}

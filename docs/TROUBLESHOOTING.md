@@ -275,14 +275,14 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 **Cause.** The container daemon cannot bind-mount the Orker's work directory. This happens when the daemon runs in a virtual machine that does not share that path with the host. The daemon then says "bind source path does not exist" for a path that exists, which reads like a missing file. There are two codes:
 
-- `WORKDIR_NOT_BINDABLE`: the Orker's own boot probe found the work root unbindable, so the Orker refuses to start (`internal/orker/activity.go`, `Boot`). Retrying does not fix it.
+- `WORKDIR_NOT_BINDABLE`: the Orker refuses to start (`internal/orker/activity.go`, `Boot`) because its work root cannot be bind-mounted. Either the path holds a comma or a control character, which a container mount cannot carry (a mount is a comma-separated option list), and the message names `ORK_ORKER_WORKDIR`; or the Orker's own boot probe found the work root unbindable. Retrying does not fix it.
 - `WORKSPACE_NOT_BINDABLE`: one attempt's container could not be created because the daemon refused the workspace's bind (`internal/orker/oci_dispatcher.go`, `runtimeFailure`). It is an `InfrastructureError` and is never retried.
 
 ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes"; [stack.sh](../scripts/stack.sh), "check_workdir_mountable".)
 
 **Confirm.** `make up` prints a warning when the probe fails. The Orker log, `.run/orker.log`, shows `orker boot checks failed:` followed by `WORKDIR_NOT_BINDABLE`. The script's comment describes the virtual-machine case, and says how to list the paths the machine shares. The script's warning describes the per-task symptom. The Orker's own probe is stricter, and it refuses to start.
 
-**Fix.** Point `ORK_ORKER_WORKDIR` at a directory the virtual machine shares. On a macOS setup that usually means a path under the user's home directory. Then run `make down` and `make up`. The script's default, `.data/work` under the repository, is chosen because those machines share the home directory.
+**Fix.** Point `ORK_ORKER_WORKDIR` at a directory the virtual machine shares. On a macOS setup that usually means a path under the user's home directory. If the message says the path holds a comma or a control character, the cause is the path itself and not the virtual machine: choose a path without either. Then run `make down` and `make up`. The script's default, `.data/work` under the repository, is chosen because those machines share the home directory.
 
 ### A task failed with `PIN_UNAVAILABLE`
 
@@ -384,11 +384,13 @@ other tools use the same ports.
 which mounts the task's workspace from `ORKSTACK_WORKDIR` (default
 `~/.cache/orkstack-quickstart`) as a path on the daemon's own machine. A daemon
 in a virtual machine (Docker Desktop, colima, Lima) sees only the directories
-that machine shares.
+that machine shares. The Orker also refuses to start when that path holds a
+comma or a control character, which a container mount cannot carry; its message
+names `ORK_ORKER_WORKDIR`, which is `ORKSTACK_WORKDIR` here.
 
 **Fix.** Set `ORKSTACK_WORKDIR` in `.env` to a directory the virtual machine
 shares and that only you can write, usually one under your home directory, not
-a shared `/tmp`, then
+a shared `/tmp`, and whose path holds no comma and no control character, then
 `docker compose up -d --wait` again ([DEPLOY.md](./DEPLOY.md), "Running the
 published images").
 
@@ -433,11 +435,12 @@ These entries apply to `make up`, which runs `scripts/stack.sh up` ([Makefile](.
 
 - `WORKDIR_NOT_BINDABLE`: see the entry above.
 - `BIND_PROBE_IMAGE_UNAVAILABLE`: the probe image `alpine:3.20` is not present, and it could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`. The message names the image, not the work root ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+- `BIND_PROBE_TIMED_OUT`: the container daemon was too slow for the probe. It did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` (two minutes) whether the probe image is local, or on each of two attempts it did not start the probe container within that time or ended it with a deadline error of its own. The daemon is overloaded or unresponsive. The work root is not the finding, so do not change `ORK_ORKER_WORKDIR`. The probe can take up to seven minutes to give up, longer than the 60 seconds `make up` waits for the Orker, so the refusal may appear in `.run/orker.log` after `make up` has stopped with a timeout ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 - `RESOURCE_REQUEST_REFUSED`: a resource cap that cannot be read, such as an invalid `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`.
 
 **Confirm.** `.run/orker.log` contains `orker boot checks failed:` followed by the code.
 
-**Fix.** For the probe image, run `docker pull alpine:3.20`. Correct the cap in `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`, or fix the work root. Then run `make down` and `make up`. Configuration keys are listed in ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
+**Fix.** For the probe image, run `docker pull alpine:3.20`. For a timed-out probe, check that `docker run --rm alpine:3.20 true` finishes, stop whatever is loading the daemon, and raise `ORK_DOCKER_BIND_PROBE_TIMEOUT` if the daemon is only slow. Correct the cap in `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`, or fix the work root. Then run `make down` and `make up`. Configuration keys are listed in ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 
 ### `uses: shell` fails to apply on a fresh clone
 

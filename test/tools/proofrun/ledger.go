@@ -56,6 +56,11 @@ type entry struct {
 	Job     string  `json:"job,omitempty"`
 	Outcome string  `json:"outcome"`
 	Seconds float64 `json:"seconds"`
+	// FuzzSeconds is, in the fuzz lane's ledger, the fuzz time the lane gave
+	// the target (go test -fuzztime), of the Seconds it took with its build
+	// and any minimization; empty for a target given an iteration count, and
+	// in every other ledger.
+	FuzzSeconds float64 `json:"fuzz_seconds,omitempty"`
 	// Reason says why an entry is a failure the test itself did not report:
 	// its binary crashed while it ran, or nothing ever reported it.
 	Reason string `json:"reason,omitempty"`
@@ -67,6 +72,31 @@ type entry struct {
 	// Failures names the failing leaf subtests of a parent that failed, so a
 	// ledger row says what actually failed.
 	Failures []string `json:"failures,omitempty"`
+	// FailureOutput is the last lines a failing top-level test printed, its
+	// subtests' included, without the testing package's own framing
+	// (failureTailLines, failureTailWidth bound it). The merger reads a
+	// timing-only failure from it (gotiming.go); it is empty for a test that
+	// did not fail.
+	FailureOutput []string `json:"failure_output,omitempty"`
+}
+
+// How much of a failing test's output an entry keeps.
+const (
+	failureTailLines = 40
+	failureTailWidth = 400
+)
+
+// frameworkLine reports whether an output line is the testing package's own
+// framing of a test (its start, pause, resume and verdict lines), as opposed
+// to something the test or its code printed.
+func frameworkLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	for _, prefix := range []string{"=== RUN", "=== PAUSE", "=== CONT", "=== NAME", "--- FAIL:", "--- PASS:", "--- SKIP:", "--- BENCH:"} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // collector accumulates outcomes from test2json events.
@@ -92,6 +122,25 @@ type collector struct {
 	// onFail, when set, is called with every top-level test that reports a
 	// failure, as it reports it (proofrun's -fail-fast).
 	onFail func(testKey)
+	// tails holds, for each top-level test that has not ended, the last lines
+	// it printed (failureTail). A test that passes or skips drops its lines;
+	// a test that fails keeps them in its entry.
+	tails map[testKey][]string
+	// sticky is set for a run that repeats its tests (go test -count above
+	// 1): one test name then reports once per repeat, and a later pass must
+	// not hide an earlier failure. A sticky collector keeps the worst outcome
+	// of a test (fail, then skip, then pass) and adds up its seconds. The
+	// unit and integration collectors are not sticky: nothing repeats there.
+	sticky bool
+	// unfinished counts, for a sticky collector, the executions of a test
+	// that started and have reported nothing yet. A repeat that starts after
+	// an earlier repeat passed would otherwise leave that pass standing when
+	// the binary ends, hangs or times out inside it.
+	unfinished map[testKey]int
+	// races counts the race detector's reports by where they were printed:
+	// the test, or an empty Test for a report outside every test. Every
+	// collector counts; only the race suites' ledgers read it (race.go).
+	races map[testKey]int
 }
 
 func newCollector() *collector {
@@ -100,11 +149,34 @@ func newCollector() *collector {
 		started:       map[testKey]bool{},
 		packageOutput: map[string]*strings.Builder{},
 		pkgEnds:       map[string]string{},
+		tails:         map[testKey][]string{},
+		unfinished:    map[testKey]int{},
+		races:         map[testKey]int{},
 	}
+}
+
+// noteOutput keeps ev's line in the tail of the top-level test it belongs to.
+func (c *collector) noteOutput(ev event) {
+	line := strings.TrimRight(ev.Output, "\r\n")
+	if strings.TrimSpace(line) == "" || frameworkLine(line) {
+		return
+	}
+	if len(line) > failureTailWidth {
+		line = strings.ToValidUTF8(line[:failureTailWidth], "") + "…"
+	}
+	top := testKey{ev.Package, strings.SplitN(ev.Test, "/", 2)[0]}
+	tail := append(c.tails[top], line)
+	if len(tail) > failureTailLines {
+		tail = append([]string(nil), tail[len(tail)-failureTailLines:]...)
+	}
+	c.tails[top] = tail
 }
 
 // add records one event. job names the process that produced it.
 func (c *collector) add(ev event, job string) {
+	if ev.Action == "output" && isRaceReport(ev.Output) {
+		c.races[testKey{ev.Package, ev.Test}]++
+	}
 	if ev.Test == "" {
 		switch ev.Action {
 		case "pass", "fail", "skip":
@@ -124,6 +196,8 @@ func (c *collector) add(ev event, job string) {
 	}
 	k := testKey{ev.Package, ev.Test}
 	switch ev.Action {
+	case "output":
+		c.noteOutput(ev)
 	case "run":
 		c.started[k] = true
 		if strings.Contains(ev.Test, "/") {
@@ -133,13 +207,16 @@ func (c *collector) add(ev event, job string) {
 			c.results[k] = &entry{Package: ev.Package, Test: ev.Test, Job: job, Outcome: outcomeNone}
 			c.order = append(c.order, k)
 		}
+		if c.sticky {
+			c.unfinished[k]++
+		}
 	case "pass", "fail", "skip":
 		if strings.Contains(ev.Test, "/") {
 			switch ev.Action {
 			case "skip":
-				c.subSkips = append(c.subSkips, k)
+				c.subSkips = c.noteSub(c.subSkips, k)
 			case "fail":
-				c.failedSubs = append(c.failedSubs, k)
+				c.failedSubs = c.noteSub(c.failedSubs, k)
 			}
 			return
 		}
@@ -150,13 +227,45 @@ func (c *collector) add(ev event, job string) {
 			c.order = append(c.order, k)
 		}
 		e.Job = job
-		e.Outcome = ev.Action
-		e.Seconds = ev.Elapsed
+		if c.sticky {
+			if c.unfinished[k] > 0 {
+				c.unfinished[k]--
+			}
+			// A repeat: keep the worst outcome so far, and add up the time.
+			if outcomeSeverity(ev.Action) >= outcomeSeverity(e.Outcome) {
+				e.Outcome = ev.Action
+			}
+			e.Seconds += ev.Elapsed
+		} else {
+			e.Outcome = ev.Action
+			e.Seconds = ev.Elapsed
+		}
 		e.Reason = ""
+		// A sticky collector's later pass keeps the tail of the failure it
+		// does not hide.
+		if ev.Action == "fail" {
+			e.FailureOutput = c.tails[k]
+		} else if !c.sticky {
+			e.FailureOutput = nil
+		}
+		delete(c.tails, k)
 		if ev.Action == "fail" && c.onFail != nil {
 			c.onFail(k)
 		}
 	}
+}
+
+// noteSub appends a subtest to a list of them. A sticky collector hears of one
+// subtest once per repeat and lists it once.
+func (c *collector) noteSub(list []testKey, k testKey) []testKey {
+	if c.sticky {
+		for _, have := range list {
+			if have == k {
+				return list
+			}
+		}
+	}
+	return append(list, k)
 }
 
 // readEvents feeds every JSON line of r to c, tagging each with job, and
@@ -263,6 +372,10 @@ type ledger struct {
 	Tests      []entry                 `json:"tests"`
 	Problems   []string                `json:"problems"`
 	Summary    summary                 `json:"summary"`
+	// Short is set on a race ledger whose run had -short: only then is a skip
+	// no allowed-skip entry names recorded rather than refused (race.go), and
+	// the merger accepts such a skip only from a ledger that says so.
+	Short bool `json:"short,omitempty"`
 }
 
 type summary struct {
@@ -311,11 +424,22 @@ func excusedFor(suite string, quarantine map[testKey]quarantineEntry) map[testKe
 func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string]bool, c *collector, allow []allowedSkip,
 	quarantine map[testKey]quarantineEntry,
 ) ledger {
+	return buildLedgerOpts(suite, expected, listed, c, allow, quarantine, false)
+}
+
+// buildLedgerOpts is buildLedgerQ with one more choice: shortSkips records a
+// skip no allowed-skip entry names as a skip with a reason, instead of as a
+// problem. Only the race suites choose it (race.go): they run with -short,
+// which skips the scale tests, and the merger holds every such skip to the
+// unit gate's result.
+func buildLedgerOpts(suite string, expected []testKey, listed map[string]map[string]bool, c *collector, allow []allowedSkip,
+	quarantine map[testKey]quarantineEntry, shortSkips bool,
+) ledger {
 	l := ledger{Suite: suite, Problems: []string{}}
 	excused := excusedFor(suite, quarantine)
 	allowed := map[testKey]allowedSkip{}
 	for _, a := range allow {
-		if a.Suite != suite && a.Suite != "any" {
+		if !skipEntryApplies(a.Suite, suite) {
 			continue
 		}
 		allowed[testKey{a.Package, a.Test}] = a
@@ -337,6 +461,12 @@ func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string
 		e := entry{Package: k.Package, Test: k.Test, Outcome: outcomeNone, Reason: "no outcome: the test was listed and asked for, and nothing reported it"}
 		if got, ok := c.results[k]; ok {
 			e = *got
+			if c.unfinished[k] > 0 {
+				// A repeat of the test started and never reported, whatever
+				// an earlier repeat reported.
+				e.Outcome = outcomeNone
+				e.Reason = "no outcome: a repeat of the test started and never reported a result"
+			}
 			if e.Outcome == outcomeNone && e.Reason == "" {
 				e.Reason = "no outcome: the test started and never reported a result"
 			}
@@ -356,15 +486,14 @@ func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string
 				break
 			}
 			l.Summary.Fail++
-			why := "failed"
-			if e.Reason != "" {
-				why = e.Reason
-			}
-			l.Problems = append(l.Problems, fmt.Sprintf("%s %s (job %s)", k, why, orDash(e.Job)))
+			l.Problems = append(l.Problems, failedProblem(k, e))
 		case outcomeSkip:
 			if a, ok := allowed[k]; ok {
 				l.Summary.AllowedSkip++
 				e.AllowedSkip = a.Reason
+			} else if shortSkips {
+				l.Summary.Skip++
+				e.Reason = shortSkipReason
 			} else {
 				l.Summary.Skip++
 				l.Problems = append(l.Problems, fmt.Sprintf(
@@ -386,10 +515,24 @@ func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string
 			continue
 		}
 		l.Summary.SubtestSkips++
+		if shortSkips {
+			continue
+		}
 		l.Problems = append(l.Problems, fmt.Sprintf(
 			"%s skipped; a skip is never a pass — fix the prerequisite, or allow it in scripts/proof-allowed-skips.txt with its reason", k))
 	}
 	return l
+}
+
+// failedProblem is the problem line a failing test has in its ledger: its
+// key, why it failed (a plain failure says "failed") and the job that ran it.
+// The merger expects exactly this line for a test it excuses (ownProblem).
+func failedProblem(k testKey, e entry) string {
+	why := "failed"
+	if e.Reason != "" {
+		why = e.Reason
+	}
+	return fmt.Sprintf("%s %s (job %s)", k, why, orDash(e.Job))
 }
 
 // failingLeaves returns the failing subtests of top that have no failing

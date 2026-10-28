@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -307,7 +306,7 @@ func TestStatsFailures_FooterSaysWhenTheListIsShort(t *testing.T) {
 	if !strings.Contains(out, "showing 1 of 3 groups (raise --limit)") {
 		t.Errorf("a truncated list does not say so:\n%s", out)
 	}
-	if !strings.Contains(out, fmt.Sprintf("scanned 6 of 6 failed runs in the window; 6 grouped into 3 groups")) {
+	if !strings.Contains(out, "scanned 6 of 6 failed runs in the window; 6 grouped into 3 groups") {
 		t.Errorf("the totals are not over every group:\n%s", out)
 	}
 }

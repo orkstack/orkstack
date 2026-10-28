@@ -18,5 +18,6 @@
 /scripts/github/ @danlsgiga
 /.github/ @danlsgiga
 /test/tools/proofrun/ @danlsgiga
+/internal/testsupport/proof/ @danlsgiga
 /Makefile @danlsgiga
 /ui/playwright.config.ts @danlsgiga

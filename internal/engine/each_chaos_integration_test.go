@@ -73,6 +73,9 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 	items := soakItems(t)
 	soakAlone(t, ctx)
 	e := startEachSoak(t, ctx, "C32", items)
+	// C32 asserts the kills' outcomes, not E4's wall-clock bounds: it keeps the
+	// soak's measurements as evidence and fails nothing for them.
+	e.timing.RecordOnly()
 	var killable []*c32Orker
 	for i := 1; i <= 3; i++ {
 		name := fmt.Sprintf("real-%d", i)

@@ -895,18 +895,54 @@ recorded as it ran. The deferred tests and specs run in the nightly tier and
 in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
 
-Until the nightly workflow runs on GitHub, `make proof-nightly` runs on
-`main`'s tip after every merge that moves `main`, and passes before the next
-merge starts and before every tag.
+The merge gate's absolute wall-clock budgets — the soaks' `GetRun` p95, the run
+page's 5 s — were calibrated on the 16-CPU reference host and are enforced
+there: in every local proof of any tier, and in the pre-release gate wherever
+it runs, which excuses no runner-size miss, so a tag rests on budgets that
+held on the reference class (a CI release proof needs runners as large as the
+reference, or `make proof-release` runs on the reference host). In the merge
+gate and the nightly, on a CI runner with fewer CPUs, a miss of one is a
+recorded known gap, never a pass and never a widened bound (accepted
+2026-10-27): only under a row of `scripts/proof-host-speed.tsv` that the user
+approved and the base carries identically, and for a Go test only up to the
+bound scaled by the reference's CPUs over the runner's. The merger derives
+each excusal itself from the part's own records (docs/PROOFS.md §12). A count,
+a size, a history share, a deadlock-detector trip, a correctness assertion, or
+a failure beside the timing miss gets no row and fails the proof wherever it
+runs. What stays visible where a budget is excused is a bound on what the
+soaks' live `GetRun` reads, which holds on every host: at most one pass over
+the generation's history, in events and in bytes, and a bounded number of
+saved-state objects. It bounds what is read, not what reading it costs: a
+slower decode shows only in the wall-clock numbers, which the reference host
+enforces, and the run page's 5 s has no such counterpart.
 
-A failing nightly or pre-release proof is a failing `main`: fix it, or revert
-the change that broke it, before anything else merges, and never edit a list,
-a threshold or a measurement file to make it pass. A nightly part whose
+The nightly of `main` is GitHub's: `nightly.yml` runs the nightly tier on
+`main` every day (05:17 UTC) and by dispatch. No local `make proof-nightly`
+follows a merge: that interim rule, in force while the workflow did not run on
+GitHub, was retired on 2026-10-27, once three consecutive nightlies of `main`
+had passed on it. A release tag has its own gate, the pre-release proof above.
+A merge is not held for a nightly of its own: a run speaks only for the commit
+it measured (its `headSha`), never for `main`'s tip, so the nightly of a later
+commit is a later run. The same workflow runs the vulnerability scan
+(`make vuln`) as a job of its own, because it needs the network and so is in
+no proof: a vulnerability whose vulnerable code the module reaches fails that
+run like any other nightly failure, and the fix is to bump the module to the
+version the report names.
+
+A failing nightly (the latest completed `nightly.yml` run on `main`) or
+pre-release proof is a failing `main`: fix it, or revert the change that broke
+it, before anything else merges, and never edit a list, a threshold or a
+measurement file to make it pass. A red nightly clears only when a later run,
+of the fix or of a commit after it, passes: the fix is the one merge made
+meanwhile, a nightly of it is dispatched once it is pushed (docs/PROOFS.md
+§10), and nothing else merges before that run passes. A nightly part whose
 runner measured below the runner-health floor
 (`scripts/proof-runner-floors.tsv`) before any test ran is a runner failure,
 not a failing `main`: the proof records that part as `runner-degraded`, is
 not a proof of the tree, and that one part runs again as a new part of the
-same tree (§11.2); a part above the floor that fails is a failing `main`. A
+same tree (§11.2); a part above the floor that fails is a failing `main`. The
+race, race-repeat and fuzz parts are measured for information and no floor
+binds them, so a failure there is a failing `main`. A
 change that raises a
 default the deferred tests measured (`engine.orkflow_max_tasks`, the fan-out
 item maximum, or a continuation, history or in-flight default) quotes a
@@ -939,7 +975,13 @@ Every code change follows this order:
 
 0. `make check` is the fast path: build, vet, lint and the unit suites with
    `-short`, with no Docker and no Temporal. Run it before every push; CI
-   runs it on every pull request.
+   runs it on every pull request. Lint is `go vet`, gofmt and staticcheck at
+   the version `go.mod` pins (`go tool staticcheck`, its default checks, run
+   as built and with `-tags=integration`): a finding is fixed in the code,
+   and a false positive carries a line-level `//lint:ignore` that says why.
+   `make vuln`, the pinned `govulncheck`, reads the vulnerability database
+   over the network, so it is in no lint and no proof, where a network failure
+   must never fail one; `ci.yml` and `nightly.yml` run it.
 1. For a process-boundary change, edit `proto/` first and run `make proto`.
 2. For a new configuration setting: add it to `internal/config`'s `Schema`
    (its default bound to the code constant, `internal/config/config.go`),
@@ -953,13 +995,16 @@ Every code change follows this order:
    refuses a stale schema.
 3. Dependencies are pinned: an exact module version, or an image digest,
    never a floating tag at runtime; a toolchain version is an exact line in
-   `go.mod` or the workflow. Update by pull request that proves the change —
+   `go.mod` or the workflow; a tool the build runs (staticcheck,
+   govulncheck) is a `tool` directive there, pinned like a module. Update by
+   pull request that proves the change —
    `.github/dependabot.yml` opens them, and an update never merges on a green
    unit run alone. A new dependency follows the same rule as any other change.
 4. Write a behavior test that fails for the right reason.
 5. Implement until it passes.
-6. Run `make lint test`; for Temporal or storage changes, run the affected
-   integration tests against `make infra-up`
+6. Run `make lint test`; for concurrent code, `make test-race` too (the race
+   gate's run, docs/PROOFS.md §2.3); for Temporal or storage changes, run the
+   affected integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
 7. Documentation is part of the change. A change that alters behaviour users
@@ -978,8 +1023,19 @@ Every code change follows this order:
 10. Merge through §11.3. The full proof of the merged tree is what makes the
     change done.
 
-Unit tests are pure and table-driven. Temporal workflow tests use
+Unit tests are pure and table-driven. A parser of input OrkStack does not
+control (a request body, a flag, an authored document, an object read back from
+storage, a container's output) that is added or changed also gets a native Go
+fuzz target (`FuzzXxx`) that states the properties the code claims, its seeds
+drawn from the table tests; the seeds run in every unit gate, so they stay fast
+and deterministic. `go test -list '^Fuzz' ./...` lists the targets there are;
+a parser without one is not yet covered, not exempt. A crasher a fuzz run finds
+is fixed at its root and kept under `testdata/fuzz/<FuzzName>/` as a regression
+seed. Temporal workflow tests use
 `WorkflowTestSuite` / `TestWorkflowEnvironment` with mocked activities.
+A unit test bounds code cost by thread CPU time or an injected clock, never by
+a sub-second wall-clock window; where the platform has no thread clock (off
+Linux) the Go cost tests fall back to the wall clock.
 Integration tests use `-tags=integration`, `make infra-up`, and `infraAbsent`; a
 missing prerequisite skips, and becomes a failure under `ORK_REQUIRE_INFRA=1`
 (`make test-integration` sets it). Browser end-to-end tests live in `ui/e2e`
@@ -1101,7 +1157,11 @@ proof means "ready for the merge proof", never "done".
 **The four tiers.** A **full proof** is the merge gate. A **feature proof**
 is a change's evidence on its branch and never merge evidence. The **nightly
 tier** runs only the tests `scripts/proof-nightly-tests.txt` lists and the
-spec files `scripts/proof-nightly-specs.txt` lists, and is never merge
+spec files `scripts/proof-nightly-specs.txt` lists, and two lanes of its own
+— the race repeat (the concurrency-heavy packages' unit suites under the race
+detector, several times in one run) and the fuzz lane (every Fuzz target,
+sharing one time budget for the whole lane, a crasher failing it and its input
+kept) — and is never merge
 evidence. The pre-release gate is the full tier with nothing
 deferred, and it runs the observability gate unconditionally. A release tag
 requires a passing pre-release proof of the exact commit. docs/PROOFS.md is
@@ -1110,22 +1170,34 @@ the reference for what each tier runs.
 **Rules for every proof.**
 
 - Never rerun a failing test, and never partially rerun a shard that produced
-  a result. Only a part whose runner GitHub annotated as lost, or whose own
+  a result. Only three kinds of part attempt may run again, none of which
+  recorded a result: one whose runner GitHub annotated as lost; one whose own
   runner-health measurement at its start was below the floor
   (`scripts/proof-runner-floors.tsv`; the part is classified
   `runner-degraded`, and `proof.json` records the part, the metric, the
-  measured value and the floor), may run again — the whole part, as a new
-  part of the same tree, never a failed test in isolation — and `proof.json`
-  records the rerun; any other second attempt makes the proof ineligible. A
-  degraded part's tests have no outcome of the tree, and a proof holding one
+  measured value and the floor); and one whose job failed in a fetch or install
+  step before its proof step started (`setup-failed`: the failed step is on
+  the per-kind allowlist `setupStepNames` in `test/tools/proofrun/merge.go`,
+  the plan and the build have no entry, and `proof.json` records the part, the
+  attempt and the step). Such a part runs again whole, as a new part of the
+  same tree, never a failed test in isolation, and `proof.json` records the
+  rerun; any other second attempt makes the proof ineligible. Reruns of the
+  three classes may be issued automatically (`.github/workflows/proof-rerun.yml`,
+  off unless the repository enables it, at most two per run), by a planner that
+  reuses the merger's classification and reruns only when every failed job is
+  the `proof` job or a part of those classes. "Re-run failed jobs" is
+  permitted when every failed part is eligible, and is never an answer to a
+  part that recorded a result; the merger stays the only authority, so a
+  rerun the planner got wrong makes a proof ineligible and never passes one.
+  A degraded part's tests have no outcome of the tree, and a proof holding one
   with no later attempt is not a proof of the tree; a part above the floor
   whose tests fail is a test failure. The floor is measured once, before any
   gate: a runner that degrades later is not seen, and its failures stay test
   failures.
 - Never edit the costs file, the slow list, the nightly list, the quarantine
-  list, the runner-health floors or the allowed skips to get a proof
-  through. The nightly and quarantine lists change only with the user's
-  approval.
+  list, the host-speed table, the runner-health floors or the allowed skips to
+  get a proof through. The nightly and quarantine lists, and the rows of the
+  host-speed table, change only with the user's approval.
 - A new top-level path needs a `scripts/proof-scope.tsv` row, and a path the
   table does not map refuses the feature tier.
 - Read `proof.json`, never the README, for a verdict.
@@ -1133,8 +1205,9 @@ the reference for what each tier runs.
   `quarantined-fail`, never as a pass, and its entry carries an owner, a
   reason and a review date. An entry excuses nothing until `main` carries it,
   and nothing once its review date has passed.
-- While the interim rule holds, `make merge-check` refuses a merge until a
-  nightly proof of `main`'s tip has passed (`NIGHTLY=`).
+- `make merge-check` asks for no nightly proof: the nightly of `main` is
+  GitHub's (§11). Given one (`NIGHTLY=`), it refuses the merge unless that
+  proof is a passing nightly proof of `main`'s tip.
 - A release tag is created only through `make release-tag` or `release.yml`,
   and both refuse without a passing pre-release proof of the exact commit.
 - A skip is never a pass. The ledgers list every test the binaries report; a
@@ -1161,8 +1234,9 @@ other than the observability gate and the three measurement files
 `scripts/proof-ui-costs.tsv`), `internal/testsupport/`, and
 `test/tools/proofrun/`), refuses the feature tier. A feature proof always runs
 lint, build, the unit suites and `go vet -tags=integration`, and it runs the UI
-type-check and unit suites when `ui/` or `proto/` changed or a spec runs, and
-the site's check and build when a path the site reads changed. It then runs:
+type-check and unit suites when `ui/` or `proto/` changed or a spec runs, the
+site's check and build when a path the site reads changed, and the race gate
+over the Go packages the change touches when it touches any. It then runs:
 
 - the change's **evidence**: every test whose source the diff changes,
   including every test that reaches a changed or deleted helper, type,
@@ -1217,16 +1291,18 @@ images, built and pushed from this tree under a tag of the proof's own
 differs from its unit build, except the deferred ones, against real Temporal
 and SeaweedFS with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run
 on those images; the UI type-check and unit suites; the site's check and
-build; every Playwright spec; and the observability gate, whenever the tree
+build; the race gate (the unit suites under the race detector, `-short`);
+every Playwright spec; and the observability gate, whenever the tree
 differs from `main` in a telemetry path. That diff-conditioned observability
 gate is the only diff-conditioned part of the full proof, and its base is not
 a choice: the full tier refuses `--base`, a full proof whose recorded base is
 not `main` is not merge-eligible, and `merge-check PROOF=` requires that base
 to be `main`'s current tip. Concurrency is how the full proof is fast, never a
 reason to run less: the fast gates (lint, build, unit, vet, the UI type-check
-and unit suites and the site's check and build) run first and alone, and a
-failure there or in any later gate stops a local proof (`PROOF_FAIL_FAST`,
-docs/PROOFS.md §2.2), which still writes its failing verdict; integration
+and unit suites, the site's check and build and the race gate) run first and
+alone, and a failure there or in any later gate stops a local proof
+(`PROOF_FAIL_FAST`, docs/PROOFS.md §2.2), which still writes its failing
+verdict; integration
 tests run as separate processes,
 `PROOF_JOBS` at a time (default 6: measured clean in two full proofs on the
 proof host, train-a-full in 79.0 min with integration 2805 s and
@@ -1237,7 +1313,7 @@ bucket's first read), with the
 activity fixture beside them once the heavy tests have run alone, and
 Playwright spec files run on `PROOF_UI_WORKERS` workers (default 2: measured
 clean; at 3 a load-sensitive spec failed in each of three runs). The
-unit and integration ledgers, and the
+unit, race and integration ledgers, and the
 Playwright ledger, list every test that `go test -list` and
 `playwright test --list` report, with the job that ran it, its outcome and its
 duration. A listed test without an outcome fails the gate. In the full tier,
@@ -1246,7 +1322,13 @@ test the nightly list names, or a test of a spec file the nightly spec list
 names, and in every other tier it fails the gate. A skip
 also fails it, unless `scripts/proof-allowed-skips.txt` names the test and the
 reason (an opt-in recorder, a helper subprocess); an allowed-skip entry that
-names no listed test fails it too. A test whose binary crashed while it ran is
+names no listed test fails it too. The race gate alone records a skip it
+does not refuse: it runs `-short`, its ledger says so, and a test it skipped
+counts only because the unit ledger, which runs the test without `-short`,
+passed it (the nightly race repeat records its `-short` skips the same way and
+has no unit ledger to hold them to); a data race
+the detector reports fails the gate whatever the tests reported, and no
+quarantine excuses it. A test whose binary crashed while it ran is
 recorded as failed and never re-run; the tests behind it run in a fresh
 process. A full proof is merge-eligible only if every gate ran and passed, the
 ledgers are complete (their `deferred` entries match exactly the entries that

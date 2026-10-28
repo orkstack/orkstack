@@ -109,11 +109,11 @@ func continuedOnly(t *testing.T, closedAgo time.Duration) *chainIndexClient {
 
 func TestDeleteOrkflow_RefusedWhileAChainIsSeenOnlyAsContinuedAsNew(t *testing.T) {
 	now := time.Now()
-	svc, store := deletionService(t, now, nil, nil)
+	_, store := deletionService(t, now, nil, nil)
 	// The deletion gate asks the real reader, over an index that shows the
 	// live chain only as the generation that closed.
 	reader := engine.NewTemporalRunReader(continuedOnly(t, time.Minute))
-	svc = api.NewService(api.Config{Orkflows: store, Reader: reader, Now: func() time.Time { return now }})
+	svc := api.NewService(api.Config{Orkflows: store, Reader: reader, Now: func() time.Time { return now }})
 	_, err := deleteDeploy(svc)
 	assertRunSafetyResult(t, store, err, connect.CodeFailedPrecondition)
 	if !strings.Contains(err.Error(), "1 active") {

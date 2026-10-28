@@ -58,6 +58,10 @@ func ValidOrkerID(orkerID string) error {
 				ErrInvalidOrkerID, orkerID, i)
 		}
 	}
+	// The id is part of a task queue name, which travels as a protobuf string.
+	if !utf8.ValidString(orkerID) {
+		return fmt.Errorf("%w: %q is not valid UTF-8", ErrInvalidOrkerID, orkerID)
+	}
 	return nil
 }
 

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 // usageCaveat is the sentence every usage surface prints, always. The UI
@@ -66,7 +67,7 @@ func newStatsUsageCommand(g *globalFlags) *cobra.Command {
 				}
 				req.Until = timestamppb.New(at)
 			}
-			if strings.EqualFold(strings.TrimSpace(groupBy), "namespace") {
+			if groupsByNamespace(groupBy) {
 				if cmd.Flags().Changed("namespace") {
 					return fmt.Errorf("--group-by namespace reports every namespace; drop --namespace")
 				}
@@ -124,6 +125,12 @@ func parseUsageGroupBy(raw string) ([]orkstackv1.FailureGroupBy, error) {
 		}
 	}
 	return dims, nil
+}
+
+// groupsByNamespace reports whether --group-by is the one word that fans out
+// over every namespace, in ASCII case, as the dimensions are read.
+func groupsByNamespace(raw string) bool {
+	return enumname.UpperASCII(strings.TrimSpace(raw)) == "NAMESPACE"
 }
 
 // unitSeconds renders one of the three sums: whole seconds, no grouping.

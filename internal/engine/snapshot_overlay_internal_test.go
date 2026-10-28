@@ -68,20 +68,30 @@ func newOverlayHarness(t *testing.T) *overlayHarness {
 	h.env.RegisterActivityWithOptions(func(ctx context.Context, run *orkstackv1.Run, seq int64, base SnapshotBase,
 		policy OverlayPolicy,
 	) (SnapshotWritten, error) {
-		clone := proto.Clone(run).(*orkstackv1.Run)
+		clone, err := cloneLent(run)
+		if err != nil {
+			return SnapshotWritten{}, err
+		}
 		written, err := h.activities.WriteSnapshotOrOverlay(ctx, run, seq, base, policy)
-		h.mu.Lock()
-		h.writes = append(h.writes, overlayWrite{ActivityWriteSnapshotOrOverlay, seq, clone, base, written})
-		h.mu.Unlock()
+		if err == nil {
+			h.mu.Lock()
+			h.writes = append(h.writes, overlayWrite{ActivityWriteSnapshotOrOverlay, seq, clone, base, written})
+			h.mu.Unlock()
+		}
 		return written, err
 	}, activity.RegisterOptions{Name: ActivityWriteSnapshotOrOverlay})
 	h.env.RegisterActivityWithOptions(func(ctx context.Context, run *orkstackv1.Run, seq int64) (string, error) {
-		clone := proto.Clone(run).(*orkstackv1.Run)
+		clone, err := cloneLent(run)
+		if err != nil {
+			return "", err
+		}
 		uri, err := h.activities.WriteSnapshot(ctx, run, seq)
-		h.mu.Lock()
-		h.writes = append(h.writes, overlayWrite{ActivityWriteSnapshot, seq, clone, SnapshotBase{},
-			SnapshotWritten{URI: uri, Full: true}})
-		h.mu.Unlock()
+		if err == nil {
+			h.mu.Lock()
+			h.writes = append(h.writes, overlayWrite{ActivityWriteSnapshot, seq, clone, SnapshotBase{},
+				SnapshotWritten{URI: uri, Full: true}})
+			h.mu.Unlock()
+		}
 		return uri, err
 	}, activity.RegisterOptions{Name: ActivityWriteSnapshot})
 	h.env.RegisterActivityWithOptions(func(_ context.Context, event *orkstackv1.Event, uri, _ string) error {
@@ -99,6 +109,15 @@ func newOverlayHarness(t *testing.T) *overlayHarness {
 			ValuesJson: []byte(fmt.Sprintf(`{"task":%q}`, in.GetTaskId()))}, nil
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	return h
+}
+
+// cloneLent is a copy of the lent snapshot run, taken the way the activities
+// read it: inside a borrow. A harness that read the rows outside one would
+// race with a cancel the way the activities once did (rows_loan.go).
+func cloneLent(run *orkstackv1.Run) (*orkstackv1.Run, error) {
+	return readLent(run, 0, func() (*orkstackv1.Run, error) {
+		return proto.Clone(run).(*orkstackv1.Run), nil
+	})
 }
 
 // overlayDocument is a fan-out of items (max_parallel parallel) between a

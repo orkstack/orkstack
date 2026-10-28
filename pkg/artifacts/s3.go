@@ -357,9 +357,17 @@ func (s *S3Store) upload(
 // The whole-object digest cannot ride a multipart upload as one checksum, so
 // it is recorded in the object's metadata as for every Put; each part is
 // covered by the request's own payload signature (or TLS).
+//
+// The upload manager is marked deprecated in favour of the SDK's
+// transfermanager. That module is still v0, needs a newer SDK core and S3
+// client than this module pins, and copies each part into a pooled buffer
+// where the manager reads it straight from the file, so moving to it is a
+// change of its own, proven against object storage; until then this is the
+// SDK's maintained multipart path.
 func (s *S3Store) uploadMultipart(
 	ctx context.Context, key string, body io.ReadSeeker, contentType string, stored map[string]string,
 ) error {
+	//lint:ignore SA1019 manager is the multipart uploader the pinned SDK maintains; its v0 successor is a change of its own (see uploadMultipart)
 	uploader := manager.NewUploader(s.client, func(u *manager.Uploader) {
 		u.PartSize = s.part()
 		u.Concurrency = multipartConcurrency
@@ -368,6 +376,7 @@ func (s *S3Store) uploadMultipart(
 		// S3-compatible server may refuse unless one is required.
 		u.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
+	//lint:ignore SA1019 manager is the multipart uploader the pinned SDK maintains; its v0 successor is a change of its own (see uploadMultipart)
 	_, err := uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(key),

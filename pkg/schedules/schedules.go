@@ -10,8 +10,10 @@ package schedules
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
+	"time"
 )
 
 const (
@@ -35,4 +37,19 @@ func NewID() (string, error) {
 		return "", fmt.Errorf("schedules: generate id: %w", err)
 	}
 	return IDPrefix + hex.EncodeToString(buf), nil
+}
+
+// ValidTimezone reports why name is not a time zone of the IANA database, which
+// is the only kind a schedule's spec.timezone may name. time.LoadLocation also
+// reads "Local" as the zone of whatever machine it runs on, so a schedule
+// created with it would fire at a different instant on each host that read it.
+func ValidTimezone(name string) error {
+	if name == "" {
+		return errors.New("is empty")
+	}
+	if name == "Local" {
+		return errors.New(`"Local" is the zone of the machine that reads it, not a zone of the IANA database`)
+	}
+	_, err := time.LoadLocation(name)
+	return err
 }

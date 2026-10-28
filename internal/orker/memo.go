@@ -274,7 +274,11 @@ func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
 	if staged != nil {
 		files = append(files, staged.inputFiles...)
 		for _, up := range staged.eachUpstream {
-			eachUpstream = append(eachUpstream, memoEachUpstream{TaskID: up.TaskID, Count: up.Count})
+			// A conversion, not a literal: the two shapes carry the same
+			// fields (only their JSON names differ), so a field added to
+			// task.json's each-upstream entry stops this compiling until the
+			// memo key has been decided on, instead of being left out of it.
+			eachUpstream = append(eachUpstream, memoEachUpstream(up))
 		}
 	}
 	sort.SliceStable(files, func(i, j int) bool { return files[i].Path < files[j].Path })

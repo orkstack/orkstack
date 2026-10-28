@@ -269,7 +269,7 @@ func RunWorkflow(
 
 	for {
 		if readyLoopProbeForTest != nil {
-			readyLoopProbeForTest.maxRetained = max(readyLoopProbeForTest.maxRetained, state.retainedClosureEntries())
+			readyLoopProbeForTest.noteRetained(int64(state.retainedClosureEntries()))
 			if readyLoopProbeForTest.pass != nil {
 				readyLoopProbeForTest.pass()
 			}
@@ -531,10 +531,9 @@ func RunWorkflow(
 			continue
 		}
 		if expired != "" {
-			if err := state.expire(ctx, expired); err != nil {
-				return state.fail(ctx, cancelRun, inFlight, expired, err)
-			}
-			continue
+			// expire always returns an error, the one the run ends with: the
+			// await's deadline, or the cancellation that settled its timer.
+			return state.fail(ctx, cancelRun, inFlight, expired, state.expire(ctx, expired))
 		}
 		if selectedItem >= 0 {
 			key := itemFlightKey(selectedID, selectedItem)
@@ -949,7 +948,7 @@ func (s *runState) start(ctx workflow.Context) {
 func (s *runState) closureOf(id string) []string {
 	closure := transitiveNeedsOf(s.tasks, id)
 	if readyLoopProbeForTest != nil {
-		readyLoopProbeForTest.closureEntries += len(closure)
+		readyLoopProbeForTest.closureEntries.Add(int64(len(closure)))
 	}
 	return closure
 }
@@ -1643,7 +1642,7 @@ func hintPinSessionHost(p *pinState, failure *orkstackv1.Error) {
 // the plan shares.
 func (s *runState) classify(ctx workflow.Context, id string) (bool, error) {
 	if readyLoopProbeForTest != nil {
-		readyLoopProbeForTest.classify++
+		readyLoopProbeForTest.classify.Add(1)
 	}
 	t := s.tasks[id]
 	if t.GetJoin() == orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
@@ -1657,7 +1656,7 @@ func (s *runState) classify(ctx workflow.Context, id string) (bool, error) {
 	}
 
 	if readyLoopProbeForTest != nil {
-		readyLoopProbeForTest.conditions++
+		readyLoopProbeForTest.conditions.Add(1)
 	}
 	shouldRun, err := evaluateCondition(s.tasks[id].GetCondition(), s.inputs, s.upstreamOutputs(id))
 	if err != nil {

@@ -90,12 +90,31 @@ same smoke before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).
 
 ## Fast checks (no Docker, under two minutes warm)
 
-`make check` runs `make lint` (`go vet` and gofmt), `go vet -tags=integration`
-over the integration suites, and the unit suites with `-short`, which skips
-the scale tests and the tests that compile binaries; it keeps the test cache.
+`make check` runs `make lint` (`go vet`, gofmt and staticcheck),
+`go vet -tags=integration` over the integration suites, and the unit suites
+with `-short`, which skips the scale tests and the tests that compile binaries;
+it keeps the test cache.
 Every proof runs those, without `-short`. Run it before every push. For the UI:
 `cd ui && bun run check && bun run test:unit`. For the site (`site/`, which
 also renders every doc): `make site`.
+
+`make lint` runs staticcheck at the version `go.mod` pins as a `tool`
+directive, so `go tool staticcheck` needs no install step. It runs the default
+checks twice, over the module as built and again with `-tags=integration`,
+because a symbol that only an integration-tagged file uses is unused to the
+first run and live to the second. Fix a finding in the code. Where staticcheck
+is wrong, for example a deprecation whose named replacement does not cover the
+use, put `//lint:ignore CHECK reason` on the line before the flagged one and
+say in the reason why; do not disable a whole check.
+
+`make vuln` runs the pinned `govulncheck`, which reports the known
+vulnerabilities in your dependencies and the standard library whose vulnerable
+code the module can reach. It reads the vulnerability database over the
+network, so it is in neither `make lint` nor any proof, and a network failure
+cannot fail one. CI's `vuln` job and the nightly workflow run it. A report names
+the fixed version: bump the module to exactly that version, then run
+`make check`. A vulnerability the code cannot reach is shown only with
+`go tool govulncheck -show verbose ./...`.
 
 When a test is listed in `scripts/proof-quarantine.txt`, its failure is that
 known flake: tell its owner if it is new to you. Never re-run a failing test until it
@@ -164,6 +183,9 @@ run, with its own `ork` and `orker`, and stops them when it ends.
 
 - **`check`** — `make check`, on every push and every pull request, with
   `DOCKER_HOST` pointing at nothing to prove the fast path needs no Docker.
+- **`vuln`** — `make vuln`, on every push and every pull request. It needs the
+  network and is in no proof; the nightly workflow runs it too, and a
+  vulnerability it reports makes that night's run red.
 - **`feature`** — the feature tier: the fast gates, the tests and specs that
   prove your change, and its regression set. Name evidence the selection
   cannot find in your PR description:
@@ -208,7 +230,9 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    image's interface label? Run `go run ./internal/schemas/cmd/genschemas`.
 3. Write a behavior test first (AGENTS.md §11.1).
 4. Implement until it passes.
-5. Run `make check`; for Temporal or storage changes, run the affected
+5. Run `make check`; for concurrent code, `make test-race` too (the proof's
+   race gate: the unit tests under the race detector, `-short`; it needs cgo
+   and a C compiler); for Temporal or storage changes, run the affected
    integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
@@ -229,6 +253,29 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    `main` buildable.
 9. Merge through AGENTS.md §11.3. CI's `proof` check is the merge gate; a
    local `make proof` is the equivalent path.
+
+## Fuzzing
+
+A parser of input OrkStack does not control that is added or changed gets a
+native Go fuzz target (`func FuzzXxx(f *testing.F)`, AGENTS.md §11.1) beside
+its table tests; one that has none is not yet covered, not exempt. The seeds
+run as ordinary tests in `make check` and every proof. To search for more, run
+one target at a time:
+
+```bash
+go test -run='^$' -fuzz='^FuzzParse_AcceptedTextIsAFilterThatFormatsBackToItself$' -fuzztime=3m ./internal/listfilter
+go test -list '^Fuzz' ./...     # every target
+```
+
+A target is a test to the feature proof: a changed one is evidence, and
+`make proof-feature TESTS='internal/listfilter:FuzzParse.*'` names it.
+`make fuzz` runs them all, sharing `FUZZ_BUDGET` between them.
+
+A failing input is written under `testdata/fuzz/<FuzzName>/`. Fix the code the
+input exposed, not the test, and commit the file: it then runs in every unit
+gate. A property is an invariant the code or its reference doc states (a round
+trip, a canonical form that compiles again, an independent count of what a
+verifier accepted), not only "does not panic".
 
 ## Definition of DONE
 

@@ -1,6 +1,8 @@
 name: nightly
 
-# The nightly tier: the scale and soak tests a merge proof defers. A red
+# The nightly tier: the scale and soak tests a merge proof defers, and two
+# lanes of its own, the race repeat and the fuzz lane; and the vulnerability
+# scan, which needs the network and so is in no proof. A red
 # nightly is a failing main — fix or revert before anything else merges.
 # (docs/PROOFS.md; AGENTS.md §11.2.)
 #
@@ -12,6 +14,10 @@ on:
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
+    inputs:
+      fuzz_budget:
+        description: the fuzz lane's whole time, shared by its Fuzz targets (105m; no more than 120m, because the lane's step is limited to 135m)
+        default: 105m
 
 permissions:
   contents: read
@@ -30,6 +36,31 @@ jobs:
       base: main
       int_shards: 4
       ui_shards: 1
+      fuzz_budget: ${{ inputs.fuzz_budget || '105m' }}
+
+  vuln:
+    # govulncheck (`make vuln`), which reports only advisories whose vulnerable
+    # symbols the code can reach. A new one makes the nightly red, and a red
+    # nightly is a failing main: the fix is to bump the module to the version
+    # the report names. It reads the vulnerability database over the network,
+    # which is why it is here and in ci.yml and in no proof.
+    if: ${{ github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: vuln
+        timeout-minutes: 10
+        run: make vuln
 
   flakes:
     # The flake budget's evidence (docs/PROOFS.md §6.1): same-tree flips and

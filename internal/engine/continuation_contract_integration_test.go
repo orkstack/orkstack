@@ -498,7 +498,7 @@ func (k *canContract) historyLimitReason(t *testing.T) {
 	_ = listener.Close()
 	// timeout(1) bounds the server's life even if this process dies before
 	// its cleanup runs.
-	out, err := exec.CommandContext(k.ctx, "docker", "run", "-d", "--rm",
+	out, err := exec.CommandContext(k.ctx, "docker", "run", "-d", "--rm", "--pull", "never",
 		"--label", fmt.Sprintf("ork.test=can-contract-%d", os.Getpid()),
 		"-p", fmt.Sprintf("127.0.0.1:%d:7233", port), "--entrypoint", "sh", image, "-c",
 		"exec timeout 600 temporal server start-dev --ip 0.0.0.0 --headless --log-level error "+

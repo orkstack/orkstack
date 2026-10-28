@@ -427,12 +427,18 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// so an id that cannot name one refuses boot here, naming the variable,
 	// rather than leaving an Orker nobody can cordon.
 	if err := task.ValidOrkerID(a.dispatcher.OrkerID); err != nil {
-		return fmt.Errorf("ORKER_ID_INVALID: %s=%q must be 1–200 bytes with no whitespace "+
+		return fmt.Errorf("ORKER_ID_INVALID: %s=%q must be 1–200 bytes of UTF-8 with no whitespace "+
 			"or control characters: %w", OrkerIDVar, a.dispatcher.OrkerID, err)
 	}
 	root := a.dispatcher.WorkRoot
 	if root == "" {
 		root = os.TempDir()
+	}
+	// The root is the source of every bind mount, and a mount is a
+	// comma-separated option list: say so once, here, not per attempt.
+	if !plainMountPath(root) {
+		return fmt.Errorf("%s: %s=%q holds a comma or a control character, which a container "+
+			"mount cannot carry; point it at a plain path", ReasonWorkdirNotBindable, WorkRootVar, root)
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("%s: create the workspace root %s: %w", ReasonWorkdirFailed, root, err)
@@ -441,10 +447,18 @@ func (a *Activities) Boot(ctx context.Context) error {
 		ProbeBindable(context.Context, string) error
 	}); ok {
 		if err := prober.ProbeBindable(ctx, root); err != nil {
-			if errors.Is(err, ErrProbeImageUnavailable) {
+			switch {
+			case ctx.Err() != nil:
+				// An Orker told to stop while it probes has found nothing
+				// wrong with its work root or its daemon.
+				return fmt.Errorf("boot interrupted during the bind probe: %w (%v)", ctx.Err(), err)
+			case errors.Is(err, ErrProbeImageUnavailable):
 				return fmt.Errorf("%s: %w", ReasonBindProbeImageUnavailable, err)
+			case errors.Is(err, ErrProbeTimedOut):
+				return fmt.Errorf("%s: %w", ReasonBindProbeTimedOut, err)
+			default:
+				return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 			}
-			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
 	}
 	// Claim the identity before reaping by it.

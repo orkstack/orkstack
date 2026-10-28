@@ -85,20 +85,6 @@ func TestNightlySpecs_DeferredSetIsAnchoredToTheBase(t *testing.T) {
 	}
 }
 
-// A merge needs a nightly proof of main's tip while either nightly list is
-// non-empty: a spec list alone makes it due.
-func TestNightlySpecs_ASpecListAloneMakesTheNightlyDue(t *testing.T) {
-	if p := nightlyProofProblemsWith("", specRow+"\n", "", "main-tree"); len(p) != 1 || !strings.Contains(p[0], "0 test(s) and 1 spec file(s)") || !strings.Contains(p[0], "NIGHTLY=proof/<name>") {
-		t.Errorf("problems = %v", p)
-	}
-	if p := nightlyProofProblemsWith("", "", "", "main-tree"); len(p) != 0 {
-		t.Errorf("two empty lists ask for a nightly proof: %v", p)
-	}
-	if p := nightlyProofProblemsWith("", "not\ta\trow\n", "", "main-tree"); len(p) != 1 || !strings.Contains(p[0], "nightly spec list cannot be read") {
-		t.Errorf("an unreadable spec list does not fail closed: %v", p)
-	}
-}
-
 // The repository's list: every spec it names and every covering spec exists,
 // and no covering spec is itself on the list.
 func TestRepositoryNightlySpecs_SpecsExistAndCoveringSpecsAreNotListed(t *testing.T) {

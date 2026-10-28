@@ -3,6 +3,7 @@
 // library only:
 //
 //	proofrun unit         run the unit suites and write their ledger
+//	proofrun fuzz         run every Fuzz target for a bounded time and write its ledger
 //	proofrun integration  plan a run once, or run one shard of that plan
 //	proofrun compile      compile and list the integration test binaries ahead
 //	proofrun select       decide what a feature proof runs, or refuse (exit 2)
@@ -23,6 +24,7 @@
 //	proofrun free-port    a port nothing listens on
 //	proofrun clean        list, or remove, what test processes that are gone left
 //	proofrun runner-health  measure this runner against the floors and write runner-health.json
+//	proofrun rerun-plan   decide whether a completed proof run's failed jobs are worth a rerun
 //
 // Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation.
 package main
@@ -42,6 +44,7 @@ type subcommand struct {
 
 var subcommands = []subcommand{
 	{"unit", "run the unit suites and write their ledger", cmdUnit},
+	{"fuzz", "run every Fuzz target for a bounded time and write its ledger", cmdFuzz},
 	{"integration", "plan a run once, or run one shard of that plan", cmdIntegration},
 	{"compile", "compile and list the integration test binaries a later integration adopts", cmdCompile},
 	{"select", "decide what a feature proof runs, or refuse", cmdSelect},
@@ -63,6 +66,7 @@ var subcommands = []subcommand{
 	{"gates", "the gates and specs a feature selection runs", cmdGates},
 	{"clean", "list, or remove, what test processes that are gone left behind", cmdClean},
 	{"runner-health", "measure this runner against the floors and write runner-health.json", cmdRunnerHealth},
+	{"rerun-plan", "decide whether the failed jobs of a completed proof run are worth an automatic rerun", cmdRerunPlan},
 }
 
 func main() {

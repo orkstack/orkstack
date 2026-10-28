@@ -19,6 +19,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/pkg/schedules"
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -353,8 +354,8 @@ func (p *parser) schedule(name string, node *yaml.Node) (ScheduleEntry, bool) {
 			tz, err := stringScalar(value)
 			if err != nil {
 				p.errorAt(at, value, "timezone %v", err)
-			} else if _, err := time.LoadLocation(tz); err != nil || tz == "" {
-				p.errorAt(at, value, "timezone %q is not an IANA time zone", tz)
+			} else if err := schedules.ValidTimezone(tz); err != nil {
+				p.errorAt(at, value, "timezone %q is not an IANA time zone: %v", tz, err)
 			}
 			entry.Spec.Timezone = tz
 		case "jitter":

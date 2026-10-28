@@ -60,6 +60,9 @@ func (f *mergeFixture) writeLocalUI(ui uiLedger, gates []gateRecord) {
 	f.writePart(rec, map[string]any{
 		"integration-tests.json": ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}, Binaries: mBinaries()},
 		"unit-tests.json":        unitLedger(),
+		"race-tests.json":        raceLedger(),
+		"race-repeat-tests.json": raceRepeatLedger(),
+		"fuzz-tests.json":        fuzzLedger(),
 		"ui-e2e-tests.json":      ui,
 	})
 }
@@ -178,11 +181,11 @@ func TestMerge_ANightlyProofRunsTheListedSpecs(t *testing.T) {
 		r, _ := f.merge("-ui-plan", f.uiPlanPath, "-nightly-specs", f.uiPlan.Nightly.File)
 		return r
 	}
-	r := nightly([]gateRecord{{Gate: "integration", Result: "pass"}, {Gate: "ui-e2e", Result: "pass"}})
+	r := nightly(append(nightlyGateRecords(), gateRecord{Gate: "ui-e2e", Result: "pass"}))
 	if r.Result != "pass" || !r.EligibleButForTier {
 		t.Fatalf("a nightly proof that ran its specs: result %s, eligible but for tier %v: %v", r.Result, r.EligibleButForTier, r.Ineligible)
 	}
-	r = nightly([]gateRecord{{Gate: "integration", Result: "pass"}})
+	r = nightly(nightlyGateRecords())
 	if r.Result == "pass" || !strings.Contains(joined(r), "ui-e2e") {
 		t.Errorf("a nightly proof without its Playwright gate passed: %s, %v", r.Result, r.Ineligible)
 	}
@@ -223,6 +226,7 @@ func TestMerge_ACINightlyProofRunsItsUIParts(t *testing.T) {
 	ui.Gates = []gateRecord{{Gate: "ui-e2e", Result: "pass"}}
 	ui.Images = map[string]string{"activity-shell": "sha256:aaa"}
 	f.writePart(ui, map[string]any{"ui-e2e-tests.json": ceilingLedger()})
+	f.writeNightlyLanes()
 	r, _ := f.merge("-ui-plan", f.uiPlanPath, "-nightly-specs", f.uiPlan.Nightly.File)
 	if r.Result != "pass" || !r.EligibleButForTier {
 		t.Fatalf("a CI nightly proof that ran its UI part: result %s, eligible but for tier %v: %v", r.Result, r.EligibleButForTier, r.Ineligible)
@@ -233,7 +237,7 @@ func TestMerge_ACINightlyProofRunsItsUIParts(t *testing.T) {
 // to the UI plan it was given: with a row listed it needs a UI plan read from
 // that list, whose files are exactly the rows', and its ui-e2e gate.
 func TestMerge_ANightlyProofIsHeldToTheTreesSpecList(t *testing.T) {
-	gates := []gateRecord{{Gate: "integration", Result: "pass"}, {Gate: "ui-e2e", Result: "pass"}}
+	gates := append(nightlyGateRecords(), gateRecord{Gate: "ui-e2e", Result: "pass"})
 	cases := []struct {
 		name   string
 		mutate func(f *mergeFixture) []string // the merge's extra arguments

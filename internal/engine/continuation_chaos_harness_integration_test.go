@@ -158,11 +158,6 @@ func (l *chaosLogger) With(keyvals ...any) sdklog.Logger {
 	return &chaosLogger{book: l.book, source: l.source, prefix: append(append([]any(nil), l.prefix...), keyvals...)}
 }
 
-// logNoSwitch is the writer's operator log line for a generation that will
-// never switch (2.13); the others are declared beside the workflow tests
-// (continuation_paths_test.go).
-const logNoSwitch = "run will not carry on into a fresh history"
-
 // ── the stack ───────────────────────────────────────────────────────────────
 
 // chaosStack is one deployment over a private Temporal namespace and private

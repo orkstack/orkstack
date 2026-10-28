@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 func newStatsFlakesCommand(g *globalFlags) *cobra.Command {
@@ -137,7 +138,7 @@ func parseFlakeGroupBy(raw string) ([]orkstackv1.FailureGroupBy, error) {
 	var out []orkstackv1.FailureGroupBy
 	seen := map[orkstackv1.FailureGroupBy]bool{}
 	for _, part := range strings.Split(raw, ",") {
-		name := strings.ToUpper(strings.TrimSpace(part))
+		name := enumname.UpperASCII(strings.TrimSpace(part))
 		value, ok := orkstackv1.FailureGroupBy_value[groupByPrefix+name]
 		dim := orkstackv1.FailureGroupBy(value)
 		if !ok || name == "" || dim == orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_UNSPECIFIED {

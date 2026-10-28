@@ -1292,8 +1292,7 @@ func TestRunWorkflow_ACancelDuringTheDrainStartsNoHandlerAndEndsFailed(t *testin
 
 func TestRunWorkflow_ACancelThatLandsMidDispatchRecordsTheHandlerCanceled(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	var h *harness
-	h = newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.TaskId == "deploy" {
 			return nil, temporal.NewNonRetryableApplicationError("deploy exploded", task.CategoryActivityFailed, nil)
 		}

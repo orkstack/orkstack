@@ -31,8 +31,8 @@ missing prerequisite.
 |---|---|---|---|
 | **feature** | `make proof-feature TESTS=… SPECS=…` | no | the fast gates, the change's evidence, its regression set |
 | **full** | `make proof` | yes, on a local host; in CI, the `proof` job | every gate, every test and every spec, except the nightly lists' entries the base also carries |
-| **nightly** | `make proof-nightly` | no | only the tests `scripts/proof-nightly-tests.txt` names and the spec files `scripts/proof-nightly-specs.txt` names |
-| **release** | `make proof-release` | no; it is a tag precondition | every gate, the nightly tests and specs included, observability always |
+| **nightly** | `make proof-nightly` | no | only the tests `scripts/proof-nightly-tests.txt` names and the spec files `scripts/proof-nightly-specs.txt` names, and two lanes of its own: the race repeat and the fuzz lane (§2.3) |
+| **release** | `make proof-release` | no; it is a tag precondition | every gate, the nightly tests and specs included, observability always; not the nightly lanes |
 
 A full proof records each nightly-listed test as `deferred`, never as passed,
 and only when its base's list also carries it; an entry the change adds runs.
@@ -52,9 +52,9 @@ only its selected specs, so it plans with no spec list. Today the list holds
 `run-page-ceiling.spec.ts`, the run page at the 4,000-task default ceiling;
 the merge gate runs `run-page-reduced-ceiling.spec.ts`, the same measurement
 with `engine.orkflow_max_tasks` lowered to 1,000.
-The pre-release gate is the full tier with nothing deferred. A tag requires a
-passing release proof of the exact commit: `make release-tag` and the workflow
-both refuse without one.
+The pre-release gate is the full tier with nothing deferred, the race gate
+included. A tag requires a passing release proof of the exact commit: `make
+release-tag` and the workflow both refuse without one.
 
 The feature tier is never merge evidence. A local full, release or nightly
 proof runs its gates on one host and writes one part, `local`, then merges it
@@ -73,9 +73,11 @@ before it (AGENTS.md §11.1). A CI part runs on a fresh runner and does not.
 ### 2.1 The gates
 
 A local proof runs its gates in this order: the **fast gates**, alone and one
-after another — lint, build, unit, `go vet -tags=integration`, then the UI
+after another — lint (`make lint`: `go vet`, gofmt, and staticcheck as built
+and with `-tags=integration`; the vulnerability scan is not part of it, §5),
+build, unit, `go vet -tags=integration`, then the UI
 type-check and unit suites (after one `svelte-kit sync`, which both read), then
-the site gate; then the **setup**, as one
+the site gate, then the race gate (§2.3); then the **setup**, as one
 concurrent group — the proof's own Temporal, the activity images, the binaries
 and the integration test binaries (`proofrun compile`), each its own row of
 `gates.tsv` (`temporal`, `images`, `binaries`, `integration-compile`) and the
@@ -92,9 +94,9 @@ time; then the observability gate. A full proof runs: lint; build; unit; `go vet
 images, built once from this tree; every integration test whose package's
 integration build differs from its unit build, against real Temporal and the
 S3-compatible store; the activity contract fixture; the UI type-check, unit
-and every Playwright spec; the site's check and build; and the observability
-gate when the tree changes a telemetry path. A release proof runs the
-observability gate unconditionally.
+and every Playwright spec; the site's check and build; the race gate; and the
+observability gate when the tree changes a telemetry path. A release proof runs
+the observability gate unconditionally.
 
 The proof's own Temporal is the `temporal` service of
 `deploy/docker-compose.yml`: its image and its command, read by `proofrun
@@ -255,6 +257,156 @@ Unit tests are not part of this: the unit suite runs to its end whatever fails
 in it. CI parts (`scripts/proof-part.sh`) are unchanged, each part being one
 job.
 
+### 2.3 The race gate and the nightly lanes
+
+**The race gate** (`race`) is the unit suites run under the race detector:
+`proofrun unit -race -short`, over every package the unit gate lists, once,
+into `race-tests.json`. The full and release tiers run it, in CI as the
+`race` part on a runner of its own beside `fast` (§5); a feature proof runs it
+over the packages its change touches, and not at all when the change touches
+none (`proofrun gates -select` prints them as `race_packages`). It is the unit
+gate's ledger, a listed test without an outcome failing it, with these
+differences:
+
+- **A data race fails it, whatever the tests reported.** The ledger counts
+  every `WARNING: DATA RACE` the detector printed — inside a test, or outside
+  every test, where a goroutine that outlived them printed it — and records a
+  problem naming the test or package for each. The detector also marks the
+  running test failed, but a gate that read only test outcomes would pass the
+  second kind.
+- **`-short` is on.** The scale tests the unit gate runs without it (the
+  history-guard, ten-thousand-item and closure-cost tests) are single-thread
+  CPU work whose assertion is their own cost, and the detector multiplies that
+  several times over. The ledger records that its run had `-short`
+  (`"short": true`), and only then is a skip no allowed-skip entry names
+  recorded, with the reason "skipped in a run with `-short`", rather than
+  refused: the ledger does not know why a test skipped (the test's own reason
+  is in the gate's log), and a run without `-short` follows the unit gate's
+  rule, a skip being a problem. A recorded skip is not a problem of the race
+  ledger and never a pass, and `proofrun merge` holds each one to the unit
+  ledger: it accepts the skip only from a ledger that says its run had
+  `-short`, and the unit gate, which runs the test without `-short`, must have
+  passed it. A test the unit ledger lists and the race ledger does not, a
+  skipped test the unit ledger did not pass, and a skipped test it does not
+  list each fail the proof, so no test is run by neither lane. A skip an
+  allowed-skip entry names (an `any` entry, or a `unit` entry, which covers
+  the race suites too) stands on that entry, as in the unit gate. A subtest
+  skipped under `-short` is counted and not refused. A test the detector cannot carry stays in both ledgers: it
+  skips itself under the detector, or scales its bound by a stated factor (the
+  engine's `raceBuild` and `raceSlowdown`), never drops it; a build tag that
+  removes it from the race build is refused, because the ledger then lacks it.
+- **No quarantine excuses it.** The race ledger is built with none, and the
+  merger refuses a `quarantined-fail` entry in it.
+- **`-timeout` is 30 minutes for each run of a package's tests**, where
+  `go test` gives ten minutes in all. `internal/engine` under the detector
+  can exceed ten minutes on a smaller runner, and the timeout covers a test
+  binary from its start to its end across every `-count` repeat, so the
+  race repeat's three runs get 90 minutes (`raceTimeoutFor` in `run.go`).
+  It is a hang guard and not a budget. `make test-race` gives `go test` the
+  same figure for its `RACE_COUNT` (`RACE_MINUTES_PER_RUN`, which a test holds
+  equal to the gate's).
+- **It sets no `ORK_PROOF_DIR`.** The measurement files the unit gate's tests
+  write there are the unit gate's evidence; a measurement taken under the
+  detector is evidence of nothing, and must not overwrite them.
+- **It needs cgo.** The detector links C code, so the gate refuses to start
+  (exit `77`, before anything is written) without `CGO_ENABLED=1` and a C
+  compiler on `PATH` (`go env CC`). The unit gate needs them too, in a local
+  proof of any tier that runs it and in the CI `fast` part, because
+  `proofrun`'s own tests run `go test -race`; a feature proof whose change
+  touches no Go package races nothing and still runs the unit gate. The
+  `ubuntu-24.04` runners and a developer host have one.
+
+*Where it runs.* A local proof runs it last of the fast gates, alone: after the
+site gate and before the setup, never beside another gate. The detector
+multiplies every test's time, so beside the integration phase it would put
+about 1,700 CPU-seconds on top of six load-sensitive integration jobs, and a
+race found there would end the proof only after the long gates had run; alone
+and early it costs wall time and ends a racing proof in the first minutes
+(§2.2). The cost is the longest package, `internal/engine`, plus the build, and
+the only measurements are two runs on a loaded 16-core host, 573 s and 632 s
+of wall (§11.5): plan about ten minutes on a local proof of 70–80, that is
+about one eighth of it. A CI proof pays nothing on its critical path, the
+`race` part running beside `fast`. Nobody has measured it on a quiet host; the
+first is the `race` row of a full proof's `gates.tsv`, and a placement beside
+the integration phase is worth another look only if that row is far above ten
+minutes.
+
+**The nightly lanes** belong to the nightly tier alone; the pre-release gate
+runs the race gate and not these. Each runs alone, before the integration
+phase, and is one CI part (§5):
+
+- **`race-repeat`** is the same run over the concurrency-heavy packages with
+  `-count 3`: `./internal/engine/...`, `./internal/orker/...`,
+  `./internal/api/...` and `./pkg/...` (`RACE_REPEAT_PACKAGES` in
+  `scripts/proof.sh`), into `race-repeat-tests.json`. A race that one run in
+  several exposes is what it looks for. One test name reports once per
+  repetition, so the ledger keeps the worst outcome of a test's repetitions
+  (fail, then skip, then pass) and adds up its seconds: a failure in any
+  repetition stands, and a repetition that started and never reported (the
+  binary ended, hung or timed out inside it) leaves its test with no outcome,
+  whatever an earlier repetition reported. The run is `-short`, as the gate
+  is, and records its `-short` skips the same way. The nightly proof has no
+  unit ledger, so nothing holds those skips to a pass: a full proof of the
+  same tree holds the same skips to its unit gate, and here they only narrow
+  what the lane hunts, are counted in its ledger summary, and are refused
+  from a ledger that does not say its run had `-short`.
+- **`fuzz`** runs `proofrun fuzz -budget $FUZZ_BUDGET` (default `105m`; a
+  whole number of `s`, `m` or `h`; the `nightly.yml` dispatch has a
+  `fuzz_budget` input): every `Fuzz*` target `go test -list '^Fuzz' ./...`
+  finds, one after another, and the lane's whole wall-clock time is the
+  budget, shared between them, so the lane ends inside its CI step however
+  many targets the module has. Before each target the lane takes an equal part
+  of the budget that remains, less the overhead of starting a target (the
+  build and link of its instrumented test binary, which `go test -fuzztime`
+  does not count), in whole seconds and never under the 15-second minimum.
+  The overhead is assumed to be 45 seconds until three targets have been
+  measured, and is then the median of what the targets measured (elapsed less
+  fuzz time), so one cold build does not starve the rest; what an early
+  estimate over- or under-spent is shared out among the targets after it,
+  which is why the first targets get the shortest turns. The clock starts when
+  the lane does, so finding the targets counts against the budget. A target
+  starts only if the budget left covers the minimum and the overhead; a lane
+  that spends its budget with targets unstarted fails, naming each one as "not
+  fuzzed", and never skips a target quietly. A target that has started may
+  run ten minutes past its fuzz time (its build, and the minimization of a
+  crasher) before the lane stops it, so the lane ends at most that long past
+  its budget; the fuzz step's limit is the budget plus that and five minutes
+  for the part's own work and the ledger write, and
+  `TestFuzzLane_TheBudgetAndTheModulesTargetsFitTheFuzzStep` fails when the
+  budget and that margin exceed the step's `timeout-minutes` in `proof.yml`,
+  when the places that set a budget (`proof.yml`, `nightly.yml`,
+  `scripts/proof.sh`) disagree, or when the module's `Fuzz` target count times
+  the minimum plus the assumed overhead exceeds the budget. A new target
+  therefore fails a unit test before it can make a nightly red; the answer is
+  a larger budget with a longer step and job limit, or fewer targets. The
+  unit test reads the budgets the repository sets, not the one a dispatch
+  supplies: a dispatched `fuzz_budget` above 120 minutes ends in the step's
+  timeout, with no ledger.
+  The CI budget is 105 minutes for the 82 targets (`go test -list '^Fuzz'
+  ./...`) of this tree: a turn of about 77 seconds, of which the first
+  targets fuzz 31 beside the assumed 45 seconds of overhead, and later ones
+  more, since a measured overhead is usually well under the assumed one. The
+  fuzz step is limited to 135 minutes and its job to 155. Its ledger,
+  `fuzz-tests.json`, has one entry per target with the `seconds` it took and
+  the `fuzz_seconds` it was given, and each target keeps its log under
+  `fuzz/`; the lane's own log line for a target says the fuzz time it was
+  given, how long it took, and what is left of the budget. A target the engine
+  breaks fails the lane, whatever its share. The engine writes the failing
+  input into the package's `testdata/fuzz/<Target>/`, a file that would turn
+  the proof's tree into another; the lane moves it to
+  `crashers/<package>/<Target>/` in the part's directory, which the part's
+  artifact carries (§7), and leaves the tree as it found it. To reproduce,
+  copy the file back into the package's `testdata/fuzz/<Target>/` and run
+  `go test -run '^<Target>$' <package>`. A lane that finds no `Fuzz` target
+  fails: fuzzing nothing proves nothing. `proofrun fuzz -fuzztime DURATION`
+  (or `Nx` iterations) instead gives every target that time and no budget,
+  for a local run or a smoke; the proofs never use it.
+
+`make test-race` runs the race gate's `go test` without its ledger
+(`RACE_COUNT` and `RACE_PACKAGES` give it the repeat's shape), and `make fuzz`
+runs the lane with `FUZZ_BUDGET` (default `45m`; `FUZZTIME=30s` gives every
+target that time instead), keeping its logs and crashers under `FUZZ_OUT`.
+
 ## 3. How `proofrun select` picks evidence
 
 `proofrun select -base REF -out FILE` reads the diff from the merge base and
@@ -276,7 +428,13 @@ The selection is:
 - **the change's evidence**: every test whose source the diff changes,
   including tests that reach a changed or deleted helper, type, variable or
   `TestMain` through their package's declarations; every test named with
-  `-tests` (the pattern must match whole test names); every spec the diff
+  `-tests` (the pattern must match whole test names). A test is a `Test`
+  function or a native fuzz target (`func FuzzXxx(f *testing.F)` in a
+  `_test.go` file, AGENTS.md §11.1): go test runs a target's seeds, `f.Add` and
+  `testdata/fuzz/<Target>/` alike, as an ordinary test, so a changed target,
+  one that reaches a changed helper, and `-tests PKG:FuzzXxx` are evidence like
+  any other, a deleted target is removed, and the unit gate's ledger lists the
+  target once and records its outcome; every spec the diff
   changes or `-specs` names; every spec when the Playwright harness or the UI's
   dependencies changed; the activity fixture when `images/` or `test/fixtures/`
   changed; the tests that read a changed example, and the examples spec; the
@@ -297,6 +455,35 @@ The selection is:
   list's (`scripts/proof-slow-tests.txt`). Those are recorded in the
   selection's `slow_omitted` and the README says "left out: on the slow list";
   they are never called deferred, a word that belongs to the nightly tier.
+
+A test reaches a changed helper through the package's top-level declarations
+in the build configuration the test compiles in, by syntax alone (no type
+checking), and over-selects where it cannot tell. A function, variable,
+constant or type is matched by its identifier: any mention of the name, a
+selector's included, reaches it. A method is matched by its receiver type and
+its name, never by its name alone: a function, a local variable, a field or
+another type's method called `m` is not a reference to `T.m`. A changed `T.m`
+is reached by a test whose reach mentions `T` and selects `m` (`x.m`, `T.m`,
+`(*T).m`); when `m` is exported, by a test whose reach mentions `T` at all,
+because another package's code can call an exported method through an
+interface the type satisfies and no declaration of the package names that
+call; and, when `T` is an alias or is not declared in the package's files of
+that configuration, by the selector alone. A method a `_test.go` file adds to
+a type a non-test file declares (an `export_test.go` hook) is reached by its
+selector alone, whether or not the test names the type: it exists in the test
+build only, so production code does not call it through an interface, and the
+test's value of the type may come from another package. A deleted method is
+matched the same way. Every `init` function of a test file is part of every
+test's reach, since it runs before each and can register a type nothing else
+mentions; one of a non-test file is not, because it cannot mention a
+declaration of a test file.
+
+
+The selection also names the Go packages the change touches
+(`race_packages`, each as a `./dir` pattern): the packages the feature proof's
+race gate runs (§2.3). A directory under `testdata` and a package the change
+deleted are not among them, and a change that touches no package leaves the
+list, and the gate, out.
 
 The slow list also holds back evidence that is there only because it reaches
 a changed helper, type or variable: such a test's own source did not change,
@@ -388,10 +575,10 @@ ready_for_review — never `labeled`), `merge_group`, a push to
 
 ```mermaid
 flowchart LR
-  base --> plan & build & fast
+  base --> plan & build & fast & race & race_repeat["race-repeat"] & fuzz
   plan --> integration & ui_e2e["ui-e2e"] & observability
   build --> integration & ui_e2e & activity_fixture["activity-fixture"] & observability
-  base & plan & build & fast & integration & ui_e2e & activity_fixture & observability --> proof
+  base & plan & build & fast & race & race_repeat & fuzz & integration & ui_e2e & activity_fixture & observability --> proof
   nightly["nightly.yml › nightly"] -. calls .-> callee["proof.yml"]
   gate["release.yml › gate"] -. calls .-> callee
   validate["release.yml › validate"] --> gate --> tag["release.yml › tag"]
@@ -413,6 +600,9 @@ repository is private, carries the `ci:proof` label.
 | `proof.yml` › `plan` | compiles and lists the packages; writes both plans; decides observability | the plans, the listing, the base lists |
 | `proof.yml` › `build` | builds every activity image once as an OCI layout and records its digests | the layouts and `images.tsv` |
 | `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build | one part |
+| `proof.yml` › `race` | the race gate (§2.3), on a runner of its own; the full and release tiers | one part |
+| `proof.yml` › `race-repeat` | the nightly race repeat (§2.3); the nightly tier alone | one part |
+| `proof.yml` › `fuzz` | the nightly fuzz lane (§2.3), `FUZZ_BUDGET` shared by its targets; the nightly tier alone | one part, with the crashers it found |
 | `proof.yml` › `integration` | one matrix entry per shard: its own Temporal, store, registry and images | one part per shard |
 | `proof.yml` › `ui-e2e` | one matrix entry per UI shard: its own stack and file list; the pinned browser image pulled, the host's Chromium installed only where the shard's files drive it (§2.1) | one part per shard |
 | `proof.yml` › `activity-fixture` | one matrix entry per activity: `make -C images contract` | one part per activity |
@@ -438,6 +628,7 @@ skipped required job reports success, which is why
 | Job | Runs |
 |---|---|
 | `ci.yml` › `check` | `make check` on every push and every pull request: no Docker, no Temporal |
+| `ci.yml` › `vuln` | `make vuln` (the pinned `govulncheck`) on every push and every pull request. It reads the vulnerability database over the network, so it is a job of its own and in no proof gate: a network failure cannot fail a proof |
 | `ci.yml` › `feature` | the feature tier on every pull-request push once the repository is public; with the `ci:feature` label while it is private; on a push to `validate/feature/**`; and by dispatch |
 
 `site.yml` is not part of the proof and holds no required check; it builds and
@@ -452,11 +643,26 @@ The proof's site gate (§2.1) runs the same command, so a change that breaks the
 build is stopped before it merges; the workflow publishes only a build that
 passed.
 
-`nightly.yml` holds two jobs, scheduled at 05:17 UTC on the default branch:
-`nightly.yml` › `nightly` runs the nightly tier, and `nightly.yml` › `flakes`
+`proof-rerun.yml` is not part of the proof and holds no required check; it
+asks GitHub for a new attempt of a failed candidate proof, when nothing in it
+recorded a result (§10):
+
+| Job | Runs |
+|---|---|
+| `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run was a push to `validate/full/**` of this repository, and its run attempt is below 3 (so at most two automatic reruns). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
+
+`nightly.yml` holds three jobs, scheduled at 05:17 UTC on the default branch:
+`nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
+`make vuln`, and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and
 suspect failures (`proofrun flakes`); it edits no list. `flakes` waits for
 `nightly`, whatever its result, so its window includes that night's proof.
+`vuln` is independent of the proof: it reports only the known vulnerabilities
+whose vulnerable code the module can reach, and a new one fails the run, which
+is a failing `main`. The fix is to bump the module it names to the fixed
+version (an exact one, §11.1 of `AGENTS.md`) and prove that change like any
+other; `go tool govulncheck -show verbose ./...` lists the ones the code cannot
+reach, which fail nothing.
 `release.yml` holds five: `release.yml` › `validate` runs first on every
 dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, refuses
 `tag: true` from any ref but `main`, and refuses a version whose `X.Y` the
@@ -466,8 +672,9 @@ repository's tags whether the release is the latest (`dist order`): a release
 below a released tag of its own `X.Y` is refused, because it would move the
 `X.Y` image tag back, and a backport to an older series is released but never
 marked the latest;
-`release.yml` › `gate` runs the release tier; `release.yml` › `artifacts`,
-beside it and read-only, builds what the release publishes — `make dist` (the
+`release.yml` › `gate` runs the release tier, on hosted 4-vCPU runners where
+its runner-size budgets cannot hold (§10, "Run the release gate"); `release.yml`
+› `artifacts`, beside it and read-only, builds what the release publishes — `make dist` (the
 archives and `SHA256SUMS`), `make release-images` for linux/amd64 and
 linux/arm64 as OCI layouts, the quickstart bundle naming them by digest — and
 runs `scripts/release-smoke.sh --layouts` on them before it uploads anything.
@@ -506,28 +713,44 @@ moves them, one pull request and one proof at a time.
 The composite action `.github/actions/proof-host` installs the host setup a
 stack part needs: Docker images cached, the Temporal CLI, cosign, and the
 Linux `host.docker.internal` name. It is proof-host setup, never Orker
-behaviour.
+behaviour. Nothing in it leaves the runner except through `proof-fetch`: the
+stack images the cache did not load are pulled through it (the compose file
+pins each by digest, and the stack then starts with `--pull never`, so a
+missing image is an explicit failure and never a stall), cosign v2.6.5 is
+downloaded through it as the release's linux/amd64 binary and kept only if it
+hashes to the SHA-256 the release's `cosign_checksums.txt` lists, and the one
+container the action runs from Docker Hub by tag is bounded with `timeout`.
+Its fetches run inside the caller's `proof host` step, which has a limit of
+10 minutes of its own.
 
 The composite action `.github/actions/proof-fetch` is how every part job
-fetches a run's own artifacts (the plan, the build, the proof job's parts)
-and how a `ui-e2e` job pulls the browser image: at most two attempts, the
-first bounded to 3 minutes and the second to 6 (`timeout` kills a fetch that
-makes no progress), under a step limit of 10, so a stalled blob store or
-registry costs a retry rather than the part, and a lost runner still fails
-within the step. An artifact is fetched with `gh run download` on the job's
-own token (`actions: read`), because `actions/download-artifact` has no limit
-of its own and nothing to retry. Every attempt is one line in the runner's
-setup log, which the part step hands to `scripts/proof.sh --part` as
-`--setup-log`; the part copies it to its `setup.log`, `proofrun record`
-carries its lines (`-setup-log`) into `part.json` (`setup`), and the merger lists
-every fetch that needed its second attempt in `proof.json` (`setup_retries`)
-and under the README's Notes. A retry is inside one attempt of a part: it is
-never a rerun and costs no eligibility. A fetch that fails both attempts
-fails the step, before the part, and the remedy is a new run of the same
-tree (§10) — the action re-runs no job and nothing continues on error.
+fetches a run's own artifacts (the plan, the build, the proof job's parts),
+how a `ui-e2e` job pulls the browser image, and how the proof host pulls its
+images and downloads its one file: at most two attempts, the first bounded to
+3 minutes and the second to 6 (`timeout` kills a fetch that makes no
+progress), under a step limit of 10, so a stalled blob store or registry
+costs a retry rather than the part, and a lost runner still fails within the
+step. An artifact is fetched with `gh run download` on the job's own token
+(`actions: read`), because `actions/download-artifact` has no limit of its
+own and nothing to retry. An image is pulled only by digest, and a file is
+fetched only over https to a path and kept only if it hashes to the SHA-256
+the caller pinned: other bytes are a failed attempt. Every attempt is one
+line in the runner's setup log, which the part step hands to
+`scripts/proof.sh --part` as `--setup-log`; the part copies it to its
+`setup.log`, `proofrun record` carries its lines (`-setup-log`) into
+`part.json` (`setup`), and the merger lists every fetch that needed its second
+attempt in `proof.json` (`setup_retries`) and under the README's Notes. A
+retry is inside one attempt of a part: it is never a rerun and costs no
+eligibility. A fetch that fails both attempts fails the step, before the
+part: the job is then a **setup-failed** part (§7.1), which the merger lets
+run again as a new part of the same tree (§8, §10). The action re-runs no job
+and nothing continues on error. The runner starts the action's script under
+`bash -e`, which would end it at the first failed command, so the script turns
+errexit off and a test (`TestProofFetch_...`) runs it under the runner's shell
+against fakes.
 
 **The runner-health floor.** The first thing every part does, before any
-gate, is measure its runner for about ten seconds (`proofrun runner-health`,
+gate, is measure its runner for about fourteen seconds (`proofrun runner-health`,
 run by `scripts/proof-part.sh`): sequential write and read throughput and
 the 95th-percentile fsync latency on its work disk, where the object store's
 and Temporal's volumes live (the probe is written and read back through
@@ -544,10 +767,15 @@ merger classifies that attempt **runner-degraded**, exactly as one whose
 runner GitHub lost: nothing it recorded is an outcome of the tree, the proof
 is not a proof of the tree, `proof.json` names the part, the metric, the
 measured value and the floor (`degraded_runners`), and that one job may run
-again (§8, §10). The `plan`, `build` and `fast` parts, and a local proof's
-`local` part, measure for information: their verdict is recorded and
-changes nothing, because a local host's floors are its measured costs
-themselves. The merger re-derives every verdict from the file's values and
+again (§8, §10). On GitHub (`GITHUB_ACTIONS=true`) the stopping part also
+prints one annotation of fixed words, `proof: runner below the floor, no gate
+ran`, which is how the rerun planner (§5, `proof-rerun.yml`) tells that job
+from a failed one without downloading its artifact; it is evidence for
+running the job again and never for a verdict, which the merger re-derives
+from `runner-health.json`. The `plan`, `build`, `fast`, `race`, `race-repeat` and
+`fuzz` parts, and a local proof's `local` part, measure for information: their
+verdict is recorded and changes nothing, because a local host's floors are its
+measured costs themselves. The merger re-derives every verdict from the file's values and
 floors, never from the file's own word, refuses a part that measured against
 floors that are not the tree's, and fails closed on a file it cannot read.
 A measurement that cannot run (a filesystem that refuses `O_DIRECT`, say)
@@ -557,6 +785,32 @@ pass, which is also why a feature proof may change the table and why no
 base anchor is needed for it. The floor is measured once, at the start: a
 runner that degrades later is not seen, and its failures stay test failures
 (§12).
+
+**Informational readings.** A disk read is one burst of one to two seconds and
+an fsync reading one series: thin evidence about a disk that may be throttled
+in bursts. So the measurement also writes the probe a second time, after the
+single-core CPU measurement, reads it in two more bursts, one right after
+that write and one after the all-core CPU measurement, and takes one more
+fsync reading, last. Each is recorded in its metric's `samples` array with
+the `offset_seconds` at which it began, how long it took (`seconds`) and,
+when it could not be taken, its `error`; the array's first entry is the
+judged reading itself. A write or a read also records the `region` of the
+probe it covered (`from_bytes`, `bytes`): the second burst starts where the
+first stopped and wraps to the start of the file at its end, so a file larger
+than a burst reads gives the bursts different blocks, and a file a burst
+reads whole (a fast disk) shows in the regions as blocks read again. An
+`O_DIRECT` read bypasses the runner's page cache and nothing beyond it, so a
+burst over blocks an earlier one read may have been served by a cache the
+runner cannot see. The judged measurements are exactly what they were: the
+same order, the same share of the budget each, and the judged fsync opens the
+file the write left, which truncates it, as it always did. The extra readings
+add about four seconds to the ten of the judged measurements. They are
+informational: the floor judges only the first reading of each metric, a
+later reading, however slow, never makes a part runner-degraded, one that
+cannot be taken changes nothing, and `scripts/proof-runner-floors.tsv` does
+not read them. They appear in `proof.json`'s `runner_health`, in the
+README's "Runner health" section and in the part's `runner-health:` log
+lines, and they feed the next derivation of the floors (§10).
 
 ## 6. The merge queue, the nightly tier and the pre-release gate
 
@@ -585,36 +839,48 @@ equals the head's merged tree, because the branch contains `main`'s tip.
 
 A required check and the merge queue are GitHub settings, not repository
 files. `scripts/github-merge-gate.sh` (`make github-merge-gate`) is the
-one-command enablement; it refuses until the repository is public and its
-owner can carry the rulesets. **Until then the gate is not enforced**: `main`
+one-command enablement; it refuses a private repository, and this one is
+public and organization-owned. **Until the apply is run the gate is not
+enforced**: no `main-proof-gate` ruleset requires the `proof` check, so `main`
 moves only by `AGENTS.md` §11.3's local path. An organization owner is needed
 only for the optional queue.
 
-The nightly job runs the deferred tests on a schedule (05:17 UTC). A failed
-scheduled run is noticed through GitHub's standard workflow-failure
-notification; nothing opens an issue. While the nightly workflow does not run
-on GitHub, interim rule A applies: `make proof-nightly` runs on `main`'s tip
-after every merge that moves `main`, and passes before the next merge starts
-and before every tag. `make merge-check PROOF=… NIGHTLY=…` refuses a merge
-when either of `main`'s nightly lists is non-empty and no passing nightly proof of `main`'s tree
-is given. A GitHub nightly proof of `main`'s tip — `nightly.yml` dispatched
-(`workflow_dispatch`) or its schedule — downloaded as its `proof-<run>-a<n>`
-artifact is that `NIGHTLY=` evidence, exactly as a local `make proof-nightly`
-is (§10). It binds the tree `main` pointed at when the run checked it out: a
-merge made after the run starts moves `main` to another tree, and `verify`
-refuses the proof as a tree mismatch. On the GitHub merge path `merge-check` does not run, so there rule A
-is a process rule: the merge stage runs `make proof-nightly` itself and quotes
-it. A red nightly or release proof is a failing `main`: fix or revert the
-change that broke it, and never edit a list, a threshold or a measurement
-file to make it pass.
+The nightly job runs the deferred tests, and the race repeat and the fuzz lane
+(§2.3), on a schedule (05:17 UTC) and by dispatch. A failed scheduled run is noticed through GitHub's standard
+workflow-failure notification; nothing opens an issue. The latest completed run of
+`nightly.yml` on `main` is `main`'s nightly. It speaks for the commit it
+measured (`headSha`), which is `main`'s tip only while nothing has merged
+since, and a red one is a failing `main` (below). Dispatching one after a
+merge that moves `main` has its verdict sooner (§10).
+
+Interim rule A is retired (2026-10-27). While the nightly workflow did not run
+on GitHub it required `make proof-nightly` on `main`'s tip after every merge
+that moved `main`, passing before the next merge started and before every tag,
+and it made `make merge-check` refuse a merge when either of `main`'s nightly
+lists was non-empty and no passing nightly proof of `main`'s tree was given
+(`NIGHTLY=`). Its exit condition, three consecutive public nightlies passing,
+was met: the five most recent runs of `nightly.yml` on `main` (40414822382,
+40431603801, 40443319443, 40489432056 and 40555387388) all passed. Now
+`make merge-check` asks for no nightly proof and reads neither of `main`'s
+lists. `NIGHTLY=proof/<name>` stays as an option: a nightly proof it is given
+(a GitHub run's `proof-<run>-a<n>` artifact, or a local `make proof-nightly`,
+§10) must be a passing nightly proof of the tree `main` points at, and `verify`
+refuses it as a tree mismatch once a merge has moved `main`. A release tag has
+its own gate, the pre-release proof. A merge is no longer held for a nightly
+of its own, so a regression only a deferred test can see is found by the next
+run, the cost `AGENTS.md` §11 accepts (2026-10-15). A red nightly or release
+proof is a failing `main`: fix or revert the change that broke it before
+anything else merges, and never edit a list, a threshold or a measurement file
+to make it pass. A red nightly clears only when a later run, of the fix or of
+a commit after it, passes. Nothing mechanical reads GitHub's nightly before a
+merge (§12): read the latest run on `main` first (§10).
 
 **Calibration.** The soaks' thresholds were measured on a 16-core host, and a
-public runner has 4 vCPU, so the first public nightlies are calibration runs:
+public runner has 4 vCPU, so the first public nightlies were calibration runs:
 a threshold missed on runner size alone is reported and the nightly's layout
 changes (one shape per job, or a larger runner); a threshold or a measured
-default never changes without the user's approval; and until three
-consecutive public nightlies have passed, rule A's local `make proof-nightly`
-continues.
+default never changes without the user's approval. Three consecutive public
+nightlies have passed, which retired rule A.
 
 **The 60-day rule.** GitHub disables a public repository's scheduled
 workflows after 60 days with no repository activity. `make github-merge-gate`
@@ -623,9 +889,10 @@ fix.
 
 The pre-release gate is the release tier. A tag pushed by hand is outside
 both paths; `make release-tag` and the `tag` job are the only sanctioned
-paths, and no tag ruleset backs them: on a User-owned repository GitHub
-refuses the Actions app as a bypass actor, and without it a ruleset would
-block `release.yml`'s own push.
+paths, and no tag ruleset backs them: none has been applied. One would block
+`release.yml`'s own push unless it named a bypass actor for it, and which actor
+the Actions app's token can be on this organization-owned repository is not
+verified.
 
 ## 7. Artifacts, `proof.json` and the ledgers
 
@@ -636,6 +903,9 @@ Retention is chosen from `github.event.repository.private`:
 | `plan-a<n>` | `integration-plan.json`, `ui-plan.json`, the Playwright listing, the base lists, `part.json`, and `bin/`: the compiled integration test binaries every shard adopts (`proofrun compile`) | 1 d / 7 d |
 | `part-build-a<n>` | the OCI layouts, `images.tsv`, `part.json` | 1 d / 7 d |
 | `part-fast-a<n>` | `unit-tests.json`, the gates' logs; the unit log and events only when the unit gate failed (`scripts/proof-part.sh` removes them from a part whose unit gate passed) | 1 d / 7 d |
+| `part-race-a<n>` | `race-tests.json`, `part.json`; the log and events only when the race gate failed (removed from a part whose gate passed, as the fast part's are) | 1 d / 7 d |
+| `part-race-repeat-a<n>` | `race-repeat-tests.json`, `part.json`; the log and events only when the lane failed | 1 d / 14 d |
+| `part-fuzz-a<n>` | `fuzz-tests.json`, `part.json`, each target's log under `fuzz/`, and `crashers/`: the input of every target the lane broke | 1 d / 14 d |
 | `part-integration-<k>-a<n>` | the shard's ledger, `part.json`, gates, `integration/*.log`, events, its `artifacts/` | 1 d / 14 d |
 | `part-ui-e2e-<k>-a<n>` | ledger, logs, screenshots, the traces of failed tests | 1 d / 14 d |
 | `part-activity-fixture-<A>-a<n>`, `part-observability-a<n>` | logs, `part.json` | 1 d / 14 d |
@@ -655,17 +925,19 @@ retention above, a re-run fails at its fetch step, and the remedy is a new
 run.
 
 The merged artifact `proof-<run_id>-a<n>` carries `proof.json`, the merged
-`unit-tests.json`, `integration-tests.json` and `ui-e2e-tests.json`, both
-plans, every part's records under `parts/` — its `part.json`, gates, ledgers,
+`unit-tests.json`, `integration-tests.json` and `ui-e2e-tests.json`, the
+`race-tests.json` of a full or release proof or the `race-repeat-tests.json`
+and `fuzz-tests.json` of a nightly one, both plans, every part's records under `parts/` — its `part.json`, gates, ledgers,
 setup log and gate logs — and GitHub's record of every attempt's jobs under
 `jobs/`, with the logs of failed jobs. A part that did not pass (a gate
 recorded as anything but `pass`, or no `part.json` because its process died)
 also has its events and per-job logs there (`*.events.jsonl`, `integration/`,
-`unit.log`), the files §8 reads a failure from; a passing part's are left
-out, and no part's `bin/`, `layouts/` or `artifacts/` is copied: all of it
-stays in the part's own artifact. `scripts/proof-collect.sh` makes the copy,
-after the merger has read the parts and written `proof.json`, so what it
-leaves out changes no verdict. The merged proof is self-sufficient for a costs
+`unit.log`, `race.log`, `race-repeat.log`, `fuzz/`), the files §8 reads a
+failure from; a passing part's are left out, and no part's `bin/`, `layouts/` or `artifacts/` is copied: all of it
+stays in the part's own artifact. A failing fuzz part's `crashers/` is none of
+those: it is copied with the part's other details. `scripts/proof-collect.sh`
+makes the copy, after the merger has read the parts and written `proof.json`,
+so what it leaves out changes no verdict. The merged proof is self-sufficient for a costs
 refresh: the merged UI ledger carries each spec file's `wall_seconds`. Its
 upload is bounded to five minutes, which the records fit: copied in whole
 the parts were 4.6 GB and the upload timed out after every part had passed
@@ -683,21 +955,34 @@ were still 921 MB (run 40388322907).
   mode and hash, deferred entries) and `ui_plan`;
 - `quarantine` (`checked_on`, `base_sha256`) and `quarantined` entries;
 - `nightly` (hash, base commit, base hash);
-- `host_speed_failures`, `known_gaps`, `binary_digest_notes`;
+- `host_speed_failures` (an excused Go test's entry carries its `timing_record`,
+  because no part's `artifacts/` reaches the merged proof), `known_gaps`,
+  `binary_digest_notes`;
 - `lists_changed`, the gate files the change edits and the rows it adds or
   removes;
 - `setup_retries`, every fetch a part's runner needed a second attempt for
   (§5), the action's own lines prefixed with the part;
 - `runner_health`, every part attempt's runner-health measurement (§5) with
-  the verdict the merger re-derived, and `degraded_runners`, every attempt
-  that measured below the floor, one entry per metric with its value and
-  the floor; a `reruns` entry whose `reason` is `runner-degraded` carries
+  the verdict the merger re-derived and the informational `samples` of the
+  disk write, the disk read and the fsync, and `degraded_runners`, every
+  attempt that measured below the floor, one entry per metric with its value
+  and the floor; a `reruns` entry whose `reason` is `runner-degraded` carries
   the earlier attempt's entries as `degraded`;
+- `setup_failures`, every part attempt whose job failed in a fetch or install
+  step before its proof step started (§7.1), with the part, the attempt, the
+  step and the step's conclusion, whether or not the part ran again; a
+  `reruns` entry has `reason` `lost-runner`, `runner-degraded` or
+  `setup-failed`, and its `lost_attempt` describes the earlier attempt
+  whichever it was (conclusion, annotations, failed step);
 - `pr` and `ci`.
 
 A ledger entry has `package`, `test`, `job`, `outcome`, `seconds`, an optional
-`reason`, `allowed_skip`, `quarantine` and `failures`. The outcomes are
-`pass`, `fail`, `skip`, `none`, `deferred` and `quarantined-fail`. The words,
+`fuzz_seconds` (the fuzz lane's: the fuzz time the target was given, §2.3), `reason`, `allowed_skip`, `quarantine`, `failures` and, for a test that
+failed, `failure_output` (the last 40 lines it printed, without the testing
+package's own framing, each cut at 400 bytes: what the merger reads a
+timing-only failure from, §12). The outcomes are
+`pass`, `fail`, `skip`, `none`, `deferred` and `quarantined-fail`. A race
+suite's ledger (§2.3) also has `short`, true when its run had `-short`. The words,
 defined once: **listed** is what the binary reports; **run** is asked for;
 **deferred** is a nightly-listed test the full tier did not run; **expected**
 is every test with one required outcome; **out of tier** is a listed test the
@@ -734,9 +1019,27 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   (`--ui-plan`). A `build` part with no digests is ineligible.
 - **Host speed.** An excused `visibleWithin` miss must be that locator's own
   timeout with the element not found or hidden, never a strict-mode violation,
-  another error, or a test timeout.
+  another error, or a test timeout. An excused Go `timing` miss is derived
+  from the part alone (§12): the ledger entry is a plain failure of a test
+  that is the only one of its job not to pass, the test's own timing record
+  says it failed nothing else, the output the entry kept ends in exactly the
+  helper's timing-miss lines, each recorded bound equals the base row's, and
+  no miss took longer than the runner's share of the reference allows.
+  A shard's own excusal, and a failing test with no record, excuse nothing,
+  and the release tier excuses no runner-size miss at all: its gate enforces
+  the budgets on the reference class.
 - **Unit gate.** A quarantined-only unit exit is dropped only when the
   package's own output is a plain test failure.
+- **Race and lane ledgers.** The race gate's ledger (full and release), and the
+  race repeat's and the fuzz lane's (nightly), are read from the part of the
+  gate's name or the local part and held to the unit ledger's rules: an entry
+  that is not a pass needs a problem naming it or an allowed-skip entry in the
+  plan's list, or is a skip from a ledger that says its run had `-short`;
+  `quarantined-fail` is refused; a gate without its ledger fails its proof.
+  The race ledger must list every test the unit ledger lists, and each test
+  it skipped under `-short` must be one the unit ledger passed. The nightly
+  race repeat has no unit ledger, so its `-short` skips are accepted and
+  counted and held to nothing further (§2.3).
 - **Lost runners.** The lost-runner match reads every check-run annotation of
   the job; GitHub's system annotations cannot be told apart by path. A failure
   seen in the attempt's events or log always wins over it.
@@ -749,10 +1052,33 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   read fails closed; an absent file is a part measured before the step
   existed. The floor binds only the CI stack parts (`floorBinds` in
   `merge.go`, the same parts `scripts/proof-part.sh` stops).
+- **Setup failures.** A job that failed, whose proof step never started (the
+  jobs API records it skipped), and whose failed step is on the allowlist of
+  fetch and install steps for its kind of part (`setupStepNames` in
+  `merge.go`), is **setup-failed**: it ran no test and left no result, and it
+  may run again exactly as a lost or a degraded part. The allowlist is by the
+  steps' own names, because the jobs API reports a composite action only as the
+  step that uses it: `proof host`, `fetch plan`, `fetch build` for
+  `integration` and `activity-fixture`; those, `bun install`,
+  `fetch browser image` and `Chromium (host)` for `ui-e2e`;
+  `observability stack`, `fetch plan` and `fetch build` for `observability`;
+  `bun install` and `bun install (site)` for `fast`. The plan and the build
+  have no entry: every other part reads what they make. Every row of the
+  classification above ranks over it: a part.json, a failing test in the
+  events or the log, a read error, a cancel, a lost runner and a degraded
+  runner are all decided before a setup step is looked at, and a job whose
+  proof step ran is a result whatever else failed. A failure in any other
+  step before the proof step (a checkout, a toolchain's setup) is not
+  rerun-eligible. `proof.json` lists the attempt in `setup_failures` and the
+  README under "Setup failures"; a part whose last attempt is setup-failed has
+  no result, and the proof fails naming it. Two tests pin the names to
+  `proof.yml` in both directions, with rename mutations: the proof step names
+  (`proofStepNames`) and the allowlist (`setupStepNames`).
 
 `make merge-check PROOF=…` refuses a proof whose quarantine `checked_on` is
-more than 30 days old (the merged artifact's private retention), and refuses
-when it cannot tell `main`'s nightly list absent from unreadable.
+more than 30 days old (the merged artifact's private retention). A `NIGHTLY=` proof it is given is
+judged against `main`'s tip tree (§6), and an empty `-nightly` value or a tip
+git cannot read refuses it; with none given, nothing of the nightly is read.
 
 ## 8. Reading a failed proof
 
@@ -766,10 +1092,14 @@ when it cannot tell `main`'s nightly list absent from unreadable.
 4. For a part with no result, `ineligible_reasons` says whether GitHub lost the
    runner (that one job may be re-run), the part ran on a degraded runner
    (`degraded_runners` names the metric, its value and the floor; that one
-   job may be re-run), or the attempt is not rerun-eligible (start a new
-   run).
+   job may be re-run), the job failed in a fetch or install step before its
+   proof step started (`setup_failures` names the step; that one job may be
+   re-run), or the attempt is not rerun-eligible (start a new run).
 5. For a gate, the merged README's gate line names the part and log; download
-   that part's artifact.
+   that part's artifact. A failed race gate names the test or package in the
+   `race` ledger's problems, and the detector's report is in the failed part's
+   `race.log`; a failed fuzz lane names the target, and the input that broke it
+   is the file under the part's `crashers/` (§2.3).
 6. A local proof that stopped early (§2.2) lists a **Stopped early** section:
    the gate that **failed** is the cause, so read its log; the gates marked
    `stopped` or `not-started` ended or never began because of it and say
@@ -777,13 +1107,18 @@ when it cannot tell `main`'s nightly list absent from unreadable.
    not become eligible. Their integration ledger rows read `not finished` or
    `not run`, never `pass`.
 
-Only a part GitHub annotated as a **lost runner**, or whose own measurement
-at its start put its runner **below the floor** (`runner-degraded`, §5), may
-run again, and only "Re-run job" on that job. "Re-run all jobs" and "Re-run
-failed jobs" give some or every part a second attempt after a result, so
-their proof is ineligible. A test failure is never answered by a rerun, and a
-degraded part runs again whole, as a new part of the same tree, never a
-failed test in isolation.
+Only a part GitHub annotated as a **lost runner**, whose own measurement at
+its start put its runner **below the floor** (`runner-degraded`, §5), or whose
+job failed in a fetch or install step before its proof step started
+(**setup-failed**, §7.1), may run again. "Re-run job" on that one job is the
+way, and "Re-run failed jobs" is permitted when every failed part is one of
+these three, because it then gives no part that recorded a result a second
+attempt (the `proof` job runs again with them, and merges every attempt).
+"Re-run all jobs" gives every part a second attempt after a result, so its
+proof is ineligible. A test failure is never answered by a rerun, and a part
+that runs again runs whole, as a new part of the same tree, never a failed
+test in isolation. `proof-rerun.yml` issues "Re-run failed jobs" itself where
+the repository enables it (§10).
 
 ## 9. Reproducing one CI shard locally
 
@@ -903,7 +1238,8 @@ fails for any tracked path no row matches, and a case in
 **Recover from a lost runner.** Confirm GitHub annotated the runner lost, then
 "Re-run job" on that job, on the same day, while the plan and build artifacts
 exist. The merger records the rerun and the unfinished tests. Any other
-missing part needs a new run of the same tree.
+missing part needs a new run of the same tree, except a degraded runner and a
+setup failure, below.
 
 **Recover from a degraded runner.** `proof.json`'s `degraded_runners` (and
 the step summary's "degraded runner" line) names the part, the metric, its
@@ -924,18 +1260,66 @@ values): for a throughput or a capacity, well under the least healthy
 measurement; for a latency (`fsync_p95_ms`), well over the largest. Name
 the runs and the margin in the row's `derived` column. The first rows came
 from run 40411125174's 21 parts (2026-10-26), each a third of the least
-measurement or three times the largest latency; a class with no row
-(`unfloored`) is measured for information until its runs give it rows. A
-floor that no healthy run would cross is the aim: a floor can only turn a
-part into "not a proof of the tree", and a floor set too high costs reruns,
-never a false pass.
+measurement or three times the largest latency, before the informational
+readings existed; a class with no row (`unfloored`) is measured for
+information until its runs give it rows. The `samples` of the disk write, the
+disk read and the fsync (§5) judge nothing, and the next derivation reads
+them first, from the same `runner-health.json` files, or across the proofs in
+one table:
 
-**After a setup failure, or a "Re-run job" past the artifact's retention.**
-Start a new run of the same tree (push again, or close and reopen the pull
-request). A fetch that failed both of its attempts (§5) is a setup failure:
-its job's log and the step summary name every attempt, and a part that did
-run after a retried fetch shows it in `proof.json`'s `setup_retries`. After a
-test failure, never: fix it, with evidence.
+```sh
+jq -r '.runner_health[] | .part as $part | .attempt as $try
+  | .metrics[] | .metric as $metric | (.samples // [])[]
+  | [$part, $try, $metric, .offset_seconds, .value,
+     (.region.from_bytes // "-"), (.region.bytes // "-"), (.error // "-")]
+  | @tsv' proof/<name>/proof.json
+```
+
+A slow first burst that the later bursts repeat is a disk that stayed slow,
+and one they do not repeat is a transient, but only where the later bursts
+read blocks the first did not: compare the regions, because a burst over
+blocks already read may have been served by a cache beyond the runner and
+shows less. Gather the readings from several proofs before that derivation,
+and name the runs in `derived` as for any row. A floor that no healthy run
+would cross is the aim: a floor can only turn a part into "not a proof of the
+tree", and a floor set too high costs reruns, never a false pass.
+
+**Recover from a setup failure.** A job that failed in a fetch or install step
+before its proof step started (§7.1) ran no test: `proof.json`'s
+`setup_failures` (and the step summary's "setup failure" line) names the part,
+the attempt and the step, and the job's log names every attempt of a fetch that
+gave up (§5). "Re-run job" on that job alone, while the plan and build
+artifacts exist; the merger records the rerun with reason `setup-failed`. A
+failure in any other step before the proof step (a checkout, a toolchain's
+setup), and any failure of the plan or the build, is not rerun-eligible: start
+a new run, below.
+
+**Run failed candidates again automatically.** `proof-rerun.yml` does what the
+three recoveries above do by hand, and only that: when a `proof` run for a push
+to `validate/full/**` of this repository fails, and the run attempt is below 3,
+`proofrun rerun-plan` classifies every failed job with the merger's own
+`classify` from GitHub's record of the attempt (its jobs, its check-run
+annotations, the logs of failed jobs), and `gh run rerun --failed` runs only if
+every failed job is the `proof` job or a part that is lost, setup-failed or
+degraded. A part with a result, a cancel, a failed `base`, `plan` or `build`,
+a job it cannot read and a job whose name is not a part of the workflow all
+mean no rerun, so a run that can never become merge-eligible is not rerun. At
+most two automatic reruns follow the first attempt. It is off until the
+repository variable `PROOF_AUTO_RERUN` is `true`, a setting only the
+maintainer makes. Its planner prints three words it validated (`rerun`,
+`reason`, `parts`) and never an annotation or a log line. The merger remains
+the only authority, reading every attempt again: an automatic rerun that was
+wrong, or forged by a branch that prints the annotation a degraded part
+prints, costs one attempt and can only make the proof ineligible, never pass
+it. The workflow takes `checks: read` beside the `actions: write` and
+`contents: read` a rerun needs, because the evidence is a check-run
+annotation; the `proof` job takes the same permission for the same reason.
+
+**After a setup failure the merger cannot excuse, or a "Re-run job" past the
+artifact's retention.** Start a new run of the same tree (push again, or close
+and reopen the pull request). A part that did run after a retried fetch shows
+it in `proof.json`'s `setup_retries`. After a test failure, never: fix it,
+with evidence.
 
 **On a private repository, start the proof** after adding the `ci:proof`
 label: push again, or close and reopen.
@@ -955,7 +1339,7 @@ git push origin HEAD:validate/full/<name>
 gh run list --workflow proof.yml --branch validate/full/<name> -L 1   # <id>
 gh run view <id> --json attempt -q .attempt                          # <attempt>
 gh run download <id> -n proof-<id>-a<attempt> -D proof/ci-<id>
-make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
+make merge-check PROOF=proof/ci-<id>
 git checkout main && git merge --ff-only <candidate>
 git push origin main
 ```
@@ -966,24 +1350,64 @@ equal to `main`'s tip, the candidate's first parent equal to `main`'s tip, a
 clean worktree, and a quarantine check date at most 30 days old. If `main`
 moved since the push, rebuild the candidate and push it again.
 
-**Run the nightly proof after a merge** and pass it to the next
-`make merge-check PROOF=… NIGHTLY=…`: locally `make proof-nightly`, or on
-GitHub by dispatching `nightly.yml` on `main` once `main` is pushed, and
-downloading its artifact:
+**Read the nightly before a merge.** `main`'s nightly is `nightly.yml`'s latest
+completed run on `main` (§6), and it speaks for the commit it measured, not for
+`main`'s tip: compare its `headSha` with `main`.
 
 ```bash
-gh workflow run nightly.yml --ref main
-gh run list --workflow nightly.yml -L 1                              # <nid>
-gh run view <nid> --json attempt -q .attempt                         # <attempt>
-gh run download <nid> -n proof-<nid>-a<attempt> -D proof/nightly-gh-<nid>
+gh run list --workflow nightly.yml --branch main -L 3 --json databaseId,status,conclusion,event,headSha
+git rev-parse main
 ```
 
+- Green: nothing a deferred test sees is wrong at `headSha`. The commits after
+  it are not measured yet, and a merge is not held for them (`AGENTS.md` §11
+  accepts that cost).
+- Red: a failing `main`. Fix it or revert the change that broke it; that merge
+  is the only one until a run of it passes. Once `main` is pushed, dispatch
+  that run and wait for it, then merge on:
+
+  ```bash
+  gh workflow run nightly.yml --ref main
+  gh run list --workflow nightly.yml --branch main -L 1 --json databaseId   # <id>
+  gh run watch <id> --exit-status
+  ```
+
+- Only `nightly.yml` › `vuln` failed: a known vulnerability the module can
+  reach, which is a failing `main` too. `go tool govulncheck ./...` names the
+  module and the version that fixes it; bump the module to exactly that
+  version, run `make check`, and merge that change on its own proof. A
+  vulnerability the code cannot reach is not reported and fails nothing.
+- Only `runner-degraded` parts failed: a runner failure, not a failing `main`
+  (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree.
+
+After any merge that moves `main`, once it is pushed, a dispatched run has its
+verdict sooner than the schedule's.
+
+`make merge-check` asks for no nightly proof. To have it verify one anyway,
+pass `NIGHTLY=`: a GitHub run's artifact, or a local `make proof-nightly`.
 It is evidence only for the tree `main` pointed at when it started (§6).
+
+```bash
+gh run view <nid> --json attempt -q .attempt                         # <attempt>
+gh run download <nid> -n proof-<nid>-a<attempt> -D proof/nightly-gh-<nid>
+make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
+```
 
 **Run the release gate.** Dispatch `release.yml` from `main` with `version`
 set and `tag: false`; `release.yml` › `validate` refuses a malformed version
 before any job starts, and `release.yml` › `gate` runs the release tier on the
 chosen branch's tip. Locally, `make proof-release` on a clean tree.
+
+`release.yml` › `gate` cannot pass on GitHub's hosted runners today. It runs
+on `ubuntu-24.04` (4 vCPUs), and the release tier excuses no runner-size miss
+(`runnerSizeRefusal` in `test/tools/proofrun/merge.go`; §12, "Runner-size
+known gaps"): the run page at the reduced task ceiling must be interactive
+within 5 s, and measured 9,485 ms there (run 40571748126), and the soaks' live
+`GetRun` p95 must be within 2 s, and measured 2.014 s (run 40593609129). Both
+budgets were calibrated on the 16-CPU reference host. A CI release path needs
+runners as large as the reference; that is a maintainer decision, and
+`release.yml` has no input for it. Until then `make proof-release` on the
+reference host is the only gate that can pass.
 
 **Tag a release.** Either dispatch `release.yml` with `tag: true` — the `tag`
 job checks out the proved commit, runs `proofrun verify -release -tag vX.Y.Z
@@ -992,10 +1416,14 @@ and pushes it, and `publish` then pushes the images and creates the GitHub
 release — or, locally, `make release-tag VERSION=vX.Y.Z
 PROOF=proof/<release>`, which applies the same check to `HEAD`, tags it and
 does not push; a tag made that way publishes nothing, because `release.yml` is
-the only path that publishes. Neither path stops a person with write access
-from pushing a `v*` tag by hand (§12). Before dispatching, add the version's
-`## [X.Y.Z]` section to CHANGELOG.md: it becomes the release notes, and
-`validate` refuses a version without one.
+the only path that publishes. Only a `release.yml` run whose `gate` passed
+publishes, and on the hosted runners it does not (above): a release proved by
+`make proof-release` on the 16-CPU reference host and tagged with `make
+release-tag` is a local tag and nothing more; its archives, images and GitHub
+release wait for a CI release path on larger runners. Neither path stops a
+person with write access from pushing a `v*` tag by hand (§12). Before
+dispatching, add the version's `## [X.Y.Z]` section to CHANGELOG.md: it
+becomes the release notes, and `validate` refuses a version without one.
 
 **Recover a failed publish.** `publish` is safe to re-run: an image tag that
 already holds this release's digest is left alone, and the release itself is
@@ -1007,7 +1435,7 @@ new patch version.
 `ghcr.io/orkstack/<image>` starts private, and an anonymous pull (the
 quickstart's) fails until it is public (on each package's settings page).
 
-**Enable the merge gate.** Once the repository is public, run
+**Enable the merge gate.** The repository is public, so run
 `make github-merge-gate` (check mode, read-only) and then
 `make github-merge-gate APPLY=1`. Check mode refuses unless: you are an
 administrator; the repository is public; for `QUEUE=1`, it is owned by an
@@ -1081,9 +1509,12 @@ listing with no bucket at all.
 
 | Target | Does |
 |---|---|
-| `make check` | `make lint` (`go vet ./...` and gofmt), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept; no Docker |
+| `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept; no Docker |
+| `make vuln` | `go tool govulncheck ./...`: the known vulnerabilities whose vulnerable code the module reaches. It needs the network, so it is in no proof gate; `ci.yml` and `nightly.yml` run it (§5) |
 | `make proof` | the full proof, the merge gate |
 | `make proof-ui` | the same; the full proof already runs the UI suites |
+| `make test-race` | the race gate's `go test`, without its ledger: `-race -short` over `RACE_PACKAGES` (default `./...`), `RACE_COUNT` times (default 1) |
+| `make fuzz` | the fuzz lane: every Fuzz target, sharing `FUZZ_BUDGET` (default 45m) or given `FUZZTIME` each, logs and crashers under `FUZZ_OUT` |
 | `make proof-feature` | a feature proof of this branch |
 | `make proof-nightly` | the nightly tier |
 | `make proof-release` | the pre-release gate |
@@ -1111,14 +1542,15 @@ listing with no bucket at all.
 | `scripts/proof-test-costs.tsv` | package, test, seconds | an unmeasured test gets the conservative default |
 | `scripts/proof-slow-tests.txt` | package, test | a slow test is left out of a feature proof's regression set, and of its evidence when it is there only by reaching a changed helper, type or variable |
 | `scripts/proof-ui-costs.tsv` | spec file, wall seconds | an unmeasured spec gets 160 s |
-| `scripts/proof-host-speed.tsv` | kind, spec or package, test title or name, assertion, bound, reference CPUs, note | a malformed row fails the merge; only a row the base carries identically excuses, and only its declared assertion's miss on a CI UI part (§12) |
+| `scripts/proof-host-speed.tsv` | kind, spec or package, test title or name, assertion, bound, reference CPUs, note | a malformed row fails the merge; only a row the base carries identically excuses, and only its declared assertion's miss on a CI UI part, or a Go test's `timing` check on a CI integration part (§12) |
 | `scripts/proof-runner-floors.tsv` | class, metric, floor, derived | a malformed row fails the merge and makes `runner-health` exit 2 (the part runs on, unjudged); a class with no row is `unfloored`; a floor only ever makes a part "not a proof of the tree" (§5) |
 
 ### 11.3 `proofrun`
 
 | Subcommand | Flags |
 |---|---|
-| `unit` | `-out FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE` |
+| `unit` | `-out DIR`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-race`, `-short`, `-count N` |
+| `fuzz` | `-out DIR`, `-budget DURATION` or `-fuzztime DURATION`, one of the two |
 | `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-nightly-specs FILE`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `compile` | `-out DIR`, `-select FILE` |
 | `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
@@ -1140,6 +1572,7 @@ listing with no bucket at all.
 | `gates` | `-select FILE` |
 | `clean` | `-remove` |
 | `runner-health` | `-out FILE`, `-class NAME`, `-floors FILE`, `-dir DIR`, `-seconds N` |
+| `rerun-plan` | `-repo OWNER/NAME`, `-run ID`, `-attempt N`, `-max-attempts N` |
 
 ### 11.4 The scripts
 
@@ -1161,6 +1594,37 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   and 377 s at 4 CPUs (`taskset -c 0-3`). A cold cache recompiles the suites
   and is the number the `ci.yml` › `check` job records on a runner, so a
   2-vCPU runner's cold `check` takes longer than the two-minute warm target.
+  Those figures are from before staticcheck joined `make lint`.
+- staticcheck in `make lint` (`go tool staticcheck ./...`, then the same with
+  `-tags=integration`), measured 2026-10-28 on a 16-core host whose load
+  average was 7–9. It keeps each package's results, so with nothing changed a
+  run took 1.7 s at 2 CPUs (`taskset -c 0-1`). After edits to about thirty
+  packages the two runs took 37 s and 14 s at 16 CPUs (5 m 19 s and 1 m 58 s of
+  CPU). With a cold build cache and a cold staticcheck cache they took 69 s and
+  14 s (9 m 48 s and 2 m 0 s of CPU), most of the first run being the
+  dependencies' export data that `go vet` otherwise warms; after a cold
+  `go vet ./...` (41 s, 6 m 22 s of CPU) they took 30 s and 14 s (4 m 37 s and
+  2 m 1 s of CPU). So lint adds about 6.6 CPU-minutes on a cold runner, about
+  four minutes on two vCPUs, if it parallelises as it did here; that is why
+  the `ci.yml` › `check` step, the `ci.yml` › `feature` proof step and the
+  `proof.yml` › `fast` step each have five minutes more than they had. The
+  runner's own figure replaces this estimate once a run has recorded it.
+- The race gate (§2.3): `go test -race -short -count=1 ./...` took 573 s on
+  2026-10-27 on a 16-core host whose load average was 15–29 for the whole run,
+  another agent's race run beside it, `internal/engine` the long pole at 515 s
+  and `internal/api` at 199 s; the unit gate, without `-short` and without the
+  detector, takes 160–360 s alone. A second run took 632 s of wall under a load
+  average of 30–70 and 1,744 CPU-seconds (user 1,664, sys 80). Dividing the
+  CPU-seconds by 16 cores gives 110 s, which is not a floor: `internal/engine`
+  is one long package, and its own path bounds the gate. Neither run was
+  quiet, so neither is the gate's cost on the proof host; the first full proof
+  that runs it is. A third run, of the `internal/engine` test binary alone
+  (`-short`, one run) pinned to four CPUs with `taskset -c 12-15` under a load
+  average of 15–30, took 545 s: the package is bound by a few long
+  single-threaded tests (one took 172 s), not by cores, so four CPUs did not
+  lengthen it. That is a data point for a 4-vCPU runner on this host's cores,
+  not a measurement on one, and it leaves the 30-minute timeout per run (§2.3)
+  about 3.3 times the longest package's time.
 - A CI runner, as `runner_health` records it (run 40411125174, `ubuntu-24.04`
   on a private repository): 4 CPUs and 16 GB, with 14.3–14.8 GiB available
   before a part, sequential writes of 59–457 MB/s and reads of 235–534 MB/s
@@ -1169,18 +1633,40 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
 
 ## 12. Known gaps
 
-- **The gate is not enforced yet.** Rulesets and branch protection are
-  plan-gated on a private repository; `scripts/github-merge-gate.sh` is the
-  one-command enablement, and it refuses until the repository is public.
-  Until then `main` moves only by `AGENTS.md` §11.3's local path.
-- **The merge queue needs an organization-owned repository.** Queue-less mode
-  is the default: `proof` runs the real proof on the pull request, and
+- **The gate is not enforced yet.** The repository is public, so rulesets are
+  available, but `scripts/github-merge-gate.sh`'s apply has not been run: no
+  `main-proof-gate` ruleset requires the `proof` check. Until it is, `main`
+  moves only by `AGENTS.md` §11.3's local path.
+- **`main` is under a ruleset the script did not apply.** A ruleset named
+  `main`, active since 2026-10-27 and made by hand, covers the default branch:
+  it refuses deletion, force pushes, creating and updating the ref, and
+  unsigned commits, and its pull-request rule asks for one approval and a
+  code-owner review, with the repository's admin role able to bypass it
+  always. It does not require the `proof` check, so until the gate's apply is
+  run, `AGENTS.md` §11.3's push of `main` goes through that bypass. The apply
+  adds `main-proof-gate` beside it (the script finds its own rulesets by name),
+  which has no bypass actor, and `main` then moves through a pull request or
+  the queue. What the `main` ruleset holds is read from the API (`gh api
+  repos/orkstack/orkstack/rulesets`), not from the repository.
+- **The merge queue is optional and not applied.** The repository is
+  organization-owned, so the queue could be (`APPLY=1 QUEUE=1`). Queue-less
+  mode is the default: `proof` runs the real proof on the pull request, and
   `strict_required_status_checks_policy` makes the tested tree the landed
   tree.
-- **The gate has not had a full green run on GitHub.** Its structure was
-  validated end to end; the first green run is planned for the public
-  repository. Until then the gate is built, structurally validated and not
-  enforced.
+- **The full proof has passed on GitHub only on `validate/full/` pushes.**
+  Runs 40388322907 and 40438152385 passed, but never as the required check of
+  a pull request: the one `pull_request` run, a Dependabot pull request,
+  failed, and no `merge_group` run exists. The pull-request and queue paths
+  are structurally validated and unexercised until the gate is applied.
+- **The planner reads the default branch's allowlist; the merger reads the
+  candidate's.** `proof-rerun.yml` runs from the default branch, so
+  `rerun-plan` classifies with the default branch's `setupStepNames`, while the
+  merger of the candidate's own `proof` job uses the candidate's. A change that
+  renames a step of `proof.yml` (and moves the allowlist with it) can therefore
+  cost one wasted automatic attempt, or one that is not issued, until the
+  default branch carries the rename. It can never produce a false pass: the
+  merger decides, from the candidate's records, and refuses any attempt after a
+  result.
 - **A runner that degrades after its measurement.** The runner-health floor
   (§5) is measured once, before any gate; a runner that slows down later —
   as the one of nightly run 40371833169 did, in the third generation of a
@@ -1189,50 +1675,168 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   honest answer. A measurement after a failure would be confounded by what
   the failure left running, so none is taken.
 - **Runner-size known gaps.** A UI spec's 5 s wall-clock budget cannot hold on
-  a 2-vCPU runner. `scripts/proof-host-speed.tsv` names each such test by its
-  spec file and title, with the one assertion whose failure is its
-  runner-size miss, its bound and its reference CPU count. The assertion is
-  either `lessThan MS` (Playwright's `toBeLessThan` or `toBeLessThanOrEqual`
+  a 2-vCPU runner, nor the soaks' 2 s `GetRun` budget on a 4-vCPU one: both
+  were calibrated on the 16-CPU reference host and are enforced there: in
+  every local proof of any tier, and in the pre-release gate wherever it runs,
+  because the release tier excuses no runner-size miss (a CI release proof
+  needs runners as large as the reference, or `make proof-release` runs on
+  the reference host).
+  `scripts/proof-host-speed.tsv` names each such test, with the one assertion
+  whose failure is its runner-size miss, its bound and its reference CPU
+  count. A UI row, named by its spec file and title, declares either
+  `lessThan MS` (Playwright's `toBeLessThan` or `toBeLessThanOrEqual`
   with `Expected` exactly MS: the bound's own timing miss) or `visibleWithin
   MS LOCATOR` (a `toBeVisible` on exactly that locator that timed out after
-  exactly MS: the page never drew within the spec's own wait). A miss is a
+  exactly MS: the page never drew within the spec's own wait). A UI miss is a
   recorded known gap (`host_speed_failures`, `known_gaps`, the README's
   "Known gaps: runner size"), not a merge-blocking failure, only when all of
   these hold: the outcome is `failed`; the failure is exactly the row's
   assertion; the part is a CI `ui-e2e:K` shard whose runner has fewer CPUs
-  than the row's reference; and the base's copy of the table carries the same
-  row (a row a change adds, or a bound it loosens, excuses nothing). A skip, a
+  than the row's reference; the proof is not the release tier; and the base's
+  copy of the table carries the same row (a row a change adds, or a bound it
+  loosens, excuses nothing). A skip, a
   missing outcome, any other failure of the same test (another locator's
   visibility timeout included), and every miss on a local proof still fail
   the proof; the merger re-derives each excusal and never takes a shard's
   word for one. A miss is never turned into a wider local bound. Both
   class-B misses below are declared rows.
+
+  A Go test's wall-clock budget is a row of kind `test`, whose assertion is
+  `timing ID`: one check the top-level test reports under that id through
+  `internal/testsupport/proof` (`TimingBounds`, `Timing.Check`), never through
+  `t.Errorf`. A miss fails nothing where it is measured. The test's last
+  cleanup writes `timing/<test>.json` under the part's artifacts (every
+  check, its measured value and bound, and whether the test failed anything
+  that is not a timing check) and then reports each miss as one line of a
+  fixed form (`timing miss: id=… measured=…s bound=…s`), so the output of a
+  test that failed only a timing check ends with exactly those lines. The
+  merger excuses the miss, as a recorded known gap, only when all of these
+  hold: the part is a CI `integration:K` shard whose runner has fewer CPUs
+  than the row's reference and the proof is not the release tier; the base's
+  copy of the table carries the same row; the ledger shows the test as a
+  plain failure (no crash, no failing subtest) and no other test of its job
+  did not pass; the test's own record says it failed nothing but its timing
+  checks; the output the ledger entry kept (its last 40 lines, without the
+  testing package's framing) holds, from the first timing-miss line to the
+  end, nothing but the record's misses, one line each and in order; and every
+  missed check is declared by a row, is over its bound, was bounded at the
+  row's bound, and took no longer than the bound times the reference's CPUs
+  over the runner's (a runner with a k-th of the reference's CPUs may take k
+  times as long, no more: 8 s for the 2 s `GetRun` budget on 4 CPUs; a UI row
+  has no such ceiling). A test that failed with no record has no sample to
+  excuse and fails the proof; so does every miss on a local proof, on a
+  runner with as many CPUs as the reference, beyond that ceiling, and by any
+  check no row declares. The shard's gate is excused only when the excused
+  miss is the part's only defect. A row with the assertion `-` is recorded on
+  a miss and never excused. Counts, bytes, history shares, deadlock-detector
+  trips and correctness assertions get no row.
+
+  The rows are `getrun-live-p95` of the three reduced-ceiling soak tests
+  (`TestIntegration_AFanOutAtAReducedItemCeilingMeetsItsThresholds`,
+  `TestIntegration_AnItemCeilingRunCarriesOnAtAReducedCeiling` and
+  `TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling`), 2 s on 16
+  CPUs, and the run page at the reduced ceiling
+  (`e2e/run-page-reduced-ceiling.spec.ts`), 5 s on 16 CPUs; the user approved
+  them on 2026-10-27. The archive p95, `Events(0)` and replay checks of the
+  same tests go through the same helper and have no row: none of them missed
+  in the CI full proofs and nightlies read when the rows were chosen (runs
+  39337036208 to 40593609129), so a miss of one fails the proof, and a row
+  for one is proposed when one does.
+
+  What stays visible where the live `GetRun` budget is excused is a bound on
+  what that read reads, which holds on every host: the soaks' live `GetRun`s
+  go through a counting reader, and each must read at least one history
+  event, at most 110% of the events and at most 110% of the bytes the
+  generation it read holds (the history is scanned once, in events and in
+  bytes; the margin is for the instant between the read and the count), and
+  at most 4 saved-state objects (a read takes 1 or 2). They fail the test on
+  every runner, being counts and sizes, and were calibrated on 160 reads of
+  the three tests on the reference host, the bytes on the last 40
+  (`internal/engine/getrun_structure_test.go` holds the calibration). They
+  bound what is read, not what reading it costs: a slower decode or a larger
+  saved state shows only in the wall-clock numbers, which the reference host
+  enforces, and the evidence records the cost per thousand events
+  (`ms_per_1000_events`) and the saved-state bytes to read it by. The run
+  page's 5 s has no structural counterpart at all.
 - **The validation run's class-B results** (run 39345074409, recorded in
   `host_speed_failures` and `known_gaps`): `each-fan-out.spec.ts` (whose
   gated test is now `each-fan-out-ceiling.spec.ts`) measured
   7,006 ms against its declared 5,000 ms budget at the gated size on a 2-vCPU
   runner; `run-page-ceiling.spec.ts` never reached its 5 s budget, because
   the run page did not become visible within 60 s there.
-- **Rule A on the GitHub merge path is a process rule.** `make merge-check …
-  NIGHTLY=…` runs only on the local path; once merges go through GitHub,
-  nothing there checks for a passing nightly proof of `main`'s tip, and the
-  merge stage runs `make proof-nightly` and quotes it by hand.
-- **"Before the next merge starts" is enforced when the next merge ends.**
-  `merge-check NIGHTLY=` refuses at the end; a full proof started while
-  `main`'s tip lacks a passing nightly proof only warns. A proof may therefore
-  run beside a nightly that later fails; it is then refused at `merge-check`,
-  never merged.
+- **The scale tests are never raced.** The race gate runs `-short`, which
+  skips the history-guard, ten-thousand-item and closure-cost tests, so those
+  run under the race detector nowhere; the unit gate passes them without it
+  (§2.3). A test that asserts an absolute cost and runs under `-short` must
+  scale its bound under the detector (`raceBuild` in `internal/engine`), as the
+  continuation and definition-reference tests do.
+- **A race part's runner is not floored.** Like `fast`, the `race`,
+  `race-repeat` and `fuzz` parts measure their runner for information (§5):
+  the detector slows every test several times over, so a runner below the
+  floors that bind the stack parts fails a bound test explicitly rather than
+  being set aside as degraded. `AGENTS.md` §11.2 says so: a red `race-repeat`
+  or `fuzz` part is a failing `main`, never `runner-degraded`. Flooring them
+  needs floor rows derived from measured runs in
+  `scripts/proof-runner-floors.tsv`, which changes only with the user's
+  approval.
+- **The nightly race repeat's skips are held to nothing.** The repeat is
+  `-short`, and the nightly proof has no unit ledger to hold a skip to (the
+  full proof's merger does, §7.1), so a test that skips there narrows what the
+  lane hunts without failing it; the ledger summary counts the skips.
+- **The nightly lanes' time grows with the code.** The race repeat runs three
+  runs of its packages, so a new package lengthens a nightly; the CI job's
+  limit (`proof.yml` › `race-repeat`) is its bound. The fuzz lane is bounded
+  by construction: its budget is its whole time, shared by the targets, so a
+  new target shortens every turn instead of lengthening the lane (§2.3), and
+  a unit test fails when the targets no longer fit the budget at the minimum
+  turn. What that leaves unmeasured: the lane's real overhead per target on a
+  runner (the assumed 45 seconds is conservative, not measured there), and
+  the fuzzing a turn of a minute or so finds, which is shorter than the two
+  minutes each target had when the lane was a fixed time.
+- **Nothing mechanical reads GitHub's nightly before a merge.** `make
+  merge-check` asks for no nightly proof (rule A is retired, §6), and the
+  `proof` check does not read `nightly.yml`. `AGENTS.md` §11's "a failing
+  nightly is a failing `main`" is kept by reading the latest run on `main`
+  and comparing its `headSha` with `main`'s tip before a merge (§10). A merge
+  is not held for a nightly of its own, so between a merge and the next run
+  the deferred tests have not seen `main`'s tip, and a regression only they
+  can see is found by that run, not at merge.
 - **The observability gate has not run on GitHub.** The first release run,
   which always runs it, is its calibration.
-- **`nightly.yml` (both jobs), `release.yml`, `workflow_call` and the flakes
-  job have not run on GitHub yet.** `release.yml`'s `artifacts` and `publish`
-  jobs were added after the last `actionlint` pass; the workflow rules in
-  `test/tools/proofrun` hold their shape, and `make release-smoke` runs their
-  build and smoke on a developer's host. The first `tag: false` dispatch is
-  their first run on GitHub.
+- **`release.yml` has not run on GitHub yet, and its gate cannot pass there.**
+  `nightly.yml` has three jobs, `nightly`, `vuln` and `flakes`; the first and
+  the last have run, and so has `proof.yml` as a reusable workflow through them
+  (`workflow_call`; the flakes job passed in run 40555387388). `release.yml`'s
+  `artifacts` and `publish` jobs were added after the last `actionlint` pass;
+  the workflow rules in `test/tools/proofrun` hold their shape, and `make
+  release-smoke` runs their build and smoke on a developer's host. The first
+  `tag: false` dispatch is their first run on GitHub, and its `gate` fails on
+  the hosted runners' size alone (§10, "Run the release gate"): only a run
+  whose gate passed publishes, so no release can be published until a CI
+  release path has runners as large as the reference host, a maintainer's
+  decision.
+- **The `vuln` jobs and the race and fuzz parts have not run on GitHub.** The
+  `vuln` jobs of `ci.yml` and `nightly.yml` (`make vuln`), the proof's `race`
+  part in the full and release tiers, and its `race-repeat` and `fuzz` parts
+  in the nightly are on the same footing as the observability gate: they are
+  proven on a developer's host and by the workflow rules in
+  `test/tools/proofrun`, not on a hosted runner, so the first full proof and
+  the first nightly that carry them are their calibration.
+- **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
+  `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
+  planner is proven against fakes of `gh api`, and its workflow shape by the
+  rules in `test/tools/proofrun`. Two things only a run can show: that the
+  `proof` workflow's completion fires `workflow_run` for an attempt that this
+  workflow's own `GITHUB_TOKEN` asked for (if it does not, one automatic rerun
+  follows a run, and a person's rerun arms the next), and that a failed
+  job's log, annotations and `check_run_url` read as the planner expects. Both
+  fail toward fewer reruns, never toward a false pass.
 - **The nightly soaks' thresholds were measured on a 16-core host.** A
   threshold missed on a 4-vCPU public runner is reported as a calibration
-  result, never silently changed.
+  result, never silently changed. The soaks themselves carry no row of
+  `scripts/proof-host-speed.tsv`: only the merge gate's reduced-ceiling copies
+  do, for the live `GetRun` p95 (above), so a nightly's wall-clock miss on a
+  CI runner fails that nightly.
 - **Base-cache sizing is unmeasured at concurrency.** The 8-entry, 128 MiB
   cache is documented arithmetic, not a measured miss rate; a setting needs a
   measurement first, with the user's approval.

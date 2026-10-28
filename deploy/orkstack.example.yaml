@@ -109,6 +109,7 @@ orker:
   docker: {}
     # bin: docker              # resolved on PATH
     # pull_timeout: ""         # runtime default
+    # bind_probe_timeout: ""   # runtime default
 
 # Telemetry. Off by default: with nothing set below, ork and orker behave
 # byte-identically to a deployment that has never heard of this section

@@ -116,20 +116,32 @@ func snapshotLocalActivityOptions() workflow.LocalActivityOptions {
 // while a regular activity would put this complete snapshot straight back
 // into ActivityTaskScheduled.input and retain quadratic history growth. Its
 // only recorded result is a small reference.
+//
+// The activity reads the run's live rows, lent to it for the call and taken
+// back as soon as Get returns, whatever it returned: Get can return while
+// the activity is still encoding (a cancel, an attempt's deadline), and the
+// failure path then changes those rows (rows_loan.go).
 func (s *runState) writeEventSnapshot(ctx workflow.Context, eventType orkstackv1.EventType) (string, error) {
 	localCtx := workflow.WithLocalActivityOptions(ctx, snapshotLocalActivityOptions())
-	if policy, ok := s.overlayPolicyFor(ctx, eventType); ok {
+	policy, overlay := s.overlayPolicyFor(ctx, eventType)
+	snapshot := s.snapshot()
+	loan := lendRows(snapshot)
+	if overlay {
 		var written SnapshotWritten
-		if err := workflow.ExecuteLocalActivity(localCtx, ActivityWriteSnapshotOrOverlay,
-			s.snapshot(), int64(s.eventSeq), s.snapBase, policy).Get(localCtx, &written); err != nil {
+		err := workflow.ExecuteLocalActivity(localCtx, ActivityWriteSnapshotOrOverlay,
+			snapshot, int64(s.eventSeq), s.snapBase, policy).Get(localCtx, &written)
+		loan.takeBack()
+		if err != nil {
 			return "", err
 		}
 		s.followSnapshotBase(written)
 		return written.URI, nil
 	}
 	var uri string
-	if err := workflow.ExecuteLocalActivity(localCtx, ActivityWriteSnapshot, s.snapshot(), int64(s.eventSeq)).
-		Get(localCtx, &uri); err != nil {
+	err := workflow.ExecuteLocalActivity(localCtx, ActivityWriteSnapshot, snapshot, int64(s.eventSeq)).
+		Get(localCtx, &uri)
+	loan.takeBack()
+	if err != nil {
 		return "", err
 	}
 	return uri, nil
@@ -164,9 +176,15 @@ var snapshotBaseHookForTest func(SnapshotBase)
 // more than policy.MaxRows rows differ, or when the overlay would not
 // reproduce the run exactly. Otherwise it writes {seq}.ovl naming the base.
 //
-// The run it is handed is the workflow's own state, passed in-process: the
-// workflow is blocked on this activity while it runs, and nothing here
-// mutates it.
+// The run it is handed is the workflow's own state, passed in-process, its
+// rows lent for the encode only (rows_loan.go): the workflow is blocked on this
+// activity while it runs — and when a cancel frees it early, it takes the rows
+// back, which waits for the encode to end. So everything the workflow goes on
+// changing — the rows and the messages the run points at — is read inside one
+// readLent, and nothing in it waits on the network: the base is read before
+// it, the object is written after it. The run's namespace and id are the Run's
+// own fields, set once when s.snapshot() builds it and never written again, so
+// they are read once, here, outside the loan.
 func (a *SnapshotActivities) WriteSnapshotOrOverlay(
 	ctx context.Context,
 	run *orkstackv1.Run,
@@ -177,33 +195,59 @@ func (a *SnapshotActivities) WriteSnapshotOrOverlay(
 	if run == nil {
 		return SnapshotWritten{}, fmt.Errorf("engine: write snapshot: run is required")
 	}
+	namespace, runID := run.GetNamespace(), run.GetId()
+	var baseRun *orkstackv1.Run
 	if base.URI != "" && int64(base.Overlays) < policy.MaxChain &&
-		artifacts.OverlayBaseURIMatches(base.URI, run.GetNamespace(), run.GetId()) {
-		if baseRun := a.verifiedBase(ctx, base); baseRun != nil {
-			if overlay, ok := diffSnapshot(baseRun, run, base, policy.MaxRows); ok {
-				data, err := proto.Marshal(overlay)
-				if err != nil {
-					return SnapshotWritten{}, fmt.Errorf("engine: marshal snapshot overlay for run %s: %w", run.GetId(), err)
-				}
-				uri, err := a.store.WriteSnapshotOverlay(ctx, run.GetNamespace(), run.GetId(), sequence, data)
-				if err != nil {
-					return SnapshotWritten{}, fmt.Errorf("engine: persist snapshot overlay for run %s: %w", run.GetId(), err)
-				}
-				return SnapshotWritten{URI: uri}, nil
+		artifacts.OverlayBaseURIMatches(base.URI, namespace, runID) {
+		baseRun = a.verifiedBase(ctx, base)
+	}
+	encoded, err := readLent(run, sequence, func() (encodedSnapshot, error) {
+		return encodeSnapshot(run, baseRun, base, policy)
+	})
+	if err != nil {
+		return SnapshotWritten{}, err
+	}
+	if encoded.overlay {
+		uri, err := a.store.WriteSnapshotOverlay(ctx, namespace, runID, sequence, encoded.data)
+		if err != nil {
+			return SnapshotWritten{}, fmt.Errorf("engine: persist snapshot overlay for run %s: %w", runID, err)
+		}
+		return SnapshotWritten{URI: uri}, nil
+	}
+	uri, err := a.store.WriteSnapshot(ctx, namespace, runID, sequence, encoded.data)
+	if err != nil {
+		return SnapshotWritten{}, fmt.Errorf("engine: persist snapshot for run %s: %w", runID, err)
+	}
+	sum := artifacts.ContinuationSHA256(encoded.data)
+	a.bases.put(uri, sum, encoded.data)
+	return SnapshotWritten{URI: uri, SHA256: sum, Full: true}, nil
+}
+
+// encodedSnapshot is a snapshot's bytes, and whether they are an overlay.
+type encodedSnapshot struct {
+	data    []byte
+	overlay bool
+}
+
+// encodeSnapshot is the bytes of run's snapshot: an overlay against baseRun
+// (the verified full snapshot base names) when there is one and the overlay
+// reproduces run exactly, else the full run. It reads run's rows and nothing
+// else; callers hold them on loan.
+func encodeSnapshot(run, baseRun *orkstackv1.Run, base SnapshotBase, policy OverlayPolicy) (encodedSnapshot, error) {
+	if baseRun != nil {
+		if overlay, ok := diffSnapshot(baseRun, run, base, policy.MaxRows); ok {
+			data, err := proto.Marshal(overlay)
+			if err != nil {
+				return encodedSnapshot{}, fmt.Errorf("engine: marshal snapshot overlay for run %s: %w", run.GetId(), err)
 			}
+			return encodedSnapshot{data: data, overlay: true}, nil
 		}
 	}
 	data, err := proto.Marshal(run)
 	if err != nil {
-		return SnapshotWritten{}, fmt.Errorf("engine: marshal snapshot for run %s: %w", run.GetId(), err)
+		return encodedSnapshot{}, fmt.Errorf("engine: marshal snapshot for run %s: %w", run.GetId(), err)
 	}
-	uri, err := a.store.WriteSnapshot(ctx, run.GetNamespace(), run.GetId(), sequence, data)
-	if err != nil {
-		return SnapshotWritten{}, fmt.Errorf("engine: persist snapshot for run %s: %w", run.GetId(), err)
-	}
-	sum := artifacts.ContinuationSHA256(data)
-	a.bases.put(uri, sum, data)
-	return SnapshotWritten{URI: uri, SHA256: sum, Full: true}, nil
+	return encodedSnapshot{data: data}, nil
 }
 
 // verifiedBase is the full snapshot base names, decoded, from the base cache

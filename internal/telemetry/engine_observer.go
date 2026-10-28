@@ -305,9 +305,7 @@ func (o *EngineObserver) log(ctx context.Context, event *orkstackv1.Event, run *
 	for _, kv := range selectionAttrs(run.GetTelemetry().GetAttributes()) {
 		args = append(args, slog.String(string(kv.Key), kv.Value.AsString()))
 	}
-	for _, attr := range TraceAttrs(ctx) {
-		args = append(args, attr)
-	}
+	args = append(args, TraceAttrs(ctx)...)
 	o.logger.Log(ctx, level, "run event", args...)
 }
 

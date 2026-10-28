@@ -122,10 +122,12 @@ func isTaskEvent(event Event) bool {
 
 // ParseEvent reads an event name. It accepts the short form a subscriber
 // writes ("RUN_SUCCEEDED"), the proto spelling the engine carries
-// ("EVENT_TYPE_RUN_SUCCEEDED"), and either in lower case, so a caller never
-// has to know which layer produced the string it is holding.
+// ("EVENT_TYPE_RUN_SUCCEEDED"), and either in lower case (ASCII case only: a
+// letter such as U+017F that Unicode upper-cases to an ASCII one is not that
+// letter), so a caller never has to know which layer produced the string it
+// is holding.
 func ParseEvent(raw string) (Event, error) {
-	normalized := Event(strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(raw)), "EVENT_TYPE_"))
+	normalized := Event(strings.TrimPrefix(upperASCII(strings.TrimSpace(raw)), "EVENT_TYPE_"))
 	for _, known := range KnownEvents() {
 		if normalized == known {
 			return known, nil
@@ -136,6 +138,19 @@ func ParseEvent(raw string) (Event, error) {
 		names = append(names, string(known))
 	}
 	return "", fmt.Errorf("webhooks: unknown event %q, want one of %s", raw, strings.Join(names, ", "))
+}
+
+// upperASCII upper-cases the ASCII letters of s and leaves every other byte
+// as it is. strings.ToUpper would also map U+017F to S and U+0131 to I, so a
+// spelling no event has would read as one.
+func upperASCII(s string) string {
+	upper := []byte(s)
+	for i, c := range upper {
+		if c >= 'a' && c <= 'z' {
+			upper[i] = c - 'a' + 'A'
+		}
+	}
+	return string(upper)
 }
 
 // Webhook is one registered subscription.

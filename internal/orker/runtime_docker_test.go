@@ -137,6 +137,17 @@ func TestDockerCreateArgs_RefusesASpecThatWeakensTheBaseline(t *testing.T) {
 		{"unlimited cpu", func(s *ContainerSpec) { s.CPUs = "" }, "always be bounded"},
 		{"unlimited memory", func(s *ContainerSpec) { s.Memory = "" }, "always be bounded"},
 		{"unlimited pids", func(s *ContainerSpec) { s.PidsLimit = 0 }, "always be bounded"},
+		// docker reads a zero limit as NO limit, so a quantity that parses to
+		// one is refused here instead of reaching the daemon as a flag value.
+		{"zero cpu", func(s *ContainerSpec) { s.CPUs = "0" }, "always be bounded"},
+		{"zero millicpu", func(s *ContainerSpec) { s.CPUs = "0m" }, "always be bounded"},
+		{"negative cpu", func(s *ContainerSpec) { s.CPUs = "-1" }, "always be bounded"},
+		{"NaN cpu", func(s *ContainerSpec) { s.CPUs = "NaN" }, "always be bounded"},
+		{"zero memory", func(s *ContainerSpec) { s.Memory = "0" }, "always be bounded"},
+		{"zero memory with a unit", func(s *ContainerSpec) { s.Memory = "0Gi" }, "always be bounded"},
+		{"less than a byte of memory", func(s *ContainerSpec) { s.Memory = "0.5" }, "always be bounded"},
+		{"negative memory", func(s *ContainerSpec) { s.Memory = "-1" }, "always be bounded"},
+		{"NaN memory", func(s *ContainerSpec) { s.Memory = "NaN" }, "always be bounded"},
 		{"no image", func(s *ContainerSpec) { s.Image = "" }, "image is required"},
 	}
 	for _, tc := range tests {
@@ -348,11 +359,14 @@ func TestDockerRuntime_WaitDrainsTheAttachBeforeReporting(t *testing.T) {
 
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
+	// The stopwatch starts before the attach does, so a host that stalls this
+	// goroutine between Start and Wait cannot eat into the delay it measures:
+	// the attach's output is written at least attachDelay after this instant.
+	began := time.Now()
 	if err := runtime.Start(ctx, "fake-container", &stdout, &stderr); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	began := time.Now()
 	status, err := runtime.Wait(ctx, "fake-container")
 	elapsed := time.Since(began)
 	if err != nil {

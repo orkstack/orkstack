@@ -132,7 +132,7 @@ func generationsOK(t *testing.T, g *generations, atLeast int) *orkstackv1.Run {
 }
 
 func pinSetup(h *harness, _ int) {
-	enablePins(h, worker.Options{DeadlockDetectionTimeout: time.Second})
+	enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 }
 
 const pinOpenDocument = `
@@ -253,7 +253,7 @@ func TestContinuation_PinOpenAtTriggerClosesBeforeSwitch(t *testing.T) {
 	}
 	g := runGenerations(t, "ork-pin-open", compile(t, pinCloseDocument), payload(t, nil), continuedPlan(1), behavior,
 		func(h *harness, _ int) {
-			h.env.SetWorkerOptions(worker.Options{EnableSessionWorker: true, DeadlockDetectionTimeout: time.Second})
+			h.env.SetWorkerOptions(worker.Options{EnableSessionWorker: true, DeadlockDetectionTimeout: productionDeadlock()})
 			h.env.RegisterActivityWithOptions(func(ctx context.Context, in *orkstackv1.ReleasePinInput) error {
 				h.mu.Lock()
 				h.released = append(h.released, in)
@@ -652,7 +652,7 @@ tasks:
 		}
 		return okBehavior(ctx, in)
 	})
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-hold-cancel"})
 	var once sync.Once
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
@@ -713,7 +713,7 @@ func TestContinuation_FailureDuringHoldTakesTheFailPath(t *testing.T) {
 // (it resumes dispatch, and retries only after growth); after a cancel (it
 // ends); with an opening pin and a closing pin (it waits on them).
 func TestContinuation_HoldNeverSpins(t *testing.T) {
-	deadlock := worker.Options{DeadlockDetectionTimeout: time.Second}
+	deadlock := worker.Options{DeadlockDetectionTimeout: productionDeadlock()}
 	t.Run("idle with an open await", func(t *testing.T) {
 		g := runGenerations(t, "ork-spin-await", compile(t, awaitAcrossDocument), payload(t, nil), holdPlan(), okBehavior,
 			func(h *harness, generation int) {
@@ -817,6 +817,9 @@ type reproducedShape struct {
 	// complete: a task named here returns only once the task it maps to has
 	// succeeded in the run's stream (completionOrder).
 	after map[string]string
+	// afterPinsClosed names tasks that return only once every pin opened so
+	// far has closed (pinCloses).
+	afterPinsClosed []string
 }
 
 // completionOrder makes tasks that run at the same time complete in one
@@ -852,6 +855,101 @@ func (o *completionOrder) behavior(ctx context.Context, in *orkstackv1.ExecuteTa
 		}
 	}
 	return itemBehavior(ctx, in)
+}
+
+// holdAfterPinCloses wraps a behavior so that a task in held returns only
+// once every pin its generation has opened so far has closed (pinCloses).
+// It returns the wrapped behavior and the step that points it at a
+// generation's own pins, run before that generation starts.
+func holdAfterPinCloses(
+	next func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error),
+	held map[string]bool,
+) (func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error), func(*harness)) {
+	var mu sync.Mutex
+	var pins *pinCloses
+	hold := func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		if held[in.GetTaskId()] {
+			mu.Lock()
+			watched := pins
+			mu.Unlock()
+			if err := watched.waitAllClosed(ctx); err != nil {
+				return nil, err
+			}
+		}
+		return next(ctx, in)
+	}
+	watch := func(h *harness) {
+		mu.Lock()
+		pins = watchPinCloses(h)
+		mu.Unlock()
+	}
+	return hold, watch
+}
+
+// pinCloses counts the pins a generation's test environment has opened and
+// closed. The engine dispatches the task that needs a pin's last member in
+// the same workflow task as that pin's close (ReleasePin, then the
+// session's completion activity), and the environment runs the two on
+// goroutines of their own, so which the run sees end first is the
+// scheduler's choice: under load the task can end first, and then no
+// moment with nothing in flight and no pin closing ever comes. A task held
+// until every opened pin has closed ends after the run has seen the close:
+// the environment counts a close in its own dispatcher, after it has handed
+// the workflow the completion's result, and hands it the held task's result
+// only later.
+type pinCloses struct {
+	mu             sync.Mutex
+	opened, closed int
+	changed        chan struct{} // closed and replaced on every count
+}
+
+// watchPinCloses counts h's pin opens (the session's creation activity
+// starting) and closes (its completion activity ending). It takes both of
+// h's activity listeners. A pin whose creation fails never closes, so a
+// test whose pins can fail to open must not wait on one.
+func watchPinCloses(h *harness) *pinCloses {
+	c := &pinCloses{changed: make(chan struct{})}
+	h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		if info.ActivityType.Name == sessionCreationActivityName {
+			c.notePinChange(&c.opened)
+		}
+	})
+	h.env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, _ error) {
+		if info.ActivityType.Name == sessionCompletionActivityName {
+			c.notePinChange(&c.closed)
+		}
+	})
+	return c
+}
+
+func (c *pinCloses) notePinChange(n *int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	*n++
+	close(c.changed)
+	c.changed = make(chan struct{})
+}
+
+// waitAllClosed blocks until every pin opened so far has closed, or fails
+// once a deadline far beyond the run's own length passes.
+func (c *pinCloses) waitAllClosed(ctx context.Context) error {
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	for {
+		c.mu.Lock()
+		done, changed := c.closed >= c.opened, c.changed
+		c.mu.Unlock()
+		if done {
+			return nil
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errors.New("a pin never finished closing")
+		}
+	}
 }
 
 // waitSucceeded blocks until taskID's TASK_SUCCEEDED is in the stream, or
@@ -949,9 +1047,10 @@ func reproducedShapes(t *testing.T) []reproducedShape {
 		{name: "a composed task", doc: reproducedComposedDocument, plan: composed, budget: 1},
 		{name: "an await", doc: awaitAcrossDocument, setup: approveLater, budget: 2},
 		// fetch starts at once; prep, its pinned sibling, only once its pin
-		// has opened, so fetch is the one that waits.
+		// has opened, so fetch is the one that waits. t1 starts beside the
+		// pin's close and waits for it, so the idle point after t1 is there.
 		{name: "a pin with an unpinned need", doc: reproducedPinDocument, setup: withPins, budget: 2,
-			after: map[string]string{"fetch": "prep"}},
+			after: map[string]string{"fetch": "prep"}, afterPinsClosed: []string{"t1"}},
 	}
 }
 
@@ -1070,6 +1169,21 @@ func TestContinuation_GenerationsReproduceTheUnswitchedRun(t *testing.T) {
 					order.setup(h, generation)
 					if shape.setup != nil {
 						shape.setup(h, generation)
+					}
+				}
+			}
+			if len(shape.afterPinsClosed) > 0 {
+				held := map[string]bool{}
+				for _, id := range shape.afterPinsClosed {
+					held[id] = true
+				}
+				hold, watch := holdAfterPinCloses(behavior, held)
+				ordered := setup
+				behavior = hold
+				setup = func(h *harness, generation int) {
+					watch(h)
+					if ordered != nil {
+						ordered(h, generation)
 					}
 				}
 			}

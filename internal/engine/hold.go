@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"go.temporal.io/sdk/workflow"
 
@@ -132,7 +133,7 @@ func (s *runState) pinClosureAllows(id string) bool {
 // done), and a member that is terminal.
 func (s *runState) rebuildPinClosure() {
 	if readyLoopProbeForTest != nil {
-		readyLoopProbeForTest.closureRebuilds++
+		readyLoopProbeForTest.closureRebuilds.Add(1)
 	}
 	s.pinClosureFresh = true
 	s.pinClosure = nil
@@ -290,6 +291,16 @@ func (s *runState) admit(id string) {
 	s.admitted[id] = true
 }
 
+// noteRetained raises maxRetained to n when n is larger.
+func (p *readyLoopProbe) noteRetained(n int64) {
+	for {
+		current := p.maxRetained.Load()
+		if n <= current || p.maxRetained.CompareAndSwap(current, n) {
+			return
+		}
+	}
+}
+
 // readyLoopProbeForTest is a TEST-ONLY probe, the precedent of
 // eachDispatchDescending: when set, it counts classify calls, condition
 // evaluations and pin-closure rebuilds, and sees the top of every main-loop
@@ -297,12 +308,16 @@ func (s *runState) admit(id string) {
 // costs O(1) per pass. Never set in production code.
 var readyLoopProbeForTest *readyLoopProbe
 
+// readyLoopProbe is what readyLoopProbeForTest counts and sees. The counters
+// are atomic: a test that runs many workflows beside one another under one
+// probe (TestHistoryGuard_CompletionsLandingDuringThePassNeverTripTheGuard)
+// has each of them count into it.
 type readyLoopProbe struct {
-	classify, conditions, closureRebuilds int
+	classify, conditions, closureRebuilds atomic.Int64
 	// closureEntries is every entry closureOf computed over the run, and
 	// maxRetained the most closure entries the run held at the top of a
 	// pass (retainedClosureEntries).
-	closureEntries, maxRetained int
+	closureEntries, maxRetained atomic.Int64
 	pass, selector              func()
 	// selectorRun, when set, is called with the run's id as the loop
 	// reaches its Selector: its pass is over.

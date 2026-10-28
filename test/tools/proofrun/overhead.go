@@ -340,6 +340,7 @@ func slowBoots(dir string, integrationLogs []string) []string {
 // gatePhase is a gate's place on the serial chain scripts/proof.sh runs.
 var gatePhase = map[string]string{
 	"lint": "fast", "build": "fast", "unit": "fast", "vet-integration": "fast", "ui-check": "fast", "ui-unit": "fast", "site": "fast",
+	"race": "fast", "race-repeat": "fast", "fuzz": "fast",
 	"temporal": "setup", "images": "setup", "binaries": "setup", "integration-compile": "setup", "setup": "setup",
 	"integration": "stack", "activity-fixture": "stack",
 	"ui-e2e": "ui-e2e", "observability": "observability",
@@ -348,7 +349,7 @@ var gatePhase = map[string]string{
 var phaseOrder = []string{"fast", "setup", "stack", "ui-e2e", "observability", "other"}
 
 var phaseText = map[string]string{
-	"fast":          "fast gates (lint, build, unit, vet, UI check and unit, site), serial",
+	"fast":          "fast gates (lint, build, unit, vet, UI check and unit, site, race), serial",
 	"setup":         "setup (Temporal, images, binaries), serial",
 	"stack":         "integration beside the activity fixture: the longer of the two",
 	"ui-e2e":        "Playwright",

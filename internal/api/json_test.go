@@ -269,6 +269,22 @@ func TestUnmarshalJSON_ReportsMalformedJSON(t *testing.T) {
 	}
 }
 
+// Text Go's decoder would alter is refused saying what is wrong with it, not
+// as protojson's "unexpected EOF".
+func TestUnmarshalJSON_NamesTextTheDecoderWouldAlter(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"half of a surrogate pair", `{"id":"\ud800"}`, "half of a surrogate pair"},
+		{"bytes that are not UTF-8", "{\"id\":\"\xff\"}", "not valid UTF-8"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := api.UnmarshalJSON([]byte(tc.body), &orkstackv1.Run{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("UnmarshalJSON(%q) = %v, want an error saying %q", tc.body, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestMarshalJSON_RoundTripsThroughUnmarshalJSON(t *testing.T) {
 	data, err := structpb.NewStruct(map[string]any{"url": "https://example.com", "retries": 3})
 	if err != nil {

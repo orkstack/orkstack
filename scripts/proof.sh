@@ -12,20 +12,27 @@
 # A full, release or nightly proof runs its gates on one host and then writes
 # one part (`local`) and merges it with `proofrun merge`, the same verdict the
 # CI proof job runs over many parts. A --part invocation is one part of a CI
-# proof: plan, build, fast, integration:K, ui-e2e:K, activity-fixture:A or
-# observability. See docs/PROOFS.md.
+# proof: plan, build, fast, race, race-repeat, fuzz, integration:K, ui-e2e:K,
+# activity-fixture:A or observability. See docs/PROOFS.md.
 #
 # The FULL proof is the merge gate (§11.3) and runs everything: lint, build,
 # unit, vet-integration, this tree's activity images pushed under a tag of the
 # proof's own, every test of every integration package (as separate processes,
 # PROOF_JOBS at a time), the activity contract fixture on those images, the UI
-# type-check, unit and Playwright suites, the site's check and build, and the
+# type-check, unit and Playwright suites, the site's check and build, the race
+# gate (the unit suites under the race detector, -short), and the
 # observability gate whenever the tree differs from main in a telemetry path.
 #
 # The FEATURE proof is a branch's evidence, never merge evidence: the fast
 # gates, the change's evidence (the tests and specs that prove it) and its
 # regression set, as test/tools/proofrun select decides from the diff against
-# the merge base with --base (default main) and scripts/proof-scope.tsv.
+# the merge base with --base (default main) and scripts/proof-scope.tsv; and
+# the race gate over the packages the change touches, when it touches any.
+#
+# The NIGHTLY proof runs the deferred tests and spec files, and two lanes of
+# its own: the race repeat (the concurrency-heavy packages' unit suites under
+# the race detector, RACE_REPEAT_COUNT times) and the fuzz lane (every Fuzz
+# target, sharing FUZZ_BUDGET). Both run alone, before the integration phase.
 #
 # Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation (an unknown
 # base, an existing proof directory, missing evidence, a pattern that matches
@@ -47,6 +54,9 @@
 #   PROOF_GATES=a,b     run only these gates — debugging only, never merge-eligible
 #   PROOF_TEMPORAL=own  `shared` uses make infra-up's Temporal — debugging only,
 #                       never merge-eligible
+#   FUZZ_BUDGET=105m    the nightly fuzz lane's whole time, shared equally by its
+#                       Fuzz targets: a whole number of s, m or h (the CI fuzz
+#                       step is limited to 135m, docs/PROOFS.md §2.3)
 #   PROOF_FAIL_FAST=1   stop at the first failing gate: the fast gates run first,
 #                       one after another, and a failure in any gate stops the
 #                       gates still running and starts no other. 0 runs every
@@ -87,7 +97,7 @@ invalid() {
 	say "proof: $*" >&2
 	exit 2
 }
-usage() { sed -n '2,39p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,46p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ---- arguments (exit 2) -------------------------------------------------------
 TIER=full
@@ -224,6 +234,8 @@ PROOF_FAIL_FAST="${PROOF_FAIL_FAST:-1}"
 [[ "$PROOF_UI_WORKERS" =~ ^[1-9][0-9]*$ ]] || invalid "PROOF_UI_WORKERS must be a positive integer"
 case "$PROOF_TEMPORAL" in own | shared) ;; *) invalid "PROOF_TEMPORAL must be own or shared" ;; esac
 case "$PROOF_FAIL_FAST" in 0 | 1) ;; *) invalid "PROOF_FAIL_FAST must be 1 (the default) or 0" ;; esac
+FUZZ_BUDGET="${FUZZ_BUDGET:-105m}"
+[[ "$FUZZ_BUDGET" =~ ^[1-9][0-9]*[smh]$ ]] || invalid "FUZZ_BUDGET must be a whole number of s, m or h, not '$FUZZ_BUDGET'"
 REGISTRY="${ORK_LOCAL_REGISTRY:-localhost:5001}"
 if [ -z "$PROOF_ID" ]; then
 	PROOF_ID="pr-$(printf '%s' "$DIR" | sha256sum | cut -c1-12)"
@@ -248,6 +260,23 @@ fi
 # build graph instead of nine.
 STACK_BINARIES=(./cmd/ork ./cmd/orker ./cmd/orkctl ./test/tools/cosign-sign ./test/tools/deaf-poller ./test/tools/bucket-ensure ./test/tools/reclaim-run ./test/tools/generations ./test/tools/archive-legacy-run ./test/tools/archive-sized-run)
 
+# The nightly race repeat (docs/PROOFS.md §2.3), local and in a CI part: the
+# unit suites of the concurrency-heavy packages under the race detector,
+# -short, RACE_REPEAT_COUNT times in one run, so a race that one run in several
+# exposes is seen. The race gate itself runs every package once.
+RACE_REPEAT_COUNT=3
+RACE_REPEAT_PACKAGES=(./internal/engine/... ./internal/orker/... ./internal/api/... ./pkg/...)
+
+# race_toolchain: the race detector links C code, so it needs cgo and a C
+# compiler (go help build, -race). A gate that needs it refuses to start
+# without, rather than failing in its first compile.
+race_toolchain() {
+	[ "$(go env CGO_ENABLED 2>/dev/null)" = 1 ] || return 1
+	local cc
+	cc="$(go env CC 2>/dev/null)"
+	command -v "${cc%% *}" >/dev/null 2>&1
+}
+
 # proofrun decides the selection before anything is written, so it is built
 # first, into a temporary directory, and moved into the proof's bin/ later.
 PR_TMP="$(mktemp -d)"
@@ -267,9 +296,10 @@ if [ -n "$PART" ]; then
 	exit $?
 fi
 
-ALL_GATES="temporal binaries integration-compile lint build unit vet-integration images integration activity-fixture ui-check ui-unit site ui-e2e observability"
+ALL_GATES="temporal binaries integration-compile lint build unit vet-integration images integration activity-fixture ui-check ui-unit site race race-repeat fuzz ui-e2e observability"
 declare -A RUN=()
 SPEC_ARGS=()
+RACE_PACKAGES=()
 OBS_PATHS=""
 SEL_TMP=""
 cleanup_tmp() {
@@ -295,6 +325,14 @@ if [ "$TIER" = feature ]; then
 		integration | ui_check | ui_unit | site | ui_e2e | activity_fixture | observability)
 			if [ "$value" = yes ]; then RUN[${key//_/-}]=1; fi
 			;;
+		race_packages)
+			# The race gate runs for the packages the change touches, and
+			# only when it touches any.
+			if [ -n "$value" ]; then
+				RUN[race]=1
+				read -r -a RACE_PACKAGES <<<"$value"
+			fi
+			;;
 		specs)
 			if [ -n "$value" ] && [ "$value" != ALL ]; then
 				read -r -a SPEC_ARGS <<<"$value"
@@ -303,7 +341,7 @@ if [ "$TIER" = feature ]; then
 		esac
 	done < <("$PR" gates -select "$SEL_TMP")
 else
-	for g in lint build unit vet-integration images integration activity-fixture ui-check ui-unit site ui-e2e; do RUN[$g]=1; done
+	for g in lint build unit vet-integration images integration activity-fixture ui-check ui-unit site race ui-e2e; do RUN[$g]=1; done
 	OBS_PATHS="$("$PR" touches -base "$BASE" -action observability)"
 	case $? in
 	0) RUN[observability]=1 ;;
@@ -311,11 +349,15 @@ else
 	*) invalid "cannot tell whether the tree touches a telemetry path" ;;
 	esac
 	if [ "$TIER" = nightly ]; then
-		# The nightly tier runs the deferred tests and spec files and nothing
-		# else: the integration tests scripts/proof-nightly-tests.txt names,
-		# and the Playwright specs scripts/proof-nightly-specs.txt names.
+		# The nightly tier runs the deferred tests and spec files and its two
+		# lanes, and nothing else: the integration tests
+		# scripts/proof-nightly-tests.txt names, the Playwright specs
+		# scripts/proof-nightly-specs.txt names, the race repeat and the
+		# fuzz lane.
 		RUN=()
 		RUN[integration]=1
+		RUN[race-repeat]=1
+		RUN[fuzz]=1
 		mapfile -t SPEC_ARGS < <(grep -v '^[[:space:]]*#' scripts/proof-nightly-specs.txt 2>/dev/null |
 			awk -F'\t' 'NF >= 4 && $1 != "" { sub(/^ui\//, "", $1); print $1 }')
 		if [ ${#SPEC_ARGS[@]} -gt 0 ]; then RUN[ui-e2e]=1; fi
@@ -393,6 +435,12 @@ elif runs temporal || runs activity-fixture; then
 fi
 if runs integration; then
 	need "the cosign CLI on PATH (image-policy interop test)" command -v cosign
+fi
+# The unit gate needs it too: proofrun's own tests run go test -race, and a
+# feature proof whose change touches no Go package races nothing and still runs
+# the unit gate.
+if runs race || runs race-repeat || runs unit; then
+	need "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH (go env CC)" race_toolchain
 fi
 if runs ui-check || runs ui-unit || runs ui-e2e || runs site; then
 	need "bun on PATH" command -v bun
@@ -705,6 +753,16 @@ step ui-unit ui-unit.log in_ui bun test test/
 # command checks it (the docs sync, the token drift check, astro check) and
 # builds it (link validation included). It needs no Temporal and no Docker.
 step site site.log in_site bash -c 'bun run check && bun run build'
+# The race gate and the nightly lanes run alone, after the cheap gates and
+# before the setup: the detector multiplies every test's time several times
+# over, so a race run beside other gates would only make both load-sensitive,
+# and a race found here ends the proof before the long gates start. A full
+# proof runs every package; a feature proof the packages the change touches.
+# None sets ORK_PROOF_DIR: the measurements the unit gate writes there are the
+# unit gate's, and one taken under the detector is evidence of nothing.
+step race race.log "$PR" unit -race -short -out "$DIR" "${RACE_PACKAGES[@]}"
+step race-repeat race-repeat.log "$PR" unit -race -short -count "$RACE_REPEAT_COUNT" -out "$DIR" "${RACE_REPEAT_PACKAGES[@]}"
+step fuzz fuzz.log "$PR" fuzz -out "$DIR" -budget "$FUZZ_BUDGET"
 
 # ---- P0: the setup, one concurrent group: Temporal, images, binaries, test binaries --
 # Everything the long gates need, started together once the fast gates have

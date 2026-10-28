@@ -75,9 +75,31 @@ tidy: ## go mod tidy
 test: ## Run unit tests
 	go test ./... -count=1
 
+# The race gate's run, without its ledger (docs/PROOFS.md §2.3): the unit suites
+# under the race detector with -short, which skips the scale tests the unit
+# gate runs without it. RACE_COUNT=3 RACE_PACKAGES='./internal/engine/...'
+# is the shape of the nightly repeat. The detector needs cgo and a C compiler.
+# go test's -timeout covers a test binary across every -count repeat, so it is
+# RACE_MINUTES_PER_RUN times RACE_COUNT, as the gate gives it
+# (raceTimeoutPerRun, test/tools/proofrun/run.go; a test holds the two equal).
+RACE_COUNT ?= 1
+RACE_PACKAGES ?= ./...
+RACE_MINUTES_PER_RUN ?= 30
+RACE_TIMEOUT ?= $(shell echo $$(( $(RACE_MINUTES_PER_RUN) * $(RACE_COUNT) )))m
 .PHONY: test-race
-test-race: ## Run tests with the race detector
-	go test ./... -race -count=1
+test-race: ## Run the unit tests under the race detector, -short (RACE_COUNT=N repeats, RACE_PACKAGES='./pkg/...' narrows)
+	go test -race -short -count=$(RACE_COUNT) -timeout $(RACE_TIMEOUT) $(RACE_PACKAGES)
+
+# The nightly fuzz lane's run (docs/PROOFS.md §2.3): every Fuzz target of the
+# module, sharing FUZZ_BUDGET between them (or FUZZTIME each, when it is set), a
+# ledger and a log per target under FUZZ_OUT, and the crasher input of a target
+# that fails kept under FUZZ_OUT/crashers.
+FUZZ_BUDGET ?= 45m
+FUZZTIME ?=
+FUZZ_OUT ?= .data/fuzz/$(shell date -u +%Y%m%dT%H%M%SZ)
+.PHONY: fuzz
+fuzz: ## Fuzz every Fuzz target, sharing FUZZ_BUDGET (default 45m) or FUZZTIME each; crashers are kept under FUZZ_OUT
+	go run ./test/tools/proofrun fuzz -out $(FUZZ_OUT) $(if $(FUZZTIME),-fuzztime $(FUZZTIME),-budget $(FUZZ_BUDGET))
 
 .PHONY: cover
 cover: ## Run tests with coverage -> coverage.out
@@ -143,10 +165,25 @@ run-orker: ## Run an Orker (Temporal activity worker + OCI runtime)
 	go run ./cmd/orker
 
 ## ---- quality ----
+# staticcheck is the version go.mod pins (a `tool` directive), run with its
+# default checks over the module twice: once as built, once with the
+# integration tag the integration suites are vetted with. A symbol used only by
+# an integration-tagged file is dead to the first run and live to the second,
+# so each run answers for the files it compiles and the tree needs both clean.
 .PHONY: lint
-lint: ## Run go vet + gofmt check
+lint: ## Run go vet, the gofmt check and staticcheck (pinned in go.mod; default checks, with and without the integration tag)
 	go vet ./...
 	@test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './gen/*'))" || (echo "gofmt needed:"; gofmt -l $$(find . -name '*.go' -not -path './gen/*'); exit 1)
+	go tool staticcheck ./...
+	go tool staticcheck -tags=integration ./...
+
+# govulncheck is the version go.mod pins. It reads the vulnerability database
+# over the network, so it is in neither `lint` nor any proof gate: a network
+# failure must never fail a proof. ci.yml and nightly.yml run it. It reports
+# only the vulnerabilities whose vulnerable symbols the code can reach.
+.PHONY: vuln
+vuln: ## Scan for reachable known vulnerabilities with the pinned govulncheck (needs the network; in no lint or proof gate)
+	go tool govulncheck ./...
 
 .PHONY: fmt
 fmt: ## Format Go code
@@ -159,7 +196,7 @@ check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integratio
 	go test -short ./...
 
 .PHONY: merge-check
-merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree (AGENTS.md §11.3)
+merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree, and with NIGHTLY=proof/<name> verify that nightly proof of main's tip (AGENTS.md §11.3; none is required)
 	go vet -tags=integration ./...
 	@echo "merge-check OK: the tree builds, passes lint and unit tests, and its integration suites compile"
 ifneq ($(strip $(PROOF)),)
@@ -205,7 +242,7 @@ proof-ui: ## Alias of proof: the full proof already runs the UI type-check, unit
 	@scripts/proof.sh $(NAME)
 
 .PHONY: proof-nightly
-proof-nightly: ## The nightly tier: only the deferred scale and soak tests and specs, on one host -> proof/<NAME>-nightly/
+proof-nightly: ## The nightly tier: the deferred scale and soak tests and specs, the race repeat and the fuzz lane, on one host -> proof/<NAME>-nightly/
 	@scripts/proof.sh --tier nightly $(if $(NAME),$(NAME),nightly)
 
 .PHONY: proof-release
@@ -264,7 +301,7 @@ proof-observability: ## Only the observability gate, with what it needs (needs: 
 	@PROOF_GATES=observability scripts/proof.sh $(NAME)
 
 .PHONY: github-merge-gate
-github-merge-gate: ## Check (APPLY=1 applies) the required proof check; not enforced until the repository is public
+github-merge-gate: ## Check (APPLY=1 applies) the required proof check; not enforced until the apply is run; refuses a private repository
 	@APPLY=$(or $(APPLY),0) QUEUE=$(or $(QUEUE),0) CODEOWNER_REVIEW=$(or $(CODEOWNER_REVIEW),1) scripts/github-merge-gate.sh
 
 .PHONY: proof-stop

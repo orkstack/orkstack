@@ -29,6 +29,15 @@ import (
 
 // --- fakes ------------------------------------------------------------------
 
+// asksDefaultMode reports whether a describe request leaves the api mode unset,
+// which is the default mode every release read must use: it is the only mode
+// that answers versioning_info and the one that lists every poller whatever
+// release it registered with.
+func asksDefaultMode(req *workflowservice.DescribeTaskQueueRequest) bool {
+	//lint:ignore SA1019 asserting the deprecated enhanced-mode switch stays unset is the point
+	return req.GetApiMode() == enumspb.DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED
+}
+
 type fakeDeploymentHandle struct {
 	client.WorkerDeploymentHandle
 
@@ -301,7 +310,7 @@ func TestEngineReplicas_CountFreshWorkflowPollersByRelease(t *testing.T) {
 	}
 	req := fake.channelReqs[0]
 	if req.GetTaskQueue().GetName() != task.DefaultQueue || req.GetTaskQueueType() != enumspb.TASK_QUEUE_TYPE_WORKFLOW ||
-		req.GetApiMode() != enumspb.DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED {
+		!asksDefaultMode(req) {
 		t.Fatalf("request = %v", req)
 	}
 
@@ -493,7 +502,8 @@ func TestRoutingRevision_EqualExactlyWhenRoutingIsEqual(t *testing.T) {
 			}
 		}
 	}
-	if (Routing{Current: "v1"}).Revision() != (Routing{Current: "v1"}).Revision() {
+	first, second := Routing{Current: "v1"}, Routing{Current: "v1"}
+	if first.Revision() != second.Revision() {
 		t.Fatal("equal routings differ")
 	}
 }
@@ -548,7 +558,7 @@ func TestAwaitRouting_ReadsTheEngineChannelInDefaultMode(t *testing.T) {
 	}
 	req := fake.channelReqs[0]
 	if req.GetTaskQueue().GetName() != task.DefaultQueue || req.GetTaskQueueType() != enumspb.TASK_QUEUE_TYPE_WORKFLOW ||
-		req.GetApiMode() != enumspb.DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED {
+		!asksDefaultMode(req) {
 		t.Fatalf("request = %v", req)
 	}
 

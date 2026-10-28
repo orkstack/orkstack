@@ -283,10 +283,17 @@ func ParseLogChunkKey(key string) (ref LogRef, seq int64, truncated bool, ok boo
 
 // parseFixedWidth decodes one zero-padded counter segment. The width is
 // checked, not just the digits: a segment of another width was written by
-// something else and its ordering guarantee is not this one's.
+// something else and its ordering guarantee is not this one's. Every byte is
+// a digit, because strconv.ParseInt also takes a sign, and a segment spelled
+// with a plus names the same record as the one without.
 func parseFixedWidth(segment string, width int) (int64, bool) {
 	if len(segment) != width {
 		return 0, false
+	}
+	for i := 0; i < len(segment); i++ {
+		if segment[i] < '0' || segment[i] > '9' {
+			return 0, false
+		}
 	}
 	value, err := strconv.ParseInt(segment, 10, 64)
 	if err != nil || value < 0 {

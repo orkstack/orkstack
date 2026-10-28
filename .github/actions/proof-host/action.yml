@@ -44,7 +44,9 @@ runs:
         echo '{"dns":["172.17.0.1"]}' | sudo tee /etc/docker/daemon.json
         sudo systemctl restart systemd-resolved
         sudo systemctl restart docker
-        docker run --rm alpine:3.20 getent hosts host.docker.internal
+        # The one container this action runs that is not the stack's: pulled
+        # from Docker Hub by tag, so it is bounded like a fetch is.
+        timeout -k 10 360 docker run --rm alpine:3.20 getent hosts host.docker.internal
 
     # About 20 jobs a run each need the stack's images; Docker Hub allows 100
     # anonymous pulls an hour per address. One job saves them, every job loads
@@ -62,11 +64,33 @@ runs:
           docker load -i /tmp/orkstack-stack-images.tar
         fi
 
+    # What the cache did not load is pulled here, through proof-fetch: two
+    # bounded attempts, each in the setup log, instead of the unbounded pulls
+    # `compose up` and `docker save` would make. The compose file pins each
+    # image by digest, which proof-fetch requires; the stack then starts with
+    # --pull never, so a missing image is an explicit failure and never a
+    # stall.
+    - name: Missing stack images
+      id: missing
+      shell: bash
+      run: |
+        set -euo pipefail
+        missing=()
+        while read -r image; do
+          docker image inspect "$image" >/dev/null 2>&1 || missing+=("$image")
+        done < <(docker compose -f deploy/docker-compose.yml config --images temporal seaweedfs registry | sort -u)
+        echo "images=${missing[*]}" >>"$GITHUB_OUTPUT"
+    - name: fetch stack images
+      if: steps.missing.outputs.images != ''
+      uses: ./.github/actions/proof-fetch
+      with:
+        image: ${{ steps.missing.outputs.images }}
+
     - name: SeaweedFS and registry
       shell: bash
       run: |
         set -euo pipefail
-        docker compose -f deploy/docker-compose.yml up -d --wait seaweedfs registry
+        docker compose -f deploy/docker-compose.yml up -d --wait --pull never seaweedfs registry
         # 403 is a healthy answer from the S3 server to an unsigned request.
         code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9000/)"
         [ "$code" = 200 ] || [ "$code" = 403 ]
@@ -84,20 +108,39 @@ runs:
           # reference that was never pulled, and `|| true` hid it.
           mapfile -t images < <(docker compose -f deploy/docker-compose.yml config --images temporal seaweedfs registry | sort -u)
           for image in "${images[@]}"; do
-            docker image inspect "$image" >/dev/null 2>&1 || docker pull --quiet "$image"
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+              # The step that pulls it failed and said so; nothing is pulled here.
+              echo "not saving the stack images: $image is not present"
+              exit 0
+            fi
           done
           docker save -o /tmp/orkstack-stack-images.tar "${images[@]}"
         fi
 
+    # The CLI the image-policy interop test was proven with locally: cosign
+    # v2.6.5, the linux/amd64 binary of the release, downloaded through
+    # proof-fetch (two bounded attempts, in the setup log) and kept only if it
+    # hashes to the SHA-256 the release's cosign_checksums.txt lists for it.
+    # The installer action had no way to retry without continue-on-error, which
+    # no workflow here allows, and v4 of it defaults to cosign v3, whose new
+    # bundle format is not the signature layout OrkStack verifies; moving to it
+    # is its own change with its own proof. To move cosign, take the new line
+    # from the release's checksums and change the pair here and in
+    # test/tools/proofrun/proofhost_test.go.
+    - name: fetch cosign
+      if: inputs.cosign == 'true'
+      uses: ./.github/actions/proof-fetch
+      with:
+        url: https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign-linux-amd64
+        sha256: c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644
+        path: ${{ runner.temp }}/cosign/cosign
     - name: cosign
       if: inputs.cosign == 'true'
-      uses: sigstore/cosign-installer@v4.1.2
-      with:
-        # The CLI the image-policy interop test was proven with locally.
-        # Installer v4 defaults to cosign v3, whose new bundle format is not
-        # the signature layout OrkStack verifies; moving to it is its own
-        # change with its own proof.
-        cosign-release: v2.6.5
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo install -m 0755 "$RUNNER_TEMP/cosign/cosign" /usr/local/bin/cosign
+        cosign version
 
     - name: temporal CLI
       if: inputs.temporal-cli == 'true'
@@ -105,7 +148,7 @@ runs:
       run: |
         set -euo pipefail
         image="$(docker compose -f deploy/docker-compose.yml config --images | grep temporalio/temporal | head -n1)"
-        id="$(docker create "$image")"
+        id="$(docker create --pull never "$image")"
         sudo docker cp "$id:/usr/local/bin/temporal" /usr/local/bin/temporal
         docker rm "$id" >/dev/null
         temporal --version

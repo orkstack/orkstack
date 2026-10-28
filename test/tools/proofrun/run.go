@@ -954,10 +954,10 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 	// proof (mergeIntegration), since a local proof is one plan and one part.
 	var expected []testKey
 	for _, e := range plan.Expected {
-		if isDeferred(plan.Deferred, testKey{e.Package, e.Test}) {
+		if isDeferred(plan.Deferred, testKey(e)) {
 			continue
 		}
-		expected = append(expected, testKey{e.Package, e.Test})
+		expected = append(expected, testKey(e))
 	}
 	l := buildLedgerQ("integration", expected, listed, r.c, allow, quarantine)
 	for _, d := range plan.Deferred {
@@ -1279,8 +1279,8 @@ func runShard(o *integrationPlanOptions) int {
 	}
 	var expected []testKey
 	for _, e := range plan.Expected {
-		if shardSet[testKey{e.Package, e.Test}] {
-			expected = append(expected, testKey{e.Package, e.Test})
+		if shardSet[testKey(e)] {
+			expected = append(expected, testKey(e))
 		}
 	}
 	l := buildLedgerQ("integration", expected, listed, r.c, allow, quarantine)
@@ -1368,18 +1368,48 @@ func writeLedgerAndReport(out string, l ledger) int {
 	return 0
 }
 
-// cmdUnit is `proofrun unit`: the unit suites, with a ledger.
+// raceTimeoutPerRun is the timeout the race suites give go test for one run of
+// a package's tests. The default is ten minutes, and internal/engine's -short
+// suite under the race detector took 515 s on a loaded 16-core host, so a
+// smaller runner would be killed by the timeout rather than judged.
+const raceTimeoutPerRun = 30 * time.Minute
+
+// raceTimeoutFor is the -timeout a race suite gives go test for count runs. The
+// timeout covers a test binary from its start to its end, across every
+// repeat of -count, so a repeat of N runs gets N runs' time: the bound stays
+// what it is for one run, a hang guard and not a budget the repeat eats.
+func raceTimeoutFor(count int) string {
+	if count < 1 {
+		count = 1
+	}
+	return (raceTimeoutPerRun * time.Duration(count)).String()
+}
+
+// cmdUnit is `proofrun unit`: the unit suites, with a ledger. With -race it
+// is the race gate (race.go): the same listing and ledger, the suites run
+// under the race detector.
 func cmdUnit(args []string) int {
 	fs := flag.NewFlagSet("unit", flag.ContinueOnError)
 	out := fs.String("out", "", "directory for the ledger and events (required)")
 	allowFile := fs.String("allow", "scripts/proof-allowed-skips.txt", "allowed skips")
 	quarantineFile := fs.String("quarantine", "scripts/proof-quarantine.txt", "the quarantine list")
 	quarantineBase := fs.String("quarantine-base", "", "the base's copy of the quarantine list (only entries it carries excuse)")
+	race := fs.Bool("race", false, "run the suites under the race detector: the race gate, ledger race-tests.json; a data race fails it, and no quarantine excuses a failure")
+	short := fs.Bool("short", false, "pass -short to go test (only with -race): the scale tests skip, and the merger holds each skip to the unit gate")
+	count := fs.Int("count", 1, "run every test this many times (only with -race; above 1 the suite is race-repeat, ledger race-repeat-tests.json)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *out == "" {
 		fmt.Fprintln(os.Stderr, "proofrun unit: -out is required")
+		return 2
+	}
+	if *count < 1 {
+		fmt.Fprintln(os.Stderr, "proofrun unit: -count must be at least 1")
+		return 2
+	}
+	if !*race && (*short || *count > 1) {
+		fmt.Fprintln(os.Stderr, "proofrun unit: -short and -count above 1 belong to the race gate: pass -race with them")
 		return 2
 	}
 	allow, err := readAllowlist(*allowFile)
@@ -1391,9 +1421,20 @@ func cmdUnit(args []string) int {
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
+	suite := unitSuiteName(*race, *count)
 
-	// The listing: every test each package's unit binary reports.
-	listCmd := exec.Command("go", append([]string{"test", "-json", "-list", ".*"}, patterns...)...)
+	// The listing: every test each package's unit binary reports. A race
+	// suite compiles it with the detector too, so the run reuses the build.
+	listArgs := []string{"test", "-json", "-list", ".*"}
+	runArgs := []string{"test", "-json", fmt.Sprintf("-count=%d", *count)}
+	if *race {
+		listArgs = append(listArgs, "-race")
+		runArgs = append(runArgs, "-race", "-timeout", raceTimeoutFor(*count))
+	}
+	if *short {
+		runArgs = append(runArgs, "-short")
+	}
+	listCmd := exec.Command("go", append(listArgs, patterns...)...)
 	var listErr bytes.Buffer
 	listCmd.Stderr = &listErr
 	listOut, err := listCmd.Output()
@@ -1402,21 +1443,27 @@ func cmdUnit(args []string) int {
 		return 1
 	}
 	listed, expected := parseJSONListing(listOut)
-	checkedOn := todayUTC()
-	quarantine, qProblems, qExpiring, err := quarantineProof(*quarantineFile, *quarantineBase, listed, allow, checkedOn)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "proofrun unit:", err)
-		return 2
-	}
-	printQuarantineWarnings(stdout, qExpiring)
 
-	events, err := os.Create(filepath.Join(*out, "unit.events.jsonl"))
+	// Only the plain unit gate has a quarantine: a race suite excuses nothing.
+	var quarantine map[testKey]quarantineEntry
+	var qProblems []string
+	if !*race {
+		var qExpiring []quarantineEntry
+		quarantine, qProblems, qExpiring, err = quarantineProof(*quarantineFile, *quarantineBase, listed, allow, todayUTC())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun unit:", err)
+			return 2
+		}
+		printQuarantineWarnings(stdout, qExpiring)
+	}
+
+	events, err := os.Create(filepath.Join(*out, suite+".events.jsonl"))
 	if err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
 	defer events.Close()
-	cmd := exec.Command("go", append([]string{"test", "-json", "-count=1"}, patterns...)...)
+	cmd := exec.Command("go", append(runArgs, patterns...)...)
 	cmd.Stderr = stdout
 	goOut, err := cmd.StdoutPipe()
 	if err != nil {
@@ -1428,15 +1475,21 @@ func cmdUnit(args []string) int {
 		return 1
 	}
 	c := newCollector()
-	readErr := readEvents(goOut, c, "unit", events, stdout, nil)
+	c.sticky = *count > 1
+	readErr := readEvents(goOut, c, suite, events, stdout, nil)
 	runErr := cmd.Wait()
 
-	l := buildLedgerQ("unit", expected, listed, c, allow, quarantine)
+	var l ledger
+	if *race {
+		l = buildRaceLedger(suite, *short, expected, listed, c, allow)
+	} else {
+		l = buildLedgerQ(suite, expected, listed, c, allow, quarantine)
+	}
 	l.Problems = append(qProblems, l.Problems...)
 	if readErr != nil {
 		l.Problems = append(l.Problems, "reading go test -json: "+readErr.Error())
 	}
-	if runErr != nil && !unitExitExcused(l, c.pkgEnds, listed, c.packageOutput) {
+	if runErr != nil && (*race || !unitExitExcused(l, c.pkgEnds, listed, c.packageOutput)) {
 		l.Problems = append(l.Problems, "go test exited: "+runErr.Error())
 	}
 	return writeLedgerAndReport(*out, l)

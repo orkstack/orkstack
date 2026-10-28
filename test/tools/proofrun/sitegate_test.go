@@ -26,11 +26,14 @@ var scriptTools = []string{
 	"bash", "sh", "env", "dirname", "basename", "ps", "tr", "setsid", "git", "go", "mktemp", "date",
 	"sha256sum", "cut", "sed", "awk", "grep", "mkdir", "mv", "cp", "chmod", "rm", "cat", "find", "sort",
 	"head", "tail", "wc", "hostname", "nproc", "uname", "seq", "sleep", "kill", "xargs", "tee", "ls",
-	"readlink", "id", "test", "true", "false",
+	"readlink", "id", "test", "true", "false", "gcc", "cc",
 }
 
 // stubProofrun answers what scripts/proof.sh asks of proofrun on the paths
-// under test: no telemetry path is touched, and the gate files are none.
+// under test: no telemetry path is touched, and the gate files are none. The
+// unit and fuzz gates it records, one line of arguments each, in
+// $PROOFRUN_LOG, and fails when $STUB_FAIL_UNIT or $STUB_FAIL_FUZZ is set; it
+// prints $STUB_GATES for `gates`, as a feature selection would.
 const stubProofrun = `package main
 
 import (
@@ -40,12 +43,28 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "touches" {
+	if len(os.Args) < 2 {
+		return
+	}
+	switch os.Args[1] {
+	case "touches":
 		if strings.Contains(strings.Join(os.Args[2:], " "), "-gate-files") {
 			fmt.Println("[]")
 			return
 		}
 		os.Exit(1)
+	case "gates":
+		fmt.Print(os.Getenv("STUB_GATES"))
+	case "unit", "fuzz":
+		if log := os.Getenv("PROOFRUN_LOG"); log != "" {
+			if f, err := os.OpenFile(log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+				fmt.Fprintln(f, strings.Join(os.Args[1:], " "))
+				f.Close()
+			}
+		}
+		if os.Getenv("STUB_FAIL_"+strings.ToUpper(os.Args[1])) != "" {
+			os.Exit(1)
+		}
 	}
 }
 `
@@ -69,6 +88,7 @@ type siteScriptRepo struct {
 	fakes string // a PATH directory of the fake docker and make
 	bin   string // a PATH directory of the fake bun, when a test wants one
 	log   string // the fake bun's log
+	calls string // the stub proofrun's log of the unit and fuzz gates it was asked to run
 }
 
 func newSiteScriptRepo(t *testing.T) *siteScriptRepo {
@@ -88,6 +108,7 @@ func newSiteScriptRepo(t *testing.T) *siteScriptRepo {
 	r.fakes = filepath.Join(r.root, ".fakes")
 	r.bin = filepath.Join(r.root, ".bun")
 	r.log = filepath.Join(r.root, "bun.log")
+	r.calls = filepath.Join(r.root, "proofrun.log")
 	for _, d := range []string{r.tools, r.fakes} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -119,7 +140,7 @@ func newSiteScriptRepo(t *testing.T) *siteScriptRepo {
 	}
 	r.write(filepath.Join(r.root, "go.mod"), "module stub\n", 0o644)
 	r.write(filepath.Join(r.root, "test/tools/proofrun/main.go"), stubProofrun, 0o644)
-	r.write(filepath.Join(r.root, ".gitignore"), "proof/\n.tools/\n.fakes/\n.bun/\n.tmp/\nbun.log\n", 0o644)
+	r.write(filepath.Join(r.root, ".gitignore"), "proof/\n.tools/\n.fakes/\n.bun/\n.tmp/\nbun.log\nproofrun.log\n", 0o644)
 	if err := os.MkdirAll(filepath.Join(r.root, ".tmp"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +209,8 @@ func (r *siteScriptRepo) run(env []string, args ...string) (int, string) {
 	}
 	cmd.Env = append(os.Environ(), hermeticGit()...)
 	cmd.Env = append(cmd.Env, "PATH="+path, "GOROOT="+strings.TrimSpace(string(goroot)), "GOTOOLCHAIN=local",
-		"GOFLAGS=", "GOWORK=off", "TMPDIR="+filepath.Join(r.root, ".tmp"), "BUN_LOG="+r.log, "PROOF_SESSION=", "PROOF_GATES=", "PROOF_FAIL_FAST=1")
+		"GOFLAGS=", "GOWORK=off", "TMPDIR="+filepath.Join(r.root, ".tmp"), "BUN_LOG="+r.log, "PROOFRUN_LOG="+r.calls, "PROOF_SESSION=", "PROOF_GATES=", "PROOF_FAIL_FAST=1",
+		"FUZZ_BUDGET=", "CGO_ENABLED=1")
 	cmd.Env = append(cmd.Env, env...)
 	cmd.WaitDelay = 20 * time.Second
 	out, err := cmd.CombinedOutput()
@@ -220,6 +242,17 @@ func (r *siteScriptRepo) bunRuns() []string {
 		return nil
 	}
 	return strings.Split(strings.TrimSpace(string(b)), "\n")
+}
+
+// proofrunCalls is the unit and fuzz invocations the stub proofrun logged,
+// with the proof directory's absolute path made relative to the repository.
+func (r *siteScriptRepo) proofrunCalls() []string {
+	b, err := os.ReadFile(r.calls)
+	if err != nil {
+		return nil
+	}
+	text := strings.ReplaceAll(string(b), r.root+"/", "")
+	return strings.Split(strings.TrimSpace(text), "\n")
 }
 
 func (r *siteScriptRepo) wroteNoProof() bool {

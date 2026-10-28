@@ -10,8 +10,94 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- Fuzz targets for the inputs OrkStack accepts from outside, each stating the
+  invariants the code or its reference doc claims and not only that nothing
+  panics: the list-filter grammar, compiler and matcher (a compiled set is a
+  fixed point of compiling and independent of filter order; a row matches as
+  the documented rules say; every pushdown is sound), the enum dialect, the
+  tolerant JSON codec against protojson, the trigger, webhook and await
+  doors, page tokens, webhook signing and delivery against a real receiver,
+  the Orkflow, automation and reference parsers, the `sh` template helper and
+  `orkctl`'s printed quoting against a real shell, a container's
+  `values.json`, the container argument vector, the Orker's cpu and memory
+  quantities (an accepted request renders to a positive limit within the cap),
+  the `allowed_registries` boundary rule, the secret-source matcher against a
+  regular expression, the evidence verifier against a count made without it,
+  the continuation object decoders, the run archive and saved-object decoders,
+  the stored-record decoders against their encoders, the live-log framing and
+  the object-key parsers, the WebSocket origin check against the library's own,
+  schedule specs, configuration files and arguments, telemetry sinks, a
+  registry's bearer challenge, the activity catalog, and `orkctl`'s group-by,
+  category, time and plan-output flags. Their seeds run in every unit gate and
+  a crasher a run finds is kept as a seed under `testdata/fuzz/`
+  (CONTRIBUTING.md, "Fuzzing"; AGENTS.md §11.1). Each fix below says how its
+  defect was found: by a failing input the fuzz engine wrote, or by reading the
+  code while stating a target's property, with the target's seed failing until
+  the fix.
+
+- A runner-size miss of a Go test's wall-clock budget is a recorded known gap,
+  like a UI spec's. A `kind=test` row of `scripts/proof-host-speed.tsv` may
+  declare `timing ID`, one check the test reports through
+  `internal/testsupport/proof` (`TimingBounds`, `Timing.Check`) instead of
+  `t.Errorf`. A miss fails nothing where it is measured; the test's last
+  cleanup writes `timing/<test>.json` under the part's artifacts and then
+  reports each miss as a line of a fixed form. The merger excuses the miss on
+  a CI `integration:K` part whose runner has fewer CPUs than the row's
+  reference, under a row the base carries identically, only when it derives
+  from the part itself that the test failed nothing else: the ledger shows it
+  as the only test of its job not to pass, with no crash and no failing
+  subtest; its own record says it failed no other assertion; the failure
+  output the ledger entry now keeps (the last lines a failing test printed)
+  ends in exactly the helper's lines; every recorded bound equals the
+  row's; and no miss took longer than the bound times the reference's CPUs
+  over the runner's. The record the excusal rests on is kept in the
+  `host_speed_failures` entry (`timing_record`) of `proof.json`, because a
+  part's artifacts are not kept in the merged proof. The helper's package,
+  `internal/testsupport/proof`, is now a gate file with a code owner, because
+  the excusal trusts the record it writes and the lines it prints. A failing test with no record, a local proof, a runner as large as
+  the reference, the release tier (the pre-release gate enforces the budgets
+  on the reference class, so this also ends the excusal of the UI rows there)
+  and any other failure still fail the proof. The rows are the
+  live `GetRun` p95 (2 s on 16 CPUs) of the three reduced-ceiling soak tests,
+  which missed at 2.014 s on 4 vCPUs in run 40593609129, and the run page at
+  the reduced ceiling (5 s on 16 CPUs), which missed at 9,485 ms in run
+  40571748126 with no row. The archive p95, `Events(0)` and replay checks go
+  through the same helper and have no row. The soaks' live `GetRun` also
+  keeps a bound on what it reads, which holds on every host: at most 110% of
+  the history events and of the history bytes of the generation it read (one
+  pass over it), and at most 4 saved-state objects. It bounds what is read,
+  not what reading costs: the evidence records the cost per thousand events
+  (`ms_per_1000_events`), which only the wall-clock numbers enforce, and the
+  run page's 5 s has no such counterpart. No threshold changed.
+- A race gate in the full and release proofs, and two lanes in the nightly
+  one. The `race` gate runs the unit suites under the race detector with
+  `-short` (`proofrun unit -race -short`, ledger `race-tests.json`): a data
+  race fails it whatever the tests reported, a test skipped in its `-short`
+  run is recorded as a skip, from a ledger that says its run had `-short`, and
+  must have passed the unit gate, which runs it without `-short`, and no
+  quarantine excuses a failure. A local proof runs it last of
+  the fast gates, alone; CI runs it as the `race` part beside `fast`; a
+  feature proof runs it over the packages its change touches
+  (`race_packages` in the selection). The nightly tier adds the `race-repeat`
+  lane (the engine, Orker, API and `pkg` packages' unit suites under the
+  detector, `-count 3`, with a `-timeout` of 30 minutes for each repetition; a
+  failure in any repetition stands, and a repetition that never reported
+  leaves its test with no outcome) and the `fuzz`
+  lane (`proofrun fuzz`: every `Fuzz` target, sharing a budget for the whole
+  lane, `FUZZ_BUDGET`, 105 minutes in CI, each target an equal part of what
+  remains less the overhead of starting it, never under 15 seconds, so the
+  lane ends inside its CI step however many targets there are, and a unit test
+  fails when the budget or the target count no longer fits the step; its
+  ledger records the fuzz time each target was given; a
+  crasher fails the lane and its input is kept under the part's `crashers/`,
+  leaving the tree as it was found). `make test-race` runs the race gate's
+  `go test` without its ledger, its `-timeout` included, and `make fuzz` runs
+  the lane (`FUZZ_BUDGET`, or `FUZZTIME` for each target). The detector needs
+  cgo and a C compiler, and a gate that runs it, the unit gate included (its
+  tests run `go test -race`), refuses to start without. The gate may fail on a
+  tree with a race in it until that race is fixed; that is its purpose.
 - A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
-  `proofrun runner-health`): every part measures its runner for about ten
+  `proofrun runner-health`): every part measures its runner for about fourteen
   seconds before any gate — sequential write and read throughput and fsync
   latency on its work disk, single-core and all-core CPU throughput, and
   available memory — into `runner-health.json`, with the floors of its
@@ -29,8 +115,303 @@ include breaking changes, and each is marked **BREAKING**.
   that the runner was degraded. The floors are derived from the 21 parts of
   run 40411125174, a third of the least measurement or three times the
   largest latency.
+- Informational runner-health readings: besides the judged disk write, disk
+  read and fsync, the measurement writes the probe a second time, reads it in
+  two more bursts (one right after that write, one after the all-core CPU
+  measurement) and takes one more fsync reading, last. Each is recorded in
+  the metric's `samples` with the offset at which it began and, for a write
+  or a read, the region of the probe it covered; the second burst starts
+  where the first stopped, so bursts read different blocks where the file is
+  large enough. The judged measurements are unchanged, and so is the floor: it
+  judges only each metric's first reading, a later reading never degrades a
+  runner, and `scripts/proof-runner-floors.tsv` has no row for a later
+  reading. The readings appear in `proof.json`'s `runner_health`, in a
+  "Runner health" section of every README and in the part's `runner-health:`
+  log lines, and feed the next derivation of the floors
+  (`docs/PROOFS.md` §10, which gives a `jq` recipe). The measurement takes
+  about four seconds longer.
+- A third kind of part attempt that may run again, **setup-failed**: a CI job
+  that failed, whose proof step never started, in a fetch or install step on a
+  per-kind allowlist (`setupStepNames`: `proof host`, `fetch plan`,
+  `fetch build`, `fetch browser image`, `Chromium (host)`, `bun install`,
+  `observability stack`). It ran no test and left no result, so the merger
+  treats it exactly as a lost or a degraded part: `proof.json` lists it under
+  `setup_failures` and records the rerun with reason `setup-failed`, and the
+  README names it. The plan and the build have no entry; a failure in any
+  other step, or any attempt that recorded a result, is still not
+  rerun-eligible. The three `proof-host` steps of `proof.yml` are named, since
+  the jobs API reports a composite action only by its step's name, and the
+  merger's step names (`proofStepNames`, `setupStepNames`) are pinned to the
+  workflow in both directions, with rename mutations.
+- `proof-rerun.yml` and `proofrun rerun-plan`: automatic reruns of a failed
+  candidate proof. Off unless the repository variable `PROOF_AUTO_RERUN` is
+  `true`; it acts on a push to `validate/full/**` of this repository, while the
+  run attempt is below 3 (at most two automatic reruns), and runs
+  `gh run rerun --failed` only when every failed job is the `proof` job or a
+  part the merger's own classification calls lost, setup-failed or degraded.
+  The planner reads the attempt's jobs, annotations and logs through
+  `gh api`, prints only words it validated, and runs from the default branch;
+  the merger stays the only authority, so a wrong rerun can only make a proof
+  ineligible. The workflow takes `checks: read` beside `actions: write` and
+  `contents: read`, because the evidence is a check-run annotation. A stack
+  part that stops on a runner below the floor now prints one fixed-word
+  `::error::` annotation under `GITHUB_ACTIONS=true`, which the planner reads
+  and the merger does not.
+- Static analysis. `make lint` runs staticcheck, pinned in `go.mod` as a `tool`
+  directive (`honnef.co/go/tools` v0.8.2), with its default checks over the
+  module as built and again with `-tags=integration`, so `make check`,
+  `make merge-check` and the lint gate of every proof run it. A finding is fixed
+  in the code; the few that are not defects carry a line-level `//lint:ignore`
+  saying why (the Temporal SDK's `VersionsInfo`, its only field for a queue's
+  poller records, and the S3 multipart upload manager, whose v0 successor is a
+  change of its own). `make vuln` runs the pinned `govulncheck`
+  (`golang.org/x/vuln` v1.9.0) and reports the vulnerabilities whose vulnerable
+  code the module reaches. It needs the network, so it is in no lint and no
+  proof; `ci.yml` › `vuln` and `nightly.yml` › `vuln` run it, and a reachable
+  advisory fails the run, which for the nightly is a failing `main`. Adding the
+  two tools raised the indirect modules `golang.org/x/net`, `x/sys`, `x/sync`
+  and `x/text` to what their requirements need. The `ci.yml` › `check` and
+  `feature` proof steps and `proof.yml` › `fast` have five minutes more for the
+  lint time (docs/PROOFS.md §11.5). Its first run found three advisories no
+  OrkStack code reaches, in `google.golang.org/grpc` v1.83.1 and
+  `golang.org/x/net` v0.61.0; both are raised to the patch releases that fix
+  them (v1.83.2 and v0.62.0).
+
+### Changed
+
+- `.github/actions/proof-host` no longer leaves the runner except through
+  `proof-fetch`: cosign v2.6.5 is downloaded as the release's linux/amd64
+  binary and kept only if it hashes to the pinned SHA-256 (replacing the
+  installer action, which could not retry), the stack images the cache did not
+  load are pulled through it, the stack starts with `--pull never`, and the one
+  container pulled by tag is bounded with `timeout`. `proof-fetch` takes a `url`
+  with a `sha256`, and a list of images, each of which must be pinned by digest.
+  The registry image of `deploy/docker-compose.yml` was the floating tag
+  `registry:3`; it is pinned by the index digest of 3.1.2.
+- `proof-fetch`'s give-up line no longer says a setup failure needs a new run
+  of the same tree: a fetch that fails both attempts is a setup-failed part
+  the merger lets run again (`docs/PROOFS.md` §8).
 
 ### Fixed
+
+- The feature proof's evidence selector treats a native fuzz target
+  (`func FuzzXxx(f *testing.F)` in a `_test.go` file) as a test. A diff that
+  changed only a fuzz target, or only a helper one reaches, selected no
+  evidence, and `--tests PKG:FuzzXxx` was refused as matching no test. A
+  changed target, one that reaches a changed helper and a named one are now
+  evidence like any other, a deleted one is removed, and the unit gate's
+  ledger, which already listed fuzz targets, records the target's seeds once
+  (docs/PROOFS.md §3).
+- Unit tests no longer bound code cost by a sub-second wall-clock window, which
+  measured the runner and not the code: the CI unit gate failed
+  `TestLogChunkSink_ABurstGrowsTheChunkInsteadOfThrottlingTheWriter` at 81 ms
+  against a 75 ms bound (run 40432725750) with nothing wrong in the sink. The
+  sink's pace hold and upload back-off are now counted and sized on a clock
+  the test moves; the history-guard and run-state cost bounds read the
+  workflow thread's CPU time; the audit prefetch, sink shutdown and
+  unknown-Orker cordon tests observe concurrency and dispatch instead of
+  elapsed time; and the UI's DAG bounds read the thread's CPU time.
+  AGENTS.md §11.1 states the rule.
+- The Orker's boot check of its work directory no longer mistakes a slow
+  container daemon for an unbindable directory. The check runs a container,
+  and it ran under the 30-second timeout meant for bookkeeping commands: a
+  daemon under load took 32 seconds to start a container that exits at once,
+  the check was killed, and the Orker refused to start with
+  `WORKDIR_NOT_BINDABLE` ("docker exited -1"). Several proofs failed that way,
+  the last the local proof of `pin-close-full` (job `orkctl-171`). The check
+  now has a timeout of its own, `orker.docker.bind_probe_timeout`
+  (`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes), for each step that waits on
+  the daemon: the question whether the check's image is local, and each of two
+  attempts to run its container. An attempt that overruns it, or that the
+  daemon ends with a deadline error of its own, is tried once more after the
+  container it named is removed. A daemon that is still too slow refuses boot
+  as the new reason `BIND_PROBE_TIMED_OUT`, whose message says the daemon was
+  slow, quotes what it answered, and names the setting; a daemon that was slow
+  to say whether the check's image is local is that reason too, no longer
+  `BIND_PROBE_IMAGE_UNAVAILABLE`. `WORKDIR_NOT_BINDABLE` is kept for a
+  daemon that refuses the bind within the budget, in its own words or
+  otherwise, a check container that exits non-zero, and a check directory that
+  cannot be made, and none of those is tried again. An Orker stopped during
+  the check reports the interruption rather than any of them. A daemon that
+  never answers can now hold boot for up to three times the timeout plus a
+  minute, 7 minutes at the default, before it is refused.
+- **BREAKING:** The Orker accepted a memory request of zero and passed it to the
+  container runtime as no limit. A cpu request of zero was already refused
+  because `--cpus 0` is unlimited, but memory had no such check: `memory: "0"`,
+  `"0Gi"`, `"0.5"` (rendered as 0 bytes) and `"-1"` passed the cap, reached the
+  runtime as `--memory 0` or an unparsable value, and an attempt's usage record
+  reserved 0 bytes. A memory request is now refused unless it is at least one
+  byte and below what an int64 holds, as `RESOURCE_REQUEST_REFUSED`; the Orker
+  refuses at boot a cap or default (`ORK_ORKER_MAX_CPU`, `_MAX_MEMORY`,
+  `_DEFAULT_CPU`, `_DEFAULT_MEMORY`) that parses but is not a positive finite
+  quantity, since a NaN cap compared above and below nothing and removed the
+  ceiling; and the container argument builder refuses a cpu or memory that
+  parses to no limit. Found by reading the code for the property an accepted
+  request renders to a positive limit within the cap
+  (`FuzzResolveResources_AnAcceptedRequestIsALimitWithinTheCap`).
+- The Orker refuses at boot a work root (`ORK_ORKER_WORKDIR`) whose path holds a
+  comma or a control character, as `WORKDIR_NOT_BINDABLE` naming the setting. A
+  mount is a comma-separated option list, so every task of such an Orker failed
+  at dispatch, one attempt at a time, with an error that did not name the
+  setting.
+- **BREAKING:** The JSON codec, the trigger invoke route, the webhook
+  registration route, the await completion and rejection routes and `orkctl
+  --input-json`, `--output` and `--outputs-file` no longer repair what a caller
+  sent. Go's JSON decoder replaces bytes that are not UTF-8, and a string's lone
+  surrogate escape, with U+FFFD, so a run's input, a caller-chosen webhook
+  signing secret, an await's values or a name was stored as something other than
+  what was posted while protojson would have refused it; they are now refused,
+  as protojson refuses them. The webhook registration route also ignored
+  everything after its first JSON value (`{…}{…}` registered the first) and now
+  refuses a second value as the trigger route does, and the trigger and callback
+  routes trimmed any Unicode space around a body, so a body wrapped in a
+  no-break space started a run; only JSON's four whitespace characters are
+  trimmed now. The tolerant codec behind every Connect JSON request also dropped
+  whatever followed the first JSON value (`{}0` was read as `{}`); that is
+  refused too. The `{}0` input was written by the fuzz engine
+  (`FuzzUnmarshalJSON_IsProtojsonPlusEnumSpellings`); the others were found by
+  reading the doors while stating the targets' properties (`FuzzTriggerInput`,
+  `FuzzRegisterWebhook`, `FuzzAwaitRejectReason`, `FuzzCheckJSONText`).
+- An enum value, a filter's enum value, a webhook event name and the
+  `orkctl stats` `--group-by` and `--category` spellings are matched with ASCII
+  case only. They were upper-cased with Unicode rules, so `ſucceeded` (U+017F)
+  read as `SUCCEEDED`, `runnıng` (U+0131) as `RUNNING` and `taſk` as `task`; no
+  declared name is spelled with those letters. Found by reading the code while
+  stating `FuzzProto_ReadsOnlyASCIICaseAndDashAsTheSameValue` and
+  `FuzzParseGroupBy`.
+- A list filter on an instant whose UTC spelling falls outside the years 0000
+  to 9999 (`created_at<9999-12-31T23:59:59-23:59` is year 10000 in UTC) was
+  compiled to a canonical text, bound into the page token, that a following
+  request could not send (`10000-01-01T…` is not RFC 3339). It is refused by
+  name instead: `"…" is outside 0000-01-01T00:00:00Z to
+  9999-12-31T23:59:59.999999Z, the instants a filter can name`. Found by
+  reading the compiler while stating the canonical-set property
+  (`FuzzCompile_ACompiledSetIsCanonicalAndTheOrderOfItsFiltersDoesNotMatter`).
+- `orkctl`'s `--since`, `--until` and the run list's RFC 3339 bounds accepted an
+  instant a request cannot carry (`0000-01-01T00:00:00Z`, or a local time whose
+  UTC instant falls before 0001 or after 9999) and the request then failed to
+  encode with a message that did not name the flag; they are refused by name,
+  judged on the UTC instant. Found by `FuzzParseInstantFlags`.
+- **BREAKING:** An image reference is held to the OCI distribution grammar when
+  an Orkflow is applied and when the activity catalog is read at boot: a
+  registry host name (or bracketed IP address) with an optional port from 1 to
+  65535, lower-case repository path components, a tag of word characters, dots
+  and dashes that does not start with a dot or a dash, and a `sha256:` digest.
+  `ParseReference` accepted any text, so `uses: --cap-add=ALL.example/x:1` was a
+  registry named `--cap-add=ALL.example` (pinned as
+  `--cap-add=ALL.example/x@sha256:…`, an argument the container runtime reads as
+  a flag, ahead of the image the Orker meant), and a repository could carry `?`,
+  `#`, `%`, a space or a newline into the manifest URL. A reference outside the
+  grammar is refused at apply as `IMAGE_RESOLVE_UNSUPPORTED`, which Docker
+  refuses at pull anyway, and an `ORK_ACTIVITY_CATALOG` entry outside it stops
+  the engine at boot instead of failing at the first apply that names the
+  activity. The Orker's container argument builder also refuses, as defence in
+  depth, an image that begins with `-` or holds a space or control character,
+  and a mount path with a comma or control character, which would add an option
+  to the `--mount` value. Found by reading `dsl.ParseReference` and
+  `dockerCreateArgs` while stating `FuzzParseReference` and
+  `FuzzDockerCreateArgs`.
+- A template renders data that spells `<no value>` as itself, and refuses only
+  a nil value that it prints. The Orker's `with:` renderer and the engine's
+  output renderer refused any rendered string containing those characters, to
+  catch a nil value, so an input, a task output or an author's text that merely
+  contained them failed `RENDER_FAILED` or `OUTPUTS_RENDER_FAILED`. A nil value
+  is now noted where the template prints it, by one stage appended to each
+  printing action as `html/template` appends its escapers, and the template
+  runs once on the real data: the characters of the marker put together across
+  text and a value, across two values or inside one `printf` render as they
+  spell, `printf "%q"` and a comparison against a string the template builds see
+  the real value, and a nil that is only tested (`{{ if .x }}`) is not refused.
+  Found by reading the renderer while stating `FuzzRenderer_ARenderedValueIsTheValue`
+  and `FuzzRenderValues_OnlyAPrintedNilIsRefused`.
+- An await's completion values are refused when a string in them holds half of a
+  surrogate pair (`{"a":"\ud800"}`). The completion routes stored the values byte
+  for byte after checking only UTF-8 and JSON validity, so a later Go decode of
+  the stored object read the half as U+FFFD; the rejection route already
+  refused it. Found by reading the validation while stating
+  `FuzzValidateAwaitValues`.
+- `orkctl run submit --input-json null --input key=value` (and `run again`,
+  `schedule create`, `run plan`, `task run`) no longer panics. JSON `null` read
+  as an empty object, and the first `--input` then wrote into a nil map; `null`
+  is now refused as not a JSON object, like every other non-object. `--input`
+  and `--input-json` text that Go's JSON decoder would change on the way
+  through (bytes that are not UTF-8, a lone surrogate escape) is no longer
+  replaced with U+FFFD: `--input-json` refuses it and a `--input` value stays
+  the string you typed. A task id given to `orkctl run plan --output` or keyed
+  in its `--outputs-file` is held to the name rule (`^[a-z][a-z0-9-]*$`, at most
+  200 bytes), naming the flag: an empty key in the file, and an id that is not
+  text in either, were accepted and failed to encode with no word about the
+  flag. Found by reading `buildInputPayload` while stating
+  `FuzzBuildInputPayload`; the empty and non-text ids were written by the fuzz
+  engine (`FuzzBuildAssumedOutputs`).
+- A task's live log is framed the same way wherever the container's reads
+  split its output. A line of exactly 64 KiB (`MaxStreamedLine`) whose
+  terminator arrived in a later read streamed an extra empty line after it,
+  and a line longer than 64 KiB whose terminator arrived in the same read as
+  its end streamed as one line past the limit instead of in 64 KiB pieces. A
+  line is now cut into pieces of at most 64 KiB however its bytes arrive, and a
+  terminator right after a piece ends no empty line. Found by reading
+  `LineWriter` while stating `FuzzLineWriter_FramesAnyStreamAtAnyWriteBoundary`
+  against a framing written without it.
+- `ORK_WS_ALLOWED_ORIGINS` is read as one list by both origin checks. It was
+  split at commas and kept as written, so `a, b` left ` b` with its space; the
+  socket's early check trimmed each entry and let the origin in, and the
+  WebSocket library's own check, which does not trim, then refused the upgrade
+  with a 403 the early check had approved. Entries are trimmed and blanks
+  dropped once, a blank pattern no longer matches an Origin with no host, and
+  the early check mirrors the library for a pattern that does not parse and for
+  Unicode case folding of the host. Found by `FuzzOriginAllowed`, which takes
+  the library as its oracle.
+- **BREAKING:** A schedule's `timezone` of `Local` is refused, in the API and in
+  an automation document: Go reads it as the zone of the machine that reads it,
+  not a zone of the IANA database the reference promises, so the schedule fired
+  at a different instant on every host. Found by reading `ValidateScheduleSpec`
+  while stating `FuzzValidateScheduleSpec`.
+- A configuration file's integer, boolean or duration is applied as its bare
+  value. It was checked with its surrounding space trimmed and applied
+  untrimmed, and not every reader trims: `engine.idempotency_ttl: ' 5m'` passed
+  the file and was then silently replaced by the reader's default, and a padded
+  integer stopped the daemon at its reader. A double-quoted value that spells a NUL byte
+  (`"\0"`) is refused at load too, naming the key, instead of failing partway
+  through applying the file. Found by reading `Load` while stating
+  `FuzzLoad_AValueTheFileSetsIsOneItsKindReads`.
+- A key is read only in the spelling the writer uses. The run, recent and origin
+  index parsers used `time.Parse` for their stamp, which takes a comma as the
+  decimal separator, the attempt and task-log key parsers used
+  `strconv.ParseInt` for their zero-padded counters, which takes a leading plus
+  sign, and the escaped form of a name (`~` and base64) was decoded without
+  checking its padding bits or that the name was not clean enough to be written
+  as itself, so two keys named one record and the cursor a paged scan resumes
+  from was a key the scan had never listed. All three were written by the fuzz
+  engine (`FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites`).
+- A registry's bearer challenge is read as bytes. Splitting it ranged over
+  runes, which rewrites a byte that is not UTF-8 as U+FFFD, so the token realm
+  the resolver requested was not the one the registry named. Found by the fuzz
+  engine (`FuzzParseBearerChallenge`).
+- An Orker id that is not UTF-8 is refused at boot, naming `ORK_ORKER_ID`. It
+  becomes part of a task queue name, a protobuf string, and was refused by the
+  transport at the first poll instead. Found by reading `ValidOrkerID` while
+  stating `FuzzValidOrkerID`.
+- The feature proof's evidence selector no longer matches a changed method by
+  its name alone. It reached a changed `T.m` through every test of the
+  package that mentioned any identifier called `m` (a local variable, a
+  function, a field, another type's method), so a test-helper method named
+  `setup` or `count` made 832 unit tests and 1,040 integration tests
+  evidence in one measured change, or pulled in always-skipping opt-in
+  recorders and failed the proof with `evidence_without_a_pass`, and helpers
+  were renamed to avoid it. A method is now matched by its receiver type and
+  its name (docs/PROOFS.md §3): an exported one also by its type alone,
+  since another package can call it through an interface, except a hook a
+  `_test.go` file adds to a production type: only test code calls it, and it
+  is matched by its selector alone. The tests that read a changed tool or
+  example are found the same way. Functions, variables, constants and types
+  are still matched by name, and an `init` function of a test file now
+  counts as part of every test's reach.
+- `proof-fetch`'s retry never ran on GitHub. The runner starts a composite
+  step with `bash -e`, which ended the script at the first failed attempt,
+  before the second, before the log line and before the give-up line the merger
+  reads. The script turns errexit off, and a test runs it under the runner's
+  shell against fakes.
 
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
@@ -163,6 +544,32 @@ include breaking changes, and each is marked **BREAKING**.
   fails is logged and never fails the proof. A bucket is removed with one
   request when the store deletes a non-empty bucket, and is emptied object by
   object only when the store refuses, here and in `test/tools/bucket-ensure`.
+- Findings of the new static analysis, fixed rather than silenced. `orkctl
+  cache purge` assigned its namespace before a loop that always overwrote it.
+  The interpreter's main loop and its failure-handler loop compared with nil
+  the error `expire` always returns; the contract is now stated and the dead
+  branch gone, with no change to a command or an event. The memo key copied
+  the fields of task.json's each-upstream entry by name, so a field added to
+  the entry would have been left out of the key silently; it now converts the
+  struct, and the build stops until the key has been decided. Tests and
+  tooling moved off deprecated APIs, and code nothing used was deleted.
+  Two validation messages no longer end in a colon: a join with no needs ends
+  `or remove the join: key`, and `.each` outside a fan-out ends `that declares
+  each: (a fan-out)`.
+- The image-policy integration suites no longer pull `registry:3` from Docker
+  Hub at test time. Their private registry ran the floating tag, but the
+  stack pins the registry image by digest and the CI proof host pulls it by
+  that reference, which Docker stores without the tag; a fresh runner had no
+  `registry:3`, so a Hub stall during the suite failed it outside every setup
+  retry. `cosigntest.StartRegistry` now runs the exact reference
+  `deploy/docker-compose.yml` pins, with `--pull never`, and takes the
+  suite's infrastructure-absent path (a failure under `ORK_REQUIRE_INFRA=1`),
+  naming `make up` and the proof host, when it is not on the host. The
+  Temporal dev server of the continuation contract test also runs with
+  `--pull never`. The boot bind probe's integration test has its docker shim
+  answer the probe image's inspect in every short-budget case, so a busy
+  daemon cannot fail them for a step they do not test, and the history-guard
+  CPU bound is scaled under the race detector like its siblings.
 
 ### Added
 
@@ -204,8 +611,7 @@ include breaking changes, and each is marked **BREAKING**.
   `engine.orkflow_max_tasks` lowered to 1,000. A full proof's UI plan defers
   the spec files both the tree's and the base's list carry, and its Playwright
   ledger records their tests as `deferred`; the nightly tier, locally and in
-  CI, runs the listed specs and needs its `ui-e2e` gate; `merge-check` asks for
-  a nightly proof while either list is non-empty.
+  CI, runs the listed specs and needs its `ui-e2e` gate.
 - A feature proof holds evidence that is there only because it reaches a
   changed helper, type or variable to the slow list, as it holds the
   regression set: on a shared test helper that is about 35 minutes. A test
@@ -217,10 +623,9 @@ include breaking changes, and each is marked **BREAKING**.
   path: a `validate/full/<name>` run's `proof-<run>-a<n>` artifact, downloaded
   and passed to `make merge-check PROOF=`, gates a fast-forward when it is a
   full, passing, merge-eligible proof of exactly the candidate's tree over
-  `main`'s tip; a GitHub nightly proof of `main`'s tip, downloaded the same
-  way, is the `NIGHTLY=` evidence; and `main` is pushed to `origin` after
-  every merge (AGENTS.md §11.2, §11.3; docs/PROOFS.md §6, §10). The checks
-  `merge-check` applies are unchanged.
+  `main`'s tip; and `main` is pushed to `origin` after every merge (AGENTS.md
+  §11.2, §11.3; docs/PROOFS.md §6, §10). The checks `merge-check` applies to
+  a full proof are unchanged.
 - The Playwright suite runs less of itself alone, measuring the same things.
   The fan-out's render-budget test (E4, "the run page and the item list at the
   gated size are interactive within 5 s") moved from `each-fan-out.spec.ts`
@@ -297,6 +702,25 @@ include breaking changes, and each is marked **BREAKING**.
   continuation chain's rollout) waited out. They are development and proof
   settings, not a recommendation for a deployment, and the quickstart keeps the
   defaults (docs/DEPLOY.md §4, "Underneath"; docs/PROOFS.md §2.1).
+- The interim nightly rule is retired (2026-10-27). While the nightly workflow
+  did not run on GitHub, `make proof-nightly` had to run on `main`'s tip after
+  every merge and pass before the next, and `make merge-check` refused a merge
+  without a passing nightly proof of `main`'s tip (`NIGHTLY=`) while either
+  nightly list was non-empty. Its exit condition is met: the last five runs of
+  `nightly.yml` on `main` passed. `merge-check` now asks for no nightly proof,
+  reads neither list, and still verifies a `NIGHTLY=` proof when it is given
+  one (an empty `-nightly` value is refused, not read as no proof). The nightly
+  of `main` is GitHub's: a run speaks for the commit it measured, a merge is
+  not held for one of its own, and a failing one is still a failing `main`,
+  fixed or reverted before anything else merges, which clears when a later run
+  of the fix passes (AGENTS.md §11, §11.2; docs/PROOFS.md §6, §10).
+  `docs/PROOFS.md` §12's known gaps now say what is true: the repository is
+  public and organization-owned, the gate's apply has not been run, `main` is
+  under a ruleset made by hand that does not require the `proof` check, the
+  full proof has passed on GitHub only on `validate/full/` pushes, and
+  `release.yml` and `proof-rerun.yml` have not run there, nor have the `vuln`
+  jobs of `ci.yml` and `nightly.yml` or the proof's `race`, `race-repeat` and
+  `fuzz` parts.
 
 ### Added
 

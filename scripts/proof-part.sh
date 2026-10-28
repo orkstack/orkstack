@@ -40,11 +40,20 @@ part_require() {
 		;;
 	fast)
 		part_need "go on PATH" command -v go
+		# The unit gate's tests include proofrun's, which run go test -race.
+		part_need "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH (go env CC)" race_toolchain
 		part_need "bun on PATH" command -v bun
 		part_need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"
 		part_need "node on PATH (the site's scripts and astro run on it)" command -v node
 		part_need "site/node_modules (cd site && bun install --frozen-lockfile)" test -d "$REPO/site/node_modules"
 		part_need "make on PATH" command -v make
+		;;
+	race | race-repeat)
+		part_need "go on PATH" command -v go
+		part_need "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH (go env CC)" race_toolchain
+		;;
+	fuzz)
+		part_need "go on PATH" command -v go
 		;;
 	integration:*)
 		part_need "docker on PATH" command -v docker
@@ -138,17 +147,17 @@ part_runner_class() {
 }
 
 # part_runner_health is the runner-health floor (AGENTS.md §11.2): the FIRST
-# thing a part does, before any gate. About ten seconds measure this
+# thing a part does, before any gate. About fourteen seconds measure this
 # runner's work disk, CPUs and memory against the floors
 # scripts/proof-runner-floors.tsv declares for its class, into
 # runner-health.json beside the part's records. It returns 1 only for a
 # STACK part below a floor: the part then records itself and stops, and the
 # merger classifies it runner-degraded, exactly as a part whose runner
 # GitHub lost — no outcome of the tree, not a proof of the tree, and that
-# one job may run again. The plan, build and fast parts measure for
-# information. A measurement that cannot run (exit 2) is reported and the
-# part runs on, judged as above the floor: the floor only ever turns a
-# result into "not a proof", never a failure into a pass.
+# one job may run again. The plan, build, fast, race, race-repeat and fuzz
+# parts measure for information. A measurement that cannot run (exit 2) is
+# reported and the part runs on, judged as above the floor: the floor only
+# ever turns a result into "not a proof", never a failure into a pass.
 part_runner_health() {
 	local class code=0
 	class="$(part_runner_class)"
@@ -160,6 +169,16 @@ part_runner_health() {
 	1)
 		if part_floor_binds; then
 			part_say "   runner-health: this runner is BELOW the floor; the part stops before any gate and is not a proof of the tree (re-run this job alone)"
+			# On GitHub, one annotation of fixed words, the only way the rerun
+			# planner (.github/workflows/proof-rerun.yml, `proofrun rerun-plan`)
+			# can tell this job from a failed one without downloading its
+			# artifact. It is evidence for running the job again, never for a
+			# verdict: the merger re-derives degradation from
+			# runner-health.json. No variable text, so it is matched whole
+			# (runnerBelowFloorAnnotation, test/tools/proofrun/rerunplan.go).
+			if [ "${GITHUB_ACTIONS:-}" = true ]; then
+				printf '::error::%s\n' "proof: runner below the floor, no gate ran"
+			fi
 			return 1
 		fi
 		part_say "   runner-health: this runner is below the floor; the $PART part measures for information and runs on"
@@ -173,8 +192,8 @@ part_runner_health() {
 }
 
 # part_floor_binds: the floor stops this part. The stack parts run the
-# tests whose bounds a degraded runner would fail; the plan, build and fast
-# parts record their measurement and run on.
+# tests whose bounds a degraded runner would fail; the plan, build, fast,
+# race, race-repeat and fuzz parts record their measurement and run on.
 part_floor_binds() {
 	case "$PART" in
 	integration:* | ui-e2e:* | activity-fixture:* | observability) return 0 ;;
@@ -297,7 +316,7 @@ part_cleanup() {
 part_main() { # <part>
 	PART="$1"
 	case "$PART" in
-	plan | build | fast | observability | integration:[0-9]* | ui-e2e:[0-9]* | activity-fixture:shell | activity-fixture:json | activity-fixture:git | activity-fixture:template) ;;
+	plan | build | fast | race | race-repeat | fuzz | observability | integration:[0-9]* | ui-e2e:[0-9]* | activity-fixture:shell | activity-fixture:json | activity-fixture:git | activity-fixture:template) ;;
 	*) part_say "proof: unknown part '$PART'"; return 2 ;;
 	esac
 	PART_MISSING="$(mktemp)"
@@ -424,6 +443,31 @@ part_main() { # <part>
 		(cd "$REPO/ui" && bun test test/ >"$DIR/ui-unit.log" 2>&1) && printf 'ui-unit\tpass\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv" || printf 'ui-unit\tfail\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv"
 		# The site's check and build, recorded as the UI gates are.
 		(cd "$REPO/site" && bun run check && bun run build) >"$DIR/site.log" 2>&1 && printf 'site\tpass\t0\tsite.log\tbun run check && bun run build\n' >>"$DIR/gates.tsv" || printf 'site\tfail\t0\tsite.log\tbun run check && bun run build\n' >>"$DIR/gates.tsv"
+		;;
+	race)
+		# The unit suites under the race detector, on a runner of its own (the
+		# fast part holds the gates that run without it). Every package, once.
+		part_run race race.log "$PR" unit -race -short -out "$DIR" || true
+		# As the fast part trims its unit log: the ledger holds every test's
+		# outcome, and the merger reads the ledger.
+		if grep -q $'^race\tpass\t' "$DIR/gates.tsv"; then
+			rm -f "$DIR/race.log" "$DIR/race.events.jsonl"
+			part_say "race passed: race.log and race.events.jsonl left out of the part"
+		fi
+		;;
+	race-repeat)
+		# The nightly race repeat: the concurrency-heavy packages, -count times.
+		part_run race-repeat race-repeat.log "$PR" unit -race -short -count "$RACE_REPEAT_COUNT" -out "$DIR" "${RACE_REPEAT_PACKAGES[@]}" || true
+		if grep -q $'^race-repeat\tpass\t' "$DIR/gates.tsv"; then
+			rm -f "$DIR/race-repeat.log" "$DIR/race-repeat.events.jsonl"
+			part_say "race-repeat passed: race-repeat.log and race-repeat.events.jsonl left out of the part"
+		fi
+		;;
+	fuzz)
+		# The nightly fuzz lane: every Fuzz target, sharing FUZZ_BUDGET. A
+		# crasher is kept under crashers/ in the part, which the part's
+		# artifact carries.
+		part_run fuzz fuzz.log "$PR" fuzz -out "$DIR" -budget "$FUZZ_BUDGET" || true
 		;;
 	integration:*)
 		local k="${PART#integration:}"

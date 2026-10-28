@@ -15,6 +15,7 @@ import {
 	layoutDag,
 	neighbourhood
 } from '../src/lib/dag';
+import { cpuMs } from './cpuTime';
 import { DAG_FIXTURES } from './dagFixtures';
 
 const tasksOf = (spec: [string, string[]][]): Task[] => spec.map(([id, needs]) => create(TaskSchema, { id, needs }));
@@ -96,13 +97,16 @@ test('layerOrder agrees with layoutDag on seeded random DAGs', () => {
 test('layerOrder handles a 100,000-task chain without recursion', () => {
 	const n = 100_000;
 	const tasks = Array.from({ length: n }, (_, i) => ({ id: `t${i}`, needs: i ? [`t${i - 1}`] : [] }));
-	const started = performance.now();
+	// Bounded on CPU time, not the wall clock (cpuTime.ts): a busy host delays
+	// the ordering without adding much to it. One run: this one is long enough
+	// that three would meet the runner's own per-test timeout on a loaded host.
+	const started = cpuMs();
 	const { layer, order } = layerOrder(tasks);
-	const ms = performance.now() - started;
+	const ms = cpuMs() - started;
 	expect(layer[n - 1]).toBe(n - 1);
 	expect(order[0]).toBe(0);
 	expect(order[n - 1]).toBe(n - 1);
-	// Linear: a chain this long finishes well inside a second.
+	// Linear: a chain this long costs well under a second of CPU time.
 	expect(ms < 1000).toBe(true);
 });
 
@@ -112,9 +116,9 @@ test('layerOrder handles a dense 4,000-task DAG (each needs the previous 50) in 
 		id: `t${i}`,
 		needs: Array.from({ length: Math.min(i, 50) }, (_, k) => `t${i - 1 - k}`)
 	}));
-	const started = performance.now();
+	const started = cpuMs();
 	const { layer, order } = layerOrder(tasks);
-	const ms = performance.now() - started;
+	const ms = cpuMs() - started;
 	expect(layer[n - 1]).toBe(n - 1);
 	expect(new Set(order).size).toBe(n);
 	expect(ms < 1000).toBe(true);

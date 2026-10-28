@@ -4,6 +4,7 @@ import { JoinPolicy } from '../src/lib/gen/orkstack/v1/activity_pb';
 import { TaskSchema, type Task } from '../src/lib/gen/orkstack/v1/orkflow_pb';
 import { DAG_NODE_H, DAG_NODE_W, chooseDagDirection, dagDirectionParam, layoutDag, type DagDirection, type DagLayout } from '../src/lib/dag';
 import { buildModel } from '../src/lib/taskMap';
+import { cpuMs } from './cpuTime';
 import { DAG_STRESS, PLANAR, type StressTask } from './dagStress';
 
 // What a drawn DAG must be, checked on every stress shape (test/dagStress.ts)
@@ -183,10 +184,14 @@ test('the task map holds every task and every item exactly once, for every shape
 test('a DAG at the legible limit lays out in well under a frame budget', () => {
 	for (const name of ['random-200', 'staged-15x20']) {
 		const tasks = stressTasks(DAG_STRESS[name]);
-		const started = performance.now();
+		// Bounded on CPU time, not the wall clock (cpuTime.ts): a busy host
+		// delays the layout without adding much to it. One run, the first: what
+		// a reader waits for when the page first draws the DAG, and the runtime
+		// still compiling the layout is part of that.
+		const started = cpuMs();
 		layoutDag(tasks, 'LR');
 		layoutDag(tasks, 'TB');
-		expect(performance.now() - started, name).toBeLessThan(400);
+		expect(cpuMs() - started, name).toBeLessThan(400);
 	}
 });
 

@@ -180,17 +180,6 @@ func (p *integrationPlan) pkg(importPath string) *planPackage {
 	return nil
 }
 
-func (p *integrationPlan) listedSets() map[string]map[string]bool {
-	out := map[string]map[string]bool{}
-	for _, pk := range p.Packages {
-		out[pk.ImportPath] = map[string]bool{}
-		for _, t := range pk.Listed {
-			out[pk.ImportPath][t] = true
-		}
-	}
-	return out
-}
-
 // shardJobs is shard k's jobs, in plan order (longest first).
 func (p *integrationPlan) shardJobs(k int) []job {
 	var out []job
@@ -210,7 +199,8 @@ func partsExpected(tier string, local bool, shards, uiShards int, observability 
 	}
 	parts := []string{"plan", "build"}
 	if tier != tierNightly {
-		parts = append(parts, "fast")
+		// The race gate runs on a runner of its own, beside the fast part.
+		parts = append(parts, "fast", suiteRace)
 	}
 	for k := 1; k <= shards; k++ {
 		parts = append(parts, fmt.Sprintf("integration:%d", k))
@@ -219,9 +209,10 @@ func partsExpected(tier string, local bool, shards, uiShards int, observability 
 		parts = append(parts, fmt.Sprintf("ui-e2e:%d", k))
 	}
 	if tier == tierNightly {
-		// The nightly tier runs the deferred tests and the listed spec
-		// files (nightlyUIShards), and nothing else.
-		return parts
+		// The nightly tier runs the deferred tests, the listed spec files
+		// (nightlyUIShards), and the race repeat and fuzz lanes, and
+		// nothing else.
+		return append(parts, suiteRaceRepeat, suiteFuzz)
 	}
 	for _, a := range fixtureActivities {
 		parts = append(parts, "activity-fixture:"+a)
@@ -314,7 +305,7 @@ func repoRoot() (string, error) {
 func sortedTestRefs(keys []testKey) []testRef {
 	out := make([]testRef, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, testRef{k.Package, k.Test})
+		out = append(out, testRef(k))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Package != out[j].Package {

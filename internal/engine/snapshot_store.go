@@ -79,7 +79,10 @@ func (a *SnapshotActivities) WithBaseCache(cache *SnapshotBaseCache) *SnapshotAc
 	return a
 }
 
-// WriteSnapshot serializes and stores a complete run snapshot.
+// WriteSnapshot serializes and stores a complete run snapshot. The rows it
+// encodes are the workflow's live ones, lent for the encode only (rows_loan.go);
+// the run's namespace and id are the Run's own fields, never written after
+// s.snapshot() builds it, and are read outside the loan.
 func (a *SnapshotActivities) WriteSnapshot(
 	ctx context.Context,
 	run *orkstackv1.Run,
@@ -88,13 +91,20 @@ func (a *SnapshotActivities) WriteSnapshot(
 	if run == nil {
 		return "", fmt.Errorf("engine: write snapshot: run is required")
 	}
-	data, err := proto.Marshal(run)
+	namespace, runID := run.GetNamespace(), run.GetId()
+	data, err := readLent(run, sequence, func() ([]byte, error) {
+		data, err := proto.Marshal(run)
+		if err != nil {
+			return nil, fmt.Errorf("engine: marshal snapshot for run %s: %w", runID, err)
+		}
+		return data, nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("engine: marshal snapshot for run %s: %w", run.GetId(), err)
+		return "", err
 	}
-	uri, err := a.store.WriteSnapshot(ctx, run.GetNamespace(), run.GetId(), sequence, data)
+	uri, err := a.store.WriteSnapshot(ctx, namespace, runID, sequence, data)
 	if err != nil {
-		return "", fmt.Errorf("engine: persist snapshot for run %s: %w", run.GetId(), err)
+		return "", fmt.Errorf("engine: persist snapshot for run %s: %w", runID, err)
 	}
 	return uri, nil
 }

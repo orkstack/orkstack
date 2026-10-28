@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -11,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/enumname"
 )
 
@@ -54,6 +57,12 @@ func UnmarshalJSON(data []byte, message proto.Message) error {
 
 // UnmarshalJSONOptions is UnmarshalJSON with caller-chosen protojson options.
 func UnmarshalJSONOptions(options protojson.UnmarshalOptions, data []byte, message proto.Message) error {
+	// Text Go's decoder would alter is refused saying what is wrong with it:
+	// protojson refuses it too, but half of a surrogate pair only as an
+	// "unexpected EOF".
+	if err := dsl.CheckJSONText(data); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
 	// A rewrite failure means the input is not well-formed JSON. Hand the
 	// original bytes to protojson so the caller sees protojson's diagnostics
 	// rather than ours.
@@ -68,12 +77,28 @@ type renameEnumValue func(enum protoreflect.EnumDescriptor, name string) string
 
 // rewriteEnums re-encodes a JSON document, renaming every value that lands in
 // an enum-typed field of md. Everything else, including key order, survives.
+//
+// Survives means unchanged in meaning: a document that Go's decoder would
+// quietly change on the way through (a string with bytes that are not UTF-8,
+// or with half of a surrogate pair, both of which it turns into U+FFFD) is
+// refused here, so the caller hands its original bytes to protojson, which
+// refuses them too. A run's input or a caller's name is never silently
+// altered by the dialect.
 func rewriteEnums(data []byte, md protoreflect.MessageDescriptor, rename renameEnumValue) ([]byte, error) {
+	if err := dsl.CheckJSONText(data); err != nil {
+		return nil, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	node, err := decodeJSON(decoder)
 	if err != nil {
 		return nil, fmt.Errorf("decode json: %w", err)
+	}
+	// The decoder reads one value and would leave whatever follows it unread;
+	// the rewrite would then drop it and protojson, handed the rewrite, accept
+	// "{}0" as "{}". Anything after the value is for protojson to refuse.
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("decode json: data after the JSON value")
 	}
 	rewriteMessage(node, md, rename)
 	var buf bytes.Buffer

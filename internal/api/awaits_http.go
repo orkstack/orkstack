@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -154,7 +153,7 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 				fmt.Sprintf("read request body: %v", err))
 			return
 		}
-		if len(bytes.TrimSpace(values)) == 0 {
+		if len(bytes.Trim(values, jsonWhitespace)) == 0 {
 			values = []byte("{}")
 		}
 	}
@@ -209,16 +208,11 @@ func awaitRejectReason(w http.ResponseWriter, r *http.Request) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read request body: %w", err)
 	}
-	if !json.Valid(raw) {
-		return "", errors.New(`the request body must be one JSON object: {"reason": "..."}`)
-	}
 	var envelope struct {
 		Reason *string `json:"reason"`
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&envelope); err != nil {
-		return "", fmt.Errorf(`the request body must be {"reason": "..."}: %v`, err)
+	if err := decodeJSONValue(raw, &envelope, true); err != nil {
+		return "", fmt.Errorf(`the request body must be one JSON object, {"reason": "..."}: %v`, err)
 	}
 	if envelope.Reason == nil {
 		return "", errors.New(`reason is required: {"reason": "..."}`)

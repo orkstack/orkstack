@@ -282,6 +282,7 @@ these messages (`i` is the filter's index in the request):
 | an Orker id, in equals, not equals or in | `filters[i]: orker_id: invalid orker id: empty` |
 | bool | `filters[i]: drained is true or false, not "yes"` |
 | time | `filters[i]: "2026-10-09" is not an RFC 3339 instant with a zone (2026-10-09T00:00:00Z)` |
+| a time whose UTC spelling has no four-digit year (a zone offset can carry `9999-12-31T23:59:59-23:59` into year 10000) | `filters[i]: "9999-12-31T23:59:59-23:59" is outside 0000-01-01T00:00:00Z to 9999-12-31T23:59:59.999999Z, the instants a filter can name` |
 | an unmet requirement | `filters[i]: origin.id needs an equals (=) filter on origin.kind` |
 | an empty interval | `created_at >= 2026-10-09T00:00:00Z and < 2026-10-08T00:00:00Z select no instant` |
 | a page token of another filter set | `page_token was issued for other filters; drop it and list from the first page` |

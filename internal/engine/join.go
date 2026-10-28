@@ -642,7 +642,9 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		case resolved:
 			_ = s.resolve(ectx, resolution) // the outcome is recorded on the task
 		case expired != "":
-			if err := s.expire(ectx, expired); err != nil && temporal.IsCanceledError(err) &&
+			// expire always returns an error: the deadline's own failure, or the
+			// cancellation that settled its timer.
+			if err := s.expire(ectx, expired); temporal.IsCanceledError(err) &&
 				s.taskRuns[expired].GetStatus() == orkstackv1.Status_STATUS_AWAITING {
 				if cancelErr := s.cancelAwaiting(ectx, expired); cancelErr != nil {
 					workflow.GetLogger(ctx).Error("mark canceled failed",

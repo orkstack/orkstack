@@ -126,17 +126,20 @@ func nightlyProof(t *testing.T, mutate func(*proofRecord)) string {
 	return dir
 }
 
-func TestVerify_InterimRuleANeedsAPassingNightlyProofOfMainsTip(t *testing.T) {
-	if p := nightlyProofProblems(mainNightlyList, "", "main-tree"); len(p) != 1 || !strings.Contains(p[0], "NIGHTLY=proof/<name>") {
-		t.Errorf("no nightly proof named: %v", p)
+// The interim rule that a merge needs a nightly proof of main's tip is
+// retired (AGENTS.md §11): the nightly of main is GitHub's. merge-check asks
+// for none, and verifies the one it is given.
+func TestVerify_ANightlyProofIsVerifiedOnlyWhenGiven(t *testing.T) {
+	if p := nightlyProofProblems("", "main-tree"); len(p) != 0 {
+		t.Errorf("no nightly proof named, and one was asked for: %v", p)
 	}
-	if p := nightlyProofProblems(mainNightlyList, nightlyProof(t, nil), "main-tree"); len(p) != 0 {
+	if p := nightlyProofProblems(nightlyProof(t, nil), "main-tree"); len(p) != 0 {
 		t.Errorf("a passing nightly proof of main's tip was refused: %v", p)
 	}
 }
 
 func TestVerify_ANightlyProofOfAnotherTreeIsRefused(t *testing.T) {
-	p := strings.Join(nightlyProofProblems(mainNightlyList, nightlyProof(t, nil), "other-tree"), "\n")
+	p := strings.Join(nightlyProofProblems(nightlyProof(t, nil), "other-tree"), "\n")
 	if !strings.Contains(p, "the nightly proof measured tree main-tree, and main's tip tree is other-tree") {
 		t.Errorf("problems = %q", p)
 	}
@@ -155,7 +158,7 @@ func TestVerify_AFailedOrIneligibleNightlyProofIsRefused(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			p := strings.Join(nightlyProofProblems(mainNightlyList, nightlyProof(t, c.mutate), "main-tree"), "\n")
+			p := strings.Join(nightlyProofProblems(nightlyProof(t, c.mutate), "main-tree"), "\n")
 			if !strings.Contains(p, c.want) {
 				t.Errorf("problems %q lack %q", p, c.want)
 			}
@@ -163,14 +166,11 @@ func TestVerify_AFailedOrIneligibleNightlyProofIsRefused(t *testing.T) {
 	}
 }
 
-func TestVerify_NoNightlyProofIsNeededWhileMainsListIsEmpty(t *testing.T) {
-	for name, list := range map[string]string{"absent": "", "comments only": "# package\ttest\tcovering\tapproved\treason\n"} {
-		if p := nightlyProofProblems(list, "", "main-tree"); len(p) != 0 {
-			t.Errorf("%s list: %v", name, p)
-		}
-	}
-	// A list that cannot be parsed is not an empty one.
-	if p := nightlyProofProblems("example.com/m\tTestSoak\n", "", "main-tree"); len(p) != 1 || !strings.Contains(p[0], "cannot be read") {
-		t.Errorf("a malformed list: %v", p)
+// A proof directory that cannot be read is a refusal, not an absent proof:
+// naming a nightly proof asks merge-check to judge it.
+func TestVerify_ANightlyProofThatCannotBeReadIsRefused(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-proof")
+	if p := nightlyProofProblems(missing, "main-tree"); len(p) != 1 || !strings.Contains(p[0], "is unreadable") {
+		t.Errorf("an absent proof.json: %v", p)
 	}
 }

@@ -12,6 +12,16 @@ name: release
 # the GitHub release, running no repository code (docs/PROOFS.md §10).
 # `tag: false` is a full dry run that publishes nothing. Nothing here
 # dispatches itself; the user runs it.
+#
+# `gate` runs on the hosted ubuntu-24.04 runners (4 vCPUs), and the release
+# tier excuses no runner-size miss (test/tools/proofrun/merge.go
+# runnerSizeRefusal): the run page's 5 s budget (9,485 ms measured there) and
+# the soaks' 2 s live GetRun budget (2.014 s measured there), calibrated on the
+# 16-CPU reference host, fail it. So a dispatch fails at `gate` until a CI
+# release path has runners as large as the reference, which is a maintainer's
+# decision; this workflow has no runner input. Only a run whose `gate` passed
+# publishes: `make release-tag` after a local `make proof-release` on the
+# reference host tags and publishes nothing (docs/PROOFS.md §10, §12).
 
 on:
   workflow_dispatch:

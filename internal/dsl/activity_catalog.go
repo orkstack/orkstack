@@ -89,6 +89,10 @@ func ParseCatalog(document []byte) (Catalog, error) {
 			return nil, fmt.Errorf("ORK_ACTIVITY_CATALOG: activity %q maps to %q, "+
 				"which is not an OCI reference", name, reference)
 		}
+		if _, err := ParseReference(reference); err != nil {
+			return nil, fmt.Errorf("ORK_ACTIVITY_CATALOG: activity %q maps to %q, "+
+				"which is not an OCI reference: %v", name, reference, err)
+		}
 		catalog[name] = reference
 	}
 	return catalog, nil

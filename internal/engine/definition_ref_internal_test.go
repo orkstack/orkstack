@@ -148,7 +148,7 @@ func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newRefusalHarnessOver(t, store)
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	started := time.Now()
 	h.env.ExecuteWorkflow(RunWorkflowType, refusalWorkflowID, DefinitionStub(planned), (*orkstackv1.Payload)(nil),
 		definitionPlan(t, ref), (*orkstackv1.RunContinuation)(nil))

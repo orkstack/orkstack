@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 func testRenderer(inputs map[string]any, values map[string]map[string]any, artifacts map[string][]*orkstackv1.ArtifactRef, paths map[string]string, allowlist map[string]struct{}) *renderer {
@@ -97,8 +98,8 @@ func TestRenderer_UnknownReferencesFailWithClearErrors(t *testing.T) {
 func TestRenderer_NilUpstreamValueFailsRatherThanRenderingNoValue(t *testing.T) {
 	r := testRenderer(nil, map[string]map[string]any{"fetch": {"json": nil}}, nil, nil, nil)
 	_, err := r.render(context.Background(), map[string]any{"c": "{{ .tasks.fetch.output.json }}"})
-	if err == nil || !strings.Contains(err.Error(), noValueMarker) {
-		t.Fatalf("error = %v, want it to mention %s", err, noValueMarker)
+	if err == nil || !strings.Contains(err.Error(), dsl.NoValueMarker) {
+		t.Fatalf("error = %v, want it to mention %s", err, dsl.NoValueMarker)
 	}
 }
 
@@ -219,5 +220,35 @@ func TestRenderer_EscapedBracesRenderLiterally(t *testing.T) {
 	}
 	if got["filter"] != `"{{name}}"` {
 		t.Fatalf("filter = %q, want %q", got["filter"], `"{{name}}"`)
+	}
+}
+
+// A value, or an author's text, that spells "<no value>" renders as itself;
+// only a nil value is refused.
+func TestRenderer_ATextThatSpellsTheNoValueMarkerRendersAsItself(t *testing.T) {
+	r := testRenderer(map[string]any{"note": "see <no value> here", "nothing": nil}, nil, nil, map[string]string{"fetch/body": "/orkstack/input/<no value>.txt"}, nil)
+	got, err := r.render(context.Background(), map[string]any{
+		"data":     "{{ .inputs.note }}",
+		"around":   "literal <no value> then {{ .inputs.note }}",
+		"quoted":   "{{ sh .inputs.note }}",
+		"artifact": `{{ artifact "fetch/body" }}`,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := map[string]any{
+		"data":     "see <no value> here",
+		"around":   "literal <no value> then see <no value> here",
+		"quoted":   "'see <no value> here'",
+		"artifact": "/orkstack/input/<no value>.txt",
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Errorf("%s rendered %q, want %q", key, got[key], value)
+		}
+	}
+	_, err = r.render(context.Background(), map[string]any{"nil": "x {{ .inputs.nothing }} {{ .inputs.note }}"})
+	if err == nil || !strings.Contains(err.Error(), dsl.NoValueMarker) {
+		t.Errorf("a nil value rendered without an error naming %s: %v", dsl.NoValueMarker, err)
 	}
 }
