@@ -276,7 +276,10 @@ with neither set, behavior is byte-identical to a deployment that has never
 heard of this section — no file, no default path, nothing implied.
 
 The file is YAML, decoded strictly: an unknown key is refused at boot,
-naming its full path. Any scalar leaf may instead be written as
+naming its full path, and so is an integer, boolean or duration that is not
+exactly one (a padded `' 5m'` is not: the daemons' readers do not trim, and
+one would quietly use the default) and a value holding a NUL byte, which an
+environment variable cannot carry. Any scalar leaf may instead be written as
 `{ork: X, orker: Y}` to give the two binaries different values from one
 file — the shape `telemetry.admin_addr`
 needs — and a plain scalar still applies to both. Any string leaf may be
