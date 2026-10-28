@@ -67,6 +67,31 @@ type entry struct {
 	// Failures names the failing leaf subtests of a parent that failed, so a
 	// ledger row says what actually failed.
 	Failures []string `json:"failures,omitempty"`
+	// FailureOutput is the last lines a failing top-level test printed, its
+	// subtests' included, without the testing package's own framing
+	// (failureTailLines, failureTailWidth bound it). The merger reads a
+	// timing-only failure from it (gotiming.go); it is empty for a test that
+	// did not fail.
+	FailureOutput []string `json:"failure_output,omitempty"`
+}
+
+// How much of a failing test's output an entry keeps.
+const (
+	failureTailLines = 40
+	failureTailWidth = 400
+)
+
+// frameworkLine reports whether an output line is the testing package's own
+// framing of a test (its start, pause, resume and verdict lines), as opposed
+// to something the test or its code printed.
+func frameworkLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	for _, prefix := range []string{"=== RUN", "=== PAUSE", "=== CONT", "=== NAME", "--- FAIL:", "--- PASS:", "--- SKIP:", "--- BENCH:"} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // collector accumulates outcomes from test2json events.
@@ -92,6 +117,10 @@ type collector struct {
 	// onFail, when set, is called with every top-level test that reports a
 	// failure, as it reports it (proofrun's -fail-fast).
 	onFail func(testKey)
+	// tails holds, for each top-level test that has not ended, the last lines
+	// it printed (failureTail). A test that passes or skips drops its lines;
+	// a test that fails keeps them in its entry.
+	tails map[testKey][]string
 }
 
 func newCollector() *collector {
@@ -100,7 +129,25 @@ func newCollector() *collector {
 		started:       map[testKey]bool{},
 		packageOutput: map[string]*strings.Builder{},
 		pkgEnds:       map[string]string{},
+		tails:         map[testKey][]string{},
 	}
+}
+
+// noteOutput keeps ev's line in the tail of the top-level test it belongs to.
+func (c *collector) noteOutput(ev event) {
+	line := strings.TrimRight(ev.Output, "\r\n")
+	if strings.TrimSpace(line) == "" || frameworkLine(line) {
+		return
+	}
+	if len(line) > failureTailWidth {
+		line = strings.ToValidUTF8(line[:failureTailWidth], "") + "…"
+	}
+	top := testKey{ev.Package, strings.SplitN(ev.Test, "/", 2)[0]}
+	tail := append(c.tails[top], line)
+	if len(tail) > failureTailLines {
+		tail = append([]string(nil), tail[len(tail)-failureTailLines:]...)
+	}
+	c.tails[top] = tail
 }
 
 // add records one event. job names the process that produced it.
@@ -124,6 +171,8 @@ func (c *collector) add(ev event, job string) {
 	}
 	k := testKey{ev.Package, ev.Test}
 	switch ev.Action {
+	case "output":
+		c.noteOutput(ev)
 	case "run":
 		c.started[k] = true
 		if strings.Contains(ev.Test, "/") {
@@ -153,6 +202,11 @@ func (c *collector) add(ev event, job string) {
 		e.Outcome = ev.Action
 		e.Seconds = ev.Elapsed
 		e.Reason = ""
+		e.FailureOutput = nil
+		if ev.Action == "fail" {
+			e.FailureOutput = c.tails[k]
+		}
+		delete(c.tails, k)
 		if ev.Action == "fail" && c.onFail != nil {
 			c.onFail(k)
 		}

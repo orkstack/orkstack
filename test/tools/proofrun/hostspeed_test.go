@@ -45,17 +45,28 @@ func TestTimingMiss_IsOnlyTheBoundsOwnAssertion(t *testing.T) {
 func TestParseHostSpeed_IsStrict(t *testing.T) {
 	good := "# comment\nui\te2e/a.spec.ts\tthe title\tlessThan 5000\t5\t16\ta note\n" +
 		"ui\te2e/a.spec.ts\tthe title\tvisibleWithin 60000 getByTestId('run-status')\t5\t16\ta note\n" +
-		"test\texample.com/m\tTestA\t-\t60\t16\ta note\n"
+		"test\texample.com/m\tTestA\t-\t60\t16\ta note\n" +
+		"test\texample.com/m\tTestB\ttiming getrun-live-p95\t2\t16\ta note\n" +
+		"test\texample.com/m\tTestB\ttiming replay-slowest\t30\t16\ta note\n"
 	tab, err := parseHostSpeed(strings.NewReader(good), "t")
-	if err != nil || len(tab.UI) != 2 || len(tab.Tests) != 1 {
+	if err != nil || len(tab.UI) != 2 || len(tab.Tests) != 3 {
 		t.Fatalf("a good table: %v %+v", err, tab)
+	}
+	if rows := tab.testRows("example.com/m", "TestB"); len(rows) != 2 || rows[0].Assertion.ID != "getrun-live-p95" ||
+		rows[0].Assertion.String() != "timing getrun-live-p95" || rows[1].Assertion.ID != "replay-slowest" {
+		t.Errorf("TestB's rows = %+v, want its two timing checks in table order", rows)
 	}
 	for name, bad := range map[string]string{
 		"the old five columns":              "ui\te2e/a.spec.ts\t5\t16\ta note\n",
 		"the six columns before assertions": "ui\te2e/a.spec.ts\tt\t5\t16\ta note\n",
 		"an unknown assertion":              "ui\te2e/a.spec.ts\tt\ttoBeFast 5000\t5\t16\tnote\n",
 		"visibleWithin without a locator":   "ui\te2e/a.spec.ts\tt\tvisibleWithin 60000\t5\t16\tnote\n",
-		"a test row with an assertion":      "test\texample.com/m\tTestA\tlessThan 5\t60\t16\tnote\n",
+		"a test row with a UI assertion":    "test\texample.com/m\tTestA\tlessThan 5\t60\t16\tnote\n",
+		"a timing row with no id":           "test\texample.com/m\tTestA\ttiming\t60\t16\tnote\n",
+		"a timing row with a bad id":        "test\texample.com/m\tTestA\ttiming GetRun\t60\t16\tnote\n",
+		"a timing row with two ids":         "test\texample.com/m\tTestA\ttiming a b\t60\t16\tnote\n",
+		"a UI row with a timing assertion":  "ui\te2e/a.spec.ts\tt\ttiming getrun-live-p95\t5\t16\tnote\n",
+		"a duplicate timing row":            "test\texample.com/m\tTestA\ttiming a\t2\t16\tn\ntest\texample.com/m\tTestA\ttiming a\t2\t16\tn\n",
 		"a duplicate row":                   "ui\te2e/a.spec.ts\tt\tlessThan 5000\t5\t16\tn\nui\te2e/a.spec.ts\tt\tlessThan 5000\t5\t16\tn\n",
 		"an unknown kind":                   "spec\te2e/a.spec.ts\tt\tlessThan 5000\t5\t16\tnote\n",
 		"an empty title":                    "ui\te2e/a.spec.ts\t \tlessThan 5000\t5\t16\tnote\n",
@@ -94,6 +105,80 @@ func TestAnchoredHostSpeed_KeepsOnlyRowsTheBaseDeclaresIdentically(t *testing.T)
 		got := anchoredHostSpeed(parse(c.tree), parse(c.base))
 		if (len(got.UI) == 1) != c.kept {
 			t.Errorf("%s: kept %v, want %v", c.name, len(got.UI) == 1, c.kept)
+		}
+	}
+}
+
+// A Go row counts only when the base declares the same test, check, bound and
+// reference: a row the change adds, a bound it loosens, a check it renames or
+// a reference it raises excuses nothing.
+func TestAnchoredHostSpeed_KeepsOnlyGoRowsTheBaseDeclaresIdentically(t *testing.T) {
+	row := func(id, bound, cpus string) string {
+		return "test\texample.com/m\tTestA\ttiming " + id + "\t" + bound + "\t" + cpus + "\tnote\n"
+	}
+	parse := func(s string) hostSpeedTable {
+		tab, err := parseHostSpeed(strings.NewReader(s), "t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tab
+	}
+	cases := []struct {
+		name, tree, base string
+		kept             int
+	}{
+		{"the same row", row("a", "2", "16"), row("a", "2", "16"), 1},
+		{"a note edited", row("a", "2", "16"), strings.Replace(row("a", "2", "16"), "note", "older", 1), 1},
+		{"a row the change adds", row("a", "2", "16"), "", 0},
+		{"a looser bound", row("a", "3", "16"), row("a", "2", "16"), 0},
+		{"a higher reference", row("a", "2", "64"), row("a", "2", "16"), 0},
+		{"another check", row("b", "2", "16"), row("a", "2", "16"), 0},
+		{"one row of two is new", row("a", "2", "16") + row("b", "2", "16"), row("a", "2", "16"), 1},
+		{"a dash row the base turned into a timing row", row("a", "2", "16"), "test\texample.com/m\tTestA\t-\t2\t16\tn\n", 0},
+	}
+	for _, c := range cases {
+		if got := anchoredHostSpeed(parse(c.tree), parse(c.base)); len(got.Tests) != c.kept {
+			t.Errorf("%s: kept %d rows, want %d", c.name, len(got.Tests), c.kept)
+		}
+	}
+}
+
+// The committed table names real Go tests: each test row's package exists, one
+// of its test files declares the test, and (for a timing row) a test file of
+// the package reports a check of that id through the proof helper, so a
+// renamed test or check cannot leave a row that excuses nothing.
+func TestRepositoryHostSpeed_NamesRealGoTests(t *testing.T) {
+	root := mustRepoRoot()
+	tab, err := readHostSpeed(filepath.Join(root, "scripts", "proof-host-speed.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const module = "github.com/orkstack/orkstack/"
+	for _, b := range tab.Tests {
+		dir := filepath.Join(root, strings.TrimPrefix(b.Name, module))
+		if !strings.HasPrefix(b.Name, module) {
+			t.Errorf("line %d: %s is not a package of this module", b.Line, b.Name)
+			continue
+		}
+		files, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
+		if err != nil || len(files) == 0 {
+			t.Errorf("line %d: %s has no test file", b.Line, b.Name)
+			continue
+		}
+		var src strings.Builder
+		for _, f := range files {
+			text, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			src.Write(text)
+			src.WriteByte('\n')
+		}
+		if !strings.Contains(src.String(), "\nfunc "+b.Member+"(t *testing.T)") {
+			t.Errorf("line %d: %s declares no test %s", b.Line, b.Name, b.Member)
+		}
+		if b.Assertion.Kind == "timing" && !strings.Contains(src.String(), `Check("`+b.Assertion.ID+`"`) {
+			t.Errorf("line %d: no test file of %s reports a timing check %q", b.Line, b.Name, b.Assertion.ID)
 		}
 	}
 }

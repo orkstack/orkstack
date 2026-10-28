@@ -173,3 +173,102 @@ func TestMakespan(t *testing.T) {
 		t.Errorf("makespan on 1 slot = %v, total %v, want 650", got, totalCost(jobs))
 	}
 }
+
+func out(pkg, test, text string) event {
+	return event{Action: "output", Package: pkg, Test: test, Output: text}
+}
+
+// A failing top-level test keeps the last lines it printed, its subtests'
+// included and the testing package's own framing left out; a test that
+// passes or skips keeps none.
+func TestCollector_AFailingTestKeepsItsOutputTail(t *testing.T) {
+	const p = "example.com/p"
+	c := newCollector()
+	for _, e := range []event{
+		ev("run", p, "TestFail", 0),
+		out(p, "TestFail", "=== RUN   TestFail\n"),
+		out(p, "TestFail", "    f_test.go:10: first\n"),
+		ev("run", p, "TestFail/sub", 0),
+		out(p, "TestFail/sub", "=== RUN   TestFail/sub\n"),
+		out(p, "TestFail/sub", "    f_test.go:12: from a subtest\n"),
+		out(p, "TestFail/sub", "    --- FAIL: TestFail/sub (0.00s)\n"),
+		ev("fail", p, "TestFail/sub", 0),
+		out(p, "TestFail", "\n"),
+		out(p, "TestFail", "    f_test.go:14: last\r\n"),
+		out(p, "TestFail", "--- FAIL: TestFail (0.01s)\n"),
+		ev("fail", p, "TestFail", 0.01),
+
+		ev("run", p, "TestPass", 0),
+		out(p, "TestPass", "    f_test.go:20: chatter\n"),
+		ev("pass", p, "TestPass", 0),
+		ev("run", p, "TestSkip", 0),
+		out(p, "TestSkip", "    f_test.go:30: skipping\n"),
+		ev("skip", p, "TestSkip", 0),
+	} {
+		c.add(e, "j1")
+	}
+	want := []string{"    f_test.go:10: first", "    f_test.go:12: from a subtest", "    f_test.go:14: last"}
+	if got := c.results[testKey{p, "TestFail"}].FailureOutput; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("TestFail kept %q, want %q", got, want)
+	}
+	for _, name := range []string{"TestPass", "TestSkip"} {
+		if got := c.results[testKey{p, name}].FailureOutput; len(got) != 0 {
+			t.Errorf("%s kept %q: only a failure keeps its output", name, got)
+		}
+	}
+	if len(c.tails) != 0 {
+		t.Errorf("the collector still holds the output of %d finished tests", len(c.tails))
+	}
+}
+
+func TestCollector_TheOutputTailIsBounded(t *testing.T) {
+	const p = "example.com/p"
+	c := newCollector()
+	c.add(ev("run", p, "TestFail", 0), "j1")
+	for i := range failureTailLines + 25 {
+		c.add(out(p, "TestFail", fmt.Sprintf("line %d\n", i)), "j1")
+	}
+	c.add(out(p, "TestFail", strings.Repeat("é", failureTailWidth)+"\n"), "j1")
+	c.add(ev("fail", p, "TestFail", 1), "j1")
+	got := c.results[testKey{p, "TestFail"}].FailureOutput
+	if len(got) != failureTailLines {
+		t.Fatalf("kept %d lines, want %d", len(got), failureTailLines)
+	}
+	if got[len(got)-2] != fmt.Sprintf("line %d", failureTailLines+24) {
+		t.Errorf("the tail does not end at the last lines: %q", got[len(got)-2])
+	}
+	if last := got[len(got)-1]; len(last) > failureTailWidth+len("…") || !strings.HasSuffix(last, "…") {
+		t.Errorf("a long line was kept at %d bytes: %.40q", len(last), last)
+	}
+}
+
+func TestCollector_ParallelTestsKeepTheirOwnOutput(t *testing.T) {
+	const p = "example.com/p"
+	c := newCollector()
+	for _, e := range []event{
+		ev("run", p, "TestA", 0), ev("run", p, "TestB", 0),
+		out(p, "TestA", "    a_test.go:1: a one\n"), out(p, "TestB", "    b_test.go:1: b one\n"),
+		out(p, "TestA", "    a_test.go:2: a two\n"),
+		ev("fail", p, "TestA", 1), ev("fail", p, "TestB", 1),
+	} {
+		c.add(e, "j1")
+	}
+	if got := strings.Join(c.results[testKey{p, "TestA"}].FailureOutput, "|"); got != "    a_test.go:1: a one|    a_test.go:2: a two" {
+		t.Errorf("TestA kept %q", got)
+	}
+	if got := strings.Join(c.results[testKey{p, "TestB"}].FailureOutput, "|"); got != "    b_test.go:1: b one" {
+		t.Errorf("TestB kept %q", got)
+	}
+}
+
+func TestFrameworkLine(t *testing.T) {
+	for line, want := range map[string]bool{
+		"=== RUN   TestX": true, "=== PAUSE TestX": true, "=== CONT  TestX": true, "=== NAME  TestX": true,
+		"--- FAIL: TestX (0.00s)": true, "    --- FAIL: TestX/sub (0.00s)": true, "--- PASS: TestX (0.00s)": true, "--- SKIP: TestX (0.00s)": true,
+		"    x_test.go:1: --- FAIL: not framing": false, "panic: boom": false, "FAIL": false, "": false,
+	} {
+		if got := frameworkLine(line); got != want {
+			t.Errorf("frameworkLine(%q) = %v, want %v", line, got, want)
+		}
+	}
+}

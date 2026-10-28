@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
 // scripts/proof-host-speed.tsv names the assertions whose pass depends on the
@@ -30,7 +32,12 @@ import (
 //   - only for a row the base's copy of the table carries too, so a change
 //     cannot excuse its own failure (like the quarantine list).
 //
-// An integration row is recorded on a miss and never excused.
+// A Go test row declares `timing ID`: one wall-clock check of that test,
+// reported through internal/testsupport/proof's Timing (gotiming.go). It is
+// excused on a CI `integration:K` part under the same anchoring, and only
+// when the ledger and the test's own timing record show nothing but that
+// check failed. A Go test row with the assertion "-" is recorded on a miss
+// and never excused.
 
 // hostBound is one row of the table.
 type hostBound struct {
@@ -44,11 +51,12 @@ type hostBound struct {
 	Line          int
 }
 
-// hostAssertion is the one failure a UI row may excuse.
+// hostAssertion is the one failure a row may excuse.
 type hostAssertion struct {
-	Kind    string  // "lessThan" or "visibleWithin"; "-" for a test row
+	Kind    string  // "lessThan" or "visibleWithin" (UI); "timing" or "-" (a Go test row)
 	MS      float64 // the assertion's Expected (lessThan) or its timeout (visibleWithin)
 	Locator string  // visibleWithin: the locator exactly as Playwright prints it
+	ID      string  // timing: the check's id, as the test's Timing reports it
 }
 
 func (a hostAssertion) String() string {
@@ -57,6 +65,8 @@ func (a hostAssertion) String() string {
 		return fmt.Sprintf("lessThan %g", a.MS)
 	case "visibleWithin":
 		return fmt.Sprintf("visibleWithin %g %s", a.MS, a.Locator)
+	case "timing":
+		return "timing " + a.ID
 	}
 	return a.Kind
 }
@@ -64,10 +74,14 @@ func (a hostAssertion) String() string {
 // parseAssertion reads the assertion column.
 func parseAssertion(kind, text string) (hostAssertion, error) {
 	if kind == "test" {
-		if text != "-" {
-			return hostAssertion{}, fmt.Errorf("a test row's assertion is \"-\", got %q", text)
+		if text == "-" {
+			return hostAssertion{Kind: "-"}, nil
 		}
-		return hostAssertion{Kind: "-"}, nil
+		id, ok := strings.CutPrefix(text, "timing ")
+		if !ok || !proof.ValidTimingID(id) {
+			return hostAssertion{}, fmt.Errorf("a test row's assertion is \"-\" or \"timing ID\" (a lowercase word with hyphens), got %q", text)
+		}
+		return hostAssertion{Kind: "timing", ID: id}, nil
 	}
 	f := strings.SplitN(text, " ", 3)
 	var a hostAssertion
@@ -97,12 +111,17 @@ func (b hostBound) same(o hostBound) bool {
 
 // hostSpeedTable is the parsed table, keyed for lookups.
 type hostSpeedTable struct {
-	UI    map[string]hostBound  // spec + "\x00" + title + "\x00" + assertion
-	Tests map[testKey]hostBound // package, test
+	UI    map[string]hostBound // spec + "\x00" + title + "\x00" + assertion
+	Tests map[string]hostBound // package + "\x00" + test + "\x00" + assertion
+}
+
+// testRowKey is a Go test row's key: a test may carry one row per check.
+func testRowKey(pkg, test string, a hostAssertion) string {
+	return pkg + "\x00" + test + "\x00" + a.String()
 }
 
 func emptyHostSpeed() hostSpeedTable {
-	return hostSpeedTable{UI: map[string]hostBound{}, Tests: map[testKey]hostBound{}}
+	return hostSpeedTable{UI: map[string]hostBound{}, Tests: map[string]hostBound{}}
 }
 
 // readHostSpeed parses the table; an absent file is an empty table, because
@@ -164,7 +183,11 @@ func parseHostSpeed(r io.Reader, name string) (hostSpeedTable, error) {
 			}
 			out.UI[key] = b
 		case "test":
-			out.Tests[testKey{f[1], f[2]}] = b
+			key := testRowKey(f[1], f[2], assertion)
+			if prev, dup := out.Tests[key]; dup {
+				return emptyHostSpeed(), fmt.Errorf("%s:%d: the same row is on line %d", name, n, prev.Line)
+			}
+			out.Tests[key] = b
 		default:
 			return emptyHostSpeed(), fmt.Errorf("%s:%d: kind %q is not ui or test", name, n, f[0])
 		}
@@ -193,6 +216,18 @@ func anchoredHostSpeed(tree, base hostSpeedTable) hostSpeedTable {
 // which Playwright reports relative to its testDir.
 func specMatches(spec, file string) bool {
 	return spec == file || strings.HasSuffix(spec, "/"+file) || strings.HasSuffix(file, "/"+spec)
+}
+
+// testRows are the rows that declare the Go test pkg.test, in table order.
+func (t hostSpeedTable) testRows(pkg, test string) []hostBound {
+	var out []hostBound
+	for _, b := range t.Tests {
+		if b.Name == pkg && b.Member == test {
+			out = append(out, b)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Line < out[j].Line })
+	return out
 }
 
 // uiBounds are the rows that declare e's test, in table order.
