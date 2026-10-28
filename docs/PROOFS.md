@@ -527,45 +527,56 @@ fails the step, before the part, and the remedy is a new run of the same
 tree (§10) — the action re-runs no job and nothing continues on error.
 
 **The runner-health floor.** The first thing every part does, before any
-gate, is measure its runner for about thirteen seconds
-(`proofrun runner-health`, run by `scripts/proof-part.sh`): sequential write
-and read throughput and the 95th-percentile fsync latency on its work disk,
-where the object store's and Temporal's volumes live (the probe is written
-and read back through `O_DIRECT`, so the read measures the disk and not the
-page cache), single-core and all-core CPU throughput (SHA-256 over a fixed
-buffer), and available memory. It writes `runner-health.json` beside the
-part's records: each value, the floor `scripts/proof-runner-floors.tsv`
-declares for the runner's class — `github-hosted/<ImageOS>/<N>cpu` on a
-GitHub-hosted runner, the image and its vCPU count — and a verdict,
-`above-floor`, `below-floor` or `unfloored` (a class the table does not
-name). A stack part (`integration`, `ui-e2e`, `activity-fixture`,
-`observability`) below a floor records itself and stops there, with no gate
-run and its job red; the merger classifies that attempt **runner-degraded**,
-exactly as one whose runner GitHub lost: nothing it recorded is an outcome
-of the tree, the proof is not a proof of the tree, `proof.json` names the
-part, the metric, the measured value and the floor (`degraded_runners`), and
-that one job may run again (§8, §10). The `plan`, `build` and `fast` parts,
-and a local proof's `local` part, measure for information: their verdict is
-recorded and changes nothing, because a local host's floors are its measured
-costs themselves. The merger re-derives every verdict from the file's values
-and floors, never from the file's own word, refuses a part that measured
-against floors that are not the tree's, and fails closed on a file it cannot
-read. A measurement that cannot run (a filesystem that refuses `O_DIRECT`,
-say) leaves that metric unmeasured and never below the floor: the floor only
+gate, is measure its runner for about fourteen seconds (`proofrun runner-health`,
+run by `scripts/proof-part.sh`): sequential write and read throughput and
+the 95th-percentile fsync latency on its work disk, where the object store's
+and Temporal's volumes live (the probe is written and read back through
+`O_DIRECT`, so the read measures the disk and not the page cache),
+single-core and all-core CPU throughput (SHA-256 over a fixed buffer), and
+available memory. It writes `runner-health.json` beside the part's records:
+each value, the floor `scripts/proof-runner-floors.tsv` declares for the
+runner's class — `github-hosted/<ImageOS>/<N>cpu` on a GitHub-hosted runner,
+the image and its vCPU count — and a verdict, `above-floor`, `below-floor`
+or `unfloored` (a class the table does not name). A stack part
+(`integration`, `ui-e2e`, `activity-fixture`, `observability`) below a floor
+records itself and stops there, with no gate run and its job red; the
+merger classifies that attempt **runner-degraded**, exactly as one whose
+runner GitHub lost: nothing it recorded is an outcome of the tree, the proof
+is not a proof of the tree, `proof.json` names the part, the metric, the
+measured value and the floor (`degraded_runners`), and that one job may run
+again (§8, §10). The `plan`, `build` and `fast` parts, and a local proof's
+`local` part, measure for information: their verdict is recorded and
+changes nothing, because a local host's floors are its measured costs
+themselves. The merger re-derives every verdict from the file's values and
+floors, never from the file's own word, refuses a part that measured against
+floors that are not the tree's, and fails closed on a file it cannot read.
+A measurement that cannot run (a filesystem that refuses `O_DIRECT`, say)
+leaves that metric unmeasured and never below the floor: the floor only
 ever turns a result into "not a proof of the tree", never a failure into a
-pass, which is also why a feature proof may change the table and why no base
-anchor is needed for it. The floor is measured once, at the start: a runner
-that degrades later is not seen, and its failures stay test failures (§12).
+pass, which is also why a feature proof may change the table and why no
+base anchor is needed for it. The floor is measured once, at the start: a
+runner that degrades later is not seen, and its failures stay test failures
+(§12).
 
 **Informational readings.** A disk read is one burst of one to two seconds and
 an fsync reading one series: thin evidence about a disk that may be throttled
-in bursts. So the measurement also takes two more disk-read bursts, one after
-each CPU measurement, and one more fsync reading, last. Each is recorded in
-its metric's `samples` array with the `offset_seconds` at which it began, how
-long it took (`seconds`) and, when it could not be taken, its `error`; the
-array's first entry is the judged reading itself. They add about three
-seconds to the ten of the judged measurements, which run in the order they
-always did, each with the share of the budget it always had. They are
+in bursts. So the measurement also writes the probe a second time, after the
+single-core CPU measurement, reads it in two more bursts, one right after
+that write and one after the all-core CPU measurement, and takes one more
+fsync reading, last. Each is recorded in its metric's `samples` array with
+the `offset_seconds` at which it began, how long it took (`seconds`) and,
+when it could not be taken, its `error`; the array's first entry is the
+judged reading itself. A write or a read also records the `region` of the
+probe it covered (`from_bytes`, `bytes`): the second burst starts where the
+first stopped and wraps to the start of the file at its end, so a file larger
+than a burst reads gives the bursts different blocks, and a file a burst
+reads whole (a fast disk) shows in the regions as blocks read again. An
+`O_DIRECT` read bypasses the runner's page cache and nothing beyond it, so a
+burst over blocks an earlier one read may have been served by a cache the
+runner cannot see. The judged measurements are exactly what they were: the
+same order, the same share of the budget each, and the judged fsync opens the
+file the write left, which truncates it, as it always did. The extra readings
+add about four seconds to the ten of the judged measurements. They are
 informational: the floor judges only the first reading of each metric, a
 later reading, however slow, never makes a part runner-degraded, one that
 cannot be taken changes nothing, and `scripts/proof-runner-floors.tsv` does
@@ -705,9 +716,9 @@ were still 921 MB (run 40388322907).
   (§5), the action's own lines prefixed with the part;
 - `runner_health`, every part attempt's runner-health measurement (§5) with
   the verdict the merger re-derived and the informational `samples` of the
-  disk read and the fsync, and `degraded_runners`, every attempt
-  that measured below the floor, one entry per metric with its value and
-  the floor; a `reruns` entry whose `reason` is `runner-degraded` carries
+  disk write, the disk read and the fsync, and `degraded_runners`, every
+  attempt that measured below the floor, one entry per metric with its value
+  and the floor; a `reruns` entry whose `reason` is `runner-degraded` carries
   the earlier attempt's entries as `degraded`;
 - `pr` and `ci`.
 
@@ -942,15 +953,27 @@ the runs and the margin in the row's `derived` column. The first rows came
 from run 40411125174's 21 parts (2026-10-26), each a third of the least
 measurement or three times the largest latency, before the informational
 readings existed; a class with no row (`unfloored`) is measured for
-information until its runs give it rows. The `samples` of the disk read and
-the fsync (§5) judge nothing, and the next derivation reads them first, from
-the same `runner-health.json` files: a slow first burst that the later
-bursts repeat is a disk that stayed slow, and one they do not repeat is a
-transient; the two are told apart before a floor is set from either. Gather
-them from several proofs before that derivation, and name the runs in
-`derived` as for any row. A floor that no healthy run would cross is the
-aim: a floor can only turn a part into "not a proof of the tree", and a floor
-set too high costs reruns, never a false pass.
+information until its runs give it rows. The `samples` of the disk write, the
+disk read and the fsync (§5) judge nothing, and the next derivation reads
+them first, from the same `runner-health.json` files, or across the proofs in
+one table:
+
+```sh
+jq -r '.runner_health[] | .part as $part | .attempt as $try
+  | .metrics[] | .metric as $metric | (.samples // [])[]
+  | [$part, $try, $metric, .offset_seconds, .value,
+     (.region.from_bytes // "-"), (.region.bytes // "-"), (.error // "-")]
+  | @tsv' proof/<name>/proof.json
+```
+
+A slow first burst that the later bursts repeat is a disk that stayed slow,
+and one they do not repeat is a transient, but only where the later bursts
+read blocks the first did not: compare the regions, because a burst over
+blocks already read may have been served by a cache beyond the runner and
+shows less. Gather the readings from several proofs before that derivation,
+and name the runs in `derived` as for any row. A floor that no healthy run
+would cross is the aim: a floor can only turn a part into "not a proof of the
+tree", and a floor set too high costs reruns, never a false pass.
 
 **After a setup failure, or a "Re-run job" past the artifact's retention.**
 Start a new run of the same tree (push again, or close and reopen the pull
