@@ -13,7 +13,7 @@
 # the one command that applies them to a public one. Check mode is read-only.
 #
 # Every ruleset body is UNVERIFIED against the API until it has been applied:
-# none has ever been posted to the API. Read the API's answer
+# this script's apply has not been run. Read the API's answer
 # before anything else.
 set -uo pipefail
 
