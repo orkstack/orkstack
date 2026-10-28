@@ -13,15 +13,13 @@ name: release
 # `tag: false` is a full dry run that publishes nothing. Nothing here
 # dispatches itself; the user runs it.
 #
-# `gate` runs on the hosted ubuntu-24.04 runners (4 vCPUs), and the release
-# tier excuses no runner-size miss (test/tools/proofrun/merge.go
-# runnerSizeRefusal): the run page's 5 s budget (9,485 ms measured there) and
-# the soaks' 2 s live GetRun budget (2.014 s measured there), calibrated on the
-# 16-CPU reference host, fail it. So a dispatch fails at `gate` until a CI
-# release path has runners as large as the reference, which is a maintainer's
-# decision; this workflow has no runner input. Only a run whose `gate` passed
-# publishes: `make release-tag` after a local `make proof-release` on the
-# reference host tags and publishes nothing (docs/PROOFS.md §10, §12).
+# `gate` runs on the hosted ubuntu-24.04 runners (4 vCPUs). A wall-clock
+# budget calibrated on the 16-CPU reference host that one of them misses is
+# excused exactly as in the merge gate: a recorded known gap under a row of
+# scripts/proof-host-speed.tsv the base carries, never a pass and never a
+# widened bound (AGENTS.md §11; docs/PROOFS.md §12). Every other failure fails
+# the gate's proof. Its proof is the verdict: only a run whose release proof
+# passed and verified publishes, even when an excused miss left a part red.
 
 on:
   workflow_dispatch:
@@ -223,7 +221,13 @@ jobs:
 
   tag:
     needs: [validate, gate, artifacts]
-    if: ${{ inputs.tag && github.ref == 'refs/heads/main' }}
+    # The gate's merged proof is the verdict, never the colour of the call: an
+    # excused runner-size miss leaves an integration part red while the proof
+    # passes (docs/PROOFS.md §12), and the implicit success() would skip this
+    # job. So it runs unless cancelled, once validate and artifacts succeeded
+    # and the gate named its proof, and `proofrun verify -release` below
+    # refuses anything but a passing release proof of this exact commit.
+    if: ${{ !cancelled() && inputs.tag && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.gate.outputs.proof_artifact != '' }}
     concurrency:
       group: release-tag-${{ needs.validate.outputs.version }}
       cancel-in-progress: false
@@ -287,7 +291,9 @@ jobs:
   # verifies first.
   publish:
     needs: [validate, artifacts, tag]
-    if: ${{ inputs.tag && github.ref == 'refs/heads/main' }}
+    # Named results, not the implicit success(), which would also read the
+    # gate's colour through tag (above).
+    if: ${{ !cancelled() && inputs.tag && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.tag.result == 'success' }}
     concurrency:
       group: release-publish-${{ needs.validate.outputs.version }}
       cancel-in-progress: false

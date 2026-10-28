@@ -418,14 +418,13 @@ func TestGoTiming_ARealFailingTestIsExcusedFromItsOwnOutput(t *testing.T) {
 	}
 }
 
-// The pre-release gate enforces the wall-clock budgets on the reference class
-// (AGENTS.md §11): a CI release proof excuses no runner-size miss, Go or UI,
-// whatever the rows say, and says that is why. The full tier's excusal (the
-// tests above and in merge_test.go) is the positive control, and the nightly
-// tier keeps the excusal it always had.
-func TestMerge_TheReleaseTierExcusesNoRunnerSizeMiss(t *testing.T) {
+// The pre-release gate excuses a runner-size miss exactly as the merge gate
+// does (AGENTS.md §11): on a CI part below the row's reference, under a row
+// the base carries, a Go or UI timing miss is a recorded known gap, so a tag
+// never waits for a runner as large as the reference. A local release proof
+// still enforces every budget: only a CI part may excuse one (tested above).
+func TestMerge_TheReleaseTierExcusesARunnerSizeMissLikeTheMergeGate(t *testing.T) {
 	timingProblem := "a.spec.ts › t [chromium] failed (" + timingDetail + ")"
-	const refusal = "the release tier enforces the wall-clock budgets"
 	goMiss := func(t *testing.T, tier string) (proofRecord, int) {
 		f := newMergeFixture(t, tier, true)
 		f.anchorHostSpeed(goRow, goRow)
@@ -441,36 +440,24 @@ func TestMerge_TheReleaseTierExcusesNoRunnerSizeMiss(t *testing.T) {
 	for _, kind := range []struct {
 		name    string
 		merge   func(*testing.T, string) (proofRecord, int)
-		failure string   // the line the refused miss leaves in the proof's reasons
-		allowed []string // the tiers whose fixture can show the excusal still holds
+		failure string   // the line an unexcused miss leaves in the proof's reasons
+		tiers   []string // the tiers whose fixture can show the excusal
 	}{
-		{"a Go timing miss", goMiss, timingProblemA, []string{tierFull, tierNightly}},
+		{"a Go timing miss", goMiss, timingProblemA, []string{tierRelease, tierFull, tierNightly}},
 		// A nightly proof plans no UI part for the fixture's spec file.
-		{"a UI timing miss", uiMiss, timingProblem, []string{tierFull}},
+		{"a UI timing miss", uiMiss, timingProblem, []string{tierRelease, tierFull}},
 	} {
-		t.Run(kind.name+" in the release tier", func(t *testing.T) {
-			r, code := kind.merge(t, tierRelease)
-			if code == 0 || r.Result != "fail" || r.MergeEligible {
-				t.Fatalf("code %d, result %s eligible %v: the release tier excused the miss", code, r.Result, r.MergeEligible)
-			}
-			if !strings.Contains(joined(r), kind.failure) {
-				t.Errorf("ineligible = %v, want the failure %q kept", r.Ineligible, kind.failure)
-			}
-			if len(r.KnownGaps) != 0 && !strings.Contains(strings.Join(r.KnownGaps, "\n"), refusal) {
-				t.Errorf("known_gaps = %v: a refused miss may be recorded, only with its reason", r.KnownGaps)
-			}
-			if len(r.HostSpeedFailures) != 1 || r.HostSpeedFailures[0].Excused || !strings.Contains(r.HostSpeedFailures[0].Message, refusal) {
-				t.Errorf("host_speed_failures = %+v, want one unexcused entry that says the release tier refuses", r.HostSpeedFailures)
-			}
-		})
-		for _, tier := range kind.allowed {
+		for _, tier := range kind.tiers {
 			t.Run(kind.name+" in the "+tier+" tier", func(t *testing.T) {
 				r, _ := kind.merge(t, tier)
 				if strings.Contains(joined(r), kind.failure) {
-					t.Errorf("ineligible = %v: the %s tier no longer excuses a runner-size miss", r.Ineligible, tier)
+					t.Errorf("ineligible = %v: the %s tier did not excuse a runner-size miss", r.Ineligible, tier)
 				}
 				if len(r.HostSpeedFailures) != 1 || !r.HostSpeedFailures[0].Excused {
 					t.Errorf("host_speed_failures = %+v, want one excused entry", r.HostSpeedFailures)
+				}
+				if len(r.KnownGaps) == 0 {
+					t.Errorf("known_gaps is empty: an excused miss is recorded, never dropped")
 				}
 			})
 		}

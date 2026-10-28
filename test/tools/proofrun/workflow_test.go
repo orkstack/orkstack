@@ -1756,6 +1756,64 @@ func tagProblems(w *wfFile) []string {
 	return p
 }
 
+// releaseVerdictProblems: the gate's merged proof is the release's verdict,
+// never the colour of its call. An excused Go runner-size miss leaves its
+// integration part red while the proof passes (docs/PROOFS.md §12), and a
+// job's implicit success() would then skip tag and publish. So both run
+// unless the run was cancelled, on the named results of what they need, and
+// tag's `proofrun verify -release` is what refuses a failing proof.
+func releaseVerdictProblems(w *wfFile) []string {
+	var p []string
+	for _, c := range []struct {
+		job  string
+		want []string
+	}{
+		{"tag", []string{"!cancelled()", "inputs.tag", "github.ref == 'refs/heads/main'",
+			"needs.validate.result == 'success'", "needs.artifacts.result == 'success'", "needs.gate.outputs.proof_artifact != ''"}},
+		{"publish", []string{"!cancelled()", "inputs.tag", "github.ref == 'refs/heads/main'",
+			"needs.validate.result == 'success'", "needs.artifacts.result == 'success'", "needs.tag.result == 'success'"}},
+	} {
+		job, ok := w.Jobs[c.job]
+		if !ok {
+			p = append(p, "release.yml has no "+c.job+" job")
+			continue
+		}
+		cond := normalizeIf(job.If)
+		for _, want := range c.want {
+			if !strings.Contains(cond, want) {
+				p = append(p, fmt.Sprintf("jobs.%s.if = %q does not require %s", c.job, job.If, want))
+			}
+		}
+		if strings.Contains(cond, "always()") || strings.Contains(cond, "||") {
+			p = append(p, fmt.Sprintf("jobs.%s.if = %q can run past a cancel or a failed need", c.job, job.If))
+		}
+	}
+	return p
+}
+
+func TestWorkflows_TheReleaseVerdictIsTheProofNotTheGatesColour(t *testing.T) {
+	expectEachMutationRefused(t, "release.yml", releaseVerdictProblems, []mutation{
+		{"tag on the implicit success of the gate", func(w *wfFile) {
+			w.Jobs["tag"].If = "${{ inputs.tag && github.ref == 'refs/heads/main' }}"
+		}},
+		{"publish on the implicit success of the chain", func(w *wfFile) {
+			w.Jobs["publish"].If = "${{ inputs.tag && github.ref == 'refs/heads/main' }}"
+		}},
+		{"tag even when cancelled", func(w *wfFile) {
+			w.Jobs["tag"].If = strings.Replace(w.Jobs["tag"].If, "!cancelled()", "always()", 1)
+		}},
+		{"tag without the gate's proof", func(w *wfFile) {
+			w.Jobs["tag"].If = strings.Replace(w.Jobs["tag"].If, " && needs.gate.outputs.proof_artifact != ''", "", 1)
+		}},
+		{"publish after a failed tag", func(w *wfFile) {
+			w.Jobs["publish"].If = strings.Replace(w.Jobs["publish"].If, " && needs.tag.result == 'success'", "", 1)
+		}},
+		{"tag without the artifacts", func(w *wfFile) {
+			w.Jobs["tag"].If = strings.Replace(w.Jobs["tag"].If, " && needs.artifacts.result == 'success'", "", 1)
+		}},
+	})
+}
+
 // TestWorkflows_TheTagJobVerifiesTheReleaseProofFirst: release.yml creates and
 // pushes a tag only after `proofrun verify -release` accepted a passing
 // release proof of the commit it checked out; no earlier step touches a tag.

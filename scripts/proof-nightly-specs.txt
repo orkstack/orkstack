@@ -14,6 +14,8 @@
 # change that adds a row runs that spec one last time; its tests are
 # recorded as deferred in the Playwright ledger. The nightly tier runs
 # exactly these specs; the pre-release gate runs everything, these included.
-# A red nightly or pre-release proof is a failing main: fix it or revert the
-# change that broke it, and never edit this list to make a proof pass.
+# A red nightly or pre-release proof is a regression on main: fixing it, or
+# reverting the change that broke it, is the next work; it holds no other
+# merge, and a red pre-release proof holds its release. Never edit this list
+# to make a proof pass.
 ui/e2e/run-page-ceiling.spec.ts	ui/e2e/run-page-reduced-ceiling.spec.ts	2026-10-26 Daniel Santos	the run page at the 4,000-task default ceiling takes about 7.5 min of the Playwright solo lane; the merge gate runs the same measurement, helpers and 5 s budget with engine.orkflow_max_tasks lowered to 1,000

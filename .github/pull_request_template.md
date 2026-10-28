@@ -11,8 +11,9 @@ read it. You never need the full proof locally.
 ## Evidence
 
 <!--
-Name tests and specs the selection cannot find. The same values as
-`make proof-feature TESTS=… SPECS=…`.
+Name the tests and specs that prove the change. The same values as
+`make proof-feature TESTS=… SPECS=…`, which is optional; the `proof` check
+is the gate.
 -->
 
 Proof-tests:

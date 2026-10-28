@@ -28,9 +28,8 @@ import (
 //     or `visibleWithin MS LOCATOR`, a `toBeVisible({ timeout: MS })` on that
 //     exact locator that timed out — the class-B miss of a page that never
 //     drew within the spec's own wait on a small runner;
-//   - only on a CI `ui-e2e:K` part, never the `local` part;
-//   - never in the release tier, whose gate enforces the budgets on the
-//     reference class (merge.go runnerSizeRefusal);
+//   - only on a CI `ui-e2e:K` part, never the `local` part, in any tier: the
+//     pre-release gate excuses exactly what the merge gate does;
 //   - only for a row the base's copy of the table carries too, so a change
 //     cannot excuse its own failure (like the quarantine list).
 //

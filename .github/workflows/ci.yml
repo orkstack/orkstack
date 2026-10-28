@@ -9,9 +9,9 @@ name: ci
 #            and about twice that is estimated at two (docs/PROOFS.md §11.5).
 #   vuln     govulncheck over the module: the one job that needs the network
 #            (vuln.go.dev), so it is a job of its own and in no proof.
-#   feature  the feature proof of this change, on a public repository or with
-#            the ci:feature label (a private repository keeps its metered
-#            minutes for the merge gate).
+#   feature  the feature proof of this change, which is optional: only with
+#            the ci:feature label, on a validate/feature/** push, or by
+#            dispatch. The full proof is the gate (AGENTS.md §11.1).
 
 on:
   # `check` runs on every push and every pull request; `feature` narrows
@@ -72,7 +72,7 @@ jobs:
 
   feature:
     needs: check
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/validate/feature/')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.event.repository.visibility == 'public' || contains(github.event.pull_request.labels.*.name, 'ci:feature'))) }}
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/validate/feature/')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:feature')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 95
     permissions:

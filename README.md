@@ -247,8 +247,8 @@ from these files.
 Developing OrkStack needs Go and Bun as well as Docker; [CONTRIBUTING.md](./CONTRIBUTING.md)
 lists the prerequisites and the local development stack, and
 [AGENTS.md](./AGENTS.md) is the engineering contract. Every change ships with
-behavior tests and with evidence: `make proof-feature` on a branch, and a
-full `make proof` of the merged tree before it lands. No proof, no done.
+behavior tests, and lands only after a full proof of the merged tree passes:
+CI's sharded `proof` check, or `make proof` locally. No proof, no done.
 
 ## License
 

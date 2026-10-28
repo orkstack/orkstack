@@ -55,9 +55,7 @@ include breaking changes, and each is marked **BREAKING**.
   part's artifacts are not kept in the merged proof. The helper's package,
   `internal/testsupport/proof`, is now a gate file with a code owner, because
   the excusal trusts the record it writes and the lines it prints. A failing test with no record, a local proof, a runner as large as
-  the reference, the release tier (the pre-release gate enforces the budgets
-  on the reference class, so this also ends the excusal of the UI rows there)
-  and any other failure still fail the proof. The rows are the
+  the reference and any other failure still fail the proof. The rows are the
   live `GetRun` p95 (2 s on 16 CPUs) of the three reduced-ceiling soak tests,
   which missed at 2.014 s on 4 vCPUs in run 40593609129, and the run page at
   the reduced ceiling (5 s on 16 CPUs), which missed at 9,485 ms in run
@@ -168,7 +166,7 @@ include breaking changes, and each is marked **BREAKING**.
   (`golang.org/x/vuln` v1.9.0) and reports the vulnerabilities whose vulnerable
   code the module reaches. It needs the network, so it is in no lint and no
   proof; `ci.yml` › `vuln` and `nightly.yml` › `vuln` run it, and a reachable
-  advisory fails the run, which for the nightly is a failing `main`. Adding the
+  advisory fails the run, which for the nightly is a regression on `main`. Adding the
   two tools raised the indirect modules `golang.org/x/net`, `x/sys`, `x/sync`
   and `x/text` to what their requirements need. The `ci.yml` › `check` and
   `feature` proof steps and `proof.yml` › `fast` have five minutes more for the
@@ -179,6 +177,33 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- The pre-release gate excuses a runner-size miss exactly as the merge gate
+  and the nightly do: on a CI runner below a row's reference CPUs, under a row
+  of `scripts/proof-host-speed.tsv` the base carries, a wall-clock miss is a
+  recorded known gap, never a pass. So `release.yml`'s `gate` can pass on the
+  hosted 4-vCPU runners, and a release no longer waits for a runner as large
+  as the 16-CPU reference host; only a proof on that host enforces the
+  budgets now. Every other failure still fails it. Its `tag` and `publish`
+  jobs follow the release proof, which `proofrun verify -release` checks,
+  and the named results of what they need, never the gate call's colour: an
+  excused Go timing miss leaves its integration part red while the proof
+  passes, and the implicit `success()` would have skipped them.
+- A red nightly is a regression on `main`, not a merge freeze: fixing it, or
+  reverting what broke it, is the next work, and other changes keep merging
+  through the merge gate meanwhile. It still holds the release: a tag requires
+  a passing pre-release proof, which runs every deferred test, and a release
+  is not tagged while the nightly's own lanes or its vulnerability scan are
+  red. A nightly's verdict is its `proof.json`, not the run's colour.
+- The feature proof is optional: a scoped check of a change on its branch that
+  gates nothing. `ci.yml`'s `feature` job runs on a pull request only with the
+  `ci:feature` label (it ran on every pull-request push of a public
+  repository), and on a `validate/feature/**` push or by dispatch as before.
+  The full proof remains the only gate.
+- The default merge path is a CI full proof of the candidate: push it to
+  `validate/full/<name>`, where the proof runs sharded (14.6 minutes measured,
+  against 78 for one local host), and pass the downloaded artifact to
+  `make merge-check PROOF=` (`docs/PROOFS.md` §10). A local `make proof` stays
+  an equivalent path.
 - `.github/actions/proof-host` no longer leaves the runner except through
   `proof-fetch`: cosign v2.6.5 is downloaded as the release's linux/amd64
   binary and kept only if it hashes to the pinned SHA-256 (replacing the

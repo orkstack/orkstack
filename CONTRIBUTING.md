@@ -192,8 +192,10 @@ run, with its own `ork` and `orker`, and stops them when it ends.
 - **`vuln`** — `make vuln`, on every push and every pull request. It needs the
   network and is in no proof; the nightly workflow runs it too, and a
   vulnerability it reports makes that night's run red.
-- **`feature`** — the feature tier: the fast gates, the tests and specs that
-  prove your change, and its regression set. Name evidence the selection
+- **`feature`** — optional: the feature tier, run only with the `ci:feature`
+  label, on a push to `validate/feature/**`, or by dispatch. It runs the fast
+  gates, the tests and specs that prove your change, and its regression set,
+  and gates nothing: the `proof` check does. Name evidence the selection
   cannot find in your PR description:
 
   ```text
@@ -204,10 +206,6 @@ run, with its own `ork` and `orker`, and stops them when it ends.
   These are the same values as `make proof-feature TESTS=… SPECS=…`. A change
   to a path only the full proof covers (`scripts/`, `.github/`, the Makefiles,
   `test/tools/proofrun/`, …) skips this job; the `proof` check proves it.
-  While the repository is private, `feature` runs only with the `ci:feature`
-  label, on a push to `validate/feature/**`, or by dispatch, to keep metered
-  minutes for the merge gate; it runs on every pull-request push once the
-  repository is public.
 - **`proof`** — the full proof, split across runners, the only required
   check. Read the result from the `proof-<run>-a<attempt>` artifact's
   `proof.json` (`result`, `merge_eligible`, `ineligible_reasons`); the job
@@ -250,12 +248,13 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    cites it (the site's build refuses an uncited one). A change to the UI's look changes
    `ui/src/tokens.css`, never the site, and regenerates the site's
    screenshots (`make site-media`) when they would show it.
-7. Produce the change's evidence with a feature proof that names the tests and
-   specs proving it:
+7. Optionally, check the change's evidence with a feature proof that names the
+   tests and specs proving it:
    `make proof-feature TESTS='internal/engine:TestIntegration_X' SPECS='ui/e2e/x.spec.ts'`.
    It writes `proof/<name>-feature/`, gitignored, and refuses (exit 2) a
-   change it cannot account for.
-8. Commit with a Conventional Commit that quotes the feature proof; keep
+   change it cannot account for. It gates nothing; the full proof does.
+8. Commit with a Conventional Commit that names the tests and specs that
+   prove the change (and quotes the feature proof, if you ran one); keep
    `main` buildable.
 9. Merge through AGENTS.md §11.3. CI's `proof` check is the merge gate; a
    local `make proof` is the equivalent path.
@@ -292,9 +291,10 @@ that describes what changed says the new thing, with a CHANGELOG.md
 `[Unreleased]` entry for a user-visible change. Done is judged by the merge
 gate: the few scale tests listed in `scripts/proof-nightly-tests.txt`, and
 the specs listed in `scripts/proof-nightly-specs.txt`, run nightly and before
-a release, and a failure there is a failing `main`. A
-feature proof means "ready for the merge proof", never "done". No proof, not
-done.
+a release. A failure there is a regression on `main`: fixing it, or reverting
+what broke it, is the next work, but it holds no other merge, and no release
+is tagged until the pre-release proof, which runs them all, passes. A feature
+proof means "ready for the merge proof", never "done". No proof, not done.
 
 ## Style
 
