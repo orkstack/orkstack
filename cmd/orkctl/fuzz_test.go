@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -216,6 +217,159 @@ func FuzzParseRunRetentionFlag(f *testing.F) {
 			if d == nil || d.AsDuration() <= 0 {
 				t.Fatalf("parseRunRetentionFlag(%q) = %v, want a positive duration", raw, d)
 			}
+		}
+	})
+}
+
+func lowerASCII(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c - 'A' + 'a'
+		}
+	}
+	return string(b)
+}
+
+// FuzzParseGroupBy: --group-by is a comma-separated list of dimensions, each
+// read in ASCII case with its spaces trimmed, none named twice, in the order
+// written; the flake index also refuses the two it reports as a group's
+// dominant cause. Whatever else is refused is refused naming every spelling.
+func FuzzParseGroupBy(f *testing.F) {
+	for _, seed := range []string{
+		"orkflow", "task,pool", "Task", " TASK , Pool ", "code,category", "task,task", "task,Task", "", ",", "task,", ",task", "colour",
+		"taſk", "ımage", "phaſe,orker", "namespace", "unspecified", "orkflow,task,code,category,image,pool,phase,orker",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		known := map[string]bool{}
+		for _, spelling := range groupBySpellings() {
+			known[spelling] = true
+		}
+		for _, parse := range []struct {
+			name    string
+			fn      func(string) ([]orkstackv1.FailureGroupBy, error)
+			refused map[string]bool
+		}{
+			{"parseGroupBy", parseGroupBy, nil},
+			{"parseFlakeGroupBy", parseFlakeGroupBy, map[string]bool{"code": true, "category": true}},
+		} {
+			var want []string
+			wantOK, seen := true, map[string]bool{}
+			for _, part := range strings.Split(raw, ",") {
+				word := lowerASCII(strings.TrimSpace(part))
+				if !known[word] || seen[word] || parse.refused[word] {
+					wantOK = false
+					break
+				}
+				seen[word] = true
+				want = append(want, word)
+			}
+			got, err := parse.fn(raw)
+			if (err == nil) != wantOK {
+				t.Fatalf("%s(%q) = %v, %v; the rules say accepted: %v", parse.name, raw, got, err, wantOK)
+			}
+			if err != nil {
+				if !strings.Contains(err.Error(), "--group-by") {
+					t.Fatalf("%s(%q) refused as %q, which does not name the flag", parse.name, raw, err)
+				}
+				continue
+			}
+			spelled := make([]string, len(got))
+			for i, dim := range got {
+				spelled[i] = groupBySpelling(dim)
+			}
+			if !reflect.DeepEqual(spelled, want) {
+				t.Fatalf("%s(%q) = %v, want %v", parse.name, raw, spelled, want)
+			}
+		}
+	})
+}
+
+// FuzzParseFailureCategory: --category is one failure category, in ASCII case,
+// with or without the enum's prefix once, and nothing else; the refusal
+// names every category.
+func FuzzParseFailureCategory(f *testing.F) {
+	for _, seed := range []string{
+		"activity_failed", "INFRASTRUCTURE_ERROR", "failure_category_contract_violation", "Timed_Out", "cancelled", "canceled", "unspecified",
+		"failure_category_unspecified", "FAILURE_CATEGORY_FAILURE_CATEGORY_TIMED_OUT", " timed_out ", "", "infraſtructure_error", "tımed_out",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		known := map[string]orkstackv1.FailureCategory{}
+		for _, spelling := range categorySpellings() {
+			known[spelling] = orkstackv1.FailureCategory(orkstackv1.FailureCategory_value[categoryPrefix+strings.ToUpper(spelling)])
+		}
+		word := strings.TrimPrefix(lowerASCII(strings.TrimSpace(raw)), strings.ToLower(categoryPrefix))
+		want, wantOK := known[word]
+		got, err := parseFailureCategory(raw)
+		if (err == nil) != wantOK || err == nil && got != want {
+			t.Fatalf("parseFailureCategory(%q) = %v, %v; the rules say %v, accepted: %v", raw, got, err, want, wantOK)
+		}
+		if err != nil {
+			for spelling := range known {
+				if !strings.Contains(err.Error(), spelling) {
+					t.Fatalf("parseFailureCategory(%q) refused as %q, which does not name %s", raw, err, spelling)
+				}
+			}
+		}
+	})
+}
+
+// FuzzBuildAssumedOutputs: a planned task's assumed output is a JSON object
+// given as TASK=JSON or in a file keyed by task id, a pair wins over the file,
+// and text Go's decoder would change on the way through is refused, so a
+// replacement character reaches the plan only where the text spells one.
+func FuzzBuildAssumedOutputs(f *testing.F) {
+	for _, seed := range []string{
+		`flaky={"exitCode":1}`, `flaky={"a":{"b":[1,"x",null]}}`, `flaky=[1]`, `flaky`, `=1`, `flaky=null`, `flaky={"a":"x\ud800y"}`, "flaky={\"a\":\"p\xffq\"}",
+		`flaky={"a":"😀"}`, `flaky={"a":"�"}`, `a=b={}`, `flaky={}{}`, `flaky={"a":1e999}`,
+	} {
+		f.Add(seed, `{"flaky":{"exitCode":2},"warmup":{"ok":true}}`)
+		f.Add(seed, ``)
+	}
+	f.Add(``, `{"flaky":{"a":"x\ud800y"}}`)
+	f.Add(``, `{"flaky":3}`)
+	f.Add(``, `null`)
+	f.Add(``, `{"flaky":null}`)
+	spellsReplacement := func(text string) bool {
+		return strings.Contains(text, "�") || strings.Contains(strings.ToLower(text), `�`)
+	}
+	f.Fuzz(func(t *testing.T, pair, file string) {
+		var pairs []string
+		if pair != "" {
+			pairs = []string{pair}
+		}
+		path := ""
+		if file != "" {
+			path = writePlanFile(t, "outputs.json", file)
+		}
+		got, err := buildAssumedOutputs(pairs, path)
+		if err != nil {
+			if got != nil || err.Error() == "" {
+				t.Fatalf("buildAssumedOutputs(%q, %q) = %v, %v", pairs, file, got, err)
+			}
+			return
+		}
+		for id, payload := range got {
+			if id == "" || payload.GetData() == nil {
+				t.Fatalf("buildAssumedOutputs(%q, %q) holds %q: %v", pairs, file, id, payload)
+			}
+			if !utf8.ValidString(id) {
+				t.Fatalf("buildAssumedOutputs(%q, %q) holds the task id %q, which is not text", pairs, file, id)
+			}
+			encoded, err := payload.GetData().MarshalJSON()
+			if err != nil {
+				t.Fatalf("the assumed output of %q does not encode: %v", id, err)
+			}
+			if strings.Contains(string(encoded), "�") && !spellsReplacement(pair) && !spellsReplacement(file) {
+				t.Fatalf("buildAssumedOutputs(%q, %q) put a replacement character in %s without the text spelling one", pairs, file, encoded)
+			}
+		}
+		if id, _, found := strings.Cut(pair, "="); pair != "" && found && got[id] == nil {
+			t.Fatalf("buildAssumedOutputs(%q, %q) lost the pair for %q: %v", pairs, file, id, got)
 		}
 	})
 }

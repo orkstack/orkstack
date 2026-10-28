@@ -45,7 +45,7 @@ func Proto(enum protoreflect.EnumDescriptor, name string) string {
 		return name
 	}
 	prefix := Prefix(enum)
-	upper := upperASCII(name)
+	upper := UpperASCII(name)
 	snake := strings.ReplaceAll(upper, "-", "_")
 	for _, candidate := range []string{prefix + name, upper, prefix + upper, snake, prefix + snake} {
 		if values.ByName(protoreflect.Name(candidate)) != nil {
@@ -55,10 +55,10 @@ func Proto(enum protoreflect.EnumDescriptor, name string) string {
 	return name // unknown: the caller reports it
 }
 
-// upperASCII upper-cases the ASCII letters of s and leaves every other byte
+// UpperASCII upper-cases the ASCII letters of s and leaves every other byte
 // as it is, which strings.ToUpper does not: it maps U+017F to S and U+0131 to
 // I, and so would let a spelling no declared name has resolve to one.
-func upperASCII(s string) string {
+func UpperASCII(s string) string {
 	upper := []byte(s)
 	for i, c := range upper {
 		if c >= 'a' && c <= 'z' {

@@ -151,7 +151,11 @@ func buildAssumedOutputs(pairs []string, file string) (map[string]*orkstackv1.Pa
 			return nil, fmt.Errorf("read --outputs-file %s: %w", file, err)
 		}
 		var decoded map[string]any
-		if err := json.Unmarshal(raw, &decoded); err != nil || decoded == nil {
+		err = dsl.CheckJSONText(raw)
+		if err == nil {
+			err = json.Unmarshal(raw, &decoded)
+		}
+		if err != nil || decoded == nil {
 			if err == nil {
 				err = errors.New("not a JSON object")
 			}
@@ -163,6 +167,9 @@ func buildAssumedOutputs(pairs []string, file string) (map[string]*orkstackv1.Pa
 		}
 		sort.Strings(keys)
 		for _, id := range keys {
+			if id == "" {
+				return nil, fmt.Errorf("invalid --outputs-file %s: a task id is required as each key", file)
+			}
 			object, ok := decoded[id].(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("invalid --outputs-file %s: value for task %q must be a JSON object", file, id)
@@ -174,6 +181,9 @@ func buildAssumedOutputs(pairs []string, file string) (map[string]*orkstackv1.Pa
 		id, raw, found := strings.Cut(pair, "=")
 		if !found || id == "" {
 			return nil, fmt.Errorf("invalid --output %q: expected TASK=JSON", pair)
+		}
+		if err := dsl.CheckJSONText([]byte(raw)); err != nil {
+			return nil, fmt.Errorf("invalid --output %q: %w", pair, err)
 		}
 		var object map[string]any
 		if err := json.Unmarshal([]byte(raw), &object); err != nil || object == nil {
