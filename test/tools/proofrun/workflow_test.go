@@ -824,27 +824,8 @@ func TestWorkflows_JobRecordsCarryWhatTheMergerClassifies(t *testing.T) {
 	}
 }
 
-// TestWorkflows_EveryPartsProofStepIsOneTheMergerKnows: the merger decides
-// whether a part's proof step started by the step's name, so every step that
-// runs `scripts/proof.sh --part` carries a name it knows.
-func TestWorkflows_EveryPartsProofStepIsOneTheMergerKnows(t *testing.T) {
-	w := loadWorkflow(t, "proof.yml")
-	seen := 0
-	for _, name := range w.jobNames() {
-		for i, s := range w.Jobs[name].Steps {
-			if !strings.Contains(s.Run, "scripts/proof.sh --part") {
-				continue
-			}
-			seen++
-			if !proofStepNames[s.Name] {
-				t.Errorf("jobs.%s %s runs a part under a name the merger does not know", name, s.label(i))
-			}
-		}
-	}
-	if seen == 0 {
-		t.Fatal("no step runs scripts/proof.sh --part")
-	}
-}
+// The merger's step names (proofStepNames, setupStepNames) are pinned to
+// proof.yml in workflow_setup_test.go.
 
 // ---- a red part cannot turn green ------------------------------------------------
 

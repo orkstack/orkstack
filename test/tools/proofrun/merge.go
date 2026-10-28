@@ -255,10 +255,12 @@ func setupRetries(part string, setup []string) []string {
 }
 
 // proofStepNames are the names of the step that runs `scripts/proof.sh
-// --part` in each part job of .github/workflows/proof.yml.
+// --part` in each part job of .github/workflows/proof.yml, and exactly those:
+// TestWorkflows_TheMergersProofStepNamesAreTheWorkflowsExactly holds the map
+// to the workflow in both directions.
 var proofStepNames = map[string]bool{
 	"plan": true, "build": true, "fast": true, "integration shard": true, "UI shard": true,
-	"activity fixture": true, "observability": true, "proof part": true,
+	"activity fixture": true, "observability": true,
 }
 
 // cmdMerge is `proofrun merge`: the one verdict path for a full, release or
