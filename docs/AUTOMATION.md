@@ -130,7 +130,7 @@ or unmanaged before it ships; a test walks the descriptor and fails otherwise.
 | `description` | string, ≤ 256 bytes, no control characters | `""` |
 | `cron` | string, or list of strings | none |
 | `interval` | Go duration | unset |
-| `timezone` | IANA name | UTC |
+| `timezone` | IANA name (not `Local`) | UTC |
 | `jitter` | Go duration | none |
 | `start_at`, `end_at` | RFC 3339 | unbounded |
 | `overlap` | `skip`\|`buffer-one`\|`buffer-all`\|`cancel-other`\|`allow-all` | `skip` |
