@@ -80,6 +80,15 @@ func (l *rowsLoan) takeBack() {
 // the release to call when its reading is done, or false when the workflow
 // has taken them back. A snapshot nobody lent is the caller's own, and is
 // borrowed freely.
+//
+// That default cannot hide a shared run. A Run shares its rows with another
+// goroutine only if it is the very pointer that goroutine holds: a protobuf
+// message is not copied by value (go vet's copylocks refuses it), and every
+// copy the SDK, a data converter or an interceptor could make of a local
+// activity's arguments, a clone or an encode and decode, is deep. The SDK
+// passes the arguments in-process as the pointers the workflow gave it, which
+// is what the loan relies on; TestSnapshotWrite_ACancelDuringTheEncode...
+// fails when the pointer the activity reads is not the one lent.
 func borrowRows(run *orkstackv1.Run) (release func(), ok bool) {
 	value, lent := lentRows.Load(weak.Make(run))
 	if !lent {

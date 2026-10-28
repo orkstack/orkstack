@@ -230,6 +230,78 @@ func TestRowsLoan_TheEntryIsRetiredWithTheSnapshot(t *testing.T) {
 	}
 }
 
+// loanCycles is how many snapshots a cost measurement lends and takes back.
+const loanCycles = 4000
+
+// loanCPU is the CPU time of cycles lends and take-backs of snapshots over
+// rows, as each emit pays them (one new Run, lent, taken back), the best of
+// three: a cold cache or a collection that ran inside the window is not the
+// loan's cost. The first reading locks the goroutine to its thread (passClock).
+func loanCPU(clock *passClock, rows []*orkstackv1.TaskRun, cycles int) time.Duration {
+	var best time.Duration
+	for attempt := range 3 {
+		runtime.GC()
+		started := clock.now()
+		for range cycles {
+			lendRows(&orkstackv1.Run{Id: "ork-1-1", Namespace: "default", TaskRuns: rows}).takeBack()
+		}
+		if elapsed := clock.now() - started; attempt == 0 || elapsed < best {
+			best = elapsed
+		}
+	}
+	return best
+}
+
+// TestRowsLoan_LendingCostsNothingPerRow: the loan exists so an emit does not
+// copy a run's rows (O(rows) of workflow time per event, in a replay as much
+// as a run). So a lend and take-back costs the same however many rows the run
+// has, and a small fraction of the copy it replaces. Both bounds compare CPU
+// times measured side by side, on this thread, so neither moves with the host.
+func TestRowsLoan_LendingCostsNothingPerRow(t *testing.T) {
+	rowsOf := func(n int) []*orkstackv1.TaskRun {
+		rows := make([]*orkstackv1.TaskRun, n)
+		for i := range rows {
+			rows[i] = &orkstackv1.TaskRun{TaskId: "t" + strconv.Itoa(i), Status: orkstackv1.Status_STATUS_PENDING}
+		}
+		return rows
+	}
+	ceiling := int(DefaultOrkflowMaxTasks)
+	few, many := rowsOf(1), rowsOf(ceiling)
+	clock := &passClock{}
+
+	lendFew := loanCPU(clock, few, loanCycles)
+	lendMany := loanCPU(clock, many, loanCycles)
+
+	// The copy a loan replaces: a clone of the run at the task ceiling.
+	run := &orkstackv1.Run{Id: "ork-1-1", Namespace: "default", TaskRuns: many}
+	const clones = 20
+	var cloneBest time.Duration
+	for attempt := range 3 {
+		runtime.GC()
+		started := clock.now()
+		for range clones {
+			_ = proto.Clone(run)
+		}
+		if elapsed := clock.now() - started; attempt == 0 || elapsed < cloneBest {
+			cloneBest = elapsed
+		}
+	}
+
+	perFew, perMany, perClone := lendFew/loanCycles, lendMany/loanCycles, cloneBest/clones
+	t.Logf("%s per lend and take-back: %s at 1 row, %s at %d rows; %s per clone at %d rows",
+		clock.kind(), perFew, perMany, ceiling, perClone, ceiling)
+	// Independent of the rows: the large run costs a few times the small one
+	// at most (noise on a duration of microseconds), never in proportion to
+	// the 4,000 times as many rows.
+	if perMany > 10*perFew+time.Microsecond {
+		t.Fatalf("a lend at %d rows costs %s, over ten times the %s it costs at one row: it depends on the rows", ceiling, perMany, perFew)
+	}
+	// And far cheaper than the clone it saves.
+	if perMany*20 > perClone {
+		t.Fatalf("a lend at %d rows costs %s, over a twentieth of the %s a clone of them costs", ceiling, perMany, perClone)
+	}
+}
+
 // TestSnapshotActivities_RefuseARunTheWorkflowTookBack: an attempt that
 // reaches the activity after the workflow took the rows back writes nothing
 // and says why, as an error Temporal will not retry.
