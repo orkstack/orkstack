@@ -900,11 +900,17 @@ The nightly of `main` is GitHub's: `nightly.yml` runs the nightly tier on
 follows a merge: that interim rule, in force while the workflow did not run on
 GitHub, was retired on 2026-10-27, once three consecutive nightlies of `main`
 had passed on it. A release tag has its own gate, the pre-release proof above.
+A merge is not held for a nightly of its own: a run speaks only for the commit
+it measured (its `headSha`), never for `main`'s tip, so the nightly of a later
+commit is a later run.
 
-A failing nightly (the latest `nightly.yml` run on `main`) or pre-release proof
-is a failing `main`: fix it, or revert the change that broke it, before
-anything else merges, and never edit a list, a threshold or a measurement file
-to make it pass. A nightly part whose
+A failing nightly (the latest completed `nightly.yml` run on `main`) or
+pre-release proof is a failing `main`: fix it, or revert the change that broke
+it, before anything else merges, and never edit a list, a threshold or a
+measurement file to make it pass. A red nightly clears only when a later run,
+of the fix or of a commit after it, passes: the fix is the one merge made
+meanwhile, a nightly of it is dispatched once it is pushed (docs/PROOFS.md
+§10), and nothing else merges before that run passes. A nightly part whose
 runner measured below the runner-health floor
 (`scripts/proof-runner-floors.tsv`) before any test ran is a runner failure,
 not a failing `main`: the proof records that part as `runner-degraded`, is

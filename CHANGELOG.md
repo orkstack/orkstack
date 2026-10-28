@@ -216,10 +216,9 @@ include breaking changes, and each is marked **BREAKING**.
   path: a `validate/full/<name>` run's `proof-<run>-a<n>` artifact, downloaded
   and passed to `make merge-check PROOF=`, gates a fast-forward when it is a
   full, passing, merge-eligible proof of exactly the candidate's tree over
-  `main`'s tip; a GitHub nightly proof of `main`'s tip, downloaded the same
-  way, is the `NIGHTLY=` evidence; and `main` is pushed to `origin` after
-  every merge (AGENTS.md §11.2, §11.3; docs/PROOFS.md §6, §10). The checks
-  `merge-check` applies are unchanged.
+  `main`'s tip; and `main` is pushed to `origin` after every merge (AGENTS.md
+  §11.2, §11.3; docs/PROOFS.md §6, §10). The checks `merge-check` applies to
+  a full proof are unchanged.
 - The Playwright suite runs less of itself alone, measuring the same things.
   The fan-out's render-budget test (E4, "the run page and the item list at the
   gated size are interactive within 5 s") moved from `each-fan-out.spec.ts`
@@ -303,12 +302,16 @@ include breaking changes, and each is marked **BREAKING**.
   nightly list was non-empty. Its exit condition is met: the last five runs of
   `nightly.yml` on `main` passed. `merge-check` now asks for no nightly proof,
   reads neither list, and still verifies a `NIGHTLY=` proof when it is given
-  one; the nightly of `main` is GitHub's, and a failing one is still a failing
-  `main`, fixed or reverted before anything else merges (AGENTS.md §11, §11.2;
-  docs/PROOFS.md §6, §10). `docs/PROOFS.md` §12's known gaps now say what is
-  true: the repository is public and organization-owned, the gate's apply has
-  not been run, the full proof has passed on GitHub only on `validate/full/`
-  pushes, and `release.yml` is the one workflow that has not run there.
+  one (an empty `-nightly` value is refused, not read as no proof). The nightly
+  of `main` is GitHub's: a run speaks for the commit it measured, a merge is
+  not held for one of its own, and a failing one is still a failing `main`,
+  fixed or reverted before anything else merges, which clears when a later run
+  of the fix passes (AGENTS.md §11, §11.2; docs/PROOFS.md §6, §10).
+  `docs/PROOFS.md` §12's known gaps now say what is true: the repository is
+  public and organization-owned, the gate's apply has not been run, `main` is
+  under a ruleset made by hand that does not require the `proof` check, the
+  full proof has passed on GitHub only on `validate/full/` pushes, and
+  `release.yml` is the one workflow that has not run there.
 
 ### Added
 
