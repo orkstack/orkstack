@@ -612,7 +612,7 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 			var guardErr error
 			var suite testsuite.WorkflowTestSuite
 			env := generousDeadlock(suite.NewTestWorkflowEnvironment())
-			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 			env.SetCurrentHistoryLength(state.length)
 			env.ExecuteWorkflow(func(ctx workflow.Context) error {
 				s := newRunState(ctx, "ork-flat", wf, nil, guardPlan(t, DefaultHistoryMaxEvents, DefaultHistoryMaxBytes))

@@ -307,7 +307,7 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 	defer func() { readyLoopProbeForTest = nil }()
 
 	h := newRefusalHarnessOver(t, newMemSnapshotStore())
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	h.env.SetTestTimeout(10 * time.Minute)
 	plan := refusalRoutedPlan(t)
 	plan.History, plan.Continuation = nil, nil

@@ -550,7 +550,7 @@ const (
 func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 	wf, store, carry, size := cappedRestore(t, 4000)
 	h := newRefusalHarnessOver(t, store)
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	started := time.Now()
 	h.env.ExecuteWorkflow(RunWorkflowType, "", wf, (*orkstackv1.Payload)(nil), refusalRoutedPlan(t), carry)
 	if err := h.env.GetWorkflowError(); err != nil {

@@ -90,7 +90,7 @@ func runCapped(t *testing.T, runID, doc string, input *orkstackv1.Payload, plan 
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	h := newHarnessCtx(t, &suite, itemBehavior)
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	peak := &runningPeak{}
 	h.onSnapshot = peak.observe
 	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc), input, plan, (*orkstackv1.RunContinuation)(nil))
@@ -245,7 +245,7 @@ func TestInFlightCap_NeverSpins(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
 			h := newHarnessCtx(t, &suite, itemBehavior)
-			enablePins(h, worker.Options{DeadlockDetectionTimeout: time.Second})
+			enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 			h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-spin-pin", compile(t, pinNeedsUnpinnedDocument), payload(t, nil),
 				cappedPlan(tc.cap, 1900), (*orkstackv1.RunContinuation)(nil))
 			if err := h.env.GetWorkflowError(); err != nil {
@@ -296,7 +296,7 @@ tasks:
 `
 		var suite testsuite.WorkflowTestSuite
 		h := newHarnessCtx(t, &suite, itemBehavior)
-		enablePins(h, worker.Options{DeadlockDetectionTimeout: time.Second})
+		enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 		h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-spin-pins", compile(t, doc), payload(t, nil),
 			cappedPlan(2, 1900), (*orkstackv1.RunContinuation)(nil))
 		if err := h.env.GetWorkflowError(); err != nil {
@@ -406,7 +406,7 @@ func pinClosureUnderTheCap(t *testing.T, maxInFlight, hardStop int32) {
 		}
 		return itemBehavior(ctx, in)
 	})
-	enablePins(h, worker.Options{DeadlockDetectionTimeout: time.Second})
+	enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	peak := &runningPeak{}
 	h.onSnapshot = peak.observe
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-cap-pin", compile(t, pinnedOverCapDocument),
