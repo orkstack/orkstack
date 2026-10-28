@@ -68,3 +68,25 @@ func TestBuildAssumedOutputs_RefusesTextTheDecoderWouldChange(t *testing.T) {
 		t.Errorf("a surrogate pair is a character: %v, %v", got, err)
 	}
 }
+
+// A time zone offset can push a valid local time past either end of the range
+// a request carries (0001-01-01 to 9999-12-31 UTC), where it would fail to
+// encode with no word about the flag. Each time flag refuses it by name.
+func TestInstantFlags_RefuseAnInstantTheWireCannotCarry(t *testing.T) {
+	for _, raw := range []string{"0000-01-01T00:00:00Z", "0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-23:59"} {
+		if _, _, err := parseSince(raw); err == nil || !strings.Contains(err.Error(), "--since") {
+			t.Errorf("parseSince(%q) = %v, want a refusal naming --since", raw, err)
+		}
+		if _, err := parseUntil(raw); err == nil || !strings.Contains(err.Error(), "--until") {
+			t.Errorf("parseUntil(%q) = %v, want a refusal naming --until", raw, err)
+		}
+		if bound, err := parseRFC3339Bound("--created-after", raw); err == nil || !strings.Contains(err.Error(), "--created-after") {
+			t.Errorf("parseRFC3339Bound(%q) = %v, %v, want a refusal naming the flag", raw, bound, err)
+		}
+	}
+	for _, raw := range []string{"0001-01-01T00:00:00Z", "9999-12-31T23:59:59.999999999Z", "2026-05-01T09:00:00+02:00"} {
+		if _, err := parseUntil(raw); err != nil {
+			t.Errorf("parseUntil(%q) = %v, want the instant", raw, err)
+		}
+	}
+}

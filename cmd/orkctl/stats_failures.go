@@ -113,7 +113,7 @@ func newStatsFailuresCommand(g *globalFlags) *cobra.Command {
 func parseUntil(raw string) (time.Time, error) {
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
 		if parsed, err := time.Parse(layout, raw); err == nil {
-			return parsed.UTC(), nil
+			return wireInstant("--until", raw, parsed)
 		}
 	}
 	return time.Time{}, fmt.Errorf(

@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -192,6 +193,44 @@ func FuzzParseSince(f *testing.F) {
 		}
 		if lookback < 0 || at.Location() != time.UTC && !at.IsZero() {
 			t.Fatalf("parseSince(%q) = %v, %v", raw, lookback, at)
+		}
+		if !at.IsZero() && !timestamppb.New(at).IsValid() {
+			t.Fatalf("parseSince(%q) = %v, an instant the wire cannot carry", raw, at)
+		}
+	})
+}
+
+// FuzzParseInstantFlags: --until and the run list's RFC 3339 bounds read an
+// instant, and the instant they return is one a request can carry: UTC, inside
+// the protobuf timestamp range, and the one the text names.
+func FuzzParseInstantFlags(f *testing.F) {
+	for _, seed := range []string{
+		"2026-05-01", "2026-05-01T09:00:00Z", "2026-05-01T09:00:00.123456789Z", "2026-05-01T09:00:00+02:00", "2026-05-01T09:00:00,5Z", "0001-01-01T00:00:00Z",
+		"0001-01-01T00:00:00+01:00", "0000-01-01T00:00:00Z", "9999-12-31T23:59:59Z", "9999-12-31T23:59:59-23:59", "9999-12-31T23:59:59.999999999Z", "6h", "", "now",
+		"2026-02-30", "2026-05-01T24:00:00Z",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		if at, err := parseUntil(raw); err == nil {
+			if at.Location() != time.UTC || !timestamppb.New(at).IsValid() {
+				t.Fatalf("parseUntil(%q) = %v, an instant the wire cannot carry", raw, at)
+			}
+		} else if !strings.Contains(err.Error(), "--until") {
+			t.Fatalf("parseUntil(%q) refused as %q, which does not name the flag", raw, err)
+		}
+		bound, err := parseRFC3339Bound("--created-after", raw)
+		switch {
+		case err != nil:
+			if bound != nil || !strings.Contains(err.Error(), "--created-after") {
+				t.Fatalf("parseRFC3339Bound(%q) = %v, %v", raw, bound, err)
+			}
+		case raw == "":
+			if bound != nil {
+				t.Fatalf("parseRFC3339Bound(\"\") = %v, want no bound", bound)
+			}
+		case !bound.IsValid():
+			t.Fatalf("parseRFC3339Bound(%q) = %v, an instant the wire cannot carry", raw, bound)
 		}
 	})
 }
