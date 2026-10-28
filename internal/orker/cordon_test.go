@@ -143,10 +143,10 @@ func TestCordonSlotSupplier_BlocksReservationWhileCordoned(t *testing.T) {
 	var permit *worker.SlotPermit
 	select {
 	case permit = <-got:
-	case <-time.After(10 * time.Second):
-		// A deadline for a hang, not a latency claim: Clear wakes the waiter
-		// through a channel, and how soon a loaded host runs it is not the
-		// cordon's behaviour.
+	case <-time.After(time.Second):
+		// A deadline for a hang, as the Wait subtests above give: Clear wakes
+		// the waiter through a channel, and how soon a loaded host runs it is
+		// not the cordon's behaviour.
 		t.Fatal("ReserveSlot did not return a permit after Clear")
 	}
 	if permit == nil {
