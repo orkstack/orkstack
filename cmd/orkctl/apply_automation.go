@@ -77,6 +77,8 @@ func classifyDocument(path string, source []byte) (applyInput, error) {
 			in.namespace = "default"
 		}
 		return in, nil
+	case peek.Kind == dsl.KindActivityInterface:
+		return in, &activityInterfaceFile{path: path}
 	case peek.Kind == "" && peek.APIVersion == "":
 		return in, fmt.Errorf("%s: no apiVersion or kind: an OrkStack document begins with %q and its kind — "+
 			"%q for an Orkflow, %q for an automation document; add the two lines at the top, after any leading comments",
@@ -90,8 +92,22 @@ func classifyDocument(path string, source []byte) (applyInput, error) {
 	}
 }
 
+// activityInterfaceFile is a file whose kind is ActivityInterface: an
+// image's with: contract, packed into the image at build time and never
+// applied. A directory skips it; a file named on the command line is
+// refused with this sentence.
+type activityInterfaceFile struct{ path string }
+
+func (e *activityInterfaceFile) Error() string {
+	return fmt.Sprintf("%s: kind: %s is an activity interface, not a document to apply: pack it into an image's "+
+		"%s label with orkctl activity interface pack, or build the image with orkctl activity build --interface",
+		e.path, dsl.KindActivityInterface, dsl.InterfaceLabel)
+}
+
 // expandApplyArgs reads every argument: a file as is, a directory as its
 // regular *.ork.yaml and *.ork.yml files, non-recursively, in lexical order.
+// A directory's activity interfaces are skipped: an image's
+// interface.ork.yaml may sit beside the Orkflows that use it.
 func expandApplyArgs(args []string) ([]applyInput, error) {
 	var inputs []applyInput
 	for _, arg := range args {
@@ -118,16 +134,27 @@ func expandApplyArgs(args []string) ([]applyInput, error) {
 				return nil, fmt.Errorf("%s: no *.ork.yaml or *.ork.yml files in this directory", arg)
 			}
 		}
+		applied, skipped := 0, 0
 		for _, path := range paths {
 			source, err := os.ReadFile(path)
 			if err != nil {
 				return nil, fmt.Errorf("read %s: %w", path, err)
 			}
 			in, err := classifyDocument(path, source)
+			var notApplied *activityInterfaceFile
+			if info.IsDir() && errors.As(err, &notApplied) {
+				skipped++
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}
 			inputs = append(inputs, in)
+			applied++
+		}
+		if applied == 0 && skipped > 0 {
+			return nil, fmt.Errorf("%s: no Orkflow or automation document to apply: its *.ork.yaml files are "+
+				"activity interfaces, which are packed into images", arg)
 		}
 	}
 	return inputs, nil

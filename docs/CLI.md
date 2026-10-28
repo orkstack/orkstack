@@ -38,6 +38,7 @@ first-party image is built exactly the way any third-party image is.
 Flags:
 
 - `--file STRING` — path to the Dockerfile
+- `--interface STRING` — a kind: ActivityInterface document to pack into the image's org.orkstack.activity.interface label (it replaces a LABEL of that key in the Dockerfile)
 - `--platform STRING` — target platform(s), e.g. linux/amd64,linux/arm64
 - `--push` (default `true`) — push after building; --push=false builds only
 - `--tag STRING` — the registry reference to build and push (required)
@@ -62,6 +63,37 @@ whether each is required, and the keys the image writes to values.json.
 An image without the label is an ordinary activity; its with: is checked by the
 image itself at run time. This reads engine configuration and the registry,
 never an Orker, and writes nothing.
+
+Inherited flags:
+
+- `--json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+
+## `orkctl activity interface`
+
+Author the with: interface an activity image declares
+
+Inherited flags:
+
+- `--json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+
+## `orkctl activity interface pack`
+
+Print the interface label value a kind: ActivityInterface document packs into
+
+Read a kind: ActivityInterface document and print the value of the
+org.orkstack.activity.interface label it packs into: compact JSON,
+one line, the same bytes for the same declaration. The document is checked
+by the rules the engine reads a label by, so a value this prints is never
+one the engine refuses.
+
+Pass the value to any toolchain's --label, or use `orkctl activity build
+--interface FILE`, which does so itself.
 
 Inherited flags:
 
@@ -362,7 +394,9 @@ namespace declaring its settings, schedules, triggers and webhooks by name
 write to the existing RPC it names, in order. A directory is read
 non-recursively for *.ork.yaml and *.ork.yml files; orkflows are applied
 before automation, and nothing is written until every document has been
-validated and planned.
+validated and planned. A directory's activity interfaces (kind:
+ActivityInterface, packed into images by orkctl activity interface pack)
+are skipped; one named on the command line is refused.
 
 An automation document names its own namespace, which is authoritative:
 only an -n given on this command line is checked against it, and
