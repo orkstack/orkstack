@@ -457,6 +457,62 @@ func FuzzParseInterfaceLabel(f *testing.F) {
 	})
 }
 
+// FuzzParseInterfaceDocument: an authored activity interface is refused with
+// a reason, or yields an interface whose packed label the engine reads back
+// as the same interface — canonical bytes, no single quote, within the
+// label's bound — so what `orkctl activity interface pack` writes is never a
+// label the engine would read differently or refuse.
+func FuzzParseInterfaceDocument(f *testing.F) {
+	const header = "apiVersion: orkstack/v1\nkind: ActivityInterface\n"
+	for _, seed := range []string{
+		header,
+		header + "fields:\n  url:\n    type: string\n    required: true\n  body:\n    type: string|object|array\n",
+		header + "ops:\n  get: {}\n  post:\n    fields:\n      body:\n        type: object\ndefaultOp: get\n",
+		header + "fields:\n  as:\n    type: string\n    default: \"it's here\"\n  n:\n    type: number\n    default: 1.5\n",
+		header + "values:\n  path:\n    type: string\n",
+		header + "fields:\n  a:\n    type: string\n    default: yes\n",
+		header + "fields:\n  a: &x\n    type: string\n  b: *x\n",
+		header + "schemaVersion: 1\n",
+		header + "---\n" + header,
+		"apiVersion: orkstack/v1\nkind: Orkflow\n",
+		"- a\n", "", "fields: {}\n",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, source string) {
+		iface, err := dsl.ParseInterfaceDocument([]byte(source))
+		if err != nil {
+			if iface != nil || err.Error() == "" {
+				t.Fatalf("ParseInterfaceDocument refused %q as %v with %v", source, err, iface)
+			}
+			return
+		}
+		if len(source) > dsl.MaxInterfaceDocumentBytes || iface.GetSchemaVersion() != 1 {
+			t.Fatalf("ParseInterfaceDocument accepted %q beyond its bounds", source)
+		}
+		label, err := dsl.PackInterfaceLabel(iface)
+		if err != nil {
+			if !strings.Contains(err.Error(), "limit is") {
+				t.Fatalf("PackInterfaceLabel refused an accepted document %q: %v", source, err)
+			}
+			return
+		}
+		if len(label) > dsl.MaxInterfaceLabelBytes || strings.Contains(label, "'") {
+			t.Fatalf("PackInterfaceLabel(%q) = %q", source, label)
+		}
+		if again, err := dsl.PackInterfaceLabel(iface); err != nil || again != label {
+			t.Fatalf("PackInterfaceLabel is not deterministic: %q, then %q (%v)", label, again, err)
+		}
+		back, err := dsl.ParseInterfaceLabel(label)
+		if err != nil {
+			t.Fatalf("the engine refuses the packed label %q of %q: %v", label, source, err)
+		}
+		if !proto.Equal(back, iface) {
+			t.Fatalf("the packed label of %q reads back as\n%v\nnot\n%v", source, back, iface)
+		}
+	})
+}
+
 // FuzzRenderValues_OnlyAPrintedNilIsRefused: a template prints what its
 // pieces spell, and refuses exactly one thing, a nil value it prints. Text,
 // data and a function's result that spell the nil marker, whole or in pieces

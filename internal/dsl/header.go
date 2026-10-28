@@ -16,6 +16,10 @@ const APIVersion = "orkstack/v1"
 const (
 	KindOrkflow    = "Orkflow"
 	KindAutomation = "Automation"
+	// KindActivityInterface is an image's with: contract, authored: it is
+	// packed into the image's interface label at build time and never
+	// applied (docs/ACTIVITY_IMAGES.md, "Declaring the interface").
+	KindActivityInterface = "ActivityInterface"
 )
 
 // OrkflowHeader is the canonical header, exactly as OrkStack writes it.
@@ -122,9 +126,14 @@ func checkHeader(source []byte) error {
 		return validationError("kind", fmt.Errorf("kind: %s is an automation document, not an Orkflow: "+
 			"apply it with orkctl apply or Admin → Automation (docs/AUTOMATION.md); an Orkflow says kind: %s",
 			KindAutomation, KindOrkflow))
+	case kind.Value == KindActivityInterface:
+		return validationError("kind", fmt.Errorf("kind: %s is an activity interface, not an Orkflow: "+
+			"pack it into an image's label with orkctl activity interface pack (docs/ACTIVITY_IMAGES.md); "+
+			"an Orkflow says kind: %s", KindActivityInterface, KindOrkflow))
 	case kind.Value != KindOrkflow:
 		return validationError("kind", fmt.Errorf("kind %q is not a kind OrkStack reads: an Orkflow says kind: %s, "+
-			"an automation document kind: %s", kind.Value, KindOrkflow, KindAutomation))
+			"an automation document kind: %s, an activity interface kind: %s",
+			kind.Value, KindOrkflow, KindAutomation, KindActivityInterface))
 	}
 	return nil
 }
