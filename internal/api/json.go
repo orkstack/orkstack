@@ -57,6 +57,12 @@ func UnmarshalJSON(data []byte, message proto.Message) error {
 
 // UnmarshalJSONOptions is UnmarshalJSON with caller-chosen protojson options.
 func UnmarshalJSONOptions(options protojson.UnmarshalOptions, data []byte, message proto.Message) error {
+	// Text Go's decoder would alter is refused saying what is wrong with it:
+	// protojson refuses it too, but half of a surrogate pair only as an
+	// "unexpected EOF".
+	if err := dsl.CheckJSONText(data); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
 	// A rewrite failure means the input is not well-formed JSON. Hand the
 	// original bytes to protojson so the caller sees protojson's diagnostics
 	// rather than ours.
