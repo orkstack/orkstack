@@ -13,10 +13,12 @@
 #     in the part's own artifact;
 #   - for a part that did NOT pass — a gate recorded as anything but `pass`,
 #     or no part.json at all (its process died) — its events and per-job
-#     logs too (`*.events.jsonl`, `integration/`, `unit.log`), the files §8
-#     reads a failure from. A passing part's are left out: for a green run
-#     they were 900 MB of the merged proof, and the ledger holds every
-#     test's outcome either way;
+#     logs too (`*.events.jsonl`, `integration/`, `unit.log`, `race.log`,
+#     `race-repeat.log`, the fuzz lane's `fuzz/` logs), the files §8 reads a
+#     failure from, and the fuzz lane's `crashers/`: the inputs that broke a
+#     target. A passing part's are left out: for a green run they were 900 MB
+#     of the merged proof, and the ledger holds every test's outcome either
+#     way;
 #   - GitHub's job records, OUT/jobs/, which hold the logs of failed jobs.
 #
 # `proofrun merge` reads PARTS, never this copy, so what is left out here
@@ -43,7 +45,8 @@ for dir in "$parts"/*/; do
 	name="$(basename "$dir")"
 	excludes=(--exclude '/bin/' --exclude '/layouts/' --exclude '/artifacts/')
 	if part_passed "$dir"; then
-		excludes+=(--exclude '/*.events.jsonl' --exclude '/integration/' --exclude '/unit.log')
+		excludes+=(--exclude '/*.events.jsonl' --exclude '/integration/' --exclude '/unit.log'
+			--exclude '/race.log' --exclude '/race-repeat.log' --exclude '/fuzz/')
 		echo "collect $name: passed; records only"
 	else
 		echo "collect $name: did not pass, or left no part.json; records, events and logs"

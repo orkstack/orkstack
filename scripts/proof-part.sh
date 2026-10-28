@@ -46,6 +46,13 @@ part_require() {
 		part_need "site/node_modules (cd site && bun install --frozen-lockfile)" test -d "$REPO/site/node_modules"
 		part_need "make on PATH" command -v make
 		;;
+	race | race-repeat)
+		part_need "go on PATH" command -v go
+		part_need "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH (go env CC)" race_toolchain
+		;;
+	fuzz)
+		part_need "go on PATH" command -v go
+		;;
 	integration:*)
 		part_need "docker on PATH" command -v docker
 		part_need "docker compose" docker compose version
@@ -297,7 +304,7 @@ part_cleanup() {
 part_main() { # <part>
 	PART="$1"
 	case "$PART" in
-	plan | build | fast | observability | integration:[0-9]* | ui-e2e:[0-9]* | activity-fixture:shell | activity-fixture:json | activity-fixture:git | activity-fixture:template) ;;
+	plan | build | fast | race | race-repeat | fuzz | observability | integration:[0-9]* | ui-e2e:[0-9]* | activity-fixture:shell | activity-fixture:json | activity-fixture:git | activity-fixture:template) ;;
 	*) part_say "proof: unknown part '$PART'"; return 2 ;;
 	esac
 	PART_MISSING="$(mktemp)"
@@ -424,6 +431,30 @@ part_main() { # <part>
 		(cd "$REPO/ui" && bun test test/ >"$DIR/ui-unit.log" 2>&1) && printf 'ui-unit\tpass\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv" || printf 'ui-unit\tfail\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv"
 		# The site's check and build, recorded as the UI gates are.
 		(cd "$REPO/site" && bun run check && bun run build) >"$DIR/site.log" 2>&1 && printf 'site\tpass\t0\tsite.log\tbun run check && bun run build\n' >>"$DIR/gates.tsv" || printf 'site\tfail\t0\tsite.log\tbun run check && bun run build\n' >>"$DIR/gates.tsv"
+		;;
+	race)
+		# The unit suites under the race detector, on a runner of its own (the
+		# fast part holds the gates that run without it). Every package, once.
+		part_run race race.log "$PR" unit -race -short -out "$DIR" || true
+		# As the fast part trims its unit log: the ledger holds every test's
+		# outcome, and the merger reads the ledger.
+		if grep -q $'^race\tpass\t' "$DIR/gates.tsv"; then
+			rm -f "$DIR/race.log" "$DIR/race.events.jsonl"
+			part_say "race passed: race.log and race.events.jsonl left out of the part"
+		fi
+		;;
+	race-repeat)
+		# The nightly race repeat: the concurrency-heavy packages, -count times.
+		part_run race-repeat race-repeat.log "$PR" unit -race -short -count "$RACE_REPEAT_COUNT" -out "$DIR" "${RACE_REPEAT_PACKAGES[@]}" || true
+		if grep -q $'^race-repeat\tpass\t' "$DIR/gates.tsv"; then
+			rm -f "$DIR/race-repeat.log" "$DIR/race-repeat.events.jsonl"
+			part_say "race-repeat passed: race-repeat.log and race-repeat.events.jsonl left out of the part"
+		fi
+		;;
+	fuzz)
+		# The nightly fuzz lane: every Fuzz target for FUZZTIME. A crasher is
+		# kept under crashers/ in the part, which the part's artifact carries.
+		part_run fuzz fuzz.log "$PR" fuzz -out "$DIR" -fuzztime "$FUZZTIME" || true
 		;;
 	integration:*)
 		local k="${PART#integration:}"

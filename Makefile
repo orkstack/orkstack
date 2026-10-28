@@ -75,9 +75,24 @@ tidy: ## go mod tidy
 test: ## Run unit tests
 	go test ./... -count=1
 
+# The race gate's run, without its ledger (docs/PROOFS.md §2.3): the unit suites
+# under the race detector with -short, which skips the scale tests the unit
+# gate runs without it. RACE_COUNT=3 RACE_PACKAGES='./internal/engine/...'
+# is the shape of the nightly repeat. The detector needs cgo and a C compiler.
+RACE_COUNT ?= 1
+RACE_PACKAGES ?= ./...
 .PHONY: test-race
-test-race: ## Run tests with the race detector
-	go test ./... -race -count=1
+test-race: ## Run the unit tests under the race detector, -short (RACE_COUNT=N repeats, RACE_PACKAGES='./pkg/...' narrows)
+	go test -race -short -count=$(RACE_COUNT) $(RACE_PACKAGES)
+
+# The nightly fuzz lane's run (docs/PROOFS.md §2.3): every Fuzz target of the
+# module for FUZZTIME each, a ledger and a log per target under FUZZ_OUT, and
+# the crasher input of a target that fails kept under FUZZ_OUT/crashers.
+FUZZTIME ?= 2m
+FUZZ_OUT ?= .data/fuzz/$(shell date -u +%Y%m%dT%H%M%SZ)
+.PHONY: fuzz
+fuzz: ## Fuzz every Fuzz target for FUZZTIME each (default 2m); crashers are kept under FUZZ_OUT
+	go run ./test/tools/proofrun fuzz -out $(FUZZ_OUT) -fuzztime $(FUZZTIME)
 
 .PHONY: cover
 cover: ## Run tests with coverage -> coverage.out

@@ -39,6 +39,10 @@ on:
       ui_shards:
         type: number
         default: 5
+      fuzztime:
+        description: how long the nightly fuzz lane runs each Fuzz target
+        type: string
+        default: 2m
     outputs:
       # The merged proof's artifact name, so a caller's re-run job finds the
       # attempt that uploaded it (release.yml › tag).
@@ -58,6 +62,7 @@ env:
   TIER: ${{ inputs.tier || 'full' }}
   INT_SHARDS: ${{ inputs.int_shards || 10 }}
   UI_SHARDS: ${{ inputs.ui_shards || 5 }}
+  FUZZTIME: ${{ inputs.fuzztime || '2m' }}
   PROOF_ID: pr-ci-${{ github.run_id }}
   PROOF_NAME: pr-ci-${{ github.run_id }}
   ORK_LOCAL_REGISTRY: localhost:5001
@@ -283,6 +288,116 @@ jobs:
             proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/
             !proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
+
+  race:
+    # The unit suites under the race detector (-short), on a runner of their
+    # own: the race gate of the full and release tiers (docs/PROOFS.md §2.3).
+    needs: base
+    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: race
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          scripts/proof.sh --part race --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
+            --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        timeout-minutes: 5
+        with:
+          name: part-race-a${{ github.run_attempt }}
+          path: |
+            proof/${{ env.PROOF_NAME }}-part-race-a${{ github.run_attempt }}/
+            !proof/${{ env.PROOF_NAME }}-part-race-a${{ github.run_attempt }}/bin/**
+          retention-days: ${{ github.event.repository.private && 1 || 7 }}
+
+  race-repeat:
+    # The nightly race repeat: the concurrency-heavy packages' unit suites
+    # under the race detector, several times in one run, to catch a race that
+    # one run in several exposes (docs/PROOFS.md §2.3).
+    needs: base
+    if: ${{ inputs.tier == 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 185
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: race-repeat
+        timeout-minutes: 165
+        shell: bash
+        run: |
+          scripts/proof.sh --part race-repeat --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
+            --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        timeout-minutes: 5
+        with:
+          name: part-race-repeat-a${{ github.run_attempt }}
+          path: |
+            proof/${{ env.PROOF_NAME }}-part-race-repeat-a${{ github.run_attempt }}/
+            !proof/${{ env.PROOF_NAME }}-part-race-repeat-a${{ github.run_attempt }}/bin/**
+          retention-days: ${{ github.event.repository.private && 1 || 14 }}
+
+  fuzz:
+    # The nightly fuzz lane: every Fuzz target for FUZZTIME. A crasher fails
+    # the part and is kept in its artifact, under crashers/ (docs/PROOFS.md
+    # §2.3).
+    needs: base
+    if: ${{ inputs.tier == 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 155
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: fuzz
+        timeout-minutes: 135
+        shell: bash
+        run: |
+          scripts/proof.sh --part fuzz --tier "$TIER" --proof-id "$PROOF_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
+            --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        timeout-minutes: 5
+        with:
+          name: part-fuzz-a${{ github.run_attempt }}
+          path: |
+            proof/${{ env.PROOF_NAME }}-part-fuzz-a${{ github.run_attempt }}/
+            !proof/${{ env.PROOF_NAME }}-part-fuzz-a${{ github.run_attempt }}/bin/**
+          retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   integration:
     needs: [base, plan, build]
@@ -615,7 +730,7 @@ jobs:
   proof:
     # A skipped required job reports success: `always()` and nothing else.
     if: always()
-    needs: [base, plan, build, fast, integration, ui-e2e, activity-fixture, observability]
+    needs: [base, plan, build, fast, race, race-repeat, fuzz, integration, ui-e2e, activity-fixture, observability]
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     permissions:

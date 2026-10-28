@@ -12,6 +12,10 @@ on:
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: how long the fuzz lane runs each Fuzz target (2m, 30s, 100x)
+        default: 2m
 
 permissions:
   contents: read
@@ -30,6 +34,7 @@ jobs:
       base: main
       int_shards: 4
       ui_shards: 1
+      fuzztime: ${{ inputs.fuzztime || '2m' }}
 
   flakes:
     # The flake budget's evidence (docs/PROOFS.md §6.1): same-tree flips and

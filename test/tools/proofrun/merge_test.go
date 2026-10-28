@@ -45,6 +45,27 @@ func unitLedger() ledger {
 	return ledger{Suite: "unit", Tests: []entry{{Package: mPkg, Test: "TestUnit", Outcome: outcomePass, Seconds: 1}}, Problems: []string{}}
 }
 
+// raceLedger is the race gate's ledger of the fixture package: the unit
+// ledger's one test, run under the detector.
+func raceLedger() ledger {
+	return ledger{Suite: suiteRace, Tests: []entry{{Package: mPkg, Test: "TestUnit", Outcome: outcomePass, Seconds: 1}}, Problems: []string{}}
+}
+
+// raceRepeatLedger and fuzzLedger are the nightly tier's two extra lanes.
+func raceRepeatLedger() ledger {
+	return ledger{Suite: suiteRaceRepeat, Tests: []entry{{Package: mPkg, Test: "TestUnit", Outcome: outcomePass, Seconds: 3}}, Problems: []string{}}
+}
+
+func fuzzLedger() ledger {
+	return ledger{Suite: suiteFuzz, Tests: []entry{{Package: mPkg, Test: "FuzzUnit", Job: suiteFuzz, Outcome: outcomePass, Seconds: 120}}, Problems: []string{}}
+}
+
+// nightlyGateRecords is what a nightly part records: the integration gate and
+// the two lanes the nightly tier adds to it.
+func nightlyGateRecords() []gateRecord {
+	return []gateRecord{{Gate: "integration", Result: "pass"}, {Gate: suiteRaceRepeat, Result: "pass"}, {Gate: suiteFuzz, Result: "pass"}}
+}
+
 func uiPlanFixture() uiPlan {
 	p := uiPlan{Format: 1}
 	p.Tests = []uiPlanTest{{File: "a.spec.ts", Title: "t", Project: "chromium"}}
@@ -185,6 +206,7 @@ func (f *mergeFixture) writeLocal(integration ledger) {
 	f.writePart(rec, map[string]any{
 		"integration-tests.json": integration,
 		"unit-tests.json":        unitLedger(),
+		"race-tests.json":        raceLedger(),
 		"ui-e2e-tests.json":      uiLedgerFixture(),
 	})
 }
@@ -197,6 +219,17 @@ func fastGateRecords() []gateRecord {
 		g = append(g, gateRecord{Gate: name, Result: "pass"})
 	}
 	return g
+}
+
+// raceGateRecords is what the CI race part records: the race gate alone.
+func raceGateRecords() []gateRecord { return []gateRecord{{Gate: suiteRace, Result: "pass"}} }
+
+// writeRace writes the CI race part with the gates and ledger it recorded.
+func (f *mergeFixture) writeRace(gates []gateRecord, l ledger) {
+	f.t.Helper()
+	race := f.basePart("race")
+	race.Gates = gates
+	f.writePart(race, map[string]any{"race-tests.json": l})
 }
 
 // writeFast writes the CI fast part with the gates it recorded.
@@ -216,6 +249,7 @@ func (f *mergeFixture) writeCI() {
 	build.Images = map[string]string{"activity-shell": "sha256:aaa"}
 	f.writePart(build, nil)
 	f.writeFast(fastGateRecords())
+	f.writeRace(raceGateRecords(), raceLedger())
 	ui := f.basePart("ui-e2e:1")
 	ui.Gates = []gateRecord{{Gate: "ui-e2e", Result: "pass"}}
 	ui.Images = map[string]string{"activity-shell": "sha256:aaa"}
@@ -688,6 +722,7 @@ func (f *mergeFixture) writeLocalWith(mutate func(*partRecord), integration ledg
 	f.writePart(rec, map[string]any{
 		"integration-tests.json": integration,
 		"unit-tests.json":        unitLedger(),
+		"race-tests.json":        raceLedger(),
 		"ui-e2e-tests.json":      uiLedgerFixture(),
 	})
 }
@@ -1274,7 +1309,7 @@ func TestMerge_ReRunningEveryJobIsIneligible(t *testing.T) {
 		}
 		rec.Attempt = 2
 		files := map[string]any{}
-		for _, name := range []string{"integration-tests.json", "unit-tests.json", "ui-e2e-tests.json"} {
+		for _, name := range []string{"integration-tests.json", "unit-tests.json", "race-tests.json", "ui-e2e-tests.json"} {
 			var v any
 			if readJSON(filepath.Join(dir, name), &v) == nil {
 				files[name] = v
