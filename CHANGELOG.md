@@ -191,6 +191,14 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The feature proof's evidence selector treats a native fuzz target
+  (`func FuzzXxx(f *testing.F)` in a `_test.go` file) as a test. A diff that
+  changed only a fuzz target, or only a helper one reaches, selected no
+  evidence, and `--tests PKG:FuzzXxx` was refused as matching no test. A
+  changed target, one that reaches a changed helper and a named one are now
+  evidence like any other, a deleted one is removed, and the unit gate's
+  ledger, which already listed fuzz targets, records the target's seeds once
+  (docs/PROOFS.md §3).
 - Unit tests no longer bound code cost by a sub-second wall-clock window, which
   measured the runner and not the code: the CI unit gate failed
   `TestLogChunkSink_ABurstGrowsTheChunkInsteadOfThrottlingTheWriter` at 81 ms

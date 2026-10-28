@@ -386,8 +386,8 @@ phase, and is one CI part (§5):
   fuzz step is limited to 135 minutes and its job to 155. Its ledger,
   `fuzz-tests.json`, has one entry per target with the `seconds` it took and
   the `fuzz_seconds` it was given, and each target keeps its log under
-  `fuzz/`; the lane's own log line for a target says its fuzz time, its
-  time, and what is left of the budget. A target the engine
+  `fuzz/`; the lane's own log line for a target says the fuzz time it was
+  given, how long it took, and what is left of the budget. A target the engine
   breaks fails the lane, whatever its share. The engine writes the failing
   input into the package's `testdata/fuzz/<Target>/`, a file that would turn
   the proof's tree into another; the lane moves it to
@@ -425,7 +425,13 @@ The selection is:
 - **the change's evidence**: every test whose source the diff changes,
   including tests that reach a changed or deleted helper, type, variable or
   `TestMain` through their package's declarations; every test named with
-  `-tests` (the pattern must match whole test names); every spec the diff
+  `-tests` (the pattern must match whole test names). A test is a `Test`
+  function or a native fuzz target (`func FuzzXxx(f *testing.F)` in a
+  `_test.go` file, AGENTS.md §11.1): go test runs a target's seeds, `f.Add` and
+  `testdata/fuzz/<Target>/` alike, as an ordinary test, so a changed target,
+  one that reaches a changed helper, and `-tests PKG:FuzzXxx` are evidence like
+  any other, a deleted target is removed, and the unit gate's ledger lists the
+  target once and records its outcome; every spec the diff
   changes or `-specs` names; every spec when the Playwright harness or the UI's
   dependencies changed; the activity fixture when `images/` or `test/fixtures/`
   changed; the tests that read a changed example, and the examples spec; the

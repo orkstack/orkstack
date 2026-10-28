@@ -267,6 +267,10 @@ go test -run='^$' -fuzz='^FuzzParse_AcceptedTextIsAFilterThatFormatsBackToItself
 go test -list '^Fuzz' ./...     # every target
 ```
 
+A target is a test to the feature proof: a changed one is evidence, and
+`make proof-feature TESTS='internal/listfilter:FuzzParse.*'` names it.
+`make fuzz` runs them all, sharing `FUZZ_BUDGET` between them.
+
 A failing input is written under `testdata/fuzz/<FuzzName>/`. Fix the code the
 input exposed, not the test, and commit the file: it then runs in every unit
 gate. A property is an invariant the code or its reference doc states (a round
