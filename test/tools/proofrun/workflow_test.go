@@ -1951,7 +1951,10 @@ var (
 )
 
 // pinKeys are the `with:` keys that name a toolchain; each is an exact version.
-var pinKeys = []string{"go-version", "bun-version", "node-version", "cosign-release"}
+// cosign is no longer one: proof-host downloads its binary by URL and hash
+// through proof-fetch, and TestProofHost_CosignIsPinnedByReleaseAndByHash and
+// proofHostProblems pin the pair.
+var pinKeys = []string{"go-version", "bun-version", "node-version"}
 
 // pinProblems holds steps to the pin rule: no floating ref. Every action is
 // named by an exact release, and every toolchain in pinKeys by an exact

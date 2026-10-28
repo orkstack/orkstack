@@ -1,22 +1,29 @@
 name: proof-fetch
-description: Fetch one of this run's own artifacts, or an image pinned by digest, in at most two bounded attempts, recording every attempt in the setup log a part copies into its directory (docs/PROOFS.md §5).
+description: Fetch one of this run's own artifacts, images pinned by digest, or one file pinned by its SHA-256, in at most two bounded attempts, recording every attempt in the setup log a part copies into its directory (docs/PROOFS.md §5).
 
 # A fetch that makes no progress — an artifact download from GitHub's blob
-# store, a pull from a registry — is retried ONCE, with twice the limit, and
-# then the step fails: 3 minutes, then 6, so a stalled runner still fails
-# within ten. It never continues on error (the merger would read a part that
-# ran on half an artifact as a result), and it never re-runs a job itself: a
-# fetch that fails both attempts fails its step, before the part, and the job
-# is then a setup-failed part, which the merger lets run again as a new part of
-# the same tree (docs/PROOFS.md §8, `setupStepNames` in
-# test/tools/proofrun/merge.go). Each attempt
-# is one line in the setup log, which `scripts/proof.sh --part --setup-log`
-# copies into the part's directory, `proofrun record` carries into part.json
-# and `proofrun merge` lists in proof.json (`setup_retries`) and the README.
+# store, a pull from a registry, a file from a release — is retried ONCE, with
+# twice the limit, and then the step fails: 3 minutes, then 6, so a stalled
+# runner still fails within ten. It never continues on error (the merger would
+# read a part that ran on half an artifact as a result), and it never re-runs a
+# job itself: a fetch that fails both attempts fails its step, before the part,
+# and the job is then a setup-failed part, which the merger lets run again as a
+# new part of the same tree (docs/PROOFS.md §8, `setupStepNames` in
+# test/tools/proofrun/merge.go). Each attempt is one line in the setup log,
+# which `scripts/proof.sh --part --setup-log` copies into the part's
+# directory, `proofrun record` carries into part.json and `proofrun merge`
+# lists in proof.json (`setup_retries`) and the README.
+#
+# The runner starts this script under `bash -e`, which would end it at the
+# first failed attempt, before the second and before the log line; the script
+# turns that off, because an attempt's failure is exactly what it counts.
 #
 # An artifact is fetched with `gh run download` (actions:read on the token)
 # rather than actions/download-artifact, which has no limit of its own and no
 # retry: a stall there ends only at the step's limit, with nothing to retry.
+# An image is pulled only by digest, and a file only over https to a path, and
+# only kept if it hashes to the SHA-256 the caller pinned: a mirror that
+# answers with other bytes is a failed attempt, not an install.
 
 inputs:
   artifact:
@@ -28,11 +35,19 @@ inputs:
     required: false
     default: ""
   image:
-    description: An image reference pinned by digest, pulled into the daemon
+    description: One or more image references separated by whitespace, each pinned by digest, pulled into the daemon
+    required: false
+    default: ""
+  url:
+    description: An https URL of one file, saved to `path`, which must hash to `sha256`
+    required: false
+    default: ""
+  sha256:
+    description: The SHA-256 of the file `url` names, as 64 lowercase hex digits
     required: false
     default: ""
   path:
-    description: Where an artifact is extracted; for `artifact`, a directory of its own
+    description: Where an artifact is extracted (for `artifact`, a directory of its own) or a file is saved (for `url`)
     required: false
     default: ""
   token:
@@ -53,19 +68,44 @@ runs:
         ARTIFACT: ${{ inputs.artifact }}
         PATTERN: ${{ inputs.pattern }}
         IMAGE: ${{ inputs.image }}
+        URL: ${{ inputs.url }}
+        SHA256: ${{ inputs.sha256 }}
         DEST: ${{ inputs.path }}
         LOG: ${{ inputs.log }}
         GH_TOKEN: ${{ inputs.token }}
       run: |
         set -uo pipefail
-        case "${ARTIFACT:+a}${PATTERN:+p}${IMAGE:+i}" in
+        set +e
+        case "${ARTIFACT:+a}${PATTERN:+p}${IMAGE:+i}${URL:+u}" in
         a) what="artifact $ARTIFACT" ;;
         p) what="artifacts $PATTERN" ;;
-        i) what="image $IMAGE" ;;
-        *) echo "proof-fetch: exactly one of artifact, pattern or image" >&2; exit 2 ;;
+        i)
+          set -f
+          images=($IMAGE)
+          set +f
+          for ref in "${images[@]}"; do
+            if ! [[ "$ref" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then
+              echo "proof-fetch: the image $ref is not pinned by digest" >&2
+              exit 2
+            fi
+          done
+          what="image ${images[*]}"
+          ;;
+        u)
+          if ! [[ "$URL" =~ ^https://[^[:space:]]+$ ]]; then
+            echo "proof-fetch: a url must be an https URL without spaces" >&2
+            exit 2
+          fi
+          if ! [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "proof-fetch: a url needs sha256, 64 lowercase hex digits" >&2
+            exit 2
+          fi
+          what="url $URL"
+          ;;
+        *) echo "proof-fetch: exactly one of artifact, pattern, image or url" >&2; exit 2 ;;
         esac
         if [ -z "$IMAGE" ] && [ -z "$DEST" ]; then
-          echo "proof-fetch: an artifact needs path" >&2
+          echo "proof-fetch: an artifact or a url needs path" >&2
           exit 2
         fi
         mkdir -p "$(dirname "$LOG")"
@@ -74,8 +114,17 @@ runs:
           n=$((n + 1))
           started=$SECONDS
           if [ -n "$IMAGE" ]; then
-            timeout -k 10 "$limit" docker pull "$IMAGE"
+            # The whole list is one attempt under one limit.
+            timeout -k 10 "$limit" bash -c 'for ref in "$@"; do docker pull "$ref" || exit; done' _ "${images[@]}"
             code=$?
+          elif [ -n "$URL" ]; then
+            # Only a file that hashes to the pin is kept, and a half-written
+            # one never reads as whole: each attempt starts without it.
+            rm -f "$DEST" && mkdir -p "$(dirname "$DEST")" &&
+              timeout -k 10 "$limit" curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$DEST" "$URL" &&
+              echo "$SHA256  $DEST" | sha256sum --check --status
+            code=$?
+            [ "$code" -eq 0 ] || rm -f "$DEST"
           elif [ -n "$ARTIFACT" ]; then
             # A half-extracted artifact must never read as a whole one: the
             # directory is the artifact's own, and each attempt starts it empty.
