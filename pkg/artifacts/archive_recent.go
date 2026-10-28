@@ -94,8 +94,8 @@ func ParseRunRecentIndexKey(key string) (RunIndexEntry, bool) {
 	if !ok {
 		return RunIndexEntry{}, false
 	}
-	stamp, err := time.Parse(RunStampLayout, invertStamp(parts[4]))
-	if err != nil {
+	stamp, ok := parseRunStamp(invertStamp(parts[4]))
+	if !ok {
 		return RunIndexEntry{}, false
 	}
 	orkflow, ok := decodeArchiveSegment(parts[5])

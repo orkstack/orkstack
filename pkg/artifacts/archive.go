@@ -482,8 +482,8 @@ func ParseRunIndexKey(key string) (RunIndexEntry, bool) {
 	if !ok {
 		return RunIndexEntry{}, false
 	}
-	stamp, err := time.Parse(RunStampLayout, parts[6])
-	if err != nil {
+	stamp, ok := parseRunStamp(parts[6])
+	if !ok {
 		return RunIndexEntry{}, false
 	}
 	runID, ok := decodeArchiveSegment(parts[7])
@@ -561,8 +561,8 @@ func ParseRunOriginIndexKey(key string) (RunIndexEntry, bool) {
 	if !ok {
 		return RunIndexEntry{}, false
 	}
-	stamp, err := time.Parse(RunStampLayout, parts[8])
-	if err != nil {
+	stamp, ok := parseRunStamp(parts[8])
+	if !ok {
 		return RunIndexEntry{}, false
 	}
 	runID, ok := decodeArchiveSegment(parts[9])
@@ -622,6 +622,17 @@ func (q RunQuery) timeOrderedPrefix() bool {
 
 // RunStamp renders t as an index segment: UTC, fixed width, sortable.
 func RunStamp(t time.Time) string { return t.UTC().Format(RunStampLayout) }
+
+// parseRunStamp reads a stamp RunStamp wrote and no other spelling of it:
+// time.Parse also takes a comma as the decimal separator, which would let two
+// keys name one record.
+func parseRunStamp(s string) (time.Time, bool) {
+	stamp, err := time.Parse(RunStampLayout, s)
+	if err != nil || RunStamp(stamp) != s {
+		return time.Time{}, false
+	}
+	return stamp, true
+}
 
 // NormalizeRunStatus folds a status to the form the index stores. It accepts
 // the proto wire name ("STATUS_SUCCEEDED") and the short form, in any case.

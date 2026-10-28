@@ -3,6 +3,7 @@ package artifacts_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -71,10 +72,55 @@ func FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites(f *testing.F) {
 		"metadata/attempts/ork-1-1/build/1.json", "metadata/attempts/ork-1-1/build/00000000001.json", "metadata/attempts/ork-1-1/build/0000000000.json",
 		"metadata/attempts/ork-1-1/fan/1/0000000001.json", "metadata/attempts/ork%2D1/build/0000000001.json", "metadata/attempts/../x/0000000001.json",
 	}
+	stamped := artifacts.RunRecord{RunID: "ork-1-1", Namespace: "payments", Orkflow: "nightly", Status: "succeeded",
+		Time: time.Date(2026, 10, 9, 12, 30, 45, 123456000, time.UTC), OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, OriginID: "sch-0123456789abcdef"}
+	for _, build := range []func(artifacts.RunRecord) (string, error){
+		artifacts.RunIndexKey, artifacts.RunRecentIndexKey,
+		func(rec artifacts.RunRecord) (string, error) {
+			key, _, err := artifacts.RunOriginIndexKey(rec)
+			return key, err
+		},
+	} {
+		if key, err := build(stamped); err == nil {
+			seeds = append(seeds, key)
+		}
+	}
+	if key, err := artifacts.RunObjectRefKey("objects/a", "ork-1-1"); err == nil {
+		seeds = append(seeds, key)
+	}
+	seeds = append(seeds, "metadata/index/runs/payments/nightly/succeeded/20261009T123045.123456Z/ork%2D1", "metadata/index/runs/a/b/c/d/e/f/g")
 	for _, seed := range seeds {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, key string) {
+		if entry, ok := artifacts.ParseRunIndexKey(key); ok {
+			rebuilt, err := artifacts.RunIndexKeyForEntry(entry)
+			if err != nil || rebuilt != key {
+				t.Fatalf("ParseRunIndexKey(%q) = %+v; RunIndexKeyForEntry writes %q (%v)", key, entry, rebuilt, err)
+			}
+		}
+		if entry, ok := artifacts.ParseRunRecentIndexKey(key); ok {
+			rebuilt, err := artifacts.RunRecentIndexKeyForEntry(entry)
+			if err != nil || rebuilt != key {
+				t.Fatalf("ParseRunRecentIndexKey(%q) = %+v; RunRecentIndexKeyForEntry writes %q (%v)", key, entry, rebuilt, err)
+			}
+		}
+		if entry, ok := artifacts.ParseRunOriginIndexKey(key); ok && artifacts.NormalizeRunStatus(entry.Status) == entry.Status {
+			rebuilt, built, err := artifacts.RunOriginIndexKey(artifacts.RunRecord{
+				RunID: entry.RunID, Namespace: entry.Namespace, Orkflow: entry.Orkflow, Status: entry.Status, Time: entry.Time,
+				OriginKind: entry.OriginKind, OriginID: entry.OriginID,
+			})
+			if err != nil || !built || rebuilt != key {
+				t.Fatalf("ParseRunOriginIndexKey(%q) = %+v; RunOriginIndexKey writes %q (%v)", key, entry, rebuilt, err)
+			}
+		}
+		if runID, ok := artifacts.ParseRunObjectRefRunID(key); ok {
+			if segments := strings.Split(key, "/"); len(segments) != 5 {
+				t.Fatalf("ParseRunObjectRefRunID(%q) = %q for a key of %d segments", key, runID, len(segments))
+			} else if again, err := artifacts.RunObjectRefKey("", runID); err != nil || !strings.HasSuffix(again, "/"+segments[4]) {
+				t.Fatalf("ParseRunObjectRefRunID(%q) = %q, which re-encodes as %q (%v)", key, runID, again, err)
+			}
+		}
 		if id, day, ok := artifacts.ParseAuditKey(key); ok {
 			rebuilt, err := artifacts.AuditKey(&orkstackv1.AuditRecord{Id: id, At: timestamppb.New(day)})
 			if err != nil || rebuilt != key {

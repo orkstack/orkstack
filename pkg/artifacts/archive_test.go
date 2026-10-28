@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -132,6 +133,52 @@ func TestRunIndexKey_CarriesEveryQueriedFieldAndParsesBack(t *testing.T) {
 	} {
 		if entry, ok := artifacts.ParseRunIndexKey(foreign); ok {
 			t.Fatalf("ParseRunIndexKey(%q) = %+v, true; want false", foreign, entry)
+		}
+	}
+}
+
+// Two keys never name one record. time.Parse reads a comma as the decimal
+// separator, so a stamp spelled with one parsed to an instant whose key is
+// spelled with a dot: the scan and the cursor would then disagree about which
+// key a record is stored under. Only the spelling RunStamp writes parses.
+func TestParseRunIndexKeys_OnlyTheStampTheWriterSpellsParses(t *testing.T) {
+	record := artifacts.RunRecord{
+		RunID: "ork-1-1", Namespace: "payments", Orkflow: "nightly", Status: "succeeded",
+		Time:       day(t, "2026-08-14T09:30:15Z"),
+		OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, OriginID: "sch-0123456789abcdef",
+	}
+	runKey, err := artifacts.RunIndexKey(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recentKey, err := artifacts.RunRecentIndexKey(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originKey, _, err := artifacts.RunOriginIndexKey(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := artifacts.RunStamp(record.Time)
+	// The recent index writes the stamp with its digits inverted.
+	inverted := strings.Split(recentKey, "/")[4]
+	for name, tc := range map[string]struct {
+		key, written string
+		parse        func(string) (artifacts.RunIndexEntry, bool)
+	}{
+		"run index":    {runKey, stamp, artifacts.ParseRunIndexKey},
+		"recent index": {recentKey, inverted, artifacts.ParseRunRecentIndexKey},
+		"origin index": {originKey, stamp, artifacts.ParseRunOriginIndexKey},
+	} {
+		if _, ok := tc.parse(tc.key); !ok {
+			t.Fatalf("%s: the writer's own key %q does not parse", name, tc.key)
+		}
+		comma := strings.Replace(tc.key, tc.written, strings.Replace(tc.written, ".", ",", 1), 1)
+		if comma == tc.key {
+			t.Fatalf("%s: the key %q does not hold the stamp %q", name, tc.key, tc.written)
+		}
+		if entry, ok := tc.parse(comma); ok {
+			t.Errorf("%s: %q parsed to %+v although the writer spells the stamp %q", name, comma, entry, tc.written)
 		}
 	}
 }
