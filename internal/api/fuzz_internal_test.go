@@ -8,14 +8,17 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -415,4 +418,105 @@ func enumFieldIn(md protoreflect.MessageDescriptor, seen map[protoreflect.FullNa
 		}
 	}
 	return false
+}
+
+// FuzzPageTokens: a page token is opaque text a client hands back, so every
+// decoder refuses what it did not issue as InvalidArgument and never anything
+// else; a token it accepts re-encodes to a token that decodes to the same
+// position; and a token minted under one filter set is accepted under that set
+// and under no other.
+func FuzzPageTokens(f *testing.F) {
+	empty := listfilter.Set{}
+	spec := listfilter.MustSpec(&orkstackv1.ListNamespacesRequest{})
+	parsed, err := listfilter.Parse("name~pay")
+	if err != nil {
+		f.Fatal(err)
+	}
+	filtered, err := spec.Compile([]*orkstackv1.FieldFilter{parsed})
+	if err != nil {
+		f.Fatal(err)
+	}
+	other, err := listfilter.Parse("description^x")
+	if err != nil {
+		f.Fatal(err)
+	}
+	filteredOther, err := spec.Compile([]*orkstackv1.FieldFilter{other})
+	if err != nil {
+		f.Fatal(err)
+	}
+	mint := func(token string, err error) string {
+		if err != nil {
+			f.Fatal(err)
+		}
+		return token
+	}
+	for _, seed := range []string{
+		"", "x", "!!!", "e30", "bnVsbA", mint(encodeNamespaceCursor(empty, "payments")), mint(encodeNamespaceCursor(filtered, "payments")),
+		mint(encodeOrkflowCursor("default", empty, "nightly")), mint(encodeOrkflowCursor("default", filtered, "nightly")),
+		mint(encodeRunCursor(runCursor{Version: runCursorVersion, Namespace: "default", LastCreated: "2026-10-09T00:00:00Z", LastID: "ork-1-1"})),
+		mint(encodeAuditCursor(auditCursor{WindowSince: "2026-10-09T00:00:00Z", WindowUntil: "2026-10-10T00:00:00Z", BeforeKey: "metadata/audit/2026/10/09/aud-20261009T000000.000000000Z-0123456789abcdef.json"})),
+		"v2:e30", "v1:e30", "v2:", mint(encodeDeliveryCursor(deliveryCursor{Version: deliveryCursorVersion, WindowSince: "2026-10-09T00:00:00Z", WindowUntil: "2026-10-10T00:00:00Z"})),
+	} {
+		f.Add(seed)
+	}
+	refusedAsInvalid := func(t *testing.T, decoder string, err error) {
+		t.Helper()
+		if connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Fatalf("%s refused a token with %T %v, want InvalidArgument", decoder, err, err)
+		}
+	}
+	f.Fuzz(func(t *testing.T, token string) {
+		for _, set := range []listfilter.Set{empty, filtered, filteredOther} {
+			if name, err := decodeNamespaceCursor(token, set); err != nil {
+				refusedAsInvalid(t, "decodeNamespaceCursor", err)
+			} else {
+				again, err := encodeNamespaceCursor(set, name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if back, err := decodeNamespaceCursor(again, set); err != nil || back != name {
+					t.Fatalf("a namespace cursor at %q did not survive re-encoding: %q, %v", name, back, err)
+				}
+				for _, wrong := range []listfilter.Set{empty, filtered, filteredOther} {
+					if _, err := decodeNamespaceCursor(again, wrong); (err == nil) != (wrong.Key() == set.Key()) {
+						t.Fatalf("a token minted under %q decoded under %q: %v", set.Texts(), wrong.Texts(), err)
+					}
+				}
+			}
+			if name, err := decodeOrkflowCursor(token, "default", set); err != nil {
+				refusedAsInvalid(t, "decodeOrkflowCursor", err)
+			} else if again, err := encodeOrkflowCursor("default", set, name); err != nil {
+				t.Fatal(err)
+			} else if back, err := decodeOrkflowCursor(again, "default", set); err != nil || back != name {
+				t.Fatalf("an orkflow cursor at %q did not survive re-encoding: %q, %v", name, back, err)
+			}
+			if cursor, err := decodeRunCursor(token, "default", set); err != nil {
+				refusedAsInvalid(t, "decodeRunCursor", err)
+			} else if cursor != nil {
+				again, err := encodeRunCursor(*cursor)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if back, err := decodeRunCursor(again, "default", set); err != nil || *back != *cursor {
+					t.Fatalf("a run cursor %+v did not survive re-encoding: %+v, %v", cursor, back, err)
+				}
+			}
+			if since, until, key, err := decodeAuditCursor(token, set); err != nil {
+				refusedAsInvalid(t, "decodeAuditCursor", err)
+			} else if again, err := encodeAuditCursor(auditCursor{
+				Filters: set.Key(), WindowSince: since.Format(time.RFC3339Nano), WindowUntil: until.Format(time.RFC3339Nano), BeforeKey: key}); err != nil {
+				t.Fatal(err)
+			} else if s, u, k, err := decodeAuditCursor(again, set); err != nil || !s.Equal(since) || !u.Equal(until) || k != key {
+				t.Fatalf("an audit cursor did not survive re-encoding: %v %v %q, %v", s, u, k, err)
+			}
+			if since, until, runStart, key, err := decodeDeliveryCursor(token, set); err != nil {
+				refusedAsInvalid(t, "decodeDeliveryCursor", err)
+			} else if again, err := encodeDeliveryCursor(deliveryCursor{Version: deliveryCursorVersion, Filters: set.Key(),
+				WindowSince: since.Format(time.RFC3339Nano), WindowUntil: until.Format(time.RFC3339Nano), RunStart: runStart, BeforeKey: key}); err != nil {
+				t.Fatal(err)
+			} else if s, u, rs, k, err := decodeDeliveryCursor(again, set); err != nil || !s.Equal(since) || !u.Equal(until) || rs != runStart || k != key {
+				t.Fatalf("a delivery cursor did not survive re-encoding: %v, %v", s, err)
+			}
+		}
+	})
 }
