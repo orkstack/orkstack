@@ -125,6 +125,22 @@ include breaking changes, and each is marked **BREAKING**.
   log lines, and feed the next derivation of the floors
   (`docs/PROOFS.md` §10, which gives a `jq` recipe). The measurement takes
   about four seconds longer.
+- Static analysis. `make lint` runs staticcheck, pinned in `go.mod` as a `tool`
+  directive (`honnef.co/go/tools` v0.8.2), with its default checks over the
+  module as built and again with `-tags=integration`, so `make check`,
+  `make merge-check` and the lint gate of every proof run it. A finding is fixed
+  in the code; the few that are not defects carry a line-level `//lint:ignore`
+  saying why (the Temporal SDK's `VersionsInfo`, its only field for a queue's
+  poller records, and the S3 multipart upload manager, whose v0 successor is a
+  change of its own). `make vuln` runs the pinned `govulncheck`
+  (`golang.org/x/vuln` v1.9.0) and reports the vulnerabilities whose vulnerable
+  code the module reaches. It needs the network, so it is in no lint and no
+  proof; `ci.yml` › `vuln` and `nightly.yml` › `vuln` run it, and a reachable
+  advisory fails the run, which for the nightly is a failing `main`. Adding the
+  two tools raised the indirect modules `golang.org/x/net`, `x/sys`, `x/sync`
+  and `x/text` to what their requirements need. The `ci.yml` › `check` and
+  `feature` proof steps and `proof.yml` › `fast` have five minutes more for the
+  lint time (docs/PROOFS.md §11.5).
 
 ### Fixed
 
@@ -464,6 +480,18 @@ include breaking changes, and each is marked **BREAKING**.
   fails is logged and never fails the proof. A bucket is removed with one
   request when the store deletes a non-empty bucket, and is emptied object by
   object only when the store refuses, here and in `test/tools/bucket-ensure`.
+- Findings of the new static analysis, fixed rather than silenced. `orkctl
+  cache purge` assigned its namespace before a loop that always overwrote it.
+  The interpreter's main loop and its failure-handler loop compared with nil
+  the error `expire` always returns; the contract is now stated and the dead
+  branch gone, with no change to a command or an event. The memo key copied
+  the fields of task.json's each-upstream entry by name, so a field added to
+  the entry would have been left out of the key silently; it now converts the
+  struct, and the build stops until the key has been decided. Tests and
+  tooling moved off deprecated APIs, and code nothing used was deleted.
+  Two validation messages no longer end in a colon: a join with no needs ends
+  `or remove the join: key`, and `.each` outside a fan-out ends `that declares
+  each: (a fan-out)`.
 
 ### Added
 

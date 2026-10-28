@@ -90,12 +90,31 @@ same smoke before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).
 
 ## Fast checks (no Docker, under two minutes warm)
 
-`make check` runs `make lint` (`go vet` and gofmt), `go vet -tags=integration`
-over the integration suites, and the unit suites with `-short`, which skips
-the scale tests and the tests that compile binaries; it keeps the test cache.
+`make check` runs `make lint` (`go vet`, gofmt and staticcheck),
+`go vet -tags=integration` over the integration suites, and the unit suites
+with `-short`, which skips the scale tests and the tests that compile binaries;
+it keeps the test cache.
 Every proof runs those, without `-short`. Run it before every push. For the UI:
 `cd ui && bun run check && bun run test:unit`. For the site (`site/`, which
 also renders every doc): `make site`.
+
+`make lint` runs staticcheck at the version `go.mod` pins as a `tool`
+directive, so `go tool staticcheck` needs no install step. It runs the default
+checks twice, over the module as built and again with `-tags=integration`,
+because a symbol that only an integration-tagged file uses is unused to the
+first run and live to the second. Fix a finding in the code. Where staticcheck
+is wrong, for example a deprecation whose named replacement does not cover the
+use, put `//lint:ignore CHECK reason` on the line before the flagged one and
+say in the reason why; do not disable a whole check.
+
+`make vuln` runs the pinned `govulncheck`, which reports the known
+vulnerabilities in your dependencies and the standard library whose vulnerable
+code the module can reach. It reads the vulnerability database over the
+network, so it is in neither `make lint` nor any proof, and a network failure
+cannot fail one. CI's `vuln` job and the nightly workflow run it. A report names
+the fixed version: bump the module to exactly that version, then run
+`make check`. A vulnerability the code cannot reach is shown only with
+`go tool govulncheck -show verbose ./...`.
 
 When a test is listed in `scripts/proof-quarantine.txt`, its failure is that
 known flake: tell its owner if it is new to you. Never re-run a failing test until it
@@ -164,6 +183,9 @@ run, with its own `ork` and `orker`, and stops them when it ends.
 
 - **`check`** — `make check`, on every push and every pull request, with
   `DOCKER_HOST` pointing at nothing to prove the fast path needs no Docker.
+- **`vuln`** — `make vuln`, on every push and every pull request. It needs the
+  network and is in no proof; the nightly workflow runs it too, and a
+  vulnerability it reports makes that night's run red.
 - **`feature`** — the feature tier: the fast gates, the tests and specs that
   prove your change, and its regression set. Name evidence the selection
   cannot find in your PR description:
