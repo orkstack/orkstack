@@ -531,10 +531,9 @@ func RunWorkflow(
 			continue
 		}
 		if expired != "" {
-			if err := state.expire(ctx, expired); err != nil {
-				return state.fail(ctx, cancelRun, inFlight, expired, err)
-			}
-			continue
+			// expire always returns an error, the one the run ends with: the
+			// await's deadline, or the cancellation that settled its timer.
+			return state.fail(ctx, cancelRun, inFlight, expired, state.expire(ctx, expired))
 		}
 		if selectedItem >= 0 {
 			key := itemFlightKey(selectedID, selectedItem)
