@@ -596,6 +596,14 @@ The proof's site gate (§2.1) runs the same command, so a change that breaks the
 build is stopped before it merges; the workflow publishes only a build that
 passed.
 
+`proof-rerun.yml` is not part of the proof and holds no required check; it
+asks GitHub for a new attempt of a failed candidate proof, when nothing in it
+recorded a result (§10):
+
+| Job | Runs |
+|---|---|
+| `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run was a push to `validate/full/**` of this repository, and its run attempt is below 3 (so at most two automatic reruns). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
+
 `nightly.yml` holds two jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and
@@ -650,25 +658,41 @@ moves them, one pull request and one proof at a time.
 The composite action `.github/actions/proof-host` installs the host setup a
 stack part needs: Docker images cached, the Temporal CLI, cosign, and the
 Linux `host.docker.internal` name. It is proof-host setup, never Orker
-behaviour.
+behaviour. Nothing in it leaves the runner except through `proof-fetch`: the
+stack images the cache did not load are pulled through it (the compose file
+pins each by digest, and the stack then starts with `--pull never`, so a
+missing image is an explicit failure and never a stall), cosign v2.6.5 is
+downloaded through it as the release's linux/amd64 binary and kept only if it
+hashes to the SHA-256 the release's `cosign_checksums.txt` lists, and the one
+container the action runs from Docker Hub by tag is bounded with `timeout`.
+Its fetches run inside the caller's `proof host` step, which has a limit of
+10 minutes of its own.
 
 The composite action `.github/actions/proof-fetch` is how every part job
-fetches a run's own artifacts (the plan, the build, the proof job's parts)
-and how a `ui-e2e` job pulls the browser image: at most two attempts, the
-first bounded to 3 minutes and the second to 6 (`timeout` kills a fetch that
-makes no progress), under a step limit of 10, so a stalled blob store or
-registry costs a retry rather than the part, and a lost runner still fails
-within the step. An artifact is fetched with `gh run download` on the job's
-own token (`actions: read`), because `actions/download-artifact` has no limit
-of its own and nothing to retry. Every attempt is one line in the runner's
-setup log, which the part step hands to `scripts/proof.sh --part` as
-`--setup-log`; the part copies it to its `setup.log`, `proofrun record`
-carries its lines (`-setup-log`) into `part.json` (`setup`), and the merger lists
-every fetch that needed its second attempt in `proof.json` (`setup_retries`)
-and under the README's Notes. A retry is inside one attempt of a part: it is
-never a rerun and costs no eligibility. A fetch that fails both attempts
-fails the step, before the part, and the remedy is a new run of the same
-tree (§10) — the action re-runs no job and nothing continues on error.
+fetches a run's own artifacts (the plan, the build, the proof job's parts),
+how a `ui-e2e` job pulls the browser image, and how the proof host pulls its
+images and downloads its one file: at most two attempts, the first bounded to
+3 minutes and the second to 6 (`timeout` kills a fetch that makes no
+progress), under a step limit of 10, so a stalled blob store or registry
+costs a retry rather than the part, and a lost runner still fails within the
+step. An artifact is fetched with `gh run download` on the job's own token
+(`actions: read`), because `actions/download-artifact` has no limit of its
+own and nothing to retry. An image is pulled only by digest, and a file is
+fetched only over https to a path and kept only if it hashes to the SHA-256
+the caller pinned: other bytes are a failed attempt. Every attempt is one
+line in the runner's setup log, which the part step hands to
+`scripts/proof.sh --part` as `--setup-log`; the part copies it to its
+`setup.log`, `proofrun record` carries its lines (`-setup-log`) into
+`part.json` (`setup`), and the merger lists every fetch that needed its second
+attempt in `proof.json` (`setup_retries`) and under the README's Notes. A
+retry is inside one attempt of a part: it is never a rerun and costs no
+eligibility. A fetch that fails both attempts fails the step, before the
+part: the job is then a **setup-failed** part (§7.1), which the merger lets
+run again as a new part of the same tree (§8, §10). The action re-runs no job
+and nothing continues on error. The runner starts the action's script under
+`bash -e`, which would end it at the first failed command, so the script turns
+errexit off and a test (`TestProofFetch_...`) runs it under the runner's shell
+against fakes.
 
 **The runner-health floor.** The first thing every part does, before any
 gate, is measure its runner for about fourteen seconds (`proofrun runner-health`,
@@ -688,7 +712,12 @@ merger classifies that attempt **runner-degraded**, exactly as one whose
 runner GitHub lost: nothing it recorded is an outcome of the tree, the proof
 is not a proof of the tree, `proof.json` names the part, the metric, the
 measured value and the floor (`degraded_runners`), and that one job may run
-again (§8, §10). The `plan`, `build`, `fast`, `race`, `race-repeat` and
+again (§8, §10). On GitHub (`GITHUB_ACTIONS=true`) the stopping part also
+prints one annotation of fixed words, `proof: runner below the floor, no gate
+ran`, which is how the rerun planner (§5, `proof-rerun.yml`) tells that job
+from a failed one without downloading its artifact; it is evidence for
+running the job again and never for a verdict, which the merger re-derives
+from `runner-health.json`. The `plan`, `build`, `fast`, `race`, `race-repeat` and
 `fuzz` parts, and a local proof's `local` part, measure for information: their
 verdict is recorded and changes nothing, because a local host's floors are its
 measured costs themselves. The merger re-derives every verdict from the file's values and
@@ -884,6 +913,12 @@ were still 921 MB (run 40388322907).
   attempt that measured below the floor, one entry per metric with its value
   and the floor; a `reruns` entry whose `reason` is `runner-degraded` carries
   the earlier attempt's entries as `degraded`;
+- `setup_failures`, every part attempt whose job failed in a fetch or install
+  step before its proof step started (§7.1), with the part, the attempt, the
+  step and the step's conclusion, whether or not the part ran again; a
+  `reruns` entry has `reason` `lost-runner`, `runner-degraded` or
+  `setup-failed`, and its `lost_attempt` describes the earlier attempt
+  whichever it was (conclusion, annotations, failed step);
 - `pr` and `ci`.
 
 A ledger entry has `package`, `test`, `job`, `outcome`, `seconds`, an optional
@@ -962,6 +997,28 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   read fails closed; an absent file is a part measured before the step
   existed. The floor binds only the CI stack parts (`floorBinds` in
   `merge.go`, the same parts `scripts/proof-part.sh` stops).
+- **Setup failures.** A job that failed, whose proof step never started (the
+  jobs API records it skipped), and whose failed step is on the allowlist of
+  fetch and install steps for its kind of part (`setupStepNames` in
+  `merge.go`), is **setup-failed**: it ran no test and left no result, and it
+  may run again exactly as a lost or a degraded part. The allowlist is by the
+  steps' own names, because the jobs API reports a composite action only as the
+  step that uses it: `proof host`, `fetch plan`, `fetch build` for
+  `integration` and `activity-fixture`; those, `bun install`,
+  `fetch browser image` and `Chromium (host)` for `ui-e2e`;
+  `observability stack`, `fetch plan` and `fetch build` for `observability`;
+  `bun install` and `bun install (site)` for `fast`. The plan and the build
+  have no entry: every other part reads what they make. Every row of the
+  classification above ranks over it: a part.json, a failing test in the
+  events or the log, a read error, a cancel, a lost runner and a degraded
+  runner are all decided before a setup step is looked at, and a job whose
+  proof step ran is a result whatever else failed. A failure in any other
+  step before the proof step (a checkout, a toolchain's setup) is not
+  rerun-eligible. `proof.json` lists the attempt in `setup_failures` and the
+  README under "Setup failures"; a part whose last attempt is setup-failed has
+  no result, and the proof fails naming it. Two tests pin the names to
+  `proof.yml` in both directions, with rename mutations: the proof step names
+  (`proofStepNames`) and the allowlist (`setupStepNames`).
 
 `make merge-check PROOF=…` refuses a proof whose quarantine `checked_on` is
 more than 30 days old (the merged artifact's private retention). A `NIGHTLY=` proof it is given is
@@ -980,8 +1037,9 @@ git cannot read refuses it; with none given, nothing of the nightly is read.
 4. For a part with no result, `ineligible_reasons` says whether GitHub lost the
    runner (that one job may be re-run), the part ran on a degraded runner
    (`degraded_runners` names the metric, its value and the floor; that one
-   job may be re-run), or the attempt is not rerun-eligible (start a new
-   run).
+   job may be re-run), the job failed in a fetch or install step before its
+   proof step started (`setup_failures` names the step; that one job may be
+   re-run), or the attempt is not rerun-eligible (start a new run).
 5. For a gate, the merged README's gate line names the part and log; download
    that part's artifact. A failed race gate names the test or package in the
    `race` ledger's problems, and the detector's report is in the failed part's
@@ -994,13 +1052,18 @@ git cannot read refuses it; with none given, nothing of the nightly is read.
    not become eligible. Their integration ledger rows read `not finished` or
    `not run`, never `pass`.
 
-Only a part GitHub annotated as a **lost runner**, or whose own measurement
-at its start put its runner **below the floor** (`runner-degraded`, §5), may
-run again, and only "Re-run job" on that job. "Re-run all jobs" and "Re-run
-failed jobs" give some or every part a second attempt after a result, so
-their proof is ineligible. A test failure is never answered by a rerun, and a
-degraded part runs again whole, as a new part of the same tree, never a
-failed test in isolation.
+Only a part GitHub annotated as a **lost runner**, whose own measurement at
+its start put its runner **below the floor** (`runner-degraded`, §5), or whose
+job failed in a fetch or install step before its proof step started
+(**setup-failed**, §7.1), may run again. "Re-run job" on that one job is the
+way, and "Re-run failed jobs" is permitted when every failed part is one of
+these three, because it then gives no part that recorded a result a second
+attempt (the `proof` job runs again with them, and merges every attempt).
+"Re-run all jobs" gives every part a second attempt after a result, so its
+proof is ineligible. A test failure is never answered by a rerun, and a part
+that runs again runs whole, as a new part of the same tree, never a failed
+test in isolation. `proof-rerun.yml` issues "Re-run failed jobs" itself where
+the repository enables it (§10).
 
 ## 9. Reproducing one CI shard locally
 
@@ -1120,7 +1183,8 @@ fails for any tracked path no row matches, and a case in
 **Recover from a lost runner.** Confirm GitHub annotated the runner lost, then
 "Re-run job" on that job, on the same day, while the plan and build artifacts
 exist. The merger records the rerun and the unfinished tests. Any other
-missing part needs a new run of the same tree.
+missing part needs a new run of the same tree, except a degraded runner and a
+setup failure, below.
 
 **Recover from a degraded runner.** `proof.json`'s `degraded_runners` (and
 the step summary's "degraded runner" line) names the part, the metric, its
@@ -1165,12 +1229,42 @@ and name the runs in `derived` as for any row. A floor that no healthy run
 would cross is the aim: a floor can only turn a part into "not a proof of the
 tree", and a floor set too high costs reruns, never a false pass.
 
-**After a setup failure, or a "Re-run job" past the artifact's retention.**
-Start a new run of the same tree (push again, or close and reopen the pull
-request). A fetch that failed both of its attempts (§5) is a setup failure:
-its job's log and the step summary name every attempt, and a part that did
-run after a retried fetch shows it in `proof.json`'s `setup_retries`. After a
-test failure, never: fix it, with evidence.
+**Recover from a setup failure.** A job that failed in a fetch or install step
+before its proof step started (§7.1) ran no test: `proof.json`'s
+`setup_failures` (and the step summary's "setup failure" line) names the part,
+the attempt and the step, and the job's log names every attempt of a fetch that
+gave up (§5). "Re-run job" on that job alone, while the plan and build
+artifacts exist; the merger records the rerun with reason `setup-failed`. A
+failure in any other step before the proof step (a checkout, a toolchain's
+setup), and any failure of the plan or the build, is not rerun-eligible: start
+a new run, below.
+
+**Run failed candidates again automatically.** `proof-rerun.yml` does what the
+three recoveries above do by hand, and only that: when a `proof` run for a push
+to `validate/full/**` of this repository fails, and the run attempt is below 3,
+`proofrun rerun-plan` classifies every failed job with the merger's own
+`classify` from GitHub's record of the attempt (its jobs, its check-run
+annotations, the logs of failed jobs), and `gh run rerun --failed` runs only if
+every failed job is the `proof` job or a part that is lost, setup-failed or
+degraded. A part with a result, a cancel, a failed `base`, `plan` or `build`,
+a job it cannot read and a job whose name is not a part of the workflow all
+mean no rerun, so a run that can never become merge-eligible is not rerun. At
+most two automatic reruns follow the first attempt. It is off until the
+repository variable `PROOF_AUTO_RERUN` is `true`, a setting only the
+maintainer makes. Its planner prints three words it validated (`rerun`,
+`reason`, `parts`) and never an annotation or a log line. The merger remains
+the only authority, reading every attempt again: an automatic rerun that was
+wrong, or forged by a branch that prints the annotation a degraded part
+prints, costs one attempt and can only make the proof ineligible, never pass
+it. The workflow takes `checks: read` beside the `actions: write` and
+`contents: read` a rerun needs, because the evidence is a check-run
+annotation; the `proof` job takes the same permission for the same reason.
+
+**After a setup failure the merger cannot excuse, or a "Re-run job" past the
+artifact's retention.** Start a new run of the same tree (push again, or close
+and reopen the pull request). A part that did run after a retried fetch shows
+it in `proof.json`'s `setup_retries`. After a test failure, never: fix it,
+with evidence.
 
 **On a private repository, start the proof** after adding the `ci:proof`
 label: push again, or close and reopen.
@@ -1402,6 +1496,7 @@ listing with no bucket at all.
 | `gates` | `-select FILE` |
 | `clean` | `-remove` |
 | `runner-health` | `-out FILE`, `-class NAME`, `-floors FILE`, `-dir DIR`, `-seconds N` |
+| `rerun-plan` | `-repo OWNER/NAME`, `-run ID`, `-attempt N`, `-max-attempts N` |
 
 ### 11.4 The scripts
 
@@ -1472,6 +1567,15 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   a pull request: the one `pull_request` run, a Dependabot pull request,
   failed, and no `merge_group` run exists. The pull-request and queue paths
   are structurally validated and unexercised until the gate is applied.
+- **The planner reads the default branch's allowlist; the merger reads the
+  candidate's.** `proof-rerun.yml` runs from the default branch, so
+  `rerun-plan` classifies with the default branch's `setupStepNames`, while the
+  merger of the candidate's own `proof` job uses the candidate's. A change that
+  renames a step of `proof.yml` (and moves the allowlist with it) can therefore
+  cost one wasted automatic attempt, or one that is not issued, until the
+  default branch carries the rename. It can never produce a false pass: the
+  merger decides, from the candidate's records, and refuses any attempt after a
+  result.
 - **A runner that degrades after its measurement.** The runner-health floor
   (§5) is measured once, before any gate; a runner that slows down later —
   as the one of nightly run 40371833169 did, in the third generation of a
@@ -1609,6 +1713,15 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   rules in `test/tools/proofrun` hold their shape, and `make release-smoke`
   runs their build and smoke on a developer's host. The first `tag: false`
   dispatch is their first run on GitHub.
+- **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
+  `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
+  planner is proven against fakes of `gh api`, and its workflow shape by the
+  rules in `test/tools/proofrun`. Two things only a run can show: that the
+  `proof` workflow's completion fires `workflow_run` for an attempt that this
+  workflow's own `GITHUB_TOKEN` asked for (if it does not, one automatic rerun
+  follows a run, and a person's rerun arms the next), and that a failed
+  job's log, annotations and `check_run_url` read as the planner expects. Both
+  fail toward fewer reruns, never toward a false pass.
 - **The nightly soaks' thresholds were measured on a 16-core host.** A
   threshold missed on a 4-vCPU public runner is reported as a calibration
   result, never silently changed. The soaks themselves carry no row of

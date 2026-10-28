@@ -100,6 +100,10 @@ type proofRecord struct {
 	// of the tree (AGENTS.md §11.2; merge.go).
 	RunnerHealth    []partHealth     `json:"runner_health,omitempty"`
 	DegradedRunners []degradedRunner `json:"degraded_runners,omitempty"`
+	// SetupFailures is every part attempt whose job failed in a fetch or
+	// install step before its proof step started (setupStepNames), whether or
+	// not the part ran again: such an attempt ran no test, and may run again.
+	SetupFailures []setupFailure `json:"setup_failures,omitempty"`
 	// QuarantineWarnings are the entries within seven days of their date.
 	QuarantineWarnings []string  `json:"quarantine_warnings,omitempty"`
 	PR                 *prRecord `json:"pr,omitempty"`

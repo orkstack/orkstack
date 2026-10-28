@@ -1157,14 +1157,26 @@ the reference for what each tier runs.
 **Rules for every proof.**
 
 - Never rerun a failing test, and never partially rerun a shard that produced
-  a result. Only a part whose runner GitHub annotated as lost, or whose own
+  a result. Only three kinds of part attempt may run again, none of which
+  recorded a result: one whose runner GitHub annotated as lost; one whose own
   runner-health measurement at its start was below the floor
   (`scripts/proof-runner-floors.tsv`; the part is classified
   `runner-degraded`, and `proof.json` records the part, the metric, the
-  measured value and the floor), may run again — the whole part, as a new
-  part of the same tree, never a failed test in isolation — and `proof.json`
-  records the rerun; any other second attempt makes the proof ineligible. A
-  degraded part's tests have no outcome of the tree, and a proof holding one
+  measured value and the floor); and one whose job failed in a fetch or install
+  step before its proof step started (`setup-failed`: the failed step is on
+  the per-kind allowlist `setupStepNames` in `test/tools/proofrun/merge.go`,
+  the plan and the build have no entry, and `proof.json` records the part, the
+  attempt and the step). Such a part runs again whole, as a new part of the
+  same tree, never a failed test in isolation, and `proof.json` records the
+  rerun; any other second attempt makes the proof ineligible. Reruns of the
+  three classes may be issued automatically (`.github/workflows/proof-rerun.yml`,
+  off unless the repository enables it, at most two per run), by a planner that
+  reuses the merger's classification and reruns only when every failed job is
+  the `proof` job or a part of those classes. "Re-run failed jobs" is
+  permitted when every failed part is eligible, and is never an answer to a
+  part that recorded a result; the merger stays the only authority, so a
+  rerun the planner got wrong makes a proof ineligible and never passes one.
+  A degraded part's tests have no outcome of the tree, and a proof holding one
   with no later attempt is not a proof of the tree; a part above the floor
   whose tests fail is a test failure. The floor is measured once, before any
   gate: a runner that degrades later is not seen, and its failures stay test

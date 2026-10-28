@@ -125,6 +125,48 @@ include breaking changes, and each is marked **BREAKING**.
   log lines, and feed the next derivation of the floors
   (`docs/PROOFS.md` §10, which gives a `jq` recipe). The measurement takes
   about four seconds longer.
+- A third kind of part attempt that may run again, **setup-failed**: a CI job
+  that failed, whose proof step never started, in a fetch or install step on a
+  per-kind allowlist (`setupStepNames`: `proof host`, `fetch plan`,
+  `fetch build`, `fetch browser image`, `Chromium (host)`, `bun install`,
+  `observability stack`). It ran no test and left no result, so the merger
+  treats it exactly as a lost or a degraded part: `proof.json` lists it under
+  `setup_failures` and records the rerun with reason `setup-failed`, and the
+  README names it. The plan and the build have no entry; a failure in any
+  other step, or any attempt that recorded a result, is still not
+  rerun-eligible. The three `proof-host` steps of `proof.yml` are named, since
+  the jobs API reports a composite action only by its step's name, and the
+  merger's step names (`proofStepNames`, `setupStepNames`) are pinned to the
+  workflow in both directions, with rename mutations.
+- `proof-rerun.yml` and `proofrun rerun-plan`: automatic reruns of a failed
+  candidate proof. Off unless the repository variable `PROOF_AUTO_RERUN` is
+  `true`; it acts on a push to `validate/full/**` of this repository, while the
+  run attempt is below 3 (at most two automatic reruns), and runs
+  `gh run rerun --failed` only when every failed job is the `proof` job or a
+  part the merger's own classification calls lost, setup-failed or degraded.
+  The planner reads the attempt's jobs, annotations and logs through
+  `gh api`, prints only words it validated, and runs from the default branch;
+  the merger stays the only authority, so a wrong rerun can only make a proof
+  ineligible. The workflow takes `checks: read` beside `actions: write` and
+  `contents: read`, because the evidence is a check-run annotation. A stack
+  part that stops on a runner below the floor now prints one fixed-word
+  `::error::` annotation under `GITHUB_ACTIONS=true`, which the planner reads
+  and the merger does not.
+
+### Changed
+
+- `.github/actions/proof-host` no longer leaves the runner except through
+  `proof-fetch`: cosign v2.6.5 is downloaded as the release's linux/amd64
+  binary and kept only if it hashes to the pinned SHA-256 (replacing the
+  installer action, which could not retry), the stack images the cache did not
+  load are pulled through it, the stack starts with `--pull never`, and the one
+  container pulled by tag is bounded with `timeout`. `proof-fetch` takes a `url`
+  with a `sha256`, and a list of images, each of which must be pinned by digest.
+  The registry image of `deploy/docker-compose.yml` was the floating tag
+  `registry:3`; it is pinned by the index digest of 3.1.2.
+- `proof-fetch`'s give-up line no longer says a setup failure needs a new run
+  of the same tree: a fetch that fails both attempts is a setup-failed part
+  the merger lets run again (`docs/PROOFS.md` §8).
 
 ### Fixed
 
@@ -333,6 +375,12 @@ include breaking changes, and each is marked **BREAKING**.
   example are found the same way. Functions, variables, constants and types
   are still matched by name, and an `init` function of a test file now
   counts as part of every test's reach.
+- `proof-fetch`'s retry never ran on GitHub. The runner starts a composite
+  step with `bash -e`, which ended the script at the first failed attempt,
+  before the second, before the log line and before the give-up line the merger
+  reads. The script turns errexit off, and a test runs it under the runner's
+  shell against fakes.
+
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
   pid, rather than by the container's Orker id. Tests that name their own

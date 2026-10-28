@@ -24,6 +24,7 @@
 //	proofrun free-port    a port nothing listens on
 //	proofrun clean        list, or remove, what test processes that are gone left
 //	proofrun runner-health  measure this runner against the floors and write runner-health.json
+//	proofrun rerun-plan   decide whether a completed proof run's failed jobs are worth a rerun
 //
 // Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation.
 package main
@@ -65,6 +66,7 @@ var subcommands = []subcommand{
 	{"gates", "the gates and specs a feature selection runs", cmdGates},
 	{"clean", "list, or remove, what test processes that are gone left behind", cmdClean},
 	{"runner-health", "measure this runner against the floors and write runner-health.json", cmdRunnerHealth},
+	{"rerun-plan", "decide whether the failed jobs of a completed proof run are worth an automatic rerun", cmdRerunPlan},
 }
 
 func main() {

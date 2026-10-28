@@ -169,6 +169,16 @@ part_runner_health() {
 	1)
 		if part_floor_binds; then
 			part_say "   runner-health: this runner is BELOW the floor; the part stops before any gate and is not a proof of the tree (re-run this job alone)"
+			# On GitHub, one annotation of fixed words, the only way the rerun
+			# planner (.github/workflows/proof-rerun.yml, `proofrun rerun-plan`)
+			# can tell this job from a failed one without downloading its
+			# artifact. It is evidence for running the job again, never for a
+			# verdict: the merger re-derives degradation from
+			# runner-health.json. No variable text, so it is matched whole
+			# (runnerBelowFloorAnnotation, test/tools/proofrun/rerunplan.go).
+			if [ "${GITHUB_ACTIONS:-}" = true ]; then
+				printf '::error::%s\n' "proof: runner below the floor, no gate ran"
+			fi
 			return 1
 		fi
 		part_say "   runner-health: this runner is below the floor; the $PART part measures for information and runs on"

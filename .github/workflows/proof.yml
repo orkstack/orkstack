@@ -421,7 +421,11 @@ jobs:
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
-      - uses: ./.github/actions/proof-host
+      # Named, because the jobs API reports a composite action only as the
+      # step that uses it, and the merger's setup-failed rule reads that name
+      # (test/tools/proofrun/merge.go, setupStepNames).
+      - name: proof host
+        uses: ./.github/actions/proof-host
         timeout-minutes: 10
         with:
           cosign: "true"
@@ -497,7 +501,8 @@ jobs:
         timeout-minutes: 5
         working-directory: ui
         run: bun install --frozen-lockfile
-      - uses: ./.github/actions/proof-host
+      - name: proof host
+        uses: ./.github/actions/proof-host
         timeout-minutes: 10
         with:
           temporal-cli: "true"
@@ -634,7 +639,8 @@ jobs:
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
-      - uses: ./.github/actions/proof-host
+      - name: proof host
+        uses: ./.github/actions/proof-host
         timeout-minutes: 10
         with:
           cleanup-disk: "true"
@@ -890,6 +896,7 @@ jobs:
             jq -r '.quarantine_warnings[]? | "- WARNING: " + .' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             jq -r '.reruns[]? | "- rerun: \(.part) attempt \(.attempt), \(.reason)"' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             jq -r '.degraded_runners[]? | "- degraded runner: \(.part) attempt \(.attempt): \(.metric) \(.value) \(.unit), floor \(.floor) (re-run that job alone)"' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
+            jq -r '.setup_failures[]? | "- setup failure: \(.part) attempt \(.attempt): the step \"\(.step)\" ended \(.conclusion) before the proof step started (re-run that job alone)"' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             echo
             du -sh "$RUNNER_TEMP/ci/proof" 2>/dev/null || true
           } >>"$GITHUB_STEP_SUMMARY"

@@ -109,7 +109,7 @@ func (w *wfFile) onTypes(event string) ([]string, bool) {
 	return out, true
 }
 
-var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml", "site.yml"}
+var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml", "site.yml", "proof-rerun.yml"}
 
 func workflowPath(name string) string {
 	return filepath.Join("..", "..", "..", ".github", "workflows", name)
@@ -824,27 +824,8 @@ func TestWorkflows_JobRecordsCarryWhatTheMergerClassifies(t *testing.T) {
 	}
 }
 
-// TestWorkflows_EveryPartsProofStepIsOneTheMergerKnows: the merger decides
-// whether a part's proof step started by the step's name, so every step that
-// runs `scripts/proof.sh --part` carries a name it knows.
-func TestWorkflows_EveryPartsProofStepIsOneTheMergerKnows(t *testing.T) {
-	w := loadWorkflow(t, "proof.yml")
-	seen := 0
-	for _, name := range w.jobNames() {
-		for i, s := range w.Jobs[name].Steps {
-			if !strings.Contains(s.Run, "scripts/proof.sh --part") {
-				continue
-			}
-			seen++
-			if !proofStepNames[s.Name] {
-				t.Errorf("jobs.%s %s runs a part under a name the merger does not know", name, s.label(i))
-			}
-		}
-	}
-	if seen == 0 {
-		t.Fatal("no step runs scripts/proof.sh --part")
-	}
-}
+// The merger's step names (proofStepNames, setupStepNames) are pinned to
+// proof.yml in workflow_setup_test.go.
 
 // ---- a red part cannot turn green ------------------------------------------------
 
@@ -1970,7 +1951,10 @@ var (
 )
 
 // pinKeys are the `with:` keys that name a toolchain; each is an exact version.
-var pinKeys = []string{"go-version", "bun-version", "node-version", "cosign-release"}
+// cosign is no longer one: proof-host downloads its binary by URL and hash
+// through proof-fetch, and TestProofHost_CosignIsPinnedByReleaseAndByHash and
+// proofHostProblems pin the pair.
+var pinKeys = []string{"go-version", "bun-version", "node-version"}
 
 // pinProblems holds steps to the pin rule: no floating ref. Every action is
 // named by an exact release, and every toolchain in pinKeys by an exact
