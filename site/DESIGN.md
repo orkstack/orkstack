@@ -166,7 +166,7 @@ The site has no visual system of its own. `ui/src/tokens.css` holds every colour
 
 The site is a drawing set from the same office as the UI. The landing page is one sheet: its first view is a real run of the example Orkflow in the UI, framed as a drawing, and along its bottom edge a title block holds the headline, the two actions and six facts. Below the sheet, each section is a region of the same drawing, opened by a region rule: the model drawn on a drafting grid with balloons keyed to a parts list, a real Orkflow listed line by line with balloons in its margin, the features as registers, durability as an owners register, the limits as a ruled list, the quickstart as a terminal and a recording, and the status as a ruled row of links. The docs are Starlight, restyled only through its custom properties, plain CSS over its public markup and five component overrides, so a docs page carries the same top bar, the same ink rules, the same registers and the same closing title block.
 
-Density follows the UI's: narrow sans body text, tracked caps for every label, the mono only for what a person copies or compares (YAML, commands, ids, captions naming a version). Structure comes from line weight (`--rule-hair`, `--rule-region`, `--rule-frame`), never from cards, fills or shadows. Code is monochrome ink. The landing page renders without JavaScript; scripts only add the appearance switch, the copy button and the pre-paint theme choice.
+Density follows the UI's: narrow sans body text, tracked caps for every label, the mono only for what a person copies or compares (YAML, commands, ids, captions naming a version). Structure comes from line weight (`--rule-hair`, `--rule-region`, `--rule-frame`), never from cards, fills or shadows. Code takes the UI's syntax colours, the same tokens as its YAML editor. The landing page renders without JavaScript; scripts only add the appearance switch, the copy button and the pre-paint theme choice.
 
 **Key Characteristics:**
 - No colour or face of its own: tokens by name, enforced by `site/scripts/check-tokens.mjs`.
@@ -174,7 +174,7 @@ Density follows the UI's: narrow sans body text, tracked caps for every label, t
 - Regions opened by a `--rule-region` ink rule; rows divided by `--rule-hair` in `--color-rule`.
 - Drawing frames with a mono caption patch; the drafting grid behind the architecture drawing only.
 - Balloons keyed to parts lists, on the drawing and in the code listing's margin.
-- Monochrome code in both themes, generated from the tokens.
+- Code in the UI's syntax colours, both themes, generated from the tokens.
 - Real screenshots and recordings in light and dark pairs, never autoplaying.
 
 ## Colors
@@ -297,7 +297,7 @@ Inline SVG in the UI's drawing language: paper boxes with a `--rule-region` ink 
 A balloon is a circled figure: `--rule-region` ink ring on paper, bold tabular `--text-xs`. In the Orkflow listing the balloons stand in a margin column left of the code, each placed by its line number times the line height and one line tall, so adjacent balloons never touch. Each parts-list row repeats its balloon, a semibold key, a muted mono line reference and a "Reference" more-link.
 
 ### Code listing and code blocks
-The listing is a real file from `examples/` rendered by Astro's `Code` with two Shiki themes, on sunken paper inside a `--rule-region` ink border. Docs code blocks are Expressive Code with the same two themes, a `--rule-hair` border in `--color-rule`, `--radius-sm`, tabs and terminal title bars on paper. Both themes come from `codeTheme()`: keys and keywords bold ink, values secondary ink, comments italic muted ink, punctuation muted ink, selection on the blue tint.
+The listing is a real file from `examples/` rendered by Astro's `Code` with two Shiki themes, on sunken paper inside a `--rule-region` ink border. Docs code blocks are Expressive Code with the same two themes, a `--rule-hair` border in `--color-rule`, `--radius-sm`, tabs and terminal title bars on paper. Both themes come from `codeTheme()`, which reads the UI's syntax tokens (`--color-syntax-*`, ui/DESIGN.md "Syntax"): keys and keywords bold ink, strings teal, numbers ochre, `true`/`false`/`null` olive, anchors and tags slate, comments italic muted ink, punctuation muted ink, selection on the blue tint. A grammar injection (`src/lib/template-grammar.mjs`) marks a `{{ … }}` template in a YAML string, drawn violet, in the listing and in every docs block. Expressive Code's own contrast adjustment is off (`minSyntaxHighlightingColorContrast: 0`): the tokens already read at 4.5:1 on the code ground, and an adjusted colour would no longer be the UI's.
 
 ### Terminal
 The quickstart's commands: a sunken-paper box in a `--rule-region` ink border under a paper bar holding "Shell" in caps and a "Copy all" button that appears only when the Clipboard API exists and announces its result through a polite live region. Each command is mono medium ink after a muted, unselectable prompt, with a muted mono comment line below. The commands and the recording share one measure, at most 64rem, so the recording and its controls fit a laptop's viewport and its text stays under the body's. On a phone the recording shows its left columns at 270% width in a framed window, and its caption states how the run ended, so no crop hides the result.
@@ -322,7 +322,7 @@ Sidebar group labels in tracked caps; links in secondary ink, hover wash; the cu
 
 ### Don't:
 - **Don't** write a hex, colour function or named colour, or a font stack, anywhere under `site/src`; derive literal values in `site/scripts/tokens.mjs` when a library cannot read `var()`.
-- **Don't** colour code: keys, values and comments are ink, secondary ink and muted ink.
+- **Don't** colour code with anything but the syntax tokens, and never with blue, green or red.
 - **Don't** use green or red in the site's own drawing; they belong to screenshots and to Starlight's mapped asides.
 - **Don't** draw the drafting grid behind anything but the architecture drawing.
 - **Don't** put a shadow on anything that does not float.

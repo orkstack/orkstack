@@ -10,6 +10,26 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- A YAML editor in the UI for the Apply page, an Orkflow's Edit tab and
+  Admin → Automation. It checks the document as you type, against YAML syntax
+  and the generated JSON Schema of its kind. It asks the engine
+  (`ValidateOrkflow`, or a plan for an automation document) once typing
+  pauses. That covers what only the engine can check: the strict YAML-to-JSON
+  rules, `needs:` references and cycles, interfaces, pools and policy. Each
+  finding is underlined on its line, marked in the gutter, explained on hover
+  and listed under the editor with its line and column. The document reads as
+  having no problems only when the engine said so about exactly that text.
+  The editor also offers schema completion, and key docs on hover or with
+  Ctrl-Shift-Space. Tab indents; Escape, then Tab, leaves the editor.
+- Syntax colours as design tokens (`--color-syntax-*` in `ui/src/tokens.css`,
+  light and dark): keys in ink, strings teal, numbers ochre, `true`/`false`/
+  `null` olive, `{{ … }}` templates violet, anchors and tags slate. The editor,
+  the automation export, the version diff and every code block on the site
+  (landing page, examples, docs) draw YAML with them.
+- `go run ./internal/schemas/cmd/genschemas` also writes the Orkflow and
+  automation schemas to `ui/src/lib/schemas/`, the UI's copy of
+  `docs/schemas/`.
+
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing
   panics: the list-filter grammar, compiler and matcher (a compiled set is a
