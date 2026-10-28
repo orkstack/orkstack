@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -73,6 +74,49 @@ func TestRowsLoan_TakeBackWaitsForTheReadAndRefusesTheNext(t *testing.T) {
 	}
 	if _, ok := borrowRows(run); ok {
 		t.Fatal("a borrow after takeBack was allowed")
+	}
+}
+
+// TestRowsLoan_NoReaderIsInsideOnceTakeBackReturns: with attempts racing to
+// read, none is inside its read when takeBack returns and none enters after
+// it, however the goroutines interleave; the rows' "change" after takeBack is
+// a plain write the race detector would flag against any straggler.
+func TestRowsLoan_NoReaderIsInsideOnceTakeBackReturns(t *testing.T) {
+	for range 200 {
+		run := loanRun()
+		loan := lendRows(run)
+		var inside, entered atomic.Int64
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					release, ok := borrowRows(run)
+					if !ok {
+						return
+					}
+					inside.Add(1)
+					entered.Add(1)
+					_ = run.GetTaskRuns()[0].GetStatus() // a read of a row
+					inside.Add(-1)
+					release()
+				}
+			}()
+		}
+		for entered.Load() == 0 {
+			runtime.Gosched()
+		}
+		loan.takeBack()
+		if n := inside.Load(); n != 0 {
+			t.Fatalf("%d readers were inside their read when takeBack returned", n)
+		}
+		stopped := entered.Load()
+		run.TaskRuns[0].Status = orkstackv1.Status_STATUS_CANCELED // the failure path's write
+		wg.Wait()
+		if entered.Load() != stopped {
+			t.Fatalf("a reader entered after takeBack returned (%d, then %d)", stopped, entered.Load())
+		}
 	}
 }
 
