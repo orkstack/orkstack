@@ -958,8 +958,9 @@ Every code change follows this order:
    unit run alone. A new dependency follows the same rule as any other change.
 4. Write a behavior test that fails for the right reason.
 5. Implement until it passes.
-6. Run `make lint test`; for Temporal or storage changes, run the affected
-   integration tests against `make infra-up`
+6. Run `make lint test`; for concurrent code, `make test-race` too (the race
+   gate's run, docs/PROOFS.md §2.3); for Temporal or storage changes, run the
+   affected integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
 7. Documentation is part of the change. A change that alters behaviour users
@@ -1101,7 +1102,10 @@ proof means "ready for the merge proof", never "done".
 **The four tiers.** A **full proof** is the merge gate. A **feature proof**
 is a change's evidence on its branch and never merge evidence. The **nightly
 tier** runs only the tests `scripts/proof-nightly-tests.txt` lists and the
-spec files `scripts/proof-nightly-specs.txt` lists, and is never merge
+spec files `scripts/proof-nightly-specs.txt` lists, and two lanes of its own
+— the race repeat (the concurrency-heavy packages' unit suites under the race
+detector, several times in one run) and the fuzz lane (every Fuzz target for a
+bounded time, a crasher failing it and its input kept) — and is never merge
 evidence. The pre-release gate is the full tier with nothing
 deferred, and it runs the observability gate unconditionally. A release tag
 requires a passing pre-release proof of the exact commit. docs/PROOFS.md is
@@ -1161,8 +1165,9 @@ other than the observability gate and the three measurement files
 `scripts/proof-ui-costs.tsv`), `internal/testsupport/`, and
 `test/tools/proofrun/`), refuses the feature tier. A feature proof always runs
 lint, build, the unit suites and `go vet -tags=integration`, and it runs the UI
-type-check and unit suites when `ui/` or `proto/` changed or a spec runs, and
-the site's check and build when a path the site reads changed. It then runs:
+type-check and unit suites when `ui/` or `proto/` changed or a spec runs, the
+site's check and build when a path the site reads changed, and the race gate
+over the Go packages the change touches when it touches any. It then runs:
 
 - the change's **evidence**: every test whose source the diff changes,
   including every test that reaches a changed or deleted helper, type,
@@ -1217,16 +1222,18 @@ images, built and pushed from this tree under a tag of the proof's own
 differs from its unit build, except the deferred ones, against real Temporal
 and SeaweedFS with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run
 on those images; the UI type-check and unit suites; the site's check and
-build; every Playwright spec; and the observability gate, whenever the tree
+build; the race gate (the unit suites under the race detector, `-short`);
+every Playwright spec; and the observability gate, whenever the tree
 differs from `main` in a telemetry path. That diff-conditioned observability
 gate is the only diff-conditioned part of the full proof, and its base is not
 a choice: the full tier refuses `--base`, a full proof whose recorded base is
 not `main` is not merge-eligible, and `merge-check PROOF=` requires that base
 to be `main`'s current tip. Concurrency is how the full proof is fast, never a
 reason to run less: the fast gates (lint, build, unit, vet, the UI type-check
-and unit suites and the site's check and build) run first and alone, and a
-failure there or in any later gate stops a local proof (`PROOF_FAIL_FAST`,
-docs/PROOFS.md §2.2), which still writes its failing verdict; integration
+and unit suites, the site's check and build and the race gate) run first and
+alone, and a failure there or in any later gate stops a local proof
+(`PROOF_FAIL_FAST`, docs/PROOFS.md §2.2), which still writes its failing
+verdict; integration
 tests run as separate processes,
 `PROOF_JOBS` at a time (default 6: measured clean in two full proofs on the
 proof host, train-a-full in 79.0 min with integration 2805 s and
@@ -1237,7 +1244,7 @@ bucket's first read), with the
 activity fixture beside them once the heavy tests have run alone, and
 Playwright spec files run on `PROOF_UI_WORKERS` workers (default 2: measured
 clean; at 3 a load-sensitive spec failed in each of three runs). The
-unit and integration ledgers, and the
+unit, race and integration ledgers, and the
 Playwright ledger, list every test that `go test -list` and
 `playwright test --list` report, with the job that ran it, its outcome and its
 duration. A listed test without an outcome fails the gate. In the full tier,
@@ -1246,7 +1253,11 @@ test the nightly list names, or a test of a spec file the nightly spec list
 names, and in every other tier it fails the gate. A skip
 also fails it, unless `scripts/proof-allowed-skips.txt` names the test and the
 reason (an opt-in recorder, a helper subprocess); an allowed-skip entry that
-names no listed test fails it too. A test whose binary crashed while it ran is
+names no listed test fails it too. The race gate alone records a skip it
+does not refuse: it runs `-short`, and a test it skipped counts only because
+the unit ledger, which runs the test without `-short`, passed it; a data race
+the detector reports fails the gate whatever the tests reported, and no
+quarantine excuses it. A test whose binary crashed while it ran is
 recorded as failed and never re-run; the tests behind it run in a fresh
 process. A full proof is merge-eligible only if every gate ran and passed, the
 ledgers are complete (their `deferred` entries match exactly the entries that
