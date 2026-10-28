@@ -199,11 +199,13 @@ include breaking changes, and each is marked **BREAKING**.
   `FuzzLoad_AValueTheFileSetsIsOneItsKindReads`.
 - A key is read only in the spelling the writer uses. The run, recent and origin
   index parsers used `time.Parse` for their stamp, which takes a comma as the
-  decimal separator, and the attempt and task-log key parsers used
+  decimal separator, the attempt and task-log key parsers used
   `strconv.ParseInt` for their zero-padded counters, which takes a leading plus
-  sign, so two keys named one record and the cursor a paged scan resumes from
-  was a key the scan had never listed. Both were written by the fuzz engine
-  (`FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites`).
+  sign, and the escaped form of a name (`~` and base64) was decoded without
+  checking its padding bits or that the name was not clean enough to be written
+  as itself, so two keys named one record and the cursor a paged scan resumes
+  from was a key the scan had never listed. All three were written by the fuzz
+  engine (`FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites`).
 - A registry's bearer challenge is read as bytes. Splitting it ranged over
   runes, which rewrites a byte that is not UTF-8 as U+FFFD, so the token realm
   the resolver requested was not the one the registry named. Found by the fuzz

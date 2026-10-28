@@ -611,3 +611,37 @@ func TestParseRunObjectRefRunID_RoundTripsAnEncodedRunID(t *testing.T) {
 		}
 	}
 }
+
+// A segment is read only in the spelling the writer uses (two keys never name
+// one record). The escaped form is base64 with its padding bits zero, and only
+// for a name that is not already a clean component: a decoder that took the
+// other spellings listed one run under several keys.
+func TestParseRunIndexKey_ASegmentIsReadOnlyInTheSpellingTheWriterUses(t *testing.T) {
+	record := artifacts.RunRecord{
+		RunID: "\xd3", Namespace: "payments", Orkflow: "nightly", Status: "succeeded",
+		Time: day(t, "2026-08-14T09:30:15Z"),
+	}
+	key, err := artifacts.RunIndexKey(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runSegment := key[strings.LastIndex(key, "/")+1:]
+	if runSegment != "~0w" {
+		t.Fatalf("run id segment = %q, want ~0w (the test spells the other form below)", runSegment)
+	}
+	if entry, ok := artifacts.ParseRunIndexKey(key); !ok || entry.RunID != "\xd3" {
+		t.Fatalf("the writer's own key %q parses to %+v, %v", key, entry, ok)
+	}
+	prefix := strings.TrimSuffix(key, runSegment)
+	for name, other := range map[string]string{
+		"padding bits set":               prefix + "~00",
+		"a clean name written escaped":   strings.Replace(key, "/nightly/", "/~bmlnaHRseQ/", 1),
+		"an escaped empty segment":       prefix + "~",
+		"an escape that is not base64":   prefix + "~!!",
+		"an escape longer than any name": prefix + "~" + strings.Repeat("QQ", 150),
+	} {
+		if entry, ok := artifacts.ParseRunIndexKey(other); ok {
+			t.Errorf("%s: %q parsed to %+v although the writer spells the key %q", name, other, entry, key)
+		}
+	}
+}

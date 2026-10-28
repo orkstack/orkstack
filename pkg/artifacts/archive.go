@@ -598,7 +598,7 @@ func decodeOriginIDSegment(segment string) (string, bool) {
 	if segment == OriginIndexNoID {
 		return "", true
 	}
-	return decodeArchiveSegment(segment)
+	return decodeSegmentWritten(segment, encodeOriginIDSegment)
 }
 
 // parseKey parses one scanned key with the family the query selected.
@@ -837,6 +837,15 @@ func encodeArchiveSegment(raw string) (string, error) {
 }
 
 func decodeArchiveSegment(segment string) (string, bool) {
+	return decodeSegmentWritten(segment, encodeArchiveSegment)
+}
+
+// decodeSegmentWritten reverses encode, and reads only a segment encode itself
+// would write: two keys never name one record. A base64 tail with its padding
+// bits set, the escaped form of a name that is a clean component (written
+// verbatim), and an escape longer than any segment the writer produces each
+// decode to a value whose own segment is spelled differently.
+func decodeSegmentWritten(segment string, encode func(string) (string, error)) (string, bool) {
 	if segment == "" {
 		return "", false
 	}
@@ -848,6 +857,9 @@ func decodeArchiveSegment(segment string) (string, bool) {
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(segment, archiveEncodedMarker))
 	if err != nil || len(decoded) == 0 {
+		return "", false
+	}
+	if written, err := encode(string(decoded)); err != nil || written != segment {
 		return "", false
 	}
 	return string(decoded), true
