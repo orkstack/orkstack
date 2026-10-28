@@ -161,9 +161,9 @@ include breaking changes, and each is marked **BREAKING**.
   the check reports the interruption rather than any of them. A daemon that
   never answers can now hold boot for up to three times the timeout plus a
   minute, 7 minutes at the default, before it is refused.
-- The Orker accepted a memory request of zero and passed it to the container
-  runtime as no limit. A cpu request of zero was already refused because
-  `--cpus 0` is unlimited, but memory had no such check: `memory: "0"`,
+- **BREAKING:** The Orker accepted a memory request of zero and passed it to the
+  container runtime as no limit. A cpu request of zero was already refused
+  because `--cpus 0` is unlimited, but memory had no such check: `memory: "0"`,
   `"0Gi"`, `"0.5"` (rendered as 0 bytes) and `"-1"` passed the cap, reached the
   runtime as `--memory 0` or an unparsable value, and an attempt's usage record
   reserved 0 bytes. A memory request is now refused unless it is at least one
@@ -180,21 +180,21 @@ include breaking changes, and each is marked **BREAKING**.
   mount is a comma-separated option list, so every task of such an Orker failed
   at dispatch, one attempt at a time, with an error that did not name the
   setting.
-- The JSON codec, the trigger invoke route, the webhook registration route, the
-  await completion and rejection routes and `orkctl --input-json`,
-  `--output` and `--outputs-file` no longer repair what a caller sent. Go's
-  JSON decoder replaces bytes that are not UTF-8, and a string's lone surrogate
-  escape, with U+FFFD, so a run's input, a caller-chosen webhook signing secret,
-  an await's values or a name was stored as something other than what was
-  posted while protojson would have refused it; they are now refused, as
-  protojson refuses them. The webhook registration route also ignored
+- **BREAKING:** The JSON codec, the trigger invoke route, the webhook
+  registration route, the await completion and rejection routes and `orkctl
+  --input-json`, `--output` and `--outputs-file` no longer repair what a caller
+  sent. Go's JSON decoder replaces bytes that are not UTF-8, and a string's lone
+  surrogate escape, with U+FFFD, so a run's input, a caller-chosen webhook
+  signing secret, an await's values or a name was stored as something other than
+  what was posted while protojson would have refused it; they are now refused,
+  as protojson refuses them. The webhook registration route also ignored
   everything after its first JSON value (`{…}{…}` registered the first) and now
-  refuses a second value as the trigger route does, and the trigger and
-  callback routes trimmed any Unicode space around a body, so a body wrapped in
-  a no-break space started a run; only JSON's four whitespace characters are
-  trimmed now. The tolerant codec behind every Connect JSON request also
-  dropped whatever followed the first JSON value (`{}0` was read as `{}`); that
-  is refused too. The `{}0` input was written by the fuzz engine
+  refuses a second value as the trigger route does, and the trigger and callback
+  routes trimmed any Unicode space around a body, so a body wrapped in a
+  no-break space started a run; only JSON's four whitespace characters are
+  trimmed now. The tolerant codec behind every Connect JSON request also dropped
+  whatever followed the first JSON value (`{}0` was read as `{}`); that is
+  refused too. The `{}0` input was written by the fuzz engine
   (`FuzzUnmarshalJSON_IsProtojsonPlusEnumSpellings`); the others were found by
   reading the doors while stating the targets' properties (`FuzzTriggerInput`,
   `FuzzRegisterWebhook`, `FuzzAwaitRejectReason`, `FuzzCheckJSONText`).
@@ -218,25 +218,25 @@ include breaking changes, and each is marked **BREAKING**.
   UTC instant falls before 0001 or after 9999) and the request then failed to
   encode with a message that did not name the flag; they are refused by name,
   judged on the UTC instant. Found by `FuzzParseInstantFlags`.
-- An image reference is held to the OCI distribution grammar when an Orkflow
-  is applied and when the activity catalog is read at boot: a registry host
-  name (or bracketed IP address) with an optional port from 1 to 65535,
-  lower-case repository path components, a tag of word characters, dots and
-  dashes that does not start with a dot or a dash, and a `sha256:` digest.
-  `ParseReference` accepted any text, so `uses: --cap-add=ALL.example/x:1`
-  was a registry named `--cap-add=ALL.example` (pinned as
-  `--cap-add=ALL.example/x@sha256:…`, an argument the container runtime reads
-  as a flag, ahead of the image the Orker meant), and a repository could carry
-  `?`, `#`, `%`, a space or a newline into the manifest URL. A reference
-  outside the grammar is refused at apply as `IMAGE_RESOLVE_UNSUPPORTED`,
-  which Docker refuses at pull anyway, and an `ORK_ACTIVITY_CATALOG` entry
-  outside it stops the engine at boot instead of failing at the first apply
-  that names the activity. The Orker's container argument builder also refuses,
-  as defence in depth, an image that begins with `-` or holds a space or
-  control character, and a mount path with a comma or control character, which
-  would add an option to the `--mount` value. Found by reading
-  `dsl.ParseReference` and `dockerCreateArgs` while stating
-  `FuzzParseReference` and `FuzzDockerCreateArgs`.
+- **BREAKING:** An image reference is held to the OCI distribution grammar when
+  an Orkflow is applied and when the activity catalog is read at boot: a
+  registry host name (or bracketed IP address) with an optional port from 1 to
+  65535, lower-case repository path components, a tag of word characters, dots
+  and dashes that does not start with a dot or a dash, and a `sha256:` digest.
+  `ParseReference` accepted any text, so `uses: --cap-add=ALL.example/x:1` was a
+  registry named `--cap-add=ALL.example` (pinned as
+  `--cap-add=ALL.example/x@sha256:…`, an argument the container runtime reads as
+  a flag, ahead of the image the Orker meant), and a repository could carry `?`,
+  `#`, `%`, a space or a newline into the manifest URL. A reference outside the
+  grammar is refused at apply as `IMAGE_RESOLVE_UNSUPPORTED`, which Docker
+  refuses at pull anyway, and an `ORK_ACTIVITY_CATALOG` entry outside it stops
+  the engine at boot instead of failing at the first apply that names the
+  activity. The Orker's container argument builder also refuses, as defence in
+  depth, an image that begins with `-` or holds a space or control character,
+  and a mount path with a comma or control character, which would add an option
+  to the `--mount` value. Found by reading `dsl.ParseReference` and
+  `dockerCreateArgs` while stating `FuzzParseReference` and
+  `FuzzDockerCreateArgs`.
 - A template renders data that spells `<no value>` as itself, and refuses only
   a nil value that it prints. The Orker's `with:` renderer and the engine's
   output renderer refused any rendered string containing those characters, to
@@ -288,16 +288,16 @@ include breaking changes, and each is marked **BREAKING**.
   the early check mirrors the library for a pattern that does not parse and for
   Unicode case folding of the host. Found by `FuzzOriginAllowed`, which takes
   the library as its oracle.
-- A schedule's `timezone` of `Local` is refused, in the API and in an automation
-  document: Go reads it as the zone of the machine that reads it, not a zone of
-  the IANA database the reference promises, so the schedule fired at a different
-  instant on every host. Found by reading `ValidateScheduleSpec` while stating
-  `FuzzValidateScheduleSpec`.
-- A configuration file's integer, boolean or duration is refused unless it is
-  exactly one, naming the key. It was checked with its surrounding space trimmed
-  and applied untrimmed: `engine.idempotency_ttl: ' 5m'` passed the file and was
-  then silently replaced by the reader's default, and a padded integer stopped
-  the daemon at its reader. A double-quoted value that spells a NUL byte
+- **BREAKING:** A schedule's `timezone` of `Local` is refused, in the API and in
+  an automation document: Go reads it as the zone of the machine that reads it,
+  not a zone of the IANA database the reference promises, so the schedule fired
+  at a different instant on every host. Found by reading `ValidateScheduleSpec`
+  while stating `FuzzValidateScheduleSpec`.
+- A configuration file's integer, boolean or duration is applied as its bare
+  value. It was checked with its surrounding space trimmed and applied
+  untrimmed, and not every reader trims: `engine.idempotency_ttl: ' 5m'` passed
+  the file and was then silently replaced by the reader's default, and a padded
+  integer stopped the daemon at its reader. A double-quoted value that spells a NUL byte
   (`"\0"`) is refused at load too, naming the key, instead of failing partway
   through applying the file. Found by reading `Load` while stating
   `FuzzLoad_AValueTheFileSetsIsOneItsKindReads`.
