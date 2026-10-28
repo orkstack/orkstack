@@ -287,6 +287,13 @@ func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
 	switch {
 	case spec.Image == "":
 		return nil, errors.New("create container: image is required")
+	case !plainArgument(spec.Image):
+		// The image is the first argument after the flags: one that begins
+		// with "-" would be read as a flag, and one with a space or a control
+		// character is not a reference at all. The engine pins a reference
+		// to the distribution grammar (dsl.ParseReference); this is the
+		// boundary that does not rely on it.
+		return nil, fmt.Errorf("create container: image %q is not a reference the runtime can take as an argument", spec.Image)
 	case !spec.ReadOnlyRootfs, !spec.DropAllCapabilities, !spec.NoNewPrivileges, !spec.Init:
 		// A spec that weakens the §9.2 baseline is refused at construction
 		// rather than executed. These are not options.
@@ -361,12 +368,42 @@ var forbiddenMountTargets = []string{
 	"/run/docker.sock",
 }
 
+// plainArgument reports whether s can sit among the runtime's arguments as an
+// operand: it does not begin with "-" and holds no space or control character.
+func plainArgument(s string) bool {
+	if s == "" || s[0] == '-' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] <= ' ' || s[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// plainMountPath reports whether a path can sit in a --mount value, which is a
+// comma-separated list of key=value options: a comma would add an option
+// (readonly=false, a second source) and a control character would end it.
+func plainMountPath(path string) bool {
+	for i := 0; i < len(path); i++ {
+		if path[i] < ' ' || path[i] == 0x7f || path[i] == ',' {
+			return false
+		}
+	}
+	return true
+}
+
 func checkMount(m Mount) error {
 	if m.Source == "" || !strings.HasPrefix(m.Source, "/") {
 		return fmt.Errorf("mount source %q must be an absolute Orker-created path", m.Source)
 	}
 	if !strings.HasPrefix(m.Destination, "/") {
 		return fmt.Errorf("mount destination %q must be absolute", m.Destination)
+	}
+	if !plainMountPath(m.Source) || !plainMountPath(m.Destination) {
+		return fmt.Errorf("mount %q to %q: a path holds no comma or control character, which would add an option to the mount",
+			m.Source, m.Destination)
 	}
 	for _, forbidden := range forbiddenMountTargets {
 		if m.Source == forbidden {
