@@ -741,7 +741,8 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   from the part alone (§12): the ledger entry is a plain failure of a test
   that is the only one of its job not to pass, the test's own timing record
   says it failed nothing else, the output the entry kept ends in exactly the
-  helper's timing-miss lines, and each recorded bound equals the base row's.
+  helper's timing-miss lines, each recorded bound equals the base row's, and
+  no miss took longer than the runner's share of the reference allows.
   A shard's own excusal, and a failing test with no record, excuse nothing,
   and the release tier excuses no runner-size miss at all: its gate enforces
   the budgets on the reference class.
@@ -1237,15 +1238,19 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   merger excuses the miss, as a recorded known gap, only when all of these
   hold: the part is a CI `integration:K` shard whose runner has fewer CPUs
   than the row's reference and the proof is not the release tier; the base's
-  copy of the table carries the same row; the ledger shows the test as a plain failure (no crash, no failing
-  subtest) and no other test of its job did not pass; the test's own record
-  says it failed nothing but its timing checks; the output the ledger entry
-  kept (its last 40 lines, without the testing package's framing) holds, from
-  the first timing-miss line to the end, nothing but the record's misses, one
-  line each and in order; and every missed check is declared by a row, is over
-  its bound, and was bounded at the row's bound. A test that failed with no
-  record has no sample to excuse and fails the proof; so does every miss on a
-  local proof, on a runner with as many CPUs as the reference, and by any
+  copy of the table carries the same row; the ledger shows the test as a
+  plain failure (no crash, no failing subtest) and no other test of its job
+  did not pass; the test's own record says it failed nothing but its timing
+  checks; the output the ledger entry kept (its last 40 lines, without the
+  testing package's framing) holds, from the first timing-miss line to the
+  end, nothing but the record's misses, one line each and in order; and every
+  missed check is declared by a row, is over its bound, was bounded at the
+  row's bound, and took no longer than the bound times the reference's CPUs
+  over the runner's (a runner with a k-th of the reference's CPUs may take k
+  times as long, no more: 8 s for the 2 s `GetRun` budget on 4 CPUs; a UI row
+  has no such ceiling). A test that failed with no record has no sample to
+  excuse and fails the proof; so does every miss on a local proof, on a
+  runner with as many CPUs as the reference, beyond that ceiling, and by any
   check no row declares. The shard's gate is excused only when the excused
   miss is the part's only defect. A row with the assertion `-` is recorded on
   a miss and never excused. Counts, bytes, history shares, deadlock-detector

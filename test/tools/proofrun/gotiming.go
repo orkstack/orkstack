@@ -32,7 +32,9 @@ import (
 //     the first timing-miss line there is nothing but timing-miss lines, and
 //     they are the record's misses, one for one;
 //   - every miss is a check a row declares, measured over its bound, with the
-//     bound the record carries equal to the row's.
+//     bound the record carries equal to the row's, and no more than the bound
+//     scaled by the reference's CPUs over the runner's (runnerCeiling): a
+//     runner with a k-th of the reference's CPUs may take k times as long.
 //
 // Anything short of that is the ordinary failure it always was.
 
@@ -172,6 +174,13 @@ func (m *merger) goTimingExcusal(part string, partDir string, cpus int, shard le
 		case cpus >= row.ReferenceCPUs:
 			return nil, fmt.Sprintf("the runner has %d CPUs, and the row's reference is %d: a miss there is a failure", cpus, row.ReferenceCPUs)
 		}
+		// A runner with a k-th of the reference's CPUs may take k times as
+		// long, at worst: a CPU-bound check scales no worse than linearly in
+		// CPUs. A miss beyond that is not the runner's size.
+		if ceiling := runnerCeiling(row, cpus); c.Measured > ceiling {
+			return nil, fmt.Sprintf("the check %q measured %g s, more than a %d-CPU runner may take against a bound of %g s set on %d CPUs (%g s)",
+				c.ID, c.Measured, cpus, row.Bound, row.ReferenceCPUs, ceiling)
+		}
 		message := fmt.Sprintf("%s.%s: %s measured %.3f s over its %g s bound on a %d-CPU runner", e.Package, e.Test, c.ID, c.Measured, c.Bound, cpus)
 		if c.Label != "" {
 			message += " (" + c.Label + ")"
@@ -182,6 +191,13 @@ func (m *merger) goTimingExcusal(part string, partDir string, cpus int, shard le
 		})
 	}
 	return out, ""
+}
+
+// runnerCeiling is the longest a check bounded by row may take on a runner of
+// cpus CPUs and still be excused as the runner's size: the bound scaled by the
+// reference's CPUs over the runner's.
+func runnerCeiling(row hostBound, cpus int) float64 {
+	return row.Bound * float64(row.ReferenceCPUs) / float64(cpus)
 }
 
 // failureIsTheMisses reports "" when the output a failing test kept ends with

@@ -27,8 +27,10 @@
 # (artifacts/timing/<test>.json) saying it failed nothing but its timing
 # checks; the failure output the ledger kept ends in exactly the helper's
 # timing-miss lines, one for each missed check of the record; and every missed
-# check is declared by a row, is over its bound, and carries the bound the
-# row declares. A test that failed with no timing record has no sample to
+# check is declared by a row, is over its bound, carries the bound the row
+# declares, and took no longer than the bound scaled by the reference's CPUs
+# over the runner's (a runner with a k-th of the reference's CPUs may take k
+# times as long, no more; a UI row has no such ceiling). A test that failed with no timing record has no sample to
 # excuse and fails the proof, and so does every miss on a local proof. Counts,
 # bytes, history shares, deadlock-detector trips and correctness assertions
 # never get a row. A Go row whose assertion is "-" is recorded on a miss and

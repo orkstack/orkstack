@@ -189,6 +189,10 @@ func TestMerge_AGoTimingMissThatBreaksAnyConditionStillFails(t *testing.T) {
 		{name: "a check no row declares", ci: true, cpus: 4, tree: goRow, base: goRow,
 			entry:  failedA(missTail(liveMiss, otherMiss)),
 			record: ptr(recordOf("TestA", checkOf(liveMiss), checkOf(otherMiss))), want: `no row of the base's table declares the check "replay-slowest"`},
+		{name: "a miss beyond what the runner's share of the reference allows", ci: true, cpus: 4, tree: goRow, base: goRow,
+			entry:  failedA(missTail(proof.TimingMiss{ID: "getrun-live-p95", Measured: 8.001, Bound: 2, Label: "reduced-fan-out"})),
+			record: ptr(recordOf("TestA", checkOf(proof.TimingMiss{ID: "getrun-live-p95", Measured: 8.001, Bound: 2, Label: "reduced-fan-out"}))),
+			want:   "more than a 4-CPU runner may take"},
 		{name: "a record whose miss is not over its bound", ci: true, cpus: 4, tree: goRow, base: goRow,
 			entry: failedA(missTail(proof.TimingMiss{ID: "getrun-live-p95", Measured: 1.5, Bound: 2})),
 			record: func() *proof.TimingRecord {
@@ -459,6 +463,42 @@ func TestMerge_TheReleaseTierExcusesNoRunnerSizeMiss(t *testing.T) {
 					t.Errorf("host_speed_failures = %+v, want one excused entry", r.HostSpeedFailures)
 				}
 			})
+		}
+	}
+}
+
+// A runner with 1/k of the reference's CPUs may take k times the bound, no
+// more: the ceiling of an excused miss is the bound times the reference over
+// the runner's CPUs. A miss at the ceiling is excused, one over it is not, and
+// the ceiling shrinks as the runner grows.
+func TestMerge_AGoTimingMissIsExcusedUpToTheRunnersShareOfTheReference(t *testing.T) {
+	for _, c := range []struct {
+		cpus     int
+		measured float64
+		excused  bool
+	}{
+		{4, 2.014, true},
+		{4, 8, true},
+		{4, 8.001, false},
+		{4, 60, false},
+		{8, 4, true},
+		{8, 4.001, false},
+		{2, 16, true},
+		{15, 2.133, true},
+		{15, 2.134, false},
+	} {
+		miss := proof.TimingMiss{ID: "getrun-live-p95", Measured: c.measured, Bound: 2, Label: "reduced-fan-out"}
+		f := newMergeFixture(t, tierFull, true)
+		f.anchorHostSpeed(goRow, goRow)
+		f.goShard(c.cpus, "fail", []entry{failedA(missTail(miss))}, []string{timingProblemA})
+		f.putTiming("integration:1", recordOf("TestA", checkOf(miss)))
+		r, _ := f.merge()
+		failed := strings.Contains(joined(r), timingProblemA)
+		if failed == c.excused {
+			t.Errorf("%d CPUs, %g s against 2 s on 16: excused %v, but TestA failed = %v (%v)", c.cpus, c.measured, c.excused, failed, r.Ineligible)
+		}
+		if !c.excused && !strings.Contains(strings.Join(hostSpeedMessages(r), "\n"), "may take") {
+			t.Errorf("%d CPUs, %g s: host_speed_failures %v do not say why the miss was not excused", c.cpus, c.measured, hostSpeedMessages(r))
 		}
 	}
 }

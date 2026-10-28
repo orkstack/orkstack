@@ -23,8 +23,9 @@ include breaking changes, and each is marked **BREAKING**.
   as the only test of its job not to pass, with no crash and no failing
   subtest; its own record says it failed no other assertion; the failure
   output the ledger entry now keeps (the last lines a failing test printed)
-  ends in exactly the helper's lines; and every recorded bound equals the
-  row's. A failing test with no record, a local proof, a runner as large as
+  ends in exactly the helper's lines; every recorded bound equals the
+  row's; and no miss took longer than the bound times the reference's CPUs
+  over the runner's. A failing test with no record, a local proof, a runner as large as
   the reference, the release tier (the pre-release gate enforces the budgets
   on the reference class, so this also ends the excusal of the UI rows there)
   and any other failure still fail the proof. The rows are the
