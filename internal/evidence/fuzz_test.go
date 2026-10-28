@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // FuzzVerify_AVerifiedMemberIsExactlyWhatTheBundleHolds builds bundles whose
@@ -34,6 +35,9 @@ func FuzzVerify_AVerifiedMemberIsExactlyWhatTheBundleHolds(f *testing.F) {
 		bodies := [][]byte{body0, body1}
 		if name0 == name1 || name0 == ManifestPath || name1 == ManifestPath {
 			return
+		}
+		if !utf8.ValidString(name0) || !utf8.ValidString(name1) {
+			return // a manifest is JSON: a path that is not UTF-8 cannot be listed
 		}
 		// One member per entry; mode says how the manifest or the bundle lies.
 		var members []Member
