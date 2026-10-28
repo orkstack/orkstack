@@ -1,0 +1,476 @@
+package engine
+
+import (
+	"context"
+	"errors"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"go.temporal.io/sdk/temporal"
+	"google.golang.org/protobuf/proto"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+)
+
+// rowStatuses is a snapshot's task rows as "id=STATUS ...", in order: the
+// part of a snapshot a cancellation changes.
+func rowStatuses(run *orkstackv1.Run) string {
+	parts := make([]string, 0, len(run.GetTaskRuns()))
+	for _, row := range run.GetTaskRuns() {
+		parts = append(parts, row.GetTaskId()+"="+row.GetStatus().String())
+	}
+	return strings.Join(parts, " ")
+}
+
+// wholeRun is everything a snapshot write encodes, as deterministic bytes: a
+// change anywhere in it — a row, the run's error, its status, its finish time —
+// is a change.
+func wholeRun(run *orkstackv1.Run) string {
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(run)
+	if err != nil {
+		return "unmarshalable: " + err.Error()
+	}
+	return string(data)
+}
+
+func loanRun() *orkstackv1.Run {
+	return &orkstackv1.Run{Id: "ork-1-1", Namespace: "default", TaskRuns: []*orkstackv1.TaskRun{
+		{TaskId: "a", Status: orkstackv1.Status_STATUS_RUNNING},
+		{TaskId: "b", Status: orkstackv1.Status_STATUS_PENDING},
+	}}
+}
+
+// TestRowsLoan_TakeBackWaitsForTheReadAndRefusesTheNext: the workflow takes
+// its rows back only once the activity's read has ended, and an attempt that
+// asks afterwards is refused — never handed rows the workflow is about to
+// change.
+func TestRowsLoan_TakeBackWaitsForTheReadAndRefusesTheNext(t *testing.T) {
+	run := loanRun()
+	loan := lendRows(run)
+
+	release, ok := borrowRows(run)
+	if !ok {
+		t.Fatal("the first borrow of a lent snapshot was refused")
+	}
+	asked := make(chan struct{})
+	rowsTakeBackProbeForTest.Store(ptrTo(func() { close(asked) }))
+	defer rowsTakeBackProbeForTest.Store(nil)
+	taken := make(chan struct{})
+	go func() {
+		loan.takeBack()
+		close(taken)
+	}()
+	// The take-back has begun (it was observed asking), and a bounded window
+	// shows it still waiting for the read.
+	select {
+	case <-asked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("takeBack never began")
+	}
+	select {
+	case <-taken:
+		t.Fatal("takeBack returned while the activity was still reading the rows")
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	select {
+	case <-taken:
+	case <-time.After(30 * time.Second):
+		t.Fatal("takeBack did not return after the read ended")
+	}
+	if _, ok := borrowRows(run); ok {
+		t.Fatal("a borrow after takeBack was allowed")
+	}
+}
+
+// rowsLoanHangBound is how long a stress round waits for something that must
+// happen (a reader entering, takeBack returning, the readers leaving) before it
+// reports that it did not. It is a hang guard, not a measurement: a regression
+// of takeBack must fail the test by name, not stop the package at go test's
+// timeout with every other test's outcome behind the crash.
+const rowsLoanHangBound = 30 * time.Second
+
+// TestRowsLoan_NoReaderIsInsideOnceTakeBackReturns: with attempts racing to
+// read, none is inside its read when takeBack returns and none enters after
+// it, however the goroutines interleave; the rows' "change" after takeBack is
+// a plain write the race detector would flag against any straggler.
+func TestRowsLoan_NoReaderIsInsideOnceTakeBackReturns(t *testing.T) {
+	for range 200 {
+		rowsLoanStressRound(t)
+	}
+}
+
+// rowsLoanStressRound is one round of that test. The readers loop until
+// borrowRows refuses them, and also until the round ends (done), so a takeBack
+// that stopped revoking leaves them looping only until the round fails them.
+func rowsLoanStressRound(t *testing.T) {
+	t.Helper()
+	run := loanRun()
+	loan := lendRows(run)
+	var inside, entered atomic.Int64
+	var done atomic.Bool
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !done.Load() {
+				release, ok := borrowRows(run)
+				if !ok {
+					return
+				}
+				inside.Add(1)
+				entered.Add(1)
+				_ = run.GetTaskRuns()[0].GetStatus() // a read of a row
+				inside.Add(-1)
+				release()
+			}
+		}()
+	}
+	finished := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(finished)
+	}()
+	deadline := time.NewTimer(rowsLoanHangBound)
+	defer deadline.Stop()
+	// fail stops the readers, so none outlives the round, then reports.
+	fail := func(format string, args ...any) {
+		done.Store(true)
+		<-finished
+		t.Fatalf(format, args...)
+	}
+
+	for entered.Load() == 0 {
+		select {
+		case <-deadline.C:
+			fail("no reader entered the lent snapshot within %s", rowsLoanHangBound)
+		default:
+			runtime.Gosched()
+		}
+	}
+	taken := make(chan struct{})
+	go func() {
+		loan.takeBack()
+		close(taken)
+	}()
+	select {
+	case <-taken:
+	case <-deadline.C:
+		fail("takeBack did not return within %s", rowsLoanHangBound)
+	}
+	if n := inside.Load(); n != 0 {
+		fail("%d readers were inside their read when takeBack returned", n)
+	}
+	stopped := entered.Load()
+	run.TaskRuns[0].Status = orkstackv1.Status_STATUS_CANCELED // the failure path's write
+	// From here every reader is refused and leaves. Readers still looping, or
+	// one entering, mean takeBack no longer revokes.
+	for {
+		select {
+		case <-finished:
+			if now := entered.Load(); now != stopped {
+				t.Fatalf("a reader entered after takeBack returned (%d entries, then %d)", stopped, now)
+			}
+			return
+		case <-deadline.C:
+			fail("readers were still borrowing %s after takeBack returned: it no longer revokes", rowsLoanHangBound)
+		default:
+			if now := entered.Load(); now != stopped {
+				fail("a reader entered after takeBack returned (%d entries, then %d)", stopped, now)
+			}
+			runtime.Gosched()
+		}
+	}
+}
+
+// TestRowsLoan_ASnapshotNobodyLentIsBorrowedFreely: callers that hand the
+// activities a snapshot of their own (a test, a tool) are not put through a
+// loan they never made.
+func TestRowsLoan_ASnapshotNobodyLentIsBorrowedFreely(t *testing.T) {
+	run := loanRun()
+	for range 2 {
+		release, ok := borrowRows(run)
+		if !ok {
+			t.Fatal("a snapshot nobody lent was refused")
+		}
+		release()
+	}
+}
+
+// TestRowsLoan_TheEntryIsRetiredWithTheSnapshot: a loan outlives takeBack —
+// an orphaned attempt may still ask — so what retires it is the snapshot
+// being collected, not the workflow, and a run's many snapshots leave nothing
+// behind.
+func TestRowsLoan_TheEntryIsRetiredWithTheSnapshot(t *testing.T) {
+	count := func() int {
+		n := 0
+		lentRows.Range(func(_, _ any) bool { n++; return true })
+		return n
+	}
+	before := count()
+	func() {
+		for range 50 {
+			run := loanRun()
+			lendRows(run).takeBack()
+		}
+	}()
+	deadline := time.Now().Add(30 * time.Second)
+	for count() > before {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d entries are still listed after their snapshots were dropped (%d before)", count(), before)
+		}
+		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// loanCycles is how many snapshots a cost measurement lends and takes back.
+const loanCycles = 4000
+
+// loanCPU is the CPU time of cycles lends and take-backs of snapshots over
+// rows, as each emit pays them (one new Run, lent, taken back), the best of
+// three: a cold cache or a collection that ran inside the window is not the
+// loan's cost. The first reading locks the goroutine to its thread (passClock).
+func loanCPU(clock *passClock, rows []*orkstackv1.TaskRun, cycles int) time.Duration {
+	var best time.Duration
+	for attempt := range 3 {
+		runtime.GC()
+		started := clock.now()
+		for range cycles {
+			lendRows(&orkstackv1.Run{Id: "ork-1-1", Namespace: "default", TaskRuns: rows}).takeBack()
+		}
+		if elapsed := clock.now() - started; attempt == 0 || elapsed < best {
+			best = elapsed
+		}
+	}
+	return best
+}
+
+// TestRowsLoan_LendingCostsNothingPerRow: the loan exists so an emit does not
+// copy a run's rows (O(rows) of workflow time per event, in a replay as much
+// as a run). So a lend and take-back costs the same however many rows the run
+// has, and a small fraction of the copy it replaces. Both bounds compare CPU
+// times measured side by side, on this thread, so neither moves with the host.
+func TestRowsLoan_LendingCostsNothingPerRow(t *testing.T) {
+	rowsOf := func(n int) []*orkstackv1.TaskRun {
+		rows := make([]*orkstackv1.TaskRun, n)
+		for i := range rows {
+			rows[i] = &orkstackv1.TaskRun{TaskId: "t" + strconv.Itoa(i), Status: orkstackv1.Status_STATUS_PENDING}
+		}
+		return rows
+	}
+	ceiling := int(DefaultOrkflowMaxTasks)
+	few, many := rowsOf(1), rowsOf(ceiling)
+	clock := &passClock{}
+
+	lendFew := loanCPU(clock, few, loanCycles)
+	lendMany := loanCPU(clock, many, loanCycles)
+
+	// The copy a loan replaces: a clone of the run at the task ceiling.
+	run := &orkstackv1.Run{Id: "ork-1-1", Namespace: "default", TaskRuns: many}
+	const clones = 20
+	var cloneBest time.Duration
+	for attempt := range 3 {
+		runtime.GC()
+		started := clock.now()
+		for range clones {
+			_ = proto.Clone(run)
+		}
+		if elapsed := clock.now() - started; attempt == 0 || elapsed < cloneBest {
+			cloneBest = elapsed
+		}
+	}
+
+	perFew, perMany, perClone := lendFew/loanCycles, lendMany/loanCycles, cloneBest/clones
+	t.Logf("%s per lend and take-back: %s at 1 row, %s at %d rows; %s per clone at %d rows",
+		clock.kind(), perFew, perMany, ceiling, perClone, ceiling)
+	// Independent of the rows: the large run costs a few times the small one
+	// at most (noise on a duration of microseconds), never in proportion to
+	// the 4,000 times as many rows.
+	if perMany > 10*perFew+time.Microsecond {
+		t.Fatalf("a lend at %d rows costs %s, over ten times the %s it costs at one row: it depends on the rows", ceiling, perMany, perFew)
+	}
+	// And far cheaper than the clone it saves.
+	if perMany*20 > perClone {
+		t.Fatalf("a lend at %d rows costs %s, over a twentieth of the %s a clone of them costs", ceiling, perMany, perClone)
+	}
+}
+
+// TestSnapshotActivities_RefuseARunTheWorkflowTookBack: an attempt that
+// reaches the activity after the workflow took the rows back writes nothing
+// and says why, as an error Temporal will not retry.
+func TestSnapshotActivities_RefuseARunTheWorkflowTookBack(t *testing.T) {
+	store := newMemSnapshotStore()
+	a := NewSnapshotActivities(store)
+	run := loanRun()
+	lendRows(run).takeBack()
+
+	_, err := a.WriteSnapshot(context.Background(), run, 3)
+	if !errors.Is(err, errRowsTakenBack) {
+		t.Fatalf("WriteSnapshot = %v, want errRowsTakenBack", err)
+	}
+	_, err = a.WriteSnapshotOrOverlay(context.Background(), run, 4, SnapshotBase{}, DefaultOverlayPolicy())
+	if !errors.Is(err, errRowsTakenBack) {
+		t.Fatalf("WriteSnapshotOrOverlay = %v, want errRowsTakenBack", err)
+	}
+	var applicationErr *temporal.ApplicationError
+	if !errors.As(err, &applicationErr) || !applicationErr.NonRetryable() {
+		t.Fatalf("error %v is not a non-retryable application error", err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.objects) != 0 {
+		t.Fatalf("a refused attempt wrote %d objects", len(store.objects))
+	}
+}
+
+// TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded: a
+// cancel reaches the workflow while the snapshot activity is encoding the
+// run's live rows. Get returns at once, and the failure path would record
+// the cancellation on those very rows — mid-encode, a data race and a
+// snapshot that can mix both states. The workflow instead waits at the end of
+// the call for the encode to finish: the run, rows and the messages beside
+// them (its error, its output), stays exactly as it was for as long as the
+// activity reads it, and the object it wrote shows the state at the event.
+//
+// The activity holds its read open until the workflow is observed waiting
+// (its take-back probe), or until the run is seen to change.
+func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *testing.T) {
+	store := newMemSnapshotStore()
+	h := newRefusalHarnessOver(t, store)
+
+	reached := make(chan struct{})
+	var reachedOnce, cancelOnce sync.Once
+	rowsTakeBackProbeForTest.Store(ptrTo(func() { reachedOnce.Do(func() { close(reached) }) }))
+	defer rowsTakeBackProbeForTest.Store(nil)
+
+	var (
+		mu       sync.Mutex
+		before   string // the rows, as text, for the failure message
+		wholeAt  string // the whole run at the event
+		changed  string
+		timedOut bool
+		hookSeq  int64
+	)
+	hookDone := make(chan struct{}) // closed when the held read ends
+	snapshotReadHookForTest.Store(ptrTo(func(run *orkstackv1.Run, sequence int64) {
+		if !strings.Contains(rowStatuses(run), "STATUS_RUNNING") {
+			return
+		}
+		cancelOnce.Do(func() {
+			defer close(hookDone)
+			mu.Lock()
+			before, wholeAt, hookSeq = rowStatuses(run), wholeRun(run), sequence
+			mu.Unlock()
+			h.env.CancelWorkflow()
+			// Keep the read open until the workflow is seen at its take-back,
+			// then a little longer: a workflow that went on instead of waiting
+			// would have recorded the cancellation on the rows by now.
+			deadline := time.NewTimer(30 * time.Second)
+			defer deadline.Stop()
+			var held <-chan time.Time
+			waiting := reached
+			for {
+				select {
+				case <-waiting:
+					waiting, held = nil, time.After(150*time.Millisecond)
+				case <-held:
+					return
+				case <-deadline.C:
+					mu.Lock()
+					timedOut = true
+					mu.Unlock()
+					return
+				case <-time.After(2 * time.Millisecond):
+					if wholeRun(run) != wholeAt {
+						mu.Lock()
+						changed = rowStatuses(run)
+						mu.Unlock()
+						return
+					}
+				}
+			}
+		})
+	}))
+	defer snapshotReadHookForTest.Store(nil)
+
+	h.env.ExecuteWorkflow(RunWorkflowType, refusalWorkflowID, guardCompile(t, loanDocument),
+		(*orkstackv1.Payload)(nil), guardPlan(t, DefaultHistoryMaxEvents, DefaultHistoryMaxBytes),
+		(*orkstackv1.RunContinuation)(nil))
+	if !h.env.IsWorkflowCompleted() {
+		t.Fatal("the run did not complete")
+	}
+
+	mu.Lock()
+	sent := before != ""
+	mu.Unlock()
+	if !sent {
+		t.Fatal("no snapshot with a running task was written, so no cancel was sent")
+	}
+	// A workflow that did not wait can finish before the held read has looked:
+	// judge only once the read has ended.
+	select {
+	case <-hookDone:
+	case <-time.After(2 * time.Minute):
+		t.Fatal("the held snapshot read never ended")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if changed != "" {
+		t.Fatalf("the run changed while the snapshot write was reading it: rows %q, then %q", before, changed)
+	}
+	if timedOut {
+		t.Fatal("the workflow never reached its take-back: it did not wait for the write")
+	}
+	if h.env.GetWorkflowError() == nil {
+		t.Fatal("the run ended without the cancel being acted on")
+	}
+
+	// The object the abandoned write left is the state at the event, whole.
+	var written []byte
+	deadline := time.Now().Add(30 * time.Second)
+	for written == nil {
+		store.mu.Lock()
+		for uri, data := range store.objects {
+			if strings.HasSuffix(uri, "/"+strconv.FormatInt(hookSeq, 10)+".pb") {
+				written = data
+			}
+		}
+		store.mu.Unlock()
+		if written == nil {
+			if time.Now().After(deadline) {
+				t.Fatalf("snapshot %d was never written", hookSeq)
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	got := &orkstackv1.Run{}
+	if err := proto.Unmarshal(written, got); err != nil {
+		t.Fatal(err)
+	}
+	if wholeRun(got) != wholeAt {
+		t.Fatalf("the snapshot written for event %d shows rows %q, want the state at the event, %q", hookSeq, rowStatuses(got), before)
+	}
+}
+
+const loanDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: loan
+tasks:
+  - id: first
+    uses: shell
+    with: {op: exec}
+  - id: second
+    uses: shell
+    needs: [first]
+    with: {op: exec}
+`
+
+func ptrTo[T any](v T) *T { return &v }

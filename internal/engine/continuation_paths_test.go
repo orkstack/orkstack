@@ -132,7 +132,7 @@ func generationsOK(t *testing.T, g *generations, atLeast int) *orkstackv1.Run {
 }
 
 func pinSetup(h *harness, _ int) {
-	enablePins(h, worker.Options{DeadlockDetectionTimeout: time.Second})
+	enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 }
 
 const pinOpenDocument = `
@@ -253,7 +253,7 @@ func TestContinuation_PinOpenAtTriggerClosesBeforeSwitch(t *testing.T) {
 	}
 	g := runGenerations(t, "ork-pin-open", compile(t, pinCloseDocument), payload(t, nil), continuedPlan(1), behavior,
 		func(h *harness, _ int) {
-			h.env.SetWorkerOptions(worker.Options{EnableSessionWorker: true, DeadlockDetectionTimeout: time.Second})
+			h.env.SetWorkerOptions(worker.Options{EnableSessionWorker: true, DeadlockDetectionTimeout: productionDeadlock()})
 			h.env.RegisterActivityWithOptions(func(ctx context.Context, in *orkstackv1.ReleasePinInput) error {
 				h.mu.Lock()
 				h.released = append(h.released, in)
@@ -652,7 +652,7 @@ tasks:
 		}
 		return okBehavior(ctx, in)
 	})
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-hold-cancel"})
 	var once sync.Once
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
@@ -713,7 +713,7 @@ func TestContinuation_FailureDuringHoldTakesTheFailPath(t *testing.T) {
 // (it resumes dispatch, and retries only after growth); after a cancel (it
 // ends); with an opening pin and a closing pin (it waits on them).
 func TestContinuation_HoldNeverSpins(t *testing.T) {
-	deadlock := worker.Options{DeadlockDetectionTimeout: time.Second}
+	deadlock := worker.Options{DeadlockDetectionTimeout: productionDeadlock()}
 	t.Run("idle with an open await", func(t *testing.T) {
 		g := runGenerations(t, "ork-spin-await", compile(t, awaitAcrossDocument), payload(t, nil), holdPlan(), okBehavior,
 			func(h *harness, generation int) {

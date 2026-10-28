@@ -541,16 +541,20 @@ func segmentObjectForTest(t testing.TB, namespace, runID string) *orkstackv1.Con
 // 200 ms, a 5x margin.
 // restoreBatchDecodeBound is the spec's bound on one batch's decode, a
 // fifth of the one-second deadlock detector; raceSlowdown scales it under
-// the race detector.
+// the race detector. 20 is the top of the 2-20x the Go documentation gives for
+// CPU-bound code, and this decode (gzip, SHA-256 and protobuf over a megabyte
+// of parts) needs it: 39 ms in the production build, 0.5 s under -race, and
+// 2.2 s of thread CPU time while the whole repository's race build ran beside
+// it (10 would have bounded it at 2 s).
 const (
 	restoreBatchDecodeBound = 200 * time.Millisecond
-	raceSlowdown            = 10
+	raceSlowdown            = 20
 )
 
 func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 	wf, store, carry, size := cappedRestore(t, 4000)
 	h := newRefusalHarnessOver(t, store)
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	started := time.Now()
 	h.env.ExecuteWorkflow(RunWorkflowType, "", wf, (*orkstackv1.Payload)(nil), refusalRoutedPlan(t), carry)
 	if err := h.env.GetWorkflowError(); err != nil {

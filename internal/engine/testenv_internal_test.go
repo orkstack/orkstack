@@ -31,3 +31,14 @@ func testWorkerOptions(options worker.Options) worker.Options {
 	}
 	return options
 }
+
+// productionDeadlock is the deadlock budget a test proves a path within:
+// the SDK's production 1 s. A race build's instrumentation slows CPU-bound
+// workflow code several times over, so there the budget is scaled by
+// raceSlowdown, never dropped, the way the wall-clock bounds beside it are.
+func productionDeadlock() time.Duration {
+	if raceBuild {
+		return time.Second * raceSlowdown
+	}
+	return time.Second
+}

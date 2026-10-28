@@ -182,7 +182,7 @@ tasks:
 		}
 		return okBehavior(ctx, in)
 	})
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-spin-cancel"})
 	var once sync.Once
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
@@ -316,7 +316,7 @@ func holdNeverSpinsAfterFailedWrite(t *testing.T) {
 	)
 	g := runGenerationsIn(t, &suite, "ork-spin-write", compile(t, spreadDocument), spreadInput(t, 16), plan, itemBehavior,
 		func(h *harness, generation int) {
-			h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+			h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 			if generation != 0 {
 				return
 			}

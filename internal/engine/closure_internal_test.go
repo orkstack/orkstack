@@ -307,7 +307,7 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 	defer func() { readyLoopProbeForTest = nil }()
 
 	h := newRefusalHarnessOver(t, newMemSnapshotStore())
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: time.Second})
+	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	h.env.SetTestTimeout(10 * time.Minute)
 	plan := refusalRoutedPlan(t)
 	plan.History, plan.Continuation = nil, nil
@@ -320,22 +320,22 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 	t.Logf("E7 join chain of %d tasks: %d passes, largest pass %.2f ms of %s (bound %s; %.2f ms wall clock), "+
 		"closure entries computed %d (bound %d), most retained between passes %d (bound %d)",
 		n, passes, float64(worst.Microseconds())/1000, clock.kind(), bound, float64(wallWorst.Microseconds())/1000,
-		probe.closureEntries, total, probe.maxRetained, n)
+		probe.closureEntries.Load(), total, probe.maxRetained.Load(), n)
 	proof.WriteJSON(t, "task-ceiling", "join-chain-closure.json", map[string]any{
 		"tasks": n, "passes": passes, "largest_pass_ms": float64(worst.Microseconds()) / 1000,
 		"largest_pass_clock": clock.kind(), "largest_pass_wall_ms": float64(wallWorst.Microseconds()) / 1000,
-		"closure_entries_computed": probe.closureEntries, "closure_entries_bound": total,
-		"max_retained_entries": probe.maxRetained,
+		"closure_entries_computed": probe.closureEntries.Load(), "closure_entries_bound": total,
+		"max_retained_entries": probe.maxRetained.Load(),
 	})
-	if probe.conditions != n {
-		t.Fatalf("%d conditions evaluated, want every task's once (%d)", probe.conditions, n)
+	if probe.conditions.Load() != int64(n) {
+		t.Fatalf("%d conditions evaluated, want every task's once (%d)", probe.conditions.Load(), n)
 	}
-	if probe.closureEntries > total || probe.closureEntries < total-n {
+	if entries := probe.closureEntries.Load(); entries > int64(total) || entries < int64(total-n) {
 		t.Fatalf("closureOf computed %d entries over the run, want about, and at most, T(T−1)/2 = %d",
-			probe.closureEntries, total)
+			entries, total)
 	}
-	if probe.maxRetained > n {
-		t.Fatalf("the run held %d closure entries between passes, over T = %d", probe.maxRetained, n)
+	if retained := probe.maxRetained.Load(); retained > int64(n) {
+		t.Fatalf("the run held %d closure entries between passes, over T = %d", retained, n)
 	}
 	if worst > bound {
 		t.Fatalf("the largest pass's workflow code took %s of %s, over %s", worst, clock.kind(), bound)

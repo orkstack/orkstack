@@ -8,6 +8,8 @@ import (
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
+
+	"github.com/orkstack/orkstack/internal/engine"
 )
 
 // testDeadlockDetectionTimeout is the deadlock detector's budget in the
@@ -17,6 +19,10 @@ import (
 // proven where a test sets it explicitly (worker.Options{
 // DeadlockDetectionTimeout: time.Second}), which still wins.
 const testDeadlockDetectionTimeout = 60 * time.Second
+
+// productionDeadlock is the deadlock budget a test proves a path within: the
+// SDK's production 1 s, scaled under a race build (testenv_internal_test.go).
+func productionDeadlock() time.Duration { return engine.ProductionDeadlockForTest() }
 
 // generousDeadlock gives a fresh test environment the harnesses' deadlock
 // budget.

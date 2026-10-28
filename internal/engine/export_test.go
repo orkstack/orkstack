@@ -15,6 +15,10 @@ var (
 	SkipReasonCondition = skipReasonCondition
 )
 
+// ProductionDeadlockForTest is the deadlock budget a test proves a path
+// within: 1 s, scaled in a race build (productionDeadlock).
+func ProductionDeadlockForTest() time.Duration { return productionDeadlock() }
+
 // DropCacheContextForTest sets the test-only switch that makes cacheContextFor
 // return nil, and returns the function that clears it.
 func DropCacheContextForTest() (restore func()) {
