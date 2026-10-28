@@ -6,10 +6,12 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 )
 
 // prefixOfComponents reports whether the "/"-separated components of prefix
@@ -182,6 +184,59 @@ func FuzzParseSigningKey(f *testing.F) {
 		}
 		if got := SigningKeyPEMFingerprint(string(data)); got != fingerprint {
 			t.Fatalf("SigningKeyPEMFingerprint = %q, want %q", got, fingerprint)
+		}
+	})
+}
+
+// FuzzValidOrkerID: an Orker id names the task queue its control channel
+// polls, so an accepted id is 1 to 200 bytes of UTF-8 with no byte at or below
+// 0x20 and no DEL, and the channel built from it is the prefix and the id,
+// whole. Every other id is refused by the one error, and builds no channel.
+func FuzzValidOrkerID(f *testing.F) {
+	for _, seed := range []string{
+		"orker-7f3a", "host-1a2b3c4d", "orker.eu-west@rack/7", "", "a b", "a\tb", "a\x7fb", "a\nb", "a\xffb", "\xed\xa0\x80", "é", "a b",
+		strings.Repeat("a", 200), strings.Repeat("a", 201), strings.Repeat("é", 100), strings.Repeat("é", 101), "-rf", "../x", "a\x00",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, id string) {
+		want := len(id) >= 1 && len(id) <= 200 && utf8.ValidString(id)
+		for i := 0; want && i < len(id); i++ {
+			want = id[i] > 0x20 && id[i] != 0x7f
+		}
+		err := ValidOrkerID(id)
+		queue, queueErr := QueueForOrker(id)
+		if (err == nil) != want || (queueErr == nil) != want {
+			t.Fatalf("ValidOrkerID(%q) = %v and QueueForOrker = %v; the rule says accepted=%v", id, err, queueErr, want)
+		}
+		if want && queue != "ork-orker-"+id {
+			t.Fatalf("QueueForOrker(%q) = %q", id, queue)
+		}
+		if !want && (queue != "" || !errors.Is(err, ErrInvalidOrkerID)) {
+			t.Fatalf("QueueForOrker(%q) = %q with %v for a refused id", id, queue, err)
+		}
+	})
+}
+
+// FuzzValidCordonReason: a cordon's reason is what every reader of the fleet
+// sees beside the state: not blank, at most 256 bytes, UTF-8, and no control
+// character, so it is one printable line.
+func FuzzValidCordonReason(f *testing.F) {
+	for _, seed := range []string{
+		"maintenance", "", " ", "\t", "a\nb", "a\x00b", "a\x7fb", "a\u0085b", "a b", "\xff", strings.Repeat("a", 256), strings.Repeat("a", 257),
+		strings.Repeat("é", 128), strings.Repeat("é", 129), "draining for kernel update",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, reason string) {
+		want := strings.TrimSpace(reason) != "" && len(reason) <= 256 && utf8.ValidString(reason)
+		for _, r := range reason {
+			if r < 0x20 || r >= 0x7f && r < 0xa0 {
+				want = false
+			}
+		}
+		if err := ValidCordonReason(reason); (err == nil) != want {
+			t.Fatalf("ValidCordonReason(%q) = %v; the rule says accepted=%v", reason, err, want)
 		}
 	})
 }

@@ -427,7 +427,7 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// so an id that cannot name one refuses boot here, naming the variable,
 	// rather than leaving an Orker nobody can cordon.
 	if err := task.ValidOrkerID(a.dispatcher.OrkerID); err != nil {
-		return fmt.Errorf("ORKER_ID_INVALID: %s=%q must be 1–200 bytes with no whitespace "+
+		return fmt.Errorf("ORKER_ID_INVALID: %s=%q must be 1–200 bytes of UTF-8 with no whitespace "+
 			"or control characters: %w", OrkerIDVar, a.dispatcher.OrkerID, err)
 	}
 	root := a.dispatcher.WorkRoot

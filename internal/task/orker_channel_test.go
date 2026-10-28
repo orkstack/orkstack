@@ -15,7 +15,9 @@ func TestQueueForOrker_UsesTheOrkerPrefix(t *testing.T) {
 	if err != nil || queue != "ork-orker-orker-7f3a" {
 		t.Fatalf("QueueForOrker(orker-7f3a) = %q, %v; want ork-orker-orker-7f3a", queue, err)
 	}
-	for _, bad := range []string{"", strings.Repeat("a", 201), "a b", "a\tb", "a\x7fb", "a\nb"} {
+	// The id becomes part of a task queue name, which travels as a protobuf
+	// string: text that is not UTF-8 would be refused there, at the first poll.
+	for _, bad := range []string{"", strings.Repeat("a", 201), "a b", "a\tb", "a\x7fb", "a\nb", "a\xffb", "\xed\xa0\x80"} {
 		if err := task.ValidOrkerID(bad); err == nil {
 			t.Errorf("ValidOrkerID(%q) accepted an id with no addressable control channel", bad)
 		}
