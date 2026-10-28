@@ -1197,10 +1197,12 @@ binary depends on it, and that test must be an integration test when
 `scripts/proof-scope.tsv` marks the package as Temporal- or storage-facing. A
 changed file under `ui/src/` needs an evidence spec, except that a change only
 to `ui/src/lib/**/*.ts` may be proven by a changed or named UI unit test.
-Missing evidence, a `--tests` pattern that matches no test, and a `--specs`
-file that does not exist are invalid invocations. A feature proof passes only
-if every evidence test and spec ran and passed; a skip, even an allowed one,
-is not evidence. The README opens with
+Missing evidence, a `--tests` pattern that matches no test or only allowed
+skips, and a `--specs` file that does not exist are invalid invocations. A
+feature proof passes only if every evidence test and spec ran and passed; a
+skip, even an allowed one, is not evidence, so a test
+`scripts/proof-allowed-skips.txt` names is never made evidence: the README
+lists each one a rule reached as not evidence, with the list's reason. The README opens with
 `SCOPED FEATURE PROOF — NOT MERGE EVIDENCE`. It lists the evidence that ran
 for each changed package and path, and it names every gate, package, slow test
 and spec it did not run, each with the reason. When Go packages the UI suite

@@ -67,6 +67,18 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- A feature proof never makes a test `scripts/proof-allowed-skips.txt` names
+  into evidence. Such a test (an opt-in recorder, a helper subprocess) skips
+  in every proof by design, and the opt-in history recorders read the shipped
+  examples, so a change to an example they read ended `FEATURE FAIL` with
+  every gate passed: `evidence_without_a_pass` named the recorders. The
+  selection now lists each one a rule reaches as not evidence, with why it was
+  reached and the list's reason (`not_evidence` in the selection, "Not
+  evidence: allowed skips" in the README); a package whose regression set
+  holds one still runs it. A `--tests` pattern that names only allowed skips
+  is an invalid invocation, and a changed `test/tools/` tool that only allowed
+  skips read is refused as one no test or spec runs. `proofrun select` reads
+  the list with `-allow`.
 - `make site-media` no longer stops at its libwebp check with an ffmpeg that
   has the encoder: the check piped `ffmpeg -encoders` into `grep -q`, and
   under `pipefail` the SIGPIPE ffmpeg 9 takes when grep stops early failed
