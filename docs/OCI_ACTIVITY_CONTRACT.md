@@ -1724,8 +1724,10 @@ spelling). Orker policy supplies defaults and caps:
 `ORK_ORKER_PIDS_LIMIT` (`512`). A request above the cap is **refused**
 (`RESOURCE_REQUEST_REFUSED`), not silently clamped: a workload that asked for
 64 GiB and got 4 GiB fails confusingly later. A zero, negative or non-finite
-request is refused too, because the runtime reads a zero limit as unlimited,
-and an unreadable cap refuses rather than running uncapped. **No workload ever
+request is refused too (for memory, one under a single byte, which renders as
+zero), because the runtime reads a zero limit as unlimited. An unreadable cap
+refuses rather than running uncapped, and a cap or default that is not a
+positive, finite quantity stops the Orker at boot. **No workload ever
 receives unlimited resources**, including one that requested nothing. The
 effective values reach the workload in `task.json` and the attempt record.
 

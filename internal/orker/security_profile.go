@@ -263,21 +263,36 @@ func (p SecurityPolicy) Validate() error {
 	if err := p.validateSecretAllow(); err != nil {
 		return err
 	}
+	// A quantity that parses is still not a limit unless it is positive and
+	// finite: NaN is above and below nothing, so a NaN cap removes the
+	// ceiling, and zero is what the runtime reads as unlimited.
 	capCPU, err := parseCPU(p.MaxCPU)
+	if err == nil && !isPositiveFinite(capCPU) {
+		err = errNotPositiveCPU
+	}
 	if err != nil {
 		return fmt.Errorf("%s=%q is not a valid cpu quantity (%v); use the Kubernetes "+
 			"spelling, e.g. \"8\" or \"500m\"", MaxCPUVar, p.MaxCPU, err)
 	}
 	capMem, err := parseMemory(p.MaxMemory)
+	if err == nil && !isByteCount(capMem) {
+		err = errNotByteCount
+	}
 	if err != nil {
 		return fmt.Errorf("%s=%q is not a valid memory quantity (%v); use the Kubernetes "+
 			"spelling, e.g. \"16Gi\" — note Gi, not GB", MaxMemoryVar, p.MaxMemory, err)
 	}
 	defCPU, err := parseCPU(p.DefaultCPU)
+	if err == nil && !isPositiveFinite(defCPU) {
+		err = errNotPositiveCPU
+	}
 	if err != nil {
 		return fmt.Errorf("%s=%q is not a valid cpu quantity (%v)", DefaultCPUVar, p.DefaultCPU, err)
 	}
 	defMem, err := parseMemory(p.DefaultMemory)
+	if err == nil && !isByteCount(defMem) {
+		err = errNotByteCount
+	}
 	if err != nil {
 		return fmt.Errorf("%s=%q is not a valid memory quantity (%v)", DefaultMemoryVar, p.DefaultMemory, err)
 	}
@@ -320,6 +335,9 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 				"runtime, because a zero or negative limit means UNLIMITED there", cpu)
 	}
 	capCPU, cpuErr := parseCPU(p.MaxCPU)
+	if cpuErr == nil && !isPositiveFinite(capCPU) {
+		cpuErr = errNotPositiveCPU
+	}
 	if cpuErr != nil {
 		// An unreadable cap is a refusal, NOT an absent ceiling. Skipping the
 		// comparison here is what let "8 cores" grant cpu 4096.
@@ -339,7 +357,17 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 	if memErr != nil {
 		return "", "", Fail(ReasonResourceRefused, "memory %q is not a valid quantity: %v", memory, memErr)
 	}
+	if !isByteCount(requestedMem) {
+		// The memory half of the same trap: `--memory 0` is no limit, and a
+		// fraction of a byte renders as 0.
+		return "", "", Fail(ReasonResourceRefused,
+			"memory request %q is not a quantity of at least one byte; it is refused rather than passed to the "+
+				"runtime, because a zero or negative limit means UNLIMITED there", memory)
+	}
 	capMem, memErr := parseMemory(p.MaxMemory)
+	if memErr == nil && !isByteCount(capMem) {
+		memErr = errNotByteCount
+	}
 	if memErr != nil {
 		// Same rule, memory half: "16GB" is the obvious typo for "16Gi" and
 		// must refuse rather than remove the ceiling.
@@ -396,6 +424,19 @@ func (p SecurityPolicy) ResolveNetwork(mode orkstackv1.NetworkMode) (string, *Fa
 func isPositiveFinite(value float64) bool {
 	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
+
+// isByteCount reports whether a memory quantity, in bytes, is a limit: at
+// least one whole byte, because the runtime is handed the byte count as an
+// integer and reads 0 as unlimited, and below 2^63, because the attempt
+// record carries it as an int64. NaN and both infinities fail it.
+func isByteCount(bytes float64) bool {
+	return bytes >= 1 && bytes < 1<<63
+}
+
+var (
+	errNotPositiveCPU = errors.New("not a positive, finite number of cpus")
+	errNotByteCount   = errors.New("not between one byte and what an int64 holds")
+)
 
 // parseCPU reads the Kubernetes CPU spelling: "2", "0.5", "500m".
 func parseCPU(raw string) (float64, error) {

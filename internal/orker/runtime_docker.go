@@ -303,9 +303,12 @@ func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
 	case spec.Network != NetworkNone && spec.Network != NetworkDefault:
 		return nil, fmt.Errorf("create container: network mode %q is not %q or %q",
 			spec.Network, NetworkDefault, NetworkNone)
-	case spec.CPUs == "" || spec.Memory == "" || spec.PidsLimit <= 0:
+	case spec.CPUs == "" || spec.Memory == "" || spec.PidsLimit <= 0 ||
+		cpuReadsAsUnlimited(spec.CPUs) || memoryReadsAsUnlimited(spec.Memory):
 		// No workload ever receives unlimited resources, including one that
-		// requested nothing (§9.3).
+		// requested nothing (§9.3). A quantity that parses to zero, a
+		// negative or a non-number is unlimited to the daemon, which reads
+		// `--cpus 0` and `--memory 0` as no limit, so it is refused here.
 		return nil, fmt.Errorf("create container: resources must always be bounded "+
 			"(cpus=%q memory=%q pids=%d)", spec.CPUs, spec.Memory, spec.PidsLimit)
 	}
@@ -969,7 +972,7 @@ func sortedKeys[V any](m map[string]V) []string {
 // same contract quantity its own way.
 func dockerMemory(quantity string) string {
 	bytes, err := parseMemory(quantity)
-	if err != nil || bytes <= 0 {
+	if err != nil || !isByteCount(bytes) {
 		// The policy already validated this, so a parse failure here means
 		// the two disagree. Pass it through and let the daemon say so rather
 		// than silently substituting a limit nobody asked for.
@@ -984,8 +987,24 @@ func dockerMemory(quantity string) string {
 // Docker does not parse. 500m is 0.5 CPUs.
 func dockerCPUs(quantity string) string {
 	cpus, err := parseCPU(quantity)
-	if err != nil || cpus <= 0 {
+	if err != nil || !isPositiveFinite(cpus) {
 		return quantity
 	}
 	return strconv.FormatFloat(cpus, 'f', -1, 64)
+}
+
+// cpuReadsAsUnlimited reports whether a cpu quantity parses to a number that
+// is no limit to the runtime: zero, negative, NaN or infinite. A quantity
+// that does not parse is not judged here; the daemon refuses it by name.
+func cpuReadsAsUnlimited(quantity string) bool {
+	cpus, err := parseCPU(quantity)
+	return err == nil && !isPositiveFinite(cpus)
+}
+
+// memoryReadsAsUnlimited is cpuReadsAsUnlimited for memory: a quantity that
+// parses to less than one byte, or to more than an int64 holds, is not a
+// byte count the runtime can be handed.
+func memoryReadsAsUnlimited(quantity string) bool {
+	bytes, err := parseMemory(quantity)
+	return err == nil && !isByteCount(bytes)
 }

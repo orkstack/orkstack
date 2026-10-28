@@ -137,6 +137,17 @@ func TestDockerCreateArgs_RefusesASpecThatWeakensTheBaseline(t *testing.T) {
 		{"unlimited cpu", func(s *ContainerSpec) { s.CPUs = "" }, "always be bounded"},
 		{"unlimited memory", func(s *ContainerSpec) { s.Memory = "" }, "always be bounded"},
 		{"unlimited pids", func(s *ContainerSpec) { s.PidsLimit = 0 }, "always be bounded"},
+		// docker reads a zero limit as NO limit, so a quantity that parses to
+		// one is refused here instead of reaching the daemon as a flag value.
+		{"zero cpu", func(s *ContainerSpec) { s.CPUs = "0" }, "always be bounded"},
+		{"zero millicpu", func(s *ContainerSpec) { s.CPUs = "0m" }, "always be bounded"},
+		{"negative cpu", func(s *ContainerSpec) { s.CPUs = "-1" }, "always be bounded"},
+		{"NaN cpu", func(s *ContainerSpec) { s.CPUs = "NaN" }, "always be bounded"},
+		{"zero memory", func(s *ContainerSpec) { s.Memory = "0" }, "always be bounded"},
+		{"zero memory with a unit", func(s *ContainerSpec) { s.Memory = "0Gi" }, "always be bounded"},
+		{"less than a byte of memory", func(s *ContainerSpec) { s.Memory = "0.5" }, "always be bounded"},
+		{"negative memory", func(s *ContainerSpec) { s.Memory = "-1" }, "always be bounded"},
+		{"NaN memory", func(s *ContainerSpec) { s.Memory = "NaN" }, "always be bounded"},
 		{"no image", func(s *ContainerSpec) { s.Image = "" }, "image is required"},
 	}
 	for _, tc := range tests {

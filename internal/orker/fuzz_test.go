@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -224,6 +225,151 @@ func FuzzValidSecretName(f *testing.F) {
 		}
 		if want && filepath.Base(filepath.Join("/secrets", name)) != name {
 			t.Fatalf("the accepted name %q is not one path component", name)
+		}
+	})
+}
+
+// FuzzResolveResources_AnAcceptedRequestIsALimitWithinTheCap: AGENTS.md §6
+// says workflows must not receive unlimited resources, and the runtime reads
+// a zero limit as exactly that. Whatever the request, the defaults and the
+// caps say, a request the Orker accepts renders to a positive limit the
+// runtime is handed, no higher than the cap, and the number the attempt
+// record carries is that limit; a request it refuses is refused by name.
+func FuzzResolveResources_AnAcceptedRequestIsALimitWithinTheCap(f *testing.F) {
+	for _, seed := range [][6]string{
+		{"2", "4Gi", "4", "8Gi", "1", "1Gi"},
+		{"500m", "512Mi", "4", "8Gi", "1", "1Gi"},
+		{"", "", "4", "8Gi", "1", "1Gi"},
+		{"0", "1Gi", "4", "8Gi", "1", "1Gi"},
+		{"1", "0", "4", "8Gi", "1", "1Gi"},
+		{"1", "0Gi", "4", "8Gi", "1", "1Gi"},
+		{"1", "0.5", "4", "8Gi", "1", "1Gi"},
+		{"1", "-1", "4", "8Gi", "1", "1Gi"},
+		{"1", "NaN", "4", "8Gi", "1", "1Gi"},
+		{"NaN", "1Gi", "4", "8Gi", "1", "1Gi"},
+		{"1", "Inf", "4", "8Gi", "1", "1Gi"},
+		{"1", "1Gi", "NaN", "8Gi", "1", "1Gi"},
+		{"1", "1Gi", "4", "NaN", "1", "1Gi"},
+		{"1", "1Gi", "4", "0", "1", "1Gi"},
+		{"1", "1Gi", "4", "1e30", "1", "1Gi"},
+		{"", "", "4", "8Gi", "0", "0"},
+		{"1", "1e18", "4", "9e18", "1", "1Gi"},
+		{"1", "9223372036854775808", "4", "1e300", "1", "1Gi"},
+		{" 2 ", " 4Gi ", "4", "8Gi", "1", "1Gi"},
+		{"0x1p1", "0x10", "4", "8Gi", "1", "1Gi"},
+		{"1e-9", "1", "4", "8Gi", "1", "1Gi"},
+		{"4", "8Gi", "4", "8Gi", "1", "1Gi"},
+		{"4000m", "8192Mi", "4", "8Gi", "1", "1Gi"},
+	} {
+		f.Add(seed[0], seed[1], seed[2], seed[3], seed[4], seed[5])
+	}
+	f.Fuzz(func(t *testing.T, cpu, memory, maxCPU, maxMemory, defaultCPU, defaultMemory string) {
+		policy := DefaultSecurityPolicy()
+		policy.MaxCPU, policy.MaxMemory = maxCPU, maxMemory
+		policy.DefaultCPU, policy.DefaultMemory = defaultCPU, defaultMemory
+		request := &orkstackv1.ResourceRequest{Cpu: cpu, Memory: memory}
+
+		gotCPU, gotMemory, failure := policy.ResolveResources(request)
+		reserved := policy.ReservedResources(request)
+		if failure != nil {
+			if failure.Reason != ReasonResourceRefused || failure.Message == "" {
+				t.Fatalf("a refused request failed as %q: %q", failure.Reason, failure.Message)
+			}
+			if reserved != nil {
+				t.Fatalf("a refused request reserved %v", reserved)
+			}
+			return
+		}
+
+		capCPU, err := parseCPU(policy.MaxCPU)
+		if err != nil || !isPositiveFinite(capCPU) {
+			t.Fatalf("accepted cpu %q under the cap %q, which is not a limit (%v)", gotCPU, policy.MaxCPU, err)
+		}
+		capBytes, err := parseMemory(policy.MaxMemory)
+		if err != nil || capBytes < 1 {
+			t.Fatalf("accepted memory %q under the cap %q, which is not a limit (%v)", gotMemory, policy.MaxMemory, err)
+		}
+
+		renderedCPU, err := strconv.ParseFloat(dockerCPUs(gotCPU), 64)
+		if err != nil || !isPositiveFinite(renderedCPU) || renderedCPU > capCPU {
+			t.Fatalf("cpu %q renders as %q, not a positive limit within %q (%v)", gotCPU, dockerCPUs(gotCPU), policy.MaxCPU, err)
+		}
+		renderedBytes, err := strconv.ParseInt(dockerMemory(gotMemory), 10, 64)
+		if err != nil || renderedBytes < 1 || float64(renderedBytes) > capBytes {
+			t.Fatalf("memory %q renders as %q, not a positive byte count within %q (%v)", gotMemory, dockerMemory(gotMemory), policy.MaxMemory, err)
+		}
+		if reserved == nil || reserved.GetCpu() != renderedCPU || reserved.GetMemoryBytes() != renderedBytes {
+			t.Fatalf("the record holds %v for a container given %v cpus and %d bytes", reserved, renderedCPU, renderedBytes)
+		}
+
+		spec := validSpec()
+		spec.CPUs, spec.Memory = gotCPU, gotMemory
+		args, err := dockerCreateArgs(spec)
+		if err != nil {
+			t.Fatalf("an accepted request, cpu %q memory %q, does not render: %v", gotCPU, gotMemory, err)
+		}
+		for i, arg := range args {
+			switch arg {
+			case "--cpus":
+				if args[i+1] != dockerCPUs(gotCPU) {
+					t.Fatalf("--cpus %q is not the rendering of %q", args[i+1], gotCPU)
+				}
+			case "--memory":
+				if args[i+1] != dockerMemory(gotMemory) {
+					t.Fatalf("--memory %q is not the rendering of %q", args[i+1], gotMemory)
+				}
+			}
+		}
+	})
+}
+
+// FuzzQuantities_ARenderedLimitIsTheQuantityTheCapsWereCheckedWith: the
+// quantity parsers and the runtime's rendering of them agree on the number,
+// so the number a cap is compared against is the number the container gets.
+// A spec the runtime boundary renders never carries a quantity that parses to
+// something the daemon reads as unlimited.
+func FuzzQuantities_ARenderedLimitIsTheQuantityTheCapsWereCheckedWith(f *testing.F) {
+	for _, seed := range []string{
+		"", "0", "1", "2", "0.5", "500m", "0m", "1500m", "4Gi", "512Mi", "1Ki", "1Ti", "1k", "1K", "1M", "2G", "1T", "4GB", "lots", "NaN", "Inf", "-Inf",
+		"-1", "-1Gi", "1e3", "1e3Gi", "1e30", "0x10", "0x1p-2", "1_000", " 4Gi ", "4 Gi", "9223372036854775807", "9223372036854775808", "1e-9", ".5", "5.",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, quantity string) {
+		cpus, cpuErr := parseCPU(quantity)
+		bytes, memErr := parseMemory(quantity)
+
+		if cpuErr == nil {
+			rendered := dockerCPUs(quantity)
+			if isPositiveFinite(cpus) {
+				if back, err := strconv.ParseFloat(rendered, 64); err != nil || back != cpus {
+					t.Fatalf("cpu %q is %v and renders as %q (%v)", quantity, cpus, rendered, err)
+				}
+			} else if rendered != quantity {
+				t.Fatalf("cpu %q is %v, no limit, yet renders as %q", quantity, cpus, rendered)
+			}
+			if cpuReadsAsUnlimited(quantity) == isPositiveFinite(cpus) {
+				t.Fatalf("cpuReadsAsUnlimited(%q) disagrees with the number %v", quantity, cpus)
+			}
+		}
+		if memErr == nil {
+			rendered := dockerMemory(quantity)
+			if isByteCount(bytes) {
+				if n, err := strconv.ParseInt(rendered, 10, 64); err != nil || n < 1 || float64(n) > bytes || bytes-float64(n) >= 1 {
+					t.Fatalf("memory %q is %v bytes and renders as %q (%v)", quantity, bytes, rendered, err)
+				}
+			} else if rendered != quantity {
+				t.Fatalf("memory %q is %v bytes, no limit, yet renders as %q", quantity, bytes, rendered)
+			}
+			if memoryReadsAsUnlimited(quantity) == isByteCount(bytes) {
+				t.Fatalf("memoryReadsAsUnlimited(%q) disagrees with the number %v", quantity, bytes)
+			}
+		}
+
+		spec := validSpec()
+		spec.CPUs, spec.Memory = quantity, quantity
+		if _, err := dockerCreateArgs(spec); err == nil && (cpuErr == nil && !isPositiveFinite(cpus) || memErr == nil && !isByteCount(bytes)) {
+			t.Fatalf("dockerCreateArgs rendered cpus and memory %q, which the runtime reads as unlimited", quantity)
 		}
 	})
 }
