@@ -27,7 +27,7 @@ func continuationSeries(t *testing.T, reader sdkmetric.Reader) map[string]int64 
 				for _, dp := range data.DataPoints {
 					var attrs []string
 					for _, kv := range dp.Attributes.ToSlice() {
-						attrs = append(attrs, string(kv.Key)+"="+kv.Value.Emit())
+						attrs = append(attrs, string(kv.Key)+"="+kv.Value.String())
 					}
 					out[label(attrs)] += dp.Value
 				}
@@ -35,7 +35,7 @@ func continuationSeries(t *testing.T, reader sdkmetric.Reader) map[string]int64 
 				for _, dp := range data.DataPoints {
 					var attrs []string
 					for _, kv := range dp.Attributes.ToSlice() {
-						attrs = append(attrs, string(kv.Key)+"="+kv.Value.Emit())
+						attrs = append(attrs, string(kv.Key)+"="+kv.Value.String())
 					}
 					out[label(attrs)] += int64(dp.Count)
 				}
@@ -43,7 +43,7 @@ func continuationSeries(t *testing.T, reader sdkmetric.Reader) map[string]int64 
 				for _, dp := range data.DataPoints {
 					var attrs []string
 					for _, kv := range dp.Attributes.ToSlice() {
-						attrs = append(attrs, string(kv.Key)+"="+kv.Value.Emit())
+						attrs = append(attrs, string(kv.Key)+"="+kv.Value.String())
 					}
 					out[label(attrs)] += int64(dp.Count)
 				}
