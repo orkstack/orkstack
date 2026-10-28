@@ -410,11 +410,7 @@ func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string
 				break
 			}
 			l.Summary.Fail++
-			why := "failed"
-			if e.Reason != "" {
-				why = e.Reason
-			}
-			l.Problems = append(l.Problems, fmt.Sprintf("%s %s (job %s)", k, why, orDash(e.Job)))
+			l.Problems = append(l.Problems, failedProblem(k, e))
 		case outcomeSkip:
 			if a, ok := allowed[k]; ok {
 				l.Summary.AllowedSkip++
@@ -444,6 +440,17 @@ func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string
 			"%s skipped; a skip is never a pass — fix the prerequisite, or allow it in scripts/proof-allowed-skips.txt with its reason", k))
 	}
 	return l
+}
+
+// failedProblem is the problem line a failing test has in its ledger: its
+// key, why it failed (a plain failure says "failed") and the job that ran it.
+// The merger expects exactly this line for a test it excuses (ownProblem).
+func failedProblem(k testKey, e entry) string {
+	why := "failed"
+	if e.Reason != "" {
+		why = e.Reason
+	}
+	return fmt.Sprintf("%s %s (job %s)", k, why, orDash(e.Job))
 }
 
 // failingLeaves returns the failing subtests of top that have no failing

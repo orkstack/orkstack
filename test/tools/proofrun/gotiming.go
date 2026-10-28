@@ -52,9 +52,10 @@ func isCIIntegrationPart(part string) bool {
 	return err == nil && k > 0
 }
 
-// ownProblem is the problem line buildLedgerQ writes for a plain failure of e.
+// ownProblem is the problem line buildLedgerQ writes for a plain failure of e:
+// the same function writes it.
 func ownProblem(e entry) string {
-	return fmt.Sprintf("%s failed (job %s)", testKey{e.Package, e.Test}, orDash(e.Job))
+	return failedProblem(testKey{e.Package, e.Test}, e)
 }
 
 // timingRecordPath is where the part left e's timing record.

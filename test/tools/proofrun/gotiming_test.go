@@ -512,3 +512,29 @@ func TestMerge_AGoTimingMissIsExcusedUpToTheRunnersShareOfTheReference(t *testin
 		}
 	}
 }
+
+// The merger drops the shard's own problem line for a test it excuses, so the
+// line it expects must be the one buildLedgerQ writes. If the two ever drift
+// the excused line stays in the proof's problems and the excusal silently
+// never applies; this ties them to one function by the output of the real
+// ledger builder, for a job and for the dash a job-less entry gets.
+func TestOwnProblem_IsTheLineTheLedgerBuilderWrites(t *testing.T) {
+	const p = "example.com/p"
+	for _, job := range []string{"j1", ""} {
+		c := newCollector()
+		for _, e := range []event{
+			ev("run", p, "TestFail", 0),
+			out(p, "TestFail", "    f_test.go:10: timing miss: id=getrun-live-p95 measured=2.014s bound=2s\n"),
+			ev("fail", p, "TestFail", 1),
+		} {
+			c.add(e, job)
+		}
+		l := buildLedgerQ("integration", []testKey{{p, "TestFail"}}, map[string]map[string]bool{p: {"TestFail": true}}, c, nil, nil)
+		if len(l.Tests) != 1 || len(l.Problems) != 1 {
+			t.Fatalf("job %q: tests %+v problems %q, want one failing test and one problem", job, l.Tests, l.Problems)
+		}
+		if got := ownProblem(l.Tests[0]); got != l.Problems[0] {
+			t.Errorf("job %q: ownProblem = %q, the ledger builder wrote %q", job, got, l.Problems[0])
+		}
+	}
+}
