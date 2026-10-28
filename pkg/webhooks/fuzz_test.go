@@ -272,7 +272,10 @@ func FuzzDispatcher_WhatTheReceiverReadsVerifiesAndIsWhatTheResultRecords(f *tes
 			if got := header.Get(name); got != wantValue {
 				t.Fatalf("header %s = %q, want %q", name, got, wantValue)
 			}
-			if _, present := header[http.CanonicalHeaderKey(name)]; present != (wantValue != "") {
+			// The task and redelivery headers are sent only when there is a
+			// task or a redelivery; every other header is always sent.
+			optional := name == webhooks.TaskHeader || name == webhooks.RedeliveryHeader
+			if _, present := header[http.CanonicalHeaderKey(name)]; present != (!optional || wantValue != "") {
 				t.Fatalf("header %s present=%v for value %q", name, present, wantValue)
 			}
 		}
