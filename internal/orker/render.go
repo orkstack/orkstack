@@ -1,8 +1,8 @@
 package orker
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -10,16 +10,13 @@ import (
 	"text/template"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // EnvAllowlistVar names the environment variable holding the comma-separated
 // list of variable names the `env` template helper may read. It defaults to
 // empty, so no variable is readable unless an operator opts in.
 const EnvAllowlistVar = "ORK_ORKER_ENV_ALLOWLIST"
-
-// noValueMarker is what text/template prints for a present-but-nil value.
-// Rendering it would silently corrupt a command or URL, so it is an error.
-const noValueMarker = "<no value>"
 
 // renderer renders one task's raw `with` block. It mirrors the DSL's
 // compile-time traversal (internal/dsl/template.go): string leaves are
@@ -156,25 +153,28 @@ func (r *renderer) renderString(ctx context.Context, path, text string) (string,
 		return text, nil
 	}
 	name := r.taskID + "/" + path
-	tmpl, err := template.New(name).
-		Option("missingkey=error").
-		Funcs(r.funcs(ctx)).
-		Parse(text)
-	if err != nil {
-		return "", fmt.Errorf("task %q: %s: template parse error: %w", r.taskID, path, err)
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, r.data); err != nil {
-		return "", fmt.Errorf("task %q: %s: render: %w", r.taskID, path, err)
-	}
-	out := buf.String()
-	if strings.Contains(out, noValueMarker) {
-		return "", fmt.Errorf("task %q: %s: render: template resolved to %s", r.taskID, path, noValueMarker)
+	out, err := dsl.ExecuteChecked(text, r.data, func(text string, shield func(string) string) (*template.Template, error) {
+		return template.New(name).
+			Option("missingkey=error").
+			Funcs(r.funcs(ctx, shield)).
+			Parse(text)
+	})
+	var failure *dsl.TemplateError
+	switch {
+	case errors.As(err, &failure) && failure.Stage == dsl.StageParse:
+		return "", fmt.Errorf("task %q: %s: template parse error: %w", r.taskID, path, failure.Err)
+	case errors.As(err, &failure):
+		return "", fmt.Errorf("task %q: %s: render: %w", r.taskID, path, failure.Err)
+	case err != nil:
+		return "", err
 	}
 	return out, nil
 }
 
-func (r *renderer) funcs(_ context.Context) template.FuncMap {
+// funcs are the template helpers. shield passes every string a helper hands
+// the template, so that the second pass of dsl.ExecuteChecked can mask the
+// no-value marker in a staged path or an environment value too.
+func (r *renderer) funcs(_ context.Context, shield func(string) string) template.FuncMap {
 	return template.FuncMap{
 		"artifact": func(ref string) (string, error) {
 			path, ok := r.paths[ref]
@@ -183,14 +183,14 @@ func (r *renderer) funcs(_ context.Context) template.FuncMap {
 					"artifact %q is not an input of this task (staged: %s)",
 					ref, joinOrNone(sortedKeys(r.paths)))
 			}
-			return path, nil
+			return shield(path), nil
 		},
 		"env": func(name string) (string, error) {
 			if _, ok := r.allowlist[name]; !ok {
 				return "", fmt.Errorf(
 					"env %q is not allowlisted on this orker (set %s)", name, EnvAllowlistVar)
 			}
-			return os.Getenv(name), nil
+			return shield(os.Getenv(name)), nil
 		},
 		// sh wraps a value in POSIX single quotes, escaping any embedded '
 		// as '\''.
@@ -204,7 +204,7 @@ func (r *renderer) funcs(_ context.Context) template.FuncMap {
 		// first-party `command` is an argv array rather than a shell string
 		// (§10.2), so nothing rendered becomes code in the first place.
 		"sh": func(value any) string {
-			return "'" + strings.ReplaceAll(fmt.Sprint(value), "'", `'\''`) + "'"
+			return "'" + strings.ReplaceAll(shield(fmt.Sprint(value)), "'", `'\''`) + "'"
 		},
 	}
 }
