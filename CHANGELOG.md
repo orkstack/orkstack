@@ -32,6 +32,20 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The feature proof's evidence selector no longer matches a changed method by
+  its name alone. It reached a changed `T.m` through every test of the
+  package that mentioned any identifier called `m` (a local variable, a
+  function, a field, another type's method), so a test-helper method named
+  `setup` or `count` made 832 unit tests and 1,040 integration tests
+  evidence in one measured change, or pulled in always-skipping opt-in
+  recorders and failed the proof with `evidence_without_a_pass`, and helpers
+  were renamed to avoid it. A method is now matched by its receiver type and
+  its name (docs/PROOFS.md §3): an exported one also by its type alone,
+  since another package can call it through an interface, except a hook a
+  `_test.go` file adds to a production type: only test code calls it, and it
+  is matched by its selector alone. The tests that read a changed tool or
+  example are found the same way. Functions, variables, constants and types
+  are still matched by name.
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
   pid, rather than by the container's Orker id. Tests that name their own

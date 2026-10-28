@@ -24,10 +24,12 @@ import (
 // A changed test is selected. A changed helper — a func, method, var, const
 // or type declared in a _test.go file — selects every test of the package
 // (in the same build configuration) that reaches it transitively through
-// the package's top-level declarations. Matching is by identifier name, so
-// it can only over-select. A changed TestMain or init selects the whole
-// package. A changed build constraint or package clause selects every test
-// the file declares, on either side.
+// the package's top-level declarations (reach.go). A func, var, const or
+// type is matched by identifier name, so that can only over-select. A
+// method is matched by its receiver type and its name, never by its name
+// alone. A changed TestMain or init selects the whole package. A changed
+// build constraint or package clause selects every test the file declares,
+// on either side.
 
 // Build configurations a test file can compile in.
 const (
@@ -61,12 +63,19 @@ func fileMatches(cfg, dir string, f srcFile) bool {
 
 // decl is one top-level declaration.
 type decl struct {
-	Key   string          // "func Name", "method T.Name", "var X", "const X", "type T", "init#3"
-	Name  string          // the identifier other declarations reference it by
-	Canon string          // canonical source, comments removed
-	Refs  map[string]bool // identifiers it mentions
-	File  string
-	Test  bool // a top-level func TestXxx
+	Key    string          // "func Name", "method T.Name", "var X", "const X", "type T", "init#3"
+	Name   string          // the identifier other declarations reference it by
+	Node   string          // its node in the reference graph: Name, "T.Name" for a method, the key of an init
+	Recv   string          // a method's receiver type
+	IsType bool            // a type declaration
+	Alias  bool            // a type alias (type A = T)
+	Canon  string          // canonical source, comments removed
+	Refs   map[string]bool // identifiers it mentions, selector names included
+	Sels   map[string]bool // names its selector expressions select (x.Sel)
+	Lits   []string        // its string literals, unquoted
+	File   string
+	InTest bool // declared in a _test.go file
+	Test   bool // a top-level func TestXxx
 }
 
 // parsedFile is one parsed file.
@@ -110,14 +119,20 @@ func parseGo(f srcFile) parsedFile {
 		switch d := d.(type) {
 		case *ast.FuncDecl:
 			name := d.Name.Name
-			key := "func " + name
+			key, node, recv := "func "+name, name, ""
 			if d.Recv != nil && len(d.Recv.List) > 0 {
-				key = "method " + recvName(d.Recv.List[0].Type) + "." + name
+				recv = recvName(d.Recv.List[0].Type)
+				key = "method " + recv + "." + name
+				node = recv + "." + name
 			} else if name == "init" {
 				inits++
 				key = "init#" + strconv.Itoa(inits)
+				node = key
 			}
-			dd := decl{Key: key, Name: name, Canon: canon(d), Refs: refs(d), File: f.Name}
+			// The declared name is not a mention: a method named like a
+			// function would otherwise refer to it.
+			r, sels := refs(d.Recv, d.Type, d.Body)
+			dd := decl{Key: key, Name: name, Node: node, Recv: recv, Canon: canon(d), Refs: r, Sels: sels, Lits: lits(d), File: f.Name}
 			if d.Recv == nil && testName(name) && pf.TestGo {
 				dd.Test = true
 				pf.Tests = append(pf.Tests, name)
@@ -127,23 +142,30 @@ func parseGo(f srcFile) parsedFile {
 			if d.Tok == token.IMPORT {
 				continue
 			}
+			groupLits := lits(d) // a group's literals belong to every name it declares
 			for _, s := range d.Specs {
 				switch s := s.(type) {
 				case *ast.TypeSpec:
-					pf.Decls = append(pf.Decls, decl{Key: "type " + s.Name.Name, Name: s.Name.Name,
-						Canon: canon(&ast.GenDecl{Tok: d.Tok, Specs: []ast.Spec{s}}), Refs: refs(s), File: f.Name})
+					r, sels := refs(s)
+					pf.Decls = append(pf.Decls, decl{Key: "type " + s.Name.Name, Name: s.Name.Name, Node: s.Name.Name,
+						IsType: true, Alias: s.Assign.IsValid(),
+						Canon: canon(&ast.GenDecl{Tok: d.Tok, Specs: []ast.Spec{s}}), Refs: r, Sels: sels, Lits: groupLits, File: f.Name})
 				case *ast.ValueSpec:
 					c := canon(&ast.GenDecl{Tok: d.Tok, Specs: []ast.Spec{s}})
-					r := refs(s)
+					r, sels := refs(s)
 					for _, n := range s.Names {
 						if n.Name == "_" {
 							continue
 						}
-						pf.Decls = append(pf.Decls, decl{Key: d.Tok.String() + " " + n.Name, Name: n.Name, Canon: c, Refs: r, File: f.Name})
+						pf.Decls = append(pf.Decls, decl{Key: d.Tok.String() + " " + n.Name, Name: n.Name, Node: n.Name,
+							Canon: c, Refs: r, Sels: sels, Lits: groupLits, File: f.Name})
 					}
 				}
 			}
 		}
+	}
+	for i := range pf.Decls {
+		pf.Decls[i].InTest = pf.TestGo
 	}
 	ast.Inspect(file, func(n ast.Node) bool {
 		if bl, ok := n.(*ast.BasicLit); ok && bl.Kind == token.STRING {
@@ -184,12 +206,52 @@ func recvName(e ast.Expr) string {
 	return "?"
 }
 
-// refs collects every identifier a node mentions, selector names included.
-func refs(n ast.Node) map[string]bool {
-	out := map[string]bool{}
+// refs collects every identifier the nodes mention, selector names included,
+// and separately the names their selector expressions select. A nil node
+// (a func without a body or a receiver) is skipped.
+func refs(nodes ...ast.Node) (idents, sels map[string]bool) {
+	idents, sels = map[string]bool{}, map[string]bool{}
+	for _, n := range nodes {
+		if isNilNode(n) {
+			continue
+		}
+		ast.Inspect(n, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.Ident:
+				idents[n.Name] = true
+			case *ast.SelectorExpr:
+				sels[n.Sel.Name] = true
+			}
+			return true
+		})
+	}
+	return idents, sels
+}
+
+// isNilNode reports a nil pointer held in an ast.Node interface, which
+// ast.Inspect would dereference.
+func isNilNode(n ast.Node) bool {
+	switch n := n.(type) {
+	case nil:
+		return true
+	case *ast.FieldList:
+		return n == nil
+	case *ast.BlockStmt:
+		return n == nil
+	case *ast.FuncType:
+		return n == nil
+	}
+	return false
+}
+
+// lits collects the string literals a node holds, unquoted.
+func lits(n ast.Node) []string {
+	var out []string
 	ast.Inspect(n, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok {
-			out[id.Name] = true
+		if bl, ok := n.(*ast.BasicLit); ok && bl.Kind == token.STRING {
+			if s, err := strconv.Unquote(bl.Value); err == nil {
+				out = append(out, s)
+			}
 		}
 		return true
 	})
@@ -264,10 +326,13 @@ func analyzeDir(cfg, dir string, oldFiles, newFiles map[string]srcFile, newAll [
 		canon  map[string]string
 		isTest map[string]bool
 		name   map[string]string
+		node   map[string]string
+		recv   map[string]string
 		test   map[string]bool
 	}
 	index := func(ps map[string]parsedFile) side {
-		s := side{canon: map[string]string{}, isTest: map[string]bool{}, name: map[string]string{}, test: map[string]bool{}}
+		s := side{canon: map[string]string{}, isTest: map[string]bool{}, name: map[string]string{}, node: map[string]string{},
+			recv: map[string]string{}, test: map[string]bool{}}
 		for _, pf := range ps {
 			for _, d := range pf.Decls {
 				k := d.Key
@@ -277,13 +342,16 @@ func analyzeDir(cfg, dir string, oldFiles, newFiles map[string]srcFile, newAll [
 				s.canon[k] += d.Canon
 				s.isTest[k] = pf.TestGo
 				s.name[k] = d.Name
+				s.node[k] = d.Node
+				s.recv[k] = d.Recv
 				s.test[k] = d.Test
 			}
 		}
 		return s
 	}
 	o, n := index(oldP), index(newP)
-	changedHelpers := map[string]bool{}
+	changedHelpers := map[string]bool{}       // graph nodes
+	changedMethods := map[string]methodNode{} // the methods among them
 	keys := map[string]bool{}
 	for k := range o.canon {
 		keys[k] = true
@@ -323,7 +391,15 @@ func analyzeDir(cfg, dir string, oldFiles, newFiles map[string]srcFile, newAll [
 		case name == "TestMain" || strings.HasPrefix(k, "test:init#"):
 			ch.Whole = strings.TrimPrefix(k, "test:") + " changed"
 		default:
-			changedHelpers[name] = true
+			node, recv := n.node[k], n.recv[k]
+			if node == "" {
+				node, recv = o.node[k], o.recv[k]
+			}
+			changedHelpers[node] = true
+			if recv != "" {
+				// A changed helper is declared in a test file, on either side.
+				changedMethods[node] = methodNode{node: node, recv: recv, name: name, test: true}
+			}
 		}
 	}
 
@@ -364,7 +440,7 @@ func analyzeDir(cfg, dir string, oldFiles, newFiles map[string]srcFile, newAll [
 
 	// Reachability over the whole package on the new side.
 	if len(changedHelpers) > 0 {
-		graph := map[string]map[string]bool{}
+		graph := newDeclGraph()
 		var tests []string
 		for _, f := range newAll {
 			if !fileMatches(cfg, dir, f) {
@@ -372,27 +448,20 @@ func analyzeDir(cfg, dir string, oldFiles, newFiles map[string]srcFile, newAll [
 			}
 			pf := parseGo(f)
 			for _, d := range pf.Decls {
-				if graph[d.Name] == nil {
-					graph[d.Name] = map[string]bool{}
-				}
-				for r := range d.Refs {
-					graph[d.Name][r] = true
-				}
+				graph.add(d)
 				if d.Test {
 					tests = append(tests, d.Name)
 				}
 			}
 		}
-		helpers := make([]string, 0, len(changedHelpers))
-		for h := range changedHelpers {
-			helpers = append(helpers, h)
+		for _, m := range changedMethods {
+			graph.addMethod(m) // a deleted method is still one
 		}
-		sort.Strings(helpers)
 		for _, t := range tests {
 			if _, already := ch.Tests[t]; already {
 				continue
 			}
-			if via := reaches(graph, t, changedHelpers); via != "" {
+			if via := graph.reaches(t, changedHelpers); via != "" {
 				ch.Tests[t] = "reaches changed " + via
 				ch.Reached[t] = true
 			}
@@ -402,31 +471,6 @@ func analyzeDir(cfg, dir string, oldFiles, newFiles map[string]srcFile, newAll [
 	// Tests that exist only on the old side are removed, not selected.
 	sort.Strings(ch.Removed)
 	return ch
-}
-
-// reaches reports which target name `from` reaches through graph, or "".
-func reaches(graph map[string]map[string]bool, from string, targets map[string]bool) string {
-	seen := map[string]bool{from: true}
-	queue := []string{from}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		var next []string
-		for r := range graph[cur] {
-			next = append(next, r)
-		}
-		sort.Strings(next)
-		for _, r := range next {
-			if targets[r] {
-				return r
-			}
-			if !seen[r] && graph[r] != nil {
-				seen[r] = true
-				queue = append(queue, r)
-			}
-		}
-	}
-	return ""
 }
 
 // testsDeclared lists the TestXxx funcs declared in files that compile in
@@ -462,73 +506,35 @@ func testsDeclared(dir string, files []srcFile) (unit map[string]bool, integrati
 func testsReferencing(dir string, files []srcFile, needle func(string) bool) map[string]string {
 	out := map[string]string{}
 	for _, cfg := range configs {
-		graph := map[string]map[string]bool{}
+		graph := newDeclGraph()
 		hits := map[string]bool{}
 		var tests []string
 		for _, f := range files {
 			if !strings.HasSuffix(f.Name, ".go") || !fileMatches(cfg, dir, f) {
 				continue
 			}
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, f.Name, f.Content, parser.SkipObjectResolution)
-			if err != nil {
-				continue
-			}
-			for _, d := range file.Decls {
-				var names []string
-				var node ast.Node = d
-				isTest := false
-				switch d := d.(type) {
-				case *ast.FuncDecl:
-					names = []string{d.Name.Name}
-					isTest = d.Recv == nil && testName(d.Name.Name) && strings.HasSuffix(f.Name, "_test.go")
-				case *ast.GenDecl:
-					if d.Tok == token.IMPORT {
-						continue
-					}
-					for _, s := range d.Specs {
-						switch s := s.(type) {
-						case *ast.TypeSpec:
-							names = append(names, s.Name.Name)
-						case *ast.ValueSpec:
-							for _, n := range s.Names {
-								names = append(names, n.Name)
-							}
-						}
+			for _, d := range parseGo(f).Decls {
+				graph.add(d)
+				for _, l := range d.Lits {
+					if needle(l) {
+						hits[d.Node] = true
+						break
 					}
 				}
-				r := refs(node)
-				hit := false
-				ast.Inspect(node, func(n ast.Node) bool {
-					if bl, ok := n.(*ast.BasicLit); ok && bl.Kind == token.STRING {
-						if s, err := strconv.Unquote(bl.Value); err == nil && needle(s) {
-							hit = true
-						}
-					}
-					return !hit
-				})
-				for _, name := range names {
-					if graph[name] == nil {
-						graph[name] = map[string]bool{}
-					}
-					for x := range r {
-						graph[name][x] = true
-					}
-					if hit {
-						hits[name] = true
-					}
-					if isTest {
-						tests = append(tests, name)
-					}
+				if d.Test {
+					tests = append(tests, d.Name)
 				}
 			}
+		}
+		if len(hits) == 0 {
+			continue
 		}
 		for _, t := range tests {
 			if hits[t] {
 				out[t] = "references it"
 				continue
 			}
-			if via := reaches(graph, t, hits); via != "" {
+			if via := graph.reaches(t, hits); via != "" {
 				out[t] = "reaches " + via + ", which references it"
 			}
 		}

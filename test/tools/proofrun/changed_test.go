@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -264,5 +265,437 @@ func TestIntegration_Unrelated(t *testing.T) { _ = build(t, "./cmd/ork") }
 	got := testsReferencing("cmd/orkctl", fs, func(s string) bool { return strings.Contains(s, "test/tools/cosign-sign") })
 	if want := []string{"TestIntegration_Direct", "TestIntegration_Signs"}; !reflect.DeepEqual(keys(got), want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// methodFixture is a package whose methods share their names with unrelated
+// identifiers: another type's method, a function, a local variable and a
+// struct field. The pin-close change to a method named setup (and a new one
+// named count) reached every test that mentioned any setup or count at all.
+const methodFixture = `package engine
+
+import (
+	"testing"
+
+	"example.com/elsewhere"
+)
+
+type order struct{ n int }
+
+func (o *order) setup(h int) { o.n = h }
+
+func (o *order) count() int { return o.n }
+
+func (o *order) Name() string { return "order" }
+
+func (o *order) name() string { return "order" }
+
+func (o *order) behavior(in int) int { return in }
+
+type rig struct{ o *order }
+
+func newRig() *rig { return &rig{o: newOrder()} }
+
+type other struct{}
+
+func (other) setup() {}
+
+func (other) Name() string { return "other" }
+
+func count() int { return 0 }
+
+func newOrder() *order { return &order{} }
+
+type namer interface{ name() string }
+
+func nameOf(n namer) string { return n.name() }
+
+type alias = order
+
+func (a *alias) tweak() {}
+
+func TestUsesOrderThroughAConstructor(t *testing.T) {
+	o := newOrder()
+	o.setup(1)
+	_ = o.count()
+}
+
+func TestUsesOrderDirectly(t *testing.T) {
+	o := &order{}
+	o.setup(2)
+}
+
+func TestUsesOrderThroughAField(t *testing.T) {
+	r := newRig()
+	r.o.setup(3)
+}
+
+func TestHandsOrderToAnotherPackage(t *testing.T) { elsewhere.Use(&order{}) }
+
+func TestPassesTheMethodValue(t *testing.T) { elsewhere.Run(newOrder().behavior) }
+
+func TestHasABehaviorVariable(t *testing.T) {
+	behavior := func(int) int { return 0 }
+	_ = behavior(1)
+}
+
+func TestCallsOrderThroughAnInterface(t *testing.T) { _ = nameOf(&order{}) }
+
+func TestCallsOtherSetup(t *testing.T) {
+	var x other
+	x.setup()
+	_ = x.Name()
+}
+
+func TestHasLocalIdentifiers(t *testing.T) {
+	setup := func() {}
+	setup()
+	count := 1
+	_ = count
+}
+
+func TestCallsCountFunction(t *testing.T) { _ = count() }
+
+func TestReadsAField(t *testing.T) {
+	s := struct{ setup, count, name int }{}
+	_ = s.setup + s.count + s.name
+}
+
+func TestTweaksThroughTheTarget(t *testing.T) {
+	o := &order{}
+	o.tweak()
+}
+
+func TestUnrelated(t *testing.T) {}
+`
+
+func TestAnalyzeDirResolvesMethodsByReceiver(t *testing.T) {
+	change := func(from, to string) map[string]srcFile {
+		if !strings.Contains(methodFixture, from) {
+			t.Fatalf("fixture has no %q", from)
+		}
+		return files("methods_test.go", strings.Replace(methodFixture, from, to, 1))
+	}
+	cases := []struct {
+		name string
+		new  map[string]srcFile
+		want map[string]string // test -> the helper it reaches
+	}{
+		{
+			name: "a changed unexported method reaches the tests that call it on its type, and no other that mentions the name",
+			new:  change("func (o *order) setup(h int) { o.n = h }", "func (o *order) setup(h int) { o.n = h + 1 }"),
+			want: map[string]string{
+				"TestUsesOrderThroughAConstructor": "order.setup",
+				"TestUsesOrderDirectly":            "order.setup",
+				"TestUsesOrderThroughAField":       "order.setup",
+			},
+		},
+		{
+			name: "a changed method reaches a test that passes it as a method value, not one with a variable of its name",
+			new:  change("func (o *order) behavior(in int) int { return in }", "func (o *order) behavior(in int) int { return in + 1 }"),
+			want: map[string]string{"TestPassesTheMethodValue": "order.behavior"},
+		},
+		{
+			name: "a new method named like a function and a local variable reaches only the tests that call it on its type",
+			new:  change("func (o *order) count() int { return o.n }", "func (o *order) count() int { return o.n + 1 }"),
+			want: map[string]string{"TestUsesOrderThroughAConstructor": "order.count"},
+		},
+		{
+			name: "a changed unexported method is reached through an interface that selects its name",
+			new:  change(`func (o *order) name() string { return "order" }`, `func (o *order) name() string { return "ORDER" }`),
+			want: map[string]string{"TestCallsOrderThroughAnInterface": "order.name"},
+		},
+		{
+			name: "a changed exported method reaches the tests that reach its type, even with no selector: another package may call it",
+			new:  change(`func (o *order) Name() string { return "order" }`, `func (o *order) Name() string { return "ORDER" }`),
+			want: map[string]string{
+				"TestUsesOrderThroughAConstructor": "order.Name",
+				"TestUsesOrderDirectly":            "order.Name",
+				"TestUsesOrderThroughAField":       "order.Name",
+				"TestHandsOrderToAnotherPackage":   "order.Name",
+				"TestPassesTheMethodValue":         "order.Name",
+				"TestCallsOrderThroughAnInterface": "order.Name",
+				"TestTweaksThroughTheTarget":       "order.Name",
+			},
+		},
+		{
+			name: "a method declared on an alias is resolved by its selector alone",
+			new:  change("func (a *alias) tweak() {}", "func (a *alias) tweak() { _ = 1 }"),
+			want: map[string]string{"TestTweaksThroughTheTarget": "alias.tweak"},
+		},
+		{
+			name: "a changed function keeps its name key: every mention of the name reaches it",
+			new:  change("func count() int { return 0 }", "func count() int { return 1 }"),
+			want: map[string]string{
+				"TestUsesOrderThroughAConstructor": "count",
+				"TestHasLocalIdentifiers":          "count",
+				"TestCallsCountFunction":           "count",
+				"TestReadsAField":                  "count",
+			},
+		},
+		{
+			name: "a deleted method still maps through the tests that select its name on a type they mention",
+			new:  change("func (o *order) setup(h int) { o.n = h }\n", ""),
+			want: map[string]string{
+				"TestUsesOrderThroughAConstructor": "order.setup",
+				"TestUsesOrderDirectly":            "order.setup",
+				"TestUsesOrderThroughAField":       "order.setup",
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			old := files("methods_test.go", methodFixture)
+			ch := analyzeDir(cfgUnit, "internal/engine", old, c.new, all(c.new))
+			got := map[string]string{}
+			for test, why := range ch.Tests {
+				got[test] = strings.TrimPrefix(why, "reaches changed ")
+				if !ch.Reached[test] {
+					t.Errorf("%s: selected as changed, not as reached (%s)", test, why)
+				}
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("tests = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A method promoted through an embedded field, and a method of a generic
+// type, are reached through the type the test mentions.
+func TestAnalyzeDirReachesPromotedAndGenericMethods(t *testing.T) {
+	const src = `package engine
+
+import "testing"
+
+type base struct{}
+
+func (base) setup() {}
+
+type wrapper struct{ base }
+
+func newWrapper() wrapper { return wrapper{} }
+
+type box[T any] struct{ v T }
+
+func (b *box[T]) put(v T) { b.v = v }
+
+func newBox() *box[int] { return &box[int]{} }
+
+func setup() {}
+
+func TestCallsThePromotedMethod(t *testing.T) { newWrapper().setup() }
+
+func TestCallsTheGenericMethod(t *testing.T) { newBox().put(1) }
+
+func TestCallsAFunctionOfThatName(t *testing.T) { setup() }
+`
+	for _, c := range []struct {
+		name     string
+		from, to string
+		want     map[string]string
+	}{
+		{"a promoted method", "func (base) setup() {}", "func (base) setup() { _ = 1 }",
+			map[string]string{"TestCallsThePromotedMethod": "base.setup"}},
+		{"a method of a generic type", "func (b *box[T]) put(v T) { b.v = v }", "func (b *box[T]) put(v T) { b.v = v; _ = 1 }",
+			map[string]string{"TestCallsTheGenericMethod": "box.put"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			updated := strings.Replace(src, c.from, c.to, 1)
+			if updated == src {
+				t.Fatalf("fixture has no %q", c.from)
+			}
+			ch := analyzeDir(cfgUnit, "internal/engine", files("promoted_test.go", src), files("promoted_test.go", updated), all(files("promoted_test.go", updated)))
+			got := map[string]string{}
+			for name, why := range ch.Tests {
+				got[name] = strings.TrimPrefix(why, "reaches changed ")
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("tests = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A package of many tests that each mention a name some method shares: the
+// change to the method selects the tests that call it on its type, not the
+// package.
+func TestAnalyzeDirMethodNamesDoNotSelectThePackage(t *testing.T) {
+	var src strings.Builder
+	src.WriteString("package engine\n\nimport \"testing\"\n\ntype order struct{}\n\nfunc (order) setup() {}\n\n")
+	src.WriteString("type other struct{}\n\nfunc (other) setup() {}\n\nfunc setup() {}\n\n")
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&src, "func TestOther%d(t *testing.T) { var o other; o.setup(); setup() }\n\n", i)
+	}
+	src.WriteString("func TestOrder(t *testing.T) { var o order; o.setup() }\n")
+	oldSrc := src.String()
+	newSrc := strings.Replace(oldSrc, "func (order) setup() {}", "func (order) setup() { _ = 1 }", 1)
+	ch := analyzeDir(cfgUnit, "internal/engine", files("many_test.go", oldSrc), files("many_test.go", newSrc), []srcFile{{Name: "many_test.go", Content: []byte(newSrc)}})
+	if got := keys(ch.Tests); !reflect.DeepEqual(got, []string{"TestOrder"}) {
+		t.Errorf("%d tests selected, want only TestOrder: %v", len(got), got[:min(len(got), 5)])
+	}
+}
+
+func TestTestsReferencingResolvesMethodsByReceiver(t *testing.T) {
+	fs := []srcFile{{Name: "x_integration_test.go", Content: []byte(`//go:build integration
+
+package main
+
+import "testing"
+
+type signer struct{}
+
+func (signer) run() string { return "./test/tools/cosign-sign" }
+
+type other struct{}
+
+func (other) run() {}
+
+func run() {}
+
+func TestIntegration_RunsTheSigner(t *testing.T) { var s signer; _ = s.run() }
+
+func TestIntegration_RunsAnother(t *testing.T) { var o other; o.run(); run() }
+`)}}
+	got := testsReferencing("cmd/orkctl", fs, func(s string) bool { return strings.Contains(s, "test/tools/cosign-sign") })
+	if want := []string{"TestIntegration_RunsTheSigner"}; !reflect.DeepEqual(keys(got), want) {
+		t.Errorf("got %v, want %v", keys(got), want)
+	}
+}
+
+// A string literal anywhere in a const or var group makes every name the
+// group declares reference what it names: a group is read as one declaration
+// for what a test reads, which can only over-select.
+func TestTestsReferencingReadsAGroupAsOneDeclaration(t *testing.T) {
+	fs := []srcFile{{Name: "x_test.go", Content: []byte(`package main
+
+import "testing"
+
+const (
+	signer = "./test/tools/cosign-sign"
+	other  = "./cmd/ork"
+)
+
+func TestReadsSigner(t *testing.T) { _ = signer }
+
+func TestReadsOther(t *testing.T) { _ = other }
+
+func TestReadsNeither(t *testing.T) {}
+`)}}
+	got := testsReferencing("cmd/orkctl", fs, func(s string) bool { return strings.Contains(s, "test/tools/cosign-sign") })
+	if want := []string{"TestReadsOther", "TestReadsSigner"}; !reflect.DeepEqual(keys(got), want) {
+		t.Errorf("got %v, want %v", keys(got), want)
+	}
+}
+
+// A method a _test.go file adds to a production type (an export_test.go hook)
+// is called by test code only, and every call selects its name: the mention
+// of its type says nothing about it, exported or not, and a value of the type
+// may come from a package this one cannot see into. Another package cannot
+// call it through an interface, because the method exists only in the test
+// build. An exported method the production file declares stays reached by its
+// type alone, since a test may hand the value to another package.
+func TestAnalyzeDirTestFileMethodOfAProductionTypeNeedsASelector(t *testing.T) {
+	const prod = `package engine
+
+type Service struct{ store store }
+
+type store interface{ get() string }
+
+func NewService() *Service { return &Service{} }
+
+func (s *Service) Run() string { return s.store.get() }
+`
+	const test = `package engine
+
+import (
+	"testing"
+
+	"example.com/elsewhere"
+)
+
+func (s *Service) HookForTest() int { return 1 }
+
+func (s *Service) hook() int { return 1 }
+
+type fakeStore struct{}
+
+func (fakeStore) get() string { return "" }
+
+func TestCallsTheHook(t *testing.T) { _ = NewService().HookForTest() }
+
+func TestCallsTheUnexportedHook(t *testing.T) { _ = NewService().hook() }
+
+func TestCallsTheHookOnAForeignValue(t *testing.T) { _ = elsewhere.Make().HookForTest() }
+
+func TestOnlyBuildsAService(t *testing.T) { _ = NewService() }
+
+func TestHandsTheServiceToAnotherPackage(t *testing.T) { elsewhere.Use(&Service{store: fakeStore{}}) }
+
+func TestUnrelated(t *testing.T) {}
+`
+	for _, c := range []struct {
+		name     string
+		from, to string
+		want     map[string]string
+	}{
+		{
+			name: "an exported hook, whether or not the test names its type",
+			from: "func (s *Service) HookForTest() int { return 1 }", to: "func (s *Service) HookForTest() int { return 2 }",
+			want: map[string]string{
+				"TestCallsTheHook":                "Service.HookForTest",
+				"TestCallsTheHookOnAForeignValue": "Service.HookForTest",
+			},
+		},
+		{
+			name: "a deleted exported hook",
+			from: "func (s *Service) HookForTest() int { return 1 }\n", to: "",
+			want: map[string]string{
+				"TestCallsTheHook":                "Service.HookForTest",
+				"TestCallsTheHookOnAForeignValue": "Service.HookForTest",
+			},
+		},
+		{
+			name: "an unexported hook",
+			from: "func (s *Service) hook() int { return 1 }", to: "func (s *Service) hook() int { return 2 }",
+			want: map[string]string{"TestCallsTheUnexportedHook": "Service.hook"},
+		},
+		{
+			name: "a fake the production type calls through its interface",
+			from: `func (fakeStore) get() string { return "" }`, to: `func (fakeStore) get() string { return "x" }`,
+			want: map[string]string{"TestHandsTheServiceToAnotherPackage": "fakeStore.get"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			updated := strings.Replace(test, c.from, c.to, 1)
+			if updated == test {
+				t.Fatalf("fixture has no %q", c.from)
+			}
+			prodFile := srcFile{Name: "service.go", Content: []byte(prod)}
+			ch := analyzeDir(cfgUnit, "internal/engine", files("export_test.go", test), files("export_test.go", updated),
+				all(files("export_test.go", updated), prodFile))
+			got := map[string]string{}
+			for name, why := range ch.Tests {
+				got[name] = strings.TrimPrefix(why, "reaches changed ")
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("tests = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A func declared without a body (an assembly or linkname stub) has nothing
+// to mention but its signature.
+func TestParseGoReadsAFuncWithoutABody(t *testing.T) {
+	pf := parseGo(srcFile{Name: "stub.go", Content: []byte("package p\n\nfunc stub(x widget) gadget\n\nfunc (w *widget) stub()\n")})
+	if !pf.OK || len(pf.Decls) != 2 {
+		t.Fatalf("parsed = %+v", pf)
+	}
+	if d := pf.Decls[0]; d.Node != "stub" || !d.Refs["widget"] || !d.Refs["gadget"] || d.Refs["stub"] {
+		t.Errorf("func decl = %+v", d)
+	}
+	if d := pf.Decls[1]; d.Node != "widget.stub" || d.Recv != "widget" || !d.Refs["widget"] || d.Refs["stub"] {
+		t.Errorf("method decl = %+v", d)
 	}
 }

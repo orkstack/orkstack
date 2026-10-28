@@ -298,6 +298,25 @@ The selection is:
   selection's `slow_omitted` and the README says "left out: on the slow list";
   they are never called deferred, a word that belongs to the nightly tier.
 
+A test reaches a changed helper through the package's top-level declarations
+in the build configuration the test compiles in, by syntax alone (no type
+checking), and over-selects where it cannot tell. A function, variable,
+constant or type is matched by its identifier: any mention of the name, a
+selector's included, reaches it. A method is matched by its receiver type and
+its name, never by its name alone: a function, a local variable, a field or
+another type's method called `m` is not a reference to `T.m`. A changed `T.m`
+is reached by a test whose reach mentions `T` and selects `m` (`x.m`, `T.m`,
+`(*T).m`); when `m` is exported, by a test whose reach mentions `T` at all,
+because another package's code can call an exported method through an
+interface the type satisfies and no declaration of the package names that
+call; and, when `T` is an alias or is not declared in the package's files of
+that configuration, by the selector alone. A method a `_test.go` file adds to
+a type a non-test file declares (an `export_test.go` hook) is reached by its
+selector alone, whether or not the test names the type: it exists in the test
+build only, so production code does not call it through an interface, and the
+test's value of the type may come from another package. A deleted method is
+matched the same way.
+
 The slow list also holds back evidence that is there only because it reaches
 a changed helper, type or variable: such a test's own source did not change,
 so the merge proof runs it. Its `slow_omitted` entry carries `reached`, the
