@@ -13,8 +13,25 @@
 # A skip, a missing outcome, any other assertion of the same test (another
 # locator's visibility included), and the same miss on a local proof all still
 # fail the proof. A row counts only once the base carries it identically: a
-# row a change adds, or a bound it loosens, excuses nothing. A test row
-# (assertion "-") is recorded on a miss and never excused.
+# row a change adds, or a bound it loosens, excuses nothing.
+#
+# A Go test row names a package and one top-level test, and excuses exactly one
+# wall-clock check of it, and only on a CI integration part whose runner has
+# fewer CPUs than the row's reference. Its assertion is
+#   timing ID                    the check the test reports under ID through
+#                                internal/testsupport/proof (Timing.Check)
+# The merger excuses it when it derives all of these from the part itself: the
+# ledger shows the test failed, with no crash and no failing subtest, and no
+# other test of its job did not pass; the test left its own timing record
+# (artifacts/timing/<test>.json) saying it failed nothing but its timing
+# checks; the failure output the ledger kept ends in exactly the helper's
+# timing-miss lines, one for each missed check of the record; and every missed
+# check is declared by a row, is over its bound, and carries the bound the
+# row declares. A test that failed with no timing record has no sample to
+# excuse and fails the proof, and so does every miss on a local proof. Counts,
+# bytes, history shares, deadlock-detector trips and correctness assertions
+# never get a row. A Go row whose assertion is "-" is recorded on a miss and
+# never excused.
 #
 # Columns are TAB-separated: kind, name, member, assertion, bound (seconds),
 # reference CPUs, note. kind=ui names a Playwright spec path under ui/ and the
@@ -23,3 +40,7 @@
 ui	e2e/run-page-ceiling.spec.ts	the run page at the gated task size is interactive within 5 s, live and finished	lessThan 5000	5	16	the run page at the gated task size is interactive within 5 s
 ui	e2e/run-page-ceiling.spec.ts	the run page at the gated task size is interactive within 5 s, live and finished	visibleWithin 60000 getByTestId('run-status')	5	16	on a 2-vCPU runner the run page's header never drew within the spec's 60 s wait (validation run 39345074409)
 ui	e2e/each-fan-out-ceiling.spec.ts	the run page and the item list at the gated size are interactive within 5 s	lessThan 5000	5	16	the run page and the item list at the gated size are interactive within 5 s
+ui	e2e/run-page-reduced-ceiling.spec.ts	the run page at a reduced task ceiling is interactive within 5 s, live and finished	lessThan 5000	5	16	the run page at the reduced ceiling is interactive within 5 s (run 40571748126 measured 9,485 ms on 4 vCPUs)
+test	github.com/orkstack/orkstack/internal/engine	TestIntegration_AFanOutAtAReducedItemCeilingMeetsItsThresholds	timing getrun-live-p95	2	16	the live GetRun p95 over ten reads is within 2 s (soakGetRunP95Max; run 40593609129 measured 2.014 s on 4 vCPUs)
+test	github.com/orkstack/orkstack/internal/engine	TestIntegration_AnItemCeilingRunCarriesOnAtAReducedCeiling	timing getrun-live-p95	2	16	the live GetRun p95 over ten reads is within 2 s (soakGetRunP95Max; run 40593609129 measured 2.014 s on 4 vCPUs)
+test	github.com/orkstack/orkstack/internal/engine	TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling	timing getrun-live-p95	2	16	the live GetRun p95 over ten reads is within 2 s (soakGetRunP95Max; run 40593609129 measured 2.014 s on 4 vCPUs)

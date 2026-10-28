@@ -895,6 +895,19 @@ recorded as it ran. The deferred tests and specs run in the nightly tier and
 in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
 
+The merge gate's absolute wall-clock budgets — the soaks' `GetRun` p95, the run
+page's 5 s — were calibrated on the 16-CPU reference host and are enforced
+there: in every local full proof, the local nightly and the pre-release gate.
+On a CI runner with fewer CPUs a miss of one is a recorded known gap, never a
+pass and never a widened bound, and only under a row of
+`scripts/proof-host-speed.tsv` that the user approved and the base carries
+identically; the merger derives each excusal itself from the part's own
+records (docs/PROOFS.md §12). A count, a size, a history share, a
+deadlock-detector trip, a correctness assertion, or a failure beside the
+timing miss gets no row and fails the proof wherever it runs. The soaks'
+live `GetRun` also keeps a bound on what it reads, a count that holds on every
+host, so a structural slowdown stays visible where its budget is excused.
+
 Until the nightly workflow runs on GitHub, `make proof-nightly` runs on
 `main`'s tip after every merge that moves `main`, and passes before the next
 merge starts and before every tag.
