@@ -200,6 +200,10 @@ type logChunkSink struct {
 	// Tests replace it with a hold that moves their clock, so they count and
 	// size the holds instead of timing a timer; nothing else does.
 	waitPace func(wait time.Duration) bool
+	// sleep spaces a chunk's upload tries by logChunkUploadBackoff. Nil means
+	// time.Sleep. Tests replace it with a recorder, so they count the
+	// back-offs a write pays instead of timing them; nothing else does.
+	sleep func(d time.Duration)
 
 	mu sync.Mutex
 	// buf holds bytes not yet uploaded. It never exceeds chunkCap plus one
@@ -423,6 +427,16 @@ func (s *logChunkSink) holdForPace(wait time.Duration) bool {
 	return s.waitForPace(wait)
 }
 
+// backoff is how the sink waits between two tries of one chunk's upload:
+// time.Sleep, unless a test has replaced the wait.
+func (s *logChunkSink) backoff() {
+	if s.sleep != nil {
+		s.sleep(logChunkUploadBackoff)
+		return
+	}
+	time.Sleep(logChunkUploadBackoff)
+}
+
 // waitForPace blocks a producer at the ceiling without holding s.mu. A
 // cancelled activity does not need to keep accepting output; ExecuteTask's
 // deferred Close still performs the bounded final upload.
@@ -583,7 +597,7 @@ func (s *logChunkSink) putLocked(data []byte, truncated bool) {
 	var err error
 	for try := 0; try < logChunkUploadTries; try++ {
 		if try > 0 {
-			time.Sleep(logChunkUploadBackoff)
+			s.backoff()
 		}
 		if err = s.store.PutLogChunk(ctx, chunk); err == nil {
 			s.seq = chunk.Seq

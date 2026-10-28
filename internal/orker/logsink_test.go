@@ -503,6 +503,16 @@ func TestLogChunkSink_AFailingStoreBlocksOnceThenDrops(t *testing.T) {
 	sink.now = clock.now
 	sink.opts.FlushInterval = time.Second
 
+	// What blocks a writer is counted, not timed: the back-off between a
+	// chunk's upload tries (sleep) and a hold for the pace (waitPace) are the
+	// two ways the sink stalls its caller, and both are seams that record the
+	// wait instead of waiting, so a host's load cannot move the result. A wait
+	// that bypassed both seams would not be seen here: the sink waits only
+	// through them (backoff, holdForPace), and a new wait belongs behind one.
+	var backoffs, holds []time.Duration
+	sink.sleep = func(d time.Duration) { backoffs = append(backoffs, d) }
+	sink.waitPace = func(d time.Duration) bool { holds = append(holds, d); return true }
+
 	sink.Write("lost to the outage") // the first chunk: all its tries
 	mu.Lock()
 	afterFirst := tries
@@ -510,18 +520,36 @@ func TestLogChunkSink_AFailingStoreBlocksOnceThenDrops(t *testing.T) {
 	if afterFirst != logChunkUploadTries {
 		t.Fatalf("the first failing chunk was tried %d times; want %d", afterFirst, logChunkUploadTries)
 	}
+	// It blocks once: the back-off between its tries, and nothing else.
+	if len(backoffs) != logChunkUploadTries-1 {
+		t.Fatalf("the first failing chunk backed off %d times (%v); want %d, one between each pair of tries",
+			len(backoffs), backoffs, logChunkUploadTries-1)
+	}
+	for i, d := range backoffs {
+		if d != logChunkUploadBackoff {
+			t.Fatalf("back-off %d lasted %s; want %s", i, d, logChunkUploadBackoff)
+		}
+	}
 	for i := 0; i < 4; i++ { // inside the 5 s cool-down: dropped, not tried
 		clock.advance(time.Second)
 		sink.Write(fmt.Sprintf("during the cool-down %d", i))
-		// A write that did not block did not try the store: a try that fails
-		// costs the retry loop's back-off, and the store is not asked at all.
-		// That is counted after every write, not timed.
+		// The producer does not stall on a store that just failed: the write
+		// neither asks it (a try that fails costs the back-off above), nor
+		// backs off, nor is held for the pace. Each is counted after every
+		// write.
 		mu.Lock()
 		if tries != afterFirst {
 			t.Fatalf("write %d during the cool-down tried the store %d more times",
 				i, tries-afterFirst)
 		}
 		mu.Unlock()
+		if len(backoffs) != logChunkUploadTries-1 {
+			t.Fatalf("write %d during the cool-down backed off (%v); it must be dropped without waiting",
+				i, backoffs[logChunkUploadTries-1:])
+		}
+		if len(holds) != 0 {
+			t.Fatalf("write %d during the cool-down was held for the pace (%v)", i, holds)
+		}
 	}
 	mu.Lock()
 	failing = false
