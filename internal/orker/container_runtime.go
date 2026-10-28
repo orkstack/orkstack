@@ -211,6 +211,13 @@ var ErrNotBindable = errors.New("path is not bind-mountable by the container run
 // work root can be bound.
 var ErrProbeImageUnavailable = errors.New("the bind probe image is unavailable")
 
+// ErrProbeTimedOut reports that the container daemon did not run the boot-time
+// bind probe's container within the probe's budget, on every attempt it was
+// given. It is distinct from ErrNotBindable: a daemon that is slow under load
+// says nothing about whether the work root can be bound, which only a probe
+// container that ran and exited non-zero can say.
+var ErrProbeTimedOut = errors.New("the bind probe timed out")
+
 // ReapIncompleteError is Reap's report that it removed every orphan it could
 // and some it could not. Boot logs each failure and proceeds: one container
 // stuck in removal must not stop an Orker from starting.

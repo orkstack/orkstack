@@ -110,6 +110,7 @@ orker:
   docker:
     # bin: ""  # orker; docker on PATH
     pull_timeout: 5m  # orker
+    bind_probe_timeout: 2m  # orker
 
 telemetry:
   log_format: text

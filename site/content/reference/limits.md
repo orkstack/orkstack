@@ -66,6 +66,7 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 | Processes per container | 512 | `ORK_ORKER_PIDS_LIMIT` |
 | `/tmp` inside a container | 64 MiB | `ORK_ORKER_TMPFS_BYTES` |
 | Image pull | 5 minutes | `ORK_DOCKER_PULL_TIMEOUT` |
+| Orker start-up check of the work directory | 2 minutes for the daemon to start its test container, tried twice | `ORK_DOCKER_BIND_PROBE_TIMEOUT` |
 | Network modes | `default` and `none` | Fixed |
 
 ## Not built yet

@@ -28,6 +28,7 @@ var allReasonCodes = []string{
 	ReasonNetworkModeRefused, ReasonEachItemUnavailable,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
+	ReasonBindProbeTimedOut,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake
@@ -90,6 +91,10 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"no signature verifies with the pinned key, and none will"},
 		{ReasonImageSignatureUnavailable, CategoryInfrastructureError, true,
 			"the registry could not be asked; that is IMAGE_PULL_FAILED's situation, never a verdict"},
+		{ReasonBindProbeTimedOut, CategoryInfrastructureError, true,
+			"a slow daemon says nothing about the work root; the next boot may find it fast"},
+		{ReasonWorkdirNotBindable, CategoryInfrastructureError, false,
+			"the probe container ran and failed to bind: a host fact a restart does not change"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.reason, func(t *testing.T) {

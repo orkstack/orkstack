@@ -19,7 +19,10 @@ import (
 //
 // Flags (files under dir): present (the image is local), pullfail, oom,
 // exitcode (Wait's status), created (`inspect {{.State.Status}}` answers
-// "created" while it exists), rmfail-<id>, psfail, versionfail, runfail.
+// "created" while it exists), rmfail-<id>, psfail, versionfail, runfail,
+// slowruns (its content N: the first N `run` invocations hang for 30 s, as a
+// daemon that is slow to start a container does). `run` also counts itself
+// into the runs file and, once counted, touches runstarted.
 type countingDocker struct {
 	t   *testing.T
 	dir string
@@ -60,7 +63,11 @@ case "$1" in
     echo 27.0.1 ;;
   info) echo "[name=seccomp,profile=builtin]" ;;
   run)
+    n=0; if [ -e "$S/runs" ]; then n=$(cat "$S/runs"); fi
+    n=$((n+1)); echo "$n" > "$S/runs"
+    touch "$S/runstarted"
     if [ -e "$S/runfail" ]; then echo "docker: Error response from daemon: bind source path does not exist" >&2; exit 125; fi
+    if [ -e "$S/slowruns" ] && [ "$n" -le "$(cat "$S/slowruns")" ]; then exec sleep 30; fi
     exit 0 ;;
   *) exit 1 ;;
 esac

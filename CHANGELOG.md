@@ -32,6 +32,22 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The Orker's boot check of its work directory no longer mistakes a slow
+  container daemon for an unbindable directory. The check runs a container,
+  and it ran under the 30-second timeout meant for bookkeeping commands: a
+  daemon under load took 32 seconds to start a container that exits at once,
+  the check was killed, and the Orker refused to start with
+  `WORKDIR_NOT_BINDABLE` ("docker exited -1"). Several proofs failed that way,
+  the last the local proof of `pin-close-full` (job `orkctl-171`). The check
+  now has a timeout of its own, `orker.docker.bind_probe_timeout`
+  (`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes per attempt), is tried once more
+  when an attempt overruns it, and removes the container of an attempt it
+  gave up on. A daemon that still has not started the container refuses boot
+  as the new reason `BIND_PROBE_TIMED_OUT`, whose message says the daemon was
+  slow and names the setting. `WORKDIR_NOT_BINDABLE` now means only that the
+  probe container ran and exited non-zero, or that no probe directory could
+  be made, and an Orker stopped during the check reports the interruption
+  rather than either reason.
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
   pid, rather than by the container's Orker id. Tests that name their own

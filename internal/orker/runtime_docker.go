@@ -31,6 +31,10 @@ const DockerBinVar = "ORK_DOCKER_BIN"
 // PullTimeoutVar overrides how long an image pull may take.
 const PullTimeoutVar = "ORK_DOCKER_PULL_TIMEOUT"
 
+// BindProbeTimeoutVar overrides how long the boot bind probe may wait for the
+// daemon to run its container, per attempt.
+const BindProbeTimeoutVar = "ORK_DOCKER_BIND_PROBE_TIMEOUT"
+
 const (
 	// controlTimeout bounds the short bookkeeping commands — inspect, kill,
 	// remove. They must NOT inherit the run's cancelled context or its
@@ -41,6 +45,12 @@ const (
 	// internal/config's Schema can bind ORK_DOCKER_PULL_TIMEOUT's
 	// documented default to the same constant pullTimeout falls back to.
 	DefaultPullTimeout = 5 * time.Minute
+	// DefaultBindProbeTimeout bounds one attempt of the boot bind probe's
+	// `docker run`. It is deliberately longer than controlTimeout: that is a
+	// bound for bookkeeping, and a daemon under load has needed more than
+	// 30 s to start even a container that exits at once (the shim connected
+	// at 32 s). Exported for the same reason as DefaultPullTimeout.
+	DefaultBindProbeTimeout = 2 * time.Minute
 	// DefaultDockerBin is the CLI name resolved on PATH when neither Bin
 	// nor ORK_DOCKER_BIN names one. Exported so internal/config's Schema
 	// can bind ORK_DOCKER_BIN's documented default to the same constant
@@ -60,6 +70,9 @@ type DockerRuntime struct {
 	// PullTimeout bounds one pull. Zero reads ORK_DOCKER_PULL_TIMEOUT, then
 	// DefaultPullTimeout.
 	PullTimeout time.Duration
+	// BindProbeTimeout bounds one attempt of the boot bind probe's container.
+	// Zero reads ORK_DOCKER_BIND_PROBE_TIMEOUT, then DefaultBindProbeTimeout.
+	BindProbeTimeout time.Duration
 
 	// mu guards attaches and described.
 	mu sync.Mutex
@@ -104,9 +117,25 @@ func (d *DockerRuntime) control(ctx context.Context, args ...string) (int, strin
 }
 
 func (d *DockerRuntime) controlWithin(ctx context.Context, within time.Duration, args ...string) (int, string, error) {
+	code, out, _, err := d.runWithin(ctx, within, args...)
+	return code, out, err
+}
+
+// runWithin is controlWithin that also reports whether the command overran
+// its own budget: `within` elapsed while ctx was still live, and the CLI was
+// killed for it.
+//
+// controlWithin cannot say so. A CLI killed by its deadline is an exit error
+// with status -1 — the same "data" as any non-zero exit — so a caller that
+// must tell "the daemon was too slow to answer" from "the command failed"
+// cannot recover the difference from the code. A command stopped because ctx
+// itself ended is not an overrun: that is its caller's own stop.
+func (d *DockerRuntime) runWithin(
+	ctx context.Context, within time.Duration, args ...string,
+) (code int, out string, overran bool, err error) {
 	bin, err := d.bin()
 	if err != nil {
-		return 0, "", err
+		return 0, "", false, err
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, within)
 	defer cancel()
@@ -116,15 +145,17 @@ func (d *DockerRuntime) controlWithin(ctx context.Context, within time.Duration,
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
 	cmd.WaitDelay = 100 * time.Millisecond
-	switch err := cmd.Run(); {
-	case err == nil:
-		return 0, combined.String(), nil
-	case isExitErr(err):
-		return exitCodeOf(err), combined.String(), nil
+	runErr := cmd.Run()
+	overran = runErr != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+	switch {
+	case runErr == nil:
+		return 0, combined.String(), false, nil
+	case isExitErr(runErr):
+		return exitCodeOf(runErr), combined.String(), overran, nil
 	case cmdCtx.Err() != nil:
-		return 0, combined.String(), fmt.Errorf("docker %s: %w", args[0], cmdCtx.Err())
+		return 0, combined.String(), overran, fmt.Errorf("docker %s: %w", args[0], cmdCtx.Err())
 	default:
-		return 0, combined.String(), fmt.Errorf("docker %s: %w", args[0], err)
+		return 0, combined.String(), false, fmt.Errorf("docker %s: %w", args[0], runErr)
 	}
 }
 
@@ -253,6 +284,22 @@ func (d *DockerRuntime) pullTimeout() time.Duration {
 		}
 	}
 	return DefaultPullTimeout
+}
+
+// bindProbeTimeout is the budget of one attempt of the boot bind probe: the
+// field, then ORK_DOCKER_BIND_PROBE_TIMEOUT, then DefaultBindProbeTimeout. A
+// value that is not a positive duration is ignored, as pullTimeout ignores it,
+// rather than read as no budget.
+func (d *DockerRuntime) bindProbeTimeout() time.Duration {
+	if d.BindProbeTimeout > 0 {
+		return d.BindProbeTimeout
+	}
+	if raw := strings.TrimSpace(os.Getenv(BindProbeTimeoutVar)); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return DefaultBindProbeTimeout
 }
 
 // Create builds the container. Every §9.2 constraint is materialized here as a
@@ -798,6 +845,13 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 // VM-hosted daemon $HOME is shared and /var/folders is not, so an Orker
 // pointed at the wrong workdir root fails every task later with an error that
 // names the container and not the cause.
+//
+// The probe has three distinct ways to fail, and each is reported as its own
+// thing: the root cannot be bound (ErrNotBindable: the probe container ran
+// and exited non-zero, or no probe directory could be made), the probe's image
+// is not available (ErrProbeImageUnavailable), and the daemon did not start
+// the probe container within the probe's budget (ErrProbeTimedOut, after one
+// retry). An Orker that is stopped meanwhile gets the context's own error.
 func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 	probe, err := os.MkdirTemp(root, "ork-bindprobe-*")
 	if err != nil {
@@ -806,8 +860,8 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 	defer func() { _ = os.RemoveAll(probe) }()
 
 	// The probe image is fetched first, under the PULL timeout rather than the
-	// 30 s control timeout `run` would give an implicit pull, and a failure to
-	// fetch it is its own error: a slow or rate-limited registry is not a work
+	// probe run's budget an implicit pull would spend, and a failure to fetch
+	// it is its own error: a slow or rate-limited registry is not a work
 	// root the daemon cannot bind, and naming it as one sends an operator to
 	// the wrong fix.
 	present, err := d.imagePresent(ctx, bindProbeImage)
@@ -826,23 +880,54 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 		}
 	}
 
-	code, out, err := d.control(ctx, "run", "--rm",
-		"--network", "none",
-		"--read-only",
-		"--cap-drop=ALL",
-		"--security-opt", "no-new-privileges",
-		"--mount", fmt.Sprintf("type=bind,source=%s,destination=/probe,readonly", probe),
-		"--entrypoint", "/bin/true",
-		bindProbeImage)
-	if err != nil {
-		return fmt.Errorf("%w: probe bind of %s: %w", ErrNotBindable, root, err)
+	// The run is the one step of the probe that waits on the daemon to create,
+	// start and tear down a container, and under load that has taken longer
+	// than the control timeout (a daemon needed 32 s to start a container
+	// that exits at once). It therefore has a budget of its own, and an
+	// attempt that overruns it is tried once more: whether the daemon is slow
+	// is a fact about the moment, and whether the root binds is not.
+	// A container that RAN and exited non-zero is the only answer that says
+	// the root cannot be bound, and it is final.
+	budget := d.bindProbeTimeout()
+	for attempt := 1; attempt <= bindProbeAttempts; attempt++ {
+		name := containerName("bindprobe")
+		code, out, overran, err := d.runWithin(ctx, budget, "run", "--rm",
+			"--name", name,
+			"--network", "none",
+			"--read-only",
+			"--cap-drop=ALL",
+			"--security-opt", "no-new-privileges",
+			"--mount", fmt.Sprintf("type=bind,source=%s,destination=/probe,readonly", probe),
+			"--entrypoint", "/bin/true",
+			bindProbeImage)
+		switch {
+		case err == nil && code == 0:
+			return nil
+		case ctx.Err() != nil:
+			// The Orker is stopping, which is neither a slow daemon nor an
+			// unbindable root; Boot reports it as the interruption it is.
+			return fmt.Errorf("probe bind of %s interrupted: %w", root, ctx.Err())
+		case overran:
+			// The killed CLI may have left its container half-made, or the
+			// daemon may still be starting it. Remove it on a context of its
+			// own so the retry does not run beside it.
+			_ = d.Remove(context.WithoutCancel(ctx), ContainerID(name))
+		case err != nil:
+			return fmt.Errorf("%w: probe bind of %s: %w", ErrNotBindable, root, err)
+		default:
+			return fmt.Errorf("%w: probe bind of %s: docker exited %d: %s",
+				ErrNotBindable, root, code, strings.TrimSpace(out))
+		}
 	}
-	if code != 0 {
-		return fmt.Errorf("%w: probe bind of %s: docker exited %d: %s",
-			ErrNotBindable, root, code, strings.TrimSpace(out))
-	}
-	return nil
+	return fmt.Errorf("%w: the container daemon did not start the probe container within %s on each of %d attempts. "+
+		"That does not show that %s cannot be bound, only that the daemon is slow or unresponsive; "+
+		"raise %s if it is only slow",
+		ErrProbeTimedOut, budget, bindProbeAttempts, root, BindProbeTimeoutVar)
 }
+
+// bindProbeAttempts is how many times the boot bind probe runs its container
+// when the daemon overruns the probe's budget: the first try and one retry.
+const bindProbeAttempts = 2
 
 // bindProbeImage is the image the boot-time bind probe runs. It is pinned to a
 // tag rather than a digest deliberately: it is Orker-local infrastructure that

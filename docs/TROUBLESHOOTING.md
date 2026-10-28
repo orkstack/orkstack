@@ -433,11 +433,12 @@ These entries apply to `make up`, which runs `scripts/stack.sh up` ([Makefile](.
 
 - `WORKDIR_NOT_BINDABLE`: see the entry above.
 - `BIND_PROBE_IMAGE_UNAVAILABLE`: the probe image `alpine:3.20` is not present, and it could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`. The message names the image, not the work root ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+- `BIND_PROBE_TIMED_OUT`: the container daemon did not start the probe container within `ORK_DOCKER_BIND_PROBE_TIMEOUT` (two minutes), on each of two attempts. The daemon is overloaded or unresponsive. The work root is not the finding, so do not change `ORK_ORKER_WORKDIR` ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 - `RESOURCE_REQUEST_REFUSED`: a resource cap that cannot be read, such as an invalid `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`.
 
 **Confirm.** `.run/orker.log` contains `orker boot checks failed:` followed by the code.
 
-**Fix.** For the probe image, run `docker pull alpine:3.20`. Correct the cap in `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`, or fix the work root. Then run `make down` and `make up`. Configuration keys are listed in ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
+**Fix.** For the probe image, run `docker pull alpine:3.20`. For a timed-out probe, check that `docker run --rm alpine:3.20 true` finishes, stop whatever is loading the daemon, and raise `ORK_DOCKER_BIND_PROBE_TIMEOUT` if the daemon is only slow. Correct the cap in `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`, or fix the work root. Then run `make down` and `make up`. Configuration keys are listed in ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 
 ### `uses: shell` fails to apply on a fresh clone
 
