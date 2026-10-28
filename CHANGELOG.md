@@ -11,7 +11,7 @@ include breaking changes, and each is marked **BREAKING**.
 ### Added
 
 - A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
-  `proofrun runner-health`): every part measures its runner for about ten
+  `proofrun runner-health`): every part measures its runner for about thirteen
   seconds before any gate — sequential write and read throughput and fsync
   latency on its work disk, single-core and all-core CPU throughput, and
   available memory — into `runner-health.json`, with the floors of its
@@ -29,6 +29,19 @@ include breaking changes, and each is marked **BREAKING**.
   that the runner was degraded. The floors are derived from the 21 parts of
   run 40411125174, a third of the least measurement or three times the
   largest latency.
+- Informational runner-health readings: besides the judged disk read, the
+  measurement takes two more disk-read bursts (after each CPU measurement)
+  and one more fsync reading, last, and records them in the metric's
+  `samples` with the offset at which each began. Seven of the eight floor
+  trips seen in 146 measured parts were the disk read, at 31 to 71 MB/s and
+  three of them within 41.0 to 41.2 MB/s, which may be a throttle plateau or
+  noise; one burst taken once cannot say. The floor is unchanged: it judges
+  only each metric's first reading, a later reading never degrades a runner,
+  and `scripts/proof-runner-floors.tsv` has no row for a later reading.
+  The readings appear in `proof.json`'s `runner_health`, in a "Runner
+  health" section of every README and in the part's `runner-health:` log
+  lines, and feed the next derivation of the floors. The measurement takes
+  about three seconds longer.
 
 ### Fixed
 
