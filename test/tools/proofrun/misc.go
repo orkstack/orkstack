@@ -145,6 +145,9 @@ var gateFilePatterns = []string{
 	"scripts/github/",
 	".github/",
 	"test/tools/proofrun/",
+	// The helper a Go test reports a wall-clock check through: the merger's
+	// excusal trusts the record it writes and the lines it prints.
+	"internal/testsupport/proof/",
 	"Makefile",
 	"ui/playwright.config.ts",
 }

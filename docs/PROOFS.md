@@ -744,7 +744,9 @@ were still 921 MB (run 40388322907).
   mode and hash, deferred entries) and `ui_plan`;
 - `quarantine` (`checked_on`, `base_sha256`) and `quarantined` entries;
 - `nightly` (hash, base commit, base hash);
-- `host_speed_failures`, `known_gaps`, `binary_digest_notes`;
+- `host_speed_failures` (an excused Go test's entry carries its `timing_record`,
+  because no part's `artifacts/` reaches the merged proof), `known_gaps`,
+  `binary_digest_notes`;
 - `lists_changed`, the gate files the change edits and the rows it adds or
   removes;
 - `setup_retries`, every fetch a part's runner needed a second attempt for
@@ -758,7 +760,10 @@ were still 921 MB (run 40388322907).
 - `pr` and `ci`.
 
 A ledger entry has `package`, `test`, `job`, `outcome`, `seconds`, an optional
-`reason`, `allowed_skip`, `quarantine` and `failures`. The outcomes are
+`reason`, `allowed_skip`, `quarantine`, `failures` and, for a test that
+failed, `failure_output` (the last 40 lines it printed, without the testing
+package's own framing, each cut at 400 bytes: what the merger reads a
+timing-only failure from, §12). The outcomes are
 `pass`, `fail`, `skip`, `none`, `deferred` and `quarantined-fail`. The words,
 defined once: **listed** is what the binary reports; **run** is asked for;
 **deferred** is a nightly-listed test the full tier did not run; **expected**
@@ -796,7 +801,15 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   (`--ui-plan`). A `build` part with no digests is ineligible.
 - **Host speed.** An excused `visibleWithin` miss must be that locator's own
   timeout with the element not found or hidden, never a strict-mode violation,
-  another error, or a test timeout.
+  another error, or a test timeout. An excused Go `timing` miss is derived
+  from the part alone (§12): the ledger entry is a plain failure of a test
+  that is the only one of its job not to pass, the test's own timing record
+  says it failed nothing else, the output the entry kept ends in exactly the
+  helper's timing-miss lines, each recorded bound equals the base row's, and
+  no miss took longer than the runner's share of the reference allows.
+  A shard's own excusal, and a failing test with no record, excuse nothing,
+  and the release tier excuses no runner-size miss at all: its gate enforces
+  the budgets on the reference class.
 - **Unit gate.** A quarantined-only unit exit is dropped only when the
   package's own output is a plain test failure.
 - **Lost runners.** The lost-runner match reads every check-run annotation of
@@ -1216,7 +1229,7 @@ listing with no bucket at all.
 | `scripts/proof-test-costs.tsv` | package, test, seconds | an unmeasured test gets the conservative default |
 | `scripts/proof-slow-tests.txt` | package, test | a slow test is left out of a feature proof's regression set, and of its evidence when it is there only by reaching a changed helper, type or variable |
 | `scripts/proof-ui-costs.tsv` | spec file, wall seconds | an unmeasured spec gets 160 s |
-| `scripts/proof-host-speed.tsv` | kind, spec or package, test title or name, assertion, bound, reference CPUs, note | a malformed row fails the merge; only a row the base carries identically excuses, and only its declared assertion's miss on a CI UI part (§12) |
+| `scripts/proof-host-speed.tsv` | kind, spec or package, test title or name, assertion, bound, reference CPUs, note | a malformed row fails the merge; only a row the base carries identically excuses, and only its declared assertion's miss on a CI UI part, or a Go test's `timing` check on a CI integration part (§12) |
 | `scripts/proof-runner-floors.tsv` | class, metric, floor, derived | a malformed row fails the merge and makes `runner-health` exit 2 (the part runs on, unjudged); a class with no row is `unfloored`; a floor only ever makes a part "not a proof of the tree" (§5) |
 
 ### 11.3 `proofrun`
@@ -1307,24 +1320,89 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   honest answer. A measurement after a failure would be confounded by what
   the failure left running, so none is taken.
 - **Runner-size known gaps.** A UI spec's 5 s wall-clock budget cannot hold on
-  a 2-vCPU runner. `scripts/proof-host-speed.tsv` names each such test by its
-  spec file and title, with the one assertion whose failure is its
-  runner-size miss, its bound and its reference CPU count. The assertion is
-  either `lessThan MS` (Playwright's `toBeLessThan` or `toBeLessThanOrEqual`
+  a 2-vCPU runner, nor the soaks' 2 s `GetRun` budget on a 4-vCPU one: both
+  were calibrated on the 16-CPU reference host and are enforced there: in
+  every local proof of any tier, and in the pre-release gate wherever it runs,
+  because the release tier excuses no runner-size miss (a CI release proof
+  needs runners as large as the reference, or `make proof-release` runs on
+  the reference host).
+  `scripts/proof-host-speed.tsv` names each such test, with the one assertion
+  whose failure is its runner-size miss, its bound and its reference CPU
+  count. A UI row, named by its spec file and title, declares either
+  `lessThan MS` (Playwright's `toBeLessThan` or `toBeLessThanOrEqual`
   with `Expected` exactly MS: the bound's own timing miss) or `visibleWithin
   MS LOCATOR` (a `toBeVisible` on exactly that locator that timed out after
-  exactly MS: the page never drew within the spec's own wait). A miss is a
+  exactly MS: the page never drew within the spec's own wait). A UI miss is a
   recorded known gap (`host_speed_failures`, `known_gaps`, the README's
   "Known gaps: runner size"), not a merge-blocking failure, only when all of
   these hold: the outcome is `failed`; the failure is exactly the row's
   assertion; the part is a CI `ui-e2e:K` shard whose runner has fewer CPUs
-  than the row's reference; and the base's copy of the table carries the same
-  row (a row a change adds, or a bound it loosens, excuses nothing). A skip, a
+  than the row's reference; the proof is not the release tier; and the base's
+  copy of the table carries the same row (a row a change adds, or a bound it
+  loosens, excuses nothing). A skip, a
   missing outcome, any other failure of the same test (another locator's
   visibility timeout included), and every miss on a local proof still fail
   the proof; the merger re-derives each excusal and never takes a shard's
   word for one. A miss is never turned into a wider local bound. Both
   class-B misses below are declared rows.
+
+  A Go test's wall-clock budget is a row of kind `test`, whose assertion is
+  `timing ID`: one check the top-level test reports under that id through
+  `internal/testsupport/proof` (`TimingBounds`, `Timing.Check`), never through
+  `t.Errorf`. A miss fails nothing where it is measured. The test's last
+  cleanup writes `timing/<test>.json` under the part's artifacts (every
+  check, its measured value and bound, and whether the test failed anything
+  that is not a timing check) and then reports each miss as one line of a
+  fixed form (`timing miss: id=… measured=…s bound=…s`), so the output of a
+  test that failed only a timing check ends with exactly those lines. The
+  merger excuses the miss, as a recorded known gap, only when all of these
+  hold: the part is a CI `integration:K` shard whose runner has fewer CPUs
+  than the row's reference and the proof is not the release tier; the base's
+  copy of the table carries the same row; the ledger shows the test as a
+  plain failure (no crash, no failing subtest) and no other test of its job
+  did not pass; the test's own record says it failed nothing but its timing
+  checks; the output the ledger entry kept (its last 40 lines, without the
+  testing package's framing) holds, from the first timing-miss line to the
+  end, nothing but the record's misses, one line each and in order; and every
+  missed check is declared by a row, is over its bound, was bounded at the
+  row's bound, and took no longer than the bound times the reference's CPUs
+  over the runner's (a runner with a k-th of the reference's CPUs may take k
+  times as long, no more: 8 s for the 2 s `GetRun` budget on 4 CPUs; a UI row
+  has no such ceiling). A test that failed with no record has no sample to
+  excuse and fails the proof; so does every miss on a local proof, on a
+  runner with as many CPUs as the reference, beyond that ceiling, and by any
+  check no row declares. The shard's gate is excused only when the excused
+  miss is the part's only defect. A row with the assertion `-` is recorded on
+  a miss and never excused. Counts, bytes, history shares, deadlock-detector
+  trips and correctness assertions get no row.
+
+  The rows are `getrun-live-p95` of the three reduced-ceiling soak tests
+  (`TestIntegration_AFanOutAtAReducedItemCeilingMeetsItsThresholds`,
+  `TestIntegration_AnItemCeilingRunCarriesOnAtAReducedCeiling` and
+  `TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling`), 2 s on 16
+  CPUs, and the run page at the reduced ceiling
+  (`e2e/run-page-reduced-ceiling.spec.ts`), 5 s on 16 CPUs; the user approved
+  them on 2026-10-27. The archive p95, `Events(0)` and replay checks of the
+  same tests go through the same helper and have no row: none of them missed
+  in the CI full proofs and nightlies read when the rows were chosen (runs
+  39337036208 to 40593609129), so a miss of one fails the proof, and a row
+  for one is proposed when one does.
+
+  What stays visible where the live `GetRun` budget is excused is a bound on
+  what that read reads, which holds on every host: the soaks' live `GetRun`s
+  go through a counting reader, and each must read at least one history
+  event, at most 110% of the events and at most 110% of the bytes the
+  generation it read holds (the history is scanned once, in events and in
+  bytes; the margin is for the instant between the read and the count), and
+  at most 4 saved-state objects (a read takes 1 or 2). They fail the test on
+  every runner, being counts and sizes, and were calibrated on 160 reads of
+  the three tests on the reference host, the bytes on the last 40
+  (`internal/engine/getrun_structure_test.go` holds the calibration). They
+  bound what is read, not what reading it costs: a slower decode or a larger
+  saved state shows only in the wall-clock numbers, which the reference host
+  enforces, and the evidence records the cost per thousand events
+  (`ms_per_1000_events`) and the saved-state bytes to read it by. The run
+  page's 5 s has no structural counterpart at all.
 - **The validation run's class-B results** (run 39345074409, recorded in
   `host_speed_failures` and `known_gaps`): `each-fan-out.spec.ts` (whose
   gated test is now `each-fan-out-ceiling.spec.ts`) measured
@@ -1350,7 +1428,10 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   dispatch is their first run on GitHub.
 - **The nightly soaks' thresholds were measured on a 16-core host.** A
   threshold missed on a 4-vCPU public runner is reported as a calibration
-  result, never silently changed.
+  result, never silently changed. The soaks themselves carry no row of
+  `scripts/proof-host-speed.tsv`: only the merge gate's reduced-ceiling copies
+  do, for the live `GetRun` p95 (above), so a nightly's wall-clock miss on a
+  CI runner fails that nightly.
 - **Base-cache sizing is unmeasured at concurrency.** The 8-entry, 128 MiB
   cache is documented arithmetic, not a measured miss rate; a setting needs a
   measurement first, with the user's approval.

@@ -35,6 +35,40 @@ include breaking changes, and each is marked **BREAKING**.
   code while stating a target's property, with the target's seed failing until
   the fix.
 
+- A runner-size miss of a Go test's wall-clock budget is a recorded known gap,
+  like a UI spec's. A `kind=test` row of `scripts/proof-host-speed.tsv` may
+  declare `timing ID`, one check the test reports through
+  `internal/testsupport/proof` (`TimingBounds`, `Timing.Check`) instead of
+  `t.Errorf`. A miss fails nothing where it is measured; the test's last
+  cleanup writes `timing/<test>.json` under the part's artifacts and then
+  reports each miss as a line of a fixed form. The merger excuses the miss on
+  a CI `integration:K` part whose runner has fewer CPUs than the row's
+  reference, under a row the base carries identically, only when it derives
+  from the part itself that the test failed nothing else: the ledger shows it
+  as the only test of its job not to pass, with no crash and no failing
+  subtest; its own record says it failed no other assertion; the failure
+  output the ledger entry now keeps (the last lines a failing test printed)
+  ends in exactly the helper's lines; every recorded bound equals the
+  row's; and no miss took longer than the bound times the reference's CPUs
+  over the runner's. The record the excusal rests on is kept in the
+  `host_speed_failures` entry (`timing_record`) of `proof.json`, because a
+  part's artifacts are not kept in the merged proof. The helper's package,
+  `internal/testsupport/proof`, is now a gate file with a code owner, because
+  the excusal trusts the record it writes and the lines it prints. A failing test with no record, a local proof, a runner as large as
+  the reference, the release tier (the pre-release gate enforces the budgets
+  on the reference class, so this also ends the excusal of the UI rows there)
+  and any other failure still fail the proof. The rows are the
+  live `GetRun` p95 (2 s on 16 CPUs) of the three reduced-ceiling soak tests,
+  which missed at 2.014 s on 4 vCPUs in run 40593609129, and the run page at
+  the reduced ceiling (5 s on 16 CPUs), which missed at 9,485 ms in run
+  40571748126 with no row. The archive p95, `Events(0)` and replay checks go
+  through the same helper and have no row. The soaks' live `GetRun` also
+  keeps a bound on what it reads, which holds on every host: at most 110% of
+  the history events and of the history bytes of the generation it read (one
+  pass over it), and at most 4 saved-state objects. It bounds what is read,
+  not what reading costs: the evidence records the cost per thousand events
+  (`ms_per_1000_events`), which only the wall-clock numbers enforce, and the
+  run page's 5 s has no such counterpart. No threshold changed.
 - A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
   `proofrun runner-health`): every part measures its runner for about fourteen
   seconds before any gate — sequential write and read throughput and fsync

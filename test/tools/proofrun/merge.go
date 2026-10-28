@@ -167,6 +167,10 @@ type hostSpeedFailure struct {
 	// UI bound's own timing miss on a CI part (hostspeed.go). Every other
 	// entry is recorded and still fails it (rule 13).
 	Excused bool `json:"excused"`
+	// Record is, for an excused Go test, the timing record the test left (its
+	// checks, their bounds, and whether it failed anything else): the proof
+	// artifact does not keep a part's artifacts, and the excusal rests on it.
+	Record *timingRecord `json:"timing_record,omitempty"`
 }
 
 type ciRecord struct {
@@ -345,6 +349,7 @@ func cmdMerge(args []string) int {
 		attempts: attempts, hostSpeed: hostSpeed, hostSpeedFile: *hostSpeedFile,
 		runnerFloorsFile: *runnerFloors,
 		excusedUIGate:    map[string]bool{},
+		excusedGoGate:    map[string]bool{},
 	}
 	for _, f := range unreadable {
 		m.notes = append(m.notes, "GitHub's job record "+f+" is unreadable: every attempt it would have described is classified as a result (it fails closed)")
@@ -395,7 +400,7 @@ func mergeStoppedProof(partsDir, out, name string) int {
 		fmt.Fprintln(os.Stderr, "proofrun merge:", err)
 		return 2
 	}
-	m := &merger{parts: parts, excusedUIGate: map[string]bool{}}
+	m := &merger{parts: parts, excusedUIGate: map[string]bool{}, excusedGoGate: map[string]bool{}}
 	proof := &proofRecord{Name: name, Gates: []gateRecord{}, Ledgers: map[string]any{}}
 	m.proof = proof
 	reasons := []string{"the proof stopped at a failing gate before its integration plan was written, so no test of the integration or UI suites ran"}
@@ -480,6 +485,7 @@ type merger struct {
 	hostSpeedFailures []hostSpeedFailure
 	knownGaps         []string
 	excusedUIGate     map[string]bool
+	excusedGoGate     map[string]bool
 	digestNotes       []string
 	warnings          []string
 	// allow is the allowed-skips list, parsed from the file whose hash is the
@@ -1500,7 +1506,7 @@ func (m *merger) checkHostSpeedAnchor() {
 	m.hostSpeedExcusing = emptyHostSpeed()
 	ref := m.plan.HostSpeed
 	if ref.SHA256 == "" || ref.BaseSHA256 == "" || m.planPath == "" {
-		if len(m.hostSpeed.UI) > 0 {
+		if len(m.hostSpeed.UI)+len(m.hostSpeed.Tests) > 0 {
 			m.notes = append(m.notes, "the plan recorded no hash of the host-speed table or of the base's copy: no runner-size miss is excused")
 		}
 		return
@@ -1523,7 +1529,24 @@ func (m *merger) checkHostSpeedAnchor() {
 		m.notes = append(m.notes, "the base's host-speed table excuses nothing: "+err.Error())
 		return
 	}
+	if why := m.runnerSizeRefusal(); why != "" {
+		m.notes = append(m.notes, why+": no runner-size miss is excused")
+		return
+	}
 	m.hostSpeedExcusing = anchoredHostSpeed(m.hostSpeed, base)
+}
+
+// runnerSizeRefusal says why this proof excuses no runner-size miss whatever
+// the host-speed table says, or "" when its tier may. The wall-clock budgets
+// were calibrated on the reference host and are enforced there (AGENTS.md
+// §11); the pre-release gate is the one tier a tag rests on, so a miss in it
+// is a failure on every runner, and a CI release proof needs a runner with at
+// least the reference's CPUs, or `make proof-release` on the reference host.
+func (m *merger) runnerSizeRefusal() string {
+	if m.plan != nil && m.plan.Tier == tierRelease {
+		return "the release tier enforces the wall-clock budgets on the reference class"
+	}
+	return ""
 }
 
 // whyNotExcused says why a declared UI bound's miss on part still counts.
@@ -1531,6 +1554,8 @@ func (m *merger) whyNotExcused(part string, e uiEntry) string {
 	switch {
 	case !isCIUIPart(part):
 		return "only a CI ui-e2e part may excuse a runner-size miss"
+	case m.runnerSizeRefusal() != "":
+		return m.runnerSizeRefusal()
 	case len(m.hostSpeedExcusing.uiBounds(e)) == 0:
 		return "the base's host-speed table does not carry this row"
 	default:
@@ -1559,7 +1584,22 @@ func (m *merger) mergeIntegration() {
 			if err := readJSON(filepath.Join(reading.Dir, "integration-tests.json"), &shard); err != nil {
 				continue
 			}
+			problemsBefore := len(m.problems)
+			// A failure that is only a declared wall-clock check missed on a
+			// runner below the row's reference is the merger's own excusal
+			// (gotiming.go): neither the shard's line for it nor the entry
+			// is a problem, and the shard's gate is not red for it.
+			excused := m.goHostSpeed(part, reading, shard)
+			ownLines := map[string]bool{}
+			for _, e := range shard.Tests {
+				if excused[testKey{e.Package, e.Test}] {
+					ownLines[ownProblem(e)] = true
+				}
+			}
 			for _, p := range shard.Problems {
+				if ownLines[p] {
+					continue
+				}
 				l.Problems = append(l.Problems, part+": "+p)
 				m.problems = append(m.problems, part+": "+p)
 			}
@@ -1592,7 +1632,7 @@ func (m *merger) mergeIntegration() {
 					l.Problems = append(l.Problems, msg)
 					m.problems = append(m.problems, msg)
 				}
-				if msg := m.unexplainedEntry("integration", part, e, shard.Problems); msg != "" {
+				if msg := m.unexplainedEntry("integration", part, e, shard.Problems); msg != "" && !excused[k] {
 					l.Problems = append(l.Problems, msg)
 					m.problems = append(m.problems, msg)
 				}
@@ -1600,7 +1640,11 @@ func (m *merger) mergeIntegration() {
 					e.Job = part + " " + orDash(e.Job)
 				}
 				byKey[k] = e
-				m.recordIntegrationHostSpeed(part, reading, e)
+			}
+			if len(excused) > 0 && len(m.problems) == problemsBefore {
+				// The part's only defects are runner-size misses of declared
+				// checks: they are recorded, and its gate is not red for them.
+				m.excusedGoGate[part] = true
 			}
 		}
 	}
@@ -1693,34 +1737,6 @@ func (m *merger) checkShardListing(part string, shard ledger) {
 				part, pk.ImportPath, short(got.SHA256), short(pk.BinarySHA256)))
 		}
 	}
-}
-
-// recordIntegrationHostSpeed records a failing integration test named in
-// -host-speed on a part whose runner is below the bound's reference CPU count
-// (plan §2.6 rule 13). The failure still counts: result and merge_eligible are
-// decided by rules 1-12 alone, and this only makes the runner-size class of a
-// failure readable from proof.json and the README.
-func (m *merger) recordIntegrationHostSpeed(part string, reading partReading, e entry) {
-	if e.Outcome != outcomeFail || reading.Record == nil {
-		return
-	}
-	bound, ok := m.hostSpeed.Tests[testKey{e.Package, e.Test}]
-	if !ok {
-		return
-	}
-	cpus := reading.Record.Runner.CPUs
-	if cpus <= 0 || cpus >= bound.ReferenceCPUs {
-		return
-	}
-	message := fmt.Sprintf("%s failed on a %d-CPU runner (bound %.0fs, reference %d CPUs)", e.Test, cpus, bound.Bound, bound.ReferenceCPUs)
-	if bound.Note != "" {
-		message += ": " + bound.Note
-	}
-	m.hostSpeedFailures = append(m.hostSpeedFailures, hostSpeedFailure{
-		Part: part, Test: e.Package + "." + e.Test, Kind: "integration", Bound: bound.Bound,
-		RunnerCPUs: cpus, ReferenceCPUs: bound.ReferenceCPUs, Message: message,
-	})
-	m.knownGaps = append(m.knownGaps, part+": "+message)
 }
 
 // unexplainedEntry is the merger's own verdict on one shard ledger entry,
@@ -2254,7 +2270,7 @@ func (m *merger) mergeGates(expected []string) {
 				continue
 			}
 			for _, g := range reading.Record.Gates {
-				excused := g.Gate == "ui-e2e" && m.excusedUIGate[part]
+				excused := (g.Gate == "ui-e2e" && m.excusedUIGate[part]) || (g.Gate == "integration" && m.excusedGoGate[part])
 				switch {
 				case g.Result == "pass" || excused:
 					if got[g.Gate] == "" {

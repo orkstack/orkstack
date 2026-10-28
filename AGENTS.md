@@ -895,6 +895,27 @@ recorded as it ran. The deferred tests and specs run in the nightly tier and
 in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
 
+The merge gate's absolute wall-clock budgets — the soaks' `GetRun` p95, the run
+page's 5 s — were calibrated on the 16-CPU reference host and are enforced
+there: in every local proof of any tier, and in the pre-release gate wherever
+it runs, which excuses no runner-size miss, so a tag rests on budgets that
+held on the reference class (a CI release proof needs runners as large as the
+reference, or `make proof-release` runs on the reference host). In the merge
+gate and the nightly, on a CI runner with fewer CPUs, a miss of one is a
+recorded known gap, never a pass and never a widened bound (accepted
+2026-10-27): only under a row of `scripts/proof-host-speed.tsv` that the user
+approved and the base carries identically, and for a Go test only up to the
+bound scaled by the reference's CPUs over the runner's. The merger derives
+each excusal itself from the part's own records (docs/PROOFS.md §12). A count,
+a size, a history share, a deadlock-detector trip, a correctness assertion, or
+a failure beside the timing miss gets no row and fails the proof wherever it
+runs. What stays visible where a budget is excused is a bound on what the
+soaks' live `GetRun` reads, which holds on every host: at most one pass over
+the generation's history, in events and in bytes, and a bounded number of
+saved-state objects. It bounds what is read, not what reading it costs: a
+slower decode shows only in the wall-clock numbers, which the reference host
+enforces, and the run page's 5 s has no such counterpart.
+
 The nightly of `main` is GitHub's: `nightly.yml` runs the nightly tier on
 `main` every day (05:17 UTC) and by dispatch. No local `make proof-nightly`
 follows a merge: that interim rule, in force while the workflow did not run on
@@ -1143,9 +1164,9 @@ the reference for what each tier runs.
   gate: a runner that degrades later is not seen, and its failures stay test
   failures.
 - Never edit the costs file, the slow list, the nightly list, the quarantine
-  list, the runner-health floors or the allowed skips to get a proof
-  through. The nightly and quarantine lists change only with the user's
-  approval.
+  list, the host-speed table, the runner-health floors or the allowed skips to
+  get a proof through. The nightly and quarantine lists, and the rows of the
+  host-speed table, change only with the user's approval.
 - A new top-level path needs a `scripts/proof-scope.tsv` row, and a path the
   table does not map refuses the feature tier.
 - Read `proof.json`, never the README, for a verdict.
