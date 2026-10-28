@@ -313,7 +313,16 @@ even that.
 (on macOS with a VM-hosted daemon `$HOME` is shared and `/var/folders` is not,
 which is why `make up` uses `.data/work`). The Orker probes this at boot and
 refuses to start with `InfrastructureError/WORKDIR_NOT_BINDABLE` rather than
-failing every task later.
+failing every task later. The probe runs a container, so each step of it that
+waits on the daemon (asking whether the probe's image is local, and each of two
+attempts to run its container) has a budget of its own
+(`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes). An attempt that overruns it, or
+that the daemon ends with a deadline error of its own, is tried once more. A
+daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`, which says
+the daemon is slow and nothing about the work root. `WORKDIR_NOT_BINDABLE` is
+kept for a probe the daemon refused within its budget, in its own words or
+otherwise, a probe container that exited non-zero, and a probe directory that
+cannot be made; none of those is tried again.
 
 **Secrets.** `/orkstack/input/secrets` is a separate bind of a per-attempt
 directory the Orker creates, populates, mounts read-only, and removes on every
@@ -1540,7 +1549,8 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `CONTAINER_TIMEOUT` | TimedOut | **no** (§8.1) | Orker killed the container at `timeout_seconds` |
 | `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error — the container never ran |
 | `WORKSPACE_NOT_BINDABLE` | InfrastructureError | **no** | the daemon cannot bind the workspace path — a host misconfiguration retrying will not fix |
-| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | the boot probe found `ORK_ORKER_WORKDIR` not bind-mountable; the Orker refuses to start |
+| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | the daemon refused the boot probe's run within its budget, or the probe's container exited non-zero, and not for a deadline (or no probe directory could be made): `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
+| `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start the probe's container within it, or ended it with a deadline error of its own; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
 | `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`alpine:3.20`) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
 | `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out (`ORK_DOCKER_PULL_TIMEOUT`), and no verified embedded copy exists |

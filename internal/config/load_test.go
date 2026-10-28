@@ -101,6 +101,7 @@ orker:
   docker:
     bin: /usr/bin/docker
     pull_timeout: 5m
+    bind_probe_timeout: 3m
 telemetry:
   log_format: json
   log_level: debug
@@ -234,14 +235,15 @@ func TestLoad_HappyPath_Orker(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"ORK_ORKER_ID":              "orker-1",
-		"ORK_ORKER_WORKDIR":         "/var/ork/work",
-		"ORK_ORKER_ENV_ALLOWLIST":   "FOO,BAR",
-		"ORK_ORKER_LOG_FLUSH_BYTES": "65536",
-		"ORK_ORKER_DEFAULT_CPU":     "1",
-		"ORK_DOCKER_BIN":            "/usr/bin/docker",
-		"ORK_DOCKER_PULL_TIMEOUT":   "5m",
-		"ORK_ADMIN_ADDR":            "127.0.0.1:9465", // the orker side of the per-binary leaf
+		"ORK_ORKER_ID":                  "orker-1",
+		"ORK_ORKER_WORKDIR":             "/var/ork/work",
+		"ORK_ORKER_ENV_ALLOWLIST":       "FOO,BAR",
+		"ORK_ORKER_LOG_FLUSH_BYTES":     "65536",
+		"ORK_ORKER_DEFAULT_CPU":         "1",
+		"ORK_DOCKER_BIN":                "/usr/bin/docker",
+		"ORK_DOCKER_PULL_TIMEOUT":       "5m",
+		"ORK_DOCKER_BIND_PROBE_TIMEOUT": "3m",
+		"ORK_ADMIN_ADDR":                "127.0.0.1:9465", // the orker side of the per-binary leaf
 	}
 	for env, expected := range want {
 		rv, ok := doc.values[env]

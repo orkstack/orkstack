@@ -325,6 +325,7 @@ then the variable it becomes.
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
 | `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI |
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
+| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal in the daemon's own words, or a container that exits non-zero, is still `WORKDIR_NOT_BINDABLE`. A daemon that never answers holds boot for up to three times this plus a minute (7 minutes at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
@@ -1606,6 +1607,21 @@ engine boot, no Temporal connection, no store.
 
   `start_period` is the boot: a check that fails inside it does not count
   against `retries`. The check itself gives up after 3 seconds.
+- **How long an Orker's boot can take.** An Orker is not ready until its boot
+  checks pass, and one of them runs a container to prove the work root can be
+  bound. On a healthy daemon that takes seconds. On a daemon that is
+  overloaded or wedged it can take up to three times
+  `orker.docker.bind_probe_timeout` plus a minute for removing what it gave up
+  on (7 minutes at the default), and longer by `orker.docker.pull_timeout`
+  when the probe image is not local, before the Orker refuses to start with
+  `BIND_PROBE_TIMED_OUT` ([REASONS.md](REASONS.md)). A supervisor that gives
+  up sooner (a Compose check whose `start_period` plus `interval` times
+  `retries` is shorter than that, a start-up timeout in an init system)
+  reports the Orker unhealthy or failed before it can say why. Size the
+  allowance to that bound, or lower the setting to the longest start you would
+  wait for, and read the Orker's log for the reason. `make up` waits 60
+  seconds for the Orker and then stops with a pointer to `.run/orker.log`,
+  where the refusal appears when the probe ends.
 
 ### Running the published images
 

@@ -42,6 +42,29 @@ include breaking changes, and each is marked **BREAKING**.
   unknown-Orker cordon tests observe concurrency and dispatch instead of
   elapsed time; and the UI's DAG bounds read the thread's CPU time.
   AGENTS.md §11.1 states the rule.
+- The Orker's boot check of its work directory no longer mistakes a slow
+  container daemon for an unbindable directory. The check runs a container,
+  and it ran under the 30-second timeout meant for bookkeeping commands: a
+  daemon under load took 32 seconds to start a container that exits at once,
+  the check was killed, and the Orker refused to start with
+  `WORKDIR_NOT_BINDABLE` ("docker exited -1"). Several proofs failed that way,
+  the last the local proof of `pin-close-full` (job `orkctl-171`). The check
+  now has a timeout of its own, `orker.docker.bind_probe_timeout`
+  (`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes), for each step that waits on
+  the daemon: the question whether the check's image is local, and each of two
+  attempts to run its container. An attempt that overruns it, or that the
+  daemon ends with a deadline error of its own, is tried once more after the
+  container it named is removed. A daemon that is still too slow refuses boot
+  as the new reason `BIND_PROBE_TIMED_OUT`, whose message says the daemon was
+  slow, quotes what it answered, and names the setting; a daemon that was slow
+  to say whether the check's image is local is that reason too, no longer
+  `BIND_PROBE_IMAGE_UNAVAILABLE`. `WORKDIR_NOT_BINDABLE` is kept for a
+  daemon that refuses the bind within the budget, in its own words or
+  otherwise, a check container that exits non-zero, and a check directory that
+  cannot be made, and none of those is tried again. An Orker stopped during
+  the check reports the interruption rather than any of them. A daemon that
+  never answers can now hold boot for up to three times the timeout plus a
+  minute, 7 minutes at the default, before it is refused.
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
   pid, rather than by the container's Orker id. Tests that name their own

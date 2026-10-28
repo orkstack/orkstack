@@ -441,10 +441,18 @@ func (a *Activities) Boot(ctx context.Context) error {
 		ProbeBindable(context.Context, string) error
 	}); ok {
 		if err := prober.ProbeBindable(ctx, root); err != nil {
-			if errors.Is(err, ErrProbeImageUnavailable) {
+			switch {
+			case ctx.Err() != nil:
+				// An Orker told to stop while it probes has found nothing
+				// wrong with its work root or its daemon.
+				return fmt.Errorf("boot interrupted during the bind probe: %w (%v)", ctx.Err(), err)
+			case errors.Is(err, ErrProbeImageUnavailable):
 				return fmt.Errorf("%s: %w", ReasonBindProbeImageUnavailable, err)
+			case errors.Is(err, ErrProbeTimedOut):
+				return fmt.Errorf("%s: %w", ReasonBindProbeTimedOut, err)
+			default:
+				return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 			}
-			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
 	}
 	// Claim the identity before reaping by it.
