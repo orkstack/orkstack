@@ -286,11 +286,13 @@ func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *
 		timedOut bool
 		hookSeq  int64
 	)
+	hookDone := make(chan struct{}) // closed when the held read ends
 	snapshotReadHookForTest.Store(ptrTo(func(run *orkstackv1.Run, sequence int64) {
 		if !strings.Contains(rowStatuses(run), "STATUS_RUNNING") {
 			return
 		}
 		cancelOnce.Do(func() {
+			defer close(hookDone)
 			mu.Lock()
 			before, wholeAt, hookSeq = rowStatuses(run), wholeRun(run), sequence
 			mu.Unlock()
@@ -334,10 +336,20 @@ func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *
 	}
 
 	mu.Lock()
-	defer mu.Unlock()
-	if before == "" {
+	sent := before != ""
+	mu.Unlock()
+	if !sent {
 		t.Fatal("no snapshot with a running task was written, so no cancel was sent")
 	}
+	// A workflow that did not wait can finish before the held read has looked:
+	// judge only once the read has ended.
+	select {
+	case <-hookDone:
+	case <-time.After(2 * time.Minute):
+		t.Fatal("the held snapshot read never ended")
+	}
+	mu.Lock()
+	defer mu.Unlock()
 	if changed != "" {
 		t.Fatalf("the run changed while the snapshot write was reading it: rows %q, then %q", before, changed)
 	}
