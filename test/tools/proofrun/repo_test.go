@@ -581,7 +581,7 @@ func TestRepositoryCIParts_FetchWithOneBoundedRetry(t *testing.T) {
 		t.Errorf("proof-fetch bounds %d of its three fetch commands (artifact, pattern, image) with timeout", strings.Count(text, `timeout -k 10 "$limit" `))
 	}
 	if strings.Contains(text, "gh run rerun") || strings.Contains(text, "continue-on-error") {
-		t.Error("proof-fetch re-runs a job or continues on error; a setup failure needs a new run of the same tree")
+		t.Error("proof-fetch re-runs a job or continues on error; a fetch that fails both attempts fails its step, and the job is a setup-failed part the merger lets run again")
 	}
 	// The lines the merger reads back (merge.go setupAttemptRE).
 	for _, line := range []string{

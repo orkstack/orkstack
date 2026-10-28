@@ -5,8 +5,11 @@ description: Fetch one of this run's own artifacts, or an image pinned by digest
 # store, a pull from a registry — is retried ONCE, with twice the limit, and
 # then the step fails: 3 minutes, then 6, so a stalled runner still fails
 # within ten. It never continues on error (the merger would read a part that
-# ran on half an artifact as a result), and it never re-runs a job: a setup
-# failure after both attempts needs a new run of the same tree. Each attempt
+# ran on half an artifact as a result), and it never re-runs a job itself: a
+# fetch that fails both attempts fails its step, before the part, and the job
+# is then a setup-failed part, which the merger lets run again as a new part of
+# the same tree (docs/PROOFS.md §8, `setupStepNames` in
+# test/tools/proofrun/merge.go). Each attempt
 # is one line in the setup log, which `scripts/proof.sh --part --setup-log`
 # copies into the part's directory, `proofrun record` carries into part.json
 # and `proofrun merge` lists in proof.json (`setup_retries`) and the README.
@@ -96,5 +99,5 @@ runs:
           echo "$line" | tee -a "$LOG"
           [ "$code" -eq 0 ] && exit 0
         done
-        echo "fetch $what: gave up after $n attempts; a setup failure needs a new run of the same tree, never a job re-run (docs/PROOFS.md §10)" | tee -a "$LOG"
+        echo "fetch $what: gave up after $n attempts; a setup failure in a fetch step is a setup-failed part (docs/PROOFS.md §8)" | tee -a "$LOG"
         exit 1

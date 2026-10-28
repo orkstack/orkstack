@@ -76,10 +76,13 @@ type temporalRecord struct {
 	Address string `json:"address,omitempty"`
 }
 
-// rerunRecord is one part attempt that GitHub said was lost, or whose runner
-// measured below the floor, and the attempt that ran after it. They are the
-// only reruns a merge-eligible proof may hold; Reason is `lost-runner` or
-// `runner-degraded`.
+// rerunRecord is one part attempt that GitHub said was lost, whose runner
+// measured below the floor, or whose job failed in a fetch or install step
+// before its proof step started, and the attempt that ran after it. They are
+// the only reruns a merge-eligible proof may hold; Reason is `lost-runner`,
+// `runner-degraded` or `setup-failed`. LostAttempt describes the earlier
+// attempt whichever of the three it was (its conclusion, annotations and
+// failed step).
 type rerunRecord struct {
 	Part            string            `json:"part"`
 	Attempt         int               `json:"attempt"`
@@ -89,6 +92,16 @@ type rerunRecord struct {
 	// Degraded is what the earlier attempt's runner measured below the
 	// floor, for a `runner-degraded` rerun.
 	Degraded []degradedRunner `json:"degraded,omitempty"`
+}
+
+// setupFailure is one part attempt whose job failed in a fetch or install
+// step before its proof step started (setupStepNames). proof.json lists every
+// such attempt under setup_failures, whether or not the part ran again.
+type setupFailure struct {
+	Part       string `json:"part"`
+	Attempt    int    `json:"attempt"`
+	Step       string `json:"step"`
+	Conclusion string `json:"conclusion"`
 }
 
 // degradedRunner is one metric one part attempt measured on the wrong side
@@ -261,6 +274,48 @@ func setupRetries(part string, setup []string) []string {
 var proofStepNames = map[string]bool{
 	"plan": true, "build": true, "fast": true, "integration shard": true, "UI shard": true,
 	"activity fixture": true, "observability": true,
+}
+
+// setupStepNames lists, for each kind of part job in
+// .github/workflows/proof.yml, the steps before its proof step whose failure
+// is a setup failure: a download, a pull or an install from outside the run,
+// which a new attempt of the job may well get through. The names are the
+// steps' own, because the jobs API reports a composite action only as the
+// step that uses it. A job that failed in one of them, with its proof step
+// never started, left no result and ran no test (classify, attemptSetupFailed).
+//
+// The plan and the build have no entry: every other part reads what they
+// make, so a setup failure there is not answered by running the job again.
+// TestWorkflows_TheSetupStepsAreTheWorkflowsExactly holds this table to
+// proof.yml in both directions.
+var setupStepNames = map[string]map[string]bool{
+	"integration":      {"proof host": true, "fetch plan": true, "fetch build": true},
+	"ui-e2e":           {"bun install": true, "proof host": true, "fetch plan": true, "fetch build": true, "fetch browser image": true, "Chromium (host)": true},
+	"activity-fixture": {"proof host": true, "fetch plan": true, "fetch build": true},
+	"observability":    {"observability stack": true, "fetch plan": true, "fetch build": true},
+	"fast":             {"bun install": true, "bun install (site)": true},
+}
+
+// partKind is the kind of part a part name is: the name before its colon
+// (`integration:2` is an integration part), or the name itself.
+func partKind(part string) string {
+	kind, _, _ := strings.Cut(part, ":")
+	return kind
+}
+
+// partName is the part a job record belongs to, from its own field or its
+// GitHub job name; "" when it names none.
+func (j *githubJob) partName() string {
+	if j.Part != "" {
+		return j.Part
+	}
+	return partFromJobName(j.Name)
+}
+
+// isSetupStep says step is a fetch or install step of the job part runs in,
+// so that its failure before the proof step is a setup failure.
+func isSetupStep(part, step string) bool {
+	return step != "" && setupStepNames[partKind(part)][step]
 }
 
 // cmdMerge is `proofrun merge`: the one verdict path for a full, release or
@@ -473,6 +528,7 @@ type merger struct {
 	ineligible        []string
 	reruns            []rerunRecord
 	degraded          []degradedRunner
+	setupFailures     []setupFailure
 	health            []partHealth
 	proof             *proofRecord
 	unit              *ledger
@@ -710,9 +766,14 @@ const (
 	// runner below the floor (AGENTS.md §11.2); it may run again, exactly as
 	// a lost one, and nothing it recorded is an outcome of the tree.
 	attemptDegraded
-	// attemptNotEligible: no result, and not a lost runner (a setup failure,
-	// a cancel before any test started): a later attempt makes the proof
-	// ineligible, and the remedy is a new run.
+	// attemptSetupFailed: the job failed in a fetch or install step
+	// (setupStepNames) before its proof step started, so it left no result and
+	// ran no test; it may run again, exactly as a lost or a degraded one.
+	attemptSetupFailed
+	// attemptNotEligible: no result, and not one of the above (a setup failure
+	// in a step that is not a fetch or an install, one in the plan or the
+	// build, a cancel before any test started): a later attempt makes the
+	// proof ineligible, and the remedy is a new run.
 	attemptNotEligible
 )
 
@@ -727,9 +788,16 @@ const (
 //  3. GitHub's runner-lost annotation: a lost runner;
 //  4. cancelled or out of time with a started test that has no outcome: a
 //     result (a hung or failing test);
-//  5. anything else: not rerun-eligible — after the proof step started a
-//     result that never reached its upload, before it a setup failure or an
-//     early cancel.
+//  5. a failed job whose proof step never started, in a fetch or install step
+//     of its kind of part (setupStepNames): a setup failure, which ran no
+//     test and may run again;
+//  6. anything else: not rerun-eligible — after the proof step started a
+//     result that never reached its upload, before it a setup failure
+//     elsewhere (any step of the plan or the build, a checkout, a toolchain)
+//     or an early cancel.
+//
+// The planner of automatic reruns (rerunplan.go) classifies the same way, so
+// what it reruns is what the merger would call rerun-eligible.
 func classify(j *githubJob, reading partReading) (attemptClass, string) {
 	if reading.HealthCorrupt {
 		return attemptResult, "its runner-health.json cannot be read: it fails closed"
@@ -774,7 +842,10 @@ func classify(j *githubJob, reading partReading) (attemptClass, string) {
 	case "started":
 		return attemptResult, "it ended " + orDash(j.Conclusion) + " after its proof step started, and its result never reached its upload"
 	case "not-started":
-		return attemptNotEligible, "a setup failure before its proof step (" + orDash(j.FailedStep) + ")"
+		if j.Conclusion == "failure" && isSetupStep(j.partName(), j.FailedStep) {
+			return attemptSetupFailed, fmt.Sprintf("its step %q failed before its proof step started", j.FailedStep)
+		}
+		return attemptNotEligible, "a setup failure before its proof step (" + orDash(j.FailedStep) + "), which is not a fetch or install step this part may run again after"
 	}
 	return attemptResult, "GitHub's record names none of its steps: it fails closed"
 }
@@ -890,6 +961,7 @@ func (m *merger) merge(name string) {
 	m.proof.Parts = append([]string{}, expected...)
 	m.proof.Reruns = m.reruns
 	m.proof.DegradedRunners = m.degraded
+	m.proof.SetupFailures = m.setupFailures
 	m.proof.RunnerHealth = m.health
 	for _, part := range sortedPartKeys(m.parts) {
 		for _, reading := range m.resultReadings(part) {
@@ -1157,7 +1229,7 @@ func (m *merger) mergePart(part string) {
 		all[a] = true
 	}
 	if len(all) == 0 {
-		m.problems = append(m.problems, fmt.Sprintf("part %s left no result: it is not rerun-eligible (only a lost runner is); this run cannot become merge-eligible: start a new run", part))
+		m.problems = append(m.problems, fmt.Sprintf("part %s left no result: it is not rerun-eligible (only a lost, degraded or setup-failed attempt is); this run cannot become merge-eligible: start a new run", part))
 		return
 	}
 	nums := make([]int, 0, len(all))
@@ -1166,7 +1238,13 @@ func (m *merger) mergePart(part string) {
 	}
 	sort.Ints(nums)
 	last := nums[len(nums)-1]
-	var lostEarlier, degradedEarlier []int
+	// The earlier attempts that may run again, in attempt order, each with the
+	// reason it may.
+	type earlierAttempt struct {
+		attempt int
+		reason  string
+	}
+	var earlier []earlierAttempt
 	for _, a := range nums[:len(nums)-1] {
 		var j *githubJob
 		if jj, ok := jobs[a]; ok {
@@ -1175,16 +1253,19 @@ func (m *merger) mergePart(part string) {
 		class, why := classify(j, attempts[a])
 		switch class {
 		case attemptLost:
-			lostEarlier = append(lostEarlier, a)
+			earlier = append(earlier, earlierAttempt{a, reasonLostRunner})
 		case attemptDegraded:
-			degradedEarlier = append(degradedEarlier, a)
+			earlier = append(earlier, earlierAttempt{a, reasonRunnerDegraded})
 			m.recordDegraded(part, a, attempts[a])
+		case attemptSetupFailed:
+			earlier = append(earlier, earlierAttempt{a, reasonSetupFailed})
+			m.recordSetupFailure(part, a, j)
 		case attemptResult:
 			// A later attempt is a new result, never a way to erase the
 			// first: the proof can pass and is still ineligible (rule 2).
 			m.ineligible = append(m.ineligible, fmt.Sprintf("part %s was run again (attempt %d) after attempt %d recorded its result (%s)", part, last, a, why))
 		default:
-			m.ineligible = append(m.ineligible, fmt.Sprintf("part %s was run again (attempt %d) after attempt %d, which neither GitHub recorded as a lost runner nor its runner-health measured below the floor (%s): only a lost or degraded runner may run again; this run cannot become merge-eligible: start a new run", part, last, a, why))
+			m.ineligible = append(m.ineligible, fmt.Sprintf("part %s was run again (attempt %d) after attempt %d, which GitHub did not record as a lost runner, whose runner-health did not measure below the floor and which did not fail in a fetch or install step before its proof step (%s): only a lost, degraded or setup-failed attempt may run again; this run cannot become merge-eligible: start a new run", part, last, a, why))
 		}
 	}
 	lastReading := attempts[last]
@@ -1193,11 +1274,8 @@ func (m *merger) mergePart(part string) {
 		lastJob = &jj
 	}
 	if lastReading.Record != nil && len(lastReading.degradedMetrics()) == 0 && !lastReading.HealthCorrupt {
-		for _, a := range lostEarlier {
-			m.reruns = append(m.reruns, m.rerun(part, last, a, attempts[a], jobs[a]))
-		}
-		for _, a := range degradedEarlier {
-			m.reruns = append(m.reruns, m.rerun(part, last, a, attempts[a], jobs[a]))
+		for _, e := range earlier {
+			m.reruns = append(m.reruns, m.rerun(part, last, e.attempt, e.reason, attempts[e.attempt], jobs[e.attempt]))
 		}
 		return
 	}
@@ -1210,9 +1288,23 @@ func (m *merger) mergePart(part string) {
 	case attemptDegraded:
 		m.recordDegraded(part, last, lastReading)
 		m.problems = append(m.problems, fmt.Sprintf("part %s ran on a degraded runner (attempt %d, %s): its tests have no outcome of the tree, and this is not a proof of the tree; re-run that job alone, within the plan and build artifacts' retention", part, last, why))
+	case attemptSetupFailed:
+		m.recordSetupFailure(part, last, lastJob)
+		m.problems = append(m.problems, fmt.Sprintf("part %s left no result because its job failed in a setup step (attempt %d, %s); re-run that job alone, within the plan and build artifacts' retention", part, last, why))
 	default:
-		m.problems = append(m.problems, fmt.Sprintf("part %s left no result (attempt %d, %s); it is not rerun-eligible (only a lost runner is): start a new run", part, last, why))
+		m.problems = append(m.problems, fmt.Sprintf("part %s left no result (attempt %d, %s); it is not rerun-eligible (only a lost, degraded or setup-failed attempt is): start a new run", part, last, why))
 	}
+}
+
+// recordSetupFailure lists an attempt that failed in a setup step in
+// setup_failures, once per attempt.
+func (m *merger) recordSetupFailure(part string, attempt int, j *githubJob) {
+	for _, s := range m.setupFailures {
+		if s.Part == part && s.Attempt == attempt {
+			return
+		}
+	}
+	m.setupFailures = append(m.setupFailures, setupFailure{Part: part, Attempt: attempt, Step: j.FailedStep, Conclusion: j.Conclusion})
 }
 
 // describeDegraded is the README's line for a rerun's degraded attempt.
@@ -1224,18 +1316,24 @@ func describeDegraded(d []degradedRunner) string {
 	return strings.Join(parts, "; ")
 }
 
-func (m *merger) rerun(part string, attempt, lost int, reading partReading, j githubJob) rerunRecord {
+// The reasons a part attempt may run again, as a `reruns` entry records them.
+const (
+	reasonLostRunner     = "lost-runner"
+	reasonRunnerDegraded = "runner-degraded"
+	reasonSetupFailed    = "setup-failed"
+)
+
+func (m *merger) rerun(part string, attempt, earlier int, reason string, reading partReading, j githubJob) rerunRecord {
 	passed, unfinished := attemptProgress(reading.Dir, j.Log)
 	rr := rerunRecord{
-		Part: part, Attempt: attempt, EarlierAttempts: []int{lost}, Reason: "lost-runner",
+		Part: part, Attempt: attempt, EarlierAttempts: []int{earlier}, Reason: reason,
 		LostAttempt: lostAttemptRecord{
 			Conclusion: j.Conclusion, Annotation: strings.Join(j.Annotations, " "), FailedStep: j.FailedStep,
 			PassedBeforeLoss: passed, Unfinished: unfinished,
 		},
 	}
-	if below := reading.degradedMetrics(); len(below) > 0 {
-		rr.Reason = "runner-degraded"
-		rr.Degraded = degradedOf(part, lost, reading.Health, below)
+	if reason == reasonRunnerDegraded {
+		rr.Degraded = degradedOf(part, earlier, reading.Health, reading.degradedMetrics())
 	}
 	return rr
 }
@@ -2393,9 +2491,14 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) error {
 	if len(r.Reruns) > 0 {
 		fmt.Fprintf(&b, "## Reruns\n\n")
 		for _, rr := range r.Reruns {
-			if rr.Reason == "runner-degraded" {
+			switch rr.Reason {
+			case reasonRunnerDegraded:
 				fmt.Fprintf(&b, "- %s attempt %d, after attempt %v ran on a degraded runner (%s); nothing that attempt recorded is an outcome of the tree\n",
 					rr.Part, rr.Attempt, rr.EarlierAttempts, describeDegraded(rr.Degraded))
+				continue
+			case reasonSetupFailed:
+				fmt.Fprintf(&b, "- %s attempt %d, after attempt %v failed in its setup step %q before its proof step started; no test of that attempt ran\n",
+					rr.Part, rr.Attempt, rr.EarlierAttempts, rr.LostAttempt.FailedStep)
 				continue
 			}
 			fmt.Fprintf(&b, "- %s attempt %d, after attempt %v was lost by GitHub (%s); %d tests had passed, %d had started and not finished: %s\n",
@@ -2408,6 +2511,13 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) error {
 		fmt.Fprintf(&b, "## Degraded runners\n\nA part whose runner measured below the floor before any gate (scripts/proof-runner-floors.tsv): nothing it recorded is an outcome of the tree, and a part listed here without a later attempt makes this proof not a proof of the tree. Re-run that job alone (docs/PROOFS.md §10).\n\n")
 		for _, d := range r.DegradedRunners {
 			fmt.Fprintf(&b, "- %s attempt %d (%s): %s %s %s, floor %s\n", d.Part, d.Attempt, d.Class, d.Metric, trimFloat(d.Value), d.Unit, trimFloat(d.Floor))
+		}
+		fmt.Fprintln(&b)
+	}
+	if len(r.SetupFailures) > 0 {
+		fmt.Fprintf(&b, "## Setup failures\n\nA part whose job failed in a fetch or install step before its proof step started (docs/PROOFS.md §5): no test of that attempt ran, and a part listed here without a later attempt has no result. Re-run that job alone (docs/PROOFS.md §10).\n\n")
+		for _, s := range r.SetupFailures {
+			fmt.Fprintf(&b, "- %s attempt %d: the step %q ended %s before the proof step started\n", s.Part, s.Attempt, s.Step, orDash(s.Conclusion))
 		}
 		fmt.Fprintln(&b)
 	}
