@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild } from './harness';
 import { selectNamespace } from './uiHelpers';
+import { fillYaml } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('logs-dashboard');
@@ -711,7 +712,7 @@ test('an orkflow is edited and promoted in the browser, and the next run execute
 	await expect(page.getByTestId('editor-form')).toBeVisible();
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
 
-	await page.getByTestId('editor-yaml').fill(chattyOrkflow('0.2.0', 'second revision'));
+	await fillYaml(page, 'editor-yaml', chattyOrkflow('0.2.0', 'second revision'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
 	await expect(page.getByTestId('version-row-0.2.0')).toBeVisible();

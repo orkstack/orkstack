@@ -25,6 +25,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fillYaml } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('admin-automation');
@@ -208,7 +209,7 @@ test.afterAll(async () => {
 
 async function planDocument(page: import('@playwright/test').Page, yaml: string, prune = false) {
 	await page.goto(`${UI_ORIGIN}/admin/automation?ns=${NS}`);
-	await page.getByTestId('automation-yaml').fill(yaml);
+	await fillYaml(page, 'automation-yaml', yaml);
 	if (prune) await page.getByTestId('automation-prune').check();
 	await page.getByTestId('automation-plan').click();
 	await expect(page.getByTestId('automation-plan-digest')).toBeVisible();

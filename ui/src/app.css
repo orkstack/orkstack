@@ -54,6 +54,12 @@
 		outline: var(--rule-frame) solid var(--color-focus);
 		outline-offset: var(--rule-frame);
 	}
+	/* A file input is drawn by its label (Import YAML): the label shows the
+	   focus the visually hidden input has. */
+	label:has(> input[type='file']:focus-visible) {
+		outline: var(--rule-frame) solid var(--color-focus);
+		outline-offset: var(--rule-frame);
+	}
 	::placeholder {
 		color: var(--color-ink-placeholder);
 		opacity: 1;
@@ -346,6 +352,36 @@
 	}
 	.severity-error::before {
 		background-color: var(--color-red);
+	}
+
+	/* Syntax: the colours of an authored document (src/lib/yaml/highlight.ts),
+	   the roles the YAML editor, the read-only YAML views and the site's code
+	   themes all draw. Keys at weight; comments in the muted ink, oblique. */
+	.syntax-key {
+		color: var(--color-syntax-key);
+		font-weight: var(--font-weight-semibold);
+	}
+	.syntax-string {
+		color: var(--color-syntax-string);
+	}
+	.syntax-number {
+		color: var(--color-syntax-number);
+	}
+	.syntax-literal {
+		color: var(--color-syntax-literal);
+	}
+	.syntax-template {
+		color: var(--color-syntax-template);
+	}
+	.syntax-meta {
+		color: var(--color-syntax-meta);
+	}
+	.syntax-comment {
+		color: var(--color-syntax-comment);
+		font-style: italic;
+	}
+	.syntax-punctuation {
+		color: var(--color-syntax-punctuation);
 	}
 
 	/* The status stamp: a 1 px frame, tracked caps, and a drawn mark before

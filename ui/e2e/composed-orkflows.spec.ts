@@ -25,6 +25,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fillYaml } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('composed-orkflows');
@@ -286,7 +287,7 @@ test('the Orkflow page shows the child reference, its digest and the outputs', a
 
 test('apply shows composition issues on the uses line', async ({ page }) => {
 	await page.goto(`${UI}/apply?ns=${NS}`);
-	await page.getByTestId('apply-yaml').fill(`apiVersion: orkstack/v1
+	await fillYaml(page, 'apply-yaml', `apiVersion: orkstack/v1
 kind: Orkflow
 name: composed-issues
 version: "1.0.0"
@@ -300,7 +301,7 @@ tasks:
 	await expect(unknown).toContainText('has no version "9.9.9"');
 	await expect(unknown).toContainText('(versions: 0.1.0 (current))');
 
-	await page.getByTestId('apply-yaml').fill(`apiVersion: orkstack/v1
+	await fillYaml(page, 'apply-yaml', `apiVersion: orkstack/v1
 kind: Orkflow
 name: composed-issues
 version: "1.0.0"
