@@ -167,7 +167,10 @@ include breaking changes, and each is marked **BREAKING**.
   two tools raised the indirect modules `golang.org/x/net`, `x/sys`, `x/sync`
   and `x/text` to what their requirements need. The `ci.yml` › `check` and
   `feature` proof steps and `proof.yml` › `fast` have five minutes more for the
-  lint time (docs/PROOFS.md §11.5).
+  lint time (docs/PROOFS.md §11.5). Its first run found three advisories no
+  OrkStack code reaches, in `google.golang.org/grpc` v1.83.1 and
+  `golang.org/x/net` v0.61.0; both are raised to the patch releases that fix
+  them (v1.83.2 and v0.62.0).
 
 ### Changed
 
