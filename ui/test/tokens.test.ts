@@ -364,7 +364,7 @@ function block(opening: string): string {
 const namesIn = (body: string) => new Set([...body.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)].map((m) => m[1]));
 
 /** Read with var() from CSS or an inline style; never a utility. */
-const RUNTIME_ONLY = /^--(?:color-pin-|rule-|duration-|grid-pitch-|underline-offset$|opacity-)/;
+const RUNTIME_ONLY = /^--(?:color-pin-|color-syntax-|rule-|duration-|grid-pitch-|underline-offset$|opacity-)/;
 
 test('rule 6: tokens.css and the registration declare the same names', () => {
 	const registered = new Set(
