@@ -210,7 +210,8 @@ func partsExpected(tier string, local bool, shards, uiShards int, observability 
 	}
 	parts := []string{"plan", "build"}
 	if tier != tierNightly {
-		parts = append(parts, "fast")
+		// The race gate runs on a runner of its own, beside the fast part.
+		parts = append(parts, "fast", suiteRace)
 	}
 	for k := 1; k <= shards; k++ {
 		parts = append(parts, fmt.Sprintf("integration:%d", k))
@@ -219,9 +220,10 @@ func partsExpected(tier string, local bool, shards, uiShards int, observability 
 		parts = append(parts, fmt.Sprintf("ui-e2e:%d", k))
 	}
 	if tier == tierNightly {
-		// The nightly tier runs the deferred tests and the listed spec
-		// files (nightlyUIShards), and nothing else.
-		return parts
+		// The nightly tier runs the deferred tests, the listed spec files
+		// (nightlyUIShards), and the race repeat and fuzz lanes, and
+		// nothing else.
+		return append(parts, suiteRaceRepeat, suiteFuzz)
 	}
 	for _, a := range fixtureActivities {
 		parts = append(parts, "activity-fixture:"+a)

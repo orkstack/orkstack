@@ -113,8 +113,17 @@ const mainBranch = "main"
 // fullGates is every gate the merge gate runs; observability joins it when
 // the tree changed a telemetry path. The site gate runs right after the UI's
 // fast gates (scripts/proof.sh), and ui-e2e stays last. The nightly tier is
-// held to the integration gate alone (merge.go).
-var fullGates = []string{"lint", "build", "unit", "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "site", "ui-e2e"}
+// held to the integration gate and the two lanes of nightlyGates (merge.go).
+var fullGates = []string{"lint", "build", "unit", suiteRace, "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "site", "ui-e2e"}
+
+// nightlyGates are the gates the nightly tier is held to besides the
+// integration gate (and ui-e2e, when the tree lists a spec file): the race
+// repeat and the fuzz lane. Each leaves a ledger of its own.
+var nightlyGates = []string{suiteRaceRepeat, suiteFuzz}
+
+// laneLedgers are the ledgers a proof reads besides the Playwright one: one
+// per suite, <suite>-tests.json, named for the gate that wrote it.
+var laneLedgers = []string{suiteUnit, suiteRace, suiteRaceRepeat, suiteFuzz, "integration"}
 
 func readGates(file string) ([]gateRecord, error) {
 	f, err := os.Open(file)
@@ -317,7 +326,7 @@ func cmdRecord(args []string) int {
 	ledgers := map[string]any{}
 	ledgerFiles := map[string]string{}
 	ledgersOK := map[string]bool{}
-	for _, name := range []string{"unit", "integration"} {
+	for _, name := range laneLedgers {
 		var l ledger
 		if readJSON(filepath.Join(*dir, name+"-tests.json"), &l) == nil {
 			ledgers[name] = map[string]any{"summary": l.Summary, "problems": len(l.Problems)}
@@ -339,7 +348,7 @@ func cmdRecord(args []string) int {
 			continue
 		}
 		switch g.Gate {
-		case "unit", "integration", "ui-e2e":
+		case suiteUnit, suiteRace, suiteRaceRepeat, suiteFuzz, "integration", "ui-e2e":
 			if _, ok := ledgersOK[g.Gate]; !ok {
 				ledgersOK[g.Gate] = false
 			}

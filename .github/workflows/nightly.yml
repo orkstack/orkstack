@@ -1,6 +1,7 @@
 name: nightly
 
-# The nightly tier: the scale and soak tests a merge proof defers. A red
+# The nightly tier: the scale and soak tests a merge proof defers, and two
+# lanes of its own, the race repeat and the fuzz lane. A red
 # nightly is a failing main — fix or revert before anything else merges.
 # (docs/PROOFS.md; AGENTS.md §11.2.)
 #
@@ -12,6 +13,10 @@ on:
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: how long the fuzz lane runs each Fuzz target (2m, 30s, 100x)
+        default: 2m
 
 permissions:
   contents: read
@@ -30,6 +35,7 @@ jobs:
       base: main
       int_shards: 4
       ui_shards: 1
+      fuzztime: ${{ inputs.fuzztime || '2m' }}
 
   flakes:
     # The flake budget's evidence (docs/PROOFS.md §6.1): same-tree flips and

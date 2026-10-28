@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestWriteGates(t *testing.T) {
 	sel.Gates.UICheck, sel.Gates.UIUnit = true, true
 	var b strings.Builder
 	writeGates(&b, sel)
-	want := "integration=yes\nui_check=yes\nui_unit=yes\nsite=no\nui_e2e=yes\nactivity_fixture=no\nobservability=no\nspecs=e2e/admin.spec.ts e2e/budgets.spec.ts\n"
+	want := "integration=yes\nui_check=yes\nui_unit=yes\nsite=no\nui_e2e=yes\nactivity_fixture=no\nobservability=no\nrace_packages=\nspecs=e2e/admin.spec.ts e2e/budgets.spec.ts\n"
 	if b.String() != want {
 		t.Errorf("got\n%s\nwant\n%s", b.String(), want)
 	}
@@ -79,19 +80,26 @@ func TestGates_PrintTheSiteGate(t *testing.T) {
 func TestGates_EveryPrintedGateIsOneProofShReads(t *testing.T) {
 	var sel selection
 	sel.Gates.UICheck, sel.Gates.UIUnit, sel.Gates.Site, sel.Gates.Fixture, sel.Gates.Observability = true, true, true, true, true
+	sel.RacePackages = []string{"./internal/dsl"}
 	script := proofScript(t)
 	i := strings.Index(script, "integration | ui_check")
 	if i < 0 {
 		t.Fatal("proof.sh has no case arm reading the gate lines")
 	}
-	arm := script[i : i+strings.Index(script[i:], ")")]
+	// The loop that reads them: every case arm up to its closing esac.
+	start := strings.LastIndex(script[:i], "\n") + 1
+	loop := script[start : i+strings.Index(script[i:], "esac")]
+	arms := regexp.MustCompile(`(?m)^\t\t([a-z0-9_ |]+)\)$`).FindAllStringSubmatch(loop, -1)
+	read := map[string]bool{}
+	for _, a := range arms {
+		for _, key := range strings.Split(a[1], "|") {
+			read[strings.TrimSpace(key)] = true
+		}
+	}
 	for _, line := range strings.Split(strings.TrimSpace(gatesOutput(t, &sel)), "\n") {
 		key, _, _ := strings.Cut(line, "=")
-		if key == "specs" {
-			continue
-		}
-		if !strings.Contains(arm, key) {
-			t.Errorf("proofrun gates prints %s, which proof.sh's case arm %q does not read", key, arm)
+		if !read[key] {
+			t.Errorf("proofrun gates prints %s, which proof.sh's case arms %v do not read", key, read)
 		}
 	}
 }

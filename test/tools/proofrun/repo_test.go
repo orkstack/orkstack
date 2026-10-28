@@ -177,7 +177,7 @@ func at(text, prefix string) int {
 // one concurrent group, collected before any test starts.
 func TestRepositoryProofScript_RunsTheFastGatesBeforeAnythingLong(t *testing.T) {
 	text := proofScript(t)
-	fast := []string{"step lint ", "step build ", "step unit ", "step vet-integration ", "step ui-check ", "step ui-unit ", "step site "}
+	fast := []string{"step lint ", "step build ", "step unit ", "step vet-integration ", "step ui-check ", "step ui-unit ", "step site ", "step race ", "step race-repeat ", "step fuzz "}
 	long := []string{"step_bg temporal ", "step_bg images ", "step_bg binaries ", "step_bg integration-compile ", "run_bg activity-fixture ", "run_bg integration ", "step ui-e2e ", "step observability "}
 	last := -1
 	for _, g := range fast {
@@ -186,7 +186,7 @@ func TestRepositoryProofScript_RunsTheFastGatesBeforeAnythingLong(t *testing.T) 
 			t.Fatalf("proof.sh has no line starting %q", g)
 		}
 		if i < last {
-			t.Errorf("%q comes before an earlier fast gate: the fast gates run in the order lint, build, unit, vet-integration, ui-check, ui-unit, site", g)
+			t.Errorf("%q comes before an earlier fast gate: the fast gates run in the order lint, build, unit, vet-integration, ui-check, ui-unit, site, then the race gate and the nightly lanes", g)
 		}
 		last = i
 	}
@@ -321,7 +321,7 @@ func TestRepositoryProofScript_FailsFast(t *testing.T) {
 	if i < 0 || !strings.Contains(text[i:i+300], `[ -z "$FF_TRIGGER" ] || return 0`) {
 		t.Error("step does not refuse to start a gate once the proof has stopped")
 	}
-	for _, g := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "site", "ui-e2e", "observability"} {
+	for _, g := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "site", "race", "race-repeat", "fuzz", "ui-e2e", "observability"} {
 		if !strings.Contains(text, "step "+g+" ") {
 			t.Errorf("gate %s is not run through step: a stopped proof would still start it", g)
 		}
@@ -868,6 +868,25 @@ func TestRepositoryProofCollect_KeepsRecordsAndFailingPartsDetails(t *testing.T)
 		"parts/plan-a1/bin/test/m.test:binary",
 		"parts/part-build-a1/part.json:" + `{"part":"build","gates":[{"gate":"images","result":"pass"}]}`,
 		"parts/part-build-a1/layouts/activity-shell/index.json:{}",
+		// The race gate's part trims its log as the fast part trims the unit
+		// log; whatever of it a passing part kept is left out of the merge.
+		"parts/part-race-a1/part.json:" + `{"part":"race","gates":[{"gate":"race","result":"pass"}]}`,
+		"parts/part-race-a1/race-tests.json:{}",
+		"parts/part-race-a1/race.log:verbose",
+		"parts/part-race-a1/race.events.jsonl:{}",
+		"parts/part-race-repeat-a1/part.json:" + `{"part":"race-repeat","gates":[{"gate":"race-repeat","result":"fail"}]}`,
+		"parts/part-race-repeat-a1/race-repeat-tests.json:{}",
+		"parts/part-race-repeat-a1/race-repeat.log:the race report",
+		"parts/part-race-repeat-a1/race-repeat.events.jsonl:{}",
+		// A passing fuzz part keeps its records; a failing one keeps its
+		// per-target logs and the crashers it found.
+		"parts/part-fuzz-a1/part.json:" + `{"part":"fuzz","gates":[{"gate":"fuzz","result":"pass"}]}`,
+		"parts/part-fuzz-a1/fuzz-tests.json:{}",
+		"parts/part-fuzz-a1/fuzz/pkg.FuzzOK.log:ok",
+		"parts/part-fuzz-b1/part.json:" + `{"part":"fuzz","gates":[{"gate":"fuzz","result":"fail"}]}`,
+		"parts/part-fuzz-b1/fuzz-tests.json:{}",
+		"parts/part-fuzz-b1/fuzz/pkg.FuzzBad.log:--- FAIL: FuzzBad",
+		"parts/part-fuzz-b1/crashers/pkg/FuzzBad/0a1b2c:go test fuzz v1",
 		"jobs/attempt-1.json:{}",
 	} {
 		rel, text, _ := strings.Cut(f, ":")
@@ -905,9 +924,22 @@ func TestRepositoryProofCollect_KeepsRecordsAndFailingPartsDetails(t *testing.T)
 		"parts/part-integration-2-a1/integration/engine-002.log",
 		"parts/part-integration-2-a1/part.json",
 		"parts/part-integration-3-a1/integration.events.jsonl",
+		"parts/part-fuzz-a1/fuzz-tests.json",
+		"parts/part-fuzz-a1/part.json",
+		"parts/part-fuzz-b1/crashers/pkg/FuzzBad/0a1b2c",
+		"parts/part-fuzz-b1/fuzz-tests.json",
+		"parts/part-fuzz-b1/fuzz/pkg.FuzzBad.log",
+		"parts/part-fuzz-b1/part.json",
+		"parts/part-race-a1/part.json",
+		"parts/part-race-a1/race-tests.json",
+		"parts/part-race-repeat-a1/part.json",
+		"parts/part-race-repeat-a1/race-repeat-tests.json",
+		"parts/part-race-repeat-a1/race-repeat.events.jsonl",
+		"parts/part-race-repeat-a1/race-repeat.log",
 		"parts/plan-a1/integration-plan.json",
 		"parts/plan-a1/part.json",
 	}
+	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the merged proof holds\n  %s\nwant\n  %s\n%s", strings.Join(got, "\n  "), strings.Join(want, "\n  "), outText)
 	}
@@ -939,6 +971,14 @@ func TestRepositoryProofCollect_KeepsRecordsAndFailingPartsDetails(t *testing.T)
 	}
 	if unit < 0 || trim < unit {
 		t.Error("scripts/proof-part.sh trims the unit log before the unit gate has run")
+	}
+	// The race and race-repeat parts trim the same way, after their own gate.
+	for _, suite := range []string{"race", "race-repeat"} {
+		gate := at(ps, "part_run "+suite+" "+suite+".log ")
+		trim := at(ps, "if grep -q $'^"+suite+`\tpass\t' "$DIR/gates.tsv"; then`)
+		if gate < 0 || trim < gate || !strings.Contains(ps, `rm -f "$DIR/`+suite+`.log" "$DIR/`+suite+`.events.jsonl"`) {
+			t.Errorf("scripts/proof-part.sh does not leave the %s log and events out of a part whose %s gate passed", suite, suite)
+		}
 	}
 }
 

@@ -42,15 +42,19 @@ type selection struct {
 	} `json:"gates"`
 	Integration  map[string]*pkgSelection `json:"integration"`
 	UnitEvidence []selectedTest           `json:"unit_evidence"`
-	Specs        []selectedSpec           `json:"specs"`
-	AllSpecs     string                   `json:"all_specs,omitempty"`
-	UIUnitTests  []string                 `json:"ui_unit_evidence"`
-	Evidence     []evidenceFor            `json:"evidence"`
-	Removed      []string                 `json:"removed_tests"`
-	NotRun       []string                 `json:"integration_packages_not_run"`
-	Notes        []string                 `json:"notes"`
-	Errors       []string                 `json:"errors"`
-	SlowSource   string                   `json:"slow_list_source"`
+	// RacePackages are the packages the feature tier's race gate runs: the
+	// repository-relative directory of every Go package the change touches,
+	// as a `./dir` pattern, sorted. None means the gate does not run.
+	RacePackages []string       `json:"race_packages"`
+	Specs        []selectedSpec `json:"specs"`
+	AllSpecs     string         `json:"all_specs,omitempty"`
+	UIUnitTests  []string       `json:"ui_unit_evidence"`
+	Evidence     []evidenceFor  `json:"evidence"`
+	Removed      []string       `json:"removed_tests"`
+	NotRun       []string       `json:"integration_packages_not_run"`
+	Notes        []string       `json:"notes"`
+	Errors       []string       `json:"errors"`
+	SlowSource   string         `json:"slow_list_source"`
 	// RefusedFull names the paths whose scope rule is full: CI can tell
 	// "this needs the full proof" apart from missing evidence (plan §2.1).
 	RefusedFull []string `json:"refused_full"`
@@ -596,6 +600,17 @@ func selectInto(sel *selection, in selectInput) error {
 	}
 	sel.Removed = dedupe(sel.Removed)
 
+	// ---- the race gate: the packages the change touches ------------------
+	for _, pc := range changedPkgs {
+		// A directory under testdata is no package of `./...`, and a package
+		// the change deleted has nothing left to run.
+		if inTestdata(pc.dir) || len(in.newDirFiles(pc.dir)) == 0 {
+			continue
+		}
+		sel.RacePackages = append(sel.RacePackages, "./"+pc.dir)
+	}
+	sort.Strings(sel.RacePackages)
+
 	// ---- named tests -----------------------------------------------------
 	for _, spec := range in.tests {
 		i := strings.LastIndex(spec, ":")
@@ -1085,6 +1100,17 @@ func candidates(d depIndex, integ []pkgInfo, target string) string {
 		return ""
 	}
 	return " (integration packages that depend on it: " + strings.Join(c, ", ") + ")"
+}
+
+// inTestdata reports whether a repository-relative directory is, or lies
+// under, a testdata directory: the go tool never treats one as a package.
+func inTestdata(dir string) bool {
+	for _, part := range strings.Split(dir, "/") {
+		if part == "testdata" {
+			return true
+		}
+	}
+	return false
 }
 
 // goPackageDir is the nearest directory at or above dir that holds Go files.

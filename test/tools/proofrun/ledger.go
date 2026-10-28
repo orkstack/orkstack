@@ -121,6 +121,21 @@ type collector struct {
 	// it printed (failureTail). A test that passes or skips drops its lines;
 	// a test that fails keeps them in its entry.
 	tails map[testKey][]string
+	// sticky is set for a run that repeats its tests (go test -count above
+	// 1): one test name then reports once per repeat, and a later pass must
+	// not hide an earlier failure. A sticky collector keeps the worst outcome
+	// of a test (fail, then skip, then pass) and adds up its seconds. The
+	// unit and integration collectors are not sticky: nothing repeats there.
+	sticky bool
+	// unfinished counts, for a sticky collector, the executions of a test
+	// that started and have reported nothing yet. A repeat that starts after
+	// an earlier repeat passed would otherwise leave that pass standing when
+	// the binary ends, hangs or times out inside it.
+	unfinished map[testKey]int
+	// races counts the race detector's reports by where they were printed:
+	// the test, or an empty Test for a report outside every test. Every
+	// collector counts; only the race suites' ledgers read it (race.go).
+	races map[testKey]int
 }
 
 func newCollector() *collector {
@@ -130,6 +145,8 @@ func newCollector() *collector {
 		packageOutput: map[string]*strings.Builder{},
 		pkgEnds:       map[string]string{},
 		tails:         map[testKey][]string{},
+		unfinished:    map[testKey]int{},
+		races:         map[testKey]int{},
 	}
 }
 
@@ -152,6 +169,9 @@ func (c *collector) noteOutput(ev event) {
 
 // add records one event. job names the process that produced it.
 func (c *collector) add(ev event, job string) {
+	if ev.Action == "output" && isRaceReport(ev.Output) {
+		c.races[testKey{ev.Package, ev.Test}]++
+	}
 	if ev.Test == "" {
 		switch ev.Action {
 		case "pass", "fail", "skip":
@@ -182,13 +202,16 @@ func (c *collector) add(ev event, job string) {
 			c.results[k] = &entry{Package: ev.Package, Test: ev.Test, Job: job, Outcome: outcomeNone}
 			c.order = append(c.order, k)
 		}
+		if c.sticky {
+			c.unfinished[k]++
+		}
 	case "pass", "fail", "skip":
 		if strings.Contains(ev.Test, "/") {
 			switch ev.Action {
 			case "skip":
-				c.subSkips = append(c.subSkips, k)
+				c.subSkips = c.noteSub(c.subSkips, k)
 			case "fail":
-				c.failedSubs = append(c.failedSubs, k)
+				c.failedSubs = c.noteSub(c.failedSubs, k)
 			}
 			return
 		}
@@ -199,18 +222,45 @@ func (c *collector) add(ev event, job string) {
 			c.order = append(c.order, k)
 		}
 		e.Job = job
-		e.Outcome = ev.Action
-		e.Seconds = ev.Elapsed
+		if c.sticky {
+			if c.unfinished[k] > 0 {
+				c.unfinished[k]--
+			}
+			// A repeat: keep the worst outcome so far, and add up the time.
+			if outcomeSeverity(ev.Action) >= outcomeSeverity(e.Outcome) {
+				e.Outcome = ev.Action
+			}
+			e.Seconds += ev.Elapsed
+		} else {
+			e.Outcome = ev.Action
+			e.Seconds = ev.Elapsed
+		}
 		e.Reason = ""
-		e.FailureOutput = nil
+		// A sticky collector's later pass keeps the tail of the failure it
+		// does not hide.
 		if ev.Action == "fail" {
 			e.FailureOutput = c.tails[k]
+		} else if !c.sticky {
+			e.FailureOutput = nil
 		}
 		delete(c.tails, k)
 		if ev.Action == "fail" && c.onFail != nil {
 			c.onFail(k)
 		}
 	}
+}
+
+// noteSub appends a subtest to a list of them. A sticky collector hears of one
+// subtest once per repeat and lists it once.
+func (c *collector) noteSub(list []testKey, k testKey) []testKey {
+	if c.sticky {
+		for _, have := range list {
+			if have == k {
+				return list
+			}
+		}
+	}
+	return append(list, k)
 }
 
 // readEvents feeds every JSON line of r to c, tagging each with job, and
@@ -317,6 +367,10 @@ type ledger struct {
 	Tests      []entry                 `json:"tests"`
 	Problems   []string                `json:"problems"`
 	Summary    summary                 `json:"summary"`
+	// Short is set on a race ledger whose run had -short: only then is a skip
+	// no allowed-skip entry names recorded rather than refused (race.go), and
+	// the merger accepts such a skip only from a ledger that says so.
+	Short bool `json:"short,omitempty"`
 }
 
 type summary struct {
@@ -365,11 +419,22 @@ func excusedFor(suite string, quarantine map[testKey]quarantineEntry) map[testKe
 func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string]bool, c *collector, allow []allowedSkip,
 	quarantine map[testKey]quarantineEntry,
 ) ledger {
+	return buildLedgerOpts(suite, expected, listed, c, allow, quarantine, false)
+}
+
+// buildLedgerOpts is buildLedgerQ with one more choice: shortSkips records a
+// skip no allowed-skip entry names as a skip with a reason, instead of as a
+// problem. Only the race suites choose it (race.go): they run with -short,
+// which skips the scale tests, and the merger holds every such skip to the
+// unit gate's result.
+func buildLedgerOpts(suite string, expected []testKey, listed map[string]map[string]bool, c *collector, allow []allowedSkip,
+	quarantine map[testKey]quarantineEntry, shortSkips bool,
+) ledger {
 	l := ledger{Suite: suite, Problems: []string{}}
 	excused := excusedFor(suite, quarantine)
 	allowed := map[testKey]allowedSkip{}
 	for _, a := range allow {
-		if a.Suite != suite && a.Suite != "any" {
+		if !skipEntryApplies(a.Suite, suite) {
 			continue
 		}
 		allowed[testKey{a.Package, a.Test}] = a
@@ -391,6 +456,12 @@ func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string
 		e := entry{Package: k.Package, Test: k.Test, Outcome: outcomeNone, Reason: "no outcome: the test was listed and asked for, and nothing reported it"}
 		if got, ok := c.results[k]; ok {
 			e = *got
+			if c.unfinished[k] > 0 {
+				// A repeat of the test started and never reported, whatever
+				// an earlier repeat reported.
+				e.Outcome = outcomeNone
+				e.Reason = "no outcome: a repeat of the test started and never reported a result"
+			}
 			if e.Outcome == outcomeNone && e.Reason == "" {
 				e.Reason = "no outcome: the test started and never reported a result"
 			}
@@ -415,6 +486,9 @@ func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string
 			if a, ok := allowed[k]; ok {
 				l.Summary.AllowedSkip++
 				e.AllowedSkip = a.Reason
+			} else if shortSkips {
+				l.Summary.Skip++
+				e.Reason = shortSkipReason
 			} else {
 				l.Summary.Skip++
 				l.Problems = append(l.Problems, fmt.Sprintf(
@@ -436,6 +510,9 @@ func buildLedgerQ(suite string, expected []testKey, listed map[string]map[string
 			continue
 		}
 		l.Summary.SubtestSkips++
+		if shortSkips {
+			continue
+		}
 		l.Problems = append(l.Problems, fmt.Sprintf(
 			"%s skipped; a skip is never a pass — fix the prerequisite, or allow it in scripts/proof-allowed-skips.txt with its reason", k))
 	}

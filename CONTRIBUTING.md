@@ -208,7 +208,9 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    image's interface label? Run `go run ./internal/schemas/cmd/genschemas`.
 3. Write a behavior test first (AGENTS.md §11.1).
 4. Implement until it passes.
-5. Run `make check`; for Temporal or storage changes, run the affected
+5. Run `make check`; for concurrent code, `make test-race` too (the proof's
+   race gate: the unit tests under the race detector, `-short`; it needs cgo
+   and a C compiler); for Temporal or storage changes, run the affected
    integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).

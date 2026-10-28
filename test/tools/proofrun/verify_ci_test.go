@@ -65,6 +65,7 @@ func ciMerged(t *testing.T, tier, tree, base string) string {
 		build.Gates = []gateRecord{{Gate: "images", Result: "pass"}}
 		build.Images = map[string]string{"activity-shell": "sha256:aaa"}
 		f.writePart(build, nil)
+		f.writeNightlyLanes()
 	} else {
 		f.writeCI()
 	}

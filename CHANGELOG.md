@@ -69,6 +69,28 @@ include breaking changes, and each is marked **BREAKING**.
   not what reading costs: the evidence records the cost per thousand events
   (`ms_per_1000_events`), which only the wall-clock numbers enforce, and the
   run page's 5 s has no such counterpart. No threshold changed.
+- A race gate in the full and release proofs, and two lanes in the nightly
+  one. The `race` gate runs the unit suites under the race detector with
+  `-short` (`proofrun unit -race -short`, ledger `race-tests.json`): a data
+  race fails it whatever the tests reported, a test skipped in its `-short`
+  run is recorded as a skip, from a ledger that says its run had `-short`, and
+  must have passed the unit gate, which runs it without `-short`, and no
+  quarantine excuses a failure. A local proof runs it last of
+  the fast gates, alone; CI runs it as the `race` part beside `fast`; a
+  feature proof runs it over the packages its change touches
+  (`race_packages` in the selection). The nightly tier adds the `race-repeat`
+  lane (the engine, Orker, API and `pkg` packages' unit suites under the
+  detector, `-count 3`, with a `-timeout` of 30 minutes for each repetition; a
+  failure in any repetition stands, and a repetition that never reported
+  leaves its test with no outcome) and the `fuzz`
+  lane (`proofrun fuzz`: every `Fuzz` target for `FUZZTIME`, default `2m`; a
+  crasher fails the lane and its input is kept under the part's `crashers/`,
+  leaving the tree as it was found). `make test-race` runs the race gate's
+  `go test` without its ledger, its `-timeout` included, and `make fuzz` runs
+  the lane. The detector needs cgo and a C compiler, and a gate that runs it,
+  the unit gate included (its tests run `go test -race`), refuses to start
+  without. The gate may fail on a tree with a race in it until that race is
+  fixed; that is its purpose.
 - A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
   `proofrun runner-health`): every part measures its runner for about fourteen
   seconds before any gate — sequential write and read throughput and fsync

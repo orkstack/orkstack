@@ -300,6 +300,7 @@ func writeGates(w io.Writer, sel *selection) {
 	fmt.Fprintf(w, "ui_e2e=%s\n", yes(specs != ""))
 	fmt.Fprintf(w, "activity_fixture=%s\n", yes(sel.Gates.Fixture))
 	fmt.Fprintf(w, "observability=%s\n", yes(sel.Gates.Observability))
+	fmt.Fprintf(w, "race_packages=%s\n", strings.Join(sel.RacePackages, " "))
 	fmt.Fprintf(w, "specs=%s\n", specs)
 }
 

@@ -261,8 +261,8 @@ func setupRetries(part string, setup []string) []string {
 // proofStepNames are the names of the step that runs `scripts/proof.sh
 // --part` in each part job of .github/workflows/proof.yml.
 var proofStepNames = map[string]bool{
-	"plan": true, "build": true, "fast": true, "integration shard": true, "UI shard": true,
-	"activity fixture": true, "observability": true, "proof part": true,
+	"plan": true, "build": true, "fast": true, "race": true, "race-repeat": true, "fuzz": true,
+	"integration shard": true, "UI shard": true, "activity fixture": true, "observability": true, "proof part": true,
 }
 
 // cmdMerge is `proofrun merge`: the one verdict path for a full, release or
@@ -368,7 +368,10 @@ func cmdMerge(args []string) int {
 		fmt.Fprintln(os.Stderr, "proofrun merge:", err)
 		return 2
 	}
-	for name, v := range map[string]any{"unit-tests.json": m.unit, "integration-tests.json": m.integration, "ui-e2e-tests.json": m.ui} {
+	for name, v := range map[string]any{
+		"unit-tests.json": m.unit, "integration-tests.json": m.integration, "ui-e2e-tests.json": m.ui,
+		suiteRace + "-tests.json": m.race, suiteRaceRepeat + "-tests.json": m.raceRepeat, suiteFuzz + "-tests.json": m.fuzz,
+	} {
 		if isNilLedger(v) {
 			continue
 		}
@@ -480,6 +483,9 @@ type merger struct {
 	proof             *proofRecord
 	unit              *ledger
 	integration       *ledger
+	race              *ledger
+	raceRepeat        *ledger
+	fuzz              *ledger
 	ui                *uiLedger
 	notes             []string
 	hostSpeedFailures []hostSpeedFailure
@@ -694,7 +700,7 @@ func partFromJobName(name string) string {
 		return strings.ToLower(mm[1]) + ":" + mm[2]
 	}
 	switch strings.TrimSpace(name) {
-	case "plan", "build", "fast", "observability":
+	case "plan", "build", "fast", "observability", suiteRace, suiteRaceRepeat, suiteFuzz:
 		return strings.TrimSpace(name)
 	}
 	return ""
@@ -883,6 +889,7 @@ func (m *merger) merge(name string) {
 	}
 	m.mergeIntegration()
 	m.mergeUnit()
+	m.mergeLanes()
 	if m.plan.Tier == tierNightly {
 		m.checkNightlyUI()
 	}
@@ -962,10 +969,16 @@ func (m *merger) merge(name string) {
 	if m.integration != nil {
 		proof.Ledgers.(map[string]any)["integration"] = map[string]any{"summary": m.integration.Summary, "problems": len(m.integration.Problems)}
 	}
+	for suite, l := range m.laneLedgers() {
+		proof.Ledgers.(map[string]any)[suite] = map[string]any{"summary": l.Summary, "problems": len(l.Problems)}
+	}
 	if m.ui != nil {
 		proof.Ledgers.(map[string]any)["ui-e2e"] = map[string]any{"listed": m.ui.Listed, "pass": m.ui.Pass, "deferred": m.ui.Deferred, "problems": len(m.ui.Problems)}
 	}
 	ledgersOK := map[string]bool{}
+	for suite, l := range m.laneLedgers() {
+		ledgersOK[suite] = l.ok()
+	}
 	if m.unit != nil {
 		ledgersOK["unit"] = m.unit.ok()
 	}
@@ -1773,7 +1786,7 @@ func (m *merger) unexplainedEntry(suite, part string, e entry, shardProblems []s
 // list the merger parsed (only a list whose hash is the plan's is trusted).
 func (m *merger) allowedSkipFor(suite string, k testKey) (allowedSkip, bool) {
 	for _, a := range m.allow {
-		if (a.Suite == suite || a.Suite == "any") && a.Package == k.Package && a.Test == k.Test {
+		if skipEntryApplies(a.Suite, suite) && a.Package == k.Package && a.Test == k.Test {
 			return a, true
 		}
 	}
@@ -2248,6 +2261,9 @@ func (m *merger) mergeGates(expected []string) {
 	switch m.plan.Tier {
 	case tierNightly:
 		required["integration"] = true
+		for _, g := range nightlyGates {
+			required[g] = true
+		}
 		// The nightly tier runs the listed spec files too, when it has any.
 		if len(m.nightlySpecRows) > 0 || (m.uiPlan != nil && len(m.uiPlan.Files) > 0) {
 			required["ui-e2e"] = true

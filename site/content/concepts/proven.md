@@ -25,8 +25,8 @@ Each change runs through the same checks, at different scopes.
 | Check | When it runs | Counts as merge evidence |
 |---|---|---|
 | Feature proof | On a branch, for the tests that cover the change | No |
-| Full proof | Before a change lands on `main`: every test against a real cluster and object store | Yes |
-| Nightly proof | On `main`: the largest scale and soak tests | No |
+| Full proof | Before a change lands on `main`: every test against a real cluster and object store, and the unit tests under the race detector | Yes |
+| Nightly proof | On `main`: the largest scale and soak tests, the busiest packages' unit tests raced three times over, and every fuzz target for a bounded time | No |
 | Pre-release proof | Before a release tag, on the exact commit | Required for a release |
 
 A change is done only after a full proof passes on the exact tree that lands.
