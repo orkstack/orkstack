@@ -251,6 +251,12 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The Orker no longer reports a docker CLI that exited 0 as a failure when
+  its output pipe drains late. It allowed 100 ms for that drain, so on a
+  loaded host a successful `docker create` became `RUNTIME_REFUSED`
+  ("exec: WaitDelay expired before I/O complete") and a task with one attempt
+  failed its run (CI run 40740645720). It now allows 5 s, a bound on a pipe a
+  helper inherited, never on the command itself.
 - The run, newest-first and origin index parsers read only a status segment
   the writer can spell (lower case, no trailing space), and the newest-first
   cursor renders a scanned entry's stored status verbatim, as the run index's
