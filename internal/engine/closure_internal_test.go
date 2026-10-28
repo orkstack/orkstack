@@ -201,7 +201,7 @@ func (c *passClock) kind() string {
 	return "wall clock"
 }
 
-// gatedSizeBound scales a wall-clock bound under the race detector.
+// gatedSizeBound scales a CPU-time bound (passClock) under the race detector.
 func gatedSizeBound(bound time.Duration) time.Duration {
 	if raceBuild {
 		return bound * raceSlowdown
