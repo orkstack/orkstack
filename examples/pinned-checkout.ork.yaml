@@ -51,7 +51,9 @@ pins:
 tasks:
   - id: resolve
     uses: git
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     secrets:
       - name: git-token
         source: env:GIT_TOKEN
@@ -63,10 +65,13 @@ tasks:
 
   - id: checkout
     uses: git
-    needs: [resolve]
+    needs:
+      - resolve
     pin: workspace
     run_as_orker_user: true
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     secrets:
       - name: git-token
         source: env:GIT_TOKEN
@@ -79,7 +84,8 @@ tasks:
 
   - id: validate
     uses: shell
-    needs: [checkout]
+    needs:
+      - checkout
     pin: workspace
     run_as_orker_user: true
     network: none
@@ -96,7 +102,8 @@ tasks:
 
   - id: merge
     uses: json
-    needs: [validate]
+    needs:
+      - validate
     pin: workspace
     run_as_orker_user: true
     network: none
@@ -111,14 +118,17 @@ tasks:
   # values are data in argv, never text inside the script.
   - id: package
     uses: shell
-    needs: [merge]
+    needs:
+      - merge
     pin: workspace
     run_as_orker_user: true
     network: none
     with:
       op: script
       interpreter: sh
-      command: ['{{ .tasks.resolve.output.commit }}', '{{ artifact "merge/config.json" }}']
+      command:
+        - '{{ .tasks.resolve.output.commit }}'
+        - '{{ artifact "merge/config.json" }}'
       script: |
         set -eu
         out=/orkstack/shared/out
@@ -131,7 +141,8 @@ tasks:
 
   - id: checksum
     uses: file
-    needs: [package]
+    needs:
+      - package
     network: none
     with:
       op: checksum

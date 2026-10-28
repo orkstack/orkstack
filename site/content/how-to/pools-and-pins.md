@@ -17,10 +17,13 @@ pins:
 ```yaml
   - id: checkout
     uses: git
-    needs: [resolve]
+    needs:
+      - resolve
     pin: workspace
     run_as_orker_user: true
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     secrets:
       - name: git-token
         source: env:GIT_TOKEN

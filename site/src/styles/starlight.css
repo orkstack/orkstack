@@ -63,17 +63,25 @@
 	--sl-shadow-md: var(--shadow-overlay);
 	--sl-shadow-lg: var(--shadow-overlay);
 
-	/* Faces and the heading scale */
+	/* Faces and the heading scale. Body text is Starlight's own 1rem, which
+	   the reading scale (base.css) sets one step up; headings and code step
+	   up with it, a page title a quarter above the largest token. */
 	--sl-font: var(--font-sans);
 	--sl-font-mono: var(--font-mono);
-	--sl-text-h1: var(--text-2xl);
-	--sl-text-h2: var(--text-xl);
-	--sl-text-h3: var(--text-lg);
-	--sl-text-h4: var(--text-md);
-	--sl-text-h5: var(--text-base);
-	--sl-text-code: var(--text-sm);
-	--sl-text-code-sm: var(--text-xs);
+	--sl-text-h1: calc(var(--text-2xl) * 1.25);
+	--sl-text-h2: var(--text-2xl);
+	--sl-text-h3: var(--text-xl);
+	--sl-text-h4: var(--text-lg);
+	--sl-text-h5: var(--text-md);
+	--sl-text-code: var(--text-base);
+	--sl-text-code-sm: var(--text-sm);
+	--sl-line-height: 1.65;
 	--sl-line-height-headings: var(--leading-tight);
+
+	/* The column: prose stops at 72ch (below), and code, tables and
+	   screenshots take the rest. A docs screenshot is a cut of the UI's main
+	   column and fits it one to one (site/media/capture.ts). */
+	--sl-content-width: 49rem;
 
 	/* The top bar is the UI's: 44 px under a region rule. */
 	--sl-nav-height: var(--spacing-bar);
@@ -84,10 +92,10 @@
 @media (min-width: 50em) {
 	:root {
 		--sl-nav-height: var(--spacing-bar);
-		--sl-text-h1: var(--text-2xl);
-		--sl-text-h2: var(--text-xl);
-		--sl-text-h3: var(--text-lg);
-		--sl-text-h4: var(--text-md);
+		--sl-text-h1: calc(var(--text-2xl) * 1.25);
+		--sl-text-h2: var(--text-2xl);
+		--sl-text-h3: var(--text-xl);
+		--sl-text-h4: var(--text-lg);
 	}
 }
 
@@ -105,7 +113,7 @@ body {
 /* -------------------------------------------------------------- sidebar */
 
 .sidebar-content {
-	font-size: var(--text-sm);
+	font-size: var(--text-base);
 }
 .sidebar-content .top-level > li > details > summary .group-label,
 .sidebar-content .large {
@@ -185,8 +193,8 @@ h1#_top {
    rule, hairlines between rows, no boxes. */
 .sl-markdown-content table {
 	border-collapse: collapse;
-	font-size: var(--text-sm);
-	line-height: var(--text-sm--line-height);
+	font-size: var(--text-base);
+	line-height: var(--text-base--line-height);
 }
 .sl-markdown-content :is(th, td) {
 	border: 0;
@@ -233,6 +241,14 @@ h1#_top {
 .sl-markdown-content .theme-figure img {
 	border: var(--rule-region) solid var(--color-ink);
 }
+/* A screenshot is drawn at its own size inside its rule, or narrower on a
+   narrow screen: the rule sits outside the image, so the image keeps every
+   pixel of its width. */
+.sl-markdown-content .theme-shot img {
+	box-sizing: content-box;
+	max-width: calc(100% - 2 * var(--rule-region));
+	height: auto;
+}
 /* A diagram draws its own frame (scripts/readme-diagrams.mjs). */
 .sl-markdown-content .theme-diagram img {
 	width: 100%;
@@ -242,7 +258,7 @@ h1#_top {
 .sl-markdown-content .theme-figure figcaption {
 	margin-top: calc(var(--spacing) * 2);
 	color: var(--color-ink-muted);
-	font-size: var(--text-sm);
+	font-size: var(--text-base);
 }
 
 /* Right-hand contents and the pagination links. */

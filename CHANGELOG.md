@@ -30,8 +30,47 @@ include breaking changes, and each is marked **BREAKING**.
   run 40411125174, a third of the least measurement or three times the
   largest latency.
 
+### Changed
+
+- The site reads larger: it sets its root at 112.5%, so every token of
+  `ui/src/tokens.css` it draws with steps up together, Starlight's own sizes
+  included — docs body 18 px (was 16), landing body 16.9 px (was 15). On top
+  of that, the docs' code blocks, tables and sidebar step up to `--text-base`,
+  their headings by one token, and the hero lede keeps `--text-lg` on wide
+  screens. The docs column is 49rem; prose still stops at 72ch.
+- The site's screenshots are drawn at their own size and never re-encoded or
+  enlarged. `make site-media` captures each one natively at one and at two
+  device pixels per CSS pixel, saves both as lossless WebP in
+  `site/public/media`, and records each one's size in the manifest; the
+  landing page and the docs serve the pair as a `srcset`. The landing page's
+  are the run page at 1616 px, the width of its frames; the docs' are cuts of
+  the UI's main column at its 1280 px layout (the graph, a task inspected,
+  a fan-out item, the resolve dialog), which fit the docs column one to one.
+  Before, a capture was resized, re-encoded twice (WebP, then AVIF at
+  Astro's default quality) and shown enlarged on high-density screens, and a
+  docs screenshot was squeezed into the 72ch measure. The terminal recording
+  is drawn at twice its size, with a lossless poster from the tape itself;
+  the README's GIF is scaled back to its old size. The unused `ui-orkflow`
+  screenshot is no longer taken.
+- Every YAML example — `examples/`, `deploy/orkstack.example.yaml`, the README,
+  `docs/`, the activity images' READMEs and the docs site's pages — writes
+  its sequences and mappings in block style (`needs:` then `- list`), never
+  as a JSON-looking flow collection (`needs: [list]`, `retry: { … }`), and so
+  does the configuration reference `make config-defaults` generates
+  (`deploy/orkstack.defaults.yaml`, which `ork --defaults` and
+  `orker --defaults` print). The examples' definitions are unchanged
+  (`TestExamples_KeepTheirDefinitionDigests` holds every digest), but their
+  bytes are not: a store that applied an example before refuses the new
+  file under the same version (`examples/README.md`). `TestDocs_YAMLExamplesUseBlockStyle`
+  refuses a flow collection in any of them; an empty `[]` or `{}`, which has
+  no block form, is allowed.
+
 ### Fixed
 
+- `make site-media` no longer stops at its libwebp check with an ffmpeg that
+  has the encoder: the check piped `ffmpeg -encoders` into `grep -q`, and
+  under `pipefail` the SIGPIPE ffmpeg 9 takes when grep stops early failed
+  the pipeline. It reads the whole list first.
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
   pid, rather than by the container's Orker id. Tests that name their own

@@ -5,8 +5,9 @@
 #
 #   1. checks the local stack is up with the first-party images (it starts
 #      nothing: make infra-up, make -C images push, make up come first);
-#   2. media/capture.ts: the UI screenshots and the end-to-end recording,
-#      driven by Playwright in the UI e2e suite's pinned browser image;
+#   2. media/capture.ts: the UI screenshots, at one and two device pixels
+#      per CSS pixel, and the end-to-end recording, driven by Playwright in
+#      the UI e2e suite's pinned browser image;
 #   3. media/tapes/*.tape: the terminal recordings, rendered by VHS in its
 #      image pinned by digest (media/vhs-image.txt), with a terminal theme
 #      made from ui/src/tokens.css for each site theme.
@@ -31,7 +32,7 @@ need() {
 	exit 77
 }
 
-{ command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; } || need "ffmpeg and ffprobe are not installed"
+command -v ffmpeg >/dev/null || need "ffmpeg is not installed"
 
 # The README's animation of the UI: the end-to-end recording as an animated
 # WebP, which GitHub shows inline where it cannot play a video. It needs only
@@ -44,7 +45,10 @@ readme_ui_demo() {
 		echo "  docs/images/ui-demo-$theme.webp"
 	done
 }
-ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libwebp || need "ffmpeg has no libwebp encoder (the README's UI animation is an animated WebP)"
+# Read the whole list first: grep -q stops at the first match, and under
+# pipefail the SIGPIPE ffmpeg then takes would fail the check.
+encoders="$(ffmpeg -hide_banner -encoders 2>/dev/null)"
+grep -q libwebp <<<"$encoders" || need "ffmpeg has no libwebp encoder (the README's UI animation is an animated WebP)"
 if [ "${SITE_MEDIA_ONLY:-}" = readme ]; then
 	readme_ui_demo
 	exit 0
@@ -130,10 +134,10 @@ for theme in light dark; do
 			-v "$VHS/bin:/work/bin:ro" \
 			-v "$REPO/examples:/work/examples:ro" \
 			"$VHS_IMAGE" "tapes/run-$name.tape"
-		# The poster is the watch finished, three quarters in, not the last
-		# frame (which shows only the merge task's log).
-		dur="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$VHS/out/$name.mp4")"
-		ffmpeg -y -loglevel error -ss "$(awk -v d="$dur" 'BEGIN { print d * 0.75 }')" -i "$VHS/out/$name.mp4" -frames:v 1 "$VHS/out/$name.png"
+		# The poster is the tape's own screenshot of the finished watch, not a
+		# frame of the lossy video (and not its last frame, which shows only
+		# the merge task's log).
+		mv "$VHS/out/poster.png" "$VHS/out/$name.png"
 	done
 done
 (cd "$SITE" && node media/finish.mjs "$VHS/out" "$VHS_IMAGE")

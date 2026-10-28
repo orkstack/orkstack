@@ -18,20 +18,29 @@ tasks:
     uses: shell
     with:
       op: eval
-      command: ["sh", "-c", "printf 'deploy %s' \"{{ .inputs.target }}\""]
+      command:
+        - sh
+        - -c
+        - "printf 'deploy %s' \"{{ .inputs.target }}\""
 
   - id: approval
-    needs: [plan]
+    needs:
+      - plan
     await:
       timeout_seconds: 86400
       callback: true
       schema:
-        approved: { type: boolean, required: true }
-        approver: { type: string, required: true }
+        approved:
+          type: boolean
+          required: true
+        approver:
+          type: string
+          required: true
 
   - id: apply
     uses: shell
-    needs: [approval]
+    needs:
+      - approval
     condition: "{{ .tasks.approval.output.approved }}"
     with:
       op: exec

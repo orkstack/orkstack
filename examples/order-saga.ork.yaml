@@ -76,8 +76,11 @@ tasks:
 
   - id: reserve
     uses: http
-    needs: [prepare]
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    needs:
+      - prepare
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     with:
       op: put
       url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/reservation'
@@ -88,7 +91,8 @@ tasks:
 
   - id: reserved
     uses: json
-    needs: [reserve]
+    needs:
+      - reserve
     network: none
     with:
       op: query
@@ -97,8 +101,11 @@ tasks:
 
   - id: charge
     uses: http
-    needs: [reserved]
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    needs:
+      - reserved
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     with:
       op: put
       url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/payment'
@@ -109,7 +116,8 @@ tasks:
 
   - id: charged
     uses: json
-    needs: [charge]
+    needs:
+      - charge
     network: none
     with:
       op: query
@@ -118,8 +126,11 @@ tasks:
 
   - id: ship
     uses: http
-    needs: [charged]
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    needs:
+      - charged
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     with:
       op: put
       url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/shipment'
@@ -130,7 +141,8 @@ tasks:
 
   - id: shipped
     uses: json
-    needs: [ship]
+    needs:
+      - ship
     network: none
     with:
       op: query
@@ -141,9 +153,17 @@ tasks:
   #    one, and are safe to run twice.
   - id: release
     uses: http
-    needs: [reserve, reserved, charge, charged, ship, shipped]
+    needs:
+      - reserve
+      - reserved
+      - charge
+      - charged
+      - ship
+      - shipped
     join: any_failed
-    retry: { maximum_attempts: 5, initial_interval_seconds: 2 }
+    retry:
+      maximum_attempts: 5
+      initial_interval_seconds: 2
     with:
       op: delete
       url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/reservation'
@@ -151,9 +171,15 @@ tasks:
 
   - id: refund
     uses: http
-    needs: [charge, charged, ship, shipped]
+    needs:
+      - charge
+      - charged
+      - ship
+      - shipped
     join: any_failed
-    retry: { maximum_attempts: 5, initial_interval_seconds: 2 }
+    retry:
+      maximum_attempts: 5
+      initial_interval_seconds: 2
     with:
       op: delete
       url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/payment'
@@ -164,12 +190,23 @@ tasks:
   #    run.json: `srcs` hands the filter one array of both.
   - id: report
     uses: json
-    needs: [prepare, reserve, reserved, charge, charged, ship, shipped, release, refund]
+    needs:
+      - prepare
+      - reserve
+      - reserved
+      - charge
+      - charged
+      - ship
+      - shipped
+      - release
+      - refund
     join: all_done
     network: none
     with:
       op: query
-      srcs: [task.json, run.json]
+      srcs:
+        - task.json
+        - run.json
       filter: |
         .[0].join.needs as $needs
         | (.[1].order.id // "?") as $id
@@ -182,7 +219,8 @@ tasks:
 
   - id: notify
     uses: orkflow:notify-block@0.1.0
-    needs: [report]
+    needs:
+      - report
     join: all_done
     with:
       url: '{{ .inputs.notify_url }}'

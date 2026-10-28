@@ -18,7 +18,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 
 - [ ] Use one S3-compatible bucket for every `ork` and every `orker`. Set `ORK_ARTIFACT_BACKEND=s3` and the same `ORK_S3_*` values on both binaries, because the `local` default is one directory per process ([DEPLOY.md](./DEPLOY.md), "The bucket stops being optional at the second replica").
 - [ ] Use a store that implements conditional `PutObject`. Each Orker probes it at boot and refuses to start with `COMMIT_STORE_NOT_CONDITIONAL` on a store that cannot ([DEPLOY.md](./DEPLOY.md), "The bucket stops being optional at the second replica").
-- [ ] Replace the development credentials with your own. The defaults are the development store's, and any `storage.s3.*` secret can be read from a file with `{file: /path}` ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
+- [ ] Replace the development credentials with your own. The defaults are the development store's, and any `storage.s3.*` secret can be read from a file by a mapping with a single `file:` key naming its path ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 - [ ] Set `ORK_S3_PATH_STYLE` for your store. It defaults to `true`, which the development store needs, and AWS S3 does not ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 - [ ] Confirm that the store supports `DeleteObjects`. Run cleanup empties each run's prefixes with it ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").
 - [ ] Never expire anything under `metadata/snapshots/`, `metadata/commits/`, `metadata/runs/`, `metadata/index/`, or the definition, registry, settings, trigger and webhook prefixes. Live reads and the archive depend on them ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").

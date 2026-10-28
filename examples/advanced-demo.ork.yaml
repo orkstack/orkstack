@@ -67,7 +67,8 @@ tasks:
   #    activity failure and lets Temporal's policy retry it.
   - id: flaky
     uses: shell
-    needs: [warmup]
+    needs:
+      - warmup
     timeout_seconds: 20
     retry:
       maximum_attempts: 5
@@ -89,7 +90,8 @@ tasks:
   #    flushes instead of a single burst at exit.
   - id: logstream
     uses: shell
-    needs: [warmup]
+    needs:
+      - warmup
     timeout_seconds: 180
     cancellation_grace_period_seconds: 10
     resources:
@@ -117,7 +119,8 @@ tasks:
   #    submits with `enable_secret_check: true`.
   - id: guarded
     uses: shell
-    needs: [warmup]
+    needs:
+      - warmup
     condition: '{{ .inputs.enable_secret_check }}'
     pool: main
     run_as_orker_user: true
@@ -138,7 +141,9 @@ tasks:
   #    branch is available even when the DAG edge alone would suffice.
   - id: summarize
     uses: shell
-    needs: [flaky, logstream]
+    needs:
+      - flaky
+      - logstream
     condition: '{{ eq .tasks.flaky.output.exitCode 0.0 }}'
     with:
       op: exec
@@ -154,7 +159,9 @@ tasks:
   #    examples/shell-eval.ork.yaml.
   - id: archive
     uses: file
-    needs: [summarize, logstream]
+    needs:
+      - summarize
+      - logstream
     network: none
     with:
       op: tar

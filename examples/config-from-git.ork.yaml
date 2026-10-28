@@ -30,8 +30,8 @@
 # "replicas"}, ...]}. Export GIT_TOKEN where the Orker runs (secrets:
 # below). For a PUBLIC repository delete both `tokenSecret:` lines and both
 # `secrets:` blocks — and then `clone` may be cached too, because it clones a
-# commit id. Behind a proxy, give the git tasks `env: {HTTPS_PROXY: ...}`:
-# it configures git, as it would on any machine.
+# commit id. Behind a proxy, give the git tasks an `env:` mapping that sets
+# HTTPS_PROXY: it configures git, as it would on any machine.
 #
 #   orkctl run submit config-from-git --input repo=https://git.example.com/acme/app.git --input environment=prod
 #   orkctl run submit config-from-git --input repo=... --input environment=prod   # again: tmpl..manifest are SUCCEEDED (cached)
@@ -61,7 +61,9 @@ inputs:
 tasks:
   - id: resolve
     uses: git
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     secrets:
       - name: git-token
         source: env:GIT_TOKEN
@@ -73,8 +75,11 @@ tasks:
 
   - id: clone
     uses: git
-    needs: [resolve]
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    needs:
+      - resolve
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     secrets:
       - name: git-token
         source: env:GIT_TOKEN
@@ -86,9 +91,12 @@ tasks:
 
   - id: tmpl
     uses: file
-    needs: [clone]
+    needs:
+      - clone
     network: none
-    cache: { enabled: true, ttl_seconds: 86400 }
+    cache:
+      enabled: true
+      ttl_seconds: 86400
     with:
       op: untar
       src: '{{ artifact "clone/src.tar.gz" }}'
@@ -97,9 +105,12 @@ tasks:
 
   - id: services
     uses: file
-    needs: [clone]
+    needs:
+      - clone
     network: none
-    cache: { enabled: true, ttl_seconds: 86400 }
+    cache:
+      enabled: true
+      ttl_seconds: 86400
     with:
       op: untar
       src: '{{ artifact "clone/src.tar.gz" }}'
@@ -108,9 +119,13 @@ tasks:
 
   - id: prepare
     uses: json
-    needs: [resolve, services]
+    needs:
+      - resolve
+      - services
     network: none
-    cache: { enabled: true, ttl_seconds: 86400 }
+    cache:
+      enabled: true
+      ttl_seconds: 86400
     with:
       op: query
       src: '{{ artifact "services/services.json" }}'
@@ -130,9 +145,13 @@ tasks:
 
   - id: render
     uses: template
-    needs: [tmpl, prepare]
+    needs:
+      - tmpl
+      - prepare
     network: none
-    cache: { enabled: true, ttl_seconds: 86400 }
+    cache:
+      enabled: true
+      ttl_seconds: 86400
     each:
       over: '{{ .tasks.prepare.output.result }}'
       as: svc
@@ -151,9 +170,12 @@ tasks:
 
   - id: manifest
     uses: json
-    needs: [render]
+    needs:
+      - render
     network: none
-    cache: { enabled: true, ttl_seconds: 86400 }
+    cache:
+      enabled: true
+      ttl_seconds: 86400
     with:
       op: query
       gather: render

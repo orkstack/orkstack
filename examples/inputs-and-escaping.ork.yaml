@@ -38,7 +38,10 @@ inputs:
       zone: eu-west-1a
   stages:
     type: array
-    default: ["build", "test", "package"]
+    default:
+      - build
+      - test
+      - package
   release:
     type: string
     required: true
@@ -59,7 +62,10 @@ tasks:
     network: none
     with:
       op: exec
-      command: ["printf", "note=%s\n", "{{ .inputs.note }}"]
+      command:
+        - printf
+        - "note=%s\n"
+        - "{{ .inputs.note }}"
 
   # 2. positional: the script is constant text; the value is "$1".
   - id: positional
@@ -68,7 +74,8 @@ tasks:
     with:
       op: script
       interpreter: sh
-      command: ["{{ .inputs.note }}"]
+      command:
+        - "{{ .inputs.note }}"
       script: |
         set -eu
         printf 'note=%s\n' "$1" | tee /orkstack/output/artifacts/note.txt
@@ -103,22 +110,30 @@ tasks:
   # 5. A condition reads a nested object field and compares it.
   - id: regional
     uses: shell
-    needs: [argv]
+    needs:
+      - argv
     condition: '{{ eq .inputs.region.name "eu-west-1" }}'
     network: none
     with:
       op: exec
-      command: ["echo", "{{ .inputs.region.name }}", "{{ .inputs.region.zone }}"]
+      command:
+        - echo
+        - "{{ .inputs.region.name }}"
+        - "{{ .inputs.region.zone }}"
 
   # 6. A boolean input read with `not`: publish only when this is not a dry run.
   - id: publish
     uses: shell
-    needs: [as-json]
+    needs:
+      - as-json
     condition: '{{ not .inputs.dry_run }}'
     network: none
     with:
       op: exec
-      command: ["echo", "publishing release", "{{ .inputs.release }}"]
+      command:
+        - echo
+        - "publishing release"
+        - "{{ .inputs.release }}"
 
   # 7. An array input with range. Inside the body `.` is the element and `$`
   #    is the root, and every element still goes through `sh`.
@@ -140,7 +155,10 @@ tasks:
 
   - id: archive
     uses: file
-    needs: [positional, as-json, stamp]
+    needs:
+      - positional
+      - as-json
+      - stamp
     network: none
     with:
       op: tar

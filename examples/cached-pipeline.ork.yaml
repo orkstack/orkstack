@@ -33,11 +33,16 @@ tasks:
     uses: shell
     with:
       op: eval
-      command: ["sh", "-c", "date +%s%N"]
+      command:
+        - sh
+        - -c
+        - "date +%s%N"
 
   - id: train
     uses: shell
-    needs: [featurize, stamp]
+    needs:
+      - featurize
+      - stamp
     cache:
       enabled: true
     with:

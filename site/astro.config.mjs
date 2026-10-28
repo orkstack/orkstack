@@ -78,10 +78,10 @@ export default defineConfig({
 					borderWidth: 'var(--rule-hair)',
 					borderColor: 'var(--color-rule)',
 					codeFontFamily: 'var(--font-mono)',
-					codeFontSize: 'var(--text-sm)',
-					codeLineHeight: 'var(--text-sm--line-height)',
+					codeFontSize: 'var(--text-base)',
+					codeLineHeight: 'var(--text-base--line-height)',
 					uiFontFamily: 'var(--font-sans)',
-					uiFontSize: 'var(--text-xs)',
+					uiFontSize: 'var(--text-sm)',
 					frames: {
 						shadowColor: 'transparent',
 						frameBoxShadowCssValue: 'none',

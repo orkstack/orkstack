@@ -9,8 +9,11 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 ```yaml
   - id: fetch
     uses: http
-    needs: [wait-ready]
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    needs:
+      - wait-ready
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     with:
       op: get
       url: '{{ .inputs.export_url }}'
@@ -19,7 +22,8 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 
   - id: summarize
     uses: json
-    needs: [fetch]
+    needs:
+      - fetch
     network: none
     env:
       TZ: Europe/Berlin

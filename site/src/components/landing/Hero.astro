@@ -34,7 +34,7 @@ const facts: { label: string; value: string; stamp?: boolean }[] = [
 		</div>
 	</div>
 	<DrawingFrame class="hero-view" caption={`${example.name} @ ${example.version} · ${example.tasks} tasks`}>
-		<ThemeShot shot={hero} sizes="(min-width: 1280px) 1240px, 100vw" />
+		<ThemeShot shot={hero} sizes={`(max-width: 639.98px) calc((100vw - 32px) * 2.3), (min-width: 1700px) ${hero.width}px, calc(100vw - 64px)`} />
 	</DrawingFrame>
 	<dl class="hero-facts" aria-label="OrkStack in brief">
 		{
@@ -124,11 +124,10 @@ const facts: { label: string; value: string; stamp?: boolean }[] = [
 			border-width: 0 0 var(--rule-frame);
 		}
 		/* The view is the run page's top: its heading, the DAG and the timing
-		   register, cut under them (about half the capture's height). It also
-		   gives way to what the first viewport leaves once the bar and the
-		   title block (about 20rem) are drawn, so the actions stay in view. */
+		   register, which make site-media cuts the capture under. It gives way
+		   to what the first viewport leaves once the bar and the title block
+		   (about 20rem) are drawn, so the actions stay in view. */
 		.hero-view :global(.frame-body) {
-			aspect-ratio: 2400 / 745;
 			max-height: clamp(16rem, calc(100svh - 26rem), 40rem);
 		}
 		.hero-title {
@@ -137,8 +136,6 @@ const facts: { label: string; value: string; stamp?: boolean }[] = [
 		}
 		.hero-lede {
 			margin-top: calc(var(--spacing) * 3);
-			font-size: var(--text-md);
-			line-height: var(--text-md--line-height);
 		}
 		.hero-facts {
 			grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -165,11 +162,8 @@ const facts: { label: string; value: string; stamp?: boolean }[] = [
 		}
 	}
 	/* On a phone a whole desktop page would be a thumbnail: the view shows
-	   its top left, the run's heading and its DAG, at a readable size. */
+	   its left, the run's heading and its DAG, at a readable size. */
 	@media (max-width: 639.98px) {
-		.hero-view :global(.frame-body) {
-			aspect-ratio: 5 / 4;
-		}
 		.hero-view :global(.shot img) {
 			width: 230%;
 			max-width: none;

@@ -9,7 +9,9 @@ In [`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/bl
 ```yaml
   - id: resolve
     uses: git
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     secrets:
       - name: git-token
         source: env:GIT_TOKEN

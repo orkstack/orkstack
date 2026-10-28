@@ -52,7 +52,8 @@ tasks:
   #    workspace.
   - id: archive
     uses: file
-    needs: [publish]
+    needs:
+      - publish
     network: none
     with:
       op: copy
@@ -65,7 +66,9 @@ tasks:
   #    spliced into its text.
   - id: summarize
     uses: shell
-    needs: [publish, archive]
+    needs:
+      - publish
+      - archive
     condition: '{{ eq .tasks.publish.output.status 200.0 }}'
     with:
       op: exec

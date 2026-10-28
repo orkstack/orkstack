@@ -58,40 +58,56 @@ tasks:
     uses: shell
     with:
       op: eval
-      command: ["printf", "%s", "{{ .inputs.route }}"]
+      command:
+        - printf
+        - "%s"
+        - "{{ .inputs.route }}"
 
   - id: canary
     uses: shell
-    needs: [decide]
+    needs:
+      - decide
     condition: '{{ eq .tasks.decide.output.value "canary" }}'
     with:
       op: exec
-      command: ["echo", "canary rollout: 5% of traffic"]
+      command:
+        - echo
+        - "canary rollout: 5% of traffic"
 
   - id: full
     uses: shell
-    needs: [decide]
+    needs:
+      - decide
     condition: '{{ eq .tasks.decide.output.value "full" }}'
     with:
       op: exec
-      command: ["echo", "full rollout: all traffic"]
+      command:
+        - echo
+        - "full rollout: all traffic"
 
   - id: verify
     uses: shell
-    needs: [canary, full]
+    needs:
+      - canary
+      - full
     join: none_failed
     with:
       op: exec
-      command: ["echo", "verified the rollout that ran"]
+      command:
+        - echo
+        - "verified the rollout that ran"
 
   - id: deploy
     uses: shell
-    needs: [verify]
-    retry: { maximum_attempts: 2 }
+    needs:
+      - verify
+    retry:
+      maximum_attempts: 2
     with:
       op: script
       interpreter: sh
-      command: ["{{ .inputs.fail_deploy }}"]
+      command:
+        - "{{ .inputs.fail_deploy }}"
       script: |
         set -eu
         log=/orkstack/output/artifacts/deploy.log
@@ -104,7 +120,8 @@ tasks:
 
   - id: smoke
     uses: shell
-    needs: [verify]
+    needs:
+      - verify
     with:
       op: exec
       command:
@@ -116,20 +133,27 @@ tasks:
 
   - id: announce
     uses: shell
-    needs: [deploy]
+    needs:
+      - deploy
     with:
       op: exec
-      command: ["echo", "deploy is live"]
+      command:
+        - echo
+        - "deploy is live"
 
   - id: rollback
     uses: shell
-    needs: [deploy]
+    needs:
+      - deploy
     join: any_failed
-    retry: { maximum_attempts: 2 }
+    retry:
+      maximum_attempts: 2
     with:
       op: script
       interpreter: sh
-      command: ["{{ .inputs.rollback_seconds }}", "{{ .inputs.fail_rollback }}"]
+      command:
+        - "{{ .inputs.rollback_seconds }}"
+        - "{{ .inputs.fail_rollback }}"
       script: |
         set -eu
         echo "rolling back; how deploy ended:"
@@ -152,15 +176,20 @@ tasks:
 
   - id: escalate
     uses: shell
-    needs: [rollback]
+    needs:
+      - rollback
     join: any_failed
     with:
       op: exec
-      command: ["echo", "the rollback failed: paging the on-call engineer"]
+      command:
+        - echo
+        - "the rollback failed: paging the on-call engineer"
 
   - id: notify
     uses: shell
-    needs: [deploy, smoke]
+    needs:
+      - deploy
+      - smoke
     join: all_done
     with:
       op: script

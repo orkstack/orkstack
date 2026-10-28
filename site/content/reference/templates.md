@@ -9,7 +9,9 @@ An excerpt from [`examples/http-post.ork.yaml`](https://github.com/orkstack/orks
 ```yaml
   - id: summarize
     uses: shell
-    needs: [publish, archive]
+    needs:
+      - publish
+      - archive
     condition: '{{ eq .tasks.publish.output.status 200.0 }}'
     with:
       op: exec

@@ -9,11 +9,15 @@ In [`examples/decide-and-route.ork.yaml`](https://github.com/orkstack/orkstack/b
 ```yaml
   - id: canary
     uses: shell
-    needs: [decide]
+    needs:
+      - decide
     condition: '{{ eq .tasks.decide.output.result.route "canary" }}'
     with:
       op: eval
-      command: ["printf", "%s", "canary: 5%, then 50%, then 100% of traffic"]
+      command:
+        - printf
+        - "%s"
+        - "canary: 5%, then 50%, then 100% of traffic"
 ```
 
 Plan the path before anything runs:
@@ -48,7 +52,10 @@ Use `join: none_failed` to run after whichever branch ran. The same example re-j
 ```yaml
   - id: report
     uses: json
-    needs: [canary, direct, hold]
+    needs:
+      - canary
+      - direct
+      - hold
     join: none_failed
     network: none
     with:

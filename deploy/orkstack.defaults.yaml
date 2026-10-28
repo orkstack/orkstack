@@ -87,7 +87,9 @@ orker:
   # workdir: ""  # orker; temp dir
   image_layout: /var/lib/orkstack/images  # orker
   env_allowlist: []  # orker
-  secret_schemes: [env, file]  # orker
+  secret_schemes:  # orker
+    - env
+    - file
   secret_allow: []  # orker
   registry_auth_file: ""  # orker
   task_log_export: false  # orker
@@ -117,11 +119,14 @@ telemetry:
   admin_addr: ""  # no listener when unset
   pprof_enabled: false
   high_cardinality: false
-  service_name: {ork: ork, orker: orker}
+  service_name:
+    ork: ork
+    orker: orker
   resource_attributes: {}
   exporters:
     traces: none
-    metrics: [none]
+    metrics:
+      - none
     logs: none
   sampler: {}
     # sampler.name: ""  # SDK default: parentbased_always_on

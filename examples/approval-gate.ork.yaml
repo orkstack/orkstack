@@ -36,7 +36,9 @@ inputs:
   changes:
     type: array
     default:
-      - { service: web, setting: replicas, value: "3" }
+      - service: web
+        setting: replicas
+        value: "3"
   notify_url:
     type: string
     required: true
@@ -58,30 +60,40 @@ tasks:
           }
 
   - id: approval
-    needs: [assess]
+    needs:
+      - assess
     condition: '{{ .tasks.assess.output.result.risky }}'
     await:
       timeout_seconds: 86400
       schema:
-        approved: { type: boolean, required: true }
-        approver: { type: string, required: true }
+        approved:
+          type: boolean
+          required: true
+        approver:
+          type: string
+          required: true
 
   - id: apply
     uses: shell
-    needs: [assess, approval]
+    needs:
+      - assess
+      - approval
     join: none_failed
     condition: '{{ if index .tasks "approval" }}{{ .tasks.approval.output.approved }}{{ else }}true{{ end }}'
     with:
       op: script
       interpreter: sh
-      command: ['{{ .tasks.assess.output.result.summary }}']
+      command:
+        - '{{ .tasks.assess.output.result.summary }}'
       script: |
         set -eu
         echo "applying: $1"
 
   - id: announce
     uses: orkflow:notify-block@0.1.0
-    needs: [assess, apply]
+    needs:
+      - assess
+      - apply
     join: none_failed
     with:
       url: '{{ .inputs.notify_url }}'
@@ -90,7 +102,8 @@ tasks:
 
   - id: tell-requester
     uses: orkflow:notify-block@0.1.0
-    needs: [approval]
+    needs:
+      - approval
     join: any_failed
     with:
       url: '{{ .inputs.notify_url }}'

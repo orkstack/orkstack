@@ -25,10 +25,14 @@ one setting the two must not share:
 ```yaml
 telemetry:
   log_format: json
-  admin_addr: {ork: ":9464", orker: ":9465"}
+  admin_addr:
+    ork: ":9464"
+    orker: ":9465"
   exporters:
     logs: otlp
-    metrics: [prometheus, otlp]
+    metrics:
+      - prometheus
+      - otlp
     traces: otlp        # spans: ork.task.attempt, ork.task.phase, and the engine's own
   otlp:
     endpoint: http://localhost:4318
@@ -42,9 +46,9 @@ profile expects. Every key has an `ORK_*`/`OTEL_*` environment equivalent
 (`docs/DEPLOY.md`, "Configuration"); the environment overrides the file.
 
 With `make up`, the binaries run from a generated `.run/orkstack.yaml`. When
-any `OTEL_*` variable (or `ORK_ADMIN_ADDR`) is exported, that file gains
-`admin_addr: {ork: "127.0.0.1:9464", orker: "127.0.0.1:9465"}`; export the
-exporter and OTLP variables above and the rest follows. An exported
+any `OTEL_*` variable (or `ORK_ADMIN_ADDR`) is exported, that file gains an
+`admin_addr:` with `ork: "127.0.0.1:9464"` and `orker: "127.0.0.1:9465"`;
+export the exporter and OTLP variables above and the rest follows. An exported
 `ORK_ADMIN_ADDR` applies to both binaries, so set admin ports through the file
 instead.
 

@@ -27,7 +27,10 @@ tasks:
     uses: shell
     with:
       op: eval
-      command: ["sh", "-c", "printf '%s' \"{{ .inputs.text }}\" | wc -c | tr -d ' '"]
+      command:
+        - sh
+        - -c
+        - "printf '%s' \"{{ .inputs.text }}\" | wc -c | tr -d ' '"
 
   # 2. eval as a probe: this command exits 1 on purpose. Under `op: exec` that
   #    would fail the task; under `op: eval` the exit code is just data.
@@ -35,13 +38,18 @@ tasks:
     uses: shell
     with:
       op: eval
-      command: ["test", "-f", "/definitely/not/here"]
+      command:
+        - test
+        - -f
+        - "/definitely/not/here"
 
   # 3. exec as the actual work: a non-zero exit here fails the run, and
   #    Temporal's retry policy decides what happens next.
   - id: report
     uses: shell
-    needs: [measure, probe]
+    needs:
+      - measure
+      - probe
     with:
       op: exec
       command:
@@ -58,7 +66,8 @@ tasks:
   #    it leaves in /orkstack/output/artifacts/ becomes an output artifact.
   - id: package
     uses: shell
-    needs: [report]
+    needs:
+      - report
     with:
       op: script
       interpreter: sh
@@ -76,7 +85,9 @@ tasks:
   #    name, so the archive carries no workspace path inside it.
   - id: archive
     uses: file
-    needs: [report, package]
+    needs:
+      - report
+      - package
     with:
       op: tar
       srcs:

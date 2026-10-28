@@ -8,12 +8,14 @@
 # each-fan-out is already stored there.
 
 Set Shell "bash"
-Set FontSize 15
-Set Width 1200
+# Twice the size the site shows it at (ThemeClip.astro), so a screen with two
+# device pixels per CSS pixel shows the text one to one.
+Set FontSize 30
+Set Width 2400
 # Tall enough that the finished watch's last lines sit above a paused
 # video's controls band.
-Set Height 860
-Set Padding 24
+Set Height 1720
+Set Padding 48
 Set TypingSpeed 30ms
 Set CursorBlink false
 
@@ -40,6 +42,9 @@ Type "orkctl run submit each-fan-out --watch"
 Sleep 500ms
 Enter
 Sleep 18s
+# The poster: the watch finished, as the terminal drew it, lossless.
+# media/run.sh renames it for the theme.
+Screenshot out/poster.png
 
 Hide
 Type "RUN=$(orkctl run list --limit 1 --json | grep -o 'ork-[0-9]*-[0-9]*' | head -1) && orkctl run watch $RUN >/dev/null 2>&1; clear"

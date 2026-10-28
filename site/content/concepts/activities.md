@@ -5,9 +5,12 @@ Learn what a task's image receives, what it must write, and what OrkStack does w
 ```yaml
   - id: report-shell
     uses: localhost:5001/orkstack-examples/custom-image-shell:dev
-    needs: [probe]
+    needs:
+      - probe
     network: none
-    command: ["{{ .inputs.label }}", "is-not-rendered"]
+    command:
+      - "{{ .inputs.label }}"
+      - is-not-rendered
     with:
       label: '{{ .inputs.label }}'
       src: upstream/probe/values.json

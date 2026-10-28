@@ -9,10 +9,13 @@ OCI Activity Contract costs nothing.
 ```yaml
 - id: package
   uses: file
-  needs: [build]
+  needs:
+    - build
   with:
     op: tar
-    srcs: ["artifacts/build/app", "artifacts/build/config.yaml"]
+    srcs:
+      - artifacts/build/app
+      - artifacts/build/config.yaml
     as: release.tar.gz
 ```
 

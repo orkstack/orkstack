@@ -214,15 +214,17 @@ Drafting paper and blue-black ink, with hue rationed tighter than in the UI: the
 
 **Character:** The UI's pairing, unchanged: a narrow humanist sans for prose, headings and tracked-caps labels, and a mono reserved for data. Both faces are installed by `@fontsource-variable` packages at exactly the UI's versions.
 
+**Scale:** The tokens are the UI's, sized for a dense app; a page read top to bottom sets them one step larger. `base.css` sets the root at 112.5%, and since every token is in rem, that one value lifts every size, space and measure together, Starlight's own included, and keeps their ratios; rules stay in px. The sizes below are tokens at that root: `--text-md` is 16.9 px here, `--text-lg` 20.25 px.
+
 ### Hierarchy
 - **Display** (semibold, fluid from 1.3 to 1.9 times `--text-2xl`, `--leading-none`, `--tracking-tight`, balanced): the landing page's one h1, in the title block's first cell, at most 22ch wide.
-- **Headline** (semibold, fluid from `--text-2xl` to 1.5 times it, `--leading-tight`, `--tracking-tight`, balanced): each landing section's h2. The docs use the token ramp directly: h1 `--text-2xl`, h2 `--text-xl`, h3 `--text-lg`, h4 `--text-md`, h5 `--text-base`, all semibold and tight.
+- **Headline** (semibold, fluid from `--text-2xl` to 1.5 times it, `--leading-tight`, `--tracking-tight`, balanced): each landing section's h2. The docs' headings: h1 1.25 times `--text-2xl`, h2 `--text-2xl`, h3 `--text-xl`, h4 `--text-lg`, h5 `--text-md`, all semibold and tight.
 - **Title** (semibold, `--text-lg`): a part's h3, a limit's name.
-- **Lede** (`--text-lg`, `--color-ink-secondary`): the paragraph under each section heading and the hero lede below 1024 px; at 1024 px and up the hero lede drops to `--text-md`.
-- **Body** (`--font-weight-body`, `--text-md`): landing prose, title-block values (semibold); docs paragraphs and list items stop at 72ch.
-- **Register** (`--text-base` on the landing page, `--text-sm` in docs tables): register rows.
+- **Lede** (`--text-lg`, `--color-ink-secondary`): the paragraph under each section heading and the hero lede, at every width.
+- **Body** (`--font-weight-body`, `--text-md`): landing prose, title-block values (semibold). Docs body text is Starlight's 1rem at a line height of 1.65; docs paragraphs and list items stop at 72ch.
+- **Register** (`--text-base`): register rows, on the landing page and in docs tables; the docs sidebar sets at the same size.
 - **Label** (semibold, `--text-2xs`, `--tracking-caps`, uppercase): the `.caps` class: title-block and fact labels, register heads, the top bar's places, the wordmark (at `--text-xs`), the docs sidebar's group labels and the contents heading, the terminal bar's "Shell".
-- **Code** (`--font-mono`, `--text-sm`): the YAML listing, the quickstart commands (medium weight), docs code blocks. Inline code inside prose sets at 0.9em.
+- **Code** (`--font-mono`, `--text-sm`): the YAML listing and the quickstart commands (medium weight); docs code blocks set at `--text-base`. Inline code inside prose sets at 0.9em.
 - **Caption** (`--font-mono`, `--text-xs`): a drawing frame's caption patch and the quickstart's comments.
 
 ### Named Rules
@@ -234,11 +236,11 @@ Drafting paper and blue-black ink, with hue rationed tighter than in the UI: the
 
 **The landing sheet.** `main` is centred at a maximum of 90rem, with `--spacing-gutter` side padding below 640 px and `--spacing-sheet` from 640 px. Sections (`.block`) stand `calc(var(--spacing) * 24)` apart; each opens with a `--rule-region` ink rule, then a heading block at most 46rem wide with more space below it (`* 10`) than above (`* 6`).
 
-**The first viewport.** The hero is one grid inside a `--rule-frame` ink border. Below 1024 px it reads in document order: title cell, the framed view, the facts in two columns. From 1024 px the view spans the top and the title block runs along the bottom: the title cell (about 1.15 parts) with a `--rule-frame` ink rule on its right, then six fact cells in two rows of three divided by hairlines in ink. The view's body is cut to the screenshot's top (aspect 2400 / 745) and gives way to the viewport (`max-height: clamp(16rem, calc(100svh - 26rem), 40rem)`) so the actions stay in view. Below 640 px the screenshot is shown at 230% width in a 5 / 4 window, its top left: the run heading and the DAG at a readable size.
+**The first viewport.** The hero is one grid inside a `--rule-frame` ink border. Below 1024 px it reads in document order: title cell, the framed view, the facts in two columns. From 1024 px the view spans the top and the title block runs along the bottom: the title cell (about 1.15 parts) with a `--rule-frame` ink rule on its right, then six fact cells in two rows of three divided by hairlines in ink. The view is the run page's top, which `make site-media` cuts under its heading, its drawing and the aside's timing register, and it gives way to the viewport (`max-height: clamp(16rem, calc(100svh - 26rem), 40rem)`) so the actions stay in view. Below 640 px the screenshot is shown at 230% width, its left: the run heading and the DAG at a readable size.
 
 **Breakpoints in use.** 640 px (top-bar links fold into the Menu disclosure; sheet padding; registers and owners and status links restack), 768 px (limits become two columns), 900 px (the architecture drawing switches from down to across; the parts list becomes three columns; the title block band becomes one row with the first cell twice as wide), 1024 px (the hero sheet; features as two columns of registers), 1100 px (the code listing beside its parts list, 2 : 1). Starlight's own 50rem switches the docs header.
 
-**The docs.** Starlight's layout with `--sl-nav-height` set to `--spacing-bar` at every width, so the docs top bar is the landing page's height. `scroll-padding-top` clears the bar plus a gutter.
+**The docs.** Starlight's layout with `--sl-nav-height` set to `--spacing-bar` at every width, so the docs top bar is the landing page's height. The content column is 49rem: prose stops at 72ch, and code, tables and screenshots take the rest. `scroll-padding-top` clears the bar plus a gutter.
 
 ### Named Rules
 **The One Sheet Rule.** The first viewport is one framed sheet: the real run as the main view and a title block holding the headline, the actions and the facts. Facts are title-block cells with a caps label over a value, never stat cards or large figures.
@@ -304,7 +306,7 @@ The quickstart's commands: a sunken-paper box in a `--rule-region` ink border un
 The UI's table: tracked-caps muted heads on sunken paper under a `--rule-region` ink rule, `--rule-hair` rows, cells in secondary ink, row heads semibold. Feature row heads are ink links underlined in `--color-rule-strong` that turn blue on hover. Docs markdown tables get the same treatment with no zebra striping. Below 640 px a row restacks into a grid.
 
 ### Docs surfaces
-Sidebar group labels in tracked caps; links in secondary ink, hover wash; the current page semibold ink on the blue tint. Inline code on the hover wash with a faint hairline. Blockquotes take a `--color-rule-strong` hairline. Asides are sunken paper with a hairline; caution and danger take the red. The search trigger is a quiet outlined control; its dialog has a `--rule-region` ink border on sheet ground. Screenshots in docs take a `--rule-region` ink border and a muted caption.
+Sidebar group labels in tracked caps; links in secondary ink, hover wash; the current page semibold ink on the blue tint. Inline code on the hover wash with a faint hairline. Blockquotes take a `--color-rule-strong` hairline. Asides are sunken paper with a hairline; caution and danger take the red. The search trigger is a quiet outlined control; its dialog has a `--rule-region` ink border on sheet ground. Screenshots in docs are cuts of the UI's main column, drawn at their own size inside a `--rule-region` ink border, with a muted caption.
 
 ## Do's and Don'ts
 
@@ -313,7 +315,8 @@ Sidebar group labels in tracked caps; links in secondary ink, hover wash; the cu
 - **Do** open every landing section with a `--rule-region` ink rule and divide rows with `--rule-hair` in `--color-rule`.
 - **Do** frame screenshots and drawings in `DrawingFrame` with a mono caption naming what is drawn.
 - **Do** ship every screenshot and recording as a light and dark pair from `make site-media` (`ThemeShot`, `ThemeClip`), within the media budget `check-tokens.mjs` enforces (900 KiB an image, 2.5 MiB a video, 24 MiB in all), lazy, with alt text, and a caption on every recording.
-- **Do** give recordings controls, a poster, `muted`, `playsinline` and `preload="none"`; a terminal recording sits at the top of a box 110 of its pixels taller, in the terminal's own `--color-paper-sunken`, so a paused video's controls band falls below its last line.
+- **Do** draw a screenshot at its own size or narrower, never larger: `make site-media` captures it natively at one and two device pixels per CSS pixel and saves both losslessly in `public/media`, and the page serves the pair as a `srcset` with the screenshot's own `width` and `height`. The landing page's are taken at the width of its frames, the docs' as cuts of the UI's main column that fit the docs column; nothing re-encodes or resizes them on the way.
+- **Do** give recordings controls, a poster, `muted`, `playsinline` and `preload="none"`; a terminal recording is drawn at twice the size it is shown at, and sits at the top of a box 220 of its pixels taller, in the terminal's own `--color-paper-sunken`, so a paused video's controls band falls below its last line.
 - **Do** keep motion to colour and ground transitions over `--duration-fast` on `--ease-out`, and stop the one entrance animation under `prefers-reduced-motion`.
 - **Do** keep the landing page working with JavaScript off: commands stay selectable text, the Menu is a `<details>`, and the theme follows the system through the generated dark block.
 
