@@ -361,6 +361,26 @@ func (h *harness) answerThenLosePinHost(gate <-chan struct{}, cause error) {
 		})
 }
 
+// heldUntilLost is a member behavior for a pin whose host dies: the member
+// named held closes running the moment it executes and never completes on
+// its own, so answerThenLosePinHost(running, …) kills the host while it runs;
+// every other member succeeds. Without the gate the host's death raced the
+// member's own success, and under load the member won and the run passed
+// (CI run 40740645720; 6 of 3,600 runs under parallel race-detector load).
+func heldUntilLost(held string, running chan struct{}) func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	var once sync.Once
+	return func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		if in.TaskId != held {
+			return succeeded(in.TaskId, map[string]any{"ok": true}), nil
+		}
+		once.Do(func() { close(running) })
+		// Cancelled by the session failure, never by this deadline — it is a
+		// hang guard so a regression fails the test instead of the suite.
+		<-time.After(30 * time.Second)
+		return nil, errors.New(held + " was never cancelled by its lost pin")
+	}
+}
+
 // startedActivities is every activity type the environment started, in order.
 func (h *harness) startedActivities() []string {
 	h.mu.Lock()
@@ -1808,10 +1828,9 @@ tasks:
 // error says the task cannot be retried elsewhere.
 func TestRunWorkflow_ClassifiesALostPinHostAsPinHostLost(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	h := newPinHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
-	}, nil)
-	h.answerThenLosePinHost(nil, temporal.NewNonRetryableApplicationError(
+	running := make(chan struct{})
+	h := newPinHarness(t, &suite, heldUntilLost("prep", running), nil)
+	h.answerThenLosePinHost(running, temporal.NewNonRetryableApplicationError(
 		"pin host stopped heartbeating", task.CategoryInfrastructureError, nil))
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-lost",
