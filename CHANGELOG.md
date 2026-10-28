@@ -540,6 +540,20 @@ include breaking changes, and each is marked **BREAKING**.
   Two validation messages no longer end in a colon: a join with no needs ends
   `or remove the join: key`, and `.each` outside a fan-out ends `that declares
   each: (a fan-out)`.
+- The image-policy integration suites no longer pull `registry:3` from Docker
+  Hub at test time. Their private registry ran the floating tag, but the
+  stack pins the registry image by digest and the CI proof host pulls it by
+  that reference, which Docker stores without the tag; a fresh runner had no
+  `registry:3`, so a Hub stall during the suite failed it outside every setup
+  retry. `cosigntest.StartRegistry` now runs the exact reference
+  `deploy/docker-compose.yml` pins, with `--pull never`, and takes the
+  suite's infrastructure-absent path (a failure under `ORK_REQUIRE_INFRA=1`),
+  naming `make up` and the proof host, when it is not on the host. The
+  Temporal dev server of the continuation contract test also runs with
+  `--pull never`. The boot bind probe's integration test has its docker shim
+  answer the probe image's inspect in every short-budget case, so a busy
+  daemon cannot fail them for a step they do not test, and the history-guard
+  CPU bound is scaled under the race detector like its siblings.
 
 ### Added
 
