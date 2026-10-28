@@ -1288,7 +1288,10 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   their first run on GitHub.
 - **The nightly soaks' thresholds were measured on a 16-core host.** A
   threshold missed on a 4-vCPU public runner is reported as a calibration
-  result, never silently changed.
+  result, never silently changed. The soaks themselves carry no row of
+  `scripts/proof-host-speed.tsv`: only the merge gate's reduced-ceiling copies
+  do, for the live `GetRun` p95 (above), so a nightly's wall-clock miss on a
+  CI runner fails that nightly.
 - **Base-cache sizing is unmeasured at concurrency.** The 8-entry, 128 MiB
   cache is documented arithmetic, not a measured miss rate; a setting needs a
   measurement first, with the user's approval.
