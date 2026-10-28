@@ -906,7 +906,9 @@ runner measured below the runner-health floor
 (`scripts/proof-runner-floors.tsv`) before any test ran is a runner failure,
 not a failing `main`: the proof records that part as `runner-degraded`, is
 not a proof of the tree, and that one part runs again as a new part of the
-same tree (§11.2); a part above the floor that fails is a failing `main`. A
+same tree (§11.2); a part above the floor that fails is a failing `main`. The
+race, race-repeat and fuzz parts are measured for information and no floor
+binds them, so a failure there is a failing `main`. A
 change that raises a
 default the deferred tests measured (`engine.orkflow_max_tasks`, the fan-out
 item maximum, or a continuation, history or in-flight default) quotes a
@@ -1254,8 +1256,10 @@ names, and in every other tier it fails the gate. A skip
 also fails it, unless `scripts/proof-allowed-skips.txt` names the test and the
 reason (an opt-in recorder, a helper subprocess); an allowed-skip entry that
 names no listed test fails it too. The race gate alone records a skip it
-does not refuse: it runs `-short`, and a test it skipped counts only because
-the unit ledger, which runs the test without `-short`, passed it; a data race
+does not refuse: it runs `-short`, its ledger says so, and a test it skipped
+counts only because the unit ledger, which runs the test without `-short`,
+passed it (the nightly race repeat records its `-short` skips the same way and
+has no unit ledger to hold them to); a data race
 the detector reports fails the gate whatever the tests reported, and no
 quarantine excuses it. A test whose binary crashed while it ran is
 recorded as failed and never re-run; the tests behind it run in a fresh

@@ -275,39 +275,59 @@ differences:
 - **`-short` is on.** The scale tests the unit gate runs without it (the
   history-guard, ten-thousand-item and closure-cost tests) are single-thread
   CPU work whose assertion is their own cost, and the detector multiplies that
-  several times over. A test `-short` skipped is recorded as a skip with its
-  reason, not as a problem of the race ledger and never as a pass, and
-  `proofrun merge` holds each such skip to the unit ledger: the unit gate,
-  which runs the test without `-short`, must have passed it. A test the unit
-  ledger lists and the race ledger does not, a skipped test the unit ledger did
-  not pass, and a skipped test it does not list each fail the proof, so no
-  test is run by neither lane. A skip an allowed-skip entry names (an `any`
-  entry, or a `unit` entry, which covers the race suites too) stands on that
-  entry, as in the unit gate. A subtest skipped under `-short` is counted and
-  not refused. A test the detector cannot carry stays in both ledgers: it
+  several times over. The ledger records that its run had `-short`
+  (`"short": true`), and only then is a skip no allowed-skip entry names
+  recorded, with the reason "skipped in a run with `-short`", rather than
+  refused: the ledger does not know why a test skipped (the test's own reason
+  is in the gate's log), and a run without `-short` follows the unit gate's
+  rule, a skip being a problem. A recorded skip is not a problem of the race
+  ledger and never a pass, and `proofrun merge` holds each one to the unit
+  ledger: it accepts the skip only from a ledger that says its run had
+  `-short`, and the unit gate, which runs the test without `-short`, must have
+  passed it. A test the unit ledger lists and the race ledger does not, a
+  skipped test the unit ledger did not pass, and a skipped test it does not
+  list each fail the proof, so no test is run by neither lane. A skip an
+  allowed-skip entry names (an `any` entry, or a `unit` entry, which covers
+  the race suites too) stands on that entry, as in the unit gate. A subtest
+  skipped under `-short` is counted and not refused. A test the detector cannot carry stays in both ledgers: it
   skips itself under the detector, or scales its bound by a stated factor (the
   engine's `raceBuild` and `raceSlowdown`), never drops it; a build tag that
   removes it from the race build is refused, because the ledger then lacks it.
 - **No quarantine excuses it.** The race ledger is built with none, and the
   merger refuses a `quarantined-fail` entry in it.
-- **`-timeout 30m`** replaces `go test`'s ten minutes per package, which
-  `internal/engine` under the detector can exceed on a smaller runner.
+- **`-timeout` is 30 minutes for each run of a package's tests**, where
+  `go test` gives ten minutes in all. `internal/engine` under the detector
+  can exceed ten minutes on a smaller runner, and the timeout covers a test
+  binary from its start to its end across every `-count` repeat, so the
+  race repeat's three runs get 90 minutes (`raceTimeoutFor` in `run.go`).
+  It is a hang guard and not a budget. `make test-race` gives `go test` the
+  same figure for its `RACE_COUNT` (`RACE_MINUTES_PER_RUN`, which a test holds
+  equal to the gate's).
 - **It sets no `ORK_PROOF_DIR`.** The measurement files the unit gate's tests
   write there are the unit gate's evidence; a measurement taken under the
   detector is evidence of nothing, and must not overwrite them.
 - **It needs cgo.** The detector links C code, so the gate refuses to start
   (exit `77`, before anything is written) without `CGO_ENABLED=1` and a C
-  compiler on `PATH` (`go env CC`). The `ubuntu-24.04` runners and a developer
-  host have one.
+  compiler on `PATH` (`go env CC`). The unit gate needs them too, in a local
+  proof of any tier that runs it and in the CI `fast` part, because
+  `proofrun`'s own tests run `go test -race`; a feature proof whose change
+  touches no Go package races nothing and still runs the unit gate. The
+  `ubuntu-24.04` runners and a developer host have one.
 
 *Where it runs.* A local proof runs it last of the fast gates, alone: after the
 site gate and before the setup, never beside another gate. The detector
-multiplies every test's time, so beside the integration phase it would make
-both load-sensitive, and a race found there ends the proof before the long gates
-start (§2.2). Its cost is the longest package, `internal/engine`, plus the
-build: a few minutes on a proof of 70–80 (§11.5 has the measurements, taken on
-a loaded host; the first quiet one is the `race` row of a full proof's
-`gates.tsv`).
+multiplies every test's time, so beside the integration phase it would put
+about 1,700 CPU-seconds on top of six load-sensitive integration jobs, and a
+race found there would end the proof only after the long gates had run; alone
+and early it costs wall time and ends a racing proof in the first minutes
+(§2.2). The cost is the longest package, `internal/engine`, plus the build, and
+the only measurements are two runs on a loaded 16-core host, 573 s and 632 s
+of wall (§11.5): plan about ten minutes on a local proof of 70–80, that is
+about one eighth of it. A CI proof pays nothing on its critical path, the
+`race` part running beside `fast`. Nobody has measured it on a quiet host; the
+first is the `race` row of a full proof's `gates.tsv`, and a placement beside
+the integration phase is worth another look only if that row is far above ten
+minutes.
 
 **The nightly lanes** belong to the nightly tier alone; the pre-release gate
 runs the race gate and not these. Each runs alone, before the integration
@@ -320,7 +340,14 @@ phase, and is one CI part (§5):
   several exposes is what it looks for. One test name reports once per
   repetition, so the ledger keeps the worst outcome of a test's repetitions
   (fail, then skip, then pass) and adds up its seconds: a failure in any
-  repetition stands.
+  repetition stands, and a repetition that started and never reported (the
+  binary ended, hung or timed out inside it) leaves its test with no outcome,
+  whatever an earlier repetition reported. The run is `-short`, as the gate
+  is, and records its `-short` skips the same way. The nightly proof has no
+  unit ledger, so nothing holds those skips to a pass: a full proof of the
+  same tree holds the same skips to its unit gate, and here they only narrow
+  what the lane hunts, are counted in its ledger summary, and are refused
+  from a ledger that does not say its run had `-short`.
 - **`fuzz`** runs `proofrun fuzz -fuzztime $FUZZTIME` (default `2m`; a whole
   number of `s`, `m` or `h`, or of iterations as `100x`; the `nightly.yml`
   dispatch has a `fuzztime` input): every `Fuzz*` target `go test -list
@@ -797,7 +824,8 @@ were still 921 MB (run 40388322907).
 
 A ledger entry has `package`, `test`, `job`, `outcome`, `seconds`, an optional
 `reason`, `allowed_skip`, `quarantine` and `failures`. The outcomes are
-`pass`, `fail`, `skip`, `none`, `deferred` and `quarantined-fail`. The words,
+`pass`, `fail`, `skip`, `none`, `deferred` and `quarantined-fail`. A race
+suite's ledger (§2.3) also has `short`, true when its run had `-short`. The words,
 defined once: **listed** is what the binary reports; **run** is asked for;
 **deferred** is a nightly-listed test the full tier did not run; **expected**
 is every test with one required outcome; **out of tier** is a listed test the
@@ -841,10 +869,12 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   race repeat's and the fuzz lane's (nightly), are read from the part of the
   gate's name or the local part and held to the unit ledger's rules: an entry
   that is not a pass needs a problem naming it or an allowed-skip entry in the
-  plan's list; `quarantined-fail` is refused; a gate without its ledger fails
-  its proof. The race ledger must list every test the unit ledger lists, and
-  each test it skipped under `-short` must be one the unit ledger passed
-  (§2.3).
+  plan's list, or is a skip from a ledger that says its run had `-short`;
+  `quarantined-fail` is refused; a gate without its ledger fails its proof.
+  The race ledger must list every test the unit ledger lists, and each test
+  it skipped under `-short` must be one the unit ledger passed. The nightly
+  race repeat has no unit ledger, so its `-short` skips are accepted and
+  counted and held to nothing further (§2.3).
 - **Lost runners.** The lost-runner match reads every check-run annotation of
   the job; GitHub's system annotations cannot be told apart by path. A failure
   seen in the attempt's events or log always wins over it.
@@ -1280,9 +1310,11 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   another agent's race run beside it, `internal/engine` the long pole at 515 s
   and `internal/api` at 199 s; the unit gate, without `-short` and without the
   detector, takes 160–360 s alone. A second run took 632 s of wall under a load
-average of 30–70 and 1,744 CPU-seconds (user 1,664, sys 80), a floor of about
-110 s on a quiet 16-core host. Neither run was quiet, so neither is the gate's
-cost on the proof host; the first full proof that runs it is.
+  average of 30–70 and 1,744 CPU-seconds (user 1,664, sys 80). Dividing the
+  CPU-seconds by 16 cores gives 110 s, which is not a floor: `internal/engine`
+  is one long package, and its own path bounds the gate. Neither run was
+  quiet, so neither is the gate's cost on the proof host; the first full proof
+  that runs it is.
 - A CI runner, as `runner_health` records it (run 40411125174, `ubuntu-24.04`
   on a private repository): 4 CPUs and 16 GB, with 14.3–14.8 GiB available
   before a part, sequential writes of 59–457 MB/s and reads of 235–534 MB/s
@@ -1345,7 +1377,15 @@ cost on the proof host; the first full proof that runs it is.
   `race-repeat` and `fuzz` parts measure their runner for information (§5):
   the detector slows every test several times over, so a runner below the
   floors that bind the stack parts fails a bound test explicitly rather than
-  being set aside as degraded.
+  being set aside as degraded. `AGENTS.md` §11.2 says so: a red `race-repeat`
+  or `fuzz` part is a failing `main`, never `runner-degraded`. Flooring them
+  needs floor rows derived from measured runs in
+  `scripts/proof-runner-floors.tsv`, which changes only with the user's
+  approval.
+- **The nightly race repeat's skips are held to nothing.** The repeat is
+  `-short`, and the nightly proof has no unit ledger to hold a skip to (the
+  full proof's merger does, §7.1), so a test that skips there narrows what the
+  lane hunts without failing it; the ledger summary counts the skips.
 - **The nightly lanes' time grows with the code.** The fuzz lane takes each
   Fuzz target's `FUZZTIME` in turn and the race repeat three runs of its
   packages, so a new target or package lengthens a nightly; the CI jobs'
