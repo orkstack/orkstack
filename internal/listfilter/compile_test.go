@@ -148,6 +148,24 @@ func TestCompile_RefusesTimeWithoutAZone(t *testing.T) {
 	}
 }
 
+// A zone offset can carry an instant out of the years RFC 3339 spells with
+// four digits once it is written in UTC, the canonical spelling; the text the
+// compiler would produce could not be sent back, so it is refused.
+func TestCompile_RefusesAnInstantWhoseUTCSpellingHasNoFourDigitYear(t *testing.T) {
+	for _, v := range []string{"9999-12-31T23:59:59.999999999-23:59", "9999-12-31T23:59:59-00:01", "0000-01-01T00:00:00+00:01"} {
+		expectRefusal(t, namespacesSpec(t),
+			fmt.Sprintf("filters[0]: %q is outside 0000-01-01T00:00:00Z to 9999-12-31T23:59:59.999999Z, the instants a filter can name", v),
+			"created_at<"+v)
+	}
+	for _, v := range []string{"9999-12-31T23:59:59.999999999Z", "0000-01-01T00:00:00Z", "0000-01-01T00:00:00-00:01", "9999-12-31T23:59:59+00:01"} {
+		set := compile(t, namespacesSpec(t), "created_at<"+v)
+		recompiled := compile(t, namespacesSpec(t), set.Texts()...)
+		if recompiled.Key() != set.Key() {
+			t.Errorf("%s compiled to %q, which compiles to %q", v, set.Texts(), recompiled.Texts())
+		}
+	}
+}
+
 func TestCompile_RefusesUnmetRequires(t *testing.T) {
 	expectRefusal(t, runsSpec(t), "filters[0]: origin.id needs an equals (=) filter on origin.kind", "origin.id=x")
 	compile(t, runsSpec(t), "origin.id=x", "origin.kind=trigger")

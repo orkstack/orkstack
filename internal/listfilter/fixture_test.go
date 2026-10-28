@@ -25,7 +25,7 @@ var (
 	runsDesc protoreflect.MessageDescriptor
 )
 
-func runsSpec(t *testing.T) *listfilter.Spec {
+func runsSpec(t testing.TB) *listfilter.Spec {
 	t.Helper()
 	runsOnce.Do(func() {
 		S5 := []orkstackv1.FilterOperator{1, 2, 3, 4, 5}
@@ -76,7 +76,7 @@ func runsSpec(t *testing.T) *listfilter.Spec {
 	return spec
 }
 
-func specOf(t *testing.T, request proto.Message) *listfilter.Spec {
+func specOf(t testing.TB, request proto.Message) *listfilter.Spec {
 	t.Helper()
 	spec, err := listfilter.SpecFor(request)
 	if err != nil {
@@ -106,7 +106,7 @@ type vectors struct {
 	} `json:"canonical"`
 }
 
-func loadVectors(t *testing.T) vectors {
+func loadVectors(t testing.TB) vectors {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/vectors.json")
 	if err != nil {
