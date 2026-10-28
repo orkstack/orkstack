@@ -159,10 +159,13 @@ include breaking changes, and each is marked **BREAKING**.
   and `--input-json` text that Go's JSON decoder would change on the way
   through (bytes that are not UTF-8, a lone surrogate escape) is no longer
   replaced with U+FFFD: `--input-json` refuses it and a `--input` value stays
-  the string you typed. An `--outputs-file` of `orkctl run plan` keyed by an
-  empty task id, which the `--output` pair already refused, is refused too.
-  Found by reading `buildInputPayload` while stating `FuzzBuildInputPayload`;
-  the empty key was written by the fuzz engine (`FuzzBuildAssumedOutputs`).
+  the string you typed. A task id given to `orkctl run plan --output` or keyed
+  in its `--outputs-file` is held to the name rule (`^[a-z][a-z0-9-]*$`, at most
+  200 bytes), naming the flag: an empty key in the file, and an id that is not
+  text in either, were accepted and failed to encode with no word about the
+  flag. Found by reading `buildInputPayload` while stating
+  `FuzzBuildInputPayload`; the empty and non-text ids were written by the fuzz
+  engine (`FuzzBuildAssumedOutputs`).
 - A task's live log is framed the same way wherever the container's reads
   split its output. A line of exactly 64 KiB (`MaxStreamedLine`) whose
   terminator arrived in a later read streamed an extra empty line after it,

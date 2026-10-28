@@ -167,8 +167,8 @@ func buildAssumedOutputs(pairs []string, file string) (map[string]*orkstackv1.Pa
 		}
 		sort.Strings(keys)
 		for _, id := range keys {
-			if id == "" {
-				return nil, fmt.Errorf("invalid --outputs-file %s: a task id is required as each key", file)
+			if err := dsl.ValidSlug("task id", id); err != nil {
+				return nil, fmt.Errorf("invalid --outputs-file %s: key %q: %w", file, id, err)
 			}
 			object, ok := decoded[id].(map[string]any)
 			if !ok {
@@ -181,6 +181,9 @@ func buildAssumedOutputs(pairs []string, file string) (map[string]*orkstackv1.Pa
 		id, raw, found := strings.Cut(pair, "=")
 		if !found || id == "" {
 			return nil, fmt.Errorf("invalid --output %q: expected TASK=JSON", pair)
+		}
+		if err := dsl.ValidSlug("task id", id); err != nil {
+			return nil, fmt.Errorf("invalid --output %q: %w", pair, err)
 		}
 		if err := dsl.CheckJSONText([]byte(raw)); err != nil {
 			return nil, fmt.Errorf("invalid --output %q: %w", pair, err)

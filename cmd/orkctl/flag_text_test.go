@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -59,9 +60,25 @@ func TestBuildAssumedOutputs_RefusesTextTheDecoderWouldChange(t *testing.T) {
 			}
 		})
 	}
-	// The pair refuses an empty task id; the file's key is held to the same.
-	if got, err := buildAssumedOutputs(nil, writePlanFile(t, "empty-id.json", `{"":{}}`)); err == nil {
-		t.Errorf("an --outputs-file keyed by an empty task id = %v, want it refused as the pair is", got)
+	// A task id is a name, held to the rule every boundary holds names to
+	// (AGENTS.md section 7): the pair and the file's key alike, naming the flag.
+	// One that is not text could not even be encoded as a map key.
+	for _, id := range []string{"", "\x80", "Build", "build step", "1build", "build_step", strings.Repeat("a", 201)} {
+		if got, err := buildAssumedOutputs([]string{id + "={}"}, ""); err == nil || !strings.Contains(err.Error(), "--output") {
+			t.Errorf("--output %q = %v, %v, want a refusal naming --output", id+"={}", got, err)
+		}
+		file := writePlanFile(t, "bad-id.json", fmt.Sprintf(`{%q:{}}`, id))
+		if id == "\x80" {
+			file = writePlanFile(t, "bad-id.json", "{\"\x80\":{}}")
+		}
+		if got, err := buildAssumedOutputs(nil, file); err == nil || !strings.Contains(err.Error(), "--outputs-file") {
+			t.Errorf("--outputs-file keyed by %q = %v, %v, want a refusal naming --outputs-file", id, got, err)
+		}
+	}
+	for _, id := range []string{"a", "build", "build-step-2"} {
+		if _, err := buildAssumedOutputs([]string{id + "={}"}, ""); err != nil {
+			t.Errorf("--output %s={}: %v", id, err)
+		}
 	}
 	got, err := buildAssumedOutputs([]string{`flaky={"a":"😀"}`}, "")
 	if err != nil || got["flaky"].GetData().GetFields()["a"].GetStringValue() != "\U0001F600" {
