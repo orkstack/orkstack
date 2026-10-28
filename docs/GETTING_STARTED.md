@@ -1,55 +1,53 @@
 # Getting started
 
-This page takes a machine with Docker to a finished run: the whole stack from
-a release's images, and one Orkflow applied, planned, run and inspected from
-the CLI and the UI. Docker is the only prerequisite. Everything here is a
-local setup; [DEPLOY.md](./DEPLOY.md) is the reference for a real deployment,
-and [CONTRIBUTING.md](../CONTRIBUTING.md) builds and runs OrkStack from
-source.
+This page takes a machine with Docker to a finished run: the whole stack built
+from a clone of this repository, and one Orkflow applied, planned, run and
+inspected from the CLI and the UI. Docker and git are the only prerequisites.
+Everything here is a local setup; [DEPLOY.md](./DEPLOY.md) is the reference
+for a real deployment, and [CONTRIBUTING.md](../CONTRIBUTING.md) runs
+OrkStack's processes on the host for working on them.
 
 OrkStack is pre-release: stable, but breaking changes may be introduced until
-1.0, and each is listed in [CHANGELOG.md](../CHANGELOG.md). The commands below
-download a published release. Until the first release is published there is
-nothing to download yet; build and run from source instead
-([CONTRIBUTING.md](../CONTRIBUTING.md), "The local development stack").
+1.0, and each is listed in [CHANGELOG.md](../CHANGELOG.md).
 
 <!-- site-media: e2e-demo -->
 
 ## What you need
 
 - **Docker** with Compose v2: Docker Engine, or Docker Desktop. The stack
-  runs in containers, and so does every task.
-- **curl** and **tar**, to download the release.
+  builds and runs in containers, and so does every task.
+- **git**, to clone the repository.
 
 Nothing else: no toolchain and no database of its own. OrkStack runs on a
 Temporal cluster and S3-compatible object storage, and the quickstart starts
-one of each. This page is checked on Linux with Docker Engine; Docker Desktop
-on macOS and Windows is not checked yet.
+one of each. This page is checked on Linux with Docker Engine, on amd64; Docker
+Desktop on macOS and Windows, and arm64, are not checked yet.
 
-## 1. Download the quickstart
+## 1. Clone the repository
 
 ```bash
-curl -fsSLO https://github.com/orkstack/orkstack/releases/latest/download/orkstack-quickstart.tar.gz
-tar -xzf orkstack-quickstart.tar.gz
-cd orkstack-quickstart
+git clone https://github.com/orkstack/orkstack.git
+cd orkstack
 ```
 
-The bundle holds a `compose.yaml`, a `.env` that names the release's images by
-version and digest, and the example Orkflows under `examples/`. To check the
-download first, fetch the release's checksums beside it and run
-`sha256sum --ignore-missing -c SHA256SUMS`
-(`https://github.com/orkstack/orkstack/releases/latest/download/SHA256SUMS`).
+Run every command below from this directory. A clone of `main` is the newest
+code; to try a release, clone its tag instead (`git clone --branch vX.Y.Z
+https://github.com/orkstack/orkstack.git`).
 
 ## 2. Start OrkStack
 
 ```bash
-docker compose up -d --wait
+docker compose up --build -d --wait
 ```
 
-This pulls the release's images from `ghcr.io/orkstack`, starts Temporal,
-SeaweedFS as the S3-compatible object store, the engine, one Orker and the
-UI, and returns once each one passes its health check. Everything listens on
-this machine's loopback only:
+[`compose.yaml`](../compose.yaml), at the root of the clone, builds the
+engine, the Orker, the UI, `orkctl` and the six first-party activity images
+from the clone, then starts Temporal, SeaweedFS as the S3-compatible object
+store, an image registry for the activities, the engine, one Orker and the UI.
+It returns once each one passes its health check. The first build downloads
+the toolchains' images and the dependencies and takes a few minutes; later
+builds reuse Docker's build cache. Everything listens on this machine's
+loopback only:
 
 | What | Where |
 |---|---|
@@ -57,8 +55,9 @@ this machine's loopback only:
 | Engine API | http://localhost:8080 |
 | Temporal UI | http://localhost:8233 |
 
-If a port is taken, set `ORKSTACK_UI_PORT`, `ORKSTACK_API_PORT` or
-`ORKSTACK_TEMPORAL_UI_PORT` in `.env`. `docker compose ps` shows what is
+If a port is taken, set `ORKSTACK_UI_PORT`, `ORKSTACK_API_PORT`,
+`ORKSTACK_TEMPORAL_UI_PORT` or `ORKSTACK_REGISTRY_PORT` (the registry, 5002)
+in a `.env` file beside `compose.yaml`. `docker compose ps` shows what is
 running, and `docker compose logs -f ork orker` follows the engine's and the
 Orker's logs.
 
@@ -76,26 +75,18 @@ services can reach the store.
 
 ## 3. Get orkctl
 
-Run it from its image, with nothing to install:
+Run it from the image the stack built, with nothing to install:
 
 ```bash
 alias orkctl='docker compose run --rm orkctl'
 ```
 
-The alias works from the bundle's directory, and the container sees that
-directory read-only, which is enough for `orkctl apply examples/…`. Or
-install the binary for your system from the same release
-(`orkctl-linux-amd64.tar.gz`, `orkctl-linux-arm64.tar.gz`,
-`orkctl-darwin-amd64.tar.gz`, `orkctl-darwin-arm64.tar.gz`,
-`orkctl-windows-amd64.zip`, `orkctl-windows-arm64.zip`):
-
-```bash
-curl -fsSLO https://github.com/orkstack/orkstack/releases/latest/download/orkctl-linux-amd64.tar.gz
-tar -xzf orkctl-linux-amd64.tar.gz orkctl
-sudo install -m 0755 orkctl /usr/local/bin/orkctl
-```
-
-Either way, `orkctl version` names the release.
+The alias works from the clone's directory, and the container sees that
+directory read-only, which is enough for `orkctl apply examples/…`. A build
+from source calls itself `dev` (`orkctl version`). To install the binary itself, build it
+with Go (`make build` writes `bin/orkctl`, [CONTRIBUTING.md](../CONTRIBUTING.md))
+or take it from a release's archives ([UPGRADING.md](./UPGRADING.md), "Release
+artifacts").
 
 ## 4. Apply an Orkflow
 
@@ -148,16 +139,18 @@ logs and artifacts.
 
 <!-- site-media: ui-run-finished -->
 
-## 7. Stop, or start over
+## 7. Update, stop, or start over
 
 ```bash
-docker compose down      # stop; the object store keeps its data
-docker compose down -v   # stop and delete the stored data too
+git pull && docker compose up --build -d --wait   # update to the newest code
+docker compose down                               # stop; the object store keeps its data
+docker compose down -v                            # stop and delete the stored data too
 ```
 
-The quickstart's Temporal keeps its history in memory, so a stopped stack
-forgets its runs' histories; the Orkflows and the artifacts are in the object
-store, which `down` keeps unless you add `-v`.
+`--build` rebuilds whatever the pull changed and reuses the rest. The
+quickstart's Temporal keeps its history in memory, so a stopped stack forgets
+its runs' histories; the Orkflows and the artifacts are in the object store,
+which `down` keeps unless you add `-v`.
 
 ## Where next
 
@@ -168,5 +161,5 @@ store, which `down` keeps unless you add `-v`.
   follow, and why.
 - [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md) — what a container
   must do to be an activity, for writing your own image.
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — build OrkStack from source and run
-  the development stack.
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — work on OrkStack itself, with its
+  processes on the host.

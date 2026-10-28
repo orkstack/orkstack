@@ -12,7 +12,7 @@ orkctl run logs <run-id> --task <task>        # what the task wrote
 
 Every command takes `--json` for scripts and `-n, --namespace` to choose the namespace ([CLI.md](./CLI.md), "`orkctl run get`").
 
-The page is grouped into five parts. **Submitting** covers refusals, which happen before a run exists. **Running** covers a run that exists but is not progressing as expected, or ended in a way nobody asked for. **Failures** covers a task or run that failed, by reason code. **The quickstart** covers the release bundle `docker compose` runs ([GETTING_STARTED.md](./GETTING_STARTED.md)). **The local stack** covers `make up` and the dev stack in `scripts/stack.sh`.
+The page is grouped into five parts. **Submitting** covers refusals, which happen before a run exists. **Running** covers a run that exists but is not progressing as expected, or ended in a way nobody asked for. **Failures** covers a task or run that failed, by reason code. **The quickstart** covers the stack `docker compose` builds and runs from a clone ([GETTING_STARTED.md](./GETTING_STARTED.md)). **The local stack** covers `make up` and the dev stack in `scripts/stack.sh`.
 
 ## Submitting
 
@@ -353,30 +353,50 @@ Two commands run a task's pieces locally, through the same code the Orker uses:
 
 ## The quickstart
 
-These entries apply to the release's quickstart bundle: `compose.yaml` and its
-`.env`, started with `docker compose up -d --wait`
-([deploy/quickstart/compose.yaml](../deploy/quickstart/compose.yaml)).
+These entries apply to the quickstart: the repository's root `compose.yaml`,
+built and started from a clone with `docker compose up --build -d --wait`
+([compose.yaml](../compose.yaml)). A setting it names goes in a `.env` file
+beside it.
 
-### `docker compose up` cannot pull `ghcr.io/orkstack/…`
+### `docker compose up` fails while building
 
-**Cause.** The images are published by a release ([UPGRADING.md](./UPGRADING.md),
-"Release artifacts"). Before the first release there is nothing to pull, and a
-package that is still private refuses an anonymous pull with "denied" or
-"unauthorized".
+**Cause.** The first build downloads the toolchain images (Go, Bun, Node), the
+Go modules, the UI's packages and the activities' Alpine packages, so it needs
+the network, and a few GB free for Docker. A build also fails when Docker's
+build cache holds a broken layer, or when the clone was edited into a state
+that does not compile.
 
-**Fix.** Download the bundle of a published release, whose `.env` names images
-that exist. Until a release is published, run OrkStack from source
-([CONTRIBUTING.md](../CONTRIBUTING.md), "The local development stack").
+**Confirm.** The output names the failing service and step, for example
+`ork` and its `go build`, or `activity-template` and its download.
+
+**Fix.** Run the same command again once the network is back. For a broken
+cache, `docker builder prune` and run it again. For a clone that does not
+build, `git status` shows what changed; `git stash` or a fresh clone gets back
+to the committed code.
 
 ### `docker compose up` stops with "port is already allocated"
 
-**Cause.** The quickstart publishes the UI on 5173, the engine on 8080 and the
-Temporal UI on 8233, on `127.0.0.1`. The development stack (`make up`) and many
-other tools use the same ports.
+**Cause.** The quickstart publishes the UI on 5173, the engine on 8080, the
+Temporal UI on 8233 and its activity registry on 5002, on `127.0.0.1`. The
+development stack (`make up`) and many other tools use the same ports.
 
 **Fix.** Stop what holds the port, or set `ORKSTACK_UI_PORT`,
-`ORKSTACK_API_PORT` or `ORKSTACK_TEMPORAL_UI_PORT` in `.env` and run
-`docker compose up -d --wait` again.
+`ORKSTACK_API_PORT`, `ORKSTACK_TEMPORAL_UI_PORT` or `ORKSTACK_REGISTRY_PORT`
+in `.env` and run `docker compose up --build -d --wait` again.
+
+### `orkctl apply` cannot resolve `127.0.0.1:5002/orkstack/activity-…`
+
+**Cause.** The engine pins each first-party activity by asking the
+quickstart's registry for its digest, at `127.0.0.1:5002` inside the engine's
+own network, where a forwarder (`registry-forward`) serves it. The forwarder
+restarts whenever compose restarts the engine; an engine started some other
+way, for example by `docker start`, comes back without it.
+
+**Confirm.** `docker compose ps registry-forward` shows it missing or exited,
+or older than `ork`.
+
+**Fix.** `docker compose restart registry-forward`, or
+`docker compose up --build -d --wait` again.
 
 ### A task fails with `WORKDIR_NOT_BINDABLE` or "bind source path does not exist"
 
@@ -391,14 +411,15 @@ names `ORK_ORKER_WORKDIR`, which is `ORKSTACK_WORKDIR` here.
 **Fix.** Set `ORKSTACK_WORKDIR` in `.env` to a directory the virtual machine
 shares and that only you can write, usually one under your home directory, not
 a shared `/tmp`, and whose path holds no comma and no control character, then
-`docker compose up -d --wait` again ([DEPLOY.md](./DEPLOY.md), "Running the
-published images").
+`docker compose up --build -d --wait` again ([DEPLOY.md](./DEPLOY.md), "Running
+the published images").
 
 ### The Orker cannot reach Docker
 
 **Cause.** The compose file mounts `ORKSTACK_DOCKER_SOCKET` (default
-`/var/run/docker.sock`) into the Orker. Rootless Docker, colima and some
-Docker Desktop setups put the socket elsewhere.
+`/var/run/docker.sock`) into the Orker, and into the step that pushes the
+activities. Rootless Docker, colima and some Docker Desktop setups put the
+socket elsewhere; the push step then fails and the engine never starts.
 
 **Confirm.** `docker context inspect --format '{{.Endpoints.docker.Host}}'`
 prints the socket the `docker` command uses.

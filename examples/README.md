@@ -31,10 +31,10 @@ or under another version.
 
 ## Running them
 
-Start a stack first: the quickstart from a release, whose bundle carries the
-example Orkflows under `examples/` ([Getting started](../docs/GETTING_STARTED.md)), or
-`make up` from a checkout ([CONTRIBUTING.md](../CONTRIBUTING.md), "The local
-development stack"). Then:
+Start a stack first, from the repository's root: the quickstart,
+`docker compose up --build -d --wait` with `orkctl` from its image
+([Getting started](../docs/GETTING_STARTED.md)), or `make up`
+([CONTRIBUTING.md](../CONTRIBUTING.md), "The local development stack"). Then:
 
 ```sh
 orkctl apply examples/decide-and-route.ork.yaml  # store one example

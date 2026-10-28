@@ -23,7 +23,8 @@ Before you upgrade, read the **BREAKING** entries in the `[Unreleased]` section.
 ## Release artifacts
 
 Each release is published by `release.yml`, and only after its pre-release
-proof passed and its quickstart ran end to end on the images it publishes
+proof passed, the quickstart's compose file ran end to end on the images it
+publishes, and the README's Quickstart ran as written on a clone of its commit
 ([PROOFS.md](./PROOFS.md) §5). It publishes:
 
 - **On the GitHub release**, under names that carry no version, so that
@@ -34,9 +35,6 @@ proof passed and its quickstart ran end to end on the images it publishes
     `orkctl-windows-amd64.zip`, `orkctl-windows-arm64.zip`;
   - `ork-linux-amd64.tar.gz`, `ork-linux-arm64.tar.gz`,
     `orker-linux-amd64.tar.gz`, `orker-linux-arm64.tar.gz`;
-  - `orkstack-quickstart.tar.gz`, the compose file of
-    [GETTING_STARTED.md](./GETTING_STARTED.md) with a `.env` naming this
-    release's images by version and digest, and the example Orkflows;
   - `SHA256SUMS`, over every file above: `sha256sum --ignore-missing -c
     SHA256SUMS` checks the ones you downloaded.
 - **On `ghcr.io/orkstack`**, for linux/amd64 and linux/arm64: `ork`, `orker`,
@@ -44,7 +42,7 @@ proof passed and its quickstart ran end to end on the images it publishes
   `activity-http`, `activity-file`, `activity-json`, `activity-git` and
   `activity-template`. Each is tagged `X.Y.Z`, which never moves, and `X.Y`,
   which moves to each patch release of that line. Deploy by digest, or by
-  `X.Y.Z`; the quickstart's `.env` names both.
+  `X.Y.Z`.
 
 The images are not signed yet. A namespace's `require_signed_by` therefore
 cannot be met by the first-party activity images as published; sign them with

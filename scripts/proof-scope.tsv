@@ -54,6 +54,8 @@ deploy/orkstack.example.yaml	none
 go.mod	full
 go.sum	full
 Makefile	full
+# The quickstart: every image it builds and the stack every user starts.
+compose.yaml	full
 images/Makefile	full
 buf.yaml	full
 buf.gen.yaml	full

@@ -1433,7 +1433,7 @@ internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/docscheck/    Documentation drift checks (test-only)
 internal/apidocs/      docs/API.md, the client-facing API reference, generated from the proto comments
-internal/dist/         Release artifacts: binaries, archives, checksums, the quickstart bundle, release guards
+internal/dist/         Release artifacts: binaries, archives, checksums, release guards; the quickstart's guards
 internal/healthcheck/  The `--healthcheck` probe of ork and orker
 images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
@@ -1445,7 +1445,7 @@ ui/                    SvelteKit, Vite, Tailwind, and generated TS clients
 site/                  The landing page and docs site (Astro, Starlight): styled by ui/src/tokens.css,
                        its docs written for readers and citing this repository's docs
 deploy/                The development stack (Temporal, object storage, registry), the release images'
-                       Dockerfile, and the quickstart compose bundle
+                       Dockerfile, and the quickstart's source build (deploy/source/; compose.yaml at the root)
 examples/              Example Orkflows, automation documents, and custom images
 docs/                  Reference material (indexed in README.md; `CLI.md` is generated)
 test/                  Activity contract fixtures and test-only helper tools

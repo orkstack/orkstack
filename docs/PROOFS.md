@@ -693,9 +693,11 @@ marked the latest;
 `release.yml` › `gate` runs the release tier, on hosted 4-vCPU runners where
 its runner-size budgets cannot hold (§10, "Run the release gate"); `release.yml`
 › `artifacts`, beside it and read-only, builds what the release publishes — `make dist` (the
-archives and `SHA256SUMS`), `make release-images` for linux/amd64 and
-linux/arm64 as OCI layouts, the quickstart bundle naming them by digest — and
-runs `scripts/release-smoke.sh --layouts` on them before it uploads anything.
+archives and `SHA256SUMS`) and `make release-images` for linux/amd64 and
+linux/arm64 as OCI layouts — runs `scripts/quickstart-smoke.sh --release
+--layouts` on them (the root `compose.yaml` on those images, by digest), and
+runs `scripts/quickstart-smoke.sh` (the README's Quickstart as written, on a
+clone of the commit, built from source) before it uploads anything.
 It restores no cache, and runs QEMU's installer and BuildKit from images
 pinned by digest in `with:`, which Dependabot does not see, so those two pins
 are moved by hand;
@@ -705,9 +707,8 @@ passing release proof of the exact commit; and `release.yml` › `publish`, also
 only with `tag: true` on `main`, verifies before anything is pushed that the
 assets are exactly what the artifact's `SHA256SUMS` sums and match it, that
 the image list names each of the ten images once, that each layout's index
-names that digest, whose bytes hash to it and list linux/amd64 and
-linux/arm64, and that the quickstart bundle names every image by that tag and
-digest; it then pushes each layout to `ghcr.io/orkstack/<image>` byte for byte
+names that digest, and that its bytes hash to it and list linux/amd64 and
+linux/arm64; it then pushes each layout to `ghcr.io/orkstack/<image>` byte for byte
 (`skopeo copy --all --preserve-digests`, from the image
 `deploy/skopeo-image.txt` pins) under `X.Y.Z` and `X.Y`, checks each digest
 after the push, refuses to move an `X.Y.Z` that holds another digest, and only
@@ -1458,8 +1459,8 @@ created last. Re-run the failed job from the run's page while the
 new patch version.
 
 **After the first publish,** make the ten packages public: each new
-`ghcr.io/orkstack/<image>` starts private, and an anonymous pull (the
-quickstart's) fails until it is public (on each package's settings page).
+`ghcr.io/orkstack/<image>` starts private, and an anonymous pull fails until
+it is public (on each package's settings page).
 
 **Enable the merge gate.** The repository is public, so run
 `make github-merge-gate` (check mode, read-only) and then
@@ -1547,7 +1548,8 @@ listing with no bucket at all.
 | `make release-tag` | tag HEAD after a passing release proof of it |
 | `make dist` | the release's binaries, archives and `SHA256SUMS` for `VERSION=vX.Y.Z` |
 | `make release-images` | the release images as OCI layouts under `OUT`, for `PLATFORMS` |
-| `make release-smoke` | build both for this machine and run the quickstart bundle on them |
+| `make release-smoke` | build both for this machine and run `compose.yaml` on those images |
+| `make quickstart-smoke` | run the README's Quickstart as written on a fresh clone of the working tree |
 | `make proof-flakes` | derive per-test flake rates from the ledgers |
 | `make proof-slow-list` | regenerate the costs and the slow list from a proof |
 | `make proof-overhead` | report where a proof's wall-clock went, from its directory, running nothing |
@@ -1850,7 +1852,8 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   (`workflow_call`; the flakes job passed in run 40555387388). `release.yml`'s
   `artifacts` and `publish` jobs were added after the last `actionlint` pass;
   the workflow rules in `test/tools/proofrun` hold their shape, and `make
-  release-smoke` runs their build and smoke on a developer's host. The first
+  release-smoke` and `make quickstart-smoke` run their build and both smokes
+  on a developer's host. The first
   `tag: false` dispatch is their first run on GitHub. Its `gate` excuses a
   runner-size miss as the merge gate does (§10, "Run the release gate"), so
   the hosted runners' size alone no longer fails it.

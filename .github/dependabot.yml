@@ -34,8 +34,15 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # The release images' Dockerfile and the quickstart's source build, which
+  # runs the same stages (TestSourceDockerfile_StagesAreTheReleasesOwn), so
+  # one update moves both. Two pins are held to pins another entry or file
+  # moves, and their update needs the other moved by hand in the same pull
+  # request: the docker CLI, which the root compose.yaml's push step also
+  # runs (TestQuickstartCompose_InfraPinsMatchTheDevStack), and golang, whose
+  # version is the workflows' go-version.
   - package-ecosystem: docker
-    directory: /deploy
+    directories: ["/deploy", "/deploy/source"]
     schedule:
       interval: weekly
     groups:
@@ -48,7 +55,7 @@ updates:
   # digest too. deploy/skopeo-image.txt, and the QEMU and BuildKit images in
   # release.yml's `with:`, are moved by hand.
   - package-ecosystem: docker-compose
-    directories: ["/deploy", "/deploy/quickstart"]
+    directories: ["/", "/deploy"]
     schedule:
       interval: weekly
     groups:

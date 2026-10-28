@@ -10,7 +10,7 @@ import (
 
 // readRepoFile reads a repository file, named by its slash-separated path
 // from the root (repoRoot). The contract tests of the release images and the
-// quickstart read the committed files, so they hold the files themselves and
+// quickstart's compose file read the committed files, so they hold the files themselves and
 // never a copy.
 func readRepoFile(t *testing.T, rel string) []byte {
 	t.Helper()
@@ -95,26 +95,4 @@ func composeVariables(text string) (required []string, optional map[string]strin
 		optional[m[1]] = m[2]
 	}
 	return required, optional
-}
-
-// parseEnvFile reads a .env file: KEY=value lines, with comments and blank
-// lines skipped. A line that is neither is a test failure.
-func parseEnvFile(t *testing.T, name string, data []byte) map[string]string {
-	t.Helper()
-	env := map[string]string{}
-	for i, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok || key == "" || strings.ContainsAny(key, " \t") {
-			t.Fatalf("%s:%d: %q is not KEY=value", name, i+1, line)
-		}
-		if _, dup := env[key]; dup {
-			t.Fatalf("%s:%d: %s is set twice", name, i+1, key)
-		}
-		env[key] = value
-	}
-	return env
 }

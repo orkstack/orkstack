@@ -25,10 +25,10 @@ func sha(data string) string {
 func TestSums_IsTheSha256sumFormat(t *testing.T) {
 	t.Parallel()
 	got, err := dist.Sums(map[string][]byte{
-		"orkctl-linux-amd64.tar.gz":  []byte("two"),
-		"ork-linux-amd64.tar.gz":     []byte("one"),
-		"orkstack-quickstart.tar.gz": []byte("three"),
-		"Z-first.txt":                []byte("upper case sorts before lower"),
+		"orkctl-linux-amd64.tar.gz": []byte("two"),
+		"ork-linux-amd64.tar.gz":    []byte("one"),
+		"orker-linux-arm64.tar.gz":  []byte("three"),
+		"Z-first.txt":               []byte("upper case sorts before lower"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +36,7 @@ func TestSums_IsTheSha256sumFormat(t *testing.T) {
 	want := sha("upper case sorts before lower") + "  Z-first.txt\n" +
 		sha("one") + "  ork-linux-amd64.tar.gz\n" +
 		sha("two") + "  orkctl-linux-amd64.tar.gz\n" +
-		sha("three") + "  orkstack-quickstart.tar.gz\n"
+		sha("three") + "  orker-linux-arm64.tar.gz\n"
 	if string(got) != want {
 		t.Fatalf("SHA256SUMS\n got:\n%s\nwant:\n%s", got, want)
 	}

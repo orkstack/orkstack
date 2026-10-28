@@ -81,9 +81,6 @@ func TestRun_UsageErrorsExitTwo(t *testing.T) {
 		{"digests", "-layouts"},
 		{"digests", "-layouts", "x", "extra"},
 		{"digests", "-nonsense"},
-		{"quickstart"},
-		{"quickstart", "-version", "v0.1.0", "-images", "x", "-registry", "ghcr.io", "-tag", "0.1.0"},
-		{"quickstart", "-nonsense"},
 	} {
 		got := invoke(t, nil, nil, args...)
 		if got.code != 2 {
@@ -97,7 +94,7 @@ func TestRun_UsageErrorsExitTwo(t *testing.T) {
 		}
 	}
 	usage := invoke(t, nil, nil)
-	for _, sub := range []string{"check", "build", "sums", "notes", "digests", "quickstart"} {
+	for _, sub := range []string{"check", "order", "build", "sums", "notes", "digests"} {
 		if !strings.Contains(usage.stderr, sub) {
 			t.Errorf("usage does not list %s: %q", sub, usage.stderr)
 		}
@@ -319,11 +316,6 @@ func TestRun_Digests(t *testing.T) {
 				t.Errorf("line %d = %q, want %q", i, lines[i], want)
 			}
 		}
-		// The output is exactly what `quickstart -images` reads.
-		parsed, err := dist.ParseImages([]byte(got.stdout))
-		if err != nil || len(parsed) != 10 {
-			t.Errorf("ParseImages: %v (%d images)", err, len(parsed))
-		}
 	})
 	t.Run("a refused layout is exit 1 with nothing on stdout", func(t *testing.T) {
 		t.Parallel()
@@ -336,182 +328,6 @@ func TestRun_Digests(t *testing.T) {
 			if got.code != 1 || got.stdout != "" || got.stderr == "" {
 				t.Errorf("%s: exit %d, stdout %q, stderr %q; want 1, nothing on stdout, a reason", name, got.code, got.stdout, got.stderr)
 			}
-		}
-	})
-}
-
-// quickstartRepo is a repository root with what a bundle is made of: the
-// repository's own compose file and README, a LICENSE and two examples.
-func quickstartRepo(t *testing.T) string {
-	t.Helper()
-	root := repoWith(t, "")
-	for _, rel := range []string{"deploy/quickstart/compose.yaml", "deploy/quickstart/README.txt"} {
-		data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.MkdirAll(filepath.Join(root, "examples"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"alpha", "beta"} {
-		if err := os.WriteFile(filepath.Join(root, "examples", name+".ork.yaml"), []byte("name: "+name+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return root
-}
-
-// imagesFile writes the list `digests` prints.
-func imagesFile(t *testing.T, names []string) string {
-	t.Helper()
-	var list []dist.Image
-	for _, name := range names {
-		list = append(list, dist.Image{Name: name, Digest: digestOf(name)})
-	}
-	path := filepath.Join(t.TempDir(), "images.tsv")
-	if err := os.WriteFile(path, []byte(dist.FormatImages(list)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func TestRun_Quickstart(t *testing.T) {
-	t.Parallel()
-	args := func(root, images, out string, extra ...string) []string {
-		return append([]string{"quickstart", "-version", "v0.1.0", "-images", images, "-registry", "127.0.0.1:5000",
-			"-tag", "smoke-1-abc", "-out", out, "-root", root}, extra...)
-	}
-	t.Run("writes the bundle, stamped with the flag's commit time", func(t *testing.T) {
-		t.Parallel()
-		root, out := quickstartRepo(t), filepath.Join(t.TempDir(), "dist")
-		got := invoke(t, map[string]string{"SOURCE_DATE_EPOCH": "1"}, nil,
-			args(root, imagesFile(t, dist.Images()), out, "-commit-time", "1761298215")...)
-		if got.code != 0 {
-			t.Fatalf("exit %d: %s", got.code, got.stderr)
-		}
-		bundle := filepath.Join(out, "orkstack-quickstart.tar.gz")
-		if mtime := archivedTime(t, bundle); mtime.Unix() != 1761298215 {
-			t.Errorf("bundle mtime %v, want the -commit-time flag's, not SOURCE_DATE_EPOCH's", mtime)
-		}
-		if !strings.Contains(got.stdout, "orkstack-quickstart.tar.gz") {
-			t.Errorf("stdout %q does not name the bundle", got.stdout)
-		}
-		file, err := os.Open(bundle)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = file.Close() }()
-		gz, err := gzip.NewReader(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		reader := tar.NewReader(gz)
-		var env []byte
-		var names []string
-		for {
-			header, err := reader.Next()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			names = append(names, header.Name)
-			if header.Name == "orkstack-quickstart/.env" {
-				env, _ = io.ReadAll(reader)
-			}
-		}
-		if !strings.Contains(string(env), "127.0.0.1:5000/orkstack/ork:smoke-1-abc@"+digestOf("ork")) {
-			t.Errorf(".env does not name the registry, tag and digest it was given:\n%s", env)
-		}
-		if len(names) != 1+4+2+1 { // the directory, four files, two examples and examples/
-			t.Errorf("entries %q", names)
-		}
-	})
-	t.Run("falls back to SOURCE_DATE_EPOCH", func(t *testing.T) {
-		t.Parallel()
-		root, out := quickstartRepo(t), filepath.Join(t.TempDir(), "dist")
-		got := invoke(t, map[string]string{"SOURCE_DATE_EPOCH": "1700000000"}, nil, args(root, imagesFile(t, dist.Images()), out)...)
-		if got.code != 0 {
-			t.Fatalf("exit %d: %s", got.code, got.stderr)
-		}
-		if mtime := archivedTime(t, filepath.Join(out, "orkstack-quickstart.tar.gz")); mtime.Unix() != 1700000000 {
-			t.Errorf("bundle mtime %v, want SOURCE_DATE_EPOCH's", mtime)
-		}
-	})
-	t.Run("refuses to guess a commit time", func(t *testing.T) {
-		t.Parallel()
-		root, out := quickstartRepo(t), filepath.Join(t.TempDir(), "dist")
-		for _, env := range []map[string]string{nil, {"SOURCE_DATE_EPOCH": "soon"}} {
-			got := invoke(t, env, nil, args(root, imagesFile(t, dist.Images()), out)...)
-			if got.code != 2 || !strings.Contains(got.stderr, "SOURCE_DATE_EPOCH") {
-				t.Errorf("env %v: exit %d, stderr %q; want 2 naming SOURCE_DATE_EPOCH", env, got.code, got.stderr)
-			}
-		}
-		if _, err := os.Stat(out); err == nil {
-			t.Error("the output directory was created before the commit time was known")
-		}
-	})
-	t.Run("a registry or tag that is not one is a usage error, before any file is read", func(t *testing.T) {
-		t.Parallel()
-		root, out := quickstartRepo(t), filepath.Join(t.TempDir(), "dist")
-		images := imagesFile(t, dist.Images())
-		for name, replace := range map[string][2]string{
-			"a registry with a path": {"127.0.0.1:5000", "ghcr.io/orkstack"},
-			"a registry with a URL":  {"127.0.0.1:5000", "https://ghcr.io"},
-			"a bad tag":              {"smoke-1-abc", "-latest"},
-			"a tag with a slash":     {"smoke-1-abc", "a/b"},
-			"a version that is not":  {"v0.1.0", "0.1.0"},
-		} {
-			full := args(root, images, out, "-commit-time", "1700000000")
-			for i, arg := range full {
-				if arg == replace[0] {
-					full[i] = replace[1]
-				}
-			}
-			got := invoke(t, nil, nil, full...)
-			if got.code != 2 || got.stdout != "" || got.stderr == "" {
-				t.Errorf("%s: exit %d, stdout %q, stderr %q; want 2 with a reason", name, got.code, got.stdout, got.stderr)
-			}
-		}
-		if _, err := os.Stat(out); err == nil {
-			t.Error("the output directory was created for an invalid invocation")
-		}
-	})
-	t.Run("an image list that is not the ten is exit 1", func(t *testing.T) {
-		t.Parallel()
-		root, out := quickstartRepo(t), filepath.Join(t.TempDir(), "dist")
-		for name, images := range map[string]string{
-			"nine images":  imagesFile(t, dist.Images()[1:]),
-			"no such file": filepath.Join(t.TempDir(), "absent.tsv"),
-			"a list that isn't": func() string {
-				path := filepath.Join(t.TempDir(), "x.tsv")
-				_ = os.WriteFile(path, []byte("not a list\n"), 0o644)
-				return path
-			}(),
-		} {
-			got := invoke(t, nil, nil, args(root, images, out, "-commit-time", "1700000000")...)
-			if got.code != 1 || got.stderr == "" {
-				t.Errorf("%s: exit %d, stderr %q; want 1 with a reason", name, got.code, got.stderr)
-			}
-		}
-		if _, err := os.Stat(filepath.Join(out, "orkstack-quickstart.tar.gz")); err == nil {
-			t.Error("a bundle was written for an image list that is not the ten")
-		}
-	})
-	t.Run("a repository without the compose file is exit 1", func(t *testing.T) {
-		t.Parallel()
-		got := invoke(t, nil, nil, args(repoWith(t, ""), imagesFile(t, dist.Images()), filepath.Join(t.TempDir(), "dist"), "-commit-time", "1700000000")...)
-		if got.code != 1 || !strings.Contains(got.stderr, "compose.yaml") {
-			t.Errorf("exit %d, stderr %q; want 1 naming compose.yaml", got.code, got.stderr)
 		}
 	})
 }

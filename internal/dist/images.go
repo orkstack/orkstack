@@ -20,12 +20,11 @@ const ImageNamespace = "orkstack"
 // image start with: the catalog's "shell" is the image "activity-shell".
 const ActivityPrefix = "activity-"
 
-// serviceImages are the four images of the platform itself, in the order the
-// quickstart's compose file and .env name them.
+// serviceImages are the four images of the platform itself.
 var serviceImages = []string{Ork, Orker, "ui", Orkctl}
 
 // activityNames are the catalog names of the first-party activities, in the
-// order the quickstart's catalog lists them.
+// order the quickstart's compose file (compose.yaml) pushes them.
 var activityNames = []string{"shell", "http", "file", "json", "git", "template"}
 
 // ServiceImages returns the platform's images: ork, orker, ui and orkctl. The
@@ -38,8 +37,8 @@ func ServiceImages() []string { return slices.Clone(serviceImages) }
 func ActivityNames() []string { return slices.Clone(activityNames) }
 
 // Images returns every image a release publishes, sorted: the one list the
-// layouts, the digests and the quickstart's .env are all checked against. The
-// caller owns the returned slice.
+// layouts and the digests are checked against. The caller owns the returned
+// slice.
 func Images() []string {
 	images := slices.Clone(serviceImages)
 	for _, name := range activityNames {
@@ -136,39 +135,9 @@ func ReadLayouts(dir string) ([]Image, error) {
 	return images, nil
 }
 
-// checkImages returns images sorted by name after checking that they are
-// exactly the images a release publishes, each once, each by a well-formed
-// digest.
-func checkImages(images []Image) ([]Image, error) {
-	checked := slices.Clone(images)
-	sort.SliceStable(checked, func(i, j int) bool { return checked[i].Name < checked[j].Name })
-	var problems []string
-	seen := map[string]bool{}
-	for _, image := range checked {
-		switch {
-		case !slices.Contains(Images(), image.Name):
-			problems = append(problems, fmt.Sprintf("%q is not an image a release publishes", image.Name))
-		case seen[image.Name]:
-			problems = append(problems, fmt.Sprintf("%s is listed twice", image.Name))
-		case !dsl.ValidDigest(image.Digest):
-			problems = append(problems, fmt.Sprintf("%s has the digest %q, which is not sha256:<64 lowercase hex>", image.Name, image.Digest))
-		}
-		seen[image.Name] = true
-	}
-	for _, name := range Images() {
-		if !seen[name] {
-			problems = append(problems, name+" is missing")
-		}
-	}
-	if len(problems) > 0 {
-		return nil, fmt.Errorf("the image list is not the %d images a release publishes: %s", len(Images()), strings.Join(problems, "; "))
-	}
-	return checked, nil
-}
-
-// FormatImages writes images as the list `dist digests` prints and
-// `dist quickstart -images` reads: one "<name><TAB><digest>" line per image,
-// sorted by name.
+// FormatImages writes images as the list `dist digests` prints, which the
+// release smoke (scripts/quickstart-smoke.sh) and release.yml read: one
+// "<name><TAB><digest>" line per image, sorted by name.
 func FormatImages(images []Image) string {
 	sorted := slices.Clone(images)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
@@ -177,23 +146,4 @@ func FormatImages(images []Image) string {
 		out.WriteString(image.Name + "\t" + image.Digest + "\n")
 	}
 	return out.String()
-}
-
-// ParseImages reads the list FormatImages writes, and refuses anything that is
-// not exactly the images a release publishes, each once, by a well-formed
-// digest.
-func ParseImages(data []byte) ([]Image, error) {
-	text := strings.TrimSuffix(string(data), "\n")
-	if text == "" {
-		return nil, fmt.Errorf("the image list is empty")
-	}
-	var images []Image
-	for i, line := range strings.Split(text, "\n") {
-		fields := strings.Split(line, "\t")
-		if len(fields) != 2 {
-			return nil, fmt.Errorf("image list line %d (%q) is not <name><TAB><digest>", i+1, line)
-		}
-		images = append(images, Image{Name: fields[0], Digest: fields[1]})
-	}
-	return checkImages(images)
 }

@@ -7,8 +7,6 @@
 //	go run ./internal/dist/cmd/dist sums dist
 //	go run ./internal/dist/cmd/dist notes -version v0.1.0
 //	go run ./internal/dist/cmd/dist digests -layouts dist/layouts
-//	go run ./internal/dist/cmd/dist quickstart -version v0.1.0 -images images.tsv \
-//	    -registry ghcr.io -tag 0.1.0 -out dist
 //
 // It publishes nothing: release.yml uploads what it writes. Exit status: 0
 // done, 1 the work failed (a refused release, a compile error), 2 an invalid
@@ -62,11 +60,6 @@ commands:
   notes -version vX.Y.Z           print the "## [X.Y.Z]" section of CHANGELOG.md
   digests -layouts DIR            print "<image><TAB><digest>" for each of the ten OCI image layouts
                                   in DIR, sorted: the digest skopeo pushes each under
-  quickstart -version vX.Y.Z -images FILE -registry REG -tag TAG -out DIR
-                                  write DIR/orkstack-quickstart.tar.gz: compose.yaml, a .env
-                                  naming REG/orkstack/<image>:TAG@<digest> for each image
-                                  FILE lists (the output of digests), README.txt, LICENSE and
-                                  examples/*.ork.yaml
 
 Run it from the repository root, or name the root with -root.
 `
@@ -92,8 +85,6 @@ func run(args []string, env runEnv) int {
 		return env.notes(args[1:])
 	case "digests":
 		return env.digests(args[1:])
-	case "quickstart":
-		return env.quickstart(args[1:])
 	}
 	fmt.Fprintf(env.stderr, "dist: unknown command %q\n\n%s", args[0], usageText)
 	return 2
@@ -153,7 +144,7 @@ func (e runEnv) parseVersion(raw string) (dist.Version, int) {
 	return version, 0
 }
 
-// commitTimeFlag registers -commit-time, shared by build and quickstart.
+// commitTimeFlag registers build's -commit-time.
 func commitTimeFlag(set *flag.FlagSet) *string {
 	return set.String("commit-time", "",
 		"the commit's time, seconds since the epoch or RFC 3339 (default: $SOURCE_DATE_EPOCH; no clock fallback)")
@@ -317,67 +308,5 @@ func (e runEnv) digests(args []string) int {
 		return e.failure(err)
 	}
 	fmt.Fprint(e.stdout, dist.FormatImages(images))
-	return 0
-}
-
-func (e runEnv) quickstart(args []string) int {
-	set := e.flags("quickstart")
-	raw, root := versionFlags(set)
-	list := set.String("images", "", "the image list `dist digests` prints (required)")
-	registry := set.String("registry", "", "the registry host[:port] the images are named under (required)")
-	tag := set.String("tag", "", "the tag the images are named with (required)")
-	out := set.String("out", "", "the release directory (required)")
-	stamp := commitTimeFlag(set)
-	if code, done := e.parse(set, args, 0); done {
-		return code
-	}
-	version, code := e.parseVersion(*raw)
-	if code != 0 {
-		return code
-	}
-	for _, required := range []struct{ name, value string }{
-		{"images", *list}, {"registry", *registry}, {"tag", *tag}, {"out", *out},
-	} {
-		if required.value == "" {
-			return e.usageError("-%s is required (dist quickstart -h lists them)", required.name)
-		}
-	}
-	if err := dist.ValidateRegistry(*registry); err != nil {
-		return e.usageError("%v", err)
-	}
-	if err := dist.ValidateTag(*tag); err != nil {
-		return e.usageError("%v", err)
-	}
-	commitTime, code := e.commitTime(*stamp)
-	if code != 0 {
-		return code
-	}
-	data, err := os.ReadFile(*list)
-	if err != nil {
-		return e.failure(fmt.Errorf("read the image list: %w", err))
-	}
-	images, err := dist.ParseImages(data)
-	if err != nil {
-		return e.failure(fmt.Errorf("%s: %w", *list, err))
-	}
-	asset, err := dist.Quickstart(dist.QuickstartOptions{
-		Root: *root, Version: version, Images: images, Registry: *registry, Tag: *tag, CommitTime: commitTime,
-	})
-	if err != nil {
-		return e.failure(err)
-	}
-	if err := os.MkdirAll(*out, 0o755); err != nil {
-		return e.failure(fmt.Errorf("make the release directory: %w", err))
-	}
-	path := filepath.Join(*out, asset.Name)
-	if err := os.WriteFile(path, asset.Data, 0o644); err != nil {
-		return e.failure(fmt.Errorf("write %s: %w", asset.Name, err))
-	}
-	// WriteFile keeps the mode of a file an earlier run left there.
-	if err := os.Chmod(path, 0o644); err != nil {
-		return e.failure(fmt.Errorf("set the mode of %s: %w", asset.Name, err))
-	}
-	fmt.Fprintln(e.stdout, asset.Name)
-	fmt.Fprintf(e.stdout, "wrote %s: %s images at %s/orkstack/<image>:%s\n", path, version, *registry, *tag)
 	return 0
 }
