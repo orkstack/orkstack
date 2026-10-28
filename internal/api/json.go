@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/enumname"
 )
 
@@ -78,7 +79,7 @@ type renameEnumValue func(enum protoreflect.EnumDescriptor, name string) string
 // refuses them too. A run's input or a caller's name is never silently
 // altered by the dialect.
 func rewriteEnums(data []byte, md protoreflect.MessageDescriptor, rename renameEnumValue) ([]byte, error) {
-	if err := CheckJSONText(data); err != nil {
+	if err := dsl.CheckJSONText(data); err != nil {
 		return nil, err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))

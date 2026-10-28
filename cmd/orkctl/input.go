@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // buildInputPayload turns --input-json and repeated --input key=value pairs
@@ -51,7 +51,7 @@ func decodeInputObject(text string) (map[string]any, error) {
 	if trimmed == "" {
 		return map[string]any{}, nil
 	}
-	if err := api.CheckJSONText([]byte(trimmed)); err != nil {
+	if err := dsl.CheckJSONText([]byte(trimmed)); err != nil {
 		return nil, fmt.Errorf("invalid --input-json: %w", err)
 	}
 	var object map[string]any
@@ -68,7 +68,7 @@ func decodeInputObject(text string) (map[string]any, error) {
 // anything else is preserved verbatim as a string, including text whose JSON
 // reading would change it (see decodeInputObject).
 func parseInputValue(raw string) any {
-	if api.CheckJSONText([]byte(raw)) == nil {
+	if dsl.CheckJSONText([]byte(raw)) == nil {
 		var decoded any
 		if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
 			return decoded

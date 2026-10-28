@@ -204,6 +204,8 @@ func FuzzValidateAwaitValues(f *testing.F) {
 		`{"name":"a","flag":1}`, `{"name":"a","obj":[]}`, `{"name":"a","list":{}}`, `[]`, `"x"`, `12`, `true`, `null`, ``, ` `, `{`, `{}{}`,
 		`{"name":"a","name":1}`, "{\"name\":\"\xff\"}", `{"name":"a","count":1e999}`, `{"name":"a","count":-0.0}`, "\u00a0{\"name\":\"a\"}",
 		`{"name":"` + strings.Repeat("x", 100) + `"}`,
+		`{"name":"\ud800"}`, `{"name":"\udc00x"}`, `{"name":"\ud800A"}`, `{"\ud800":1}`, `{"name":"😀"}`, `{"name":"\\ud800"}`,
+		`{"name":"\uD800"}`, `{"name":"\ud800𐀀"}`, `{"name":"a\\\ud800"}`, `{"name":"\\\\ud800"}`,
 	} {
 		f.Add([]byte(seed), int64(0), uint8(1))
 		f.Add([]byte(seed), int64(64), uint8(0))
@@ -243,6 +245,9 @@ func awaitVerdict(raw []byte, maxBytes int64, order []string, types map[string]s
 	}
 	if !json.Valid(raw) {
 		return "values: the values are not one valid JSON value"
+	}
+	if escape := halfOfAPair(raw); escape != "" {
+		return "values: the values hold a string that cannot be read as text: the escape " + escape + " is half of a surrogate pair, not a character"
 	}
 	kindOf := func(text []byte) string {
 		switch trimmed := strings.TrimLeft(string(text), " \t\r\n"); trimmed[0] {
@@ -289,6 +294,47 @@ func awaitVerdict(raw []byte, maxBytes int64, order []string, types map[string]s
 				article = "an " + types[name]
 			}
 			return "values." + name + ": must be " + article + ", not " + got
+		}
+	}
+	return ""
+}
+
+var (
+	jsonStringLiteral = regexp.MustCompile(`(?s)"(?:[^"\\]|\\.)*"`)
+	jsonStringToken   = regexp.MustCompile(`(?s)\\u[0-9a-fA-F]{4}|\\.|[^\\]`)
+)
+
+// halfOfAPair returns the first unicode escape in a valid JSON text's strings
+// that is half of a surrogate pair, as spelled, or "" when every string is
+// text. It reads the strings as sequences of escapes and characters, which is
+// not how CheckJSONText scans them.
+func halfOfAPair(valid []byte) string {
+	unitOf := func(token string) (rune, bool) {
+		if len(token) != 6 || token[:2] != `\u` {
+			return 0, false
+		}
+		unit, err := strconv.ParseUint(token[2:], 16, 32)
+		return rune(unit), err == nil
+	}
+	for _, literal := range jsonStringLiteral.FindAll(valid, -1) {
+		tokens := jsonStringToken.FindAllString(string(literal[1:len(literal)-1]), -1)
+		for i := 0; i < len(tokens); i++ {
+			unit, isEscape := unitOf(tokens[i])
+			switch {
+			case !isEscape:
+			case unit >= 0xDC00 && unit < 0xE000:
+				return tokens[i]
+			case unit >= 0xD800 && unit < 0xDC00:
+				if next, ok := unitOf(func() string {
+					if i+1 < len(tokens) {
+						return tokens[i+1]
+					}
+					return ""
+				}()); !ok || next < 0xDC00 || next >= 0xE000 {
+					return tokens[i]
+				}
+				i++
+			}
 		}
 	}
 	return ""
@@ -471,4 +517,69 @@ func FuzzRenderValues_OnlyAPrintedNilIsRefused(f *testing.F) {
 			t.Fatalf("%q rendered %q, want %q", text, got.(map[string]any)["v"], want)
 		}
 	})
+}
+
+// FuzzCheckJSONText: for a text that is JSON, CheckJSONText refuses exactly
+// what Go's decoder would change on the way through, text that is not UTF-8
+// and half of a surrogate pair, names the escape it refuses, and nothing the
+// decoder keeps whole is refused. The oracle reads the strings as escapes and
+// characters; CheckJSONText scans their bytes.
+func FuzzCheckJSONText(f *testing.F) {
+	for _, seed := range []string{
+		`{}`, `"a"`, `"😀"`, `"\ud800"`, `"\udc00"`, `"\ud800A"`, `"\ud800x"`, `"\\ud800"`, `"\\\ud800"`, `"\ud800𐀀"`,
+		`"\uD800"`, `"􏿿"`, `"\uDC00\uD800"`, `{"\ud800":"\udc00"}`, `["\u0000","\u001f","�"]`, `"\ud800`, `"\ud80`, `"\u"`, `"\ud800\u`,
+		"\"\xff\"", "\"\xed\xa0\x80\"", "\"é\"", `[1,"\ud83d",2]`, `"\ud83d😀"`, "", `x`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		err := dsl.CheckJSONText(data)
+		if !utf8.Valid(data) {
+			if err == nil {
+				t.Fatalf("CheckJSONText accepted %q, which is not UTF-8", data)
+			}
+			return
+		}
+		if !json.Valid(data) {
+			return // not JSON: the decoder's to refuse
+		}
+		if escape := halfOfAPair(data); escape == "" {
+			if err != nil {
+				t.Fatalf("CheckJSONText refused %q, whose strings are all text: %v", data, err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), escape) {
+			t.Fatalf("CheckJSONText(%q) = %v, want the half pair %s named", data, err, escape)
+		}
+		if err == nil {
+			// What it lets through, Go's decoder reads back whole: a
+			// replacement character appears only where the text spells one.
+			var decoded any
+			if json.Unmarshal(data, &decoded) != nil {
+				return
+			}
+			if holdsReplacement(decoded) && !strings.Contains(strings.ToLower(string(data)), `�`) && !strings.Contains(string(data), "�") {
+				t.Fatalf("CheckJSONText accepted %q, which Go reads with a replacement character it does not spell", data)
+			}
+		}
+	})
+}
+
+func holdsReplacement(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.ContainsRune(typed, utf8.RuneError)
+	case map[string]any:
+		for k, v := range typed {
+			if strings.ContainsRune(k, utf8.RuneError) || holdsReplacement(v) {
+				return true
+			}
+		}
+	case []any:
+		for _, v := range typed {
+			if holdsReplacement(v) {
+				return true
+			}
+		}
+	}
+	return false
 }
