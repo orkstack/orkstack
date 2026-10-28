@@ -27,6 +27,7 @@ func FuzzVerify_AVerifiedMemberIsExactlyWhatTheBundleHolds(f *testing.F) {
 	f.Add("a", []byte("x"), "b", []byte("y"), uint32(0x32), false)
 	f.Add("a", []byte("x"), "b", []byte("y"), uint32(0x54), false)
 	f.Add("a", []byte("x"), "b", []byte("y"), uint32(0x76), false)
+	f.Add("a", []byte("x"), "b", []byte("y"), uint32(0x10), true) // a wrong file first still sets the order
 	f.Add("../escape", []byte("x"), "/abs", []byte("y"), uint32(0), false)
 	f.Add("same", []byte("x"), "same", []byte("y"), uint32(0), false)
 	f.Add("", []byte(""), "b/../c", []byte(""), uint32(0), false)
@@ -49,34 +50,39 @@ func FuzzVerify_AVerifiedMemberIsExactlyWhatTheBundleHolds(f *testing.F) {
 		}
 		var inTar []tarFile
 		honest := map[string]bool{} // a member that should verify if it is also in order
+		listed := map[string]bool{} // a member the manifest lists as present, right or wrong
 		for i := range names {
 			mode := (modes >> (4 * i)) & 15 % 8
 			member := Member{Path: names[i], Kind: KindArtifact, SizeBytes: int64(len(bodies[i])), SHA256: digestOf(bodies[i]), State: StatePresent}
 			switch mode {
 			case 0: // honest
-				honest[names[i]] = true
+				honest[names[i]], listed[names[i]] = true, true
 				members = append(members, member)
 				inTar = append(inTar, tarFile{i, names[i], bodies[i], false})
 			case 1: // wrong digest
 				member.SHA256 = digestOf(append([]byte("x"), bodies[i]...))
+				listed[names[i]] = true
 				members = append(members, member)
 				inTar = append(inTar, tarFile{i, names[i], bodies[i], false})
 			case 2: // wrong size
 				member.SizeBytes++
+				listed[names[i]] = true
 				members = append(members, member)
 				inTar = append(inTar, tarFile{i, names[i], bodies[i], false})
 			case 3: // not listed
 				inTar = append(inTar, tarFile{i, names[i], bodies[i], false})
 			case 4: // listed, not in the bundle
+				listed[names[i]] = true
 				members = append(members, member)
 			case 5: // listed twice: the first listing verifies, the second is a failure
-				honest[names[i]] = true
+				honest[names[i]], listed[names[i]] = true, true
 				members = append(members, member, member)
 				inTar = append(inTar, tarFile{i, names[i], bodies[i], false})
 			case 6: // reclaimed: absent as it must be
 				member.State = StateReclaimed
 				members = append(members, member)
 			case 7: // a directory where a file belongs
+				listed[names[i]] = true
 				members = append(members, member)
 				inTar = append(inTar, tarFile{i, names[i], nil, true})
 			}
@@ -132,16 +138,21 @@ func FuzzVerify_AVerifiedMemberIsExactlyWhatTheBundleHolds(f *testing.F) {
 			}
 			listedAt[member.Path] = i
 		}
+		// Order is the bundle's, not a member's: a listed regular file at a
+		// safe path moves the furthest position whether or not its bytes are
+		// right, and a later file at an earlier position is out of order.
 		for _, entry := range inTar {
-			index, listed := listedAt[entry.name]
-			if !honest[entry.name] || entry.dir || !listed || unsafeName(entry.name) {
+			index := listedAt[entry.name]
+			if entry.dir || !listed[entry.name] || unsafeName(entry.name) {
 				continue
 			}
 			if index < furthest {
 				continue
 			}
 			furthest = index
-			want[entry.name] = true
+			if honest[entry.name] {
+				want[entry.name] = true
+			}
 		}
 		got := map[string]bool{}
 		for _, member := range report.Verified {
