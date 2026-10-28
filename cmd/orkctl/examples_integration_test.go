@@ -26,10 +26,11 @@ import (
 // The shipped-examples scenarios (examples/README.md): every example this repository ships runs end to end, as a reader
 // would run it — the shipped file, applied under its own name, submitted with
 // the inputs its header names — against a real engine, Orker, Temporal and
-// MinIO. Each scenario writes its transcript to
+// MinIO. Each scenario is a test of its own, on a stack of its own, so a
+// proof runs them side by side; each writes its transcript to
 // <ORK_PROOF_DIR>/orkctl/examples-<E>.txt.
 
-// scenario runs one named scenario as a subtest on the shared stack: the
+// scenario runs one named scenario as a subtest on the test's stack: the
 // stack's helpers report to the subtest, and the transcript is written when
 // it ends, pass or fail.
 func (x *examplesStack) scenario(t *testing.T, name string, body func(t *testing.T)) {
@@ -152,12 +153,11 @@ func TestIntegration_EveryExampleValidatesClean(t *testing.T) {
 	x.note("every example validated with no warning but cached-pipeline's documented one; the automation plan is %v", planned)
 }
 
-func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+// E2: the decide-and-route example.
+func TestIntegration_DecideAndRouteExampleRunsAsShipped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	x := newExamplesStack(ctx, t, examplesOptions{})
-	base := x.services.base
-
 	x.scenario(t, "E2", func(t *testing.T) {
 		x.apply("examples/decide-and-route.ork.yaml")
 		cases := []struct {
@@ -200,7 +200,13 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 			t.Fatalf("task run decide values = %v", got)
 		}
 	})
+}
 
+// E3: the each-fan-out example.
+func TestIntegration_EachFanOutExampleRunsAsShipped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	x := newExamplesStack(ctx, t, examplesOptions{})
 	x.scenario(t, "E3", func(t *testing.T) {
 		x.apply("examples/each-fan-out.ork.yaml")
 		run := x.runToEnd("each-fan-out")
@@ -221,7 +227,13 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 			t.Fatalf("merged.txt = %q", got)
 		}
 	})
+}
 
+// E4: the inputs-and-escaping example.
+func TestIntegration_InputsAndEscapingExampleRunsAsShipped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	x := newExamplesStack(ctx, t, examplesOptions{})
 	x.scenario(t, "E4", func(t *testing.T) {
 		x.apply("examples/inputs-and-escaping.ork.yaml")
 		run := x.runToEnd("inputs-and-escaping", "--input", "release=1.4.2")
@@ -267,7 +279,14 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 			}
 		}
 	})
+}
 
+// E5: the order-saga example.
+func TestIntegration_OrderSagaExampleRunsAsShipped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	x := newExamplesStack(ctx, t, examplesOptions{})
+	base := x.services.base
 	x.scenario(t, "E5", func(t *testing.T) {
 		x.apply("examples/notify-block.ork.yaml")
 		x.apply("examples/order-saga.ork.yaml")
@@ -347,7 +366,14 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 		}
 		x.note("(c) notification: %s", notes[0].Text)
 	})
+}
 
+// E6: the approval-gate example.
+func TestIntegration_ApprovalGateExampleRunsAsShipped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	x := newExamplesStack(ctx, t, examplesOptions{})
+	base := x.services.base
 	x.scenario(t, "E6", func(t *testing.T) {
 		x.apply("examples/notify-block.ork.yaml")
 		x.apply("examples/approval-gate.ork.yaml")
@@ -419,7 +445,14 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 		}
 		x.note("(a) applied, (b) declined, (c) applied by dana, (d) rejected and the requester told")
 	})
+}
 
+// E7: the poll-until-ready example.
+func TestIntegration_PollUntilReadyExampleRunsAsShipped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	x := newExamplesStack(ctx, t, examplesOptions{})
+	base := x.services.base
 	x.scenario(t, "E7", func(t *testing.T) {
 		x.services.SetNotReady(2)
 		x.apply("examples/poll-until-ready.ork.yaml")
@@ -449,7 +482,14 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 		}
 		x.note("wait-ready: %v; summarize: %s", outcomes, asJSON(t, taskOutput(t, run, "summarize")))
 	})
+}
 
+// E12: the file-read, shell-eval, http-post and pinned-build examples.
+func TestIntegration_SmallExamplesRunAsShipped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	x := newExamplesStack(ctx, t, examplesOptions{})
+	base := x.services.base
 	x.scenario(t, "E12", func(t *testing.T) {
 		for _, file := range []string{"file-read", "shell-eval", "http-post", "pinned-build"} {
 			x.apply("examples/" + file + ".ork.yaml")
@@ -492,27 +532,36 @@ func TestIntegration_ExamplesRunAsShipped(t *testing.T) {
 	})
 }
 
-func TestIntegration_GitExamplesRunAsShipped(t *testing.T) {
+// newGitExamplesStack starts a stack with a TLS git server serving the
+// examples' repository, and returns it with the repository's URL and its
+// seeded commit. Each git scenario has a server of its own, so one that
+// pushes a commit never moves another's.
+func newGitExamplesStack(ctx context.Context, t *testing.T) (*examplesStack, string, string) {
+	t.Helper()
+	x := newExamplesStack(ctx, t, examplesOptions{git: true})
+	return x, x.git.URL("private/examples.git"), x.git.AddRepository(t, "private/examples.git", examplesRepoFiles)
+}
+
+// gitVariant is the shipped file with the test git server's CA added and
+// nothing else changed.
+func (x *examplesStack) gitVariant(t *testing.T, file string) string {
+	t.Helper()
+	shipped, err := os.ReadFile(filepath.Join(x.root, "examples", file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCA := withExampleGitCA(t, shipped)
+	requireOnlyGitCAAdded(t, shipped, withCA)
+	return x.variantFile(file, withCA)
+}
+
+// E9: the pinned-checkout example.
+func TestIntegration_PinnedCheckoutExampleRunsAsShipped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	x := newExamplesStack(ctx, t, examplesOptions{git: true})
-	repo := x.git.URL("private/examples.git")
-	first := x.git.AddRepository(t, "private/examples.git", examplesRepoFiles)
-
-	variant := func(file string) string {
-		shipped, err := os.ReadFile(filepath.Join(x.root, "examples", file))
-		if err != nil {
-			t.Fatal(err)
-		}
-		withCA := withExampleGitCA(t, shipped)
-		requireOnlyGitCAAdded(t, shipped, withCA)
-		return x.variantFile(file, withCA)
-	}
-
-	// E9 runs first: E8's third run pushes a commit, and E9 reads VERSION at
-	// the seeded one.
+	x, repo, first := newGitExamplesStack(ctx, t)
 	x.scenario(t, "E9", func(t *testing.T) {
-		x.apply(variant("pinned-checkout.ork.yaml"))
+		x.apply(x.gitVariant(t, "pinned-checkout.ork.yaml"))
 		run := x.runToEnd("pinned-checkout", "--input", "repo="+repo, "--input", "environment=prod")
 		requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
 		checkout := taskRunOf(t, run, "checkout")
@@ -541,9 +590,15 @@ func TestIntegration_GitExamplesRunAsShipped(t *testing.T) {
 		}
 		x.note("pin %s on %s; bundle %s", checkout.GetPin(), checkout.GetOrkerId(), sha256Hex(bundle))
 	})
+}
 
+// E8: the config-from-git example.
+func TestIntegration_ConfigFromGitExampleRunsAsShipped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	x, repo, first := newGitExamplesStack(ctx, t)
 	x.scenario(t, "E8", func(t *testing.T) {
-		x.apply(variant("config-from-git.ork.yaml"))
+		x.apply(x.gitVariant(t, "config-from-git.ork.yaml"))
 		input := []string{"--input", "repo=" + repo, "--input", "environment=prod"}
 		cached := []string{"tmpl", "services", "prepare", "manifest"}
 		outcomes := func(label string, run *orkstackv1.Run) {
