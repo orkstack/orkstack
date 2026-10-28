@@ -13,7 +13,7 @@ import (
 
 // orkstackEnums is every enum the generated orkstack.v1 files declare,
 // nested ones included.
-func orkstackEnums(t *testing.T) []protoreflect.EnumDescriptor {
+func orkstackEnums(t testing.TB) []protoreflect.EnumDescriptor {
 	t.Helper()
 	_ = orkstackv1.Status_STATUS_SUCCEEDED // link the generated files into the registry
 	var out []protoreflect.EnumDescriptor
