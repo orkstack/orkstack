@@ -12,14 +12,14 @@ import (
 // A body wrapped in any other Unicode space (U+00A0, U+0085) is not JSON.
 const jsonWhitespace = " \t\r\n"
 
-// checkJSONText reports why Go's JSON decoder could not read data without
+// CheckJSONText reports why Go's JSON decoder could not read data without
 // changing a string in it: data is not valid UTF-8, or a string holds a
 // unicode escape of a surrogate that is not half of a pair. Go's decoder
 // replaces both with U+FFFD, so a value a caller chose (a run's input, a
 // signing secret) would be stored as something they did not send. It looks
 // at nothing else: a document that is not JSON at all is for the decoder to
 // refuse.
-func checkJSONText(data []byte) error {
+func CheckJSONText(data []byte) error {
 	if !utf8.Valid(data) {
 		return errors.New("not valid UTF-8")
 	}
@@ -97,7 +97,7 @@ func pairedUnit(data []byte, at int) (rune, bool) {
 // lone surrogate escape (both would become U+FFFD in a field the caller
 // chose) and anything after the value.
 func decodeJSONValue(raw []byte, v any, disallowUnknownFields bool) error {
-	if err := checkJSONText(raw); err != nil {
+	if err := CheckJSONText(raw); err != nil {
 		return err
 	}
 	if !json.Valid(raw) {
