@@ -165,6 +165,11 @@ type eachSoak struct {
 	inflight   map[string]map[string]bool
 	// document, when set, is the soak's Orkflow instead of soakDocument.
 	document func(name string, items, maxParallel int) string
+	// timing reports the soak's wall-clock checks (proof.TimingBounds), and
+	// reads counts what the API's reader pulled from the cluster and the
+	// object store, beside each GetRun it times.
+	timing *proof.Timing
+	reads  *readCounter
 }
 
 // soakDocument is the soak's Orkflow: a json task computing [0, …, items−1],
@@ -251,6 +256,9 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 	configure func(s *chaosStack, cfg *api.Config),
 ) *eachSoak {
 	t.Helper()
+	// First, so its cleanup is the last to run: nothing the stack's own
+	// teardown says follows the helper's report (proof.TimingBounds).
+	timing := proof.TimingBounds(t)
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
@@ -268,7 +276,7 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 	}
 	stores := s.realStores()
 	e := &eachSoak{chaosStack: s, items: items, stores: stores, realIDs: map[string]string{},
-		inflight: map[string]map[string]bool{}}
+		inflight: map[string]map[string]bool{}, timing: timing}
 
 	// The engine: its run worker advertises this build's capabilities, as
 	// cmd/ork's client does, so the API's fleet check passes on its own
@@ -303,6 +311,9 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 	}
 	if configure != nil {
 		configure(s, &apiConfig)
+	}
+	if apiConfig.Reader == nil {
+		apiConfig.Reader = e.countedReader()
 	}
 	e.api = s.serveAPI(apiConfig)
 	return e
@@ -389,6 +400,7 @@ type soakRecord struct {
 	SnapshotObjects      int              `json:"snapshot_objects"`
 	GetRunLive           []float64        `json:"get_run_live_seconds"`
 	GetRunLiveP95        float64          `json:"get_run_live_p95_seconds"`
+	GetRunLiveReads      []getRunRead     `json:"get_run_live_reads"`
 	GetRunArchive        []float64        `json:"get_run_archive_seconds"`
 	GetRunArchiveP95     float64          `json:"get_run_archive_p95_seconds"`
 	GetRunDecodedBytes   int              `json:"get_run_decoded_bytes"`
@@ -532,8 +544,8 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 	// Live reads, once half the items have finished: the run's rows are
 	// all expanded and half of them carry a result.
 	e.waitItemsSettled(t, ctx, stream, e.items/2)
-	liveTimes, liveRun := e.getRunTimes(t, ctx, runID, soakGetRunReads)
-	e.transcript.step("GetRun live: %v (run %v)", soakSeconds(liveTimes), liveRun.GetStatus())
+	liveTimes, liveReads, liveRun := e.liveGetRuns(t, ctx, runID, soakGetRunReads)
+	e.transcript.step("GetRun live: %v (run %v); read %s", soakSeconds(liveTimes), liveRun.GetStatus(), describeReads(liveReads))
 	if live != nil {
 		live(runID)
 	}
@@ -548,7 +560,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 		Elapsed: elapsed.Round(time.Second).String(), InFlightCap: engine.DefaultRunMaxInFlight,
 		EventsLimit: engine.DefaultHistoryMaxEvents, BytesLimit: engine.DefaultHistoryMaxBytes,
 		CheckpointCap: engine.DefaultContinuationBytes,
-		GetRunLive:    soakSeconds(liveTimes), GetRunLiveP95: soakP95(liveTimes)}
+		GetRunLive:    soakSeconds(liveTimes), GetRunLiveP95: soakP95(liveTimes), GetRunLiveReads: liveReads}
 
 	// Events(0), the stream opened at submit, and the archive.
 	readStart := time.Now()
@@ -686,22 +698,40 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 	if rec.SnapshotBytes > soakSnapshotBytesMax {
 		miss("snapshot bytes written %d > %d", rec.SnapshotBytes, soakSnapshotBytesMax)
 	}
-	if rec.GetRunLiveP95 > soakGetRunP95Max.Seconds() {
-		miss("GetRun p95 live %.3fs > %s", rec.GetRunLiveP95, soakGetRunP95Max)
-	}
-	if rec.GetRunArchiveP95 > soakGetRunP95Max.Seconds() {
-		miss("GetRun p95 from the archive %.3fs > %s", rec.GetRunArchiveP95, soakGetRunP95Max)
-	}
-	if rec.EventsReadSeconds > soakEventsReadMax.Seconds() {
-		miss("Events(0) %.3fs > %s", rec.EventsReadSeconds, soakEventsReadMax)
+	for _, structural := range getRunStructuralMisses(liveReads) {
+		miss("%s", structural)
 	}
 	if rec.DeadlockTrips != 0 {
 		miss("%d live deadlock-detector trips", rec.DeadlockTrips)
 	}
-	if rec.SlowestReplaySeconds > soakReplayMax.Seconds() {
-		miss("slowest generation replay %.3fs > %s", rec.SlowestReplaySeconds, soakReplayMax)
-	}
+	// The wall-clock bounds, last, through the timing helper: a miss fails
+	// the test when it ends, and is a known gap on a runner below the
+	// reference (docs/PROOFS.md §12). The bounds are the same.
+	e.checkReadTimings(shape, rec.GetRunLiveP95, rec.GetRunArchiveP95, rec.EventsReadSeconds, rec.SlowestReplaySeconds)
 	return rec, events
+}
+
+// checkReadTimings reports E4 and E7's four wall-clock bounds, which the
+// fan-out and the task soaks share: GetRun's p95 live and from the archive,
+// the Events(0) read and the slowest generation's replay. Each id is the one
+// a scripts/proof-host-speed.tsv row names.
+func (e *eachSoak) checkReadTimings(label string, getRunLiveP95, getRunArchiveP95, eventsRead, slowestReplay float64) {
+	e.timing.Check("getrun-live-p95", getRunLiveP95, soakGetRunP95Max.Seconds(), label)
+	e.timing.Check("getrun-archive-p95", getRunArchiveP95, soakGetRunP95Max.Seconds(), label)
+	e.timing.Check("events0-read", eventsRead, soakEventsReadMax.Seconds(), label)
+	e.timing.Check("replay-slowest", slowestReplay, soakReplayMax.Seconds(), label)
+}
+
+// describeReads is what the live GetRuns read, for the transcript: the
+// events and saved-state objects of the first and the last.
+func describeReads(reads []getRunRead) string {
+	if len(reads) == 0 {
+		return "nothing"
+	}
+	first, last := reads[0], reads[len(reads)-1]
+	return fmt.Sprintf("%d events (%d B) and %d objects (%d B) of a %d-event generation, then %d events (%d B) and %d objects (%d B) of a %d-event one",
+		first.Events, first.EventBytes, first.SnapshotReads, first.SnapshotBytes, first.History,
+		last.Events, last.EventBytes, last.SnapshotReads, last.SnapshotBytes, last.History)
 }
 
 // waitRetired blocks until the cluster no longer knows the run at all: its

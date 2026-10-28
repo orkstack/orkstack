@@ -347,6 +347,7 @@ type taskSoakRecord struct {
 	GetRunLive           []float64            `json:"get_run_live_seconds"`
 	GetRunLiveP95        float64              `json:"get_run_live_p95_seconds"`
 	GetRunLiveBytes      int                  `json:"get_run_live_decoded_bytes"`
+	GetRunLiveReads      []getRunRead         `json:"get_run_live_reads"`
 	GetRunArchive        []float64            `json:"get_run_archive_seconds"`
 	GetRunArchiveP95     float64              `json:"get_run_archive_p95_seconds"`
 	GetRunArchiveBytes   int                  `json:"get_run_archive_decoded_bytes"`
@@ -571,6 +572,9 @@ func analyzeClosedForm(t *testing.T, h *historypb.History, tasks, dispatchedBefo
 // for a flat shape, and the API at the task-ceiling defaults.
 func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int) (*eachSoak, *latencyHandler) {
 	t.Helper()
+	// First, so its cleanup is the last to run: nothing the stack's own
+	// teardown says follows the helper's report (proof.TimingBounds).
+	timing := proof.TimingBounds(t)
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
@@ -586,7 +590,7 @@ func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int
 	if err != nil {
 		t.Fatalf("parse the local catalog: %v", err)
 	}
-	e := &eachSoak{chaosStack: s, realIDs: map[string]string{}, inflight: map[string]map[string]bool{}}
+	e := &eachSoak{chaosStack: s, realIDs: map[string]string{}, inflight: map[string]map[string]bool{}, timing: timing}
 	if shape.real {
 		e.stores = s.realStores()
 	}
@@ -617,7 +621,7 @@ func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int
 	e.api = s.serveAPI(api.Config{
 		OrkflowMaxTasks: int32(n), ContinuationEnabled: true,
 		DefinitionByReference: true, DefinitionObjects: s.store, SnapshotOverlays: true,
-		Capabilities: cluster, Catalog: catalog, Resolver: dsl.NewResolver(""),
+		Capabilities: cluster, Catalog: catalog, Resolver: dsl.NewResolver(""), Reader: e.countedReader(),
 	})
 	return e, metrics
 }
@@ -679,9 +683,10 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 		BytesLimit: engine.DefaultHistoryMaxBytes}
 
 	e.waitTasksSettled(t, ctx, stream, n/2)
-	liveTimes, liveRun := e.getRunTimes(t, ctx, runID, soakGetRunReads)
+	liveTimes, liveReads, liveRun := e.liveGetRuns(t, ctx, runID, soakGetRunReads)
 	rec.GetRunLive, rec.GetRunLiveP95, rec.GetRunLiveBytes = soakSeconds(liveTimes), soakP95(liveTimes), proto.Size(liveRun)
-	e.transcript.step("GetRun live: %v (run %v, %d bytes)", rec.GetRunLive, liveRun.GetStatus(), rec.GetRunLiveBytes)
+	rec.GetRunLiveReads = liveReads
+	e.transcript.step("GetRun live: %v (run %v, %d bytes); read %s", rec.GetRunLive, liveRun.GetStatus(), rec.GetRunLiveBytes, describeReads(liveReads))
 
 	status, err := e.wait(runID, taskSoakRunWithin)
 	if status != enums.WORKFLOW_EXECUTION_STATUS_COMPLETED || err != nil {
@@ -835,20 +840,11 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 	if rec.SnapshotBytes >= taskSoakSnapshotBytesMax {
 		miss("snapshot bytes written %d >= 1 GB", rec.SnapshotBytes)
 	}
-	if rec.GetRunLiveP95 > soakGetRunP95Max.Seconds() {
-		miss("GetRun p95 live %.3fs > %s", rec.GetRunLiveP95, soakGetRunP95Max)
-	}
-	if rec.GetRunArchiveP95 > soakGetRunP95Max.Seconds() {
-		miss("GetRun p95 from the archive %.3fs > %s", rec.GetRunArchiveP95, soakGetRunP95Max)
-	}
-	if rec.EventsReadSeconds > soakEventsReadMax.Seconds() {
-		miss("Events(0) %.3fs > %s", rec.EventsReadSeconds, soakEventsReadMax)
+	for _, structural := range getRunStructuralMisses(liveReads) {
+		miss("%s", structural)
 	}
 	if rec.DeadlockTrips != 0 {
 		miss("%d live deadlock-detector trips", rec.DeadlockTrips)
-	}
-	if rec.SlowestReplaySeconds > soakReplayMax.Seconds() {
-		miss("slowest generation replay %.3fs > %s", rec.SlowestReplaySeconds, soakReplayMax)
 	}
 	if rec.MaxD > float64(engine.PlainDispatchEvents) {
 		miss("measured d %.2f > %d", rec.MaxD, engine.PlainDispatchEvents)
@@ -864,6 +860,9 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 			miss("generation %d's peak of history plus reserve %d > the closed form's %d", i, g.Peak, g.Predicted)
 		}
 	}
+	// The wall-clock bounds, last, through the timing helper (the same four
+	// as the fan-out soak's; docs/PROOFS.md §12).
+	e.checkReadTimings(shape.name, rec.GetRunLiveP95, rec.GetRunArchiveP95, rec.EventsReadSeconds, rec.SlowestReplaySeconds)
 	return rec
 }
 

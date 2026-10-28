@@ -222,8 +222,8 @@ func (m *Timing) settle() {
 }
 
 // callerPackage is the import path of the package of the function skip frames
-// above its own caller, without a trailing _test: the package a test
-// binary's ledger names its tests under.
+// up the stack from itself (2 is the caller of its caller), without a
+// trailing _test: the package a test binary's ledger names its tests under.
 func callerPackage(skip int) string {
 	pc, _, _, ok := runtime.Caller(skip)
 	if !ok {
