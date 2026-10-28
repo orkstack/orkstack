@@ -105,11 +105,11 @@ interface ImportMeta {
 }
 
 // The environment read and the CPU clock the unit tests use: UPDATE_DAG_PINS=1
-// rewrites dag.test.ts's pinned layouts, and cpuTime.ts reads the process's
-// CPU time to bound what code costs. A module, not a global, so the app's code
-// cannot reach a `process` it does not have.
+// rewrites dag.test.ts's pinned layouts, and cpuTime.ts reads the calling
+// thread's CPU time to bound what code costs. A module, not a global, so the
+// app's code cannot reach a `process` it does not have.
 declare module 'node:process' {
 	export const env: Record<string, string | undefined>;
-	/** The process's CPU time in microseconds (cpuTime.ts bounds code cost on it). */
-	export function cpuUsage(): { user: number; system: number };
+	/** The calling thread's CPU time in microseconds (cpuTime.ts bounds code cost on it). */
+	export function threadCpuUsage(): { user: number; system: number };
 }
