@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,11 +86,13 @@ func serialWalkAudit(ctx context.Context, src auditSource, q AuditQuery) (AuditP
 	return page, nil
 }
 
-// latencySource is an auditSource with a per-fetch latency, a fetch counter, a
+// latencySource is an auditSource with a per-fetch hold, a fetch counter, a
 // high-water mark of concurrent fetches, and keys whose fetch fails.
 type latencySource struct {
 	flakySource
-	latency  time.Duration
+	// hold, when set, runs inside every fetch after it is counted in flight and
+	// before it answers: the store's slowness, under the test's control.
+	hold     func(ctx context.Context) error
 	failing  map[string]bool
 	fetches  atomic.Int64
 	inflight atomic.Int64
@@ -106,13 +109,9 @@ func (l *latencySource) fetchAudit(ctx context.Context, key string) ([]byte, boo
 			break
 		}
 	}
-	if l.latency > 0 {
-		timer := time.NewTimer(l.latency)
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, false, ctx.Err()
+	if l.hold != nil {
+		if err := l.hold(ctx); err != nil {
+			return nil, false, err
 		}
 	}
 	if l.failing[key] {
@@ -250,24 +249,82 @@ func TestWalkAudit_PrefetchKeepsTheScanBudget(t *testing.T) {
 }
 
 // A filtered scan over a slow store fetches eight bodies at a time.
+//
+// THE STORE'S SLOWNESS IS THE TEST'S, NOT THE CLOCK'S. Every fetch is held
+// until the test has seen the whole window in flight at once, and then the
+// window is let go together. A scan that fetched one body at a time would
+// never put a second in flight, and the test would say so; a scan that does
+// fetch a window together passes at any speed. "It finished in a third of the
+// serial time" was a wall-clock claim about ten-millisecond sleeps, which a
+// busy host moves without touching the scan.
 func TestWalkAudit_AFilteredScanFetchesEightBodiesAtATime(t *testing.T) {
 	end := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 	r := rand.New(rand.NewPCG(9, 9))
-	const n, latency = 160, 10 * time.Millisecond
+	const n = 160
 	src := seedAuditSource(t, r, n, end, 2*time.Hour)
-	src.latency = latency
+	// Every key is a candidate of the one day the records fall in, and the
+	// filter keeps none, so the scan fetches them all.
+	total := len(src.bodies)
 	q := AuditQuery{Since: end.Add(-3 * time.Hour), Until: end.Add(time.Hour), Limit: 50,
 		Keep: func(*orkstackv1.AuditRecord) bool { return false }}
 
-	started := time.Now()
-	if _, err := walkAudit(context.Background(), src, q); err != nil {
-		t.Fatalf("walkAudit: %v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // frees any fetch still held if the test gives up
+
+	arrived := make(chan struct{}, total)
+	var mu sync.Mutex
+	gate := make(chan struct{})
+	src.hold = func(ctx context.Context) error {
+		mu.Lock()
+		window := gate
+		mu.Unlock()
+		arrived <- struct{}{}
+		select {
+		case <-window:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	elapsed := time.Since(started)
+	scanned := make(chan error, 1)
+	go func() {
+		_, err := walkAudit(ctx, src, q)
+		scanned <- err
+	}()
+
+	var windows []int
+	for left := total; left > 0; {
+		want := min(auditPrefetchWindow, left)
+		for in := 0; in < want; in++ {
+			select {
+			case <-arrived:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("window %d: %d of %d fetches in flight together and no more came; "+
+					"the scan is not fetching %d bodies at a time", len(windows)+1, in, want, auditPrefetchWindow)
+			}
+		}
+		windows = append(windows, want)
+		mu.Lock()
+		close(gate)
+		gate = make(chan struct{})
+		mu.Unlock()
+		left -= want
+	}
+	select {
+	case err := <-scanned:
+		if err != nil {
+			t.Fatalf("walkAudit: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("walkAudit did not finish after every window was let go")
+	}
 	if peak := src.peak.Load(); peak != auditPrefetchWindow {
 		t.Errorf("peak concurrent fetches = %d, want %d", peak, auditPrefetchWindow)
 	}
-	if serial := time.Duration(n) * latency; elapsed > serial/3 {
-		t.Errorf("a %d-key filtered scan took %s; one at a time it takes %s", n, elapsed, serial)
+	if fetched := int(src.fetches.Load()); fetched != total {
+		t.Errorf("fetched %d bodies, want all %d", fetched, total)
+	}
+	if want := (total + auditPrefetchWindow - 1) / auditPrefetchWindow; len(windows) != want {
+		t.Errorf("%d bodies took %d windows, want %d", total, len(windows), want)
 	}
 }
