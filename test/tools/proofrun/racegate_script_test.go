@@ -242,3 +242,42 @@ func TestProofPart_ThePartsThatRaceNeedCgo(t *testing.T) {
 		})
 	}
 }
+
+// The unit gate runs proofrun's own tests, and some of them run go test -race
+// (race_test.go), so the unit gate needs the race detector's toolchain
+// wherever it runs: a feature proof whose change touches no Go package selects
+// no race gate and still runs the unit gate, and its tests must not meet a
+// missing compiler as an opaque `go: -race requires cgo`.
+func TestProofScript_TheUnitGateNeedsCgoWhetherOrNotAnyPackageRaces(t *testing.T) {
+	for _, tier := range []string{"full", "feature"} {
+		t.Run(tier, func(t *testing.T) {
+			r := newSiteScriptRepo(t)
+			env := []string{"PROOF_GATES=unit", "CGO_ENABLED=0", "STUB_GATES=integration=no\nrace_packages=\nspecs=\n"}
+			code, out := r.run(env, "--tier", tier, "unit-nocgo")
+			if code != 77 || !strings.Contains(out, "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH") {
+				t.Fatalf("exit %d, want 77 naming cgo:\n%s", code, out)
+			}
+			if !r.wroteNoProof() {
+				t.Error("a refused proof left a proof directory behind")
+			}
+			if len(r.proofrunCalls()) != 0 {
+				t.Errorf("proofrun ran for a refused proof: %v", r.proofrunCalls())
+			}
+		})
+	}
+}
+
+func TestProofPart_TheFastPartNeedsCgoForTheUnitGate(t *testing.T) {
+	r := newSiteScriptRepo(t)
+	r.withBun()
+	r.withNode()
+	r.withNodeModules("ui", "site")
+	code, out := r.run([]string{"CGO_ENABLED=0"}, "--part", "fast", "--tier", "full", "--proof-id", "pr-fast", "--attempt", "1",
+		"--base-commit", r.git("rev-parse", "HEAD"), "nocgo-fast")
+	if code != 77 || !strings.Contains(out, "cgo for the race detector") {
+		t.Errorf("exit %d, want 77 naming cgo:\n%s", code, out)
+	}
+	if !r.wroteNoProof() {
+		t.Error("a refused part left a proof directory behind")
+	}
+}

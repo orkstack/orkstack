@@ -113,7 +113,7 @@ const mainBranch = "main"
 // fullGates is every gate the merge gate runs; observability joins it when
 // the tree changed a telemetry path. The site gate runs right after the UI's
 // fast gates (scripts/proof.sh), and ui-e2e stays last. The nightly tier is
-// held to the integration gate alone (merge.go).
+// held to the integration gate and the two lanes of nightlyGates (merge.go).
 var fullGates = []string{"lint", "build", "unit", suiteRace, "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "site", "ui-e2e"}
 
 // nightlyGates are the gates the nightly tier is held to besides the

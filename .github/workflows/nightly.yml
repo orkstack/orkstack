@@ -1,6 +1,7 @@
 name: nightly
 
-# The nightly tier: the scale and soak tests a merge proof defers. A red
+# The nightly tier: the scale and soak tests a merge proof defers, and two
+# lanes of its own, the race repeat and the fuzz lane. A red
 # nightly is a failing main — fix or revert before anything else merges.
 # (docs/PROOFS.md; AGENTS.md §11.2.)
 #

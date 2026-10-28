@@ -40,6 +40,8 @@ part_require() {
 		;;
 	fast)
 		part_need "go on PATH" command -v go
+		# The unit gate's tests include proofrun's, which run go test -race.
+		part_need "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH (go env CC)" race_toolchain
 		part_need "bun on PATH" command -v bun
 		part_need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"
 		part_need "node on PATH (the site's scripts and astro run on it)" command -v node

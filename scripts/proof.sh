@@ -12,8 +12,8 @@
 # A full, release or nightly proof runs its gates on one host and then writes
 # one part (`local`) and merges it with `proofrun merge`, the same verdict the
 # CI proof job runs over many parts. A --part invocation is one part of a CI
-# proof: plan, build, fast, integration:K, ui-e2e:K, activity-fixture:A or
-# observability. See docs/PROOFS.md.
+# proof: plan, build, fast, race, race-repeat, fuzz, integration:K, ui-e2e:K,
+# activity-fixture:A or observability. See docs/PROOFS.md.
 #
 # The FULL proof is the merge gate (§11.3) and runs everything: lint, build,
 # unit, vet-integration, this tree's activity images pushed under a tag of the
@@ -435,7 +435,10 @@ fi
 if runs integration; then
 	need "the cosign CLI on PATH (image-policy interop test)" command -v cosign
 fi
-if runs race || runs race-repeat; then
+# The unit gate needs it too: proofrun's own tests run go test -race, and a
+# feature proof whose change touches no Go package races nothing and still runs
+# the unit gate.
+if runs race || runs race-repeat || runs unit; then
 	need "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH (go env CC)" race_toolchain
 fi
 if runs ui-check || runs ui-unit || runs ui-e2e || runs site; then
