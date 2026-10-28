@@ -412,17 +412,21 @@ func TestVerify_AProofWhoseQuarantineCheckIsOlderThanItsArtifactIsRefused(t *tes
 	}
 }
 
-// A main without a nightly list needs no nightly proof; a git error is not
-// that: it refuses.
-func TestVerify_ANightlyListThatCannotBeReadIsNotAnAbsentOne(t *testing.T) {
-	git := func(dir string, args ...string) {
+// merge-check asks for no nightly proof, whatever main's nightly lists hold
+// (the interim rule that did is retired, AGENTS.md §11), so it reads neither
+// list and a tip it cannot resolve is nothing to it. A proof it IS given is
+// judged against main's tip tree, and a tip it cannot read is a refusal.
+func TestVerify_MainsNightlyListsAreNoInputToMergeCheck(t *testing.T) {
+	git := func(dir string, args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
+		return strings.TrimSpace(string(out))
 	}
 	dir := t.TempDir()
 	git(dir, "init", "-q", "-b", "main")
@@ -431,16 +435,16 @@ func TestVerify_ANightlyListThatCannotBeReadIsNotAnAbsentOne(t *testing.T) {
 	}
 	git(dir, "add", "f")
 	git(dir, "commit", "-q", "-m", "one")
-	tip, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	tip, tree := git(dir, "rev-parse", "HEAD"), git(dir, "rev-parse", "HEAD^{tree}")
 	t.Chdir(dir)
-	if p := verifyNightlyProblems("", strings.TrimSpace(string(tip))); len(p) != 0 {
-		t.Errorf("a main with no nightly list was refused: %v", p)
-	}
-	if p := strings.Join(verifyNightlyProblems("", "0000000000000000000000000000000000000001"), "\n"); !strings.Contains(p, "cannot be read") {
-		t.Errorf("a git error was read as an absent list: %q", p)
+	const unresolvable = "0000000000000000000000000000000000000001"
+
+	// No proof named: nothing is asked, with or without a list, and a tip git
+	// cannot resolve is not read.
+	for _, c := range []struct{ name, tip string }{{"a main with no nightly list", tip}, {"a tip git cannot resolve", unresolvable}, {"no tip", ""}} {
+		if p := verifyNightlyProblems("", c.tip); len(p) != 0 {
+			t.Errorf("%s: a nightly proof was asked for: %v", c.name, p)
+		}
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
 		t.Fatal(err)
@@ -448,11 +452,31 @@ func TestVerify_ANightlyListThatCannotBeReadIsNotAnAbsentOne(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "scripts", "proof-nightly-tests.txt"), []byte(mainNightlyList), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "scripts", "proof-nightly-specs.txt"), []byte("not\ta\trow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	git(dir, "add", ".")
 	git(dir, "commit", "-q", "-m", "two")
-	tip2, _ := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
-	if p := strings.Join(verifyNightlyProblems("", strings.TrimSpace(string(tip2))), "\n"); !strings.Contains(p, "NIGHTLY=proof/<name>") {
-		t.Errorf("a main with a nightly list: %q", p)
+	tip2, tree2 := git(dir, "rev-parse", "HEAD"), git(dir, "rev-parse", "HEAD^{tree}")
+	if p := verifyNightlyProblems("", tip2); len(p) != 0 {
+		t.Errorf("a main with a nightly list and an unparseable spec list was refused without a nightly proof: %v", p)
+	}
+
+	// A proof named is judged against the tip's tree, lists or none.
+	ofTree := func(tree string) string {
+		return nightlyProof(t, func(r *proofRecord) { r.Tree, r.TreeEnd = tree, tree })
+	}
+	if p := verifyNightlyProblems(ofTree(tree2), tip2); len(p) != 0 {
+		t.Errorf("a passing nightly proof of main's tip tree was refused: %v", p)
+	}
+	if p := strings.Join(verifyNightlyProblems(ofTree(tree), tip2), "\n"); !strings.Contains(p, "the nightly proof measured tree") {
+		t.Errorf("a nightly proof of main's earlier tree was accepted: %q", p)
+	}
+	if p := strings.Join(verifyNightlyProblems(ofTree(tree), unresolvable), "\n"); !strings.Contains(p, "tip tree cannot be read") {
+		t.Errorf("a named proof was judged against a tip git cannot read: %q", p)
+	}
+	if p := strings.Join(verifyNightlyProblems(ofTree(tree), ""), "\n"); !strings.Contains(p, "tip tree cannot be read") {
+		t.Errorf("a named proof was judged without a tip: %q", p)
 	}
 }
 

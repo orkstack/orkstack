@@ -507,14 +507,15 @@ func writeVerdict(w io.Writer, r *proofRecord) {
 // branch's current tip, and the proof's own base was that same tip.
 //
 // -release is the pre-release gate: a passing release proof of the exact
-// commit the tag names (or HEAD, before the tag exists). -nightly requires a
-// passing nightly proof of main's tip while main's nightly list is non-empty.
+// commit the tag names (or HEAD, before the tag exists). -nightly is optional:
+// a merge needs no nightly proof (the nightly of main is GitHub's, AGENTS.md
+// §11), but one that is named must be a passing nightly proof of main's tip.
 func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	dir := fs.String("proof", "", "the proof directory")
 	release := fs.Bool("release", false, "verify a pre-release proof for a tag")
 	tag := fs.String("tag", "", "with -release: the tag the proof must cover")
-	nightlyDir := fs.String("nightly", "", "a passing nightly proof of main's tip")
+	nightlyDir := fs.String("nightly", "", "optional: a nightly proof of main's tip, verified when given (a merge needs none)")
 	if err := fs.Parse(args); err != nil || *dir == "" || fs.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, "proofrun verify -proof proof/<name> [-release -tag vX.Y.Z] [-nightly DIR]")
 		return 2
@@ -624,64 +625,31 @@ func releaseProofProblems(r proofRecord, target, tree string) []string {
 	return problems
 }
 
-// verifyNightlyProblems is interim rule A's mechanical check: while main's
-// nightly list is non-empty, a merge needs a passing nightly proof of main's
-// tip tree.
+// verifyNightlyProblems judges the nightly proof a merge was given against
+// main's tip tree. A merge needs none: the interim rule that it did, while the
+// nightly did not yet run on GitHub, is retired (AGENTS.md §11), so with no
+// proof named nothing is asked and nothing is read.
 func verifyNightlyProblems(nightlyDir, mainTip string) []string {
-	if mainTip == "" {
+	if nightlyDir == "" {
 		return nil
 	}
-	const listPath = "scripts/proof-nightly-tests.txt"
-	// Absent and unreadable are different: a main with no nightly list needs
-	// no nightly proof, a git error is a refusal.
-	ls, err := gitOut("ls-tree", "--name-only", mainTip, "--", listPath)
-	if err != nil {
-		return []string{fmt.Sprintf("whether %s carries a nightly list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
-	}
-	list := ""
-	if strings.TrimSpace(ls) != "" {
-		if list, err = gitOut("show", mainTip+":"+listPath); err != nil {
-			return []string{fmt.Sprintf("%s's nightly list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
-		}
-	}
-	specs := ""
-	if ls, err := gitOut("ls-tree", "--name-only", mainTip, "--", nightlySpecFile); err != nil {
-		return []string{fmt.Sprintf("whether %s carries a nightly spec list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
-	} else if strings.TrimSpace(ls) != "" {
-		if specs, err = gitOut("show", mainTip+":"+nightlySpecFile); err != nil {
-			return []string{fmt.Sprintf("%s's nightly spec list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
-		}
+	if mainTip == "" {
+		return []string{fmt.Sprintf("%s's tip tree cannot be read, so the nightly proof %s cannot be judged against it: no such commit", mainBranch, nightlyDir)}
 	}
 	tree, err := gitOut("rev-parse", mainTip+"^{tree}")
 	if err != nil {
-		return []string{fmt.Sprintf("%s's tip tree cannot be read: %v", mainBranch, err)}
+		return []string{fmt.Sprintf("%s's tip tree cannot be read, so the nightly proof %s cannot be judged against it: %v", mainBranch, nightlyDir, err)}
 	}
-	return nightlyProofProblemsWith(list, specs, nightlyDir, strings.TrimSpace(tree))
+	return nightlyProofProblems(nightlyDir, strings.TrimSpace(tree))
 }
 
-// nightlyProofProblems is verifyNightlyProblems, pure over main's list text,
-// the nightly proof's directory and main's tip tree.
-func nightlyProofProblems(list, nightlyDir, mainTree string) []string {
-	return nightlyProofProblemsWith(list, "", nightlyDir, mainTree)
-}
-
-// nightlyProofProblemsWith also reads main's nightly spec list: a merge needs
-// a nightly proof while either list is non-empty.
-func nightlyProofProblemsWith(list, specList, nightlyDir, mainTree string) []string {
-	entries, err := parseNightlyList(strings.NewReader(list), mainBranch+":scripts/proof-nightly-tests.txt")
-	if err != nil {
-		// An unreadable list is not an empty one: it fails closed.
-		return []string{fmt.Sprintf("%s's nightly list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
-	}
-	specs, err := parseNightlySpecs(strings.NewReader(specList), mainBranch+":"+nightlySpecFile)
-	if err != nil {
-		return []string{fmt.Sprintf("%s's nightly spec list cannot be read, so whether a nightly proof is due is unknown: %v", mainBranch, err)}
-	}
-	if len(entries) == 0 && len(specs) == 0 {
-		return nil
-	}
+// nightlyProofProblems is verifyNightlyProblems, pure over the nightly proof's
+// directory and main's tip tree: a nightly proof that passed, held every
+// identity rule but its tier, was clean, and measured main's tip tree. No
+// directory is no proof asked for.
+func nightlyProofProblems(nightlyDir, mainTree string) []string {
 	if nightlyDir == "" {
-		return []string{fmt.Sprintf("%s's nightly lists hold %d test(s) and %d spec file(s): name a passing nightly proof of its tip with NIGHTLY=proof/<name>", mainBranch, len(entries), len(specs))}
+		return nil
 	}
 	var r proofRecord
 	if err := readJSON(filepath.Join(nightlyDir, "proof.json"), &r); err != nil {
