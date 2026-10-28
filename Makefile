@@ -163,10 +163,25 @@ run-orker: ## Run an Orker (Temporal activity worker + OCI runtime)
 	go run ./cmd/orker
 
 ## ---- quality ----
+# staticcheck is the version go.mod pins (a `tool` directive), run with its
+# default checks over the module twice: once as built, once with the
+# integration tag the integration suites are vetted with. A symbol used only by
+# an integration-tagged file is dead to the first run and live to the second,
+# so each run answers for the files it compiles and the tree needs both clean.
 .PHONY: lint
-lint: ## Run go vet + gofmt check
+lint: ## Run go vet, the gofmt check and staticcheck (pinned in go.mod; default checks, with and without the integration tag)
 	go vet ./...
 	@test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './gen/*'))" || (echo "gofmt needed:"; gofmt -l $$(find . -name '*.go' -not -path './gen/*'); exit 1)
+	go tool staticcheck ./...
+	go tool staticcheck -tags=integration ./...
+
+# govulncheck is the version go.mod pins. It reads the vulnerability database
+# over the network, so it is in neither `lint` nor any proof gate: a network
+# failure must never fail a proof. ci.yml and nightly.yml run it. It reports
+# only the vulnerabilities whose vulnerable symbols the code can reach.
+.PHONY: vuln
+vuln: ## Scan for reachable known vulnerabilities with the pinned govulncheck (needs the network; in no lint or proof gate)
+	go tool govulncheck ./...
 
 .PHONY: fmt
 fmt: ## Format Go code

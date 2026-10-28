@@ -241,7 +241,7 @@ jobs:
     needs: base
     if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 55
     permissions:
       contents: read
     steps:
@@ -271,7 +271,9 @@ jobs:
         working-directory: site
         run: bun install --frozen-lockfile
       - name: fast
-        timeout-minutes: 15
+        # Five minutes over the 15 it had before staticcheck joined the lint
+        # gate (about four minutes on two vCPUs, docs/PROOFS.md §11.5).
+        timeout-minutes: 20
         shell: bash
         env:
           PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}

@@ -3,9 +3,12 @@ name: ci
 # The fast contributor path and the feature tier. No required check lives
 # here; the merge gate is `proof.yml`'s `proof` job (docs/PROOFS.md).
 #
-#   check    build, vet, lint and the unit suites with -short: no Docker,
-#            under two minutes warm; cold, 377 s was measured at four CPUs
+#   check    build, vet, lint (gofmt and staticcheck included) and the unit
+#            suites with -short: no Docker, under two minutes warm; cold,
+#            377 s was measured at four CPUs before staticcheck joined lint,
 #            and about twice that is estimated at two (docs/PROOFS.md §11.5).
+#   vuln     govulncheck over the module: the one job that needs the network
+#            (vuln.go.dev), so it is a job of its own and in no proof.
 #   feature  the feature proof of this change, on a public repository or with
 #            the ci:feature label (a private repository keeps its metered
 #            minutes for the merge gate).
@@ -24,7 +27,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -37,16 +40,41 @@ jobs:
         with:
           go-version: "1.27.3"
       - name: check
-        # Cold, two vCPUs: estimated at about 750 s, so 25 minutes is a margin of two.
-        timeout-minutes: 25
+        # Cold, two vCPUs: estimated at about 750 s before staticcheck, which
+        # adds 6.6 CPU-minutes on a build cache that vet has warmed
+        # (docs/PROOFS.md §11.5), about four minutes on two vCPUs: 30 minutes
+        # is a margin of about 1.6.
+        timeout-minutes: 30
         # Pointing DOCKER_HOST at nothing proves the fast path needs no Docker.
         run: DOCKER_HOST=unix:///nonexistent make check
+
+  vuln:
+    # govulncheck reads the vulnerability database over the network, so it is
+    # never part of `make lint` or a proof: an outage must not fail a merge
+    # gate. A reachable advisory fails this job; fix it by bumping the module
+    # to the version the report names. The nightly workflow runs it too.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: vuln
+        timeout-minutes: 10
+        run: make vuln
 
   feature:
     needs: check
     if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/validate/feature/')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.event.repository.visibility == 'public' || contains(github.event.pull_request.labels.*.name, 'ci:feature'))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 95
     permissions:
       contents: read
     steps:
@@ -140,7 +168,9 @@ jobs:
           exit "$code"
       - name: feature proof
         if: steps.select.outputs.run == 'true'
-        timeout-minutes: 30
+        # Five minutes over the 30 it had before staticcheck joined the lint
+        # gate every feature proof runs first.
+        timeout-minutes: 35
         shell: bash
         env:
           PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}
