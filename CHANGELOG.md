@@ -10,6 +10,21 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- Fuzz targets for the inputs OrkStack accepts from outside, each stating the
+  invariants the code or its reference doc claims and not only that nothing
+  panics: the list-filter grammar, compiler and matcher (a compiled set is a
+  fixed point of compiling and independent of filter order; a row matches as
+  the documented rules say; every pushdown is sound), the enum dialect, the
+  tolerant JSON codec against protojson, the trigger, webhook and await
+  doors, page tokens, webhook signing and delivery against a real receiver,
+  the Orkflow, automation and reference parsers, the `sh` template helper and
+  `orkctl`'s printed quoting against a real shell, a container's
+  `values.json`, the container argument vector, the `allowed_registries`
+  boundary rule, the evidence verifier against a count made without it,
+  the continuation object decoders, the live-log framing and the object-key
+  parsers. Their seeds run in every unit gate and a crasher a run finds is
+  kept as a seed under `testdata/fuzz/` (CONTRIBUTING.md, "Fuzzing"; AGENTS.md
+  §11.1).
 - A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
   `proofrun runner-health`): every part measures its runner for about ten
   seconds before any gate — sequential write and read throughput and fsync
@@ -32,6 +47,72 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The JSON codec, the trigger invoke route, the webhook registration route and
+  the await rejection route no longer repair what a caller sent. Go's JSON
+  decoder replaces bytes that are not UTF-8, and a string's lone surrogate
+  escape, with U+FFFD, so a run's input, a caller-chosen webhook signing
+  secret or a name was stored as something other than what was posted while
+  protojson would have refused it; they are now refused, as protojson refuses
+  them. The webhook registration route also ignored everything after its first
+  JSON value (`{…}{…}` registered the first) and now refuses a second value as
+  the trigger route does, and the trigger and callback routes trimmed any
+  Unicode space around a body, so a body wrapped in a no-break space started a
+  run; only JSON's four whitespace characters are trimmed now. The tolerant
+  codec behind every Connect JSON request also dropped whatever followed the
+  first JSON value (`{}0` was read as `{}`); that is refused too. Found by
+  fuzzing the JSON doors (`FuzzUnmarshalJSON_IsProtojsonPlusEnumSpellings`,
+  `FuzzTriggerInput`, `FuzzRegisterWebhook`, `FuzzAwaitRejectReason`).
+- An enum value, a filter's enum value and a webhook event name are matched
+  with ASCII case only. They were upper-cased with Unicode rules, so `ſucceeded`
+  (U+017F) read as `SUCCEEDED` and `runnıng` (U+0131) as `RUNNING`; no declared
+  name is spelled with those letters. Found by fuzzing `enumname.Proto` and
+  `webhooks.ParseEvent`.
+- A list filter on an instant whose UTC spelling falls outside the years 0000
+  to 9999 (`created_at<9999-12-31T23:59:59-23:59` is year 10000 in UTC) was
+  compiled to a canonical text, bound into the page token, that a following
+  request could not send (`10000-01-01T…` is not RFC 3339). It is refused by
+  name instead: `"…" is outside 0000-01-01T00:00:00Z to
+  9999-12-31T23:59:59.999999Z, the instants a filter can name`. Found by
+  fuzzing the compiler for a canonical set that compiles again
+  (`FuzzCompile_ACompiledSetIsCanonicalAndTheOrderOfItsFiltersDoesNotMatter`).
+- An image reference is held to the OCI distribution grammar when an Orkflow
+  is applied: a registry host name (or bracketed IP address) with an optional
+  port from 1 to 65535, lower-case repository path components, a tag of word
+  characters, dots and dashes that does not start with a dot or a dash, and a
+  `sha256:` digest. `ParseReference` accepted any text, so `uses:
+  --cap-add=ALL.example/x:1` was a registry named `--cap-add=ALL.example`
+  (pinned as `--cap-add=ALL.example/x@sha256:…`, an argument the container
+  runtime reads as a flag, ahead of the image the Orker meant), and a
+  repository could carry `?`, `#`, `%`, a space or a newline into the manifest
+  URL. A reference outside the grammar is refused at apply as
+  `IMAGE_RESOLVE_UNSUPPORTED`, which Docker refuses at pull anyway. The Orker's
+  container argument builder also refuses, as defence in depth, an image that
+  begins with `-` or holds a space or control character, and a mount path with
+  a comma or control character, which would add an option to the `--mount`
+  value. Found by fuzzing `dsl.ParseReference` and `dockerCreateArgs`.
+- A template that renders data spelling `<no value>` no longer fails the task
+  or the run. The Orker's `with:` renderer and the engine's output renderer
+  refused any rendered string containing those characters, to catch a nil
+  value, so an input, a task output or an author's text that merely contained
+  `<no value>` failed `RENDER_FAILED` or `OUTPUTS_RENDER_FAILED`. They now tell
+  the two apart, and a nil value is still refused. Found by fuzzing the
+  renderer (`FuzzRenderer_ARenderedValueIsTheValue`).
+- `orkctl run submit --input-json null --input key=value` (and `run again`,
+  `schedule create`, `run plan`, `task run`) no longer panics. JSON `null` read
+  as an empty object, and the first `--input` then wrote into a nil map; `null`
+  is now refused as not a JSON object, like every other non-object. `--input`
+  and `--input-json` text that Go's JSON decoder would change on the way
+  through (bytes that are not UTF-8, a lone surrogate escape) is no longer
+  replaced with U+FFFD: `--input-json` refuses it and a `--input` value stays
+  the string you typed. Found by fuzzing `buildInputPayload`.
+- A task's live log is framed the same way wherever the container's reads
+  split its output. A line of exactly 64 KiB (`MaxStreamedLine`) whose
+  terminator arrived in a later read streamed an extra empty line after it,
+  and a line longer than 64 KiB whose terminator arrived in the same read as
+  its end streamed as one line past the limit instead of in 64 KiB pieces. A
+  line is now cut into pieces of at most 64 KiB however its bytes arrive, and a
+  terminator right after a piece ends no empty line. Found by fuzzing
+  `LineWriter` against a framing written without it.
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
   pid, rather than by the container's Orker id. Tests that name their own
