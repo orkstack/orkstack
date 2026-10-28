@@ -195,6 +195,11 @@ type logChunkSink struct {
 	// now reads the clock the minimum-gap bound is measured on. Tests replace
 	// it; nothing else does.
 	now func() time.Time
+	// waitPace holds a writer at the chunk ceiling for the rest of the pace
+	// and reports whether to carry on. Nil means waitForPace, a real timer.
+	// Tests replace it with a hold that moves their clock, so they count and
+	// size the holds instead of timing a timer; nothing else does.
+	waitPace func(wait time.Duration) bool
 
 	mu sync.Mutex
 	// buf holds bytes not yet uploaded. It never exceeds chunkCap plus one
@@ -289,7 +294,7 @@ func (s *logChunkSink) Write(line string) {
 				if !s.pacedLocked() {
 					wait := s.paceWaitLocked()
 					s.mu.Unlock()
-					if !s.waitForPace(wait) {
+					if !s.holdForPace(wait) {
 						return
 					}
 					continue
@@ -304,7 +309,7 @@ func (s *logChunkSink) Write(line string) {
 				// flush while we wait, so never sleep with s.mu held.
 				wait := s.paceWaitLocked()
 				s.mu.Unlock()
-				if !s.waitForPace(wait) {
+				if !s.holdForPace(wait) {
 					return
 				}
 				continue
@@ -407,6 +412,15 @@ func (s *logChunkSink) paceWaitLocked() time.Duration {
 		return 0
 	}
 	return remaining
+}
+
+// holdForPace is how a writer waits out the pace: waitForPace, unless a test
+// has replaced the wait.
+func (s *logChunkSink) holdForPace(wait time.Duration) bool {
+	if s.waitPace != nil {
+		return s.waitPace(wait)
+	}
+	return s.waitForPace(wait)
 }
 
 // waitForPace blocks a producer at the ceiling without holding s.mu. A
