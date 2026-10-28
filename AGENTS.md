@@ -978,9 +978,10 @@ Every code change follows this order:
 10. Merge through §11.3. The full proof of the merged tree is what makes the
     change done.
 
-Unit tests are pure and table-driven. Temporal workflow tests use
-`WorkflowTestSuite` / `TestWorkflowEnvironment` with mocked activities.
-Integration tests use `-tags=integration`, `make infra-up`, and `infraAbsent`; a
+Unit tests are pure and table-driven. A unit test bounds code cost by thread
+CPU time or an injected clock, never by a sub-second wall-clock window.
+Temporal workflow tests use `WorkflowTestSuite` / `TestWorkflowEnvironment`
+with mocked activities. Integration tests use `-tags=integration`, `make infra-up`, and `infraAbsent`; a
 missing prerequisite skips, and becomes a failure under `ORK_REQUIRE_INFRA=1`
 (`make test-integration` sets it). Browser end-to-end tests live in `ui/e2e`
 (Playwright, `cd ui && bun run test`) and drive the built UI against a real
