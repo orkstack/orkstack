@@ -308,7 +308,8 @@ differences:
   equal to the gate's). The plain unit gate gives each package's binary 15
   minutes (`unitTimeout`) for the same reason: `internal/engine`'s unit suite
   took 460 s on a 4-vCPU runner and passed ten minutes on a slower one (CI run
-  40749987883). Fifteen stays under the `fast` step's 20, so a hang ends in
+  40749987883). Fifteen stays well under the `fast` step's 30 (raised from 20
+  on 2026-10-28: that run's unit gate alone took 689 s), so a hang ends in
   `go test`'s own trace naming the test.
 - **It sets no `ORK_PROOF_DIR`.** The measurement files the unit gate's tests
   write there are the unit gate's evidence; a measurement taken under the
