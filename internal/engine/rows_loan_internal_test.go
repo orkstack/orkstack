@@ -27,6 +27,17 @@ func rowStatuses(run *orkstackv1.Run) string {
 	return strings.Join(parts, " ")
 }
 
+// wholeRun is everything a snapshot write encodes, as deterministic bytes: a
+// change anywhere in it — a row, the run's error, its status, its finish time —
+// is a change.
+func wholeRun(run *orkstackv1.Run) string {
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(run)
+	if err != nil {
+		return "unmarshalable: " + err.Error()
+	}
+	return string(data)
+}
+
 func loanRun() *orkstackv1.Run {
 	return &orkstackv1.Run{Id: "ork-1-1", Namespace: "default", TaskRuns: []*orkstackv1.TaskRun{
 		{TaskId: "a", Status: orkstackv1.Status_STATUS_RUNNING},
@@ -252,12 +263,12 @@ func TestSnapshotActivities_RefuseARunTheWorkflowTookBack(t *testing.T) {
 // run's live rows. Get returns at once, and the failure path would record
 // the cancellation on those very rows — mid-encode, a data race and a
 // snapshot that can mix both states. The workflow instead waits at the end of
-// the call for the encode to finish: the rows stay exactly as they were for
-// as long as the activity reads them, and the object it wrote shows the
-// state at the event.
+// the call for the encode to finish: the run, rows and the messages beside
+// them (its error, its output), stays exactly as it was for as long as the
+// activity reads it, and the object it wrote shows the state at the event.
 //
 // The activity holds its read open until the workflow is observed waiting
-// (its take-back probe), or until the rows are seen to change.
+// (its take-back probe), or until the run is seen to change.
 func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *testing.T) {
 	store := newMemSnapshotStore()
 	h := newRefusalHarnessOver(t, store)
@@ -269,7 +280,8 @@ func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *
 
 	var (
 		mu       sync.Mutex
-		before   string
+		before   string // the rows, as text, for the failure message
+		wholeAt  string // the whole run at the event
 		changed  string
 		timedOut bool
 		hookSeq  int64
@@ -280,7 +292,7 @@ func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *
 		}
 		cancelOnce.Do(func() {
 			mu.Lock()
-			before, hookSeq = rowStatuses(run), sequence
+			before, wholeAt, hookSeq = rowStatuses(run), wholeRun(run), sequence
 			mu.Unlock()
 			h.env.CancelWorkflow()
 			// Keep the read open until the workflow is seen at its take-back,
@@ -302,9 +314,9 @@ func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *
 					mu.Unlock()
 					return
 				case <-time.After(2 * time.Millisecond):
-					if now := rowStatuses(run); now != before {
+					if wholeRun(run) != wholeAt {
 						mu.Lock()
-						changed = now
+						changed = rowStatuses(run)
 						mu.Unlock()
 						return
 					}
@@ -327,7 +339,7 @@ func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *
 		t.Fatal("no snapshot with a running task was written, so no cancel was sent")
 	}
 	if changed != "" {
-		t.Fatalf("the rows changed from %q to %q while the snapshot write was reading them", before, changed)
+		t.Fatalf("the run changed while the snapshot write was reading it: rows %q, then %q", before, changed)
 	}
 	if timedOut {
 		t.Fatal("the workflow never reached its take-back: it did not wait for the write")
@@ -358,8 +370,8 @@ func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *
 	if err := proto.Unmarshal(written, got); err != nil {
 		t.Fatal(err)
 	}
-	if rowStatuses(got) != before {
-		t.Fatalf("the snapshot written for event %d shows %q, want the state at the event, %q", hookSeq, rowStatuses(got), before)
+	if wholeRun(got) != wholeAt {
+		t.Fatalf("the snapshot written for event %d shows rows %q, want the state at the event, %q", hookSeq, rowStatuses(got), before)
 	}
 }
 
