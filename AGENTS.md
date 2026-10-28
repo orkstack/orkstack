@@ -1144,9 +1144,9 @@ the reference for what each tier runs.
   gate: a runner that degrades later is not seen, and its failures stay test
   failures.
 - Never edit the costs file, the slow list, the nightly list, the quarantine
-  list, the runner-health floors or the allowed skips to get a proof
-  through. The nightly and quarantine lists change only with the user's
-  approval.
+  list, the host-speed table, the runner-health floors or the allowed skips to
+  get a proof through. The nightly and quarantine lists, and the rows of the
+  host-speed table, change only with the user's approval.
 - A new top-level path needs a `scripts/proof-scope.tsv` row, and a path the
   table does not map refuses the feature tier.
 - Read `proof.json`, never the README, for a verdict.
