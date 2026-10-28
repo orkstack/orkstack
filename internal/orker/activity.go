@@ -434,6 +434,12 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if root == "" {
 		root = os.TempDir()
 	}
+	// The root is the source of every bind mount, and a mount is a
+	// comma-separated option list: say so once, here, not per attempt.
+	if !plainMountPath(root) {
+		return fmt.Errorf("%s: %s=%q holds a comma or a control character, which a container "+
+			"mount cannot carry; point it at a plain path", ReasonWorkdirNotBindable, WorkRootVar, root)
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("%s: create the workspace root %s: %w", ReasonWorkdirFailed, root, err)
 	}

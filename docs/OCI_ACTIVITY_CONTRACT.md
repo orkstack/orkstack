@@ -311,9 +311,10 @@ even that.
 **Host placement.** The workspace root is a per-attempt directory under
 `ORK_ORKER_WORKDIR`, which MUST be a path the container daemon can bind-mount
 (on macOS with a VM-hosted daemon `$HOME` is shared and `/var/folders` is not,
-which is why `make up` uses `.data/work`). The Orker probes this at boot and
-refuses to start with `InfrastructureError/WORKDIR_NOT_BINDABLE` rather than
-failing every task later.
+which is why `make up` uses `.data/work`) and whose path holds no comma or
+control character, which a container mount cannot carry. The Orker probes this
+at boot and refuses to start with `InfrastructureError/WORKDIR_NOT_BINDABLE`
+rather than failing every task later.
 
 **Secrets.** `/orkstack/input/secrets` is a separate bind of a per-attempt
 directory the Orker creates, populates, mounts read-only, and removes on every
@@ -1552,7 +1553,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `CONTAINER_TIMEOUT` | TimedOut | **no** (§8.1) | Orker killed the container at `timeout_seconds` |
 | `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error — the container never ran |
 | `WORKSPACE_NOT_BINDABLE` | InfrastructureError | **no** | the daemon cannot bind the workspace path — a host misconfiguration retrying will not fix |
-| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | the boot probe found `ORK_ORKER_WORKDIR` not bind-mountable; the Orker refuses to start |
+| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | the boot probe found `ORK_ORKER_WORKDIR` not bind-mountable, or its path holds a comma or control character; the Orker refuses to start |
 | `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`alpine:3.20`) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
 | `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out (`ORK_DOCKER_PULL_TIMEOUT`), and no verified embedded copy exists |
