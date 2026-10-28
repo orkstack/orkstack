@@ -97,7 +97,8 @@ func parseSince(raw string) (lookback time.Duration, at time.Time, err error) {
 	}
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
 		if parsed, parseErr := time.Parse(layout, raw); parseErr == nil {
-			return 0, parsed.UTC(), nil
+			at, err := wireInstant("--since", raw, parsed)
+			return 0, at, err
 		}
 	}
 	return 0, time.Time{}, fmt.Errorf(

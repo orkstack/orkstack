@@ -437,6 +437,34 @@ func TestBoot_RefusesAnInvalidOrkerID(t *testing.T) {
 	}
 }
 
+// TestBoot_RefusesAWorkRootADockerMountCannotName: the work root is the
+// source of every bind mount, and a --mount value is a comma-separated option
+// list, so a root with a comma or a control character would make every
+// attempt fail at dispatch with an error that does not name the setting.
+// Boot refuses it once, naming the variable and the reason.
+func TestBoot_RefusesAWorkRootADockerMountCannotName(t *testing.T) {
+	for _, tc := range []struct{ name, suffix string }{
+		{"a comma", "work,readonly=false"},
+		{"a newline", "work\nsource=/"},
+		{"a tab", "work\tx"},
+		{"a delete character", "work\x7f"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewActivitiesWithOptions(nil, Options{
+				OrkerID:  "orker-a",
+				WorkRoot: filepath.Join(t.TempDir(), tc.suffix),
+				Runtime:  &reapRecorder{labelled: map[string]int{}},
+			})
+			defer a.Close()
+			err := a.Boot(context.Background())
+			if err == nil || !strings.Contains(err.Error(), ReasonWorkdirNotBindable) || !strings.Contains(err.Error(), WorkRootVar) {
+				t.Fatalf("Boot with a work root holding %s = %v; want %s naming %s",
+					tc.name, err, ReasonWorkdirNotBindable, WorkRootVar)
+			}
+		})
+	}
+}
+
 // TestWorkerTuner_ActivitySlotsAreTheConfiguredCeiling is
 // F-orker-storage-perf-1: the activity supplier's size is the operator's
 // orker.max_concurrent, and DescribeOrker reports that same number rather than

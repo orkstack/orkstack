@@ -177,6 +177,13 @@ func (s *Spec) canonicalValue(i int, field *Field, op orkstackv1.FilterOperator,
 		if err != nil {
 			return "", refuse(i, "%q is not an RFC 3339 instant with a zone (2026-10-09T00:00:00Z)", v)
 		}
+		// The canonical spelling is UTC, and a year outside 0000-9999 has no
+		// RFC 3339 spelling that reads back (a zone offset can carry
+		// 9999-12-31T23:59:59-23:59 into year 10000): refused here, rather
+		// than compiled to a text the next request cannot send.
+		if year := t.UTC().Year(); year < 0 || year > 9999 {
+			return "", refuse(i, "%q is outside %s to %s, the instants a filter can name", v, firstInstant, lastInstant)
+		}
 		return formatTime(t), nil
 	case KindText:
 		if !wholeValue(op) {
@@ -207,6 +214,14 @@ func parseInstant(v string) (time.Time, error) {
 	}
 	return t.Truncate(time.Microsecond), nil
 }
+
+// firstInstant and lastInstant bound the instants a time filter can name:
+// the years RFC 3339 spells with four digits, in the canonical (UTC,
+// microsecond) spelling.
+const (
+	firstInstant = "0000-01-01T00:00:00Z"
+	lastInstant  = "9999-12-31T23:59:59.999999Z"
+)
 
 // formatTime is an instant's canonical spelling.
 func formatTime(t time.Time) string {

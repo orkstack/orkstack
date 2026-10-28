@@ -41,3 +41,21 @@ func TestNewID_ShapeAndValidID(t *testing.T) {
 		t.Errorf("ValidID refused a well-formed id")
 	}
 }
+
+// A schedule's zone is an IANA name. Go also reads "Local" as the zone of the
+// machine it runs on, which is a different instant on every host.
+func TestValidTimezone_IsAnIANANameAndNotTheHostsOwn(t *testing.T) {
+	for _, name := range []string{"UTC", "Europe/Lisbon", "America/Argentina/Buenos_Aires", "Etc/GMT+5"} {
+		if err := ValidTimezone(name); err != nil {
+			t.Errorf("ValidTimezone(%q) = %v, want an accepted zone", name, err)
+		}
+	}
+	for _, name := range []string{"", "Local", "Mars/Olympus", "../zoneinfo/UTC", "/etc/localtime", "Europe/../UTC", "UTC\x00", "Europe/Lisbon "} {
+		if err := ValidTimezone(name); err == nil {
+			t.Errorf("ValidTimezone(%q) accepted a name that is not an IANA zone", name)
+		}
+	}
+	if err := ValidTimezone("Local"); err == nil || !strings.Contains(err.Error(), "machine") {
+		t.Errorf("ValidTimezone(Local) = %v, want it to say the zone is the machine's own", err)
+	}
+}

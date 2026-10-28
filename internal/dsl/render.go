@@ -1,7 +1,7 @@
 package dsl
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,17 +10,13 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// noValueMarker is what text/template prints for a present-but-nil value.
-// Rendering it would silently corrupt a value, so it is an error — the rule
-// internal/orker/render.go holds a container's with: to.
-const noValueMarker = "<no value>"
-
 // RenderValues renders every string leaf of value as a text/template against
 // {"inputs": inputs, "tasks": {<id>: {"output": outputs[id]}}} with
 // missingkey=error and NO helper functions; maps and slices are walked, every
 // other value is kept verbatim, and map keys are never templated — the
-// traversal internal/orker/render.go uses. A result containing "<no value>"
-// is an error (render.go's noValueMarker rule). label prefixes every error
+// traversal internal/orker/render.go uses. A nil value that a template prints
+// is an error (ExecuteChecked); data or text that merely spells "<no value>"
+// renders as itself. label prefixes every error
 // ("task \"release\": with" gives "task \"release\": with.image: …";
 // "outputs" gives "outputs.digest: …"). Pure.
 func RenderValues(label string, value any, inputs map[string]any, outputs map[string]map[string]any) (any, error) {
@@ -100,17 +96,17 @@ func renderString(label, path, text string, data map[string]any) (string, error)
 		return text, nil
 	}
 	at := where(label, path)
-	tmpl, err := template.New(at).Option("missingkey=error").Parse(text)
-	if err != nil {
-		return "", fmt.Errorf("%s: template parse error: %w", at, err)
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("%s: render: %w", at, err)
-	}
-	out := buf.String()
-	if strings.Contains(out, noValueMarker) {
-		return "", fmt.Errorf("%s: render: template resolved to %s", at, noValueMarker)
+	out, err := ExecuteChecked(text, data, func(text string) (*template.Template, error) {
+		return template.New(at).Option("missingkey=error").Parse(text)
+	})
+	var failure *TemplateError
+	switch {
+	case errors.As(err, &failure) && failure.Stage == StageParse:
+		return "", fmt.Errorf("%s: template parse error: %w", at, failure.Err)
+	case errors.As(err, &failure):
+		return "", fmt.Errorf("%s: render: %w", at, failure.Err)
+	case err != nil:
+		return "", err
 	}
 	return out, nil
 }

@@ -318,6 +318,7 @@ func TestParse_ScheduleRulesMatchValidateScheduleSpec(t *testing.T) {
 		"start after end": {"    cron: '@daily'\n    start_at: '2030-01-02T00:00:00Z'\n    end_at: '2030-01-01T00:00:00Z'\n", "schedules.s.start_at", "after end_at"},
 		"bad overlap":     {"    cron: '@daily'\n    overlap: terminate-other\n", "schedules.s.overlap", "skip, buffer-one, buffer-all, cancel-other, allow-all"},
 		"bad timezone":    {"    cron: '@daily'\n    timezone: Mars/Olympus\n", "schedules.s.timezone", "IANA"},
+		"the host's zone": {"    cron: '@daily'\n    timezone: Local\n", "schedules.s.timezone", "machine"},
 		"no when":         {"", "schedules.s", "a cron or an interval"},
 		"long text":       {"    cron: '@daily'\n    description: " + strings.Repeat("x", 257) + "\n", "schedules.s.description", "limit is 256"},
 	}

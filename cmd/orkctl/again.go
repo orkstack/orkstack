@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -72,14 +71,12 @@ func againInput(source *orkstackv1.Payload, pairs []string, rawJSON string) (*or
 			values[key] = value
 		}
 	}
-	if rawJSON != "" {
-		var overrides map[string]any
-		if err := json.Unmarshal([]byte(rawJSON), &overrides); err != nil {
-			return nil, fmt.Errorf("invalid --input-json: %w", err)
-		}
-		for key, value := range overrides {
-			values[key] = value
-		}
+	overrides, err := decodeInputObject(rawJSON)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range overrides {
+		values[key] = value
 	}
 	for _, pair := range pairs {
 		key, raw, ok := strings.Cut(pair, "=")

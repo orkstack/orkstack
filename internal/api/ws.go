@@ -26,6 +26,7 @@ import (
 // long ago, or was started by a different process a moment earlier.
 func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 	marshaler := protojson.MarshalOptions{EmitUnpopulated: false}
+	allowedOrigins = originPatterns(allowedOrigins)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runID := r.PathValue("id")
@@ -132,6 +133,22 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 	})
 }
 
+// originPatterns reads the configured list of allowed origins the way a person
+// writes one ("a, b"): each entry trimmed, blank entries dropped. The result
+// is the one list both the early check and the library's Accept see; Accept
+// does not trim, so a padded entry would let the early check in an origin
+// Accept then refuses. A blank entry is no pattern at all, and left in it
+// would match an Origin with no host.
+func originPatterns(configured []string) []string {
+	patterns := make([]string, 0, len(configured))
+	for _, pattern := range configured {
+		if pattern = strings.TrimSpace(pattern); pattern != "" {
+			patterns = append(patterns, pattern)
+		}
+	}
+	return patterns
+}
+
 // originAllowed reports whether a browser at r's Origin may open this socket.
 //
 // It mirrors what coder/websocket enforces during Accept, and Accept still
@@ -141,9 +158,10 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 //   - No Origin header: not a browser. Allowed; CLI and test clients send none.
 //   - Origin whose host equals the request Host: same-origin. Always allowed,
 //     which is the library's default when no patterns are configured.
-//   - Otherwise: allowed only when the Origin's host matches one of patterns,
-//     compared case-insensitively, with `*` wildcards (so `*.example.com` and
-//     `localhost:5173` both work).
+//   - Otherwise: allowed only when the Origin's host matches one of patterns
+//     (as originPatterns returns them), compared case-insensitively, with `*`
+//     wildcards (so `*.example.com` and `localhost:5173` both work). A pattern
+//     that is not a valid pattern refuses, as it does in the library.
 func originAllowed(r *http.Request, patterns []string) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -154,11 +172,11 @@ func originAllowed(r *http.Request, patterns []string) bool {
 		return false
 	}
 	host := strings.ToLower(parsed.Host)
-	if host == strings.ToLower(r.Host) {
+	if strings.EqualFold(parsed.Host, r.Host) {
 		return true
 	}
 	for _, pattern := range patterns {
-		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		pattern = strings.ToLower(pattern)
 		if pattern == "" {
 			continue
 		}
@@ -172,7 +190,11 @@ func originAllowed(r *http.Request, patterns []string) bool {
 		if strings.Contains(pattern, "://") {
 			target = strings.ToLower(parsed.Scheme) + "://" + host
 		}
-		if ok, err := path.Match(pattern, target); err == nil && ok {
+		ok, err := path.Match(pattern, target)
+		if err != nil {
+			return false
+		}
+		if ok {
 			return true
 		}
 	}
@@ -204,6 +226,7 @@ const TaskLogSocketPath = "/ws/runs/{id}/tasks/{task}/logs"
 // the same store and end on the same rule.
 func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 	marshaler := protojson.MarshalOptions{EmitUnpopulated: false}
+	allowedOrigins = originPatterns(allowedOrigins)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runID := r.PathValue("id")

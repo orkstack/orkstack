@@ -230,6 +230,25 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
 9. Merge through AGENTS.md §11.3. CI's `proof` check is the merge gate; a
    local `make proof` is the equivalent path.
 
+## Fuzzing
+
+A parser of input OrkStack does not control that is added or changed gets a
+native Go fuzz target (`func FuzzXxx(f *testing.F)`, AGENTS.md §11.1) beside
+its table tests; one that has none is not yet covered, not exempt. The seeds
+run as ordinary tests in `make check` and every proof. To search for more, run
+one target at a time:
+
+```bash
+go test -run='^$' -fuzz='^FuzzParse_AcceptedTextIsAFilterThatFormatsBackToItself$' -fuzztime=3m ./internal/listfilter
+go test -list '^Fuzz' ./...     # every target
+```
+
+A failing input is written under `testdata/fuzz/<FuzzName>/`. Fix the code the
+input exposed, not the test, and commit the file: it then runs in every unit
+gate. A property is an invariant the code or its reference doc states (a round
+trip, a canonical form that compiles again, an independent count of what a
+verifier accepted), not only "does not panic".
+
 ## Definition of DONE
 
 A change is done when it is on `main` and a full proof passed on the exact

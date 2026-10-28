@@ -337,6 +337,13 @@ func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
 	switch {
 	case spec.Image == "":
 		return nil, errors.New("create container: image is required")
+	case !plainArgument(spec.Image):
+		// The image is the first argument after the flags: one that begins
+		// with "-" would be read as a flag, and one with a space or a control
+		// character is not a reference at all. The engine pins a reference
+		// to the distribution grammar (dsl.ParseReference); this is the
+		// boundary that does not rely on it.
+		return nil, fmt.Errorf("create container: image %q is not a reference the runtime can take as an argument", spec.Image)
 	case !spec.ReadOnlyRootfs, !spec.DropAllCapabilities, !spec.NoNewPrivileges, !spec.Init:
 		// A spec that weakens the §9.2 baseline is refused at construction
 		// rather than executed. These are not options.
@@ -346,9 +353,12 @@ func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
 	case spec.Network != NetworkNone && spec.Network != NetworkDefault:
 		return nil, fmt.Errorf("create container: network mode %q is not %q or %q",
 			spec.Network, NetworkDefault, NetworkNone)
-	case spec.CPUs == "" || spec.Memory == "" || spec.PidsLimit <= 0:
+	case spec.CPUs == "" || spec.Memory == "" || spec.PidsLimit <= 0 ||
+		cpuReadsAsUnlimited(spec.CPUs) || memoryReadsAsUnlimited(spec.Memory):
 		// No workload ever receives unlimited resources, including one that
-		// requested nothing (§9.3).
+		// requested nothing (§9.3). A quantity that parses to zero, a
+		// negative or a non-number is unlimited to the daemon, which reads
+		// `--cpus 0` and `--memory 0` as no limit, so it is refused here.
 		return nil, fmt.Errorf("create container: resources must always be bounded "+
 			"(cpus=%q memory=%q pids=%d)", spec.CPUs, spec.Memory, spec.PidsLimit)
 	}
@@ -411,12 +421,42 @@ var forbiddenMountTargets = []string{
 	"/run/docker.sock",
 }
 
+// plainArgument reports whether s can sit among the runtime's arguments as an
+// operand: it does not begin with "-" and holds no space or control character.
+func plainArgument(s string) bool {
+	if s == "" || s[0] == '-' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] <= ' ' || s[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// plainMountPath reports whether a path can sit in a --mount value, which is a
+// comma-separated list of key=value options: a comma would add an option
+// (readonly=false, a second source) and a control character would end it.
+func plainMountPath(path string) bool {
+	for i := 0; i < len(path); i++ {
+		if path[i] < ' ' || path[i] == 0x7f || path[i] == ',' {
+			return false
+		}
+	}
+	return true
+}
+
 func checkMount(m Mount) error {
 	if m.Source == "" || !strings.HasPrefix(m.Source, "/") {
 		return fmt.Errorf("mount source %q must be an absolute Orker-created path", m.Source)
 	}
 	if !strings.HasPrefix(m.Destination, "/") {
 		return fmt.Errorf("mount destination %q must be absolute", m.Destination)
+	}
+	if !plainMountPath(m.Source) || !plainMountPath(m.Destination) {
+		return fmt.Errorf("mount %q to %q: a path holds no comma or control character, which would add an option to the mount",
+			m.Source, m.Destination)
 	}
 	for _, forbidden := range forbiddenMountTargets {
 		if m.Source == forbidden {
@@ -1073,7 +1113,7 @@ func sortedKeys[V any](m map[string]V) []string {
 // same contract quantity its own way.
 func dockerMemory(quantity string) string {
 	bytes, err := parseMemory(quantity)
-	if err != nil || bytes <= 0 {
+	if err != nil || !isByteCount(bytes) {
 		// The policy already validated this, so a parse failure here means
 		// the two disagree. Pass it through and let the daemon say so rather
 		// than silently substituting a limit nobody asked for.
@@ -1088,8 +1128,24 @@ func dockerMemory(quantity string) string {
 // Docker does not parse. 500m is 0.5 CPUs.
 func dockerCPUs(quantity string) string {
 	cpus, err := parseCPU(quantity)
-	if err != nil || cpus <= 0 {
+	if err != nil || !isPositiveFinite(cpus) {
 		return quantity
 	}
 	return strconv.FormatFloat(cpus, 'f', -1, 64)
+}
+
+// cpuReadsAsUnlimited reports whether a cpu quantity parses to a number that
+// is no limit to the runtime: zero, negative, NaN or infinite. A quantity
+// that does not parse is not judged here; the daemon refuses it by name.
+func cpuReadsAsUnlimited(quantity string) bool {
+	cpus, err := parseCPU(quantity)
+	return err == nil && !isPositiveFinite(cpus)
+}
+
+// memoryReadsAsUnlimited is cpuReadsAsUnlimited for memory: a quantity that
+// parses to less than one byte, or to more than an int64 holds, is not a
+// byte count the runtime can be handed.
+func memoryReadsAsUnlimited(quantity string) bool {
+	bytes, err := parseMemory(quantity)
+	return err == nil && !isByteCount(bytes)
 }

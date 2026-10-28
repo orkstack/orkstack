@@ -274,6 +274,14 @@ func TestValidateAwaitValues(t *testing.T) {
 		{"null", nil, `null`, 0, "", "the values must be a JSON object, not null"},
 		{"invalid utf-8", nil, "{\"a\":\"\xff\"}", 0, "", "the values are not valid UTF-8"},
 		{"invalid json", nil, `{"a":`, 0, "", "the values are not one valid JSON value"},
+		// Go's decoder reads half of a surrogate pair as U+FFFD, so a body
+		// stored byte for byte would be read back as something else.
+		{"lone high surrogate", nil, `{"a":"\ud800"}`, 0, "", `the values hold a string that cannot be read as text: the escape \ud800 is half of a surrogate pair, not a character`},
+		{"lone low surrogate", nil, `{"a":"\udc00x"}`, 0, "", `the values hold a string that cannot be read as text: the escape \udc00 is half of a surrogate pair, not a character`},
+		{"high surrogate before a character", nil, `{"a":"\ud800A"}`, 0, "", `the values hold a string that cannot be read as text: the escape \ud800 is half of a surrogate pair, not a character`},
+		{"lone surrogate in a key", nil, `{"\ud800":1}`, 0, "", `the values hold a string that cannot be read as text: the escape \ud800 is half of a surrogate pair, not a character`},
+		{"a surrogate pair is a character", nil, `{"a":"😀"}`, 0, "", ""},
+		{"an escaped backslash before u is no escape", nil, `{"a":"\\ud800"}`, 0, "", ""},
 		{"two values", nil, `{}{}`, 0, "", "the values are not one valid JSON value"},
 		{"over the bound", nil, `{"a":"bcdef"}`, 5, "", "the values are 13 bytes, over the 5-byte limit"},
 		{"missing required", spec, `{}`, 0, "values.model_uri", "is required by the await's schema"},

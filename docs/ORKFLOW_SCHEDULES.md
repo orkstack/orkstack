@@ -186,7 +186,8 @@ an accepted parity exception ([UI_CLI_PARITY.md](UI_CLI_PARITY.md)).
 Validation, each a refusal naming the field: at least one cron expression or
 an interval; a cron expression of at most 200 bytes with no control character
 and no `CRON_TZ=`/`TZ=` prefix (set the time zone instead); a positive
-interval; a non-negative jitter; an IANA time zone; a catch-up window of at
+interval; a non-negative jitter; an IANA time zone (`Local`, which Go reads as
+the zone of whatever machine runs it, is refused); a catch-up window of at
 least 10 s; `start_at` not after `end_at`; an `end_at` in the future (a
 schedule with no fire left is retired by the cluster); a declared overlap
 policy; a description or pause reason of at most 256 bytes, valid UTF-8, no

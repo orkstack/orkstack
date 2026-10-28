@@ -434,6 +434,19 @@ func TestParseBearerChallenge_KeepsCommasInsideQuotedValues(t *testing.T) {
 	}
 }
 
+// The challenge is a registry's header, bytes and all: a value is kept as it
+// came, not rewritten with the replacement character for a byte that is not
+// UTF-8.
+func TestParseBearerChallenge_KeepsTheBytesOfAValue(t *testing.T) {
+	got := parseBearerChallenge("Bearer realm=\"https://auth.example/t\xffk\",scope=\"a\xfe,b\"")
+	if got == nil {
+		t.Fatal("challenge did not parse")
+	}
+	if got.Realm != "https://auth.example/t\xffk" || got.Scope != "a\xfe,b" {
+		t.Fatalf("challenge = %q, want the bytes the registry sent", got)
+	}
+}
+
 func TestResolveOrkflow_ResolvesEachDistinctUsesOnce(t *testing.T) {
 	stub := indexStub(t)
 	body := stub.body

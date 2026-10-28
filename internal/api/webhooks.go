@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -140,7 +141,11 @@ func deleteWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.Re
 func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.Registry) auditEntry {
 	entry := auditEntry{Action: "webhook.register", Target: auditNoTarget}
 	var body registerWebhookRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, httpRequestBodyLimit)).Decode(&body); err != nil {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, httpRequestBodyLimit))
+	if err == nil {
+		err = decodeJSONValue(raw, &body, false)
+	}
+	if err != nil {
 		writeWebhookError(w, http.StatusBadRequest, "invalid_argument",
 			fmt.Sprintf("decode request body: %v", err))
 		return entry

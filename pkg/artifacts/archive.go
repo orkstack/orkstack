@@ -482,8 +482,8 @@ func ParseRunIndexKey(key string) (RunIndexEntry, bool) {
 	if !ok {
 		return RunIndexEntry{}, false
 	}
-	stamp, err := time.Parse(RunStampLayout, parts[6])
-	if err != nil {
+	stamp, ok := parseRunStamp(parts[6])
+	if !ok {
 		return RunIndexEntry{}, false
 	}
 	runID, ok := decodeArchiveSegment(parts[7])
@@ -561,8 +561,8 @@ func ParseRunOriginIndexKey(key string) (RunIndexEntry, bool) {
 	if !ok {
 		return RunIndexEntry{}, false
 	}
-	stamp, err := time.Parse(RunStampLayout, parts[8])
-	if err != nil {
+	stamp, ok := parseRunStamp(parts[8])
+	if !ok {
 		return RunIndexEntry{}, false
 	}
 	runID, ok := decodeArchiveSegment(parts[9])
@@ -598,7 +598,7 @@ func decodeOriginIDSegment(segment string) (string, bool) {
 	if segment == OriginIndexNoID {
 		return "", true
 	}
-	return decodeArchiveSegment(segment)
+	return decodeSegmentWritten(segment, encodeOriginIDSegment)
 }
 
 // parseKey parses one scanned key with the family the query selected.
@@ -622,6 +622,17 @@ func (q RunQuery) timeOrderedPrefix() bool {
 
 // RunStamp renders t as an index segment: UTC, fixed width, sortable.
 func RunStamp(t time.Time) string { return t.UTC().Format(RunStampLayout) }
+
+// parseRunStamp reads a stamp RunStamp wrote and no other spelling of it:
+// time.Parse also takes a comma as the decimal separator, which would let two
+// keys name one record.
+func parseRunStamp(s string) (time.Time, bool) {
+	stamp, err := time.Parse(RunStampLayout, s)
+	if err != nil || RunStamp(stamp) != s {
+		return time.Time{}, false
+	}
+	return stamp, true
+}
 
 // NormalizeRunStatus folds a status to the form the index stores. It accepts
 // the proto wire name ("STATUS_SUCCEEDED") and the short form, in any case.
@@ -826,6 +837,15 @@ func encodeArchiveSegment(raw string) (string, error) {
 }
 
 func decodeArchiveSegment(segment string) (string, bool) {
+	return decodeSegmentWritten(segment, encodeArchiveSegment)
+}
+
+// decodeSegmentWritten reverses encode, and reads only a segment encode itself
+// would write: two keys never name one record. A base64 tail with its padding
+// bits set, the escaped form of a name that is a clean component (written
+// verbatim), and an escape longer than any segment the writer produces each
+// decode to a value whose own segment is spelled differently.
+func decodeSegmentWritten(segment string, encode func(string) (string, error)) (string, bool) {
 	if segment == "" {
 		return "", false
 	}
@@ -837,6 +857,9 @@ func decodeArchiveSegment(segment string) (string, bool) {
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(segment, archiveEncodedMarker))
 	if err != nil || len(decoded) == 0 {
+		return "", false
+	}
+	if written, err := encode(string(decoded)); err != nil || written != segment {
 		return "", false
 	}
 	return string(decoded), true

@@ -978,7 +978,15 @@ Every code change follows this order:
 10. Merge through §11.3. The full proof of the merged tree is what makes the
     change done.
 
-Unit tests are pure and table-driven. Temporal workflow tests use
+Unit tests are pure and table-driven. A parser of input OrkStack does not
+control (a request body, a flag, an authored document, an object read back from
+storage, a container's output) that is added or changed also gets a native Go
+fuzz target (`FuzzXxx`) that states the properties the code claims, its seeds
+drawn from the table tests; the seeds run in every unit gate, so they stay fast
+and deterministic. `go test -list '^Fuzz' ./...` lists the targets there are;
+a parser without one is not yet covered, not exempt. A crasher a fuzz run finds
+is fixed at its root and kept under `testdata/fuzz/<FuzzName>/` as a regression
+seed. Temporal workflow tests use
 `WorkflowTestSuite` / `TestWorkflowEnvironment` with mocked activities.
 A unit test bounds code cost by thread CPU time or an injected clock, never by
 a sub-second wall-clock window; where the platform has no thread clock (off

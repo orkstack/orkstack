@@ -151,7 +151,7 @@ func triggerInput(w http.ResponseWriter, r *http.Request) (*orkstackv1.Payload, 
 	if err != nil {
 		return nil, fmt.Errorf("read request body: %w", err)
 	}
-	body := bytes.TrimSpace(raw)
+	body := bytes.Trim(raw, jsonWhitespace)
 	if len(body) == 0 {
 		return nil, nil
 	}

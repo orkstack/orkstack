@@ -10,6 +10,31 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- Fuzz targets for the inputs OrkStack accepts from outside, each stating the
+  invariants the code or its reference doc claims and not only that nothing
+  panics: the list-filter grammar, compiler and matcher (a compiled set is a
+  fixed point of compiling and independent of filter order; a row matches as
+  the documented rules say; every pushdown is sound), the enum dialect, the
+  tolerant JSON codec against protojson, the trigger, webhook and await
+  doors, page tokens, webhook signing and delivery against a real receiver,
+  the Orkflow, automation and reference parsers, the `sh` template helper and
+  `orkctl`'s printed quoting against a real shell, a container's
+  `values.json`, the container argument vector, the Orker's cpu and memory
+  quantities (an accepted request renders to a positive limit within the cap),
+  the `allowed_registries` boundary rule, the secret-source matcher against a
+  regular expression, the evidence verifier against a count made without it,
+  the continuation object decoders, the run archive and saved-object decoders,
+  the stored-record decoders against their encoders, the live-log framing and
+  the object-key parsers, the WebSocket origin check against the library's own,
+  schedule specs, configuration files and arguments, telemetry sinks, a
+  registry's bearer challenge, the activity catalog, and `orkctl`'s group-by,
+  category, time and plan-output flags. Their seeds run in every unit gate and
+  a crasher a run finds is kept as a seed under `testdata/fuzz/`
+  (CONTRIBUTING.md, "Fuzzing"; AGENTS.md §11.1). Each fix below says how its
+  defect was found: by a failing input the fuzz engine wrote, or by reading the
+  code while stating a target's property, with the target's seed failing until
+  the fix.
+
 - A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
   `proofrun runner-health`): every part measures its runner for about ten
   seconds before any gate — sequential write and read throughput and fsync
@@ -65,6 +90,163 @@ include breaking changes, and each is marked **BREAKING**.
   the check reports the interruption rather than any of them. A daemon that
   never answers can now hold boot for up to three times the timeout plus a
   minute, 7 minutes at the default, before it is refused.
+- The Orker accepted a memory request of zero and passed it to the container
+  runtime as no limit. A cpu request of zero was already refused because
+  `--cpus 0` is unlimited, but memory had no such check: `memory: "0"`,
+  `"0Gi"`, `"0.5"` (rendered as 0 bytes) and `"-1"` passed the cap, reached the
+  runtime as `--memory 0` or an unparsable value, and an attempt's usage record
+  reserved 0 bytes. A memory request is now refused unless it is at least one
+  byte and below what an int64 holds, as `RESOURCE_REQUEST_REFUSED`; the Orker
+  refuses at boot a cap or default (`ORK_ORKER_MAX_CPU`, `_MAX_MEMORY`,
+  `_DEFAULT_CPU`, `_DEFAULT_MEMORY`) that parses but is not a positive finite
+  quantity, since a NaN cap compared above and below nothing and removed the
+  ceiling; and the container argument builder refuses a cpu or memory that
+  parses to no limit. Found by reading the code for the property an accepted
+  request renders to a positive limit within the cap
+  (`FuzzResolveResources_AnAcceptedRequestIsALimitWithinTheCap`).
+- The Orker refuses at boot a work root (`ORK_ORKER_WORKDIR`) whose path holds a
+  comma or a control character, as `WORKDIR_NOT_BINDABLE` naming the setting. A
+  mount is a comma-separated option list, so every task of such an Orker failed
+  at dispatch, one attempt at a time, with an error that did not name the
+  setting.
+- The JSON codec, the trigger invoke route, the webhook registration route, the
+  await completion and rejection routes and `orkctl --input-json`,
+  `--output` and `--outputs-file` no longer repair what a caller sent. Go's
+  JSON decoder replaces bytes that are not UTF-8, and a string's lone surrogate
+  escape, with U+FFFD, so a run's input, a caller-chosen webhook signing secret,
+  an await's values or a name was stored as something other than what was
+  posted while protojson would have refused it; they are now refused, as
+  protojson refuses them. The webhook registration route also ignored
+  everything after its first JSON value (`{…}{…}` registered the first) and now
+  refuses a second value as the trigger route does, and the trigger and
+  callback routes trimmed any Unicode space around a body, so a body wrapped in
+  a no-break space started a run; only JSON's four whitespace characters are
+  trimmed now. The tolerant codec behind every Connect JSON request also
+  dropped whatever followed the first JSON value (`{}0` was read as `{}`); that
+  is refused too. The `{}0` input was written by the fuzz engine
+  (`FuzzUnmarshalJSON_IsProtojsonPlusEnumSpellings`); the others were found by
+  reading the doors while stating the targets' properties (`FuzzTriggerInput`,
+  `FuzzRegisterWebhook`, `FuzzAwaitRejectReason`, `FuzzCheckJSONText`).
+- An enum value, a filter's enum value, a webhook event name and the
+  `orkctl stats` `--group-by` and `--category` spellings are matched with ASCII
+  case only. They were upper-cased with Unicode rules, so `ſucceeded` (U+017F)
+  read as `SUCCEEDED`, `runnıng` (U+0131) as `RUNNING` and `taſk` as `task`; no
+  declared name is spelled with those letters. Found by reading the code while
+  stating `FuzzProto_ReadsOnlyASCIICaseAndDashAsTheSameValue` and
+  `FuzzParseGroupBy`.
+- A list filter on an instant whose UTC spelling falls outside the years 0000
+  to 9999 (`created_at<9999-12-31T23:59:59-23:59` is year 10000 in UTC) was
+  compiled to a canonical text, bound into the page token, that a following
+  request could not send (`10000-01-01T…` is not RFC 3339). It is refused by
+  name instead: `"…" is outside 0000-01-01T00:00:00Z to
+  9999-12-31T23:59:59.999999Z, the instants a filter can name`. Found by
+  reading the compiler while stating the canonical-set property
+  (`FuzzCompile_ACompiledSetIsCanonicalAndTheOrderOfItsFiltersDoesNotMatter`).
+- `orkctl`'s `--since`, `--until` and the run list's RFC 3339 bounds accepted an
+  instant a request cannot carry (`0000-01-01T00:00:00Z`, or a local time whose
+  UTC instant falls before 0001 or after 9999) and the request then failed to
+  encode with a message that did not name the flag; they are refused by name,
+  judged on the UTC instant. Found by `FuzzParseInstantFlags`.
+- An image reference is held to the OCI distribution grammar when an Orkflow
+  is applied and when the activity catalog is read at boot: a registry host
+  name (or bracketed IP address) with an optional port from 1 to 65535,
+  lower-case repository path components, a tag of word characters, dots and
+  dashes that does not start with a dot or a dash, and a `sha256:` digest.
+  `ParseReference` accepted any text, so `uses: --cap-add=ALL.example/x:1`
+  was a registry named `--cap-add=ALL.example` (pinned as
+  `--cap-add=ALL.example/x@sha256:…`, an argument the container runtime reads
+  as a flag, ahead of the image the Orker meant), and a repository could carry
+  `?`, `#`, `%`, a space or a newline into the manifest URL. A reference
+  outside the grammar is refused at apply as `IMAGE_RESOLVE_UNSUPPORTED`,
+  which Docker refuses at pull anyway, and an `ORK_ACTIVITY_CATALOG` entry
+  outside it stops the engine at boot instead of failing at the first apply
+  that names the activity. The Orker's container argument builder also refuses,
+  as defence in depth, an image that begins with `-` or holds a space or
+  control character, and a mount path with a comma or control character, which
+  would add an option to the `--mount` value. Found by reading
+  `dsl.ParseReference` and `dockerCreateArgs` while stating
+  `FuzzParseReference` and `FuzzDockerCreateArgs`.
+- A template renders data that spells `<no value>` as itself, and refuses only
+  a nil value that it prints. The Orker's `with:` renderer and the engine's
+  output renderer refused any rendered string containing those characters, to
+  catch a nil value, so an input, a task output or an author's text that merely
+  contained them failed `RENDER_FAILED` or `OUTPUTS_RENDER_FAILED`. A nil value
+  is now noted where the template prints it, by one stage appended to each
+  printing action as `html/template` appends its escapers, and the template
+  runs once on the real data: the characters of the marker put together across
+  text and a value, across two values or inside one `printf` render as they
+  spell, `printf "%q"` and a comparison against a string the template builds see
+  the real value, and a nil that is only tested (`{{ if .x }}`) is not refused.
+  Found by reading the renderer while stating `FuzzRenderer_ARenderedValueIsTheValue`
+  and `FuzzRenderValues_OnlyAPrintedNilIsRefused`.
+- An await's completion values are refused when a string in them holds half of a
+  surrogate pair (`{"a":"\ud800"}`). The completion routes stored the values byte
+  for byte after checking only UTF-8 and JSON validity, so a later Go decode of
+  the stored object read the half as U+FFFD; the rejection route already
+  refused it. Found by reading the validation while stating
+  `FuzzValidateAwaitValues`.
+- `orkctl run submit --input-json null --input key=value` (and `run again`,
+  `schedule create`, `run plan`, `task run`) no longer panics. JSON `null` read
+  as an empty object, and the first `--input` then wrote into a nil map; `null`
+  is now refused as not a JSON object, like every other non-object. `--input`
+  and `--input-json` text that Go's JSON decoder would change on the way
+  through (bytes that are not UTF-8, a lone surrogate escape) is no longer
+  replaced with U+FFFD: `--input-json` refuses it and a `--input` value stays
+  the string you typed. A task id given to `orkctl run plan --output` or keyed
+  in its `--outputs-file` is held to the name rule (`^[a-z][a-z0-9-]*$`, at most
+  200 bytes), naming the flag: an empty key in the file, and an id that is not
+  text in either, were accepted and failed to encode with no word about the
+  flag. Found by reading `buildInputPayload` while stating
+  `FuzzBuildInputPayload`; the empty and non-text ids were written by the fuzz
+  engine (`FuzzBuildAssumedOutputs`).
+- A task's live log is framed the same way wherever the container's reads
+  split its output. A line of exactly 64 KiB (`MaxStreamedLine`) whose
+  terminator arrived in a later read streamed an extra empty line after it,
+  and a line longer than 64 KiB whose terminator arrived in the same read as
+  its end streamed as one line past the limit instead of in 64 KiB pieces. A
+  line is now cut into pieces of at most 64 KiB however its bytes arrive, and a
+  terminator right after a piece ends no empty line. Found by reading
+  `LineWriter` while stating `FuzzLineWriter_FramesAnyStreamAtAnyWriteBoundary`
+  against a framing written without it.
+- `ORK_WS_ALLOWED_ORIGINS` is read as one list by both origin checks. It was
+  split at commas and kept as written, so `a, b` left ` b` with its space; the
+  socket's early check trimmed each entry and let the origin in, and the
+  WebSocket library's own check, which does not trim, then refused the upgrade
+  with a 403 the early check had approved. Entries are trimmed and blanks
+  dropped once, a blank pattern no longer matches an Origin with no host, and
+  the early check mirrors the library for a pattern that does not parse and for
+  Unicode case folding of the host. Found by `FuzzOriginAllowed`, which takes
+  the library as its oracle.
+- A schedule's `timezone` of `Local` is refused, in the API and in an automation
+  document: Go reads it as the zone of the machine that reads it, not a zone of
+  the IANA database the reference promises, so the schedule fired at a different
+  instant on every host. Found by reading `ValidateScheduleSpec` while stating
+  `FuzzValidateScheduleSpec`.
+- A configuration file's integer, boolean or duration is refused unless it is
+  exactly one, naming the key. It was checked with its surrounding space trimmed
+  and applied untrimmed: `engine.idempotency_ttl: ' 5m'` passed the file and was
+  then silently replaced by the reader's default, and a padded integer stopped
+  the daemon at its reader. A double-quoted value that spells a NUL byte
+  (`"\0"`) is refused at load too, naming the key, instead of failing partway
+  through applying the file. Found by reading `Load` while stating
+  `FuzzLoad_AValueTheFileSetsIsOneItsKindReads`.
+- A key is read only in the spelling the writer uses. The run, recent and origin
+  index parsers used `time.Parse` for their stamp, which takes a comma as the
+  decimal separator, the attempt and task-log key parsers used
+  `strconv.ParseInt` for their zero-padded counters, which takes a leading plus
+  sign, and the escaped form of a name (`~` and base64) was decoded without
+  checking its padding bits or that the name was not clean enough to be written
+  as itself, so two keys named one record and the cursor a paged scan resumes
+  from was a key the scan had never listed. All three were written by the fuzz
+  engine (`FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites`).
+- A registry's bearer challenge is read as bytes. Splitting it ranged over
+  runes, which rewrites a byte that is not UTF-8 as U+FFFD, so the token realm
+  the resolver requested was not the one the registry named. Found by the fuzz
+  engine (`FuzzParseBearerChallenge`).
+- An Orker id that is not UTF-8 is refused at boot, naming `ORK_ORKER_ID`. It
+  becomes part of a task queue name, a protobuf string, and was refused by the
+  transport at the first poll instead. Found by reading `ValidOrkerID` while
+  stating `FuzzValidOrkerID`.
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
   pid, rather than by the container's Orker id. Tests that name their own

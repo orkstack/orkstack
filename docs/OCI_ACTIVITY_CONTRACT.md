@@ -311,18 +311,20 @@ even that.
 **Host placement.** The workspace root is a per-attempt directory under
 `ORK_ORKER_WORKDIR`, which MUST be a path the container daemon can bind-mount
 (on macOS with a VM-hosted daemon `$HOME` is shared and `/var/folders` is not,
-which is why `make up` uses `.data/work`). The Orker probes this at boot and
-refuses to start with `InfrastructureError/WORKDIR_NOT_BINDABLE` rather than
-failing every task later. The probe runs a container, so each step of it that
-waits on the daemon (asking whether the probe's image is local, and each of two
-attempts to run its container) has a budget of its own
+which is why `make up` uses `.data/work`) and whose path holds no comma or
+control character, which a container mount cannot carry. The Orker probes this
+at boot and refuses to start with `InfrastructureError/WORKDIR_NOT_BINDABLE`
+rather than failing every task later. The probe runs a container, so each step
+of it that waits on the daemon (asking whether the probe's image is local, and
+each of two attempts to run its container) has a budget of its own
 (`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes). An attempt that overruns it, or
 that the daemon ends with a deadline error of its own, is tried once more. A
 daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`, which says
 the daemon is slow and nothing about the work root. `WORKDIR_NOT_BINDABLE` is
-kept for a probe the daemon refused within its budget, in its own words or
-otherwise, a probe container that exited non-zero, and a probe directory that
-cannot be made; none of those is tried again.
+kept for a work root whose path holds a comma or control character, a probe the
+daemon refused within its budget, in its own words or otherwise, a probe
+container that exited non-zero, and a probe directory that cannot be made; none
+of those is tried again.
 
 **Secrets.** `/orkstack/input/secrets` is a separate bind of a per-attempt
 directory the Orker creates, populates, mounts read-only, and removes on every
@@ -570,7 +572,11 @@ input payload — the same data templates see as `.inputs`. The template context
 is `docs/DSL.md`, "Templating".
 
 Rendering is recursive over nested maps and lists, with `missingkey=error`, and
-a rendered `<no value>` is rejected. A render failure is
+a nil value that a template prints, which Go would print as `<no value>`, is
+rejected. Data or text that merely spells those characters (an input of `see
+<no value> here`), however they come together, renders as itself: the Orker
+notes a nil value where the template prints it, so what is printed is never
+guessed from the text. A render failure is
 `ContractViolation/RENDER_FAILED` and is never retried. A templated value
 renders to a **string**: a number arrives in Go's spelling (`1000000` as
 `1e+06`), so numbers and structures a workload computes with travel as files,
@@ -720,7 +726,15 @@ activities:
 2. Else, `uses` matching `^[a-z][a-z0-9-]*$` that is a catalog key → the
    catalog reference.
 3. Else, `uses` that parses as an OCI reference (contains `/`, `:` or `@`) →
-   itself.
+   itself. A reference is held to the distribution grammar and refused by name
+   outside it, never repaired: a registry that is a host name (or a bracketed IP
+   address) with an optional port from 1 to 65535, repository path components
+   of lower-case letters and digits joined by single `.`, `_`, `__` or dash
+   separators, a tag of at most 128 word characters, dots and dashes that does
+   not start with a dot or a dash, and a `sha256:` digest. The reference becomes
+   a registry URL at apply and a runtime argument at dispatch, so nothing it
+   accepts can begin like a runtime option, hold a space or a control character,
+   or change a URL's path, query or fragment.
 4. Else → compile error `UNKNOWN_ACTIVITY`, listing the catalog keys.
 
 Rule 2 before rule 3 means `shell` can never accidentally mean Docker Hub's
@@ -1549,7 +1563,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `CONTAINER_TIMEOUT` | TimedOut | **no** (§8.1) | Orker killed the container at `timeout_seconds` |
 | `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error — the container never ran |
 | `WORKSPACE_NOT_BINDABLE` | InfrastructureError | **no** | the daemon cannot bind the workspace path — a host misconfiguration retrying will not fix |
-| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | the daemon refused the boot probe's run within its budget, or the probe's container exited non-zero, and not for a deadline (or no probe directory could be made): `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
+| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | `ORK_ORKER_WORKDIR`'s path holds a comma or control character, or the daemon refused the boot probe's run within its budget, or the probe's container exited non-zero, and not for a deadline (or no probe directory could be made): `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
 | `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start the probe's container within it, or ended it with a deadline error of its own; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
 | `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`alpine:3.20`) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
 | `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created |
@@ -1722,8 +1736,10 @@ spelling). Orker policy supplies defaults and caps:
 `ORK_ORKER_PIDS_LIMIT` (`512`). A request above the cap is **refused**
 (`RESOURCE_REQUEST_REFUSED`), not silently clamped: a workload that asked for
 64 GiB and got 4 GiB fails confusingly later. A zero, negative or non-finite
-request is refused too, because the runtime reads a zero limit as unlimited,
-and an unreadable cap refuses rather than running uncapped. **No workload ever
+request is refused too (for memory, one under a single byte, which renders as
+zero), because the runtime reads a zero limit as unlimited. An unreadable cap
+refuses rather than running uncapped, and a cap or default that is not a
+positive, finite quantity stops the Orker at boot. **No workload ever
 receives unlimited resources**, including one that requested nothing. The
 effective values reach the workload in `task.json` and the attempt record.
 

@@ -15,6 +15,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/schedules"
 )
 
 // ScheduleController is the engine's schedule seam: what the API needs from
@@ -80,7 +81,7 @@ func ValidateScheduleSpec(spec *orkstackv1.ScheduleSpec, now time.Time) error {
 		return fmt.Errorf("spec.jitter: must not be negative, got %s", j.AsDuration())
 	}
 	if tz := spec.GetTimezone(); tz != "" {
-		if _, err := time.LoadLocation(tz); err != nil {
+		if err := schedules.ValidTimezone(tz); err != nil {
 			return fmt.Errorf("spec.timezone: %q is not an IANA time zone: %v", tz, err)
 		}
 	}

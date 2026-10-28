@@ -133,10 +133,25 @@ A list filter's values ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Filtering
 lists") are this dialect's spellings: an enum value by its short name
 (`FAILED`), `true`/`false`, an RFC 3339 instant with a zone, text verbatim —
 exactly what `--json` prints, so a value copied from `--json` output filters
-for it. An enum value is read with this dialect's tolerance — any case, the
-type prefix optional — and one more: `-` reads as `_`, so `parent-run` is
-`PARENT_RUN`. The JSON codec accepts the same `-` spelling, since one rule
-reads both.
+for it. An enum value is read with this dialect's tolerance — any case of the
+ASCII letters (a letter such as `ſ`, which Unicode upper-cases to `S`, is not
+an `S`), the type prefix optional — and one more: `-` reads as `_`, so
+`parent-run` is `PARENT_RUN`. The JSON codec accepts the same `-` spelling,
+since one rule reads both.
+
+### Text the codec will not change
+
+The tolerant decoder rewrites enum names and nothing else: a request that
+protojson accepts is read as protojson reads it. It refuses, rather than
+repairs, JSON that Go's decoder would alter on the way through — text that is
+not valid UTF-8, or a string holding half of a surrogate pair (`"\ud800"`) —
+so a run's input or a name is never silently stored as something the caller
+did not send. The plain-HTTP doors (the trigger invoke route, the webhook
+registration route and the await callback routes) hold to the same rule, and
+to one JSON value per body: a second value after the first is refused, not
+ignored. A body that is only whitespace is no body; "whitespace" is JSON's own
+four characters (space, tab, line feed, carriage return), so a body wrapped in
+a no-break space is not JSON.
 
 ## Implementation
 

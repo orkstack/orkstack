@@ -241,6 +241,7 @@ func (e *AwaitValuesError) Error() string {
 //	len(raw) > maxBytes                → "", "the values are N bytes, over the M-byte limit"
 //	!utf8.Valid(raw)                   → "", "the values are not valid UTF-8"
 //	!json.Valid(raw)                   → "", "the values are not one valid JSON value"
+//	half of a surrogate pair in a string → "", "the values hold a string that cannot be read as text: …"
 //	top level is not an object         → "", "the values must be a JSON object, not <kind>"
 //	for each schema entry, sorted by name:
 //	  required and absent              → "values.<k>", "is required by the await's schema"
@@ -261,6 +262,11 @@ func ValidateAwaitValues(spec *orkstackv1.AwaitSpec, raw []byte, maxBytes int64)
 	}
 	if !json.Valid(raw) {
 		return &AwaitValuesError{Message: "the values are not one valid JSON value"}
+	}
+	// The values are stored byte for byte and read back by Go's decoder,
+	// which turns half of a surrogate pair into U+FFFD.
+	if err := CheckJSONText(raw); err != nil {
+		return &AwaitValuesError{Message: "the values hold a string that cannot be read as text: " + err.Error()}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()

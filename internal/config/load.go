@@ -131,6 +131,14 @@ func Load(path string, binary Binary) (*Document, error) {
 	if err := walkNode(mapping, schemaRoot, nil, binary, values, configDir); err != nil {
 		return nil, fmt.Errorf("config: %s: %w", path, err)
 	}
+	// Every value reaches its daemon as an environment variable, which cannot
+	// hold a NUL byte, and a double-quoted YAML scalar can spell one ("\0").
+	// Refuse it here, naming the key, not partway through applying the file.
+	for _, v := range Schema {
+		if rv, ok := values[v.Env]; ok && strings.IndexByte(rv.value, 0) >= 0 {
+			return nil, fmt.Errorf("config: %s: %s: the value holds a NUL byte, which an environment variable cannot", path, v.Path)
+		}
+	}
 	return &Document{path: path, values: values}, nil
 }
 
@@ -371,19 +379,21 @@ func trimOneLineEnding(s string) string {
 
 // checkScalarType validates a resolved scalar against its Kind, so a typo
 // (a bool where a duration belongs) is refused at load time naming the key,
-// rather than surfacing later from whatever *FromEnv reader parses it.
+// rather than surfacing later from whatever *FromEnv reader parses it. The
+// value is parsed as it stands: the readers do not trim it, so a padded
+// duration the file passed would silently become the reader's default.
 func checkScalarType(kind Kind, raw, path string) error {
 	switch kind {
 	case KindInt:
-		if _, err := strconv.Atoi(strings.TrimSpace(raw)); err != nil {
+		if _, err := strconv.Atoi(raw); err != nil {
 			return fmt.Errorf("%s: %q is not an integer", path, raw)
 		}
 	case KindBool:
-		if _, err := strconv.ParseBool(strings.TrimSpace(raw)); err != nil {
+		if _, err := strconv.ParseBool(raw); err != nil {
 			return fmt.Errorf("%s: %q is not a boolean", path, raw)
 		}
 	case KindDuration:
-		if _, err := time.ParseDuration(strings.TrimSpace(raw)); err != nil {
+		if _, err := time.ParseDuration(raw); err != nil {
 			return fmt.Errorf("%s: %q is not a duration", path, raw)
 		}
 	}

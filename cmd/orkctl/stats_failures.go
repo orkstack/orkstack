@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 const (
@@ -112,7 +113,7 @@ func newStatsFailuresCommand(g *globalFlags) *cobra.Command {
 func parseUntil(raw string) (time.Time, error) {
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
 		if parsed, err := time.Parse(layout, raw); err == nil {
-			return parsed.UTC(), nil
+			return wireInstant("--until", raw, parsed)
 		}
 	}
 	return time.Time{}, fmt.Errorf(
@@ -149,7 +150,7 @@ func parseGroupBy(raw string) ([]orkstackv1.FailureGroupBy, error) {
 	var out []orkstackv1.FailureGroupBy
 	seen := map[orkstackv1.FailureGroupBy]bool{}
 	for _, part := range strings.Split(raw, ",") {
-		name := strings.ToUpper(strings.TrimSpace(part))
+		name := enumname.UpperASCII(strings.TrimSpace(part))
 		value, ok := orkstackv1.FailureGroupBy_value[groupByPrefix+name]
 		dim := orkstackv1.FailureGroupBy(value)
 		if !ok || name == "" || dim == orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_UNSPECIFIED {
@@ -184,7 +185,7 @@ func categorySpellings() []string {
 // the enum's prefix. CANCELLED is the enum's own spelling, two Ls — unlike
 // the run status CANCELED — and only that spelling is accepted.
 func parseFailureCategory(raw string) (orkstackv1.FailureCategory, error) {
-	name := strings.ToUpper(strings.TrimSpace(raw))
+	name := enumname.UpperASCII(strings.TrimSpace(raw))
 	name = strings.TrimPrefix(name, categoryPrefix)
 	value, ok := orkstackv1.FailureCategory_value[categoryPrefix+name]
 	if !ok || value == int32(orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED) {

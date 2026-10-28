@@ -47,7 +47,25 @@ func parseRFC3339Bound(flag, value string) (*timestamppb.Timestamp, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s must be RFC3339: %w", flag, err)
 	}
-	return timestamppb.New(parsed), nil
+	at, err := wireInstant(flag, value, parsed)
+	if err != nil {
+		return nil, err
+	}
+	return timestamppb.New(at), nil
+}
+
+// wireInstant is an instant a flag named, in UTC, if a request can carry it. A
+// protobuf timestamp holds 0001-01-01T00:00:00Z to 9999-12-31T23:59:59.999999999Z
+// and a time zone offset can push a valid local time past either end, so the
+// range is judged on the UTC instant.
+func wireInstant(flag, raw string, parsed time.Time) (time.Time, error) {
+	at := parsed.UTC()
+	if !timestamppb.New(at).IsValid() {
+		return time.Time{}, fmt.Errorf(
+			"invalid %s %q: %s UTC is outside 0001-01-01 to 9999-12-31, the instants a request can carry",
+			flag, raw, at.Format(time.RFC3339Nano))
+	}
+	return at, nil
 }
 
 func newRunSubmitCommand(g *globalFlags) *cobra.Command {

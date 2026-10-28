@@ -114,6 +114,49 @@ func TestSecurityPolicy_RefusesAnOverCapRequestRatherThanClamping(t *testing.T) 
 			request: &orkstackv1.ResourceRequest{Cpu: "1"},
 			wantCPU: "1", wantMem: policy.DefaultMemory,
 		},
+		// Memory has the same trap cpu has: docker reads `--memory 0` as NO
+		// limit, so a zero, negative, fractional-byte or non-finite request is
+		// an unlimited container, not a small one.
+		{
+			name:    "zero memory is refused rather than interpreted as unlimited",
+			request: &orkstackv1.ResourceRequest{Memory: "0"},
+			wantErr: true,
+		},
+		{
+			name:    "zero memory with a unit is refused",
+			request: &orkstackv1.ResourceRequest{Memory: "0Gi"},
+			wantErr: true,
+		},
+		{
+			name:    "less than one byte is refused, because it renders as zero",
+			request: &orkstackv1.ResourceRequest{Memory: "0.5"},
+			wantErr: true,
+		},
+		{
+			name:    "negative memory is refused",
+			request: &orkstackv1.ResourceRequest{Memory: "-1"},
+			wantErr: true,
+		},
+		{
+			name:    "negative memory with a unit is refused",
+			request: &orkstackv1.ResourceRequest{Memory: "-4Gi"},
+			wantErr: true,
+		},
+		{
+			name:    "NaN memory is refused",
+			request: &orkstackv1.ResourceRequest{Memory: "NaN"},
+			wantErr: true,
+		},
+		{
+			name:    "infinite memory is refused",
+			request: &orkstackv1.ResourceRequest{Memory: "Inf"},
+			wantErr: true,
+		},
+		{
+			name:    "one byte remains accepted",
+			request: &orkstackv1.ResourceRequest{Memory: "1"},
+			wantCPU: policy.DefaultCPU, wantMem: "1",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -333,6 +376,20 @@ func TestSecurityPolicy_ValidateRefusesAnUnreadableCapAtBoot(t *testing.T) {
 		{"unreadable default cpu", func(p *SecurityPolicy) { p.DefaultCPU = "one" }, DefaultCPUVar},
 		{"empty max memory", func(p *SecurityPolicy) { p.MaxMemory = "" }, MaxMemoryVar},
 		{"default above the cap", func(p *SecurityPolicy) { p.DefaultMemory = "32Gi" }, MaxMemoryVar},
+		// A cap that parses but is not a quantity is as much a typo as one
+		// that does not parse: NaN is above and below nothing, so a NaN cap
+		// removes the ceiling, and a zero default is an unlimited container.
+		{"NaN max cpu", func(p *SecurityPolicy) { p.MaxCPU = "NaN" }, MaxCPUVar},
+		{"zero max cpu", func(p *SecurityPolicy) { p.MaxCPU = "0" }, MaxCPUVar},
+		{"infinite max cpu", func(p *SecurityPolicy) { p.MaxCPU = "Inf" }, MaxCPUVar},
+		{"NaN max memory", func(p *SecurityPolicy) { p.MaxMemory = "NaN" }, MaxMemoryVar},
+		{"zero max memory", func(p *SecurityPolicy) { p.MaxMemory = "0" }, MaxMemoryVar},
+		{"infinite max memory", func(p *SecurityPolicy) { p.MaxMemory = "Inf" }, MaxMemoryVar},
+		{"a max memory no int64 holds", func(p *SecurityPolicy) { p.MaxMemory = "1e30" }, MaxMemoryVar},
+		{"zero default cpu", func(p *SecurityPolicy) { p.DefaultCPU = "0" }, DefaultCPUVar},
+		{"negative default cpu", func(p *SecurityPolicy) { p.DefaultCPU = "-1" }, DefaultCPUVar},
+		{"zero default memory", func(p *SecurityPolicy) { p.DefaultMemory = "0" }, DefaultMemoryVar},
+		{"NaN default memory", func(p *SecurityPolicy) { p.DefaultMemory = "NaN" }, DefaultMemoryVar},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

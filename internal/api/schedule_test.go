@@ -283,6 +283,9 @@ func TestValidateScheduleSpec(t *testing.T) {
 		{"zero interval", &orkstackv1.ScheduleSpec{Interval: durationpb.New(0)}, "spec.interval"},
 		{"negative jitter", &orkstackv1.ScheduleSpec{Cron: []string{"@daily"}, Jitter: durationpb.New(-time.Second)}, "spec.jitter"},
 		{"bad zone", &orkstackv1.ScheduleSpec{Cron: []string{"@daily"}, Timezone: "Mars/Olympus"}, "spec.timezone"},
+		// Go reads "Local" as the zone of the machine it runs on: not an IANA
+		// name, and a different instant on every host.
+		{"the host's own zone", &orkstackv1.ScheduleSpec{Cron: []string{"@daily"}, Timezone: "Local"}, "spec.timezone"},
 		{"good zone", &orkstackv1.ScheduleSpec{Cron: []string{"@daily"}, Timezone: "Europe/Lisbon"}, ""},
 		{"5s catch-up", &orkstackv1.ScheduleSpec{Cron: []string{"@daily"}, CatchupWindow: durationpb.New(5 * time.Second)}, "spec.catchup_window"},
 		{"10s catch-up", &orkstackv1.ScheduleSpec{Cron: []string{"@daily"}, CatchupWindow: durationpb.New(10 * time.Second)}, ""},

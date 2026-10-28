@@ -1,0 +1,2 @@
+go test fuzz v1
+string("metadata/index/origins/0/schedule/0/0/0/00000101T000000.000000000Z/~00")

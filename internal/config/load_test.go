@@ -304,6 +304,62 @@ func TestLoad_WrongType_NamesKey(t *testing.T) {
 	}
 }
 
+// A typed value is read by the daemon's own reader, which does not trim: a
+// padded duration is silently replaced by its default there, and a padded
+// integer stops the daemon. A value that passes here must be one the reader
+// takes as it stands.
+func TestLoad_ARawValueIsOneItsKindReadsNotATrimmedOne(t *testing.T) {
+	cases := []struct {
+		name, yaml, wantKey string
+	}{
+		{"padded duration", "engine:\n  idempotency_ttl: ' 5m'\n", "engine.idempotency_ttl"},
+		{"duration with a trailing space", "engine:\n  idempotency_ttl: '5m '\n", "engine.idempotency_ttl"},
+		{"padded integer", "engine:\n  each_max_items: ' 7 '\n", "engine.each_max_items"},
+		{"padded boolean", "storage:\n  s3:\n    path_style: 'true '\n", "storage.s3.path_style"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTemp(t, "padded.yaml", tc.yaml)
+			doc, err := Load(path, BinaryOrk)
+			if err == nil {
+				t.Fatalf("Load accepted a padded value and set %v", doc.values)
+			}
+			if !strings.Contains(err.Error(), tc.wantKey) {
+				t.Errorf("Load error = %q, want it to name %q", err.Error(), tc.wantKey)
+			}
+		})
+	}
+	path := writeTemp(t, "plain.yaml", "engine:\n  idempotency_ttl: 5m\n  each_max_items: 7\nstorage:\n  s3:\n    path_style: true\n")
+	if _, err := Load(path, BinaryOrk); err != nil {
+		t.Errorf("Load refused plain typed values: %v", err)
+	}
+}
+
+// An environment variable cannot hold a NUL byte, and a double-quoted YAML
+// scalar can spell one ("\0"). The file is refused at load, naming the key,
+// rather than failing partway through applying it at boot.
+func TestLoad_RefusesAValueTheEnvironmentCannotHold(t *testing.T) {
+	cases := []struct {
+		name, yaml, wantKey string
+	}{
+		{"a string", "temporal:\n  address: \"a\\0b\"\n", "temporal.address"},
+		{"a list item", "engine:\n  ws_allowed_origins: [\"a\", \"b\\0\"]\n", "engine.ws_allowed_origins"},
+		{"a map value", "telemetry:\n  resource_attributes:\n    k: \"v\\0\"\n", "telemetry.resource_attributes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTemp(t, "nul.yaml", tc.yaml)
+			doc, err := Load(path, BinaryOrk)
+			if err == nil {
+				t.Fatalf("Load accepted a NUL byte and set %q", doc.values)
+			}
+			if !strings.Contains(err.Error(), tc.wantKey) || !strings.Contains(err.Error(), "NUL") {
+				t.Errorf("Load error = %q, want it to name %q and NUL", err.Error(), tc.wantKey)
+			}
+		})
+	}
+}
+
 func TestLoad_PerBinaryLeaf(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "telemetry:\n  admin_addr:\n    ork: \":9464\"\n    orker: \":9465\"\n")
 
