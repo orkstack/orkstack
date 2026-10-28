@@ -27,7 +27,9 @@ include breaking changes, and each is marked **BREAKING**.
   row's; and no miss took longer than the bound times the reference's CPUs
   over the runner's. The record the excusal rests on is kept in the
   `host_speed_failures` entry (`timing_record`) of `proof.json`, because a
-  part's artifacts are not kept in the merged proof. A failing test with no record, a local proof, a runner as large as
+  part's artifacts are not kept in the merged proof. The helper's package,
+  `internal/testsupport/proof`, is now a gate file with a code owner, because
+  the excusal trusts the record it writes and the lines it prints. A failing test with no record, a local proof, a runner as large as
   the reference, the release tier (the pre-release gate enforces the budgets
   on the reference class, so this also ends the excusal of the UI rows there)
   and any other failure still fail the proof. The rows are the

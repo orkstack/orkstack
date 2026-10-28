@@ -157,12 +157,15 @@ func TestTouches_GateFilesAreTheOnesCodeownersMustCover(t *testing.T) {
 	for _, p := range []string{
 		"scripts/proof.sh", "scripts/proof-nightly-tests.txt", "scripts/github/ruleset-main.json",
 		".github/workflows/proof.yml", "test/tools/proofrun/merge.go", "Makefile", "ui/playwright.config.ts",
+		// What a Go test's timing record and miss lines are written by is read
+		// by the merger's excusal (gotiming.go).
+		"internal/testsupport/proof/timing.go", "internal/testsupport/proof/timing_test.go", "internal/testsupport/proof/proof.go",
 	} {
 		if !isGateFile(p) {
 			t.Errorf("%s is not a gate file", p)
 		}
 	}
-	for _, p := range []string{"ui/src/routes/+page.svelte", "internal/engine/workflow.go", "docs/PROOFS.md"} {
+	for _, p := range []string{"ui/src/routes/+page.svelte", "internal/engine/workflow.go", "docs/PROOFS.md", "internal/testsupport/testbin/testbin.go"} {
 		if isGateFile(p) {
 			t.Errorf("%s is a gate file", p)
 		}
