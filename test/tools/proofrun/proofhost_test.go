@@ -386,7 +386,7 @@ func proofHostProblems(steps []wfStep) []string {
 }
 
 func TestProofHost_NothingLeavesTheRunnerExceptThroughProofFetch(t *testing.T) {
-	steps := proofHostSteps(t)
+	steps := compositeSteps(t, "proof-host")
 	expectNoProblems(t, "the proof-host action", proofHostProblems(steps))
 	mut := func(name string, change func(steps []wfStep)) func(t *testing.T) {
 		return func(t *testing.T) {
