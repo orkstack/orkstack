@@ -1,0 +1,33 @@
+# The with: contract of examples/custom-image-shell (docs/ACTIVITY_IMAGES.md, "Declaring the
+# interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
+# Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
+# that line.
+apiVersion: orkstack/v1
+kind: ActivityInterface
+fields:
+  label:
+    type: string
+  src:
+    type: string
+  as:
+    type: string
+    default: "report.txt"
+values:
+  idempotencyKey:
+    type: string
+  attempt:
+    type: number
+  taskId:
+    type: string
+  label:
+    type: string
+  argv:
+    type: array
+  source:
+    type: string
+  artifact:
+    type: string
+  stats:
+    type: object
+  each:
+    type: object

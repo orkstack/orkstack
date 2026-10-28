@@ -2,6 +2,9 @@ package dsl
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -64,6 +67,65 @@ func TestParseInterfaceDocument_IsTheLabelsInterface(t *testing.T) {
 	want := mustParse(t, firstPartyLabel(t, "activity-http"))
 	if !proto.Equal(got, want) {
 		t.Fatalf("the document parses to\n%v\nthe label is\n%v", got, want)
+	}
+}
+
+// interfaceDirs are the directories this repository builds an image from
+// beside an interface.ork.yaml: every first-party image and the examples.
+func interfaceDirs(t *testing.T) []string {
+	t.Helper()
+	var dirs []string
+	for _, pattern := range []string{"images/activity-*/Dockerfile", "examples/custom-image*/Dockerfile"} {
+		matches, err := filepath.Glob(filepath.Join("..", "..", pattern))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range matches {
+			dirs = append(dirs, filepath.Dir(match))
+		}
+	}
+	if len(dirs) != 8 {
+		t.Fatalf("image directories = %v, want the six first-party images and the two examples", dirs)
+	}
+	return dirs
+}
+
+// TestInterfaceDocuments_AreTheirImagesLabels: each image's interface.ork.yaml
+// is the source of the LABEL its Dockerfile carries — the same declaration,
+// and the very bytes PackInterfaceLabel writes for it (genschemas
+// regenerates the line).
+func TestInterfaceDocuments_AreTheirImagesLabels(t *testing.T) {
+	label := regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(InterfaceLabel) + `='([^']*)'$`)
+	for _, dir := range interfaceDirs(t) {
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join(dir, "interface.ork.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, err := ParseInterfaceDocument(source)
+			if err != nil {
+				t.Fatalf("interface.ork.yaml: %v", err)
+			}
+			dockerfile, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := label.FindSubmatch(dockerfile)
+			if m == nil {
+				t.Fatal("the Dockerfile carries no single-line interface LABEL")
+			}
+			if carried := mustParse(t, string(m[1])); !proto.Equal(doc, carried) {
+				t.Fatalf("interface.ork.yaml declares\n%v\nthe Dockerfile's LABEL\n%v", doc, carried)
+			}
+			packed, err := PackInterfaceLabel(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(m[1]) != packed {
+				t.Fatalf("the Dockerfile's LABEL is not the packed interface.ork.yaml: run go run ./internal/schemas/cmd/genschemas\n"+
+					"carried: %s\npacked:  %s", m[1], packed)
+			}
+		})
 	}
 }
 

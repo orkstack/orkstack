@@ -1,0 +1,31 @@
+# The with: contract of images/activity-template (docs/ACTIVITY_IMAGES.md, "Declaring the
+# interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
+# Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
+# that line.
+apiVersion: orkstack/v1
+kind: ActivityInterface
+ops:
+  render:
+    fields:
+      src:
+        type: string
+        required: true
+      data:
+        type: string
+      values:
+        type: object
+      datasources:
+        type: object
+      leftDelim:
+        type: string
+      rightDelim:
+        type: string
+      as:
+        type: string
+values:
+  path:
+    type: string
+  sizeBytes:
+    type: number
+  sha256:
+    type: string

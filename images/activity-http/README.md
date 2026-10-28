@@ -90,18 +90,15 @@ a plain file name: no `/`, and not `.` or `..`.
 
 ## Interface
 
-The image declares its `with:` contract in the
+The image declares its `with:` contract in
+[`interface.ork.yaml`](interface.ork.yaml), packed into its
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
 "Declaring the interface"), so `orkctl orkflow validate` and apply check a
 task's `with:` before anything runs: a missing required key or an unknown
 `op` is an error, an undeclared key a warning. Five shared keys, six ops that
 read nothing beyond them, `get` when `op` is absent, and every `values.json`
 key of Output — `json` included, although it is present only for a JSON body
-of at most 1 MiB. The label, as the Dockerfile carries it:
-
-```dockerfile
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type":"string","required":true},"headers":{"type":"object"},"body":{"type":"string|object|array"},"timeoutSeconds":{"type":"number"},"captureBodyAs":{"type":"string"}},"ops":{"get":{},"post":{},"put":{},"patch":{},"delete":{},"head":{}},"defaultOp":"get","values":{"status":{"type":"number"},"headers":{"type":"object"},"durationMs":{"type":"number"},"sizeBytes":{"type":"number"},"json":{"type":"object"}}}'
-```
+of at most 1 MiB.
 
 `orkctl activity inspect http` renders it as a table.
 

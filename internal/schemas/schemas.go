@@ -31,28 +31,84 @@ const (
 	DispatcherFile        = "orkstack.v1.json"
 )
 
-// labelLine is the interface label's line in a first-party Dockerfile.
+// InterfaceDocument is the file an image directory declares its with:
+// contract in (docs/ACTIVITY_IMAGES.md, "Declaring the interface").
+const InterfaceDocument = "interface.ork.yaml"
+
+// labelLine is the interface label's line in a Dockerfile.
 var labelLine = regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`)
 
-// FirstPartyInterfaces reads each builtin catalog image's interface label
-// from images/activity-<name>/Dockerfile.
+// readInterface parses one image directory's interface document.
+func readInterface(dir string) (*orkstackv1.ActivityInterface, error) {
+	path := filepath.Join(dir, InterfaceDocument)
+	source, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("schemas: read %s: %w", path, err)
+	}
+	iface, err := dsl.ParseInterfaceDocument(source)
+	if err != nil {
+		return nil, fmt.Errorf("schemas: %s: %w", path, err)
+	}
+	return iface, nil
+}
+
+// FirstPartyInterfaces reads each builtin catalog image's interface from
+// images/activity-<name>/interface.ork.yaml, the source of its label.
 func FirstPartyInterfaces(repoRoot string) (map[string]*orkstackv1.ActivityInterface, error) {
 	out := map[string]*orkstackv1.ActivityInterface{}
 	for _, name := range dsl.BuiltinActivityCatalog().Names() {
-		path := filepath.Join(repoRoot, "images", "activity-"+name, "Dockerfile")
+		iface, err := readInterface(filepath.Join(repoRoot, "images", "activity-"+name))
+		if err != nil {
+			return nil, err
+		}
+		out[name] = iface
+	}
+	return out, nil
+}
+
+// Dockerfiles returns the Dockerfile of every image directory under images/
+// and examples/ that holds an interface.ork.yaml, with its one interface
+// LABEL line replaced by the line PackInterfaceLabel writes for that
+// document — keyed by path from the repository root. Every other line is the
+// Dockerfile's own. A Dockerfile without exactly one such line is refused:
+// the line is where the author put it, and the generator never guesses.
+func Dockerfiles(repoRoot string) (map[string][]byte, error) {
+	var documents []string
+	for _, parent := range []string{"images", "examples"} {
+		matches, err := filepath.Glob(filepath.Join(repoRoot, parent, "*", InterfaceDocument))
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, matches...)
+	}
+	out := map[string][]byte{}
+	for _, document := range documents {
+		dir := filepath.Dir(document)
+		iface, err := readInterface(dir)
+		if err != nil {
+			return nil, err
+		}
+		label, err := dsl.PackInterfaceLabel(iface)
+		if err != nil {
+			return nil, fmt.Errorf("schemas: %s: %w", document, err)
+		}
+		path := filepath.Join(dir, "Dockerfile")
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("schemas: read %s: %w", path, err)
 		}
-		match := labelLine.FindSubmatch(raw)
-		if match == nil {
-			return nil, fmt.Errorf("schemas: %s carries no %s label", path, dsl.InterfaceLabel)
+		lines := labelLine.FindAllIndex(raw, -1)
+		if len(lines) != 1 {
+			return nil, fmt.Errorf("schemas: %s carries %d interface LABEL lines, want exactly one for %s to replace",
+				path, len(lines), InterfaceDocument)
 		}
-		iface, err := dsl.ParseInterfaceLabel(string(match[1]))
+		line := "LABEL " + dsl.InterfaceLabel + "='" + label + "'"
+		generated := append(append(append([]byte{}, raw[:lines[0][0]]...), line...), raw[lines[0][1]:]...)
+		rel, err := filepath.Rel(repoRoot, path)
 		if err != nil {
-			return nil, fmt.Errorf("schemas: %s: %w", path, err)
+			return nil, err
 		}
-		out[name] = iface
+		out[filepath.ToSlash(rel)] = generated
 	}
 	return out, nil
 }

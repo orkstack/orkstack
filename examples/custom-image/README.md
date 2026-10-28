@@ -97,12 +97,9 @@ There are no other exit codes: retrying is the task's `retry:` policy.
 
 ## Interface
 
-The image declares its `with:` contract in one label, which validate and apply
-read; the container never does:
-
-```dockerfile
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"label":{"type":"string"},"src":{"type":"string"},"as":{"type":"string","default":"report.txt"}},"values":{"idempotencyKey":{"type":"string"},"attempt":{"type":"number"},"taskId":{"type":"string"},"label":{"type":"string"},"argv":{"type":"array"},"source":{"type":"string"},"artifact":{"type":"string"},"stats":{"type":"object"},"each":{"type":"object"}}}'
-```
+The image declares its `with:` contract in
+[`interface.ork.yaml`](interface.ork.yaml), packed into one label that
+validate and apply read; the container never does.
 
 There are no `ops`, so the whole `with:` block is its `fields`, and
 `orkctl activity inspect <reference>` heads it `schema 1 · 3 keys`.

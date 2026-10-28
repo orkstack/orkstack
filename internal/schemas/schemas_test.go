@@ -37,6 +37,72 @@ func TestSchemas_AreGenerated(t *testing.T) {
 	}
 }
 
+// TestInterfaces_LabelsAreGenerated: every Dockerfile built beside an
+// interface.ork.yaml carries, byte for byte, the LABEL line the generator
+// packs from it — the first-party images and the examples alike.
+func TestInterfaces_LabelsAreGenerated(t *testing.T) {
+	files, err := schemas.Dockerfiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	documents, err := filepath.Glob(filepath.Join(root, "*", "*", "interface.ork.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != len(documents) || len(files) != 8 {
+		t.Errorf("the generator writes %d Dockerfiles, the tree holds %d interface documents; want eight", len(files), len(documents))
+	}
+	for path, want := range files {
+		got, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil || string(got) != string(want) {
+			t.Errorf("%s is stale (%v): run go run ./internal/schemas/cmd/genschemas", path, err)
+		}
+	}
+}
+
+// TestInterfaces_TheGeneratorReplacesOnlyTheLabelLine: a Dockerfile's other
+// lines are its author's, and a Dockerfile with no interface LABEL line, or
+// two, is refused rather than guessed at.
+func TestInterfaces_TheGeneratorReplacesOnlyTheLabelLine(t *testing.T) {
+	const document = "apiVersion: orkstack/v1\nkind: ActivityInterface\nfields:\n  a:\n    type: string\n"
+	const label = `LABEL ` + dsl.InterfaceLabel + `='{"schemaVersion":1,"fields":{"a":{"type":"string"}}}'`
+	for _, tc := range []struct {
+		name, dockerfile, want, err string
+	}{
+		{"stale", "FROM scratch\n# kept\nLABEL " + dsl.InterfaceLabel + "='{}'\nENTRYPOINT [\"/x\"]\n",
+			"FROM scratch\n# kept\n" + label + "\nENTRYPOINT [\"/x\"]\n", ""},
+		{"current", "FROM scratch\n" + label + "\n", "FROM scratch\n" + label + "\n", ""},
+		{"none", "FROM scratch\n", "", "carries 0 interface LABEL lines, want exactly one"},
+		{"two", "FROM scratch\n" + label + "\n" + label + "\n", "", "carries 2 interface LABEL lines, want exactly one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			image := filepath.Join(dir, "images", "activity-x")
+			if err := os.MkdirAll(image, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, content := range map[string]string{"interface.ork.yaml": document, "Dockerfile": tc.dockerfile} {
+				if err := os.WriteFile(filepath.Join(image, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			files, err := schemas.Dockerfiles(dir)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("Dockerfiles = %v; want an error containing %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(files["images/activity-x/Dockerfile"]); got != tc.want {
+				t.Fatalf("Dockerfile\n%s\nwant\n%s", got, tc.want)
+			}
+		})
+	}
+}
+
 func trees(t *testing.T) map[string]map[string]any {
 	t.Helper()
 	trees, err := schemas.Trees(root)

@@ -75,17 +75,14 @@ unknown or missing `op` exits `2`.
 
 ## Interface
 
-The image declares its `with:` contract in the
+The image declares its `with:` contract in
+[`interface.ork.yaml`](interface.ork.yaml), packed into its
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
 "Declaring the interface"), so `orkctl orkflow validate` and apply check a
 task's `with:` before anything runs: a missing required key or an unknown
 `op` is an error, an undeclared key a warning. Seven ops, no default op (an
 unknown or missing `op` exits `2`), and the three `values.json` keys of
-Output. The label, as the Dockerfile carries it:
-
-```dockerfile
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}},"checksum":{"fields":{"src":{"type":"string","required":true}}},"gzip":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}},"gunzip":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}},"tar":{"fields":{"srcs":{"type":"array","required":true},"as":{"type":"string"}}},"untar":{"fields":{"src":{"type":"string","required":true},"member":{"type":"string","required":true},"as":{"type":"string"}}},"concat":{"fields":{"srcs":{"type":"array","required":true},"as":{"type":"string","required":true}}}},"values":{"path":{"type":"string"},"sizeBytes":{"type":"number"},"sha256":{"type":"string"}}}'
-```
+Output.
 
 `orkctl activity inspect file` renders it as a table.
 

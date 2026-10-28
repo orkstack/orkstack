@@ -345,17 +345,13 @@ whether to try again.
 
 ## Interface
 
-The image declares its `with:` contract in the
+The image declares its `with:` contract in
+[`interface.ork.yaml`](interface.ork.yaml), packed into its
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
 "Declaring the interface"), so `orkctl orkflow validate` and apply check a
 task's `with:` before anything runs: a missing `url` or an unknown `op` is an
 error, an undeclared key a warning. Five keys shared by both ops, two ops, no
-default op (an unknown or missing `op` exits `2`). The label, as the
-Dockerfile carries it:
-
-```dockerfile
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type":"string","required":true},"ref":{"type":"string"},"tokenSecret":{"type":"string"},"tokenUser":{"type":"string","default":"x-access-token"},"caFile":{"type":"string"}},"ops":{"clone":{"fields":{"depth":{"type":"number","default":1},"as":{"type":"string","default":"src.tar.gz"},"dest":{"type":"string"}}},"resolve":{}},"values":{"commit":{"type":"string"},"ref":{"type":"string"},"path":{"type":"string"},"sizeBytes":{"type":"number"},"sha256":{"type":"string"}}}'
-```
+default op (an unknown or missing `op` exits `2`).
 
 ## Cancellation
 

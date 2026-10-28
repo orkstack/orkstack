@@ -335,16 +335,13 @@ needed for one.
 
 ## Interface
 
-The image declares its `with:` contract in the
+The image declares its `with:` contract in
+[`interface.ork.yaml`](interface.ork.yaml), packed into its
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
 "Declaring the interface"), so `orkctl orkflow validate` and apply check a
 task's `with:` before anything runs: a missing `filter` or an unknown `op` is
 an error, an undeclared key a warning. Two ops, no default op (an unknown or
-missing `op` exits `2`). The label, as the Dockerfile carries it:
-
-```dockerfile
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"query":{"fields":{"filter":{"type":"string","required":true},"src":{"type":"string"},"slurp":{"type":"boolean","default":false},"srcs":{"type":"array"},"gather":{"type":"string"},"nullInput":{"type":"boolean","default":false},"vars":{"type":"object"},"as":{"type":"string"}}},"merge":{"fields":{"srcs":{"type":"array","required":true},"as":{"type":"string"}}}},"values":{"path":{"type":"string"},"sizeBytes":{"type":"number"},"sha256":{"type":"string"}}}'
-```
+missing `op` exits `2`).
 
 `result` is deliberately **not** declared under `values`: its JSON type is
 whatever the filter returns, and the interface vocabulary has no "any" type.

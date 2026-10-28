@@ -195,6 +195,24 @@ func TestInterfaceManifests_FirstPartyImagesDeclareTheirInterfaces(t *testing.T)
 		t.Fatalf("template interface = %v, want the one op render, no default", templateIface)
 	}
 
+	// Each label the registry serves is exactly what the image's
+	// interface.ork.yaml declares: genschemas generated the LABEL line the
+	// image was built with, and the engine reads it back unchanged.
+	root := repoRoot(t)
+	for _, name := range dsl.BuiltinActivityCatalog().Names() {
+		source, err := os.ReadFile(filepath.Join(root, "images", "activity-"+name, "interface.ork.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := dsl.ParseInterfaceDocument(source)
+		if err != nil {
+			t.Fatalf("images/activity-%s/interface.ork.yaml: %v", name, err)
+		}
+		if got := byName[name].GetInterface(); !proto.Equal(got, want) {
+			t.Fatalf("%s: the registry's label declares\n%v\nits interface.ork.yaml\n%v", name, got, want)
+		}
+	}
+
 	requireCLI(t, stack.cli, "inspect file", "activity", "inspect", "file")
 	inspected := decodeActivityInfo(t, requireCLI(t, stack.cli, "inspect file as JSON", "activity", "inspect", "file", "--json"), false)[0]
 	if !proto.Equal(inspected.GetInterface(), file) {
@@ -427,6 +445,58 @@ func pushUnlabelledImage(ctx context.Context, t *testing.T, registry, repository
 	tag := fmt.Sprintf("plain-%d", time.Now().UnixNano())
 	do(http.MethodPut, base+"/manifests/"+tag, dsl.MediaTypeOCIManifest, manifest, http.StatusCreated)
 	return fmt.Sprintf("%s/%s@sha256:%x", registry, repository, sha256.Sum256(manifest))
+}
+
+// TestInterfaceManifests_ActivityBuildPacksTheInterface: `orkctl activity
+// build --interface` packs a kind: ActivityInterface document into the image
+// it builds and pushes, and the engine reads back, from the registry, the
+// interface the document declares — a single quote in a default included,
+// which the label carries escaped.
+func TestInterfaceManifests_ActivityBuildPacksTheInterface(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	stack := startInterfaceStack(ctx, t, 1, false)
+	t.Cleanup(func() {
+		stack.writeProof(t, "activity-build-interface.txt", "activity build --interface packs the interface")
+	})
+
+	// FROM scratch builds offline: the image is never run, only resolved.
+	buildContext := t.TempDir()
+	for name, content := range map[string]string{
+		"Dockerfile": "FROM scratch\nCOPY entry /entry\nENTRYPOINT [\"/entry\"]\n",
+		"entry":      "never run\n",
+	} {
+		if err := os.WriteFile(filepath.Join(buildContext, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	document := "apiVersion: orkstack/v1\nkind: ActivityInterface\n" +
+		"fields:\n  greeting:\n    type: string\n    default: \"it's here\"\n" +
+		"ops:\n  hello:\n    fields:\n      name:\n        type: string\n        required: true\n  bye: {}\n" +
+		"defaultOp: hello\nvalues:\n  said:\n    type: string\n"
+	documentPath := filepath.Join(t.TempDir(), "interface.ork.yaml")
+	if err := os.WriteFile(documentPath, []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want, err := dsl.ParseInterfaceDocument([]byte(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tag := fmt.Sprintf("%s/orkstack-test/interface-built:%s", testRegistry(), exampleImageTag())
+	built := requireCLI(t, stack.cli, "activity build --interface",
+		"activity", "build", buildContext, "--tag", tag, "--interface", documentPath)
+	if !strings.Contains(built, "Declaring the interface of "+documentPath) {
+		t.Fatalf("activity build did not say it packed the interface:\n%s", built)
+	}
+	inspected := decodeActivityInfo(t, requireCLI(t, stack.cli, "inspect the built image",
+		"activity", "inspect", tag, "--json"), false)[0]
+	if inspected.GetInterfaceError() != "" {
+		t.Fatalf("the built image's label is unreadable: %s", inspected.GetInterfaceError())
+	}
+	if !proto.Equal(inspected.GetInterface(), want) {
+		t.Fatalf("the built image declares\n%v\nthe document\n%v", inspected.GetInterface(), want)
+	}
 }
 
 func TestInterfaceManifests_ADocumentNamingAnUnlabelledImageIsUnchanged(t *testing.T) {

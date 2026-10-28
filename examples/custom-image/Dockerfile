@@ -14,7 +14,8 @@ COPY --from=build /out/report /report
 # never root
 USER 65532:65532
 # The with: contract, read by validate and apply (docs/ACTIVITY_IMAGES.md,
-# "Declaring the interface"); the container never reads it.
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"label":{"type":"string"},"src":{"type":"string"},"as":{"type":"string","default":"report.txt"}},"values":{"idempotencyKey":{"type":"string"},"attempt":{"type":"number"},"taskId":{"type":"string"},"label":{"type":"string"},"argv":{"type":"array"},"source":{"type":"string"},"artifact":{"type":"string"},"stats":{"type":"object"},"each":{"type":"object"}}}'
+# "Declaring the interface"); the container never reads it. Generated from
+# interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`.
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"as":{"type":"string","default":"report.txt"},"label":{"type":"string"},"src":{"type":"string"}},"values":{"argv":{"type":"array"},"artifact":{"type":"string"},"attempt":{"type":"number"},"each":{"type":"object"},"idempotencyKey":{"type":"string"},"label":{"type":"string"},"source":{"type":"string"},"stats":{"type":"object"},"taskId":{"type":"string"}}}'
 # exec form: SIGTERM reaches the program itself
 ENTRYPOINT ["/report"]
