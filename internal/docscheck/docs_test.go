@@ -3,6 +3,7 @@ package docscheck
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -302,7 +303,9 @@ func TestRepositoryNeverKillsByNameOrPattern(t *testing.T) {
 
 // TestDocs_EnumerationsAreCacheVisible: a drift test that runs git reads an
 // index go test's cache cannot see, so it must open the index file itself
-// first, asking git for its path. treeFiles and
+// first, asking git for its path; the cache keys on it where the git directory
+// lies inside the module, and make check runs the package uncached for the
+// rest (TestMakeCheck_RunsGitStatePackagesUncached). treeFiles and
 // TestRepositoryScopeTable_MapsEveryTrackedPath do; this keeps them, and any
 // future one, honest. It matches the call, not a mention of the flag, so a
 // file that only names it, as this one does, is not taken for one that opens
@@ -323,6 +326,56 @@ func TestDocs_EnumerationsAreCacheVisible(t *testing.T) {
 		doc := readFile(t, file)
 		if gitExec.MatchString(doc) && !opensIndex.MatchString(doc) {
 			t.Errorf("%s runs git without opening the index file: a cached pass could hide a new file", filepath.ToSlash(file))
+		}
+	}
+}
+
+// TestMakeCheck_RunsGitStatePackagesUncached: a unit test that runs git reads
+// state go test's cache cannot see. The cache records only the files the test
+// process itself opens inside the module, and git reads HEAD, the index and
+// the ignore rules in a subprocess, so a change to what git tracks or ignores
+// alone leaves a cached pass standing. Every package whose unit tests run git
+// is in the Makefile's GIT_STATE_PACKAGES, which `make check`, the one target
+// that keeps the cache, runs with -count=1; and the list names no other
+// package. The integration suites run only in proofs, which never use the
+// cache.
+func TestMakeCheck_RunsGitStatePackagesUncached(t *testing.T) {
+	root := repoRoot(t)
+	makefile := readFile(t, filepath.Join(root, "Makefile"))
+	m := regexp.MustCompile(`(?m)^GIT_STATE_PACKAGES :=(.*)$`).FindStringSubmatch(makefile)
+	if m == nil {
+		t.Fatal("the Makefile declares no GIT_STATE_PACKAGES")
+	}
+	listed := map[string]bool{}
+	for _, p := range strings.Fields(m[1]) {
+		listed[p] = true
+	}
+	if !regexp.MustCompile(`(?m)^\tgo test -short -count=1 \$\(GIT_STATE_PACKAGES\)$`).MatchString(makefile) {
+		t.Error("make check does not run $(GIT_STATE_PACKAGES) with -count=1")
+	}
+	runsGit := regexp.MustCompile(`exec\.(?:Command(?:Context\([^,]+,\s*|\()|LookPath\()"git"`)
+	integration := regexp.MustCompile(`(?m)^//go:build integration$`)
+	runs := map[string]bool{}
+	for rel := range treeFiles(t, root) {
+		if !strings.HasSuffix(rel, "_test.go") {
+			continue
+		}
+		text := readFile(t, filepath.Join(root, filepath.FromSlash(rel)))
+		if runsGit.MatchString(text) && !integration.MatchString(text) {
+			runs["./"+path.Dir(rel)] = true
+		}
+	}
+	if len(runs) == 0 {
+		t.Fatal("no unit test runs git: the call shape this test looks for has drifted")
+	}
+	for p := range runs {
+		if !listed[p] {
+			t.Errorf("%s has a unit test that runs git, and GIT_STATE_PACKAGES does not list it", p)
+		}
+	}
+	for p := range listed {
+		if !runs[p] {
+			t.Errorf("GIT_STATE_PACKAGES lists %s, and no unit test there runs git", p)
 		}
 	}
 }

@@ -33,7 +33,9 @@ func markdownFiles(t *testing.T) []string {
 // stat of every entry in it: a new file there, or an edited .gitignore,
 // re-runs these checks. The cache cannot see info/exclude or a global ignore
 // file, nor, in a linked worktree, the index, which lies outside the module;
-// a change to those alone needs -count=1, as `make test` and every proof run.
+// so this package runs with -count=1 wherever its result counts: make check
+// runs it uncached (GIT_STATE_PACKAGES), as `make test` and every proof run
+// every package.
 func markdownFilesUnder(t *testing.T, root string) []string {
 	t.Helper()
 	files := treeFiles(t, root)

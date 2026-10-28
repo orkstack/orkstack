@@ -229,8 +229,10 @@ func TestRepositoryScopeTable(t *testing.T) {
 // TestRepositoryScopeTable_MapsEveryTrackedPath is the mechanical form of "a
 // new top-level path needs a scope row": every tracked path matches a row, so
 // a feature proof never meets an unmapped path it could have been told about.
-// It opens the index first, so go test's cache keys on it and a cached pass
-// never hides a newly tracked file (plan §2.8, §8.3).
+// It opens the index first, so go test's cache keys on it where the git
+// directory lies inside the module (plan §2.8, §8.3); a linked worktree's
+// index lies outside it, so make check runs this package uncached
+// (GIT_STATE_PACKAGES), and a cached pass never hides a newly tracked file.
 func TestRepositoryScopeTable_MapsEveryTrackedPath(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {

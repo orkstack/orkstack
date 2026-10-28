@@ -241,6 +241,16 @@ include breaking changes, and each is marked **BREAKING**.
   synced again. A tracked document is now read wherever it lies, even in a
   directory named like a build output. The checks need git and a git
   checkout, as `go test ./...` already did.
+- `make check` runs the packages whose unit tests run git
+  (`GIT_STATE_PACKAGES` in the Makefile: `internal/docscheck`,
+  `internal/engine` and `test/tools/proofrun`) with `-count=1`, and keeps the
+  test cache for the rest. Go's cache records only the files the test process
+  itself opens inside the module, never what git reads in a subprocess (HEAD,
+  the index, `info/exclude`, a global ignore file), so a change to what git
+  tracks or ignores alone left a cached pass standing: the documentation
+  checks, the scope table's check and the engine's golden-fixture check all
+  read that state. `TestMakeCheck_RunsGitStatePackagesUncached` keeps the list
+  whole.
 - The feature proof's evidence selector treats a native fuzz target
   (`func FuzzXxx(f *testing.F)` in a `_test.go` file) as a test. A diff that
   changed only a fuzz target, or only a helper one reaches, selected no
