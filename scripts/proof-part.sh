@@ -138,7 +138,7 @@ part_runner_class() {
 }
 
 # part_runner_health is the runner-health floor (AGENTS.md §11.2): the FIRST
-# thing a part does, before any gate. About ten seconds measure this
+# thing a part does, before any gate. About fourteen seconds measure this
 # runner's work disk, CPUs and memory against the floors
 # scripts/proof-runner-floors.tsv declares for its class, into
 # runner-health.json beside the part's records. It returns 1 only for a

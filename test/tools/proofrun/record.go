@@ -439,6 +439,7 @@ func cmdRecord(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	writeRunnerHealthSection(os.Stdout, r.RunnerHealth)
 	writeVerdict(os.Stdout, &r)
 	if r.Result != "pass" {
 		return 1
