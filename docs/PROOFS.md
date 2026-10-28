@@ -1849,13 +1849,16 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   `tag: false` dispatch is their first run on GitHub. Its `gate` excuses a
   runner-size miss as the merge gate does (§10, "Run the release gate"), so
   the hosted runners' size alone no longer fails it.
-- **The `vuln` jobs and the race and fuzz parts have not run on GitHub.** The
-  `vuln` jobs of `ci.yml` and `nightly.yml` (`make vuln`), the proof's `race`
-  part in the full and release tiers, and its `race-repeat` and `fuzz` parts
-  in the nightly are on the same footing as the observability gate: they are
-  proven on a developer's host and by the workflow rules in
-  `test/tools/proofrun`, not on a hosted runner, so the first full proof and
-  the first nightly that carry them are their calibration.
+- **The proof's `race` part has not run on GitHub.** The `race` part of the
+  full and release tiers is on the same footing as the observability gate:
+  it is proven on a developer's host and by the workflow rules in
+  `test/tools/proofrun`, not on a hosted runner, so the first CI full proof
+  that carries it is its calibration. The other lanes have run there: the
+  `vuln` jobs of `ci.yml` (run 40706033375) and `nightly.yml`, and the
+  nightly's `race-repeat` part, passed in their first runs on 2026-10-28, and
+  its `fuzz` part ran its whole 105-minute budget in nightly 40706217000 and
+  found a real crasher (`pkg/artifacts`, a run-index status the writer never
+  spells), kept as a seed.
 - **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
   `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
   planner is proven against fakes of `gh api`, and its workflow shape by the

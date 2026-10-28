@@ -251,6 +251,15 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The run, newest-first and origin index parsers read only a status segment
+  the writer can spell (lower case, no trailing space), and the newest-first
+  cursor renders a scanned entry's stored status verbatim, as the run index's
+  cursor already did. A key with status `A` read back as a run whose cursor
+  was the key spelled `a`, and a stored `status_succeeded` (what a raw
+  `STATUS_STATUS_SUCCEEDED` stores) rebuilt as `succeeded`, a key after it, so
+  a newest-first page could skip runs. The nightly fuzz lane found it in its
+  first run on GitHub (nightly 40706217000); the input is kept under
+  `pkg/artifacts/testdata/fuzz/`.
 - The documentation drift checks (`internal/docscheck`) read only the
   markdown a commit of the work tree would hold: tracked files, and untracked
   ones git does not ignore. They read every `*.md` on disk outside a fixed
