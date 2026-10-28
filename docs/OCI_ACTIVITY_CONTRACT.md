@@ -1729,7 +1729,7 @@ configure the daemon.
 
 ### 9.3 Resource policy
 
-A task may request `resources: {cpu: "2", memory: 4Gi}` (Kubernetes
+A task may request `resources:` with `cpu: "2"` and `memory: 4Gi` (Kubernetes
 spelling). Orker policy supplies defaults and caps:
 `ORK_ORKER_DEFAULT_CPU` (`1`), `ORK_ORKER_DEFAULT_MEMORY` (`1Gi`),
 `ORK_ORKER_MAX_CPU` (`8`), `ORK_ORKER_MAX_MEMORY` (`16Gi`),
@@ -1818,8 +1818,8 @@ every container is refused before it starts.
    whatever umask the runtime supplies (§3.1).
 8. **`with.command` is a JSON array, executed as argv** — never a shell string
    passed to `sh -c` — so a rendered value cannot become code whatever it
-   contains (§14.18). An image that genuinely needs a shell takes
-   `["sh", "-c", "…"]`, which puts the boundary in the document.
+   contains (§14.18). An image that genuinely needs a shell takes the
+   argv `sh`, `-c`, `"…"`, which puts the boundary in the document.
 9. **Honour the task's `env:`** (§3.7): never clear, filter or re-exec the
    environment. Defaults go in the Dockerfile as `ENV`, overridable by `env:`,
    and are documented in the image's README.
@@ -1894,7 +1894,8 @@ image in `uses:` and give it a `command`:
 ```yaml
 - id: migrate
   uses: ghcr.io/acme/migrate:v3
-  command: ["/bin/migrate"]
+  command:
+    - "/bin/migrate"
 ```
 
 **A templated image is deliberately unsupported.** `uses: "{{ .inputs.image }}"`
@@ -2087,10 +2088,10 @@ hold the tree to them.
 - **14.18 Command substitution loses cancellation and stdout.**
   `value=$(run_supervised …)` put the trap in a subshell (exit 143, no
   `values.json`, empty logs on cancel) and captured the workload's stdout away
-  from `stdout.log`; redirection fixes both. The same harness showed
-  `command: ["echo", "hello; touch /orkstack/output/artifacts/PWNED"]` printed
-  as data with no file created — the argv form is a real mitigation (§10.1
-  rules 2b and 8).
+  from `stdout.log`; redirection fixes both. The same harness showed a
+  `command` of `echo` and `hello; touch /orkstack/output/artifacts/PWNED`
+  printed as data with no file created — the argv form is a real mitigation
+  (§10.1 rules 2b and 8).
 
 ---
 

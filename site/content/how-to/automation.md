@@ -14,7 +14,8 @@ namespace: examples
 settings:
   description: "The shipped example Orkflows (examples/README.md)"
   run_retention: 48h
-  allowed_secrets: ["env:GIT_TOKEN"]
+  allowed_secrets:
+    - "env:GIT_TOKEN"
 
 schedules:
   poll-exports:

@@ -13,7 +13,7 @@
 #               wait longer than this policy allows is an awaited task with a
 #               callback instead (docs/DSL.md, "Awaited tasks").
 #   fetch       one GET, the response body kept as an artifact.
-#   summarize   a json task over that file. `env: {TZ: ...}` is ordinary
+#   summarize   a json task over that file. `env:` setting TZ is ordinary
 #               tool configuration: jq's strflocaltime reads it. It is NOT
 #               cached, although its filter reads nothing but its input: a
 #               cached task's key covers every ancestor's values.json, and
@@ -58,8 +58,11 @@ tasks:
 
   - id: fetch
     uses: http
-    needs: [wait-ready]
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    needs:
+      - wait-ready
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     with:
       op: get
       url: '{{ .inputs.export_url }}'
@@ -68,7 +71,8 @@ tasks:
 
   - id: summarize
     uses: json
-    needs: [fetch]
+    needs:
+      - fetch
     network: none
     env:
       TZ: Europe/Berlin

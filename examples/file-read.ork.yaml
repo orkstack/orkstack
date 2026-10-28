@@ -38,7 +38,8 @@ tasks:
   #    the answer.
   - id: before
     uses: file
-    needs: [seed]
+    needs:
+      - seed
     with:
       op: checksum
       src: '{{ artifact "seed/greeting.txt" }}'
@@ -46,7 +47,8 @@ tasks:
   # 3. Compress. The output name defaults to basename(src) + ".gz".
   - id: compress
     uses: file
-    needs: [seed]
+    needs:
+      - seed
     with:
       op: gzip
       src: '{{ artifact "seed/greeting.txt" }}'
@@ -54,7 +56,8 @@ tasks:
   # 4. Decompress, back to the original name.
   - id: expand
     uses: file
-    needs: [compress]
+    needs:
+      - compress
     with:
       op: gunzip
       src: '{{ artifact "compress/greeting.txt.gz" }}'
@@ -63,7 +66,9 @@ tasks:
   #    the check is visible rather than buried in an image.
   - id: verify
     uses: shell
-    needs: [before, expand]
+    needs:
+      - before
+      - expand
     with:
       op: exec
       command:

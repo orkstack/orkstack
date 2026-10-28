@@ -352,12 +352,11 @@ const decodeXml = (t) =>
 		.replace(/&quot;/g, '"')
 		.replace(/&apos;/g, "'")
 		.replace(/&amp;/g, '&');
-const escapeAlt = (t) => String(t).replace(/[\\[\]]/g, (c) => `\\${c}`);
 
 const mediaManifestPath = path.join(mediaDir, 'manifest.json');
 const media = existsSync(mediaManifestPath) ? JSON.parse(readFileSync(mediaManifestPath, 'utf8')).items ?? {} : {};
 
-function mediaFigure(name, outFile) {
+function mediaFigure(name) {
 	const item = media[name];
 	if (!item) {
 		// Only while the media are being made for the first time; the build
@@ -366,7 +365,6 @@ function mediaFigure(name, outFile) {
 		fail(`site-media marker ${name} has no entry in src/assets/media/manifest.json (run make site-media)`);
 		return '';
 	}
-	const rel = (f) => path.relative(path.dirname(outFile), path.join(mediaDir, f)).split(path.sep).join('/');
 	if (item.webm || item.mp4) {
 		// A recording: plain <video> elements, one per theme, served from
 		// public/media as they are. No autoplay; nothing loads until played.
@@ -388,14 +386,22 @@ function mediaFigure(name, outFile) {
 			`</figure>`,
 		].join('\n');
 	}
-	// Two images, one shown per theme by the site's stylesheet. An HTML
-	// block, a blank line, then markdown images, so Astro optimizes them.
+	// A screenshot: two images, one shown per theme by the site's stylesheet,
+	// each served from public/media as make site-media saved it, losslessly,
+	// at its own size and at twice it. One HTML block, so markdown neither
+	// wraps it in a paragraph (whose measure would shrink it) nor hands it to
+	// Astro's image pipeline (which would re-encode it): it is drawn at its own
+	// size, or narrower on a narrow screen, never enlarged.
+	if (!item.width || !item.height) fail(`media ${name} has no width and height in src/assets/media/manifest.json (run make site-media)`);
+	const src = (f) => `${BASE_PATH}/media/${f}`;
+	const img = (one, two) =>
+		`<img src="${src(one)}" srcset="${src(one)} ${item.width}w, ${src(two)} ${item.width * 2}w" sizes="(min-width: 1600px) ${item.width}px, 100vw" width="${item.width}" height="${item.height}" alt="${escapeHtml(item.alt)}" loading="lazy" decoding="async" />`;
+	for (const f of [item.light, item.light2x, item.dark, item.dark2x]) {
+		if (!f || !existsSync(path.join(siteRoot, 'public', 'media', f))) fail(`media ${name}: public/media/${f} is missing (run make site-media)`);
+	}
 	return [
-		`<figure class="theme-figure">`,
-		'',
-		`![${escapeAlt(item.alt)}](${rel(item.light)})`,
-		`![${escapeAlt(item.alt)}](${rel(item.dark)})`,
-		'',
+		`<figure class="theme-figure theme-shot">`,
+		`<div class="theme-pair">${img(item.light, item.light2x)}${img(item.dark, item.dark2x)}</div>`,
 		`<figcaption>${escapeHtml(item.caption)}</figcaption>`,
 		`</figure>`,
 	].join('\n');
@@ -505,7 +511,7 @@ for (const page of pages) {
 		.get(page.route)
 		.map((c) => (c.source ? rewriteLinks(c.text, c.source) : c.text))
 		.join('\n\n');
-	body = body.replace(/<!--\s*site-media:\s*([a-z0-9-]+)\s*-->/g, (_, name) => mediaFigure(name, outFile));
+	body = body.replace(/<!--\s*site-media:\s*([a-z0-9-]+)\s*-->/g, (_, name) => mediaFigure(name));
 	body = body.replace(/<!--\s*site-diagram:\s*([a-z0-9-]+)\s*-->/g, (_, name) => diagramFigure(name));
 	body = body.replace(/<!--\s*site-generated:\s*([a-z0-9-]+)\s*-->/g, (_, name) => {
 		if (!generatedBlocks[name]) {

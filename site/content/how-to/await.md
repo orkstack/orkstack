@@ -8,13 +8,18 @@ In [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob
 
 ```yaml
   - id: approval
-    needs: [assess]
+    needs:
+      - assess
     condition: '{{ .tasks.assess.output.result.risky }}'
     await:
       timeout_seconds: 86400
       schema:
-        approved: { type: boolean, required: true }
-        approver: { type: string, required: true }
+        approved:
+          type: boolean
+          required: true
+        approver:
+          type: string
+          required: true
 ```
 
 Submit a risky change. Do not use `--watch`, because the run waits for the approval:

@@ -19,11 +19,14 @@ storage:
     endpoint: https://s3.internal.example
     region: us-east-1
     bucket: orkstack-artifacts
-    access_key: {file: /run/secrets/s3_access_key}
-    secret_key: {file: /run/secrets/s3_secret_key}
+    access_key:
+      file: /run/secrets/s3_access_key
+    secret_key:
+      file: /run/secrets/s3_secret_key
     path_style: false
 engine:
-  ws_allowed_origins: [https://orkstack.internal.example]   # only when the UI is on another origin
+  ws_allowed_origins:  # only when the UI is on another origin
+    - https://orkstack.internal.example
 ```
 
 ```bash

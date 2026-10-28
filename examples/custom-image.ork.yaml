@@ -42,9 +42,12 @@ tasks:
 
   - id: report
     uses: localhost:5001/orkstack-examples/custom-image:dev
-    needs: [probe]
+    needs:
+      - probe
     network: none
-    command: ["{{ .inputs.label }}", "is-not-rendered"]
+    command:
+      - "{{ .inputs.label }}"
+      - is-not-rendered
     with:
       label: '{{ .inputs.label }}'
       src: upstream/probe/values.json
@@ -52,9 +55,12 @@ tasks:
 
   - id: report-shell
     uses: localhost:5001/orkstack-examples/custom-image-shell:dev
-    needs: [probe]
+    needs:
+      - probe
     network: none
-    command: ["{{ .inputs.label }}", "is-not-rendered"]
+    command:
+      - "{{ .inputs.label }}"
+      - is-not-rendered
     with:
       label: '{{ .inputs.label }}'
       src: upstream/probe/values.json
@@ -67,12 +73,17 @@ tasks:
       op: query
       nullInput: true
       vars:
-        labels: [alpha, beta, gamma]
+        labels:
+          - alpha
+          - beta
+          - gamma
       filter: '$vars.labels'
 
   - id: per-label
     uses: localhost:5001/orkstack-examples/custom-image:dev
-    needs: [labels, probe]
+    needs:
+      - labels
+      - probe
     network: none
     each:
       over: '{{ .tasks.labels.output.result }}'
@@ -83,7 +94,8 @@ tasks:
 
   - id: summary
     uses: json
-    needs: [per-label]
+    needs:
+      - per-label
     network: none
     with:
       op: query
@@ -92,7 +104,9 @@ tasks:
 
   - id: collate
     uses: file
-    needs: [report, report-shell]
+    needs:
+      - report
+      - report-shell
     network: none
     with:
       op: concat

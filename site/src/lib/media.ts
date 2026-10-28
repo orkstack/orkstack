@@ -2,15 +2,19 @@
 // their manifest so a page names an item, never a file. A missing item fails
 // the build, unless SITE_ALLOW_MISSING_MEDIA=1, which only the first
 // generation of the media sets: then the page draws an empty, labelled frame.
-import type { ImageMetadata } from 'astro';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 interface Item {
 	alt: string;
 	caption: string;
+	/** A screenshot's size in CSS pixels: its one-x file's, half its two-x file's. */
+	width?: number;
+	height?: number;
 	light?: string;
+	light2x?: string;
 	dark?: string;
+	dark2x?: string;
 	webm?: string;
 	mp4?: string;
 	poster?: string;
@@ -23,39 +27,46 @@ const manifests = import.meta.glob<{ items: Record<string, Item> }>('../assets/m
 	eager: true,
 	import: 'default',
 });
-const images = import.meta.glob<ImageMetadata>('../assets/media/*.{png,webp,avif,jpg}', {
-	eager: true,
-	import: 'default',
-});
-
 const items: Record<string, Item> = Object.values(manifests)[0]?.items ?? {};
 const allowMissing = import.meta.env.SITE_ALLOW_MISSING_MEDIA === '1' || process.env.SITE_ALLOW_MISSING_MEDIA === '1';
 
-function file<T>(table: Record<string, T>, name: string | undefined, item: string): T | undefined {
-	if (!name) return undefined;
-	const hit = table[`../assets/media/${name}`];
-	if (!hit && !allowMissing) throw new Error(`media ${item}: ${name} is missing from src/assets/media (run make site-media)`);
-	return hit;
+/** One theme of a screenshot: its one-x file, and the srcset that offers the two-x one. */
+export interface ShotTheme {
+	src: string;
+	srcset: string;
 }
 
 export interface Shot {
 	alt: string;
 	caption: string;
-	light?: ImageMetadata;
-	dark?: ImageMetadata;
+	/** The size to draw it at, in CSS pixels: one to one. */
+	width: number;
+	height: number;
+	light?: ShotTheme;
+	dark?: ShotTheme;
 }
 
 export function shot(name: string): Shot {
 	const item = items[name];
 	if (!item) {
-		if (allowMissing) return { alt: `${name} (not generated yet)`, caption: name };
+		if (allowMissing) return { alt: `${name} (not generated yet)`, caption: name, width: 1600, height: 1000 };
 		throw new Error(`media ${name} has no entry in src/assets/media/manifest.json (run make site-media)`);
 	}
+	const { width, height } = item;
+	if (!width || !height) throw new Error(`media ${name} has no width and height in src/assets/media/manifest.json (run make site-media)`);
+	const theme = (one: string | undefined, two: string | undefined): ShotTheme | undefined => {
+		const src = served(one, name);
+		const src2x = served(two, name);
+		if (!src || !src2x) return undefined;
+		return { src, srcset: `${src} ${width}w, ${src2x} ${width * 2}w` };
+	};
 	return {
 		alt: item.alt,
 		caption: item.caption,
-		light: file(images, item.light, name),
-		dark: file(images, item.dark, name),
+		width,
+		height,
+		light: theme(item.light, item.light2x),
+		dark: theme(item.dark, item.dark2x),
 	};
 }
 
@@ -71,8 +82,9 @@ export interface Clip {
 	dark: ClipTheme;
 }
 
-// Recordings are served as they are, from public/media: Astro's image
-// pipeline has nothing to do for a video, and a docs page embeds them by URL.
+// Screenshots and recordings are served as they are, from public/media: a
+// screenshot is already the size it is drawn at, and Astro's image pipeline
+// would only re-encode it, and a docs page embeds them by URL.
 const publicMedia = path.resolve(process.cwd(), 'public', 'media');
 
 function served(name: string | undefined, item: string): string | undefined {

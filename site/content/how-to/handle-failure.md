@@ -9,9 +9,17 @@ In [`examples/order-saga.ork.yaml`](https://github.com/orkstack/orkstack/blob/ma
 ```yaml
   - id: release
     uses: http
-    needs: [reserve, reserved, charge, charged, ship, shipped]
+    needs:
+      - reserve
+      - reserved
+      - charge
+      - charged
+      - ship
+      - shipped
     join: any_failed
-    retry: { maximum_attempts: 5, initial_interval_seconds: 2 }
+    retry:
+      maximum_attempts: 5
+      initial_interval_seconds: 2
     with:
       op: delete
       url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/reservation'

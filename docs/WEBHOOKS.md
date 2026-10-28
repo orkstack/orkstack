@@ -352,7 +352,9 @@ webhooks:
   etl-loader:
     url: https://hooks.acme.dev/etl
     orkflow: nightly-etl
-    events: [TASK_SUCCEEDED, RUN_FAILED]
+    events:
+      - TASK_SUCCEEDED
+      - RUN_FAILED
     secret_env: ETL_WEBHOOK_SECRET
 ```
 

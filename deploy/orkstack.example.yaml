@@ -17,11 +17,12 @@
 # written here. That is deliberate — the environment stays the layer a
 # container orchestrator or a secrets manager overrides per replica.
 #
-# Any scalar leaf may be written as `{ork: X, orker: Y}` to give the two
-# binaries different values from this one file (`telemetry.admin_addr`
-# below needs exactly that); a plain scalar still applies to both. Any
-# string leaf may be written as `{file: /path}` to pull a secret from a
-# file instead of writing it here, one trailing newline trimmed.
+# Any scalar leaf may instead be a mapping with `ork:` and `orker:` keys,
+# to give the two binaries different values from this one file
+# (`telemetry.admin_addr` below needs exactly that); a plain scalar still
+# applies to both. Any string leaf may instead be a mapping with a single
+# `file:` key naming a path, to pull a secret from a file instead of
+# writing it here, one trailing newline trimmed.
 #
 # Validate this file without starting anything:
 #   ork   --config orkstack.yaml --check
@@ -49,7 +50,7 @@ storage:
     # region: us-east-1
     # bucket: orkstack-artifacts
     # access_key: orkstack           # the docker-compose dev credential; supply a real one
-    # secret_key: orkstack-secret    # as above — or {file: /run/secrets/ork_s3_secret_key}
+    # secret_key: orkstack-secret    # as above — or a `file:` mapping naming /run/secrets/ork_s3_secret_key
     # session_token: ""              # for temporary credentials
     # path_style: true               # the dev store needs path-style addressing; AWS S3 does not
 
@@ -119,14 +120,18 @@ orker:
 telemetry:
   # log_format: text                # text | json
   # log_level: info                 # debug | info | warn | error
-  admin_addr: {ork: ":9464", orker: ":9465"}   # default: "" (no listener); per-binary since the ports must differ
+  admin_addr:                       # default: "" (no listener); per-binary since the ports must differ
+    ork: ":9464"
+    orker: ":9465"
   # pprof_enabled: false            # mounts net/http/pprof on the admin listener
   # high_cardinality: false         # adds run_id/task_id/orkflow labels to ork_* metrics — see docs/DEPLOY.md §7
   # service_name: ""                # default: ork / orker per binary — the local profile wants exactly that
   # resource_attributes: {}         # standard OTEL_RESOURCE_ATTRIBUTES map
   exporters:
     logs: otlp                      # default: none
-    metrics: [prometheus, otlp]     # default: none
+    metrics:                        # default: none
+      - prometheus
+      - otlp
     traces: otlp                    # default: none
   sampler: {}
     # name: ""                      # default: parentbased_always_on
@@ -134,7 +139,7 @@ telemetry:
   otlp:
     endpoint: http://localhost:4318 # default: unset (SDK default)
     protocol: http/protobuf         # default: unset; only http/protobuf is supported
-    # headers: {}                   # map, e.g. {Authorization: {file: /run/secrets/otlp_token}} — a top-level headers leaf takes a literal or {file:}, not {source:} (that shape is for a named sink's own headers below, which have their own schema)
+    # headers: {}                   # map from header to value, e.g. Authorization with a `file:` mapping naming /run/secrets/otlp_token — a top-level headers leaf takes a literal or a `file:` mapping, not a `source:` one (that shape is for a named sink's own headers below, which have their own schema)
     # timeout: 0                    # milliseconds, per the OTel spec; default: SDK default
     # certificate: ""               # default: SDK default
     # traces:
@@ -159,7 +164,8 @@ telemetry:
     datadog:
       endpoint: https://otlp.datadoghq.com
       headers:
-        DD-API-KEY: {source: "env:DD_API_KEY"}
+        DD-API-KEY:
+          source: env:DD_API_KEY
 
 # OTEL_BSP_*, OTEL_BLRP_*, and OTEL_PROPAGATORS have no keys here — they
 # remain environment only (docs/DEPLOY.md §1).

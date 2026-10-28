@@ -88,18 +88,24 @@ tasks:
       op: query
       nullInput: true
       vars:
-        parts: [{name: a}, {name: b}, {name: c}, {name: d}]
+        parts:
+          - name: a
+          - name: b
+          - name: c
+          - name: d
       filter: '$vars.parts'
 
   - id: convert
     uses: shell
-    needs: [list]
+    needs:
+      - list
     each:
       over: '{{ .tasks.list.output.result }}'
       as: part
       max_items: 50
       max_parallel: 2
-    retry: { maximum_attempts: 2 }
+    retry:
+      maximum_attempts: 2
     with:
       op: script
       interpreter: sh
@@ -111,7 +117,8 @@ tasks:
 
   - id: merge
     uses: shell
-    needs: [convert]
+    needs:
+      - convert
     with:
       op: script
       interpreter: sh

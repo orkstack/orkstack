@@ -5,7 +5,13 @@
  * Values are tokens only.
  */
 
+/* The reading scale. The tokens are the UI's, sized for a dense app; a page
+   read top to bottom sets them one step larger. Every token is in rem, so
+   this one value lifts every size, space and measure together, Starlight's
+   own included, and keeps their ratios; rules stay in px. A percentage
+   leaves the reader's own default size in charge. */
 html {
+	font-size: 112.5%;
 	scrollbar-color: var(--color-rule-strong) transparent;
 	accent-color: var(--color-blue);
 	scroll-padding-top: calc(var(--spacing-bar) + var(--spacing-gutter));

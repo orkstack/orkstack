@@ -10,7 +10,8 @@ list, deciding a route — is a task. This one.
 ```yaml
 - id: pick
   uses: json
-  needs: [fetch]
+  needs:
+    - fetch
   network: none
   with:
     op: query
@@ -83,16 +84,26 @@ task:
 
 ```yaml
 - id: line
-  needs: [prepare]
-  each: {over: '{{ .tasks.prepare.output.result }}', max_items: 100}
+  needs:
+    - prepare
+  each:
+    over: '{{ .tasks.prepare.output.result }}'
+    max_items: 100
   uses: json
   network: none
-  with: {op: query, src: task.json, filter: '.each.item | "\(.name)=\(.replicas)"'}
+  with:
+    op: query
+    src: task.json
+    filter: '.each.item | "\(.name)=\(.replicas)"'
 - id: collect
-  needs: [line]
+  needs:
+    - line
   uses: json
   network: none
-  with: {op: query, gather: line, filter: 'map(.result) | join(",")'}
+  with:
+    op: query
+    gather: line
+    filter: 'map(.result) | join(",")'
 ```
 
 A fan-out with zero items gathers `[]`. A `gather` id that `task.json` lists no
@@ -165,7 +176,7 @@ filter over the same files would fail the same way.
 - **Dates.** `now`, `gmtime`, `mktime`, `strptime`, `todate`, `fromdate` and
   `strftime` of a `gmtime` value are UTC whatever `TZ` says; `localtime` and
   `strflocaltime` follow `TZ` — `UTC` by default, or any zone a task's
-  `env: {TZ: Europe/Berlin}` names (the image ships zone data, so
+  `env:` names in `TZ`, as in `TZ: Europe/Berlin` (the image ships zone data, so
   `0 | strflocaltime("%H")` prints `01` there). `%Z` prints an empty string
   under the image's C library, so a filter prints the zone it set rather than
   reading it back. Time-zone business rules belong in your own image.
@@ -178,9 +189,9 @@ filter over the same files would fail the same way.
   JSON, and a number renders as above — so strings, booleans and small numbers
   travel in `vars` (`$vars.limit | tonumber`), while structures, ids and large
   integers travel as files. Data a filter only returns — a fixed list a
-  fan-out reads — goes in `vars:` as YAML (`vars: {labels: [alpha, beta]}`,
-  `filter: '$vars.labels'`), never as a jq literal: a filter is code, the list
-  is data.
+  fan-out reads — goes in `vars:` as YAML (a `labels:` list of `alpha` and
+  `beta`, read by `filter: '$vars.labels'`), never as a jq literal: a filter is
+  code, the list is data.
 - **Literal braces.** `filter` and every `vars` leaf are `with:` strings, and a
   `with:` string containing `{{` is a DSL template: `orkctl orkflow validate`
   parses it and the Orker renders it before the container starts. A filter that
@@ -210,7 +221,9 @@ handlers"):
 
    ```yaml
    - id: report
-     needs: [canary, direct]
+     needs:
+       - canary
+       - direct
      join: none_failed
      uses: json
      network: none
@@ -290,7 +303,7 @@ the container's own id).
 | Image default | What it does |
 |---|---|
 | `HOME=/orkstack/tmp` | a writable, empty, per-attempt home instead of the runtime's read-only `/`. jq sources `$HOME/.jq` into every program when it is a file; the default home holds none. |
-| `TZ=UTC` | local time is UTC unless your task says otherwise; the image ships zone data, so `env: {TZ: Europe/Berlin}` really means Berlin. |
+| `TZ=UTC` | local time is UTC unless your task says otherwise; the image ships zone data, so `TZ: Europe/Berlin` under `env:` really means Berlin. |
 
 - Every variable is visible to a filter as `$ENV.<NAME>` — honoured, not
   hidden. For data a filter computes with, `vars` is usually the better

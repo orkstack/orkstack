@@ -155,9 +155,9 @@ func (j *joinE2E) invocations(runID, taskID string) int {
 	return j.invoked[runID+"/"+taskID]
 }
 
-// noRetryVariant is the shipped file with rollback's retry: line removed.
+// noRetryVariant is the shipped file with rollback's retry: block removed.
 func noRetryVariant(src string) string {
-	return strings.Replace(src, "    join: any_failed\n    retry: { maximum_attempts: 2 }\n", "    join: any_failed\n", 1)
+	return strings.Replace(src, "    join: any_failed\n    retry:\n      maximum_attempts: 2\n", "    join: any_failed\n", 1)
 }
 
 // awaitVariant replaces the whole rollback task with an awaited one.
@@ -195,7 +195,13 @@ func (j *joinE2E) example(variant func(string) string) *orkstackv1.Orkflow {
 	}
 	source := string(raw)
 	if variant != nil {
-		source = variant(source)
+		// A variant edits the shipped text; one that finds nothing to edit
+		// would run the shipped file under the variant's name.
+		varied := variant(source)
+		if varied == source {
+			j.t.Fatalf("%s no longer holds the text this variant edits", branchAndRecover)
+		}
+		source = varied
 	}
 	return j.compileDoc(source)
 }

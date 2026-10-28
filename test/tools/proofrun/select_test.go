@@ -127,6 +127,20 @@ func fakeSelect(t *testing.T, changes []change, tests, specs []string) *selectio
 // fakeSelectSlow is fakeSelect with a slow list of the caller's own.
 func fakeSelectSlow(t *testing.T, changes []change, tests, specs []string, slow map[testKey]slowEntry) *selection {
 	t.Helper()
+	return fakeSelectIn(t, changes, tests, specs, slow, nil)
+}
+
+// fakeSelectAllowed is fakeSelect with an allowed-skips list of the caller's own.
+func fakeSelectAllowed(t *testing.T, changes []change, tests []string, allowed []allowedSkip) *selection {
+	t.Helper()
+	return fakeSelectIn(t, changes, tests, nil, map[testKey]slowEntry{{pEngine, "TestIntegration_Slow"}: {Seconds: 120}}, allowed)
+}
+
+// fakeSelectIn writes the base tree with changes applied to a temp dir (the
+// new side), keeps the base tree as the old side, and selects with the given
+// slow list and allowed skips.
+func fakeSelectIn(t *testing.T, changes []change, tests, specs []string, slow map[testKey]slowEntry, allowed []allowedSkip) *selection {
+	t.Helper()
 	root := t.TempDir()
 	newTree := map[string]string{}
 	for p, c := range baseTree {
@@ -168,7 +182,7 @@ func fakeSelectSlow(t *testing.T, changes []change, tests, specs []string, slow 
 	}
 	in := selectInput{
 		root: root, paths: paths, scope: scope, tests: tests, specs: specs,
-		slow: slow,
+		slow: slow, allowed: allowed,
 		readNew: func(p string) []byte {
 			if c, ok := newTree[p]; ok {
 				return []byte(c)
@@ -780,5 +794,95 @@ func TestFeatureReport_PrintsTheDocsWarning(t *testing.T) {
 	got := b.String()
 	if !strings.HasPrefix(got, "## Documentation") || !strings.Contains(got, "WARNING: no CHANGELOG.md") {
 		t.Fatalf("report = %q", got)
+	}
+}
+
+// A test the allowed-skips list names (an opt-in recorder, a helper
+// subprocess) skips in every proof by design, so it can never pass as
+// evidence: no rule makes it evidence, each one a rule reached is listed as
+// not evidence with the list's reason, and a --tests pattern that names only
+// such tests is refused, as is a changed tool that only such tests read. An
+// entry applies to its own suite, or to any.
+func TestSelect_AnAllowedSkipIsNeverEvidence(t *testing.T) {
+	const reason = "opt-in recorder: re-records a committed replay fixture"
+	skip := func(suite, pkg, test string) []allowedSkip {
+		return []allowedSkip{{Suite: suite, Package: pkg, Test: test, Reason: reason}}
+	}
+	exampleChange := change{"examples/hello.ork.yaml", "name: hello\nversion: 2\n"}
+	examplesSourceChange := change{"cmd/orkctl/cli_integration_test.go", strings.Replace(baseTree["cmd/orkctl/cli_integration_test.go"],
+		`func TestIntegration_Examples(t *testing.T) { _ = "examples/hello.ork.yaml" }`,
+		`func TestIntegration_Examples(t *testing.T) { _ = "examples/hello.ork.yaml"; t.Log(1) }`, 1)}
+	// A changed tool whose only reader is added beside it.
+	lonelyChanges := []change{
+		{"test/tools/lonely/main.go", "package main\n\nfunc main() { println() }\n"},
+		{"cmd/orkctl/cli_integration_test.go", baseTree["cmd/orkctl/cli_integration_test.go"] +
+			"\nfunc TestIntegration_Lonely(t *testing.T) { _ = \"./test/tools/lonely\" }\n"},
+	}
+	cases := []struct {
+		name     string
+		changes  []change
+		tests    []string
+		allowed  []allowedSkip
+		evidence map[string][]string // integration package -> evidence
+		not      []string            // listed as not evidence
+		errors   []string
+	}{
+		{name: "an example it reads changed", changes: []change{exampleChange},
+			allowed:  skip("integration", pOrkctl, "TestIntegration_Examples"),
+			evidence: map[string][]string{pOrkctl: {}}, not: []string{"cmd/orkctl.TestIntegration_Examples"}},
+		{name: "its own source changed", changes: []change{examplesSourceChange},
+			allowed:  skip("integration", pOrkctl, "TestIntegration_Examples"),
+			evidence: map[string][]string{pOrkctl: {}}, not: []string{"cmd/orkctl.TestIntegration_Examples"}},
+		{name: "a helper it reaches changed", changes: []change{bootChange},
+			allowed:  skip("integration", pEngine, "TestIntegration_Fast"),
+			evidence: map[string][]string{pEngine: {"TestIntegration_Slow"}}, not: []string{"internal/engine.TestIntegration_Fast"}},
+		{name: "an entry for any suite", changes: []change{exampleChange},
+			allowed:  skip("any", pOrkctl, "TestIntegration_Examples"),
+			evidence: map[string][]string{pOrkctl: {}}, not: []string{"cmd/orkctl.TestIntegration_Examples"}},
+		{name: "a unit entry leaves an integration test alone", changes: []change{exampleChange},
+			allowed:  skip("unit", pOrkctl, "TestIntegration_Examples"),
+			evidence: map[string][]string{pOrkctl: {"TestIntegration_Examples"}}},
+		{name: "--tests naming others too", changes: []change{engineChange},
+			tests:    []string{"internal/engine:TestIntegration_(Fast|Uses)"},
+			allowed:  skip("integration", pEngine, "TestIntegration_Uses"),
+			evidence: map[string][]string{pEngine: {"TestIntegration_Fast"}}, not: []string{"internal/engine.TestIntegration_Uses"}},
+		{name: "--tests naming only allowed skips", changes: []change{engineChange},
+			tests:   []string{"internal/engine:TestIntegration_Uses"},
+			allowed: skip("integration", pEngine, "TestIntegration_Uses"),
+			not:     []string{"internal/engine.TestIntegration_Uses"},
+			errors: []string{`--tests "internal/engine:TestIntegration_Uses" names only allowed skips (TestIntegration_Uses)`,
+				"internal/engine changed (func Run) and no evidence test depends on it"}},
+		{name: "a changed tool only it reads", changes: lonelyChanges,
+			allowed: skip("integration", pOrkctl, "TestIntegration_Lonely"),
+			not:     []string{"cmd/orkctl.TestIntegration_Lonely"},
+			errors:  []string{"test/tools/lonely changed, and no test or spec runs it: nothing can prove the change"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sel := fakeSelectAllowed(t, tc.changes, tc.tests, tc.allowed)
+			requireErrors(t, sel, tc.errors...)
+			for pkg, want := range tc.evidence {
+				if got := evidenceNames(sel, pkg); !reflect.DeepEqual(got, want) {
+					t.Errorf("%s evidence = %v, want %v", relDir(pkg), got, want)
+				}
+			}
+			got := []string{}
+			for _, n := range sel.NotEvidence {
+				got = append(got, relDir(n.Package)+"."+n.Test)
+				if n.Reason != reason || n.Why == "" {
+					t.Errorf("not evidence %s.%s: why %q, reason %q", relDir(n.Package), n.Test, n.Why, n.Reason)
+				}
+			}
+			if want := orEmpty(tc.not); !reflect.DeepEqual(got, want) {
+				t.Errorf("not evidence = %v, want %v", got, want)
+			}
+			for _, n := range tc.not {
+				var b strings.Builder
+				featureReport(&b, sel, outcomes{}, nil)
+				if !strings.Contains(b.String(), n+" — ") || !strings.Contains(b.String(), reason) {
+					t.Errorf("the README does not list %s as not evidence with the list's reason:\n%s", n, b.String())
+				}
+			}
+		})
 	}
 }

@@ -13,17 +13,21 @@ needs before it runs. Every example begins with its comment header, then the
 document header `apiVersion: orkstack/v1` and `kind: Orkflow`.
 
 The ten examples marked *older* below do not follow every rule of the
-guide, and are not edited except for their document header: each pins a
-`version:` a deployment may already store, and applying changed bytes under
-a stored version is refused — the two lines `apiVersion: orkstack/v1` and
-`kind: Orkflow` are the one addition a stored version takes
-([`docs/DSL.md`](../docs/DSL.md), "The document header").
-Six of them splice a rendered value into shell text — `shell-eval`,
-`file-read`, `pinned-build`, `advanced-demo`, `awaited-approval` (whose
-`approver` comes from whoever resolves the await) and `cached-pipeline` —
-which the guide's "Pass values as data, never as code" says not to do, and
-`cached-pipeline` also caches a task with no `ttl_seconds` (its one
-validation warning). Follow the guide, not them.
+guide; they keep the versions a deployment may already store rather than be
+rewritten to follow it. Six of them splice a rendered value into shell
+text — `shell-eval`, `file-read`, `pinned-build`, `advanced-demo`,
+`awaited-approval` (whose `approver` comes from whoever resolves the await)
+and `cached-pipeline` — which the guide's "Pass values as data, never as
+code" says not to do, and `cached-pipeline` also caches a task with no
+`ttl_seconds` (its one validation warning). Follow the guide, not them.
+
+Every example pins its `version:`, and a store refuses different bytes under
+a version it already holds ([`docs/DSL.md`](../docs/DSL.md), "The document
+header"). On 2026-10-27 every example's YAML was rewritten in block style,
+one `- item` or `key: value` per line, and no definition changed: each
+compiles to the digest it had. A store that applied an example before then
+refuses the new file under the same version, so apply it to a fresh store
+or under another version.
 
 ## Running them
 

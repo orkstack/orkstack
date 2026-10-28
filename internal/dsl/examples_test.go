@@ -28,10 +28,10 @@ const (
 )
 
 // predatesPatterns names the ten examples that predate
-// docs/ORKFLOW_PATTERNS.md. Apart from their document header they are kept
-// byte-identical: a stored version cannot change. So they are exempt from the
-// comment-header rules, and from the network and cache rules below; every
-// other rule holds them too.
+// docs/ORKFLOW_PATTERNS.md. They keep the versions a deployment may already
+// store rather than be rewritten to follow it (examples/README.md), so they
+// are exempt from the comment-header rules, and from the network and cache
+// rules below; every other rule holds them too.
 var predatesPatterns = map[string]bool{
 	"advanced-demo.ork.yaml":      true,
 	"awaited-approval.ork.yaml":   true,

@@ -497,6 +497,18 @@ every `-tests` name, always runs; a changed `TestMain` still runs the whole
 package, slow tests included. On a shared helper such as `newChaosStack`
 this is about 35 minutes of a feature proof.
 
+A test `scripts/proof-allowed-skips.txt` names is never evidence, by any of
+the rules above: it skips in every proof by design (an opt-in recorder, a
+helper subprocess), so it could never pass as evidence. Each one a rule
+reaches goes in the selection's `not_evidence` with the reason it was reached
+and the list's reason, and the README lists it under "Not evidence: allowed
+skips"; a package whose regression set holds it still runs it, and its skip
+is recorded as allowed. The opt-in recorders read the shipped examples, so
+without this an example change could never pass a feature proof. A `-tests`
+pattern that names only allowed skips is an invalid invocation, and a
+changed `test/tools/` tool that only allowed skips read is refused as one no
+test or spec runs.
+
 The regression set is never evidence. Every changed package with a change
 outside its tests and its comments needs at least one evidence test whose
 binary depends on it, and it must be an integration test when the package is
@@ -1553,7 +1565,7 @@ listing with no bucket at all.
 | `fuzz` | `-out DIR`, `-budget DURATION` or `-fuzztime DURATION`, one of the two |
 | `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-select FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-observability-required`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-nightly-specs FILE`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `compile` | `-out DIR`, `-select FILE` |
-| `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
+| `select` | `-base REF`, `-out FILE`, `-scope FILE`, `-slow FILE`, `-allow FILE`, `-tests PKG:REGEX`, `-specs FILE` |
 | `feature-report` | `-dir DIR`, `-select FILE` |
 | `ui-ledger` | `-report FILE`, `-list FILE`, `-plan FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME`, `-host-speed FILE`, `-host-speed-base FILE` |
 | `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE`, `-nightly-mode MODE`, `-nightly-specs FILE`, `-nightly-specs-base FILE`, `-run-files-out FILE` |

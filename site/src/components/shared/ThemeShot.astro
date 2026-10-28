@@ -1,51 +1,40 @@
 ---
-// A screenshot in both themes: two pictures, one shown per theme by
-// base.css (.theme-pair), each served as AVIF and WebP by Astro's image
-// pipeline. After Landpack's ThemeImage (MIT, see site/THIRD_PARTY.md),
-// switched on data-theme and the system preference instead of a class.
-// Both are lazy: the hidden one has no box, so a browser never fetches it,
-// where an eager pair would cost every visitor the other theme's image.
-import { Picture } from 'astro:assets';
+// A screenshot in both themes: two images, one shown per theme by base.css
+// (.theme-pair). Each is served as make site-media saved it, losslessly, at
+// its own size and at twice it, and drawn at its own size or narrower: a
+// screen shows it one to one, or scaled down, never re-encoded or enlarged.
+// After Landpack's ThemeImage (MIT, see site/THIRD_PARTY.md), switched on
+// data-theme and the system preference instead of a class. Both are lazy:
+// the hidden one has no box, so a browser never fetches it, where an eager
+// pair would cost every visitor the other theme's image.
 import type { Shot } from '../../lib/media';
 
 interface Props {
 	shot: Shot;
+	/** How wide it is drawn at each width of the page, for picking one x or two. */
 	sizes?: string;
 	class?: string;
 }
-const { shot, sizes = '(min-width: 1280px) 1200px, 100vw', class: className } = Astro.props;
-const widths = [640, 960, 1280, 1600];
+const { shot, sizes = `(min-width: ${shot.width}px) ${shot.width}px, 100vw`, class: className } = Astro.props;
 ---
 
 <div class:list={['theme-pair', 'shot', className]}>
 	{
-		shot.light ? (
-			<Picture
-				src={shot.light}
-				alt={shot.alt}
-				formats={['avif', 'webp']}
-				widths={widths.filter((w) => w <= shot.light!.width)}
-				sizes={sizes}
-				fallbackFormat="webp"
-				loading="lazy"
-			/>
-		) : (
-			<div class="shot-missing" role="img" aria-label={shot.alt} />
-		)
-	}
-	{
-		shot.dark ? (
-			<Picture
-				src={shot.dark}
-				alt={shot.alt}
-				formats={['avif', 'webp']}
-				widths={widths.filter((w) => w <= shot.dark!.width)}
-				sizes={sizes}
-				fallbackFormat="webp"
-				loading="lazy"
-			/>
-		) : (
-			<div class="shot-missing" role="img" aria-label={shot.alt} />
+		[shot.light, shot.dark].map((t) =>
+			t ? (
+				<img
+					src={t.src}
+					srcset={t.srcset}
+					sizes={sizes}
+					width={shot.width}
+					height={shot.height}
+					alt={shot.alt}
+					loading="lazy"
+					decoding="async"
+				/>
+			) : (
+				<div class="shot-missing" role="img" aria-label={shot.alt} />
+			),
 		)
 	}
 </div>
@@ -53,7 +42,7 @@ const widths = [640, 960, 1280, 1600];
 <style>
 	.shot :global(img) {
 		display: block;
-		width: 100%;
+		max-width: 100%;
 		height: auto;
 	}
 	.shot-missing {

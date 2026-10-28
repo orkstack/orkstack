@@ -458,8 +458,8 @@ Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
 ## Examples index
 
 Examples marked *older* do not follow every rule of this guide; see
-[`examples/README.md`](../examples/README.md) for which, and why they are not
-edited except for their document header. Follow the guide, not them.
+[`examples/README.md`](../examples/README.md) for which, and why they keep
+their versions rather than follow it. Follow the guide, not them.
 
 | Example | Shows | Sections |
 |---|---|---|

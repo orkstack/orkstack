@@ -41,7 +41,8 @@ tasks:
   #    artifact at, under the read-only /orkstack/input tree.
   - id: transform
     uses: shell
-    needs: [fetch]
+    needs:
+      - fetch
     with:
       op: exec
       command:
@@ -58,7 +59,8 @@ tasks:
   #    new to store.
   - id: verify
     uses: file
-    needs: [transform]
+    needs:
+      - transform
     with:
       op: checksum
       src: '{{ artifact "transform/summary.txt" }}'

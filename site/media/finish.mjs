@@ -2,6 +2,7 @@
 // frames, and records them in the media manifest beside the screenshots.
 // Called by media/run.sh with the VHS output directory and image.
 import { readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import sharp from 'sharp';
 import { repoRoot, siteRoot } from '../scripts/tokens.mjs';
@@ -9,7 +10,8 @@ import { repoRoot, siteRoot } from '../scripts/tokens.mjs';
 const [out, vhsImage] = process.argv.slice(2);
 const pub = path.join(siteRoot, 'public', 'media');
 // The README shows each terminal recording as a GIF, which GitHub plays
-// inline; the site keeps the videos.
+// inline, at half the recording's size (the tape draws at twice the site's);
+// the site keeps the videos.
 const readmeImages = path.join(repoRoot, 'docs', 'images');
 const manifestPath = path.join(siteRoot, 'src', 'assets', 'media', 'manifest.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -28,12 +30,16 @@ for (const file of readdirSync(out).sort()) {
 	Object.assign(item, words[name]);
 	const suffix = theme === 'dark' ? 'Dark' : '';
 	if (ext === 'gif') {
-		copyFileSync(path.join(out, file), path.join(readmeImages, file));
+		execFileSync('ffmpeg', [
+			'-y', '-loglevel', 'error', '-i', path.join(out, file),
+			'-vf', 'scale=iw/2:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=full[p];[b][p]paletteuse=dither=none',
+			path.join(readmeImages, file),
+		]);
 		continue;
 	}
 	if (ext === 'png') {
 		const poster = `${name}-${theme}.webp`;
-		await sharp(path.join(out, file)).webp({ quality: 82 }).toFile(path.join(pub, poster));
+		await sharp(path.join(out, file)).webp({ lossless: true, effort: 6 }).toFile(path.join(pub, poster));
 		item[`poster${suffix}`] = poster;
 	} else {
 		copyFileSync(path.join(out, file), path.join(pub, file));

@@ -71,10 +71,10 @@ var alwaysCommentedEnv = map[string]bool{
 	"ORK_DOCKER_BIN":       true,
 }
 
-// perBinaryDefault carries an explicit {ork: X, orker: Y} literal for an
-// entry whose real default differs by binary — OTEL_SERVICE_NAME's "ork" /
-// "orker" service.name (telemetry.ResourceAttrs) — rather than the single
-// scalar form every other active entry below writes.
+// perBinaryDefault carries an explicit per-binary mapping (ork: X, orker: Y)
+// for an entry whose real default differs by binary — OTEL_SERVICE_NAME's
+// "ork" / "orker" service.name (telemetry.ResourceAttrs) — rather than the
+// single scalar form every other active entry below writes.
 var perBinaryDefault = map[string][2]string{
 	"OTEL_SERVICE_NAME": {"ork", "orker"},
 }
@@ -142,7 +142,7 @@ func RenderDefaults() string {
 func renderNode(b *strings.Builder, n *yamlTree, depth int) {
 	indent := strings.Repeat("  ", depth)
 	if n.v != nil {
-		fmt.Fprintln(b, indent+renderLeafLine(*n.v, lastSegment(n.v.Path)))
+		writeLeaf(b, indent, renderLeafLine(*n.v, lastSegment(n.v.Path)))
 		return
 	}
 	// A section with no active leaf anywhere beneath it (telemetry.sampler,
@@ -177,7 +177,7 @@ func renderInactiveComments(b *strings.Builder, n *yamlTree, depth int, prefix s
 	indent := strings.Repeat("  ", depth)
 	displayKey := prefix + "." + n.key
 	if n.v != nil {
-		fmt.Fprintln(b, indent+renderLeafLine(*n.v, displayKey))
+		writeLeaf(b, indent, renderLeafLine(*n.v, displayKey))
 		return
 	}
 	for _, c := range n.children {
@@ -199,6 +199,15 @@ func hasActiveLeaf(n *yamlTree) bool {
 	return false
 }
 
+// writeLeaf writes a leaf's rendering at indent, each of its lines: a list
+// or a per-binary value is its key's line, then its entries in block style
+// two spaces deeper.
+func writeLeaf(b *strings.Builder, indent, leaf string) {
+	for _, line := range strings.Split(leaf, "\n") {
+		fmt.Fprintln(b, indent+line)
+	}
+}
+
 // renderLeafLine renders one Schema entry's YAML line, without leading
 // indentation: key as the key (the leaf's own last path segment when it is
 // printed nested, or a fuller relative path when renderInactiveComments is
@@ -214,7 +223,7 @@ func renderLeafLine(v Var, key string) string {
 	}
 
 	if pb, ok := perBinaryDefault[v.Env]; ok {
-		return fmt.Sprintf("%s: {ork: %s, orker: %s}%s", key, pb[0], pb[1], trailingComment(notes))
+		return fmt.Sprintf("%s:%s\n  ork: %s\n  orker: %s", key, trailingComment(notes), quoteScalar(pb[0]), quoteScalar(pb[1]))
 	}
 
 	if !isActiveDefault(v) {
@@ -244,9 +253,13 @@ func renderLeafLine(v Var, key string) string {
 	if v.Kind == KindList {
 		// A List leaf's Default is the comma-joined string load.go itself
 		// renders a YAML list DOWN to (walkNode's KindList case); write it
-		// back UP as a flow list, since Load requires a real
-		// yaml.SequenceNode for this Kind, never a bare scalar.
-		return fmt.Sprintf("%s: [%s]%s", key, strings.Join(strings.Split(value, ","), ", "), trailingComment(notes))
+		// back UP as a block list, one item per line, since Load requires a
+		// real yaml.SequenceNode for this Kind, never a bare scalar.
+		line := key + ":" + trailingComment(notes)
+		for _, item := range strings.Split(value, ",") {
+			line += "\n  - " + quoteScalar(item)
+		}
+		return line
 	}
 	return fmt.Sprintf("%s: %s%s", key, quoteScalar(value), trailingComment(notes))
 }

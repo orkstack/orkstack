@@ -13,16 +13,19 @@ This excerpt fans `convert` out over the array that `list` computes:
 ```yaml
   - id: convert
     uses: shell
-    needs: [list]
+    needs:
+      - list
     each:
       over: '{{ .tasks.list.output.result }}'
       as: part
       max_items: 50
       max_parallel: 2
-    # ... the script is in examples/each-fan-out.ork.yaml
+    # ... its retry and script are in examples/each-fan-out.ork.yaml
+
   - id: merge
     uses: shell
-    needs: [convert]
+    needs:
+      - convert
     # ...
 ```
 

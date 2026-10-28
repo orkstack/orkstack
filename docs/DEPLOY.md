@@ -226,8 +226,8 @@ needs `ORK_S3_*` either way.
   The list is read in the same vocabulary as the dispatch — the collapsed name
   of the bullet above. With `ORK_ORKER_POOL=gpu` on the engine, a task that
   names no pool is dispatched to, stamped as and reported on `gpu`, so a
-  namespace whose list is `[main]` is refused there and one whose list is
-  `[gpu]` accepts `pool: main`:
+  namespace whose list holds only `main` is refused there and one whose list
+  holds only `gpu` accepts `pool: main`:
 
   ```
   namespace "payments" does not allow pool "gpu" for task "settle" (allowed: main);
@@ -280,11 +280,11 @@ naming its full path, and so is an integer, boolean or duration that is not
 one once the space around it is trimmed (the daemons are handed the bare
 value: not every reader trims, and a padded one would quietly use the
 default) and a value holding a NUL byte, which an environment variable cannot
-carry. Any scalar leaf may instead be written as
-`{ork: X, orker: Y}` to give the two binaries different values from one
-file — the shape `telemetry.admin_addr`
-needs — and a plain scalar still applies to both. Any string leaf may be
-written as `{file: /path}` in place of a literal, to pull a secret from a
+carry. Any scalar leaf may instead be a mapping with `ork:` and `orker:` keys,
+to give the two binaries different values from one file — the shape
+`telemetry.admin_addr` needs — and a plain scalar still applies to both. Any
+string leaf may instead be a mapping with a single `file:` key naming a path,
+in place of a literal, to pull a secret from a
 file rather than the document itself (one trailing line ending, `\n` or
 `\r\n`, trimmed; a relative path resolves against the directory holding the
 config file itself, never the process's working directory, so the same
@@ -1602,7 +1602,10 @@ engine boot, no Temporal connection, no store.
 
   ```yaml
   healthcheck:
-    test: ["CMD", "/usr/local/bin/ork", "--healthcheck"]   # orker: /usr/local/bin/orker
+    test:
+      - CMD
+      - "/usr/local/bin/ork"   # orker: /usr/local/bin/orker
+      - "--healthcheck"
     interval: 10s
     timeout: 5s
     start_period: 30s
@@ -2774,10 +2777,14 @@ binaries with `--config`:
 ```yaml
 telemetry:
   log_format: json
-  admin_addr: {ork: ":9464", orker: ":9465"}
+  admin_addr:
+    ork: ":9464"
+    orker: ":9465"
   exporters:
     logs: otlp
-    metrics: [prometheus, otlp]
+    metrics:
+      - prometheus
+      - otlp
     traces: otlp
   otlp:
     endpoint: http://localhost:4318
@@ -2786,7 +2793,8 @@ telemetry:
     laptop-collector:
       endpoint: http://localhost:4318
       headers:
-        X-Scope-OrgID: {source: "env:LOKI_ORG_ID"}
+        X-Scope-OrgID:
+          source: env:LOKI_ORG_ID
 orker:
   task_log_export: true   # ship task stdout/stderr as log records too
 ```

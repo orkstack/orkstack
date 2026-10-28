@@ -388,7 +388,8 @@ tasks:
   - id: fetch             # unique within the Orkflow
     uses: http            # catalog activity name, full OCI image reference,
                           # or orkflow:<name>@<version> (see "Composition")
-    needs: []             # DAG edges list existing task ids; no cycles
+    needs:                # DAG edges list existing task ids; no cycles
+      - prepare
     join: all_succeeded   # optional: none_failed, any_failed or all_done (see "Joins and failure handlers")
     condition: ""         # optional templated gate
     timeout_seconds: 300  # optional container wall-clock timeout; default 300
@@ -399,7 +400,9 @@ tasks:
       maximum_interval_seconds: 100
     pool: ""              # optional Orker pool; absent means the default pool
     pin: ""               # optional declared pin; absent means unpinned
-    command: ["curl", "--version"] # optional image ENTRYPOINT/CMD override; argv
+    command:              # optional image ENTRYPOINT/CMD override; argv
+      - curl
+      - "--version"
     env:                  # workload environment only; no platform state
       MODE: probe
     secrets:              # resolved to read-only files, never embedded values
@@ -411,7 +414,8 @@ tasks:
     network: none         # optional: `default` or `none`
     cancellation_grace_period_seconds: 30 # SIGTERM-to-SIGKILL window
     run_as_orker_user: false # opt in to overriding the image's USER
-    cache: { enabled: true } # optional: reuse an identical earlier result (see "Caching")
+    cache:                # optional: reuse an identical earlier result (see "Caching")
+      enabled: true
     with:                 # image-specific config, rendered into config.json
       op: get
       url: https://example.test/health
@@ -421,8 +425,8 @@ tasks:
 `needs:` is the only thing that orders tasks. Declaration order sequences
 nothing: a task with no `needs` (absent or `[]`) starts when the run starts,
 and every task starts as soon as all its needs have ended and its `join:`
-admits it, so independent tasks run in parallel. To run B after A, write
-`needs: [A]` on B.
+admits it, so independent tasks run in parallel. To run B after A, list A in
+B's `needs:`.
 
 `retry:` absent (or `maximum_attempts` of 0 or 1) means one attempt — never
 Temporal's unbounded default. Within `retry:`, an unset interval is 1 s, an
@@ -614,40 +618,61 @@ words are predicates over **this task's own needs**, not hooks: a handler is
 not "on run failure", and `all_done` does not mean "even when cancelled".
 
 **Re-joining branches.** `none_failed` closes an if/else: "if A then B else C,
-then D" is `D: {needs: [B, C], join: none_failed}` — one of B and C is always
-skipped, and D runs after whichever ran. Skips propagate along every
-`all_succeeded` edge; a `none_failed` task stops the propagation unless every
-one of its needs was skipped.
+then D" is a task D that needs B and C and sets `join: none_failed` — one of B
+and C is always skipped, and D runs after whichever ran. Skips propagate along
+every `all_succeeded` edge; a `none_failed` task stops the propagation unless
+every one of its needs was skipped.
 
 ```yaml
 - id: decide                      # the decision is a task's value
   uses: shell
-  with: {op: eval, command: ["printf", "%s", "{{ .inputs.route }}"]}
+  with:
+    op: eval
+    command:
+      - printf
+      - "%s"
+      - "{{ .inputs.route }}"
 - id: canary
   uses: shell
-  needs: [decide]
+  needs:
+    - decide
   condition: '{{ eq .tasks.decide.output.value "canary" }}'
-  with: {op: exec, command: ["echo", "canary rollout"]}
+  with:
+    op: exec
+    command:
+      - echo
+      - "canary rollout"
 - id: full
   uses: shell
-  needs: [decide]
+  needs:
+    - decide
   condition: '{{ eq .tasks.decide.output.value "full" }}'
-  with: {op: exec, command: ["echo", "full rollout"]}
+  with:
+    op: exec
+    command:
+      - echo
+      - "full rollout"
 - id: verify
   uses: shell
-  needs: [canary, full]
+  needs:
+    - canary
+    - full
   join: none_failed               # one branch was skipped; re-join after the other
-  with: {op: exec, command: ["echo", "verified"]}
+  with:
+    op: exec
+    command:
+      - echo
+      - verified
 ```
 
 **Failure handlers.** A task whose join is `any_failed` or `all_done` is a
 **failure handler**: the only kind of task that starts in a run that is
 already failing. A handler cleans up, notifies or compensates; it never rescues
-the run. It covers only the needs it lists — `rollback: {needs: [deploy], join:
-any_failed}` does not run when `build` fails, because then `deploy` never ran.
-An `any_failed` handler on another handler is an escalation ("page someone if
-the rollback failed"); an `all_done` handler on one is a step after it,
-whatever it did.
+the run. It covers only the needs it lists — a `rollback` task that needs
+`deploy` and has `join: any_failed` does not run when `build` fails, because
+then `deploy` never ran. An `any_failed` handler on another handler is an
+escalation ("page someone if the rollback failed"); an `all_done` handler on
+one is a step after it, whatever it did.
 
 **How a run ends.**
 
@@ -724,11 +749,16 @@ compensation undoes can be running when another forward step fails:
   ```yaml
   - id: cancel-hotel
     uses: ghcr.io/acme/booking:3
-    needs: [reserve-hotel, reserve-flight, charge-card]
+    needs:
+      - reserve-hotel
+      - reserve-flight
+      - charge-card
     join: any_failed
     condition: '{{ if index .tasks "reserve-hotel" }}true{{ end }}'
-    retry: {maximum_attempts: 3}
-    with: {op: cancel-hotel}
+    retry:
+      maximum_attempts: 3
+    with:
+      op: cancel-hotel
   ```
 - *Forward steps run in parallel:* fail-fast stops a step still running and
   records it `CANCELED`, so the condition above is false for it and
@@ -743,9 +773,12 @@ compensation undoes can be running when another forward step fails:
   ```yaml
   - id: release-capacity
     uses: shell
-    needs: [reserve-capacity, provision-dns]
+    needs:
+      - reserve-capacity
+      - provision-dns
     join: all_done
-    retry: {maximum_attempts: 3}
+    retry:
+      maximum_attempts: 3
     with:
       op: script
       interpreter: sh
@@ -823,26 +856,40 @@ tasks:
     uses: git
     pin: build                 # a task joins a pin by name, like `pool:`
     run_as_orker_user: true
-    with: { op: clone, url: "{{ .inputs.repo }}", dest: /orkstack/shared/src }
+    with:
+      op: clone
+      url: "{{ .inputs.repo }}"
+      dest: /orkstack/shared/src
 
   - id: compile
     uses: golang
     pin: build
-    needs: [clone]             # `needs:` is unchanged and still required for order
+    needs:                     # `needs:` is unchanged and still required for order
+      - clone
     run_as_orker_user: true
-    command: [sh, -c, "cd /orkstack/shared/src && go build -o /orkstack/shared/bin/app ./..."]
+    command:
+      - sh
+      - -c
+      - "cd /orkstack/shared/src && go build -o /orkstack/shared/bin/app ./..."
 
   - id: test
     uses: golang
     pin: build
-    needs: [compile]
+    needs:
+      - compile
     run_as_orker_user: true
-    command: [sh, -c, "cd /orkstack/shared/src && go test ./... > /orkstack/output/artifacts/report.txt"]
+    command:
+      - sh
+      - -c
+      - "cd /orkstack/shared/src && go test ./... > /orkstack/output/artifacts/report.txt"
 
   - id: publish                # unpinned: runs wherever the pool sends it and
     uses: file                 # sees `test` only through its committed artifacts
-    needs: [test]
-    with: { op: checksum, src: '{{ artifact "test/report.txt" }}' }
+    needs:
+      - test
+    with:
+      op: checksum
+      src: '{{ artifact "test/report.txt" }}'
 ```
 
 `git` is the first-party `activity-git` image (`images/activity-git/README.md`,
@@ -853,16 +900,16 @@ against the first-party activity images and compiled by the test suite, see
 with the `git` activity into a pin.
 
 `pins:` is a top-level map from pin name to a (possibly empty) options object;
-`pins: { build: {} }` is legal. `pin:` on a task is a bare name and must name a
-declared pin — a name nothing declared is refused at compile, exactly as a
-`needs` entry that names no task is, so a typo cannot silently create a second,
-one-task group. A pin's only option is `timeout_seconds`, the whole
-group's lifetime from the moment its first task is dispatched until its last
-task ends; `0` or absent means derived, as the sum of every member task's own
-wall-clock budget, which is the sequential worst case. The lifetime is declared
-on the pin rather than on a task because it is a property of the group, and
-asking which task's value wins is the shape of question the compiler exists to
-refuse.
+a pin named `build` with an empty options object is legal. `pin:` on a task is
+a bare name and must name a declared pin — a name nothing declared is refused
+at compile, exactly as a `needs` entry that names no task is, so a typo cannot
+silently create a second, one-task group. A pin's only option is
+`timeout_seconds`, the whole group's lifetime from the moment its first task is
+dispatched until its last task ends; `0` or absent means derived, as the sum of
+every member task's own wall-clock budget, which is the sequential worst case.
+The lifetime is declared on the pin rather than on a task because it is a
+property of the group, and asking which task's value wins is the shape of
+question the compiler exists to refuse.
 
 Every task of one pin must name the same pool and the same
 `run_as_orker_user`. A pin cannot span two pools: it is one process out of one
@@ -963,17 +1010,23 @@ tasks:
   - id: submit-training
     uses: ghcr.io/acme/databricks-submit:v2
   - id: training
-    needs: [submit-training]
+    needs:
+      - submit-training
     await:
       timeout_seconds: 21600          # required, 1 s … 30 days
       callback: true                  # optional: mint a one-time callback token at submit
       schema:                         # optional: the `inputs:` vocabulary, checked on resolve
-        model_uri: { type: string, required: true }
-        auc:       { type: number }
+        model_uri:
+          type: string
+          required: true
+        auc:
+          type: number
   - id: evaluate
-    needs: [training]
+    needs:
+      - training
     uses: ghcr.io/acme/evaluate:v5
-    with: { model: "{{ .tasks.training.output.model_uri }}" }
+    with:
+      model: "{{ .tasks.training.output.model_uri }}"
 ```
 
 `await:` takes three keys:
@@ -989,11 +1042,11 @@ tasks:
   bearer token for this await so a caller outside the deployment's API can
   resolve it over plain HTTP (below).
 - `schema` — optional: what a completion must carry, in the `inputs:`
-  vocabulary — a map from key to `{type, required}`, `type` one of `string`,
-  `number`, `boolean`, `object`, `array`. It declares **no `default`**: a
-  completion's `values.json` is stored as the caller's exact bytes, and a
-  default would make the stored object differ from what was sent. Keys the
-  schema does not declare are accepted.
+  vocabulary — a map from key to an object whose only keys are `type` and
+  `required`, `type` one of `string`, `number`, `boolean`, `object`, `array`.
+  It declares **no `default`**: a completion's `values.json` is stored as the
+  caller's exact bytes, and a default would make the stored object differ from
+  what was sent. Keys the schema does not declare are accepted.
 
 An awaited task takes only `id`, `needs`, `condition`, `join` and `await`; every key
 that shapes a container (`uses`, `with`, `command`, `env`, `secrets`,
@@ -1068,7 +1121,8 @@ tasks:
     uses: ghcr.io/acme/list-parts:v1      # writes {"parts": [...]} to values.json
   - id: convert
     uses: ghcr.io/acme/convert:v3
-    needs: [list]
+    needs:
+      - list
     each:
       over: '{{ .tasks.list.output.parts }}'   # required: one reference to an array
       as: part                                 # optional, default "item"
@@ -1079,7 +1133,8 @@ tasks:
       label: "part {{ .each.index }} of {{ .each.count }}"
   - id: merge
     uses: ghcr.io/acme/merge:v1
-    needs: [convert]       # stages every item of convert as files
+    needs:                 # stages every item of convert as files
+      - convert
 ```
 
 `each:` takes four keys:
@@ -1206,15 +1261,19 @@ tasks:
     uses: ghcr.io/acme/build:4
   - id: release
     uses: orkflow:release-block@2.1.0     # version REQUIRED, never floating
-    needs: [build]
+    needs:
+      - build
     with:                                  # the child run's input
       image: '{{ .tasks.build.output.image_digest }}'
   - id: announce
     uses: shell
-    needs: [release]
+    needs:
+      - release
     with:                                  # the child's outputs, read as values
       op: exec
-      command: ["echo", "shipped {{ .tasks.release.output.digest }}"]
+      command:
+        - echo
+        - "shipped {{ .tasks.release.output.digest }}"
 ```
 
 - **One pinned version.** `orkflow:<name>@<version>` — the version is
@@ -1293,7 +1352,8 @@ A task may declare `cache:` to reuse the result of an identical earlier run:
 ```yaml
   - id: featurize
     uses: ghcr.io/acme/featurize:3.1
-    needs: [fetch-data]
+    needs:
+      - fetch-data
     cache:
       enabled: true          # required: the opt-in, and the author's assertion of purity
       ttl_seconds: 86400     # optional: 0/absent = the deployment's cap (ORK_CACHE_MAX_TTL)

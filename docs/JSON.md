@@ -62,8 +62,8 @@ the string, or write the number as JSON writes it:
 | a null key, or a key the readers disagree on | a JSON key is a string | `~:`, `yes:`, `0755:` |
 | a key written twice in one mapping | a JSON object holds each key once | `a: 1` and `a: 2` in one mapping, or `1:` beside `"1":` |
 
-A version-like value in one of these places is data like any other:
-`with: {version: 1.10}` is the number `1.1`, as JSON's own `1.10` is. Quote
+A version-like value in one of these places is data like any other: under
+`with:`, `version: 1.10` is the number `1.1`, as JSON's own `1.10` is. Quote
 it for the text: `version: '1.10'`. An Orkflow's own top-level `version:` is
 not runtime data: it is always read as text, so `version: 1.10` there names
 the version `1.10`.

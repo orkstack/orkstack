@@ -34,11 +34,12 @@ const views = [clip.light, clip.dark];
 	.clip {
 		margin: 0;
 	}
-	/* The recording is 1200×860 and its last line sits on its bottom row. The
-	   box is 110 of its pixels taller, drawn in the terminal's own background
-	   (the VHS theme's is --color-paper-sunken too), and the recording sits at
-	   its top: a paused video's controls band falls on that strip, below the
-	   last line, at every width. */
+	/* The recording is 2400×1720, twice the size it is shown at, and its last
+	   line sits on its bottom row. The box is 220 of its pixels taller, drawn
+	   in the terminal's own background (the VHS theme's is
+	   --color-paper-sunken too), and the recording sits at its top: a paused
+	   video's controls band falls on that strip, below the last line, at
+	   every width. */
 	video,
 	.clip-missing {
 		display: block;

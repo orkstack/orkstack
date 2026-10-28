@@ -18,11 +18,14 @@ Token authentication only, and nothing that writes to a remote.
     tokenSecret: git-token
 - id: checkout
   uses: git
-  needs: [resolve]
+  needs:
+    - resolve
   secrets:
     - name: git-token
       source: env:GIT_TOKEN
-  retry: {maximum_attempts: 3, initial_interval_seconds: 2}
+  retry:
+    maximum_attempts: 3
+    initial_interval_seconds: 2
   with:
     op: clone
     url: https://github.com/acme/app.git

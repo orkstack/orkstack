@@ -11,7 +11,10 @@ no OrkStack SDK, and reads its whole world out of `/orkstack`. Its
   uses: shell
   with:
     op: exec
-    command: ["/bin/sh", "-c", "echo hello"]
+    command:
+      - "/bin/sh"
+      - -c
+      - "echo hello"
 ```
 
 ## Configuration
@@ -33,7 +36,9 @@ element. It is never handed to `sh -c`. A rendered value therefore cannot
 become code, whatever it contains (the contract's §10.1 rule 8):
 
 ```yaml
-command: ["echo", "hello; touch /orkstack/output/artifacts/PWNED"]
+command:
+  - echo
+  - "hello; touch /orkstack/output/artifacts/PWNED"
 ```
 
 prints the payload as data and creates no file.
@@ -42,7 +47,10 @@ If you genuinely want a shell, ask for one in the document, where the boundary
 is visible:
 
 ```yaml
-command: ["sh", "-c", "grep -c ERROR /orkstack/input/artifacts/build/app.log"]
+command:
+  - sh
+  - -c
+  - "grep -c ERROR /orkstack/input/artifacts/build/app.log"
 ```
 
 ## Operations

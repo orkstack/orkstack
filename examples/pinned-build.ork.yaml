@@ -16,7 +16,7 @@
 #     pinned group's work only through the artifact `read` committed. Nothing
 #     outside a pin can see /orkstack/shared.
 #
-# A pin imposes NO ORDERING. The `needs: [write]` edge is what makes `read`
+# A pin imposes NO ORDERING. The `needs:` entry `write` is what makes `read`
 # run second; membership in `build` adds no edge at all. Two members with no
 # edge between them run concurrently, on one host, sharing one directory —
 # which is the author's own concurrency contract with their filesystem, exactly
@@ -70,7 +70,8 @@ tasks:
   - id: read
     uses: shell
     pin: build
-    needs: [write]
+    needs:
+      - write
     run_as_orker_user: true
     with:
       op: exec
@@ -84,7 +85,8 @@ tasks:
   #    through a committed artifact resolved to a local path before it starts.
   - id: checksum
     uses: file
-    needs: [read]
+    needs:
+      - read
     with:
       op: checksum
       src: '{{ artifact "read/version.txt" }}'

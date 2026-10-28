@@ -51,10 +51,15 @@ type selection struct {
 	UIUnitTests  []string       `json:"ui_unit_evidence"`
 	Evidence     []evidenceFor  `json:"evidence"`
 	Removed      []string       `json:"removed_tests"`
-	NotRun       []string       `json:"integration_packages_not_run"`
-	Notes        []string       `json:"notes"`
-	Errors       []string       `json:"errors"`
-	SlowSource   string         `json:"slow_list_source"`
+	// NotEvidence are the tests a rule reached that the allowed-skips list
+	// names: they skip in every proof by design (an opt-in recorder, a
+	// helper subprocess), so none can pass as evidence, and none is made
+	// evidence. Each keeps why it was reached and the list's reason.
+	NotEvidence []notEvidence `json:"not_evidence"`
+	NotRun      []string      `json:"integration_packages_not_run"`
+	Notes       []string      `json:"notes"`
+	Errors      []string      `json:"errors"`
+	SlowSource  string        `json:"slow_list_source"`
 	// RefusedFull names the paths whose scope rule is full: CI can tell
 	// "this needs the full proof" apart from missing evidence (plan §2.1).
 	RefusedFull []string `json:"refused_full"`
@@ -124,6 +129,14 @@ type selectedTest struct {
 type selectedSpec struct {
 	File string `json:"file"`
 	Why  string `json:"why"`
+}
+
+// notEvidence is an allowed skip a rule would have made evidence.
+type notEvidence struct {
+	Package string `json:"package"`
+	Test    string `json:"test"`
+	Why     string `json:"why"`
+	Reason  string `json:"reason"`
 }
 
 // evidenceFor is what proves one changed package or path.
@@ -210,6 +223,7 @@ type selectOptions struct {
 	Specs     []string
 	ScopeFile string
 	SlowFile  string
+	AllowFile string
 }
 
 // multiFlag collects a repeatable flag.
@@ -227,6 +241,7 @@ func cmdSelect(args []string) int {
 	fs.Var(&specs, "specs", "a Playwright spec or UI unit test file naming evidence (repeatable)")
 	fs.StringVar(&o.ScopeFile, "scope", "scripts/proof-scope.tsv", "the scope table")
 	fs.StringVar(&o.SlowFile, "slow", "scripts/proof-slow-tests.txt", "the slow list")
+	fs.StringVar(&o.AllowFile, "allow", "scripts/proof-allowed-skips.txt", "the allowed skips, which are never evidence")
 	outFile := fs.String("out", "", "write the selection JSON here")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -288,7 +303,7 @@ func docsWarning(paths []pathScope) []string {
 // computeSelection runs against the repository in the working directory.
 func computeSelection(o selectOptions) (*selection, error) {
 	sel := &selection{Tier: "feature", BaseRef: o.Base, Integration: map[string]*pkgSelection{},
-		Errors: []string{}, Notes: []string{}, Removed: []string{}, UnitEvidence: []selectedTest{}, Specs: []selectedSpec{}}
+		Errors: []string{}, Notes: []string{}, Removed: []string{}, NotEvidence: []notEvidence{}, UnitEvidence: []selectedTest{}, Specs: []selectedSpec{}}
 	sel.Inputs.Tests = append([]string{}, o.Tests...)
 	sel.Inputs.Specs = append([]string{}, o.Specs...)
 	if sel.Inputs.Tests == nil {
@@ -328,13 +343,17 @@ func computeSelection(o selectOptions) (*selection, error) {
 		return nil, err
 	}
 	sel.SlowSource = slowSource
+	allowed, err := readAllowlist(o.AllowFile)
+	if err != nil {
+		return nil, err
+	}
 	paths, err := diffPaths(sel.MergeBase)
 	if err != nil {
 		return nil, err
 	}
 	in := selectInput{
 		root: root, mergeBase: sel.MergeBase, paths: paths, scope: scope, slow: slow,
-		tests: o.Tests, specs: o.Specs,
+		tests: o.Tests, specs: o.Specs, allowed: allowed,
 		readNew: func(p string) []byte {
 			b, err := os.ReadFile(filepath.Join(root, p))
 			if err != nil {
@@ -389,10 +408,12 @@ type selectInput struct {
 	slow      map[testKey]slowEntry
 	tests     []string
 	specs     []string
-	readNew   func(p string) []byte
-	readOld   func(p string) []byte
-	listOld   func(dir string) []string
-	deps      func() (depIndex, []string, error)
+	// allowed is the allowed-skips list: tests that skip in every proof.
+	allowed []allowedSkip
+	readNew func(p string) []byte
+	readOld func(p string) []byte
+	listOld func(dir string) []string
+	deps    func() (depIndex, []string, error)
 	// integrationPkgs lists the packages with an integration suite.
 	integrationPkgs func() ([]pkgInfo, error)
 	// allPkgs lists every package of the module, with its directory.
@@ -526,13 +547,43 @@ func selectInto(sel *selection, in selectInput) error {
 		declaredCache[dir] = [2]map[string]bool{u, i}
 		return u, i
 	}
+	// An allowed skip skips in every proof by design (an opt-in recorder, a
+	// helper subprocess), so it could never pass as evidence: no rule makes
+	// it evidence, and each one a rule reaches is listed as not evidence. An
+	// entry covers its own suite, or both when it says any.
+	allowedSkips := map[testKey][]allowedSkip{}
+	for _, a := range in.allowed {
+		k := testKey{a.Package, a.Test}
+		allowedSkips[k] = append(allowedSkips[k], a)
+	}
+	allowedFor := func(suite, pkg, test string) (string, bool) {
+		for _, a := range allowedSkips[testKey{pkg, test}] {
+			if a.Suite == suite || a.Suite == "any" {
+				return a.Reason, true
+			}
+		}
+		return "", false
+	}
+	notEvidenceSeen := map[testKey]bool{}
+	notEvidenceFor := func(pkg, test, why, reason string) {
+		if k := (testKey{pkg, test}); !notEvidenceSeen[k] {
+			notEvidenceSeen[k] = true
+			sel.NotEvidence = append(sel.NotEvidence, notEvidence{Package: pkg, Test: test, Why: why, Reason: reason})
+		}
+	}
 	integEvidence := map[string]map[string]string{} // import path -> test -> why
 	// integReached marks the evidence that is there only because it reaches
 	// a changed helper, type or variable; any other reason (its own source
 	// changed, --tests, a changed tool or example) clears the mark and wins
 	// as the reason, because such evidence always runs.
 	integReached := map[string]map[string]bool{}
-	addInteg := func(pkg, test, why string, reached bool) {
+	// addInteg and addUnit report whether the test is evidence now: an
+	// allowed skip never is.
+	addInteg := func(pkg, test, why string, reached bool) bool {
+		if reason, ok := allowedFor(cfgIntegration, pkg, test); ok {
+			notEvidenceFor(pkg, test, why, reason)
+			return false
+		}
 		if integEvidence[pkg] == nil {
 			integEvidence[pkg] = map[string]string{}
 			integReached[pkg] = map[string]bool{}
@@ -540,20 +591,26 @@ func selectInto(sel *selection, in selectInput) error {
 		if _, ok := integEvidence[pkg][test]; !ok {
 			integEvidence[pkg][test] = why
 			integReached[pkg][test] = reached
-			return
+			return true
 		}
 		if integReached[pkg][test] && !reached {
 			integEvidence[pkg][test] = why
 			integReached[pkg][test] = false
 		}
+		return true
 	}
 	unitSeen := map[testKey]bool{}
-	addUnit := func(pkg, test, why string) {
+	addUnit := func(pkg, test, why string) bool {
+		if reason, ok := allowedFor(cfgUnit, pkg, test); ok {
+			notEvidenceFor(pkg, test, why, reason)
+			return false
+		}
 		k := testKey{pkg, test}
 		if !unitSeen[k] {
 			unitSeen[k] = true
 			sel.UnitEvidence = append(sel.UnitEvidence, selectedTest{Package: pkg, Test: test, Why: why})
 		}
+		return true
 	}
 	wholeIntegration := map[string]string{}
 	for _, dir := range dirs {
@@ -640,6 +697,20 @@ func selectInto(sel *selection, in selectInput) error {
 			sel.Errors = append(sel.Errors, fmt.Sprintf("--tests %q matches no test declared in %s", spec, dir))
 			continue
 		}
+		var skipping []string
+		for _, t := range matched {
+			suite := cfgUnit
+			if integDecl[t] {
+				suite = cfgIntegration
+			}
+			if _, ok := allowedFor(suite, pkg, t); ok {
+				skipping = append(skipping, t)
+			}
+		}
+		if len(skipping) == len(matched) {
+			sel.Errors = append(sel.Errors, fmt.Sprintf("--tests %q names only allowed skips (%s), which skip in every proof and are never evidence (scripts/proof-allowed-skips.txt): name a test that runs",
+				spec, strings.Join(skipping, ", ")))
+		}
 		for _, t := range matched {
 			if integDecl[t] {
 				addInteg(pkg, t, "named by --tests "+spec, false)
@@ -696,15 +767,19 @@ func selectInto(sel *selection, in selectInput) error {
 				continue
 			}
 			unitDecl, integDecl := testsDeclared(p.Dir, files)
+			// n counts the evidence only: an allowed skip that reads the
+			// needle never runs it.
 			for t, why := range hits {
 				w := label + ": " + why
 				switch {
 				case integDecl[t]:
-					addInteg(p.ImportPath, t, w, false)
-					n++
+					if addInteg(p.ImportPath, t, w, false) {
+						n++
+					}
 				case unitDecl[t]:
-					addUnit(p.ImportPath, t, w)
-					n++
+					if addUnit(p.ImportPath, t, w) {
+						n++
+					}
 				}
 			}
 		}
@@ -759,6 +834,14 @@ func selectInto(sel *selection, in selectInput) error {
 	if len(sel.Specs) > 0 {
 		sel.Gates.UICheck, sel.Gates.UIUnit = true, true
 	}
+
+	sort.Slice(sel.NotEvidence, func(i, j int) bool {
+		a, b := sel.NotEvidence[i], sel.NotEvidence[j]
+		if a.Package != b.Package {
+			return a.Package < b.Package
+		}
+		return a.Test < b.Test
+	})
 
 	// ---- regression set and evidence requirement -------------------------
 	var deps depIndex

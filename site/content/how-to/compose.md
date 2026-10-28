@@ -9,16 +9,21 @@ In [`examples/composed-release.ork.yaml`](https://github.com/orkstack/orkstack/b
 ```yaml
   - id: release
     uses: orkflow:release-block@0.1.0
-    needs: [build]
+    needs:
+      - build
     with:
       image: '{{ .tasks.build.output.value }}'
 
   - id: announce
     uses: shell
-    needs: [release]
+    needs:
+      - release
     with:
       op: exec
-      command: ["sh", "-c", "echo released {{ sh .tasks.release.output.digest }} at {{ sh .tasks.release.output.url }}"]
+      command:
+        - sh
+        - -c
+        - "echo released {{ sh .tasks.release.output.digest }} at {{ sh .tasks.release.output.url }}"
 ```
 
 The block declares those two outputs in [`examples/release-block.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/release-block.ork.yaml):

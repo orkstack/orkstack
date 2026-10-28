@@ -15,7 +15,9 @@ namespace: payments
 
 settings:
   default_pool: main
-  allowed_pools: [main, gpu]
+  allowed_pools:
+    - main
+    - gpu
   run_retention: 168h
 
 schedules:
@@ -36,7 +38,9 @@ webhooks:
   etl-loader:
     url: https://hooks.acme.dev/etl
     orkflow: nightly-etl
-    events: [TASK_SUCCEEDED, RUN_FAILED]
+    events:
+      - TASK_SUCCEEDED
+      - RUN_FAILED
     secret_env: ETL_WEBHOOK_SECRET
 ```
 

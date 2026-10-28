@@ -11,13 +11,15 @@ In [`examples/each-fan-out.ork.yaml`](https://github.com/orkstack/orkstack/blob/
 ```yaml
   - id: convert
     uses: shell
-    needs: [list]
+    needs:
+      - list
     each:
       over: '{{ .tasks.list.output.result }}'
       as: part
       max_items: 50
       max_parallel: 2
-    retry: { maximum_attempts: 2 }
+    retry:
+      maximum_attempts: 2
     with:
       op: script
       interpreter: sh

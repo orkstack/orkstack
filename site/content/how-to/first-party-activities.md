@@ -16,7 +16,8 @@ An excerpt from [`examples/hello.ork.yaml`](https://github.com/orkstack/orkstack
 
   - id: transform
     uses: shell
-    needs: [fetch]
+    needs:
+      - fetch
     with:
       op: exec
       command:
@@ -29,7 +30,8 @@ An excerpt from [`examples/hello.ork.yaml`](https://github.com/orkstack/orkstack
 
   - id: verify
     uses: file
-    needs: [transform]
+    needs:
+      - transform
     with:
       op: checksum
       src: '{{ artifact "transform/summary.txt" }}'
@@ -87,11 +89,14 @@ An artifact is a file. Give it a name with `as:`, where the image accepts one. A
 ```yaml
 - id: checkout
   uses: git
-  needs: [resolve]
+  needs:
+    - resolve
   secrets:
     - name: git-token
       source: env:GIT_TOKEN
-  retry: {maximum_attempts: 3, initial_interval_seconds: 2}
+  retry:
+    maximum_attempts: 3
+    initial_interval_seconds: 2
   with:
     op: clone
     url: https://github.com/acme/app.git

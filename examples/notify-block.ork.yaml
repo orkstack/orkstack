@@ -52,8 +52,11 @@ tasks:
   # and is retried; an answer of any status is data.
   - id: post
     uses: http
-    needs: [body]
-    retry: { maximum_attempts: 3, initial_interval_seconds: 2 }
+    needs:
+      - body
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 2
     with:
       op: post
       url: '{{ .inputs.url }}'

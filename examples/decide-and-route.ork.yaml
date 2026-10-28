@@ -64,37 +64,52 @@ tasks:
   #    so an enum compared with `eq` is the safe form.
   - id: canary
     uses: shell
-    needs: [decide]
+    needs:
+      - decide
     condition: '{{ eq .tasks.decide.output.result.route "canary" }}'
     with:
       op: eval
-      command: ["printf", "%s", "canary: 5%, then 50%, then 100% of traffic"]
+      command:
+        - printf
+        - "%s"
+        - "canary: 5%, then 50%, then 100% of traffic"
 
   - id: direct
     uses: shell
-    needs: [decide]
+    needs:
+      - decide
     condition: '{{ eq .tasks.decide.output.result.route "direct" }}'
     with:
       op: eval
-      command: ["printf", "%s", "direct: all traffic at once"]
+      command:
+        - printf
+        - "%s"
+        - "direct: all traffic at once"
 
   - id: hold
     uses: shell
-    needs: [decide]
+    needs:
+      - decide
     condition: '{{ eq .tasks.decide.output.result.route "hold" }}'
     with:
       op: eval
-      command: ["printf", "%s", "hold: a change freeze is on, nothing rolls out"]
+      command:
+        - printf
+        - "%s"
+        - "hold: a change freeze is on, nothing rolls out"
 
   # 3. Combining is still only reading: `and` of an enum test and a JSON
   #    boolean rendered bare.
   - id: notify-owner
     uses: shell
-    needs: [decide]
+    needs:
+      - decide
     condition: '{{ and (ne .tasks.decide.output.result.route "hold") .tasks.decide.output.result.notify }}'
     with:
       op: exec
-      command: ["echo", "the change is not low-risk: telling its owner"]
+      command:
+        - echo
+        - "the change is not low-risk: telling its owner"
 
   # 4. The re-join. Two of the three branches are always SKIPPED, so the
   #    default join (all_succeeded) would skip this task too; none_failed
@@ -103,7 +118,10 @@ tasks:
   #    with the guard form `if index .tasks "<id>"`, which never fails.
   - id: report
     uses: json
-    needs: [canary, direct, hold]
+    needs:
+      - canary
+      - direct
+      - hold
     join: none_failed
     network: none
     with:

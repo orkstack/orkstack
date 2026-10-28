@@ -28,6 +28,9 @@ func printSelection(w io.Writer, sel *selection) {
 		}
 		fmt.Fprintf(w, "  integration %s: %d evidence, %d regression, %d slow-omitted\n", relDir(p), len(ps.Evidence), len(ps.Regression), len(ps.SlowOmitted))
 	}
+	for _, n := range sel.NotEvidence {
+		fmt.Fprintf(w, "  not evidence: %s.%s (an allowed skip: %s)\n", relDir(n.Package), n.Test, n.Reason)
+	}
 	for _, n := range sel.Notes {
 		fmt.Fprintf(w, "  note: %s\n", n)
 	}
@@ -202,6 +205,14 @@ func featureReport(w io.Writer, sel *selection, o outcomes, specs map[string]str
 	}
 	for _, n := range sel.NotRun {
 		fmt.Fprintf(w, "- not run: `%s`\n", n)
+	}
+
+	if len(sel.NotEvidence) > 0 {
+		fmt.Fprintf(w, "\n### Not evidence: allowed skips\n\n")
+		fmt.Fprintf(w, "A rule reached these, and scripts/proof-allowed-skips.txt names them: they skip in every proof by design, so none can pass as evidence. A package whose regression set holds one still runs it.\n\n")
+		for _, n := range sel.NotEvidence {
+			fmt.Fprintf(w, "- %s.%s — %s; %s\n", relDir(n.Package), n.Test, n.Why, n.Reason)
+		}
 	}
 
 	fmt.Fprintf(w, "\n### Playwright specs\n\n")

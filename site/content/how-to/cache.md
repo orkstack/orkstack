@@ -9,9 +9,12 @@ In [`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/bl
 ```yaml
   - id: tmpl
     uses: file
-    needs: [clone]
+    needs:
+      - clone
     network: none
-    cache: { enabled: true, ttl_seconds: 86400 }
+    cache:
+      enabled: true
+      ttl_seconds: 86400
     with:
       op: untar
       src: '{{ artifact "clone/src.tar.gz" }}'

@@ -12,7 +12,9 @@ stdout is `activity-template: gomplate version 4.3.3`.
 ```yaml
 - id: config
   uses: template
-  needs: [seed, data]
+  needs:
+    - seed
+    - data
   network: none
   with:
     op: render
@@ -145,10 +147,10 @@ unqualified: `default`, `quote`, `squote`, `indent`, `toUpper`, `toLower`,
 - **Numbers from datasource files render as written** (`1000000`,
   `12345678901234567890`). A templated `values` leaf is a **string**, and a
   number templated into one arrives in Go's spelling — `1000000` as `1e+06` —
-  so numbers a template prints are read from a datasource file
-  (`datasources: {up: upstream/<id>/values.json}`), never from a templated
-  `values` leaf. Inside a fan-out item, `datasources: {task: task.json}` gives
-  `(ds "task").each.item` as exact JSON.
+  so numbers a template prints are read from a datasource file (a
+  `datasources:` entry such as `up: upstream/<id>/values.json`), never from a
+  templated `values` leaf. Inside a fan-out item, a `datasources:` entry
+  `task: task.json` gives `(ds "task").each.item` as exact JSON.
 - **YAML coerces like YAML** (`b: 0777` reads as `511`). Data a *system*
   produced should be JSON; YAML is for files a person authored.
 - **Never render a secret into a file**: a rendered artifact lives in object
@@ -246,7 +248,7 @@ runtime adds (under Docker, `HOSTNAME`).
 | Image default | What it does |
 |---|---|
 | `HOME=/orkstack/tmp` | a writable, empty, per-attempt home instead of the runtime's read-only `/` |
-| `TZ=UTC` | local time is UTC unless your task says otherwise; the image ships zone data, so `env: {TZ: Europe/Berlin}` really means Berlin |
+| `TZ=UTC` | local time is UTC unless your task says otherwise; the image ships zone data, so `TZ: Europe/Berlin` under `env:` really means Berlin |
 
 Every variable is readable through `getenv`, `env.Getenv` and
 `env.ExpandEnv` — honoured, with the caching consequence above (a variable

@@ -26,7 +26,7 @@ const notes = [
 		href: route('docs/examples'),
 	},
 	{
-		line: lineOf(/needs: \[list\]/),
+		line: lineOf(/^\s+needs:/),
 		key: 'needs',
 		text: 'The only thing that orders tasks. <code>convert</code> starts when <code>list</code> has succeeded; tasks without needs start at once, in parallel.',
 		href: route('docs/reference/orkflow-keys') + '#task',
@@ -57,7 +57,7 @@ const notes = [
 	},
 ].map((n, i) => ({ ...n, n: i + 1 }));
 
-const run = shot('ui-run-finished');
+const run = shot('ui-run-page');
 const code = example.lines.join('\n');
 ---
 
@@ -111,7 +111,7 @@ const code = example.lines.join('\n');
 		</ol>
 	</div>
 	<DrawingFrame caption={`${example.name} @ ${example.version} · a finished run`} class="example-run">
-		<ThemeShot shot={run} sizes="(min-width: 1280px) 1240px, 100vw" />
+		<ThemeShot shot={run} sizes={`(min-width: 1700px) ${run.width}px, calc(100vw - 64px)`} />
 		<p slot="after" class="frame-note">{run.caption}</p>
 	</DrawingFrame>
 </section>
