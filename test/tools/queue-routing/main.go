@@ -190,13 +190,13 @@ func run(
 
 // routesTo reads the queue's own view: the current deployment version this
 // physical queue's tasks are dispatched to. See the package comment for why it
-// is the default api mode and why the task queue type is part of the question.
+// is the default api mode (the request leaves the deprecated api mode unset)
+// and why the task queue type is part of the question.
 func routesTo(ctx context.Context, c client.Client, namespace string, queue physicalQueue) (string, error) {
 	described, err := c.WorkflowService().DescribeTaskQueue(ctx, &workflowservice.DescribeTaskQueueRequest{
 		Namespace:     namespace,
 		TaskQueue:     &taskqueuepb.TaskQueue{Name: queue.name, Kind: enumspb.TASK_QUEUE_KIND_NORMAL},
 		TaskQueueType: queue.kind,
-		ApiMode:       enumspb.DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED,
 	})
 	if err != nil {
 		return "", fmt.Errorf("describe task queue %s: %w", queue, err)
