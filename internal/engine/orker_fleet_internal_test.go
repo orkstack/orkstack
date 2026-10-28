@@ -19,22 +19,16 @@ import (
 func TestLivePollerRecords_KeepsIdentitiesAndTheirNewestLastSeen(t *testing.T) {
 	now := time.Now()
 	older, newer := now.Add(-20*time.Second), now.Add(-2*time.Second)
-	description := client.TaskQueueDescription{
-		VersionsInfo: map[string]client.TaskQueueVersionInfo{
-			"": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-				client.TaskQueueTypeActivity: {Pollers: []client.TaskQueuePollerInfo{
-					poller("orker-a", older),
-					poller("orker-stale", now.Add(-5*time.Minute)),
-					poller("", newer),
-				}},
-			}},
-			"v2": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-				client.TaskQueueTypeActivity: {Pollers: []client.TaskQueuePollerInfo{
-					poller("orker-a", newer),
-				}},
-			}},
-		},
-	}
+	description := sdkDescription(map[string]map[client.TaskQueueType][]client.TaskQueuePollerInfo{
+		"": {client.TaskQueueTypeActivity: {
+			poller("orker-a", older),
+			poller("orker-stale", now.Add(-5*time.Minute)),
+			poller("", newer),
+		}},
+		"v2": {client.TaskQueueTypeActivity: {
+			poller("orker-a", newer),
+		}},
+	})
 	records := livePollerRecords(description, now, DefaultPollerFreshness)
 	if len(records) != 1 || records[0].Identity != "orker-a" || !records[0].LastSeen.Equal(newer) {
 		t.Fatalf("livePollerRecords = %+v; want one orker-a at its newer timestamp", records)

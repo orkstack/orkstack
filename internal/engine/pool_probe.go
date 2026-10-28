@@ -88,6 +88,7 @@ func activityDescription(described *workflowservice.DescribeTaskQueueResponse) c
 		}
 		pollers = append(pollers, info)
 	}
+	//lint:ignore SA1019 the SDK's VersioningInfo is the routing state and holds no pollers; VersionsInfo is the only field the SDK has for a channel's poller records
 	return client.TaskQueueDescription{VersionsInfo: map[string]client.TaskQueueVersionInfo{
 		"": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
 			client.TaskQueueTypeActivity: {Pollers: pollers},
@@ -157,6 +158,7 @@ func pollerRecords(description client.TaskQueueDescription, now time.Time, withi
 	// A record with no identity cannot be matched against any other, so it
 	// counts on its own rather than collapsing every anonymous record into one.
 	var anonymous anonymousPollers
+	//lint:ignore SA1019 the SDK's VersioningInfo is the routing state and holds no pollers; VersionsInfo is the only field the SDK has for a channel's poller records
 	for _, version := range description.VersionsInfo {
 		info, ok := version.TypesInfo[client.TaskQueueTypeActivity]
 		if !ok {

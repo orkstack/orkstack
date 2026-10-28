@@ -441,6 +441,7 @@ func awaitActivityPoller(ctx context.Context, t *testing.T, temporalClient clien
 		})
 		lastErr = err
 		if err == nil {
+			//lint:ignore SA1019 the SDK's VersioningInfo is the routing state and holds no pollers; VersionsInfo is the only field the SDK has for a channel's poller records
 			for _, version := range description.VersionsInfo {
 				if len(version.TypesInfo[client.TaskQueueTypeActivity].Pollers) > 0 {
 					t.Logf("Orker activity poller ready on %s", queue)
