@@ -241,7 +241,7 @@ func refs(v any, out *[]string) {
 	}
 }
 
-func TestSchemas_DispatcherHoldsBothKinds(t *testing.T) {
+func TestSchemas_DispatcherHoldsEveryKind(t *testing.T) {
 	all := trees(t)
 	dispatcher := all[schemas.DispatcherFile]
 	allOf := dispatcher["allOf"].([]any)
@@ -251,7 +251,15 @@ func TestSchemas_DispatcherHoldsBothKinds(t *testing.T) {
 		kind := clause["if"].(map[string]any)["properties"].(map[string]any)["kind"].(map[string]any)["const"].(string)
 		kinds[kind] = clause["then"].(map[string]any)["$ref"].(string)
 	}
-	want := map[string]string{dsl.KindOrkflow: "#/definitions/orkflow", dsl.KindAutomation: "#/definitions/automation"}
+	want := map[string]string{
+		dsl.KindOrkflow:           "#/definitions/orkflow",
+		dsl.KindAutomation:        "#/definitions/automation",
+		dsl.KindActivityInterface: "#/definitions/activityinterface",
+	}
+	if got := stringsOf(dispatcher["properties"].(map[string]any)["kind"].(map[string]any)["enum"]); !reflect.DeepEqual(got,
+		[]string{dsl.KindActivityInterface, dsl.KindAutomation, dsl.KindOrkflow}) {
+		t.Errorf("the dispatcher's kind enum is %v", got)
+	}
 	if !reflect.DeepEqual(kinds, want) {
 		t.Fatalf("the dispatcher selects %v, want %v", kinds, want)
 	}

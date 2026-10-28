@@ -31,9 +31,133 @@
       "then": {
         "$ref": "#/definitions/automation"
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "ActivityInterface"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "$ref": "#/definitions/activityinterface"
+      }
     }
   ],
   "definitions": {
+    "activityinterface": {
+      "additionalProperties": false,
+      "description": "An image's `with:` contract (kind: ActivityInterface, docs/ACTIVITY_IMAGES.md): `orkctl activity interface pack` packs it into the image's `org.orkstack.activity.interface` label, which the engine reads.",
+      "properties": {
+        "apiVersion": {
+          "const": "orkstack/v1",
+          "description": "The document format's version: exactly `orkstack/v1`."
+        },
+        "defaultOp": {
+          "description": "The op the image runs when `op` is absent; with `ops` and no `defaultOp`, `op` is required.",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "type": "string"
+        },
+        "fields": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/activityinterface.fields"
+            }
+          ],
+          "description": "The top-level `with:` keys every op reads (for an image with no `op`, the whole `with:` block)."
+        },
+        "kind": {
+          "const": "ActivityInterface",
+          "description": "Exactly `ActivityInterface`: an image's `with:` contract, packed into its `org.orkstack.activity.interface` label at build time."
+        },
+        "ops": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/activityinterface.op"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "The image follows the `op` convention: each op's name, and the keys it reads beside `fields`. `op` is then implied and must not appear in `fields`.",
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "values": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/activityinterface.fields"
+            }
+          ],
+          "description": "Documentary: the keys the image writes to `values.json`."
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind"
+      ],
+      "title": "OrkStack activity interface (orkstack/v1)",
+      "type": "object"
+    },
+    "activityinterface.field": {
+      "additionalProperties": false,
+      "description": "One `with:` key: `type`, `required` and a documentary `default` — the vocabulary an Orkflow's `inputs:` has, and not one word more.",
+      "properties": {
+        "default": {
+          "description": "Documentary: what the image assumes when the key is absent. Never written into `with:`; not null, and of the declared type."
+        },
+        "required": {
+          "description": "The image refuses to run without this key. A key with a default is never required.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "One of string, number, boolean, object, array, or several joined by `|`.",
+          "pattern": "^(string|number|boolean|object|array)(\\|(string|number|boolean|object|array))*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "activityinterface.fields": {
+      "additionalProperties": {
+        "$ref": "#/definitions/activityinterface.field"
+      },
+      "maxProperties": 256,
+      "propertyNames": {
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "activityinterface.op": {
+      "additionalProperties": false,
+      "description": "One op: the keys it reads beside `fields`.",
+      "properties": {
+        "fields": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/activityinterface.fields"
+            }
+          ],
+          "description": "The keys this op reads in addition to `fields`; a key is declared once, shared or under an op."
+        }
+      },
+      "type": "object"
+    },
     "automation": {
       "additionalProperties": false,
       "description": "One namespace's settings, schedules, triggers and webhooks, declared by name (docs/AUTOMATION.md). `orkctl apply --dry-run` plans it against what the namespace holds; a schema checks only its shape.",
@@ -1916,13 +2040,14 @@
       "type": "object"
     }
   },
-  "description": "An Orkflow (kind: Orkflow, docs/DSL.md) or an automation document (kind: Automation, docs/AUTOMATION.md); apiVersion and kind select the schema.",
+  "description": "An Orkflow (kind: Orkflow, docs/DSL.md), an automation document (kind: Automation, docs/AUTOMATION.md) or an activity interface (kind: ActivityInterface, docs/ACTIVITY_IMAGES.md); apiVersion and kind select the schema.",
   "properties": {
     "apiVersion": {
       "const": "orkstack/v1"
     },
     "kind": {
       "enum": [
+        "ActivityInterface",
         "Automation",
         "Orkflow"
       ]

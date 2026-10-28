@@ -18,8 +18,8 @@ func TestGenschemas_WritesTheCommittedSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	written := strings.Fields(out.String())
-	if len(written) != 3 {
-		t.Fatalf("wrote %v, want the three schemas", written)
+	if len(written) != 4 {
+		t.Fatalf("wrote %v, want the four schemas", written)
 	}
 	for _, path := range written {
 		got, err := os.ReadFile(filepath.Join(dest, path))
