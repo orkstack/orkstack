@@ -44,7 +44,13 @@ func newSlowDockerShim(t *testing.T, realDocker string) *slowDockerShim {
 	script := `#!/bin/sh
 S='` + dir + `'
 echo "$*" >> "$S/calls"
-if [ "$1" = image ] && [ -e "$S/inspecthang" ]; then exec sleep 300; fi
+if [ "$1" = image ]; then
+  if [ -e "$S/inspecthang" ]; then exec sleep 300; fi
+  if [ "$2" = inspect ]; then
+    if [ -e "$S/present" ]; then echo "sha256:0000000000000000000000000000000000000000000000000000000000000000"; exit 0; fi
+    echo x >> "$S/realinspects"
+  fi
+fi
 if [ "$1" = run ]; then
   n=0; if [ -e "$S/runs" ]; then n=$(cat "$S/runs"); fi
   n=$((n+1)); echo "$n" > "$S/runs"
@@ -88,6 +94,20 @@ func (s *slowDockerShim) runs() int {
 	return n
 }
 
+// realInspects reports how many `image inspect`s the shim passed on to the
+// real daemon.
+func (s *slowDockerShim) realInspects() int {
+	s.t.Helper()
+	raw, err := os.ReadFile(filepath.Join(s.dir, "realinspects"))
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return strings.Count(string(raw), "x")
+}
+
 // probeContainers returns, in order, the --name of every probe `docker run`
 // and the container every `docker rm --force` named.
 func (s *slowDockerShim) probeContainers() (ran, removed []string) {
@@ -127,12 +147,17 @@ func (s *slowDockerShim) probeContainers() (ran, removed []string) {
 // container the daemon refused is still the work root's fault and is not
 // retried.
 //
-// Only the first case needs the real daemon to be fast, and its budget is 90 s,
-// nearly three times the longest start the incident behind the budget saw
-// (32 s), so it fails for a daemon that is slower still and not for a busy
-// host. The case that overruns once has the shim answer the retry itself: its
-// budget is what the hung first attempt costs in wall time, and a real start
-// inside a budget that short would measure the host, not the probe.
+// Only the first case reaches the real daemon, for the image inspect and for
+// the run, and its budget is 90 s, nearly three times the longest start the
+// incident behind the budget saw (32 s), so it fails for a daemon that is
+// slower still and not for a busy host. Every other case has a budget of a few
+// seconds that is spent on the step it makes slow, and the shim answers
+// everything else itself: the probe asks `image inspect` under the same
+// budget, and a real inspect that a busy daemon answered late would fail the
+// case for a reason it does not test. The case that overruns once has the shim
+// answer the retry as well: its budget is what the hung first attempt costs in
+// wall time, and a real start inside a budget that short would measure the
+// host, not the probe.
 func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *testing.T) {
 	requireDocker(t)
 	realDocker, err := exec.LookPath("docker")
@@ -159,13 +184,19 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 		budget     time.Duration
 		wantRuns   int
 		wantReason string // "" boots
+		// realBind is the one case that proves a real bind: it alone reaches
+		// the real daemon, for the image inspect and for the run. Every other
+		// case has the shim answer the inspect itself, because its budget is
+		// short and the step it makes slow is not the inspect, and an inspect
+		// that a busy daemon answers late would fail it for the wrong reason.
+		realBind bool
 		// wantRemoved is how many probe containers Boot force-removed: one
 		// per attempt that overran its budget.
 		wantRemoved int
 	}{
 		{
 			name:  "a start slower than usual but inside its budget boots without a retry",
-			flags: map[string]string{"delay": "2"}, budget: 90 * time.Second, wantRuns: 1,
+			flags: map[string]string{"delay": "2"}, budget: 90 * time.Second, wantRuns: 1, realBind: true,
 		},
 		{
 			name:  "a start that overruns once boots on the retry",
@@ -198,6 +229,9 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 			shim := newSlowDockerShim(t, realDocker)
 			for flag, content := range tt.flags {
 				shim.set(flag, content)
+			}
+			if !tt.realBind {
+				shim.set("present", "")
 			}
 			workRoot, err := os.MkdirTemp(workParent, proof.WorkRootPattern("ork-bindprobe"))
 			if err != nil {
@@ -243,6 +277,9 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 			}
 			if got := shim.runs(); got != tt.wantRuns {
 				t.Errorf("the probe ran its container %d times; want %d", got, tt.wantRuns)
+			}
+			if got := shim.realInspects(); tt.realBind != (got > 0) {
+				t.Errorf("%d `image inspect`s reached the real daemon; only the case that proves a real bind (this one: %v) should reach it", got, tt.realBind)
 			}
 			ran, removed := shim.probeContainers()
 			if len(removed) != tt.wantRemoved {
