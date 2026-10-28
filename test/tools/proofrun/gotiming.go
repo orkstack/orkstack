@@ -17,7 +17,9 @@ import (
 // the shard's word for it:
 //
 //   - the part is a CI `integration:K` part whose runner has fewer CPUs than
-//     the row's reference, never the `local` part;
+//     the row's reference, never the `local` part, and the proof is not the
+//     release tier, whose gate enforces the budgets on the reference class
+//     (merge.go runnerSizeRefusal);
 //   - the test's ledger entry is a plain failure (no crash reason, no failing
 //     subtest) and no other test of its job did not pass, so the test and
 //     nothing else failed;
@@ -112,6 +114,9 @@ func (m *merger) goHostSpeed(part string, reading partReading, shard ledger) map
 func (m *merger) goTimingExcusal(part string, partDir string, cpus int, shard ledger, e entry) ([]hostSpeedFailure, string) {
 	if !isCIIntegrationPart(part) {
 		return nil, "only a CI integration part may excuse a runner-size miss"
+	}
+	if why := m.runnerSizeRefusal(); why != "" {
+		return nil, why
 	}
 	rows := map[string]hostBound{}
 	for _, b := range m.hostSpeedExcusing.testRows(e.Package, e.Test) {

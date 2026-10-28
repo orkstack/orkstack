@@ -25,7 +25,9 @@ include breaking changes, and each is marked **BREAKING**.
   output the ledger entry now keeps (the last lines a failing test printed)
   ends in exactly the helper's lines; and every recorded bound equals the
   row's. A failing test with no record, a local proof, a runner as large as
-  the reference and any other failure still fail the proof. The rows are the
+  the reference, the release tier (the pre-release gate enforces the budgets
+  on the reference class, so this also ends the excusal of the UI rows there)
+  and any other failure still fail the proof. The rows are the
   live `GetRun` p95 (2 s on 16 CPUs) of the three reduced-ceiling soak tests,
   which missed at 2.014 s on 4 vCPUs in run 40593609129, and the run page at
   the reduced ceiling (5 s on 16 CPUs), which missed at 9,485 ms in run

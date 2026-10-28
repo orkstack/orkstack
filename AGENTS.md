@@ -897,9 +897,12 @@ proof of the exact commit it names.
 
 The merge gate's absolute wall-clock budgets — the soaks' `GetRun` p95, the run
 page's 5 s — were calibrated on the 16-CPU reference host and are enforced
-there: in every local full proof, the local nightly and the pre-release gate.
-On a CI runner with fewer CPUs a miss of one is a recorded known gap, never a
-pass and never a widened bound, and only under a row of
+there: in every local proof of any tier, and in the pre-release gate wherever
+it runs, which excuses no runner-size miss, so a tag rests on budgets that
+held on the reference class (a CI release proof needs runners as large as the
+reference, or `make proof-release` runs on the reference host). In the merge
+gate and the nightly, on a CI runner with fewer CPUs a miss of one is a
+recorded known gap, never a pass and never a widened bound, and only under a row of
 `scripts/proof-host-speed.tsv` that the user approved and the base carries
 identically; the merger derives each excusal itself from the part's own
 records (docs/PROOFS.md §12). A count, a size, a history share, a

@@ -742,7 +742,9 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   that is the only one of its job not to pass, the test's own timing record
   says it failed nothing else, the output the entry kept ends in exactly the
   helper's timing-miss lines, and each recorded bound equals the base row's.
-  A shard's own excusal, and a failing test with no record, excuse nothing.
+  A shard's own excusal, and a failing test with no record, excuse nothing,
+  and the release tier excuses no runner-size miss at all: its gate enforces
+  the budgets on the reference class.
 - **Unit gate.** A quarantined-only unit exit is dropped only when the
   package's own output is a plain test failure.
 - **Lost runners.** The lost-runner match reads every check-run annotation of
@@ -1198,8 +1200,11 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   the failure left running, so none is taken.
 - **Runner-size known gaps.** A UI spec's 5 s wall-clock budget cannot hold on
   a 2-vCPU runner, nor the soaks' 2 s `GetRun` budget on a 4-vCPU one: both
-  were calibrated on the 16-CPU reference host and are enforced there (every
-  local full proof, the local nightly, the pre-release gate).
+  were calibrated on the 16-CPU reference host and are enforced there: in
+  every local proof of any tier, and in the pre-release gate wherever it runs,
+  because the release tier excuses no runner-size miss (a CI release proof
+  needs runners as large as the reference, or `make proof-release` runs on
+  the reference host).
   `scripts/proof-host-speed.tsv` names each such test, with the one assertion
   whose failure is its runner-size miss, its bound and its reference CPU
   count. A UI row, named by its spec file and title, declares either
@@ -1211,8 +1216,9 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   "Known gaps: runner size"), not a merge-blocking failure, only when all of
   these hold: the outcome is `failed`; the failure is exactly the row's
   assertion; the part is a CI `ui-e2e:K` shard whose runner has fewer CPUs
-  than the row's reference; and the base's copy of the table carries the same
-  row (a row a change adds, or a bound it loosens, excuses nothing). A skip, a
+  than the row's reference; the proof is not the release tier; and the base's
+  copy of the table carries the same row (a row a change adds, or a bound it
+  loosens, excuses nothing). A skip, a
   missing outcome, any other failure of the same test (another locator's
   visibility timeout included), and every miss on a local proof still fail
   the proof; the merger re-derives each excusal and never takes a shard's
@@ -1230,8 +1236,8 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   test that failed only a timing check ends with exactly those lines. The
   merger excuses the miss, as a recorded known gap, only when all of these
   hold: the part is a CI `integration:K` shard whose runner has fewer CPUs
-  than the row's reference; the base's copy of the table carries the same
-  row; the ledger shows the test as a plain failure (no crash, no failing
+  than the row's reference and the proof is not the release tier; the base's
+  copy of the table carries the same row; the ledger shows the test as a plain failure (no crash, no failing
   subtest) and no other test of its job did not pass; the test's own record
   says it failed nothing but its timing checks; the output the ledger entry
   kept (its last 40 lines, without the testing package's framing) holds, from
