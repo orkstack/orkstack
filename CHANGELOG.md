@@ -83,14 +83,19 @@ include breaking changes, and each is marked **BREAKING**.
   detector, `-count 3`, with a `-timeout` of 30 minutes for each repetition; a
   failure in any repetition stands, and a repetition that never reported
   leaves its test with no outcome) and the `fuzz`
-  lane (`proofrun fuzz`: every `Fuzz` target for `FUZZTIME`, default `2m`; a
+  lane (`proofrun fuzz`: every `Fuzz` target, sharing a budget for the whole
+  lane, `FUZZ_BUDGET`, 105 minutes in CI, each target an equal part of what
+  remains less the overhead of starting it, never under 15 seconds, so the
+  lane ends inside its CI step however many targets there are, and a unit test
+  fails when the budget or the target count no longer fits the step; its
+  ledger records the fuzz time each target was given; a
   crasher fails the lane and its input is kept under the part's `crashers/`,
   leaving the tree as it was found). `make test-race` runs the race gate's
   `go test` without its ledger, its `-timeout` included, and `make fuzz` runs
-  the lane. The detector needs cgo and a C compiler, and a gate that runs it,
-  the unit gate included (its tests run `go test -race`), refuses to start
-  without. The gate may fail on a tree with a race in it until that race is
-  fixed; that is its purpose.
+  the lane (`FUZZ_BUDGET`, or `FUZZTIME` for each target). The detector needs
+  cgo and a C compiler, and a gate that runs it, the unit gate included (its
+  tests run `go test -race`), refuses to start without. The gate may fail on a
+  tree with a race in it until that race is fixed; that is its purpose.
 - A runner-health floor for the CI proof parts (`scripts/proof-runner-floors.tsv`,
   `proofrun runner-health`): every part measures its runner for about fourteen
   seconds before any gate — sequential write and read throughput and fsync
