@@ -124,9 +124,6 @@ func TestDocs_YAMLExamplesUseBlockStyle(t *testing.T) {
 			t.Fatal(err)
 		}
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, generatedDocs) {
-			continue
-		}
 		text := readFile(t, file)
 		if strings.HasSuffix(rel, ".md") {
 			fences += len(yamlFences(text))

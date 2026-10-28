@@ -93,7 +93,13 @@ same smoke before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).
 `make check` runs `make lint` (`go vet`, gofmt and staticcheck),
 `go vet -tags=integration` over the integration suites, and the unit suites
 with `-short`, which skips the scale tests and the tests that compile binaries;
-it keeps the test cache.
+it keeps the test cache, except for the packages whose unit tests run git
+(`GIT_STATE_PACKAGES`: the documentation checks, the engine's golden-fixture
+check and the proof harness), which it runs with `-count=1`. Go's cache records
+only the files the test process itself opens inside the module, never what git
+reads in a subprocess (HEAD, the index, `info/exclude`, a global ignore file),
+so a cached pass there could survive a change to what git tracks or ignores.
+Run those packages with `-count=1` by hand too.
 Every proof runs those, without `-short`. Run it before every push. For the UI:
 `cd ui && bun run check && bun run test:unit`. For the site (`site/`, which
 also renders every doc): `make site`.

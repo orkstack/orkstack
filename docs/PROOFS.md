@@ -1521,7 +1521,7 @@ listing with no bucket at all.
 
 | Target | Does |
 |---|---|
-| `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept; no Docker |
+| `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept, except for `GIT_STATE_PACKAGES` (the packages whose unit tests run git, whose reads the cache cannot see), run with `-count=1`; no Docker |
 | `make vuln` | `go tool govulncheck ./...`: the known vulnerabilities whose vulnerable code the module reaches. It needs the network, so it is in no proof gate; `ci.yml` and `nightly.yml` run it (§5) |
 | `make proof` | the full proof, the merge gate |
 | `make proof-ui` | the same; the full proof already runs the UI suites |

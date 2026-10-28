@@ -189,11 +189,20 @@ vuln: ## Scan for reachable known vulnerabilities with the pinned govulncheck (n
 fmt: ## Format Go code
 	gofmt -w $$(find . -name '*.go' -not -path './gen/*')
 
+# GIT_STATE_PACKAGES hold the unit tests that run git, most of them to read
+# the repository's own state: HEAD, the index, the ignore rules. go test's cache
+# records only the files the test process itself opens inside the module, so it
+# never sees what git reads. make check runs these packages uncached, so a
+# change only to what git tracks or ignores re-runs them;
+# TestMakeCheck_RunsGitStatePackagesUncached keeps the list whole.
+GIT_STATE_PACKAGES := ./internal/docscheck ./internal/engine ./test/tools/proofrun
+
 .PHONY: check
-check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integration suites, unit tests (-short, test cache kept)
+check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integration suites, unit tests (-short, test cache kept but for GIT_STATE_PACKAGES)
 	$(MAKE) lint
 	go vet -tags=integration ./...
-	go test -short ./...
+	go test -short $$(go list ./... | grep -vxF "$$(go list $(GIT_STATE_PACKAGES))")
+	go test -short -count=1 $(GIT_STATE_PACKAGES)
 
 .PHONY: merge-check
 merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree, and with NIGHTLY=proof/<name> verify that nightly proof of main's tip (AGENTS.md §11.3; none is required)
