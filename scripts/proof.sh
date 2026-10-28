@@ -32,7 +32,7 @@
 # The NIGHTLY proof runs the deferred tests and spec files, and two lanes of
 # its own: the race repeat (the concurrency-heavy packages' unit suites under
 # the race detector, RACE_REPEAT_COUNT times) and the fuzz lane (every Fuzz
-# target for FUZZTIME). Both run alone, before the integration phase.
+# target, sharing FUZZ_BUDGET). Both run alone, before the integration phase.
 #
 # Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation (an unknown
 # base, an existing proof directory, missing evidence, a pattern that matches
@@ -54,8 +54,9 @@
 #   PROOF_GATES=a,b     run only these gates — debugging only, never merge-eligible
 #   PROOF_TEMPORAL=own  `shared` uses make infra-up's Temporal — debugging only,
 #                       never merge-eligible
-#   FUZZTIME=2m         how long the nightly fuzz lane runs each Fuzz target: a
-#                       whole number of s, m or h, or of iterations (100x)
+#   FUZZ_BUDGET=105m    the nightly fuzz lane's whole time, shared equally by its
+#                       Fuzz targets: a whole number of s, m or h (the CI fuzz
+#                       step is limited to 135m, docs/PROOFS.md §2.3)
 #   PROOF_FAIL_FAST=1   stop at the first failing gate: the fast gates run first,
 #                       one after another, and a failure in any gate stops the
 #                       gates still running and starts no other. 0 runs every
@@ -233,8 +234,8 @@ PROOF_FAIL_FAST="${PROOF_FAIL_FAST:-1}"
 [[ "$PROOF_UI_WORKERS" =~ ^[1-9][0-9]*$ ]] || invalid "PROOF_UI_WORKERS must be a positive integer"
 case "$PROOF_TEMPORAL" in own | shared) ;; *) invalid "PROOF_TEMPORAL must be own or shared" ;; esac
 case "$PROOF_FAIL_FAST" in 0 | 1) ;; *) invalid "PROOF_FAIL_FAST must be 1 (the default) or 0" ;; esac
-FUZZTIME="${FUZZTIME:-2m}"
-[[ "$FUZZTIME" =~ ^[1-9][0-9]*(s|m|h|x)$ ]] || invalid "FUZZTIME must be a whole number of s, m or h, or of iterations (100x), not '$FUZZTIME'"
+FUZZ_BUDGET="${FUZZ_BUDGET:-105m}"
+[[ "$FUZZ_BUDGET" =~ ^[1-9][0-9]*[smh]$ ]] || invalid "FUZZ_BUDGET must be a whole number of s, m or h, not '$FUZZ_BUDGET'"
 REGISTRY="${ORK_LOCAL_REGISTRY:-localhost:5001}"
 if [ -z "$PROOF_ID" ]; then
 	PROOF_ID="pr-$(printf '%s' "$DIR" | sha256sum | cut -c1-12)"
@@ -761,7 +762,7 @@ step site site.log in_site bash -c 'bun run check && bun run build'
 # unit gate's, and one taken under the detector is evidence of nothing.
 step race race.log "$PR" unit -race -short -out "$DIR" "${RACE_PACKAGES[@]}"
 step race-repeat race-repeat.log "$PR" unit -race -short -count "$RACE_REPEAT_COUNT" -out "$DIR" "${RACE_REPEAT_PACKAGES[@]}"
-step fuzz fuzz.log "$PR" fuzz -out "$DIR" -fuzztime "$FUZZTIME"
+step fuzz fuzz.log "$PR" fuzz -out "$DIR" -budget "$FUZZ_BUDGET"
 
 # ---- P0: the setup, one concurrent group: Temporal, images, binaries, test binaries --
 # Everything the long gates need, started together once the fast gates have

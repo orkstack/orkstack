@@ -99,30 +99,30 @@ func TestProofScript_TheNightlyTierRunsTheRaceRepeatAndTheFuzzLaneAlone(t *testi
 	}
 	want := []string{
 		"unit -race -short -count 3 -out proof/lanes-pass " + racePackagesOfTheRepeat,
-		"fuzz -out proof/lanes-pass -fuzztime 2m",
+		"fuzz -out proof/lanes-pass -budget 105m",
 	}
 	if calls := r.proofrunCalls(); strings.Join(calls, "\n") != strings.Join(want, "\n") {
 		t.Errorf("proofrun was asked for\n%s\nwant\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
 	}
 }
 
-func TestProofScript_FUZZTIMESetsTheFuzzLanesTime(t *testing.T) {
+func TestProofScript_FUZZBUDGETSetsTheFuzzLanesBudget(t *testing.T) {
 	r := newSiteScriptRepo(t)
-	if code, out := r.run([]string{"PROOF_GATES=fuzz", "FUZZTIME=45s"}, "--tier", "nightly", "fuzztime-ok"); code != 0 {
+	if code, out := r.run([]string{"PROOF_GATES=fuzz", "FUZZ_BUDGET=45m"}, "--tier", "nightly", "fuzzbudget-ok"); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if calls := r.proofrunCalls(); len(calls) != 1 || !strings.HasSuffix(calls[0], "-fuzztime 45s") {
-		t.Errorf("proofrun was asked for %q, want -fuzztime 45s", calls)
+	if calls := r.proofrunCalls(); len(calls) != 1 || !strings.HasSuffix(calls[0], "-budget 45m") {
+		t.Errorf("proofrun was asked for %q, want -budget 45m", calls)
 	}
 }
 
-func TestProofScript_AFuzzTimeThatIsNotADurationOrACountIsRefused(t *testing.T) {
-	for _, bad := range []string{"forever", "0s", "-5m", "2", "1.5m", "5m;rm", "x"} {
+func TestProofScript_AFuzzBudgetThatIsNotAWholeNumberOfSecondsMinutesOrHoursIsRefused(t *testing.T) {
+	for _, bad := range []string{"forever", "0s", "-5m", "2", "1.5m", "5m;rm", "x", "100x", "1h30m"} {
 		t.Run(bad, func(t *testing.T) {
 			r := newSiteScriptRepo(t)
-			code, out := r.run([]string{"PROOF_GATES=fuzz", "FUZZTIME=" + bad}, "--tier", "nightly", "fuzztime-bad")
-			if code != 2 || !strings.Contains(out, "FUZZTIME must be") {
-				t.Errorf("exit %d, want 2 naming FUZZTIME:\n%s", code, out)
+			code, out := r.run([]string{"PROOF_GATES=fuzz", "FUZZ_BUDGET=" + bad}, "--tier", "nightly", "fuzzbudget-bad")
+			if code != 2 || !strings.Contains(out, "FUZZ_BUDGET must be") {
+				t.Errorf("exit %d, want 2 naming FUZZ_BUDGET:\n%s", code, out)
 			}
 			if !r.wroteNoProof() {
 				t.Error("a refused proof left a proof directory behind")
@@ -207,12 +207,12 @@ func TestProofPart_TheNightlyLaneParts(t *testing.T) {
 		want string
 	}{
 		{"race-repeat", "unit -race -short -count 3 -out proof/lane-part-part-race-repeat-a1 " + racePackagesOfTheRepeat},
-		{"fuzz", "fuzz -out proof/lane-part-part-fuzz-a1 -fuzztime 90s"},
+		{"fuzz", "fuzz -out proof/lane-part-part-fuzz-a1 -budget 90m"},
 	} {
 		t.Run(c.part, func(t *testing.T) {
 			r := newSiteScriptRepo(t)
 			base := r.git("rev-parse", "HEAD")
-			code, out := r.run([]string{"FUZZTIME=90s"}, "--part", c.part, "--tier", "nightly", "--proof-id", "pr-lane", "--attempt", "1", "--base-commit", base, "lane-part")
+			code, out := r.run([]string{"FUZZ_BUDGET=90m"}, "--part", c.part, "--tier", "nightly", "--proof-id", "pr-lane", "--attempt", "1", "--base-commit", base, "lane-part")
 			if code != 0 {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}

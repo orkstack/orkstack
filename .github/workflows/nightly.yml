@@ -15,9 +15,9 @@ on:
     - cron: "17 5 * * *"
   workflow_dispatch:
     inputs:
-      fuzztime:
-        description: how long the fuzz lane runs each Fuzz target (2m, 30s, 100x)
-        default: 2m
+      fuzz_budget:
+        description: the fuzz lane's whole time, shared by its Fuzz targets (105m; the lane's step is limited to 135m)
+        default: 105m
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
       base: main
       int_shards: 4
       ui_shards: 1
-      fuzztime: ${{ inputs.fuzztime || '2m' }}
+      fuzz_budget: ${{ inputs.fuzz_budget || '105m' }}
 
   vuln:
     # govulncheck (`make vuln`), which reports only advisories whose vulnerable

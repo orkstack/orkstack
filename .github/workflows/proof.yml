@@ -39,10 +39,10 @@ on:
       ui_shards:
         type: number
         default: 5
-      fuzztime:
-        description: how long the nightly fuzz lane runs each Fuzz target
+      fuzz_budget:
+        description: the nightly fuzz lane's whole time, shared by its Fuzz targets (the fuzz step's limit less the lane's margin bounds it)
         type: string
-        default: 2m
+        default: 105m
     outputs:
       # The merged proof's artifact name, so a caller's re-run job finds the
       # attempt that uploaded it (release.yml › tag).
@@ -62,7 +62,7 @@ env:
   TIER: ${{ inputs.tier || 'full' }}
   INT_SHARDS: ${{ inputs.int_shards || 10 }}
   UI_SHARDS: ${{ inputs.ui_shards || 5 }}
-  FUZZTIME: ${{ inputs.fuzztime || '2m' }}
+  FUZZ_BUDGET: ${{ inputs.fuzz_budget || '105m' }}
   PROOF_ID: pr-ci-${{ github.run_id }}
   PROOF_NAME: pr-ci-${{ github.run_id }}
   ORK_LOCAL_REGISTRY: localhost:5001
@@ -365,9 +365,11 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   fuzz:
-    # The nightly fuzz lane: every Fuzz target for FUZZTIME. A crasher fails
-    # the part and is kept in its artifact, under crashers/ (docs/PROOFS.md
-    # §2.3).
+    # The nightly fuzz lane: every Fuzz target, sharing FUZZ_BUDGET between
+    # them, so the lane ends inside this step however many targets there are
+    # (a unit test holds the budget and the target count to the step's limit).
+    # A crasher fails the part and is kept in its artifact, under crashers/
+    # (docs/PROOFS.md §2.3).
     needs: base
     if: ${{ inputs.tier == 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
