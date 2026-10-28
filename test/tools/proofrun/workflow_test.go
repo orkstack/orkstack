@@ -162,9 +162,6 @@ func compositeSteps(t *testing.T, name string) []wfStep {
 	return a.Runs.Steps
 }
 
-// proofHostSteps are the proof-host composite action's steps.
-func proofHostSteps(t *testing.T) []wfStep { return compositeSteps(t, "proof-host") }
-
 func isCheckout(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/checkout@") }
 
 // proofFetchAction is the composite action every proof.yml download of a

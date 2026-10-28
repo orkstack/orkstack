@@ -19,7 +19,6 @@ import (
 type recordingLogStore struct {
 	mu     sync.Mutex
 	chunks []artifacts.LogChunk
-	stamps []time.Time
 	fail   func(seq int64) error
 }
 
@@ -34,7 +33,6 @@ func (s *recordingLogStore) PutLogChunk(_ context.Context, chunk artifacts.LogCh
 	stored := chunk
 	stored.Data = append([]byte(nil), chunk.Data...)
 	s.chunks = append(s.chunks, stored)
-	s.stamps = append(s.stamps, time.Now())
 	return nil
 }
 
@@ -97,12 +95,6 @@ func (s *recordingLogStore) stored() []artifacts.LogChunk {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]artifacts.LogChunk(nil), s.chunks...)
-}
-
-func (s *recordingLogStore) uploadTimes() []time.Time {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]time.Time(nil), s.stamps...)
 }
 
 func (s *recordingLogStore) body() string {

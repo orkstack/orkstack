@@ -303,3 +303,17 @@ func writeEventProof(t *testing.T, runID string, events []*orkstackv1.Event) {
 		"events":   raw,
 	})
 }
+
+// decodeValuesJSON is the inverse of valuesJSON, for asserting on what a task
+// returned. Only the integration suites use it, so it lives with them.
+func decodeValuesJSON(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	decoded := map[string]any{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("decode values.json %q: %v", raw, err)
+	}
+	return decoded
+}

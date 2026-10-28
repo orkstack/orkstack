@@ -1663,10 +1663,10 @@ func (m *merger) mergeIntegration() {
 	}
 	expected := map[testKey]bool{}
 	for _, e := range m.plan.Expected {
-		expected[testKey{e.Package, e.Test}] = true
+		expected[testKey(e)] = true
 	}
 	for _, e := range m.plan.Expected {
-		k := testKey{e.Package, e.Test}
+		k := testKey(e)
 		if isDeferred(m.plan.Deferred, k) {
 			continue
 		}
@@ -2384,13 +2384,6 @@ func sha256File(file string) string {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
-}
-
-func (m *merger) planFileDir(name string) string {
-	for _, r := range m.parts["plan"] {
-		return filepath.Join(r.Dir, name)
-	}
-	return ""
 }
 
 // writeMergeREADME writes the merged README: identity, parts, reruns, known
