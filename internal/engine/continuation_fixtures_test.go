@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -94,8 +95,25 @@ func TestContinuation_RestoreEqualsLiveStateAtEveryIdlePoint(t *testing.T) {
 
 			var current *harness
 			behavior := fixtureBehavior(results, &current)
+			// An unpinned task that needs a pinned one starts beside that pin's
+			// close; it waits for the close, so the idle point after it is
+			// there (pinCloses).
+			pinned, afterPin := map[string]bool{}, map[string]bool{}
+			for _, task := range wf.GetTasks() {
+				pinned[task.GetId()] = task.GetPin() != ""
+			}
+			for _, task := range wf.GetTasks() {
+				if !pinned[task.GetId()] && slices.ContainsFunc(task.GetNeeds(), func(need string) bool { return pinned[need] }) {
+					afterPin[task.GetId()] = true
+				}
+			}
+			watch := func(*harness) {}
+			if len(afterPin) > 0 {
+				behavior, watch = holdAfterPinCloses(behavior, afterPin)
+			}
 			g := runGenerations(t, runID, wf, input, plan, behavior, func(h *harness, _ int) {
 				current = h
+				watch(h)
 				enablePins(h, worker.Options{})
 				h.countItems = func(*orkstackv1.ArtifactRef) (int32, error) { return count, nil }
 				for i, sig := range signals {
