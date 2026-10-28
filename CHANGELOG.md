@@ -163,6 +163,18 @@ include breaking changes, and each is marked **BREAKING**.
   fails is logged and never fails the proof. A bucket is removed with one
   request when the store deletes a non-empty bucket, and is emptied object by
   object only when the store refuses, here and in `test/tools/bucket-ensure`.
+- A run canceled while an event's snapshot was being written no longer
+  records the cancellation on task rows the write is still encoding. The
+  snapshot activity reads the run's live rows, and the SDK frees the run the
+  moment the cancel reaches the activity while the activity goes on, so the
+  failure path changed rows under the encoder: a data race (found by the Go
+  race detector, which no proof gate runs) and a snapshot object that could
+  mix the rows before and after the cancel. The object belonged to an event
+  that was never published, so no read returned it; the run's own end, and
+  every snapshot a reader sees, were unaffected. The run now takes its rows
+  back from the write, which waits for an encode in progress, and the write
+  refuses rows taken back. No extra copy is made: a clone per event would have
+  cost O(rows) of workflow time on every event, replays included.
 
 ### Added
 

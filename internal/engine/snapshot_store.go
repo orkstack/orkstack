@@ -79,7 +79,8 @@ func (a *SnapshotActivities) WithBaseCache(cache *SnapshotBaseCache) *SnapshotAc
 	return a
 }
 
-// WriteSnapshot serializes and stores a complete run snapshot.
+// WriteSnapshot serializes and stores a complete run snapshot. The rows it
+// encodes are the workflow's live ones, lent for the encode only (rows_loan.go).
 func (a *SnapshotActivities) WriteSnapshot(
 	ctx context.Context,
 	run *orkstackv1.Run,
@@ -88,9 +89,15 @@ func (a *SnapshotActivities) WriteSnapshot(
 	if run == nil {
 		return "", fmt.Errorf("engine: write snapshot: run is required")
 	}
-	data, err := proto.Marshal(run)
+	data, err := readLent(run, sequence, func() ([]byte, error) {
+		data, err := proto.Marshal(run)
+		if err != nil {
+			return nil, fmt.Errorf("engine: marshal snapshot for run %s: %w", run.GetId(), err)
+		}
+		return data, nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("engine: marshal snapshot for run %s: %w", run.GetId(), err)
+		return "", err
 	}
 	uri, err := a.store.WriteSnapshot(ctx, run.GetNamespace(), run.GetId(), sequence, data)
 	if err != nil {
