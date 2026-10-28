@@ -635,16 +635,18 @@ func splitChallenge(in string) []string {
 	var parts []string
 	var current strings.Builder
 	inQuotes := false
-	for _, r := range in {
-		switch {
-		case r == '"':
+	// Bytes, not runes: the quote and the comma are ASCII, and ranging over
+	// runes would rewrite a byte that is not UTF-8 as U+FFFD.
+	for i := 0; i < len(in); i++ {
+		switch c := in[i]; {
+		case c == '"':
 			inQuotes = !inQuotes
-			current.WriteRune(r)
-		case r == ',' && !inQuotes:
+			current.WriteByte(c)
+		case c == ',' && !inQuotes:
 			parts = append(parts, current.String())
 			current.Reset()
 		default:
-			current.WriteRune(r)
+			current.WriteByte(c)
 		}
 	}
 	if current.Len() > 0 {
