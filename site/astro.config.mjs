@@ -7,6 +7,7 @@ import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import { SITE, BASE, REPO } from './site.config.mjs';
 import { repoRoot, readTokens, codeTheme } from './scripts/tokens.mjs';
+import { templateInjection } from './src/lib/template-grammar.mjs';
 
 // Read here, at config time, so a missing tokens.css fails the build before
 // anything renders (readTokens throws).
@@ -70,9 +71,15 @@ export default defineConfig({
 				themes: [codeTheme('light', tokens), codeTheme('dark', tokens)],
 				themeCssSelector: (theme) => `[data-theme='${theme.type}']`,
 				useDarkModeMediaQuery: true,
+				// The syntax colours are the UI's own and already meet the text
+				// floor on the code ground (ui/test/tokenContrast.test.ts); left
+				// on, Expressive Code would shift them, and the docs would no
+				// longer match the UI or the landing page's listing.
+				minSyntaxHighlightingColorContrast: 0,
 				// Languages the repository's docs fence that Shiki does not ship:
 				// Go templates read as plain text, Alloy's river as HCL, its parent.
-				shiki: { langAlias: { gotemplate: 'txt', river: 'hcl' } },
+				// The template injection colours {{ … }} in YAML as the UI does.
+				shiki: { langAlias: { gotemplate: 'txt', river: 'hcl' }, langs: [templateInjection] },
 				styleOverrides: {
 					borderRadius: 'var(--radius-sm)',
 					borderWidth: 'var(--rule-hair)',

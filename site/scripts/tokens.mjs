@@ -122,17 +122,18 @@ export function resolve(tokens, name, theme) {
 /**
  * The code theme for one site theme, as a TextMate theme object.
  *
- * Monochrome on purpose: the UI rations hue to three accents, each with one
- * job (blue: links and selection; green: running; red: failure), and its pin
- * colours reach only 3:1, below the text floor. Code is ink: keys and
- * keywords in the ink at weight, values in the secondary ink, comments and
- * punctuation in the muted ink.
+ * The same syntax pencils as the UI's editor and read-only YAML views
+ * (ui/src/tokens.css, --color-syntax-*; ui/src/lib/yaml/highlight.ts names
+ * the roles): keys and keywords in the ink at weight, strings teal, numbers
+ * ochre, true/false/null olive, a `{{ … }}` template violet (the
+ * orkstack.template injection, ../src/lib/template-grammar.mjs), anchors,
+ * aliases and tags slate, comments oblique and punctuation in the muted ink.
+ * Blue, green and red, the UI's three accents, never colour code.
  */
 export function codeTheme(theme, tokens = readTokens()) {
 	const c = (name) => resolve(tokens, name, theme);
 	const ink = c('--color-ink');
-	const secondary = c('--color-ink-secondary');
-	const muted = c('--color-ink-muted');
+	const role = (r) => c(`--color-syntax-${r}`);
 	return {
 		name: `orkstack-${theme}`,
 		type: theme,
@@ -140,7 +141,7 @@ export function codeTheme(theme, tokens = readTokens()) {
 			'editor.background': c('--color-paper-sunken'),
 			'editor.foreground': ink,
 			'editor.selectionBackground': c('--color-blue-tint'),
-			'editorLineNumber.foreground': muted,
+			'editorLineNumber.foreground': c('--color-ink-muted'),
 			'terminal.foreground': ink,
 			'terminal.background': c('--color-paper-sunken'),
 		},
@@ -148,7 +149,7 @@ export function codeTheme(theme, tokens = readTokens()) {
 			{ settings: { foreground: ink } },
 			{
 				scope: ['comment', 'punctuation.definition.comment'],
-				settings: { foreground: muted, fontStyle: 'italic' },
+				settings: { foreground: role('comment'), fontStyle: 'italic' },
 			},
 			{
 				scope: [
@@ -160,22 +161,33 @@ export function codeTheme(theme, tokens = readTokens()) {
 					'entity.name.function',
 					'support.function',
 				],
-				settings: { foreground: ink, fontStyle: 'bold' },
+				settings: { foreground: role('key'), fontStyle: 'bold' },
 			},
 			{
+				scope: ['string', 'punctuation.definition.string', 'variable.parameter', 'entity.other.attribute-name'],
+				settings: { foreground: role('string') },
+			},
+			{ scope: ['constant.numeric'], settings: { foreground: role('number') } },
+			{ scope: ['constant.language', 'constant.other', 'constant.character'], settings: { foreground: role('literal') } },
+			{
 				scope: [
-					'string',
-					'constant',
-					'constant.numeric',
-					'constant.language',
-					'variable.parameter',
-					'entity.other.attribute-name',
+					'entity.name.type.anchor',
+					'variable.other.alias',
+					'punctuation.definition.anchor',
+					'punctuation.definition.alias',
+					'storage.type.tag-handle',
+					'keyword.other.directive',
+					'entity.other.document',
 				],
-				settings: { foreground: secondary },
+				settings: { foreground: role('meta'), fontStyle: '' },
 			},
 			{
 				scope: ['punctuation', 'meta.brace', 'keyword.operator'],
-				settings: { foreground: muted },
+				settings: { foreground: role('punctuation'), fontStyle: '' },
+			},
+			{
+				scope: ['meta.template.expression.orkstack', 'meta.template.expression.orkstack punctuation'],
+				settings: { foreground: role('template'), fontStyle: '' },
 			},
 		],
 	};
