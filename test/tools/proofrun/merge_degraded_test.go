@@ -238,8 +238,8 @@ func TestMerge_TheMergerReDerivesTheHealthVerdict(t *testing.T) {
 }
 
 // The floor binds the CI stack parts alone. A local proof's measurement, and
-// the plan, build and fast parts', is recorded and changes no verdict: the
-// host's floors are its measured costs themselves.
+// the plan, build, fast, race, race-repeat and fuzz parts', is recorded and
+// changes no verdict: the host's floors are its measured costs themselves.
 func TestMerge_TheFloorDoesNotBindALocalOrAFastPart(t *testing.T) {
 	t.Run("local", func(t *testing.T) {
 		f := newMergeFixture(t, tierFull, false)

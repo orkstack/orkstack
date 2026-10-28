@@ -275,14 +275,14 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 **Cause.** The container daemon cannot bind-mount the Orker's work directory. This happens when the daemon runs in a virtual machine that does not share that path with the host. The daemon then says "bind source path does not exist" for a path that exists, which reads like a missing file. There are two codes:
 
-- `WORKDIR_NOT_BINDABLE`: the Orker's own boot probe found the work root unbindable, so the Orker refuses to start (`internal/orker/activity.go`, `Boot`). Retrying does not fix it.
+- `WORKDIR_NOT_BINDABLE`: the Orker refuses to start (`internal/orker/activity.go`, `Boot`) because its work root cannot be bind-mounted. Either the path holds a comma or a control character, which a container mount cannot carry (a mount is a comma-separated option list), and the message names `ORK_ORKER_WORKDIR`; or the Orker's own boot probe found the work root unbindable. Retrying does not fix it.
 - `WORKSPACE_NOT_BINDABLE`: one attempt's container could not be created because the daemon refused the workspace's bind (`internal/orker/oci_dispatcher.go`, `runtimeFailure`). It is an `InfrastructureError` and is never retried.
 
 ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes"; [stack.sh](../scripts/stack.sh), "check_workdir_mountable".)
 
 **Confirm.** `make up` prints a warning when the probe fails. The Orker log, `.run/orker.log`, shows `orker boot checks failed:` followed by `WORKDIR_NOT_BINDABLE`. The script's comment describes the virtual-machine case, and says how to list the paths the machine shares. The script's warning describes the per-task symptom. The Orker's own probe is stricter, and it refuses to start.
 
-**Fix.** Point `ORK_ORKER_WORKDIR` at a directory the virtual machine shares. On a macOS setup that usually means a path under the user's home directory. Then run `make down` and `make up`. The script's default, `.data/work` under the repository, is chosen because those machines share the home directory.
+**Fix.** Point `ORK_ORKER_WORKDIR` at a directory the virtual machine shares. On a macOS setup that usually means a path under the user's home directory. If the message says the path holds a comma or a control character, the cause is the path itself and not the virtual machine: choose a path without either. Then run `make down` and `make up`. The script's default, `.data/work` under the repository, is chosen because those machines share the home directory.
 
 ### A task failed with `PIN_UNAVAILABLE`
 
@@ -384,11 +384,13 @@ other tools use the same ports.
 which mounts the task's workspace from `ORKSTACK_WORKDIR` (default
 `~/.cache/orkstack-quickstart`) as a path on the daemon's own machine. A daemon
 in a virtual machine (Docker Desktop, colima, Lima) sees only the directories
-that machine shares.
+that machine shares. The Orker also refuses to start when that path holds a
+comma or a control character, which a container mount cannot carry; its message
+names `ORK_ORKER_WORKDIR`, which is `ORKSTACK_WORKDIR` here.
 
 **Fix.** Set `ORKSTACK_WORKDIR` in `.env` to a directory the virtual machine
 shares and that only you can write, usually one under your home directory, not
-a shared `/tmp`, then
+a shared `/tmp`, and whose path holds no comma and no control character, then
 `docker compose up -d --wait` again ([DEPLOY.md](./DEPLOY.md), "Running the
 published images").
 

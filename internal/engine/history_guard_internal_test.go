@@ -592,8 +592,9 @@ func flatDocument(n int) string {
 // events, at the default limit of 51,200 — both inside the band where the
 // quick O(1) bound crosses and the exact count does not, so every guard check
 // of the pass takes the per-pass path. One pass's guard checks — one per
-// ready task, as the ready loop makes them — stay within 20 ms, under the
-// production 1 s deadlock detector.
+// ready task, as the ready loop makes them — stay within 20 ms of CPU time
+// (scaled under the race detector, gatedSizeBound), under the production 1 s
+// deadlock detector.
 func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 	wf := guardCompile(t, flatDocument(4000))
 	for _, state := range []struct {
@@ -666,11 +667,12 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 				t.Fatalf("the state is not inside the per-pass band: quick %d, exact %d, limit %d",
 					quickTotal, exactTotal, DefaultHistoryMaxEvents)
 			}
-			t.Logf("E0 deadlock budget (%s): %d guard checks in one pass took %.2f ms of %s (budget 20 ms; %.2f ms wall clock)",
-				state.name, checks, float64(elapsed.Microseconds())/1000, clock.kind(),
+			bound := gatedSizeBound(20 * time.Millisecond)
+			t.Logf("E0 deadlock budget (%s): %d guard checks in one pass took %.2f ms of %s (budget %s; %.2f ms wall clock)",
+				state.name, checks, float64(elapsed.Microseconds())/1000, clock.kind(), bound,
 				float64(wallElapsed.Microseconds())/1000)
-			if elapsed > 20*time.Millisecond {
-				t.Fatalf("one pass's guard checks took %s of %s, over 20 ms", elapsed, clock.kind())
+			if elapsed > bound {
+				t.Fatalf("one pass's guard checks took %s of %s, over %s", elapsed, clock.kind(), bound)
 			}
 		})
 	}

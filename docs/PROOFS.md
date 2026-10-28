@@ -628,8 +628,9 @@ repository's tags whether the release is the latest (`dist order`): a release
 below a released tag of its own `X.Y` is refused, because it would move the
 `X.Y` image tag back, and a backport to an older series is released but never
 marked the latest;
-`release.yml` › `gate` runs the release tier; `release.yml` › `artifacts`,
-beside it and read-only, builds what the release publishes — `make dist` (the
+`release.yml` › `gate` runs the release tier, on hosted 4-vCPU runners where
+its runner-size budgets cannot hold (§10, "Run the release gate"); `release.yml`
+› `artifacts`, beside it and read-only, builds what the release publishes — `make dist` (the
 archives and `SHA256SUMS`), `make release-images` for linux/amd64 and
 linux/arm64 as OCI layouts, the quickstart bundle naming them by digest — and
 runs `scripts/release-smoke.sh --layouts` on them before it uploads anything.
@@ -1353,6 +1354,17 @@ set and `tag: false`; `release.yml` › `validate` refuses a malformed version
 before any job starts, and `release.yml` › `gate` runs the release tier on the
 chosen branch's tip. Locally, `make proof-release` on a clean tree.
 
+`release.yml` › `gate` cannot pass on GitHub's hosted runners today. It runs
+on `ubuntu-24.04` (4 vCPUs), and the release tier excuses no runner-size miss
+(`runnerSizeRefusal` in `test/tools/proofrun/merge.go`; §12, "Runner-size
+known gaps"): the run page at the reduced task ceiling must be interactive
+within 5 s, and measured 9,485 ms there (run 40571748126), and the soaks' live
+`GetRun` p95 must be within 2 s, and measured 2.014 s (run 40593609129). Both
+budgets were calibrated on the 16-CPU reference host. A CI release path needs
+runners as large as the reference; that is a maintainer decision, and
+`release.yml` has no input for it. Until then `make proof-release` on the
+reference host is the only gate that can pass.
+
 **Tag a release.** Either dispatch `release.yml` with `tag: true` — the `tag`
 job checks out the proved commit, runs `proofrun verify -release -tag vX.Y.Z
 -proof DIR` on the gate's artifact, and only then creates the annotated tag
@@ -1360,10 +1372,14 @@ and pushes it, and `publish` then pushes the images and creates the GitHub
 release — or, locally, `make release-tag VERSION=vX.Y.Z
 PROOF=proof/<release>`, which applies the same check to `HEAD`, tags it and
 does not push; a tag made that way publishes nothing, because `release.yml` is
-the only path that publishes. Neither path stops a person with write access
-from pushing a `v*` tag by hand (§12). Before dispatching, add the version's
-`## [X.Y.Z]` section to CHANGELOG.md: it becomes the release notes, and
-`validate` refuses a version without one.
+the only path that publishes. Only a `release.yml` run whose `gate` passed
+publishes, and on the hosted runners it does not (above): a release proved by
+`make proof-release` on the 16-CPU reference host and tagged with `make
+release-tag` is a local tag and nothing more; its archives, images and GitHub
+release wait for a CI release path on larger runners. Neither path stops a
+person with write access from pushing a `v*` tag by hand (§12). Before
+dispatching, add the version's `## [X.Y.Z]` section to CHANGELOG.md: it
+becomes the release notes, and `validate` refuses a version without one.
 
 **Recover a failed publish.** `publish` is safe to re-run: an image tag that
 already holds this release's digest is left alone, and the release itself is
@@ -1737,13 +1753,25 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   can see is found by that run, not at merge.
 - **The observability gate has not run on GitHub.** The first release run,
   which always runs it, is its calibration.
-- **`release.yml` has not run on GitHub yet.** `nightly.yml` has, both jobs,
-  and so has `proof.yml` as a reusable workflow through it (`workflow_call`;
-  the flakes job passed in run 40555387388). `release.yml`'s `artifacts` and
-  `publish` jobs were added after the last `actionlint` pass; the workflow
-  rules in `test/tools/proofrun` hold their shape, and `make release-smoke`
-  runs their build and smoke on a developer's host. The first `tag: false`
-  dispatch is their first run on GitHub.
+- **`release.yml` has not run on GitHub yet, and its gate cannot pass there.**
+  `nightly.yml` has three jobs, `nightly`, `vuln` and `flakes`; the first and
+  the last have run, and so has `proof.yml` as a reusable workflow through them
+  (`workflow_call`; the flakes job passed in run 40555387388). `release.yml`'s
+  `artifacts` and `publish` jobs were added after the last `actionlint` pass;
+  the workflow rules in `test/tools/proofrun` hold their shape, and `make
+  release-smoke` runs their build and smoke on a developer's host. The first
+  `tag: false` dispatch is their first run on GitHub, and its `gate` fails on
+  the hosted runners' size alone (§10, "Run the release gate"): only a run
+  whose gate passed publishes, so no release can be published until a CI
+  release path has runners as large as the reference host, a maintainer's
+  decision.
+- **The `vuln` jobs and the race and fuzz parts have not run on GitHub.** The
+  `vuln` jobs of `ci.yml` and `nightly.yml` (`make vuln`), the proof's `race`
+  part in the full and release tiers, and its `race-repeat` and `fuzz` parts
+  in the nightly are on the same footing as the observability gate: they are
+  proven on a developer's host and by the workflow rules in
+  `test/tools/proofrun`, not on a hosted runner, so the first full proof and
+  the first nightly that carry them are their calibration.
 - **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
   `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
   planner is proven against fakes of `gh api`, and its workflow shape by the

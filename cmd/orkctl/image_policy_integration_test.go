@@ -35,9 +35,10 @@ import (
 //   - the bucket is private because the image policy is ONE deployment-wide
 //     document at a fixed key (metadata/settings/image-policy.json); written
 //     into the shared bucket it would refuse images in every other suite;
-//   - the registry is private (registry:3 with deletion enabled) because a
-//     scenario removes a signature and another stops the registry, neither
-//     of which may touch the registry every other suite on this host reads.
+//   - the registry is private (the stack's pinned registry image, with deletion
+//     enabled; cosigntest.StartRegistry) because a scenario removes a
+//     signature and another stops the registry, neither of which may touch
+//     the registry every other suite on this host reads.
 //
 // The first-party images are copied into the private registry preserving
 // their digests, and the engines' catalog points there (ORK_TEST_REGISTRY,
