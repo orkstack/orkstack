@@ -3,6 +3,7 @@ package dsl
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -29,6 +30,26 @@ var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // ValidDigest reports whether s is a well-formed "sha256:<64 lowercase hex>".
 func ValidDigest(s string) bool { return digestPattern.MatchString(s) }
+
+// The reference grammar, from the OCI distribution specification's reference
+// rules. A reference an Orkflow names reaches a registry as a URL and the
+// container runtime as an argument, so ParseReference accepts exactly this and
+// refuses the rest by name, never by repairing it: a registry that is a host
+// name (or a bracketed IP literal) with an optional port, lower-case path
+// components, a tag of word characters, dots and dashes that does not start
+// with a dot or a dash, and a digest. Nothing it accepts can begin like a
+// runtime option, carry a space or a control character, or change a registry
+// URL's path, query or fragment.
+var (
+	domainComponent = `(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])`
+	registryPattern = regexp.MustCompile(`^(?:` + domainComponent + `(?:\.` + domainComponent + `)*|\[[0-9a-fA-F:.]+\])(?::([0-9]{1,5}))?$`)
+	pathComponent   = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
+	tagPattern      = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$`)
+)
+
+// maxReferencePart bounds a registry host and a repository path, the limits
+// the distribution specification and Docker both hold names to.
+const maxReferencePart = 255
 
 // Reference is a parsed OCI reference.
 type Reference struct {
@@ -109,6 +130,9 @@ func ParseReference(reference string) (Reference, error) {
 	if parsed.Registry == "" {
 		parsed.Registry = DefaultRegistry
 	}
+	if err := checkRegistry(parsed.Registry); err != nil {
+		return Reference{}, fmt.Errorf("image reference %q: %w", reference, err)
+	}
 
 	// Now a ':' can only be a tag separator.
 	if colon := strings.LastIndex(name, ":"); colon >= 0 {
@@ -116,6 +140,9 @@ func ParseReference(reference string) (Reference, error) {
 		name = name[:colon]
 		if parsed.Tag == "" {
 			return Reference{}, fmt.Errorf("image reference %q: empty tag", reference)
+		}
+		if !tagPattern.MatchString(parsed.Tag) {
+			return Reference{}, fmt.Errorf("image reference %q: tag %q must match %s", reference, parsed.Tag, tagPattern)
 		}
 	}
 
@@ -126,6 +153,9 @@ func ParseReference(reference string) (Reference, error) {
 	if parsed.Registry == DefaultRegistry && !strings.Contains(name, "/") {
 		name = "library/" + name
 	}
+	if err := checkRepository(name); err != nil {
+		return Reference{}, fmt.Errorf("image reference %q: %w", reference, err)
+	}
 	parsed.Repository = name
 
 	// Neither tag nor digest means the default tag. It is spelled out here
@@ -135,6 +165,35 @@ func ParseReference(reference string) (Reference, error) {
 		parsed.Tag = DefaultTag
 	}
 	return parsed, nil
+}
+
+// checkRegistry holds a registry to a host name or bracketed IP literal with
+// an optional port from 1 to 65535.
+func checkRegistry(registry string) error {
+	match := registryPattern.FindStringSubmatch(registry)
+	if match == nil || len(registry) > maxReferencePart {
+		return fmt.Errorf("registry %q must be a host name or a bracketed IP address, with an optional :port", registry)
+	}
+	if port := match[1]; port != "" {
+		if n, _ := strconv.Atoi(port); n < 1 || n > 65535 {
+			return fmt.Errorf("registry %q has the port %s, which is not from 1 to 65535", registry, port)
+		}
+	}
+	return nil
+}
+
+// checkRepository holds a repository to lower-case path components.
+func checkRepository(repository string) error {
+	if len(repository) > maxReferencePart {
+		return fmt.Errorf("repository of %d bytes exceeds the %d-byte limit", len(repository), maxReferencePart)
+	}
+	for _, component := range strings.Split(repository, "/") {
+		if !pathComponent.MatchString(component) {
+			return fmt.Errorf("repository %q: %q must be lower-case letters and digits joined by single separators (., _, __ or dashes) (%s)",
+				repository, component, pathComponent)
+		}
+	}
+	return nil
 }
 
 // IsLoopback reports whether the API host is a loopback address, which is the

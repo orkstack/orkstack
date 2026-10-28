@@ -561,7 +561,11 @@ input payload — the same data templates see as `.inputs`. The template context
 is `docs/DSL.md`, "Templating".
 
 Rendering is recursive over nested maps and lists, with `missingkey=error`, and
-a rendered `<no value>` is rejected. A render failure is
+a nil value, which Go prints as `<no value>`, is rejected. Data or text that
+merely spells those characters (an input of `see <no value> here`) renders as
+itself: the Orker tells the two apart by running the template again with the
+spelling masked, and refuses a template whose text or data holds the mask
+(`<no`, U+0001, `value>`) itself. A render failure is
 `ContractViolation/RENDER_FAILED` and is never retried. A templated value
 renders to a **string**: a number arrives in Go's spelling (`1000000` as
 `1e+06`), so numbers and structures a workload computes with travel as files,
@@ -711,7 +715,15 @@ activities:
 2. Else, `uses` matching `^[a-z][a-z0-9-]*$` that is a catalog key → the
    catalog reference.
 3. Else, `uses` that parses as an OCI reference (contains `/`, `:` or `@`) →
-   itself.
+   itself. A reference is held to the distribution grammar and refused by name
+   outside it, never repaired: a registry that is a host name (or a bracketed IP
+   address) with an optional port from 1 to 65535, repository path components
+   of lower-case letters and digits joined by single `.`, `_`, `__` or dash
+   separators, a tag of at most 128 word characters, dots and dashes that does
+   not start with a dot or a dash, and a `sha256:` digest. The reference becomes
+   a registry URL at apply and a runtime argument at dispatch, so nothing it
+   accepts can begin like a runtime option, hold a space or a control character,
+   or change a URL's path, query or fragment.
 4. Else → compile error `UNKNOWN_ACTIVITY`, listing the catalog keys.
 
 Rule 2 before rule 3 means `shell` can never accidentally mean Docker Hub's
