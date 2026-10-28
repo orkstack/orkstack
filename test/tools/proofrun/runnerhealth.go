@@ -19,13 +19,13 @@ import (
 )
 
 // The runner-health floor (AGENTS.md §11.2). Every CI part measures its
-// runner for about thirteen seconds before it runs anything — sequential write
+// runner for about fourteen seconds before it runs anything — sequential write
 // and read throughput and fsync latency on its work disk, where the object
 // store's and Temporal's volumes live, single-core and all-core CPU
 // throughput, and available memory — and writes runner-health.json beside its
 // records: the measured values, the floors scripts/proof-runner-floors.tsv
-// declares for its runner class, and a verdict. Ten of the thirteen seconds
-// are the judged measurements; the other three take informational readings
+// declares for its runner class, and a verdict. Ten of the fourteen seconds
+// are the judged measurements; the other four take informational readings
 // (healthSample) that no floor reads. A stack part below a floor stops before
 // any gate; the merger classifies it runner-degraded, exactly as a part whose
 // runner GitHub lost: its tests get no outcome of the tree, the proof is not
@@ -43,7 +43,7 @@ const (
 	runnerHealthFormat = 1
 	// runnerHealthSeconds is the default measurement budget, split across
 	// the judged measurements by their shares below. The informational
-	// readings take their own shares on top of it (extraReadShare).
+	// readings take their own shares on top of it (extraWriteShare).
 	runnerHealthSeconds = 10.0
 )
 
@@ -132,6 +132,19 @@ type healthSample struct {
 	Seconds float64 `json:"seconds,omitempty"`
 	// Error says this reading could not be taken; the value is then 0.
 	Error string `json:"error,omitempty"`
+	// Region is the part of the disk probe a write or a read covered. The
+	// bursts are told apart by it: an O_DIRECT read bypasses the guest's page
+	// cache and nothing beyond it, so a burst that re-read blocks an earlier
+	// one read may have been served by a cache the guest cannot see.
+	Region *healthRegion `json:"region,omitempty"`
+}
+
+// healthRegion is a byte range of the probe file: where a reading began and
+// how many bytes it covered. A read that reached the end of the file and
+// wrapped to its start covers Bytes in all, from From.
+type healthRegion struct {
+	From  int64 `json:"from_bytes"`
+	Bytes int64 `json:"bytes"`
 }
 
 // runnerHealth is runner-health.json.
@@ -316,7 +329,7 @@ func cmdRunnerHealth(args []string) int {
 	class := fs.String("class", "", "the runner class the floors table names (required)")
 	floorsFile := fs.String("floors", runnerFloorsFile, "the floors table")
 	dir := fs.String("dir", "", "the directory to measure the disk in (default: -out's)")
-	seconds := fs.Float64("seconds", runnerHealthSeconds, "the measurement budget, split across the timed metrics (the informational readings take 30% more)")
+	seconds := fs.Float64("seconds", runnerHealthSeconds, "the measurement budget, split across the timed metrics (the informational readings take 40% more)")
 	if err := fs.Parse(args); err != nil || *out == "" || *class == "" || fs.NArg() > 0 || *seconds <= 0 {
 		fmt.Fprintln(os.Stderr, "proofrun runner-health -out FILE -class NAME [-floors FILE] [-dir DIR] [-seconds N]")
 		return 2
@@ -397,14 +410,14 @@ func describeReadings(m healthMetric) string {
 	return strings.Join(parts, ", ")
 }
 
-// The informational readings (docs/PROOFS.md §5): two more disk-read bursts
-// and one more fsync reading, each this share of the budget and on top of the
-// judged measurements' own shares, so the default measurement takes about
-// thirteen seconds. They are taken apart from the judged readings, with the
-// other measurements between them, and recorded with their offsets. The floor
-// never reads them.
+// The informational readings (docs/PROOFS.md §5): a second write of the
+// probe, two more disk-read bursts over it and one more fsync reading, each
+// this share of the budget and on top of the judged measurements' own shares,
+// so the default measurement takes about fourteen seconds. They are taken
+// apart from the judged readings, with the other measurements between them,
+// and recorded with their offsets. The floor never reads them.
 const (
-	extraReadBursts = 2
+	extraWriteShare = 0.10
 	extraReadShare  = 0.10
 	extraFsyncShare = 0.10
 )
@@ -412,7 +425,7 @@ const (
 // healthProbes are the measurements themselves, so a test can script them.
 type healthProbes struct {
 	diskWrite func(path string, budget time.Duration) (wrote int64, mbPerSec, seconds float64, err error)
-	diskRead  func(path string, size int64, budget time.Duration) (mbPerSec, seconds float64, err error)
+	diskRead  func(path string, size, from int64, budget time.Duration) (read int64, mbPerSec, seconds float64, err error)
 	fsync     func(path string, budget time.Duration) (p95ms, seconds float64, err error)
 	cpu       func(workers int, budget time.Duration) (mbPerSec, seconds float64)
 	memory    func() (mib float64, err error)
@@ -426,12 +439,27 @@ func measureRunnerHealth(dir, class string, floors healthFloors, budget time.Dur
 	return measureRunnerHealthWith(hostProbes, dir, class, floors, budget)
 }
 
+// nextBurstStart is where the burst after one that began at from and covered
+// read bytes of a size-byte file starts: where that one stopped, rounded down
+// to a read, so it covers blocks the last did not; the start of the file once
+// the last reached its end.
+func nextBurstStart(from, read, size int64) int64 {
+	if size <= 0 {
+		return 0
+	}
+	next := (from + read) % size
+	return next - next%directChunk
+}
+
 // measureRunnerHealthWith is the measurement over scripted or real probes.
 // The judged measurements run in the order they always did — write, read,
-// fsync, single-core CPU, all-core CPU, memory — and the informational
-// readings are slotted between and after them: a read burst after each CPU
-// measurement and one more fsync reading last. Each reading's offset is when
-// it began.
+// fsync, single-core CPU, all-core CPU, memory — each on the one probe file,
+// and the judged fsync opens it, which truncates what the write left, as it
+// always did. The informational readings are slotted between and after them:
+// the probe is written again after the single-core CPU measurement, a read
+// burst follows it and another comes after the all-core measurement, which
+// starts where the first stopped, and one more fsync reading comes last. Each
+// reading's offset is when it began.
 func measureRunnerHealthWith(p healthProbes, dir, class string, floors healthFloors, budget time.Duration) *runnerHealth {
 	started := time.Now()
 	h := &runnerHealth{Format: runnerHealthFormat, Class: class, MeasuredAt: started.UTC().Format(time.RFC3339), Dir: dir, Runner: currentRunner()}
@@ -443,50 +471,55 @@ func measureRunnerHealthWith(p healthProbes, dir, class string, floors healthFlo
 		return time.Duration(float64(budget) * d.Share)
 	}
 	extra := func(share float64) time.Duration { return time.Duration(float64(budget) * share) }
-	// take records a reading that began at offset at.
-	take := func(metric string, at, value, seconds float64, err error) {
-		smp := healthSample{Offset: at, Value: value, Seconds: seconds}
+	// take records a reading that began at offset at, with the region of the
+	// probe it covered when it was taken (an fsync covers none).
+	take := func(metric string, at, value, seconds float64, region *healthRegion, err error) {
+		smp := healthSample{Offset: at, Value: value, Seconds: seconds, Region: region}
 		if err != nil {
-			smp.Value, smp.Error = 0, err.Error()
+			smp.Value, smp.Region, smp.Error = 0, nil, err.Error()
 		}
 		readings[metric] = append(readings[metric], smp)
 	}
 	offset := func() float64 { return time.Since(started).Seconds() }
 	probe := filepath.Join(dir, ".runner-health.probe")
-	// The fsync readings write a file of their own: opening one truncates it,
-	// and the probe must outlive them for the later read bursts. The judged
-	// fsync reading used to open the probe itself, truncating what the write
-	// had just left; it measures the same thing (4 KiB appends and fsyncs on
-	// the work disk) and only no longer follows that truncation.
-	fsyncProbe := filepath.Join(dir, ".runner-health.fsync")
 	defer os.Remove(probe)
-	defer os.Remove(fsyncProbe)
-	wrote, writeMB, writeSec, err := p.diskWrite(probe, share("disk_write_mb_s"))
-	values["disk_write_mb_s"] = metricOf(writeMB, writeSec, err)
-	// readBurst and fsyncReading take one reading and record it; the first of
-	// each is the judged metric, which the caller keeps.
-	readBurst := func(budget time.Duration) healthMetric {
+	// wrote is what the latest write left, and next is where the next read
+	// burst starts in it.
+	var wrote, next int64
+	// writeProbe, readBurst and fsyncReading take one reading and record it;
+	// the first of each is the judged metric, which the caller keeps.
+	writeProbe := func(budget time.Duration) healthMetric {
 		at := offset()
-		mb, sec, err := p.diskRead(probe, wrote, budget)
-		take("disk_read_mb_s", at, mb, sec, err)
+		n, mb, sec, err := p.diskWrite(probe, budget)
+		wrote, next = n, 0
+		take("disk_write_mb_s", at, mb, sec, &healthRegion{From: 0, Bytes: n}, err)
+		return metricOf(mb, sec, err)
+	}
+	readBurst := func(budget time.Duration) healthMetric {
+		at, from := offset(), next
+		n, mb, sec, err := p.diskRead(probe, wrote, from, budget)
+		if err == nil {
+			next = nextBurstStart(from, n, wrote)
+		}
+		take("disk_read_mb_s", at, mb, sec, &healthRegion{From: from, Bytes: n}, err)
 		return metricOf(mb, sec, err)
 	}
 	fsyncReading := func(budget time.Duration) healthMetric {
 		at := offset()
-		ms, sec, err := p.fsync(fsyncProbe, budget)
-		take("fsync_p95_ms", at, ms, sec, err)
+		ms, sec, err := p.fsync(probe, budget)
+		take("fsync_p95_ms", at, ms, sec, nil, err)
 		return metricOf(ms, sec, err)
 	}
+	values["disk_write_mb_s"] = writeProbe(share("disk_write_mb_s"))
 	values["disk_read_mb_s"] = readBurst(share("disk_read_mb_s"))
 	values["fsync_p95_ms"] = fsyncReading(share("fsync_p95_ms"))
 	single, singleSec := p.cpu(1, share("cpu_single_mb_s"))
 	values["cpu_single_mb_s"] = metricOf(single, singleSec, nil)
+	writeProbe(extra(extraWriteShare))
 	readBurst(extra(extraReadShare))
 	all, allSec := p.cpu(runtime.NumCPU(), share("cpu_all_mb_s"))
 	values["cpu_all_mb_s"] = metricOf(all, allSec, nil)
-	for i := 1; i < extraReadBursts; i++ {
-		readBurst(extra(extraReadShare))
-	}
+	readBurst(extra(extraReadShare))
 	fsyncReading(extra(extraFsyncShare))
 	mem, err := p.memory()
 	values["mem_available_mib"] = metricOf(mem, 0, err)
@@ -601,42 +634,68 @@ func measureDiskWrite(path string, budget time.Duration) (wrote int64, mbPerSec,
 	return wrote, float64(wrote) / 1e6 / seconds, seconds, nil
 }
 
-// measureDiskRead reads the probe back through O_DIRECT, for budget or until
-// its end.
-func measureDiskRead(path string, size int64, budget time.Duration) (mbPerSec, seconds float64, err error) {
+// measureDiskRead reads the probe back through O_DIRECT from the byte offset
+// from, wrapping to the start of the file at its end, for budget or until it
+// has read size bytes. It returns the bytes it read.
+func measureDiskRead(path string, size, from int64, budget time.Duration) (read int64, mbPerSec, seconds float64, err error) {
 	if size == 0 {
-		return 0, 0, fmt.Errorf("nothing to read: the write left no bytes")
+		return 0, 0, 0, fmt.Errorf("nothing to read: the write left no bytes")
 	}
 	f, direct, err := openDirect(path, os.O_RDONLY)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	defer f.Close()
 	if !direct {
-		return 0, 0, fmt.Errorf("O_DIRECT is refused on this filesystem: a read of the file just written would measure the page cache")
+		return 0, 0, 0, fmt.Errorf("O_DIRECT is refused on this filesystem: a read of the file just written would measure the page cache")
 	}
 	buf := alignedBuffer(directChunk)
 	started := time.Now()
-	deadline := started.Add(budget)
-	var read int64
-	for read < size {
-		n, rerr := f.Read(buf)
-		read += int64(n)
-		if rerr == io.EOF {
-			break
+	read, rerr := readRegion(f, buf, size, from, started.Add(budget))
+	seconds = time.Since(started).Seconds()
+	if rerr != nil {
+		return 0, 0, seconds, rerr
+	}
+	if seconds == 0 || read == 0 {
+		return 0, 0, seconds, fmt.Errorf("nothing was read")
+	}
+	return read, float64(read) / 1e6 / seconds, seconds, nil
+}
+
+// readRegion reads r through buf from the byte offset from until it has read
+// size bytes or deadline has passed. At the end of the file it wraps to the
+// start, once, so no block is read twice and a burst that began late in the
+// file still reads as much as one that began at its start; a file shorter
+// than size ends the burst at its end. A read is taken before the deadline is
+// looked at, so a burst reads at least once. It returns the bytes read, which
+// on an error are those read before it.
+func readRegion(r io.ReadSeeker, buf []byte, size, from int64, deadline time.Time) (read int64, err error) {
+	wrapped := from <= 0
+	if !wrapped {
+		if _, err := r.Seek(from, io.SeekStart); err != nil {
+			return 0, err
 		}
-		if rerr != nil {
-			return 0, time.Since(started).Seconds(), rerr
+	}
+	for read < size {
+		n, rerr := r.Read(buf)
+		read += int64(n)
+		switch {
+		case rerr == io.EOF:
+			if wrapped {
+				return read, nil
+			}
+			wrapped = true
+			if _, err := r.Seek(0, io.SeekStart); err != nil {
+				return read, err
+			}
+		case rerr != nil:
+			return read, rerr
 		}
 		if time.Now().After(deadline) {
 			break
 		}
 	}
-	seconds = time.Since(started).Seconds()
-	if seconds == 0 || read == 0 {
-		return 0, seconds, fmt.Errorf("nothing was read")
-	}
-	return float64(read) / 1e6 / seconds, seconds, nil
+	return read, nil
 }
 
 // measureFsync appends 4 KiB and fsyncs, for budget or 500 samples, and

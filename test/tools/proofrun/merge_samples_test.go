@@ -58,6 +58,16 @@ func TestMerge_LaterReadingsReachProofJSONAndTheREADMEAndJudgeNothing(t *testing
 	if len(read.Samples) != 3 || read.Samples[2].Offset != 11 || read.Samples[2].Value != 9.8 || read.Samples[2].Seconds != 1 {
 		t.Errorf("proof.json lost the disk-read readings: %+v", read.Samples)
 	}
+	// Each burst's region of the probe crosses the merge with it: it is what
+	// tells a burst over new blocks from one over blocks already read.
+	if len(read.Samples) == 3 {
+		if r := read.Samples[2].Region; r == nil || *r != (healthRegion{From: 12582912, Bytes: 12582912}) {
+			t.Errorf("proof.json lost the region of the last burst: %+v", r)
+		}
+		if r := read.Samples[0].Region; r == nil || *r != (healthRegion{From: 0, Bytes: 524288000}) {
+			t.Errorf("proof.json lost the region of the judged burst: %+v", r)
+		}
+	}
 	if fs := healthMetricNamed(t, &runnerHealth{Metrics: h.Metrics}, "fsync_p95_ms"); len(fs.Samples) != 2 || fs.Samples[1].Value != 400.25 {
 		t.Errorf("proof.json lost the fsync readings: %+v", fs.Samples)
 	}
@@ -66,8 +76,8 @@ func TestMerge_LaterReadingsReachProofJSONAndTheREADMEAndJudgeNothing(t *testing
 	if err := readJSON(filepath.Join(f.out, "proof.json"), &onDisk); err != nil {
 		t.Fatal(err)
 	}
-	if read := healthMetricNamed(t, &runnerHealth{Metrics: healthOf(t, onDisk.RunnerHealth, "integration:2").Metrics}, "disk_read_mb_s"); len(read.Samples) != 3 {
-		t.Errorf("the written proof.json has %d disk-read readings, want 3", len(read.Samples))
+	if read := healthMetricNamed(t, &runnerHealth{Metrics: healthOf(t, onDisk.RunnerHealth, "integration:2").Metrics}, "disk_read_mb_s"); len(read.Samples) != 3 || read.Samples[1].Region == nil || read.Samples[1].Region.Bytes != 12582912 {
+		t.Errorf("the written proof.json has %d disk-read readings (%+v), want 3 with their regions", len(read.Samples), read.Samples)
 	}
 	readme := f.readmeText()
 	for _, want := range []string{

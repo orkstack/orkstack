@@ -9,9 +9,9 @@
     {"metric": "disk_write_mb_s", "unit": "MB/s", "value": 203.5, "floor": 40, "below_floor": false, "seconds": 2.5},
     {"metric": "disk_read_mb_s", "unit": "MB/s", "value": 311, "floor": 40, "below_floor": false, "seconds": 2,
       "samples": [
-        {"offset_seconds": 2.5, "value": 311, "seconds": 2},
-        {"offset_seconds": 8, "value": 12.5, "seconds": 1},
-        {"offset_seconds": 11, "value": 9.8, "seconds": 1}
+        {"offset_seconds": 2.5, "value": 311, "seconds": 2, "region": {"from_bytes": 0, "bytes": 524288000}},
+        {"offset_seconds": 8, "value": 12.5, "seconds": 1, "region": {"from_bytes": 0, "bytes": 12582912}},
+        {"offset_seconds": 11, "value": 9.8, "seconds": 1, "region": {"from_bytes": 12582912, "bytes": 12582912}}
       ]},
     {"metric": "fsync_p95_ms", "unit": "ms", "value": 6.41, "floor": 60, "below_floor": false, "seconds": 1.5,
       "samples": [
