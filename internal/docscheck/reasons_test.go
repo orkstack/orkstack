@@ -82,15 +82,10 @@ func scanReasons(t *testing.T) []reasonConst {
 // TestReasons_EveryReasonIsDocumented: every machine-readable reason a
 // client can see appears as a whole word in some docs/*.md.
 func TestReasons_EveryReasonIsDocumented(t *testing.T) {
-	root := repoRoot(t)
 	reasons := scanReasons(t)
 
-	docs, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var text strings.Builder
-	for _, doc := range docs {
+	for _, doc := range docsFiles(t) {
 		text.WriteString(readFile(t, doc))
 		text.WriteString("\n")
 	}

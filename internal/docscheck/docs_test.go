@@ -2,64 +2,27 @@ package docscheck
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"testing"
 	"unicode"
 )
 
-// repoRoot is the module root: this package lives at internal/docscheck.
+// repoRoot is the module root: this package lives at internal/docscheck. It is
+// resolved through symbolic links, because the walk never follows one at its
+// root and git names the tree's top by its real path.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return root
-}
-
-// markdownFiles walks the tree for tracked-looking documentation. It reads
-// directories with os.ReadDir, so go test's cache records the reads and a new
-// file re-runs these checks.
-func markdownFiles(t *testing.T) []string {
-	t.Helper()
-	return markdownFilesUnder(t, repoRoot(t))
-}
-
-// markdownFilesUnder is markdownFiles for the tree at root. A directory named
-// like a build output, a dependency cache or a generated tree is not
-// documentation, and neither is anything under it: /dist/ is where `make dist`
-// writes a release, including the bundle's own README.
-func markdownFilesUnder(t *testing.T, root string) []string {
-	t.Helper()
-	var out []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", ".data", ".atomic", ".cache", "node_modules", "proof", "gen", "build", ".svelte-kit", "tmp", "bin", "dist":
-				if path != root {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if strings.HasSuffix(d.Name(), ".md") {
-			out = append(out, path)
-		}
-		return nil
-	})
-	if err != nil {
+	if root, err = filepath.EvalSymlinks(root); err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(out)
-	return out
+	return root
 }
 
 func readFile(t *testing.T, path string) string {
@@ -240,17 +203,10 @@ func TestReadme_DocsTableListsEveryDoc(t *testing.T) {
 	for _, m := range linkRE.FindAllStringSubmatch(section, -1) {
 		linked[strings.TrimPrefix(m[1], "./")] = true
 	}
-	docs, err := os.ReadDir(filepath.Join(root, "docs"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var missing []string
-	for _, d := range docs {
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
-			continue
-		}
-		if !linked["docs/"+d.Name()] {
-			missing = append(missing, "docs/"+d.Name())
+	for _, doc := range docsFiles(t) {
+		if name := "docs/" + filepath.Base(doc); !linked[name] {
+			missing = append(missing, name)
 		}
 	}
 	if len(missing) > 0 {
@@ -346,21 +302,26 @@ func TestRepositoryNeverKillsByNameOrPattern(t *testing.T) {
 
 // TestDocs_EnumerationsAreCacheVisible: a drift test that runs git reads an
 // index go test's cache cannot see, so it must open the index file itself
-// first. TestRepositoryScopeTable_MapsEveryTrackedPath does; this keeps it,
-// and any future one, honest.
+// first, asking git for its path. treeFiles and
+// TestRepositoryScopeTable_MapsEveryTrackedPath do; this keeps them, and any
+// future one, honest. It matches the call, not a mention of the flag, so a
+// file that only names it, as this one does, is not taken for one that opens
+// the index.
 func TestDocs_EnumerationsAreCacheVisible(t *testing.T) {
 	root := repoRoot(t)
 	files := []string{
 		filepath.Join(root, "internal/docscheck/docs_test.go"),
+		filepath.Join(root, "internal/docscheck/tree_test.go"),
 		filepath.Join(root, "internal/docscheck/reasons_test.go"),
 		filepath.Join(root, "cmd/orkctl/cli_reference_test.go"),
 		filepath.Join(root, "test/tools/proofrun/docs_test.go"),
 		filepath.Join(root, "test/tools/proofrun/scope_test.go"),
 	}
-	gitExec := regexp.MustCompile(`exec\.Command\("git"`)
+	gitExec := regexp.MustCompile(`exec\.Command(?:Context\([^,]+,\s*|\()"git"`)
+	opensIndex := regexp.MustCompile(`"rev-parse",\s*"--git-path",\s*"index"`)
 	for _, file := range files {
 		doc := readFile(t, file)
-		if gitExec.MatchString(doc) && !strings.Contains(doc, "--git-path") {
+		if gitExec.MatchString(doc) && !opensIndex.MatchString(doc) {
 			t.Errorf("%s runs git without opening the index file: a cached pass could hide a new file", filepath.ToSlash(file))
 		}
 	}

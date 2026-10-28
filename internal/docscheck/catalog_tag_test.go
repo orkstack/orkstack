@@ -2,7 +2,6 @@ package docscheck
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -19,11 +18,6 @@ import (
 // letter or digit, so a sentence's full stop is not part of it.
 var activityImageMention = regexp.MustCompile(
 	`ghcr\.io/orkstack/activity-([A-Za-z0-9*<>_-]+):([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)`)
-
-// generatedDocs is the part of the site that is the repository's own markdown
-// ported at build time (site/docs.manifest.json). It is not tracked, and the
-// documents it copies are checked where they live.
-const generatedDocs = "site/src/content/docs/docs/"
 
 // catalogTagMismatches returns one line per mention of a built-in activity
 // image in text whose tag is not tag, each naming path and line.
@@ -64,9 +58,6 @@ func TestDocs_NameTheBuiltinCatalogTag(t *testing.T) {
 			t.Fatal(err)
 		}
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, generatedDocs) {
-			continue
-		}
 		text := readFile(t, file)
 		mentions[rel] = len(activityImageMention.FindAllString(text, -1))
 		bad = append(bad, catalogTagMismatches(rel, text, tag)...)
@@ -118,34 +109,5 @@ func TestDocs_NameTheBuiltinCatalogTag_BitesOnPlantedText(t *testing.T) {
 				t.Errorf("%s: mismatch %q does not carry %q", tc.name, got[i], want)
 			}
 		}
-	}
-}
-
-// TestMarkdownFiles_SkipsBuildOutput: what `make dist` writes under dist/ is a
-// release, not documentation, and is gitignored; the walk that every drift
-// check shares must not read it, or a stale bundle README fails a check about
-// the tree.
-func TestMarkdownFiles_SkipsBuildOutput(t *testing.T) {
-	root := t.TempDir()
-	for _, rel := range []string{
-		"README.md", "docs/GUIDE.md",
-		"dist/README.md", "dist/quickstart/NOTES.md", "site/dist/index.md",
-		"node_modules/x/README.md", "bin/NOTES.md",
-	} {
-		path := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("# x\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var got []string
-	for _, path := range markdownFilesUnder(t, root) {
-		rel, _ := filepath.Rel(root, path)
-		got = append(got, filepath.ToSlash(rel))
-	}
-	if want := "README.md docs/GUIDE.md"; strings.Join(got, " ") != want {
-		t.Fatalf("markdown files %q, want %q", got, want)
 	}
 }

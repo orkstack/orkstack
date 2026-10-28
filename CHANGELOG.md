@@ -226,6 +226,21 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The documentation drift checks (`internal/docscheck`) read only the
+  markdown a commit of the work tree would hold: tracked files, and untracked
+  ones git does not ignore. They read every `*.md` on disk outside a fixed
+  list of directory names, so they also judged files that are not the tree's:
+  the pages the site's docs sync writes into `site/src/content/docs/docs/`,
+  which git ignores and which stay behind when a checkout switches branches,
+  a design tool's notes under `site/.impeccable/`, a hand-run Playwright
+  failure's output under `ui/test-results/` and, from a checkout holding
+  worktrees under `.claude/worktrees/`, every other worktree's documents. A
+  worktree that synced the site on a branch with `make test-race` and
+  `make vuln`, then switched to one without them, failed
+  `TestDocs_EveryMakeTargetExists` in its unit gate until the site was
+  synced again. A tracked document is now read wherever it lies, even in a
+  directory named like a build output. The checks need git and a git
+  checkout, as `go test ./...` already did.
 - The feature proof's evidence selector treats a native fuzz target
   (`func FuzzXxx(f *testing.F)` in a `_test.go` file) as a test. A diff that
   changed only a fuzz target, or only a helper one reaches, selected no
