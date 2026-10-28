@@ -1,10 +1,15 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The race gate runs the unit suites under the race detector (AGENTS.md
@@ -107,7 +112,7 @@ func TestCollector_AStickyCollectorKeepsTheWorstRepeat(t *testing.T) {
 		}
 	}
 	listed, expected := raceListing("TestQ")
-	l := buildRaceLedger(suiteRaceRepeat, expected, listed, rep, nil)
+	l := buildRaceLedger(suiteRaceRepeat, true, expected, listed, rep, nil)
 	if l.Summary.SubtestSkips != 1 || len(l.Tests) != 1 || len(l.Tests[0].Failures) != 1 {
 		t.Errorf("repeated subtests: summary %+v, failures %v: each leaf counts once", l.Summary, l.Tests[0].Failures)
 	}
@@ -136,7 +141,7 @@ func TestRaceLedger_ADataRaceIsAProblemWhateverTheTestsReported(t *testing.T) {
 	} {
 		c.add(e, "race")
 	}
-	l := buildRaceLedger(suiteRace, expected, listed, c, nil)
+	l := buildRaceLedger(suiteRace, true, expected, listed, c, nil)
 	if l.ok() {
 		t.Fatalf("a ledger with data races is ok: %+v", l)
 	}
@@ -169,7 +174,7 @@ func TestRaceLedger_AShortSkipIsRecordedAsASkipAndIsNoProblemOfItsOwn(t *testing
 		c.add(e, "race")
 	}
 	allow := []allowedSkip{{Suite: "any", Package: racePkg, Test: "TestAllowed", Reason: "helper process", Line: 1}}
-	l := buildRaceLedger(suiteRace, expected, listed, c, allow)
+	l := buildRaceLedger(suiteRace, true, expected, listed, c, allow)
 	if !l.ok() {
 		t.Fatalf("a ledger whose only skips are -short skips has problems: %v", l.Problems)
 	}
@@ -192,7 +197,7 @@ func TestRaceLedger_AShortSkipIsRecordedAsASkipAndIsNoProblemOfItsOwn(t *testing
 	// A test that never reported is still a problem: -short excuses a skip,
 	// not the absence of an outcome.
 	listed, expected = raceListing("TestGone")
-	if l := buildRaceLedger(suiteRace, expected, listed, newCollector(), nil); l.ok() {
+	if l := buildRaceLedger(suiteRace, true, expected, listed, newCollector(), nil); l.ok() {
 		t.Error("a listed test with no outcome is not a problem")
 	}
 }
@@ -211,13 +216,13 @@ func TestRaceLedger_UnitAllowedSkipsApplyToTheRaceSuites(t *testing.T) {
 		{Suite: "integration", Package: racePkg, Test: "TestElsewhere", Reason: "not this lane", Line: 2},
 	}
 	for _, suite := range []string{suiteRace, suiteRaceRepeat} {
-		l := buildRaceLedger(suite, expected, listed, c, allow)
+		l := buildRaceLedger(suite, true, expected, listed, c, allow)
 		if l.Summary.AllowedSkip != 1 || !l.ok() {
 			t.Errorf("%s: summary %+v, problems %v", suite, l.Summary, l.Problems)
 		}
 	}
 	stale := []allowedSkip{{Suite: "unit", Package: racePkg, Test: "TestRenamed", Reason: "gone", Line: 7}}
-	l := buildRaceLedger(suiteRace, expected, listed, c, stale)
+	l := buildRaceLedger(suiteRace, true, expected, listed, c, stale)
 	if l.ok() || !strings.Contains(strings.Join(l.Problems, "\n"), "allowed-skip entry (line 7) names "+racePkg+".TestRenamed") {
 		t.Errorf("a stale unit entry is not stale in the race lane: %v", l.Problems)
 	}
@@ -234,7 +239,7 @@ func TestRaceLedger_NoQuarantineExcusesAFailure(t *testing.T) {
 	} {
 		c.add(e, "race")
 	}
-	l := buildRaceLedger(suiteRace, expected, listed, c, nil)
+	l := buildRaceLedger(suiteRace, true, expected, listed, c, nil)
 	if l.ok() || l.Summary.Fail != 1 || l.Summary.Quarantined != 0 {
 		t.Errorf("summary %+v, problems %v: the failure must stand", l.Summary, l.Problems)
 	}
@@ -284,6 +289,7 @@ func TestUnitRunner_TheRaceGateFailsOnADataRaceAndNamesTheTest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs go test -race")
 	}
+	requireRaceToolchain(t)
 	quiet(t)
 	out := t.TempDir()
 	code := cmdUnit([]string{"-out", out, "-allow", "", "-race", "-short", "./testdata/racesuite"})
@@ -337,6 +343,7 @@ func TestUnitRunner_TheRaceGatePassesACleanPackage(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs go test -race")
 	}
+	requireRaceToolchain(t)
 	quiet(t)
 	out := t.TempDir()
 	if code := cmdUnit([]string{"-out", out, "-allow", "", "-race", "-short", "./testdata/fakesuite"}); code != 0 {
@@ -355,6 +362,7 @@ func TestUnitRunner_ARepeatedRaceRunFailsATestThatFailsOnlyOnce(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs go test -race")
 	}
+	requireRaceToolchain(t)
 	quiet(t)
 	out := t.TempDir()
 	code := cmdUnit([]string{"-out", out, "-allow", "", "-race", "-short", "-count", "3", "./testdata/flakysuite"})
@@ -376,5 +384,242 @@ func TestUnitRunner_ARepeatedRaceRunFailsATestThatFailsOnlyOnce(t *testing.T) {
 	}
 	if got.Outcome != outcomeFail {
 		t.Errorf("TestFailsOnTheSecondRun = %+v: a later pass hid the failure", got)
+	}
+}
+
+// ---- review findings: what the gate runs is what -short, -count and the toolchain say ----
+
+// raceToolchainMissing says what the race detector lacks on this host, or
+// returns "" when it has what it needs: cgo, and a C compiler on PATH. The
+// unit gate runs the tests below, so a host without them is a missing
+// prerequisite, named, and never an opaque `go: -race requires cgo`.
+func raceToolchainMissing() string {
+	out, err := exec.Command("go", "env", "CGO_ENABLED", "CC").Output()
+	if err != nil {
+		return "go env: " + err.Error()
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 1 || fields[0] != "1" {
+		return "CGO_ENABLED is not 1"
+	}
+	if len(fields) < 2 {
+		return "go env CC names no C compiler"
+	}
+	if _, err := exec.LookPath(fields[1]); err != nil {
+		return "no C compiler on PATH: " + err.Error()
+	}
+	return ""
+}
+
+func requireRaceToolchain(t *testing.T) {
+	t.Helper()
+	if why := raceToolchainMissing(); why != "" {
+		t.Fatalf("prerequisite missing: the race detector needs cgo (CGO_ENABLED=1) and a C compiler on PATH (go env CC): %s", why)
+	}
+}
+
+func TestRaceToolchain_ACgoLessHostIsAMissingPrerequisiteWithAReason(t *testing.T) {
+	t.Setenv("CGO_ENABLED", "0")
+	if why := raceToolchainMissing(); !strings.Contains(why, "CGO_ENABLED") {
+		t.Errorf("a host with cgo off is missing nothing? reason %q", why)
+	}
+}
+
+// go test's -timeout runs from the start of a test binary to its end, across
+// every -count repeat of its tests, so a repeat of N runs needs N runs' time.
+func TestRaceTimeout_ScalesWithTheRepeatCount(t *testing.T) {
+	for count, want := range map[int]string{1: "30m0s", 2: "1h0m0s", 3: "1h30m0s", 5: "2h30m0s"} {
+		if got := raceTimeoutFor(count); got != want {
+			t.Errorf("raceTimeoutFor(%d) = %s, want %s", count, got, want)
+		}
+	}
+}
+
+func TestUnitRunner_TheRaceTimeoutSpansEveryRepeat(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go test -race")
+	}
+	requireRaceToolchain(t)
+	quiet(t)
+	for _, c := range []struct{ count, minutes int }{{1, 30}, {3, 90}} {
+		t.Run(fmt.Sprintf("count %d", c.count), func(t *testing.T) {
+			out := t.TempDir()
+			args := []string{"-out", out, "-allow", "", "-race", "-short"}
+			if c.count > 1 {
+				args = append(args, "-count", strconv.Itoa(c.count))
+			}
+			if code := cmdUnit(append(args, "./testdata/deadlinesuite")); code != 0 {
+				t.Fatalf("exit %d, want 0", code)
+			}
+			events, err := os.ReadFile(filepath.Join(out, unitSuiteName(true, c.count)+".events.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("timeout-minutes=%d", c.minutes)
+			if !strings.Contains(string(events), want) {
+				t.Errorf("the test binary was not given a %d-minute -timeout for %d run(s): no %q in its events:\n%s", c.minutes, c.count, want, events)
+			}
+		})
+	}
+}
+
+// make test-race is the gate's go test without its ledger: the same flags,
+// the timeout included, for the same repeat count.
+func TestMakefile_TestRaceGivesGoTestTheGatesTimeout(t *testing.T) {
+	timeoutFlag := regexp.MustCompile(`-timeout (\S+)`)
+	for _, count := range []int{1, 3} {
+		t.Run(fmt.Sprintf("RACE_COUNT=%d", count), func(t *testing.T) {
+			out, err := exec.Command("make", "-n", "-s", "-C", mustRepoRoot(), "test-race",
+				fmt.Sprintf("RACE_COUNT=%d", count), "RACE_PACKAGES=./pkg/triggers").CombinedOutput()
+			if err != nil {
+				t.Fatalf("make -n test-race: %v\n%s", err, out)
+			}
+			m := timeoutFlag.FindStringSubmatch(string(out))
+			if m == nil {
+				t.Fatalf("make test-race runs go test with no -timeout, so the default ten minutes bound a repeat of the engine's suite:\n%s", out)
+			}
+			got, err := time.ParseDuration(m[1])
+			if err != nil {
+				t.Fatalf("-timeout %q: %v", m[1], err)
+			}
+			want, _ := time.ParseDuration(raceTimeoutFor(count))
+			if got != want {
+				t.Errorf("make test-race RACE_COUNT=%d gives -timeout %s, the gate gives %s", count, got, want)
+			}
+			for _, flag := range []string{"-race", "-short", fmt.Sprintf("-count=%d", count)} {
+				if !strings.Contains(string(out), flag) {
+					t.Errorf("make test-race lacks %s:\n%s", flag, out)
+				}
+			}
+		})
+	}
+}
+
+// -short is what makes a skip a thing the race ledger records instead of
+// refuses. A race run without it follows the unit gate's rules, a skip is a
+// problem there, and the ledger says which kind of run it was.
+func TestRaceLedger_ASkipIsOnlyRecordedWhenTheRunHadShort(t *testing.T) {
+	listed, expected := raceListing("TestSkips", "TestSub")
+	events := []event{
+		ev("run", racePkg, "TestSkips", 0), ev("skip", racePkg, "TestSkips", 0),
+		ev("run", racePkg, "TestSub", 0), ev("run", racePkg, "TestSub/inner", 0), ev("skip", racePkg, "TestSub/inner", 0), ev("pass", racePkg, "TestSub", 0),
+	}
+	collect := func() *collector {
+		c := newCollector()
+		for _, e := range events {
+			c.add(e, "race")
+		}
+		return c
+	}
+	with := buildRaceLedger(suiteRace, true, expected, listed, collect(), nil)
+	if !with.ok() || !with.Short {
+		t.Errorf("a -short run: ok %v, short %v, problems %v: the skips are recorded, not refused", with.ok(), with.Short, with.Problems)
+	}
+	without := buildRaceLedger(suiteRace, false, expected, listed, collect(), nil)
+	if without.ok() || without.Short {
+		t.Fatalf("a run without -short: ok %v, short %v: a skip is never a pass", without.ok(), without.Short)
+	}
+	problems := strings.Join(without.Problems, "\n")
+	for _, want := range []string{racePkg + ".TestSkips skipped", racePkg + ".TestSub/inner skipped", "a skip is never a pass"} {
+		if !strings.Contains(problems, want) {
+			t.Errorf("problems lack %q:\n%s", want, problems)
+		}
+	}
+	// The reason a skip carries says what is known, and no more: the run had
+	// -short, and the test's own reason is in the gate's log.
+	for _, e := range with.Tests {
+		if e.Test == "TestSkips" && (!strings.Contains(e.Reason, "run with -short") || strings.Contains(e.Reason, "skipped under -short")) {
+			t.Errorf("TestSkips reason = %q: it claims a cause the ledger does not know", e.Reason)
+		}
+	}
+}
+
+func TestUnitRunner_TheLedgerSaysWhetherTheRunHadShort(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go test -race")
+	}
+	requireRaceToolchain(t)
+	quiet(t)
+	for _, short := range []bool{true, false} {
+		t.Run(fmt.Sprintf("short=%v", short), func(t *testing.T) {
+			out := t.TempDir()
+			args := []string{"-out", out, "-allow", "", "-race"}
+			if short {
+				args = append(args, "-short")
+			}
+			if code := cmdUnit(append(args, "./testdata/fakesuite")); code != 0 {
+				t.Fatalf("exit %d, want 0", code)
+			}
+			var l ledger
+			if err := readJSON(filepath.Join(out, "race-tests.json"), &l); err != nil {
+				t.Fatal(err)
+			}
+			if l.Short != short {
+				t.Errorf("ledger short = %v, want %v", l.Short, short)
+			}
+		})
+	}
+}
+
+// -count repeats a test in one process; a repeat that starts and never
+// reports (the binary ended, hung or timed out in it) must not leave the
+// earlier repeat's pass standing as the test's outcome.
+func TestCollector_AStickyRepeatThatNeverReportedIsNoOutcome(t *testing.T) {
+	listed, expected := raceListing("TestDies", "TestFine")
+	c := newCollector()
+	c.sticky = true
+	for _, e := range []event{
+		ev("run", racePkg, "TestDies", 0), ev("pass", racePkg, "TestDies", 1),
+		ev("run", racePkg, "TestDies", 0), // the binary ends here
+		ev("run", racePkg, "TestFine", 0), ev("pass", racePkg, "TestFine", 1),
+		ev("run", racePkg, "TestFine", 0), ev("pass", racePkg, "TestFine", 1),
+	} {
+		c.add(e, "race")
+	}
+	l := buildRaceLedger(suiteRaceRepeat, true, expected, listed, c, nil)
+	if l.ok() || l.Summary.NoOutcome != 1 || l.Summary.Pass != 1 {
+		t.Fatalf("ledger %+v, problems %v: want TestDies with no outcome and TestFine passed", l.Summary, l.Problems)
+	}
+	problems := strings.Join(l.Problems, "\n")
+	if !strings.Contains(problems, racePkg+".TestDies no outcome") || strings.Contains(problems, "TestFine") {
+		t.Errorf("problems do not name the test that never reported, and only it:\n%s", problems)
+	}
+	// A repeat that reports clears the mark, whatever it reports first.
+	again := newCollector()
+	again.sticky = true
+	for _, e := range []event{
+		ev("run", racePkg, "TestDies", 0), ev("run", racePkg, "TestDies", 0), ev("pass", racePkg, "TestDies", 1),
+	} {
+		again.add(e, "race")
+	}
+	if l := buildRaceLedger(suiteRaceRepeat, true, []testKey{{racePkg, "TestDies"}}, map[string]map[string]bool{racePkg: {"TestDies": true}}, again, nil); l.ok() {
+		// two runs started, one reported: the second never did.
+		t.Errorf("a repeat that started twice and reported once is ok: %+v", l.Summary)
+	}
+}
+
+func TestUnitRunner_ARepeatThatEndsTheBinaryNamesItsTest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go test -race")
+	}
+	requireRaceToolchain(t)
+	quiet(t)
+	out := t.TempDir()
+	code := cmdUnit([]string{"-out", out, "-allow", "", "-race", "-short", "-count", "3", "./testdata/diesuite"})
+	if code != 1 {
+		t.Fatalf("exit %d, want 1: the binary ends in the second run", code)
+	}
+	var l ledger
+	if err := readJSON(filepath.Join(out, "race-repeat-tests.json"), &l); err != nil {
+		t.Fatal(err)
+	}
+	problems := strings.Join(l.Problems, "\n")
+	if !strings.Contains(problems, "TestDiesOnTheSecondRun no outcome") {
+		t.Errorf("the test whose repeat never reported is not named:\n%s", problems)
+	}
+	for _, e := range l.Tests {
+		if e.Test == "TestDiesOnTheSecondRun" && e.Outcome == outcomePass {
+			t.Errorf("TestDiesOnTheSecondRun = %+v: the first repeat's pass stands for a test that died in the second", e)
+		}
 	}
 }

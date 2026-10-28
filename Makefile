@@ -79,11 +79,16 @@ test: ## Run unit tests
 # under the race detector with -short, which skips the scale tests the unit
 # gate runs without it. RACE_COUNT=3 RACE_PACKAGES='./internal/engine/...'
 # is the shape of the nightly repeat. The detector needs cgo and a C compiler.
+# go test's -timeout covers a test binary across every -count repeat, so it is
+# RACE_MINUTES_PER_RUN times RACE_COUNT, as the gate gives it
+# (raceTimeoutPerRun, test/tools/proofrun/run.go; a test holds the two equal).
 RACE_COUNT ?= 1
 RACE_PACKAGES ?= ./...
+RACE_MINUTES_PER_RUN ?= 30
+RACE_TIMEOUT ?= $(shell echo $$(( $(RACE_MINUTES_PER_RUN) * $(RACE_COUNT) )))m
 .PHONY: test-race
 test-race: ## Run the unit tests under the race detector, -short (RACE_COUNT=N repeats, RACE_PACKAGES='./pkg/...' narrows)
-	go test -race -short -count=$(RACE_COUNT) $(RACE_PACKAGES)
+	go test -race -short -count=$(RACE_COUNT) -timeout $(RACE_TIMEOUT) $(RACE_PACKAGES)
 
 # The nightly fuzz lane's run (docs/PROOFS.md §2.3): every Fuzz target of the
 # module for FUZZTIME each, a ledger and a log per target under FUZZ_OUT, and
@@ -220,7 +225,7 @@ proof-ui: ## Alias of proof: the full proof already runs the UI type-check, unit
 	@scripts/proof.sh $(NAME)
 
 .PHONY: proof-nightly
-proof-nightly: ## The nightly tier: only the deferred scale and soak tests and specs, on one host -> proof/<NAME>-nightly/
+proof-nightly: ## The nightly tier: the deferred scale and soak tests and specs, the race repeat and the fuzz lane, on one host -> proof/<NAME>-nightly/
 	@scripts/proof.sh --tier nightly $(if $(NAME),$(NAME),nightly)
 
 .PHONY: proof-release

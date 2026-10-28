@@ -19,11 +19,15 @@ import (
 //     prints "WARNING: DATA RACE" and marks the running test failed, but a
 //     report may also come from a goroutine that outlived every test, and a
 //     gate that read only the test outcomes would pass it.
-//   - A test skipped by -short is recorded as a skip, with a reason, and is
-//     not a problem of the race ledger. It is not a pass either: the merger
-//     requires the unit gate, which runs the same test without -short, to
-//     have passed it (merge.go, mergeRaceSkips), so no test is covered by
-//     neither lane.
+//   - A skip in a run that had -short is recorded as a skip, with a reason,
+//     and is not a problem of the race ledger. The ledger records that the
+//     run had -short (ledger.Short), and without it a skip is a problem, as
+//     in the unit gate: the rule is -short's, not the race lane's. A skip is
+//     not a pass either: the full proof's merger requires the unit gate, which
+//     runs the same test without -short, to have passed it
+//     (mergelanes.go, checkRaceAgainstUnit), so no test is covered by neither
+//     lane. The nightly repeat has no unit ledger to hold its skips to; they
+//     only narrow what it hunts, and its ledger counts them.
 //   - No quarantine excuses a failure. A race failure is a finding, and the
 //     quarantine list names flaky tests of the unit and integration suites.
 //
@@ -42,8 +46,9 @@ const (
 )
 
 // shortSkipReason is what a race ledger's skip entry says when no
-// allowed-skip entry names it.
-const shortSkipReason = "skipped under -short; the unit gate runs this test without it, and the merger requires that gate to have passed it"
+// allowed-skip entry names it. It says what the ledger knows: the run had
+// -short. Why the test skipped is the test's own, in the gate's log.
+const shortSkipReason = "skipped in a run with -short (the test's own reason is in the gate's log); the unit gate runs this test without -short, and the full proof's merger requires that gate to have passed it"
 
 // raceReportLine is the first line of every report the race detector prints.
 const raceReportLine = "WARNING: DATA RACE"
@@ -99,11 +104,13 @@ func unitSuiteName(race bool, count int) string {
 	return suiteRace
 }
 
-// buildRaceLedger is the race suites' ledger: the unit builder with -short
-// skips recorded rather than refused, no quarantine, and a problem for every
-// data race the detector reported.
-func buildRaceLedger(suite string, expected []testKey, listed map[string]map[string]bool, c *collector, allow []allowedSkip) ledger {
-	l := buildLedgerOpts(suite, expected, listed, c, allow, nil, true)
+// buildRaceLedger is the race suites' ledger: the unit builder with the skips
+// of a -short run recorded rather than refused (short says the run had
+// -short; without it the unit gate's rule stands), no quarantine, and a
+// problem for every data race the detector reported.
+func buildRaceLedger(suite string, short bool, expected []testKey, listed map[string]map[string]bool, c *collector, allow []allowedSkip) ledger {
+	l := buildLedgerOpts(suite, expected, listed, c, allow, nil, short)
+	l.Short = short
 	l.Problems = append(l.Problems, raceProblems(c)...)
 	return l
 }

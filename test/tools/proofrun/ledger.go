@@ -98,6 +98,11 @@ type collector struct {
 	// of a test (fail, then skip, then pass) and adds up its seconds. The
 	// unit and integration collectors are not sticky: nothing repeats there.
 	sticky bool
+	// unfinished counts, for a sticky collector, the executions of a test
+	// that started and have reported nothing yet. A repeat that starts after
+	// an earlier repeat passed would otherwise leave that pass standing when
+	// the binary ends, hangs or times out inside it.
+	unfinished map[testKey]int
 	// races counts the race detector's reports by where they were printed:
 	// the test, or an empty Test for a report outside every test. Every
 	// collector counts; only the race suites' ledgers read it (race.go).
@@ -110,6 +115,7 @@ func newCollector() *collector {
 		started:       map[testKey]bool{},
 		packageOutput: map[string]*strings.Builder{},
 		pkgEnds:       map[string]string{},
+		unfinished:    map[testKey]int{},
 		races:         map[testKey]int{},
 	}
 }
@@ -147,6 +153,9 @@ func (c *collector) add(ev event, job string) {
 			c.results[k] = &entry{Package: ev.Package, Test: ev.Test, Job: job, Outcome: outcomeNone}
 			c.order = append(c.order, k)
 		}
+		if c.sticky {
+			c.unfinished[k]++
+		}
 	case "pass", "fail", "skip":
 		if strings.Contains(ev.Test, "/") {
 			switch ev.Action {
@@ -165,6 +174,9 @@ func (c *collector) add(ev event, job string) {
 		}
 		e.Job = job
 		if c.sticky {
+			if c.unfinished[k] > 0 {
+				c.unfinished[k]--
+			}
 			// A repeat: keep the worst outcome so far, and add up the time.
 			if outcomeSeverity(ev.Action) >= outcomeSeverity(e.Outcome) {
 				e.Outcome = ev.Action
@@ -298,6 +310,10 @@ type ledger struct {
 	Tests      []entry                 `json:"tests"`
 	Problems   []string                `json:"problems"`
 	Summary    summary                 `json:"summary"`
+	// Short is set on a race ledger whose run had -short: only then is a skip
+	// no allowed-skip entry names recorded rather than refused (race.go), and
+	// the merger accepts such a skip only from a ledger that says so.
+	Short bool `json:"short,omitempty"`
 }
 
 type summary struct {
@@ -383,6 +399,12 @@ func buildLedgerOpts(suite string, expected []testKey, listed map[string]map[str
 		e := entry{Package: k.Package, Test: k.Test, Outcome: outcomeNone, Reason: "no outcome: the test was listed and asked for, and nothing reported it"}
 		if got, ok := c.results[k]; ok {
 			e = *got
+			if c.unfinished[k] > 0 {
+				// A repeat of the test started and never reported, whatever
+				// an earlier repeat reported.
+				e.Outcome = outcomeNone
+				e.Reason = "no outcome: a repeat of the test started and never reported a result"
+			}
 			if e.Outcome == outcomeNone && e.Reason == "" {
 				e.Reason = "no outcome: the test started and never reported a result"
 			}

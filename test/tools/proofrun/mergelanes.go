@@ -59,8 +59,17 @@ func (m *merger) mergeLane(suite string) *ledger {
 					l.Problems = append(l.Problems, msg)
 					m.problems = append(m.problems, msg)
 				case isRaceSuite(suite) && e.Outcome == outcomeSkip && e.AllowedSkip == "":
-					// A -short skip: checkRaceAgainstUnit holds it to the
-					// unit gate's result.
+					// A skip of a run that had -short is recorded, not
+					// refused: in the full and release tiers
+					// checkRaceAgainstUnit holds it to the unit gate's result,
+					// and the nightly repeat has no unit ledger to hold it to
+					// (docs/PROOFS.md §7.1). A skip from a ledger that does
+					// not say its run had -short is an ordinary skip.
+					if !l.Short {
+						msg := fmt.Sprintf("%s: %s skipped in the %s ledger, which does not say its run had -short: a skip is never a pass", part, testKey{e.Package, e.Test}, suite)
+						l.Problems = append(l.Problems, msg)
+						m.problems = append(m.problems, msg)
+					}
 				default:
 					if msg := m.unexplainedEntry(suite, part, e, l.Problems); msg != "" {
 						l.Problems = append(l.Problems, msg)

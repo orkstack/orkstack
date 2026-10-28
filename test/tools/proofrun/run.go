@@ -1368,11 +1368,22 @@ func writeLedgerAndReport(out string, l ledger) int {
 	return 0
 }
 
-// raceTimeout is the per-binary timeout the race suites give go test. The
-// default is ten minutes, and internal/engine's -short suite under the race
-// detector took 515 s on a loaded 16-core host, so a smaller runner would be
-// killed by the timeout rather than judged.
-const raceTimeout = "30m"
+// raceTimeoutPerRun is the timeout the race suites give go test for one run of
+// a package's tests. The default is ten minutes, and internal/engine's -short
+// suite under the race detector took 515 s on a loaded 16-core host, so a
+// smaller runner would be killed by the timeout rather than judged.
+const raceTimeoutPerRun = 30 * time.Minute
+
+// raceTimeoutFor is the -timeout a race suite gives go test for count runs. The
+// timeout covers a test binary from its start to its end, across every
+// repeat of -count, so a repeat of N runs gets N runs' time: the bound stays
+// what it is for one run, a hang guard and not a budget the repeat eats.
+func raceTimeoutFor(count int) string {
+	if count < 1 {
+		count = 1
+	}
+	return (raceTimeoutPerRun * time.Duration(count)).String()
+}
 
 // cmdUnit is `proofrun unit`: the unit suites, with a ledger. With -race it
 // is the race gate (race.go): the same listing and ledger, the suites run
@@ -1418,7 +1429,7 @@ func cmdUnit(args []string) int {
 	runArgs := []string{"test", "-json", fmt.Sprintf("-count=%d", *count)}
 	if *race {
 		listArgs = append(listArgs, "-race")
-		runArgs = append(runArgs, "-race", "-timeout", raceTimeout)
+		runArgs = append(runArgs, "-race", "-timeout", raceTimeoutFor(*count))
 	}
 	if *short {
 		runArgs = append(runArgs, "-short")
@@ -1470,7 +1481,7 @@ func cmdUnit(args []string) int {
 
 	var l ledger
 	if *race {
-		l = buildRaceLedger(suite, expected, listed, c, allow)
+		l = buildRaceLedger(suite, *short, expected, listed, c, allow)
 	} else {
 		l = buildLedgerQ(suite, expected, listed, c, allow, quarantine)
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,6 +169,7 @@ func TestMerge_AShortSkipIsHeldToTheUnitGatesPass(t *testing.T) {
 	}
 	race := func() ledger {
 		l := raceLedger()
+		l.Short = true
 		l.Tests = append(l.Tests, shortSkip("TestScale"))
 		return l
 	}
@@ -207,6 +209,54 @@ func TestMerge_AShortSkipIsHeldToTheUnitGatesPass(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A skip is recorded rather than refused only for a run that had -short, and
+// the ledger must say it did: a race ledger of a run without it, or one that
+// does not say, is held to the unit gate's rule, whatever its reason text
+// claims. The nightly repeat is held to the same.
+func TestMerge_AShortSkipNeedsALedgerThatSaysItsRunHadShort(t *testing.T) {
+	problem := mPkg + ".TestScale skipped in the %s ledger, which does not say its run had -short"
+	t.Run("full tier", func(t *testing.T) {
+		unit := unitLedger()
+		unit.Tests = append(unit.Tests, entry{Package: mPkg, Test: "TestScale", Outcome: outcomePass, Seconds: 30})
+		for _, short := range []bool{true, false} {
+			race := raceLedger()
+			race.Short = short
+			race.Tests = append(race.Tests, shortSkip("TestScale"))
+			f := newMergeFixture(t, tierFull, false)
+			f.writeLocal(integrationLedger)
+			dir := filepath.Join(f.parts, "local-a1")
+			for name, l := range map[string]ledger{"unit-tests.json": unit, "race-tests.json": race} {
+				if err := writeJSON(filepath.Join(dir, name), l); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r, code := f.merge()
+			if short && (code != 0 || !r.MergeEligible) {
+				t.Errorf("short ledger: code %d, eligible %v: %v", code, r.MergeEligible, r.Ineligible)
+			}
+			if !short && (code != 1 || r.MergeEligible || !strings.Contains(joined(r), fmt.Sprintf(problem, suiteRace))) {
+				t.Errorf("a skip from a ledger without short: code %d, eligible %v: %v", code, r.MergeEligible, r.Ineligible)
+			}
+		}
+	})
+	t.Run("nightly race repeat", func(t *testing.T) {
+		for _, short := range []bool{true, false} {
+			rr := raceRepeatLedger()
+			rr.Short = short
+			rr.Tests = append(rr.Tests, shortSkip("TestScale"))
+			f := newMergeFixture(t, tierNightly, false)
+			f.writeNightlyLocal(nightlyGateRecords(), map[string]any{"race-repeat-tests.json": rr, "fuzz-tests.json": fuzzLedger()})
+			r, code := f.merge()
+			if short && (code != 0 || r.Result != "pass") {
+				t.Errorf("short ledger: code %d, result %s: %v", code, r.Result, r.Ineligible)
+			}
+			if !short && (code != 1 || r.Result == "pass" || !strings.Contains(joined(r), fmt.Sprintf(problem, suiteRaceRepeat))) {
+				t.Errorf("a skip from a ledger without short: code %d, result %s: %v", code, r.Result, r.Ineligible)
+			}
+		}
+	})
 }
 
 // The race ledger must cover the unit ledger: a race run narrowed to fewer
