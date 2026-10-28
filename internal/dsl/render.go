@@ -14,8 +14,9 @@ import (
 // {"inputs": inputs, "tasks": {<id>: {"output": outputs[id]}}} with
 // missingkey=error and NO helper functions; maps and slices are walked, every
 // other value is kept verbatim, and map keys are never templated — the
-// traversal internal/orker/render.go uses. A result containing "<no value>"
-// is an error (render.go's noValueMarker rule). label prefixes every error
+// traversal internal/orker/render.go uses. A nil value that a template prints
+// is an error (ExecuteChecked); data or text that merely spells "<no value>"
+// renders as itself. label prefixes every error
 // ("task \"release\": with" gives "task \"release\": with.image: …";
 // "outputs" gives "outputs.digest: …"). Pure.
 func RenderValues(label string, value any, inputs map[string]any, outputs map[string]map[string]any) (any, error) {
@@ -95,7 +96,7 @@ func renderString(label, path, text string, data map[string]any) (string, error)
 		return text, nil
 	}
 	at := where(label, path)
-	out, err := ExecuteChecked(text, data, func(text string, _ func(string) string) (*template.Template, error) {
+	out, err := ExecuteChecked(text, data, func(text string) (*template.Template, error) {
 		return template.New(at).Option("missingkey=error").Parse(text)
 	})
 	var failure *TemplateError

@@ -153,10 +153,10 @@ func (r *renderer) renderString(ctx context.Context, path, text string) (string,
 		return text, nil
 	}
 	name := r.taskID + "/" + path
-	out, err := dsl.ExecuteChecked(text, r.data, func(text string, shield func(string) string) (*template.Template, error) {
+	out, err := dsl.ExecuteChecked(text, r.data, func(text string) (*template.Template, error) {
 		return template.New(name).
 			Option("missingkey=error").
-			Funcs(r.funcs(ctx, shield)).
+			Funcs(r.funcs(ctx)).
 			Parse(text)
 	})
 	var failure *dsl.TemplateError
@@ -171,10 +171,7 @@ func (r *renderer) renderString(ctx context.Context, path, text string) (string,
 	return out, nil
 }
 
-// funcs are the template helpers. shield passes every string a helper hands
-// the template, so that the second pass of dsl.ExecuteChecked can mask the
-// no-value marker in a staged path or an environment value too.
-func (r *renderer) funcs(_ context.Context, shield func(string) string) template.FuncMap {
+func (r *renderer) funcs(_ context.Context) template.FuncMap {
 	return template.FuncMap{
 		"artifact": func(ref string) (string, error) {
 			path, ok := r.paths[ref]
@@ -183,14 +180,14 @@ func (r *renderer) funcs(_ context.Context, shield func(string) string) template
 					"artifact %q is not an input of this task (staged: %s)",
 					ref, joinOrNone(sortedKeys(r.paths)))
 			}
-			return shield(path), nil
+			return path, nil
 		},
 		"env": func(name string) (string, error) {
 			if _, ok := r.allowlist[name]; !ok {
 				return "", fmt.Errorf(
 					"env %q is not allowlisted on this orker (set %s)", name, EnvAllowlistVar)
 			}
-			return shield(os.Getenv(name)), nil
+			return os.Getenv(name), nil
 		},
 		// sh wraps a value in POSIX single quotes, escaping any embedded '
 		// as '\''.
@@ -204,7 +201,7 @@ func (r *renderer) funcs(_ context.Context, shield func(string) string) template
 		// first-party `command` is an argv array rather than a shell string
 		// (§10.2), so nothing rendered becomes code in the first place.
 		"sh": func(value any) string {
-			return "'" + strings.ReplaceAll(shield(fmt.Sprint(value)), "'", `'\''`) + "'"
+			return "'" + strings.ReplaceAll(fmt.Sprint(value), "'", `'\''`) + "'"
 		},
 	}
 }

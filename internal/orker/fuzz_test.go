@@ -26,11 +26,19 @@ func FuzzRenderer_ARenderedValueIsTheValue(f *testing.F) {
 	} {
 		f.Add(seed, "prefix ", " suffix")
 	}
+	// The characters of the nil marker put together across the text and the
+	// value, and a value or text that holds the marker whole.
+	f.Add("value>", "<no ", "")
+	f.Add("", "<no ", " value>")
+	f.Add("value", "see <no ", "> here")
+	f.Add("<no value", "", ">")
+	f.Add("<no", "", " value>")
+	f.Add("<no value>", "<no value>", "<no value>")
 	f.Fuzz(func(t *testing.T, value, before, after string) {
 		r := testRenderer(map[string]any{"value": value}, nil, nil, nil, nil)
 		// before and after are template text, the author's, so only plain text
 		// (no brace that could join the action's) is part of this property.
-		if strings.ContainsAny(before+after, "{}") || strings.Contains(before+after, "<no value>") {
+		if strings.ContainsAny(before+after, "{}") {
 			return
 		}
 		got, err := r.render(context.Background(), map[string]any{

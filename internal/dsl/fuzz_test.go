@@ -410,3 +410,65 @@ func FuzzParseInterfaceLabel(f *testing.F) {
 		}
 	})
 }
+
+// FuzzRenderValues_OnlyAPrintedNilIsRefused: a template prints what its
+// pieces spell, and refuses exactly one thing, a nil value it prints. Text,
+// data and a function's result that spell the nil marker, whole or in pieces
+// that only meet in the output, are just text; a nil value that is tested,
+// not printed, is just a nil. The oracle is the concatenation of the pieces.
+func FuzzRenderValues_OnlyAPrintedNilIsRefused(f *testing.F) {
+	for _, seed := range []struct{ before, middle, after, v1, v2 string }{
+		{"", "", "", "<no", " value>"},
+		{"<no ", "", "", "value>", ""},
+		{"see <no ", "> here", "", "value", ""},
+		{"", "", "", "<no value>", "<no value>"},
+		{"<no value>", "", "<no value>", "x", "y"},
+		{"", " ", "", "<no\x01value>", "<no value>"},
+		{"a", "b", "c", "d", "e"},
+		{"", "", "", "", ""},
+		{"", "", "", "\xff", "é"},
+	} {
+		for mode := uint8(0); mode < 8; mode++ {
+			f.Add(seed.before, seed.middle, seed.after, seed.v1, seed.v2, mode)
+		}
+	}
+	f.Fuzz(func(t *testing.T, before, middle, after, v1, v2 string, mode uint8) {
+		if strings.Contains(before+middle+after, "{") {
+			return // template text, the author's: no brace that could join an action's
+		}
+		type variant struct {
+			tail    string // appended after the second value
+			printed string // what it prints when it prints
+			nilHit  bool   // it prints a nil value
+		}
+		variants := []variant{
+			{"", "", false},
+			{`{{ printf "%s%s" .inputs.v1 .inputs.v2 }}`, v1 + v2, false},
+			{`{{ print .inputs.v1 .inputs.v2 }}`, v1 + v2, false},
+			{`{{ .inputs.n }}`, "", true},
+			{`{{ if .inputs.n }}x{{ else }}` + "y" + `{{ end }}`, "y", false},
+			{`{{ index .inputs.m "gone" }}`, "", true},
+			{`{{ range .inputs.l }}[{{ . }}]{{ end }}`, "[" + v1 + "][" + v2 + "]", false},
+			{`{{ range .inputs.ln }}[{{ . }}]{{ end }}`, "", true},
+		}
+		chosen := variants[int(mode)%len(variants)]
+		inputs := map[string]any{
+			"v1": v1, "v2": v2, "n": nil, "m": map[string]any{},
+			"l": []any{v1, v2}, "ln": []any{v1, nil},
+		}
+		text := before + "{{ .inputs.v1 }}" + middle + "{{ .inputs.v2 }}" + after + chosen.tail
+		got, err := dsl.RenderValues("with", map[string]any{"v": text}, inputs, nil)
+		if chosen.nilHit {
+			if err == nil || !strings.Contains(err.Error(), "template resolved to <no value>") {
+				t.Fatalf("%q printed a nil value and rendered %v, %v", text, got, err)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("%q over %q and %q: %v", text, v1, v2, err)
+		}
+		if want := before + v1 + middle + v2 + after + chosen.printed; got.(map[string]any)["v"] != want {
+			t.Fatalf("%q rendered %q, want %q", text, got.(map[string]any)["v"], want)
+		}
+	})
+}

@@ -562,11 +562,11 @@ input payload — the same data templates see as `.inputs`. The template context
 is `docs/DSL.md`, "Templating".
 
 Rendering is recursive over nested maps and lists, with `missingkey=error`, and
-a nil value, which Go prints as `<no value>`, is rejected. Data or text that
-merely spells those characters (an input of `see <no value> here`) renders as
-itself: the Orker tells the two apart by running the template again with the
-spelling masked, and refuses a template whose text or data holds the mask
-(`<no`, U+0001, `value>`) itself. A render failure is
+a nil value that a template prints, which Go would print as `<no value>`, is
+rejected. Data or text that merely spells those characters (an input of `see
+<no value> here`), however they come together, renders as itself: the Orker
+notes a nil value where the template prints it, so what is printed is never
+guessed from the text. A render failure is
 `ContractViolation/RENDER_FAILED` and is never retried. A templated value
 renders to a **string**: a number arrives in Go's spelling (`1000000` as
 `1e+06`), so numbers and structures a workload computes with travel as files,

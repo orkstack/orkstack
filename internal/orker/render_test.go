@@ -199,7 +199,7 @@ func TestSafeComponent_SanitizesArtifactNamesIntoOneSafeComponent(t *testing.T) 
 // the platform only moves and quotes data, and anything that computes is a
 // task — so the renderer of with: offers exactly artifact, env and sh.
 func TestRendererFuncs_AreExactlyArtifactEnvSh(t *testing.T) {
-	funcs := newRenderer("t", nil, nil, nil, nil, nil, nil).funcs(context.Background(), func(s string) string { return s })
+	funcs := newRenderer("t", nil, nil, nil, nil, nil, nil).funcs(context.Background())
 	var names []string
 	for name := range funcs {
 		names = append(names, name)

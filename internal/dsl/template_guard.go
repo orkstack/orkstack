@@ -3,24 +3,21 @@ package dsl
 import (
 	"bytes"
 	"errors"
-	"fmt"
-	"strings"
 	"text/template"
+	"text/template/parse"
 )
 
 // NoValueMarker is what text/template prints for a value that is present and
-// nil. Rendering it would silently corrupt a command or a URL, so a rendered
-// string that holds it is an error. The same four-and-six characters are also
-// what a user's data, or an author's literal text, may legitimately spell, and
-// those must render as themselves.
+// nil. Rendering it would silently corrupt a command or a URL, so a nil value
+// that reaches the output is an error. The same ten characters are also what a
+// user's data, or an author's literal text, may legitimately spell, however
+// they came together, and those render as themselves.
 const NoValueMarker = "<no value>"
 
-// noValueMask has the length of NoValueMarker and cannot be told apart from it
-// by any template function that measures or slices text. It stands in for the
-// marker, in the template's text and in every string it can read, while the
-// template is run a second time to tell a nil value from data that spells the
-// marker.
-const noValueMask = "<no\x01value>"
+// nilCheck is the name the guard gives the function it appends to every
+// action that prints. An author cannot write it: the template is parsed
+// before the function exists.
+const nilCheck = "ork_print_nil_check"
 
 // Stage names where a TemplateError arose.
 const (
@@ -42,91 +39,76 @@ type TemplateError struct {
 func (e *TemplateError) Error() string { return e.Stage + ": " + e.Err.Error() }
 func (e *TemplateError) Unwrap() error { return e.Err }
 
-// ExecuteChecked builds the template for text, runs it against data and
-// returns what it printed, refusing a nil value. build parses text with the
-// caller's options and functions; the strings its functions return pass through
-// shield, which the second pass uses to mask the marker in them too.
+// ExecuteChecked parses text with the caller's options and functions, runs it
+// against data and returns what it printed, refusing a nil value that would
+// print as NoValueMarker.
 //
-// The marker is looked for in the output, so it can arise three ways: a nil
-// value (an error), a string in data that spells it, or text in the template
-// that does (neither is). Only when the output holds it is the template run
-// again with the marker masked in the text and in data; if the marker is still
-// there it came from a nil value, and if not, the mask is put back. A template
-// or data that already holds the mask itself is refused rather than guessed
-// at.
-func ExecuteChecked(text string, data map[string]any, build func(text string, shield func(string) string) (*template.Template, error)) (string, error) {
-	identity := func(s string) string { return s }
-	out, err := runTemplate(text, data, build, identity)
-	if err != nil || !strings.Contains(out, NoValueMarker) {
-		return out, err
-	}
-	if strings.Contains(text, noValueMask) || holdsString(data, noValueMask) {
-		return "", &TemplateError{Stage: StageRender, Err: fmt.Errorf("the template or its data holds %q, which is reserved while a %s is told from a nil value", noValueMask, NoValueMarker)}
-	}
-	shield := func(s string) string { return strings.ReplaceAll(s, NoValueMarker, noValueMask) }
-	masked, err := runTemplate(shield(text), maskStrings(data, shield).(map[string]any), build, shield)
-	if err != nil {
-		return "", err
-	}
-	if strings.Contains(masked, NoValueMarker) {
-		return "", &TemplateError{Stage: StageRender, Err: ErrNoValue}
-	}
-	return strings.ReplaceAll(masked, noValueMask, NoValueMarker), nil
-}
-
-func runTemplate(text string, data map[string]any, build func(string, func(string) string) (*template.Template, error), shield func(string) string) (string, error) {
-	tmpl, err := build(text, shield)
+// A nil value is found where it is printed, not in the text it printed. The
+// marker in the output can come from a nil value, from a string in data or in
+// the template that spells it, or from pieces that only spell it side by side,
+// and the output cannot say which. So every action that prints gets one more
+// stage on its pipeline, the way html/template adds its escapers, that sees
+// the value about to be printed and notes whether it is nil. The template
+// then runs once, on the real data, and its output is returned exactly as
+// text/template wrote it.
+func ExecuteChecked(text string, data map[string]any, parse func(text string) (*template.Template, error)) (string, error) {
+	tmpl, err := parse(text)
 	if err != nil {
 		return "", &TemplateError{Stage: StageParse, Err: err}
 	}
+	printedNil := false
+	tmpl.Funcs(template.FuncMap{nilCheck: func(value any) any {
+		if value == nil {
+			printedNil = true
+		}
+		return value
+	}})
+	guardPrints(tmpl)
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", &TemplateError{Stage: StageRender, Err: err}
 	}
+	if printedNil {
+		return "", &TemplateError{Stage: StageRender, Err: ErrNoValue}
+	}
 	return buf.String(), nil
 }
 
-// maskStrings copies a tree of maps, slices and strings with shield applied to
-// every string, key and value alike; any other value is kept.
-func maskStrings(value any, shield func(string) string) any {
-	switch typed := value.(type) {
-	case string:
-		return shield(typed)
-	case map[string]any:
-		out := make(map[string]any, len(typed))
-		for k, v := range typed {
-			out[shield(k)] = maskStrings(v, shield)
+// guardPrints appends the nil check to every pipeline of tmpl, and of the
+// templates defined beside it, that is printed. A pipeline that declares a
+// variable, or tests a branch, or is handed to a template, prints nothing.
+func guardPrints(tmpl *template.Template) {
+	seen := map[*parse.Tree]bool{}
+	for _, t := range tmpl.Templates() {
+		if t.Tree != nil && !seen[t.Tree] {
+			seen[t.Tree] = true
+			guardList(t.Tree.Root)
 		}
-		return out
-	case []any:
-		out := make([]any, len(typed))
-		for i, v := range typed {
-			out[i] = maskStrings(v, shield)
-		}
-		return out
-	default:
-		return value
 	}
 }
 
-// holdsString reports whether any string, key or value in the tree contains
-// needle.
-func holdsString(value any, needle string) bool {
-	switch typed := value.(type) {
-	case string:
-		return strings.Contains(typed, needle)
-	case map[string]any:
-		for k, v := range typed {
-			if strings.Contains(k, needle) || holdsString(v, needle) {
-				return true
+func guardList(list *parse.ListNode) {
+	if list == nil {
+		return
+	}
+	for _, node := range list.Nodes {
+		switch typed := node.(type) {
+		case *parse.ActionNode:
+			if pipe := typed.Pipe; len(pipe.Decl) == 0 {
+				stage := parse.NewIdentifier(nilCheck).SetPos(pipe.Pos)
+				pipe.Cmds = append(pipe.Cmds, &parse.CommandNode{
+					NodeType: parse.NodeCommand, Pos: pipe.Pos, Args: []parse.Node{stage},
+				})
 			}
-		}
-	case []any:
-		for _, v := range typed {
-			if holdsString(v, needle) {
-				return true
-			}
+		case *parse.IfNode:
+			guardList(typed.List)
+			guardList(typed.ElseList)
+		case *parse.RangeNode:
+			guardList(typed.List)
+			guardList(typed.ElseList)
+		case *parse.WithNode:
+			guardList(typed.List)
+			guardList(typed.ElseList)
 		}
 	}
-	return false
 }
