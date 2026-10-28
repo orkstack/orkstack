@@ -24,16 +24,44 @@ func poller(identity string, lastAccess time.Time) client.TaskQueuePollerInfo {
 	return client.TaskQueuePollerInfo{Identity: identity, LastAccessTime: lastAccess}
 }
 
+// sdkDescription is the SDK's enhanced answer for a channel: the pollers of
+// each build ID's entry (the empty ID is unversioned), by task type. Every use
+// of the SDK's VersionsInfo shape in these tests is here, because it is the
+// only field the SDK has for a channel's poller records.
+func sdkDescription(entries map[string]map[client.TaskQueueType][]client.TaskQueuePollerInfo) client.TaskQueueDescription {
+	//lint:ignore SA1019 the SDK's VersioningInfo is the routing state and holds no pollers; VersionsInfo is the only field the SDK has for a channel's poller records
+	versions := map[string]client.TaskQueueVersionInfo{}
+	for buildID, byType := range entries {
+		types := map[client.TaskQueueType]client.TaskQueueTypeInfo{}
+		for kind, pollers := range byType {
+			types[kind] = client.TaskQueueTypeInfo{Pollers: pollers}
+		}
+		//lint:ignore SA1019 the SDK's VersioningInfo is the routing state and holds no pollers; VersionsInfo is the only field the SDK has for a channel's poller records
+		versions[buildID] = client.TaskQueueVersionInfo{TypesInfo: types}
+	}
+	//lint:ignore SA1019 the SDK's VersioningInfo is the routing state and holds no pollers; VersionsInfo is the only field the SDK has for a channel's poller records
+	return client.TaskQueueDescription{VersionsInfo: versions}
+}
+
+// sdkEntries is sdkDescription's inverse: each build ID's pollers by task type.
+func sdkEntries(description client.TaskQueueDescription) map[string]map[client.TaskQueueType][]client.TaskQueuePollerInfo {
+	entries := map[string]map[client.TaskQueueType][]client.TaskQueuePollerInfo{}
+	//lint:ignore SA1019 the SDK's VersioningInfo is the routing state and holds no pollers; VersionsInfo is the only field the SDK has for a channel's poller records
+	for buildID, version := range description.VersionsInfo {
+		entries[buildID] = map[client.TaskQueueType][]client.TaskQueuePollerInfo{}
+		for kind, info := range version.TypesInfo {
+			entries[buildID][kind] = info.Pollers
+		}
+	}
+	return entries
+}
+
 // activityPollers is one channel's description with a single version entry, as
 // an unversioned deployment produces.
 func activityPollers(pollers ...client.TaskQueuePollerInfo) client.TaskQueueDescription {
-	return client.TaskQueueDescription{
-		VersionsInfo: map[string]client.TaskQueueVersionInfo{
-			"": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-				client.TaskQueueTypeActivity: {Pollers: pollers},
-			}},
-		},
-	}
+	return sdkDescription(map[string]map[client.TaskQueueType][]client.TaskQueuePollerInfo{
+		"": {client.TaskQueueTypeActivity: pollers},
+	})
 }
 
 // TestLivePollers_CountsOnlyTheOrkersStillInsideTheWindow is the difference
@@ -135,16 +163,10 @@ func TestLivePollers_AnIdleOrkerBetweenTwoPollsIsLive(t *testing.T) {
 func TestLivePollers_CountsOneWorkerOnceHoweverManyRecordsDescribeIt(t *testing.T) {
 	now := time.Now()
 	one := poller("7@host@ork-pool-gpu", now.Add(-1*time.Second))
-	description := client.TaskQueueDescription{
-		VersionsInfo: map[string]client.TaskQueueVersionInfo{
-			"": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-				client.TaskQueueTypeActivity: {Pollers: []client.TaskQueuePollerInfo{one}},
-			}},
-			"build-42": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-				client.TaskQueueTypeActivity: {Pollers: []client.TaskQueuePollerInfo{one}},
-			}},
-		},
-	}
+	description := sdkDescription(map[string]map[client.TaskQueueType][]client.TaskQueuePollerInfo{
+		"":         {client.TaskQueueTypeActivity: {one}},
+		"build-42": {client.TaskQueueTypeActivity: {one}},
+	})
 
 	live := livePollers(description, now, DefaultPollerFreshness)
 	if live.Orkers != 1 {
@@ -177,15 +199,9 @@ func TestLivePollers_TrustsARecordTheClusterGaveNoTimestampFor(t *testing.T) {
 // counting it would vouch for a pool no Orker serves.
 func TestLivePollers_CountsActivityPollersOnly(t *testing.T) {
 	now := time.Now()
-	description := client.TaskQueueDescription{
-		VersionsInfo: map[string]client.TaskQueueVersionInfo{
-			"": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-				client.TaskQueueTypeWorkflow: {Pollers: []client.TaskQueuePollerInfo{
-					poller("3@host@ork-tasks", now),
-				}},
-			}},
-		},
-	}
+	description := sdkDescription(map[string]map[client.TaskQueueType][]client.TaskQueuePollerInfo{
+		"": {client.TaskQueueTypeWorkflow: {poller("3@host@ork-tasks", now)}},
+	})
 
 	if live := livePollers(description, now, DefaultPollerFreshness); live.Orkers != 0 {
 		t.Errorf("counted %d Orkers on a channel only the engine polls, want 0", live.Orkers)
@@ -271,11 +287,12 @@ func TestActivityDescription_FeedsTheDefaultModeAnswerToTheSameReduction(t *test
 
 	t.Run("the reshaped answer holds activity pollers only, under one entry", func(t *testing.T) {
 		got := activityDescription(answer(record("1@host@ork-pool-alpha", now)))
-		if len(got.VersionsInfo) != 1 {
-			t.Fatalf("got %d version entries, want 1", len(got.VersionsInfo))
+		entries := sdkEntries(got)
+		if len(entries) != 1 {
+			t.Fatalf("got %d version entries, want 1", len(entries))
 		}
-		types := got.VersionsInfo[""].TypesInfo
-		if len(types) != 1 || len(types[client.TaskQueueTypeActivity].Pollers) != 1 {
+		types := entries[""]
+		if len(types) != 1 || len(types[client.TaskQueueTypeActivity]) != 1 {
 			t.Fatalf("got types %v, want one activity poller", types)
 		}
 		if records := livePollerRecords(got, now, within); len(records) != 1 || records[0].Identity != "1@host@ork-pool-alpha" {

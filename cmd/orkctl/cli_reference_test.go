@@ -169,10 +169,7 @@ func TestCLIReference_NamesEveryRunnableCommand(t *testing.T) {
 // placeholders.
 func TestDocs_EveryOrkctlInvocationResolves(t *testing.T) {
 	root, _ := newRootCommand()
-	var files []string
-	for _, pat := range []string{"../../README.md", "../../CONTRIBUTING.md", "../../AGENTS.md", "../../ARCHITECTURE.md"} {
-		files = append(files, pat)
-	}
+	files := []string{"../../README.md", "../../CONTRIBUTING.md", "../../AGENTS.md", "../../ARCHITECTURE.md"}
 	for _, dir := range []string{"../../docs", "../../deploy", "../../examples"} {
 		err := filepathWalkMarkdown(dir, func(path string) { files = append(files, path) })
 		if err != nil {

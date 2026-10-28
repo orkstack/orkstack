@@ -87,7 +87,7 @@ func validateJoins(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task) err
 		if policy != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED && len(task.GetNeeds()) == 0 {
 			return validationError(at("join"), fmt.Errorf(
 				"task %q: join %s decides on how its needs ended, and it names no need — add needs:, "+
-					"or remove join:", id, JoinWord(policy)))
+					"or remove the join: key", id, JoinWord(policy)))
 		}
 		handler := IsFailureHandler(task)
 		// Rule 39: a failure handler is not pinned, fanned out or cached.

@@ -180,17 +180,6 @@ func (p *integrationPlan) pkg(importPath string) *planPackage {
 	return nil
 }
 
-func (p *integrationPlan) listedSets() map[string]map[string]bool {
-	out := map[string]map[string]bool{}
-	for _, pk := range p.Packages {
-		out[pk.ImportPath] = map[string]bool{}
-		for _, t := range pk.Listed {
-			out[pk.ImportPath][t] = true
-		}
-	}
-	return out
-}
-
 // shardJobs is shard k's jobs, in plan order (longest first).
 func (p *integrationPlan) shardJobs(k int) []job {
 	var out []job
@@ -316,7 +305,7 @@ func repoRoot() (string, error) {
 func sortedTestRefs(keys []testKey) []testRef {
 	out := make([]testRef, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, testRef{k.Package, k.Test})
+		out = append(out, testRef(k))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Package != out[j].Package {

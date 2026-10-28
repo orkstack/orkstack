@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -27,15 +26,13 @@ func repoRoot(t *testing.T) string {
 }
 
 // goTool finds the go command this test run was started with, so a cross
-// build uses the same toolchain as the test binary.
+// build uses the same toolchain as the test binary: `go test` puts its own
+// GOROOT/bin first on the PATH of the test binary it runs.
 func goTool(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(runtime.GOROOT(), "bin", "go")
-	if _, err := os.Stat(path); err != nil {
-		var lookErr error
-		if path, lookErr = exec.LookPath("go"); lookErr != nil {
-			t.Fatalf("no go command to build with: %v", lookErr)
-		}
+	path, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("no go command to build with: %v", err)
 	}
 	return path
 }

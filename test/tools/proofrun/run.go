@@ -954,10 +954,10 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 	// proof (mergeIntegration), since a local proof is one plan and one part.
 	var expected []testKey
 	for _, e := range plan.Expected {
-		if isDeferred(plan.Deferred, testKey{e.Package, e.Test}) {
+		if isDeferred(plan.Deferred, testKey(e)) {
 			continue
 		}
-		expected = append(expected, testKey{e.Package, e.Test})
+		expected = append(expected, testKey(e))
 	}
 	l := buildLedgerQ("integration", expected, listed, r.c, allow, quarantine)
 	for _, d := range plan.Deferred {
@@ -1279,8 +1279,8 @@ func runShard(o *integrationPlanOptions) int {
 	}
 	var expected []testKey
 	for _, e := range plan.Expected {
-		if shardSet[testKey{e.Package, e.Test}] {
-			expected = append(expected, testKey{e.Package, e.Test})
+		if shardSet[testKey(e)] {
+			expected = append(expected, testKey(e))
 		}
 	}
 	l := buildLedgerQ("integration", expected, listed, r.c, allow, quarantine)

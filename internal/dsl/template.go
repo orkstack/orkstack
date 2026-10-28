@@ -162,7 +162,7 @@ func (c *templateChecker) checkEachRoot(path, key string) error {
 	}
 	if !c.fanOut {
 		return c.refuseAt(path, fmt.Errorf("task %q: %s: .each is available only in the with: of a task "+
-			"that declares each:", c.taskID, path))
+			"that declares each: (a fan-out)", c.taskID, path))
 	}
 	if key == c.each || key == "index" || key == "count" {
 		return nil

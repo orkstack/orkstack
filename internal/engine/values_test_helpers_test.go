@@ -2,7 +2,6 @@ package engine_test
 
 import (
 	"encoding/json"
-	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -29,19 +28,6 @@ func valuesJSON(values map[string]any) []byte {
 		panic("valuesJSON: " + err.Error())
 	}
 	return encoded
-}
-
-// decodeValuesJSON is the inverse, for asserting on what a task returned.
-func decodeValuesJSON(t *testing.T, raw []byte) map[string]any {
-	t.Helper()
-	if len(raw) == 0 {
-		return map[string]any{}
-	}
-	decoded := map[string]any{}
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		t.Fatalf("decode values.json %q: %v", raw, err)
-	}
-	return decoded
 }
 
 // succeeded builds the result a healthy Orker returns for one task.

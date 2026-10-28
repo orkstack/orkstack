@@ -437,6 +437,9 @@ func freshPoller(poller *taskqueuepb.PollerInfo, now time.Time, within time.Dura
 
 // describeChannel is the default-mode channel read every release question
 // uses: the engine's channel for replicas and routing, a pool's for its use.
+// The request leaves the deprecated api mode unset, which is the default mode:
+// the only one that answers versioning_info, and the one that lists every
+// poller whatever release it registered with.
 func (c *TemporalReleaseCluster) describeChannel(ctx context.Context, queue string, kind enumspb.TaskQueueType, stats bool) (*workflowservice.DescribeTaskQueueResponse, error) {
 	readCtx, cancel := context.WithTimeout(ctx, releaseReadTimeout)
 	defer cancel()
@@ -444,7 +447,6 @@ func (c *TemporalReleaseCluster) describeChannel(ctx context.Context, queue stri
 		TaskQueue:     &taskqueuepb.TaskQueue{Name: queue, Kind: enumspb.TASK_QUEUE_KIND_NORMAL},
 		TaskQueueType: kind,
 		ReportStats:   stats,
-		ApiMode:       enumspb.DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED,
 	})
 }
 

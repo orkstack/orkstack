@@ -346,7 +346,7 @@ func newCachePurgeCommand(g *globalFlags) *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
 			var deleted, kept int64
-			namespace := g.namespace
+			var namespace string
 			for {
 				resp, err := client.PurgeCache(ctx, connect.NewRequest(req))
 				if err != nil {

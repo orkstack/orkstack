@@ -923,7 +923,11 @@ GitHub, was retired on 2026-10-27, once three consecutive nightlies of `main`
 had passed on it. A release tag has its own gate, the pre-release proof above.
 A merge is not held for a nightly of its own: a run speaks only for the commit
 it measured (its `headSha`), never for `main`'s tip, so the nightly of a later
-commit is a later run.
+commit is a later run. The same workflow runs the vulnerability scan
+(`make vuln`) as a job of its own, because it needs the network and so is in
+no proof: a vulnerability whose vulnerable code the module reaches fails that
+run like any other nightly failure, and the fix is to bump the module to the
+version the report names.
 
 A failing nightly (the latest completed `nightly.yml` run on `main`) or
 pre-release proof is a failing `main`: fix it, or revert the change that broke
@@ -971,7 +975,13 @@ Every code change follows this order:
 
 0. `make check` is the fast path: build, vet, lint and the unit suites with
    `-short`, with no Docker and no Temporal. Run it before every push; CI
-   runs it on every pull request.
+   runs it on every pull request. Lint is `go vet`, gofmt and staticcheck at
+   the version `go.mod` pins (`go tool staticcheck`, its default checks, run
+   as built and with `-tags=integration`): a finding is fixed in the code,
+   and a false positive carries a line-level `//lint:ignore` that says why.
+   `make vuln`, the pinned `govulncheck`, reads the vulnerability database
+   over the network, so it is in no lint and no proof, where a network failure
+   must never fail one; `ci.yml` and `nightly.yml` run it.
 1. For a process-boundary change, edit `proto/` first and run `make proto`.
 2. For a new configuration setting: add it to `internal/config`'s `Schema`
    (its default bound to the code constant, `internal/config/config.go`),
@@ -985,7 +995,9 @@ Every code change follows this order:
    refuses a stale schema.
 3. Dependencies are pinned: an exact module version, or an image digest,
    never a floating tag at runtime; a toolchain version is an exact line in
-   `go.mod` or the workflow. Update by pull request that proves the change —
+   `go.mod` or the workflow; a tool the build runs (staticcheck,
+   govulncheck) is a `tool` directive there, pinned like a module. Update by
+   pull request that proves the change —
    `.github/dependabot.yml` opens them, and an update never merges on a green
    unit run alone. A new dependency follows the same rule as any other change.
 4. Write a behavior test that fails for the right reason.

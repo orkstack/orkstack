@@ -144,6 +144,7 @@ func rawPollerRecords(
 		t.Fatalf("describe %s: %v", queue, err)
 	}
 	var records []pollerRecord
+	//lint:ignore SA1019 the SDK's VersioningInfo is the routing state and holds no pollers; VersionsInfo is the only field the SDK has for a channel's poller records
 	for _, version := range description.VersionsInfo {
 		for _, poller := range version.TypesInfo[client.TaskQueueTypeActivity].Pollers {
 			records = append(records, pollerRecord{

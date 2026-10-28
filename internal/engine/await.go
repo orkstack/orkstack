@@ -261,7 +261,8 @@ func (s *runState) resolve(ctx workflow.Context, sig *orkstackv1.AwaitSignal) er
 // A timer that settled with an error was cancelled because the run is ending —
 // an operator's CancelRun, or cancelRun() in fail() — and the error is handed
 // back unchanged so fail() records RUN_CANCELED. A timer that fired is the
-// deadline: the task fails AWAIT_TIMED_OUT and the run fails with it.
+// deadline: the task fails AWAIT_TIMED_OUT and the run fails with it. It
+// therefore always returns an error, never nil.
 func (s *runState) expire(ctx workflow.Context, id string) error {
 	a := s.awaits[id]
 	err := a.deadline.Get(ctx, nil)

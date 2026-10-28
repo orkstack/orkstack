@@ -73,7 +73,9 @@ before it (AGENTS.md §11.1). A CI part runs on a fresh runner and does not.
 ### 2.1 The gates
 
 A local proof runs its gates in this order: the **fast gates**, alone and one
-after another — lint, build, unit, `go vet -tags=integration`, then the UI
+after another — lint (`make lint`: `go vet`, gofmt, and staticcheck as built
+and with `-tags=integration`; the vulnerability scan is not part of it, §5),
+build, unit, `go vet -tags=integration`, then the UI
 type-check and unit suites (after one `svelte-kit sync`, which both read), then
 the site gate, then the race gate (§2.3); then the **setup**, as one
 concurrent group — the proof's own Temporal, the activity images, the binaries
@@ -582,6 +584,7 @@ skipped required job reports success, which is why
 | Job | Runs |
 |---|---|
 | `ci.yml` › `check` | `make check` on every push and every pull request: no Docker, no Temporal |
+| `ci.yml` › `vuln` | `make vuln` (the pinned `govulncheck`) on every push and every pull request. It reads the vulnerability database over the network, so it is a job of its own and in no proof gate: a network failure cannot fail a proof |
 | `ci.yml` › `feature` | the feature tier on every pull-request push once the repository is public; with the `ci:feature` label while it is private; on a push to `validate/feature/**`; and by dispatch |
 
 `site.yml` is not part of the proof and holds no required check; it builds and
@@ -604,11 +607,18 @@ recorded a result (§10):
 |---|---|
 | `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run was a push to `validate/full/**` of this repository, and its run attempt is below 3 (so at most two automatic reruns). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
 
-`nightly.yml` holds two jobs, scheduled at 05:17 UTC on the default branch:
-`nightly.yml` › `nightly` runs the nightly tier, and `nightly.yml` › `flakes`
+`nightly.yml` holds three jobs, scheduled at 05:17 UTC on the default branch:
+`nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
+`make vuln`, and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and
 suspect failures (`proofrun flakes`); it edits no list. `flakes` waits for
 `nightly`, whatever its result, so its window includes that night's proof.
+`vuln` is independent of the proof: it reports only the known vulnerabilities
+whose vulnerable code the module can reach, and a new one fails the run, which
+is a failing `main`. The fix is to bump the module it names to the fixed
+version (an exact one, §11.1 of `AGENTS.md`) and prove that change like any
+other; `go tool govulncheck -show verbose ./...` lists the ones the code cannot
+reach, which fail nothing.
 `release.yml` holds five: `release.yml` › `validate` runs first on every
 dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, refuses
 `tag: true` from any ref but `main`, and refuses a version whose `X.Y` the
@@ -1317,6 +1327,11 @@ git rev-parse main
   gh run watch <id> --exit-status
   ```
 
+- Only `nightly.yml` › `vuln` failed: a known vulnerability the module can
+  reach, which is a failing `main` too. `go tool govulncheck ./...` names the
+  module and the version that fixes it; bump the module to exactly that
+  version, run `make check`, and merge that change on its own proof. A
+  vulnerability the code cannot reach is not reported and fails nothing.
 - Only `runner-degraded` parts failed: a runner failure, not a failing `main`
   (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree.
 
@@ -1434,7 +1449,8 @@ listing with no bucket at all.
 
 | Target | Does |
 |---|---|
-| `make check` | `make lint` (`go vet ./...` and gofmt), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept; no Docker |
+| `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept; no Docker |
+| `make vuln` | `go tool govulncheck ./...`: the known vulnerabilities whose vulnerable code the module reaches. It needs the network, so it is in no proof gate; `ci.yml` and `nightly.yml` run it (§5) |
 | `make proof` | the full proof, the merge gate |
 | `make proof-ui` | the same; the full proof already runs the UI suites |
 | `make test-race` | the race gate's `go test`, without its ledger: `-race -short` over `RACE_PACKAGES` (default `./...`), `RACE_COUNT` times (default 1) |
@@ -1518,6 +1534,21 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   and 377 s at 4 CPUs (`taskset -c 0-3`). A cold cache recompiles the suites
   and is the number the `ci.yml` › `check` job records on a runner, so a
   2-vCPU runner's cold `check` takes longer than the two-minute warm target.
+  Those figures are from before staticcheck joined `make lint`.
+- staticcheck in `make lint` (`go tool staticcheck ./...`, then the same with
+  `-tags=integration`), measured 2026-10-28 on a 16-core host whose load
+  average was 7–9. It keeps each package's results, so with nothing changed a
+  run took 1.7 s at 2 CPUs (`taskset -c 0-1`). After edits to about thirty
+  packages the two runs took 37 s and 14 s at 16 CPUs (5 m 19 s and 1 m 58 s of
+  CPU). With a cold build cache and a cold staticcheck cache they took 69 s and
+  14 s (9 m 48 s and 2 m 0 s of CPU), most of the first run being the
+  dependencies' export data that `go vet` otherwise warms; after a cold
+  `go vet ./...` (41 s, 6 m 22 s of CPU) they took 30 s and 14 s (4 m 37 s and
+  2 m 1 s of CPU). So lint adds about 6.6 CPU-minutes on a cold runner, about
+  four minutes on two vCPUs, if it parallelises as it did here; that is why
+  the `ci.yml` › `check` step, the `ci.yml` › `feature` proof step and the
+  `proof.yml` › `fast` step each have five minutes more than they had. The
+  runner's own figure replaces this estimate once a run has recorded it.
 - The race gate (§2.3): `go test -race -short -count=1 ./...` took 573 s on
   2026-10-27 on a 16-core host whose load average was 15–29 for the whole run,
   another agent's race run beside it, `internal/engine` the long pole at 515 s
