@@ -523,6 +523,10 @@ func cmdVerify(args []string) int {
 	if *release {
 		return verifyRelease(*dir, *tag)
 	}
+	// A flag given with an empty value names a proof that is not there; it is
+	// not the flag left out. Only the latter asks for no nightly proof.
+	nightlyGiven := false
+	fs.Visit(func(f *flag.Flag) { nightlyGiven = nightlyGiven || f.Name == "nightly" })
 	var r proofRecord
 	if err := readJSON(filepath.Join(*dir, "proof.json"), &r); err != nil {
 		fmt.Printf("merge-check: %v\n", err)
@@ -545,6 +549,9 @@ func cmdVerify(args []string) int {
 	mainTip := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", mainBranch+"^{commit}"))
 	status := mustGit("status", "--porcelain", "--untracked-files=all")
 	problems := verifyProblems(r, head, parent, mainTip, status, mainBranch)
+	if nightlyGiven && *nightlyDir == "" {
+		problems = append(problems, "-nightly names no proof directory: leave the flag out to ask for no nightly proof, or name the one to verify")
+	}
 	problems = append(problems, verifyNightlyProblems(*nightlyDir, mainTip)...)
 	if len(problems) > 0 {
 		fmt.Printf("merge-check: %s is not merge evidence for HEAD:\n", *dir)

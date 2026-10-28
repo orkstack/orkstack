@@ -121,3 +121,20 @@ func TestVerify_ADownloadedCIProofIsMergeEvidence(t *testing.T) {
 		t.Errorf("verify after main moved exited %d, want 1", code)
 	}
 }
+
+// A nightly proof asked for by name must exist: `-nightly ""` is a proof
+// directory that is not there, never "no proof asked for". merge-check passes
+// the flag only when NIGHTLY is set, but a script that passes it from an unset
+// variable must not make the check it asked for vanish.
+func TestVerify_AnEmptyNightlyValueIsNotAnAbsentFlag(t *testing.T) {
+	dir, mainTip, _, headTree := ciCandidateRepo(t)
+	full := ciMerged(t, tierFull, headTree, mainTip)
+	t.Chdir(dir)
+	quiet(t)
+	if code := cmdVerify([]string{"-proof", full}); code != 0 {
+		t.Fatalf("verify with no -nightly flag exited %d, want 0", code)
+	}
+	if code := cmdVerify([]string{"-proof", full, "-nightly", ""}); code != 1 {
+		t.Errorf("verify with an empty -nightly exited %d, want 1: the check it asked for was skipped", code)
+	}
+}
