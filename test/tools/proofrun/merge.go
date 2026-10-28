@@ -583,7 +583,8 @@ type partReading struct {
 // degradedMetrics is what the attempt's runner measured on the wrong side of
 // its floor, re-derived from the record's values and floors. The floor binds
 // only the CI stack parts (scripts/proof-part.sh part_floor_binds): a local
-// proof's health, and the plan, build and fast parts', is information.
+// proof's health, and the plan, build, fast, race, race-repeat and fuzz parts',
+// is information.
 func (r partReading) degradedMetrics() []healthMetric {
 	if !floorBinds(r.Part) {
 		return nil

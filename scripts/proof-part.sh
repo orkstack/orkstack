@@ -154,10 +154,10 @@ part_runner_class() {
 # STACK part below a floor: the part then records itself and stops, and the
 # merger classifies it runner-degraded, exactly as a part whose runner
 # GitHub lost — no outcome of the tree, not a proof of the tree, and that
-# one job may run again. The plan, build and fast parts measure for
-# information. A measurement that cannot run (exit 2) is reported and the
-# part runs on, judged as above the floor: the floor only ever turns a
-# result into "not a proof", never a failure into a pass.
+# one job may run again. The plan, build, fast, race, race-repeat and fuzz
+# parts measure for information. A measurement that cannot run (exit 2) is
+# reported and the part runs on, judged as above the floor: the floor only
+# ever turns a result into "not a proof", never a failure into a pass.
 part_runner_health() {
 	local class code=0
 	class="$(part_runner_class)"
@@ -192,8 +192,8 @@ part_runner_health() {
 }
 
 # part_floor_binds: the floor stops this part. The stack parts run the
-# tests whose bounds a degraded runner would fail; the plan, build and fast
-# parts record their measurement and run on.
+# tests whose bounds a degraded runner would fail; the plan, build, fast,
+# race, race-repeat and fuzz parts record their measurement and run on.
 part_floor_binds() {
 	case "$PART" in
 	integration:* | ui-e2e:* | activity-fixture:* | observability) return 0 ;;

@@ -702,7 +702,9 @@ include breaking changes, and each is marked **BREAKING**.
   public and organization-owned, the gate's apply has not been run, `main` is
   under a ruleset made by hand that does not require the `proof` check, the
   full proof has passed on GitHub only on `validate/full/` pushes, and
-  `release.yml` is the one workflow that has not run there.
+  `release.yml` and `proof-rerun.yml` have not run there, nor have the `vuln`
+  jobs of `ci.yml` and `nightly.yml` or the proof's `race`, `race-repeat` and
+  `fuzz` parts.
 
 ### Added
 
