@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -84,6 +86,12 @@ func rewriteEnums(data []byte, md protoreflect.MessageDescriptor, rename renameE
 	node, err := decodeJSON(decoder)
 	if err != nil {
 		return nil, fmt.Errorf("decode json: %w", err)
+	}
+	// The decoder reads one value and would leave whatever follows it unread;
+	// the rewrite would then drop it and protojson, handed the rewrite, accept
+	// "{}0" as "{}". Anything after the value is for protojson to refuse.
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("decode json: data after the JSON value")
 	}
 	rewriteMessage(node, md, rename)
 	var buf bytes.Buffer
