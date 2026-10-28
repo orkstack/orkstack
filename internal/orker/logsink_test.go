@@ -378,41 +378,58 @@ func TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace(t *testing
 // block the workload's write(2) for a full interval every 64 KiB (128 KiB/s).
 // Now the chunk grows to 1 MiB first, so no single write waits longer than
 // one interval, every byte arrives in order, and uploads stay paced.
+//
+// THE WAITS ARE COUNTED, NOT TIMED. The writer blocks only where the sink
+// holds it for the pace, and that hold is a seam (waitPace) this test
+// replaces with one that moves the sink's clock by the wait it was asked for.
+// "One write blocked longer than an interval" was a wall-clock measurement of
+// a timer; a host busy with other processes delivers a timer late (76 ms
+// against a 50 ms interval and a 75 ms bound, in CI) without the sink asking
+// for anything but the interval. How many times the sink held the writer, and
+// for how long it asked, are its own decisions and need no clock to observe.
 func TestLogChunkSink_ABurstGrowsTheChunkInsteadOfThrottlingTheWriter(t *testing.T) {
-	const interval = 50 * time.Millisecond
+	// An hour, so no armed timer can fire while the test runs; the pace is
+	// read from the test's clock, which the holds below move.
+	const interval = time.Hour
 	store := &recordingLogStore{}
 	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushInterval: interval,
 		MaxBytes:      64 << 20,
 	})
+	clock := newTestClock()
+	sink.now = clock.now
+	var holds []time.Duration
+	sink.waitPace = func(wait time.Duration) bool {
+		holds = append(holds, wait)
+		clock.advance(wait)
+		return true
+	}
+
 	line := strings.Repeat("z", 1023)
-	var longest time.Duration
-	blocked := 0
-	began := time.Now()
 	for i := 0; i < 4096; i++ {
-		start := time.Now()
 		sink.Write(line)
-		if took := time.Since(start); took > longest {
-			longest = took
-		}
-		if time.Since(start) > interval/2 {
-			blocked++
-		}
 	}
-	elapsed := time.Since(began)
 	sink.Close()
-	if longest > interval+25*time.Millisecond {
-		t.Fatalf("one write blocked %s, longer than one %s interval", longest, interval)
+
+	var longest time.Duration
+	for _, hold := range holds {
+		longest = max(longest, hold)
 	}
-	// 4 MiB at 1 MiB per interval is about four waits; at 64 KiB per interval
-	// it was sixty-four.
-	if blocked > 8 {
-		t.Fatalf("the writer was held %d times for 4 MiB; at a 1 MiB chunk it is about 4", blocked)
+	if longest > interval {
+		t.Fatalf("the sink held one write for %s, longer than one %s interval", longest, interval)
+	}
+	// 4 MiB at 1 MiB per interval is about four waits (three here: the
+	// immediate first chunk is not held, and the last megabyte is closed, not
+	// held); at 64 KiB per interval it was sixty-four. At least one proves the
+	// burst did reach the chunk ceiling, so the count measures the sink and not
+	// a burst that never needed holding.
+	if len(holds) < 1 || len(holds) > 8 {
+		t.Fatalf("the writer was held %d times for 4 MiB; at a 1 MiB chunk it is about 4", len(holds))
 	}
 	if store.body() != strings.Repeat(line+"\n", 4096) {
 		t.Fatal("the burst was not stored whole and in order")
 	}
-	t.Logf("4 MiB in %s, %d chunks, longest write %s", elapsed, len(store.stored()), longest)
+	t.Logf("4 MiB in %d chunks, %d holds, longest %s", len(store.stored()), len(holds), longest)
 }
 
 // TestLogChunkSink_TheIntervalDoublesForALongTrickle is F-orker-storage-perf-6
@@ -486,6 +503,16 @@ func TestLogChunkSink_AFailingStoreBlocksOnceThenDrops(t *testing.T) {
 	sink.now = clock.now
 	sink.opts.FlushInterval = time.Second
 
+	// What blocks a writer is counted, not timed: the back-off between a
+	// chunk's upload tries (sleep) and a hold for the pace (waitPace) are the
+	// two ways the sink stalls its caller, and both are seams that record the
+	// wait instead of waiting, so a host's load cannot move the result. A wait
+	// that bypassed both seams would not be seen here: the sink waits only
+	// through them (backoff, holdForPace), and a new wait belongs behind one.
+	var backoffs, holds []time.Duration
+	sink.sleep = func(d time.Duration) { backoffs = append(backoffs, d) }
+	sink.waitPace = func(d time.Duration) bool { holds = append(holds, d); return true }
+
 	sink.Write("lost to the outage") // the first chunk: all its tries
 	mu.Lock()
 	afterFirst := tries
@@ -493,18 +520,38 @@ func TestLogChunkSink_AFailingStoreBlocksOnceThenDrops(t *testing.T) {
 	if afterFirst != logChunkUploadTries {
 		t.Fatalf("the first failing chunk was tried %d times; want %d", afterFirst, logChunkUploadTries)
 	}
+	// It blocks once: the back-off between its tries, and nothing else.
+	if len(backoffs) != logChunkUploadTries-1 {
+		t.Fatalf("the first failing chunk backed off %d times (%v); want %d, one between each pair of tries",
+			len(backoffs), backoffs, logChunkUploadTries-1)
+	}
+	for i, d := range backoffs {
+		if d != logChunkUploadBackoff {
+			t.Fatalf("back-off %d lasted %s; want %s", i, d, logChunkUploadBackoff)
+		}
+	}
 	for i := 0; i < 4; i++ { // inside the 5 s cool-down: dropped, not tried
 		clock.advance(time.Second)
-		start := time.Now()
 		sink.Write(fmt.Sprintf("during the cool-down %d", i))
-		if took := time.Since(start); took > 50*time.Millisecond {
-			t.Fatalf("a write during the cool-down blocked %s", took)
+		// The producer does not stall on a store that just failed: the write
+		// neither asks it (a try that fails costs the back-off above), nor
+		// backs off, nor is held for the pace. Each is counted after every
+		// write.
+		mu.Lock()
+		if tries != afterFirst {
+			t.Fatalf("write %d during the cool-down tried the store %d more times",
+				i, tries-afterFirst)
+		}
+		mu.Unlock()
+		if len(backoffs) != logChunkUploadTries-1 {
+			t.Fatalf("write %d during the cool-down backed off (%v); it must be dropped without waiting",
+				i, backoffs[logChunkUploadTries-1:])
+		}
+		if len(holds) != 0 {
+			t.Fatalf("write %d during the cool-down was held for the pace (%v)", i, holds)
 		}
 	}
 	mu.Lock()
-	if tries != afterFirst {
-		t.Fatalf("the store was tried %d more times during its cool-down", tries-afterFirst)
-	}
 	failing = false
 	mu.Unlock()
 	clock.advance(2 * time.Second) // past the cool-down

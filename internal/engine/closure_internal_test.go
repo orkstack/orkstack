@@ -201,7 +201,7 @@ func (c *passClock) kind() string {
 	return "wall clock"
 }
 
-// gatedSizeBound scales a wall-clock bound under the race detector.
+// gatedSizeBound scales a CPU-time bound (passClock) under the race detector.
 func gatedSizeBound(bound time.Duration) time.Duration {
 	if raceBuild {
 		return bound * raceSlowdown
@@ -211,20 +211,22 @@ func gatedSizeBound(bound time.Duration) time.Duration {
 
 // TestNewRunState_AtTheGatedSizeUnderTheDeadlockBudget: with the closure
 // computed on demand, building a run's state at the gated task ceiling
-// (DefaultOrkflowMaxTasks) in each of E7's shapes takes at most 200 ms, a
-// fifth of the 1 s deadlock detector, every generation's first workflow task
-// and every replay paying it once.
+// (DefaultOrkflowMaxTasks) in each of E7's shapes takes at most 200 ms of the
+// building thread's CPU time (passClock), a fifth of the 1 s deadlock
+// detector, every generation's first workflow task and every replay paying it
+// once.
 func TestNewRunState_AtTheGatedSizeUnderTheDeadlockBudget(t *testing.T) {
 	n := int(DefaultOrkflowMaxTasks)
 	bound := gatedSizeBound(200 * time.Millisecond)
+	clock := &passClock{}
 	timings := map[string]float64{}
 	for _, shape := range []string{"flat", "staged", "deep"} {
 		wf := soakShape(shape, n)
 		var best time.Duration
-		for attempt := range 3 { // the best of three: a scheduler hiccup is not the code's cost
-			started := time.Now()
+		for attempt := range 3 { // the best of three: a cold cache is not the code's cost
+			started := clock.now()
 			s := buildRunState("ork-gated", wf, nil, RunPlan{})
-			elapsed := time.Since(started)
+			elapsed := clock.now() - started
 			if len(s.order) != n {
 				t.Fatalf("%s: %d tasks, want %d", shape, len(s.order), n)
 			}
@@ -233,12 +235,12 @@ func TestNewRunState_AtTheGatedSizeUnderTheDeadlockBudget(t *testing.T) {
 			}
 		}
 		timings[shape] = float64(best.Microseconds()) / 1000
-		t.Logf("E7 newRunState at %d tasks, %s: %.2f ms (bound %s)", n, shape, timings[shape], bound)
+		t.Logf("E7 newRunState at %d tasks, %s: %.2f ms of %s (bound %s)", n, shape, timings[shape], clock.kind(), bound)
 		if best > bound {
-			t.Fatalf("%s: newRunState at %d tasks took %s, over %s", shape, n, best, bound)
+			t.Fatalf("%s: newRunState at %d tasks took %s of %s, over %s", shape, n, best, clock.kind(), bound)
 		}
 	}
-	proof.WriteJSON(t, "task-ceiling", "new-run-state.json", map[string]any{"tasks": n, "ms": timings})
+	proof.WriteJSON(t, "task-ceiling", "new-run-state.json", map[string]any{"tasks": n, "ms": timings, "clock": clock.kind()})
 }
 
 // TestReadyLoop_JoinChainClosureCost: a chain of the gated size whose tasks

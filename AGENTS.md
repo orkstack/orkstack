@@ -980,6 +980,9 @@ Every code change follows this order:
 
 Unit tests are pure and table-driven. Temporal workflow tests use
 `WorkflowTestSuite` / `TestWorkflowEnvironment` with mocked activities.
+A unit test bounds code cost by thread CPU time or an injected clock, never by
+a sub-second wall-clock window; where the platform has no thread clock (off
+Linux) the Go cost tests fall back to the wall clock.
 Integration tests use `-tags=integration`, `make infra-up`, and `infraAbsent`; a
 missing prerequisite skips, and becomes a failure under `ORK_REQUIRE_INFRA=1`
 (`make test-integration` sets it). Browser end-to-end tests live in `ui/e2e`

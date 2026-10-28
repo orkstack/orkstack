@@ -32,6 +32,16 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- Unit tests no longer bound code cost by a sub-second wall-clock window, which
+  measured the runner and not the code: the CI unit gate failed
+  `TestLogChunkSink_ABurstGrowsTheChunkInsteadOfThrottlingTheWriter` at 81 ms
+  against a 75 ms bound (run 40432725750) with nothing wrong in the sink. The
+  sink's pace hold and upload back-off are now counted and sized on a clock
+  the test moves; the history-guard and run-state cost bounds read the
+  workflow thread's CPU time; the audit prefetch, sink shutdown and
+  unknown-Orker cordon tests observe concurrency and dispatch instead of
+  elapsed time; and the UI's DAG bounds read the thread's CPU time.
+  AGENTS.md §11.1 states the rule.
 - `proofrun clean` now tells which test process left an activity container
   by the work root the container mounts, whose name carries that process's
   pid, rather than by the container's Orker id. Tests that name their own

@@ -290,15 +290,14 @@ func TestCordonOrker_RequiresAReason_BeforeAnyDispatch(t *testing.T) {
 func TestCordonOrker_UnknownOrkerIsNotFoundWithoutWaiting(t *testing.T) {
 	fleet := threeOrkerFleet()
 	svc := api.NewService(api.Config{Fleet: fleet})
-	start := time.Now()
 	_, err := svc.CordonOrker(context.Background(), connect.NewRequest(&orkstackv1.CordonOrkerRequest{
 		OrkerId: "orker-typo", Cordoned: true, Reason: "cve"}))
 	if connect.CodeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "orkctl orker list") {
 		t.Fatalf("unknown id = %v; want NotFound pointing at orkctl orker list", err)
 	}
-	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
-		t.Fatalf("NotFound took %v", elapsed)
-	}
+	// "Without waiting" is that nothing was sent to an id nothing polls: the
+	// only wait a cordon has is for the Orker's answer (the delivery timeout).
+	// Counted, not timed.
 	if len(fleet.cordons) != 0 {
 		t.Fatal("a cordon was dispatched to an id nothing polls")
 	}

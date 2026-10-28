@@ -348,11 +348,14 @@ func TestDockerRuntime_WaitDrainsTheAttachBeforeReporting(t *testing.T) {
 
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
+	// The stopwatch starts before the attach does, so a host that stalls this
+	// goroutine between Start and Wait cannot eat into the delay it measures:
+	// the attach's output is written at least attachDelay after this instant.
+	began := time.Now()
 	if err := runtime.Start(ctx, "fake-container", &stdout, &stderr); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	began := time.Now()
 	status, err := runtime.Wait(ctx, "fake-container")
 	elapsed := time.Since(began)
 	if err != nil {

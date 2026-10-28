@@ -606,7 +606,9 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 		{"286 in flight after 300 collections", 14_736, 286, 300, 51_408, 46_720},
 	} {
 		t.Run(state.name, func(t *testing.T) {
-			var elapsed time.Duration
+			var elapsed, wallElapsed time.Duration
+			var wallStarted time.Time
+			var clock *passClock
 			var quickTotal, exactTotal int64
 			var checks int
 			var guardErr error
@@ -629,7 +631,12 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 				events, _ := s.historyNow(ctx)
 				qe, _ := s.quickReserve(inFlight, s.plan.History.Reserve)
 				quickTotal = events + qe
-				started := time.Now()
+				// The pass is timed on this goroutine's thread CPU time
+				// (passClock): a host loaded by other processes delays it
+				// without adding to its CPU time, and a slower guard still does.
+				clock = &passClock{}
+				begin := clock.now()
+				wallStarted = time.Now()
 				s.beginPass()
 				pendingTasks := len(s.order) - state.done - state.inFlight
 				for i := 0; i <= pendingTasks; i++ { // check point 1, then one per ready task
@@ -639,7 +646,8 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 						break
 					}
 				}
-				elapsed = time.Since(started)
+				elapsed = clock.now() - begin
+				wallElapsed = time.Since(wallStarted)
 				re, _ := s.reserveNow(inFlight)
 				exactTotal = events + re
 				return nil
@@ -658,10 +666,11 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 				t.Fatalf("the state is not inside the per-pass band: quick %d, exact %d, limit %d",
 					quickTotal, exactTotal, DefaultHistoryMaxEvents)
 			}
-			t.Logf("E0 deadlock budget (%s): %d guard checks in one pass took %.2f ms (budget 20 ms)",
-				state.name, checks, float64(elapsed.Microseconds())/1000)
+			t.Logf("E0 deadlock budget (%s): %d guard checks in one pass took %.2f ms of %s (budget 20 ms; %.2f ms wall clock)",
+				state.name, checks, float64(elapsed.Microseconds())/1000, clock.kind(),
+				float64(wallElapsed.Microseconds())/1000)
 			if elapsed > 20*time.Millisecond {
-				t.Fatalf("one pass's guard checks took %s, over 20 ms", elapsed)
+				t.Fatalf("one pass's guard checks took %s of %s, over 20 ms", elapsed, clock.kind())
 			}
 		})
 	}
