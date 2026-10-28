@@ -232,10 +232,11 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
 
 ## Fuzzing
 
-Every parser of input OrkStack does not control has a native Go fuzz target
-(`func FuzzXxx(f *testing.F)`, AGENTS.md §11.1) beside its table tests. The
-seeds run as ordinary tests in `make check` and every proof. To search for
-more, run one target at a time:
+A parser of input OrkStack does not control that is added or changed gets a
+native Go fuzz target (`func FuzzXxx(f *testing.F)`, AGENTS.md §11.1) beside
+its table tests; one that has none is not yet covered, not exempt. The seeds
+run as ordinary tests in `make check` and every proof. To search for more, run
+one target at a time:
 
 ```bash
 go test -run='^$' -fuzz='^FuzzParse_AcceptedTextIsAFilterThatFormatsBackToItself$' -fuzztime=3m ./internal/listfilter
