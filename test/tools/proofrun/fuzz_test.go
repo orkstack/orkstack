@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The fuzz lane (AGENTS.md §11.2, docs/PROOFS.md §2.1) runs every Fuzz target
@@ -135,14 +134,16 @@ func TestFuzzRunner_APassingTargetAndACrashingOne(t *testing.T) {
 		t.Skip("runs go test -fuzz")
 	}
 	quiet(t)
-	// A lane budget of 12s for two targets: each is given an equal share of what
-	// remains, less the overhead, and never under the minimum. The crasher a
+	// Each target is fuzzed for a fixed 3s, so neither outcome depends on how
+	// long this host takes to build the instrumented binaries: under a 12s
+	// budget, a cold build on a loaded CI runner (26s for the first target)
+	// once spent it all and left FuzzOK never fuzzed. How a budget is shared
+	// is proven with an injected clock (fuzzbudget_test.go). The crasher a
 	// short fuzz time finds is kept and fails the lane as it does for a longer
 	// one.
-	withTuning(t, 3*time.Second, 2*time.Second)
 	mod := fuzzModuleDir(t, map[string]string{"ok_test.go": fuzzOKSource, "crash_test.go": fuzzCrashSource})
 	out := filepath.Join(t.TempDir(), "out")
-	code := cmdFuzz([]string{"-out", out, "-budget", "12s"})
+	code := cmdFuzz([]string{"-out", out, "-fuzztime", "3s"})
 	if code != 1 {
 		t.Fatalf("exit %d, want 1: FuzzCrash has a crasher", code)
 	}
@@ -158,8 +159,8 @@ func TestFuzzRunner_APassingTargetAndACrashingOne(t *testing.T) {
 		by[e.Test] = e
 	}
 	for _, name := range []string{"FuzzOK", "FuzzCrash"} {
-		if e := by[name]; e.FuzzSeconds < 3 || e.FuzzSeconds > 12 || e.Seconds < e.FuzzSeconds && e.Outcome == outcomePass {
-			t.Errorf("%s: fuzz_seconds %v, seconds %v: the ledger must record the fuzz time it was given (3s to 12s here)", name, e.FuzzSeconds, e.Seconds)
+		if e := by[name]; e.FuzzSeconds != 3 || e.Seconds < e.FuzzSeconds && e.Outcome == outcomePass {
+			t.Errorf("%s: fuzz_seconds %v, seconds %v: the ledger must record the fuzz time it was given (3s here)", name, e.FuzzSeconds, e.Seconds)
 		}
 	}
 	if by["FuzzOK"].Outcome != outcomePass || by["FuzzCrash"].Outcome != outcomeFail {
