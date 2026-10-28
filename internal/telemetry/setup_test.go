@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -373,26 +374,38 @@ func TestSinksHas(t *testing.T) {
 }
 
 // TestSinksShutdownRunsConcurrently is fix 5's contract: Shutdown must not
-// serialize one sink's shutdown behind another's — two sinks each taking
-// ~300ms must together finish in well under their combined 600ms.
+// serialize one sink's shutdown behind another's.
+//
+// Each sink's shutdown reports that it has started and then waits for the
+// other's start. Run together, both are in flight at once and both return; run
+// one after the other, the first waits for a start that cannot come until it
+// returns, and gives up with an error naming that. Nothing is timed: a slow
+// host delays both starts and changes no outcome, and the wait's own bound is
+// only how long a serialized Shutdown takes to say so.
 func TestSinksShutdownRunsConcurrently(t *testing.T) {
+	started := make(chan struct{}, 2)
+	bothStarted := make(chan struct{})
+	go func() {
+		<-started
+		<-started
+		close(bothStarted)
+	}()
+	rendezvous := func(context.Context) error {
+		started <- struct{}{}
+		select {
+		case <-bothStarted:
+			return nil
+		case <-time.After(10 * time.Second):
+			return errors.New("the other sink's shutdown had not started: Shutdown runs them one after the other")
+		}
+	}
 	def := noopProviders(Config{})
-	def.shutdowns = append(def.shutdowns, func(context.Context) error {
-		time.Sleep(300 * time.Millisecond)
-		return nil
-	})
+	def.shutdowns = append(def.shutdowns, rendezvous)
 	named := noopProviders(Config{})
-	named.shutdowns = append(named.shutdowns, func(context.Context) error {
-		time.Sleep(300 * time.Millisecond)
-		return nil
-	})
+	named.shutdowns = append(named.shutdowns, rendezvous)
 	sinks := newSinksForTest(def, map[string]*Providers{"b": named})
 
-	start := time.Now()
 	if err := sinks.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown: %v", err)
-	}
-	if elapsed := time.Since(start); elapsed >= 500*time.Millisecond {
-		t.Errorf("Shutdown took %v, want under 500ms (two ~300ms shutdowns run concurrently)", elapsed)
 	}
 }
