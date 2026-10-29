@@ -1060,6 +1060,33 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 	return removed, nil
 }
 
+// endpointVars point a CLI at a daemon or at a container store: the docker
+// CLI's host, context and configuration directory (which holds its current
+// context), and the podman CLI's remote connection and storage.
+var endpointVars = []string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
+	"CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_STORAGE_CONF"}
+
+// Endpoint names, without asking it, the daemon this runtime's commands
+// reach: the CLI's grammar and binary, and every variable that points either
+// CLI elsewhere. `orkctl task run` keys the containers of a run that is gone
+// on it, so one run never settles the leftovers of a run on another daemon.
+// A setting that does not parse is named as it was given.
+func (d *DockerRuntime) Endpoint() string {
+	cli, err := d.cli()
+	if err != nil {
+		cli = "unparsed:" + d.CLI + "|" + os.Getenv(CLIVar)
+	}
+	bin, err := d.bin()
+	if err != nil {
+		bin = "unparsed:" + d.Bin + "|" + os.Getenv(DockerBinVar)
+	}
+	parts := []string{"cli=" + cli, "bin=" + bin}
+	for _, name := range endpointVars {
+		parts = append(parts, name+"="+os.Getenv(name))
+	}
+	return strings.Join(parts, "\n")
+}
+
 // Describe reports the runtime's identity for DescribeOrker.
 //
 // The answer is process-lifetime data — the daemon's version and whether it is

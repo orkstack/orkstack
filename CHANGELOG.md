@@ -323,6 +323,20 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- `orkctl task run` gives each run an identity of its own,
+  `ork.orker=orkctl-task-run-<hex>` from its local run id, in place of the one
+  `orkctl-task-run` every run shared, so one run's label never names another
+  run's container. Each run holds a lock file for its identity in its work
+  directory while it lives, naming its host and container engine, and deletes
+  it once its container is removed. The next task run in the same work
+  directory, on the same host and engine, removes the containers of every
+  identity whose lock is free: a container a run abandoned on a second
+  interrupt, or left when it was killed. A live run's container is never
+  touched, and `--render-only` removes none. Before, nothing removed such a
+  container; one an earlier release left under the shared
+  `ork.orker=orkctl-task-run` label is not collected and is removed by that
+  label by hand.
+
 - The Orker reads a docker CLI's answer from its stdout alone and quotes its
   stderr in errors. Both streams were read as one, so a CLI that wrote a line
   of its own on stderr (the `podman-docker` shim's "Emulate Docker CLI using

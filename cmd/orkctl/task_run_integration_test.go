@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -222,13 +224,15 @@ func fileSHA(t *testing.T, path string) string {
 
 // replayFailedConsume is the replay assertion set against a failed fixture run. It
 // returns the two invocations' stdout.
-func (s *taskRunStack) replayFailedConsume(run *orkstackv1.Run) {
+// It returns the local run ids of the two task runs it made.
+func (s *taskRunStack) replayFailedConsume(run *orkstackv1.Run) []string {
 	t := s.t
 	stdout, stderr, code := s.taskRun("--from-run", run.GetId(), "--task", "consume", "--keep")
 	if code != exitRunFailed || !strings.Contains(stdout, "FAILED  CONTAINER_EXIT_NONZERO (ActivityFailed)") {
 		t.Fatalf("replay exit = %d, want %d with CONTAINER_EXIT_NONZERO\nstdout:\n%s\nstderr:\n%s", code, exitRunFailed, stdout, stderr)
 	}
 	session := keptSession(t, stdout)
+	localIDs := []string{localRunID(t, stdout)}
 
 	production := productionStdout(t, s.replicas[0].runs, s.ctx, run.GetId(), "consume")
 	keptConfig, err := os.ReadFile(filepath.Join(session, "input", "config.json"))
@@ -271,6 +275,7 @@ func (s *taskRunStack) replayFailedConsume(run *orkstackv1.Run) {
 		t.Fatalf("replay with --input expect=staging exit = %d, want 0 with values\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	t.Logf("EVIDENCE --input expect=staging: SUCCEEDED, exit 0")
+	return append(localIDs, localRunID(t, stdout))
 }
 
 // TestIntegration_TaskRunReplaysAFailedTaskAgainstItsRunsBytes.
@@ -357,7 +362,7 @@ func TestIntegration_TaskRunWritesNothingToTheDeployment(t *testing.T) {
 	}
 	runsBefore, bucketBefore, attemptsBefore := listRuns(), bucketListing(t, ctx, s.artifactCfg), attempts()
 
-	s.replayFailedConsume(run)
+	localIDs := s.replayFailedConsume(run)
 
 	runsAfter, bucketAfter, attemptsAfter := listRuns(), bucketListing(t, ctx, s.artifactCfg), attempts()
 	if strings.Join(runsAfter, ",") != strings.Join(runsBefore, ",") {
@@ -384,22 +389,18 @@ func TestIntegration_TaskRunWritesNothingToTheDeployment(t *testing.T) {
 	if _, err := commits.Get(ctx, root+"/"+key); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("consume's commit key answered %v after a locally SUCCESSFUL replay, want ErrNotFound", err)
 	}
-	reaped, err := orker.NewDockerRuntime().Reap(ctx, "orkctl-task-run")
-	if err != nil {
-		t.Fatalf("Reap: %v", err)
-	}
-	if reaped != 0 {
-		t.Errorf("Reap(orkctl-task-run) removed %d containers, want 0", reaped)
+	for _, localID := range localIDs {
+		requireTaskRunSettled(ctx, t, s.sessions, localID)
 	}
 	report := fmt.Sprintf("source run %s (archive record readable before the snapshot)\n"+
 		"ListRuns ids before: %d, after: %d, identical: %t\n"+
 		"bucket artifact listing before: %d objects, after: %d objects, identical: %t\n"+
 		"ListTaskAttempts(%s, consume) identical: %t\n"+
 		"commit %s/%s after the local success: ErrNotFound\n"+
-		"Reap(orkctl-task-run) removed: %d\n",
+		"task runs %v: no container labelled ork.run, no lock file left\n",
 		run.GetId(), len(runsBefore), len(runsAfter), strings.Join(runsAfter, ",") == strings.Join(runsBefore, ","),
 		len(bucketBefore), len(bucketAfter), strings.Join(bucketAfter, "\n") == strings.Join(bucketBefore, "\n"),
-		run.GetId(), attemptsAfter == attemptsBefore, root, key, reaped)
+		run.GetId(), attemptsAfter == attemptsBefore, root, key, localIDs)
 	t.Logf("EVIDENCE\n%s", report)
 	proof.Write(t, "task-run", "writes-nothing.txt", []byte(report))
 	s.writeTranscript("task-run-writes-nothing.txt")
@@ -585,17 +586,258 @@ tasks:
 	if !strings.Contains(out.String(), "trapped-TERM") {
 		t.Fatalf("the workload's TERM trap never ran:\n%s", out.String())
 	}
-	reaped, err := orker.NewDockerRuntime().Reap(ctx, "orkctl-task-run")
-	if err != nil {
-		t.Fatalf("Reap: %v", err)
-	}
-	if reaped != 0 {
-		t.Fatalf("Reap(orkctl-task-run) removed %d containers, want 0", reaped)
-	}
+	interruptedID := localRunID(t, out.String())
+	requireTaskRunSettled(ctx, t, s.sessions, interruptedID)
 	fmt.Fprintf(&s.transcript, "$ orkctl task run --file %s --task looper   (SIGINT after the ready line)\n%s(stderr) %s(exit %d after %s)\n",
 		doc, out.String(), stderr.String(), exitRunCanceled, elapsed.Round(time.Millisecond))
-	t.Logf("EVIDENCE SIGINT -> trapped-TERM, exit 3 after %s, Reap removed 0", elapsed.Round(time.Millisecond))
+	t.Logf("EVIDENCE SIGINT -> trapped-TERM, exit 3 after %s, %s left no container and no lock file", elapsed.Round(time.Millisecond), interruptedID)
 	s.writeTranscript("task-run-interrupt.txt")
+}
+
+// localRunID is the local run id a task run's header named.
+func localRunID(t *testing.T, stdout string) string {
+	t.Helper()
+	match := localRunLine.FindStringSubmatch(stdout)
+	if match == nil {
+		t.Fatalf("no `local run` header line:\n%s", stdout)
+	}
+	return match[1]
+}
+
+// requireTaskRunSettled: the task run localID left no container (labelled
+// ork.run=localID) and no lock file of its identity under sessions, which
+// is what a run that removed its own container leaves (task_run_owner.go).
+func requireTaskRunSettled(ctx context.Context, t *testing.T, sessions, localID string) {
+	t.Helper()
+	if id, label, running, present := taskRunContainer(ctx, t, localID); present {
+		t.Errorf("task run %s left container %s (ork.orker=%s, running %t)", localID, id, label, running)
+	}
+	lock := filepath.Join(sessions, taskRunOrkerPrefix+strings.TrimPrefix(localID, "local-")+taskRunLockSuffix)
+	if _, err := os.Stat(lock); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("task run %s left its lock file %s (%v)", localID, lock, err)
+	}
+}
+
+// localRunLine is the header line that names a task run's local run id.
+var localRunLine = regexp.MustCompile(`(?m)^local run\s+(local-[0-9a-f]+)`)
+
+// startedTaskRun is one `orkctl task run` process the test started and whose
+// container printed its ready line.
+type startedTaskRun struct {
+	cmd     *exec.Cmd
+	localID string
+	copied  chan struct{}
+	stderr  *bytes.Buffer
+
+	mu  sync.Mutex
+	out bytes.Buffer
+}
+
+// output is what the run printed so far.
+func (r *startedTaskRun) output() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.out.String()
+}
+
+// startLooper starts `orkctl task run --task looper` and returns once its
+// container printed "ready", with the local run id its header named.
+func (s *taskRunStack) startLooper(doc string) *startedTaskRun {
+	s.t.Helper()
+	cmd := exec.CommandContext(s.ctx, s.orkctlPath, "task", "run", "--file", doc, "--task", "looper",
+		"--server", "http://"+s.replicas[0].addr)
+	cmd.Dir = s.root
+	cmd.Env = append(os.Environ(), orker.WorkRootVar+"="+s.sessions)
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	run := &startedTaskRun{cmd: cmd, copied: make(chan struct{}), stderr: &bytes.Buffer{}}
+	cmd.Stderr = run.stderr
+	if err := cmd.Start(); err != nil {
+		s.t.Fatal(err)
+	}
+	// A failed test still stops what it started and removes its container,
+	// by the run's own label once the header named it.
+	s.t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		if match := localRunLine.FindStringSubmatch(run.output()); match != nil {
+			ids, _ := exec.Command(localContainerCLI(), "ps", "-a", "-q", "--filter", "label=ork.run="+match[1]).Output()
+			for _, id := range strings.Fields(string(ids)) {
+				_ = exec.Command(localContainerCLI(), "rm", "--force", id).Run()
+			}
+		}
+	})
+	ready := make(chan struct{})
+	go func() {
+		defer close(run.copied)
+		scanner := bufio.NewScanner(pipe)
+		scanner.Buffer(make([]byte, 64<<10), 4<<20)
+		signalled := false
+		for scanner.Scan() {
+			run.mu.Lock()
+			run.out.WriteString(scanner.Text() + "\n")
+			run.mu.Unlock()
+			if !signalled && strings.Contains(scanner.Text(), "│ ready") {
+				signalled = true
+				close(ready)
+			}
+		}
+		_, _ = io.Copy(io.Discard, pipe)
+	}()
+	select {
+	case <-ready:
+	case <-run.copied:
+		_ = cmd.Wait()
+		s.t.Fatalf("the looper exited before its ready line\nstdout:\n%s\nstderr:\n%s", run.output(), run.stderr.String())
+	case <-time.After(3 * time.Minute):
+		_ = cmd.Process.Kill()
+		s.t.Fatalf("the looper never printed its ready line\nstdout:\n%s", run.output())
+	}
+	run.localID = localRunID(s.t, run.output())
+	return run
+}
+
+// taskRunContainer is the one container labelled ork.run=localID, its
+// ork.orker label and whether it is running; ok is false when there is none.
+func taskRunContainer(ctx context.Context, t *testing.T, localID string) (id, orkerLabel string, running, ok bool) {
+	t.Helper()
+	raw, err := exec.CommandContext(ctx, localContainerCLI(), "ps", "-a", "-q", "--filter", "label=ork.run="+localID).Output()
+	if err != nil {
+		t.Fatalf("list the containers labelled ork.run=%s: %v", localID, err)
+	}
+	ids := strings.Fields(string(raw))
+	switch len(ids) {
+	case 0:
+		return "", "", false, false
+	case 1:
+	default:
+		t.Fatalf("%d containers are labelled ork.run=%s, want at most 1: %v", len(ids), localID, ids)
+	}
+	answer, err := exec.CommandContext(ctx, localContainerCLI(), "inspect", "--format",
+		`{{index .Config.Labels "ork.orker"}} {{.State.Running}}`, ids[0]).Output()
+	if err != nil {
+		t.Fatalf("inspect container %s: %v", ids[0], err)
+	}
+	fields := strings.Fields(string(answer))
+	if len(fields) != 2 {
+		t.Fatalf("inspect container %s answered %q", ids[0], answer)
+	}
+	return ids[0], fields[0], fields[1] == "true", true
+}
+
+// TestIntegration_TaskRunTouchesOnlyItsOwnContainers: two `orkctl task run`
+// processes on one host label their containers with identities of their own,
+// so one run's identity never names the other's container. A run killed with
+// SIGKILL leaves its container running; the next task run removes that one,
+// because its owner is gone, and never the container of a run still alive.
+func TestIntegration_TaskRunTouchesOnlyItsOwnContainers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	s := newTaskRunStack(ctx, t)
+	doc := filepath.Join(t.TempDir(), "owners.ork.yaml")
+	if err := os.WriteFile(doc, []byte(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: task-run-owners-%d
+version: "0.1.0"
+tasks:
+  - id: looper
+    uses: shell
+    timeout_seconds: 300
+    cancellation_grace_period_seconds: 5
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        echo ready
+        while true; do sleep 1; done
+  - id: hello
+    uses: shell
+    timeout_seconds: 120
+    with:
+      op: eval
+      command: ["sh", "-c", "echo hello"]
+`, time.Now().UnixNano())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	live := s.startLooper(doc)
+	abandoned := s.startLooper(doc)
+	_, liveOrker, liveRunning, ok := taskRunContainer(ctx, t, live.localID)
+	if !ok || !liveRunning {
+		t.Fatalf("the live run's container (ork.run=%s) is not running", live.localID)
+	}
+	abandonedContainer, abandonedOrker, abandonedRunning, ok := taskRunContainer(ctx, t, abandoned.localID)
+	if !ok || !abandonedRunning {
+		t.Fatalf("the second run's container (ork.run=%s) is not running", abandoned.localID)
+	}
+	if liveOrker == abandonedOrker {
+		t.Errorf("both runs labelled their containers ork.orker=%s: one run's identity names the other's "+
+			"container, so removing one run's containers removes the other's", liveOrker)
+	}
+
+	// SIGKILL runs nothing of orkctl's: the container stays, running, with
+	// nobody watching it.
+	if err := abandoned.cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	<-abandoned.copied
+	_ = abandoned.cmd.Wait()
+	if _, _, running, ok := taskRunContainer(ctx, t, abandoned.localID); !ok || !running {
+		t.Fatalf("the killed run's container %s stopped by itself (present %t, running %t); "+
+			"the test needs one that outlives its run", abandonedContainer, ok, running)
+	}
+
+	stdout, stderr, code := s.taskRun("--file", doc, "--task", "hello")
+	if code != exitOK {
+		t.Fatalf("the third run exited %d, want %d\nstdout:\n%s\nstderr:\n%s", code, exitOK, stdout, stderr)
+	}
+	thirdID := localRunID(t, stdout)
+	if _, _, _, present := taskRunContainer(ctx, t, abandoned.localID); present {
+		t.Errorf("the killed run's container %s (ork.orker=%s) is still there after the next task run; "+
+			"a container whose run is gone must be removed", abandonedContainer, abandonedOrker)
+	}
+	_, _, liveRunningAfter, livePresent := taskRunContainer(ctx, t, live.localID)
+	if !livePresent || !liveRunningAfter {
+		t.Fatalf("the live run's container (ork.run=%s, ork.orker=%s) was removed or stopped by the next "+
+			"task run (present %t, running %t)", live.localID, liveOrker, livePresent, liveRunningAfter)
+	}
+	if !strings.Contains(stdout, abandonedOrker) {
+		t.Errorf("the third run did not say it removed the killed run's container (ork.orker=%s):\n%s", abandonedOrker, stdout)
+	}
+
+	// The live run is still the one in charge of its container.
+	if err := live.cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { <-live.copied; waited <- live.cmd.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-waited:
+	case <-time.After(5*time.Second + 30*time.Second):
+		_ = live.cmd.Process.Kill()
+		t.Fatalf("the live run did not exit within its grace period plus 30s\nstdout:\n%s", live.output())
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(waitErr, &exitErr) || exitErr.ExitCode() != exitRunCanceled {
+		t.Fatalf("the live run exited %v, want %d\nstdout:\n%s\nstderr:\n%s", waitErr, exitRunCanceled, live.output(), live.stderr.String())
+	}
+	// Every run is settled: no container, and no lock file left behind.
+	for _, localID := range []string{live.localID, abandoned.localID, thirdID} {
+		requireTaskRunSettled(ctx, t, s.sessions, localID)
+	}
+	report := fmt.Sprintf("live run %s: ork.orker=%s, running before and after the third run\n"+
+		"killed run %s: ork.orker=%s, running after SIGKILL, removed by the third run %s\n"+
+		"third run output:\n%s",
+		live.localID, liveOrker, abandoned.localID, abandonedOrker, thirdID, stdout)
+	t.Logf("EVIDENCE\n%s", report)
+	proof.Write(t, "task-run", "own-containers.txt", []byte(report))
+	fmt.Fprintf(&s.transcript, "$ orkctl task run --file %s --task looper   (live, SIGINT at the end)\n%s(stderr) %s\n",
+		doc, live.output(), live.stderr.String())
+	fmt.Fprintf(&s.transcript, "$ orkctl task run --file %s --task looper   (SIGKILL after the ready line)\n%s(stderr) %s\n",
+		doc, abandoned.output(), abandoned.stderr.String())
+	s.writeTranscript("task-run-own-containers.txt")
 }
 
 // TestIntegration_TaskRunRendersOnlyWithoutACreatedContainer.

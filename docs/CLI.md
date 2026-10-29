@@ -2156,6 +2156,14 @@ log. A local run is a new logical activity with its own run id and idempotency
 key, and any external side effect it performs is real. Every secret the task
 declares must be supplied with --secret or skipped with --omit-secret.
 
+Each run labels its container ork.orker=orkctl-task-run-<hex>, from its own local
+run id, and holds a lock file for that identity in its work directory
+(ORK_ORKER_WORKDIR, else ~/.orkstack/task-run, else the temporary directory) while
+it lives. A run that removed its container deletes the file. A second interrupt
+abandons the container instead; the next task run on the same host, work
+directory and container engine removes it, and any container a killed run left,
+but never one of a run that is still alive. --render-only removes none.
+
 Exit status: 0 succeeded (or rendered), 2 the task failed, 3 interrupted, 1 the
 command could not run the task.
 

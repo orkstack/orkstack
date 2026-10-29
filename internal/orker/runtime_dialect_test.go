@@ -340,3 +340,36 @@ func TestDockerRuntime_TheProbeSpeaksTheEnginesSeccomp(t *testing.T) {
 		t.Errorf("RunBootProbe behind the podman-docker shim = %v; want ErrPostureRefused telling to set %s", err, CLIVar)
 	}
 }
+
+// TestDockerRuntime_EndpointNamesWhatPicksTheDaemon: runtimes that reach
+// different daemons or container stores name different endpoints, and one
+// runtime names the same endpoint every time it is asked.
+func TestDockerRuntime_EndpointNamesWhatPicksTheDaemon(t *testing.T) {
+	for _, name := range append([]string{CLIVar, DockerBinVar}, endpointVars...) {
+		t.Setenv(name, "")
+	}
+	base := (&DockerRuntime{}).Endpoint()
+	if again := (&DockerRuntime{}).Endpoint(); again != base {
+		t.Fatalf("one runtime named two endpoints:\n%s\n%s", base, again)
+	}
+	cases := map[string]func(t *testing.T) string{
+		"the podman CLI":  func(*testing.T) string { return (&DockerRuntime{CLI: CLIPodman}).Endpoint() },
+		"another binary":  func(*testing.T) string { return (&DockerRuntime{Bin: "/opt/docker/bin/docker"}).Endpoint() },
+		"an unparsed CLI": func(*testing.T) string { return (&DockerRuntime{CLI: "nerdctl"}).Endpoint() },
+		"ORK_DOCKER_CLI":  func(t *testing.T) string { t.Setenv(CLIVar, CLIPodman); return (&DockerRuntime{}).Endpoint() },
+		"ORK_DOCKER_BIN": func(t *testing.T) string {
+			t.Setenv(DockerBinVar, "/usr/local/bin/docker")
+			return (&DockerRuntime{}).Endpoint()
+		},
+	}
+	for _, name := range endpointVars {
+		cases[name] = func(t *testing.T) string { t.Setenv(name, "elsewhere"); return (&DockerRuntime{}).Endpoint() }
+	}
+	for name, endpoint := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := endpoint(t); got == base {
+				t.Fatalf("%s names the same endpoint as the default:\n%s", name, got)
+			}
+		})
+	}
+}
