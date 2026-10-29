@@ -144,14 +144,34 @@ func postureWorkRoot(t *testing.T, name string) string {
 //     refused as RUN_AS_ORKER_UNAVAILABLE.
 func TestIntegration_BootProbeJudgesATasksContainerOnTheRealDaemon(t *testing.T) {
 	requireDocker(t)
-	realDocker, err := exec.LookPath("docker")
-	if err != nil {
-		infraAbsent(t, "the docker CLI is not on PATH: %v", err)
-	}
+	realDocker := containerCLI(t)
 	setup, cancelSetup := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancelSetup()
 	requireProbeImage(setup, t, realDocker)
 	orkerUser := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	// The Podman engine is given no seccomp option, which it fills with its
+	// own default, so a weaker filter is asked for rather than rewritten;
+	// and its /run is a read-only tmpfs of its own, so a writable root
+	// leaves /run read-only there.
+	info := runtimeInfo(t)
+	podman := info.Name == orker.CLIPodman
+	// The Orker's own user lands as the Orker unless a rootless engine maps
+	// it elsewhere and the CLI cannot keep it: the docker CLI against a
+	// rootless Podman socket, run by a non-root Orker (the Orker as root
+	// inside the runtime is that shape's supported form).
+	ownUserLands := os.Geteuid() == 0 || !info.Rootless || info.CLI == orker.CLIPodman
+	// Without --pids-limit a container on the Podman socket gets pids.max 1,
+	// so its init cannot even fork: still refused, in the runtime's words.
+	noPidsSays := []string{"pids.max"}
+	if podman && info.CLI == orker.CLIDocker {
+		noPidsSays = []string{"failed to fork"}
+	}
+	noSeccomp := struct{ replace, prepend string }{replace: "seccomp=" + orker.SeccompBuiltin + "\tseccomp=unconfined\n"}
+	writableRoot := []string{"/ is writable", "/run is writable", "/var/tmp is writable"}
+	if podman {
+		noSeccomp = struct{ replace, prepend string }{prepend: "--security-opt\nseccomp=unconfined\n"}
+		writableRoot = []string{"/ is writable"}
+	}
 	// As root the Orker reads any file, so a container user that lands as
 	// someone else still leaves files it can read: the hatch does what it is
 	// for, and the probe says so.
@@ -172,14 +192,14 @@ func TestIntegration_BootProbeJudgesATasksContainerOnTheRealDaemon(t *testing.T)
 		{name: "the probe as it is boots"},
 		{name: "capabilities kept", replace: "--cap-drop=ALL\t--cap-drop=NET_RAW\n",
 			wantReason: orker.ReasonRuntimePostureRefused, wantSays: []string{"CapBnd"}},
-		{name: "no seccomp filter", replace: "seccomp=" + orker.SeccompBuiltin + "\tseccomp=unconfined\n",
+		{name: "no seccomp filter", replace: noSeccomp.replace, prepend: noSeccomp.prepend,
 			wantReason: orker.ReasonRuntimePostureRefused, wantSays: []string{"Seccomp"}},
 		{name: "privileges can be gained", replace: "no-new-privileges\tno-new-privileges=false\n",
 			wantReason: orker.ReasonRuntimePostureRefused, wantSays: []string{"NoNewPrivs"}},
 		{name: "a writable root, and with it /run", replace: "--read-only\t--read-only=false\n",
-			wantReason: orker.ReasonRuntimePostureRefused, wantSays: []string{"/ is writable", "/run is writable", "/var/tmp is writable"}},
+			wantReason: orker.ReasonRuntimePostureRefused, wantSays: writableRoot},
 		{name: "no pids limit", replace: "--pids-limit\t--label\n",
-			wantReason: orker.ReasonRuntimePostureRefused, wantSays: []string{"pids.max"}},
+			wantReason: orker.ReasonRuntimePostureRefused, wantSays: noPidsSays},
 		{name: "a proxy the task never set", prepend: "--env\nHTTP_PROXY=http://user:hunter2@proxy.invalid:3128\n",
 			wantReason: orker.ReasonRuntimePostureRefused, wantSays: []string{"HTTP_PROXY"}, mustNotSay: "hunter2"},
 		{name: "a bind source the runtime made itself", elsewhere: true,
@@ -188,7 +208,8 @@ func TestIntegration_BootProbeJudgesATasksContainerOnTheRealDaemon(t *testing.T)
 		{name: "the Orker's user landing as another, forced", replace: orkerUser + "\t12345:12345\n", force: true,
 			wantReason: map[bool]string{false: orker.ReasonRunAsOrkerUnavailable, true: ""}[hatchLands],
 			wantSays:   map[bool][]string{false: {orker.ForceUserVar, "uid"}, true: nil}[hatchLands]},
-		{name: "the Orker's own user, forced", force: true},
+		{name: "the Orker's own user, forced", force: true,
+			wantReason: map[bool]string{false: orker.ReasonRunAsOrkerUnavailable, true: ""}[ownUserLands]},
 	}
 	for i, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -229,11 +250,17 @@ func TestIntegration_BootProbeJudgesATasksContainerOnTheRealDaemon(t *testing.T)
 			if len(runs) != 1 {
 				t.Fatalf("the probe ran %d containers (%q); want one", len(runs), runs)
 			}
-			for _, flag := range []string{
-				"--security-opt seccomp=" + orker.SeccompBuiltin, "--init", "--cap-drop=ALL", "--read-only",
+			flags := []string{
+				"--init", "--cap-drop=ALL", "--read-only",
 				"--tmpfs /tmp:rw,nosuid,nodev,noexec", "--pids-limit", "--memory", "--cpus",
 				"--user " + orkerUser, orker.BindProbeImage,
-			} {
+			}
+			if podman {
+				flags = append(flags, "--tmpfs /run:ro,size=1m", "--tmpfs /var/tmp:ro,size=1m")
+			} else {
+				flags = append(flags, "--security-opt seccomp="+orker.SeccompBuiltin)
+			}
+			for _, flag := range flags {
 				if !strings.Contains(runs[0], flag) {
 					t.Errorf("the probe's container was asked for without %q: %s", flag, runs[0])
 				}
@@ -268,10 +295,7 @@ func TestIntegration_BootProbeJudgesATasksContainerOnTheRealDaemon(t *testing.T)
 // the container before it asks for the removal.
 func TestIntegration_RemoveOfARunningContainerThatIgnoresTERMIsPrompt(t *testing.T) {
 	requireDocker(t)
-	realDocker, err := exec.LookPath("docker")
-	if err != nil {
-		infraAbsent(t, "the docker CLI is not on PATH: %v", err)
-	}
+	realDocker := containerCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	requireProbeImage(ctx, t, realDocker)
@@ -289,7 +313,9 @@ exec '` + realDocker + `' "$@"
 		t.Fatal(err)
 	}
 	label := "ork.orker=" + proof.OrkerID("remove-term-ignorer")
-	out, err := exec.CommandContext(ctx, realDocker, "run", "--detach", "--init", "--label", label,
+	// A pids limit, as every Orker container has: the Podman socket's default
+	// is one process, which leaves its init unable to fork.
+	out, err := exec.CommandContext(ctx, realDocker, "run", "--detach", "--init", "--pids-limit", "64", "--label", label,
 		"--network", "none", orker.BindProbeImage, "/bin/sh", "-c", `trap "" TERM; while :; do sleep 1; done`).Output()
 	if err != nil {
 		t.Fatalf("start the TERM-ignoring container: %v", err)
@@ -325,10 +351,7 @@ exec '` + realDocker + `' "$@"
 // the task runs and commits as it does on the plain CLI.
 func TestIntegration_ACLIThatWritesOnStderrStillRunsATask(t *testing.T) {
 	requireDocker(t)
-	realDocker, err := exec.LookPath("docker")
-	if err != nil {
-		infraAbsent(t, "the docker CLI is not on PATH: %v", err)
-	}
+	realDocker := containerCLI(t)
 	dir := t.TempDir()
 	shim := filepath.Join(dir, "docker")
 	script := `#!/bin/sh

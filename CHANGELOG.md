@@ -10,6 +10,19 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- Podman as a second engine of the Orker's one runtime: the podman CLI
+  (`orker.docker.cli: podman`, `ORK_DOCKER_CLI`, read by `orkctl activity
+  test` and `orkctl task run` too), or the docker CLI against Podman's
+  Docker-compatible socket, each with the Orker as root inside the runtime
+  (docs/DEPLOY.md, "Running on Podman"). The engine is asked at boot, logged,
+  and verified by the boot probe. On the Podman engine the default seccomp
+  profile is spelled by omitting `seccomp=builtin`, which that engine reads as
+  a file, and DescribeOrker's security profile says `seccomp=engine-default`;
+  the podman CLI is told `--http-proxy=false`, so its own proxy variables
+  never reach a container; the escape hatch uses `--userns=keep-id` on a
+  rootless podman CLI; and `/run` and `/var/tmp` get a read-only tmpfs, which
+  that engine's `--read-only` leaves writable. `podman.yml` runs the
+  runtime-facing suites on Podman, rootless and rootful.
 - The Orker counts an attempt whose own directory, or its secrets, could not
   be removed when it ended, on `ork.orker.workspace_cleanup_failures`, and
   logs the path and the error. The error was discarded, so a workload that
@@ -189,6 +202,16 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- DescribeOrker's runtime name is the engine that runs the containers
+  (`docker` or `podman`), not the CLI, and its rootless flag is read from the
+  CLI's own field: the podman CLI has no `SecurityOptions`, and a failed
+  detection was reported as not rootless. A detection that fails is now an
+  error.
+- The Orker reads a container as started only from a state it names as
+  started, and keeps waiting on one it does not know (Podman's `configured`
+  and `initialized` are not started), and it reads the runtime's refusals in
+  any case, including Podman's own words for a container that already
+  stopped and for a bind source it cannot see.
 - **BREAKING:** The Orker's boot probe runs one container built exactly as a
   task's is, and judges it. It used to run a weaker argument vector (no
   seccomp option, no `--init`, no limits, no tmpfs), so a runtime that refused

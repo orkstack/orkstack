@@ -111,6 +111,7 @@ orker:
     force_user: false  # orker
   docker:
     # bin: ""  # orker; docker on PATH
+    cli: docker  # orker
     pull_timeout: 5m  # orker
     bind_probe_timeout: 2m  # orker
 

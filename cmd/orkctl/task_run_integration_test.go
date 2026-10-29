@@ -615,7 +615,7 @@ func TestIntegration_TaskRunRendersOnlyWithoutACreatedContainer(t *testing.T) {
 	if report.Outcome != taskRunRendered || len(report.Config) == 0 || len(report.TaskJSON) == 0 {
 		t.Fatalf("report outcome %q (config %d bytes, task.json %d bytes), want RENDERED with both", report.Outcome, len(report.Config), len(report.TaskJSON))
 	}
-	containers, err := exec.CommandContext(ctx, "docker", "ps", "-a", "-q", "--filter", "label=ork.run="+report.LocalRunID).Output()
+	containers, err := exec.CommandContext(ctx, localContainerCLI(), "ps", "-a", "-q", "--filter", "label=ork.run="+report.LocalRunID).Output()
 	if err != nil {
 		t.Fatalf("docker ps: %v", err)
 	}
@@ -737,4 +737,17 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 		runID, produce.GetValuesRef().GetUri(), len(keptConfig), len(before))
 	t.Logf("EVIDENCE\n%s", report)
 	proof.Write(t, "task-run", "local-backend.txt", []byte(report+"\n"+transcript.String()))
+}
+
+// localContainerCLI is the container CLI `orkctl task run` drives under this
+// environment, for a test that asks the runtime what it left behind:
+// ORK_DOCKER_BIN, then podman for ORK_DOCKER_CLI=podman, then docker.
+func localContainerCLI() string {
+	if bin := strings.TrimSpace(os.Getenv(orker.DockerBinVar)); bin != "" {
+		return bin
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(orker.CLIVar)), orker.CLIPodman) {
+		return orker.CLIPodman
+	}
+	return orker.DefaultDockerBin
 }

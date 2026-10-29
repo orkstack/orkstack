@@ -300,9 +300,12 @@ fine (§14.8). No mount configuration fixes this, so three measures apply:
    user so the Orker owns every written file whatever the umask; `task.json`
    then reports `task.runAsOrkerUser: true`. The dispatcher asks for the
    intent (`ContainerSpec.RunAsOrker`) and the runtime renders it: the docker
-   CLI as `--user <orker-uid>:<orker-gid>`. Under a user namespace (a rootless
-   daemon, `userns-remap`) that uid is another user on the host, so the boot
-   probe checks the rendering: its container writes a `0600` file as the
+   CLI as `--user <orker-uid>:<orker-gid>`, and the podman CLI on a rootless
+   engine as `--userns=keep-id --user <orker-uid>:<orker-gid>`, measured to
+   land as the Orker. Under a user namespace the CLI cannot keep (a rootless
+   Docker daemon, `userns-remap`, the docker CLI against a rootless Podman
+   socket) that uid is another user on the host, so the boot probe checks the
+   rendering: its container writes a `0600` file as the
    Orker's user, and when the Orker cannot read it back, a task that asks for
    the hatch fails `InfrastructureError/RUN_AS_ORKER_UNAVAILABLE`, which is not
    retried, and an Orker with `ORK_ORKER_FORCE_USER` refuses to start with
@@ -353,9 +356,9 @@ from the host and from inside it (`internal/orker/boot_probe.go`):
 - **The escape hatch lands as the Orker** (measure 2 above).
 
 The probe runs a container, so each step of it that waits on the daemon
-(asking whether the probe's image is local, and each of two attempts to run its
-container) has a budget of its own (`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2
-minutes). An attempt that overruns it, or that the daemon ends with a deadline
+(identifying the engine, asking whether the probe's image is local, and each of
+two attempts to run its container) has a budget of its own
+(`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes). An attempt that overruns it, or that the daemon ends with a deadline
 error of its own, is tried once more. A daemon that is still too slow refuses
 boot as `BIND_PROBE_TIMED_OUT`, which says the daemon is slow and nothing about
 the work root. `WORKDIR_NOT_BINDABLE` is kept for a work root whose path holds
@@ -1286,10 +1289,17 @@ One implementation runs every activity: `internal/orker.OCIDispatcher`, over a
 stores, the security policy, and the work root. `orkctl activity test` and
 `orkctl task run` drive the same dispatcher, built by the same constructor.
 
-Exactly one runtime ships: `DockerRuntime`, shelling out to `docker`. The
-interface exists so Podman, containerd, Kubernetes Jobs, ECS or Nomad remain
-*possible*, not because any is planned. **No Docker-specific detail may
-appear outside `internal/orker/runtime_docker.go`.**
+One runtime ships: `DockerRuntime`, shelling out to a Docker-compatible CLI —
+the docker CLI, against Docker or against Podman's Docker-compatible socket,
+or the podman CLI. What differs between them is a dialect, a value of
+spellings on two axes: the CLI's flag grammar, which is configured
+(`orker.docker.cli`, `ORK_DOCKER_CLI`: `docker` or `podman`), and the engine
+behind it, which is asked (`version`; Podman's socket reports a `Podman
+Engine` component), logged at boot and verified by the boot probe (§3.1).
+DescribeOrker reports the engine, not the CLI. The interface exists so
+containerd, Kubernetes Jobs, ECS or Nomad remain *possible*, not because any
+is planned. **No Docker- or Podman-specific detail may appear outside the
+runtime files, `internal/orker/runtime_docker.go` and `runtime_dialect.go`.**
 
 **The interface split is also the failure classification.** `Create` and
 `Start` return `error`; `Wait` returns `(ExitStatus, error)`. A container that
@@ -1741,7 +1751,8 @@ socket.
 --read-only                                   root filesystem
 --cap-drop=ALL
 --security-opt no-new-privileges
---security-opt seccomp=builtin                default profile, named explicitly
+--security-opt seccomp=builtin                default profile, named explicitly; omitted on the Podman engine, which has no name for its default and reads builtin as a file
+--http-proxy=false                            podman CLI only: it forwards its own process's proxy variables otherwise
 --pids-limit <policy>                         default 512
 --memory <request or policy default>          always set; never unlimited
 --cpus <request or policy default>            always set; never unlimited
@@ -1757,24 +1768,28 @@ socket.
 --mount type=bind,source=<attempt>/tmp,destination=/orkstack/tmp
 --mount type=bind,source=<pin>/shared,destination=/orkstack/shared   pinned tasks only
 --tmpfs /tmp:rw,nosuid,nodev,noexec,size=<policy>   default 64 MiB; noexec spelled, not left to the runtime
+--tmpfs /run:ro,size=1m --tmpfs /var/tmp:ro,size=1m   Podman engine only, below
 --user <orker-uid>:<orker-gid>                only with runAsOrkerUser / ORK_ORKER_FORCE_USER, as the runtime renders "as the Orker"
+--userns=keep-id                              with that --user, on a rootless podman CLI only
 --env <task env:>                             the task's own, nothing else
 ```
 
 `--read-only` makes the whole root read-only, `/run` and `/var/tmp` included,
-on Docker. Podman's leaves those two writable tmpfs, and its `containers.conf`
-setting for it had no effect. They are not given a read-only tmpfs of their
-own, though that spelling reads alike on every runtime measured: a mount
-target follows the image's own symlinks, so an image whose `/var/tmp` links to
-`/tmp` had its writable `/tmp` turned read-only by it. The boot probe runs this
-argument vector and checks from inside its container that the daemon applied
+on Docker. The Podman engine's leaves those two writable tmpfs, behind its CLI
+and its socket alike, and its `containers.conf` setting for it had no effect,
+so on that engine alone each gets an empty read-only tmpfs. Docker does not:
+a mount target follows the image's own symlinks, so on an image whose
+`/var/tmp` links to `/tmp` the tmpfs turns `/tmp` read-only, which on Podman
+is the price of a read-only `/run` and `/var/tmp`. The boot probe runs this
+argument vector and checks from inside its container that the engine applied
 it, `/run` and `/var/tmp` by name, so a runtime that leaves either writable is
 refused at boot (§3.1).
 
 Rootless execution is used when the runtime supports it. Per-container user
-namespace remapping is not implementable (`--userns=host` is the only valid
-`docker run` value and it *reduces* isolation); deployments wanting it
-configure the daemon.
+namespace remapping is not implementable on the docker CLI (`--userns=host` is
+the only valid `docker run` value and it *reduces* isolation); deployments
+wanting it configure the daemon. The podman CLI's `--userns=keep-id` is used
+for the escape hatch alone (§3.1).
 
 ### 9.3 Resource policy
 

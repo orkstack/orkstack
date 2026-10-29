@@ -1,8 +1,9 @@
-// This file is the ONLY place in the repository that may name a Docker
-// concept. AGENTS.md §5 requires the OCI runtime boundary to stay clean enough
-// for a future Podman, containerd, Kubernetes Jobs, ECS or Nomad
-// implementation, and the way that requirement is held is that every other
-// file talks to ContainerRuntime and nothing else.
+// This file and runtime_dialect.go are the runtime files: the ONLY places in
+// the repository that may name a Docker or Podman concept. AGENTS.md §5
+// requires the OCI runtime boundary to stay clean enough for a future
+// containerd, Kubernetes Jobs, ECS or Nomad implementation, and the way that
+// requirement is held is that every other file talks to ContainerRuntime and
+// nothing else.
 package orker
 
 import (
@@ -71,15 +72,23 @@ const (
 	DefaultDockerBin = "docker"
 )
 
-// DockerRuntime drives the Docker CLI. It is the one ContainerRuntime that
-// ships.
+// DockerRuntime drives a Docker-compatible CLI: the docker CLI, against Docker
+// or against Podman's Docker-compatible socket, or the podman CLI. It is the
+// one ContainerRuntime that ships. What differs between them is a dialect, a
+// value of spellings (runtime_dialect.go), on two axes: the CLI's flag
+// grammar, which is configured (CLI, ORK_DOCKER_CLI), and the engine behind
+// it, which is asked (`version`) and verified by the boot probe.
 //
 // It shells out rather than linking the daemon SDK: the CLI is the stable
 // interface, it is what an operator debugging a container will type, and it
 // keeps the dependency surface at zero.
 type DockerRuntime struct {
-	// Bin is the CLI to drive. Empty reads ORK_DOCKER_BIN, then DefaultDockerBin.
+	// Bin is the CLI to drive. Empty reads ORK_DOCKER_BIN, then the CLI's own
+	// name (DefaultDockerBin, or "podman" for the podman CLI) on PATH.
 	Bin string
+	// CLI is the flag grammar Bin speaks: CLIDocker or CLIPodman. Empty reads
+	// ORK_DOCKER_CLI, then DefaultDockerCLI.
+	CLI string
 	// PullTimeout bounds one pull. Zero reads ORK_DOCKER_PULL_TIMEOUT, then
 	// DefaultPullTimeout.
 	PullTimeout time.Duration
@@ -87,7 +96,7 @@ type DockerRuntime struct {
 	// Zero reads ORK_DOCKER_BIND_PROBE_TIMEOUT, then DefaultBindProbeTimeout.
 	BindProbeTimeout time.Duration
 
-	// mu guards attaches and described.
+	// mu guards attaches, described and spoken.
 	mu sync.Mutex
 	// attaches tracks, per container, the `docker start --attach` process
 	// Start span. Wait consumes and removes its entry so it can block on the
@@ -97,6 +106,10 @@ type DockerRuntime struct {
 	// described is the first successful Describe, kept for the process's
 	// lifetime. A failure is never kept.
 	described *RuntimeInfo
+	// spoken is the dialect, once the engine behind the CLI has answered.
+	// The engine does not change under a running Orker; a failure to ask is
+	// never kept.
+	spoken *dialect
 }
 
 var _ ContainerRuntime = (*DockerRuntime)(nil)
@@ -105,12 +118,19 @@ var _ ContainerRuntime = (*DockerRuntime)(nil)
 func NewDockerRuntime() *DockerRuntime { return &DockerRuntime{} }
 
 func (d *DockerRuntime) bin() (string, error) {
+	cli, err := d.cli()
+	if err != nil {
+		return "", err
+	}
 	name := strings.TrimSpace(d.Bin)
 	if name == "" {
 		name = strings.TrimSpace(os.Getenv(DockerBinVar))
 	}
 	if name == "" {
 		name = DefaultDockerBin
+		if cli == CLIPodman {
+			name = CLIPodman
+		}
 	}
 	if strings.ContainsRune(name, os.PathSeparator) {
 		return name, nil
@@ -120,6 +140,107 @@ func (d *DockerRuntime) bin() (string, error) {
 		return "", fmt.Errorf("docker CLI %q not found on PATH (set %s): %w", name, DockerBinVar, err)
 	}
 	return resolved, nil
+}
+
+// cli is the flag grammar the runtime's CLI speaks: the field, then
+// ORK_DOCKER_CLI, then DefaultDockerCLI. A value that names no known CLI is an
+// error on every command, never a guess.
+func (d *DockerRuntime) cli() (string, error) {
+	if raw := strings.TrimSpace(d.CLI); raw != "" {
+		return parseCLI(raw)
+	}
+	return parseCLI(os.Getenv(CLIVar))
+}
+
+// grammar is the dialect as far as the CLI setting alone decides it, for the
+// spellings that do not depend on the engine (the CLI's own refusals).
+func (d *DockerRuntime) grammar() dialect {
+	d.mu.Lock()
+	spoken := d.spoken
+	d.mu.Unlock()
+	if spoken != nil {
+		return *spoken
+	}
+	cli, err := d.cli()
+	if err != nil {
+		return dockerDialect
+	}
+	return dialect{cli: cli, engine: cli}
+}
+
+// dialect is the CLI's grammar and the engine behind it, asked once and kept.
+// The podman CLI only ever drives the Podman engine; the docker CLI drives
+// whichever engine answers its socket, and says which in `version`.
+func (d *DockerRuntime) dialect(ctx context.Context) (dialect, error) {
+	spoken, _, err := d.dialectWithin(ctx, controlTimeout)
+	return spoken, err
+}
+
+// dialectWithin is dialect with the engine's whole answer — which engine it
+// is, and whether it is rootless — bounded by one within, and overran
+// reporting that the engine did not answer in time.
+func (d *DockerRuntime) dialectWithin(ctx context.Context, within time.Duration) (spoken dialect, overran bool, err error) {
+	d.mu.Lock()
+	if d.spoken != nil {
+		spoken = *d.spoken
+		d.mu.Unlock()
+		return spoken, false, nil
+	}
+	d.mu.Unlock()
+
+	cli, err := d.cli()
+	if err != nil {
+		return dialect{}, false, err
+	}
+	// One budget for both questions, so identifying the engine is one step
+	// of whatever bound its caller states.
+	askCtx, cancel := context.WithTimeout(ctx, within)
+	defer cancel()
+	timedOut := func() bool { return askCtx.Err() != nil && ctx.Err() == nil }
+	spoken = dialect{cli: cli, engine: cli}
+	if cli == CLIDocker {
+		answer, _, err := d.runWithin(askCtx, within, "version", "--format", "{{json .Server.Components}}")
+		switch {
+		case timedOut():
+			return dialect{}, true, fmt.Errorf("the container engine did not answer `docker version` within %s", within)
+		case err != nil:
+			return dialect{}, false, fmt.Errorf("identify the container engine: %w", err)
+		case answer.code != 0:
+			hint := ""
+			if containsFold(answer.said(), "can't evaluate field") {
+				// The podman CLI installed as `docker` (the podman-docker
+				// shim) has no such field: it speaks the podman grammar,
+				// which only the setting can say.
+				hint = fmt.Sprintf("; a podman CLI installed as docker (the podman-docker shim) speaks the podman grammar: set %s=%s",
+					CLIVar, CLIPodman)
+			}
+			return dialect{}, false, fmt.Errorf("identify the container engine: docker version exited %d: %s%s",
+				answer.code, answer.said(), hint)
+		}
+		if spoken.engine, err = engineFromComponents(answer.stdout); err != nil {
+			return dialect{}, false, fmt.Errorf("identify the container engine: %w", err)
+		}
+	}
+	// Rootless is a daemon fact, not a flag, and one this CLI must answer: a
+	// detection that failed is an error, never "not rootless".
+	answer, _, err := d.runWithin(askCtx, within, "info", "--format", spoken.rootlessQuery())
+	switch {
+	case timedOut():
+		return dialect{}, true, fmt.Errorf("the container engine did not answer `%s info` within %s", cli, within)
+	case err != nil:
+		return dialect{}, false, fmt.Errorf("ask whether the container engine is rootless: %w", err)
+	case answer.code != 0:
+		return dialect{}, false, fmt.Errorf("ask whether the container engine is rootless: %s info --format %s exited %d: %s",
+			cli, spoken.rootlessQuery(), answer.code, answer.said())
+	}
+	if spoken.rootless, err = spoken.isRootless(answer.stdout); err != nil {
+		return dialect{}, false, fmt.Errorf("ask whether the container engine is rootless: %w", err)
+	}
+	d.mu.Lock()
+	kept := spoken
+	d.spoken = &kept
+	d.mu.Unlock()
+	return spoken, false, nil
 }
 
 // cliAnswer is what one CLI invocation reported: its exit status and its two
@@ -348,7 +469,11 @@ func (d *DockerRuntime) bindProbeTimeout() time.Duration {
 // flag, and nothing from §9.1 is expressible: there is no branch that could
 // add a capability, mount a socket, or select a host namespace.
 func (d *DockerRuntime) Create(ctx context.Context, spec ContainerSpec) (ContainerID, error) {
-	args, err := dockerCreateArgs(spec)
+	spoken, err := d.dialect(ctx)
+	if err != nil {
+		return "", fmt.Errorf("create container: %w", err)
+	}
+	args, err := createArgs(spec, spoken)
 	if err != nil {
 		return "", err
 	}
@@ -358,7 +483,7 @@ func (d *DockerRuntime) Create(ctx context.Context, spec ContainerSpec) (Contain
 	}
 	if answer.code != 0 {
 		said := answer.said()
-		if isUnbindable(said) {
+		if spoken.unbindable(said) {
 			return "", fmt.Errorf("%w: %s", ErrNotBindable, said)
 		}
 		return "", fmt.Errorf("create container: docker exited %d: %s", answer.code, said)
@@ -370,10 +495,16 @@ func (d *DockerRuntime) Create(ctx context.Context, spec ContainerSpec) (Contain
 	return ContainerID(id), nil
 }
 
-// dockerCreateArgs renders a spec to argv. It is a pure function so a test can
-// assert the whole security posture without a daemon.
+// dockerCreateArgs renders a spec to argv for the docker CLI against Docker.
+// It is a pure function so a test can assert the whole security posture
+// without a daemon.
 func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
-	flags, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]))
+	return createArgs(spec, dockerDialect)
+}
+
+// createArgs renders a spec to argv in a dialect.
+func createArgs(spec ContainerSpec, spoken dialect) ([]string, error) {
+	flags, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]), spoken)
 	if err != nil {
 		return nil, err
 	}
@@ -381,9 +512,10 @@ func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
 }
 
 // dockerContainerFlags is everything after the verb: the flags, the image and
-// the command of a container named name. `create` and the boot probe's `run`
-// take the same list, which is what makes the probe's container a task's.
-func dockerContainerFlags(spec ContainerSpec, name string) ([]string, error) {
+// the command of a container named name, in a dialect. `create` and the boot
+// probe's `run` take the same list, which is what makes the probe's
+// container a task's.
+func dockerContainerFlags(spec ContainerSpec, name string, spoken dialect) ([]string, error) {
 	switch {
 	case spec.Image == "":
 		return nil, errors.New("create container: image is required")
@@ -413,27 +545,35 @@ func dockerContainerFlags(spec ContainerSpec, name string) ([]string, error) {
 			"(cpus=%q memory=%q pids=%d)", spec.CPUs, spec.Memory, spec.PidsLimit)
 	}
 
+	seccomp, err := spoken.seccompFlags(spec.SeccompProfile)
+	if err != nil {
+		return nil, err
+	}
 	args := []string{
 		"--name", name,
 		"--read-only",
 		"--cap-drop=ALL",
 		"--security-opt", "no-new-privileges",
-		"--security-opt", "seccomp=" + spec.SeccompProfile,
+	}
+	args = append(args, seccomp...)
+	args = append(args,
 		"--init",
 		"--workdir", spec.WorkDir,
 		"--network", spec.Network,
 		"--cpus", dockerCPUs(spec.CPUs),
 		"--memory", dockerMemory(spec.Memory),
 		"--pids-limit", strconv.FormatInt(spec.PidsLimit, 10),
-	}
+	)
+	args = append(args, spoken.cliFlags()...)
 	if spec.StopTimeoutSeconds > 0 {
 		args = append(args, "--stop-timeout", strconv.Itoa(spec.StopTimeoutSeconds))
 	}
 	if spec.RunAsOrker {
-		// The §3.1 escape hatch in this CLI's spelling: the Orker's own uid
-		// and gid. Under a user namespace (a rootless daemon, userns-remap)
-		// that uid is another host user, which the boot probe finds.
-		args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
+		// The §3.1 escape hatch in this dialect's spelling. Under a user
+		// namespace the dialect cannot keep (a rootless Docker daemon,
+		// userns-remap) the uid is another host user, which the boot probe
+		// finds.
+		args = append(args, spoken.runAsOrkerFlags()...)
 	}
 	if spec.TmpfsPath != "" {
 		// noexec is spelled rather than left to the runtime: Docker adds it to
@@ -441,13 +581,10 @@ func dockerContainerFlags(spec ContainerSpec, name string) ([]string, error) {
 		args = append(args, "--tmpfs",
 			fmt.Sprintf("%s:rw,nosuid,nodev,noexec,size=%d", spec.TmpfsPath, spec.TmpfsBytes))
 	}
-	// /run and /var/tmp are NOT given a read-only tmpfs of their own, though
-	// that spelling reads alike on every runtime measured: this CLI's
-	// --read-only already covers both, and a mount target follows the image's
-	// own symlinks, so an image whose /var/tmp links to /tmp had its writable
-	// /tmp turned read-only by it. A runtime whose --read-only leaves either
-	// writable (Podman's) is refused at boot by the probe instead, which
-	// checks both (readOnlyRootfsPaths).
+	// /run and /var/tmp get a read-only tmpfs of their own only on an engine
+	// whose --read-only leaves them writable (readOnlyTmpfsFlags says why not
+	// on Docker), and the boot probe checks both on every engine.
+	args = append(args, spoken.readOnlyTmpfsFlags()...)
 
 	for _, key := range sortedKeys(spec.Labels) {
 		args = append(args, "--label", key+"="+spec.Labels[key])
@@ -722,16 +859,12 @@ func (d *DockerRuntime) leftCreated(ctx context.Context, id ContainerID) (bool, 
 	if answer.code != 0 {
 		return false, nil
 	}
-	switch status := strings.TrimSpace(answer.stdout); status {
-	case "created":
-		return false, nil
-	case "":
-		return false, fmt.Errorf("start container %s: the daemon reported no state", id)
-	default:
-		// running, exited, paused, dead — all mean the container was started,
-		// which is what Wait needs to be true.
-		return true, nil
-	}
+	// Named on both sides (runtime_dialect.go). A state on neither list is
+	// not read as started: a Wait that raced a container that never started
+	// fabricates a success, so an unknown state keeps the gate polling to
+	// its deadline.
+	status := strings.TrimSpace(answer.stdout)
+	return startedStates[status] && !preStartStates[status], nil
 }
 
 // boundedBuffer keeps at most limit bytes, so a workload's stderr cannot make
@@ -779,7 +912,7 @@ func (d *DockerRuntime) Signal(ctx context.Context, id ContainerID, sig Signal) 
 	}
 	if answer.code != 0 {
 		said := answer.said()
-		if strings.Contains(said, "is not running") || strings.Contains(said, "No such container") {
+		if d.grammar().notRunning(said) {
 			// Signalling a container that already exited is the normal race
 			// between the grace timer and a well-behaved workload, not a
 			// failure.
@@ -881,7 +1014,7 @@ func (d *DockerRuntime) Remove(ctx context.Context, id ContainerID) error {
 	if err != nil {
 		return err
 	}
-	if answer.code != 0 && !strings.Contains(answer.said(), "No such container") {
+	if answer.code != 0 && !d.grammar().gone(answer.said()) {
 		return fmt.Errorf("remove container %s: docker exited %d: %s", id, answer.code, answer.said())
 	}
 	return nil
@@ -944,20 +1077,24 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 	}
 	d.mu.Unlock()
 
-	info := RuntimeInfo{Name: "docker"}
+	spoken, err := d.dialect(ctx)
+	if err != nil {
+		// What the CLI setting alone says, so a transient failure does not
+		// change what a pool reads about this Orker's posture.
+		grammar := d.grammar()
+		return RuntimeInfo{Name: grammar.engine, CLI: grammar.cli, Seccomp: grammar.seccompName()}, err
+	}
+	// The engine's name, not the CLI's: a docker CLI against Podman's socket
+	// runs every container on Podman.
+	info := RuntimeInfo{Name: spoken.engine, CLI: spoken.cli, Rootless: spoken.rootless, Seccomp: spoken.seccompName()}
 	answer, err := d.control(ctx, "version", "--format", "{{.Server.Version}}")
 	if err != nil {
 		return info, err
 	}
 	if answer.code != 0 {
-		return info, fmt.Errorf("docker version: exited %d: %s", answer.code, answer.said())
+		return info, fmt.Errorf("%s version: exited %d: %s", spoken.cli, answer.code, answer.said())
 	}
 	info.Version = strings.TrimSpace(answer.stdout)
-
-	// Rootless is a daemon fact, not a flag: the security context reports it.
-	if answer, err := d.control(ctx, "info", "--format", "{{.SecurityOptions}}"); err == nil && answer.code == 0 {
-		info.Rootless = strings.Contains(answer.stdout, "rootless")
-	}
 	d.mu.Lock()
 	kept := info
 	d.described = &kept
@@ -982,12 +1119,6 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 // container exited non-zero (ErrPostureRefused). An Orker that is stopped
 // meanwhile gets the context's own error.
 func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (string, error) {
-	// A spec this CLI cannot render is refused before anything waits on the
-	// daemon: no retry changes it.
-	if _, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"])); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
-	}
-
 	// Every step of the probe that waits on the daemon is bounded by the
 	// probe's budget and not by controlTimeout, which is meant for
 	// bookkeeping: under load a daemon has needed more than 30 s to answer
@@ -995,6 +1126,24 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 	// probe nothing about the image or the root.
 	budget := d.bindProbeTimeout()
 	image := spec.Image
+
+	// The engine first, because the argument vector depends on it. A CLI
+	// setting that names no CLI, or an engine that cannot be identified, is
+	// a runtime that cannot be given a task's posture.
+	spoken, overran, err := d.dialectWithin(ctx, budget)
+	switch {
+	case ctx.Err() != nil:
+		return "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+	case overran:
+		return "", probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
+	case err != nil:
+		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+	}
+	// A spec this CLI cannot render is refused before anything waits on the
+	// daemon: no retry changes it.
+	if _, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]), spoken); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+	}
 
 	// The probe image is fetched first, under the PULL timeout rather than the
 	// probe run's budget an implicit pull would spend, and a failure to fetch
@@ -1039,7 +1188,7 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 	var attempts, leftovers []string
 	for attempt := 1; attempt <= bindProbeAttempts; attempt++ {
 		name := containerName(spec.Labels["ork.task"])
-		flags, _ := dockerContainerFlags(spec, name)
+		flags, _ := dockerContainerFlags(spec, name, spoken)
 		answer, overran, err := d.runWithin(ctx, budget, append([]string{"run", "--rm"}, flags...)...)
 		said := truncateString(answer.said(), 2000)
 		switch {
@@ -1053,7 +1202,7 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 			attempts = append(attempts, fmt.Sprintf("attempt %d: no answer within %s", attempt, budget))
 		case err != nil:
 			return "", fmt.Errorf("%w: run the boot probe's container: %w", ErrPostureRefused, err)
-		case isUnbindable(said):
+		case spoken.unbindable(said):
 			return "", fmt.Errorf("%w: docker exited %d: %s", ErrNotBindable, answer.code, said)
 		case saysDeadline(said, sources...):
 			attempts = append(attempts, fmt.Sprintf("attempt %d: the daemon answered %q", attempt, truncateString(said, 300)))
@@ -1155,19 +1304,6 @@ func safeNameComponent(raw string) string {
 		return "task"
 	}
 	return cleaned
-}
-
-// isUnbindable recognizes the daemon's own words for a source path it cannot
-// bind. It separates WORKSPACE_NOT_BINDABLE (a host misconfiguration retrying
-// will not fix) from RUNTIME_REFUSED (which is retryable).
-func isUnbindable(message string) bool {
-	lowered := strings.ToLower(message)
-	return strings.Contains(lowered, "bind source path does not exist") ||
-		strings.Contains(lowered, "mounts denied") ||
-		strings.Contains(lowered, "is not shared from the host") ||
-		// The daemon could not see the Orker's directory and tried to make
-		// it on its own side, which is the same unshared path.
-		strings.Contains(lowered, "error while creating mount source path")
 }
 
 func isExitErr(err error) bool {

@@ -95,7 +95,12 @@ skip_run() {
     exit 77
 }
 
-command -v docker >/dev/null 2>&1 || skip_run "docker is not installed"
+# The container CLI: docker, or any CLI that speaks its grammar, such as the
+# podman CLI (ORK_DOCKER_BIN=podman). Every `docker` below is this one.
+DOCKER_CLI=${ORK_DOCKER_BIN:-docker}
+docker() { command "$DOCKER_CLI" "$@"; }
+
+command -v "$DOCKER_CLI" >/dev/null 2>&1 || skip_run "$DOCKER_CLI is not installed"
 docker version --format '{{.Server.Version}}' >/dev/null 2>&1 ||
     skip_run "the docker daemon is not reachable"
 command -v jq >/dev/null 2>&1 || skip_run "jq is not installed"
@@ -117,7 +122,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 ||
 bindable() {   # bindable <dir> — can the daemon actually bind-mount this?
     docker run --rm \
         --mount "type=bind,source=$1,destination=/probe,readonly" \
-        alpine:3.20 true >/dev/null 2>&1
+        docker.io/library/alpine:3.20 true >/dev/null 2>&1
 }
 
 ROOT=
@@ -528,12 +533,12 @@ contains "workload stdout reached the container log stream" "HELLO-ON-STDOUT" "$
 # silently accepted — otherwise every later assertion is vacuous. Run a bare
 # base image so this falsifies the CHECKER, not the image under test.
 w=$(mkws '{}' "novalues")
-rc=$(run_sync "$w" "alpine:3.20")
+rc=$(run_sync "$w" "docker.io/library/alpine:3.20")
 check "exit 0 with no values.json is caught as VALUES_MISSING" \
     "VALUES_MISSING" "$(validate_values "$w")"
 
 w=$(mkws '{}' "badvalues")
-rc=$(run_sync "$w" "alpine:3.20")
+rc=$(run_sync "$w" "docker.io/library/alpine:3.20")
 printf '[1,2,3]' > "$w/output/values.json"
 check "a top-level array is caught as VALUES_MALFORMED" \
     "VALUES_MALFORMED" "$(validate_values "$w")"

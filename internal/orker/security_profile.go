@@ -199,9 +199,15 @@ func positivePolicyInt(key, raw string) (int64, error) {
 
 // ProfileID names the enforced profile for DescribeOrker, so an operator can
 // see which posture a pool's Orkers hold without reading their configuration.
-func (p SecurityPolicy) ProfileID() string {
+// seccomp is what the runtime actually spelled for the default profile
+// (RuntimeInfo.Seccomp): SeccompBuiltin by name, or SeccompEngineDefault on an
+// engine that has no name for it. Empty means a runtime that could not say.
+func (p SecurityPolicy) ProfileID(seccomp string) string {
+	if seccomp == "" {
+		seccomp = "unknown"
+	}
 	return fmt.Sprintf("orkstack/v1:readonly,cap-drop-all,no-new-privileges,seccomp=%s,pids=%d",
-		SeccompBuiltin, p.PidsLimit)
+		seccomp, p.PidsLimit)
 }
 
 // AllowsSecretScheme reports whether this Orker resolves a source scheme.

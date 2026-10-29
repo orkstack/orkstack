@@ -126,7 +126,7 @@ to omit them ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §9.2):
 | `--read-only` | the root file system cannot be written |
 | `--cap-drop=ALL` | no Linux capability is kept |
 | `--security-opt no-new-privileges` | a process cannot gain privilege it did not start with |
-| `--security-opt seccomp=builtin` | the runtime's default seccomp profile, named explicitly |
+| `--security-opt seccomp=builtin` | the runtime's default seccomp profile, named explicitly; on the Podman engine, which has no name for its default, nothing is spelled and the engine applies its own, which the boot probe checks is a filter |
 | `--init` | PID 1 reaps zombies and forwards signals |
 | `--pids-limit` | 512 by default |
 | `--cpus`, `--memory` | always set, never unlimited |

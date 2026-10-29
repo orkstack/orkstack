@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -156,6 +157,18 @@ func TestIntegration_ACommittedAttemptIsAdoptedAfterItsSignatureIsRemoved(t *tes
 	defer cancel()
 	if err := client.Sign(ctx, key, registry.Host, shellRepo, image.GetIndexDigest()); err != nil {
 		t.Fatalf("sign: %v", err)
+	}
+
+	// The private registry is plain HTTP on a port chosen at run time. Docker
+	// trusts a loopback registry by itself; Podman trusts one only by name in
+	// registries.conf, which has no way to name a port not yet chosen, so on
+	// the podman CLI the image is fetched here, telling it that this one
+	// registry needs no TLS. What this test proves is the adoption, not the
+	// pull.
+	if onPodman(t) && strings.HasSuffix(containerCLI(t), "podman") {
+		if out, err := exec.CommandContext(ctx, containerCLI(t), "pull", "--quiet", "--tls-verify=false", image.GetPinned()).CombinedOutput(); err != nil {
+			t.Fatalf("fetch %s from the private registry: %v: %s", image.GetPinned(), err, out)
+		}
 	}
 
 	dispatcher, _ := newDispatcher(t)

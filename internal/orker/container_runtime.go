@@ -200,9 +200,17 @@ type ContainerRuntime interface {
 
 // RuntimeInfo is a runtime's self-description, for DescribeOrker.
 type RuntimeInfo struct {
-	Name     string
-	Version  string
+	// Name is the engine that runs the containers ("docker", "podman"), not
+	// the CLI that asks it to.
+	Name    string
+	Version string
+	// CLI is the command-line grammar the runtime speaks to the engine.
+	CLI      string
 	Rootless bool
+	// Seccomp is how the runtime spells the default seccomp profile:
+	// SeccompBuiltin by name, or SeccompEngineDefault where the engine has
+	// no name for it and is given none.
+	Seccomp string
 }
 
 // ErrNotInLayout reports that an OCI image layout does not hold the requested

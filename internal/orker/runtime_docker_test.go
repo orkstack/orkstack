@@ -268,8 +268,8 @@ func TestIsUnbindable_RecognizesTheDaemonsOwnWords(t *testing.T) {
 		"docker: Error response from daemon: error while creating mount source path '/work/x': mkdir /work: permission denied",
 	}
 	for _, message := range unbindable {
-		if !isUnbindable(message) {
-			t.Errorf("isUnbindable(%q) = false; this is the WORKSPACE_NOT_BINDABLE case", message)
+		if !dockerDialect.unbindable(message) {
+			t.Errorf("unbindable(%q) = false; this is the WORKSPACE_NOT_BINDABLE case", message)
 		}
 	}
 	ordinary := []string{
@@ -277,8 +277,8 @@ func TestIsUnbindable_RecognizesTheDaemonsOwnWords(t *testing.T) {
 		"failed to create task for container: OCI runtime create failed",
 	}
 	for _, message := range ordinary {
-		if isUnbindable(message) {
-			t.Errorf("isUnbindable(%q) = true; this is an ordinary RUNTIME_REFUSED", message)
+		if dockerDialect.unbindable(message) {
+			t.Errorf("unbindable(%q) = true; this is an ordinary RUNTIME_REFUSED", message)
 		}
 	}
 }

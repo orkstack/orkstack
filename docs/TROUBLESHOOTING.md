@@ -429,6 +429,21 @@ These entries apply to `make up`, which runs `scripts/stack.sh up` ([Makefile](.
 
 **Fix.** Start Docker, then run `make up` again. The script skips processes that are already running. If `ork` exits during startup, read the last line of `.run/ork.log`. Set `ORK_HTTP_ADDR` to another address if the port is taken. The UI's dev server runs with `--strictPort`, so a taken `ORK_UI_PORT` (5173 by default) stops it rather than letting it move ([stack.sh](../scripts/stack.sh), `cmd_up`).
 
+### The Orker refuses to start, or a task fails, on Podman
+
+**Cause.** Podman needs host settings Docker does not, and the Orker's boot probe checks them rather than assuming them ([DEPLOY.md](./DEPLOY.md), "Running on Podman"). The usual ones:
+
+- `RUNTIME_POSTURE_REFUSED` naming `cpu.max`, `memory.max` or `pids.max` as unreadable: a rootless Podman whose user has not been delegated the `cpu`, `memory` and `pids` cgroup controllers, or that is not using the systemd cgroup manager. The limit would not be enforced.
+- `RUNTIME_POSTURE_REFUSED` quoting `catatonit` or an init that cannot be found: `--init` needs `init_path` in `containers.conf`.
+- `RUNTIME_POSTURE_REFUSED` quoting `open builtin: no such file or directory`: the engine was not identified as Podman, so `seccomp=builtin` reached it. The boot log's `container runtime engine=` line says which engine the Orker found.
+- `RUNTIME_POSTURE_REFUSED` saying `identify the container engine` and `can't evaluate field Components`: the CLI is the podman CLI under the name `docker` (the `podman-docker` shim), which speaks the podman grammar. Set `ORK_DOCKER_CLI=podman`.
+- `IMAGE_PULL_FAILED` with "server gave HTTP response to HTTPS client": a plain-HTTP registry, the local `localhost:5001` included, that `registries.conf` does not mark `insecure = true`.
+- `RUN_AS_ORKER_UNAVAILABLE`: the docker CLI against a rootless Podman socket, run by a non-root Orker, which cannot keep the Orker's uid in the container. Run the Orker as root inside the runtime, or use the podman CLI.
+
+**Confirm.** `.run/orker.log` (or the Orker's log) has a `container runtime` line with `engine=podman`, then the refusal.
+
+**Fix.** Make the change the refusal names in the host's Podman configuration, then start the Orker again.
+
 ### `make up` stops with "orker boot checks failed"
 
 **Cause.** The Orker refuses to boot when one of its checks fails (`cmd/orker/main.go`; `internal/orker/activity.go`, `Boot`). The codes are:
@@ -437,7 +452,7 @@ These entries apply to `make up`, which runs `scripts/stack.sh up` ([Makefile](.
 - `RUNTIME_POSTURE_REFUSED`: the probe ran one container built exactly as a task's is, and the runtime did not give it a task's posture. The message names each weaker fact: privileges it could gain, no seccomp filter, a capability, a writable root, `/run`, `/var/tmp` or input, a `/tmp` without `noexec`, a proxy variable the runtime added (by name only), or cgroup v2 limits other than it asked for. It also covers a runtime that refused the container for a reason that is not a bind or a deadline ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "3.1 Layout").
 - `RUN_AS_ORKER_UNAVAILABLE`, only when `ORK_ORKER_FORCE_USER` is set: running a container as the Orker's own user does not land as the Orker on this host, as on a rootless or user-namespaced daemon. Without `ORK_ORKER_FORCE_USER` the Orker starts, logs `running a task as the Orker's user does not work on this host`, and fails only the tasks that set `run_as_orker_user: true`, with the same code.
 - `BIND_PROBE_IMAGE_UNAVAILABLE`: the probe image (`orker.BindProbeImage`, alpine 3.20 by digest) is not present, and it could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`. The message names the image, not the work root ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
-- `BIND_PROBE_TIMED_OUT`: the container daemon was too slow for the probe. It did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` (two minutes) whether the probe image is local, or on each of two attempts it did not start the probe container within that time or ended it with a deadline error of its own. The daemon is overloaded or unresponsive. The work root is not the finding, so do not change `ORK_ORKER_WORKDIR`. The probe can take up to seven minutes and ten seconds to give up, longer than the 60 seconds `make up` waits for the Orker, so the refusal may appear in `.run/orker.log` after `make up` has stopped with a timeout ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+- `BIND_PROBE_TIMED_OUT`: the container daemon was too slow for the probe. It did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` (two minutes) whether the probe image is local, or on each of two attempts it did not start the probe container within that time or ended it with a deadline error of its own. The daemon is overloaded or unresponsive. The work root is not the finding, so do not change `ORK_ORKER_WORKDIR`. The probe can take up to nine minutes and ten seconds to give up, longer than the 60 seconds `make up` waits for the Orker, so the refusal may appear in `.run/orker.log` after `make up` has stopped with a timeout ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 - `RESOURCE_REQUEST_REFUSED`: a resource cap that cannot be read, such as an invalid `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`.
 
 **Confirm.** `.run/orker.log` contains `orker boot checks failed:` followed by the code.

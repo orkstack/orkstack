@@ -37,7 +37,7 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 	}
 
 	posture := func(spec ContainerSpec) []string {
-		flags, err := dockerContainerFlags(spec, "ork-x")
+		flags, err := dockerContainerFlags(spec, "ork-x", dockerDialect)
 		if err != nil {
 			t.Fatalf("dockerContainerFlags: %v", err)
 		}

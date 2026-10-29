@@ -235,7 +235,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		OrkerId:           a.dispatcher.OrkerID,
 		BuildId:           a.dispatcher.BuildID,
 		Pool:              a.pool,
-		SecurityProfile:   a.dispatcher.Policy.ProfileID(),
+		SecurityProfile:   a.dispatcher.Policy.ProfileID(""),
 		MaxConcurrent:     a.maxConc,
 		MaxConcurrentPins: a.maxPins,
 		RunningTasks:      a.running.Load(),
@@ -268,13 +268,26 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 			// answer, so the identity is returned with the runtime fields it
 			// could not fill rather than failing the pool.
 			result.RuntimeName = info.Name
+			result.SecurityProfile = a.dispatcher.Policy.ProfileID(info.Seccomp)
 			return result, nil
 		}
 		result.RuntimeName = info.Name
 		result.RuntimeVersion = info.Version
 		result.Rootless = info.Rootless
+		result.SecurityProfile = a.dispatcher.Policy.ProfileID(info.Seccomp)
 	}
 	return result, nil
+}
+
+// SecurityProfile names the posture this Orker enforces, with the seccomp
+// profile as its runtime spells it (SecurityPolicy.ProfileID).
+func (a *Activities) SecurityProfile(ctx context.Context) string {
+	if a.dispatcher.Runtime == nil {
+		return a.dispatcher.Policy.ProfileID("")
+	}
+	// A runtime that could not describe itself still says what it spells.
+	info, _ := a.dispatcher.Runtime.Describe(ctx)
+	return a.dispatcher.Policy.ProfileID(info.Seccomp)
 }
 
 // ReleasePin removes one pin's shared directory (§6.4).
@@ -460,6 +473,15 @@ func (a *Activities) Boot(ctx context.Context) error {
 		default:
 			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
+	}
+	// Which engine the probe ran on, said out loud: the CLI is configured, the
+	// engine behind it is asked, and the probe above is what verified the
+	// two agree on a task's posture.
+	if info, err := a.dispatcher.Runtime.Describe(ctx); err != nil {
+		a.dispatcher.logger().Warn("container runtime could not describe itself", "error", err)
+	} else {
+		a.dispatcher.logger().Info("container runtime", "engine", info.Name, "cli", info.CLI,
+			"version", info.Version, "rootless", info.Rootless, "seccomp", info.Seccomp)
 	}
 	// An escape hatch that does not land as the Orker is a boot refusal only
 	// where every task would use it; elsewhere it fails only the tasks that

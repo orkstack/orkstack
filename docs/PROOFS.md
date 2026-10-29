@@ -669,6 +669,15 @@ recorded a result (§10):
 |---|---|
 | `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run was a push to `validate/full/**` of this repository, and its run attempt is below 3 (so at most two automatic reruns). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
 
+`podman.yml` is not part of the proof and holds no required check; it runs the
+runtime-facing suites on Podman, OrkStack's second engine
+([DEPLOY.md](DEPLOY.md), "Running on Podman"), on `ubuntu-26.04`, whose image
+ships Podman 5:
+
+| Job | Runs |
+|---|---|
+| `podman.yml` › `podman` | on a push or pull request that touches `internal/orker/`, `cmd/orker/`, `orkctl task run`, `test/fixtures/` or the workflow, at 05:41 UTC every day, and by dispatch; one job per shape: `rootless-cli` (the podman CLI as the runner's user, `ORK_DOCKER_CLI=podman`), `rootful-cli` (the podman CLI as root through `sudo`) and `rootful-socket` (the docker CLI against the rootful Podman socket, the release image's shape). Each runs `scripts/integration.sh ./internal/orker` and the Bash activity contract fixture; the CLI shapes also run `./cmd/orker` and `orkctl task run`'s tests. The socket shape runs `internal/orker`'s runtime tests only: its image-policy tests start a plain-HTTP registry on a port chosen at run time, which the docker CLI cannot tell Podman to trust. A rootless runner that cannot start a container (AppArmor's restriction on unprivileged user namespaces) fails that job and says so in its summary. Docker hosts the stack the suites use; Podman is only the engine under test |
+
 `nightly.yml` holds three jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
 `make vuln`, and `nightly.yml` › `flakes`

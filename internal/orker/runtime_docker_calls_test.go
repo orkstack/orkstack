@@ -29,7 +29,11 @@ import (
 // inspecthang (`image inspect` hangs for 30 s), rmfailall (every `rm` is
 // refused), noise (every command first writes a line of its own on stderr, as
 // the podman-docker shim does) and killnotrunning (`kill` answers that the
-// container is not running).
+// container is not running). For the Podman dialects: podmanengine
+// (`version`'s components name the Podman engine), rootless (the content
+// `info {{.Host.Security.Rootless}}` answers), infofail (`info` fails) and
+// state (the content `inspect {{.State.Status}}` answers). `run` also counts
+// itself into the runs file and, once counted, touches runstarted.
 //
 // A `run` that succeeds behaves as the boot probe's container does on a
 // runtime that gives it a task's posture: it reads the nonce the Orker wrote
@@ -39,8 +43,7 @@ import (
 // make it the probe of a runtime that does not: wrongdir (the container sees
 // an input directory with nothing in it), nowrite (its writes do not reach the
 // Orker's output directory) and asorkerwrong (the file it writes as the
-// Orker's user does not hold what it wrote). `run` also counts itself into the runs file and, once counted,
-// touches runstarted.
+// Orker's user does not hold what it wrote).
 type countingDocker struct {
 	t   *testing.T
 	dir string
@@ -49,6 +52,10 @@ type countingDocker struct {
 
 func newCountingDocker(t *testing.T) *countingDocker {
 	t.Helper()
+	// A stand-in of the docker CLI, whatever CLI the environment points the
+	// suite's real runtime at (ORK_DOCKER_CLI=podman in the Podman lane): a
+	// test that wants the podman CLI's grammar says so on the runtime.
+	t.Setenv(CLIVar, "")
 	dir := t.TempDir()
 	script := `#!/bin/sh
 S=` + shellQuote(dir) + `
@@ -68,7 +75,7 @@ case "$1" in
   inspect)
     case "$3" in
       *OOMKilled*) if [ -e "$S/oom" ]; then echo true; else echo false; fi ;;
-      *) if [ -e "$S/created" ]; then echo created; else echo running; fi ;;
+      *) if [ -e "$S/state" ]; then cat "$S/state"; elif [ -e "$S/created" ]; then echo created; else echo running; fi ;;
     esac ;;
   create) echo cid-0123 ;;
   kill)
@@ -85,8 +92,16 @@ case "$1" in
     exit 0 ;;
   version)
     if [ -e "$S/versionfail" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
-    echo 27.0.1 ;;
-  info) echo "[name=seccomp,profile=builtin]" ;;
+    case "$3" in
+      *Components*) if [ -e "$S/podmanengine" ]; then echo '[{"Name":"Podman Engine","Version":"5.8.8"}]'; else echo '[{"Name":"Engine","Version":"27.0.1"}]'; fi ;;
+      *) echo 27.0.1 ;;
+    esac ;;
+  info)
+    if [ -e "$S/infofail" ]; then echo "Error: cannot read host info" >&2; exit 125; fi
+    case "$3" in
+      *Host.Security.Rootless*) if [ -e "$S/rootless" ]; then cat "$S/rootless"; else echo false; fi ;;
+      *) echo "[name=seccomp,profile=builtin]" ;;
+    esac ;;
   run)
     n=0; if [ -e "$S/runs" ]; then n=$(cat "$S/runs"); fi
     n=$((n+1)); echo "$n" > "$S/runs"
@@ -274,8 +289,8 @@ func TestDockerRuntime_DescribeCachesOnlyASuccess(t *testing.T) {
 			t.Fatalf("Describe #%d = %+v, %v", i, info, err)
 		}
 	}
-	if calls := fake.calls(); len(calls) != 2 {
-		t.Fatalf("two Describes after a success spawned %d processes: %q; want 2 (version, info) in total", len(calls), calls)
+	if calls := fake.calls(); len(calls) != 3 {
+		t.Fatalf("two Describes after a success spawned %d processes: %q; want 3 (the engine, version, info) in total", len(calls), calls)
 	}
 }
 

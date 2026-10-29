@@ -189,10 +189,7 @@ func requireProbeImage(ctx context.Context, t *testing.T, realDocker string) {
 // host, not the probe.
 func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *testing.T) {
 	requireDocker(t)
-	realDocker, err := exec.LookPath("docker")
-	if err != nil {
-		infraAbsent(t, "the docker CLI is not on PATH: %v", err)
-	}
+	realDocker := containerCLI(t)
 	// The probe image is made local here, so that the step each case makes
 	// slow is the run and no case waits on a registry.
 	setup, cancelSetup := context.WithTimeout(context.Background(), 3*time.Minute)

@@ -132,6 +132,17 @@ below first.
 
 ## Linux hosts
 
+The runtime-facing suites (`internal/orker`, `cmd/orker`, `orkctl task run`
+and `test/fixtures/bash_activity_contract.sh`) run on whichever CLI the
+environment names, so they can be run on Podman as well as Docker: set
+`ORK_DOCKER_CLI=podman` for the podman CLI (and `ORK_DOCKER_BIN` if it is not
+`podman` on `PATH`), or `DOCKER_HOST` to Podman's socket for the docker CLI
+against it. Podman needs `insecure = true` for `localhost:5001` in
+`registries.conf` and the host requirements of docs/DEPLOY.md, "Running on
+Podman". Podman may write under `~/.config/containers` and
+`~/.local/share/containers`; restore them when done. CI runs them on Podman in
+`podman.yml`.
+
 Docker Desktop (macOS, Windows) provides `host.docker.internal` inside
 containers; plain Docker Engine on Linux does not. Several integration and
 Playwright tests start a stub server on the host and have an activity

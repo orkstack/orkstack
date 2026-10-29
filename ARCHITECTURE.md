@@ -142,7 +142,7 @@ Activity containers receive no Temporal, object-storage, or control-plane
 credentials unless the user explicitly supplies them as workload secrets. The
 Orker is the security boundary and is stateless beyond an image cache and
 ephemeral workdirs (a pin's shared directory lives as long as its pin, bounded
-by a lease). Docker sits behind the `ContainerRuntime` seam.
+by a lease). Docker, and Podman as a dialect of the same runtime, sit behind the `ContainerRuntime` seam.
 
 ### Activity images (`images/` and any OCI image)
 

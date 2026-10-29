@@ -327,9 +327,10 @@ then the variable it becomes.
 | `engine.registry_auth_file` | `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during apply-time resolution; grants no push and no execution |
 | `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one — across the whole deployment, not only on one host: it is also the Orker's address for `orkctl orker` (1–200 bytes of UTF-8, no whitespace or control characters; refused at boot otherwise) |
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
-| `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI |
+| `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI; `podman` on `PATH` when `orker.docker.cli` is `podman` |
+| `orker.docker.cli` | `ORK_DOCKER_CLI` | `docker` | `orker` | the grammar that CLI speaks: `docker` (the docker CLI, against Docker or against Podman's Docker-compatible socket) or `podman` (the podman CLI); any other value fails every container command, naming the setting. The engine behind the CLI is asked at boot, logged, and verified by the boot probe ([Running on Podman](#running-on-podman)). `orkctl activity test` and `orkctl task run` read it too |
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
-| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. A daemon that never answers holds boot for up to three times this plus 70 seconds for removing what it gave up on (7 minutes 10 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
+| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. A daemon that never answers holds boot for up to four times this (identifying the engine, the image inspect and the two attempts) plus 70 seconds for removing what it gave up on (9 minutes 10 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
@@ -1618,9 +1619,9 @@ engine boot, no Temporal connection, no store.
   checks pass, and one of them runs a container, built as a task's is, to
   prove the work root can be bound and that the runtime gives a task its
   posture. On a healthy daemon that takes seconds. On a daemon that is
-  overloaded or wedged it can take up to three times
+  overloaded or wedged it can take up to four times
   `orker.docker.bind_probe_timeout` plus 70 seconds for removing what it gave
-  up on (7 minutes 10 seconds at the default), and longer by `orker.docker.pull_timeout`
+  up on (9 minutes 10 seconds at the default), and longer by `orker.docker.pull_timeout`
   when the probe image is not local, before the Orker refuses to start with
   `BIND_PROBE_TIMED_OUT` ([REASONS.md](REASONS.md)). A supervisor that gives
   up sooner (a Compose check whose `start_period` plus `interval` times
@@ -1644,7 +1645,7 @@ checked by `internal/dist`'s tests and run end to end by
 | Image | Runs | User | Settings it needs in a container |
 |---|---|---|---|
 | `ork` | `/usr/local/bin/ork` | non-root | the API on `ORK_HTTP_ADDR` (default `:8080`, every interface), Temporal (`ORK_TEMPORAL_ADDRESS`), the store (`ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_*`), `ORK_WS_ALLOWED_ORIGINS` naming the UI's origin, and `ORK_ADMIN_ADDR` for a health check |
-| `orker` | `/usr/local/bin/orker`, with the `docker` CLI | root | the Docker socket and a work directory, below; Temporal and the store as for `ork` |
+| `orker` | `/usr/local/bin/orker`, with the `docker` CLI | root | the Docker socket (or Podman's Docker-compatible one, [Running on Podman](#running-on-podman)) and a work directory, below; Temporal and the store as for `ork` |
 | `orkctl` | `/usr/local/bin/orkctl` | non-root | `ORK_SERVER`; its working directory is `/work` |
 | `ui` | `node build` on port 5173 | non-root | `ENGINE_API_URL` (where its server reaches the engine) and `PUBLIC_ENGINE_WS_URL` (where a browser reaches the engine's WebSockets) |
 
@@ -1678,6 +1679,77 @@ other first-party names by the tag of its release line, for example
 each patch release of the line. To pin the exact release instead, set
 `ORK_ACTIVITY_CATALOG` to the images by tag and digest, as the quickstart's
 `.env` does.
+
+### Running on Podman
+
+Podman is a second engine of the one runtime the Orker ships
+([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), "§9"). Two shapes are
+supported, each with the Orker as root inside the runtime:
+
+- **The podman CLI**: `orker.docker.cli: podman` (`ORK_DOCKER_CLI=podman`),
+  which also makes `podman` on `PATH` the default `orker.docker.bin`.
+- **The release image on a Podman socket**: the `orker` image's docker CLI
+  against Podman's Docker-compatible socket (`podman system service`, or
+  `podman.socket`), mounted where the Docker socket would be. Nothing is set:
+  the CLI is `docker`, and the engine is asked.
+
+Either way the Orker asks the engine at boot, logs it (`container runtime
+engine=podman cli=… rootless=… seccomp=engine-default`), and runs its boot
+probe, which refuses to start with `RUNTIME_POSTURE_REFUSED` on a host that
+does not give a task's container its posture. The probe is what makes the
+host requirements below checked rather than assumed.
+
+What differs from Docker, by design:
+
+- **Seccomp.** The Podman engine has no name for its default profile and reads
+  `seccomp=builtin` as a file path, so the Orker spells nothing and the engine
+  applies its own default; the probe checks that a filter is active
+  (`Seccomp: 2`), not that it is Docker's profile. DescribeOrker's security
+  profile says `seccomp=engine-default`.
+- **Proxy variables.** The podman CLI forwards its own process's
+  `HTTP_PROXY`, `https_proxy` and `NO_PROXY`, credentials included, into every
+  container unless told not to; the Orker passes `--http-proxy=false`, and the
+  probe refuses any `*_proxy` variable it finds.
+- **`/run` and `/var/tmp`.** Podman's `--read-only` leaves both writable, so
+  each gets an empty read-only tmpfs. On an image whose `/var/tmp` is a
+  symlink to `/tmp`, that turns `/tmp` read-only on Podman.
+- **The escape hatch** (`run_as_orker_user`, `orker.resources.force_user`).
+  On a rootless podman CLI it is rendered with `--userns=keep-id`, which lands
+  as the Orker. The docker CLI cannot say that, so against a rootless Podman
+  socket, run by a non-root Orker, the hatch lands as another host user, and
+  the probe makes such tasks fail `RUN_AS_ORKER_UNAVAILABLE`.
+- **The embedded image layout** (`orker.image_layout`) does not work on
+  Podman: Podman does not find what it loaded by the pinned digest, so a task
+  whose pull fails there fails `IMAGE_PULL_FAILED` rather than falling back.
+
+Host requirements, each of which the probe or the first task finds when
+missing:
+
+- **cgroup v2 with the `cpu`, `memory` and `pids` controllers delegated** to
+  the user a rootless Podman runs as, the systemd cgroup manager
+  (`cgroup_manager = "systemd"` in `containers.conf`), and an OCI runtime
+  built with systemd support (runc; a static crun without it failed). A limit
+  that is not enforced refuses boot, naming it.
+- **An init binary** for `--init`: `catatonit` where `containers.conf`'s
+  `init_path` says.
+- **A subordinate uid and gid range of at least 65536** for the Orker's user
+  (`/etc/subuid`, `/etc/subgid`), for rootless Podman.
+- **Qualified image references.** Podman's enforcing short-name mode refuses
+  `alpine:3.20` where more than one search registry is configured; the boot
+  probe's image is fully qualified and pinned, and an activity's reference
+  is resolved before it reaches the runtime.
+- **`insecure = true` for a plain-HTTP registry** in `registries.conf`, the
+  local development registry included (`[[registry]] location =
+  "localhost:5001"`). Docker trusts a loopback registry by itself; Podman does
+  not, and a pull from it fails `IMAGE_PULL_FAILED`.
+- **No SELinux or AppArmor relabelling yet.** Binds carry no relabel option,
+  so on an enforcing SELinux host the boot probe's container cannot read its
+  bind and boot refuses `WORKDIR_NOT_BINDABLE`; this has not been measured.
+
+`podman system reset` writes under `~/.config/containers` and
+`~/.local/share/containers` even with storage configured elsewhere.
+`podman.yml` runs the runtime-facing suites on Podman, rootless and rootful
+([PROOFS.md](PROOFS.md), "§5").
 
 ### The admin surface: what a deployment is made of, and who is serving it
 
