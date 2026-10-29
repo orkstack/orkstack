@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -37,6 +39,12 @@ type bootProber interface {
 	// stdout. Its errors match ErrProbeImageUnavailable, ErrProbeTimedOut,
 	// ErrNotBindable or ErrPostureRefused, or are the context's own.
 	RunBootProbe(ctx context.Context, spec ContainerSpec) (string, error)
+	// StartBootProbe starts spec's container detached, removed by the daemon
+	// when it exits, and returns its name. Its errors are RunBootProbe's.
+	StartBootProbe(ctx context.Context, spec ContainerSpec) (ContainerID, error)
+	// bindProbeTimeout is the probe's budget for each step that waits on the
+	// daemon (ORK_DOCKER_BIND_PROBE_TIMEOUT).
+	bindProbeTimeout() time.Duration
 }
 
 const (
@@ -49,6 +57,13 @@ const (
 	// bootProbeAsOrkerFile is the 0600 file the container writes, as the
 	// Orker's user, for the Orker to read back.
 	bootProbeAsOrkerFile = "probe-as-orker"
+	// signalProbeTaskID names the SIGTERM probe's container (ork-sigprobe-…).
+	signalProbeTaskID = "sigprobe"
+	// signalProbeReadyFile is written into output/ by the SIGTERM probe's
+	// workload once its trap is set, with what it runs under.
+	signalProbeReadyFile = "probe-ready"
+	// signalProbeHeardFile is written into output/ by its trap.
+	signalProbeHeardFile = "probe-heard-term"
 )
 
 // bootProbeScript is what the probe's container runs, as `sh -c`, with the
@@ -76,6 +91,22 @@ for f in memory.max pids.max cpu.max; do echo "@@$f"; cat "$d/$f"; done
 exit 0
 `
 
+// signalProbeScript is the SIGTERM probe's workload, as `sh -c`: one that
+// cleans up when it is cancelled, as the contract asks a workload to. It sets
+// its trap first and only then says it is ready, with what the host cannot see
+// from outside: the security label it runs under and its own signal masks. The
+// ready file is renamed into place, so the Orker never reads half of it. It
+// waits in `wait`, which a trapped signal interrupts at once, and it ends by
+// itself, exit 3, if SIGTERM never comes, so an Orker killed while it probes
+// leaves no container behind: the daemon removes it when it exits.
+const signalProbeScript = `trap 'echo heard > /orkstack/output/` + signalProbeHeardFile + `; exit 0' TERM
+o=/orkstack/output/` + signalProbeReadyFile + `
+{ echo '@@label'; cat /proc/$$/attr/current; echo; echo '@@signals'; grep '^Sig' /proc/$$/status; } > "$o.tmp" 2>&1
+mv "$o.tmp" "$o"
+sleep 300 & wait $!
+exit 3
+`
+
 // runAsOrkerFinding is what the boot probe found about the §3.1 escape hatch:
 // err is nil when a file the container wrote as the Orker's user was the
 // Orker's to read.
@@ -101,7 +132,8 @@ func (d *OCIDispatcher) runAsOrkerUnavailable() error {
 //     the container wrote did not reach the Orker): the daemon bound some
 //     other directory of the same name;
 //   - ErrPostureRefused: the runtime would not run a task's container, or ran
-//     it with a weaker posture than §9.2, each weakness named;
+//     it with a weaker posture than §9.2, each weakness named, or a workload
+//     cancelled as a task is never heard SIGTERM (probeSignalDelivery);
 //   - ErrProbeImageUnavailable and ErrProbeTimedOut, as RunBootProbe reports
 //     them.
 //
@@ -144,6 +176,24 @@ func (d *OCIDispatcher) ProbeRuntime(ctx context.Context, root string) error {
 		return err
 	}
 
+	if err := d.judgeBootProbe(ctx, prober, root, ws, spec, hostNonce, containerNonce); err != nil {
+		return err
+	}
+	// The SIGTERM check only once the first container has passed: it reads
+	// the bind the first one proved, and starts its container on an engine
+	// already identified, from an image already local.
+	if err := d.probeSignalDelivery(ctx, prober, root, ws); err != nil {
+		return err
+	}
+	d.runAsOrker.Store(&runAsOrkerFinding{err: runAsOrkerVerdict(ws, containerNonce)})
+	return nil
+}
+
+// judgeBootProbe runs the boot probe's first container and judges it: the
+// bind both ways, then the posture it was given.
+func (d *OCIDispatcher) judgeBootProbe(ctx context.Context, prober bootProber, root string, ws *Workspace,
+	spec ContainerSpec, hostNonce, containerNonce string,
+) error {
 	stdout, err := prober.RunBootProbe(ctx, spec)
 	if err != nil {
 		return fmt.Errorf("boot probe under %s: %w", root, err)
@@ -166,7 +216,6 @@ func (d *OCIDispatcher) ProbeRuntime(ctx context.Context, root string) error {
 		return fmt.Errorf("%w: the boot probe ran a container built as a task's is, and from inside it: %s",
 			ErrPostureRefused, strings.Join(violations, "; "))
 	}
-	d.runAsOrker.Store(&runAsOrkerFinding{err: runAsOrkerVerdict(ws, containerNonce)})
 	return nil
 }
 
@@ -183,14 +232,21 @@ func (d *OCIDispatcher) ProbeRuntime(ctx context.Context, root string) error {
 // the posture: the bounding set, NoNewPrivs, seccomp and the mount table read
 // the same for every uid.
 func (d *OCIDispatcher) bootProbeSpec(ws *Workspace, containerNonce string) (ContainerSpec, error) {
+	return d.probeContainerSpec(ws, bootProbeTaskID, []string{"/bin/sh", "-c", bootProbeScript, "ork-probe", containerNonce})
+}
+
+// signalProbeSpec is the SIGTERM probe's container: the boot probe's, with its
+// own command and name.
+func (d *OCIDispatcher) signalProbeSpec(ws *Workspace) (ContainerSpec, error) {
+	return d.probeContainerSpec(ws, signalProbeTaskID, []string{"/bin/sh", "-c", signalProbeScript})
+}
+
+func (d *OCIDispatcher) probeContainerSpec(ws *Workspace, taskID string, command []string) (ContainerSpec, error) {
 	cpu, memory, failure := d.Policy.ResolveResources(nil)
 	if failure != nil {
 		return ContainerSpec{}, fmt.Errorf("%w: the probe's resources: %s", ErrPostureRefused, failure.Message)
 	}
-	in := &orkstackv1.ExecuteTaskInput{
-		TaskId:  bootProbeTaskID,
-		Command: []string{"/bin/sh", "-c", bootProbeScript, "ork-probe", containerNonce},
-	}
+	in := &orkstackv1.ExecuteTaskInput{TaskId: taskID, Command: command}
 	image := &orkstackv1.ImageRef{Pinned: BindProbeImage}
 	spec, failure := d.containerSpec(in, ws, image, 1, NetworkNone, cpu, memory, true)
 	if failure != nil {
@@ -198,8 +254,211 @@ func (d *OCIDispatcher) bootProbeSpec(ws *Workspace, containerNonce string) (Con
 	}
 	// Its own label only: no ork.orker, so no reaper and no test counting an
 	// Orker's containers ever meets a probe that is already being removed.
-	spec.Labels = map[string]string{"ork.task": bootProbeTaskID}
+	spec.Labels = map[string]string{"ork.task": taskID}
 	return spec, nil
+}
+
+// probeSignalDelivery is the boot probe's SIGTERM check: a second container,
+// built as a task's is, whose workload traps SIGTERM, cancelled exactly as a
+// cancelled task's container is (TerminateContainer: SIGTERM through the
+// runtime, the grace, then SIGKILL). The first container cannot show it: it
+// runs to its end and is never signalled, and a runtime that gives a
+// container its whole posture can still drop the one signal a cancelled task
+// needs. Rootful Podman under AppArmor 5 runs the workload under a stacked
+// label that its profile does not let the container's init signal, so every
+// cancelled task was killed at the end of its grace without its cleanup, and
+// nothing said so.
+//
+// What decides is the file the trap writes into the output bind, which the
+// Orker reads itself: no daemon stands between the verdict and what the
+// workload did. A workload that never heard SIGTERM refuses boot as
+// ErrPostureRefused, naming what it ran under. Starting the container is
+// StartBootProbe, with the first container's budget, retry and
+// classification; a workload that does not say it is ready within the budget
+// is ErrProbeTimedOut.
+func (d *OCIDispatcher) probeSignalDelivery(ctx context.Context, prober bootProber, root string, ws *Workspace) error {
+	spec, err := d.signalProbeSpec(ws)
+	if err != nil {
+		return err
+	}
+	id, err := prober.StartBootProbe(ctx, spec)
+	if err != nil {
+		return fmt.Errorf("boot probe's SIGTERM container under %s: %w", root, err)
+	}
+	// The daemon removes the container once it exits. One that may still be
+	// running when the check ends is removed here, on a context of its own,
+	// as a task's container is; a removal that fails is reported, not fatal:
+	// what the check found stands.
+	running := true
+	defer func() {
+		if !running {
+			return
+		}
+		if err := d.Runtime.Remove(context.WithoutCancel(ctx), id); err != nil {
+			d.logger().Warn("boot probe: the SIGTERM probe's container could not be removed and may remain",
+				"container", id, "error", err)
+		}
+	}()
+
+	budget := prober.bindProbeTimeout()
+	readyCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	readyPath := filepath.Join(ws.Output, signalProbeReadyFile)
+	if !awaitProbeFile(readyCtx, readyPath) {
+		if ctx.Err() != nil {
+			return fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+		}
+		return probeTimedOut(fmt.Sprintf("let the SIGTERM probe's workload say it is ready within %s", budget), nil, nil)
+	}
+	raw, _ := os.ReadFile(readyPath)
+	facts := parseProbeFacts(string(raw))
+
+	heardPath := filepath.Join(ws.Output, signalProbeHeardFile)
+	heard := make(chan struct{})
+	watchCtx, stopWatching := context.WithCancel(ctx)
+	go func() {
+		defer close(heard)
+		awaitProbeFile(watchCtx, heardPath)
+	}()
+	grace := d.signalProbeGrace
+	if grace <= 0 {
+		grace = DefaultCancellationGrace
+	}
+	signals := &signalRecorder{ContainerRuntime: d.Runtime}
+	TerminateContainer(ctx, signals, id, grace, heard)
+	stopWatching()
+	<-heard
+	if _, err := os.Stat(heardPath); err == nil {
+		// Its trap exits, and the daemon removes the container.
+		running = false
+		return nil
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+	}
+	// A SIGKILL the runtime took ends the container, which the daemon
+	// then removes.
+	running = signals.failed(SIGKILL) != nil
+	return signalNotHeard(grace, signals.failed(SIGTERM), facts)
+}
+
+// signalRecorder is the runtime as TerminateContainer sees it, keeping what
+// each Signal call answered: a SIGTERM the runtime itself refused is not a
+// workload that did not hear it.
+type signalRecorder struct {
+	ContainerRuntime
+	mu      sync.Mutex
+	answers map[Signal]error
+}
+
+func (r *signalRecorder) Signal(ctx context.Context, id ContainerID, sig Signal) error {
+	err := r.ContainerRuntime.Signal(ctx, id, sig)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.answers == nil {
+		r.answers = map[Signal]error{}
+	}
+	r.answers[sig] = err
+	return err
+}
+
+// failed is the runtime's refusal of sig, or nil: it took it, or it was never
+// sent.
+func (r *signalRecorder) failed(sig Signal) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.answers[sig]
+}
+
+// awaitProbeFile reports whether path exists, polling until it does or ctx
+// ends, and looking once more after that. It polls a real condition with a
+// deadline, not a sleep standing in for synchronization, and backs off as
+// awaitLeftCreated does.
+func awaitProbeFile(ctx context.Context, path string) bool {
+	exists := func() bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}
+	poll := startStatePoll
+	for {
+		if exists() {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return exists()
+		case <-time.After(poll):
+		}
+		if poll *= 2; poll > startStatePollMax {
+			poll = startStatePollMax
+		}
+	}
+}
+
+// sigtermBit is SIGTERM's bit in /proc/<pid>/status's signal masks.
+const sigtermBit = 1 << (15 - 1)
+
+// signalNotHeard is the refusal of a runtime whose cancelled workload never
+// heard SIGTERM, with every cause it can point at: the runtime's own refusal
+// of the signal, then what the workload reported.
+func signalNotHeard(grace time.Duration, termRefused error, facts probeFacts) error {
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "the boot probe ran a container built as a task's is, whose workload traps SIGTERM, and cancelled it as "+
+		"a task is cancelled (SIGTERM through the runtime, then SIGKILL after %s), and its workload never heard SIGTERM: "+
+		"its trap had not run at the end of the grace. "+
+		"Every cancelled task here would be killed at the end of its grace without its cleanup", grace)
+	if termRefused != nil {
+		fmt.Fprintf(&msg, "; the runtime refused the SIGTERM itself: %v", termRefused)
+	} else {
+		for _, cause := range signalCauses(facts) {
+			msg.WriteString("; ")
+			msg.WriteString(cause)
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrPostureRefused, msg.String())
+}
+
+// signalCauses reads the SIGTERM probe's ready file for why its workload did
+// not hear SIGTERM: its own signal masks, then the security label it ran
+// under.
+func signalCauses(facts probeFacts) []string {
+	var causes []string
+	masks := map[string]string{}
+	for _, line := range facts["signals"] {
+		if key, value, ok := strings.Cut(line, ":"); ok {
+			masks[key] = strings.TrimSpace(value)
+		}
+	}
+	has := func(mask string) bool {
+		value, err := strconv.ParseUint(masks[mask], 16, 64)
+		return err == nil && value&sigtermBit != 0
+	}
+	switch {
+	case has("SigIgn"):
+		causes = append(causes, fmt.Sprintf("its workload started with SIGTERM ignored (SigIgn %s), which a shell cannot "+
+			"trap: whatever starts the engine's containers hands SIGTERM on ignored", masks["SigIgn"]))
+	case has("SigBlk"):
+		causes = append(causes, fmt.Sprintf("its workload runs with SIGTERM blocked (SigBlk %s)", masks["SigBlk"]))
+	case masks["SigCgt"] != "" && !has("SigCgt"):
+		causes = append(causes, fmt.Sprintf("its trap on SIGTERM is not set (SigCgt %s)", masks["SigCgt"]))
+	}
+
+	label := strings.TrimSpace(strings.Join(facts["label"], " "))
+	switch {
+	case strings.Contains(label, "//&"):
+		causes = append(causes, fmt.Sprintf("its workload runs under the stacked AppArmor label %q, and an AppArmor "+
+			"profile that lets a process signal only its own exact label keeps the container's init from passing SIGTERM "+
+			"on to it; the host's kernel log has the denial (apparmor=\"DENIED\" operation=\"signal\"). "+
+			"docs/DEPLOY.md, \"Rootful Podman under AppArmor\", gives the host's fix, or run the engine rootless", label))
+	case label != "" && label != "unconfined" && !strings.Contains(label, ": "):
+		causes = append(causes, fmt.Sprintf("its workload runs under the security label %q, and the host's kernel log "+
+			"names any signal that label's policy denied", label))
+	}
+	if len(causes) == 0 {
+		causes = append(causes, "nothing inside the container says why: the runtime, the container's init or a security "+
+			"policy dropped it, and the host's kernel log names any denial")
+	}
+	return causes
 }
 
 func probeNonce() string {

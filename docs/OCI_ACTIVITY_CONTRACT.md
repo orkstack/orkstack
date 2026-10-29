@@ -327,7 +327,7 @@ control character, which a container mount cannot carry. The Orker probes this
 at boot and refuses to start with `InfrastructureError/WORKDIR_NOT_BINDABLE`
 rather than failing every task later.
 
-The boot probe runs one container built exactly as a task's is: the same spec
+The boot probe runs a container built exactly as a task's is: the same spec
 builder and the same §9.2 argument vector, a task's four mounts from a probe
 directory under the work root, the policy's default resources, network `none`,
 the escape hatch's user, and the image
@@ -353,11 +353,21 @@ from the host and from inside it (`internal/orker/boot_probe.go`):
   2` shows that a filter is active, not that it is the default profile, which
   the spelling `seccomp=builtin` decides; and on a host whose cgroup is not v2
   alone the limits are not read, and the Orker logs that it did not read them.
+- **A cancelled workload hears SIGTERM.** A second container, built the same
+  way and started once the first has passed, traps SIGTERM, says it is ready, and is
+  cancelled exactly as a task is (§6.3: SIGTERM through the runtime, the
+  default 30-second grace, then SIGKILL). The file its trap writes into
+  `output/` decides. A workload that never heard SIGTERM refuses boot as
+  `InfrastructureError/RUNTIME_POSTURE_REFUSED`, quoting the security label
+  and the signal masks it ran with: rootful Podman under AppArmor 5 runs the
+  workload under a stacked label its profile does not let the container's
+  init signal ([DEPLOY.md](DEPLOY.md), "Rootful Podman under AppArmor").
 - **The escape hatch lands as the Orker** (measure 2 above).
 
-The probe runs a container, so each step of it that waits on the daemon
-(identifying the engine, asking whether the probe's image is local, and each of
-two attempts to run its container) has a budget of its own
+The probe runs containers, so each step of it that waits on the daemon
+(identifying the engine, asking whether the probe's image is local, each of
+two attempts to run each of its two containers, and the second one's ready
+file) has a budget of its own
 (`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes). An attempt that overruns it, or that the daemon ends with a deadline
 error of its own, is tried once more. A daemon that is still too slow refuses
 boot as `BIND_PROBE_TIMED_OUT`, which says the daemon is slow and nothing about
@@ -1611,8 +1621,8 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error — the container never ran |
 | `WORKSPACE_NOT_BINDABLE` | InfrastructureError | **no** | the daemon cannot bind the workspace path — a host misconfiguration retrying will not fix |
 | `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | `ORK_ORKER_WORKDIR`'s path holds a comma or control character, or the daemon refused the boot probe's bind within its budget in its own words, or the probe's container and the Orker did not read back each other's nonce (the daemon bound a directory of its own), or no probe directory could be made: `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
-| `RUNTIME_POSTURE_REFUSED` | InfrastructureError | — | the boot probe's container, built as a task's is, was refused for a reason that is neither a bind nor a deadline, exited non-zero, or saw a weaker posture than §9.2 from inside (privileges it could gain, no seccomp filter, a capability, a writable root, `/run`, `/var/tmp` or input, a `/tmp` without `noexec`, a proxy variable it was never given, cgroup v2 limits other than it asked for); the Orker refuses to start, naming each |
-| `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start the probe's container within it, or ended it with a deadline error of its own; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
+| `RUNTIME_POSTURE_REFUSED` | InfrastructureError | — | the boot probe's container, built as a task's is, was refused for a reason that is neither a bind nor a deadline, exited non-zero, or saw a weaker posture than §9.2 from inside (privileges it could gain, no seccomp filter, a capability, a writable root, `/run`, `/var/tmp` or input, a `/tmp` without `noexec`, a proxy variable it was never given, cgroup v2 limits other than it asked for), or its SIGTERM container's workload, cancelled as a task is, never heard SIGTERM (§3.1); the Orker refuses to start, naming each |
+| `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start one of the probe's two containers within it, or ended it with a deadline error of its own, or the second one's workload did not say it was ready within it; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
 | `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`orker.BindProbeImage`, alpine 3.20 by digest) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
 | `RUN_AS_ORKER_UNAVAILABLE` | InfrastructureError | **no** | the task runs as the Orker's own user (`runAsOrkerUser`, or `ORK_ORKER_FORCE_USER`), and the boot probe found that user does not land as the Orker on this host: a `0600` file its container wrote as that user is one the Orker cannot read. Refused before a container is created; under `ORK_ORKER_FORCE_USER` the Orker refuses to start instead |
 | `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created |

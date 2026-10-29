@@ -1198,6 +1198,44 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 		}
 	}
 
+	return d.runProbeContainer(ctx, spec, spoken, budget, false)
+}
+
+// StartBootProbe starts spec's container detached, to be removed by the
+// daemon when it exits (`run --detach --rm`), and returns its name: the boot
+// probe's SIGTERM container, which the dispatcher then cancels as a task's
+// container is cancelled. It runs after RunBootProbe has passed, so the
+// engine is known and the image is local, and its run has RunBootProbe's
+// budget, retry and classification, and its errors are RunBootProbe's. The
+// flags are a task's, rendered by the same function `create` uses.
+func (d *DockerRuntime) StartBootProbe(ctx context.Context, spec ContainerSpec) (ContainerID, error) {
+	budget := d.bindProbeTimeout()
+	spoken, overran, err := d.dialectWithin(ctx, budget)
+	switch {
+	case ctx.Err() != nil:
+		return "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+	case overran:
+		return "", probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
+	case err != nil:
+		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+	}
+	if _, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]), spoken); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+	}
+	name, err := d.runProbeContainer(ctx, spec, spoken, budget, true)
+	return ContainerID(name), err
+}
+
+// runProbeContainer runs a boot probe's container, attached to its end or
+// detached once it has started, and returns its stdout or, detached, its
+// name.
+func (d *DockerRuntime) runProbeContainer(
+	ctx context.Context, spec ContainerSpec, spoken dialect, budget time.Duration, detached bool,
+) (string, error) {
+	verb := []string{"run", "--rm"}
+	if detached {
+		verb = []string{"run", "--detach", "--rm"}
+	}
 	// The daemon quotes the paths it was given, and none of them is a word
 	// about the daemon's own deadlines: neither a bind's source nor the probe
 	// directory and the work root it lies in.
@@ -1216,9 +1254,11 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 	for attempt := 1; attempt <= bindProbeAttempts; attempt++ {
 		name := containerName(spec.Labels["ork.task"])
 		flags, _ := dockerContainerFlags(spec, name, spoken)
-		answer, overran, err := d.runWithin(ctx, budget, append([]string{"run", "--rm"}, flags...)...)
+		answer, overran, err := d.runWithin(ctx, budget, append(verb, flags...)...)
 		said := truncateString(answer.said(), 2000)
 		switch {
+		case err == nil && answer.code == 0 && detached:
+			return name, nil
 		case err == nil && answer.code == 0:
 			return answer.stdout, nil
 		case ctx.Err() != nil:

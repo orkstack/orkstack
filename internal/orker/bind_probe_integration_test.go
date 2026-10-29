@@ -31,10 +31,12 @@ import (
 // that has recovered does, and never reaches the real daemon: it does what the
 // probe's container does on a runtime that gives it a task's posture, reading
 // the Orker's nonce from the input bind, writing its own into the output bind
-// and printing the facts file), fail (a
+// and printing the facts file; the SIGTERM probe's container is answered the
+// same way, as a workload that hears SIGTERM), fail (a
 // `run` that the daemon refuses, as it refuses an unshared path), inspecthang
 // (`image inspect` never answers). `calls` records every invocation and `runs`
-// counts the `run`s.
+// counts the `run`s. The flags other than answer leave the SIGTERM probe's
+// container alone: it reaches the real daemon, and is not counted.
 type slowDockerShim struct {
 	t   *testing.T
 	dir string
@@ -54,6 +56,21 @@ if [ "$1" = image ]; then
     echo x >> "$S/realinspects"
   fi
 fi
+case "$1 $*" in
+  run*ork.task=sigprobe*)
+    if [ ! -e "$S/answer" ]; then exec '` + realDocker + `' "$@"; fi
+    for a in "$@"; do
+      case "$a" in type=bind,source=*,destination=/orkstack/output) out=${a#type=bind,source=}; out=${out%%,destination=*} ;; esac
+    done
+    printf '%s' "$out" > "$S/sigout"
+    printf '@@label\nunconfined\n@@signals\nSigCgt:\t0000000000004000\n' > "$out/probe-ready"
+    echo 0123456789ab; exit 0 ;;
+  kill*ork-sigprobe-*)
+    if [ -e "$S/answer" ]; then
+      if [ "$3" = TERM ]; then echo heard > "$(cat "$S/sigout")/probe-heard-term"; fi
+      exit 0
+    fi ;;
+esac
 if [ "$1" = run ]; then
   n=0; if [ -e "$S/runs" ]; then n=$(cat "$S/runs"); fi
   n=$((n+1)); echo "$n" > "$S/runs"
@@ -139,7 +156,7 @@ func (s *slowDockerShim) probeContainers() (ran, removed []string) {
 		switch {
 		case len(fields) > 0 && fields[0] == "run":
 			for i, field := range fields {
-				if field == "--name" && i+1 < len(fields) {
+				if field == "--name" && i+1 < len(fields) && strings.HasPrefix(fields[i+1], "ork-bindprobe-") {
 					ran = append(ran, fields[i+1])
 				}
 			}
