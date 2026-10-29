@@ -64,6 +64,25 @@ gives it to any other service. An activity
 container never receives the socket, a host path or the host's namespaces
 ("What the Orker refuses" below).
 
+### What the Orker reads back
+
+The boundary holds in the other direction too: nothing a workload leaves in
+its output directory makes the Orker read outside it. The Orker reads the
+output on the host, where a symlink resolves in the Orker's own mount
+namespace, so a link the workload wrote could name any file the Orker can
+open. It therefore reads `/orkstack/output` only through a confined root
+(`os.Root`) opened on the attempt's output directory, `lstat`s every name it
+reads before opening it, and checks every open against that `lstat`. A
+symlinked `values.json` fails `VALUES_MALFORMED`, and a symlinked or
+non-directory `output/artifacts`, or any artifact entry that is not a regular
+file, fails `ARTIFACT_NOT_A_FILE`. Both are contract violations, never
+retried, and each names the container path and never a host path. The failure
+path reads through the same root, so a failed attempt publishes nothing from
+outside either. The Orker does not depend on the host's
+`fs.protected_symlinks`, which a same-uid workload passes
+([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md) §9.5;
+`internal/orker/workspace.go`, `OutputTree`).
+
 ## What an activity container receives
 
 The Orker renders the container's mounts from paths it created for the attempt

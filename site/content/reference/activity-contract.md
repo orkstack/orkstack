@@ -33,8 +33,10 @@ The working directory is `/orkstack`, and the container reads every input file.
 | `/orkstack/input/upstream/<task>/values.json` | read-only | An upstream task's `values.json`. A fan-out has one directory per item, numbered from `00000`. |
 | `/orkstack/input/artifacts/<task>/<name>` | read-only | An upstream task's artifact. |
 | `/orkstack/input/secrets/<name>` | read-only | A secret, as its exact bytes. |
-| `/orkstack/output/values.json` | read-write | The result. Required, and one JSON object. |
+| `/orkstack/output/values.json` | read-write | The result. Required, and one JSON object, in a regular file. |
 | `/orkstack/output/artifacts/<name>` | read-write | One file per output artifact. Regular files only, directly in the directory. |
+
+The Orker reads the output only from inside `/orkstack/output` and follows no link: a `values.json`, an `artifacts` directory or an artifact that is a symlink fails the task, even when it points inside.
 | `/orkstack/tmp` | read-write | Scratch space. |
 | `/orkstack/shared` | read-write | Only for a task of a pin. Every task of the pin sees it. |
 
@@ -50,7 +52,7 @@ The working directory is `/orkstack`, and the container reads every input file.
 |---|---|
 | Exits `0`, and `values.json` is one JSON object | The task succeeds, and its outputs are committed. |
 | Exits `0`, with no `values.json` | The task fails with `VALUES_MISSING`. It is not retried. |
-| Exits `0`, with `values.json` that is not an object, or is over 256 KiB | The task fails with `VALUES_MALFORMED` or `VALUES_TOO_LARGE`. It is not retried. |
+| Exits `0`, with `values.json` that is not an object, is a link, or is over 256 KiB | The task fails with `VALUES_MALFORMED` or `VALUES_TOO_LARGE`. It is not retried. |
 | Exits with any non-zero status | The task fails with `CONTAINER_EXIT_NONZERO`. It is retried under the task's `retry:`. |
 | Runs past `timeout_seconds` | The task fails with `CONTAINER_TIMEOUT`. It is not retried. |
 
