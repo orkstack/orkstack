@@ -1,0 +1,39 @@
+# Not an Orker: Docker's own rootless engine image as its documentation runs
+# it (a privileged container, the daemon as uid 1000), so the proof can
+# measure what it does with a container's limits. It has no systemd, and a
+# rootless daemon needs systemd for cgroups, so it runs every container with
+# none: --memory, --cpus and --pids-limit are accepted and not applied. That
+# is why deploy/kubernetes ships no rootless shape (docs/DEPLOY.md, "Orkers on
+# Kubernetes"). It runs in the orkstack-engine RuntimeClass only to stay
+# clear of a kind-only spec hook that bind-mounts files over /sys, which a
+# user namespace may then not mount.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rootless-dind
+spec:
+  runtimeClassName: orkstack-engine
+  containers:
+    - name: engine
+      image: docker:29.9.2-dind-rootless@sha256:ae083cc7de51e7a8e5a597f8fb774ca7914c408a95fc0f1477826a913479518a
+      args:
+        - dockerd
+        - --host=unix:///run/user/1000/docker.sock
+      env:
+        - name: DOCKER_HOST
+          value: unix:///run/user/1000/docker.sock
+      securityContext:
+        privileged: true
+      startupProbe:
+        exec:
+          command:
+            - docker
+            - info
+        periodSeconds: 2
+        failureThreshold: 60
+      volumeMounts:
+        - name: data
+          mountPath: /home/rootless/.local/share
+  volumes:
+    - name: data
+      emptyDir: {}

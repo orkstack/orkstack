@@ -1,0 +1,17 @@
+# The user-namespaced Orker without the orkstack-engine RuntimeClass: the
+# pod's cgroup is not its root's to write, so the engine cannot place its
+# tasks' cgroups and must not start (docs/DEPLOY.md, "Orkers on Kubernetes").
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: orkstack
+resources:
+  - ../../orker-userns
+components:
+  - ../common
+patches:
+  - target:
+      kind: Deployment
+      name: orker
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/runtimeClassName

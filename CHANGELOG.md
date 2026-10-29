@@ -10,6 +10,21 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- Orkers on Kubernetes, each with a Docker engine of its own in a native
+  sidecar (docs/DEPLOY.md, "Orkers on Kubernetes"). `deploy/kubernetes/` has
+  two kustomize bases. `orker-userns/` runs the engine in a pod with its own
+  user namespace, so nothing in the pod is privileged on the node; it needs
+  the `orkstack-engine` RuntimeClass, a containerd handler with
+  `cgroup_writable`. `orker-privileged/` is the fallback: there the engine
+  container is privileged, and no task container is. In both, the work root
+  is one `emptyDir` at one path in the two containers, and the engine's
+  storage is an `emptyDir`. The engine's start-up keeps every task inside the
+  pod's own cgroup, so the pod's limits bound them and the kubelet accounts
+  for them. `scripts/kind-orker.sh` proves both shapes on a throwaway kind
+  cluster: artifacts, `network: none` and `default`, each task's limits and
+  profile, a cancel, the per-task ceiling, a pod deletion, and the boot check
+  refusing a mismatched work root. Docker's rootless engine image is not
+  supported: it applies no container limits.
 - An activity image's `with:` interface can be written as a readable YAML
   document, `kind: ActivityInterface` (by convention `interface.ork.yaml`
   beside the Dockerfile), instead of one line of JSON. `orkctl activity

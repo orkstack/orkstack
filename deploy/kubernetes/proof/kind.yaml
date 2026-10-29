@@ -1,0 +1,16 @@
+# The throwaway cluster scripts/kind-orker.sh creates. Every node declares
+# the orkstack-engine containerd handler that deploy/kubernetes/orker-userns
+# needs (docs/DEPLOY.md, "Orkers on Kubernetes"); kind writes a version 2
+# containerd configuration, so the table uses that spelling.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.orkstack-engine]
+      runtime_type = "io.containerd.runc.v2"
+      cgroup_writable = true
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.orkstack-engine.options]
+        SystemdCgroup = true

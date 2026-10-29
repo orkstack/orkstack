@@ -93,26 +93,28 @@ func blockStyleProblems(path, text string) []string {
 }
 
 // TestDocs_YAMLExamplesUseBlockStyle: every YAML example a reader is shown —
-// the shipped examples, the example configuration, the generated defaults
-// the docs site's Configuration page shows, and every yaml fence of the
-// documentation — writes its sequences and mappings in block style, one
+// the shipped examples, the Kubernetes manifests, the example configuration,
+// the generated defaults the docs site's Configuration page shows, and every
+// yaml fence of the documentation — writes its sequences and mappings in block style, one
 // `- item` or `key: value` per line, never as a JSON-looking flow collection
 // ([a, b], {k: v}). An Orkflow is a YAML document, and its examples teach the
 // shape authors copy, so they all write it one way.
 func TestDocs_YAMLExamplesUseBlockStyle(t *testing.T) {
 	root := repoRoot(t)
 	files := markdownFiles(t)
-	err := filepath.WalkDir(filepath.Join(root, "examples"), func(path string, d fs.DirEntry, err error) error {
+	for _, dir := range []string{"examples", filepath.Join("deploy", "kubernetes")} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && (strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")) {
+				files = append(files, path)
+			}
+			return nil
+		})
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
-		if !d.IsDir() && (strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")) {
-			files = append(files, path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	files = append(files, filepath.Join(root, "deploy", "orkstack.example.yaml"), filepath.Join(root, "deploy", "orkstack.defaults.yaml"))
 

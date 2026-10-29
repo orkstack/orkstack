@@ -1,0 +1,63 @@
+# What every Orker overlay of the proof changes in the shipped manifests, and
+# nothing else: the images the script built from this tree, the registry's
+# certificate authority in the engine, one replica, and a pod sized for a
+# laptop. The sizes keep the shipped rule: the engine's memory is at least
+# ORK_ORKER_MAX_CONCURRENT × ORK_ORKER_MAX_MEMORY plus the daemon's share, and
+# a task's default is within its ceiling.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+images:
+  - name: orker
+    newName: localhost/orkstack-k8s/orker
+    newTag: proof
+patches:
+  - target:
+      kind: Deployment
+      name: orker
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: orker
+      spec:
+        replicas: 1
+        template:
+          spec:
+            initContainers:
+              - name: engine
+                resources:
+                  requests:
+                    cpu: "2"
+                    memory: 2Gi
+                    ephemeral-storage: 4Gi
+                  limits:
+                    cpu: "2"
+                    memory: 2Gi
+                    ephemeral-storage: 8Gi
+                volumeMounts:
+                  - name: proof-ca
+                    mountPath: /etc/docker/certs.d/registry.orkstack-infra.svc.cluster.local:5000
+                    readOnly: true
+            containers:
+              - name: orker
+                imagePullPolicy: Never
+                env:
+                  - name: ORK_ORKER_MAX_CPU
+                    value: "0.5"
+                  - name: ORK_ORKER_MAX_MEMORY
+                    value: 384Mi
+                  - name: ORK_ORKER_DEFAULT_CPU
+                    value: "0.25"
+                  - name: ORK_ORKER_DEFAULT_MEMORY
+                    value: 256Mi
+                resources:
+                  requests:
+                    cpu: 100m
+                    memory: 128Mi
+                  limits:
+                    cpu: 250m
+                    memory: 256Mi
+            volumes:
+              - name: proof-ca
+                configMap:
+                  name: proof-ca

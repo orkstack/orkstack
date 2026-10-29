@@ -60,7 +60,42 @@ Each release publishes `ork`, `orker`, `orkctl`, `ui` and six first-party activi
 
 No release is published yet, so there are no images to pull. The [release notes](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts) describe what a release publishes. The images are not signed yet. Activity images you build yourself can be signed, and a namespace can require that.
 
-The `orker` mounts the host's Docker socket. Whoever controls that socket controls the host. Activity containers never receive it.
+On a host, the `orker` mounts the host's Docker socket. Whoever controls that socket controls the host. Activity containers never receive it. On Kubernetes, each Orker pod has an engine of its own instead.
+
+## On Kubernetes
+
+Give each Orker pod a Docker engine of its own, in a sidecar. Never give it the node's container runtime or Docker socket. [`deploy/kubernetes/`](https://github.com/orkstack/orkstack/tree/main/deploy/kubernetes) has two kustomize bases:
+
+| Base | Needs | Privileged on the node |
+|---|---|---|
+| `orker-userns/` (prefer it) | user namespaces, and the `orkstack-engine` RuntimeClass: a containerd handler with `cgroup_writable = true` | nothing |
+| `orker-privileged/` | a namespace that admits privileged pods | the engine container, not the tasks |
+
+Use a base from an overlay that names the release's `orker` image by digest:
+
+```yaml
+# kustomization.yaml
+resources:
+  - <your clone>/deploy/kubernetes/orker-userns
+images:
+  - name: orker
+    newName: ghcr.io/orkstack/orker
+    digest: sha256:<the release's orker digest>
+```
+
+Create the settings it reads, then apply it:
+
+```bash
+kubectl create configmap orkstack --from-env-file=orkstack.env   # ORK_TEMPORAL_ADDRESS, ORK_S3_ENDPOINT, …
+kubectl create secret generic orkstack-s3 --from-env-file=s3.env  # ORK_S3_ACCESS_KEY, ORK_S3_SECRET_KEY
+kubectl apply -k .
+```
+
+- The work root is one volume at one path in both containers. The Orker refuses to start when the engine sees it elsewhere (`WORKDIR_NOT_BINDABLE`).
+- Every task runs inside the pod's cgroup. Size the engine container to hold `ORK_ORKER_MAX_CONCURRENT` tasks at `ORK_ORKER_MAX_MEMORY`, plus the daemon.
+- `network: none` and `network: default` both work. The default network reaches what the pod reaches.
+- Drain an Orker before you delete its pod.
+- Docker's rootless engine image is not supported: it applies no container limits.
 
 ## Settings that matter first
 
@@ -101,6 +136,7 @@ OrkStack is pre-release. Breaking changes can land until 1.0. The [production ch
 
 - [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#0-topology--what-you-run-and-where-state-lives): the topology, in full
 - [DEPLOY.md, “1. Configuration”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration): every key and its variable
+- [DEPLOY.md, “Orkers on Kubernetes”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes): both shapes, sizing, the RuntimeClass and the proof
 - [PRODUCTION_CHECKLIST.md](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md): the full list of care items
 - [STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md): what OrkStack keeps in the bucket, and where
 - [LIMITATIONS.md](https://github.com/orkstack/orkstack/blob/main/docs/LIMITATIONS.md): what is not built yet
