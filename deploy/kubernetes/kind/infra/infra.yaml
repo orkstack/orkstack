@@ -1,6 +1,7 @@
-# The proof's infrastructure (deploy/kubernetes/proof/README.md): Temporal's
-# development server, SeaweedFS, a registry served over TLS with a
-# certificate the script makes, and one ork engine. Every image is the one
+# The kind cluster's OrkStack deployment (deploy/kubernetes/kind/README.md),
+# for scripts/k8s-orker-check.sh to use: Temporal's development server,
+# SeaweedFS, a registry served over TLS with a certificate scripts/kind-orker.sh
+# makes, and one ork engine. Every image is the one
 # the development stack pins (deploy/docker-compose.yml), except ork, which
 # the script builds from this tree.
 apiVersion: v1

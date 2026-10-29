@@ -1,16 +1,23 @@
-# What every Orker overlay of the proof changes in the shipped manifests, and
-# nothing else: the images the script built from this tree, the registry's
-# certificate authority in the engine, one replica, and a pod sized for a
-# laptop. The sizes keep the shipped rule: the engine's memory is at least
-# ORK_ORKER_MAX_CONCURRENT × ORK_ORKER_MAX_MEMORY plus the daemon's share, and
-# a task's default is within its ceiling.
+# What scripts/k8s-orker-check.sh changes in every shipped base it checks, and
+# nothing else: one replica in the check's own pool, the per-task ceiling its
+# limits run measures, a pod sized for a small node, and no RuntimeClass of
+# its own. The RuntimeClass is cluster-wide, so the check requires it rather
+# than creating it. The sizes keep the shipped rule: the engine's memory is at
+# least ORK_ORKER_MAX_CONCURRENT × ORK_ORKER_MAX_MEMORY plus the daemon's
+# share, and a task's default is within its ceiling. The image, the pull
+# policy, the namespace and a registry's certificate authority are the
+# check's options, written beside this by the script.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
-images:
-  - name: orker
-    newName: localhost/orkstack-k8s/orker
-    newTag: proof
 patches:
+  - target:
+      kind: RuntimeClass
+    patch: |-
+      $patch: delete
+      apiVersion: node.k8s.io/v1
+      kind: RuntimeClass
+      metadata:
+        name: orkstack-engine
   - target:
       kind: Deployment
       name: orker
@@ -34,14 +41,13 @@ patches:
                     cpu: "2"
                     memory: 2Gi
                     ephemeral-storage: 8Gi
-                volumeMounts:
-                  - name: proof-ca
-                    mountPath: /etc/docker/certs.d/registry.orkstack-infra.svc.cluster.local:5000
-                    readOnly: true
             containers:
               - name: orker
-                imagePullPolicy: Never
                 env:
+                  # The check's own pool: its Orkers take only its runs, and
+                  # its runs land only on them.
+                  - name: ORK_ORKER_POOL
+                    value: k8s-check
                   - name: ORK_ORKER_MAX_CPU
                     value: "0.5"
                   - name: ORK_ORKER_MAX_MEMORY
@@ -57,7 +63,3 @@ patches:
                   limits:
                     cpu: 250m
                     memory: 256Mi
-            volumes:
-              - name: proof-ca
-                configMap:
-                  name: proof-ca

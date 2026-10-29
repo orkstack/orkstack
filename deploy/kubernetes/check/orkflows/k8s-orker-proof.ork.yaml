@@ -1,4 +1,5 @@
-# A run through an Orker whose engine is its own (scripts/kind-orker.sh):
+# A run through an Orker whose engine is its own (scripts/k8s-orker-check.sh),
+# on the check's own pool:
 # artifacts written, hashed, compressed and read back by later tasks, tasks
 # with no network and one on the default network, and what each task's
 # container is given: its limits and the Orker's security profile.
@@ -10,6 +11,7 @@ description: Artifacts, both network modes, limits and the task profile through 
 tasks:
   - id: produce
     uses: shell
+    pool: k8s-check
     network: none
     resources:
       cpu: "0.5"
@@ -33,6 +35,7 @@ tasks:
         sha256sum "$out/blob.bin"
   - id: checksum
     uses: file
+    pool: k8s-check
     needs:
       - produce
     network: none
@@ -41,6 +44,7 @@ tasks:
       src: '{{ artifact "produce/blob.bin" }}'
   - id: compress
     uses: file
+    pool: k8s-check
     needs:
       - produce
     network: none
@@ -49,6 +53,7 @@ tasks:
       src: '{{ artifact "produce/report.txt" }}'
   - id: verify
     uses: shell
+    pool: k8s-check
     needs:
       - checksum
       - compress
@@ -64,12 +69,15 @@ tasks:
         gunzip -c '{{ artifact "compress/report.txt.gz" }}'
   - id: reach
     uses: shell
+    pool: k8s-check
     network: default
     with:
       op: script
       interpreter: sh
       script: |
         set -u
-        status=$(wget -S -O /dev/null http://ork.orkstack.svc.cluster.local:8080/ 2>&1 | grep -m1 'HTTP/')
-        echo "default network reached the engine Service:${status}"
+        # The Kubernetes API's own Service, which every cluster has: any
+        # answer shows the task's traffic left through the pod's network.
+        status=$(wget -S --no-check-certificate -O /dev/null https://kubernetes.default.svc/ 2>&1 | grep -m1 'HTTP/')
+        echo "default network reached the Kubernetes API Service:${status}"
         [ -n "$status" ]

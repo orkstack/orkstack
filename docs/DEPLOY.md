@@ -1788,7 +1788,7 @@ containerd 2's own configuration (version 3):
 
 In a version 2 file, which kind writes, the table is
 `plugins."io.containerd.grpc.v1.cri".containerd.runtimes.orkstack-engine`
-([`deploy/kubernetes/proof/kind.yaml`](../deploy/kubernetes/proof/kind.yaml)).
+([`deploy/kubernetes/kind/kind.yaml`](../deploy/kubernetes/kind/kind.yaml)).
 Restart containerd, then apply the base: it declares the RuntimeClass
 `orkstack-engine` with that handler. The proof ran on Kubernetes 1.37,
 containerd 2.3.4, cgroup v2 and Linux 7.2. The node there had no AppArmor; on
@@ -1823,24 +1823,74 @@ Orker.
 - Sysbox, which installs onto the nodes, was not measured: kind's nodes are
   containers. Podman in the Orker container is not on `main` yet.
 
-**The proof.** `scripts/kind-orker.sh` builds `ork`, `orker` and two
-activities from the tree. It creates a kind cluster with Temporal, SeaweedFS,
-a registry served over TLS and one `ork`. It applies each base as it ships,
-with only [`deploy/kubernetes/proof/common`](../deploy/kubernetes/proof/common/)'s
-changes: the built images, the registry's certificate authority and a smaller
-pod. For each shape it checks:
+**Check your cluster before you trust it.** Run
+[`scripts/k8s-orker-check.sh`](../scripts/k8s-orker-check.sh) against your
+own cluster first, from a clone of the release you deploy:
+
+```bash
+scripts/k8s-orker-check.sh --context prod-eu \
+  --server https://orkstack.internal.example \
+  --orker-image ghcr.io/orkstack/orker:X.Y.Z@sha256:<the release's orker digest> \
+  --settings-from orkstack
+```
+
+It needs `kubectl`, `jq` and Go (for `orkctl`), an `ork` engine at `--server`
+whose catalog resolves the `shell` and `file` activities, and the `orkstack`
+ConfigMap and `orkstack-s3` Secret your Orkers read, in the namespace
+`--settings-from` names. It refuses, with exit `77` and the reason, a missing
+prerequisite:
+
+- Kubernetes before 1.33, or no `orkstack-engine` RuntimeClass, for the
+  user-namespaced shape (`--shapes privileged` checks the fallback alone);
+- the settings, or an engine that does not answer;
+- Temporal, the object store or `--registry-host`, unreachable from a pod;
+- a user-namespaced pod in that RuntimeClass that cannot make cgroups of its
+  own, which means its handler lacks `cgroup_writable`;
+- Pod Security, or any admission policy, refusing either shape. The check
+  asks the API server with a dry-run of the shape's pod.
+
+Then it deploys each base as it ships into a namespace of its own
+(`orkstack-check` unless `--namespace` names another). It changes only what
+[`deploy/kubernetes/check/common`](../deploy/kubernetes/check/common/)
+changes: one replica in the pool `k8s-check`, the per-task ceiling its limits
+run measures, and a smaller pod. For each shape it checks:
 
 - a run that passes artifacts between tasks;
-- tasks with no network, and one on the default network;
-- each task's limits and profile;
-- where each task's cgroup is;
+- tasks with no network, and one on the default network, which must reach
+  the Kubernetes API's own Service;
+- each task's limits and security profile;
+- that each task's cgroup is under the engine container's, and, for the
+  privileged shape, that the engine's is under its pod's;
+- that the engine's root is a user-namespace range, or the node's root for
+  the fallback;
 - a cancel, the per-task ceiling, an out-of-memory task, and a pod deletion.
 
-Then it checks that the Orker refuses a mismatched work root, that the
-user-namespaced engine does not start without its RuntimeClass, and that the
-rootless engine drops a container's limits. It needs Docker, Go, openssl and
-jq, and installs nothing system-wide. Its log and evidence go under
-`.data/kind-orker/<stamp>/`. It runs by hand and is part of no proof tier.
+Then it checks that the Orker refuses a mismatched work root, and that the
+user-namespaced engine does not start without its RuntimeClass. It deletes its
+namespace at the end (`KEEP=1` leaves it) and creates nothing cluster-wide:
+the RuntimeClass must exist already. In OrkStack it leaves three Orkflows
+(`k8s-orker-proof`, `k8s-orker-cancel`, `k8s-orker-limits`) in
+`--ork-namespace` (`default` unless named) and their runs, kept by that
+namespace's retention. Its Orkers serve only the pool `k8s-check`, which that
+namespace must allow, so they take no other run's tasks. Exit `0` means every
+check held. Exit `1` names the check that failed, and the namespace's state
+then is in its evidence (`.data/k8s-orker-check/<stamp>/`, or `--out`).
+
+**On kind, in CI.** [`scripts/kind-orker.sh`](../scripts/kind-orker.sh) makes
+a throwaway kind cluster that meets those prerequisites
+([`deploy/kubernetes/kind/`](../deploy/kubernetes/kind/)): the containerd
+handler on its nodes, the RuntimeClass, Temporal, SeaweedFS, a registry
+served over TLS, and one `ork`, with `ork`, `orker` and two activities built
+from the tree. It runs the check against that cluster with both shapes, then
+measures that the rootless engine drops a container's limits, and deletes the
+cluster (`KEEP=1` leaves it). It needs Docker, Go, curl, openssl and jq, and
+installs nothing system-wide. kind and kubectl are their release binaries,
+checked against pinned SHA-256s, and crane comes from an image pinned by
+digest. Its log and evidence go under `.data/kind-orker/<stamp>/`, with the
+cluster's state when a step fails. CI runs it as `kind-orker.yml` on a change
+to what the bases run, every day, and by dispatch
+([PROOFS.md](PROOFS.md) §5). It is not a required check and is part of no
+proof tier.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 

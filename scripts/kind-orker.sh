@@ -1,39 +1,43 @@
 #!/usr/bin/env bash
-# scripts/kind-orker.sh: the Kubernetes Orker manifests (deploy/kubernetes/,
-# docs/DEPLOY.md "Orkers on Kubernetes"), proven on a throwaway kind cluster.
+# scripts/kind-orker.sh: scripts/k8s-orker-check.sh on a throwaway kind
+# cluster, which this script makes and deletes (docs/DEPLOY.md "Orkers on
+# Kubernetes").
 #
-#   scripts/kind-orker.sh           run every scenario, then delete the cluster
+#   scripts/kind-orker.sh           make the cluster, check it, delete it
 #   KEEP=1 scripts/kind-orker.sh    leave the cluster up afterwards
 #
-# For each shape, user-namespaced (deploy/kubernetes/orker-userns) and
-# privileged (deploy/kubernetes/orker-privileged), applied as they ship with
-# only deploy/kubernetes/proof/common's changes, it checks that:
-#   1. a run passes artifacts between tasks, runs tasks with no network and
-#      one on the default network, and gives each task its own limits and the
-#      Orker's security profile;
-#   2. each task's cgroup is inside the Orker pod's, never at the node's root;
-#   3. a cancel reaches each task's container as SIGTERM, then SIGKILL after
-#      that task's own grace;
-#   4. a task cannot be given more than ORK_ORKER_MAX_MEMORY, and one that
-#      uses more than it asked for is killed in its own cgroup;
-#   5. deleting the pod stops the Orker first, which cancels its tasks the same
-#      way, while the engine outlives it to deliver the signals.
-# Then that the Orker refuses to boot when the engine sees the work root at
-# another path, that the user-namespaced engine does not start without its
-# RuntimeClass, and that Docker's rootless engine drops a container's limits,
-# which is why no rootless shape ships.
+# It makes the cluster the check expects of any other: nodes with the
+# orkstack-engine containerd handler (deploy/kubernetes/kind/kind.yaml), the
+# RuntimeClass, and an OrkStack deployment for the check to use, from
+# deploy/kubernetes/kind/infra: Temporal's development server, SeaweedFS, a
+# registry served over TLS with a certificate authority made for this run,
+# and one ork engine. It builds ork, orker and the shell and file activities
+# from this tree, loads the first two into the nodes, and pushes the
+# activities to that registry. Then it runs the check against the cluster,
+# both shapes, and measures one thing the check does not: that Docker's
+# rootless engine drops a container's limits, which is why no rootless shape
+# ships.
 #
-# Needs Docker, Go, openssl and jq on the host, and nothing installed
-# system-wide: kind and crane are built at pinned versions into
-# .data/kind-orker/bin, kubectl is the kind node image's own, and every image
-# is pinned by digest except ork, orker and the two activities, which are
-# built from this tree. Each run's log and evidence is under
-# .data/kind-orker/<stamp>/. Not part of any proof tier: it is run by hand.
+# Needs Docker, Go, curl, openssl and jq on the host, and installs nothing
+# system-wide. Every tool is pinned: kind's and kubectl's release binaries
+# are kept in .data/kind-orker/bin only if they hash to the SHA-256 below,
+# crane runs from its image by digest, and every image is pinned by digest
+# except ork, orker and the two activities, which are built from this tree.
+# Each run's log and evidence is under .data/kind-orker/<stamp>/, the
+# check's under its check/, with the cluster's state when a check fails. Not
+# part of any proof tier: .github/workflows/kind-orker.yml runs it
+# (docs/PROOFS.md §5), and it runs by hand.
 set -euo pipefail
 
 KIND_VERSION=v0.33.0
+# The SHA-256 each release publishes beside each binary (kind-linux-<arch>.sha256sum, kubectl.sha256).
+KIND_SHA256_amd64=aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+KIND_SHA256_arm64=20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2
+KUBECTL_VERSION=v1.37.0
+KUBECTL_SHA256_amd64=6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
+KUBECTL_SHA256_arm64=922df28df248cc00a9e025f947704f1d1482de64ece54cfe57e61f19eaf1eef3
 KIND_NODE_IMAGE=kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
-CRANE_VERSION=v0.22.1
+CRANE_IMAGE=gcr.io/go-containerregistry/crane:v0.22.1@sha256:1f968817b95790bed063f71175aa6b8ff879fa17064020415f3e18bb6e6a36e1
 PROBE_IMAGE=docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 REGISTRY_HOST=registry.orkstack-infra.svc.cluster.local:5000
 
@@ -44,10 +48,34 @@ tools=$root/.data/kind-orker/bin
 out=$root/.data/kind-orker/$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$tools" "$out"
 exec > >(tee "$out/run.log") 2>&1
+control=$cluster-control-plane
+worker=$cluster-worker
+kubeconfig=$out/kubeconfig
 
 log() { printf '%s %s\n' "$(date -u +%T)" "$*"; }
+kctl() { "$tools/kubectl" --kubeconfig "$kubeconfig" "$@"; }
+# What a failed step leaves for whoever reads it: the cluster as it was.
+cluster_state() {
+	docker inspect "$control" >/dev/null 2>&1 || {
+		echo "no cluster $cluster"
+		return 0
+	}
+	local pod
+	echo "== kubectl get nodes -o wide"
+	kctl get nodes -o wide 2>&1 || :
+	echo "== kubectl get pods -A -o wide"
+	kctl get pods -A -o wide 2>&1 || :
+	echo "== kubectl get events -A --sort-by=.lastTimestamp"
+	kctl get events -A --sort-by=.lastTimestamp 2>&1 || :
+	for pod in $(kctl -n orkstack get pods -o name 2>/dev/null); do
+		echo "== kubectl -n orkstack logs $pod (every container, the last 200 lines)"
+		kctl -n orkstack logs "$pod" --all-containers --prefix --tail=200 2>&1 || :
+	done
+}
 fail() {
 	log "FAIL: $*"
+	cluster_state >"$out/cluster-state.txt" 2>&1 || :
+	log "the cluster's state at the failure: ${out#"$root"/}/cluster-state.txt"
 	exit 1
 }
 expect() { # expect FILE PATTERN WHAT: the evidence file holds a line matching PATTERN
@@ -55,7 +83,7 @@ expect() { # expect FILE PATTERN WHAT: the evidence file holds a line matching P
 	log "ok: $3"
 }
 
-for tool in docker go openssl jq; do
+for tool in docker go curl openssl jq; do
 	command -v "$tool" >/dev/null || {
 		echo "kind-orker: $tool is required" >&2
 		exit 77
@@ -71,24 +99,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "building kind $KIND_VERSION, crane $CRANE_VERSION and orkctl from this tree"
-GOBIN=$tools GOFLAGS=-mod=mod go install "sigs.k8s.io/kind@$KIND_VERSION"
-GOBIN=$tools GOFLAGS=-mod=mod go install "github.com/google/go-containerregistry/cmd/crane@$CRANE_VERSION"
+case $(uname -m) in
+x86_64) arch=amd64 ;;
+aarch64 | arm64) arch=arm64 ;;
+*) fail "no kind or kubectl binary is pinned for $(uname -m)" ;;
+esac
+fetch() { # fetch NAME URL SHA256: keep $tools/NAME only if it hashes to SHA256
+	local name=$1 url=$2 want=$3 got
+	[ "$(sha256sum "$tools/$name" 2>/dev/null | cut -d' ' -f1)" != "$want" ] || return 0
+	log "fetching $url"
+	curl --fail --silent --show-error --location --proto '=https' --retry 2 --max-time 300 -o "$tools/$name.download" "$url"
+	got=$(sha256sum "$tools/$name.download" | cut -d' ' -f1)
+	[ "$got" = "$want" ] || fail "$url hashes to $got, not the pinned $want"
+	chmod 0755 "$tools/$name.download"
+	mv "$tools/$name.download" "$tools/$name"
+}
+want=KIND_SHA256_$arch
+fetch kind "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-$arch" "${!want}"
+want=KUBECTL_SHA256_$arch
+fetch kubectl "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/$arch/kubectl" "${!want}"
+"$tools/kind" version
+"$tools/kubectl" version --client | head -n 1
+log "building orkctl from this tree"
 go build -o "$tools/orkctl" ./cmd/orkctl
 
 "$tools/kind" delete cluster --name "$cluster" >/dev/null 2>&1 || :
 log "creating cluster $cluster ($KIND_NODE_IMAGE)"
 "$tools/kind" create cluster --name "$cluster" --image "$KIND_NODE_IMAGE" \
-	--config deploy/kubernetes/proof/kind.yaml --kubeconfig "$out/kubeconfig" --wait 120s
-control=$cluster-control-plane
-worker=$cluster-worker
+	--config deploy/kubernetes/kind/kind.yaml --kubeconfig "$kubeconfig" --wait 120s
 node_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$worker")
-
-# kubectl is the control-plane node's own; kustomizations are read from a
-# copy of deploy/kubernetes inside it.
-kctl() { docker exec -i "$control" kubectl --kubeconfig /etc/kubernetes/admin.conf "$@"; }
-tar -C deploy -c kubernetes | docker exec -i "$control" sh -c 'rm -rf /orkstack && mkdir -p /orkstack && tar -C /orkstack -x'
-orkctl() { "$tools/orkctl" --server "http://$node_ip:30080" "$@"; }
 
 # kind points each node's resolver at an address it DNATs to Docker's
 # embedded DNS. Where Docker's own upstream is that same address (a daemon
@@ -114,29 +153,30 @@ for node in "$control" "$worker"; do
 	! grep -q " /sys/devices/virtual/dmi/id/product_" /proc/self/mountinfo' ||
 		fail "$node: kind's files over /sys/devices/virtual/dmi/id could not be unmounted"
 done
+# The nodes declare the handler (kind.yaml); the cluster declares the class.
+kctl apply -f deploy/kubernetes/orker-userns/runtimeclass.yaml >/dev/null
 
 {
-	echo "kind $KIND_VERSION, node image $KIND_NODE_IMAGE"
+	echo "kind $KIND_VERSION, kubectl $KUBECTL_VERSION, node image $KIND_NODE_IMAGE"
 	kctl version 2>/dev/null | grep Server
 	docker exec "$worker" containerd --version
 	echo "kernel $(uname -r)"
 	echo "tree $(git rev-parse HEAD) $(git status --porcelain | wc -l) uncommitted paths"
 } | tee "$out/versions.txt"
 
-log "a certificate authority for the proof's registry"
+log "a certificate authority for the registry"
 tls=$out/tls
 mkdir -p "$tls"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 \
-	-subj "/CN=orkstack kind-orker proof CA" -keyout "$tls/ca.key" -out "$tls/ca.crt" 2>/dev/null
+	-subj "/CN=orkstack kind-orker CA" -keyout "$tls/ca.key" -out "$tls/ca.crt" 2>/dev/null
 openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
 	-subj "/CN=${REGISTRY_HOST%:*}" -keyout "$tls/tls.key" -out "$tls/tls.csr" 2>/dev/null
 printf 'subjectAltName=DNS:%s,IP:%s\nextendedKeyUsage=serverAuth\n' "${REGISTRY_HOST%:*}" "$node_ip" >"$tls/ext.cnf"
 openssl x509 -req -in "$tls/tls.csr" -CA "$tls/ca.crt" -CAkey "$tls/ca.key" -CAcreateserial -days 2 \
 	-extfile "$tls/ext.cnf" -out "$tls/tls.crt" 2>/dev/null
-tar -C "$tls" -c ca.crt tls.crt tls.key | docker exec -i "$control" sh -c 'mkdir -p /proof-tls && tar -C /proof-tls -x'
 for ns in orkstack-infra orkstack; do kctl create namespace "$ns" >/dev/null; done
-kctl -n orkstack-infra create secret tls registry-tls --cert=/proof-tls/tls.crt --key=/proof-tls/tls.key >/dev/null
-kctl -n orkstack create configmap proof-ca --from-file=ca.crt=/proof-tls/ca.crt >/dev/null
+kctl -n orkstack-infra create secret tls registry-tls --cert="$tls/tls.crt" --key="$tls/tls.key" >/dev/null
+kctl -n orkstack create configmap proof-ca --from-file=ca.crt="$tls/ca.crt" >/dev/null
 
 log "building ork, orker and the shell and file activities from this tree"
 for target in ork orker; do
@@ -148,198 +188,37 @@ for activity in shell file; do
 done
 
 log "infrastructure: Temporal, SeaweedFS, the registry and ork"
-kctl apply -k /orkstack/kubernetes/proof/infra >/dev/null
+kctl apply -k deploy/kubernetes/kind/infra >/dev/null
 kctl -n orkstack-infra rollout status deploy/registry --timeout=300s >/dev/null
 for activity in shell file; do
 	docker save "localhost/orkstack-k8s/activity-$activity:proof" -o "$out/activity-$activity.tar"
-	SSL_CERT_FILE=$tls/ca.crt "$tools/crane" push "$out/activity-$activity.tar" \
-		"$node_ip:30500/orkstack/activity-$activity:proof" 2>/dev/null
+	chmod 0644 "$out/activity-$activity.tar" # crane's image runs as an unprivileged user
+	# crane, from its image, on kind's network: the registry answers on the
+	# worker's NodePort with the certificate this run's authority signed.
+	docker run --rm --network kind -v "$out:/out:ro" -e SSL_CERT_FILE=/out/tls/ca.crt "$CRANE_IMAGE" \
+		push "/out/activity-$activity.tar" "$node_ip:30500/orkstack/activity-$activity:proof" 2>/dev/null
 	rm -f "$out/activity-$activity.tar"
 done
-kctl -n orkstack-infra rollout status deploy/temporal deploy/seaweedfs --timeout=300s >/dev/null
-kctl -n orkstack rollout status deploy/ork --timeout=300s >/dev/null
-for flow in deploy/kubernetes/proof/orkflows/*.ork.yaml; do
-	orkctl apply "$flow" >/dev/null
-done
+kctl -n orkstack-infra rollout status deploy/temporal deploy/seaweedfs --timeout=300s >/dev/null ||
+	fail "Temporal or SeaweedFS never became ready"
+kctl -n orkstack rollout status deploy/ork --timeout=300s >/dev/null || fail "ork never became ready"
 
-# The Orker pod's name, once its Deployment has rolled out.
-orker_pod() { kctl -n orkstack get pod -l app.kubernetes.io/name=orker --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'; }
-run_status() { orkctl run get "$1" --json | jq -r .run.status; }
-wait_terminal() { # wait_terminal RUN: until the run has ended, at most 5 minutes
-	local deadline=$((SECONDS + 300)) status
-	while :; do
-		status=$(run_status "$1")
-		case $status in SUCCEEDED | FAILED | CANCELED) return 0 ;; esac
-		[ $SECONDS -lt $deadline ] || fail "run $1 still $status after 5 minutes"
-		sleep 2
-	done
-}
-wait_started() { # wait_started RUN N: until N tasks have logged that they started
-	local deadline=$((SECONDS + 300))
-	until [ "$(orkctl run logs "$1" 2>/dev/null | grep -c ': started at ')" -ge "$2" ]; do
-		[ $SECONDS -lt $deadline ] || fail "run $1: fewer than $2 tasks started within 5 minutes"
-		sleep 1
-	done
-}
-# The engine's own record of what it signalled, as "<unix ns> <action> <task> signal= exit=".
-events_format='{{.TimeNano}} {{.Action}} {{index .Actor.Attributes "ork.task"}} signal={{index .Actor.Attributes "signal"}} exit={{index .Actor.Attributes "exitCode"}}'
-signals() { # signals POD SINCE UNTIL
-	kctl -n orkstack exec "$1" -c engine -- docker events --since "$2" --until "$3" \
-		--filter type=container --filter event=kill --filter event=die --format "$events_format"
-}
-check_signals() { # check_signals FILE: TERM to both, graceful exits 0, stubborn KILLed after its 5 s grace
-	local f=$1 term kill
-	expect "$f" ' kill graceful signal=15 ' "graceful was sent SIGTERM"
-	expect "$f" ' die graceful signal= exit=0$' "graceful exited 0 from its trap"
-	expect "$f" ' kill stubborn signal=15 ' "stubborn was sent SIGTERM"
-	expect "$f" ' kill stubborn signal=9 ' "stubborn was sent SIGKILL"
-	expect "$f" ' die stubborn signal= exit=137$' "stubborn died of SIGKILL"
-	term=$(awk '$2=="kill" && $3=="stubborn" && $4=="signal=15" {print $1; exit}' "$f")
-	kill=$(awk '$2=="kill" && $3=="stubborn" && $4=="signal=9" {print $1; exit}' "$f")
-	awk -v t="$term" -v k="$kill" 'BEGIN { d = (k - t) / 1e9; printf "SIGTERM to SIGKILL: %.2f s (grace 5 s)\n", d; exit !(d >= 5 && d < 8) }' |
-		tee -a "$f.summary" || fail "stubborn's SIGKILL did not follow its SIGTERM by its 5 s grace"
-}
-
-prove_shape() { # prove_shape SHAPE
-	local shape=$1 dir=$out/$1 pod run since until uid
-	mkdir -p "$dir"
-	log "== $shape: deploy/kubernetes/orker-$shape"
-	kctl apply -k "/orkstack/kubernetes/proof/$shape" >/dev/null
-	kctl -n orkstack rollout status deploy/orker --timeout=600s >/dev/null || {
-		kctl -n orkstack describe pod -l app.kubernetes.io/name=orker >"$dir/describe.txt" || :
-		fail "$shape: the Orker never became ready ($dir/describe.txt)"
-	}
-	pod=$(orker_pod)
-	kctl -n orkstack get pod "$pod" -o yaml >"$dir/pod.yaml"
-	orkctl orker list | tee "$dir/orker-list.txt"
-	expect "$dir/orker-list.txt" "^$pod\\.orkstack +main .* ready " "$shape: the Orker is ready under its pod's id"
-	kctl -n orkstack logs "$pod" -c orker >"$dir/orker-boot.log"
-	expect "$dir/orker-boot.log" 'msg="orker started"' "$shape: the Orker booted (its bind probe passed)"
-
-	log "$shape: artifacts, network none and default, limits and the task profile"
-	run=$(orkctl run submit k8s-orker-proof --json | jq -r .run.id)
-	wait_terminal "$run"
-	orkctl run get "$run" >"$dir/proof-run.txt"
-	orkctl run logs "$run" >"$dir/proof-logs.txt"
-	orkctl run artifacts "$run" >"$dir/proof-artifacts.txt"
-	orkctl run attempts "$run" >"$dir/proof-attempts.txt"
-	[ "$(run_status "$run")" = SUCCEEDED ] || fail "$shape: k8s-orker-proof $run ended $(run_status "$run")"
-	log "ok: $shape: k8s-orker-proof $run SUCCEEDED"
-	expect "$dir/proof-logs.txt" '^\[produce\] interfaces: lo $' "$shape: network none: only the loopback interface"
-	expect "$dir/proof-logs.txt" '^\[reach\] default network reached the engine Service: *HTTP/' "$shape: network default: a cluster Service answered"
-	expect "$dir/proof-logs.txt" '^\[produce\] memory.max: 134217728$' "$shape: the task's memory limit is its 128Mi"
-	expect "$dir/proof-logs.txt" '^\[produce\] cpu.max: 50000 100000$' "$shape: the task's cpu limit is its 0.5"
-	expect "$dir/proof-logs.txt" '^\[produce\] NoNewPrivs: 1$' "$shape: the task runs with no-new-privileges"
-	expect "$dir/proof-logs.txt" '^\[produce\] Seccomp: 2$' "$shape: the task runs under a seccomp filter"
-	expect "$dir/proof-logs.txt" '^\[produce\] CapEff: 0000000000000000$' "$shape: the task holds no capabilities"
-	expect "$dir/proof-logs.txt" '^\[produce\] root: read-only$' "$shape: the task's root filesystem is read-only"
-	local sha
-	sha=$(awk '/^\[produce\] [0-9a-f]{64} /{print $2}' "$dir/proof-logs.txt")
-	[ -n "$sha" ] || fail "$shape: produce logged no sha256"
-	expect "$dir/proof-logs.txt" "^\\[checksum\\] .*sha256:$sha\\)" "$shape: checksum read produce's artifact intact"
-	expect "$dir/proof-logs.txt" "^\\[verify\\] $sha " "$shape: verify read produce's artifact intact"
-	expect "$dir/proof-logs.txt" '^\[verify\] memory.max: 134217728$' "$shape: verify read compress's artifact back"
-	expect "$dir/proof-artifacts.txt" '^compress +1 +OUTPUT +report.txt.gz ' "$shape: compress's artifact was committed"
-
-	log "$shape: a cancel, and where each task's cgroup is"
-	since=$(kctl -n orkstack exec "$pod" -c engine -- date +%s)
-	run=$(orkctl run submit k8s-orker-cancel --json | jq -r .run.id)
-	wait_started "$run" 2
-	uid=$(kctl -n orkstack get pod "$pod" -o jsonpath='{.metadata.uid}' | tr - _)
-	docker exec "$worker" sh -c '
-		for f in /proc/[0-9]*/cgroup; do
-			c=$(sed -n "s/^0:://p" "$f" 2>/dev/null) || continue
-			case $c in *pod'"$uid"'.slice/*/tasks/*) ;; *) continue ;; esac
-			p=${f#/proc/}; p=${p%/cgroup}
-			echo "$(echo "$c" | sed "s|.*pod'"$uid"'.slice/|<pod>/|; s|cri-containerd-\([0-9a-f]\{12\}\)[0-9a-f]*\.scope|<engine \1>|") memory.max=$(cat /sys/fs/cgroup$c/memory.max) host-uid=$(awk "/^Uid:/{print \$2}" /proc/$p/status)"
-		done | sort -u
-		echo "at the node root: docker/ $(test -d /sys/fs/cgroup/docker && echo present || echo absent), tasks/ $(test -d /sys/fs/cgroup/tasks && echo present || echo absent)"
-	' | tee "$dir/task-cgroups.txt"
-	[ "$(grep -c '^<pod>/<engine [0-9a-f]*>/tasks/' "$dir/task-cgroups.txt")" -ge 2 ] ||
-		fail "$shape: the two running tasks' processes are not in cgroups under the Orker pod's engine"
-	log "ok: $shape: each running task's cgroup is under the Orker pod's engine container"
-	expect "$dir/task-cgroups.txt" 'at the node root: docker/ absent, tasks/ absent' "$shape: no task cgroup at the node's root"
-	orkctl run cancel "$run" --reason "kind-orker: a cancel reaches the container" >/dev/null
-	wait_terminal "$run"
-	[ "$(run_status "$run")" = CANCELED ] || fail "$shape: cancelled run $run ended $(run_status "$run")"
-	log "ok: $shape: k8s-orker-cancel $run CANCELED"
-	sleep 2
-	until=$(kctl -n orkstack exec "$pod" -c engine -- date +%s)
-	signals "$pod" "$since" "$until" >"$dir/cancel-signals.txt"
-	orkctl run logs "$run" >"$dir/cancel-logs.txt"
-	check_signals "$dir/cancel-signals.txt"
-	expect "$dir/cancel-logs.txt" '^\[graceful\] graceful: SIGTERM at ' "$shape: graceful's trap ran"
-	expect "$dir/cancel-logs.txt" '^\[stubborn\] stubborn: SIGTERM at .*ignoring it' "$shape: stubborn's trap ran"
-
-	log "$shape: the per-task ceiling and a task's own limit"
-	run=$(orkctl run submit k8s-orker-limits --json | jq -r .run.id)
-	wait_terminal "$run"
-	orkctl run get "$run" --json >"$dir/limits-run.json"
-	orkctl run logs "$run" >"$dir/limits-logs.txt"
-	jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-") \(.error.message // "-")"' "$dir/limits-run.json" | tee "$dir/limits-tasks.txt"
-	expect "$dir/limits-tasks.txt" '^within SUCCEEDED ' "$shape: a task at the 384Mi ceiling runs"
-	expect "$dir/limits-logs.txt" '^\[within\] memory.max: 402653184$' "$shape: with the ceiling as its limit"
-	expect "$dir/limits-tasks.txt" '^hog FAILED CONTAINER_EXIT_NONZERO .*exceeding its memory limit of 64Mi' "$shape: a task over its own 64Mi is killed by the kernel"
-	expect "$dir/limits-tasks.txt" '^too-big FAILED RESOURCE_REQUEST_REFUSED ' "$shape: a task asking for more than the ceiling is refused"
-
-	log "$shape: deleting the pod while two tasks run"
-	run=$(orkctl run submit k8s-orker-cancel --json | jq -r .run.id)
-	wait_started "$run" 2
-	kctl -n orkstack exec "$pod" -c engine -- docker events \
-		--filter type=container --filter event=kill --filter event=die --format "$events_format" \
-		>"$dir/pod-delete-signals.txt" 2>/dev/null &
-	local stream=$!
-	sleep 2
-	kctl -n orkstack delete pod "$pod" --wait=true >/dev/null
-	wait "$stream" || :
-	check_signals "$dir/pod-delete-signals.txt"
-	log "ok: $shape: the engine outlived the Orker and delivered every signal"
-	wait_terminal "$run"
-	orkctl run get "$run" --json | jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-")"' | tee "$dir/pod-delete-tasks.txt"
-	expect "$dir/pod-delete-tasks.txt" '^graceful FAILED ORKER_HEARTBEAT_TIMEOUT$' "$shape: a task with no retry: ends explicitly when its Orker stops"
-	kctl -n orkstack rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the replacement pod never became ready"
-	log "ok: $shape: the Deployment replaced the pod"
-	# The RuntimeClass stays: the rootless measurement below runs in it too.
-	kctl -n orkstack delete deployment orker --ignore-not-found --wait=true >/dev/null
-	kctl -n orkstack wait --for=delete pod -l app.kubernetes.io/name=orker --timeout=300s >/dev/null 2>&1 || :
-}
-
-prove_shape userns
-prove_shape privileged
-
-log "== a work root the engine sees at another path"
-kctl apply -k /orkstack/kubernetes/proof/mismatch >/dev/null
-deadline=$((SECONDS + 300))
-# The container restarts after each refusal, so keep the log that showed it.
-until kctl -n orkstack logs -l app.kubernetes.io/name=orker -c orker --tail=-1 >"$out/mismatch-orker.log" 2>&1 &&
-	grep -q WORKDIR_NOT_BINDABLE "$out/mismatch-orker.log"; do
-	[ $SECONDS -lt $deadline ] || fail "the Orker did not refuse a mismatched work root within 5 minutes"
-	sleep 2
-done
-kctl -n orkstack get pod -l app.kubernetes.io/name=orker | tee "$out/mismatch-pod.txt"
-expect "$out/mismatch-orker.log" 'orker boot checks failed: WORKDIR_NOT_BINDABLE: .*bind source path does not exist: /var/lib/orkstack/work/ork-bindprobe-' \
-	"the Orker refused to boot on a work root the engine cannot see"
-expect "$out/mismatch-pod.txt" ' 1/2 ' "the mismatched pod never became ready"
-kctl -n orkstack delete deployment orker --ignore-not-found --wait=true >/dev/null
-kctl -n orkstack wait --for=delete pod -l app.kubernetes.io/name=orker --timeout=300s >/dev/null 2>&1 || :
-
-log "== the user-namespaced engine without its RuntimeClass"
-kctl apply -k /orkstack/kubernetes/proof/no-runtimeclass >/dev/null
-deadline=$((SECONDS + 300))
-until kctl -n orkstack logs -l app.kubernetes.io/name=orker -c engine --tail=-1 >"$out/no-runtimeclass-engine.log" 2>&1 &&
-	grep -q "can't create directory" "$out/no-runtimeclass-engine.log"; do
-	[ $SECONDS -lt $deadline ] || fail "the engine without its RuntimeClass did not refuse to start within 5 minutes"
-	sleep 2
-done
-kctl -n orkstack get pod -l app.kubernetes.io/name=orker | tee "$out/no-runtimeclass-pod.txt"
-expect "$out/no-runtimeclass-engine.log" "^mkdir: can't create directory '/sys/fs/cgroup/engine': " "without its RuntimeClass the engine cannot make its cgroups"
-expect "$out/no-runtimeclass-pod.txt" ' 0/2 ' "and the pod never runs the Orker"
-kctl -n orkstack delete deployment orker --ignore-not-found --wait=true >/dev/null
-kctl -n orkstack wait --for=delete pod -l app.kubernetes.io/name=orker --timeout=300s >/dev/null 2>&1 || :
+log "== scripts/k8s-orker-check.sh on the cluster"
+KUBECTL=$tools/kubectl ORKCTL=$tools/orkctl scripts/k8s-orker-check.sh \
+	--kubeconfig "$kubeconfig" \
+	--server "http://$node_ip:30080" \
+	--orker-image localhost/orkstack-k8s/orker:proof \
+	--pull-policy Never \
+	--settings-from orkstack \
+	--registry-host "$REGISTRY_HOST" \
+	--registry-ca "$tls/ca.crt" \
+	--out "$out/check" ||
+	fail "scripts/k8s-orker-check.sh did not pass (exit $?): $(grep -E ' (FAIL|MISSING): ' "$out/check/check.log" | tail -n 1)"
 
 log "== Docker's rootless engine and a container's limits"
-kctl apply -k /orkstack/kubernetes/proof/rootless-dind >/dev/null
-kctl -n orkstack wait --for=condition=Ready pod/rootless-dind --timeout=300s >/dev/null
+kctl apply -k deploy/kubernetes/kind/rootless-dind >/dev/null
+kctl -n orkstack wait --for=condition=Ready pod/rootless-dind --timeout=300s >/dev/null ||
+	fail "the rootless engine's pod never became ready"
 kctl -n orkstack exec rootless-dind -- docker run --rm --memory 64m --cpus 0.5 --pids-limit 100 "$PROBE_IMAGE" \
 	sh -c 'echo "memory.max: $(cat /sys/fs/cgroup/memory.max)"; echo "cpu.max: $(cat /sys/fs/cgroup/cpu.max)"' 2>/dev/null |
 	tee "$out/rootless-limits.txt"
@@ -347,6 +226,6 @@ kctl -n orkstack logs rootless-dind >"$out/rootless-daemon.log"
 expect "$out/rootless-limits.txt" '^memory.max: max$' "rootless engine: --memory 64m is not applied"
 expect "$out/rootless-limits.txt" '^cpu.max: max ' "rootless engine: --cpus 0.5 is not applied"
 expect "$out/rootless-daemon.log" 'Running in rootless-mode without cgroups' "rootless engine: the daemon says it runs without cgroups"
-kctl delete -k /orkstack/kubernetes/proof/rootless-dind --ignore-not-found >/dev/null
+kctl delete -k deploy/kubernetes/kind/rootless-dind --ignore-not-found >/dev/null
 
-log "PASS: every scenario held; evidence in ${out#"$root"/}"
+log "PASS: the check held on kind, and the rootless engine drops limits; evidence in ${out#"$root"/}"

@@ -1,4 +1,5 @@
-# The throwaway cluster scripts/kind-orker.sh creates. Every node declares
+# The throwaway cluster scripts/kind-orker.sh creates for
+# scripts/k8s-orker-check.sh. Every node declares
 # the orkstack-engine containerd handler that deploy/kubernetes/orker-userns
 # needs (docs/DEPLOY.md, "Orkers on Kubernetes"); kind writes a version 2
 # containerd configuration, so the table uses that spelling.

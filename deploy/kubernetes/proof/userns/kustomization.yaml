@@ -1,9 +1,0 @@
-# deploy/kubernetes/orker-userns as it ships, with the proof's changes
-# (../common).
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: orkstack
-resources:
-  - ../../orker-userns
-components:
-  - ../common

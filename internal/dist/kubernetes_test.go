@@ -20,7 +20,9 @@ import (
 // socket are one volume at one path in both containers, the engine is a
 // native sidecar that outlives the Orker, every image is pinned, the engine's
 // limits cover the Orker's ceiling, and the two shapes differ in privilege
-// and nothing else. scripts/kind-orker.sh is the proof that they also run.
+// and nothing else; and they hold the check (deploy/kubernetes/check) to
+// what it says it does to a cluster. scripts/k8s-orker-check.sh, which
+// scripts/kind-orker.sh runs on kind, is the proof that they also run.
 
 var kubernetesShapes = []string{"orker-userns", "orker-privileged"}
 
@@ -269,8 +271,8 @@ func TestKubernetesOrker_TheShapesDifferInPrivilegeAndNothingElse(t *testing.T) 
 	if class.Kind != "RuntimeClass" || userns.RuntimeClassName != class.Metadata.Name {
 		t.Errorf("orker-userns runs in RuntimeClass %q, but runtimeclass.yaml declares the %s %q", userns.RuntimeClassName, class.Kind, class.Metadata.Name)
 	}
-	if !strings.Contains(string(readRepoFile(t, "deploy/kubernetes/proof/kind.yaml")), "runtimes."+class.Handler+"]") {
-		t.Errorf("the proof's cluster declares no containerd handler %q", class.Handler)
+	if !strings.Contains(string(readRepoFile(t, "deploy/kubernetes/kind/kind.yaml")), "runtimes."+class.Handler+"]") {
+		t.Errorf("the kind cluster declares no containerd handler %q", class.Handler)
 	}
 	if p := usernsEngine.SecurityContext.Privileged; p != nil && *p {
 		t.Error("orker-userns: the engine is privileged")
@@ -315,8 +317,8 @@ func TestKubernetesOrker_ImagesArePinned(t *testing.T) {
 	built := regexp.MustCompile(`^localhost/orkstack-k8s/[a-z-]+:proof$`)
 	images := map[string]bool{}
 	for _, rel := range []string{
-		"deploy/kubernetes/proof/infra/infra.yaml",
-		"deploy/kubernetes/proof/rootless-dind/rootless-dind.yaml",
+		"deploy/kubernetes/kind/infra/infra.yaml",
+		"deploy/kubernetes/kind/rootless-dind/rootless-dind.yaml",
 	} {
 		for _, image := range imagesIn(t, rel) {
 			images[image] = true
@@ -428,4 +430,45 @@ func k8sQuantity(t *testing.T, raw string) float64 {
 		t.Fatalf("cannot read the quantity %q", raw)
 	}
 	return value * scale
+}
+
+// TestKubernetesOrkerCheck_CreatesNothingClusterWideAndKeepsToItsPool: the
+// check deploys the bases into a cluster that is not its own, so it creates
+// nothing cluster-wide (the RuntimeClass of the user-namespaced base is
+// required, never applied), and its Orkers join a pool of their own that
+// every one of its tasks names, so they take no other run's tasks and its
+// tasks land on no other Orker.
+func TestKubernetesOrkerCheck_CreatesNothingClusterWideAndKeepsToItsPool(t *testing.T) {
+	t.Parallel()
+	common := string(readRepoFile(t, "deploy/kubernetes/check/common/kustomization.yaml"))
+	if !regexp.MustCompile(`(?m)^\s+\$patch: delete\n\s+apiVersion: node\.k8s\.io/v1\n\s+kind: RuntimeClass\n\s+metadata:\n\s+name: orkstack-engine$`).MatchString(common) {
+		t.Error("deploy/kubernetes/check/common does not delete the base's RuntimeClass, so the check would create it cluster-wide")
+	}
+	pool := regexp.MustCompile(`(?m)^\s+- name: ORK_ORKER_POOL\n\s+value: (\S+)$`).FindStringSubmatch(common)
+	if pool == nil {
+		t.Fatal("deploy/kubernetes/check/common does not put the check's Orkers in a pool of their own")
+	}
+	if pool[1] == "main" || pool[1] == "" {
+		t.Errorf("the check's Orkers join the pool %q, which real Orkers serve", pool[1])
+	}
+	for _, flow := range []string{"k8s-orker-proof", "k8s-orker-cancel", "k8s-orker-limits"} {
+		rel := "deploy/kubernetes/check/orkflows/" + flow + ".ork.yaml"
+		var doc struct {
+			Tasks []struct {
+				ID   string `yaml:"id"`
+				Pool string `yaml:"pool"`
+			} `yaml:"tasks"`
+		}
+		if err := yaml.Unmarshal(readRepoFile(t, rel), &doc); err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+		if len(doc.Tasks) == 0 {
+			t.Fatalf("%s has no tasks", rel)
+		}
+		for _, task := range doc.Tasks {
+			if task.Pool != pool[1] {
+				t.Errorf("%s: task %s runs on pool %q, not the check's own %q", rel, task.ID, task.Pool, pool[1])
+			}
+		}
+	}
 }

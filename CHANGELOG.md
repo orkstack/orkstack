@@ -20,11 +20,17 @@ include breaking changes, and each is marked **BREAKING**.
   is one `emptyDir` at one path in the two containers, and the engine's
   storage is an `emptyDir`. The engine's start-up keeps every task inside the
   pod's own cgroup, so the pod's limits bound them and the kubelet accounts
-  for them. `scripts/kind-orker.sh` proves both shapes on a throwaway kind
-  cluster: artifacts, `network: none` and `default`, each task's limits and
-  profile, a cancel, the per-task ceiling, a pod deletion, and the boot check
-  refusing a mismatched work root. Docker's rootless engine image is not
-  supported: it applies no container limits.
+  for them. `scripts/k8s-orker-check.sh` checks both shapes on a cluster
+  you already have, before you trust it. It refuses a missing prerequisite
+  (the Kubernetes version, the RuntimeClass and its handler, Pod Security,
+  a reachable Temporal, object store or registry) with its reason. Then, in
+  a namespace of its own that it deletes, it checks artifacts,
+  `network: none` and `default`, each task's limits and profile, where its
+  cgroup is, a cancel, the per-task ceiling, a pod deletion, and the boot
+  check refusing a mismatched work root. `scripts/kind-orker.sh` runs it on
+  a throwaway kind cluster, and CI runs that (`kind-orker.yml`, not a
+  required check). Docker's rootless engine image is not supported: it
+  applies no container limits.
 - An activity image's `with:` interface can be written as a readable YAML
   document, `kind: ActivityInterface` (by convention `interface.ork.yaml`
   beside the Dockerfile), instead of one line of JSON. `orkctl activity

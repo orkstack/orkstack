@@ -1,6 +1,6 @@
 # Not an Orker: Docker's own rootless engine image as its documentation runs
-# it (a privileged container, the daemon as uid 1000), so the proof can
-# measure what it does with a container's limits. It has no systemd, and a
+# it (a privileged container, the daemon as uid 1000), so scripts/kind-orker.sh
+# can measure what it does with a container's limits. It has no systemd, and a
 # rootless daemon needs systemd for cgroups, so it runs every container with
 # none: --memory, --cpus and --pids-limit are accepted and not applied. That
 # is why deploy/kubernetes ships no rootless shape (docs/DEPLOY.md, "Orkers on

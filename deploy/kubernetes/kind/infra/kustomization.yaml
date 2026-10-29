@@ -1,5 +1,6 @@
 # Applied first by scripts/kind-orker.sh. The settings every OrkStack process
-# of the proof reads; the store's keys are the development stack's own.
+# on the kind cluster reads, which the check copies (--settings-from
+# orkstack); the store's keys are the development stack's own.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

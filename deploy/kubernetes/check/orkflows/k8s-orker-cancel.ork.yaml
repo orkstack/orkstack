@@ -1,6 +1,6 @@
 # Cancelling a run, or stopping its Orker, reaches each running task's
 # container as SIGTERM, then SIGKILL once the task's own grace has passed
-# (scripts/kind-orker.sh records the signals the engine delivered).
+# (scripts/k8s-orker-check.sh records the signals the engine delivered).
 apiVersion: orkstack/v1
 kind: Orkflow
 name: k8s-orker-cancel
@@ -9,6 +9,7 @@ description: SIGTERM, then SIGKILL after each task's grace, through an Orker on 
 tasks:
   - id: graceful
     uses: shell
+    pool: k8s-check
     network: none
     cancellation_grace_period_seconds: 20
     with:
@@ -20,6 +21,7 @@ tasks:
         while :; do sleep 1; done
   - id: stubborn
     uses: shell
+    pool: k8s-check
     network: none
     cancellation_grace_period_seconds: 5
     with:
